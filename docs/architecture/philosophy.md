@@ -43,9 +43,6 @@ model says "done"
     -> workflow becomes complete
 ```
 
-This principle applies to task completion, review, external effects, recovery,
-and user authority.
-
 ## 3. Agent is not the architecture
 
 Agent is one useful autonomous actor, not the universal abstraction for every
@@ -55,114 +52,99 @@ Do not force deterministic executors, tools, persistent Team identities, Website
 capabilities, or runtime protocols into an "Agent" shape when their real
 semantics differ.
 
-The architecture should model the distinctions that matter.
-
 ## 4. Capability over brand
 
-System routes work by required guarantees, not by names such as ChatGPT, Claude,
-Codex, Gemini, or DSH.
+System routes work by required guarantees, not provider/model names.
 
-Provider identity can influence diagnostics and policy, but it must not become a
-substitute for capability evidence.
-
-A Worker is suitable because it can prove the required current composition, not
-because its model or provider is assumed to be capable.
+Provider identity can influence diagnostics and explicit routing policy, but it
+must not substitute for capability evidence.
 
 ## 5. Spend intelligence where intelligence matters
 
 LLM tokens, context, browser turns, and premium-model calls are resources.
 
 Repeated deterministic work should become deterministic execution whenever
-possible.
-
-For example, an Agent should help discover, debug, or repair a website
-automation path; it should not rediscover the same unchanged button one hundred
-times when a stable automation can perform the action.
-
-Use Agents at uncertainty boundaries. Reuse learned deterministic mechanisms
+possible. Use Agents at uncertainty boundaries and reuse learned mechanisms
 between those boundaries.
 
-## 6. Website is a capability, not a special species of Agent
+## 6. Workflow policy should be data when possible
 
-Browser-backed intelligence is useful, but "Website Agent" should not become a
-permanent ontology merely because the first implementation used a browser.
-
-The stable concept is the semantic capability:
-
-```text
-web read / interact / research / authenticated conversation
-```
-
-The implementation may later be a local browser, provider API, remote browser, or
-another service.
-
-## 7. Collaboration is a procedure over persistent participants
-
-A Team is not synonymous with debate.
-
-Team Core should provide persistent members, messaging, barriers, phase
-semantics, and acceptance. Procedures decide whether members brainstorm,
-cross-review, debate, vote, synthesize, or use another pattern.
-
-This makes collaboration reusable across domains.
-
-## 8. Artifacts are shared knowledge, not mailbox payload
-
-Long-lived work should produce named, addressable Artifacts and Evidence.
+A supported workflow change should not require a code change merely because its
+topology or parameters changed.
 
 Prefer:
 
 ```text
-compact peer message
-  + artifact/evidence reference
+stable primitive semantics in code
+        +
+validated declarative Profile
+        =
+runtime procedure
 ```
 
-over repeatedly injecting entire reports into every participant's context.
+over encoding each named workflow as a new TypeScript function.
 
-This reduces token cost, preserves exact identity, and improves provenance.
+Profiles should own participant configuration, procedure composition, prompts,
+capability requirements, and bounded parameters such as round counts. Code should
+change only when the semantic primitive vocabulary itself must grow.
 
-## 9. Evidence should travel with claims
+A running workflow snapshots its Profile so configuration remains dynamic between
+runs but deterministic within one run.
 
-A Task result should make it possible to answer:
+## 7. Website is a capability, not a special species of Agent
 
-- what input did this result depend on?
-- which Artifact or external state did it inspect?
-- what Evidence supports the claim?
-- which version/head/revision was accepted?
-- can the result still be reused if upstream state changes?
+Browser-backed intelligence is useful, but "Website Agent" should not become a
+permanent ontology merely because the first implementation used a browser.
 
-Exact evidence prevents stale reasoning from silently satisfying a new state.
+The stable concept is semantic web capability. The implementation may be a local
+browser, provider API, remote browser, or another service.
 
-## 10. Recovery is reconciliation before repetition
+## 8. Collaboration is a procedure over persistent participants
 
-External systems can complete work even when System misses the response.
+A Team is not synonymous with debate.
+
+Team Core should provide persistent members, messaging, barriers, phase
+semantics, and acceptance. Procedures decide whether members research
+independently, debate, cross-review, vote, synthesize, or use another pattern.
+
+## 9. Artifacts are shared knowledge, not mailbox payload
+
+When work becomes long-lived, prefer compact peer messages plus exact
+result/artifact references over repeatedly injecting entire reports into every
+participant's context.
+
+The MVP may start with simple stable result references and grow a richer Artifact
+model only when real workflows require it.
+
+## 10. Evidence should travel with claims
+
+A result should make it possible to determine what input produced it, what
+evidence supports it, and whether it is still reusable after upstream state
+changes.
+
+## 11. Recovery is reconciliation before repetition
+
+External or model work can complete even when System misses the response.
 
 Therefore:
 
 ```text
 failure/interruption
-  -> inspect durable/local/external evidence
+  -> inspect exact state
       -> recover already-completed work if exact
           -> otherwise retry the smallest safe unit
 ```
 
-Blind replay is a correctness bug when an operation may have side effects.
+Blind replay is a correctness bug when prior work may already be valid.
 
-## 11. User authority is not model confidence
+## 12. User authority is not model confidence
 
 A high-confidence Agent recommendation does not become user authorization.
 
-System should separate:
+System separates reasoning, accepted evidence, policy, authority, and effect
+execution.
 
-- reasoning;
-- accepted evidence;
-- policy;
-- authority;
-- effect execution.
-
-Consequential external effects should carry explicit scoped authority.
-
-## 12. Reuse before abstraction
+## 13. Reuse before abstraction
 
 Prefer, in order:
 
@@ -177,28 +159,20 @@ native host/runtime capability
 Do not recreate DSH Team state, MCP registries, ACP lifecycle, browser engines, or
 other runtime mechanics merely to make System appear self-contained.
 
-Likewise, do not add a generic abstraction until two real implementations or a
-real semantic boundary prove it useful.
+## 14. Concrete MVP, replaceable boundaries
 
-## 13. Concrete MVP, replaceable boundaries
-
-The MVP may intentionally choose DSH, Patchright-compatible browser execution, or
-specific provider implementations.
+The MVP may intentionally choose DSH and concrete provider implementations.
 
 Being concrete is not the same as coupling the semantic model to those choices.
+Use narrow replacement seams where replacement is real, while keeping the first
+implementation small.
 
-Use narrow replacement seams where real replacement is expected, while keeping
-the first implementation simple.
+## 15. Fail closed on ambiguous correctness
 
-## 14. Fail closed on ambiguous correctness
+When System cannot prove that work completed, that a result matches the current
+input, or that a Profile is valid, it should not guess.
 
-When System cannot prove that an operation completed, that evidence matches the
-current input, or authority is still valid, it should not guess.
-
-Ambiguity is a state to surface and reconcile, not a reason to silently accept a
-possibly incorrect transition.
-
-## 15. Build behavior with TDD
+## 16. Build behavior with TDD
 
 Behavioral changes use strict:
 
@@ -208,5 +182,3 @@ Red -> Green -> Refactor
 
 Tests are executable specifications for boundaries, invariants, failure cases,
 recovery, and regressions.
-
-A clean architecture is valuable only if its behavioral contracts are proven.

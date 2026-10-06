@@ -66,9 +66,9 @@ The control plane is the correctness authority for execution state.
 
 It owns semantics such as:
 
-- Workflow and Task DAG state;
+- Workflow and Task state;
 - exact task inputs and outputs;
-- Artifact and Evidence identity;
+- Artifact and Evidence identity when those are used;
 - acceptance;
 - execution fencing;
 - authority boundaries;
@@ -172,6 +172,53 @@ cancellation, and provider-specific mechanics.
 System reuses runtime-native models instead of mirroring them without a proven
 semantic need.
 
+## Dynamic Workflow Profiles
+
+Workflow/Profile composition is **data**, not production code.
+
+System Core should expose a small stable vocabulary of execution and
+collaboration primitives. A named Profile composes those primitives at runtime.
+
+```text
+Profile data
+   |
+   | validate + snapshot
+   v
+Procedure plan
+   |
+   +--> Team/runtime primitives
+   +--> Worker/capability requirements
+   `--> bounded parameters
+```
+
+A Profile may own:
+
+- participant/member declarations;
+- semantic capability requirements;
+- prompts or role guidance;
+- procedure steps;
+- ordering/dependencies expressible by the supported vocabulary;
+- bounded values such as debate rounds;
+- synthesis policy.
+
+System code owns:
+
+- Profile schema/version validation;
+- primitive semantics;
+- safety and admission invariants;
+- execution/recovery mechanics;
+- fail-closed handling of unknown primitives.
+
+Therefore changing a supported workflow shape should normally be a Profile edit,
+not a source-code edit.
+
+Each run snapshots the resolved Profile before execution. Later Profile changes
+apply to future runs and must not mutate already-started run semantics.
+
+The MVP does not need an unrestricted programmable workflow language. Start with
+the smallest primitives proven by real Profiles and extend the vocabulary only
+when a new procedure cannot be expressed cleanly.
+
 ## Workflow and Team
 
 Workflow owns semantic task dependency and progression.
@@ -198,40 +245,27 @@ Examples include:
 
 A Lead may coordinate and synthesize without relaying every peer message.
 
+For the MVP, only the primitives required by the two-researcher, two-round
+research/debate Profile need to exist.
+
 ## Task graph and Artifact graph are different
 
-System treats work and produced knowledge as distinct first-class graphs.
+As System grows, work state and produced knowledge should remain conceptually
+distinct.
 
 ```text
 Task graph
+  -> what may execute next
 
-Research A ----+
-               +--> Synthesis --> Implement --> Review
-Research B ----+
-
-
-Artifact graph
-
-sources
-  -> research report
-      -> architecture plan
-          -> patch
-              -> test evidence
-                  -> review report
+Artifact/Evidence graph
+  -> what exact knowledge/result was produced and consumed
 ```
 
-A Task may consume and produce Artifacts:
+The MVP does not need a general Artifact graph. Stable exact result references are
+sufficient until richer cross-step knowledge management proves the need.
 
-```text
-Task
-  |-- consumes Artifact[]
-  `-- produces Artifact[]
-```
-
-Team messages should prefer compact conclusions and Artifact/Evidence references
-over repeatedly copying large payloads.
-
-Artifact identity must not become a second hidden workflow state machine.
+Team messages should prefer compact conclusions and result references over
+repeatedly copying large payloads.
 
 ## Authority
 
@@ -241,9 +275,9 @@ Initial rule:
 
 > **User owns consequential external authority. System brokers and enforces it.**
 
-System may automate bounded internal decisions under policy, but it must not turn
-successful reasoning into implicit user authorization for destructive, published,
-financial, security-sensitive, or otherwise consequential effects.
+The research-only MVP performs no consequential external mutation, so the first
+implementation does not need a merge/publish authority gate. The boundary remains
+architectural truth for later Profiles.
 
 ## Runtime and protocol placement
 
@@ -251,10 +285,16 @@ For the MVP:
 
 ```text
 DSH ctx.subagents
-  = multi-provider Worker execution seam
+  = bounded auxiliary Worker execution when needed
 
 DSH ctx.agentTeams
   = persistent Team-member lifecycle + direct peer messaging
+
+System Profile loader
+  = declarative dynamic workflow composition
+
+System procedure runner
+  = semantic collaboration/control primitives
 
 ACP
   = optional external Agent/Worker runtime control
@@ -268,13 +308,17 @@ A2A
 
 Do not introduce a protocol for architectural symmetry.
 
+DSH `ctx.workflowEngine` is not required for the small MVP. It remains a
+candidate execution backend for future Profiles that benefit from model-authored
+or larger fan-out orchestration.
+
 ## Website capability
 
 The useful runtime lessons from `@tsuuanmi/internet` are retained, but Website
 is a Capability rather than a permanent standalone Agent type.
 
 ```text
-Worker
+Worker / Team Member
   -> Website capability
       -> Website Core
           -> WebsiteProviderRuntime
@@ -299,50 +343,56 @@ from the reusable surface.
 ## Dependency direction
 
 ```text
-Goal / Profile
-    |
-    v
-Workflow
-    |
-    +--> Team policy
-    |
-    +--> Worker admission/routing
+Goal
+  |
+  v
+Profile registry
+  |
+  v
+validated Profile snapshot
+  |
+  v
+procedure runner
+  |
+  +--> Team policy/runtime
+  |
+  +--> Worker/capability admission
               |
               v
          native runtime
               |
               v
       concrete execution
-
-Capabilities plug into Worker composition without making higher layers depend on
-provider implementation details.
 ```
 
 ## Ownership statement
 
 A compact ownership rule:
 
-> **User owns authority. System owns goal state and orchestration. Workflow owns
-> task semantics. Team owns collaboration semantics. Worker owns execution
-> acceptance. Capability owns domain behavior. Runtime owns lifecycle and
-> transport. Provider owns implementation details.**
+> **User owns authority. System owns goal state and orchestration. Profile owns
+> declarative workflow composition. Procedure owns collaboration semantics.
+> Worker owns execution acceptance. Capability owns domain behavior. Runtime
+> owns lifecycle and transport. Provider owns implementation details.**
 
 ## Cross-cutting invariants
 
 1. System is the center of orchestration; Agent is not the universal center.
 2. Models reason; deterministic state transitions require System acceptance.
 3. Worker is opaque externally and selected by semantic conformance.
-4. Provider/model names do not define Workflow or Profile semantics.
-5. Team Member identity is persistent for the Team lifecycle.
-6. Direct Team collaboration should not require the Lead to relay every message.
-7. Message delivery is not equivalent to semantic collaboration completion.
-8. Task DAG and Artifact graph are distinct but linked.
-9. Artifacts and Evidence should replace unnecessary long mailbox/context copies.
-10. Capability matching reflects current composition and state.
-11. Reuse native DSH/runtime/protocol mechanics before rebuilding them.
-12. MCP, ACP, and A2A are introduced only for real boundaries they solve.
-13. Provider-specific Website/browser details stay below `WebsiteProviderRuntime`.
-14. Consequential user authority is explicit.
+4. Provider/model names do not define generic procedure semantics.
+5. Workflow/Profile composition is data whenever existing primitives are
+   sufficient.
+6. A run snapshots its resolved Profile before execution.
+7. Unknown or invalid Profile semantics fail before work starts.
+8. Team Member identity is persistent for the Team lifecycle.
+9. Direct Team collaboration should not require the Lead to relay every message.
+10. Message delivery is not equivalent to semantic collaboration completion.
+11. Capability matching reflects current composition and state.
+12. Reuse native DSH/runtime/protocol mechanics before rebuilding them.
+13. MCP, ACP, A2A, and DSH Workflow are introduced only for real boundaries they
+    solve.
+14. Provider-specific Website/browser details stay below
+    `WebsiteProviderRuntime`.
 15. Recovery targets the smallest correctness-bearing unit possible.
 16. Behavioral implementation changes use Red -> Green -> Refactor TDD.
 

@@ -2,331 +2,362 @@
 
 - **Status:** initial normative scope
 - **Host:** DSH / Cordis
-- **Purpose:** prove the System control model with one useful end-to-end workflow
+- **Purpose:** prove a minimal cognitive-control loop with two research agents and a configurable collaboration profile
 
 ## Goal
 
-The MVP must prove that System can take a user objective and coordinate multiple
-forms of intelligence through explicit semantic boundaries without becoming a
-monolithic super-agent or rebuilding runtime mechanics already provided by DSH.
+The MVP should be intentionally small.
 
-A successful MVP demonstrates:
+It does **not** need a complete software-development lifecycle, implementation
+workers, review gates, merge authority, or a general workflow engine.
 
-```text
-user objective
-  -> semantic workflow
-      -> Worker/Team selection
-          -> capability-backed execution
-              -> Artifacts + Evidence
-                  -> explicit acceptance
-                      -> recoverable progression
-```
+It needs to prove one core thesis:
 
-## Primary vertical
+> **System can load a declarative Profile, create the required participants,
+> let them research independently, coordinate a bounded multi-round exchange,
+> and synthesize one result without encoding that workflow topology in
+> production code.**
 
-The first vertical should be a software-development workflow because it exercises
-research, implementation, validation, review, artifacts, repository state, and
-authority in one concrete domain.
-
-Representative flow:
+The first end-to-end path is:
 
 ```text
-Research A -----+
-                +--> Synthesis --> Implement --> Validate ----+
-Research B -----+                                             |
-                                                              +--> Review
-Review A ------------------------------------------------------+
-Review B ------------------------------------------------------+
-                                                               |
-                                                        accepted result
-                                                               |
-                                                     user-owned effect gate
+User question / research objective
+            |
+            v
+      load Profile
+            |
+            v
+   +----------------+
+   | Researcher A   |
+   | Researcher B   |
+   +----------------+
+        |       |
+        | independent research
+        v       v
+      Result A  Result B
+           \     /
+            \   /
+        Debate round 1
+            |
+        Debate round 2
+            |
+            v
+         Synthesis
+            |
+            v
+       Final answer
 ```
 
-The exact procedure may evolve. The MVP requirement is that System owns the
-semantic flow while underlying runtimes own their native mechanics.
+## MVP Profile
 
-## Required MVP capabilities
+The first shipped Profile should express the workflow as data, not TypeScript.
 
-### 1. Goal to semantic Workflow
+Illustrative shape:
 
-System must be able to instantiate a semantic DAG whose nodes have:
+```yaml
+id: research-debate
+description: Two independent researchers debate before synthesis
 
-- stable node identity;
-- objective;
-- explicit dependencies;
-- executor kind or semantic requirements;
-- exact correctness-bearing input identity;
-- accepted output/evidence identity.
+members:
+  - id: researcher-a
+    requires: [research, web-research]
+  - id: researcher-b
+    requires: [research, web-research]
 
-The workflow domain must not depend on provider brands.
+steps:
+  - type: parallel
+    action: research
+    participants: [researcher-a, researcher-b]
 
-### 2. Worker admission and deterministic routing
+  - type: debate
+    participants: [researcher-a, researcher-b]
+    rounds: 2
 
-System must route one-shot semantic work through DSH `ctx.subagents` or the
-appropriate native runtime.
+  - type: synthesize
+    actor: lead
+```
 
-Admission must:
+The exact file schema may evolve during implementation, but the ownership rule is
+normative:
 
-- evaluate required current capabilities;
-- reject Workers that cannot prove conformance;
-- make selection deterministic under configured policy;
-- preserve native cancellation;
-- keep semantic acceptance separate from provider completion.
+> **Code owns stable execution primitives and validation. Profiles own workflow
+> composition, participant configuration, prompts/policy, ordering, and bounded
+> parameters such as debate rounds.**
 
-The MVP does not need an AI-based router.
+Changing the workflow from two to three researchers, two to four rounds, a
+different synthesis actor, or a different capability requirement should not
+require a production-code change when the existing primitive vocabulary is
+sufficient.
 
-### 3. Persistent Team participation
+## Dynamic Profile requirements
 
-System must support persistent collaborative members through DSH
-`ctx.agentTeams`.
+Profiles are runtime data.
 
-The MVP must prove:
+The MVP must provide a Profile registry/loader that:
 
-- member identity persists for the Team lifecycle;
-- member formation admits only Team-compatible providers;
-- peers can communicate directly through the native Team boundary;
-- an independent-first barrier can be enforced;
-- a collaboration procedure can run after the barrier;
-- phase completion requires explicit semantic acceptance.
+- loads named Profiles from an external configuration location;
+- validates them against a versioned schema before execution;
+- resolves a Profile by id for each run;
+- does not compile workflow topology into source code;
+- lets the next run use an updated Profile without rebuilding System;
+- fails closed on unknown primitives, invalid participants, invalid references,
+  or unsupported parameters.
 
-One-shot auxiliary Workers may be used by a Team Member, but must not silently
-become the Team identity.
+Hot-reloading a Profile during an already-running workflow is **not** required.
+A run should snapshot the resolved Profile at start so later edits cannot mutate
+its semantics underneath it.
 
-### 4. At least one reusable Team procedure
+The MVP may use YAML or JSON. The important boundary is data-driven composition,
+not the serialization format.
 
-The MVP must implement at least one useful procedure composed from Team
-primitives, for example:
+## Minimal procedure vocabulary
+
+The MVP should start with the smallest useful vocabulary.
+
+### `parallel`
+
+Run the same semantic action independently for the listed participants.
+
+For the initial Profile:
 
 ```text
-independent work
-  -> peer critique/review
-      -> revision or strongest-supported synthesis
-          -> accepted phase result
+researcher-a ---- independent research
+researcher-b ---- independent research
 ```
 
-The Team Core must not hard-code debate as the only collaboration model.
+Neither participant should see the other's initial result before both complete.
 
-### 5. First-class Artifacts and Evidence
+### `debate`
 
-Tasks must be able to produce addressable Artifacts and Evidence separately from
-mailbox/chat text.
+Run a bounded exchange between already-created participants.
 
-The MVP must prove:
-
-- a Task can consume Artifact references;
-- a Task can produce Artifact references;
-- Artifact identity is stable enough for downstream input receipts;
-- compact Team messages can reference Artifacts instead of embedding large
-  payloads;
-- accepted claims can point to supporting Evidence.
-
-The first store may be simple and local. Distributed artifact infrastructure is
-not required.
-
-### 6. Website capability
-
-System must support a Website-capable Worker using semantics selectively adapted
-from `@tsuuanmi/internet`.
-
-The MVP must preserve the important correctness behaviors:
-
-- logical request identity;
-- semantic conversation continuity where needed;
-- retained-result idempotency;
-- reconcile-before-resubmit;
-- bounded resubmission;
-- full-result retention with bounded model-context projection;
-- cancellation propagation;
-- provider-specific details below `WebsiteProviderRuntime`.
-
-The first direct DSH composition must not require MCP.
-
-### 7. Execution attempt fencing
-
-A logical Task/node and a concrete execution attempt must not be the same
-identity.
-
-The MVP must prevent stale attempts from committing late output after ownership
-or retry has moved to a newer attempt.
-
-### 8. Recovery of the smallest safe unit
-
-On interruption or restart, System must prefer:
+For the initial Profile:
 
 ```text
-reconcile exact current state
-  -> recover completed exact work
-      -> otherwise retry the smallest safe logical unit
+round 1:
+  A receives B's independent result and responds
+  B receives A's independent result and responds
+
+round 2:
+  A receives the latest B position and responds
+  B receives the latest A position and responds
 ```
 
-Completed siblings and dependencies must not be replayed merely because a
-downstream step failed.
+The exact speaking order may be chosen deterministically by the procedure
+implementation, but the Profile owns the configured round count.
 
-### 9. Explicit acceptance
+A round is a semantic boundary: failure in round 2 must not require rerunning
+independent research or round 1 when the earlier outputs remain exact and valid.
 
-The MVP must preserve layered completion:
+### `synthesize`
+
+Produce one final result from the accepted participant outputs and debate state.
+
+The MVP can use the Lead/local System agent as synthesizer.
+
+## Participants
+
+The initial implementation uses exactly two research participants.
+
+They should be persistent Team Members when the selected DSH runtime supports the
+required continuable lifecycle:
 
 ```text
-provider/runtime finished
-  != Worker result accepted
-
-Worker result accepted
-  != Team phase accepted
-
-Team phase accepted
-  != Workflow complete
-
-Workflow success
-  != consequential user authority
+System
+  -> DSH ctx.agentTeams
+      -> researcher-a
+      -> researcher-b
 ```
 
-### 10. Explicit user authority boundary
+System owns the collaboration procedure. DSH owns native member lifecycle,
+durable peer messages, and Team mechanics.
 
-At least one representative consequential external effect must require explicit
-user authority scoped to the exact target state.
+If a bounded one-shot research executor is used underneath a Team Member, that
+executor is auxiliary evidence production and does not replace the persistent
+member identity.
 
-The software-development vertical may use merge/publish as the first example.
+## Research capability
 
-### 11. Observability
+Each researcher must be able to gather evidence rather than only reason from
+model memory.
 
-The MVP must expose enough state to answer:
+The Profile should request semantic capability such as:
 
-- what Workflow is running?
-- which Tasks are READY/RUNNING/BLOCKED/COMPLETED?
-- which execution attempt owns active work?
-- what dependency blocks progress?
-- what Artifact/Evidence was produced?
-- what failure/recovery action is current?
-- what user action or authority is required?
+```text
+research
+web-research
+```
 
-Diagnostic events must not become a second correctness state machine.
+The exact provider is below the routing boundary.
 
-### 12. TDD for behavioral implementation
+For the first implementation, Website capability may be supplied through the
+browser-backed semantics selectively inherited from `@tsuuanmi/internet`, or
+through another conforming DSH web capability.
 
-Behavioral implementation follows strict Red -> Green -> Refactor.
+Provider/model identity must not be encoded in the procedure definition unless a
+specific Profile intentionally chooses an explicit route.
 
-Every bug fix requires a reproducing regression test before the production fix.
-Refactors must preserve behavior under existing or added characterization tests.
+## Artifacts: keep the MVP small
 
-## Concrete MVP runtime choices
+The MVP does not need a general Artifact graph or distributed Artifact store.
 
-The first implementation intentionally uses:
+It only needs stable result references sufficient to avoid copying every long
+research payload through every control message.
+
+A minimal result record may contain:
+
+```text
+result id
+producer member
+step id
+content or content reference
+content hash
+created-at
+```
+
+Research results and each debate-round result should be addressable so synthesis
+and recovery can reuse exact prior work.
+
+A richer Artifact/Evidence graph remains a post-MVP evolution.
+
+## Durability and recovery
+
+The MVP should preserve the strongest useful invariant from
+`@tsuuanmi/internet`:
+
+> **Reconcile before repeating work.**
+
+At minimum:
+
+- accepted independent research must not rerun because debate round 2 failed;
+- completed debate round 1 must not rerun when its exact inputs still match;
+- the resolved Profile snapshot for the run must be retained;
+- stale or superseded executions must not overwrite a newer accepted result.
+
+The implementation does not need the full historical Internet workflow engine.
+
+## Runtime choices
+
+Prefer reuse over a new orchestration runtime.
 
 ```text
 DSH / Cordis
   -> host and plugin composition
 
-DSH ctx.subagents
-  -> one-shot/multi-provider Worker execution
-
 DSH ctx.agentTeams
-  -> persistent Team lifecycle and native peer messaging
+  -> persistent participants + durable peer communication
 
-Website Core + WebsiteProviderRuntime
-  -> Website capability
+DSH ctx.subagents
+  -> optional bounded auxiliary research execution
 
-existing DSH storage/credentials/jobs/workflow facilities
-  -> reused where their semantics are sufficient
+System Profile loader
+  -> dynamic declarative workflow composition
+
+System procedure runner
+  -> small stable primitive vocabulary
+
+Website capability
+  -> evidence acquisition when requested by Profile
 ```
 
-Concrete implementation choices are replaceable below semantic boundaries; they
-do not redefine the domain model.
+## Relationship to DSH workflow
+
+The MVP must not depend on `ctx.workflowEngine` merely because the word
+"workflow" appears in System.
+
+DSH's workflow subsystem is valuable for model-authored JavaScript orchestration,
+especially larger fan-out work, but the current MVP is only two participants and
+a small bounded procedure.
+
+System's Profile is a declarative semantic policy object, not a model-written
+JavaScript program.
+
+A future System adapter may compile or lower richer Profiles into DSH workflow
+execution when that becomes the simplest reusable mechanism.
 
 ## Protocol scope
 
 ### ACP
 
-Optional in the MVP.
+Not required for the MVP.
 
-Use ACP when a real external Worker/runtime should be controlled through an ACP
-boundary. Do not require ACP for ordinary in-process DSH execution.
+Use it later when an external Agent/Worker runtime is a real execution boundary.
 
 ### MCP
 
-Optional in the MVP.
+Not required for the MVP.
 
-Use MCP when a real second consumer needs a reusable tool/resource/capability
-surface. Do not force the first Website integration through MCP.
+Use it when a capability needs a reusable tool/resource surface across multiple
+consumer cores.
 
 ### A2A
 
-Deferred.
+Not required for the MVP.
 
-Native DSH Team messaging is sufficient for the first persistent Team. Add A2A
-only when independently addressable Workers across runtimes require persistent
-direct-peer interoperability.
+Native DSH Team messaging is sufficient for the first two persistent research
+members.
 
 ## Non-goals
 
 The MVP does not require:
 
-- a universal normalized Worker anatomy;
-- a second Team runtime;
-- a custom MCP registry or transport;
-- custom ACP lifecycle wrappers;
-- A2A-based Team communication;
-- heterogeneous Codex/Claude/etc. persistent Team membership unless the runtime
-  actually satisfies continuation semantics;
-- an opaque AI Worker router;
-- arbitrary user-defined distributed DAGs;
-- multi-host consensus;
-- a globally distributed Artifact store;
-- a general-purpose UI platform;
-- autonomous consequential effects without user authority;
-- compatibility with every `internet` or AgentOS public API;
-- preserving obsolete standalone Website-Agent abstractions merely for migration.
+- software implementation or code mutation;
+- validation/review/merge phases;
+- a general-purpose DAG engine;
+- arbitrary graph generation by a model;
+- a large Worker taxonomy;
+- a distributed Artifact store;
+- a general Team scheduler;
+- heterogeneous cross-runtime persistent Team membership;
+- custom MCP, ACP, or A2A transports;
+- a rich UI;
+- autonomous consequential external effects;
+- compatibility with every `internet` or AgentOS public API.
 
 ## What should be selectively inherited
 
 ### From `@tsuuanmi/internet`
 
-Retain proven semantics and lessons around:
+Retain useful proven semantics around:
 
-- browser/provider account isolation;
-- conversation binding;
-- turn receipts;
+- Website/provider account isolation;
+- conversation continuity;
+- exact logical request identity;
 - reconcile-before-resubmit;
-- exact retained results;
-- execution attempts;
-- workflow recovery;
-- evidence bound to exact external state;
-- explicit user authority.
+- retained results;
+- bounded projection of long results;
+- execution-attempt fencing.
 
-Do not copy the entire application/workflow stack when System owns that layer.
+Do not copy Internet's full coding workflow into this MVP.
 
 ### From AgentOS
 
 Retain:
 
-- Worker as opaque assignable execution unit;
+- opaque capability-bearing Workers;
 - capability-driven admission;
-- Worker routing separate from Worker identity;
-- Team Member Model A;
-- DSH-native Team and Worker runtime reuse;
-- Website as composable capability;
-- protocol placement based on proven need;
-- replaceability through narrow semantic seams.
+- persistent Team Member identity;
+- DSH-native Team/runtime reuse;
+- Website as a composable capability;
+- protocol placement by proven need;
+- narrow replaceable seams.
 
-System extends this model by making goal state, planning, Artifact/Evidence
-graphs, authority, and durable control first-class parts of the brain/control
-plane.
+System adds the dynamic Profile/procedure layer above these primitives.
 
 ## MVP completion criteria
 
-The MVP is complete when one end-to-end software-development workflow can
-demonstrate all of the following in tests and a controlled real run:
+The MVP is complete when a controlled real run and tests demonstrate:
 
-1. a semantic Workflow is instantiated from a goal/Profile;
-2. independent Team work executes behind a barrier;
-3. Worker routing is capability-driven and deterministic;
-4. Website capability can participate without leaking provider details upward;
-5. Tasks exchange exact Artifact/Evidence references;
-6. implementation and validation produce accepted evidence;
-7. independent review is bound to the exact implementation state;
-8. interrupted work can reconcile and resume without broad replay;
-9. stale execution attempts cannot commit;
-10. consequential final effect requires explicit scoped user authority;
-11. state/diagnostics clearly explain current progress and blockers;
-12. higher layers contain no provider-specific branches that violate the
-    architecture.
+1. a named Profile is loaded from external declarative configuration;
+2. two research members are created/admitted from that Profile;
+3. both perform independent research without seeing the other's initial answer;
+4. the independent-first barrier releases only after both results are accepted;
+5. the same two participants complete exactly two configured debate rounds;
+6. a synthesizer produces one final answer from the accepted results;
+7. changing the round count, prompts, capability requirements, or member
+   configuration within the supported vocabulary requires only a Profile edit,
+   not a production-code change;
+8. invalid Profiles fail before participant work starts;
+9. completed exact steps can be reconciled and reused after interruption;
+10. provider-specific Website details do not leak into the Profile/procedure
+    semantic boundary.
