@@ -314,31 +314,49 @@ or larger fan-out orchestration.
 
 ## Website capability
 
-The useful runtime lessons from `@tsuuanmi/internet` are retained, but Website
-is a Capability rather than a permanent standalone Agent type.
+Website remains a Capability rather than a permanent standalone Agent type.
+
+For the MVP, System should **reuse an external ChatGPT-Web bridge** instead of
+owning the ChatGPT DOM/browser implementation.
 
 ```text
-Worker / Team Member
-  -> Website capability
-      -> Website Core
-          -> WebsiteProviderRuntime
-              -> browser / provider API / remote implementation
+System procedure
+  -> DSH Team Member
+      -> ChatGPT Web adapter
+          -> external Responses-compatible bridge
+              -> authenticated ChatGPT browser runtime
+                  -> chatgpt.com
 ```
 
-Website Core should retain provider-neutral semantics such as:
+The strongest current upstream/reference implementation is
+[`miuuyy/codex-chatgpt-web`](https://github.com/miuuyy/codex-chatgpt-web).
+It already owns difficult provider/runtime mechanics such as authenticated browser
+state, task-bound browser tabs, response binding, cancellation, retained
+conversation lifecycle, and bounded concurrent turns.
 
-- logical request identity;
-- conversation continuity where required;
-- retained-result idempotency;
-- reconcile-before-resubmit;
-- full-result retention with bounded projection;
-- cancellation propagation.
+Because its public product surface is Codex-oriented, System should consume those
+semantics through a thin DSH adapter/plugin boundary rather than couple System Core
+to Codex integration details. A DSH-native project such as
+[`WLV-ZEDD/dsh-chatgpt-web`](https://github.com/WLV-ZEDD/dsh-chatgpt-web)
+is a candidate adapter/reference surface.
 
-Provider auth, cookies, DOM behavior, native conversation IDs, and browser process
-state remain below the provider-runtime boundary.
+System-owned Website semantics should therefore be limited to what remains above
+the bridge:
 
-MCP should be introduced for Website only when a real second consumer benefits
-from the reusable surface.
+- semantic capability declaration;
+- exact request/result ownership needed by the current procedure;
+- acceptance;
+- reconciliation before repeat;
+- bounded projection/result references.
+
+Provider auth, cookies, DOM selectors, model-picker behavior, native ChatGPT
+conversation IDs, browser process/tab lifecycle, and page-state recovery stay
+below the adapter boundary.
+
+The MVP uses ordinary ChatGPT Web turns only. Native Deep Research, multiple
+authenticated accounts, and account scheduling are deferred future capabilities.
+
+MCP is not required for this browser-only MVP.
 
 ## Dependency direction
 
@@ -391,9 +409,13 @@ A compact ownership rule:
 12. Reuse native DSH/runtime/protocol mechanics before rebuilding them.
 13. MCP, ACP, A2A, and DSH Workflow are introduced only for real boundaries they
     solve.
-14. Provider-specific Website/browser details stay below
-    `WebsiteProviderRuntime`.
-15. Recovery targets the smallest correctness-bearing unit possible.
-16. Behavioral implementation changes use Red -> Green -> Refactor TDD.
+14. Provider-specific Website/browser details stay below the external bridge /
+    adapter boundary.
+15. System does not reimplement ChatGPT browser mechanics already provided by a
+    suitable reusable bridge.
+16. Multiple ChatGPT accounts and native Deep Research are future capabilities,
+    not MVP requirements.
+17. Recovery targets the smallest correctness-bearing unit possible.
+18. Behavioral implementation changes use Red -> Green -> Refactor TDD.
 
 See [Philosophy](philosophy.md) for the principles behind these constraints.
