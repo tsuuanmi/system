@@ -60,9 +60,11 @@ description: Two independent researchers debate before synthesis
 
 members:
   - id: researcher-a
-    requires: [research, web-research]
+    route: chatgpt-web
+    requires: [research]
   - id: researcher-b
-    requires: [research, web-research]
+    route: chatgpt-web
+    requires: [research]
 
 steps:
   - type: parallel
@@ -176,26 +178,39 @@ If a bounded one-shot research executor is used underneath a Team Member, that
 executor is auxiliary evidence production and does not replace the persistent
 member identity.
 
-## Research capability
+## ChatGPT Web research runtime
 
-Each researcher must be able to gather evidence rather than only reason from
-model memory.
+For the MVP, both researchers intentionally run through ChatGPT Web.
 
-The Profile should request semantic capability such as:
+That concrete route belongs to the initial Profile rather than the generic
+`parallel`, `debate`, or `synthesize` primitive semantics:
 
 ```text
-research
-web-research
+System Profile
+  -> DSH Team Member A ----+
+                            +--> ChatGPT Web runtime
+  -> DSH Team Member B ----+
 ```
 
-The exact provider is below the routing boundary.
+System should reuse an existing ChatGPT-Web bridge rather than implement the
+ChatGPT DOM/browser stack again.
 
-For the first implementation, Website capability may be supplied through the
-browser-backed semantics selectively inherited from `@tsuuanmi/internet`, or
-through another conforming DSH web capability.
+The strongest current upstream/reference implementation is
+[`miuuyy/codex-chatgpt-web`](https://github.com/miuuyy/codex-chatgpt-web).
+It provides an authenticated ChatGPT Web browser runtime, a local Responses API
+bridge, retained task-bound browser conversations, cancellation/recovery
+semantics, and bounded concurrency of up to five independent task-bound tabs.
 
-Provider/model identity must not be encoded in the procedure definition unless a
-specific Profile intentionally chooses an explicit route.
+Because that project is Codex-oriented, the DSH integration should remain a thin
+adapter/plugin boundary. A DSH-native bridge such as
+[`WLV-ZEDD/dsh-chatgpt-web`](https://github.com/WLV-ZEDD/dsh-chatgpt-web)
+is a candidate integration surface and reference for this adapter.
+
+The MVP should use browser-only / ordinary ChatGPT Web turns. It does not require
+ChatGPT native Deep Research or the Full-harness MCP connector.
+
+The generic System procedure remains provider-agnostic even though the initial
+Profile intentionally selects `chatgpt-web`.
 
 ## Artifacts: keep the MVP small
 
@@ -256,8 +271,11 @@ System Profile loader
 System procedure runner
   -> small stable primitive vocabulary
 
-Website capability
-  -> evidence acquisition when requested by Profile
+ChatGPT Web adapter
+  -> reusable Responses-compatible browser runtime
+
+External ChatGPT Web bridge
+  -> authenticated browser/session/turn mechanics
 ```
 
 ## Relationship to DSH workflow
@@ -309,6 +327,8 @@ The MVP does not require:
 - a distributed Artifact store;
 - a general Team scheduler;
 - heterogeneous cross-runtime persistent Team membership;
+- ChatGPT native Deep Research;
+- multiple ChatGPT accounts or account scheduling;
 - custom MCP, ACP, or A2A transports;
 - a rich UI;
 - autonomous consequential external effects;
@@ -318,17 +338,20 @@ The MVP does not require:
 
 ### From `@tsuuanmi/internet`
 
-Retain useful proven semantics around:
+Do not carry Internet's ChatGPT DOM/browser implementation into the MVP when an
+existing bridge can provide the same runtime boundary.
 
-- Website/provider account isolation;
-- conversation continuity;
-- exact logical request identity;
-- reconcile-before-resubmit;
-- retained results;
+Retain only proven semantic lessons that are still needed above the external
+bridge, especially:
+
+- exact logical request/result identity;
+- reconcile-before-repeat;
+- retained-result references;
 - bounded projection of long results;
 - execution-attempt fencing.
 
-Do not copy Internet's full coding workflow into this MVP.
+Internet's multi-account scheduler, native Deep Research path, coding workflow,
+and provider-specific orchestration are outside the MVP.
 
 ### From AgentOS
 
@@ -343,6 +366,31 @@ Retain:
 - narrow replaceable seams.
 
 System adds the dynamic Profile/procedure layer above these primitives.
+
+## Future work
+
+The following are deliberately deferred rather than removed from the long-term
+architecture:
+
+### Multiple ChatGPT accounts
+
+A later version may add multiple authenticated ChatGPT accounts, per-account
+capacity, account selection, isolation, and scheduling.
+
+That capability should live below System's semantic procedure layer so Profiles
+continue to request capabilities/routes rather than manipulate browser accounts
+directly.
+
+### Native Deep Research
+
+ChatGPT native Deep Research may be added later as a distinct Website capability
+when there is a concrete need. It is not required for the initial
+research/debate MVP.
+
+### Richer Website providers
+
+The same adapter boundary may later support additional website-backed providers
+or provider-specific capabilities without changing Team/debate semantics.
 
 ## MVP completion criteria
 
