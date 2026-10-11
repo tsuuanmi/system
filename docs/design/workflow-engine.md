@@ -122,7 +122,7 @@ the decision artifact that caused it.
 | transient provider / network | `IMMEDIATE` or `BACKOFF` |
 | browser session or conversation broken | `RECREATE_SESSION` |
 | auth lost, confirmation needed, quota | `USER_ACTION` |
-| contract violation, scheduler exception | `CODE_FIX` |
+| contract violation, scheduler exception, internal programming error (`internal`) | `CODE_FIX` |
 | website UI drift that self-heal could not resolve | `CONFIG_FIX` (update the UI map; [UI operations](ui-operations.md)) |
 | invalid input, rejected by acceptance | `NONE` |
 

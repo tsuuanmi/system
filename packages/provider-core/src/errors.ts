@@ -4,7 +4,7 @@ export type Disposition = 'IMMEDIATE' | 'BACKOFF' | 'RECREATE_SESSION' | 'USER_A
 export type ProviderErrorKind =
   | 'network' | 'timeout' | 'provider_stalled' | 'session_broken'
   | 'reauth_required' | 'challenge' | 'quota_exhausted' | 'reconciliation_failed'
-  | 'ui_drift' | 'config_error' | 'aborted' | 'invalid_input'
+  | 'ui_drift' | 'config_error' | 'aborted' | 'invalid_input' | 'internal'
 
 const DISPOSITIONS: Record<ProviderErrorKind, Disposition> = {
   network: 'BACKOFF',
@@ -17,6 +17,7 @@ const DISPOSITIONS: Record<ProviderErrorKind, Disposition> = {
   reconciliation_failed: 'USER_ACTION',
   ui_drift: 'CONFIG_FIX', // update the provider's UI map (ADR-0021)
   config_error: 'CODE_FIX',
+  internal: 'CODE_FIX',
   aborted: 'NONE',
   invalid_input: 'NONE',
 }
@@ -44,4 +45,19 @@ export function abortReason(signal: AbortSignal | undefined, what = 'provider tu
   const reason: unknown = signal?.reason
   if (reason instanceof Error && reason.name !== 'AbortError') return reason
   return new ProviderError('aborted', what, { cause: reason })
+}
+
+/** Programming and contract errors: retrying cannot help and may repeat a side effect. */
+const INTERNAL = new Set(['TypeError', 'RangeError', 'SyntaxError', 'ReferenceError', 'SchemaError', 'RevisionConflict'])
+
+/**
+ * Type a failure the runtime did not raise itself. Programming and contract errors are
+ * `internal` (CODE_FIX, never retried); anything else (browser or page failures) is a
+ * broken session that a fresh context may fix.
+ */
+export function toProviderError(error: unknown): ProviderError {
+  if (error instanceof ProviderError) return error
+  const name = error instanceof Error ? error.name : ''
+  const message = error instanceof Error ? error.message : String(error)
+  return new ProviderError(INTERNAL.has(name) ? 'internal' : 'session_broken', message, { cause: error })
 }

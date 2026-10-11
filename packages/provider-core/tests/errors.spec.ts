@@ -22,3 +22,16 @@ describe('failure taxonomy (docs/design/workflow-engine.md#recovery)', () => {
     expect(error).toMatchObject({ name: 'ProviderError', kind: 'challenge', disposition: 'USER_ACTION' })
   })
 })
+
+describe('toProviderError: classifying failures the runtime did not type', () => {
+  it('keeps typed failures, treats programming and contract errors as internal (no retry), and the rest as a broken session', async () => {
+    const { toProviderError } = await import('../src/index.ts')
+    const typed = new ProviderError('challenge', 'cf')
+    expect(toProviderError(typed)).toBe(typed)
+    for (const error of [new TypeError('x'), new RangeError('y'), Object.assign(new Error('schema'), { name: 'SchemaError' }), Object.assign(new Error('rev'), { name: 'RevisionConflict' })]) {
+      expect(toProviderError(error)).toMatchObject({ kind: 'internal', disposition: 'CODE_FIX' })
+    }
+    expect(toProviderError(new Error('Target page, context or browser has been closed'))).toMatchObject({ kind: 'session_broken', disposition: 'RECREATE_SESSION' })
+    expect(toProviderError('a string')).toMatchObject({ kind: 'session_broken' })
+  })
+})

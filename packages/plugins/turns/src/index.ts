@@ -16,7 +16,7 @@ import type {} from '@tsuuanmi/system-browser-patchright'
 import { type Lease, LeaseLost, StaleGeneration } from '@tsuuanmi/system-leases'
 import { type ContentId, sha256 } from '@tsuuanmi/system-libs'
 import type {} from '@tsuuanmi/system-mcp-server'
-import { type ConversationMode, type Disposition, ProviderError, type ProviderFeature, ProviderScheduler, type Tier, dispositionOf } from '@tsuuanmi/system-provider-core'
+import { type ConversationMode, type Disposition, ProviderError, type ProviderFeature, ProviderScheduler, type Tier, dispositionOf, toProviderError } from '@tsuuanmi/system-provider-core'
 import type {} from '@tsuuanmi/system-providers'
 import type {} from '@tsuuanmi/system-store'
 import type {} from '@tsuuanmi/system-turn-receipts'
@@ -168,7 +168,7 @@ export class Turns extends Service {
         this.stopping = true
         for (const timer of this.retries) clearTimeout(timer)
         for (const scheduler of this.schedulers.values()) scheduler.close(new ProviderError('aborted', 'turn runtime stopped'))
-        await Promise.allSettled([...this.inflight])
+        await Promise.allSettled(this.inflight)
       }
     })
     ctx.inject(['mcp'], (c) => this.registerTools(c))
@@ -531,7 +531,7 @@ export class Turns extends Service {
   }
 
   private fail(turnId: string, error: unknown, lease?: () => Lease): void {
-    const typed = error instanceof ProviderError ? error : new ProviderError('session_broken', (error as Error)?.message ?? String(error), { cause: error })
+    const typed = toProviderError(error)
     this.update(turnId, { status: 'failed', error: JSON.stringify({ kind: typed.kind, disposition: dispositionOf(typed.kind), message: typed.message }) }, lease)
   }
 
