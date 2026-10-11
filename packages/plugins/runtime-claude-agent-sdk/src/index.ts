@@ -5,8 +5,9 @@
  * - only the listed built-in tools exist in the session (`tools`), and only they are
  *   pre-approved (`allowedTools`); anything else is denied without a prompt (`dontAsk`,
  *   no approval surface);
- * - no settings files are loaded (`settingSources: []`), so the operator's own Claude Code
- *   permissions, hooks, and MCP servers never widen a Worker's policy;
+ * - no settings files are loaded (`settingSources: []`) and no MCP server is attached
+ *   (`strictMcpConfig` with none given, live check 2026-10-12: the account's claude.ai
+ *   connectors were attached otherwise), so nothing outside the policy widens a Worker;
  * - `read-only` only for now: confining writes to the workspace is not verified yet, so
  *   `workspace-write` is refused.
  * The SDK's session stays native; only its id crosses as the run's handle (INV-7).
@@ -78,6 +79,8 @@ export class ClaudeAgentRuntime implements AgentRuntimeProvider {
         prompt: spec.prompt,
         options: {
           cwd: spec.workspace, tools, allowedTools: tools, permissionMode: 'dontAsk', permissionPrompts: 'none', settingSources: [],
+          // No MCP server at all: not the operator's, not a project's, not the account's connectors.
+          mcpServers: {}, strictMcpConfig: true,
           pathToClaudeCodeExecutable: executable, abortController: controller,
           ...(spec.model ? { model: spec.model } : {}), ...(spec.maxTurns ? { maxTurns: spec.maxTurns } : {}), ...(spec.resume ? { resume: spec.resume } : {}),
         },

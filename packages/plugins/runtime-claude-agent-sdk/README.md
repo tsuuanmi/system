@@ -13,8 +13,10 @@ installed.
     read-only run is refused before starting;
   - `permissionMode: dontAsk` with no approval surface, so anything else is
     denied without a prompt;
-  - `settingSources: []`: the operator's own Claude Code settings, hooks, and
-    MCP servers never widen a Worker;
+  - `settingSources: []`: the operator's own Claude Code settings and hooks
+    never widen a Worker;
+  - no MCP server at all (`strictMcpConfig` with none given). Without this, the
+    live check of 2026-10-12 showed the account's claude.ai connectors attached;
   - `workspace-write` is refused until confining writes to the workspace is
     verified.
 - **Run:**

@@ -40,7 +40,7 @@ describe('claude-agent-sdk: the configured policy, exactly', () => {
     expect(result).toEqual({ text: 'echo: review', nativeHandle: 'h-1', turns: 2, costUsd: 0.01 })
     expect(calls[0]!.options).toMatchObject({
       cwd: workspace, permissionMode: 'dontAsk', permissionPrompts: 'none', allowedTools: ['Read', 'Grep', 'Glob'], tools: ['Read', 'Grep', 'Glob'],
-      settingSources: [], pathToClaudeCodeExecutable: '/usr/bin/claude', model: 'opus-x', maxTurns: 5, resume: 'h-0',
+      settingSources: [], mcpServers: {}, strictMcpConfig: true, pathToClaudeCodeExecutable: '/usr/bin/claude', model: 'opus-x', maxTurns: 5, resume: 'h-0',
     })
   })
 
