@@ -1,0 +1,13 @@
+# M0 spike layer over @deepseek-ai/dsh-base (ADR-0018).
+# Telemetry off: both OTel rows disabled (the launcher also honors DSH_TELEMETRY_DISABLED).
+- id: otel
+  disabled: true
+- id: session-telemetry-otel
+  disabled: true
+- insert:
+    - id: webserver
+      name: '@deepseek-ai/dsh-host-webserver'
+      config: { host: 127.0.0.1, port: 0 }
+    - id: system-probe
+      name: system-m0-probe-bundle
+      config: { token: probe-token }

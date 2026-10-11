@@ -30,8 +30,8 @@ Full statement: [docs/requirements/purpose.md](docs/requirements/purpose.md).
 
 ## Status
 
-**Design phase.** The repository holds documentation only. The architecture is
-proposed in [PROP-0001](docs/proposals/0001-unified-system-architecture.md), and
+**M0 (implementation started).** The architecture is
+accepted in [PROP-0001](docs/proposals/0001-unified-system-architecture.md), and
 implementation follows the [roadmap](docs/proposals/roadmap.md).
 
 ## Simplest use case (target)
@@ -53,8 +53,12 @@ Claude Code ── Messages ───┘          ▲              router   └�
 
 ## Build / run / test
 
-There is no code yet. The planned toolchain and commands are in
-[engineering](docs/engineering/README.md).
+```sh
+pnpm install && pnpm check && pnpm test
+```
+
+Implementation has started with the M0 spike. The toolchain and commands are in
+[engineering](docs/engineering/development.md).
 
 ## Read next
 

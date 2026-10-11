@@ -11,7 +11,7 @@ the same way as the DSH packages they run beside
 | Concern | Tool (same as DSH) |
 |---|---|
 | runtime | Node `^22.19 \|\| >=24` (CI on 22 and 24) |
-| package manager | pnpm 11 workspaces (`packageManager` pinned) |
+| package manager | pnpm workspaces (version pinned in `packageManager`) |
 | host | DSH core, one exact pinned version; `system` bundle + profile |
 | language | TypeScript, `strict`, project references like DSH's `tsconfig.base.json` |
 | dev run | `tsx` (source); built `lib/` under plain `node` for smoke tests |
@@ -44,18 +44,12 @@ Planned profiles: `default` (all layers), `headless` (no gateways or Web UI),
 `gateway-only`, and `dev` (fakes for every external seam, so no accounts are
 needed). The composed tree can be printed for inspection.
 
-## Commands (planned)
+## Commands
 
-```sh
-pnpm install
-pnpm check        # oxlint + eslint + typecheck + doc and schema checks
-pnpm test         # unit, contract, and composition tests
-pnpm verify       # check + test + build + smoke (CI entry point)
-system --help     # wrapper around `dsh --profile system`
-```
-
-The definitive list will be the `scripts` in the root `package.json` once M0 lands.
-This document will then point there instead of repeating it.
+The root [`package.json`](../../package.json) `scripts` are canonical. Today:
+`pnpm install`, `pnpm check` (docs, schemas, lint, typecheck), and `pnpm test`.
+CI runs the same commands on Node 22 and 24
+([`.github/workflows/ci.yml`](../../.github/workflows/ci.yml)).
 
 ## Data directory
 

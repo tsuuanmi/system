@@ -113,3 +113,18 @@ Option 3.
      store runs on `node:sqlite` beside it;
   4. `dsh-credentials-local` encrypts at rest. If it does not, we add a provider
      that does.
+
+## Follow-up (2026-10-11): M0 spike results
+
+[Spike evidence](../../research/m0-dsh-core-spike.md):
+
+1. A profile without `web-app` stays resident: **yes**.
+2. An MCP Streamable HTTP endpoint on `ctx.webServer` with loopback, a token, and
+   Origin rejection: **yes**.
+3. `node:sqlite`: **yes, for `system`-owned tables**. `dsh-storage-sqlite` is only
+   a key-value facet.
+4. `dsh-credentials-local` encrypts at rest: **no**. A provider that encrypts is
+   required.
+
+Telemetry is disabled by bundle patch. The decision stands.
+
