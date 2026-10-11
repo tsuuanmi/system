@@ -86,12 +86,18 @@ export interface BrowserDeps {
   discover: () => ChromeChoice | undefined
   install: () => Promise<{ path: string; installed: boolean }>
   hasXvfb: () => boolean
+  /** The VNC server for remote login, if installed. */
+  vnc: () => string | undefined
 }
 
 const defaultBrowserDeps = (home: string): BrowserDeps => ({
   discover: () => discoverChrome(undefined),
   install: () => installManagedChrome({ dir: join(home, 'system', 'browsers') }),
   hasXvfb: () => spawnSync('sh', ['-c', 'command -v Xvfb'], { stdio: 'ignore' }).status === 0,
+  vnc: () => {
+    const found = spawnSync('sh', ['-c', 'command -v x0vncserver || command -v x11vnc'], { encoding: 'utf8' })
+    return found.status === 0 ? found.stdout.trim().split('\n')[0] : undefined
+  },
 })
 
 /**
@@ -108,7 +114,12 @@ export async function ensureBrowser(deps: BrowserDeps = defaultBrowserDeps(dshHo
     const { path } = await deps.install()
     chrome = `chrome: installed managed Chrome ${CHROME_LOCK.buildId} at ${path}`
   }
-  return [chrome, deps.hasXvfb() ? 'xvfb: ok' : 'xvfb: missing (provider turns need it; Ubuntu/Debian: sudo apt install xvfb)']
+  const vnc = deps.vnc()
+  return [
+    chrome,
+    deps.hasXvfb() ? 'xvfb: ok' : 'xvfb: missing (provider turns need it; Ubuntu/Debian: sudo apt install xvfb)',
+    vnc ? `vnc (remote login): ${vnc}` : 'vnc (remote login): missing (system account login needs it; Ubuntu/Debian: sudo apt install tigervnc-scraping-server, or x11vnc)',
+  ]
 }
 
 export function browserDeps(home: string = dshHome()): BrowserDeps {

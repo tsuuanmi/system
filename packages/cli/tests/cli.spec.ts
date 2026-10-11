@@ -48,17 +48,18 @@ describe('system init: browser prerequisites', () => {
 
   it('keeps a usable Chrome and does not download one', async () => {
     const install = vi.fn()
-    const report = await ensureBrowser({ discover: () => chrome, install, hasXvfb: () => true })
+    const report = await ensureBrowser({ discover: () => chrome, install, hasXvfb: () => true, vnc: () => '/usr/bin/x0vncserver' })
     expect(install).not.toHaveBeenCalled()
-    expect(report).toEqual(['chrome: /usr/bin/google-chrome (system)', 'xvfb: ok'])
+    expect(report).toEqual(['chrome: /usr/bin/google-chrome (system)', 'xvfb: ok', 'vnc (remote login): /usr/bin/x0vncserver'])
   })
 
   it('installs the pinned managed Chrome when none is usable, and flags a missing Xvfb', async () => {
     const install = vi.fn(async () => ({ path: '/home/u/.dsh/system/browsers/chrome', installed: true }))
-    const report = await ensureBrowser({ discover: () => undefined, install, hasXvfb: () => false })
+    const report = await ensureBrowser({ discover: () => undefined, install, hasXvfb: () => false, vnc: () => undefined })
     expect(install).toHaveBeenCalledOnce()
     expect(report[0]).toBe(`chrome: installed managed Chrome ${CHROME_LOCK.buildId} at /home/u/.dsh/system/browsers/chrome`)
     expect(report[1]).toMatch(/xvfb: missing .*apt install xvfb/)
+    expect(report[2]).toMatch(/vnc \(remote login\): missing .*tigervnc-scraping-server/)
   })
 })
 

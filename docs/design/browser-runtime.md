@@ -118,7 +118,7 @@ profile, so the operator signs in exactly as usual, including SSO popups and 2FA
 
 | Flow | Platform | How |
 |---|---|---|
-| **remote** | **Linux (MVP)** | **ported from tsuuanmi/internet**: Chrome on its own Xvfb, `x11vnc -localhost` with a one-time password file, and a token-gated **noVNC** page on 127.0.0.1. The operator runs `ssh -L <port>:127.0.0.1:<port> host` and opens the printed URL. The page has Save, Cancel, and paste-from-host buttons. The session is started on demand, and its token expires after a short TTL |
+| **remote** | **Linux (MVP)** | **ported from tsuuanmi/internet**: `system account login <id>` opens Chrome on its own X-authenticated Xvfb, with `x0vncserver` or `x11vnc` on an owner-only unix socket and a token-gated **noVNC** page on 127.0.0.1. The operator runs `ssh -L <port>:127.0.0.1:<port> host` and opens the printed URL. The page has Save and Cancel (paste-from-host is not built yet). The session is started on demand and expires after a short TTL |
 | **visible** | desktop (v1.0) | Chrome opens on screen with the account's login profile |
 
 ### Credential login (`credentials`, opt-in)

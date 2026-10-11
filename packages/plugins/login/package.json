@@ -19,12 +19,15 @@
     "build": "tsc -p tsconfig.build.json"
   },
   "dependencies": {
+    "@novnc/novnc": "1.7.0",
     "@tsuuanmi/system-accounts": "workspace:*",
     "@tsuuanmi/system-browser-patchright": "workspace:*",
+    "@tsuuanmi/system-display-virtual": "workspace:*",
     "@tsuuanmi/system-libs": "workspace:*",
     "@tsuuanmi/system-mcp-server": "workspace:*",
     "@tsuuanmi/system-provider-core": "workspace:*",
-    "@tsuuanmi/system-providers": "workspace:*"
+    "@tsuuanmi/system-providers": "workspace:*",
+    "ws": "8.22.0"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "4.0.5-alpha.1",
@@ -37,8 +40,8 @@
     "@deepseek-ai/schemastery": "3.18.5-alpha.1",
     "@modelcontextprotocol/sdk": "1.32.1",
     "@tsuuanmi/system-credentials-vault": "workspace:*",
-    "@tsuuanmi/system-display-virtual": "workspace:*",
     "@tsuuanmi/system-provider-chatgpt-web": "workspace:*",
+    "@types/ws": "8.18.2",
     "patchright-core": "1.63.0",
     "zod": "^4.1.0"
   }

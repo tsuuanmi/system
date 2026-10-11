@@ -360,12 +360,18 @@ importers:
 
   packages/plugins/login:
     dependencies:
+      '@novnc/novnc':
+        specifier: 1.7.0
+        version: 1.7.0
       '@tsuuanmi/system-accounts':
         specifier: workspace:*
         version: link:../accounts
       '@tsuuanmi/system-browser-patchright':
         specifier: workspace:*
         version: link:../browser-patchright
+      '@tsuuanmi/system-display-virtual':
+        specifier: workspace:*
+        version: link:../display-virtual
       '@tsuuanmi/system-libs':
         specifier: workspace:*
         version: link:../../libs
@@ -378,6 +384,9 @@ importers:
       '@tsuuanmi/system-providers':
         specifier: workspace:*
         version: link:../providers
+      ws:
+        specifier: 8.22.0
+        version: 8.22.0
     devDependencies:
       '@deepseek-ai/cordis':
         specifier: 4.0.5-alpha.1
@@ -394,12 +403,12 @@ importers:
       '@tsuuanmi/system-credentials-vault':
         specifier: workspace:*
         version: link:../credentials-vault
-      '@tsuuanmi/system-display-virtual':
-        specifier: workspace:*
-        version: link:../display-virtual
       '@tsuuanmi/system-provider-chatgpt-web':
         specifier: workspace:*
         version: link:../provider-chatgpt-web
+      '@types/ws':
+        specifier: 8.18.2
+        version: 8.18.2
       patchright-core:
         specifier: 1.63.0
         version: 1.63.0
@@ -3727,6 +3736,9 @@ packages:
     os: [linux]
     libc: [glibc]
 
+  '@novnc/novnc@1.7.0':
+    resolution: {integrity: sha512-ucEJOx4T2avIRCleodk7YobZj5O2Ga2AeLfQ69A/yjG9HHba2+PDgwSkN3FttrmG+70ZGx21sElNFouK13RzyA==}
+
   '@opentelemetry/api-logs@0.222.0':
     resolution: {integrity: sha512-9mb1If+IF6u0ZVXkHQ6ogEae5HwA6ajIVUgpSDQyRASxft6BSXHvBvPooRle3yFN/fKnCdSOnuu0OC3PLcF6+g==}
     engines: {node: '>=8.0.0'}
@@ -4154,6 +4166,9 @@ packages:
 
   '@types/retry@0.12.0':
     resolution: {integrity: sha512-wWKOClTTiizcZhXnPY4wikVAwmdYHp8q6DmC+EJUzAMsycb7HB32Kh9RN4+0gExjmPmZSAQjgURXIGATPegAvA==}
+
+  '@types/ws@8.18.2':
+    resolution: {integrity: sha512-67MQl+fpWKVTT1NYdnmo3U4sc/xPo/zQBncVnI74qmQa0z/b+1g6iYqNmGCPbxO+zz2aklb08a0oHfegiVd0/w==}
 
   '@vitest/expect@3.2.7':
     resolution: {integrity: sha512-E8eBXaKibuvH2pSZErOjdVb5vF4PbKYcrnluBTYxEk1l/VhhwZg1kZQsdtjq+CsF5CFydf2Rdkz7jDHKSisi3w==}
@@ -9329,6 +9344,8 @@ snapshots:
   '@napi-rs/lzma-linux-x64-gnu@1.5.1':
     optional: true
 
+  '@novnc/novnc@1.7.0': {}
+
   '@opentelemetry/api-logs@0.222.0':
     dependencies:
       '@opentelemetry/api': 1.9.1
@@ -9616,6 +9633,10 @@ snapshots:
       undici-types: 7.24.6
 
   '@types/retry@0.12.0': {}
+
+  '@types/ws@8.18.2':
+    dependencies:
+      '@types/node': 24.19.2
 
   '@vitest/expect@3.2.7':
     dependencies:

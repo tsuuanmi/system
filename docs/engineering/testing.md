@@ -45,6 +45,9 @@ absence of automation leaks are properties of the real browser.
   resort they use the same pinned build in `~/.cache/system-chrome` (`npx
   @puppeteer/browsers install chrome@<chrome.lock.json buildId> --path
   ~/.cache/system-chrome`). No root is needed.
+- The remote-login tests also need `x0vncserver` (on PATH, in `X0VNCSERVER`, or
+  TigerVNC's static build under `~/.cache/system-tigervnc`). CI installs
+  `tigervnc-scraping-server`.
 - Locally they are skipped when either is missing. CI sets
   `SYSTEM_REQUIRE_BROWSER=1`, so a missing browser **fails** the run instead of
   skipping silently.
