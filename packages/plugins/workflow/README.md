@@ -15,6 +15,9 @@ second execution path (INV-1).
 
     Both nodes use `acceptance.answer`. A live report can have no citation
     links, so a deployment that requires them configures `acceptance.cited`.
+  - `review` is one node, `review:1`, requiring `review` and `local-data`. It
+    routes to a local agent Worker (`agents` source), never to a website
+    account.
   - Config `templates` adds or replaces templates. A template is checked at
     load (preflight):
     - valid, unique node ids;
@@ -87,6 +90,7 @@ second execution path (INV-1).
     `profile` for template tiers, `caller` when the caller's tier replaced one.
 - **MCP tools** (they replace the built-in placeholders):
   - `ask` waits up to `waitSeconds` (≤ 55 s);
+  - `run { template, input, … }` starts any template, and waits like `ask`;
   - `research` returns at once;
   - `result` takes a `runId` and long-polls it;
   - `usage`;

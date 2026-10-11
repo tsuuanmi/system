@@ -23,7 +23,7 @@ code updates this table.
 | HTML → Markdown | `turndown` | library | provider drivers | |
 | Token budgets | `tiktoken` | library | provider runtime, gateways | |
 | MCP | `@modelcontextprotocol/sdk` (`StreamableHTTPServerTransport`) on DSH `ctx.webServer` | protocol SDK + thin own plugin | `mcp-server` | proven in the M0 spike; community MCP-server plugins rejected, codex-bridge patterns (idempotency key, cursor long-poll, `0600` discovery file) borrowed ([review](../research/dsh-community-plugins-review.md)) |
-| Claude Code as Worker | Claude Agent SDK | protocol SDK | `ctx.agentRuntimes` | check its license terms before release |
+| Claude Code as Worker | `@anthropic-ai/claude-agent-sdk` (exact pin 0.3.296; © Anthropic, use under Anthropic's legal agreements, not an OSI license) driving the operator's installed `claude` | protocol SDK | `ctx.agentRuntimes` provider `runtime-claude-agent-sdk` | its bundled per-platform Claude Code builds (~250 MB each) are ignored in `pnpm-workspace.yaml`; review the license terms before any release |
 | Codex as Worker | `@openai/codex-sdk` | protocol SDK | `ctx.agentRuntimes` | Apache-2.0 |
 | Other agents as Workers | `@agentclientprotocol/sdk` | protocol SDK | `ctx.agentRuntimes` | Apache-2.0 |
 | ChatGPT Web UI handling (stage timeouts, composer and attachment transactions, submission evidence, DOM to Markdown) | read `@wlv-zedd/dsh-chatgpt-web` (MIT) for patterns only | reference | `provider-chatgpt-web` | do not copy its headless default, Temporary-Chat statelessness, or unauthenticated sidecar ([review](../research/dsh-community-plugins-review.md)) |

@@ -44,6 +44,13 @@
       name: '@tsuuanmi/system-workers'               # Worker registry, admission, deterministic router
     - id: turns
       name: '@tsuuanmi/system-turns'                 # the website Worker runtime (durable turns)
+    # --- agent runtimes (M3): Claude Code and others as Workers; configure workers in the operator patch ---
+    - id: agent-runtimes
+      name: '@tsuuanmi/system-agent-runtimes'
+    - id: runtime-claude-agent-sdk
+      name: '@tsuuanmi/system-runtime-claude-agent-sdk'   # runs the installed `claude`
+    - id: agent-workers
+      name: '@tsuuanmi/system-agent-workers'          # the `agents` Worker source (no workers until configured)
     - id: workflow
       name: '@tsuuanmi/system-workflow'              # the single engine; MCP ask/research/result/usage/explain
     - id: mcp-server

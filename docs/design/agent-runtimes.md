@@ -22,18 +22,24 @@ threads, and events stay native, and only their handles cross the seam
 ## Seam contract
 
 ```ts
-abstract class AgentRuntimes extends Service {
-  // provider registration
-  abstract register(provider: AgentRuntimeProvider): Disposable;
+abstract class AgentRuntimes extends Service {     // ctx.agentRuntimes
+  abstract register(provider: AgentRuntimeProvider): void;  // for the plugin's lifetime
+  abstract get(kind: string): AgentRuntimeProvider | undefined;
+  abstract list(): string[];
 }
 
 interface AgentRuntimeProvider {
   readonly kind: string;                                // "claude-agent-sdk", "codex-sdk", "acp:<agent>"
-  probe(): Promise<RuntimeEvidence>;                    // installed? authenticated? version? continuable?
-  start(spec: RunSpec, signal: AbortSignal): Promise<RunHandle>;
-  resume?(handle: NativeHandle, input: TurnInput, signal: AbortSignal): Promise<RunHandle>;
+  probe(): Promise<RuntimeEvidence>;                    // installed? version? policies it can enforce? resumable?
+  run(spec: RunSpec, signal: AbortSignal,
+      onHandle?: (nativeHandle: string) => void): Promise<RunResult>;  // RunSpec.resume continues a session
 }
 ```
+
+Workers are not providers. The `agents` Worker source
+([`agent-workers`](../../packages/plugins/agent-workers/README.md)) turns each
+configured Worker into a capability descriptor, a durable run, and a result
+artifact (`agent-result@1.0`). The provider only drives the agent.
 
 `RunSpec` carries the objective, the workspace root, the sandbox policy, the
 approval policy, and the tool allow-list. All of these come from trusted
@@ -65,3 +71,21 @@ The Worker registry admits an agent-runtime Worker only on evidence from
   (cancelled, or completed before cancel) is reported.
 - **Evidence.** Diffs, commands run, test results, and the final message are
   stored as artifacts with their hashes.
+
+## Built so far
+
+- `ctx.agentRuntimes`: the definition in
+  [`agent-runtime-core`](../../packages/agent-runtime-core/README.md), its
+  registry, and both conformance suites.
+- The [`agents` Worker source](../../packages/plugins/agent-workers/README.md):
+  - Workers are configured as `agent:<id>`, with a workspace, a sandbox, tools,
+    and a tier. They are local and use `agent-plan` quota.
+  - Capabilities come from `probe()`: `review`, `local-data`, plus `develop` and
+    `validate` when writable, plus `persistent-conversation` when resumable.
+    Never plain `reason`, so plain asks never spend the agent plan (P1).
+  - Runs are durable, one at a time per Worker. A run started before a stop
+    fails as `reconciliation_failed` and names its native session; it is never
+    re-run.
+- [`runtime-claude-agent-sdk`](../../packages/plugins/runtime-claude-agent-sdk/README.md):
+  read-only only, with exact tools, no prompts, and no settings files.
+- The workflow template `review` routes to these Workers by capability.

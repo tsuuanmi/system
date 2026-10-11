@@ -11,6 +11,8 @@ const USAGE = `Usage: system <command>
                             from stdin (profile must be running)
   research [--session <id>] [--classification <c>] (<question...> | -)
                             Deep research, then a cited compaction on a cheap tier; waits
+  run <template> [--session <id>] [--persist] [--tier <t>] [--classification <c>] (<input...> | -)
+                            start any workflow template (e.g. review, on a local agent Worker)
   result <runId>            wait for a run and print its answer
   usage [<limit>]           recent runs: per step, the Worker, tier, and quota class used
   explain <runId|artifact>  the decision chain behind a run (egress, tier, route, acceptance)
@@ -79,6 +81,13 @@ async function main(argv: string[]): Promise<number> {
       if (!request || request.persist || request.tier) break
       const { prompt, ...options } = request
       return awaitRun(await callTool('research', { question: prompt, ...options }))
+    }
+    case 'run': {
+      const [template, ...args] = rest
+      const request = template ? await parseAsk(args, readAllStdin) : undefined
+      if (!template || !request) break
+      const { prompt, ...options } = request
+      return awaitRun(await callTool('run', { template, input: prompt, ...options }))
     }
     case 'result': {
       if (!rest[0]) break

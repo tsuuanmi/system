@@ -9,3 +9,14 @@ allowBuilds:
   koffi: false
   node-pty: false
   protobufjs: false
+# The Claude Agent SDK bundles a platform build of Claude Code (~250 MB each); the
+# runtime-claude-agent-sdk provider runs the operator's installed `claude` instead.
+ignoredOptionalDependencies:
+  - '@anthropic-ai/claude-agent-sdk-linux-x64'
+  - '@anthropic-ai/claude-agent-sdk-linux-arm64'
+  - '@anthropic-ai/claude-agent-sdk-linux-x64-musl'
+  - '@anthropic-ai/claude-agent-sdk-linux-arm64-musl'
+  - '@anthropic-ai/claude-agent-sdk-darwin-x64'
+  - '@anthropic-ai/claude-agent-sdk-darwin-arm64'
+  - '@anthropic-ai/claude-agent-sdk-win32-x64'
+  - '@anthropic-ai/claude-agent-sdk-win32-arm64'

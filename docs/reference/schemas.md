@@ -96,6 +96,15 @@ guesses.
   `capabilities`, `tier`, `quotaClass`, `locality`, and `state` are routing
   inputs.
 
+### `agent-result`
+
+- Written once per finished agent-runtime run, as the body of a `report`
+  artifact. The prompt is kept by hash only.
+- `nativeHandle` names the agent's own session (for example, a Claude Code
+  session id). The session itself is never mirrored (INV-7).
+- `sandbox` is the policy the run was held to, taken from trusted
+  configuration.
+
 ### `ui-map`
 
 - Operation ids are dotted lowercase names. Drivers refer to them; they never

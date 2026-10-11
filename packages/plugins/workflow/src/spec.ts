@@ -57,6 +57,12 @@ export const DEFAULT_TEMPLATES: Record<string, NodeTemplate[]> = {
   ask: [
     { nodeId: 'ask:1', objective: 'Answer the caller\'s prompt', prompt: '{{input}}', capabilities: ['reason'], tier: 'standard', callerTier: true, conversation: 'caller', acceptance: 'acceptance.answer' },
   ],
+  review: [
+    {
+      nodeId: 'review:1', objective: 'Review the caller\'s subject on this machine and report findings', prompt: '{{input}}',
+      capabilities: ['review', 'local-data'], tier: 'standard', callerTier: true, conversation: 'caller', acceptance: 'acceptance.answer',
+    },
+  ],
   research: [
     {
       nodeId: 'research:1', objective: 'Write a cited Deep research report on the caller\'s question', prompt: '{{input}}',

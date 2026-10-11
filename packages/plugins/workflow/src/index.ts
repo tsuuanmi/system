@@ -753,6 +753,27 @@ export class Workflow extends Service {
         return failure(error)
       }
     })
+    c.mcp.tool('run', {
+      description: `Start any workflow template (${Object.keys(this.templates).sort().join(', ')}); its steps are routed by capability to website or local agent Workers. Waits up to waitSeconds; otherwise returns a runId for \`result\`.`,
+      inputSchema: {
+        template: zod.string().max(100),
+        input: zod.string().min(1).max(32_000),
+        sessionId: zod.string().max(200).optional().describe('Continue an existing session'),
+        persist: zod.boolean().optional().describe('Start a persistent session'),
+        tier: zod.enum(['economy', 'standard', 'frontier']).optional().describe('Minimum tier for the steps that take the caller\'s tier'),
+        classification, clientRequestId, waitSeconds,
+      },
+    }, async (args) => {
+      try {
+        const run = this.start({
+          template: String(args.template), input: String(args.input), sessionId: args.sessionId as string | undefined, persist: args.persist as boolean | undefined,
+          tier: args.tier as Tier | undefined, classification: args.classification as Classification | undefined, clientRequestId: args.clientRequestId as string | undefined,
+        })
+        return shape(await this.wait(run.runId, ((args.waitSeconds as number | undefined) ?? 45) * 1000))
+      } catch (error) {
+        return failure(error)
+      }
+    })
     c.mcp.tool('result', {
       description: 'Fetch a run started by `ask` or `research`; waits up to waitSeconds for it to finish.',
       inputSchema: { runId: zod.string().max(200), waitSeconds },

@@ -263,7 +263,7 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
     expect(ctx.workflow.explain(done.runId)!.nodes.map((n) => n.decisions.length)).toEqual([4, 4])
   }, 90_000)
 
-  it('serves ask, research, result, usage, and explain over MCP in place of the placeholders', async () => {
+  it('serves ask, research, run, result, usage, and explain over MCP in place of the placeholders', async () => {
     const { dir } = await boot()
     const { url, tokenFile } = JSON.parse(readFileSync(join(dir, 'mcp.json'), 'utf8')) as { url: string; tokenFile: string }
     const client = new Client({ name: 'test', version: '0' })
@@ -283,6 +283,9 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
         .toEqual([expect.objectContaining({ tier: 'frontier', quotaClass: 'subscription-chat' }), expect.objectContaining({ tier: 'economy', quotaClass: 'subscription-chat' })])
       const explained = await client.callTool({ name: 'explain', arguments: { id: runId } })
       expect(explained.structuredContent).toMatchObject({ runId, nodes: [{ nodeId: 'ask:1' }] })
+      const ran = await client.callTool({ name: 'run', arguments: { template: 'ask', input: 'via run', waitSeconds: 25 } })
+      expect(ran.structuredContent).toMatchObject({ template: 'ask', status: 'completed', answer: 'Plain answer.' })
+      expect((await client.callTool({ name: 'run', arguments: { template: 'nope', input: 'x' } })).isError).toBe(true)
       const missing = await client.callTool({ name: 'result', arguments: { runId: 'run_nope' } })
       expect(missing.isError).toBe(true)
     } finally {

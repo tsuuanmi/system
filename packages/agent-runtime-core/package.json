@@ -1,0 +1,14 @@
+{
+  "name": "@tsuuanmi/system-agent-runtime-core",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Capability seam definition: ctx.agentRuntimes, external coding agents (Claude Code, Codex, ACP agents) run as Workers, with conformance suites",
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "exports": { ".": { "types": "./lib/index.d.ts", "default": "./lib/index.js" } },
+  "files": ["lib"],
+  "scripts": { "build": "tsc -p tsconfig.build.json" },
+  "peerDependencies": { "@deepseek-ai/cordis": "4.0.5-alpha.1" },
+  "devDependencies": { "@deepseek-ai/cordis": "4.0.5-alpha.1" }
+}

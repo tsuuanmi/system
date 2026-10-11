@@ -25,6 +25,7 @@ each field, which a schema cannot fully express, is documented in
 | [lease.v1.json](lease.v1.json) | a held lease (`ctx.leases`): resource, owner, token, monotonic generation, expiry |
 | [account.v1.json](account.v1.json) | provider account vault record (portable state; never leaves the provider runtime) |
 | [provider-answer.v1.json](provider-answer.v1.json) | body of a `report` artifact holding one website Worker answer (the prompt by hash only) |
+| [agent-result.v1.json](agent-result.v1.json) | body of a `report` artifact holding one agent-runtime Worker run's final message (the prompt by hash only) |
 | [ui-map.v1.json](ui-map.v1.json) | a provider website's UI operations as data: elements, actions, network signals, states ([ADR-0021](../docs/decisions/adr/0021-ui-operations-as-data.md)) |
 
 Schemas still to come, added with their milestone: the domain artifact bodies
