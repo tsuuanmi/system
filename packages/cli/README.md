@@ -6,7 +6,8 @@ the supported way to run a DSH harness
 
 | Command | Does |
 |---|---|
-| `system init` | writes `<DSH_HOME>/profiles/system` with **only** `@tsuuanmi/system-bundle` (no `dsh-base`, [ADR-0019](../../docs/decisions/adr/0019-explicit-minimal-dsh-core.md)), then runs `dsh plugin install` |
+| `system init` | writes `<DSH_HOME>/profiles/system` with **only** `@tsuuanmi/system-bundle` (no `dsh-base`, [ADR-0019](../../docs/decisions/adr/0019-explicit-minimal-dsh-core.md)), then runs `dsh plugin install`, keeps a usable Chrome (installing the pinned managed build when none exists, [ADR-0020](../../docs/decisions/adr/0020-pinned-managed-chrome.md)), and reports a missing Xvfb |
+| `system browser install` | installs the managed Chrome pinned in `chrome.lock.json` under `<DSH_HOME>/system/browsers` |
 | `system start [dsh args]` | runs `dsh --profile system …` with `DSH_TELEMETRY_DISABLED=1` |
 | `system mcp-config claude\|codex` | prints the client configuration from the running profile's discovery file. The token is read from `$SYSTEM_MCP_TOKEN` and never printed into the command |
 | `system mcp-token` | prints only the bearer token, for `export SYSTEM_MCP_TOKEN="$(system mcp-token)"` |

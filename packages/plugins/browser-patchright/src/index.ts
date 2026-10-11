@@ -9,33 +9,20 @@
  * (docs/research/dsh-community-plugins-review.md#browser-runtime-second-pass-2026-10-11).
  * @module @tsuuanmi/system-browser-patchright
  */
-import { existsSync } from 'node:fs'
 import { type Context, Service } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { type PortableState, type PreparedDisplay, ProviderError } from '@tsuuanmi/system-provider-core'
 import { type Browser, type BrowserContext, type Page, chromium } from 'patchright-core'
+import { discoverChrome } from './chrome.ts'
 import { type StorageState, fromStorageState, toStorageState } from './state.ts'
 
+export { CHROME_LOCK, type ChromeChoice, type ChromeLock, discoverChrome, engineChromiumMajor, installManagedChrome, managedBrowsersDir, managedChromePath } from './chrome.ts'
 export { type CaptureOptions, type StorageState, fromStorageState, toStorageState } from './state.ts'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
     browser: BrowserPool
   }
-}
-
-const STANDARD_CHROME_PATHS = ['/usr/bin/google-chrome', '/usr/bin/google-chrome-stable', '/usr/bin/chromium', '/usr/bin/chromium-browser']
-
-/**
- * The configured path, then `CHROME_PATH`, then standard locations. There is no bundled
- * fallback: provider turns run the operator's real Chrome (ADR-0016).
- */
-export function discoverChrome(configured: string | undefined, standard: readonly string[] = STANDARD_CHROME_PATHS): string | undefined {
-  if (configured !== undefined) {
-    if (!existsSync(configured)) throw new ProviderError('config_error', `configured Chrome path does not exist: ${configured}`)
-    return configured
-  }
-  return [process.env.CHROME_PATH ?? '', ...standard].find((path) => path.length > 0 && existsSync(path))
 }
 
 /** Pages render and update as if in the foreground (docs/design/browser-runtime.md#display-modes-ctxdisplay). */
@@ -50,7 +37,7 @@ const CHROME_ARGS = [
 const IGNORED_DEFAULT_ARGS = ['--no-sandbox', '--password-store=basic', '--use-mock-keychain', '--enable-automation']
 
 export interface Config {
-  /** Chrome executable; defaults to `CHROME_PATH`, then standard install locations. */
+  /** Chrome executable; defaults to `CHROME_PATH`, a recent system Chrome, then the managed build. */
   chromePath?: string
   /** Close an account's browser after this long without an open turn (default 30 min). */
   closeAfterMs?: number
@@ -85,7 +72,7 @@ export class BrowserPool extends Service {
   static inject = ['display']
 
   static Config: z<Config> = z.object({
-    chromePath: z.string().description('Chrome executable; defaults to CHROME_PATH, then standard locations'),
+    chromePath: z.string().description('Chrome executable; defaults to CHROME_PATH, a recent system Chrome, then the managed build'),
     closeAfterMs: z.natural().default(30 * 60_000).description('Idle time before an account browser closes, in milliseconds'),
     maxIndexedDbBytes: z.natural().default(16 * 1024 * 1024).description('IndexedDB capture size cap in bytes'),
   })
@@ -181,10 +168,11 @@ export class BrowserPool extends Service {
   private async launch(account: string): Promise<Managed> {
     if (this.browsers.has(account)) await this.close(account)
     const display = await this.ctx.display.prepare('invisible')
-    const executablePath = discoverChrome(this.config.chromePath)
-    if (!executablePath) {
-      throw new ProviderError('config_error', 'Google Chrome was not found: install Chrome (stable) or set chromePath / CHROME_PATH')
+    const chrome = discoverChrome(this.config.chromePath)
+    if (!chrome) {
+      throw new ProviderError('config_error', 'no usable Chrome: run `system init` (installs the pinned managed Chrome), install a recent Chrome stable, or set chromePath / CHROME_PATH')
     }
+    const executablePath = chrome.path
     let browser: Browser
     try {
       browser = await chromium.launch({

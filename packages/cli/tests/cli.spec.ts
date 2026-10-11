@@ -1,8 +1,9 @@
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
-import { exitCode, mergeProfileManifest, mcpConfig } from '../src/index.ts'
+import { CHROME_LOCK } from '@tsuuanmi/system-browser-patchright'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { ensureBrowser, exitCode, mergeProfileManifest, mcpConfig } from '../src/index.ts'
 
 const dirs: string[] = []
 afterEach(() => {
@@ -39,5 +40,24 @@ describe('system CLI (PR #3 kernel review)', () => {
       expect(text).toContain('SYSTEM_MCP_TOKEN')
     }
     expect(readFileSync(join(home, 'system', 'mcp.json'), 'utf8')).toContain('47317')
+  })
+})
+
+describe('system init: browser prerequisites', () => {
+  const chrome = { path: '/usr/bin/google-chrome', source: 'system' as const }
+
+  it('keeps a usable Chrome and does not download one', async () => {
+    const install = vi.fn()
+    const report = await ensureBrowser({ discover: () => chrome, install, hasXvfb: () => true })
+    expect(install).not.toHaveBeenCalled()
+    expect(report).toEqual(['chrome: /usr/bin/google-chrome (system)', 'xvfb: ok'])
+  })
+
+  it('installs the pinned managed Chrome when none is usable, and flags a missing Xvfb', async () => {
+    const install = vi.fn(async () => ({ path: '/home/u/.dsh/system/browsers/chrome', installed: true }))
+    const report = await ensureBrowser({ discover: () => undefined, install, hasXvfb: () => false })
+    expect(install).toHaveBeenCalledOnce()
+    expect(report[0]).toBe(`chrome: installed managed Chrome ${CHROME_LOCK.buildId} at /home/u/.dsh/system/browsers/chrome`)
+    expect(report[1]).toMatch(/xvfb: missing .*apt install xvfb/)
   })
 })

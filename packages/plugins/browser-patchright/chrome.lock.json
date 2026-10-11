@@ -1,0 +1,5 @@
+{
+  "$comment": "The managed Chrome that `system init` installs when no recent system Chrome exists (docs/design/browser-runtime.md#browser-launch-ctxbrowser). Bump buildId in a PR; it must be a Chrome for Testing stable build no older than patchright-core's Chromium.",
+  "browser": "chrome",
+  "buildId": "155.0.8059.39"
+}

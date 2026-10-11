@@ -13,12 +13,15 @@
     }
   },
   "files": [
-    "lib"
+    "lib",
+    "chrome.lock.json"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json"
   },
   "dependencies": {
+    "@puppeteer/browsers": "3.2.3",
+    "@tsuuanmi/system-libs": "workspace:*",
     "@tsuuanmi/system-provider-core": "workspace:*",
     "patchright-core": "1.63.0"
   },

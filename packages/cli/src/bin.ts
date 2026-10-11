@@ -1,9 +1,10 @@
 #!/usr/bin/env node
-import { init, mcpConfig, mcpToken, start } from './index.ts'
+import { browserDeps, ensureBrowser, init, mcpConfig, mcpToken, start } from './index.ts'
 
 const USAGE = `Usage: system <command>
 
-  init                      create or refresh the system DSH profile
+  init                      create or refresh the system DSH profile; ensure Chrome and Xvfb
+  browser install           install the managed Chrome pinned in chrome.lock.json
   start [dsh args...]       boot the profile (e.g. --patch ./overlay.yml)
   mcp-config <claude|codex> print client configuration for the running MCP server
   mcp-token                 print the bearer token (for an environment variable)
@@ -14,7 +15,15 @@ async function main(argv: string[]): Promise<number> {
   switch (command) {
     case 'init':
       console.log(`profile ready: ${init()}`)
+      for (const line of await ensureBrowser()) console.log(line)
       return 0
+    case 'browser': {
+      if (rest[0] !== 'install') break
+      const deps = browserDeps()
+      const { path, installed } = await deps.install()
+      console.log(installed ? `installed ${path}` : `already installed: ${path}`)
+      return 0
+    }
     case 'start':
       return start(rest)
     case 'mcp-config': {

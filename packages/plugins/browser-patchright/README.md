@@ -16,8 +16,11 @@
   - the browser closes after `closeAfterMs` with no open turn;
   - it also closes when the display is lost;
   - a late `disconnected` from an older process never drops its replacement.
-- **Chrome:** `chromePath`, then `CHROME_PATH`, then standard locations, with no
-  bundled fallback. A missing or unlaunchable Chrome is a `config_error`.
+- **Chrome:** `chromePath`, then `CHROME_PATH`, then a system Chrome no older than
+  the engine's Chromium, then the managed build pinned in `chrome.lock.json`
+  (`installManagedChrome`, used by `system init`;
+  [ADR-0020](../../../docs/decisions/adr/0020-pinned-managed-chrome.md)). A
+  missing or unlaunchable Chrome is a `config_error`.
 - **Injects:** `display`. **Config:** `chromePath`, `closeAfterMs`, `maxIndexedDbBytes`.
 - **Ported from:** tsuuanmi/internet `src/browser/runtime.ts` and `chrome.ts`. The
   origin filter and launch patterns come from `@anweat/dsh-browser`

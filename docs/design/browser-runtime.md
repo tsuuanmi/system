@@ -60,9 +60,11 @@ foreground:
 ## Browser launch (`ctx.browser`)
 
 - **Engine:** `patchright-core` driving the **system Chrome stable channel**.
-  The search order is the configured path, then `CHROME_PATH`, then standard
-  install locations. There is no bundled fallback: a missing Chrome fails closed
-  with `config_error`.
+  The search order is the configured path, then `CHROME_PATH`, then a system
+  Chrome no older than the engine's Chromium, then the **managed** Chrome for
+  Testing build pinned in `chrome.lock.json`, which `system init` installs under
+  `<DSH_HOME>/system/browsers` ([ADR-0020](../decisions/adr/0020-pinned-managed-chrome.md)).
+  When none is usable, the turn fails closed with `config_error`.
 - **Flags:** no `--enable-automation`, no `--no-sandbox` for headed runs, and the
   OS keyring is kept, without `--password-store=basic` or `--use-mock-keychain`.
 - **No exposed debugging port.** Contexts are owned in-process. If a CDP endpoint

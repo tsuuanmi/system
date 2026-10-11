@@ -8,6 +8,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { constants as osConstants } from 'node:os'
 import { dirname, join } from 'node:path'
+import { CHROME_LOCK, type ChromeChoice, discoverChrome, installManagedChrome } from '@tsuuanmi/system-browser-patchright'
 import { dshHome } from '@tsuuanmi/system-libs'
 
 const require = createRequire(import.meta.url)
@@ -76,6 +77,39 @@ export function init(home: string = dshHome()): string {
   if (install.error) throw install.error
   if (install.status !== 0) throw new Error(`dsh plugin install failed (${install.signal ?? `status ${install.status}`})`)
   return dir
+}
+
+export interface BrowserDeps {
+  discover: () => ChromeChoice | undefined
+  install: () => Promise<{ path: string; installed: boolean }>
+  hasXvfb: () => boolean
+}
+
+const defaultBrowserDeps = (home: string): BrowserDeps => ({
+  discover: () => discoverChrome(undefined),
+  install: () => installManagedChrome({ dir: join(home, 'system', 'browsers') }),
+  hasXvfb: () => spawnSync('sh', ['-c', 'command -v Xvfb'], { stdio: 'ignore' }).status === 0,
+})
+
+/**
+ * Provider turns need a recent Chrome and Xvfb (docs/design/browser-runtime.md). Keeps a
+ * usable Chrome; otherwise installs the build pinned in `chrome.lock.json`. Xvfb is a
+ * system package, so a missing one is reported, not installed.
+ */
+export async function ensureBrowser(deps: BrowserDeps = defaultBrowserDeps(dshHome())): Promise<string[]> {
+  const found = deps.discover()
+  let chrome: string
+  if (found) {
+    chrome = `chrome: ${found.path} (${found.source})`
+  } else {
+    const { path } = await deps.install()
+    chrome = `chrome: installed managed Chrome ${CHROME_LOCK.buildId} at ${path}`
+  }
+  return [chrome, deps.hasXvfb() ? 'xvfb: ok' : 'xvfb: missing (provider turns need it; Ubuntu/Debian: sudo apt install xvfb)']
+}
+
+export function browserDeps(home: string = dshHome()): BrowserDeps {
+  return defaultBrowserDeps(home)
 }
 
 /**

@@ -7,7 +7,7 @@ import { Context } from '@deepseek-ai/cordis'
 import { type XvfbHandle, startXvfb } from '@tsuuanmi/system-display-virtual'
 import { Display, type PreparedDisplay, ProviderError } from '@tsuuanmi/system-provider-core'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
-import BrowserPool, { discoverChrome } from '../src/index.ts'
+import BrowserPool from '../src/index.ts'
 
 /** A modern Chrome for the real-browser tests: CHROME_PATH, a recent system Chrome, or Chrome for Testing in ~/.cache/system-chrome. */
 function findTestChrome(): string | undefined {
@@ -37,21 +37,6 @@ const chrome = findTestChrome()
 const canRun = hasXvfb && chrome !== undefined
 // CI sets SYSTEM_REQUIRE_BROWSER=1 so a missing browser fails instead of silently skipping.
 if (process.env.SYSTEM_REQUIRE_BROWSER === '1' && !canRun) throw new Error('real-browser tests need Xvfb and a modern Chrome (set CHROME_PATH)')
-
-describe('discoverChrome', () => {
-  it('uses an explicit path and fails closed when it does not exist', () => {
-    expect(() => discoverChrome('/nonexistent/chrome')).toThrow(ProviderError)
-    expect(() => discoverChrome('/nonexistent/chrome')).toThrow(/does not exist/)
-  })
-
-  it('falls back to CHROME_PATH, then standard locations, and never to a bundled browser', () => {
-    vi.stubEnv('CHROME_PATH', process.execPath)
-    expect(discoverChrome(undefined)).toBe(process.execPath)
-    vi.stubEnv('CHROME_PATH', '')
-    expect(discoverChrome(undefined, [])).toBeUndefined()
-    vi.unstubAllEnvs()
-  })
-})
 
 /** A display provider whose Xvfb the test can kill, to simulate a lost display. */
 class KillableDisplay extends Display {

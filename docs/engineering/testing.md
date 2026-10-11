@@ -39,9 +39,10 @@ headed Chrome, not a mocked engine: invisibility, foreground behavior, and the
 absence of automation leaks are properties of the real browser.
 
 - They need Xvfb and a modern Chrome. The tests use `CHROME_PATH`, then a system
-  Chrome of version 120 or later, then Chrome for Testing installed with
-  `npx @puppeteer/browsers install chrome@stable --path ~/.cache/system-chrome`
-  (no root needed).
+  Chrome of version 120 or later, then Chrome for Testing in
+  `~/.cache/system-chrome` (for example, the pinned build from `system browser
+  install`, or `npx @puppeteer/browsers install chrome@stable --path
+  ~/.cache/system-chrome`). No root is needed.
 - Locally they are skipped when either is missing. CI sets
   `SYSTEM_REQUIRE_BROWSER=1`, so a missing browser **fails** the run instead of
   skipping silently.
