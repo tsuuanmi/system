@@ -24,6 +24,14 @@
   - one transaction binds the conversation and completes the receipt;
   - the answer becomes a `report` artifact (`provider-answer@1.0`,
     `local-private`) linked to the route decision.
+- **Ownership:**
+  - every turn runs under a `turn:<id>` lease from `ctx.leases` (60 s, renewed
+    every 20 s);
+  - the receipt, routing, status, and completion writes are fenced inside their
+    transactions;
+  - a turn that another live process holds is re-checked when its lease would
+    expire, so two processes sharing one home never run a turn twice;
+  - a stop waits for in-flight runs, so their leases are released.
 - **Restart:**
   - `queued` turns run again;
   - a `running` turn with no receipt was never sent, so it runs again;
@@ -46,7 +54,7 @@
 - **MCP:** contributes `research`, `ask` (it waits up to `waitSeconds`, default 45 s, max
   55 s, then returns the `turnId`) and `result` (long-polls a `turnId`). These
   replace the built-in placeholders.
-- **Injects:** `store`, `artifacts`, `turnReceipts`, `accounts`, `browser`,
+- **Injects:** `store`, `artifacts`, `leases`, `turnReceipts`, `accounts`, `browser`,
   `providers`; `mcp` is optional.
 - **Not yet:**
   - recovering a submitted persistent turn from its conversation;

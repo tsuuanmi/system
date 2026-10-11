@@ -13,6 +13,7 @@ import z from '@deepseek-ai/schemastery'
 import type {} from '@tsuuanmi/system-accounts'
 import type {} from '@tsuuanmi/system-artifacts'
 import type {} from '@tsuuanmi/system-browser-patchright'
+import { type Lease, LeaseLost, StaleGeneration } from '@tsuuanmi/system-leases'
 import { type ContentId, sha256 } from '@tsuuanmi/system-libs'
 import type {} from '@tsuuanmi/system-mcp-server'
 import { type ConversationMode, type Disposition, ProviderError, type ProviderFeature, ProviderScheduler, type Tier, dispositionOf } from '@tsuuanmi/system-provider-core'
@@ -113,9 +114,11 @@ interface SessionRow {
 const newId = (prefix: string): string => `${prefix}_${randomBytes(8).toString('hex')}`
 const now = (): string => new Date().toISOString()
 const TERMINAL: ReadonlySet<TurnStatus> = new Set(['completed', 'failed'])
+/** Ownership lease of a running turn; renewed every third of it. */
+const LEASE_TTL_MS = 60_000
 
 export class Turns extends Service {
-  static inject = ['store', 'artifacts', 'turnReceipts', 'accounts', 'browser', 'providers']
+  static inject = ['store', 'artifacts', 'leases', 'turnReceipts', 'accounts', 'browser', 'providers']
 
   static Config: z<Config> = z.object({
     maxConcurrentTurnsPerAccount: z.natural().min(1).default(2).description('Parallel turns per account (different sessions)'),
@@ -130,6 +133,10 @@ export class Turns extends Service {
   private readonly waiters = new Map<string, Set<() => void>>()
   /** Turns of one session run in acceptance order, each after the previous one settles. */
   private readonly sessionChains = new Map<string, Promise<void>>()
+  /** Re-checks of turns another process holds; cleared on stop. */
+  private readonly retries = new Set<NodeJS.Timeout>()
+  /** Runs in flight; a stop waits for them so their leases are released. */
+  private readonly inflight = new Set<Promise<void>>()
   private stopping = false
 
   constructor(ctx: Context, private readonly config: Config = {}) {
@@ -156,10 +163,12 @@ export class Turns extends Service {
     }])
     ctx.effect(() => {
       queueMicrotask(() => this.recover())
-      return () => {
+      return async () => {
         // A stop is not a failure: running and queued turns stay as they are for the next start.
         this.stopping = true
+        for (const timer of this.retries) clearTimeout(timer)
         for (const scheduler of this.schedulers.values()) scheduler.close(new ProviderError('aborted', 'turn runtime stopped'))
+        await Promise.allSettled([...this.inflight])
       }
     })
     ctx.inject(['mcp'], (c) => this.registerTools(c))
@@ -244,16 +253,7 @@ export class Turns extends Service {
   private recover(): void {
     if (this.stopping) return
     const rows = this.ctx.store.db.prepare(`SELECT * FROM turns WHERE status IN ('queued', 'running') ORDER BY created_at`).all() as unknown as Row[]
-    for (const row of rows) {
-      const receipt = row.account ? this.ctx.turnReceipts.read(this.identity(row, row.account)) : undefined
-      if (row.status === 'running' && receipt) {
-        // Recovering a submitted turn needs the conversation snapshot; a temporary one cannot be reopened.
-        this.fail(row.turn_id, new ProviderError('reconciliation_failed',
-          'the host stopped after this prompt was sent; it is not resent automatically (ambiguous whether the provider answered)'))
-        continue
-      }
-      this.schedule(row)
-    }
+    for (const row of rows) this.schedule(row)
   }
 
   /** Run a turn now, or after the previous turn of its session settles. */
@@ -270,24 +270,75 @@ export class Turns extends Service {
     })
   }
 
-  private async run(turnId: string): Promise<void> {
-    const row = this.row(turnId)
-    if (!row || TERMINAL.has(row.status) || this.stopping) return
+  /**
+   * Run a turn under its ownership lease (`turn:<id>`), so two processes sharing one home
+   * never run it twice: the holder heartbeats it, and the receipt and the completion are
+   * fenced inside their transactions (INV-4). A turn another live process holds is
+   * re-checked when that lease would expire.
+   */
+  private run(turnId: string): Promise<void> {
+    const running = this.runOwned(turnId)
+    this.inflight.add(running)
+    void running.finally(() => this.inflight.delete(running))
+    return running
+  }
+
+  private async runOwned(turnId: string): Promise<void> {
+    if (this.stopping) return
+    const resource = `turn:${turnId}`
+    let lease = this.ctx.leases.acquire(resource, LEASE_TTL_MS)
+    if (!lease) {
+      const holder = this.ctx.leases.current(resource)
+      const timer = setTimeout(() => {
+        this.retries.delete(timer)
+        void this.run(turnId)
+      }, Math.max(1000, (holder?.expiresAt ?? Date.now()) - Date.now() + 1000))
+      timer.unref()
+      this.retries.add(timer)
+      return
+    }
+    const lost = new AbortController()
+    const heartbeat = setInterval(() => {
+      try {
+        lease = this.ctx.leases.renew(lease!, LEASE_TTL_MS)
+      } catch (error) {
+        lost.abort(error)
+      }
+    }, LEASE_TTL_MS / 3)
+    heartbeat.unref()
+    const current = (): Lease => lease!
     try {
-      const account = row.account ?? (await this.route(row))
+      const row = this.row(turnId)
+      if (!row || TERMINAL.has(row.status)) return
+      const receipt = row.account ? this.ctx.turnReceipts.read(this.identity(row, row.account)) : undefined
+      if (row.status === 'running' && receipt) {
+        // Its previous owner stopped after sending. Recovering needs a conversation snapshot,
+        // and a temporary conversation cannot be reopened: never resend.
+        this.fail(turnId, new ProviderError('reconciliation_failed',
+          'the host stopped after this prompt was sent; it is not resent automatically (ambiguous whether the provider answered)'), current)
+        return
+      }
+      const account = row.account ?? (await this.route(row, current))
       const scheduler = this.scheduler(account)
-      await scheduler.runTurn(row.session_id ?? row.turn_id, undefined, async (lease) => {
-        this.update(turnId, { status: 'running' })
-        await this.execute(this.row(turnId)!, account, lease.signal)
+      await scheduler.runTurn(row.session_id ?? row.turn_id, lost.signal, async (slot) => {
+        this.update(turnId, { status: 'running' }, current)
+        await this.execute(this.row(turnId)!, account, slot.signal, current)
       })
     } catch (error) {
-      if (this.stopping) return
-      this.fail(turnId, error)
+      if (this.stopping || error instanceof LeaseLost || error instanceof StaleGeneration || lost.signal.aborted) return
+      this.fail(turnId, error, current)
+    } finally {
+      clearInterval(heartbeat)
+      try {
+        this.ctx.leases.release(current())
+      } catch {
+        // the store may already be closing; an unreleased lease simply expires
+      }
     }
   }
 
   /** Persistent sessions stay on their account; otherwise the first ready account in catalog order. */
-  private async route(row: Row): Promise<string> {
+  private async route(row: Row, lease: () => Lease): Promise<string> {
     const accounts = await this.ctx.accounts.list()
     const providers = new Set(this.ctx.providers.list())
     const session = row.session_id ? this.session(row.session_id) : undefined
@@ -327,14 +378,15 @@ export class Turns extends Service {
       deterministic: true,
     }, { producer: { type: 'system', ref: 'turns' } })
     this.ctx.store.transaction((db) => {
+      this.ctx.leases.fence(lease())
       // A new persistent session is bound to the first account that runs it.
       if (row.session_id) db.prepare('UPDATE turn_sessions SET account = COALESCE(account, ?) WHERE session_id = ?').run(account, row.session_id)
     })
-    this.update(row.turn_id, { account, route_decision: decision.id, tier_decision: tier.id })
+    this.update(row.turn_id, { account, route_decision: decision.id, tier_decision: tier.id }, lease)
     return account
   }
 
-  private async execute(row: Row, accountId: string, signal: AbortSignal): Promise<void> {
+  private async execute(row: Row, accountId: string, signal: AbortSignal, lease: () => Lease): Promise<void> {
     const view = await this.ctx.accounts.get(accountId)
     if (view.status !== 'ready') throw new ProviderError('reauth_required', `${accountId} is ${view.status}`)
     const driver = this.ctx.providers.get(view.provider)
@@ -356,10 +408,13 @@ export class Turns extends Service {
         signal,
         deadlines,
         beforeSend: ({ previousResponse, mode }) => {
-          this.ctx.turnReceipts.submit({
+          this.ctx.store.transaction(() => {
+            this.ctx.leases.fence(lease())
+            this.ctx.turnReceipts.submit({
             ...identity, prompt: row.prompt, previousResponse,
             conversation: { provider: view.provider, binding: session?.binding ?? '' },
             mode: { verified: true, tier: row.tier, ...mode, feature: row.feature },
+            })
           })
         },
       })
@@ -373,6 +428,7 @@ export class Turns extends Service {
     }
     try {
       this.ctx.store.transaction(() => {
+        this.ctx.leases.fence(lease())
         if (result.binding) {
           this.ctx.turnReceipts.bindConversation(identity, result.binding)
           if (row.session_id) {
@@ -394,7 +450,7 @@ export class Turns extends Service {
           producer: { type: 'worker', ref: `${view.provider}/${accountId}` },
           inputs: row.route_decision ? [row.route_decision as ContentId] : [],
         })
-        this.update(row.turn_id, { status: 'completed', answer: result.text, answer_artifact: answer.id, binding: result.binding ?? null })
+        this.update(row.turn_id, { status: 'completed', answer: result.text, answer_artifact: answer.id, binding: result.binding ?? null }, lease)
       })
     } finally {
       await turn.close()
@@ -474,14 +530,16 @@ export class Turns extends Service {
     return this.ctx.store.db.prepare('SELECT * FROM turns WHERE turn_id = ?').get(turnId) as Row | undefined
   }
 
-  private fail(turnId: string, error: unknown): void {
+  private fail(turnId: string, error: unknown, lease?: () => Lease): void {
     const typed = error instanceof ProviderError ? error : new ProviderError('session_broken', (error as Error)?.message ?? String(error), { cause: error })
-    this.update(turnId, { status: 'failed', error: JSON.stringify({ kind: typed.kind, disposition: dispositionOf(typed.kind), message: typed.message }) })
+    this.update(turnId, { status: 'failed', error: JSON.stringify({ kind: typed.kind, disposition: dispositionOf(typed.kind), message: typed.message }) }, lease)
   }
 
-  private update(turnId: string, fields: Partial<Omit<Row, 'turn_id'>>): void {
+  /** Write turn fields; with a lease, only while that lease still holds the turn (fenced). */
+  private update(turnId: string, fields: Partial<Omit<Row, 'turn_id'>>, lease?: () => Lease): void {
     const entries = Object.entries({ ...fields, updated_at: now() })
     this.ctx.store.transaction((db) => {
+      if (lease) this.ctx.leases.fence(lease())
       db.prepare(`UPDATE turns SET ${entries.map(([k]) => `${k} = ?`).join(', ')} WHERE turn_id = ?`).run(...entries.map(([, v]) => v as string | null), turnId)
     })
     if (fields.status && TERMINAL.has(fields.status)) {

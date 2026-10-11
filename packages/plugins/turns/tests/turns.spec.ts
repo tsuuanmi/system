@@ -8,6 +8,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
 import Accounts from '@tsuuanmi/system-accounts'
 import Artifacts from '@tsuuanmi/system-artifacts'
+import Leases from '@tsuuanmi/system-leases'
 import BrowserPool from '@tsuuanmi/system-browser-patchright'
 import Vault from '@tsuuanmi/system-credentials-vault'
 import VirtualDisplay from '@tsuuanmi/system-display-virtual'
@@ -29,16 +30,17 @@ afterEach(async () => {
 type CatalogEntry = { id: string; provider: string; quotaClass: 'subscription-chat'; tiers: Record<string, string> }
 const account = (id: string): CatalogEntry => ({ id, provider: 'chatgpt-web', quotaClass: 'subscription-chat', tiers: { economy: 'instant', standard: 'medium', frontier: 'high' } })
 
-async function boot(options: { fake?: FakeOptions; accounts?: CatalogEntry[]; ready?: string[]; dir?: string; capacity?: number } = {}) {
-  const fake = new FakeChatGpt({ answer: 'OK', ...options.fake })
-  await fake.start()
+async function boot(options: { fake?: FakeOptions; accounts?: CatalogEntry[]; ready?: string[]; dir?: string; capacity?: number; shared?: FakeChatGpt } = {}) {
+  const fake = options.shared ?? new FakeChatGpt({ answer: 'OK', ...options.fake })
+  if (!options.shared) await fake.start()
   const dir = options.dir ?? mkdtempSync(join(tmpdir(), 'system-turns-'))
   if (!options.dir) cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
-  cleanups.push(() => fake.stop())
+  if (!options.shared) cleanups.push(() => fake.stop())
   const ctx = new Context()
   const fibers = [
     ctx.plugin(Store, { path: join(dir, 'system.db') }),
     ctx.plugin(Artifacts, {}),
+    ctx.plugin(Leases, {}),
     ctx.plugin(TurnReceipts, {}),
     ctx.plugin(Vault, { path: join(dir, 'vault.enc'), keyFile: join(dir, 'vault.key') }),
     ctx.plugin(Accounts, { accounts: options.accounts ?? [account('chatgpt-main')] }),
@@ -55,7 +57,7 @@ async function boot(options: { fake?: FakeOptions; accounts?: CatalogEntry[]; re
     for (const fiber of [...fibers].reverse()) await fiber.dispose()
   }
   cleanups.push(stop)
-  for (const id of options.ready ?? ['chatgpt-main']) {
+  for (const id of options.shared ? [] : options.ready ?? ['chatgpt-main']) {
     await ctx.accounts.saveState(id, {
       state: { origins: [fake.origin], cookies: [], capturedAt: '2026-10-11T00:00:00Z' },
       identityHash: `sha256:${id === 'chatgpt-main' ? 'a'.repeat(64) : 'b'.repeat(64)}`, verifiedAt: '2026-10-11T00:00:00Z',
@@ -157,6 +159,18 @@ describe.runIf(canRunBrowser)('ctx.turns: ask through a saved account', () => {
     expect(turn).toMatchObject({ status: 'failed', error: { kind: 'reauth_required', disposition: 'USER_ACTION' } })
     expect(fake.sent).toEqual([])
   }, 60_000)
+
+  it('runs a recovered turn in only one of two processes sharing the same home', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'system-turns-'))
+    cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+    const first = await boot({ dir, fake: { thinkMs: 2000, answer: 'once' } })
+    const turn = first.ctx.turns.ask({ prompt: 'only once' })
+    const second = await boot({ dir, shared: first.fake })
+    await new Promise((resolve) => setTimeout(resolve, 6000))
+    expect(first.fake.sent.map((s) => s.prompt)).toEqual(['only once'])
+    expect((await first.ctx.turns.wait(turn.turnId, 30_000)).status).toBe('completed')
+    expect(second.ctx.turns.get(turn.turnId)?.status).toBe('completed')
+  }, 90_000)
 
   it('serves ask and result over MCP in place of the placeholders', async () => {
     const { dir } = await boot({ fake: { answer: 'via mcp' } })

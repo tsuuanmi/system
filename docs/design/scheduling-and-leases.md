@@ -26,6 +26,10 @@ Every scheduled unit holds a lease `{ owner, generation, expiresAt, signal }`.
   fence passes only if that exact lease (token **and** generation) still holds the
   resource and has not expired. Because it runs under the transaction's write lock, no
   successor can take over before the commit lands.
+- Website turns (`ctx.turns`) hold a `turn:<id>` lease with a heartbeat. The
+  receipt written before the send, the routing, and the completion are fenced, so
+  two processes sharing one home never send the same turn twice. This is covered
+  by a two-process test.
 - Workflow node executions use the same lease primitive with heartbeats. On
   startup, a `RUNNING` node with an expired lease or a foreign owner moves to
   `RECOVERING`.
