@@ -48,6 +48,27 @@ default. Live observations are in the
   selected after one attempt, the turn fails before sending. Temporary chat does
   not show the group; Chat is selected on the home page before switching to it.
 
+## Modes and tiers
+
+- **Where the knowledge lives.** The UI map holds *how* to select a mode: the
+  model menu, model radios, Power slider and its status, the tools popover, and
+  the Deep research chip. Configuration holds *what* to select:
+  - the driver plugin's `modes` (named presets of a model and an effort level)
+    and its `defaultMode`;
+  - each account's catalog `tiers` (tier → preset name);
+  - the turn runtime's `defaultTier`.
+- **Resolution.** A turn's tier (requested, or `defaultTier`) maps through the
+  account's `tiers` to a preset. A tier with no preset uses the driver's
+  `defaultMode`. The choice is recorded as a `tier` decision that names the
+  preset.
+- **Verification.** The driver selects the model radio and steps the Power
+  slider, then **reads both back**. An unknown preset, an unknown or locked
+  model, or an unreachable level fails with `config_error` before anything is
+  sent (INV-2). The receipt records the verified model and effort.
+- **Deep research** (`feature: deep-research`) runs only in persistent
+  conversations: Temporary chat does not offer it. `research` returns at once,
+  with longer deadlines (default 60 min, stall 30 min).
+
 ## Turn receipt
 
 A receipt is persisted **before** submission. It binds:

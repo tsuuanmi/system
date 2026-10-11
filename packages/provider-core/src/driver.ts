@@ -6,24 +6,41 @@
 export type AuthState = 'signed-in' | 'signed-out' | 'unknown'
 export type ConversationMode = 'temporary' | 'persistent'
 
+/** A model selection as the website names it; either part may be left to the site. */
+export interface ProviderMode {
+  model?: string
+  /** Reasoning effort level (ChatGPT calls it Power: Instant, Medium, High). */
+  effort?: string
+}
+
+export type ProviderFeature = 'chat' | 'deep-research'
+
 export interface AskOptions {
   conversation: ConversationMode
+  /** Name of a configured mode preset; the driver's default preset when absent. */
+  mode?: string | undefined
+  /** `deep-research` needs a persistent conversation. Default `chat`. */
+  feature?: ProviderFeature | undefined
   /** Persistent conversation to continue. */
   binding?: string | undefined
   signal?: AbortSignal
+  /** Two-clock completion deadlines for this turn; the driver's defaults when absent. */
+  deadlines?: { timeoutMs: number; stallTimeoutMs: number } | undefined
   /**
    * Called after the prompt is in the composer and the mode is verified, immediately
    * before the send. The runtime persists the turn receipt here (INV-4); a throw aborts
    * the turn without sending. `previousResponse` is the last answer already in the
    * conversation (null for a new one), the boundary used by reconciliation.
    */
-  beforeSend?: (boundary: { previousResponse: string | null }) => void | Promise<void>
+  beforeSend?: (boundary: { previousResponse: string | null; mode: ProviderMode }) => void | Promise<void>
 }
 
 export interface AskResult {
   text: string
   /** Canonical conversation id for persistent turns; undefined for temporary ones. */
   binding: string | undefined
+  /** The mode read back from the page before sending (never assumed). */
+  mode: ProviderMode
 }
 
 export interface ProviderDriver<Page = unknown> {

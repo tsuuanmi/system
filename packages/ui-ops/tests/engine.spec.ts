@@ -91,6 +91,8 @@ const AMBIGUOUS = page(`<form data-type="composer"><div contenteditable role="te
   <button type="button" aria-label="Send now">↑</button><button type="button" aria-label="Send later">⏱</button></form>`)
 const VIETNAMESE = page(`<form data-type="composer"><div contenteditable role="textbox"></div>
   <button type="button" aria-label="Gửi lời nhắc" data-send>↑</button></form>`)
+const WITH_CHIP = page(`<form data-type="composer"><div contenteditable data-testid="prompt-textarea" role="textbox"><p><span contenteditable="false" data-chip><img alt="Deep research">Deep research</span>&nbsp;</p></div>
+  <button type="button" data-testid="send-button" aria-label="Send prompt" data-send>↑</button></form>`)
 const SIGNED_OUT = page(`<form data-type="composer"><div contenteditable role="textbox"></div></form>`, '<a data-testid="login-button" href="#">Log in</a>')
 
 describe('loadUiMap', () => {
@@ -204,6 +206,14 @@ describe.runIf(canRunBrowser)('UiEngine on a real page', () => {
     await engine.act('composer.insert', { text: 'hello' })
     await engine.act('composer.send')
     expect(await engine.count('turn.user')).toBe(1)
+  })
+
+  it('reads inserted text back without the composer\'s non-editable chips (e.g. a Deep research mention)', async () => {
+    const { engine, tab } = await open(WITH_CHIP)
+    await tab.getByRole('textbox').click()
+    await tab.keyboard.press('End')
+    await engine.act('composer.insert', { text: 'compare plugin catalogs' })
+    expect(await tab.getByRole('textbox').innerText()).toContain('Deep research')
   })
 
   it('does not heal while a guard state is showing', async () => {

@@ -31,14 +31,24 @@
     `reconciliation_failed`, because recovering it needs a conversation
     snapshot and a temporary conversation cannot be reopened.
   - A stop leaves turns as they are for the next start.
-- **MCP:** contributes `ask` (it waits up to `waitSeconds`, default 45 s, max
+- **Tiers and modes:**
+  - `tier` (or `defaultTier`) maps through the account's catalog `tiers` to the
+    driver's mode preset, and a `tier` decision records the preset;
+  - the receipt records the model and effort that were read back.
+- **Deep research:** `research` starts in a new (or the given) persistent
+  session and returns at once (`researchTimeoutMs`, `researchStallTimeoutMs`).
+- **Sessions:**
+  - a persistent session exists from acceptance and is bound to the first
+    account that runs it;
+  - turns of one session run in acceptance order.
+- **Sign-out:** a driver `reauth_required` (it saw the login surface) marks the
+  account `reauth-required`, so new turns route elsewhere.
+- **MCP:** contributes `research`, `ask` (it waits up to `waitSeconds`, default 45 s, max
   55 s, then returns the `turnId`) and `result` (long-polls a `turnId`). These
   replace the built-in placeholders.
 - **Injects:** `store`, `artifacts`, `turnReceipts`, `accounts`, `browser`,
   `providers`; `mcp` is optional.
 - **Not yet:**
-  - `research` (Deep Research);
   - recovering a submitted persistent turn from its conversation;
   - state write-back after a turn;
-  - tier and model selection (the receipt records `standard`/`chat`);
   - one-node DAG execution on the workflow engine.

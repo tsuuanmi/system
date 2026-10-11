@@ -15,7 +15,7 @@ import type {} from '@tsuuanmi/system-artifacts'
 import type {} from '@tsuuanmi/system-browser-patchright'
 import { type ContentId, sha256 } from '@tsuuanmi/system-libs'
 import type {} from '@tsuuanmi/system-mcp-server'
-import { type ConversationMode, type Disposition, ProviderError, ProviderScheduler, dispositionOf } from '@tsuuanmi/system-provider-core'
+import { type ConversationMode, type Disposition, ProviderError, type ProviderFeature, ProviderScheduler, type Tier, dispositionOf } from '@tsuuanmi/system-provider-core'
 import type {} from '@tsuuanmi/system-providers'
 import type {} from '@tsuuanmi/system-store'
 import type {} from '@tsuuanmi/system-turn-receipts'
@@ -34,12 +34,15 @@ export interface TurnView {
   turnId: string
   status: TurnStatus
   mode: ConversationMode
+  feature: ProviderFeature
+  tier: Tier
   sessionId?: string
   account?: string
   binding?: string
   answer?: string
   answerArtifact?: ContentId
   routeDecision?: ContentId
+  tierDecision?: ContentId
   error?: { kind: string; disposition: Disposition; message: string }
   createdAt: string
   updatedAt: string
@@ -53,14 +56,32 @@ export interface AskInput {
   persist?: boolean | undefined
   /** Retry-safe request key: the same key returns the same turn. */
   clientRequestId?: string | undefined
+  /** Intelligence tier; mapped through the account's catalog to a provider mode preset. */
+  tier?: Tier | undefined
+  /** `deep-research` always runs in a persistent session. */
+  feature?: ProviderFeature | undefined
 }
+
+export interface ResearchInput {
+  question: string
+  sessionId?: string | undefined
+  clientRequestId?: string | undefined
+}
+
+const TIERS: readonly Tier[] = ['economy', 'standard', 'frontier']
 
 export interface Config {
   maxConcurrentTurnsPerAccount?: number
-  /** Hard deadline per turn (default 15 min). */
+  /** Tier for turns that name none (default `standard`). */
+  defaultTier?: Tier
+  /** Hard deadline per chat turn (default 15 min). */
   turnTimeoutMs?: number
-  /** No-progress deadline per turn (default 5 min). */
+  /** No-progress deadline per chat turn (default 5 min). */
   stallTimeoutMs?: number
+  /** Hard deadline per Deep research turn (default 60 min). */
+  researchTimeoutMs?: number
+  /** No-progress deadline per Deep research turn (default 30 min). */
+  researchStallTimeoutMs?: number
 }
 
 interface Row {
@@ -68,6 +89,8 @@ interface Row {
   request_key: string | null
   session_id: string | null
   mode: ConversationMode
+  feature: ProviderFeature
+  tier: Tier
   prompt: string
   status: TurnStatus
   account: string | null
@@ -75,6 +98,7 @@ interface Row {
   answer: string | null
   answer_artifact: string | null
   route_decision: string | null
+  tier_decision: string | null
   error: string | null
   created_at: string
   updated_at: string
@@ -82,7 +106,7 @@ interface Row {
 
 interface SessionRow {
   session_id: string
-  account: string
+  account: string | null
   binding: string | null
 }
 
@@ -95,12 +119,17 @@ export class Turns extends Service {
 
   static Config: z<Config> = z.object({
     maxConcurrentTurnsPerAccount: z.natural().min(1).default(2).description('Parallel turns per account (different sessions)'),
-    turnTimeoutMs: z.natural().default(15 * 60_000).description('Hard deadline per turn, in milliseconds'),
-    stallTimeoutMs: z.natural().default(5 * 60_000).description('No-progress deadline per turn, in milliseconds'),
+    defaultTier: z.union(['economy', 'standard', 'frontier']).default('standard').description('Tier for turns that name none'),
+    turnTimeoutMs: z.natural().default(15 * 60_000).description('Hard deadline per chat turn, in milliseconds'),
+    stallTimeoutMs: z.natural().default(5 * 60_000).description('No-progress deadline per chat turn, in milliseconds'),
+    researchTimeoutMs: z.natural().default(60 * 60_000).description('Hard deadline per Deep research turn, in milliseconds'),
+    researchStallTimeoutMs: z.natural().default(30 * 60_000).description('No-progress deadline per Deep research turn, in milliseconds'),
   })
 
   private readonly schedulers = new Map<string, ProviderScheduler>()
   private readonly waiters = new Map<string, Set<() => void>>()
+  /** Turns of one session run in acceptance order, each after the previous one settles. */
+  private readonly sessionChains = new Map<string, Promise<void>>()
   private stopping = false
 
   constructor(ctx: Context, private readonly config: Config = {}) {
@@ -114,6 +143,16 @@ export class Turns extends Service {
       );
       CREATE INDEX turns_status ON turns (status);
       CREATE TABLE turn_sessions (session_id TEXT PRIMARY KEY, account TEXT NOT NULL, binding TEXT, created_at TEXT NOT NULL);`,
+    }, {
+      // Tier and feature per turn; sessions exist from acceptance, before an account is chosen.
+      version: 2,
+      sql: `ALTER TABLE turns ADD COLUMN feature TEXT NOT NULL DEFAULT 'chat';
+      ALTER TABLE turns ADD COLUMN tier TEXT NOT NULL DEFAULT 'standard';
+      ALTER TABLE turns ADD COLUMN tier_decision TEXT;
+      CREATE TABLE turn_sessions_v2 (session_id TEXT PRIMARY KEY, account TEXT, binding TEXT, created_at TEXT NOT NULL);
+      INSERT INTO turn_sessions_v2 SELECT session_id, account, binding, created_at FROM turn_sessions;
+      DROP TABLE turn_sessions;
+      ALTER TABLE turn_sessions_v2 RENAME TO turn_sessions;`,
     }])
     ctx.effect(() => {
       queueMicrotask(() => this.recover())
@@ -139,26 +178,38 @@ export class Turns extends Service {
           return this.view(existing)
         }
       }
+      const feature = input.feature ?? 'chat'
+      const tier = input.tier ?? this.config.defaultTier ?? 'standard'
+      if (!TIERS.includes(tier)) throw new ProviderError('invalid_input', `unknown tier ${String(tier)}`)
       let sessionId: string | null = null
       if (input.sessionId) {
         if (!db.prepare('SELECT 1 FROM turn_sessions WHERE session_id = ?').get(input.sessionId)) {
           throw new ProviderError('invalid_input', `unknown session ${input.sessionId}`)
         }
         sessionId = input.sessionId
-      } else if (input.persist) {
+      } else if (input.persist || feature === 'deep-research') {
         sessionId = newId('ses')
+        db.prepare('INSERT INTO turn_sessions (session_id, account, binding, created_at) VALUES (?, NULL, NULL, ?)').run(sessionId, now())
       }
       const row: Row = {
-        turn_id: newId('turn'), request_key: requestKey, session_id: sessionId, mode: sessionId ? 'persistent' : 'temporary',
-        prompt, status: 'queued', account: null, binding: null, answer: null, answer_artifact: null, route_decision: null,
+        turn_id: newId('turn'), request_key: requestKey, session_id: sessionId, mode: sessionId ? 'persistent' : 'temporary', feature, tier,
+        prompt, status: 'queued', account: null, binding: null, answer: null, answer_artifact: null, route_decision: null, tier_decision: null,
         error: null, created_at: now(), updated_at: now(),
       }
-      db.prepare(`INSERT INTO turns (turn_id, request_key, session_id, mode, prompt, status, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, 'queued', ?, ?)`).run(row.turn_id, requestKey, sessionId, row.mode, prompt, row.created_at, row.updated_at)
-      this.ctx.store.afterCommit(() => void this.run(row.turn_id))
+      db.prepare(`INSERT INTO turns (turn_id, request_key, session_id, mode, feature, tier, prompt, status, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?)`).run(row.turn_id, requestKey, sessionId, row.mode, feature, tier, prompt, row.created_at, row.updated_at)
+      this.ctx.store.afterCommit(() => void this.schedule(row))
       return this.view(row)
     })
     return view
+  }
+
+  /** Start Deep research in a persistent session; returns at once (REQ-SES-8). */
+  research(input: ResearchInput): TurnView {
+    return this.ask({
+      prompt: input.question, feature: 'deep-research', sessionId: input.sessionId, clientRequestId: input.clientRequestId,
+      ...(input.sessionId ? {} : { persist: true }),
+    })
   }
 
   get(turnId: string): TurnView | undefined {
@@ -201,8 +252,22 @@ export class Turns extends Service {
           'the host stopped after this prompt was sent; it is not resent automatically (ambiguous whether the provider answered)'))
         continue
       }
-      void this.run(row.turn_id)
+      this.schedule(row)
     }
+  }
+
+  /** Run a turn now, or after the previous turn of its session settles. */
+  private schedule(row: Row): void {
+    if (!row.session_id) {
+      void this.run(row.turn_id)
+      return
+    }
+    const previous = this.sessionChains.get(row.session_id) ?? Promise.resolve()
+    const next = previous.then(() => this.run(row.turn_id))
+    this.sessionChains.set(row.session_id, next)
+    void next.finally(() => {
+      if (this.sessionChains.get(row.session_id!) === next) this.sessionChains.delete(row.session_id!)
+    })
   }
 
   private async run(turnId: string): Promise<void> {
@@ -226,16 +291,17 @@ export class Turns extends Service {
     const accounts = await this.ctx.accounts.list()
     const providers = new Set(this.ctx.providers.list())
     const session = row.session_id ? this.session(row.session_id) : undefined
+    const bound = session?.account ?? undefined
     let chosen: string | undefined
     const candidates = accounts.map((a) => {
       const reasons: string[] = []
-      if (session && a.id !== session.account) reasons.push(`session is bound to ${session.account}`)
+      if (bound && a.id !== bound) reasons.push(`session is bound to ${bound}`)
       else if (!providers.has(a.provider)) reasons.push(`no driver for ${a.provider}`)
       else if (a.status !== 'ready') reasons.push(`status ${a.status}`)
       const selected = reasons.length === 0 && chosen === undefined
       if (selected) chosen = a.id
       else if (reasons.length === 0) reasons.push('a ready account earlier in the catalog was chosen')
-      return { option: a.id, selected, reasons: selected ? [session ? 'the session\'s account' : 'first ready account'] : reasons }
+      return { option: a.id, selected, reasons: selected ? [bound ? 'the session\'s account' : 'first ready account'] : reasons }
     })
     if (!chosen) {
       throw new ProviderError('reauth_required', `no ready account can take this turn (${candidates.map((c) => `${c.option}: ${c.reasons.join(', ')}`).join('; ') || 'no accounts configured'})`)
@@ -249,8 +315,23 @@ export class Turns extends Service {
       outcome: { option: chosen },
       deterministic: true,
     }, { producer: { type: 'system', ref: 'turns' } })
-    this.update(row.turn_id, { account: chosen, route_decision: decision.id })
-    return chosen
+    const account = chosen
+    const preset = accounts.find((a) => a.id === account)?.tiers[row.tier]
+    const tier = this.ctx.artifacts.recordDecision({
+      decisionType: 'tier',
+      question: `Which intelligence tier and mode preset does turn ${row.turn_id} use on ${account}?`,
+      inputs: [decision.id],
+      candidates: TIERS.map((t) => ({ option: t, selected: t === row.tier, reasons: t === row.tier ? [row.tier === (this.config.defaultTier ?? 'standard') ? 'requested or default tier' : 'requested tier'] : [] })),
+      decider: { type: 'rule', id: 'turns.tier.catalog', version: '1' },
+      outcome: { option: row.tier, detail: { account, preset: preset ?? null } },
+      deterministic: true,
+    }, { producer: { type: 'system', ref: 'turns' } })
+    this.ctx.store.transaction((db) => {
+      // A new persistent session is bound to the first account that runs it.
+      if (row.session_id) db.prepare('UPDATE turn_sessions SET account = COALESCE(account, ?) WHERE session_id = ?').run(account, row.session_id)
+    })
+    this.update(row.turn_id, { account, route_decision: decision.id, tier_decision: tier.id })
+    return account
   }
 
   private async execute(row: Row, accountId: string, signal: AbortSignal): Promise<void> {
@@ -260,20 +341,37 @@ export class Turns extends Service {
     const state = await this.ctx.accounts.portableState(accountId)
     const session = row.session_id ? this.session(row.session_id) : undefined
     const identity = this.identity(row, accountId)
+    const research = row.feature === 'deep-research'
+    const deadlines = research
+      ? { timeoutMs: this.config.researchTimeoutMs ?? 60 * 60_000, stallTimeoutMs: this.config.researchStallTimeoutMs ?? 30 * 60_000 }
+      : { timeoutMs: this.config.turnTimeoutMs ?? 15 * 60_000, stallTimeoutMs: this.config.stallTimeoutMs ?? 5 * 60_000 }
     const turn = await this.ctx.browser.openTurn(accountId, { state, signal })
+    let result: Awaited<ReturnType<typeof driver.ask>>
     try {
-      const result = await driver.ask(turn.page, row.prompt, {
+      result = await driver.ask(turn.page, row.prompt, {
         conversation: row.mode,
         binding: session?.binding ?? undefined,
+        mode: view.tiers[row.tier],
+        feature: row.feature,
         signal,
-        beforeSend: ({ previousResponse }) => {
+        deadlines,
+        beforeSend: ({ previousResponse, mode }) => {
           this.ctx.turnReceipts.submit({
             ...identity, prompt: row.prompt, previousResponse,
             conversation: { provider: view.provider, binding: session?.binding ?? '' },
-            mode: { verified: true, tier: 'standard', feature: 'chat' },
+            mode: { verified: true, tier: row.tier, ...mode, feature: row.feature },
           })
         },
       })
+    } catch (error) {
+      await turn.close()
+      // Positive evidence only (the driver saw the login surface): the account needs the operator.
+      if (error instanceof ProviderError && error.kind === 'reauth_required') {
+        await this.ctx.accounts.markSignedOut(accountId, 'login-surface', view.revision).catch(() => undefined)
+      }
+      throw error
+    }
+    try {
       this.ctx.store.transaction(() => {
         if (result.binding) {
           this.ctx.turnReceipts.bindConversation(identity, result.binding)
@@ -307,12 +405,14 @@ export class Turns extends Service {
     const shape = (view: TurnView) => ({ content: [{ type: 'text' as const, text: view.answer ?? JSON.stringify(view) }], structuredContent: { ...view } })
     const failure = (error: unknown) => ({ isError: true, content: [{ type: 'text' as const, text: (error as Error).message }] })
     const waitSeconds = zod.number().int().min(0).max(55).optional().describe('How long to wait for the answer before returning (default 45 s)')
+    const tier = zod.enum(['economy', 'standard', 'frontier']).optional().describe('Intelligence tier; the account catalog maps it to a model and effort preset')
     c.mcp.tool('ask', {
-      description: 'Ask ChatGPT on the web (a separate chat quota) through a saved account. One-shot by default (temporary chat); persist=true or sessionId continues a conversation. Returns the answer, or a turnId to poll with `result` if it takes longer than waitSeconds.',
+      description: 'Ask a website model (a separate chat quota) through a saved account. One-shot by default (temporary conversation); persist=true or sessionId continues a conversation. Returns the answer, or a turnId to poll with `result` if it takes longer than waitSeconds.',
       inputSchema: {
         prompt: zod.string().min(1).max(32_000),
         sessionId: zod.string().max(200).optional().describe('Continue an existing persistent session'),
         persist: zod.boolean().optional().describe('Start a persistent session (a normal conversation)'),
+        tier,
         clientRequestId: zod.string().max(200).optional().describe('Retry-safe request key'),
         waitSeconds,
       },
@@ -321,8 +421,25 @@ export class Turns extends Service {
         const started = this.ask({
           prompt: String(args.prompt), sessionId: args.sessionId as string | undefined,
           persist: args.persist as boolean | undefined, clientRequestId: args.clientRequestId as string | undefined,
+          tier: args.tier as Tier | undefined,
         })
         return shape(await this.wait(started.turnId, ((args.waitSeconds as number | undefined) ?? 45) * 1000))
+      } catch (error) {
+        return failure(error)
+      }
+    })
+    c.mcp.tool('research', {
+      description: 'Start provider-native Deep research in a persistent session. Returns at once with a turnId and sessionId; poll `result` (runs take minutes to tens of minutes).',
+      inputSchema: {
+        question: zod.string().min(1).max(32_000),
+        sessionId: zod.string().max(200).optional().describe('Run in an existing persistent session'),
+        clientRequestId: zod.string().max(200).optional().describe('Retry-safe request key'),
+      },
+    }, async (args) => {
+      try {
+        return shape(this.research({
+          question: String(args.question), sessionId: args.sessionId as string | undefined, clientRequestId: args.clientRequestId as string | undefined,
+        }))
       } catch (error) {
         return failure(error)
       }
@@ -377,13 +494,14 @@ export class Turns extends Service {
 
   private view(row: Row): TurnView {
     return {
-      turnId: row.turn_id, status: row.status, mode: row.mode,
+      turnId: row.turn_id, status: row.status, mode: row.mode, feature: row.feature, tier: row.tier,
       ...(row.session_id ? { sessionId: row.session_id } : {}),
       ...(row.account ? { account: row.account } : {}),
       ...(row.binding ? { binding: row.binding } : {}),
       ...(row.answer !== null ? { answer: row.answer } : {}),
       ...(row.answer_artifact ? { answerArtifact: row.answer_artifact as ContentId } : {}),
       ...(row.route_decision ? { routeDecision: row.route_decision as ContentId } : {}),
+      ...(row.tier_decision ? { tierDecision: row.tier_decision as ContentId } : {}),
       ...(row.error ? { error: JSON.parse(row.error) as TurnView['error'] & object } : {}),
       createdAt: row.created_at, updatedAt: row.updated_at,
     }

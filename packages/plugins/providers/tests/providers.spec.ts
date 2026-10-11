@@ -5,7 +5,7 @@ import Providers from '../src/index.ts'
 
 const driver = (provider: string): ProviderDriver => ({
   provider, loginUrl: 'https://example.test/login', stateOrigins: ['https://example.test'],
-  checkAuth: async () => 'signed-in', identity: async () => 'user-1', ask: async () => ({ text: 'ok', binding: undefined }),
+  checkAuth: async () => 'signed-in', identity: async () => 'user-1', ask: async () => ({ text: 'ok', binding: undefined, mode: {} }),
 })
 
 describe('ctx.providers', () => {

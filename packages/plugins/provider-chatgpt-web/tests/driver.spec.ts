@@ -41,7 +41,11 @@ describe.runIf(canRunBrowser)('ChatGptWebDriver against the fake site', () => {
     const context = await browser.newContext()
     cleanups.push(() => fake.stop(), () => context.close())
     const page = await context.newPage()
-    const driver = new ChatGptWebDriver({ origin: fake.origin, timeouts: { turnMs: 20_000, stallMs: 10_000, stableMs: 400, pollMs: 100 } })
+    const driver = new ChatGptWebDriver({
+      origin: fake.origin, timeouts: { turnMs: 20_000, stallMs: 10_000, stableMs: 400, pollMs: 100 },
+      modes: { instant: { model: 'Latest', effort: 'Instant' }, deep: { model: 'GPT-6', effort: 'High' }, locked: { model: 'GPT-5.6 Sol', effort: 'Medium' }, missing: { model: 'GPT-9' } },
+      defaultMode: 'instant',
+    })
     return { fake, page, context, driver }
   }
 
@@ -85,6 +89,37 @@ describe.runIf(canRunBrowser)('ChatGptWebDriver against the fake site', () => {
     await expect(failure).rejects.toThrow(/store unavailable/)
     expect(fake.sent).toEqual([])
   }, 30_000)
+
+  it('selects and verifies the configured model and power before sending, and reports them', async () => {
+    const { fake, page, driver } = await site({ answer: 'deep' })
+    const turn = await driver.ask(page, 'think hard', { conversation: 'temporary', mode: 'deep' })
+    expect(turn.mode).toEqual({ model: 'GPT-6', effort: 'High' })
+    expect(fake.sent[0]).toMatchObject({ model: 'GPT-6', power: 'High', mode: 'chat' })
+  }, 40_000)
+
+  it('uses the default mode when none is requested', async () => {
+    const { fake, page, driver } = await site()
+    const turn = await driver.ask(page, 'plain', { conversation: 'temporary' })
+    expect(turn.mode).toEqual({ model: 'Latest', effort: 'Instant' })
+    expect(fake.sent[0]).toMatchObject({ model: 'Latest', power: 'Instant' })
+  }, 40_000)
+
+  it('fails before sending on an unknown preset, an unknown model, or a locked model', async () => {
+    const { fake, page, driver } = await site({ lockedModels: ['GPT-5.6 Sol'] })
+    await expect(driver.ask(page, 'x', { conversation: 'temporary', mode: 'nope' })).rejects.toMatchObject({ kind: 'config_error', message: expect.stringMatching(/unknown mode nope/) })
+    await expect(driver.ask(page, 'x', { conversation: 'temporary', mode: 'missing' })).rejects.toMatchObject({ kind: 'config_error', message: expect.stringMatching(/GPT-9.*Latest, GPT-6/) })
+    await expect(driver.ask(page, 'x', { conversation: 'temporary', mode: 'locked' })).rejects.toMatchObject({ kind: 'config_error', message: expect.stringMatching(/locked/) })
+    expect(fake.sent).toEqual([])
+  }, 60_000)
+
+  it('runs Deep research from the + tools in a persistent conversation, with the prompt free of the tool chip', async () => {
+    const { fake, page, driver } = await site({ answer: 'A detailed report' })
+    const turn = await driver.ask(page, 'Survey the DSH plugin catalog', { conversation: 'persistent', feature: 'deep-research' })
+    expect(turn.text).toBe('A detailed report')
+    expect(turn.binding).toMatch(/^[0-9a-f-]{36}$/)
+    expect(fake.sent[0]).toMatchObject({ prompt: 'Survey the DSH plugin catalog', deepResearch: true, mode: 'chat', temporary: false })
+    await expect(driver.ask(page, 'x', { conversation: 'temporary', feature: 'deep-research' })).rejects.toMatchObject({ kind: 'invalid_input' })
+  }, 60_000)
 
   it('refuses to send when Chat cannot be selected (Work spends the Codex quota)', async () => {
     const { fake, page, driver } = await site({ chatToggleBroken: true })

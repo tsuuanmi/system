@@ -102,6 +102,27 @@ answer, so a second prompt was sent.
   Completion is decided from the DOM (stop gone, the answer's action buttons
   present, stable text). The network gives submission evidence and errors.
 
+**Model and tools survey (2026-10-12, read only; the Power level was stepped and restored).**
+
+- **Model menu.** `button "Select ChatGPT model"` opens `menu "Select ChatGPT model"`. It holds:
+  - the Power slider: `menuitem "Power"` over `[data-reasoning-slider]`, driven by
+    arrow keys, with a `status` that reads "Instant, 1 of 3.". The levels are
+    **Instant, Medium, High**. The button shows the level, and carries
+    `data-selected-reasoning-effort`;
+  - the model radios (`menuitemradio`, `aria-checked`): **Latest** (the
+    default), **GPT-6**, **GPT-5.6 Sol**, and **GPT-5.5** ("Leaving on October
+    14"). There is also a "Locked, opens access options" note.
+- **Tools.** `button "Add files and more"` opens a popover of plain buttons whose
+  names are the title and a description. Examples: "Deep research Get a detailed
+  report", "Web search Find real-time news and info", "Create image ...", and
+  apps such as GitHub and PDF.
+- **Deep research.** The tool inserts a non-editable mention chip *inside* the
+  composer (`[data-prompt-link-href="app://connector_openai_deep_research"]`,
+  `app-mention-name="deep-research"`). Send becomes enabled. Reloading removes the
+  chip. Deep research is **not offered in Temporary chat**, so it always runs in a
+  persistent conversation. How a run completes (clarifying questions, report
+  rendering) is not observed yet; it needs one live run.
+
 This confirms the design choice: role plus accessible name first, structural
 `data-*` attributes second, test ids only where they still exist.
 

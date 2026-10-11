@@ -69,6 +69,46 @@ elements:
     candidates:
       - { role: button, name: { en: '^Select ChatGPT model$' } }
 
+  composer.tools:
+    description: The "+" button that opens tools (files, Web search, Deep research, apps).
+    scope: composer.form
+    candidates:
+      - { role: button, name: { en: '^Add files and more$' } }
+  composer.deep-research:
+    description: The Deep research mention chip inserted into the composer (checked 2026-10-12).
+    scope: composer.form
+    candidates:
+      - { css: '[data-prompt-link-href="app://connector_openai_deep_research"]' }
+      - { css: '[app-mention-name="deep-research"]' }
+      - { role: img, name: { en: '^Deep research$' } }
+  tools.deep-research:
+    description: The Deep research entry of the "+" tools popover (absent in Temporary chat).
+    candidates:
+      - { role: button, name: { en: '^Deep research\b' } }
+    fingerprint: { role: button, name: { en: 'deep research' } }
+
+  model.menu:
+    description: Opened by composer.model. Holds the Power slider and the model radios (checked 2026-10-12).
+    candidates:
+      - { role: menu, name: { en: '^Select ChatGPT model$' } }
+  model.option:
+    description: One radio per model; the accessible name starts with the model name.
+    scope: model.menu
+    cardinality: many
+    candidates:
+      - { role: menuitemradio }
+  model.power:
+    description: The Power slider; ArrowRight/ArrowLeft step through the levels.
+    scope: model.menu
+    candidates:
+      - { role: menuitem, name: { en: '^Power$' } }
+      - { css: '[data-reasoning-slider]' }
+  model.power-status:
+    description: 'Reads "<level>, <n> of <total>."'
+    scope: model.menu
+    candidates:
+      - { role: status }
+
   turn.user:
     description: One heading per user turn.
     cardinality: many
@@ -97,6 +137,27 @@ actions:
     do: click
     target: temporary.toggle
     verify: { anyOf: [{ url: 'temporary-chat=true' }, { visible: temporary.off }] }
+    sideEffect: reversible
+    heal: deterministic
+    timeouts: { resolveMs: 5000, verifyMs: 5000 }
+  model.open:
+    do: click
+    target: composer.model
+    verify: { visible: model.menu }
+    sideEffect: reversible
+    heal: deterministic
+    timeouts: { resolveMs: 5000, verifyMs: 5000 }
+  tools.open:
+    do: click
+    target: composer.tools
+    verify: { visible: tools.deep-research }
+    sideEffect: reversible
+    heal: deterministic
+    timeouts: { resolveMs: 5000, verifyMs: 5000 }
+  tools.deep-research:
+    do: click
+    target: tools.deep-research
+    verify: { visible: composer.deep-research }
     sideEffect: reversible
     heal: deterministic
     timeouts: { resolveMs: 5000, verifyMs: 5000 }

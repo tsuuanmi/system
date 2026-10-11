@@ -29,7 +29,18 @@ The **ChatGPT Web provider driver**
 - **Live-verified on 2026-10-11:**
   - a Temporary chat answer through this driver;
   - every primary candidate resolving without drift.
+- **Modes:**
+  - `Config.modes` holds named presets of `{ model, effort }`. The defaults are
+    `instant`, `medium` and `high` on **Latest**, and `defaultMode: instant`.
+  - The driver selects the model radio and steps the Power slider, then reads
+    both back. It fails before sending if a preset, model or level is unknown,
+    or if a model is locked.
+  - Models seen on 2026-10-12: Latest, GPT-6, GPT-5.6 Sol, GPT-5.5. Power
+    levels: Instant, Medium, High.
+- **Deep research** (`feature: 'deep-research'`, persistent only): "+" →
+  "Deep research" → the mention chip is checked → the prompt goes after the
+  chip.
 - **Not yet:**
   - Markdown extraction (the answer is returned as text);
-  - model and effort selection, Deep Research, and attachments;
-  - registration on the `ctx.providers` seam.
+  - attachments;
+  - observing a live Deep research run to completion.

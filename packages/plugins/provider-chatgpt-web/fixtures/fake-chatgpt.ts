@@ -7,7 +7,11 @@
  * - the action slot shows Send (disabled when empty), Stop while running, and voice on an empty home page;
  * - turns are marked only by headings "You said:" / "ChatGPT said:"; a finished answer gets "Copy" and "Regenerate response";
  * - the send is `POST /backend-api/f/conversation` answered with an event stream that **stays open**;
- * - a second visible form also carries `data-chatgpt-composer`, without the textbox.
+ * - a second visible form also carries `data-chatgpt-composer`, without the textbox;
+ * - the model menu (`menu "Select ChatGPT model"`): model radios, and a Power slider driven by arrow keys
+ *   whose `status` reads "Instant, 1 of 3." (levels Instant, Medium, High), as surveyed live on 2026-10-12;
+ * - the "+" popover lists tools as buttons ("Deep research Get a detailed report"); Deep research inserts a
+ *   non-editable mention chip into the composer and is not offered in Temporary chat.
  * No private data from the live account is included.
  */
 import { randomUUID } from 'node:crypto'
@@ -29,6 +33,10 @@ export interface FakeOptions {
   answer?: string
   /** Delay before streaming starts, in ms. */
   thinkMs?: number
+  /** Model radios in the model menu. */
+  models?: string[]
+  /** Models shown but locked for this account. */
+  lockedModels?: string[]
 }
 
 export interface Sent {
@@ -36,6 +44,9 @@ export interface Sent {
   mode: string
   temporary: boolean
   conversationId: string | undefined
+  model: string
+  power: string
+  deepResearch: boolean
 }
 
 interface Conversation {
@@ -65,15 +76,29 @@ function html(options: Required<FakeOptions>, conversation: Conversation | undef
     <form data-chatgpt-composer data-composer-placement="home" id="composer">
       <button type="button" aria-label="Add files and more">+</button>
       <div contenteditable="true" role="textbox" aria-multiline="true" aria-label="Ask ChatGPT" data-composer-markdown id="input"></div>
-      <button type="button" aria-label="Select ChatGPT model" aria-haspopup="menu">Instant</button>
+      <button type="button" aria-label="Select ChatGPT model" aria-haspopup="menu" aria-expanded="false" id="picker">Instant</button>
       <button type="button" aria-label="Dictate">d</button>
       <span id="slot"></span>
     </form>
   </main>
 </main>
+<div role="menu" aria-label="Select ChatGPT model" id="model-menu" hidden>
+  <div role="menuitem" data-model-picker-view-toggle id="power-label">Instant</div>
+  <div role="status" id="power-status">Instant, 1 of 3.</div>
+  <div role="menuitem" aria-label="Power" tabindex="0" id="power" data-reasoning-slider><span role="slider" aria-hidden="true">●──</span></div>
+  <div id="model-radios"></div>
+</div>
+<div id="tools" hidden>
+  <button type="button">Add photos &amp; files Upload from computer</button>
+  <button type="button" id="tool-web">Web search Find real-time news and info</button>
+  <button type="button" id="tool-dr">Deep research Get a detailed report</button>
+</div>
 <script>
 const { options, conversationId } = ${state}
 let mode = options.startOnWork ? 'work' : 'chat'
+const POWERS = ['Instant', 'Medium', 'High']
+let power = 0
+let model = options.models[0]
 let temporary = new URLSearchParams(location.search).get('temporary-chat') === 'true'
 let running = false
 let convId = conversationId
@@ -95,6 +120,30 @@ function render() {
   if ($('send')) $('send').onclick = send
   if ($('stop')) $('stop').onclick = () => { running = false; render() }
 }
+function renderMenu() {
+  $('power-label').textContent = POWERS[power]
+  $('power-status').textContent = POWERS[power] + ', ' + (power + 1) + ' of 3.'
+  $('picker').textContent = POWERS[power]
+  $('model-radios').innerHTML = options.models.map((m) => '<div role="menuitemradio" aria-checked="' + (m === model) + '"'
+    + (options.lockedModels.includes(m) ? ' aria-disabled="true"' : '') + ' data-model="' + m + '">' + m + '</div>').join('')
+  for (const el of document.querySelectorAll('[data-model]')) el.onclick = () => {
+    if (el.getAttribute('aria-disabled') !== 'true') { model = el.dataset.model; renderMenu() }
+  }
+}
+$('picker').onclick = () => { const open = $('model-menu').hidden; $('model-menu').hidden = !open; $('picker').setAttribute('aria-expanded', String(open)); renderMenu() }
+$('power').addEventListener('keydown', (e) => {
+  if (e.key === 'ArrowRight') power = Math.min(2, power + 1)
+  if (e.key === 'ArrowLeft') power = Math.max(0, power - 1)
+  renderMenu()
+})
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { $('model-menu').hidden = true; $('tools').hidden = true; $('picker').setAttribute('aria-expanded', 'false') } })
+document.querySelector('[aria-label="Add files and more"]').onclick = () => { $('tool-dr').hidden = temporary; $('tools').hidden = !$('tools').hidden }
+$('tool-dr').onclick = () => {
+  const chip = '<span contenteditable="false" data-prompt-link-href="app://connector_openai_deep_research" app-mention-name="deep-research"><img alt="Deep research">Deep research</span>&nbsp;'
+  $('input').innerHTML = '<p>' + chip + '</p>'
+  $('tools').hidden = true
+  render()
+}
 $('mode-chat').onclick = () => { if (!options.chatToggleBroken) mode = 'chat'; render() }
 $('mode-work').onclick = () => { mode = 'work'; render() }
 $('temp').onclick = () => { temporary = true; history.pushState({}, '', '/?temporary-chat=true'); render() }
@@ -102,7 +151,10 @@ $('temp-off').onclick = () => { temporary = false; history.pushState({}, '', '/'
 $('input').addEventListener('input', render)
 $('input').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); if (!running && $('input').textContent.trim()) send() } })
 async function send() {
-  const prompt = $('input').textContent
+  const deepResearch = !!$('input').querySelector('[data-prompt-link-href="app://connector_openai_deep_research"]')
+  const copy = $('input').cloneNode(true)
+  for (const island of copy.querySelectorAll('[contenteditable="false"]')) island.remove()
+  const prompt = copy.textContent.replace(/\u00a0/g, ' ').trim()
   $('input').textContent = ''
   const user = document.createElement('div')
   user.className = 'turn'
@@ -112,7 +164,7 @@ async function send() {
   running = true
   render()
   const res = await fetch('/backend-api/f/conversation', { method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ prompt, mode, temporary, conversationId: convId }) })
+    body: JSON.stringify({ prompt, mode, temporary, conversationId: convId, model, power: POWERS[power], deepResearch }) })
   const reader = res.body.getReader()
   const answer = document.createElement('div')
   answer.className = 'turn'
@@ -156,7 +208,10 @@ export class FakeChatGpt {
   origin = ''
 
   constructor(options: FakeOptions = {}) {
-    this.options = { startOnWork: true, chatToggleBroken: false, signedIn: true, requireCookie: false, userId: 'user-fake123', sendLabel: 'Send', answer: 'OK', thinkMs: 300, ...options }
+    this.options = {
+      startOnWork: true, chatToggleBroken: false, signedIn: true, requireCookie: false, userId: 'user-fake123', sendLabel: 'Send',
+      answer: 'OK', thinkMs: 300, models: ['Latest', 'GPT-6', 'GPT-5.6 Sol', 'GPT-5.5'], lockedModels: [], ...options,
+    }
   }
 
   async start(): Promise<string> {

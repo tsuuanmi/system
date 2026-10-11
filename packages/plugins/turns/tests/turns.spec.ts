@@ -27,7 +27,7 @@ afterEach(async () => {
 })
 
 type CatalogEntry = { id: string; provider: string; quotaClass: 'subscription-chat'; tiers: Record<string, string> }
-const account = (id: string): CatalogEntry => ({ id, provider: 'chatgpt-web', quotaClass: 'subscription-chat', tiers: { standard: 'instant' } })
+const account = (id: string): CatalogEntry => ({ id, provider: 'chatgpt-web', quotaClass: 'subscription-chat', tiers: { economy: 'instant', standard: 'medium', frontier: 'high' } })
 
 async function boot(options: { fake?: FakeOptions; accounts?: CatalogEntry[]; ready?: string[]; dir?: string; capacity?: number } = {}) {
   const fake = new FakeChatGpt({ answer: 'OK', ...options.fake })
@@ -45,7 +45,7 @@ async function boot(options: { fake?: FakeOptions; accounts?: CatalogEntry[]; re
     ctx.plugin(VirtualDisplay, {}),
     ctx.plugin(BrowserPool, { chromePath: testChrome! }),
     ctx.plugin(Providers),
-    ctx.plugin(ChatGptWeb, { origin: fake.origin, overlayPath: join(dir, 'none.yaml') }),
+    ctx.plugin(ChatGptWeb, { origin: fake.origin, overlayPath: join(dir, 'none.yaml'), modes: { instant: { model: 'Latest', effort: 'Instant' }, medium: { model: 'Latest', effort: 'Medium' }, high: { model: 'GPT-6', effort: 'High' } }, defaultMode: 'instant' }),
     ctx.plugin(Turns, { turnTimeoutMs: 90_000, stallTimeoutMs: 80_000, maxConcurrentTurnsPerAccount: options.capacity ?? 2 }),
     ctx.plugin(WebServer, { host: '127.0.0.1', port: 0 }),
     ctx.plugin(McpEndpoint, { tokenFile: join(dir, 'mcp.token'), discoveryFile: join(dir, 'mcp.json') }),
@@ -78,6 +78,45 @@ describe.runIf(canRunBrowser)('ctx.turns: ask through a saved account', () => {
     expect(route?.body).toMatchObject({ decisionType: 'route', outcome: { option: 'chatgpt-main' } })
     expect(ctx.turnReceipts.read({ account: 'chatgpt-main', sessionId: turn.turnId, requestId: turn.turnId })).toMatchObject({ status: 'COMPLETED' })
   }, 90_000)
+
+  it('maps the requested tier through the account catalog to a mode preset, verifies it, and records it', async () => {
+    const { ctx, fake } = await boot()
+    const turn = await ctx.turns.wait(ctx.turns.ask({ prompt: 'hard question', tier: 'frontier' }).turnId, 30_000)
+    expect(turn).toMatchObject({ status: 'completed', tier: 'frontier', mode: 'temporary' })
+    expect(fake.sent[0]).toMatchObject({ model: 'GPT-6', power: 'High' })
+    const receipt = ctx.turnReceipts.read({ account: 'chatgpt-main', sessionId: turn.turnId, requestId: turn.turnId })
+    expect(receipt?.mode).toEqual({ verified: true, tier: 'frontier', model: 'GPT-6', effort: 'High', feature: 'chat' })
+    const tier = ctx.artifacts.get(turn.tierDecision!)?.body
+    expect(tier).toMatchObject({ decisionType: 'tier', outcome: { option: 'frontier', detail: { preset: 'high' } } })
+    const plain = await ctx.turns.wait(ctx.turns.ask({ prompt: 'default tier' }).turnId, 30_000)
+    expect(plain.tier).toBe('standard')
+    expect(fake.sent[1]).toMatchObject({ model: 'Latest', power: 'Medium' })
+  }, 90_000)
+
+  it('starts Deep research at once in a persistent session and delivers the report through result', async () => {
+    const { ctx, fake } = await boot({ fake: { answer: 'Research report', thinkMs: 1500 } })
+    const started = ctx.turns.research({ question: 'Survey the plugin catalog' })
+    expect(started).toMatchObject({ status: 'queued', mode: 'persistent', feature: 'deep-research' })
+    expect(started.sessionId).toMatch(/^ses_/)
+    const done = await ctx.turns.wait(started.turnId, 60_000)
+    expect(done).toMatchObject({ status: 'completed', answer: 'Research report' })
+    expect(fake.sent[0]).toMatchObject({ deepResearch: true, temporary: false, prompt: 'Survey the plugin catalog' })
+  }, 90_000)
+
+  it('accepts a follow-up on a new persistent session before its first turn has finished', async () => {
+    const { ctx } = await boot({ fake: { thinkMs: 1500 } })
+    const first = ctx.turns.ask({ prompt: 'one', persist: true })
+    const second = ctx.turns.ask({ prompt: 'two', sessionId: first.sessionId! })
+    expect((await ctx.turns.wait(second.turnId, 60_000)).status).toBe('completed')
+    expect((await ctx.turns.wait(first.turnId, 1000)).status).toBe('completed')
+  }, 90_000)
+
+  it('marks the account reauth-required on positive sign-out evidence, so the next turn routes elsewhere', async () => {
+    const { ctx } = await boot({ fake: { signedIn: false } })
+    const turn = await ctx.turns.wait(ctx.turns.ask({ prompt: 'x' }).turnId, 30_000)
+    expect(turn).toMatchObject({ status: 'failed', error: { kind: 'reauth_required' } })
+    expect(await ctx.accounts.get('chatgpt-main')).toMatchObject({ status: 'reauth-required' })
+  }, 60_000)
 
   it('keeps a persistent session on one conversation across asks', async () => {
     const { ctx, fake } = await boot({ fake: { answer: 'first' } })

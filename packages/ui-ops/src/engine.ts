@@ -254,9 +254,17 @@ export class UiEngine {
       case 'insertText': {
         const text = args.text ?? ''
         await locator.click()
+        // After anything already in the composer (such as a tool mention chip).
+        await locator.press('ControlOrMeta+End')
         // Insert as text (no key events), so editor shortcuts never fire; then read back.
         await this.page.keyboard.insertText(text)
-        const value = await locator.evaluate((el) => (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement ? el.value : el.textContent))
+        const value = await locator.evaluate((el) => {
+          if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) return el.value
+          // Non-editable islands (tool mention chips) are not part of the typed text.
+          const copy = el.cloneNode(true) as Element
+          for (const island of copy.querySelectorAll('[contenteditable="false"]')) island.remove()
+          return copy.textContent
+        })
         if (normalizeText(value) !== normalizeText(text)) {
           throw new ProviderError('ui_drift', `${this.map.provider}: ${spec.target} readback differs from the inserted text`)
         }
