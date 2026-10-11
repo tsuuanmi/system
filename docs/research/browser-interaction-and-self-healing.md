@@ -50,6 +50,37 @@ Snapshot from the reference repositories (codex-chatgpt-web is the newest, dated
 | conversation binding | URL `/c/<id>` |
 | errors | rate-limit and generic error dialogs; HTTP 413 `message_length_exceeds_limit`; SSE `error_code` |
 
+## Live check (2026-10-11, signed-in account, read only)
+
+The maintainer signed in through a temporary remote view. The login profile was
+then reopened headed on a private Xvfb, and only the UI was read: nothing was
+typed or sent, and no state left the browser.
+
+- **Test ids are almost gone.** One `data-testid` remains on the home page
+  (`app-shell-header-context-menu-surface`). `prompt-textarea`, `send-button`,
+  and `model-switcher-dropdown-button`, which every reference repository relies
+  on, are absent.
+- **ARIA roles and names are present and stable-looking:**
+
+| Operation | Live signal |
+|---|---|
+| composer form | `form[data-chatgpt-composer]` (no role) |
+| composer input | `textbox "Ask ChatGPT"`, `contenteditable`, `[data-composer-markdown]` |
+| add files and tools | `button "Add files and more"` with `aria-expanded`, `data-composer-navigation-target="add-context"` |
+| file inputs | `input[type=file]` labelled "Attach files" / "Attach photos" |
+| model picker | `button "Select ChatGPT model"` (`aria-haspopup=menu`, `data-composer-navigation-target="reasoning"`), showing the current mode ("Instant") |
+| composer mode | `group "Composer mode"` with `button "Chat" [pressed]` and `button "Work"` |
+| temporary chat | `button "Temporary chat"` |
+| voice | `button "Dictate"`, `button "Start Voice"` (the send button appears only once text is entered; not yet observed) |
+
+This confirms the design choice: role plus accessible name first, structural
+`data-*` attributes second, test ids only where they still exist.
+
+**Remote login without root on Ubuntu 20.04:** TigerVNC's static `Xvnc` needs
+`libxcvt`, which Focal lacks. Its `x0vncserver` runs, and serves an existing Xvfb
+display (`-localhost`, `VncAuth`), with noVNC and websockify in front. This is
+the fallback when `x11vnc` is not installed.
+
 ## Findings
 
 1. No existing tool keeps a website's operations **as data** with ordered
