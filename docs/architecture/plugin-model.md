@@ -183,9 +183,6 @@ in the test fake (two Xvfbs for concurrent callers), which was then fixed.
 - **A scripted fake `ProviderDriver`** for testing the turn runtime without a
   browser is still to come; today the runtime is tested through a real browser on
   the fake site.
-- **Tier escalation** after a rejected result (REQ-WRK-9) is not built: a
-  rejection fails the run (`acceptance_rejected`, `NONE`). The workflow engine
-  has no graph growth yet, which escalation needs.
 - **Agent runtimes, first slice.**
   - Only `runtime-claude-agent-sdk` exists. It offers `read-only` and
     `workspace-write`, with writes confined to the workspace (verified live).

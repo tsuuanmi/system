@@ -22,6 +22,8 @@ export interface NodeTemplate {
   conversation: 'temporary' | 'persistent' | 'caller'
   /** Acceptance contract the node's result must pass (REQ-WRK-3). */
   acceptance: string
+  /** Times a rejected result is retried at the next tier up (REQ-WRK-9; default 1, at most 3). */
+  maxEscalations?: number
 }
 
 export interface CallerOptions {

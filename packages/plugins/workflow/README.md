@@ -55,8 +55,15 @@ second execution path (INV-1).
     otherwise.
   - When the turn completes, `ctx.workers.accept` checks the result against
     the node's contract and records an `acceptance` decision. `COMPLETED`
-    holds the output receipt (result plus acceptance). A rejection fails the
-    node with `acceptance_rejected` (`NONE`).
+    holds the output receipt (result plus acceptance).
+  - **Escalation (REQ-WRK-9).** A rejected result runs again at the next tier
+    above the one that served it, at most `maxEscalations` times (per node,
+    default 1, at most 3). The run is a new execution of the same node: its
+    requirement's tier becomes `{ min: next, source: decision }`, and its key
+    carries the escalation count. The rejected result stays as evidence. The
+    choice is an `escalation` decision either way, and `workflow.node.escalated`
+    names it. With no tier left, or the bound reached, the node fails with
+    `acceptance_rejected` (`NONE`).
 - **Retries (REQ-WF-6).**
   - A failure is retried, up to `maxAttempts` and after
     `retryDelayMs × 2^(attempt−1)`, only when all of these hold:
@@ -98,6 +105,6 @@ second execution path (INV-1).
 - **Retention:** runs are deleted only by the operator (no command yet). After
   `retainDays`, a finished run's input text and rendered prompts are cleared.
 - **Not yet:** graph growth, plan approval gates, teams, lineage invalidation,
-  tier escalation, and the operator commands `stop`, `continue`, and `delete`.
+  and the operator commands `stop`, `continue`, and `delete`.
 - **Injects:** `store`, `artifacts`, `eventLog`, `leases`, `egress`, `workers`;
   `mcp` is optional.

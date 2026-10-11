@@ -38,7 +38,7 @@ export interface FakeOptions {
   /** Accessible name of the send button (drift tests). */
   sendLabel?: string
   /** Answer text, or a function of the prompt; streamed word by word. */
-  answer?: string | ((prompt: string) => string)
+  answer?: string | ((prompt: string, sent: Sent) => string)
   /** Delay before streaming starts, in ms. */
   thinkMs?: number
   /** Model radios in the model menu. */
@@ -357,7 +357,7 @@ export class FakeChatGpt {
       const research = sent.deepResearch && !this.options.clarify
       const answer = sent.deepResearch
         ? (this.options.clarify ? 'Which aspect should the research focus on?' : 'Deep Research has started investigating. The final report will appear here.')
-        : typeof this.options.answer === 'function' ? this.options.answer(sent.prompt) : this.options.answer
+        : typeof this.options.answer === 'function' ? this.options.answer(sent.prompt, sent) : this.options.answer
       if (research) {
         const run = { done: false, report: this.options.report }
         user.research = conversation.researches.push(run) - 1

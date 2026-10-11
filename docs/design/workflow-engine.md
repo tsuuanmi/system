@@ -151,7 +151,9 @@ static templates (`ask`, and `research` → `compact`). It has:
 - preflight and a spec hash;
 - durable node records, and input receipts bound by `inputHash`;
 - `worker` nodes run as turns keyed by run, node, attempt, and input hash;
-- acceptance through `ctx.workers`;
+- acceptance through `ctx.workers`, with bounded tier escalation after a
+  rejection (a new execution of the same node, recorded as an `escalation`
+  decision);
 - bounded retries by disposition;
 - leases, and recovery on restart.
 

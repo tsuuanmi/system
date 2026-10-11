@@ -18,7 +18,7 @@ import { canonicalJson, type ContentId, SchemaRegistry, sha256 } from '@tsuuanmi
 import type {} from '@tsuuanmi/system-store'
 import type {} from '@tsuuanmi/system-egress'
 import { dispositionOf, type ProviderErrorKind } from '@tsuuanmi/system-provider-core'
-import { AdmissionFailure, type AdmittedWorker, type ArtifactRef, type Classification, type Tier, type WorkRequirement, type WorkerExecution } from '@tsuuanmi/system-workers-core'
+import { AdmissionFailure, type AdmittedWorker, type ArtifactRef, type Classification, type Tier, TIERS, type WorkRequirement, type WorkerExecution } from '@tsuuanmi/system-workers-core'
 import { z as zod } from 'zod'
 import { type CallerOptions, DEFAULT_TEMPLATES, type NodeTemplate, render, type ResolvedNode, resolve } from './spec.ts'
 
@@ -161,6 +161,8 @@ interface NodeRow {
   quota_class: string | null
   /** The turn's egress, tier, and route (or admission) decisions, kept here because runs outlive turns. */
   decisions: string | null
+  /** Rejected results retried at a higher tier so far. */
+  escalations: number
   error: string | null
   updated_at: string
 }
@@ -184,6 +186,7 @@ export class Workflow extends Service {
       callerTier: z.boolean(),
       conversation: z.union(['temporary', 'persistent', 'caller']).required(),
       acceptance: z.string().required(),
+      maxEscalations: z.natural().max(3),
     }))).default({}).description('Workflow templates by name, added to the built-in ask and research'),
     maxAttempts: z.natural().min(1).max(10).default(3).description('Attempts per node for retryable failures'),
     retryDelayMs: z.natural().default(5000).description('First back-off delay, doubled per attempt'),
@@ -225,6 +228,10 @@ export class Workflow extends Service {
       sql: `ALTER TABLE workflow_nodes RENAME COLUMN turn_id TO execution_id;
       ALTER TABLE workflow_nodes ADD COLUMN source TEXT;
       UPDATE workflow_nodes SET source = 'website' WHERE execution_id IS NOT NULL;`,
+    }, {
+      // Tier escalation after a rejected result (REQ-WRK-9).
+      version: 4,
+      sql: 'ALTER TABLE workflow_nodes ADD COLUMN escalations INTEGER NOT NULL DEFAULT 0;',
     }])
     ctx.effect(() => {
       queueMicrotask(() => {
@@ -367,7 +374,7 @@ export class Workflow extends Service {
       data: { classification: classification ?? this.ctx.egress.defaultClassification, refs: [] },
       egressPolicy: 'egress.classification-and-secrets',
       tier: { min: node.tier, source: node.tierSource },
-      acceptance: { contract: node.acceptance },
+      acceptance: { contract: node.acceptance, maxEscalations: node.maxEscalations ?? 1 },
     }
   }
 
@@ -522,7 +529,7 @@ export class Workflow extends Service {
       try {
         this.ctx.store.transaction(() => {
           const started = source.start({
-            key: `workflow:${run.run_id}:${node.node_id}:${attempt}:${record.inputReceipt!.inputHash}`,
+            key: `workflow:${run.run_id}:${node.node_id}:${attempt}:${node.escalations}:${record.inputReceipt!.inputHash}`,
             worker: admitted.worker.worker, prompt: node.prompt!, sessionId: spec.session.sessionId,
             requirement: record.requirement, decisions: admitted.decisions,
           })
@@ -573,12 +580,46 @@ export class Workflow extends Service {
       if (acceptance.accepted) {
         this.writeNode(node, { state: 'COMPLETED', error: null, ...decisions }, (r) => ({ ...r, outputReceipt: { result, acceptance: acceptance.decision }, lastDecision: acceptance.decision }), lease)
         this.ctx.eventLog.append({ type: 'workflow.node.completed', runId: run.run_id, nodeId: node.node_id, decision: acceptance.decision, data })
-      } else {
+      } else if (!this.escalate(run, node, spec, result, acceptance.decision, acceptance.reasons, decisions, lease)) {
         const error: WorkflowError = { kind: 'acceptance_rejected', disposition: 'NONE', message: `${spec.acceptance}: ${acceptance.reasons.join('; ')}` }
         this.writeNode(node, { state: 'FAILED', error: JSON.stringify(error), ...decisions }, (r) => ({ ...r, lastDecision: acceptance.decision }), lease)
         this.ctx.eventLog.append({ type: 'workflow.node.failed', runId: run.run_id, nodeId: node.node_id, decision: acceptance.decision, data: { ...data, kind: error.kind } })
       }
     })
+  }
+
+  /**
+   * A rejected result may run again at the next tier above the one that served it, at most
+   * `maxEscalations` times (REQ-WRK-9, routing.md#intelligence-tiers). The rejected result stays
+   * as evidence; the choice is an `escalation` decision either way. True when it escalated.
+   */
+  private escalate(run: RunRow, node: NodeRow, spec: ResolvedNode, result: ArtifactRef, acceptance: ArtifactRef, reasons: string[], decisions: { decisions: string }, lease: () => Lease): boolean {
+    const max = spec.maxEscalations ?? 1
+    const served = node.served_tier ?? spec.tier
+    const next = TIERS[TIERS.indexOf(served) + 1]
+    const escalate = node.escalations < max && next !== undefined
+    const why = escalate
+      ? [`${spec.acceptance} rejected the ${served} result (${reasons.join('; ')}); escalation ${node.escalations + 1} of ${max} to ${next}`]
+      : [next === undefined ? `no tier above ${served}` : `escalation bound reached (${max})`]
+    const decision = this.ctx.artifacts.recordDecision({
+      decisionType: 'escalation',
+      question: `Does node ${node.node_id} of run ${run.run_id} run again at a higher tier after its result was rejected?`,
+      inputs: [acceptance, result],
+      candidates: [{ option: 'escalate', selected: escalate, reasons: escalate ? why : [] }, { option: 'fail', selected: !escalate, reasons: escalate ? [] : why }],
+      decider: { type: 'policy', id: 'workflow.escalation', version: '1' },
+      outcome: { option: escalate ? 'escalate' : 'fail', ...(escalate ? { detail: { from: served, to: next } } : {}) },
+      deterministic: true,
+    }, { producer: { type: 'system', ref: 'workflow' }, runId: run.run_id, nodeId: node.node_id })
+    if (!escalate) return false
+    this.writeNode(node, { state: 'READY', execution_id: null, escalations: node.escalations + 1, error: null, ...decisions }, (r) => {
+      const next_: NodeRecord = {
+        ...r, requirement: { ...r.requirement, tier: { min: next!, source: 'decision', decision: decision.id as ArtifactRef } }, lastDecision: decision.id as ArtifactRef,
+      }
+      delete next_.execution
+      return next_
+    }, lease)
+    this.ctx.eventLog.append({ type: 'workflow.node.escalated', runId: run.run_id, nodeId: node.node_id, decision: decision.id, data: { from: served, to: next, escalation: node.escalations + 1 } })
+    return true
   }
 
   /** The tier and route decisions recorded when the node's current attempt was routed. */

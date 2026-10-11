@@ -151,6 +151,23 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
     expect(fake.sent).toHaveLength(1)
   }, 90_000)
 
+  it('escalates a rejected result to the next tier once, keeping the rejected result as evidence (REQ-WRK-9)', async () => {
+    const cited = [{ nodeId: 'ask:1', objective: 'x', prompt: '{{input}}', capabilities: ['reason'], tier: 'economy', conversation: 'temporary', acceptance: 'acceptance.cited' }]
+    const { ctx, fake } = await boot({
+      fake: { answer: (_prompt, sent) => (sent.power === 'Instant' ? 'No sources here.' : 'See https://src.example/a') },
+      workflow: { templates: { cited } },
+    })
+    const done = await ctx.workflow.wait(ctx.workflow.start({ template: 'cited', input: 'q' }).runId, 60_000)
+    expect(done).toMatchObject({ status: 'completed', answer: 'See https://src.example/a', nodes: [{ tier: 'standard' }] })
+    expect(fake.sent.map((s) => s.power)).toEqual(['Instant', 'Medium'])
+    const record = ctx.workflow.records(done.runId)[0]!
+    expect(record.requirement.tier).toMatchObject({ min: 'standard', source: 'decision' })
+    const escalation = ctx.artifacts.get(record.requirement.tier.decision!)?.body as { decisionType: string; outcome: { option: string }; inputs: string[] }
+    expect(escalation).toMatchObject({ decisionType: 'escalation', outcome: { option: 'escalate' } })
+    expect(escalation.inputs).toHaveLength(2)
+    expect(ctx.eventLog.query({ type: 'workflow.node.escalated', runId: done.runId })).toHaveLength(1)
+  }, 90_000)
+
   it('retries a node that failed with a back-off disposition, within the bound (REQ-WF-6)', async () => {
     const { ctx, fake } = await boot({ fake: { thinkMs: 1500 }, turns: { maxPendingTurns: 1 }, workflow: { retryDelayMs: 1000, maxAttempts: 6 } })
     const blocker = ctx.workflow.start({ template: 'ask', input: 'hold the only slot' })
