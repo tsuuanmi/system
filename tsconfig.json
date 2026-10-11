@@ -56,13 +56,17 @@
       ],
       "@tsuuanmi/system-ui-ops": [
         "packages/ui-ops/src/index.ts"
+      ],
+      "@tsuuanmi/system-provider-chatgpt-web": [
+        "packages/plugins/provider-chatgpt-web/src/index.ts"
       ]
     }
   },
   "include": [
-    "scripts/**/*.ts",
-    "spikes/**/*.ts",
+    "packages/**/fixtures/**/*.ts",
     "packages/**/src/**/*.ts",
-    "packages/**/tests/**/*.ts"
+    "packages/**/tests/**/*.ts",
+    "scripts/**/*.ts",
+    "spikes/**/*.ts"
   ]
 }

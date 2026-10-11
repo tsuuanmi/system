@@ -109,7 +109,11 @@ been unchanged for `stableMs`. Idle alone is not enough, because the slot can
 flip between phases of a long answer (thinking, tool calls, Deep Research).
 Network streams are not used to decide "running": on ChatGPT the event stream
 stays open after the answer is complete. They serve as submission evidence and
-as typed error signals. In persistent mode, completion and the canonical
+as typed error signals.
+
+Known limitation: typing into the composer while the site is generating turns the
+slot back to **Send**. The driver never types during a run, so this case is not
+handled yet. In persistent mode, completion and the canonical
 conversation binding are awaited together, so a turn without a canonical binding
 fails. A hard timeout and a
 stall timeout are reported as distinct errors.

@@ -43,7 +43,7 @@ can be added without changing consumers.
 | Provider runtime | `display` (abstract `Display` in `@tsuuanmi/system-provider-core`; `prepare('invisible' \| 'visible')`, where `visible` is the operator's `DISPLAY` for every provider) | `@tsuuanmi/system-display-virtual` (Xvfb, Linux), `display-offscreen` (v1.0); never headless | browser ([browser runtime](../design/browser-runtime.md)) |
 | Provider runtime | `accounts` | `@tsuuanmi/system-accounts` (records and credentials as encrypted grants in **DSH** `ctx.credentials`, provided by `@tsuuanmi/system-credentials-vault`) | provider runtime, admission |
 | Provider runtime | `turnReceipts` | `@tsuuanmi/system-turn-receipts` | provider drivers, recovery |
-| Provider runtime | `providers` (driver registry) | `provider-chatgpt-web`, `provider-gemini-web` | website capability |
+| Provider runtime | `providers` (driver registry) | `@tsuuanmi/system-provider-chatgpt-web` (driver implemented; registration lands with the registry), `provider-gemini-web` | website capability |
 | Capabilities | `website` | `website-core` | Worker providers |
 | Capabilities | `exec` | **DSH** `ctx.shell` / `ctx.fs` / `ctx.sandbox` / `ctx.subprocess` (local, sandbox, SSH) | local-tools Worker |
 | Capabilities | `models` (API and local model providers) | **DSH** `ctx.llm` (`llm-pi-ai`: OpenAI-compatible and others) | Worker providers, especially `economy`-tier jobs ([purpose P4](../requirements/purpose.md#p4-cheap-models-do-low-level-work-strong-models-do-hard-work)) |

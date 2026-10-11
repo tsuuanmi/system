@@ -387,6 +387,25 @@ importers:
         specifier: workspace:*
         version: link:../store
 
+  packages/plugins/provider-chatgpt-web:
+    dependencies:
+      '@tsuuanmi/system-provider-core':
+        specifier: workspace:*
+        version: link:../../provider-core
+      '@tsuuanmi/system-ui-ops':
+        specifier: workspace:*
+        version: link:../../ui-ops
+    devDependencies:
+      '@tsuuanmi/system-browser-patchright':
+        specifier: workspace:*
+        version: link:../browser-patchright
+      '@tsuuanmi/system-display-virtual':
+        specifier: workspace:*
+        version: link:../display-virtual
+      patchright-core:
+        specifier: 1.63.0
+        version: 1.63.0
+
   packages/plugins/store:
     dependencies:
       '@tsuuanmi/system-libs':
