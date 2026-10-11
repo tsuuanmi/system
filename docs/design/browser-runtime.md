@@ -138,7 +138,7 @@ NEEDS_HUMAN ──▶ remote browser on the SAME profile + `account.status = rea
 
 - **Steps are matched by URL path and accessible role**, not brittle CSS.
   The language is forced to `en-US`. DOM fixtures cover every page, and drift
-  fails closed with `CODE_FIX`.
+  fails closed with `CONFIG_FIX` ([UI operations](ui-operations.md)).
 - **Code providers:**
   - `totp-local` computes RFC 6238 locally with `otpauth`. If fewer than 5 seconds
     remain in the window, it waits for the next window. Codes are never reused.
@@ -186,4 +186,4 @@ A failed verification saves nothing.
 | Cloudflare challenge response (`cf-mitigated: challenge`) **outside** an active turn | reload once, then confirm with a 2xx |
 | a challenge during a turn, or after the reload | turn fails as `USER_ACTION` (`challenge`). The operator resolves it through the `visible` or `remote` view. Nothing is auto-solved |
 | signed out (positive evidence) | `reauth-required`; queued work for the account fails closed (REQ-ACC-5) |
-| UI drift (selector or fixture mismatch) | turn fails closed with `CODE_FIX`; a health alert is raised |
+| UI drift (no candidate resolves) | bounded self-heal ([UI operations](ui-operations.md#self-heal)); if it fails, the turn fails closed with `CONFIG_FIX` and a diagnostic bundle, and a health alert is raised |

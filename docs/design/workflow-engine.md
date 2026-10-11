@@ -123,6 +123,7 @@ the decision artifact that caused it.
 | browser session or conversation broken | `RECREATE_SESSION` |
 | auth lost, confirmation needed, quota | `USER_ACTION` |
 | contract violation, scheduler exception | `CODE_FIX` |
+| website UI drift that self-heal could not resolve | `CONFIG_FIX` (update the UI map; [UI operations](ui-operations.md)) |
 | invalid input, rejected by acceptance | `NONE` |
 
 Attempts are bounded (default 3). The operator command `continue` reopens exactly

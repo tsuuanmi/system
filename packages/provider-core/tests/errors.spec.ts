@@ -11,7 +11,7 @@ describe('failure taxonomy (docs/design/workflow-engine.md#recovery)', () => {
     expect(dispositionOf('challenge')).toBe('USER_ACTION')
     expect(dispositionOf('quota_exhausted')).toBe('USER_ACTION')
     expect(dispositionOf('reconciliation_failed')).toBe('USER_ACTION')
-    expect(dispositionOf('ui_drift')).toBe('CODE_FIX')
+    expect(dispositionOf('ui_drift')).toBe('CONFIG_FIX') // ADR-0021: fix the UI map, not the code
     expect(dispositionOf('config_error')).toBe('CODE_FIX')
     expect(dispositionOf('aborted')).toBe('NONE')
     expect(dispositionOf('invalid_input')).toBe('NONE')

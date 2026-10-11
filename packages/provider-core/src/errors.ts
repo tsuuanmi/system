@@ -1,5 +1,5 @@
 /** Retry disposition per failure class (docs/design/workflow-engine.md#recovery). */
-export type Disposition = 'IMMEDIATE' | 'BACKOFF' | 'RECREATE_SESSION' | 'USER_ACTION' | 'CODE_FIX' | 'NONE'
+export type Disposition = 'IMMEDIATE' | 'BACKOFF' | 'RECREATE_SESSION' | 'USER_ACTION' | 'CODE_FIX' | 'CONFIG_FIX' | 'NONE'
 
 export type ProviderErrorKind =
   | 'network' | 'timeout' | 'provider_stalled' | 'session_broken'
@@ -15,7 +15,7 @@ const DISPOSITIONS: Record<ProviderErrorKind, Disposition> = {
   challenge: 'USER_ACTION',
   quota_exhausted: 'USER_ACTION',
   reconciliation_failed: 'USER_ACTION',
-  ui_drift: 'CODE_FIX',
+  ui_drift: 'CONFIG_FIX', // update the provider's UI map (ADR-0021)
   config_error: 'CODE_FIX',
   aborted: 'NONE',
   invalid_input: 'NONE',

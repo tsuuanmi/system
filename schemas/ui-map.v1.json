@@ -1,0 +1,637 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:tsuuanmi:system:schema:ui-map:v1",
+  "title": "Website UI map",
+  "description": "Operations of one provider website as data (design/ui-operations.md, ADR-0021). Drivers name operations by id; the engine resolves them.",
+  "type": "object",
+  "required": [
+    "schema",
+    "provider",
+    "uiRevision",
+    "locales",
+    "elements"
+  ],
+  "properties": {
+    "schema": {
+      "const": "ui-map@1.0"
+    },
+    "provider": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]*$",
+      "maxLength": 64
+    },
+    "uiRevision": {
+      "type": "string",
+      "format": "date",
+      "description": "When the map was last checked against the live site."
+    },
+    "locales": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 64,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z]{2,3}(-[A-Z]{2})?$"
+      }
+    },
+    "elements": {
+      "type": "object",
+      "maxProperties": 256,
+      "propertyNames": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9-]*(\\.[a-z][a-z0-9-]*)*$",
+        "maxLength": 96
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/element"
+      }
+    },
+    "actions": {
+      "type": "object",
+      "maxProperties": 256,
+      "propertyNames": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9-]*(\\.[a-z][a-z0-9-]*)*$",
+        "maxLength": 96
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/action"
+      }
+    },
+    "network": {
+      "type": "object",
+      "maxProperties": 256,
+      "propertyNames": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9-]*(\\.[a-z][a-z0-9-]*)*$",
+        "maxLength": 96
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/network"
+      }
+    },
+    "states": {
+      "type": "object",
+      "maxProperties": 256,
+      "propertyNames": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9-]*(\\.[a-z][a-z0-9-]*)*$",
+        "maxLength": 96
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/condition"
+      }
+    },
+    "errors": {
+      "type": "array",
+      "maxItems": 64,
+      "items": {
+        "type": "object",
+        "required": [
+          "when",
+          "kind"
+        ],
+        "properties": {
+          "when": {
+            "$ref": "#/$defs/condition"
+          },
+          "kind": {
+            "enum": [
+              "challenge",
+              "reauth_required",
+              "quota_exhausted",
+              "invalid_input",
+              "provider_stalled",
+              "network",
+              "session_broken"
+            ]
+          },
+          "message": {
+            "type": "string",
+            "maxLength": 256
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "localized": {
+      "type": "object",
+      "description": "Regex per locale (anchored as written), e.g. {\"en\": \"^Send prompt$\"}.",
+      "minProperties": 1,
+      "maxProperties": 64,
+      "propertyNames": {
+        "pattern": "^[a-z]{2,3}(-[A-Z]{2})?$"
+      },
+      "additionalProperties": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256
+      }
+    },
+    "candidate": {
+      "description": "One locator; candidates are tried in order and CSS comes last.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "testId"
+          ],
+          "properties": {
+            "testId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "role"
+          ],
+          "properties": {
+            "role": {
+              "type": "string",
+              "pattern": "^[a-z]+$",
+              "maxLength": 32
+            },
+            "name": {
+              "$ref": "#/$defs/localized"
+            },
+            "exact": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "label"
+          ],
+          "properties": {
+            "label": {
+              "$ref": "#/$defs/localized"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "text"
+          ],
+          "properties": {
+            "text": {
+              "$ref": "#/$defs/localized"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "css"
+          ],
+          "properties": {
+            "css": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "condition": {
+      "description": "A predicate over the page, the map's elements, or observed network events.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "visible"
+          ],
+          "properties": {
+            "visible": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9-]*(\\.[a-z][a-z0-9-]*)*$",
+              "maxLength": 96
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "hidden"
+          ],
+          "properties": {
+            "hidden": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9-]*(\\.[a-z][a-z0-9-]*)*$",
+              "maxLength": 96
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "countIncreased"
+          ],
+          "properties": {
+            "countIncreased": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9-]*(\\.[a-z][a-z0-9-]*)*$",
+              "maxLength": 96
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "attr"
+          ],
+          "properties": {
+            "attr": {
+              "type": "object",
+              "required": [
+                "of",
+                "name"
+              ],
+              "properties": {
+                "of": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9-]*(\\.[a-z][a-z0-9-]*)*$",
+                  "maxLength": 96
+                },
+                "name": {
+                  "type": "string",
+                  "maxLength": 64
+                },
+                "equals": {
+                  "type": "string",
+                  "maxLength": 256
+                },
+                "present": {
+                  "type": "boolean"
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "url"
+          ],
+          "properties": {
+            "url": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "network"
+          ],
+          "properties": {
+            "network": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9-]*(\\.[a-z][a-z0-9-]*)*$",
+              "maxLength": 96
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "state"
+          ],
+          "properties": {
+            "state": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9-]*(\\.[a-z][a-z0-9-]*)*$",
+              "maxLength": 96
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "stableTextMs"
+          ],
+          "properties": {
+            "stableTextMs": {
+              "type": "integer",
+              "minimum": 100,
+              "maximum": 600000
+            },
+            "of": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9-]*(\\.[a-z][a-z0-9-]*)*$",
+              "maxLength": 96
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "anyOf"
+          ],
+          "properties": {
+            "anyOf": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 16,
+              "items": {
+                "$ref": "#/$defs/condition"
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "allOf"
+          ],
+          "properties": {
+            "allOf": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 16,
+              "items": {
+                "$ref": "#/$defs/condition"
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "not"
+          ],
+          "properties": {
+            "not": {
+              "$ref": "#/$defs/condition"
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "element": {
+      "type": "object",
+      "required": [
+        "candidates"
+      ],
+      "properties": {
+        "description": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "scope": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]*(\\.[a-z][a-z0-9-]*)*$",
+          "maxLength": 96
+        },
+        "cardinality": {
+          "enum": [
+            "one",
+            "many"
+          ]
+        },
+        "candidates": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "items": {
+            "$ref": "#/$defs/candidate"
+          }
+        },
+        "fingerprint": {
+          "type": "object",
+          "properties": {
+            "role": {
+              "type": "string",
+              "maxLength": 32
+            },
+            "name": {
+              "$ref": "#/$defs/localized"
+            },
+            "nearRole": {
+              "type": "string",
+              "maxLength": 32
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "action": {
+      "type": "object",
+      "required": [
+        "do",
+        "target",
+        "verify",
+        "sideEffect"
+      ],
+      "properties": {
+        "description": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "do": {
+          "enum": [
+            "click",
+            "insertText",
+            "press",
+            "setFiles",
+            "select"
+          ]
+        },
+        "target": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]*(\\.[a-z][a-z0-9-]*)*$",
+          "maxLength": 96
+        },
+        "key": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "require": {
+          "type": "array",
+          "maxItems": 4,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "enabled",
+              "editable"
+            ]
+          }
+        },
+        "fallback": {
+          "type": "object",
+          "required": [
+            "press",
+            "on"
+          ],
+          "properties": {
+            "press": {
+              "type": "string",
+              "maxLength": 32
+            },
+            "on": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9-]*(\\.[a-z][a-z0-9-]*)*$",
+              "maxLength": 96
+            }
+          },
+          "additionalProperties": false
+        },
+        "verify": {
+          "$ref": "#/$defs/condition"
+        },
+        "sideEffect": {
+          "enum": [
+            "none",
+            "reversible",
+            "irreversible"
+          ]
+        },
+        "heal": {
+          "enum": [
+            "off",
+            "deterministic",
+            "model"
+          ]
+        },
+        "timeouts": {
+          "type": "object",
+          "properties": {
+            "resolveMs": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 600000
+            },
+            "verifyMs": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 3600000
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false,
+      "if": {
+        "properties": {
+          "sideEffect": {
+            "const": "irreversible"
+          }
+        },
+        "required": [
+          "sideEffect"
+        ]
+      },
+      "then": {
+        "properties": {
+          "heal": {
+            "enum": [
+              "off",
+              "deterministic"
+            ]
+          }
+        }
+      }
+    },
+    "network": {
+      "type": "object",
+      "required": [
+        "url"
+      ],
+      "properties": {
+        "url": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "method": {
+          "enum": [
+            "GET",
+            "POST",
+            "PUT",
+            "PATCH",
+            "DELETE"
+          ]
+        },
+        "status": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 599
+        },
+        "contentType": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "open": {
+          "type": "boolean",
+          "description": "Matches while the response body is still streaming."
+        },
+        "header": {
+          "type": "object",
+          "required": [
+            "name"
+          ],
+          "properties": {
+            "name": {
+              "type": "string",
+              "maxLength": 64
+            },
+            "equals": {
+              "type": "string",
+              "maxLength": 256
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "timeouts": {
+      "type": "object",
+      "properties": {
+        "resolveMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 600000
+        },
+        "verifyMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 3600000
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

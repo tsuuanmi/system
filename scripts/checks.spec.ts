@@ -49,4 +49,19 @@ describe('schema checks', () => {
     delete account.login['credentialRef']
     expect(loadSchemas(schemas).getSchema(schemaId('account'))?.(account)).toBe(false)
   })
+
+  it('never lets a model heal an irreversible UI action (ADR-0021)', () => {
+    const map = example('ui-map.chatgpt-web.json') as { actions: Record<string, Record<string, unknown>> }
+    const validate = loadSchemas(schemas).getSchema(schemaId('ui-map'))!
+    map.actions['composer.send']!['heal'] = 'model'
+    expect(validate(map)).toBe(false)
+    map.actions['composer.send']!['sideEffect'] = 'reversible'
+    expect(validate(map)).toBe(true)
+  })
+
+  it('rejects a UI map element without candidates', () => {
+    const map = example('ui-map.chatgpt-web.json') as { elements: Record<string, Record<string, unknown>> }
+    map.elements['composer.send']!['candidates'] = []
+    expect(loadSchemas(schemas).getSchema(schemaId('ui-map'))?.(map)).toBe(false)
+  })
 })

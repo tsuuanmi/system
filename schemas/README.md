@@ -22,6 +22,7 @@ each field, which a schema cannot fully express, is documented in
 | [worker-session.v1.json](worker-session.v1.json) | durable Worker session with its own `SessionId` ([ADR-0015](../docs/decisions/adr/0015-worker-sessions-and-peer-messaging.md)) |
 | [message.v1.json](message.v1.json) | body of a `message` artifact sent directly between sessions |
 | [account.v1.json](account.v1.json) | provider account vault record (portable state; never leaves the provider runtime) |
+| [ui-map.v1.json](ui-map.v1.json) | a provider website's UI operations as data: elements, actions, network signals, states ([ADR-0021](../docs/decisions/adr/0021-ui-operations-as-data.md)) |
 
 Schemas still to come, added with their milestone: the domain artifact bodies
 (`report`, `handoff`, `plan`, `assessment`, …), MCP tool input and output, and the

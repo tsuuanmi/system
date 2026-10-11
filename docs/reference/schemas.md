@@ -95,3 +95,16 @@ guesses.
 - `provider` is informational. Routing must not branch on it (INV-11). Only
   `capabilities`, `tier`, `quotaClass`, `locality`, and `state` are routing
   inputs.
+
+### `ui-map`
+
+- Operation ids are dotted lowercase names. Drivers refer to them; they never
+  contain selectors ([UI operations](../design/ui-operations.md)).
+- `candidates` are ordered; the first with **exactly one** visible match wins.
+  Name and text values are regular expressions per locale, written with their own
+  anchors.
+- `network` patterns are matched against requests and responses the page makes
+  on its own. They are never used to send requests.
+- A local overlay has the same shape, holds only extra candidates, and is
+  merged after the shipped candidates. It never replaces the shipped map.
+- `heal` is capped by `sideEffect`: an `irreversible` action never uses `model`.
