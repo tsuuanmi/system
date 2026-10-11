@@ -1,0 +1,13 @@
+{
+  "name": "@tsuuanmi/system-provider-core",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Provider-runtime libraries: turn reconciliation, two-clock completion, per-account scheduler, failure taxonomy (ported from tsuuanmi/internet)",
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "exports": { ".": { "types": "./lib/index.d.ts", "default": "./lib/index.js" } },
+  "files": ["lib"],
+  "scripts": { "build": "tsc -p tsconfig.build.json" },
+  "dependencies": { "@tsuuanmi/system-libs": "workspace:*" }
+}

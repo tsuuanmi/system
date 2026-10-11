@@ -38,6 +38,9 @@
       ],
       "@tsuuanmi/system-blobs": [
         "packages/plugins/blobs/src/index.ts"
+      ],
+      "@tsuuanmi/system-provider-core": [
+        "packages/provider-core/src/index.ts"
       ]
     }
   },

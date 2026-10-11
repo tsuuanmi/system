@@ -334,6 +334,12 @@ importers:
         specifier: 3.18.5-alpha.1
         version: 3.18.5-alpha.1
 
+  packages/provider-core:
+    dependencies:
+      '@tsuuanmi/system-libs':
+        specifier: workspace:*
+        version: link:../libs
+
   packages/system-bundle:
     dependencies:
       '@tsuuanmi/system-artifacts':

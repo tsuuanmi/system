@@ -15,6 +15,7 @@ export default defineConfig({
       '@tsuuanmi/system-leases': src('./packages/plugins/leases/src/index.ts'),
       '@tsuuanmi/system-event-log': src('./packages/plugins/event-log/src/index.ts'),
       '@tsuuanmi/system-blobs': src('./packages/plugins/blobs/src/index.ts'),
+      '@tsuuanmi/system-provider-core': src('./packages/provider-core/src/index.ts'),
     },
   },
   test: {

@@ -1,0 +1,47 @@
+/** Retry disposition per failure class (docs/design/workflow-engine.md#recovery). */
+export type Disposition = 'IMMEDIATE' | 'BACKOFF' | 'RECREATE_SESSION' | 'USER_ACTION' | 'CODE_FIX' | 'NONE'
+
+export type ProviderErrorKind =
+  | 'network' | 'timeout' | 'provider_stalled' | 'session_broken'
+  | 'reauth_required' | 'challenge' | 'quota_exhausted' | 'reconciliation_failed'
+  | 'ui_drift' | 'config_error' | 'aborted' | 'invalid_input'
+
+const DISPOSITIONS: Record<ProviderErrorKind, Disposition> = {
+  network: 'BACKOFF',
+  timeout: 'BACKOFF',
+  provider_stalled: 'RECREATE_SESSION',
+  session_broken: 'RECREATE_SESSION',
+  reauth_required: 'USER_ACTION',
+  challenge: 'USER_ACTION',
+  quota_exhausted: 'USER_ACTION',
+  reconciliation_failed: 'USER_ACTION',
+  ui_drift: 'CODE_FIX',
+  config_error: 'CODE_FIX',
+  aborted: 'NONE',
+  invalid_input: 'NONE',
+}
+
+export function dispositionOf(kind: ProviderErrorKind): Disposition {
+  return DISPOSITIONS[kind]
+}
+
+/** A typed provider-runtime failure; `disposition` tells the engine how to recover. */
+export class ProviderError extends Error {
+  readonly disposition: Disposition
+
+  constructor(readonly kind: ProviderErrorKind, message: string, options?: ErrorOptions) {
+    super(message, options)
+    this.name = 'ProviderError'
+    this.disposition = dispositionOf(kind)
+  }
+}
+
+/**
+ * The abort reason as an Error. A caller's own Error reason is kept; a bare `abort()`
+ * (DOMException AbortError) or a non-Error reason becomes a typed `aborted` failure.
+ */
+export function abortReason(signal: AbortSignal | undefined, what = 'provider turn aborted'): Error {
+  const reason: unknown = signal?.reason
+  if (reason instanceof Error && reason.name !== 'AbortError') return reason
+  return new ProviderError('aborted', what, { cause: reason })
+}
