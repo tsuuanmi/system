@@ -36,6 +36,21 @@ invisible headed Chrome, receipts, and reconciliation. The architecture is
 accepted in [PROP-0001](docs/proposals/0001-unified-system-architecture.md), and
 implementation follows the [roadmap](docs/proposals/roadmap.md).
 
+## Connect Claude Code (works today)
+
+```bash
+alias system="node $PWD/packages/cli/lib/bin.js"
+system init                          # profile, managed Chrome if needed, Xvfb/VNC check
+system start &                       # the daemon (MCP on 127.0.0.1:47317)
+system account login chatgpt-main    # once: sign in through noVNC over ssh -L, then Save
+eval "$(system mcp-config claude)"   # registers MCP server "system" (token via headersHelper)
+```
+
+Claude Code then has `ask`, `research`, `result`, and `status`, plus the
+operator tools `account_*`. For example, `ask` with `{ "prompt": "..." }`
+returns ChatGPT's answer, and `research` starts a Deep research run whose report
+`result` returns.
+
 ## Simplest use case (target)
 
 ```text

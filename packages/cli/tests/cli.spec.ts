@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { CHROME_LOCK } from '@tsuuanmi/system-browser-patchright'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { callTool, ensureBrowser, exitCode, mergeProfileManifest, mcpConfig, parseAsk } from '../src/index.ts'
+import { callTool, ensureBrowser, exitCode, mcpConfig, mcpHeaders, mergeProfileManifest, parseAsk } from '../src/index.ts'
 
 const dirs: string[] = []
 afterEach(() => {
@@ -34,11 +34,9 @@ describe('system CLI (PR #3 kernel review)', () => {
     writeFileSync(join(home, 'system', 'mcp.token'), Buffer.alloc(32, 9))
     writeFileSync(join(home, 'system', 'mcp.json'), JSON.stringify({ url: 'http://127.0.0.1:47317/mcp', tokenFile: join(home, 'system', 'mcp.token') }))
     const token = Buffer.alloc(32, 9).toString('base64url')
-    for (const client of ['claude', 'codex'] as const) {
-      const text = mcpConfig(client, home)
-      expect(text).not.toContain(token)
-      expect(text).toContain('SYSTEM_MCP_TOKEN')
-    }
+    for (const client of ['claude', 'codex'] as const) expect(mcpConfig(client, home)).not.toContain(token)
+    expect(mcpConfig('codex', home)).toContain('SYSTEM_MCP_TOKEN')
+    expect(mcpConfig('claude', home)).toContain('headersHelper')
     expect(readFileSync(join(home, 'system', 'mcp.json'), 'utf8')).toContain('47317')
   })
 })
@@ -77,5 +75,21 @@ describe('system ask arguments', () => {
     expect(await parseAsk(['--session', 'ses_1', 'hello', 'world'], async () => '')).toEqual({ prompt: 'hello world', sessionId: 'ses_1' })
     expect(await parseAsk(['--tier', 'frontier', 'q'], async () => '')).toEqual({ prompt: 'q', tier: 'frontier' })
     expect(await parseAsk([], async () => '')).toBeUndefined()
+  })
+})
+
+describe('Claude Code connection (headersHelper)', () => {
+  it('prints the bearer header for headersHelper, and a config that never contains the token', () => {
+    const home = mkdtempSync(join(tmpdir(), 'system-cli-'))
+    dirs.push(home)
+    mkdirSync(join(home, 'system'))
+    writeFileSync(join(home, 'system', 'mcp.token'), Buffer.alloc(32, 7))
+    writeFileSync(join(home, 'system', 'mcp.json'), JSON.stringify({ url: 'http://127.0.0.1:47317/mcp', tokenFile: join(home, 'system', 'mcp.token') }))
+    const token = Buffer.alloc(32, 7).toString('base64url')
+    expect(JSON.parse(mcpHeaders(home))).toEqual({ Authorization: `Bearer ${token}` })
+    const claude = mcpConfig('claude', home)
+    expect(claude).toContain('headersHelper')
+    expect(claude).toContain('mcp-headers')
+    expect(claude).not.toContain(token)
   })
 })

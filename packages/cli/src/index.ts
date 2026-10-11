@@ -8,6 +8,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { constants as osConstants } from 'node:os'
 import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { CHROME_LOCK, type ChromeChoice, discoverChrome, installManagedChrome } from '@tsuuanmi/system-browser-patchright'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
@@ -148,8 +149,17 @@ export function mcpConfig(client: 'claude' | 'codex', home: string = dshHome()):
   const { url } = JSON.parse(readFileSync(path, 'utf8')) as Discovery
   // The token is never printed here (shell history); clients read it from the environment.
   const exportLine = 'export SYSTEM_MCP_TOKEN="$(system mcp-token)"'
-  if (client === 'claude') return [exportLine, `claude mcp add --transport http system ${url} --header "Authorization: Bearer $SYSTEM_MCP_TOKEN"`].join('\n')
+  if (client === 'claude') {
+    // Claude Code runs headersHelper on each connection, so the token never sits in its config.
+    const helper = `${process.execPath} ${fileURLToPath(new URL('./bin.js', import.meta.url))} mcp-headers`
+    return `claude mcp add-json --scope user system '${JSON.stringify({ type: 'http', url, headersHelper: helper })}'`
+  }
   return [exportLine, '', '# ~/.codex/config.toml', '[mcp_servers.system]', `url = "${url}"`, 'bearer_token_env_var = "SYSTEM_MCP_TOKEN"'].join('\n')
+}
+
+/** `{"Authorization": "Bearer <token>"}` for a client's headersHelper (Claude Code). */
+export function mcpHeaders(home: string = dshHome()): string {
+  return JSON.stringify({ Authorization: `Bearer ${mcpToken(home)}` })
 }
 
 /** The bearer token alone, for `export SYSTEM_MCP_TOKEN="$(system mcp-token)"`. */

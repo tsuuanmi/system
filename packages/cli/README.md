@@ -12,8 +12,9 @@ the supported way to run a DSH harness
 | `system account list` / `system account save <id>` | call the running profile's `account_list` / `account_save` MCP tools, authenticated from the discovery file. Save runs after an interactive login |
 | `system browser install` | installs the managed Chrome pinned in `chrome.lock.json` under `<DSH_HOME>/system/browsers` |
 | `system start [dsh args]` | runs `dsh --profile system …` with `DSH_TELEMETRY_DISABLED=1` |
-| `system mcp-config claude\|codex` | prints the client configuration from the running profile's discovery file. The token is read from `$SYSTEM_MCP_TOKEN` and never printed into the command |
-| `system mcp-token` | prints only the bearer token, for `export SYSTEM_MCP_TOKEN="$(system mcp-token)"` |
+| `system mcp-config claude\|codex` | prints the client configuration from the running profile's discovery file. For Claude Code it is a `claude mcp add-json --scope user` command whose `headersHelper` runs `system mcp-headers`, so the token never sits in Claude Code's config. For Codex it reads `$SYSTEM_MCP_TOKEN`. The token is never printed into the command |
+| `system mcp-token` | prints only the bearer token, for `export SYSTEM_MCP_TOKEN="$(system mcp-token)"` (Codex) |
+| `system mcp-headers` | prints `{"Authorization": "Bearer …"}` for Claude Code's `headersHelper`, read from the `0600` token file on every connection |
 
 The e2e test [`tests/profile.e2e.ts`](tests/profile.e2e.ts) boots the real
 profile, asserts the exact row set, and calls MCP.

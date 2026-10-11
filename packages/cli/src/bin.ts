@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { browserDeps, callTool, ensureBrowser, init, mcpConfig, mcpToken, parseAsk, readAllStdin, start } from './index.ts'
+import { browserDeps, callTool, ensureBrowser, init, mcpConfig, mcpHeaders, mcpToken, parseAsk, readAllStdin, start } from './index.ts'
 
 const USAGE = `Usage: system <command>
 
@@ -17,6 +17,7 @@ const USAGE = `Usage: system <command>
   start [dsh args...]       boot the profile (e.g. --patch ./overlay.yml)
   mcp-config <claude|codex> print client configuration for the running MCP server
   mcp-token                 print the bearer token (for an environment variable)
+  mcp-headers               print the Authorization header as JSON (Claude Code headersHelper)
 `
 
 async function main(argv: string[]): Promise<number> {
@@ -117,6 +118,9 @@ async function main(argv: string[]): Promise<number> {
       console.log(mcpConfig(client))
       return 0
     }
+    case 'mcp-headers':
+      console.log(mcpHeaders())
+      return 0
     case 'mcp-token':
       console.log(mcpToken())
       return 0
