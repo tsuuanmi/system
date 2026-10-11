@@ -1,0 +1,67 @@
+# System invariants
+
+> Target state. These rules are binding on all code. Changing one requires an ADR.
+
+### INV-1 One authoritative runtime
+
+For each concern there is exactly one runtime: one workflow engine, one store, and
+one scheduler per account. No parallel "next" runtime is kept alive next to the
+current one ([ADR-0004](../decisions/adr/0004-single-workflow-runtime.md)).
+
+### INV-2 Fail closed
+
+Admission, provider reconciliation, model and effort selection, authentication,
+and authority checks all fail closed. There is no silent fallback across
+providers, models, accounts, transports, or versions. A degraded path is an
+explicit error with a cause.
+
+### INV-3 Completion boundaries are distinct
+
+```text
+provider terminal   ≠ Worker accepted
+message delivered   ≠ response accepted
+member accepted     ≠ phase accepted
+phase accepted      ≠ workflow complete
+protocol success    ≠ effect verified
+authority granted   ≠ effect completed
+```
+
+Each layer accepts only its own semantic, and never infers a higher one from a
+lower one.
+
+### INV-4 Restart is reconciliation, not replay
+
+Every external effect is classified as **safe-to-repeat**,
+**reconcile-before-repeat**, or **block**. After a crash, in-flight work is
+reconciled against observable state before anything is repeated. Leases carry a
+generation, and a commit from a stale generation is rejected.
+
+### INV-5 Exact-subject binding
+
+Evidence, results, reviews, and approvals bind to the exact subject they were
+produced for: an input hash, a content hash, or a VCS head SHA. Evidence about an
+old subject never satisfies a gate on a new subject.
+
+### INV-6 Authority comes from trusted envelopes
+
+Filesystem scope, sandbox mode, approval, account choice, and control actions come
+from trusted structured envelopes, such as the client protocol envelope, operator
+configuration, or admitted workflow specs. They never come from model-produced or
+user-pasted text. Trusted control messages travel separately from model data.
+
+### INV-7 No mirrored protocol objects
+
+Native protocol objects (MCP, Responses, ACP) cross their own boundaries
+unchanged. Adapters translate *behavior*, not data models. There is no universal
+Task, Message, or Artifact type that mirrors every protocol, and no global Worker
+id ([ADR-0006](../decisions/adr/0006-protocol-introduction-gates.md)).
+
+### INV-8 Credentials never cross upward
+
+Account credentials, cookies, and browser storage stay inside the provider
+runtime. Layers above it see account ids, states, and results, never secrets.
+
+### INV-9 Everything is bounded
+
+Concurrency, retries, resubmissions, review cycles, payload sizes, caches, and
+waits all have explicit configured limits. An unbounded loop or queue is a defect.

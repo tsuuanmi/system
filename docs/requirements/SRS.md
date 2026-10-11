@@ -1,0 +1,111 @@
+# Software Requirements Specification
+
+> Target state. Terms such as Worker, capability, receipt, and lease are defined
+> where they are first used in [architecture](../architecture/README.md).
+
+## Families
+
+| Prefix | Family |
+|---|---|
+| `REQ-ACC` | provider accounts and login |
+| `REQ-PRV` | provider turns |
+| `REQ-WRK` | Worker admission, routing, and acceptance |
+| `REQ-TEAM` | multi-member teams |
+| `REQ-WF` | durable workflows |
+| `REQ-GW` | client gateways |
+| `REQ-HOST` | host lifecycle |
+
+## Provider accounts (`REQ-ACC`)
+
+- **REQ-ACC-1** Accounts are named semantic identities, for example
+  `chatgpt-thinker` and `chatgpt-writer`. Each declares a provider, a role, and
+  capabilities. The account catalog is configuration, not code.
+- **REQ-ACC-2** A caller always names an account, or a capability that admission
+  resolves to an account. A provider name alone never selects an account.
+- **REQ-ACC-3** An operator can sign in an account interactively from a remote
+  machine without installing client software. A browser and an SSH tunnel are
+  enough.
+- **REQ-ACC-4** Automated turns use only the account's portable authenticated
+  state, never the interactive login profile.
+- **REQ-ACC-5** When an account loses authentication, it is marked
+  `reauth-required`, and its queued and running work fails closed with a
+  user-action error.
+
+## Provider turns (`REQ-PRV`)
+
+- **REQ-PRV-1** Every turn submitted with a logical request id is idempotent.
+  Retrying the same request id never sends a second prompt when the first one was
+  accepted by the provider.
+- **REQ-PRV-2** After a crash or restart, an in-flight turn is reconciled against
+  the provider's observable state before any resubmission.
+- **REQ-PRV-3** The selected model and reasoning effort are verified before
+  submission. On a mismatch the turn fails. It never runs on a different model.
+- **REQ-PRV-4** A turn ends either on stable completion or on one of two
+  deadlines, a hard limit and a no-progress stall limit, each reported distinctly.
+- **REQ-PRV-5** Provider responses are returned as Markdown that matches the text
+  that was streamed.
+- **REQ-PRV-6** Provider-native deep research is available as a distinct
+  capability.
+
+## Workers (`REQ-WRK`)
+
+- **REQ-WRK-1** A Worker is admitted for a piece of work only when its current
+  composition proves every required capability. Admission fails closed.
+- **REQ-WRK-2** Routing among admitted Workers is deterministic for a given
+  configuration and input.
+- **REQ-WRK-3** A provider reaching its terminal state does not make the work
+  accepted. Acceptance is a separate check against the work's acceptance contract.
+- **REQ-WRK-4** Work can be cancelled. Cancellation reaches the owning runtime,
+  and its outcome is reported.
+
+## Teams (`REQ-TEAM`)
+
+- **REQ-TEAM-1** A team runs members independently first. No member sees a
+  peer's output until every member has produced its independent result.
+- **REQ-TEAM-2** A team member keeps one collaboration identity, and one logical
+  Worker, for the team's lifetime.
+- **REQ-TEAM-3** A synthesis step produces the strongest-supported result and
+  cites the member evidence it relies on.
+- **REQ-TEAM-4** Members of an independence-sensitive team are backed by distinct
+  accounts.
+
+## Workflows (`REQ-WF`)
+
+- **REQ-WF-1** A workflow is a semantic DAG of nodes, each with an objective, an
+  executor kind, and dependencies. It is validated before activation.
+- **REQ-WF-2** Activation requires an admitted, hashed specification. Each value
+  in it records its provenance: user-explicit, interpreted, or policy default.
+- **REQ-WF-3** A node whose input hash matches a stored result reuses that result
+  and does not re-execute.
+- **REQ-WF-4** Workflow state survives host restart, and running nodes are
+  reconciled on startup.
+- **REQ-WF-5** Evidence and approvals bind to an exact subject, such as a content
+  hash or a VCS head SHA. Evidence about one subject never satisfies a gate for
+  another.
+- **REQ-WF-6** Failures are classified into a retry disposition: immediate,
+  backoff, recreate session, user action, code fix, or none. Retries are bounded.
+- **REQ-WF-7** An operator can list, watch, stop, continue (one failed node), and
+  delete workflows.
+- **REQ-WF-8** The workflow graph can grow at runtime, for example by adding a
+  review cycle once a PR exists, up to configured bounds.
+- **REQ-WF-9** At least two domain profiles, software development and scientific
+  research, run on the same engine without engine changes.
+
+## Gateways (`REQ-GW`)
+
+- **REQ-GW-1** The host exposes an OpenAI Responses-compatible endpoint with SSE
+  streaming. A Responses client such as Codex can select `system` Workers as models.
+- **REQ-GW-2** Tool calls requested by a remote Worker are executed by the
+  **client** under the client's own sandbox and approvals, and returned to the
+  same remote turn.
+- **REQ-GW-3** The host exposes its capabilities as an MCP server.
+- **REQ-GW-4** A CLI offers turn, workflow, account, and maintenance commands.
+
+## Host (`REQ-HOST`)
+
+- **REQ-HOST-1** The host drains before stop or upgrade. It accepts no new work
+  and waits for in-flight requests and provider turns, or for a drain deadline.
+- **REQ-HOST-2** Startup validates configuration, profiles, and stores, and fails
+  with a precise error when any of them is invalid.
+- **REQ-HOST-3** Any change the host makes to a client's configuration is
+  journaled and can be reversed byte for byte.
