@@ -1,10 +1,12 @@
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto'
-import { closeSync, constants, fsyncSync, openSync, readFileSync, renameSync, statSync, unlinkSync, writeSync } from 'node:fs'
-import { setTimeout as sleep } from 'node:timers/promises'
+import { readFileSync } from 'node:fs'
+import { writeFileDurable } from '@tsuuanmi/system-libs'
 
 const AAD = Buffer.from('system-vault:v1')
+const NONCE_BYTES = 12
+const TAG_BYTES = 16
 
-/** The decrypted vault contents. */
+/** The decrypted vault contents. Null-prototype maps: names like `__proto__` are plain keys. */
 export interface VaultDocument {
   refs: Record<string, string>
   records: Record<string, unknown>
@@ -19,14 +21,23 @@ interface VaultFile {
   data: string
 }
 
-export const emptyDocument = (): VaultDocument => ({ refs: {}, records: {} })
+const dictionary = <T>(entries: Record<string, T> = {}): Record<string, T> =>
+  Object.assign(Object.create(null) as Record<string, T>, entries)
 
-/** Encrypt a document with AES-256-GCM under a fresh 96-bit nonce. */
+export const emptyDocument = (): VaultDocument => ({ refs: dictionary(), records: dictionary() })
+
+/** Own-property lookup that ignores the prototype chain. */
+export function own<T>(map: Record<string, T>, key: string): T | undefined {
+  return Object.hasOwn(map, key) ? map[key] : undefined
+}
+
+/** Encrypt a document with AES-256-GCM under a fresh 96-bit nonce and a full 128-bit tag. */
 export function seal(document: VaultDocument, key: Buffer): string {
-  const nonce = randomBytes(12)
-  const cipher = createCipheriv('aes-256-gcm', key, nonce)
+  const nonce = randomBytes(NONCE_BYTES)
+  const cipher = createCipheriv('aes-256-gcm', key, nonce, { authTagLength: TAG_BYTES })
   cipher.setAAD(AAD)
-  const data = Buffer.concat([cipher.update(JSON.stringify(document), 'utf8'), cipher.final()])
+  const plain = JSON.stringify({ refs: { ...document.refs }, records: { ...document.records } })
+  const data = Buffer.concat([cipher.update(plain, 'utf8'), cipher.final()])
   const file: VaultFile = {
     format: 'system-vault', version: 1, cipher: 'aes-256-gcm',
     nonce: nonce.toString('base64'), tag: cipher.getAuthTag().toString('base64'), data: data.toString('base64'),
@@ -34,23 +45,27 @@ export function seal(document: VaultDocument, key: Buffer): string {
   return `${JSON.stringify(file)}\n`
 }
 
-/** Decrypt and authenticate a vault file; a wrong key or any tampering throws. */
+/** Decrypt and authenticate a vault file; a wrong key, a short tag, or any tampering throws. */
 export function open(text: string, key: Buffer): VaultDocument {
   const file = JSON.parse(text) as Partial<VaultFile>
   if (file.format !== 'system-vault' || file.version !== 1 || file.cipher !== 'aes-256-gcm') {
     throw new Error('vault: unsupported file format')
   }
-  const decipher = createDecipheriv('aes-256-gcm', key, Buffer.from(file.nonce ?? '', 'base64'))
+  const nonce = Buffer.from(file.nonce ?? '', 'base64')
+  const tag = Buffer.from(file.tag ?? '', 'base64')
+  if (nonce.length !== NONCE_BYTES || tag.length !== TAG_BYTES) throw new Error('vault: malformed nonce or authentication tag')
+  const decipher = createDecipheriv('aes-256-gcm', key, nonce, { authTagLength: TAG_BYTES })
   decipher.setAAD(AAD)
-  decipher.setAuthTag(Buffer.from(file.tag ?? '', 'base64'))
+  decipher.setAuthTag(tag)
   let plain: Buffer
   try {
     plain = Buffer.concat([decipher.update(Buffer.from(file.data ?? '', 'base64')), decipher.final()])
   } catch {
     throw new Error('vault: authentication failed (wrong key or modified file)')
   }
-  const document = JSON.parse(plain.toString('utf8')) as Partial<VaultDocument>
-  return { refs: document.refs ?? {}, records: document.records ?? {} }
+  // JSON.parse defines "__proto__" as an own property, so no prototype is touched.
+  const parsed = JSON.parse(plain.toString('utf8')) as Partial<VaultDocument>
+  return { refs: dictionary(parsed.refs), records: dictionary(parsed.records) }
 }
 
 /** Read the vault, or an empty document when the file does not exist yet. */
@@ -65,47 +80,7 @@ export function readVault(path: string, key: Buffer): VaultDocument {
   return open(text, key)
 }
 
-/** Atomically replace the vault: write a 0600 temp file, fsync, rename. */
+/** Durably replace the vault (0600 temp, fsync, rename, fsync directory). */
 export function writeVault(path: string, document: VaultDocument, key: Buffer): void {
-  const temp = `${path}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`
-  const fd = openSync(temp, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600)
-  try {
-    writeSync(fd, seal(document, key))
-    fsyncSync(fd)
-  } finally {
-    closeSync(fd)
-  }
-  renameSync(temp, path)
-}
-
-/**
- * Cross-process exclusion through an O_EXCL lock file. A lock older than `staleMs`
- * (a crashed holder) is broken; waiting longer than `timeoutMs` throws.
- */
-export async function withFileLock<T>(lockPath: string, fn: () => T, timeoutMs = 5000, staleMs = 30_000): Promise<T> {
-  const deadline = Date.now() + timeoutMs
-  for (;;) {
-    try {
-      closeSync(openSync(lockPath, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o600))
-      break
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
-      try {
-        if (Date.now() - statSync(lockPath).mtimeMs > staleMs) unlinkSync(lockPath)
-      } catch {
-        // the holder released it between our attempts
-      }
-      if (Date.now() > deadline) throw new Error(`vault: timed out waiting for ${lockPath}`)
-      await sleep(10 + Math.random() * 20)
-    }
-  }
-  try {
-    return fn()
-  } finally {
-    try {
-      unlinkSync(lockPath)
-    } catch {
-      // already removed as stale by another process
-    }
-  }
+  writeFileDurable(path, seal(document, key), 0o600)
 }

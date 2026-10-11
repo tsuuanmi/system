@@ -66,6 +66,75 @@ describe('ctx.store', () => {
     await fiber
     const store = ctx.store
     await fiber.dispose()
+    await new Promise((resolve) => setImmediate(resolve))
     expect(() => store.db).toThrow('store is closed')
+  })
+})
+
+describe('review fixes (PR #3 kernel review)', () => {
+  it('surfaces a failed COMMIT, releases the write lock, and stays usable', async () => {
+    const { ctx } = await boot()
+    ctx.store.migrate('test', [{ version: 1, sql: `
+      CREATE TABLE parent (id TEXT PRIMARY KEY);
+      CREATE TABLE child (id TEXT PRIMARY KEY, parent TEXT REFERENCES parent(id) DEFERRABLE INITIALLY DEFERRED);` }])
+    expect(() => ctx.store.transaction((db) => db.prepare('INSERT INTO child VALUES (?, ?)').run('c', 'missing'))).toThrow(/FOREIGN KEY/)
+    expect(ctx.store.db.isTransaction).toBe(false)
+    ctx.store.transaction((db) => db.prepare('INSERT INTO parent VALUES (?)').run('p'))
+    expect(ctx.store.db.prepare('SELECT count(*) AS n FROM parent').get()).toEqual({ n: 1 })
+  })
+
+  it('poisons the store when a callback returns a promise', async () => {
+    const { ctx } = await boot()
+    expect(() => ctx.store.transaction((async () => 1) as never)).toThrow(/synchronous/)
+    expect(() => ctx.store.transaction(() => 1)).toThrow(/poisoned/)
+  })
+
+  it('runs afterCommit callbacks once after the outermost commit and drops them on rollback', async () => {
+    const { ctx } = await boot()
+    const seen: string[] = []
+    ctx.store.transaction(() => {
+      ctx.store.transaction(() => ctx.store.afterCommit(() => void seen.push('inner')))
+      expect(seen).toEqual([])
+    })
+    expect(seen).toEqual(['inner'])
+    expect(() => ctx.store.transaction(() => {
+      ctx.store.afterCommit(() => void seen.push('rolled-back'))
+      throw new Error('boom')
+    })).toThrow('boom')
+    ctx.store.afterCommit(() => void seen.push('outside'))
+    expect(seen).toEqual(['inner', 'outside'])
+  })
+
+  it('isolates a throwing afterCommit callback from the committed transaction', async () => {
+    const { ctx } = await boot()
+    expect(() => ctx.store.transaction(() => ctx.store.afterCommit(() => {
+      throw new Error('listener')
+    }))).not.toThrow()
+  })
+
+  it('defaults to synchronous=FULL and accepts a configured level', async () => {
+    const { ctx } = await boot()
+    expect(ctx.store.db.prepare('PRAGMA synchronous').get()).toEqual({ synchronous: 2 })
+  })
+
+  it('keeps the database open for dependents that write while disposing', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'system-store-'))
+    cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+    const ctx = new Context()
+    const store = ctx.plugin(Store, { path: join(dir, 'system.db') })
+    let wrote = false
+    const dependent = ctx.plugin({
+      inject: ['store'],
+      apply(child: Context) {
+        child.store.migrate('dep', [{ version: 1, sql: 'CREATE TABLE d (x TEXT)' }])
+        child.effect(() => () => {
+          child.store.transaction((db) => db.prepare('INSERT INTO d VALUES (?)').run('bye'))
+          wrote = true
+        })
+      },
+    })
+    await Promise.all([store, dependent])
+    await store.dispose()
+    expect(wrote).toBe(true)
   })
 })

@@ -22,7 +22,10 @@ Every scheduled unit holds a lease `{ owner, generation, expiresAt, signal }`.
 - `invalidate()` increments the generation, rejects queued work, and aborts active
   work through its `AbortSignal`.
 - Every commit, including receipt completion, auth write-back, and node output,
-  presents its generation. The kernel rejects a commit from a stale generation.
+  calls `ctx.leases.fence(lease)` **inside** the committing store transaction. The
+  fence passes only if that exact lease (token **and** generation) still holds the
+  resource and has not expired. Because it runs under the transaction's write lock, no
+  successor can take over before the commit lands.
 - Workflow node executions use the same lease primitive with heartbeats. On
   startup, a `RUNNING` node with an expired lease or a foreign owner moves to
   `RECOVERING`.

@@ -1,7 +1,7 @@
 /**
  * Encrypted `ctx.credentials` provider (ADR-0017, docs/research/dsh-community-plugins-review.md).
  * DSH's `dsh-credentials-local` keeps secrets as plain YAML; this provider keeps the same
- * seam but seals the whole document with AES-256-GCM. The key is a 32-byte 0600 file —
+ * seam but seals the whole document with AES-256-GCM. The key is a 32-byte owner-only file —
  * point `keyFile` at a systemd credential (`$CREDENTIALS_DIRECTORY/<name>`) or another
  * disk to separate key and ciphertext.
  * @module @tsuuanmi/system-credentials-vault
@@ -15,13 +15,22 @@ import {
 } from '@deepseek-ai/dsh-credentials'
 import z from '@deepseek-ai/schemastery'
 import { dshHome, ensurePrivateDir, readOrCreateSecretFile } from '@tsuuanmi/system-libs'
-import { type VaultDocument, readVault, withFileLock, writeVault } from './vault-file.ts'
+import { withFileLock } from '@deepseek-ai/dsh-atomic-write'
+import { type VaultDocument, own, readVault, writeVault } from './vault-file.ts'
 
 export { open, seal } from './vault-file.ts'
+
+/** Own-property environment lookup: names like `constructor` are never inherited values. */
+function envValue(ref: string): string | undefined {
+  const value = Object.hasOwn(process.env, ref) ? process.env[ref] : undefined
+  return typeof value === 'string' && value !== '' ? value : undefined
+}
 
 export interface Config {
   /** Encrypted vault file; defaults to `<DSH_HOME>/system/vault.enc`. */
   path?: string
+  /** How long a writer waits for the cross-process lock, in milliseconds (default 30 s; mutations may do network refreshes). */
+  lockWaitMs?: number
   /** 32-byte key file (created 0600 when absent); defaults to `<DSH_HOME>/system/vault.key`. */
   keyFile?: string
 }
@@ -29,19 +38,20 @@ export interface Config {
 export class VaultCredentialProvider extends CredentialProvider {
   static Config: z<Config> = z.object({
     path: z.string().description('Encrypted vault file; defaults to <DSH_HOME>/system/vault.enc'),
-    keyFile: z.string().description('32-byte 0600 key file; defaults to <DSH_HOME>/system/vault.key'),
+    keyFile: z.string().description('32-byte owner-only key file; defaults to <DSH_HOME>/system/vault.key'),
+    lockWaitMs: z.natural().default(30_000).description('Cross-process lock wait in milliseconds'),
   })
 
   readonly path: string
-  private readonly lockPath: string
   private readonly key: Buffer
+  private readonly lockWaitMs: number
   private queue: Promise<unknown> = Promise.resolve()
   private closed = false
 
   constructor(ctx: Context, config: Config) {
     super(ctx)
     this.path = config.path ?? join(dshHome(), 'system', 'vault.enc')
-    this.lockPath = `${this.path}.lock`
+    this.lockWaitMs = config.lockWaitMs ?? 30_000
     ensurePrivateDir(dirname(this.path))
     this.key = readOrCreateSecretFile(config.keyFile ?? join(dshHome(), 'system', 'vault.key'), 32)
     ctx.effect(() => () => {
@@ -51,15 +61,15 @@ export class VaultCredentialProvider extends CredentialProvider {
   }
 
   async resolve(ref: CredentialRef): Promise<ResolvedCredential | undefined> {
-    const env = process.env[ref]
+    const env = envValue(ref)
     if (env) return { value: env, source: 'env' }
-    const stored = this.read().refs[ref]
+    const stored = own(this.read().refs, ref)
     return stored ? { value: stored, source: 'vault' } : undefined
   }
 
   async describe(ref: CredentialRef): Promise<CredentialInfo> {
-    if (process.env[ref]) return { configured: true, source: 'env', writable: false }
-    const configured = Boolean(this.read().refs[ref])
+    if (envValue(ref)) return { configured: true, source: 'env', writable: false }
+    const configured = Boolean(own(this.read().refs, ref))
     return configured ? { configured, source: 'vault', writable: true } : { configured, writable: true }
   }
 
@@ -81,11 +91,11 @@ export class VaultCredentialProvider extends CredentialProvider {
   }
 
   async readRecord(key: CredentialKey): Promise<CredentialRecord | undefined> {
-    return this.read().records[key] as CredentialRecord | undefined
+    return own(this.read().records, key) as CredentialRecord | undefined
   }
 
   async describeRecord(key: CredentialKey): Promise<CredentialRecordInfo> {
-    const record = this.read().records[key] as CredentialRecord | undefined
+    const record = own(this.read().records, key) as CredentialRecord | undefined
     return record ? { configured: true, kind: record.kind, writable: true } : { configured: false, writable: true }
   }
 
@@ -93,32 +103,28 @@ export class VaultCredentialProvider extends CredentialProvider {
     return Object.entries(this.read().records).map(([key, record]) => ({ key: parseCredentialKey(key), kind: (record as CredentialRecord).kind }))
   }
 
+  /**
+   * Serialized read-modify-write holding the cross-process lock across the async
+   * `mutate` (seam contract): `mutate` runs once per call and always sees the committed
+   * state, so a rotating refresh token is never spent twice.
+   */
   async modifyRecord(
     key: CredentialKey,
     mutate: (current: CredentialRecord | undefined) => Promise<CredentialRecord | undefined>,
   ): Promise<CredentialRecord | undefined> {
     let changed = false
-    const result = await this.serialized(async () => {
-      // The mutation is async, so it runs before taking the file lock; the lock then
-      // re-reads and refuses to commit over a concurrent write to the same record.
-      for (let attempt = 0; attempt < 16; attempt++) {
-        const before = this.read().records[key] as CredentialRecord | undefined
-        const next = await mutate(before)
-        if (next === undefined) return before
-        const committed = await withFileLock(this.lockPath, () => {
-          const document = this.read()
-          if (JSON.stringify(document.records[key]) !== JSON.stringify(before)) return false
-          document.records[key] = JSON.parse(JSON.stringify(next)) as unknown
-          writeVault(this.path, document, this.key)
-          return true
-        })
-        if (committed) {
-          changed = true
-          return next
-        }
-      }
-      throw new Error(`vault: ${key} kept changing concurrently; giving up`)
-    })
+    const result = await this.serialized(() =>
+      withFileLock(this.path, async () => {
+        const document = this.read()
+        const current = own(document.records, key) as CredentialRecord | undefined
+        const next = await mutate(current)
+        if (next === undefined) return current
+        document.records[key] = JSON.parse(JSON.stringify(next)) as unknown
+        writeVault(this.path, document, this.key)
+        changed = true
+        return next
+      }, { waitMs: this.lockWaitMs }),
+    )
     if (changed) this.notifyRecordUpdated(key)
     return result
   }
@@ -138,16 +144,16 @@ export class VaultCredentialProvider extends CredentialProvider {
   }
 
   private assertNotShadowed(ref: CredentialRef): void {
-    if (process.env[ref]) throw new Error(`vault: ${ref} is set in the launch environment, which shadows the vault`)
+    if (envValue(ref)) throw new Error(`vault: ${ref} is set in the launch environment, which shadows the vault`)
   }
 
   private mutate(apply: (document: VaultDocument) => void): Promise<void> {
     return this.serialized(() =>
-      withFileLock(this.lockPath, () => {
+      withFileLock(this.path, async () => {
         const document = this.read()
         apply(document)
         writeVault(this.path, document, this.key)
-      }),
+      }, { waitMs: this.lockWaitMs }),
     )
   }
 

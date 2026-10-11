@@ -1,16 +1,15 @@
 /**
  * `ctx.blobs`: content-addressed files (docs/design/artifacts.md#storage). DSH's
  * `ctx.attachments` is prompt-attachment oriented (image normalization, session paths),
- * so system keeps its own store: `<dir>/sha256/<aa>/<hex>`, atomic 0600 writes,
+ * so system keeps its own store: `<dir>/sha256/<aa>/<hex>`, durable atomic 0600 writes,
  * deduplicated, and verified against its address on every read.
  * @module @tsuuanmi/system-blobs
  */
-import { randomBytes } from 'node:crypto'
-import { closeSync, constants, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, statSync, writeSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { type Context, Service } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
-import { type ContentId, dshHome, ensurePrivateDir, sha256 } from '@tsuuanmi/system-libs'
+import { type ContentId, dshHome, ensurePrivateDir, sha256, writeFileDurable } from '@tsuuanmi/system-libs'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -64,17 +63,10 @@ export class Blobs extends Service {
     if (bytes.length > this.maxBytes) throw new RangeError(`blob exceeds ${this.maxBytes} bytes`)
     const ref = sha256(bytes)
     const path = this.pathOf(ref)
-    if (!existsSync(path)) {
+    // An existing file is trusted only if it still matches its address; a corrupted one is repaired.
+    if (!existsSync(path) || sha256(readFileSync(path)) !== ref) {
       mkdirSync(join(path, '..'), { recursive: true, mode: 0o700 })
-      const temp = `${path}.${randomBytes(4).toString('hex')}.tmp`
-      const fd = openSync(temp, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600)
-      try {
-        writeSync(fd, bytes)
-        fsyncSync(fd)
-      } finally {
-        closeSync(fd)
-      }
-      renameSync(temp, path)
+      writeFileDurable(path, bytes, 0o600)
     }
     return { ref, bytes: bytes.length, mediaType }
   }

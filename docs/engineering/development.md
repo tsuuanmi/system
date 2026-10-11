@@ -62,7 +62,7 @@ Run it locally on Linux:
 ```sh
 node packages/cli/lib/bin.js init              # profile with only @tsuuanmi/system-bundle
 node packages/cli/lib/bin.js start             # loopback daemon; MCP on 127.0.0.1:47317/mcp
-node packages/cli/lib/bin.js mcp-config claude # or codex
+node packages/cli/lib/bin.js mcp-config claude # or codex (token via $SYSTEM_MCP_TOKEN)
 ```
 
 CI runs check, test, build, and e2e on Node 22 and 24

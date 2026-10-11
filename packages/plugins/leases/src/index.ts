@@ -9,6 +9,7 @@ import { randomBytes } from 'node:crypto'
 import { hostname } from 'node:os'
 import { type Context, Service } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
+import { SchemaRegistry } from '@tsuuanmi/system-libs'
 import type {} from '@tsuuanmi/system-store'
 
 declare module '@deepseek-ai/cordis' {
@@ -60,6 +61,7 @@ export class Leases extends Service {
   })
 
   private readonly maxTtlMs: number
+  private readonly schemas = new SchemaRegistry()
 
   constructor(ctx: Context, config: Config) {
     super(ctx, 'leases')
@@ -77,14 +79,16 @@ export class Leases extends Service {
   acquire(resource: string, ttlMs: number, owner: string = processOwner, now: number = Date.now()): Lease | undefined {
     const expiresAt = now + this.ttl(ttlMs)
     const token = randomBytes(18).toString('base64url')
-    return this.ctx.store.transaction((db) => {
+    return this.ctx.store.transaction((db): Lease | undefined => {
       const row = db.prepare('SELECT * FROM leases WHERE resource = ?').get(resource) as Row | undefined
       if (row && row.owner !== null && (row.expires_at ?? 0) > now) return undefined
       const generation = (row?.generation ?? 0) + 1
+      const lease: Lease = { schema: 'lease@1.0', resource, owner, token, generation, expiresAt }
+      this.schemas.assertRecord(lease)
       db.prepare(`INSERT INTO leases (resource, owner, token, generation, expires_at) VALUES (?, ?, ?, ?, ?)
         ON CONFLICT(resource) DO UPDATE SET owner = excluded.owner, token = excluded.token, generation = excluded.generation, expires_at = excluded.expires_at`)
         .run(resource, owner, token, generation, expiresAt)
-      return { schema: 'lease@1.0', resource, owner, token, generation, expiresAt }
+      return lease
     })
   }
 
@@ -105,13 +109,18 @@ export class Leases extends Service {
   }
 
   /**
-   * Commit fence: call inside the committing `ctx.store.transaction`. Throws
-   * {@link StaleGeneration} unless `generation` is the resource's current one.
+   * Commit fence (INV-4): call it inside the committing `ctx.store.transaction`. Passes
+   * only if this exact lease (token and generation) still holds the resource and has not
+   * expired; otherwise throws {@link StaleGeneration} or {@link LeaseLost}. Because it runs
+   * under the transaction's write lock, no successor can take over before the commit.
    */
-  fence(resource: string, generation: number): void {
-    const row = this.ctx.store.db.prepare('SELECT generation FROM leases WHERE resource = ?').get(resource) as { generation: number } | undefined
-    const current = row?.generation ?? 0
-    if (current !== generation) throw new StaleGeneration(resource, generation, current)
+  fence(lease: Lease, now: number = Date.now()): void {
+    if (!this.ctx.store.db.isTransaction) throw new Error('leases.fence must run inside the committing store transaction')
+    const row = this.ctx.store.db.prepare('SELECT * FROM leases WHERE resource = ?').get(lease.resource) as Row | undefined
+    if (!row || row.generation !== lease.generation || row.token !== lease.token) {
+      throw new StaleGeneration(lease.resource, lease.generation, row?.generation ?? 0)
+    }
+    if ((row.expires_at ?? 0) <= now) throw new LeaseLost(lease.resource, 'expired before commit')
   }
 
   /** Fence out every outstanding holder: bump the generation and drop the holder. Returns the new generation. */

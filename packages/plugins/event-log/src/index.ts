@@ -38,6 +38,12 @@ declare module '@deepseek-ai/cordis' {
   }
 }
 
+/** An integer page size in [1, 1000]; NaN or fractional input never reaches SQL. */
+export function clampLimit(limit: number | undefined): number {
+  const n = Number.isFinite(limit) ? Math.floor(limit as number) : 100
+  return Math.min(Math.max(n, 1), 1000)
+}
+
 export interface Config {
   /** Largest serialized `data` accepted, in bytes (default 16 KiB). */
   maxDataBytes?: number
@@ -82,7 +88,8 @@ export class EventLog extends Service {
       if (Number(lastInsertRowid) !== entry.seq) throw new Error('event log sequence drifted')
       return entry
     })
-    this.ctx.emit('system/event', event)
+    // Announce only after the outermost commit; a listener cannot veto or fail the append.
+    this.ctx.store.afterCommit(() => this.ctx.emit('system/event', event))
     return event
   }
 
@@ -96,7 +103,7 @@ export class EventLog extends Service {
         params.push(value)
       }
     }
-    const limit = Math.min(Math.max(filter.limit ?? 100, 1), 1000)
+    const limit = clampLimit(filter.limit)
     const rows = this.ctx.store.db.prepare(`SELECT entry FROM events WHERE ${clauses.join(' AND ')} ORDER BY seq LIMIT ${limit}`).all(...params) as { entry: string }[]
     return rows.map((row) => JSON.parse(row.entry) as SystemEvent)
   }

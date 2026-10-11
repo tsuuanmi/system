@@ -1,11 +1,12 @@
 #!/usr/bin/env node
-import { init, mcpConfig, start } from './index.ts'
+import { init, mcpConfig, mcpToken, start } from './index.ts'
 
 const USAGE = `Usage: system <command>
 
   init                      create or refresh the system DSH profile
   start [dsh args...]       boot the profile (e.g. --patch ./overlay.yml)
   mcp-config <claude|codex> print client configuration for the running MCP server
+  mcp-token                 print the bearer token (for an environment variable)
 `
 
 async function main(argv: string[]): Promise<number> {
@@ -22,6 +23,9 @@ async function main(argv: string[]): Promise<number> {
       console.log(mcpConfig(client))
       return 0
     }
+    case 'mcp-token':
+      console.log(mcpToken())
+      return 0
     case '--help':
     case '-h':
     case undefined:

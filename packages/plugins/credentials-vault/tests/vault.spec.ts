@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
@@ -76,5 +76,67 @@ describe('encrypted ctx.credentials provider', () => {
       ({ kind: 'grant', payload: { n: ((current?.kind === 'grant' ? (current.payload as { n: number }).n : 0) + 1) } })
     await Promise.all(Array.from({ length: 20 }, (_, i) => (i % 2 ? a : b).credentials.modifyRecord(ACCOUNT, bump)))
     expect(await a.credentials.readRecord(ACCOUNT)).toEqual({ kind: 'grant', payload: { n: 20 } })
+  })
+})
+
+describe('review fixes (PR #3 security review)', () => {
+  it('runs mutate exclusively across providers: one call per write, never overlapping, always on the latest value', async () => {
+    const dir = tempDir()
+    const [a, b] = [await boot(dir), await boot(dir)]
+    let inFlight = 0
+    let maxInFlight = 0
+    let calls = 0
+    const bump = async (current: CredentialRecord | undefined): Promise<CredentialRecord> => {
+      calls++
+      inFlight++
+      maxInFlight = Math.max(maxInFlight, inFlight)
+      await new Promise((resolve) => setTimeout(resolve, 2))
+      inFlight--
+      return { kind: 'grant', payload: { n: (current?.kind === 'grant' ? (current.payload as { n: number }).n : 0) + 1 } }
+    }
+    await Promise.all(Array.from({ length: 10 }, (_, i) => (i % 2 ? a : b).credentials.modifyRecord(ACCOUNT, bump)))
+    expect(maxInFlight).toBe(1)
+    expect(calls).toBe(10)
+    expect(await a.credentials.readRecord(ACCOUNT)).toEqual({ kind: 'grant', payload: { n: 10 } })
+  })
+
+  it('rejects a truncated GCM tag', async () => {
+    const dir = tempDir()
+    const ctx = await boot(dir)
+    await ctx.credentials.set(REF, 'v')
+    const sealed = JSON.parse(readFileSync(join(dir, 'vault.enc'), 'utf8')) as { tag: string }
+    sealed.tag = Buffer.from(sealed.tag, 'base64').subarray(0, 4).toString('base64')
+    writeFileSync(join(dir, 'vault.enc'), JSON.stringify(sealed))
+    await expect(ctx.credentials.resolve(REF)).rejects.toThrow(/vault/)
+  })
+
+  it('treats prototype-named references as ordinary keys', async () => {
+    const dir = tempDir()
+    const ctx = await boot(dir)
+    for (const name of ['toString', 'constructor', '__proto__']) {
+      const ref = credentialRef(name)
+      expect(await ctx.credentials.resolve(ref)).toBeUndefined()
+      await ctx.credentials.set(ref, `value-of-${name}`)
+      expect(await ctx.credentials.resolve(ref)).toEqual({ value: `value-of-${name}`, source: 'vault' })
+    }
+  })
+
+  it('accepts a read-only (0400) key file such as a systemd credential', async () => {
+    const dir = tempDir()
+    const keyFile = join(dir, 'key')
+    writeFileSync(keyFile, Buffer.alloc(32, 7), { mode: 0o400 })
+    const ctx = new Context()
+    const fiber = ctx.plugin(VaultCredentialProvider, { path: join(dir, 'vault.enc'), keyFile })
+    await fiber
+    cleanups.push(() => fiber.dispose())
+    await ctx.credentials.set(REF, 'v')
+    expect(await ctx.credentials.resolve(REF)).toEqual({ value: 'v', source: 'vault' })
+  })
+
+  it('leaves no temp files behind', async () => {
+    const dir = tempDir()
+    const ctx = await boot(dir)
+    for (let i = 0; i < 5; i++) await ctx.credentials.set(REF, `v${i}`)
+    expect(readdirSync(dir).filter((name) => name.endsWith('.tmp'))).toEqual([])
   })
 })

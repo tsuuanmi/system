@@ -9,8 +9,9 @@
     `generation + 1`.
   - `renew`: heartbeat; throws `LeaseLost`.
   - `release`.
-  - `fence(resource, generation)`: call it inside the committing
-    `ctx.store.transaction`; it throws `StaleGeneration`.
+  - `fence(lease)`: call it inside the committing `ctx.store.transaction`. It checks
+    the token, the generation, and expiry, and throws `StaleGeneration` or
+    `LeaseLost`.
   - `invalidate`: fences every holder at once.
   - `current`.
 - **Reuse:** the claim, heartbeat, and release by token follow
