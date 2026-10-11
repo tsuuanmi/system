@@ -9,6 +9,7 @@ import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
 import Accounts from '@tsuuanmi/system-accounts'
 import Artifacts from '@tsuuanmi/system-artifacts'
 import Leases from '@tsuuanmi/system-leases'
+import Login from '@tsuuanmi/system-login'
 import BrowserPool from '@tsuuanmi/system-browser-patchright'
 import Vault from '@tsuuanmi/system-credentials-vault'
 import VirtualDisplay from '@tsuuanmi/system-display-virtual'
@@ -48,6 +49,7 @@ async function boot(options: { fake?: FakeOptions; accounts?: CatalogEntry[]; re
     ctx.plugin(BrowserPool, { chromePath: testChrome! }),
     ctx.plugin(Providers),
     ctx.plugin(ChatGptWeb, { origin: fake.origin, overlayPath: join(dir, 'none.yaml'), modes: { instant: { model: 'Latest', effort: 'Instant' }, medium: { model: 'Latest', effort: 'Medium' }, high: { model: 'GPT-6', effort: 'High' } }, defaultMode: 'instant' }),
+    ctx.plugin(Login, { profilesDir: join(dir, 'profiles') }),
     ctx.plugin(Turns, { turnTimeoutMs: 90_000, stallTimeoutMs: 80_000, maxConcurrentTurnsPerAccount: options.capacity ?? 2, ...options.turns }),
     ctx.plugin(WebServer, { host: '127.0.0.1', port: 0 }),
     ctx.plugin(McpEndpoint, { tokenFile: join(dir, 'mcp.token'), discoveryFile: join(dir, 'mcp.json') }),
@@ -112,6 +114,15 @@ describe.runIf(canRunBrowser)('ctx.turns: ask through a saved account', () => {
     expect((await ctx.turns.wait(second.turnId, 60_000)).status).toBe('completed')
     expect((await ctx.turns.wait(first.turnId, 1000)).status).toBe('completed')
   }, 90_000)
+
+  it('signs a credentials-mode account back in when it was signed out, then runs the turn', async () => {
+    const { ctx, fake } = await boot({ fake: { requireCookie: true, mfa: 'totp', answer: 'after relogin' } })
+    await ctx.accounts.setCredentials('chatgpt-main', { email: fake.options.email, password: fake.options.password, totpSecret: fake.options.totpSecret })
+    const turn = await ctx.turns.wait(ctx.turns.ask({ prompt: 'x' }).turnId, 90_000)
+    expect(turn).toMatchObject({ status: 'completed', answer: 'after relogin' })
+    expect(fake.sent).toHaveLength(1)
+    expect(await ctx.accounts.get('chatgpt-main')).toMatchObject({ status: 'ready' })
+  }, 150_000)
 
   it('marks the account reauth-required on positive sign-out evidence, so the next turn routes elsewhere', async () => {
     const { ctx } = await boot({ fake: { signedIn: false } })

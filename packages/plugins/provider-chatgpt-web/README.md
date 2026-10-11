@@ -23,6 +23,10 @@ The **ChatGPT Web provider driver**
 - **`snapshot(page, binding)`:** reopens `/c/<id>` and returns the last answer
   and whether it is still running, for reconciliation. `onBinding` reports a new
   conversation's id as soon as the URL shows it.
+- **`signIn(page, credentials, code)`:** the credential sign-in state machine,
+  driven by the map's `login.*` elements. The email page was verified live; the
+  password, code, and method-choice steps follow the reference repositories and
+  are **not yet verified live**. A challenge stops it, and so does a third code.
 - **`checkAuth`:** `signed-in` (composer present), `signed-out` (positive
   evidence: login URL or surface), or `unknown`.
 - **Heal audit:**

@@ -42,6 +42,9 @@ export interface DriverOptions {
 
 const escapeRegex = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
+/** Sign-in steps run on signed-out pages, where the map's sign-out guard would always fire. */
+const NO_GUARDS = { guards: false } as const
+
 const MAP_URL = new URL('../ui/chatgpt-web.ui.yaml', import.meta.url)
 const CONVERSATION = /\/c\/([0-9a-f-]{36})(?:[/?#]|$)/
 
@@ -236,6 +239,50 @@ export class ChatGptWebDriver implements ProviderDriver<Page> {
   private bindingOf(page: Page): string | undefined {
     const url = new URL(page.url())
     return CONVERSATION.exec(url.pathname + url.search)?.[1]
+  }
+
+  /**
+   * Credential sign-in on the current (signed-out) page: email, password, then whatever second
+   * step appears. Steps are recognized from the UI map, never by guessing; a challenge, an
+   * unknown page, or a third code fails closed, so the account is never locked.
+   */
+  async signIn(page: Page, credentials: { email: string; password: string }, code: (kind: 'totp' | 'email') => Promise<string>): Promise<void> {
+    if (!page.url().startsWith(this.origin) && !/auth/.test(page.url())) await page.goto(this.loginUrl, { waitUntil: 'domcontentloaded' })
+    else if ((await this.checkAuth(page)) === 'signed-out' && (await this.engine(page).count('login.email')) === 0) await page.goto(this.loginUrl, { waitUntil: 'domcontentloaded' })
+    const deadline = Date.now() + 3 * 60_000
+    let submissions = 0
+    let idleSince = Date.now()
+    for (;;) {
+      const engine = this.engine(page)
+      if (Date.now() > deadline) throw new ProviderError('reauth_required', 'chatgpt-web: sign-in did not finish in time; use the remote login')
+      if ((await engine.count('login.challenge')) > 0) throw new ProviderError('challenge', 'chatgpt-web: the sign-in shows a challenge; it is never solved automatically')
+      if ((await engine.count('composer.input')) > 0) return
+      let acted = true
+      if ((await engine.count('login.code')) > 0) {
+        if (submissions >= 2) throw new ProviderError('reauth_required', 'chatgpt-web: two codes were not accepted; stopping before the account is locked')
+        const kind = (await engine.count('login.email-code-hint')) > 0 ? 'email' : 'totp'
+        await engine.act('login.fill-code', { text: await code(kind) }, NO_GUARDS)
+        submissions++
+        await engine.act('login.submit-code', {}, NO_GUARDS)
+      } else if ((await engine.count('login.password')) > 0) {
+        await engine.act('login.fill-password', { text: credentials.password }, NO_GUARDS)
+        await engine.act('login.submit-password', {}, NO_GUARDS)
+      } else if ((await engine.count('login.email')) > 0) {
+        await engine.act('login.fill-email', { text: credentials.email }, NO_GUARDS)
+        await engine.act('login.submit-email', {}, NO_GUARDS)
+      } else if ((await engine.count('login.try-another')) > 0) {
+        await engine.act('login.choose-another', {}, NO_GUARDS)
+        await engine.act('login.choose-authenticator', {}, NO_GUARDS)
+      } else if ((await engine.count('login.not-now')) > 0) {
+        await (await engine.resolve('login.not-now')).locator.click()
+      } else {
+        acted = false
+      }
+      if (acted) idleSince = Date.now()
+      else if (Date.now() - idleSince > 15_000) throw new ProviderError('reauth_required', `chatgpt-web: unknown sign-in page (${new URL(page.url()).pathname}); use the remote login`)
+      await page.waitForLoadState('domcontentloaded').catch(() => undefined)
+      await new Promise((done) => setTimeout(done, 300))
+    }
   }
 
   /** The canonical conversation id from the URL, waiting briefly for it to appear. */

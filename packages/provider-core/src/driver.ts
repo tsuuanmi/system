@@ -60,6 +60,12 @@ export interface ProviderDriver<Page = unknown> {
   /** A stable identity hint for the signed-in account; only its hash is ever stored. */
   identity(page: Page): Promise<string>
   ask(page: Page, prompt: string, options: AskOptions): Promise<AskResult>
+  /**
+   * Optional credential sign-in on a signed-out page (ADR-0017): a bounded state machine
+   * that asks `code` for one-time codes (`totp` computed locally, or `email`), stops at any
+   * challenge (never solved), and gives up after two code submissions.
+   */
+  signIn?(page: Page, credentials: { email: string; password: string }, code: (kind: 'totp' | 'email') => Promise<string>): Promise<void>
   /** Reopen a bound conversation and report its last answer and whether it is still generating. */
   snapshot(page: Page, binding: string): Promise<TurnSnapshot>
 }

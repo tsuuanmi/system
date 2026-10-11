@@ -99,3 +99,47 @@ describe.runIf(canRunBrowser)('ctx.login.save', () => {
     await expect(ctx.login.save('nope')).rejects.toThrow()
   }, 60_000)
 })
+
+describe.runIf(canRunBrowser)('ctx.login.relogin (credential login with local TOTP)', () => {
+  async function bootCredentials(mfa: 'totp' | 'challenge' | 'email-code') {
+    const fake = new FakeChatGpt({ requireCookie: true, userId: 'user-cred', mfa })
+    await fake.start()
+    const dir = mkdtempSync(join(tmpdir(), 'system-relogin-'))
+    const ctx = new Context()
+    const fibers = [
+      ctx.plugin(Vault, { path: join(dir, 'vault.enc'), keyFile: join(dir, 'vault.key') }),
+      ctx.plugin(Accounts, { accounts: [{ id: 'chatgpt-main', provider: 'chatgpt-web', quotaClass: 'subscription-chat', tiers: {} }] }),
+      ctx.plugin(VirtualDisplay, {}),
+      ctx.plugin(BrowserPool, { chromePath: testChrome! }),
+      ctx.plugin(Providers),
+      ctx.plugin(ChatGptWeb, { origin: fake.origin, overlayPath: join(dir, 'none.yaml') }),
+      ctx.plugin(Login, { profilesDir: join(dir, 'profiles') }),
+    ]
+    await Promise.all(fibers)
+    cleanups.push(() => rmSync(dir, { recursive: true, force: true }), () => fake.stop(), async () => { for (const f of fibers.reverse()) await f.dispose() })
+    await ctx.accounts.setCredentials('chatgpt-main', { email: fake.options.email, password: fake.options.password, totpSecret: fake.options.totpSecret })
+    return { ctx, fake, dir }
+  }
+
+  it('signs in with stored credentials and a local TOTP code, then saves the account', async () => {
+    const { ctx, dir } = await bootCredentials('totp')
+    const view = await ctx.login.relogin('chatgpt-main')
+    expect(view).toMatchObject({ status: 'ready', loginMode: 'credentials' })
+    const vault = readFileSync(join(dir, 'vault.enc'))
+    for (const secret of ['correct horse', 'JBSWY3DPEHPK3PXP', 'operator@example.test']) expect(vault.includes(Buffer.from(secret))).toBe(false)
+  }, 120_000)
+
+  it('waits for an operator-supplied code when the site emails one', async () => {
+    const { ctx } = await bootCredentials('email-code')
+    const relogin = ctx.login.relogin('chatgpt-main')
+    await expect.poll(() => ctx.login.pendingCode('chatgpt-main'), { timeout: 60_000 }).toBe('email')
+    ctx.login.submitCode('chatgpt-main', '424242')
+    expect(await relogin).toMatchObject({ status: 'ready' })
+  }, 120_000)
+
+  it('marks the account reauth-required at a challenge and points to the remote login', async () => {
+    const { ctx } = await bootCredentials('challenge')
+    await expect(ctx.login.relogin('chatgpt-main')).rejects.toMatchObject({ kind: 'challenge' })
+    expect(await ctx.accounts.get('chatgpt-main')).toMatchObject({ status: 'reauth-required' })
+  }, 120_000)
+})

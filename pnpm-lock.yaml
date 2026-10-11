@@ -384,6 +384,9 @@ importers:
       '@tsuuanmi/system-providers':
         specifier: workspace:*
         version: link:../providers
+      otpauth:
+        specifier: 9.5.2
+        version: 9.5.2
       ws:
         specifier: 8.22.0
         version: 8.22.0
@@ -480,6 +483,9 @@ importers:
       '@tsuuanmi/system-store':
         specifier: workspace:*
         version: link:../store
+      otpauth:
+        specifier: 9.5.2
+        version: 9.5.2
       patchright-core:
         specifier: 1.63.0
         version: 1.63.0
@@ -549,6 +555,9 @@ importers:
       '@tsuuanmi/system-libs':
         specifier: workspace:*
         version: link:../../libs
+      '@tsuuanmi/system-login':
+        specifier: workspace:*
+        version: link:../login
       '@tsuuanmi/system-mcp-server':
         specifier: workspace:*
         version: link:../mcp-server
@@ -3736,6 +3745,10 @@ packages:
     os: [linux]
     libc: [glibc]
 
+  '@noble/hashes@2.4.0':
+    resolution: {integrity: sha512-X5XaVWZIBCT7HHZGm5I7ZQXDwLG+bGXuSrMQAW+7Zvl87h1kmc1ZB1VSRJcpUfoUrGQp4Fkoxm5kZ+Ms+aW+eA==}
+    engines: {node: '>= 20.19.0'}
+
   '@novnc/novnc@1.7.0':
     resolution: {integrity: sha512-ucEJOx4T2avIRCleodk7YobZj5O2Ga2AeLfQ69A/yjG9HHba2+PDgwSkN3FttrmG+70ZGx21sElNFouK13RzyA==}
 
@@ -4998,6 +5011,9 @@ packages:
         optional: true
       zod:
         optional: true
+
+  otpauth@9.5.2:
+    resolution: {integrity: sha512-GQ5emWR/x1tcExT62IBT0UfO95wZzJZyxYOJOGVeQF47SYEN9vmh0vISvDZaNMuFJRG+IaWCKtfm+t9Bfoal6w==}
 
   oxlint@1.87.0:
     resolution: {integrity: sha512-drxVlaW7Oqq7wSy1CN25znRu00aRq8n57Q2wniJRxCmtYVz07ufCm7EVDPQFZURrTgQIjzKrVEHAD/HcvJXObg==}
@@ -9344,6 +9360,8 @@ snapshots:
   '@napi-rs/lzma-linux-x64-gnu@1.5.1':
     optional: true
 
+  '@noble/hashes@2.4.0': {}
+
   '@novnc/novnc@1.7.0': {}
 
   '@opentelemetry/api-logs@0.222.0':
@@ -10479,6 +10497,10 @@ snapshots:
       undici: 8.11.2
       ws: 8.22.0
       zod: 4.6.5
+
+  otpauth@9.5.2:
+    dependencies:
+      '@noble/hashes': 2.4.0
 
   oxlint@1.87.0:
     optionalDependencies:

@@ -64,6 +64,11 @@ export interface ActArgs {
 export interface ActOptions {
   /** Allow the action's non-locator fallback (default true). */
   allowFallback?: boolean
+  /**
+   * Check the map's `errors` guards first (default true). Sign-in steps turn this off,
+   * because a signed-out page is where they run; they check their own stop conditions.
+   */
+  guards?: boolean
 }
 
 const TICK_MS = 100
@@ -133,7 +138,8 @@ export class UiEngine {
   async act(id: string, args: ActArgs = {}, options: ActOptions = {}): Promise<void> {
     const spec = this.map.actions[id]
     if (!spec) throw new ProviderError('config_error', `${this.map.provider}: unknown action ${id}`)
-    await this.checkGuards()
+    const guarded = options.guards !== false
+    if (guarded) await this.checkGuards()
     const resolveMs = spec.timeouts?.resolveMs ?? this.options.defaultResolveMs ?? 5000
     const verifyMs = spec.timeouts?.verifyMs ?? this.options.defaultVerifyMs ?? 15_000
     const baselines = await this.baselines(spec.verify)
@@ -144,7 +150,7 @@ export class UiEngine {
       target = await this.resolve(spec.target, resolveMs)
     } catch (error) {
       if (!(error instanceof ProviderError) || error.kind !== 'ui_drift') throw error
-      await this.checkGuards()
+      if (guarded) await this.checkGuards()
       const heal = this.options.heal === false ? undefined : await this.heal(id, spec)
       if (heal) {
         ;({ target, event: healed } = heal)
@@ -173,7 +179,12 @@ export class UiEngine {
     const spec = this.element(id)
     if (spec.frames === 'any') {
       for (const frame of this.page.frames()) {
-        const found = await this.matchIn(id, spec, frame)
+        // A frame can be replaced while it is searched (pages re-render their iframes).
+        if (frame.isDetached()) continue
+        const found = await this.matchIn(id, spec, frame).catch((error: unknown) => {
+          if (frame.isDetached() || /detached/i.test((error as Error).message)) return undefined
+          throw error
+        })
         if (found) return found
       }
       return undefined

@@ -27,6 +27,7 @@
     "@tsuuanmi/system-mcp-server": "workspace:*",
     "@tsuuanmi/system-provider-core": "workspace:*",
     "@tsuuanmi/system-providers": "workspace:*",
+    "otpauth": "9.5.2",
     "ws": "8.22.0"
   },
   "peerDependencies": {

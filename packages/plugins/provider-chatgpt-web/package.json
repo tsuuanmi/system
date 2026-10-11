@@ -38,6 +38,7 @@
     "@tsuuanmi/system-browser-patchright": "workspace:*",
     "@tsuuanmi/system-display-virtual": "workspace:*",
     "@tsuuanmi/system-store": "workspace:*",
+    "otpauth": "9.5.2",
     "patchright-core": "1.63.0"
   }
 }

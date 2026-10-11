@@ -10,6 +10,9 @@ const USAGE = `Usage: system <command>
                             from stdin (profile must be running)
   account list              list provider accounts and their status (profile must be running)
   account login <id>        open a remote login desktop (noVNC over ssh -L); Save stores the account
+  account credentials <id>  store login credentials from stdin as JSON {"email","password","totpSecret"?}
+  account relogin <id>      sign in again with the stored credentials (TOTP computed locally)
+  account code <id> <code>  supply a one-time code a running sign-in is waiting for
   account save <id>         after an interactive login: capture, verify, store encrypted
   start [dsh args...]       boot the profile (e.g. --patch ./overlay.yml)
   mcp-config <claude|codex> print client configuration for the running MCP server
@@ -77,6 +80,26 @@ async function main(argv: string[]): Promise<number> {
           }
         }
         throw new Error('the remote login desktop expired before the account was saved')
+      }
+      if (rest[0] === 'credentials' && rest[1]) {
+        // Read from stdin, never from arguments: a password must not reach the process list or history.
+        const input = JSON.parse(await readAllStdin()) as { email?: string; password?: string; totpSecret?: string }
+        const outcome = await callTool('account_set_credentials', { account: rest[1], email: input.email, password: input.password, ...(input.totpSecret ? { totpSecret: input.totpSecret } : {}) })
+        if (outcome.isError) throw new Error(outcome.text)
+        console.log(outcome.text)
+        return 0
+      }
+      if (rest[0] === 'relogin' && rest[1]) {
+        const outcome = await callTool('account_relogin', { account: rest[1] })
+        if (outcome.isError) throw new Error(outcome.text)
+        console.log(`signed in ${rest[1]}`)
+        return 0
+      }
+      if (rest[0] === 'code' && rest[1] && rest[2]) {
+        const outcome = await callTool('account_code', { account: rest[1], code: rest[2] })
+        if (outcome.isError) throw new Error(outcome.text)
+        console.log(outcome.text)
+        return 0
       }
       if (rest[0] === 'save' && rest[1]) {
         const outcome = await callTool('account_save', { account: rest[1] })

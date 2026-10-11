@@ -10,6 +10,7 @@
 import { existsSync } from 'node:fs'
 import { delimiter, join } from 'node:path'
 import { RemoteLogin, type RemoteSessionInfo } from './remote.ts'
+import { TotpCodes } from './totp.ts'
 import { type Context, Service } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { z as zod } from 'zod'
@@ -37,6 +38,8 @@ export interface Config {
   remoteTtlMs?: number
   /** Loopback port of the remote login page (default 47318; 0 picks a free one). */
   remotePort?: number
+  /** How long a credential sign-in waits for an operator-supplied code (default 5 min). */
+  codeWaitMs?: number
 }
 
 const ID = /^[a-z][a-z0-9-]*$/
@@ -50,10 +53,13 @@ export class Login extends Service {
     chromePath: z.string().description('Chrome for the remote login desktop'),
     remoteTtlMs: z.natural().default(30 * 60_000).description('Lifetime of a remote login desktop, in milliseconds'),
     remotePort: z.natural().default(47318).description('Loopback port of the remote login page (0 = any free port)'),
+    codeWaitMs: z.natural().default(5 * 60_000).description('How long a sign-in waits for an operator-supplied code, in milliseconds'),
   })
 
   private readonly profilesDir: string
   private readonly remotes = new Map<string, RemoteLogin>()
+  private readonly totp = new TotpCodes()
+  private readonly pendingCodes = new Map<string, { kind: 'totp' | 'email'; resolve: (code: string) => void; reject: (error: Error) => void }>()
 
   constructor(ctx: Context, private readonly config: Config = {}) {
     super(ctx, 'login')
@@ -75,6 +81,39 @@ export class Login extends Service {
         try {
           const info = await this.remote(String(account))
           return { content: [{ type: 'text', text: `${info.sshCommand}\nthen open ${info.url}` }], structuredContent: { ...info } }
+        } catch (error) {
+          return failure(error)
+        }
+      })
+      c.mcp.tool('account_set_credentials', {
+        description: 'Operator tool: store an account\'s login credentials encrypted (email, password, optional Base32 TOTP secret) and switch it to credential login. Nothing is returned or logged.',
+        inputSchema: { account: zod.string().min(1).max(64), email: zod.string().min(3).max(320), password: zod.string().min(1).max(1024), totpSecret: zod.string().max(256).optional() },
+      }, async ({ account, email, password, totpSecret }) => {
+        try {
+          const view = await this.ctx.accounts.setCredentials(String(account), { email: String(email), password: String(password), ...(totpSecret ? { totpSecret: String(totpSecret) } : {}) })
+          return { content: [{ type: 'text', text: `credentials stored for ${view.id}` }], structuredContent: { ...view } }
+        } catch (error) {
+          return failure(error)
+        }
+      })
+      c.mcp.tool('account_relogin', {
+        description: 'Operator tool: sign an account in again with its stored credentials (local TOTP; an emailed code is supplied with account_code).',
+        inputSchema: { account: zod.string().min(1).max(64) },
+      }, async ({ account }) => {
+        try {
+          const view = await this.relogin(String(account))
+          return { content: [{ type: 'text', text: JSON.stringify(view) }], structuredContent: { ...view } }
+        } catch (error) {
+          return failure(error)
+        }
+      })
+      c.mcp.tool('account_code', {
+        description: 'Operator tool: supply the one-time code a running sign-in is waiting for.',
+        inputSchema: { account: zod.string().min(1).max(64), code: zod.string().min(4).max(10) },
+      }, async ({ account, code }) => {
+        try {
+          this.submitCode(String(account), String(code))
+          return { content: [{ type: 'text', text: 'code accepted' }] }
         } catch (error) {
           return failure(error)
         }
@@ -129,8 +168,68 @@ export class Login extends Service {
     await this.remotes.get(accountId)?.end()
   }
 
+  /**
+   * Credential login (ADR-0017): only for an account in `credentials` mode, on its persistent
+   * login profile so the device stays recognized. One-time codes come from the local TOTP
+   * secret, or from the operator (`submitCode`) when the site emails one. A challenge or a
+   * failed sign-in marks the account `reauth-required` and nothing is saved.
+   */
+  async relogin(accountId: string): Promise<AccountView> {
+    const account = await this.ctx.accounts.get(accountId)
+    if (account.loginMode !== 'credentials') throw new ProviderError('invalid_input', `${accountId} uses manual login; run system account login ${accountId}`)
+    const driver = this.ctx.providers.get(account.provider)
+    if (!driver.signIn) throw new ProviderError('config_error', `${driver.provider} has no credential sign-in`)
+    const credentials = await this.ctx.accounts.credentials(accountId)
+    if (!credentials) throw new ProviderError('invalid_input', `${accountId} has no stored credentials`)
+    const code = async (kind: 'totp' | 'email'): Promise<string> => {
+      if (kind === 'totp' && credentials.totpSecret) return this.totp.next(accountId, credentials.totpSecret)
+      return this.awaitCode(accountId, kind)
+    }
+    try {
+      return await this.save(accountId, { signIn: (page) => driver.signIn!(page as never, { email: credentials.email, password: credentials.password }, code) })
+    } catch (error) {
+      if (error instanceof ProviderError && (error.kind === 'challenge' || error.kind === 'reauth_required')) {
+        const current = await this.ctx.accounts.get(accountId)
+        if (current.status !== 'reauth-required') await this.ctx.accounts.markSignedOut(accountId, 'login-surface', current.revision).catch(() => undefined)
+      }
+      throw error
+    } finally {
+      this.pendingCodes.get(accountId)?.reject(new ProviderError('aborted', 'sign-in ended'))
+      this.pendingCodes.delete(accountId)
+    }
+  }
+
+  /** The kind of code a sign-in is waiting for (`email`, or `totp` without a stored secret), if any. */
+  pendingCode(accountId: string): 'totp' | 'email' | undefined {
+    return this.pendingCodes.get(accountId)?.kind
+  }
+
+  /** The operator types the code the site sent them (`system account code <id> <code>`). */
+  submitCode(accountId: string, code: string): void {
+    const pending = this.pendingCodes.get(accountId)
+    if (!pending) throw new ProviderError('invalid_input', `no sign-in is waiting for a code for ${accountId}`)
+    if (!/^\d{4,10}$/.test(code)) throw new ProviderError('invalid_input', 'a one-time code is 4 to 10 digits')
+    this.pendingCodes.delete(accountId)
+    pending.resolve(code)
+  }
+
+  private awaitCode(accountId: string, kind: 'totp' | 'email'): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.pendingCodes.delete(accountId)
+        reject(new ProviderError('reauth_required', `no ${kind} code was supplied for ${accountId} in time; use system account code or the remote login`))
+      }, this.config.codeWaitMs ?? 5 * 60_000)
+      timer.unref()
+      this.pendingCodes.set(accountId, {
+        kind,
+        resolve: (code) => { clearTimeout(timer); resolve(code) },
+        reject: (error) => { clearTimeout(timer); reject(error) },
+      })
+    })
+  }
+
   /** Capture → verify in a fresh context → store encrypted (revision-guarded). */
-  async save(accountId: string): Promise<AccountView> {
+  async save(accountId: string, options: { signIn?: (page: unknown) => Promise<void> } = {}): Promise<AccountView> {
     const account = await this.ctx.accounts.get(accountId)
     const driver = this.ctx.providers.get(account.provider)
     const [home] = driver.stateOrigins
@@ -141,7 +240,11 @@ export class Login extends Service {
       origins: [...driver.stateOrigins],
       previous,
       inspect: async (page) => {
-        const auth = await driver.checkAuth(page)
+        let auth = await driver.checkAuth(page)
+        if (auth === 'signed-out' && options.signIn) {
+          await options.signIn(page)
+          auth = await driver.checkAuth(page)
+        }
         if (auth === 'signed-out') throw new ProviderError('reauth_required', `${accountId} is not signed in; log in first`)
         if (auth !== 'signed-in') throw new ProviderError('session_broken', `${accountId}: could not confirm the sign-in`)
         return driver.identity(page)

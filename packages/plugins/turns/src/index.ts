@@ -12,6 +12,7 @@ import { type Context, Service } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import type {} from '@tsuuanmi/system-accounts'
 import type {} from '@tsuuanmi/system-event-log'
+import type {} from '@tsuuanmi/system-login'
 import type {} from '@tsuuanmi/system-artifacts'
 import type { Turn } from '@tsuuanmi/system-browser-patchright'
 import { type Lease, LeaseLost, StaleGeneration } from '@tsuuanmi/system-leases'
@@ -411,7 +412,7 @@ export class Turns extends Service {
     return account
   }
 
-  private async execute(row: Row, accountId: string, signal: AbortSignal, lease: () => Lease): Promise<void> {
+  private async execute(row: Row, accountId: string, signal: AbortSignal, lease: () => Lease, relogged = false): Promise<void> {
     const view = await this.ctx.accounts.get(accountId)
     if (view.status !== 'ready') throw new ProviderError('reauth_required', `${accountId} is ${view.status}`)
     const driver = this.ctx.providers.get(view.provider)
@@ -447,8 +448,14 @@ export class Turns extends Service {
       })
     } catch (error) {
       await turn.close()
-      // Positive evidence only (the driver saw the login surface): the account needs the operator.
       if (error instanceof ProviderError && error.kind === 'reauth_required') {
+        // Signed out before anything was sent: a credentials-mode account signs in again once
+        // (ADR-0017), then the turn runs again; otherwise the account needs the operator.
+        const login = this.ctx.get('login')
+        if (!relogged && view.loginMode === 'credentials' && login) {
+          await login.relogin(accountId)
+          return this.execute(this.row(row.turn_id)!, accountId, signal, lease, true)
+        }
         await this.ctx.accounts.markSignedOut(accountId, 'login-surface', view.revision).catch(() => undefined)
       }
       throw error

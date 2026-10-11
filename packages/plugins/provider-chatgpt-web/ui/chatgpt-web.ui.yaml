@@ -15,6 +15,39 @@ elements:
       - { role: heading, name: { en: '^Log in or sign up$' } }
       - { testId: login-button }
 
+  # Credential sign-in (ADR-0017). The email page was seen live on 2026-10-11; the later
+  # steps (password, codes, method choice, challenge) are NOT yet verified live.
+  login.email:
+    candidates:
+      - { role: textbox, name: { en: '^Email address$' } }
+      - { label: { en: '^Email address$' } }
+  login.password:
+    candidates:
+      - { label: { en: '^Password$' } }
+  login.code:
+    candidates:
+      - { label: { en: '^(Code|Enter code|Verification code|One-time code)$' } }
+  login.continue:
+    candidates:
+      - { role: button, name: { en: '^Continue$' } }
+  login.try-another:
+    candidates:
+      - { role: button, name: { en: '^Try another method$' } }
+      - { role: link, name: { en: '^Try another method$' } }
+  login.authenticator:
+    candidates:
+      - { role: button, name: { en: '^Authenticator app\b' } }
+  login.not-now:
+    candidates:
+      - { role: button, name: { en: '^(Not now|Skip|Maybe later)$' } }
+  login.email-code-hint:
+    candidates:
+      - { role: heading, name: { en: '^Check your (inbox|email)$' } }
+  login.challenge:
+    candidates:
+      - { css: 'iframe[title*="challenge" i]' }
+      - { role: heading, name: { en: '^Verify you are human$' } }
+
   mode.group:
     description: Chat / Work switch on the home page; Work spends the Codex quota.
     candidates:
@@ -163,6 +196,50 @@ actions:
     sideEffect: reversible
     heal: deterministic
     timeouts: { resolveMs: 5000, verifyMs: 5000 }
+  login.fill-email:
+    do: insertText
+    target: login.email
+    verify: { visible: login.email }
+    sideEffect: none
+  login.fill-password:
+    do: insertText
+    target: login.password
+    verify: { visible: login.password }
+    sideEffect: none
+  login.fill-code:
+    do: insertText
+    target: login.code
+    verify: { visible: login.code }
+    sideEffect: none
+  login.submit-email:
+    do: click
+    target: login.continue
+    verify: { hidden: login.email }
+    sideEffect: reversible
+    timeouts: { resolveMs: 5000, verifyMs: 15000 }
+  login.submit-password:
+    do: click
+    target: login.continue
+    verify: { hidden: login.password }
+    sideEffect: reversible
+    timeouts: { resolveMs: 5000, verifyMs: 15000 }
+  login.submit-code:
+    # A wrong code shows the same page again; the sign-in loop judges the outcome.
+    do: click
+    target: login.continue
+    verify: { url: '.' }
+    sideEffect: irreversible
+    timeouts: { resolveMs: 5000, verifyMs: 1000 }
+  login.choose-another:
+    do: click
+    target: login.try-another
+    verify: { visible: login.authenticator }
+    sideEffect: reversible
+  login.choose-authenticator:
+    do: click
+    target: login.authenticator
+    verify: { visible: login.code }
+    sideEffect: reversible
   model.open:
     do: click
     target: composer.model

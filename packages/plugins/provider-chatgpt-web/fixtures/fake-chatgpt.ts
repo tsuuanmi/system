@@ -21,6 +21,7 @@
  */
 import { randomUUID } from 'node:crypto'
 import { type IncomingMessage, type Server, type ServerResponse, createServer } from 'node:http'
+import { Secret, TOTP } from 'otpauth'
 
 export interface FakeOptions {
   /** Start on the Work tab (the trap the driver must avoid). Default true. */
@@ -48,6 +49,13 @@ export interface FakeOptions {
   report?: string
   /** Deep research asks a clarifying question instead of starting. */
   clarify?: boolean
+  /** Sign-in flow after the password (requireCookie mode): none, totp, push-first (then "Try another method"), email-code, or challenge. */
+  mfa?: 'none' | 'totp' | 'push-first' | 'email-code' | 'challenge'
+  /** Credentials the fake auth accepts. */
+  email?: string
+  password?: string
+  /** Base32 TOTP secret the fake auth verifies against. */
+  totpSecret?: string
 }
 
 export interface Sent {
@@ -243,7 +251,16 @@ fetch('/backend-api/me')
 }
 
 /** Serves the fake site; `sent` records every conversation POST the page made. */
+/** Plain HTML forms shaped like the auth pages (the email page as seen live; later steps unverified). */
+function authPage(title: string, body: string): string {
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${title}</title></head><body><main><h1>${title}</h1>${body}</main></body></html>`
+}
+const field = (label: string, name: string, type = 'text'): string =>
+  `<label>${label}<input name="${name}" type="${type}" aria-label="${label}"></label>`
+
 export class FakeChatGpt {
+  /** Code submissions the fake auth received (for bounds tests). */
+  readonly codeAttempts: string[] = []
   readonly sent: Sent[] = []
   readonly conversations = new Map<string, Conversation>()
   private server: Server | undefined
@@ -255,7 +272,8 @@ export class FakeChatGpt {
     this.options = {
       startOnWork: true, chatToggleBroken: false, signedIn: true, requireCookie: false, userId: 'user-fake123', sendLabel: 'Send',
       answer: 'OK', thinkMs: 300, models: ['Latest', 'GPT-6', 'GPT-5.6 Sol', 'GPT-5.5'], lockedModels: [],
-      researchMs: 1500, report: 'Deep research report body.', clarify: false, ...options,
+      researchMs: 1500, report: 'Deep research report body.', clarify: false,
+      mfa: 'totp', email: 'operator@example.test', password: 'correct horse', totpSecret: 'JBSWY3DPEHPK3PXP', ...options,
     }
   }
 
@@ -269,6 +287,49 @@ export class FakeChatGpt {
   async stop(): Promise<void> {
     for (const stream of this.streams) stream.destroy()
     await new Promise<void>((resolve) => this.server?.close(() => resolve()) ?? resolve())
+  }
+
+  /** A multi-step sign-in: email, password, then the configured second step. */
+  private async auth(url: URL, req: IncomingMessage, res: ServerResponse): Promise<void> {
+    let body = ''
+    for await (const chunk of req) body += String(chunk)
+    const form = new URLSearchParams(body)
+    const page = (html: string): void => void res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }).end(html)
+    const signedIn = (): void => {
+      res.writeHead(302, { location: '/', 'set-cookie': 'session=valid; Path=/; Max-Age=3600' })
+      res.end()
+    }
+    const codePage = (title: string): void => page(authPage(title, `<form method="post" action="/auth/code">${field('Code', 'code')}<button type="submit">Continue</button></form>`))
+    switch (url.pathname) {
+      case '/auth/login':
+        return page(authPage('Log in or sign up', `<button>Continue with Google</button><form method="post" action="/auth/email">${field('Email address', 'email', 'email')}<button type="submit">Continue</button></form>`))
+      case '/auth/email':
+        if (form.get('email') !== this.options.email) return page(authPage('Log in or sign up', '<p>Unknown account</p>'))
+        return page(authPage('Enter your password', `<form method="post" action="/auth/password">${field('Password', 'password', 'password')}<button type="submit">Continue</button></form>`))
+      case '/auth/password': {
+        if (form.get('password') !== this.options.password) return page(authPage('Enter your password', '<p>Wrong password</p>'))
+        const mfa = this.options.mfa
+        if (mfa === 'none') return signedIn()
+        if (mfa === 'challenge') return page(authPage('Verify you are human', '<iframe title="Widget containing a Cloudflare security challenge"></iframe>'))
+        if (mfa === 'email-code') return codePage('Check your inbox')
+        if (mfa === 'push-first') return page(authPage('Check your phone', '<form method="get" action="/auth/methods"><button type="submit">Try another method</button></form>'))
+        return codePage('Check your authenticator app')
+      }
+      case '/auth/methods':
+        return page(authPage('Choose a method', '<form method="get" action="/auth/authenticator"><button type="submit">Authenticator app</button></form>'))
+      case '/auth/authenticator':
+        return codePage('Check your authenticator app')
+      case '/auth/code': {
+        const code = form.get('code') ?? ''
+        this.codeAttempts.push(code)
+        const ok = this.options.mfa === 'email-code'
+          ? code === '424242'
+          : new TOTP({ secret: Secret.fromBase32(this.options.totpSecret), digits: 6, period: 30 }).validate({ token: code, window: 1 }) !== null
+        if (ok) return signedIn()
+        return codePage(this.options.mfa === 'email-code' ? 'Check your inbox' : 'Check your authenticator app')
+      }
+    }
+    res.writeHead(404).end()
   }
 
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -323,10 +384,7 @@ export class FakeChatGpt {
       return
     }
     res.setHeader('content-type', 'text/html; charset=utf-8')
-    if (url.pathname.startsWith('/auth')) {
-      res.end('<!doctype html><title>Log in</title><h1>Log in or sign up</h1><button>Continue with Google</button><input aria-label="Email address"><button>Continue</button>')
-      return
-    }
+    if (url.pathname.startsWith('/auth')) return this.auth(url, req, res)
     const match = /^\/c\/([0-9a-f-]+)$/.exec(url.pathname)
     res.end(html(this.options, match ? this.conversations.get(match[1]!) : undefined))
   }
