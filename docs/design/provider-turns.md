@@ -60,8 +60,9 @@ default. Live observations are in the
   - the driver plugin's `modes` (named presets of a model and an effort level)
     and its `defaultMode`;
   - each account's catalog `tiers` (tier → preset name);
-  - the turn runtime's `defaultTier`.
-- **Resolution.** A turn's tier (requested, or `defaultTier`) is a minimum.
+  - the workflow template's tier per node, which a caller may replace for
+    `ask`.
+- **Resolution.** A node's tier is a minimum.
   Each tier an account maps to a preset is one Worker. The router
   ([routing](routing.md#algorithm)) picks the lowest admitted tier at or above
   the minimum and records a `tier` decision. A tier the catalog does not map has
@@ -70,7 +71,7 @@ default. Live observations are in the
   slider, then **reads both back**. An unknown preset, an unknown or locked
   model, or an unreachable level fails with `config_error` before anything is
   sent (INV-2). The receipt records the verified model and effort.
-- **Deep research** (`feature: deep-research`) runs only in persistent
+- **Deep research** (the `deep-research` capability) runs only in persistent
   conversations: Temporary chat does not offer it. Its first reply is an
   acknowledgement, and the report arrives later in a nested frame. The driver
   waits for that frame's "Research completed" state (running while "Stop
@@ -164,8 +165,8 @@ generation are still current. Otherwise the write is dropped
 
 ## Runtime (MVP slice 1)
 
-`@tsuuanmi/system-turns` (`ctx.turns`) runs one turn end to end. The workflow
-engine calls it for every `worker` node. The details are in its
+`@tsuuanmi/system-turns` (`ctx.turns`) runs one turn end to end, on the website
+Worker the workflow engine admitted. The details are in its
 [README](../../packages/plugins/turns/README.md):
 
 - **Accept durably.** The turn is stored as `queued` before anything runs.

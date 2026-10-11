@@ -4,7 +4,11 @@
 router ([routing](../../../docs/design/routing.md#algorithm)). Definition:
 [`@tsuuanmi/system-workers-core`](../../workers-core/README.md).
 
-- **Sources.** A plugin registers a `WorkerSource` for its own lifetime.
+- **Sources.** A plugin registers a `WorkerSource` for its own lifetime. A
+  source describes its Workers, runs work on them (`start`, `get`, `wait`), and
+  may name the Workers a session must stay on (`affinity`). The router
+  returns the admitted Worker with its source's name; `source(name)` finds the
+  source.
   `describe()` runs on every route, so admission sees current states. Each
   descriptor is validated against `capability-descriptor@1.0`. A Worker id that
   two sources describe is refused.

@@ -4,28 +4,27 @@
 invoked by the [workflow engine](../workflow/README.md)
 ([provider turns](../../../docs/design/provider-turns.md#runtime-mvp-slice-1)).
 
-- **Durable from acceptance.** `ask` writes the turn (`queued`) and returns at
-  once. The prompt is stored locally, and is never returned by views or MCP.
-  `clientRequestId` makes retries idempotent; the same key with another prompt is
-  refused.
-- **Egress (INV-12):** before routing or sending, `ctx.egress` checks the prompt
-  against the caller's `classification` (default `operator-shared`) for the
-  `website` Worker class, and scans it for credentials. A denial fails the turn
-  as `egress_denied` with the decision id, and nothing is sent.
-- **Routing through `ctx.workers`:**
-  - this runtime registers the `website` Worker source: one Worker
-    `worker:<account>/<tier>` per account and tier its catalog maps to a mode
-    preset, proving what the account's driver declares, in a state taken from the
-    account's status;
-  - each turn becomes a `work-requirement@1.0`: `reason`, plus
-    `persistent-conversation` for a session and `deep-research` for research;
-    the caller's classification; and the minimum tier;
-  - a persistent session is restricted to its account's Workers;
-  - the router records `tier` and `route` decisions. When nothing is admissible
-    it records an `admission` decision, and the turn fails with nothing sent:
-    `reauth_required` when there is no Worker at all or a Worker was kept out
-    only by its account's state, `config_error` when no Worker serves the
-    capabilities or tier.
+- **The `website` Worker source.**
+  - **Describe:** one Worker `worker:<account>/<tier>` per account and per tier
+    its catalog maps to a mode preset. It proves what the account's driver
+    declares, in a state taken from the account's status.
+  - **Run:** `start`, `get`, and `wait` run turns. The engine routes; a turn
+    never routes itself.
+  - **Affinity:** a session stays on the account it is bound to.
+- **Durable from acceptance.** `ask(WorkerStart)` writes the turn (`queued`) on
+  the admitted Worker and returns at once.
+  - The turn takes its feature from the requirement's capabilities
+    (`deep-research`), its tier from the Worker, and the route and tier
+    decisions from the caller.
+  - A session id is opened on first use and bound to the Worker's account.
+  - The request `key` makes it idempotent; the same key with another prompt is
+    refused.
+  - The prompt is stored locally, and is never returned by views or MCP.
+- **Egress (INV-12):** before sending, `ctx.egress` checks the prompt against
+  the requirement's classification for the `website` Worker class, and scans it
+  for credentials. A denial fails the turn as `egress_denied` with the decision
+  id, and nothing is sent. Routing already keeps `local-private` work off remote
+  Workers; this check holds even if a caller skipped routing.
 - **Execution:**
   - each account has its own `ProviderScheduler` (capacity
     `maxConcurrentTurnsPerAccount`; one session runs in order);
@@ -67,33 +66,28 @@ invoked by the [workflow engine](../workflow/README.md)
     `reconciliation_failed` (AMBIGUOUS).
   - A stop leaves turns as they are for the next start.
 - **Tiers and modes:**
-  - `tier` (or `defaultTier`) is the **minimum**: the router picks the lowest
-    admitted tier at or above it, and the chosen Worker's tier maps through the
-    account's catalog `tiers` to the driver's mode preset;
+  - the Worker's tier maps through the account's catalog `tiers` to the
+    driver's mode preset. The router chose that tier as the lowest admitted one
+    at or above the requirement's minimum;
   - the receipt records the model and effort that were read back.
-- **Deep research:** `research` starts in a new (or the given) persistent
-  session and returns at once (`researchTimeoutMs`, `researchStallTimeoutMs`).
+- **Deep research:** a requirement with `deep-research` runs as Deep research in
+  its persistent session (`researchTimeoutMs`, `researchStallTimeoutMs`).
 - **Sessions:**
-  - a persistent session exists from acceptance and is bound to the first
-    account that runs it;
+  - the caller issues session ids; a session is bound to the account of its
+    first turn;
   - turns of one session run in acceptance order.
 - **Sign-out:** a driver `reauth_required` (it saw the login surface) marks the
   account `reauth-required`, so new turns route elsewhere.
-- **For the engine:** `requirement(input)` returns the `work-requirement@1.0` an
-  ask is routed with; the engine records it on its node. `openSession()` opens
-  an empty persistent session, so a run can return its id at once.
-  - An ask names its `acceptance` contract (default `acceptance.answer`), its
-    `objective`, and its `tierSource` (`caller`, `default`, or `profile`). All
-    three are recorded in the requirement.
-  - A view's `submitted` flag says whether the prompt reached the provider. It
-    is set in the same transaction as the receipt, so a caller never resends.
+- **Submitted:** a view's `submitted` flag says whether the prompt reached the
+  provider. It is set in the same transaction as the receipt, so a caller never
+  resends.
 - **Fail closed on drift:** a turn routed before a restart whose tier the
   operator has since unmapped fails with `config_error`. It is never served by
   another mode.
 - **Lost lease:** the turn is looked at again once its lease can be taken, so it
   is never stranded until the next start.
-- **Stop:** a stopped runtime starts nothing. A turn caught mid-route stays
-  queued for the next start.
+- **Stop:** a stopped runtime starts nothing. A turn caught before scheduling
+  stays queued for the next start.
 - **Injects:** `store`, `artifacts`, `leases`, `egress`, `turnReceipts`, `accounts`,
   `browser`, `providers`, `workers`; `mcp` is optional.
 - **MCP:** none of its own; the workflow engine serves `ask`, `research`, and

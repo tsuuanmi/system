@@ -27,9 +27,9 @@ second execution path (INV-1).
 - **Start (admission).**
   - The caller's options are applied, and the resolved spec is hashed. The run
     binds to that `specHash`.
-  - Runs, nodes, and the run's persistent session are written in one
-    transaction, so `research` returns its `runId` and `sessionId` at once
-    (REQ-SES-8).
+  - Runs and nodes are written in one transaction. The engine issues the run's
+    session id, so `research` returns its `runId` and `sessionId` at once
+    (REQ-SES-8). A caller's `sessionId` must be one the engine issued.
   - `clientRequestId` makes `start` idempotent.
   - At most `maxActiveRuns` runs are unfinished at once (INV-9).
 - **Nodes** are durable `workflow-node@1.0` records, validated on every write.
@@ -37,11 +37,19 @@ second execution path (INV-1).
     rendered from the dependencies' results. The input receipt binds
     `inputHash` (the node, the rendered prompt, and the dependency results)
     and its bundle.
-  - A `worker` node becomes a turn on `ctx.turns`. The turn's request key is
-    the run, node, attempt, and input hash, so a restart re-attaches to the
-    same turn and never sends twice.
-  - The node stays `READY` until the turn is routed. `RUNNING` carries the
-    execution and its route decision.
+  - A `worker` node declares capabilities, and its requirement (objective,
+    capabilities, plus `persistent-conversation` in a session, classification,
+    tier, and contract) is recorded at admission.
+  - The engine routes it through `ctx.workers` (a session keeps its affinity),
+    then starts it on the admitted Worker's source. A website Worker's source is
+    the turn runtime. The request key is the run, node, attempt, and input hash,
+    so a restart re-attaches to the same execution and never sends twice.
+  - `RUNNING` carries the execution and its route decision. A stop while
+    routing starts nothing.
+  - An admission failure fails the node with nothing sent: `reauth_required`
+    when there is no Worker or one was kept out only by its account's state,
+    `egress_denied` for local-private work with no local Worker, `config_error`
+    otherwise.
   - When the turn completes, `ctx.workers.accept` checks the result against
     the node's contract and records an `acceptance` decision. `COMPLETED`
     holds the output receipt (result plus acceptance). A rejection fails the
@@ -87,5 +95,5 @@ second execution path (INV-1).
   `retainDays`, a finished run's input text and rendered prompts are cleared.
 - **Not yet:** graph growth, plan approval gates, teams, lineage invalidation,
   tier escalation, and the operator commands `stop`, `continue`, and `delete`.
-- **Injects:** `store`, `artifacts`, `eventLog`, `leases`, `turns`, `workers`;
+- **Injects:** `store`, `artifacts`, `eventLog`, `leases`, `egress`, `workers`;
   `mcp` is optional.

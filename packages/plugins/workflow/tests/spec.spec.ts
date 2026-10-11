@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { DEFAULT_TEMPLATES, type NodeTemplate, preflight, render, resolve } from '../src/spec.ts'
 
 const node = (nodeId: string, overrides: Partial<NodeTemplate> = {}): NodeTemplate => ({
-  nodeId, objective: 'x', prompt: '{{input}}', tier: 'standard', conversation: 'temporary', acceptance: 'acceptance.answer', ...overrides,
+  nodeId, objective: 'x', prompt: '{{input}}', capabilities: ['reason'], tier: 'standard', conversation: 'temporary', acceptance: 'acceptance.answer', ...overrides,
 })
 
 describe('workflow specs', () => {
@@ -10,8 +10,8 @@ describe('workflow specs', () => {
     expect(preflight(DEFAULT_TEMPLATES.ask!)).toEqual(['ask:1'])
     expect(preflight(DEFAULT_TEMPLATES.research!)).toEqual(['research:1', 'compact:1'])
     expect(DEFAULT_TEMPLATES.research).toMatchObject([
-      { nodeId: 'research:1', feature: 'deep-research', tier: 'frontier', conversation: 'persistent', acceptance: 'acceptance.answer' },
-      { nodeId: 'compact:1', dependsOn: ['research:1'], tier: 'economy', conversation: 'temporary', acceptance: 'acceptance.answer' },
+      { nodeId: 'research:1', capabilities: ['reason', 'deep-research'], tier: 'frontier', conversation: 'persistent', acceptance: 'acceptance.answer' },
+      { nodeId: 'compact:1', dependsOn: ['research:1'], capabilities: ['reason'], tier: 'economy', conversation: 'temporary', acceptance: 'acceptance.answer' },
     ])
   })
 

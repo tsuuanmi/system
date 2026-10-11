@@ -18,10 +18,10 @@ import type {} from '@tsuuanmi/system-login'
 import type {} from '@tsuuanmi/system-artifacts'
 import { type Lease, LeaseLost, StaleGeneration } from '@tsuuanmi/system-leases'
 import { type ContentId, sha256 } from '@tsuuanmi/system-libs'
-import { type BrowserTurn, type ConversationMode, type Disposition, type PortableState, ProviderError, type ProviderErrorKind, type ProviderFeature, ProviderScheduler, type Tier, type TurnReceipt, type TurnSnapshot, dispositionOf, toProviderError } from '@tsuuanmi/system-provider-core'
+import { type BrowserTurn, type ConversationMode, type Disposition, type PortableState, ProviderError, type ProviderFeature, ProviderScheduler, type Tier, type TurnReceipt, type TurnSnapshot, dispositionOf, toProviderError } from '@tsuuanmi/system-provider-core'
 import type {} from '@tsuuanmi/system-store'
 import type {} from '@tsuuanmi/system-turn-receipts'
-import { AdmissionFailure, type AdmittedWorker, type CapabilityDescriptor, type WorkRequirement, type WorkerState } from '@tsuuanmi/system-workers-core'
+import type { CapabilityDescriptor, WorkerExecution, WorkerStart, WorkerState } from '@tsuuanmi/system-workers-core'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -56,43 +56,10 @@ export interface TurnView {
   updatedAt: string
 }
 
-export interface AskInput {
-  prompt: string
-  /** Continue a persistent session. */
-  sessionId?: string | undefined
-  /** Start a persistent session (a normal conversation) instead of a temporary one. */
-  persist?: boolean | undefined
-  /** Retry-safe request key: the same key returns the same turn. */
-  clientRequestId?: string | undefined
-  /** Minimum intelligence tier; routing picks the lowest admitted tier at or above it (REQ-WRK-9). */
-  tier?: Tier | undefined
-  /** `deep-research` always runs in a persistent session. */
-  feature?: ProviderFeature | undefined
-  /** Data classification of the prompt, stated by the caller (default from ctx.egress). */
-  classification?: Classification | undefined
-  /** Acceptance contract the result is checked against by its caller (default `acceptance.answer`). */
-  acceptance?: string | undefined
-  /** Who set `tier` (default: `caller` when a tier is given, else `default`). */
-  tierSource?: TierSource | undefined
-  /** The work's objective, for its requirement (default: answer the prompt, or write the report). */
-  objective?: string | undefined
-}
-
-export type TierSource = 'caller' | 'default' | 'profile'
-
-export interface ResearchInput {
-  question: string
-  classification?: Classification | undefined
-  sessionId?: string | undefined
-  clientRequestId?: string | undefined
-}
-
 const TIERS: readonly Tier[] = ['economy', 'standard', 'frontier']
 
 export interface Config {
   maxConcurrentTurnsPerAccount?: number
-  /** Tier for turns that name none (default `standard`). */
-  defaultTier?: Tier
   /** Hard deadline per chat turn (default 15 min). */
   turnTimeoutMs?: number
   /** No-progress deadline per chat turn (default 5 min). */
@@ -114,7 +81,7 @@ interface Row {
   mode: ConversationMode
   feature: ProviderFeature
   tier: Tier
-  tier_source: TierSource
+  tier_source: string
   acceptance: string
   objective: string | null
   submitted_at: string | null
@@ -151,21 +118,15 @@ function parseWebsiteWorker(worker: string): { account: string; tier: Tier } {
   return { account: match[1]!, tier: match[2] as Tier }
 }
 
-/**
- * How a refused admission is handled: by the state that kept an otherwise fitting Worker
- * out. With no Worker at all, the operator still has to add and sign in an account.
- */
-function admissionKind(failure: AdmissionFailure): ProviderErrorKind {
-  if (failure.rejections.length === 0) return 'reauth_required'
-  const onlyState = failure.rejections.filter((r) => r.failed.every((f) => f.check === 'state'))
-  if (onlyState.some((r) => r.state === 'reauth-required' || r.state === 'unavailable')) return 'reauth_required'
-  if (onlyState.some((r) => r.state === 'quota-exhausted')) return 'quota_exhausted'
-  if (onlyState.length) return 'overloaded'
-  if (failure.rejections.some((r) => r.failed.every((f) => f.check === 'locality'))) return 'egress_denied'
-  return 'config_error'
+/** A turn as a Worker execution (workers-core). */
+function execution(turn: TurnView): WorkerExecution {
+  return {
+    id: turn.turnId, status: turn.status, submitted: turn.submitted,
+    ...(turn.answerArtifact ? { result: turn.answerArtifact } : {}),
+    ...(turn.error ? { error: turn.error } : {}),
+    decisions: turn.egressDecision ? [turn.egressDecision] : [],
+  }
 }
-
-const DEFAULT_ACCEPTANCE = 'acceptance.answer'
 
 const newId = (prefix: string): string => `${prefix}_${randomBytes(8).toString('hex')}`
 const now = (): string => new Date().toISOString()
@@ -178,7 +139,6 @@ export class Turns extends Service {
 
   static Config: z<Config> = z.object({
     maxConcurrentTurnsPerAccount: z.natural().min(1).default(2).description('Parallel turns per account (different sessions)'),
-    defaultTier: z.union(['economy', 'standard', 'frontier']).default('standard').description('Tier for turns that name none'),
     turnTimeoutMs: z.natural().default(15 * 60_000).description('Hard deadline per chat turn, in milliseconds'),
     stallTimeoutMs: z.natural().default(5 * 60_000).description('No-progress deadline per chat turn, in milliseconds'),
     researchTimeoutMs: z.natural().default(60 * 60_000).description('Hard deadline per Deep research turn, in milliseconds'),
@@ -239,7 +199,20 @@ export class Turns extends Service {
       sql: `ALTER TABLE turns ADD COLUMN submitted_at TEXT;
       ALTER TABLE turns ADD COLUMN objective TEXT;`,
     }])
-    ctx.workers.register({ name: 'website', describe: () => this.describeWorkers() })
+    ctx.workers.register({
+      name: 'website',
+      describe: () => this.describeWorkers(),
+      start: (request) => execution(this.ask(request)),
+      get: (id) => {
+        const turn = this.get(id)
+        return turn && execution(turn)
+      },
+      wait: async (id, timeoutMs) => execution(await this.wait(id, timeoutMs)),
+      affinity: (sessionId) => {
+        const account = this.session(sessionId)?.account
+        return account ? TIERS.map((t) => websiteWorker(account, t)) : undefined
+      },
+    })
     ctx.effect(() => {
       queueMicrotask(() => {
         this.purge()
@@ -261,65 +234,50 @@ export class Turns extends Service {
     })
   }
 
-  /** Accept an ask: durable at once, run in the background. */
-  ask(input: AskInput): TurnView {
-    const prompt = input.prompt
+  /**
+   * Accept a turn on the website Worker the caller admitted (the workflow engine routes):
+   * durable at once, run in the background, idempotent by `key`. A session id is opened on
+   * first use and stays on its account.
+   */
+  ask(request: WorkerStart): TurnView {
+    const prompt = request.prompt
     if (!prompt.trim()) throw new ProviderError('invalid_input', 'prompt must not be empty')
-    const requestKey = input.clientRequestId ? sha256(`ask\0${input.clientRequestId}`) : null
+    const { account, tier } = parseWebsiteWorker(request.worker)
+    const requestKey = sha256(`ask\0${request.key}`)
     const view = this.ctx.store.transaction((db) => {
-      if (requestKey) {
-        const existing = db.prepare('SELECT * FROM turns WHERE request_key = ?').get(requestKey) as Row | undefined
-        if (existing) {
-          if (existing.prompt !== prompt) throw new ProviderError('invalid_input', 'clientRequestId was reused with a different prompt')
-          return this.view(existing)
-        }
+      const existing = db.prepare('SELECT * FROM turns WHERE request_key = ?').get(requestKey) as Row | undefined
+      if (existing) {
+        if (existing.prompt !== prompt) throw new ProviderError('invalid_input', 'the request key was reused with a different prompt')
+        return this.view(existing)
       }
       const pending = (db.prepare("SELECT COUNT(*) AS n FROM turns WHERE status IN ('queued', 'running')").get() as { n: number }).n
       const limit = this.config.maxPendingTurns ?? 32
       if (pending >= limit) throw new ProviderError('overloaded', `${pending} turns are already pending (limit ${limit}); retry later`)
-      const feature = input.feature ?? 'chat'
-      const tier = input.tier ?? this.config.defaultTier ?? 'standard'
-      if (!TIERS.includes(tier)) throw new ProviderError('invalid_input', `unknown tier ${String(tier)}`)
-      let sessionId: string | null = null
-      if (input.sessionId) {
-        if (!db.prepare('SELECT 1 FROM turn_sessions WHERE session_id = ?').get(input.sessionId)) {
-          throw new ProviderError('invalid_input', `unknown session ${input.sessionId}`)
-        }
-        sessionId = input.sessionId
-      } else if (input.persist || feature === 'deep-research') {
-        sessionId = newId('ses')
-        db.prepare('INSERT INTO turn_sessions (session_id, account, binding, created_at) VALUES (?, NULL, NULL, ?)').run(sessionId, now())
+      const sessionId = request.sessionId ?? null
+      if (sessionId) {
+        db.prepare('INSERT OR IGNORE INTO turn_sessions (session_id, account, binding, created_at) VALUES (?, NULL, NULL, ?)').run(sessionId, now())
+        const bound = this.session(sessionId)?.account
+        if (bound && bound !== account) throw new ProviderError('invalid_input', `session ${sessionId} is bound to ${bound}, not ${account}`)
+        // A new persistent session is bound to the first account that runs it.
+        db.prepare('UPDATE turn_sessions SET account = COALESCE(account, ?) WHERE session_id = ?').run(account, sessionId)
       }
+      const requirement = request.requirement
       const row: Row = {
-        turn_id: newId('turn'), request_key: requestKey, session_id: sessionId, mode: sessionId ? 'persistent' : 'temporary', feature, tier,
-        tier_source: input.tierSource ?? (input.tier ? 'caller' : 'default'), acceptance: input.acceptance ?? DEFAULT_ACCEPTANCE,
-        objective: input.objective ?? null, submitted_at: null, prompt, status: 'queued', account: null, worker: null, binding: null, answer: null, answer_artifact: null, route_decision: null, tier_decision: null,
-        egress_decision: null, classification: input.classification ?? null, error: null, created_at: now(), updated_at: now(),
+        turn_id: newId('turn'), request_key: requestKey, session_id: sessionId, mode: sessionId ? 'persistent' : 'temporary',
+        feature: requirement.capabilities.includes('deep-research') ? 'deep-research' : 'chat', tier, tier_source: requirement.tier.source,
+        acceptance: requirement.acceptance.contract, objective: requirement.objective, submitted_at: null, prompt, status: 'queued',
+        account, worker: request.worker, binding: null, answer: null, answer_artifact: null,
+        route_decision: request.decisions.route, tier_decision: request.decisions.tier, egress_decision: null,
+        classification: requirement.data.classification, error: null, created_at: now(), updated_at: now(),
       }
-      db.prepare(`INSERT INTO turns (turn_id, request_key, session_id, mode, feature, tier, tier_source, acceptance, objective, classification, prompt, status, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?)`).run(row.turn_id, requestKey, sessionId, row.mode, feature, tier, row.tier_source, row.acceptance, row.objective, row.classification, prompt, row.created_at, row.updated_at)
+      db.prepare(`INSERT INTO turns (turn_id, request_key, session_id, mode, feature, tier, tier_source, acceptance, objective, classification, prompt, status,
+        account, worker, route_decision, tier_decision, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?)`)
+        .run(row.turn_id, requestKey, sessionId, row.mode, row.feature, tier, row.tier_source, row.acceptance, row.objective, row.classification, prompt,
+          account, row.worker, row.route_decision, row.tier_decision, row.created_at, row.updated_at)
       this.ctx.store.afterCommit(() => void this.schedule(row))
       return this.view(row)
     })
     return view
-  }
-
-  /**
-   * Open an empty persistent session, bound to an account by its first turn. A caller that
-   * must hand out the session id before any turn exists (the workflow engine) uses this.
-   */
-  openSession(): string {
-    const sessionId = newId('ses')
-    this.ctx.store.db.prepare('INSERT INTO turn_sessions (session_id, account, binding, created_at) VALUES (?, NULL, NULL, ?)').run(sessionId, now())
-    return sessionId
-  }
-
-  /** Start Deep research in a persistent session; returns at once (REQ-SES-8). */
-  research(input: ResearchInput): TurnView {
-    return this.ask({
-      prompt: input.question, feature: 'deep-research', sessionId: input.sessionId, clientRequestId: input.clientRequestId, classification: input.classification,
-      ...(input.sessionId ? {} : { persist: true }),
-    })
   }
 
   get(turnId: string): TurnView | undefined {
@@ -437,7 +395,9 @@ export class Turns extends Service {
         this.fail(turnId, new ProviderError('egress_denied', `${egress.reason} (decision ${egress.decision})`), current)
         return
       }
-      const account = row.account ?? (await this.route(row, current))
+      // The caller admitted the Worker; a turn never routes itself.
+      const account = row.account
+      if (!account || !row.worker) throw new ProviderError('internal', `turn ${turnId} has no admitted Worker`)
       const scheduler = this.scheduler(account)
       await scheduler.runTurn(row.session_id ?? row.turn_id, lost.signal, async (slot) => {
         this.update(turnId, { status: 'running' }, current)
@@ -479,60 +439,6 @@ export class Turns extends Service {
         observedAt,
       }))
     })
-  }
-
-  /**
-   * The work requirement an ask would be routed with (`work-requirement@1.0`). The workflow
-   * engine records it on its node; routing uses the same function, so the two never differ.
-   */
-  requirement(input: Omit<AskInput, 'prompt' | 'clientRequestId'>): WorkRequirement {
-    const feature = input.feature ?? 'chat'
-    return this.requirementOf({
-      feature, mode: input.sessionId || input.persist || feature === 'deep-research' ? 'persistent' : 'temporary',
-      tier: input.tier ?? this.config.defaultTier ?? 'standard', tierSource: input.tierSource ?? (input.tier ? 'caller' : 'default'),
-      classification: input.classification ?? null, acceptance: input.acceptance ?? DEFAULT_ACCEPTANCE, objective: input.objective ?? null,
-    })
-  }
-
-  private requirementOf(turn: { feature: ProviderFeature; mode: ConversationMode; tier: Tier; tierSource: TierSource; classification: Classification | null; acceptance: string; objective: string | null }): WorkRequirement {
-    return {
-      schema: 'work-requirement@1.0',
-      objective: turn.objective ?? (turn.feature === 'deep-research' ? 'Write a provider-native research report on the caller\'s question' : 'Answer the caller\'s prompt'),
-      capabilities: ['reason', ...(turn.mode === 'persistent' ? ['persistent-conversation'] : []), ...(turn.feature === 'deep-research' ? ['deep-research'] : [])],
-      data: { classification: turn.classification ?? this.ctx.egress.defaultClassification, refs: [] },
-      egressPolicy: 'egress.classification-and-secrets',
-      tier: { min: turn.tier, source: turn.tierSource },
-      acceptance: { contract: turn.acceptance },
-    }
-  }
-
-  /** Admit a Worker through ctx.workers; a persistent session stays on its account. */
-  private async route(row: Row, lease: () => Lease): Promise<string> {
-    const session = row.session_id ? this.session(row.session_id) : undefined
-    const bound = session?.account ?? undefined
-    const requirement = this.requirementOf({
-      feature: row.feature, mode: row.mode, tier: row.tier, tierSource: row.tier_source, classification: row.classification, acceptance: row.acceptance, objective: row.objective,
-    })
-    let admitted: AdmittedWorker
-    try {
-      admitted = await this.ctx.workers.route(requirement, {
-        producer: 'turns',
-        ...(bound ? { restrict: { workers: TIERS.map((t) => websiteWorker(bound, t)), reason: `the session is bound to ${bound}` } } : {}),
-      })
-    } catch (error) {
-      if (!(error instanceof AdmissionFailure)) throw error
-      this.update(row.turn_id, { route_decision: error.decision }, lease)
-      const hint = error.rejections.length ? '' : ': add an account with a tier → mode map to the catalog, then sign it in'
-      throw new ProviderError(admissionKind(error), `${error.message}${hint}`, { cause: error })
-    }
-    const { account } = parseWebsiteWorker(admitted.worker.worker)
-    this.ctx.store.transaction((db) => {
-      this.ctx.leases.fence(lease())
-      // A new persistent session is bound to the first account that runs it.
-      if (row.session_id) db.prepare('UPDATE turn_sessions SET account = COALESCE(account, ?) WHERE session_id = ?').run(account, row.session_id)
-    })
-    this.update(row.turn_id, { account, worker: admitted.worker.worker, route_decision: admitted.decisions.route, tier_decision: admitted.decisions.tier }, lease)
-    return account
   }
 
   private async execute(row: Row, accountId: string, signal: AbortSignal, lease: () => Lease, relogged = false): Promise<void> {

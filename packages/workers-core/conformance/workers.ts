@@ -6,7 +6,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@tsuuanmi/system-artifacts'
 import { describe, expect, it } from 'vitest'
-import { AdmissionFailure, type CapabilityDescriptor, type WorkRequirement } from '../src/index.ts'
+import { AdmissionFailure, type CapabilityDescriptor, type WorkRequirement, type WorkerSource } from '../src/index.ts'
 
 export type Boot = () => Promise<{ ctx: Context; dispose: () => Promise<void> }>
 
@@ -19,6 +19,14 @@ export function worker(id: string, overrides: Partial<CapabilityDescriptor> & { 
     capabilities: proves.map((capability) => ({ capability, evidence: { kind: 'conformance', at: AT } })),
     state: 'ready', observedAt: AT, ...rest,
   }
+}
+
+/** A source for routing tests: it describes Workers; running work on them is not part of the test. */
+export function source(name: string, workers: CapabilityDescriptor[] | (() => Promise<CapabilityDescriptor[]>), extra: Partial<WorkerSource> = {}): WorkerSource {
+  const unused = (): never => {
+    throw new Error(`source ${name} runs no work in this test`)
+  }
+  return { name, describe: typeof workers === 'function' ? workers : async () => workers, start: unused, get: unused, wait: unused, ...extra }
 }
 
 export function requirement(overrides: Partial<WorkRequirement> = {}): WorkRequirement {
@@ -37,7 +45,7 @@ export function workersConformance(name: string, boot: Boot): void {
     const withWorkers = async (workers: CapabilityDescriptor[], run: (ctx: Context) => Promise<void>): Promise<void> => {
       const { ctx, dispose } = await boot()
       try {
-        ctx.workers.register({ name: 'conformance', describe: async () => workers })
+        ctx.workers.register(source('conformance', workers))
         await run(ctx)
       } finally {
         await dispose()
@@ -47,12 +55,14 @@ export function workersConformance(name: string, boot: Boot): void {
     it('lists a source\'s Workers for the contributing plugin\'s lifetime only', async () => {
       const { ctx, dispose } = await boot()
       try {
-        const fiber = ctx.plugin({ inject: ['workers'], apply: (c: Context) => c.workers.register({ name: 'temp', describe: async () => [worker('w:b'), worker('w:a')] }) })
+        const fiber = ctx.plugin({ inject: ['workers'], apply: (c: Context) => c.workers.register(source('temp', [worker('w:b'), worker('w:a')])) })
         await fiber
         expect((await ctx.workers.list()).map((w) => w.worker)).toEqual(['w:a', 'w:b'])
-        expect(() => ctx.workers.register({ name: 'temp', describe: async () => [] })).toThrow()
+        expect(() => ctx.workers.register(source('temp', []))).toThrow()
+        expect(ctx.workers.source('temp')?.name).toBe('temp')
         await fiber.dispose()
         expect(await ctx.workers.list()).toEqual([])
+        expect(ctx.workers.source('temp')).toBeUndefined()
       } finally {
         await dispose()
       }
@@ -110,6 +120,19 @@ export function workersConformance(name: string, boot: Boot): void {
         expect(second.decisions).toEqual(first.decisions)
         expect((await ctx.workers.route(requirement({ budget: { preferQuota: ['agent-plan'] } }))).worker.worker).toBe('w:a')
       })
+    })
+
+    it('names the source of the admitted Worker, and asks the owning source for a session\'s affinity', async () => {
+      const { ctx, dispose } = await boot()
+      try {
+        ctx.workers.register(source('one', [worker('w:a')]))
+        ctx.workers.register(source('two', [worker('w:b', { tier: 'economy' })], { affinity: (id) => (id === 'ses_two' ? ['w:b'] : undefined) }))
+        expect((await ctx.workers.route(requirement())).source).toBe('two')
+        expect(ctx.workers.affinity('ses_two')).toEqual(['w:b'])
+        expect(ctx.workers.affinity('ses_other')).toBeUndefined()
+      } finally {
+        await dispose()
+      }
     })
 
     it('honours a restriction, such as a persistent session bound to its account', async () => {

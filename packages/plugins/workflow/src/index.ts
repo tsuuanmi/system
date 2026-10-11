@@ -16,8 +16,9 @@ import type {} from '@tsuuanmi/system-gateway-core'
 import { type Lease, LeaseLost, StaleGeneration } from '@tsuuanmi/system-leases'
 import { canonicalJson, type ContentId, SchemaRegistry, sha256 } from '@tsuuanmi/system-libs'
 import type {} from '@tsuuanmi/system-store'
-import type { TurnView } from '@tsuuanmi/system-turns'
-import type { ArtifactRef, Classification, Tier, WorkRequirement } from '@tsuuanmi/system-workers-core'
+import type {} from '@tsuuanmi/system-egress'
+import { dispositionOf, type ProviderErrorKind } from '@tsuuanmi/system-provider-core'
+import { AdmissionFailure, type AdmittedWorker, type ArtifactRef, type Classification, type Tier, type WorkRequirement, type WorkerExecution } from '@tsuuanmi/system-workers-core'
 import { z as zod } from 'zod'
 import { type CallerOptions, DEFAULT_TEMPLATES, type NodeTemplate, render, type ResolvedNode, resolve } from './spec.ts'
 
@@ -62,7 +63,10 @@ export interface NodeView {
   /** The node's minimum tier. */
   minTier: Tier
   attempt: number
-  turnId?: string
+  /** The execution on the Worker's own runtime (a turn id for website Workers). */
+  executionId?: string
+  /** The Worker source that runs it. */
+  source?: string
   worker?: string
   /** The tier of the Worker that served the node. */
   tier?: Tier
@@ -109,7 +113,7 @@ export interface Explanation {
   template: string
   status: RunStatus
   specHash: ContentId
-  nodes: Array<{ nodeId: string; state: NodeState; turnId?: string; worker?: string; quotaClass?: string; decisions: ExplainedDecision[] }>
+  nodes: Array<{ nodeId: string; state: NodeState; executionId?: string; worker?: string; quotaClass?: string; decisions: ExplainedDecision[] }>
 }
 
 export interface Config {
@@ -148,7 +152,8 @@ interface NodeRow {
   record: string
   state: NodeState
   prompt: string | null
-  turn_id: string | null
+  execution_id: string | null
+  source: string | null
   attempt: number
   not_before: string | null
   worker: string | null
@@ -166,7 +171,7 @@ const newId = (prefix: string): string => `${prefix}_${randomBytes(8).toString('
 const now = (): string => new Date().toISOString()
 
 export class Workflow extends Service {
-  static inject = ['store', 'artifacts', 'eventLog', 'leases', 'turns', 'workers']
+  static inject = ['store', 'artifacts', 'eventLog', 'leases', 'egress', 'workers']
 
   static Config: z<Config> = z.object({
     templates: z.dict(z.array(z.object({
@@ -174,7 +179,7 @@ export class Workflow extends Service {
       objective: z.string().required(),
       dependsOn: z.array(z.string()),
       prompt: z.string().required(),
-      feature: z.union(['chat', 'deep-research']),
+      capabilities: z.array(z.string()).required(),
       tier: z.union(['economy', 'standard', 'frontier']).required(),
       callerTier: z.boolean(),
       conversation: z.union(['temporary', 'persistent', 'caller']).required(),
@@ -214,6 +219,12 @@ export class Workflow extends Service {
       // Runs outlive turns (retention): a node keeps its turn's decision ids for explain.
       version: 2,
       sql: 'ALTER TABLE workflow_nodes ADD COLUMN decisions TEXT;',
+    }, {
+      // Nodes run on any Worker source, not only website turns.
+      version: 3,
+      sql: `ALTER TABLE workflow_nodes RENAME COLUMN turn_id TO execution_id;
+      ALTER TABLE workflow_nodes ADD COLUMN source TEXT;
+      UPDATE workflow_nodes SET source = 'website' WHERE execution_id IS NOT NULL;`,
     }])
     ctx.effect(() => {
       queueMicrotask(() => {
@@ -259,7 +270,11 @@ export class Workflow extends Service {
       const limit = this.config.maxActiveRuns ?? 16
       if (active >= limit) throw new WorkflowFailure('overloaded', `${active} runs are already active (limit ${limit}); retry later`)
       // One persistent session per run, opened now so its id is returned at once (REQ-SES-8).
-      const sessionId = input.sessionId ?? (spec.nodes.some((n) => n.session.persist) ? this.ctx.turns.openSession() : undefined)
+      // Sessions are the engine's: one per run, issued now so its id is returned at once (REQ-SES-8).
+      if (input.sessionId && !db.prepare('SELECT 1 FROM workflow_runs WHERE session_id = ?').get(input.sessionId)) {
+        throw new WorkflowFailure('invalid_input', `unknown session ${input.sessionId}`)
+      }
+      const sessionId = input.sessionId ?? (spec.nodes.some((n) => n.session.persist) ? newId('ses') : undefined)
       const run: RunRow = {
         run_id: newId('run'), request_key: requestKey, template: input.template, spec_hash: spec.specHash, input: input.input,
         classification: input.classification ?? null, session_id: sessionId ?? null, status: 'running', result: null, error: null, created_at: now(), updated_at: now(),
@@ -270,10 +285,7 @@ export class Workflow extends Service {
         const resolved: ResolvedNode = { ...node, session: node.session.persist ? { sessionId: sessionId! } : node.session }
         const record: NodeRecord = {
           schema: 'workflow-node@1.0', runId: run.run_id, nodeId: node.nodeId, objective: node.objective, executor: 'worker',
-          requirement: this.ctx.turns.requirement({
-            feature: node.feature, tier: node.tier, tierSource: node.tierSource, objective: node.objective, ...resolved.session,
-            classification: input.classification, acceptance: node.acceptance,
-          }),
+          requirement: this.requirementOf(node, resolved.session.sessionId !== undefined, input.classification),
           dependsOn: node.dependsOn, state: 'WAITING', revision: 0,
         }
         this.schemas.assertRecord(record)
@@ -330,16 +342,32 @@ export class Workflow extends Service {
       runId, template: run.template, status: run.status, specHash: run.spec_hash as ContentId,
       nodes: this.nodeRows(runId).map((node) => {
         const record = JSON.parse(node.record) as NodeRecord
-        const turn = node.turn_id ? this.ctx.turns.get(node.turn_id) : undefined
-        const kept = node.decisions ? (JSON.parse(node.decisions) as ArtifactRef[]) : turnDecisions(turn)
+        const kept = node.decisions ? (JSON.parse(node.decisions) as ArtifactRef[]) : []
         const last = record.outputReceipt?.acceptance ?? record.lastDecision
         const ids = [...kept, ...(last && !kept.includes(last) ? [last] : [])]
         return {
           nodeId: node.node_id, state: node.state,
-          ...(node.turn_id ? { turnId: node.turn_id } : {}), ...(node.worker ? { worker: node.worker } : {}), ...(node.quota_class ? { quotaClass: node.quota_class } : {}),
+          ...(node.execution_id ? { executionId: node.execution_id } : {}), ...(node.worker ? { worker: node.worker } : {}), ...(node.quota_class ? { quotaClass: node.quota_class } : {}),
           decisions: ids.filter((id): id is ArtifactRef => !!id).map((id) => this.decision(id)).filter((d): d is ExplainedDecision => !!d),
         }
       }),
+    }
+  }
+
+  /**
+   * A node's work requirement (`work-requirement@1.0`): its declared capabilities, plus
+   * `persistent-conversation` when it runs in a session; the run's data classification; its
+   * tier and where that came from; its acceptance contract.
+   */
+  private requirementOf(node: ResolvedNode, persistent: boolean, classification: Classification | undefined): WorkRequirement {
+    return {
+      schema: 'work-requirement@1.0',
+      objective: node.objective,
+      capabilities: [...new Set([...node.capabilities, ...(persistent ? ['persistent-conversation'] : [])])],
+      data: { classification: classification ?? this.ctx.egress.defaultClassification, refs: [] },
+      egressPolicy: 'egress.classification-and-secrets',
+      tier: { min: node.tier, source: node.tierSource },
+      acceptance: { contract: node.acceptance },
     }
   }
 
@@ -458,84 +486,105 @@ export class Workflow extends Service {
     this.writeNode(node, { state: 'READY', prompt }, (record) => ({ ...record, inputReceipt: { inputHash, bundle: results } }), lease)
   }
 
-  /** Run one node to a terminal state, or until the engine stops. */
+  /**
+   * Run one node to a terminal state, or until the engine stops: route it by its requirement
+   * (`ctx.workers`), start it on the admitted Worker's own runtime, then wait and accept.
+   */
   private async execute(run: RunRow, initial: NodeRow, lease: () => Lease, signal: AbortSignal): Promise<void> {
     let node = initial
     const spec = JSON.parse(node.spec) as ResolvedNode
-    if (!node.turn_id) {
+    if (!node.execution_id) {
       const delay = node.not_before ? Date.parse(node.not_before) - Date.now() : 0
       if (delay > 0 && !(await sleep(delay, signal))) return
       const record = JSON.parse(node.record) as NodeRecord
       const attempt = node.attempt + 1
+      const affinity = spec.session.sessionId ? this.ctx.workers.affinity(spec.session.sessionId) : undefined
+      let admitted: AdmittedWorker
+      try {
+        admitted = await this.ctx.workers.route(record.requirement, {
+          producer: 'workflow',
+          ...(affinity ? { restrict: { workers: affinity, reason: `session ${spec.session.sessionId} stays on its Worker` } } : {}),
+        })
+      } catch (error) {
+        if (!(error instanceof AdmissionFailure)) throw error
+        const hint = error.rejections.length ? '' : ': no Worker is configured (for website Workers, map tiers to modes in the account catalog, then sign the account in)'
+        return this.failAttempt(run, { ...node, attempt }, { kind: admissionKind(error), disposition: dispositionOf(admissionKind(error)), message: `${error.message}${hint}` },
+          { sent: false, decisions: [error.decision] }, lease)
+      }
+      // A stop while routing starts nothing: the node is routed again on the next start.
+      if (signal.aborted) return
+      const source = this.ctx.workers.source(admitted.source)
+      if (!source) throw new Error(`Worker source ${admitted.source} is gone`)
+      const routed = {
+        worker: admitted.worker.worker, source: admitted.source, served_tier: admitted.worker.tier, quota_class: admitted.worker.quotaClass,
+        decisions: JSON.stringify([admitted.decisions.tier, admitted.decisions.route]),
+      }
       try {
         this.ctx.store.transaction(() => {
-          const turn = this.ctx.turns.ask({
-            prompt: node.prompt!, feature: spec.feature, tier: spec.tier, tierSource: spec.tierSource, objective: spec.objective, ...spec.session,
-            classification: run.classification ?? undefined, acceptance: spec.acceptance,
-            clientRequestId: `workflow:${run.run_id}:${node.node_id}:${attempt}:${record.inputReceipt!.inputHash}`,
+          const started = source.start({
+            key: `workflow:${run.run_id}:${node.node_id}:${attempt}:${record.inputReceipt!.inputHash}`,
+            worker: admitted.worker.worker, prompt: node.prompt!, sessionId: spec.session.sessionId,
+            requirement: record.requirement, decisions: admitted.decisions,
           })
-          // The node stays READY until its turn is routed: RUNNING carries the route (workflow-node@1.0).
-          this.writeNode(node, { turn_id: turn.turnId, attempt, not_before: null }, (r) => r, lease)
-          this.ctx.eventLog.append({ type: 'workflow.node.started', runId: run.run_id, nodeId: node.node_id, turnId: turn.turnId, data: { minTier: spec.tier, attempt } })
+          this.writeNode(node, { state: 'RUNNING', execution_id: started.id, attempt, not_before: null, ...routed }, (r) => ({
+            ...r, execution: { executionId: started.id, attempt, owner: admitted.source, generation: lease().generation, route: admitted.decisions.route }, lastDecision: admitted.decisions.route,
+          }), lease)
+          this.ctx.eventLog.append({
+            type: 'workflow.node.started', runId: run.run_id, nodeId: node.node_id, decision: admitted.decisions.route,
+            data: { executionId: started.id, source: admitted.source, worker: admitted.worker.worker, minTier: spec.tier, attempt },
+          })
         })
       } catch (error) {
         if (error instanceof LeaseLost || error instanceof StaleGeneration) throw error
-        return this.failAttempt(run, { ...node, attempt }, errorOf(error), { sent: false }, lease)
+        return this.failAttempt(run, { ...node, attempt }, errorOf(error), { sent: false, decisions: [admitted.decisions.tier, admitted.decisions.route] }, lease)
       }
       node = this.nodeRow(run.run_id, node.node_id)!
     }
-    let turn = this.ctx.turns.get(node.turn_id!)
+    const source = node.source ? this.ctx.workers.source(node.source) : undefined
+    if (!source) {
+      // The Worker's runtime is not loaded now; look again later instead of guessing.
+      throw new Error(`Worker source ${node.source ?? '(none)'} of node ${node.node_id} is not registered`)
+    }
+    let current = source.get(node.execution_id!)
     const stop = aborted(signal)
-    for (;;) {
-      if (!turn) break
-      if (node.state === 'READY' && turn.routeDecision && turn.worker) {
-        node = this.toRunning(run, node, turn, lease)
-      }
-      if (turn.status !== 'queued' && turn.status !== 'running') break
+    while (current && (current.status === 'queued' || current.status === 'running')) {
       if (signal.aborted) return
-      // Wake early to notice the route, then wait for the answer.
       const waited = Date.now()
-      await Promise.race([this.ctx.turns.wait(turn.turnId, node.state === 'READY' ? 500 : 30_000), stop])
+      await Promise.race([source.wait(current.id, 30_000), stop])
       if (signal.aborted) return
-      // A turn runtime that is stopping returns at once; never spin on it.
+      // A runtime that is stopping returns at once; never spin on it.
       if (Date.now() - waited < 50 && !(await sleep(1000, signal))) return
-      turn = this.ctx.turns.get(turn.turnId)
+      current = source.get(current.id)
     }
-    if (!turn) return this.failAttempt(run, node, { kind: 'internal', disposition: 'CODE_FIX', message: `turn ${node.turn_id} is gone` }, { sent: true }, lease)
-    if (turn.status === 'failed') {
-      return this.failAttempt(run, node, turn.error ?? { kind: 'internal', disposition: 'CODE_FIX', message: 'the turn failed without an error' }, { sent: turn.submitted, turn }, lease)
+    if (!current) return this.failAttempt(run, node, { kind: 'internal', disposition: 'CODE_FIX', message: `execution ${node.execution_id} is gone` }, { sent: true }, lease)
+    if (current.status === 'failed') {
+      return this.failAttempt(run, node, current.error ?? { kind: 'internal', disposition: 'CODE_FIX', message: 'the execution failed without an error' }, { sent: current.submitted, execution: current }, lease)
     }
-    await this.complete(run, node, spec, turn, lease)
+    this.complete(run, node, spec, current, lease)
   }
 
-  /** READY → RUNNING once the turn has been routed: the execution binds the route decision. */
-  private toRunning(run: RunRow, node: NodeRow, turn: TurnView, lease: () => Lease): NodeRow {
-    const route = turn.routeDecision as ArtifactRef
-    this.writeNode(node, { state: 'RUNNING', decisions: JSON.stringify(turnDecisions(turn)) }, (r) => ({
-      ...r, execution: { executionId: turn.turnId, attempt: node.attempt, owner: 'turns', generation: lease().generation, route }, lastDecision: route,
-    }), lease)
-    this.ctx.eventLog.append({ type: 'workflow.node.running', runId: run.run_id, nodeId: node.node_id, turnId: turn.turnId, decision: route, data: { worker: turn.worker } })
-    return this.nodeRow(run.run_id, node.node_id)!
-  }
-
-  /** A finished turn: check its result against the node's contract, then commit the output receipt. */
-  private async complete(run: RunRow, node: NodeRow, spec: ResolvedNode, turn: TurnView, lease: () => Lease): Promise<void> {
-    const result = turn.answerArtifact as ArtifactRef
-    const descriptor = (await this.ctx.workers.list()).find((w) => w.worker === turn.worker)
+  /** A finished execution: check its result against the node's contract, then commit the output receipt. */
+  private complete(run: RunRow, node: NodeRow, spec: ResolvedNode, execution: WorkerExecution, lease: () => Lease): void {
+    const result = execution.result as ArtifactRef
     const acceptance = this.ctx.workers.accept(result, spec.acceptance, { producer: 'workflow', runId: run.run_id, nodeId: node.node_id })
-    const served = { worker: turn.worker ?? null, served_tier: descriptor?.tier ?? null, quota_class: descriptor?.quotaClass ?? null, decisions: JSON.stringify(turnDecisions(turn)) }
-    const execution = { execution: { executionId: turn.turnId, attempt: node.attempt, owner: 'turns', generation: lease().generation, route: turn.routeDecision as ArtifactRef } }
-    const data = { worker: turn.worker, tier: descriptor?.tier, quotaClass: descriptor?.quotaClass, account: turn.account, accepted: acceptance.accepted }
+    const decisions = { decisions: JSON.stringify([...execution.decisions, ...this.routedDecisions(node)]) }
+    const data = { executionId: execution.id, source: node.source, worker: node.worker, tier: node.served_tier, quotaClass: node.quota_class, accepted: acceptance.accepted }
     this.ctx.store.transaction(() => {
       if (acceptance.accepted) {
-        this.writeNode(node, { state: 'COMPLETED', ...served, error: null }, (r) => ({ ...r, ...execution, outputReceipt: { result, acceptance: acceptance.decision }, lastDecision: acceptance.decision }), lease)
-        this.ctx.eventLog.append({ type: 'workflow.node.completed', runId: run.run_id, nodeId: node.node_id, turnId: turn.turnId, decision: acceptance.decision, data })
+        this.writeNode(node, { state: 'COMPLETED', error: null, ...decisions }, (r) => ({ ...r, outputReceipt: { result, acceptance: acceptance.decision }, lastDecision: acceptance.decision }), lease)
+        this.ctx.eventLog.append({ type: 'workflow.node.completed', runId: run.run_id, nodeId: node.node_id, decision: acceptance.decision, data })
       } else {
         const error: WorkflowError = { kind: 'acceptance_rejected', disposition: 'NONE', message: `${spec.acceptance}: ${acceptance.reasons.join('; ')}` }
-        this.writeNode(node, { state: 'FAILED', ...served, error: JSON.stringify(error) }, (r) => ({ ...r, ...execution, lastDecision: acceptance.decision }), lease)
-        this.ctx.eventLog.append({ type: 'workflow.node.failed', runId: run.run_id, nodeId: node.node_id, turnId: turn.turnId, decision: acceptance.decision, data: { ...data, kind: error.kind } })
+        this.writeNode(node, { state: 'FAILED', error: JSON.stringify(error), ...decisions }, (r) => ({ ...r, lastDecision: acceptance.decision }), lease)
+        this.ctx.eventLog.append({ type: 'workflow.node.failed', runId: run.run_id, nodeId: node.node_id, decision: acceptance.decision, data: { ...data, kind: error.kind } })
       }
     })
+  }
+
+  /** The tier and route decisions recorded when the node's current attempt was routed. */
+  private routedDecisions(node: NodeRow): ArtifactRef[] {
+    const stored = node.decisions ? (JSON.parse(node.decisions) as ArtifactRef[]) : []
+    return stored.slice(-2)
   }
 
   /**
@@ -544,7 +593,7 @@ export class Workflow extends Service {
    * that never reached the provider: once sent, only the turn runtime may resubmit, within
    * its own bound, so the engine never causes a duplicate provider turn (INV-4).
    */
-  private failAttempt(run: RunRow, node: NodeRow, error: WorkflowError, attempt: { sent: boolean; turn?: TurnView }, lease: () => Lease): void {
+  private failAttempt(run: RunRow, node: NodeRow, error: WorkflowError, attempt: { sent: boolean; execution?: WorkerExecution; decisions?: ArtifactRef[] }, lease: () => Lease): void {
     const max = this.config.maxAttempts ?? 3
     const reasons = {
       retry: [] as string[],
@@ -555,7 +604,7 @@ export class Workflow extends Service {
     else if (node.attempt >= max) reasons.fail.push(`attempt ${node.attempt} of ${max} failed`)
     else reasons.retry.push(`${error.kind} is ${error.disposition}, the prompt was never sent, and attempt ${node.attempt} of ${max} failed`)
     const retry = reasons.retry.length > 0
-    const kept = attempt.turn ? turnDecisions(attempt.turn) : node.decisions ? (JSON.parse(node.decisions) as ArtifactRef[]) : []
+    const kept = attempt.decisions ?? (attempt.execution ? [...attempt.execution.decisions, ...this.routedDecisions(node)] : node.decisions ? (JSON.parse(node.decisions) as ArtifactRef[]) : [])
     const decision = this.ctx.artifacts.recordDecision({
       decisionType: 'recovery',
       question: `How does node ${node.node_id} of run ${run.run_id} recover from ${error.kind}?`,
@@ -569,7 +618,7 @@ export class Workflow extends Service {
     if (retry) {
       const delay = error.disposition === 'IMMEDIATE' ? 0 : (this.config.retryDelayMs ?? 5000) * 2 ** Math.max(0, node.attempt - 1)
       this.ctx.store.transaction(() => {
-        this.writeNode(node, { state: 'READY', turn_id: null, attempt: node.attempt, not_before: new Date(Date.now() + delay).toISOString(), error: JSON.stringify(error), ...decisions },
+        this.writeNode(node, { state: 'READY', execution_id: null, attempt: node.attempt, not_before: new Date(Date.now() + delay).toISOString(), error: JSON.stringify(error), ...decisions },
           (r) => {
             // The next attempt gets its own execution; the failed one no longer explains the node.
             const next: NodeRecord = { ...r, lastDecision: decision.id as ArtifactRef }
@@ -643,7 +692,7 @@ export class Workflow extends Service {
       const record = JSON.parse(n.record) as NodeRecord
       return {
         nodeId: n.node_id, state: n.state, minTier: spec.tier, attempt: n.attempt,
-        ...(n.turn_id ? { turnId: n.turn_id } : {}), ...(n.worker ? { worker: n.worker } : {}),
+        ...(n.execution_id ? { executionId: n.execution_id } : {}), ...(n.source ? { source: n.source } : {}), ...(n.worker ? { worker: n.worker } : {}),
         ...(n.served_tier ? { tier: n.served_tier } : {}), ...(n.quota_class ? { quotaClass: n.quota_class } : {}),
         ...(record.outputReceipt ? { result: record.outputReceipt.result } : {}),
         ...(n.error && n.state !== 'COMPLETED' ? { error: JSON.parse(n.error) as WorkflowError } : {}),
@@ -733,6 +782,20 @@ interface NodeHelpers {
   dependsOnCompleted: (all: NodeRow[]) => boolean
 }
 
+/**
+ * How a refused admission is handled: by the state that kept an otherwise fitting Worker
+ * out. With no Worker at all, the operator still has to add and sign in an account.
+ */
+function admissionKind(failure: AdmissionFailure): ProviderErrorKind {
+  if (failure.rejections.length === 0) return 'reauth_required'
+  const onlyState = failure.rejections.filter((r) => r.failed.every((f) => f.check === 'state'))
+  if (onlyState.some((r) => r.state === 'reauth-required' || r.state === 'unavailable')) return 'reauth_required'
+  if (onlyState.some((r) => r.state === 'quota-exhausted')) return 'quota_exhausted'
+  if (onlyState.length) return 'overloaded'
+  if (failure.rejections.some((r) => r.failed.every((f) => f.check === 'locality'))) return 'egress_denied'
+  return 'config_error'
+}
+
 /** A workflow-level refusal, typed like a turn failure. */
 export class WorkflowFailure extends Error {
   readonly disposition: string
@@ -743,10 +806,6 @@ export class WorkflowFailure extends Error {
   }
 }
 
-/** A turn's egress, tier, and route (or admission) decision ids, in that order. */
-function turnDecisions(turn: TurnView | undefined): ArtifactRef[] {
-  return [turn?.egressDecision, turn?.tierDecision, turn?.routeDecision].filter((id): id is ContentId => !!id) as ArtifactRef[]
-}
 
 function errorOf(error: unknown): WorkflowError {
   const typed = error as { kind?: unknown; disposition?: unknown; message?: unknown }

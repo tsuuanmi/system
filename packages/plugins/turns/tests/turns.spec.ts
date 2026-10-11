@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -10,7 +11,7 @@ import Login from '@tsuuanmi/system-login'
 import BrowserPool from '@tsuuanmi/system-browser-patchright'
 import Vault from '@tsuuanmi/system-credentials-vault'
 import VirtualDisplay from '@tsuuanmi/system-display-virtual'
-import WorkerRouter from '@tsuuanmi/system-workers'
+import WorkerRouter, { AdmissionFailure, type Tier, type WorkRequirement } from '@tsuuanmi/system-workers'
 import ChatGptWeb from '@tsuuanmi/system-provider-chatgpt-web'
 import Providers from '@tsuuanmi/system-providers'
 import Store from '@tsuuanmi/system-store'
@@ -27,6 +28,22 @@ afterEach(async () => {
 
 type CatalogEntry = { id: string; provider: string; quotaClass: 'subscription-chat'; tiers: Record<string, string> }
 const account = (id: string, tiers: Record<string, string> = { economy: 'instant', standard: 'medium', frontier: 'high' }): CatalogEntry => ({ id, provider: 'chatgpt-web', quotaClass: 'subscription-chat', tiers })
+
+type AskSpec = { prompt: string; tier?: Tier; sessionId?: string; persist?: boolean; research?: boolean; classification?: WorkRequirement['data']['classification']; key?: string }
+
+/** What the workflow engine does before a turn: build the requirement, route it, start it on the admitted Worker. */
+async function ask(ctx: Context, input: AskSpec) {
+  const sessionId = input.sessionId ?? (input.persist || input.research ? `ses_${randomBytes(8).toString('hex')}` : undefined)
+  const requirement: WorkRequirement = {
+    schema: 'work-requirement@1.0', objective: 'test', egressPolicy: 'egress.classification-and-secrets',
+    capabilities: ['reason', ...(sessionId ? ['persistent-conversation'] : []), ...(input.research ? ['deep-research'] : [])],
+    data: { classification: input.classification ?? 'operator-shared', refs: [] },
+    tier: { min: input.tier ?? 'standard', source: input.tier ? 'caller' : 'default' }, acceptance: { contract: 'acceptance.answer' },
+  }
+  const affinity = sessionId ? ctx.workers.affinity(sessionId) : undefined
+  const admitted = await ctx.workers.route(requirement, affinity ? { restrict: { workers: affinity, reason: 'the session stays on its account' } } : {})
+  return ctx.turns.ask({ key: input.key ?? randomBytes(8).toString('hex'), worker: admitted.worker.worker, prompt: input.prompt, sessionId, requirement, decisions: admitted.decisions })
+}
 
 async function boot(options: { fake?: FakeOptions; accounts?: CatalogEntry[]; ready?: string[]; dir?: string; capacity?: number; shared?: FakeChatGpt; turns?: Record<string, unknown> } = {}) {
   const fake = options.shared ?? new FakeChatGpt({ answer: 'OK', ...options.fake })
@@ -68,7 +85,7 @@ async function boot(options: { fake?: FakeOptions; accounts?: CatalogEntry[]; re
 describe.runIf(canRunBrowser)('ctx.turns: ask through a saved account', () => {
   it('answers a one-shot ask in Temporary chat, in Chat mode, with a receipt, a route decision, and an answer artifact', async () => {
     const { ctx, fake } = await boot({ fake: { answer: 'Hello' } })
-    const started = ctx.turns.ask({ prompt: 'Say hello' })
+    const started = await ask(ctx, { prompt: 'Say hello' })
     const turn = await ctx.turns.wait(started.turnId, 30_000)
     expect(turn).toMatchObject({ status: 'completed', account: 'chatgpt-main', mode: 'temporary', answer: 'Hello', submitted: true })
     expect(turn.sessionId).toBeUndefined()
@@ -82,7 +99,7 @@ describe.runIf(canRunBrowser)('ctx.turns: ask through a saved account', () => {
 
   it('maps the requested tier through the account catalog to a mode preset, verifies it, and records it', async () => {
     const { ctx, fake } = await boot()
-    const turn = await ctx.turns.wait(ctx.turns.ask({ prompt: 'hard question', tier: 'frontier' }).turnId, 30_000)
+    const turn = await ctx.turns.wait((await ask(ctx, { prompt: 'hard question', tier: 'frontier' })).turnId, 30_000)
     expect(turn).toMatchObject({ status: 'completed', tier: 'frontier', mode: 'temporary' })
     expect(fake.sent[0]).toMatchObject({ model: 'GPT-6', power: 'High' })
     const receipt = ctx.turnReceipts.read({ account: 'chatgpt-main', sessionId: turn.turnId, requestId: turn.turnId })
@@ -90,14 +107,14 @@ describe.runIf(canRunBrowser)('ctx.turns: ask through a saved account', () => {
     expect(turn.worker).toBe('worker:chatgpt-main/frontier')
     const tier = ctx.artifacts.get(turn.tierDecision!)?.body
     expect(tier).toMatchObject({ decisionType: 'tier', outcome: { option: 'frontier' } })
-    const plain = await ctx.turns.wait(ctx.turns.ask({ prompt: 'default tier' }).turnId, 30_000)
+    const plain = await ctx.turns.wait((await ask(ctx, { prompt: 'default tier' })).turnId, 30_000)
     expect(plain.tier).toBe('standard')
     expect(fake.sent[1]).toMatchObject({ model: 'Latest', power: 'Medium' })
   }, 90_000)
 
   it('starts Deep research at once in a persistent session and delivers the report through result', async () => {
     const { ctx, fake } = await boot({ fake: { report: 'Research report', thinkMs: 1500 } })
-    const started = ctx.turns.research({ question: 'Survey the plugin catalog' })
+    const started = await ask(ctx, { research: true, prompt: 'Survey the plugin catalog' })
     expect(started).toMatchObject({ status: 'queued', mode: 'persistent', feature: 'deep-research' })
     expect(started.sessionId).toMatch(/^ses_/)
     const done = await ctx.turns.wait(started.turnId, 60_000)
@@ -107,8 +124,8 @@ describe.runIf(canRunBrowser)('ctx.turns: ask through a saved account', () => {
 
   it('accepts a follow-up on a new persistent session before its first turn has finished', async () => {
     const { ctx } = await boot({ fake: { thinkMs: 1500 } })
-    const first = ctx.turns.ask({ prompt: 'one', persist: true })
-    const second = ctx.turns.ask({ prompt: 'two', sessionId: first.sessionId! })
+    const first = await ask(ctx, { prompt: 'one', persist: true })
+    const second = await ask(ctx, { prompt: 'two', sessionId: first.sessionId! })
     expect((await ctx.turns.wait(second.turnId, 60_000)).status).toBe('completed')
     expect((await ctx.turns.wait(first.turnId, 1000)).status).toBe('completed')
   }, 90_000)
@@ -116,7 +133,7 @@ describe.runIf(canRunBrowser)('ctx.turns: ask through a saved account', () => {
   it('signs a credentials-mode account back in when it was signed out, then runs the turn', async () => {
     const { ctx, fake } = await boot({ fake: { requireCookie: true, mfa: 'totp', answer: 'after relogin' } })
     await ctx.accounts.setCredentials('chatgpt-main', { email: fake.options.email, password: fake.options.password, totpSecret: fake.options.totpSecret })
-    const turn = await ctx.turns.wait(ctx.turns.ask({ prompt: 'x' }).turnId, 90_000)
+    const turn = await ctx.turns.wait((await ask(ctx, { prompt: 'x' })).turnId, 90_000)
     expect(turn).toMatchObject({ status: 'completed', answer: 'after relogin' })
     expect(fake.sent).toHaveLength(1)
     expect(await ctx.accounts.get('chatgpt-main')).toMatchObject({ status: 'ready' })
@@ -124,7 +141,7 @@ describe.runIf(canRunBrowser)('ctx.turns: ask through a saved account', () => {
 
   it('marks the account reauth-required on positive sign-out evidence, so the next turn routes elsewhere', async () => {
     const { ctx } = await boot({ fake: { signedIn: false } })
-    const turn = await ctx.turns.wait(ctx.turns.ask({ prompt: 'x' }).turnId, 30_000)
+    const turn = await ctx.turns.wait((await ask(ctx, { prompt: 'x' })).turnId, 30_000)
     expect(turn).toMatchObject({ status: 'failed', error: { kind: 'reauth_required' } })
     expect(await ctx.accounts.get('chatgpt-main')).toMatchObject({ status: 'reauth-required' })
   }, 60_000)
@@ -132,7 +149,7 @@ describe.runIf(canRunBrowser)('ctx.turns: ask through a saved account', () => {
   it('writes the refreshed browser state back to the account after a turn', async () => {
     const { ctx } = await boot()
     const before = await ctx.accounts.get('chatgpt-main')
-    await ctx.turns.wait(ctx.turns.ask({ prompt: 'refresh me' }).turnId, 30_000)
+    await ctx.turns.wait((await ask(ctx, { prompt: 'refresh me' })).turnId, 30_000)
     const after = await ctx.accounts.get('chatgpt-main')
     expect(after.revision).toBe(before.revision + 1)
     expect((await ctx.accounts.portableState('chatgpt-main'))?.cookies.map((c) => c.name)).toContain('session_refresh')
@@ -140,11 +157,11 @@ describe.runIf(canRunBrowser)('ctx.turns: ask through a saved account', () => {
 
   it('keeps a persistent session on one conversation across asks', async () => {
     const { ctx, fake } = await boot({ fake: { answer: 'first' } })
-    const first = await ctx.turns.wait(ctx.turns.ask({ prompt: 'one', persist: true }).turnId, 30_000)
+    const first = await ctx.turns.wait((await ask(ctx, { prompt: 'one', persist: true })).turnId, 30_000)
     expect(first).toMatchObject({ status: 'completed', mode: 'persistent', answer: 'first' })
     expect(first.sessionId).toMatch(/^ses_/)
     fake.options.answer = 'second'
-    const second = await ctx.turns.wait(ctx.turns.ask({ prompt: 'two', sessionId: first.sessionId! }).turnId, 30_000)
+    const second = await ctx.turns.wait((await ask(ctx, { prompt: 'two', sessionId: first.sessionId! })).turnId, 30_000)
     expect(second).toMatchObject({ status: 'completed', sessionId: first.sessionId, answer: 'second', binding: first.binding })
     expect(first.binding).toMatch(/^[0-9a-f-]{36}$/)
     expect(fake.sent[1]).toMatchObject({ conversationId: first.binding, temporary: false })
@@ -152,17 +169,17 @@ describe.runIf(canRunBrowser)('ctx.turns: ask through a saved account', () => {
 
   it('is idempotent on clientRequestId and sends once', async () => {
     const { ctx, fake } = await boot()
-    const a = ctx.turns.ask({ prompt: 'once', clientRequestId: 'req-1' })
-    const b = ctx.turns.ask({ prompt: 'once', clientRequestId: 'req-1' })
+    const a = await ask(ctx, { prompt: 'once', key: 'req-1' })
+    const b = await ask(ctx, { prompt: 'once', key: 'req-1' })
     expect(b.turnId).toBe(a.turnId)
     await ctx.turns.wait(a.turnId, 30_000)
     expect(fake.sent).toHaveLength(1)
-    expect(() => ctx.turns.ask({ prompt: 'different', clientRequestId: 'req-1' })).toThrow(/different prompt/)
+    await expect(ask(ctx, { prompt: 'different', key: 'req-1' })).rejects.toThrow(/different prompt/)
   }, 90_000)
 
   it('routes through ctx.workers to an admitted Worker and records why every other one was not chosen', async () => {
     const { ctx } = await boot({ accounts: [account('chatgpt-main'), account('chatgpt-2')], ready: ['chatgpt-2'] })
-    const turn = await ctx.turns.wait(ctx.turns.ask({ prompt: 'route me' }).turnId, 30_000)
+    const turn = await ctx.turns.wait((await ask(ctx, { prompt: 'route me' })).turnId, 30_000)
     expect(turn).toMatchObject({ status: 'completed', account: 'chatgpt-2', worker: 'worker:chatgpt-2/standard' })
     const route = ctx.artifacts.get(turn.routeDecision!)?.body as { candidates: Array<{ option: string; selected: boolean; reasons: string[] }> }
     const reasons = Object.fromEntries(route.candidates.map((c) => [c.option, c.reasons]))
@@ -174,30 +191,23 @@ describe.runIf(canRunBrowser)('ctx.turns: ask through a saved account', () => {
 
   it('treats the tier as a minimum, and fails closed when no Worker serves it (REQ-WRK-9)', async () => {
     const { ctx, fake } = await boot({ accounts: [account('chatgpt-main', { economy: 'instant', frontier: 'high' })] })
-    const up = await ctx.turns.wait(ctx.turns.ask({ prompt: 'standard or better', tier: 'standard' }).turnId, 30_000)
-    expect(up).toMatchObject({ status: 'completed', tier: 'standard', worker: 'worker:chatgpt-main/frontier' })
+    const up = await ctx.turns.wait((await ask(ctx, { prompt: 'standard or better', tier: 'standard' })).turnId, 30_000)
+    expect(up).toMatchObject({ status: 'completed', tier: 'frontier', worker: 'worker:chatgpt-main/frontier' })
     expect(fake.sent[0]).toMatchObject({ model: 'GPT-6', power: 'High' })
-    const cheap = await ctx.turns.wait(ctx.turns.ask({ prompt: 'easy', tier: 'economy' }).turnId, 30_000)
+    const cheap = await ctx.turns.wait((await ask(ctx, { prompt: 'easy', tier: 'economy' })).turnId, 30_000)
     expect(cheap.worker).toBe('worker:chatgpt-main/economy')
     const none = await boot({ accounts: [account('chatgpt-main', { economy: 'instant' })] })
-    const refused = await none.ctx.turns.wait(none.ctx.turns.ask({ prompt: 'too hard', tier: 'frontier' }).turnId, 10_000)
-    expect(refused).toMatchObject({ status: 'failed', error: { kind: 'config_error' } })
-    expect(none.ctx.artifacts.get(refused.routeDecision!)?.body).toMatchObject({ decisionType: 'admission', outcome: { option: 'none' } })
+    const refused = await ask(none.ctx, { prompt: 'too hard', tier: 'frontier' }).catch((e: unknown) => e)
+    expect(refused).toBeInstanceOf(AdmissionFailure)
+    expect(none.ctx.artifacts.get((refused as AdmissionFailure).decision)?.body).toMatchObject({ decisionType: 'admission', outcome: { option: 'none' } })
     expect(none.fake.sent).toEqual([])
   }, 90_000)
-
-  it('fails closed with USER_ACTION when no account is ready, and sends nothing', async () => {
-    const { ctx, fake } = await boot({ ready: [] })
-    const turn = await ctx.turns.wait(ctx.turns.ask({ prompt: 'nobody' }).turnId, 10_000)
-    expect(turn).toMatchObject({ status: 'failed', submitted: false, error: { kind: 'reauth_required', disposition: 'USER_ACTION' } })
-    expect(fake.sent).toEqual([])
-  }, 60_000)
 
   it('recovers a submitted persistent turn after a restart from its conversation, without resending', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'system-turns-'))
     cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
     const first = await boot({ dir, fake: { thinkMs: 4000, answer: 'answered while we were down' } })
-    const turn = first.ctx.turns.ask({ prompt: 'survive a crash', persist: true })
+    const turn = await ask(first.ctx, { prompt: 'survive a crash', persist: true })
     const until = async (check: () => boolean): Promise<void> => {
       const deadline = Date.now() + 30_000
       while (!check()) {
@@ -222,7 +232,7 @@ describe.runIf(canRunBrowser)('ctx.turns: ask through a saved account', () => {
     const dir = mkdtempSync(join(tmpdir(), 'system-turns-'))
     cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
     const first = await boot({ dir, fake: { researchMs: 9000, report: 'Report written while we were down.' } })
-    const turn = first.ctx.turns.research({ question: 'survive a crash' })
+    const turn = await ask(first.ctx, { research: true, prompt: 'survive a crash' })
     const deadline = Date.now() + 30_000
     while (first.ctx.turns.get(turn.turnId)?.binding === undefined) {
       if (Date.now() > deadline) throw new Error('never bound')
@@ -243,7 +253,7 @@ describe.runIf(canRunBrowser)('ctx.turns: ask through a saved account', () => {
     const dir = mkdtempSync(join(tmpdir(), 'system-turns-'))
     cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
     const first = await boot({ dir, fake: { thinkMs: 2000, answer: 'once' } })
-    const turn = first.ctx.turns.ask({ prompt: 'only once' })
+    const turn = await ask(first.ctx, { prompt: 'only once' })
     const second = await boot({ dir, shared: first.fake })
     await new Promise((resolve) => setTimeout(resolve, 6000))
     expect(first.fake.sent.map((s) => s.prompt)).toEqual(['only once'])
@@ -253,17 +263,17 @@ describe.runIf(canRunBrowser)('ctx.turns: ask through a saved account', () => {
 
   it('bounds the turns it accepts (INV-9): beyond the limit it refuses with a back-off failure', async () => {
     const { ctx } = await boot({ fake: { thinkMs: 3000 }, turns: { maxPendingTurns: 1 } })
-    const first = ctx.turns.ask({ prompt: 'one' })
-    expect(() => ctx.turns.ask({ prompt: 'two' })).toThrow(expect.objectContaining({ kind: 'overloaded', disposition: 'BACKOFF' }))
+    const first = await ask(ctx, { prompt: 'one' })
+    await expect(ask(ctx, { prompt: 'two' })).rejects.toMatchObject({ kind: 'overloaded', disposition: 'BACKOFF' })
     await ctx.turns.wait(first.turnId, 30_000)
-    expect(() => ctx.turns.ask({ prompt: 'three' })).not.toThrow()
+    await ask(ctx, { prompt: 'three' })
   }, 90_000)
 
   it('forgets finished turns (and their prompts) after the retention period', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'system-turns-'))
     cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
     const first = await boot({ dir })
-    const done = await first.ctx.turns.wait(first.ctx.turns.ask({ prompt: 'old prompt' }).turnId, 30_000)
+    const done = await first.ctx.turns.wait((await ask(first.ctx, { prompt: 'old prompt' })).turnId, 30_000)
     first.ctx.store.transaction((db) => void db.prepare("UPDATE turns SET updated_at = '2026-01-01T00:00:00.000Z' WHERE turn_id = ?").run(done.turnId))
     await first.stop()
     cleanups.splice(cleanups.indexOf(first.stop), 1)
@@ -274,7 +284,7 @@ describe.runIf(canRunBrowser)('ctx.turns: ask through a saved account', () => {
 
   it('settles pending waits promptly when the runtime stops', async () => {
     const { ctx, stop } = await boot({ fake: { thinkMs: 30_000 } })
-    const started = ctx.turns.ask({ prompt: 'slow' })
+    const started = await ask(ctx, { prompt: 'slow' })
     const waiting = ctx.turns.wait(started.turnId, 55_000)
     await new Promise((resolve) => setTimeout(resolve, 1500))
     const t0 = Date.now()
@@ -288,8 +298,8 @@ describe.runIf(canRunBrowser)('ctx.turns: ask through a saved account', () => {
     const dir = mkdtempSync(join(tmpdir(), 'system-turns-'))
     cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
     const first = await boot({ dir, capacity: 1, fake: { thinkMs: 60_000 } })
-    first.ctx.turns.ask({ prompt: 'hold the slot' })
-    const queued = first.ctx.turns.ask({ prompt: 'needs frontier', tier: 'frontier' })
+    await ask(first.ctx, { prompt: 'hold the slot' })
+    const queued = await ask(first.ctx, { prompt: 'needs frontier', tier: 'frontier' })
     const deadline = Date.now() + 30_000
     while (first.ctx.turns.get(queued.turnId)?.worker === undefined) {
       if (Date.now() > deadline) throw new Error('never routed')
@@ -303,29 +313,23 @@ describe.runIf(canRunBrowser)('ctx.turns: ask through a saved account', () => {
     expect(first.fake.sent.map((s) => s.prompt)).not.toContain('needs frontier')
   }, 120_000)
 
-  it('never starts a turn that is still routing when the runtime stops', async () => {
-    const { ctx, fake, stop } = await boot()
-    let routing!: () => void
-    const entered = new Promise<void>((resolve) => (routing = resolve))
-    ctx.workers.register({ name: 'slow', describe: async () => (routing(), await new Promise((resolve) => setTimeout(resolve, 2000)), []) })
-    ctx.turns.ask({ prompt: 'caught mid-route' })
-    await entered
-    const t0 = Date.now()
-    await stop()
-    cleanups.splice(cleanups.indexOf(stop), 1)
-    expect(Date.now() - t0).toBeLessThan(10_000)
-    expect(fake.sent).toEqual([])
-  }, 60_000)
-
   it('checks egress before sending: credentials or local-private content never leave (INV-12)', async () => {
     const { ctx, fake } = await boot()
     const pem = String((await import('node:crypto')).generateKeyPairSync('rsa', { modulusLength: 1024 }).privateKey.export({ type: 'pkcs1', format: 'pem' }))
-    const leaked = await ctx.turns.wait(ctx.turns.ask({ prompt: `why does this key fail?\n${pem}` }).turnId, 30_000)
+    const leaked = await ctx.turns.wait((await ask(ctx, { prompt: `why does this key fail?\n${pem}` })).turnId, 30_000)
     expect(leaked).toMatchObject({ status: 'failed', error: { kind: 'egress_denied', disposition: 'USER_ACTION' } })
-    const local = await ctx.turns.wait(ctx.turns.ask({ prompt: 'my notes', classification: 'local-private' }).turnId, 30_000)
-    expect(local).toMatchObject({ status: 'failed', error: { kind: 'egress_denied' } })
-    expect(fake.sent).toEqual([])
-    const fine = await ctx.turns.wait(ctx.turns.ask({ prompt: 'public question' }).turnId, 30_000)
+    // Routing keeps local-private work off remote Workers; the turn's own egress check holds even if a caller skipped that.
+    await expect(ask(ctx, { prompt: 'my notes', classification: 'local-private' })).rejects.toBeInstanceOf(AdmissionFailure)
+    const admitted = await ask(ctx, { prompt: 'warm-up', classification: 'public' })
+    const turn = await ctx.turns.wait(admitted.turnId, 30_000)
+    const bypass = ctx.turns.ask({
+      key: 'bypass', worker: turn.worker!, prompt: 'my notes', decisions: { tier: turn.tierDecision!, route: turn.routeDecision! },
+      requirement: { schema: 'work-requirement@1.0', objective: 'test', egressPolicy: 'egress.classification-and-secrets', capabilities: ['reason'],
+        data: { classification: 'local-private', refs: [] }, tier: { min: 'standard', source: 'caller' }, acceptance: { contract: 'acceptance.answer' } },
+    })
+    expect(await ctx.turns.wait(bypass.turnId, 30_000)).toMatchObject({ status: 'failed', error: { kind: 'egress_denied' } })
+    expect(fake.sent.map((s) => s.prompt)).toEqual(['warm-up'])
+    const fine = await ctx.turns.wait((await ask(ctx, { prompt: 'public question' })).turnId, 30_000)
     expect(fine.status).toBe('completed')
     expect(ctx.artifacts.get(fine.egressDecision!)?.body).toMatchObject({ decisionType: 'egress', outcome: { option: 'allow' } })
   }, 90_000)
@@ -334,7 +338,7 @@ describe.runIf(canRunBrowser)('ctx.turns: ask through a saved account', () => {
     const dir = mkdtempSync(join(tmpdir(), 'system-turns-'))
     cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
     const first = await boot({ dir, fake: { thinkMs: 60_000 }, capacity: 1 })
-    const submitted = first.ctx.turns.ask({ prompt: 'long one' })
+    const submitted = await ask(first.ctx, { prompt: 'long one' })
     await new Promise<void>((resolve, reject) => {
       const deadline = Date.now() + 30_000
       const poll = (): void => {
@@ -345,7 +349,7 @@ describe.runIf(canRunBrowser)('ctx.turns: ask through a saved account', () => {
       poll()
     })
     // Capacity 1: this turn waits behind the first one when the host goes down.
-    const queuedTurn = first.ctx.turns.ask({ prompt: 'queued before the crash' })
+    const queuedTurn = await ask(first.ctx, { prompt: 'queued before the crash' })
     expect(first.ctx.turns.get(queuedTurn.turnId)).toMatchObject({ status: 'queued' })
     await first.stop()
     cleanups.splice(cleanups.indexOf(first.stop), 1)

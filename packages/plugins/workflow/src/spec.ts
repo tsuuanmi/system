@@ -6,15 +6,14 @@
 import { contentId, type ContentId } from '@tsuuanmi/system-libs'
 import type { Tier } from '@tsuuanmi/system-workers-core'
 
-export type Feature = 'chat' | 'deep-research'
-
 export interface NodeTemplate {
   nodeId: string
   objective: string
   dependsOn?: string[]
   /** `{{input}}` is the caller's text; `{{node:<id>}}` a dependency's result, verbatim. */
   prompt: string
-  feature?: Feature
+  /** Capabilities the node needs (docs/design/routing.md#capability-vocabulary); routing admits Workers by them. */
+  capabilities: string[]
   /** Minimum tier (REQ-WRK-9). */
   tier: Tier
   /** The caller's `tier` replaces this node's (an `ask` asks for a tier; a pipeline's steps keep theirs). */
@@ -35,7 +34,6 @@ export interface ResolvedNode extends Omit<NodeTemplate, 'callerTier' | 'convers
   dependsOn: string[]
   /** `caller` when the caller's tier replaced the template's (`work-requirement` tier source). */
   tierSource: 'caller' | 'profile'
-  feature: Feature
   session: { sessionId?: string; persist?: boolean }
 }
 
@@ -57,16 +55,16 @@ const COMPACT_PROMPT = [
 
 export const DEFAULT_TEMPLATES: Record<string, NodeTemplate[]> = {
   ask: [
-    { nodeId: 'ask:1', objective: 'Answer the caller\'s prompt', prompt: '{{input}}', tier: 'standard', callerTier: true, conversation: 'caller', acceptance: 'acceptance.answer' },
+    { nodeId: 'ask:1', objective: 'Answer the caller\'s prompt', prompt: '{{input}}', capabilities: ['reason'], tier: 'standard', callerTier: true, conversation: 'caller', acceptance: 'acceptance.answer' },
   ],
   research: [
     {
       nodeId: 'research:1', objective: 'Write a cited Deep research report on the caller\'s question', prompt: '{{input}}',
-      feature: 'deep-research', tier: 'frontier', conversation: 'persistent', acceptance: 'acceptance.answer',
+      capabilities: ['reason', 'deep-research'], tier: 'frontier', conversation: 'persistent', acceptance: 'acceptance.answer',
     },
     {
       nodeId: 'compact:1', objective: 'Compact the report into a cited synthesis', dependsOn: ['research:1'], prompt: COMPACT_PROMPT,
-      tier: 'economy', conversation: 'temporary', acceptance: 'acceptance.answer',
+      capabilities: ['reason'], tier: 'economy', conversation: 'temporary', acceptance: 'acceptance.answer',
     },
   ],
 }
@@ -118,7 +116,7 @@ export function resolve(template: string, nodes: readonly NodeTemplate[], caller
         ? { sessionId: caller.sessionId }
         : conversation === 'persistent' || caller.persist ? { persist: true } : {}
     const fromCaller = !!(callerTier && caller.tier)
-    return { ...node, dependsOn: node.dependsOn ?? [], feature: node.feature ?? 'chat', tier: fromCaller ? caller.tier! : node.tier, tierSource: fromCaller ? 'caller' : 'profile', session }
+    return { ...node, dependsOn: node.dependsOn ?? [], tier: fromCaller ? caller.tier! : node.tier, tierSource: fromCaller ? 'caller' : 'profile', session }
   })
   return { template, nodes: resolved, specHash: contentId({ template, nodes: resolved }) }
 }

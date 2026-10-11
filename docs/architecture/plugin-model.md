@@ -44,7 +44,7 @@ can be added without changing consumers.
 | Provider runtime | `login` (login profiles, Save) | `@tsuuanmi/system-login` | operators (`account_save`), remote login |
 | Provider runtime | `accounts` | `@tsuuanmi/system-accounts` (records and credentials as encrypted grants in **DSH** `ctx.credentials`, provided by `@tsuuanmi/system-credentials-vault`) | provider runtime, admission |
 | Routing | `egress` (INV-12: classification policy per Worker class + credential scan of the actual payload; `egress` decisions) | `@tsuuanmi/system-egress` | the turn runtime, before routing |
-| Provider runtime | `turns` (the website Worker runtime: durable turns, the website Worker source, scheduling, receipts) | `@tsuuanmi/system-turns` | the workflow engine |
+| Provider runtime | `turns` (the website Worker runtime: durable turns, the `website` Worker source that the engine starts work through, scheduling, receipts) | `@tsuuanmi/system-turns` | `ctx.workers` (as a source), so the workflow engine |
 | Provider runtime | `turnReceipts` | `@tsuuanmi/system-turn-receipts` | provider drivers, recovery |
 | Provider runtime | `providers` (driver registry) | `@tsuuanmi/system-providers` registry; drivers: `@tsuuanmi/system-provider-chatgpt-web`, `provider-gemini-web` | website capability |
 | Capabilities | `website` | `website-core` | Worker providers |

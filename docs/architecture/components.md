@@ -31,10 +31,10 @@ routes back here.
   state, revisioned), conversation bindings, the per-account scheduler, provider
   turn receipts, and one **provider driver** per website.
   The **turn runtime** (`ctx.turns`) runs `ask`/`research`. It stores the turn
-  and its prompt locally for a bounded time, contributes the website Workers to
-  `ctx.workers` and routes each turn through it. It is the website Worker's
-  owning runtime: the workflow engine invokes it, and callers never reach it
-  directly. Login profiles and Save belong to `ctx.login`.
+  and its prompt locally for a bounded time, and contributes the `website`
+  Worker source to `ctx.workers`. It is the website Worker's owning runtime: the
+  workflow engine routes, then starts each turn on the admitted Worker through
+  the source. Callers never reach it directly. Login profiles and Save belong to `ctx.login`.
 - **Does not own:** team or workflow semantics, or Worker admission (owned by
   [routing](#routing)).
 - **Contract:** the `ProviderDriver` interface in `@tsuuanmi/system-provider-core`
@@ -88,8 +88,9 @@ Seam definitions for this layer (`Display`, `Browser`, `ProviderRegistry`) live 
 - **Design:** [routing](../design/routing.md).
 - **Built so far:** the registry, admission, router, and acceptance contracts
   ([`workers`](../../packages/plugins/workers/README.md)). The turn runtime is
-  the first Worker source and routes through it. The workflow engine checks
-  every node result with `accept`.
+  the first Worker source. The workflow engine routes every node by its
+  capabilities, starts it through the admitted Worker's source, and checks every
+  result with `accept`.
 
 ## Orchestration
 

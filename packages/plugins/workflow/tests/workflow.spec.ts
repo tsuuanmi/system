@@ -26,6 +26,7 @@ import WorkerRouter from '@tsuuanmi/system-workers'
 import { afterEach, describe, expect, it } from 'vitest'
 import { canRunBrowser, testChrome } from '../../browser-patchright/tests/support.ts'
 import { FakeChatGpt, type FakeOptions } from '../../provider-chatgpt-web/fixtures/fake-chatgpt.ts'
+import { source } from '../../../workers-core/conformance/workers.ts'
 import Workflow, { DEFAULT_TEMPLATES } from '../src/index.ts'
 
 const cleanups: Array<() => unknown> = []
@@ -37,7 +38,7 @@ const REPORT = 'Plugins matter <a href="https://src.example/catalog">[1]</a>.'
 /** Compaction answers cite; anything else answers plainly. */
 const answer = (prompt: string): string => (prompt.includes('<report>') ? 'Synthesis: plugins matter (https://src.example/catalog).' : 'Plain answer.')
 
-async function boot(options: { fake?: FakeOptions; dir?: string; shared?: FakeChatGpt; turns?: Record<string, unknown>; workflow?: Record<string, unknown> } = {}) {
+async function boot(options: { fake?: FakeOptions; dir?: string; shared?: FakeChatGpt; turns?: Record<string, unknown>; workflow?: Record<string, unknown>; ready?: boolean } = {}) {
   const fake = options.shared ?? new FakeChatGpt({ answer, report: REPORT, ...options.fake })
   if (!options.shared) await fake.start()
   const dir = options.dir ?? mkdtempSync(join(tmpdir(), 'system-workflow-'))
@@ -69,7 +70,7 @@ async function boot(options: { fake?: FakeOptions; dir?: string; shared?: FakeCh
     for (const fiber of [...fibers].reverse()) await fiber.dispose()
   }
   cleanups.push(stop)
-  if (!options.shared) {
+  if (!options.shared && options.ready !== false) {
     await ctx.accounts.saveState('chatgpt-main', {
       state: { origins: [fake.origin], cookies: [], capturedAt: '2026-10-12T00:00:00Z' },
       identityHash: `sha256:${'a'.repeat(64)}`, verifiedAt: '2026-10-12T00:00:00Z',
@@ -152,7 +153,8 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
 
   it('retries a node that failed with a back-off disposition, within the bound (REQ-WF-6)', async () => {
     const { ctx, fake } = await boot({ fake: { thinkMs: 1500 }, turns: { maxPendingTurns: 1 }, workflow: { retryDelayMs: 1000, maxAttempts: 6 } })
-    const blocker = ctx.turns.ask({ prompt: 'hold the only slot' })
+    const blocker = ctx.workflow.start({ template: 'ask', input: 'hold the only slot' })
+    await until(() => ctx.workflow.get(blocker.runId)?.nodes[0]?.executionId !== undefined)
     const run = ctx.workflow.start({ template: 'ask', input: 'after the blocker' })
     const done = await ctx.workflow.wait(run.runId, 60_000)
     expect(done.status).toBe('completed')
@@ -161,7 +163,7 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
     expect(retry.data).toMatchObject({ kind: 'overloaded', disposition: 'BACKOFF' })
     // The retry is a decision (INV-13), named by the event.
     expect(ctx.artifacts.get(retry.decision!)?.body).toMatchObject({ decisionType: 'recovery', outcome: { option: 'retry' } })
-    expect((await ctx.turns.wait(blocker.turnId, 10_000)).status).toBe('completed')
+    expect((await ctx.workflow.wait(blocker.runId, 10_000)).status).toBe('completed')
     expect(fake.sent.map((s) => s.prompt)).toEqual(['hold the only slot', 'after the blocker'])
   }, 90_000)
 
@@ -183,9 +185,36 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
   }, 90_000)
 
   it('refuses a template whose acceptance contract is unknown before anything is sent', async () => {
-    const typo = [{ nodeId: 'ask:1', objective: 'x', prompt: '{{input}}', tier: 'standard', conversation: 'temporary', acceptance: 'acceptance.anwser' }]
+    const typo = [{ nodeId: 'ask:1', objective: 'x', prompt: '{{input}}', capabilities: ['reason'], tier: 'standard', conversation: 'temporary', acceptance: 'acceptance.anwser' }]
     const { ctx, fake } = await boot({ workflow: { templates: { typo } } })
     expect(() => ctx.workflow.start({ template: 'typo', input: 'x' })).toThrow(/unknown acceptance contract acceptance.anwser/)
+    expect(fake.sent).toEqual([])
+  }, 60_000)
+
+  it('fails closed with USER_ACTION when no account is ready, and sends nothing', async () => {
+    const { ctx, fake } = await boot({ ready: false })
+    const done = await ctx.workflow.wait(ctx.workflow.start({ template: 'ask', input: 'nobody' }).runId, 30_000)
+    expect(done).toMatchObject({ status: 'failed', error: { kind: 'reauth_required', disposition: 'USER_ACTION' } })
+    expect(ctx.artifacts.get(ctx.workflow.records(done.runId)[0]!.lastDecision!)?.body).toMatchObject({ decisionType: 'recovery', inputs: [expect.any(String)] })
+    expect(fake.sent).toEqual([])
+  }, 60_000)
+
+  it('keeps local-private work off website Workers (REQ-WRK-7, MVP exit criterion 3)', async () => {
+    const { ctx, fake } = await boot()
+    const done = await ctx.workflow.wait(ctx.workflow.start({ template: 'ask', input: 'my notes', classification: 'local-private' }).runId, 30_000)
+    expect(done).toMatchObject({ status: 'failed', error: { kind: 'egress_denied' } })
+    expect(fake.sent).toEqual([])
+  }, 60_000)
+
+  it('starts nothing for a node that is still routing when the engine stops', async () => {
+    const { ctx, fake, stop } = await boot()
+    let routing!: () => void
+    const entered = new Promise<void>((resolve) => (routing = resolve))
+    ctx.workers.register(source('slow', async () => (routing(), await new Promise((resolve) => setTimeout(resolve, 2000)), [])))
+    ctx.workflow.start({ template: 'ask', input: 'caught mid-route' })
+    await entered
+    await stop()
+    cleanups.splice(cleanups.indexOf(stop), 1)
     expect(fake.sent).toEqual([])
   }, 60_000)
 
@@ -194,7 +223,10 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
     cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
     const first = await boot({ dir, fake: { researchMs: 6000 } })
     const run = first.ctx.workflow.start({ template: 'research', input: 'survive a crash' })
-    await until(() => first.ctx.turns.get(first.ctx.workflow.get(run.runId)!.nodes[0]!.turnId!)?.binding !== undefined)
+    await until(() => {
+      const id = first.ctx.workflow.get(run.runId)!.nodes[0]!.executionId
+      return id !== undefined && first.ctx.turns.get(id)?.binding !== undefined
+    })
     await first.stop()
     cleanups.splice(cleanups.indexOf(first.stop), 1)
     const second = await boot({ dir, shared: first.fake })

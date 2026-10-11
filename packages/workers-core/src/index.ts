@@ -53,10 +53,51 @@ export interface WorkRequirement {
   acceptance: { contract: string; resultSchema?: string; maxEscalations?: number }
 }
 
-/** Contributes Workers; `describe` is called on every route, so states are current. */
+/** What a caller asks one admitted Worker to do. */
+export interface WorkerStart {
+  /** Idempotency key: the same key returns the same execution, and nothing runs twice. */
+  key: string
+  /** The admitted Worker, one of this source's. */
+  worker: string
+  /** The input, already rendered. */
+  prompt: string
+  /** Continue (or open, on first use) this persistent session. */
+  sessionId?: string | undefined
+  /** The requirement the Worker was admitted for, and the decisions that admitted it. */
+  requirement: WorkRequirement
+  decisions: { tier: ArtifactRef; route: ArtifactRef }
+}
+
+export type ExecutionStatus = 'queued' | 'running' | 'completed' | 'failed'
+
+/** One execution, as its owning runtime reports it. */
+export interface WorkerExecution {
+  id: string
+  status: ExecutionStatus
+  /** The input reached the Worker: a caller must never start it again (INV-4). */
+  submitted: boolean
+  /** The stored result, once completed. */
+  result?: ArtifactRef
+  error?: { kind: string; disposition: string; message: string }
+  /** Decisions the runtime made for this execution, such as `egress`. */
+  decisions: ArtifactRef[]
+}
+
+/**
+ * Contributes Workers and runs work on them (the Worker's three questions: can it accept
+ * this work now, how is it invoked, what did it produce). `describe` is called on every
+ * route, so states are current.
+ */
 export interface WorkerSource {
   readonly name: string
   describe(): Promise<CapabilityDescriptor[]>
+  /** Start work on one admitted Worker; durable at once, idempotent by `key`. */
+  start(request: WorkerStart): WorkerExecution
+  get(executionId: string): WorkerExecution | undefined
+  /** Wait until the execution finishes or `timeoutMs` passes; the current state either way. */
+  wait(executionId: string, timeoutMs: number): Promise<WorkerExecution>
+  /** The Workers a continued session must stay on, when this source owns the session. */
+  affinity?(sessionId: string): string[] | undefined
 }
 
 /** The admission checks, in the order the router applies them. */
@@ -79,6 +120,8 @@ export interface RouteOptions {
 
 export interface AdmittedWorker {
   worker: CapabilityDescriptor
+  /** Name of the source that describes the Worker, and runs work on it. */
+  source: string
   /** The stored work requirement and the decisions that chose the Worker (INV-13). */
   requirement: ArtifactRef
   decisions: { tier: ArtifactRef; route: ArtifactRef }
@@ -123,6 +166,12 @@ export abstract class Workers extends Service {
 
   /** Every registered Worker as its source describes it now, ordered by id. */
   abstract list(): Promise<CapabilityDescriptor[]>
+
+  /** A registered source by name. */
+  abstract source(name: string): WorkerSource | undefined
+
+  /** The Workers a continued session must stay on, from the source that owns it. */
+  abstract affinity(sessionId: string): string[] | undefined
 
   /**
    * Admit and choose exactly one Worker, deterministically for the same configuration,

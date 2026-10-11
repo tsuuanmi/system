@@ -72,25 +72,43 @@ export class WorkerRouter extends Workers {
     })
   }
 
+  source(name: string): WorkerSource | undefined {
+    return this.sources.get(name)
+  }
+
+  affinity(sessionId: string): string[] | undefined {
+    for (const source of this.sources.values()) {
+      const workers = source.affinity?.(sessionId)
+      if (workers) return workers
+    }
+    return undefined
+  }
+
   async list(): Promise<CapabilityDescriptor[]> {
+    return (await this.described()).map((d) => d.worker)
+  }
+
+  /** Every Worker with the name of its source, validated and ordered by id. */
+  private async described(): Promise<Array<{ worker: CapabilityDescriptor; source: string }>> {
     const described = await Promise.all([...this.sources.values()].map(async (source) => ({ source: source.name, workers: await source.describe() })))
     const seen = new Map<string, string>()
-    const all: CapabilityDescriptor[] = []
+    const all: Array<{ worker: CapabilityDescriptor; source: string }> = []
     for (const { source, workers } of described) {
       for (const worker of workers) {
         this.schemas.assertRecord(worker)
         const other = seen.get(worker.worker)
         if (other) throw new Error(`Worker ${worker.worker} is described by both ${other} and ${source}`)
         seen.set(worker.worker, source)
-        all.push(worker)
+        all.push({ worker, source })
       }
     }
-    return all.sort((a, b) => compare(a.worker, b.worker))
+    return all.sort((a, b) => compare(a.worker.worker, b.worker.worker))
   }
 
   async route(requirement: WorkRequirement, options: RouteOptions = {}): Promise<AdmittedWorker> {
     this.schemas.assertRecord(requirement)
-    const workers = await this.list()
+    const described = await this.described()
+    const workers = described.map((d) => d.worker)
     const producer = { type: 'system' as const, ref: options.producer ?? 'workers' }
     const stored = this.ctx.artifacts.put({
       kind: 'objective', bodySchema: 'work-requirement@1.0', body: requirement, classification: requirement.data.classification, producer,
@@ -138,7 +156,7 @@ export class WorkerRouter extends Workers {
       outcome: { option: chosen.worker },
       deterministic: true,
     }, { producer, classification: requirement.data.classification })
-    return { worker: chosen, requirement: requirementRef, decisions: { tier: tier.id as ArtifactRef, route: route.id as ArtifactRef } }
+    return { worker: chosen, source: described.find((d) => d.worker === chosen)!.source, requirement: requirementRef, decisions: { tier: tier.id as ArtifactRef, route: route.id as ArtifactRef } }
   }
 
   contract(id: string, check: AcceptanceContract): void {
