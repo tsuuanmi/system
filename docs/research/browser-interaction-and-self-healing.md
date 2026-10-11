@@ -73,6 +73,35 @@ typed or sent, and no state left the browser.
 | temporary chat | `button "Temporary chat"` |
 | voice | `button "Dictate"`, `button "Start Voice"` (the send button appears only once text is entered; not yet observed) |
 
+**Live turn (2026-10-11, two test prompts in Temporary chat, Chat mode).**
+The first run sent the prompt, but the probe crashed before it captured the
+answer, so a second prompt was sent.
+
+- **Mode guard.** The home page has `group "Composer mode"` with `Chat` and
+  `Work`, and the selected one carries `aria-pressed=true`. **Work spends the
+  Codex quota**, so the driver selects Chat first. In Temporary chat
+  (`?temporary-chat=true`, heading "Temporary chat", `button "Turn off temporary
+  chat"`) the mode group is not rendered; the model picker shows a Chat model
+  ("Instant").
+- **Composer.** `form[data-chatgpt-composer]` is present (two forms exist on the
+  page, so the composer is best found as the form around `textbox "Ask
+  ChatGPT"`). `button "Send"` is disabled while the composer is empty. During a
+  run, the same slot shows `button "Stop"`.
+- **Turns.** `data-message-author-role`, `data-turn`, and turn test ids are
+  **gone**. The conversation is `region "Conversation"`. Each turn starts with a
+  level-4 heading, "You said:" or "ChatGPT said:", followed by the content. A
+  finished answer is followed by `button "Copy"`, `"Rate response"`, `"Read
+  aloud"`, and `"Regenerate response"`. The user turn has `"Copy message"` and
+  `"Edit message"`.
+- **Binding.** After the first answer the URL becomes `/c/<uuid>?temporary-chat=true`.
+- **Network.** The send is `POST /backend-api/f/conversation`, answered with
+  `text/event-stream`. It is preceded by `POST /backend-api/f/conversation/prepare`
+  and the `sentinel/chat-requirements` pair. The stream did **not** report as
+  finished within the observation window even after the answer was complete.
+  An open stream is therefore not a reliable "still running" signal on this UI.
+  Completion is decided from the DOM (stop gone, the answer's action buttons
+  present, stable text). The network gives submission evidence and errors.
+
 This confirms the design choice: role plus accessible name first, structural
 `data-*` attributes second, test ids only where they still exist.
 
