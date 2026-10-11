@@ -111,6 +111,24 @@ website quota absorbs the expensive reasoning.
 
 *Requirements:* REQ-WRK-9. *Design:* [routing](../design/routing.md#intelligence-tiers).
 
+## A motivating example from building `system` itself
+
+On 2026-10-11, choosing which existing plugins to reuse for `system` meant
+reading the DSH community catalog (about 14,400 plugin versions), triaging
+dozens of candidates, and reading their code and READMEs. That is exactly the
+kind of broad, read-only research and synthesis that P1 and P3 say should
+**not** spend frontier tokens in a local coding agent:
+
+```text
+Claude Code / Codex: "which catalog plugins fit our MCP server, vault, and DAG needs?"
+  ─▶ system research (website Workers, Deep Research, separate chat quota)      P1, P2
+  ─▶ economy tier: compact the findings into a cited shortlist                  P4
+  ─▶ local agent: apply the decision to the repository (local data stays local) P3
+```
+
+This scenario is a demo target for MVP slice 1
+([release scope](release-scope.md#delivery-order-slice-1-first)).
+
 ## Who it is for
 
 A single operator who already has AI website subscriptions and local coding

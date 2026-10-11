@@ -38,8 +38,8 @@ for free. The Responses and Messages gateways, which make `system` look like a
 ### Included plugins
 
 ```text
-host:          DSH core (dsh-base, pinned; telemetry off) + system bundle/profile; system CLI wrapper; libs
-kernel:        store (DSH storage-sqlite/domain), blobs (DSH attachments), events-store, leases-store, artifacts-store
+host:          DSH core rows only (timer, credentials, webserver; no dsh-base; pinned) + system bundle/profile; system CLI wrapper; libs
+kernel:        store (system tables on node:sqlite), blobs (system blob store; DSH attachments optional later), events-store, leases-store, artifacts-store
 provider:      browser-patchright, display-virtual, remote-login (noVNC), login-credentials,
                accounts-vault, provider-chatgpt-web (+ scheduler, receipts)
 capabilities:  website-core
@@ -89,6 +89,10 @@ usable build, delivered at milestone M1.5:
 | Reliability | turn receipts and reconciliation, two-clock completion, per-account scheduler |
 | Routing | minimal: the first `ready` account in configured priority that proves the capability; tier = the selected ChatGPT mode; route and tier decision artifacts recorded |
 | Execution | each call is a one-node DAG on the engine core |
+
+Demo scenario: the [motivating example](purpose.md#a-motivating-example-from-building-system-itself),
+a reuse survey over the DSH plugin catalog delegated from Claude Code to ChatGPT
+Web Deep Research.
 
 Slice 1 exit criteria:
 

@@ -37,8 +37,9 @@ own, its entry points, and its dependency direction, and links back to
 
 ## Composition
 
-The host is DSH core, started with the `system` profile: `dsh-base`, then the
-`system` bundle, then patch files
+The host is DSH core, started with the `system` profile: only the `system`
+bundle, which inserts the allow-listed DSH core rows (no `dsh-base`), then patch
+files
 ([plugin model](../architecture/plugin-model.md#composition)).
 Planned profiles: `default` (all layers), `headless` (no gateways or Web UI),
 `gateway-only`, and `dev` (fakes for every external seam, so no accounts are

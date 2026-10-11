@@ -96,9 +96,10 @@ routes back here.
 
 ## Host
 
-- **Owns:** composition on **DSH core**. The `system` profile layers the `system`
-  bundle over `dsh-base`, and the `system` CLI wrapper runs
-  `dsh --profile system`. It validates every plugin `Config` at startup, isolates
+- **Owns:** composition on **DSH core**. The `system` profile contains only the
+  `system` bundle, which inserts the allow-listed DSH rows and `system` plugins,
+  with no `dsh-base` ([ADR-0019](../decisions/adr/0019-explicit-minimal-dsh-core.md)).
+  The `system` CLI wrapper creates the profile and runs `dsh --profile system`. It validates every plugin `Config` at startup, isolates
   failures per plugin, disables telemetry, and runs drain and shutdown
   ([ADR-0018](../decisions/adr/0018-build-on-dsh-core.md)).
 - **Does not own:** business logic. The host never wires layers by hand.

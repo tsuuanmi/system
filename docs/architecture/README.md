@@ -74,14 +74,16 @@ internals.
 │ Kernel        ctx.store (SQLite/WAL) · ctx.blobs · ctx.events ·           │
 │               ctx.leases · libraries: hashing, clock, schemas             │
 ╞═══════════════════════════════════════════════════════════════════════════╡
-│ Host          DSH core (dsh-base) + system bundle · Cordis loader ·       │
+│ Host          DSH core (allow-listed rows) + system bundle · Cordis loader│
 │               startup validation · drain                                  │
 └───────────────────────────────────────────────────────────────────────────┘
 ```
 
-The **host** is not a layer that contains business logic. It is **DSH core**
-(the `dsh-base` bundle on Cordis) plus the `system` bundle, launched as the
-`system` profile ([ADR-0018](../decisions/adr/0018-build-on-dsh-core.md)). DSH
+The **host** is not a layer that contains business logic. It is **DSH core** on
+Cordis: only the allow-listed DSH rows, with no `dsh-base`, plus the `system`
+bundle, launched as the `system` profile
+([ADR-0018](../decisions/adr/0018-build-on-dsh-core.md),
+[ADR-0019](../decisions/adr/0019-explicit-minimal-dsh-core.md)). DSH
 packages provide several seams, such as storage, attachments, credentials,
 approvals, exec, and LLM adapters. The
 [DSH core reuse map](plugin-model.md#dsh-core-reuse-map) lists which. Which providers run, and

@@ -15,6 +15,15 @@ installed). Reproducible code is in [`spikes/m0-dsh-core/`](../../spikes/m0-dsh-
 | 4 | Does `dsh-credentials-local` encrypt at rest? | **No** | Its README: secrets are kept "in a private file", which is YAML at mode `0600`. It also says the store "cannot isolate secrets from the agent" |
 | — | Can telemetry be disabled from our bundle? | **Yes** | Patching `otel` and `session-telemetry-otel` with `disabled: true` shows in `--dump-config`. The launcher also honors `DSH_TELEMETRY_DISABLED` |
 
+## Minimal core composition
+
+A second profile listed **no `dsh-base`**. Its bundle inserted only
+`cordis-plugin-timer`, `dsh-credentials-local`, `dsh-host-webserver`, and the MCP
+probe, with `--dump-config` showing exactly those 4 rows. It stayed resident and
+served `initialize`. It used **about 91 MB RSS, against about 153 MB** for the
+`dsh-base`-layered profile. This led to
+[ADR-0019](../decisions/adr/0019-explicit-minimal-dsh-core.md).
+
 ## Consequences for the design
 
 - **Host:** confirmed. `system` runs as a resident DSH profile. A webserver row is
@@ -39,6 +48,7 @@ installed). Reproducible code is in [`spikes/m0-dsh-core/`](../../spikes/m0-dsh-
 cd spikes/m0-dsh-core/bundle && npm i            # MCP SDK for the probe plugin
 export DSH_HOME=$(mktemp -d) DSH_TELEMETRY_DISABLED=1
 npx -y @deepseek-ai/dsh@0.2.1-alpha.2 plugin --profile system-probe add ./
+# remove "@deepseek-ai/dsh-base" from $DSH_HOME/profiles/system-probe/package.json → dsh.profile.bundles
 npx -y @deepseek-ai/dsh@0.2.1-alpha.2 --profile system-probe   # then curl /mcp (see spike README)
 pnpm test spikes/m0-dsh-core                     # node:sqlite probe
 ```

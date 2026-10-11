@@ -1,13 +1,15 @@
 # Plugin model
 
 > Target state. Decisions: [ADR-0007](../decisions/adr/0007-everything-is-a-plugin.md),
-> [ADR-0018](../decisions/adr/0018-build-on-dsh-core.md) (build on DSH core).
+> [ADR-0018](../decisions/adr/0018-build-on-dsh-core.md) (build on DSH core),
+> [ADR-0019](../decisions/adr/0019-explicit-minimal-dsh-core.md) (only the DSH core rows we use).
 > Invariants: [INV-10](invariants.md#inv-10-everything-is-a-plugin),
 > [INV-11](invariants.md#inv-11-no-tool-lock-in).
 
 `system` follows the **Everything Is A Plugin** philosophy of DeepSeek Harness,
 and is built **on DSH core**. `system` is its own harness: a DSH bundle and
-profile layered on `dsh-base`, running on the same plugin runtime,
+profile that mounts only the DSH core rows it uses (no `dsh-base`), running on
+the same plugin runtime,
 [Cordis](../research/dsh-analysis.md). Every part of the product is a plugin, including the store, the provider drivers, the
 router, the workflow engine, and each gateway. There is no privileged core to
 patch. You extend `system` by mounting a plugin beside the others, and every
@@ -70,32 +72,30 @@ but not a seam.
 
 ## DSH core reuse map
 
-This table is the canonical record of what `system` reuses from DSH and what it
-builds ([ADR-0018](../decisions/adr/0018-build-on-dsh-core.md)). DSH services
-reach `system` domain plugins only through `system` seams or `system-dsh-*`
-adapter plugins (lock-in safeguard 1).
+This table is the canonical **allow-list of DSH rows** that `system` mounts. The
+`system` bundle inserts exactly these rows. It does **not** use `dsh-base`,
+which mounts 94 rows ([ADR-0019](../decisions/adr/0019-explicit-minimal-dsh-core.md)).
+DSH services reach `system` domain plugins only through `system` seams or
+`system-dsh-*` adapter plugins (lock-in safeguard 1 of
+[ADR-0018](../decisions/adr/0018-build-on-dsh-core.md)). Adding a row updates
+this table and the composition test that asserts the exact row set.
 
-| Concern | DSH package(s) | Use in `system` | Risk |
+| Stage | DSH row (package) | Serves | Risk |
 |---|---|---|---|
-| plugin runtime, loader, profiles, patches, HMR, plugin manager, config editor | Cordis + `dsh-base` infrastructure rows | host, used as is | low |
-| storage | `dsh-storage`, `dsh-storage-sqlite`, `dsh-storage-domain` | provider behind `ctx.store` | low–medium |
-| attachments, spill | `dsh-attachment(-local)`, `dsh-spill(-local)` | provider behind `ctx.blobs`; spill for large tool output | medium |
-| credentials, human-guided sign-in | `dsh-credentials(-local)`, `dsh-authorization` | secrets for `ctx.accounts`; encryption at rest verified in M0 | medium |
-| approvals, questions | `dsh-user-approval`, `dsh-user-questions`, `dsh-permission-presets` | plan-approval gate (REQ-WF-11), `NEEDS_HUMAN`, `INPUT_REQUIRED` | low–medium |
-| exec | `dsh-shell`, `dsh-fs`, `dsh-sandbox`, `dsh-subprocess` (+ SSH variants) | `ctx.exec` | low–medium |
-| LLM adapters | `dsh-llm`, `dsh-llm-pi-ai`, `dsh-llm-retry` | `ctx.models`, the economy tier (P4) | low |
-| compaction | `dsh-compaction-*` | reference for engine-owned summaries | low |
-| skills, MCP client, web search and fetch | `dsh-skill*`, `dsh-mcp-client`, `dsh-web*` | available to DSH agents and local Workers | low |
-| agent loop, tools, subagents (one-shot Claude Code / Codex / ACP) | `dsh-agent*`, `dsh-tools`, `dsh-subagent*` | optional local Worker and operator console; one-shot jobs | medium |
-| webserver, API gateway | `dsh-host-webserver`, `dsh-api-gateway` | hosts the MCP Streamable HTTP endpoint and admin API (verified in M0) | medium |
-| Web UI | `dsh-web-app`, `dsh-client-ui-*` | v1.0 operator UI with `system` UI plugins | high (churn) |
-| ACP server | `dsh-acp` | optional editor client gateway | medium |
-| **not provided by DSH; `system` builds it** | — | durable DAG engine, artifacts and decision records, leases, Worker routing, Worker sessions and mailbox, resumable agent runtimes, provider runtime (browser, display, accounts vault, drivers, receipts), MCP server, Responses and Messages gateways | — |
-| **avoided in the MVP** (experimental) | agent teams, hook bridges, browser-use and computer-use providers, webhooks | — | high |
+| **slice 1** | `timer` (`@deepseek-ai/cordis-plugin-timer`) | deadlines, idle close, heartbeats | low |
+| **slice 1** | `credentials` (`dsh-credentials` seam + a provider that encrypts at rest; `dsh-credentials-local` stores plain YAML, so it is used only in `dev`) | secrets for `ctx.accounts` | medium |
+| **slice 1** | `webserver` (`dsh-host-webserver`, loopback) | MCP Streamable HTTP endpoint, admin API | medium |
+| M2 | `approval`, `user-questions` (`dsh-user-approval`, `dsh-user-questions`) | plan-approval gate (REQ-WF-11), `NEEDS_HUMAN`, `INPUT_REQUIRED` | low–medium |
+| Beta | `llm`, `llm-pi-ai`, `llm-retry` | `ctx.models`, the economy tier (P4) | low |
+| Beta | `subprocess`, `sandbox`, `sandbox-policy`, `shell`/`fs` providers | `ctx.exec` for local-tool Workers | low–medium |
+| Beta (optional) | `hmr` | development reloads | low |
+| v1.0 | `dsh-web-app` rows, `dsh-client-ui-*` | operator Web UI | high (churn) |
+| v1.0 (optional) | `dsh-acp` | ACP editor client gateway | medium |
+| **never inserted** | telemetry (`otel`, `session-telemetry-otel`), DeepSeek account and default-model rows, agent loop, session log, tools, compaction, goals, skills, web search, plugin manager, config editor | not needed by `system`; inserted later only when a requirement asks for them | — |
+| **not provided by DSH; `system` builds it** | — | durable DAG engine, artifacts and decision records, leases, Worker routing, Worker sessions and mailbox, resumable agent runtimes, provider runtime (browser, display, accounts vault, drivers, receipts), MCP server, Responses and Messages gateways, records on `node:sqlite` | — |
+| **avoided** (experimental) | agent teams, hook bridges, browser-use and computer-use providers, webhooks | — | high |
 
-Defaults in the `system` profile: **telemetry disabled**, and DeepSeek-specific
-rows (default models, account platform) disabled unless configured. One exact DSH
-version is pinned.
+One exact DSH version is pinned for every row.
 
 ## Composition
 
@@ -104,8 +104,7 @@ runs `dsh --profile system`. What runs is decided entirely by configuration:
 
 ```text
 empty entry list
-  → dsh-base (DSH core)
-  → @tsuuanmi/system-bundle (system plugins; disables unneeded or telemetry rows)
+  → @tsuuanmi/system-bundle (the allow-listed DSH core rows + system plugins; no dsh-base)
   → profile patch file
   → operator home patch
   → --patch overlays from the command line

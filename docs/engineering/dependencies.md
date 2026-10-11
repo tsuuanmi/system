@@ -9,7 +9,7 @@ code updates this table.
 
 | Concern | Choice | Rung | Seam / home | Notes |
 |---|---|---|---|---|
-| Host, plugin runtime, reusable plugins | **DSH core** (`dsh-base` + selected `@deepseek-ai/dsh-*`) on Cordis | library (core) | host and many seams; see the [reuse map](../architecture/plugin-model.md#dsh-core-reuse-map) | MIT; one exact pinned version; never `latest`; telemetry off ([ADR-0018](../decisions/adr/0018-build-on-dsh-core.md)) |
+| Host, plugin runtime, reusable plugins | **DSH core**: only the allow-listed `@deepseek-ai/*` rows on Cordis, no `dsh-base` ([ADR-0019](../decisions/adr/0019-explicit-minimal-dsh-core.md)) | library (core) | host and many seams; see the [reuse map](../architecture/plugin-model.md#dsh-core-reuse-map) | MIT; one exact pinned version; never `latest`; telemetry off ([ADR-0018](../decisions/adr/0018-build-on-dsh-core.md)) |
 | Config validation | Schemastery (Cordis-native) | library | every plugin `Config` | keeps one schema system across plugins |
 | Record and wire schemas | JSON Schema 2020-12 + Ajv (`ajv`, `ajv-formats`) | spec + library | `ctx.artifacts`, store, MCP, decisions | [ADR-0014](../decisions/adr/0014-json-schema-contracts.md); strict mode |
 | Types from schemas | `json-schema-to-typescript` (or equivalent) | library | build step | generated types are build output, checked in CI |

@@ -9,7 +9,7 @@ Throwaway probes for the M0 spike. The results are canonical in
 
 | File | Probe |
 |---|---|
-| [bundle/](bundle/package.json) | DSH bundle: disables the telemetry rows and mounts `dsh-host-webserver` plus an MCP Streamable HTTP probe on `/mcp` |
+| [bundle/](bundle/package.json) | the profile's **only** bundle (no `dsh-base`, ADR-0019): timer, credentials, `dsh-host-webserver`, and an MCP Streamable HTTP probe on `/mcp` |
 | [sqlite.spec.ts](sqlite.spec.ts), [sqlite-worker.ts](sqlite-worker.ts) | `node:sqlite` WAL, `BEGIN IMMEDIATE`, and cross-process revision checks |
 
 Exercise the MCP probe once the profile is running. The port is printed by

@@ -1,6 +1,6 @@
 # ADR-0018: Build `system` as our own harness on DSH core
 
-- **Status:** Accepted
+- **Status:** Accepted; superseded in part by [ADR-0019](0019-explicit-minimal-dsh-core.md) (no `dsh-base`; explicit core rows)
 - **Date:** 2026-10-11
 - **Supersedes in part:** [ADR-0001](0001-standalone-host.md) (no DSH packages),
   [ADR-0002](0002-typescript-on-bun.md) (Bun runtime)
