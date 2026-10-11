@@ -4,7 +4,7 @@ export type Disposition = 'IMMEDIATE' | 'BACKOFF' | 'RECREATE_SESSION' | 'USER_A
 export type ProviderErrorKind =
   | 'network' | 'timeout' | 'provider_stalled' | 'session_broken'
   | 'reauth_required' | 'challenge' | 'quota_exhausted' | 'reconciliation_failed'
-  | 'ui_drift' | 'config_error' | 'aborted' | 'invalid_input' | 'internal'
+  | 'ui_drift' | 'config_error' | 'aborted' | 'invalid_input' | 'internal' | 'overloaded'
 
 const DISPOSITIONS: Record<ProviderErrorKind, Disposition> = {
   network: 'BACKOFF',
@@ -18,6 +18,7 @@ const DISPOSITIONS: Record<ProviderErrorKind, Disposition> = {
   ui_drift: 'CONFIG_FIX', // update the provider's UI map (ADR-0021)
   config_error: 'CODE_FIX',
   internal: 'CODE_FIX',
+  overloaded: 'BACKOFF',
   aborted: 'NONE',
   invalid_input: 'NONE',
 }

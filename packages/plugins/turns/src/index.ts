@@ -83,6 +83,10 @@ export interface Config {
   researchTimeoutMs?: number
   /** No-progress deadline per Deep research turn (default 30 min). */
   researchStallTimeoutMs?: number
+  /** Accepted turns not yet finished, across accounts (default 32); more are refused (INV-9). */
+  maxPendingTurns?: number
+  /** Finished turns, with their prompts, are deleted after this many days (default 30). */
+  retainDays?: number
 }
 
 interface Row {
@@ -127,6 +131,8 @@ export class Turns extends Service {
     stallTimeoutMs: z.natural().default(5 * 60_000).description('No-progress deadline per chat turn, in milliseconds'),
     researchTimeoutMs: z.natural().default(60 * 60_000).description('Hard deadline per Deep research turn, in milliseconds'),
     researchStallTimeoutMs: z.natural().default(30 * 60_000).description('No-progress deadline per Deep research turn, in milliseconds'),
+    maxPendingTurns: z.natural().min(1).default(32).description('Accepted but unfinished turns; more are refused'),
+    retainDays: z.natural().min(1).default(30).description('Days a finished turn (and its prompt) is kept'),
   })
 
   private readonly schedulers = new Map<string, ProviderScheduler>()
@@ -162,10 +168,16 @@ export class Turns extends Service {
       ALTER TABLE turn_sessions_v2 RENAME TO turn_sessions;`,
     }])
     ctx.effect(() => {
-      queueMicrotask(() => this.recover())
+      queueMicrotask(() => {
+        this.purge()
+        this.recover()
+      })
+      const daily = setInterval(() => this.purge(), 24 * 60 * 60_000)
+      daily.unref()
       return async () => {
         // A stop is not a failure: running and queued turns stay as they are for the next start.
         this.stopping = true
+        clearInterval(daily)
         for (const timer of this.retries) clearTimeout(timer)
         for (const scheduler of this.schedulers.values()) scheduler.close(new ProviderError('aborted', 'turn runtime stopped'))
         await Promise.allSettled(this.inflight)
@@ -187,6 +199,9 @@ export class Turns extends Service {
           return this.view(existing)
         }
       }
+      const pending = (db.prepare("SELECT COUNT(*) AS n FROM turns WHERE status IN ('queued', 'running')").get() as { n: number }).n
+      const limit = this.config.maxPendingTurns ?? 32
+      if (pending >= limit) throw new ProviderError('overloaded', `${pending} turns are already pending (limit ${limit}); retry later`)
       const feature = input.feature ?? 'chat'
       const tier = input.tier ?? this.config.defaultTier ?? 'standard'
       if (!TIERS.includes(tier)) throw new ProviderError('invalid_input', `unknown tier ${String(tier)}`)
@@ -247,6 +262,16 @@ export class Turns extends Service {
       set.add(done)
     })
     return this.get(turnId)!
+  }
+
+  /** Delete finished turns (and their prompts) past the retention period; answers stay as artifacts. */
+  private purge(): void {
+    if (this.stopping) return
+    const cutoff = new Date(Date.now() - (this.config.retainDays ?? 30) * 24 * 60 * 60_000).toISOString()
+    this.ctx.store.transaction((db) => {
+      db.prepare("DELETE FROM turns WHERE status IN ('completed', 'failed') AND updated_at < ?").run(cutoff)
+      db.prepare('DELETE FROM turn_sessions WHERE created_at < ? AND session_id NOT IN (SELECT session_id FROM turns WHERE session_id IS NOT NULL)').run(cutoff)
+    })
   }
 
   /** On start: queued turns run again; a running turn without a receipt was never sent and runs again; one with a receipt is not resent. */

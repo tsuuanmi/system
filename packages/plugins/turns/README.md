@@ -24,6 +24,10 @@
   - one transaction binds the conversation and completes the receipt;
   - the answer becomes a `report` artifact (`provider-answer@1.0`,
     `local-private`) linked to the route decision.
+- **Bounds (INV-9):** at most `maxPendingTurns` (default 32) accepted but
+  unfinished turns; more are refused with `overloaded` (BACKOFF). Finished turns,
+  their prompts, and sessions with no turns left are deleted after `retainDays`
+  (default 30). Answers stay as artifacts, which hold the prompt by hash only.
 - **Ownership:**
   - every turn runs under a `turn:<id>` lease from `ctx.leases` (60 s, renewed
     every 20 s);

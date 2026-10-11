@@ -30,7 +30,7 @@ afterEach(async () => {
 type CatalogEntry = { id: string; provider: string; quotaClass: 'subscription-chat'; tiers: Record<string, string> }
 const account = (id: string): CatalogEntry => ({ id, provider: 'chatgpt-web', quotaClass: 'subscription-chat', tiers: { economy: 'instant', standard: 'medium', frontier: 'high' } })
 
-async function boot(options: { fake?: FakeOptions; accounts?: CatalogEntry[]; ready?: string[]; dir?: string; capacity?: number; shared?: FakeChatGpt } = {}) {
+async function boot(options: { fake?: FakeOptions; accounts?: CatalogEntry[]; ready?: string[]; dir?: string; capacity?: number; shared?: FakeChatGpt; turns?: Record<string, unknown> } = {}) {
   const fake = options.shared ?? new FakeChatGpt({ answer: 'OK', ...options.fake })
   if (!options.shared) await fake.start()
   const dir = options.dir ?? mkdtempSync(join(tmpdir(), 'system-turns-'))
@@ -48,7 +48,7 @@ async function boot(options: { fake?: FakeOptions; accounts?: CatalogEntry[]; re
     ctx.plugin(BrowserPool, { chromePath: testChrome! }),
     ctx.plugin(Providers),
     ctx.plugin(ChatGptWeb, { origin: fake.origin, overlayPath: join(dir, 'none.yaml'), modes: { instant: { model: 'Latest', effort: 'Instant' }, medium: { model: 'Latest', effort: 'Medium' }, high: { model: 'GPT-6', effort: 'High' } }, defaultMode: 'instant' }),
-    ctx.plugin(Turns, { turnTimeoutMs: 90_000, stallTimeoutMs: 80_000, maxConcurrentTurnsPerAccount: options.capacity ?? 2 }),
+    ctx.plugin(Turns, { turnTimeoutMs: 90_000, stallTimeoutMs: 80_000, maxConcurrentTurnsPerAccount: options.capacity ?? 2, ...options.turns }),
     ctx.plugin(WebServer, { host: '127.0.0.1', port: 0 }),
     ctx.plugin(McpEndpoint, { tokenFile: join(dir, 'mcp.token'), discoveryFile: join(dir, 'mcp.json') }),
   ]
@@ -170,6 +170,27 @@ describe.runIf(canRunBrowser)('ctx.turns: ask through a saved account', () => {
     expect(first.fake.sent.map((s) => s.prompt)).toEqual(['only once'])
     expect((await first.ctx.turns.wait(turn.turnId, 30_000)).status).toBe('completed')
     expect(second.ctx.turns.get(turn.turnId)?.status).toBe('completed')
+  }, 90_000)
+
+  it('bounds the turns it accepts (INV-9): beyond the limit it refuses with a back-off failure', async () => {
+    const { ctx } = await boot({ fake: { thinkMs: 3000 }, turns: { maxPendingTurns: 1 } })
+    const first = ctx.turns.ask({ prompt: 'one' })
+    expect(() => ctx.turns.ask({ prompt: 'two' })).toThrow(expect.objectContaining({ kind: 'overloaded', disposition: 'BACKOFF' }))
+    await ctx.turns.wait(first.turnId, 30_000)
+    expect(() => ctx.turns.ask({ prompt: 'three' })).not.toThrow()
+  }, 90_000)
+
+  it('forgets finished turns (and their prompts) after the retention period', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'system-turns-'))
+    cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+    const first = await boot({ dir })
+    const done = await first.ctx.turns.wait(first.ctx.turns.ask({ prompt: 'old prompt' }).turnId, 30_000)
+    first.ctx.store.transaction((db) => void db.prepare("UPDATE turns SET updated_at = '2026-01-01T00:00:00.000Z' WHERE turn_id = ?").run(done.turnId))
+    await first.stop()
+    cleanups.splice(cleanups.indexOf(first.stop), 1)
+    const second = await boot({ dir, turns: { retainDays: 30 } })
+    expect(second.ctx.turns.get(done.turnId)).toBeUndefined()
+    expect(second.ctx.artifacts.get(done.answerArtifact!)).toBeDefined()
   }, 90_000)
 
   it('serves ask and result over MCP in place of the placeholders', async () => {
