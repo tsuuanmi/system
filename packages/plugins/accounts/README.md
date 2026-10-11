@@ -11,6 +11,8 @@
   guarded by revision.
 - **Views:** `list`/`get` return secret-free views (INV-8). `portableState` and
   `credentials` are for the provider runtime only.
+- **`refreshState(id, state, expectedRevision)`:** the turn runtime's write-back.
+  It applies only to a `ready` account and keeps the identity and verification.
 - **Rules:**
   - `markSignedOut` needs positive evidence (`login-url` / `login-surface`).
   - `markChallenge` keeps the state.

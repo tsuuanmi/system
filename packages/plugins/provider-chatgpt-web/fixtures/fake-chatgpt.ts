@@ -8,8 +8,10 @@
  * - turns are marked only by headings "You said:" / "ChatGPT said:"; a finished answer gets "Copy" and "Regenerate response";
  * - the send is `POST /backend-api/f/conversation` answered with an event stream that **stays open**;
  * - a second visible form also carries `data-chatgpt-composer`, without the textbox;
- * - the model menu (`menu "Select ChatGPT model"`): model radios, and a Power slider driven by arrow keys
- *   whose `status` reads "Instant, 1 of 3." (levels Instant, Medium, High), as surveyed live on 2026-10-12;
+ * - the model menu (`menu "Select ChatGPT model"`) has two views, as checked live on 2026-10-12: view A shows
+ *   the Power slider (arrow keys; `status` "Instant, 1 of 3."; levels Instant, Medium, High) and a view toggle
+ *   (`[data-model-picker-view-toggle]`) labelled with the level; view B, after the toggle, shows only the model
+ *   radios. Choosing a model returns to view A;
  * - the "+" popover lists tools as buttons ("Deep research Get a detailed report"); Deep research inserts a
  *   non-editable mention chip into the composer and is not offered in Temporary chat.
  * No private data from the live account is included.
@@ -84,9 +86,11 @@ function html(options: Required<FakeOptions>, conversation: Conversation | undef
 </main>
 <div role="menu" aria-label="Select ChatGPT model" id="model-menu" hidden>
   <div role="menuitem" data-model-picker-view-toggle id="power-label">Instant</div>
-  <div role="status" id="power-status">Instant, 1 of 3.</div>
-  <div role="menuitem" aria-label="Power" tabindex="0" id="power" data-reasoning-slider><span role="slider" aria-hidden="true">●──</span></div>
-  <div id="model-radios"></div>
+  <div id="view-a">
+    <div role="status" id="power-status">Instant, 1 of 3.</div>
+    <div role="menuitem" aria-label="Power" tabindex="0" id="power" data-reasoning-slider><span role="slider" aria-hidden="true">●──</span></div>
+  </div>
+  <div id="model-radios" hidden></div>
 </div>
 <div id="tools" hidden>
   <button type="button">Add photos &amp; files Upload from computer</button>
@@ -127,10 +131,12 @@ function renderMenu() {
   $('model-radios').innerHTML = options.models.map((m) => '<div role="menuitemradio" aria-checked="' + (m === model) + '"'
     + (options.lockedModels.includes(m) ? ' aria-disabled="true"' : '') + ' data-model="' + m + '">' + m + '</div>').join('')
   for (const el of document.querySelectorAll('[data-model]')) el.onclick = () => {
-    if (el.getAttribute('aria-disabled') !== 'true') { model = el.dataset.model; renderMenu() }
+    if (el.getAttribute('aria-disabled') !== 'true') { model = el.dataset.model; showView('a'); renderMenu() }
   }
 }
-$('picker').onclick = () => { const open = $('model-menu').hidden; $('model-menu').hidden = !open; $('picker').setAttribute('aria-expanded', String(open)); renderMenu() }
+function showView(view) { $('view-a').hidden = view !== 'a'; $('model-radios').hidden = view !== 'b' }
+$('power-label').onclick = () => showView($('model-radios').hidden ? 'b' : 'a')
+$('picker').onclick = () => { const open = $('model-menu').hidden; $('model-menu').hidden = !open; $('picker').setAttribute('aria-expanded', String(open)); showView('a'); renderMenu() }
 $('power').addEventListener('keydown', (e) => {
   if (e.key === 'ArrowRight') power = Math.min(2, power + 1)
   if (e.key === 'ArrowLeft') power = Math.max(0, power - 1)
@@ -243,7 +249,8 @@ export class FakeChatGpt {
       const conversation = this.conversations.get(id) ?? { id, turns: [] }
       this.conversations.set(id, conversation)
       conversation.turns.push({ role: 'user', text: sent.prompt })
-      res.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
+      // Like a real session, the cookie is refreshed while answering.
+      res.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8', 'set-cookie': `session_refresh=${this.sent.length}; Path=/; Max-Age=3600` })
       this.streams.add(res)
       res.write(`data: ${JSON.stringify({ conversationId: id })}\n\n`)
       await new Promise((resolve) => setTimeout(resolve, this.options.thinkMs))

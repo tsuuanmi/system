@@ -11,12 +11,13 @@ import { randomBytes } from 'node:crypto'
 import { type Context, Service } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import type {} from '@tsuuanmi/system-accounts'
+import type {} from '@tsuuanmi/system-event-log'
 import type {} from '@tsuuanmi/system-artifacts'
-import type {} from '@tsuuanmi/system-browser-patchright'
+import type { Turn } from '@tsuuanmi/system-browser-patchright'
 import { type Lease, LeaseLost, StaleGeneration } from '@tsuuanmi/system-leases'
 import { type ContentId, sha256 } from '@tsuuanmi/system-libs'
 import type {} from '@tsuuanmi/system-mcp-server'
-import { type ConversationMode, type Disposition, ProviderError, type ProviderFeature, ProviderScheduler, type Tier, type TurnReceipt, type TurnSnapshot, dispositionOf, toProviderError } from '@tsuuanmi/system-provider-core'
+import { type ConversationMode, type Disposition, type PortableState, ProviderError, type ProviderFeature, ProviderScheduler, type Tier, type TurnReceipt, type TurnSnapshot, dispositionOf, toProviderError } from '@tsuuanmi/system-provider-core'
 import type {} from '@tsuuanmi/system-providers'
 import type {} from '@tsuuanmi/system-store'
 import type {} from '@tsuuanmi/system-turn-receipts'
@@ -453,9 +454,26 @@ export class Turns extends Service {
       throw error
     }
     try {
+      // Before completion is visible: callers that see `completed` see the refreshed account.
+      await this.writeBack(accountId, turn, driver.stateOrigins, state, view.revision, lease)
       this.commit(row, accountId, view.provider, result.text, result.binding, lease)
     } finally {
       await turn.close()
+    }
+  }
+
+  /**
+   * Store the browser state refreshed during the turn (rotated session cookies), only if
+   * the turn still holds its lease and the account is still at the revision the turn
+   * started from (docs/design/browser-runtime.md). A failure never fails the answered turn.
+   */
+  private async writeBack(accountId: string, turn: Turn, origins: readonly string[], previous: PortableState | undefined, revision: number, lease: () => Lease): Promise<void> {
+    try {
+      const state = await this.ctx.browser.capture(turn, { origins: [...origins], previous })
+      this.ctx.store.transaction(() => this.ctx.leases.fence(lease()))
+      await this.ctx.accounts.refreshState(accountId, state, revision)
+    } catch (error) {
+      this.ctx.get('eventLog')?.append({ type: 'account.write-back-skipped', data: { account: accountId, reason: (error as Error).message.slice(0, 200) } })
     }
   }
 

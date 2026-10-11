@@ -20,6 +20,11 @@
   - the driver call uses the conversation mode (temporary by default;
     `persist` / `sessionId` for a persistent `/c/<id>` binding);
   - the receipt is written in the driver's `beforeSend` hook.
+- **Write-back:** before completing, the turn captures the browser state for the
+  driver's origins and stores it with `accounts.refreshState`. This happens only
+  if the turn still holds its lease and the account is still at the revision the
+  turn started from. A failure is logged (`account.write-back-skipped`) and never
+  fails an answered turn.
 - **Completion:**
   - one transaction binds the conversation and completes the receipt;
   - the answer becomes a `report` artifact (`provider-answer@1.0`,
@@ -65,5 +70,4 @@
 - **Injects:** `store`, `artifacts`, `leases`, `turnReceipts`, `accounts`, `browser`,
   `providers`; `mcp` is optional.
 - **Not yet:**
-  - state write-back after a turn;
   - one-node DAG execution on the workflow engine.

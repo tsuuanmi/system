@@ -93,3 +93,17 @@ describe('ctx.accounts', () => {
     }).rejects.toThrow()
   })
 })
+
+describe('refreshState (write-back after a turn)', () => {
+  it('replaces only the portable state of a ready account, guarded by revision', async () => {
+    const { ctx } = await boot()
+    const saved = await ctx.accounts.saveState('chatgpt-main', { state, identityHash: `sha256:${'a'.repeat(64)}`, verifiedAt: '2026-10-11T08:00:00Z' })
+    const refreshed = { ...state, cookies: [{ name: 'session-token', value: 'rotated', domain: '.chatgpt.com', path: '/' }], capturedAt: '2026-10-12T08:00:00Z' }
+    const view = await ctx.accounts.refreshState('chatgpt-main', refreshed, saved.revision)
+    expect(view).toMatchObject({ status: 'ready', revision: saved.revision + 1, verifiedAt: '2026-10-11T08:00:00Z' })
+    expect((await ctx.accounts.portableState('chatgpt-main'))?.cookies[0]).toMatchObject({ value: 'rotated' })
+    await expect(ctx.accounts.refreshState('chatgpt-main', refreshed, saved.revision)).rejects.toMatchObject({ kind: 'reconciliation_failed' })
+    await ctx.accounts.markSignedOut('chatgpt-main', 'login-url', view.revision)
+    await expect(ctx.accounts.refreshState('chatgpt-main', refreshed, view.revision + 1)).rejects.toMatchObject({ kind: 'reauth_required' })
+  })
+})

@@ -109,6 +109,17 @@ export class Accounts extends Service {
     }))
   }
 
+  /**
+   * Write back the browser state refreshed during a turn (rotated cookies). Only a ready
+   * account, only at the revision the turn started from; identity and verification stay.
+   */
+  async refreshState(id: string, state: PortableState, expectedRevision: number): Promise<AccountView> {
+    return this.mutate(id, expectedRevision, (current) => {
+      if (current.status !== 'ready') throw new ProviderError('reauth_required', `account ${id} is ${current.status}; its state is not refreshed`)
+      return { ...current, state }
+    })
+  }
+
   /** Only positive sign-out evidence may mark an account reauth-required (REQ-ACC-5). */
   async markSignedOut(id: string, evidence: SignOutEvidence, expectedRevision: number): Promise<AccountView> {
     if (evidence !== 'login-url' && evidence !== 'login-surface') throw new ProviderError('invalid_input', 'sign-out requires positive evidence (login-url or login-surface)')

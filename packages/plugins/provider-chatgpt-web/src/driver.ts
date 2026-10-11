@@ -142,9 +142,14 @@ export class ChatGptWebDriver implements ProviderDriver<Page> {
    */
   async selectMode(page: Page, wanted: ProviderMode | undefined): Promise<ProviderMode> {
     const engine = this.engine(page)
-    await engine.act('model.open')
     try {
-      const options = (await engine.resolve('model.option', 3000)).locator
+      // View A: the Power level.
+      await this.openModelMenu(engine)
+      if (wanted?.effort) await this.selectEffort(engine, wanted.effort)
+      const effort = (await this.effortStatus(engine))?.level
+      // View B: the model list.
+      await engine.act('model.show-models')
+      let options = (await engine.resolve('model.option', 3000)).locator
       if (wanted?.model) {
         const names = await this.optionNames(options)
         const match = options.filter({ hasText: new RegExp(`^\\s*${escapeRegex(wanted.model)}(?![\\w.])`) })
@@ -154,13 +159,17 @@ export class ChatGptWebDriver implements ProviderDriver<Page> {
         if ((await match.getAttribute('aria-disabled')) === 'true') {
           throw new ProviderError('config_error', `chatgpt-web: model ${wanted.model} is locked for this account`)
         }
-        if ((await match.getAttribute('aria-checked')) !== 'true') await match.click()
+        if ((await match.getAttribute('aria-checked')) !== 'true') {
+          await match.click()
+          // Choosing a model may close the menu or return to view A: reopen the list to read it back.
+          await this.openModelMenu(engine)
+          if ((await engine.count('model.option')) === 0) await engine.act('model.show-models')
+          options = (await engine.resolve('model.option', 3000)).locator
+        }
       }
-      if (wanted?.effort) await this.selectEffort(engine, wanted.effort)
       const states = await options.evaluateAll((els) => els.map((el) => [el.getAttribute('aria-checked'), (el as HTMLElement).innerText] as const))
       const checked = states.filter(([state]) => state === 'true')
       const model = checked.length === 1 ? this.optionName(checked[0]![1]) : undefined
-      const effort = (await this.effortStatus(engine))?.level
       if (wanted?.model && model !== wanted.model) throw new ProviderError('config_error', `chatgpt-web: model reads back as ${model ?? 'none'}, not ${wanted.model}`)
       if (wanted?.effort && effort !== wanted.effort) throw new ProviderError('config_error', `chatgpt-web: Power reads back as ${effort ?? 'none'}, not ${wanted.effort}`)
       return { ...(model ? { model } : {}), ...(effort ? { effort } : {}) }
@@ -168,6 +177,11 @@ export class ChatGptWebDriver implements ProviderDriver<Page> {
       await page.keyboard.press('Escape')
       await engine.waitFor({ hidden: 'model.menu' }, 3000).catch(() => page.keyboard.press('Escape'))
     }
+  }
+
+  /** Open the model menu unless it is already open. */
+  private async openModelMenu(engine: UiEngine): Promise<void> {
+    if ((await engine.count('model.menu')) === 0) await engine.act('model.open')
   }
 
   /** Navigate to a new or bound conversation in the requested mode. */

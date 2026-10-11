@@ -120,6 +120,15 @@ describe.runIf(canRunBrowser)('ctx.turns: ask through a saved account', () => {
     expect(await ctx.accounts.get('chatgpt-main')).toMatchObject({ status: 'reauth-required' })
   }, 60_000)
 
+  it('writes the refreshed browser state back to the account after a turn', async () => {
+    const { ctx } = await boot()
+    const before = await ctx.accounts.get('chatgpt-main')
+    await ctx.turns.wait(ctx.turns.ask({ prompt: 'refresh me' }).turnId, 30_000)
+    const after = await ctx.accounts.get('chatgpt-main')
+    expect(after.revision).toBe(before.revision + 1)
+    expect((await ctx.accounts.portableState('chatgpt-main'))?.cookies.map((c) => c.name)).toContain('session_refresh')
+  }, 90_000)
+
   it('keeps a persistent session on one conversation across asks', async () => {
     const { ctx, fake } = await boot({ fake: { answer: 'first' } })
     const first = await ctx.turns.wait(ctx.turns.ask({ prompt: 'one', persist: true }).turnId, 30_000)

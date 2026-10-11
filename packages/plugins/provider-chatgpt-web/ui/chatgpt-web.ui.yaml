@@ -88,11 +88,16 @@ elements:
     fingerprint: { role: button, name: { en: 'deep research' } }
 
   model.menu:
-    description: Opened by composer.model. Holds the Power slider and the model radios (checked 2026-10-12).
+    description: Opened by composer.model. Two views (checked 2026-10-12) - A, the Power slider plus a view toggle labelled with the level; B, after the toggle, the model radios.
     candidates:
       - { role: menu, name: { en: '^Select ChatGPT model$' } }
+  model.view-toggle:
+    description: Switches the model menu between the Power view and the model list.
+    scope: model.menu
+    candidates:
+      - { css: '[data-model-picker-view-toggle]' }
   model.option:
-    description: One radio per model; the accessible name starts with the model name.
+    description: One radio per model (view B); the accessible name starts with the model name.
     scope: model.menu
     cardinality: many
     candidates:
@@ -147,6 +152,12 @@ actions:
     sideEffect: reversible
     heal: deterministic
     timeouts: { resolveMs: 5000, verifyMs: 5000 }
+  model.show-models:
+    do: click
+    target: model.view-toggle
+    verify: { visible: model.option }
+    sideEffect: reversible
+    timeouts: { resolveMs: 3000, verifyMs: 3000 }
   tools.open:
     do: click
     target: composer.tools

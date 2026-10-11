@@ -41,8 +41,9 @@ The **ChatGPT Web provider driver**
 - **Modes:**
   - `Config.modes` holds named presets of `{ model, effort }`. The defaults are
     `instant`, `medium` and `high` on **Latest**, and `defaultMode: instant`.
-  - The driver selects the model radio and steps the Power slider, then reads
-    both back. It fails before sending if a preset, model or level is unknown,
+  - The model menu has two views (checked live on 2026-10-12): Power first,
+    then the model list behind the view toggle. The driver steps the Power
+    slider, switches to the model list, picks the radio, and reads both back. It fails before sending if a preset, model or level is unknown,
     or if a model is locked.
   - Models seen on 2026-10-12: Latest, GPT-6, GPT-5.6 Sol, GPT-5.5. Power
     levels: Instant, Medium, High.

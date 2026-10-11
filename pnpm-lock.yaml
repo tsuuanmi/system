@@ -531,6 +531,9 @@ importers:
       '@tsuuanmi/system-browser-patchright':
         specifier: workspace:*
         version: link:../browser-patchright
+      '@tsuuanmi/system-event-log':
+        specifier: workspace:*
+        version: link:../event-log
       '@tsuuanmi/system-leases':
         specifier: workspace:*
         version: link:../leases
