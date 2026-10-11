@@ -1,17 +1,20 @@
 # Roadmap
 
 Non-normative. This is an ordered queue of milestones for
-[PROP-0001](0001-unified-system-architecture.md). Each milestone ends with
-working, tested software and updated canonical docs.
+[PROP-0001](0001-unified-system-architecture.md). What each stage must deliver,
+and its exit criteria, are defined canonically in
+[release scope](../requirements/release-scope.md). This file only orders the
+work. Each milestone ends with working, tested software and updated canonical docs.
 
-| Milestone | Scope | Exit criteria |
+| Stage | Milestone | Scope |
 |---|---|---|
-| **M0 Host + kernel + engineering** | Bun workspace, CI, doc checks; Cordis host, loader, profiles and patches; kernel seams (store, blobs, events, leases) and libraries | Cordis primitives conformance suite passes on Bun (Node as fallback); `dev` profile loads and disposes cleanly; migrations tested; fences proven by concurrency tests |
-| **M1 Provider runtime + ChatGPT Web** | BrowserPort, account vault, remote login, scheduler, receipts, `chatgpt-web` driver, CLI `turn` | crash-mid-turn tests resolve to WAIT, RECOVER, RESUBMIT, or AMBIGUOUS; manual live turn passes |
-| **M2 Capabilities + routing** | Website Core, local exec, agent runtimes (Claude Agent SDK, Codex SDK, ACP), registry, admission, router, acceptance | fail-closed admission tests; deterministic routing tests; agent-runtime smoke tests including resume |
-| **M3 Orchestration** | workflow engine, team runner, `software-development` profile | restart mid-workflow never repeats completed nodes; exact-head gates enforced |
-| **M4 Gateways** | Responses and Anthropic Messages gateways, shared turn broker, MCP server, Web UI, drain | real-Codex and real-Claude-Code smoke covering streaming, a tool round trip, cancel, and interrupt; MCP client smoke |
-| **M5 Second domain** | `scientific-research` profile, typed artifacts, invalidation, `gemini-web` driver | profile runs with zero engine changes |
+| **MVP** | **M0 Host + kernel + engineering** | Bun workspace, CI, doc checks; Cordis host, loader, profiles and patches; kernel seams (store, blobs, events, leases) and libraries; Cordis primitives conformance suite on Bun (Node as fallback) |
+| **MVP** | **M1 Provider runtime + ChatGPT Web** | browser, display, remote login, account vault, scheduler, receipts, `chatgpt-web` driver with `reason`, `web-search`, `deep-research`, and mode-to-tier mapping |
+| **MVP** | **M2 Routing + MCP + CLI** | Website Core, `workers-core` (admission, tiers, egress policy, quota exclusion), the fixed research → compact pipeline, MCP server, CLI. **MVP release** |
+| **Beta** | **M3 Workers** | agent runtimes (Claude Agent SDK, Codex SDK, ACP), Gemini Web driver, connectors as capabilities, economy-tier API or local model provider |
+| **Beta** | **M4 Orchestration** | workflow engine, team runner, `software-development` profile, Web UI. **Beta release** |
+| **v1.0** | **M5 Gateways** | Responses and Anthropic Messages gateways, shared turn broker, journaled client configuration, drain |
+| **v1.0** | **M6 Second domain + readiness** | `scientific-research` profile, operations, validation, and reference docs, hardening, packaging, DSH bundle. **Production-ready release** |
 
-Later candidates, each needing its own proposal: API provider capability, the
-DSH bundle, sandboxed or SSH `exec` providers, and a packaged launcher.
+Later candidates, each needing its own proposal: sandboxed or SSH `exec`
+providers, additional website providers, and a desktop launcher.

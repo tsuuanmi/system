@@ -46,7 +46,9 @@ routes back here.
 - **Agent runtime capability** (`ctx.agentRuntimes`). Drives external coding
   agents (Claude Code through the Claude Agent SDK, Codex through the Codex SDK,
   any ACP agent) as Workers. See [agent runtimes](../design/agent-runtimes.md).
-- **API provider capability.** Direct model APIs, for when a requirement needs them.
+- **Model capability** (`ctx.models`). API and local model providers. They mainly
+  serve `economy`-tier jobs such as triage, extraction, and compaction
+  ([purpose P4](../requirements/purpose.md#p4-cheap-models-do-low-level-work-strong-models-do-hard-work)).
 - **Does not own:** routing decisions or acceptance.
 - **Contract:** each capability publishes a descriptor with its name, side-effect
   class (`none | idempotent | reconcilable | irreversible`), and input and output
@@ -65,6 +67,10 @@ routes back here.
   not normalized into a universal interface.
 - **Contract:** `route(workRequirement) → AdmittedWorker | AdmissionFailure`, and
   `accept(result, contract) → Accepted | Rejected(reasons)`.
+- **Policy inputs:** proven capabilities, data locality and egress policy, and
+  quota class and account readiness. This is where the three
+  [purposes](../requirements/purpose.md) become mechanics.
+- **Design:** [routing](../design/routing.md).
 
 ## Orchestration
 

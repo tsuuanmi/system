@@ -7,6 +7,7 @@
 
 - Provider account sessions: cookies, auth storage, and conversation history.
 - The local workspace: files, shell, and VCS credentials reachable through tools.
+- Local and private data: datasets, documents, and repository content that must not leave the machine without policy.
 - Workflow state and results.
 - Control credentials: the gateway bearer token and turn tokens.
 
@@ -35,6 +36,7 @@ untrusted:  provider websites · model output · tool output · repository conte
 | Duplicate side effects after a crash (double PR, double message) | receipts and reconciliation ([INV-4](../architecture/invariants.md#inv-4-restart-is-reconciliation-not-replay)) |
 | Stale evidence approving a newer change | exact-subject binding ([INV-5](../architecture/invariants.md#inv-5-exact-subject-binding)) |
 | An agent-runtime Worker acts outside its workspace or approvals | the policy comes from trusted envelopes and maps exactly onto the agent's sandbox and permission modes; a policy that cannot be expressed exactly fails the run (REQ-WRK-6) |
+| Local or private data leaks to a provider website or API through a prompt or attachment | egress check on the actual outgoing payload against an explicit policy; `local-private` work admitted only to local Workers ([INV-12](../architecture/invariants.md#inv-12-data-egress-is-explicit)) |
 | A malicious or compromised plugin | plugins run in-process with full host trust, so only operator-installed plugins from the profile are loaded; there is no remote plugin installation; plugin packages are pinned in the lockfile |
 | A supply-chain change in the browser stack or SDKs | committed lockfile, pinned versions, `bun audit` in CI, no vendored binaries |
 | Provider terms or abuse controls lead to account loss | bounded per-account concurrency; no evasion features; operator responsibility (CON-3) |

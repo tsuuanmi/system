@@ -26,7 +26,7 @@ behavior lives and under which constraints. *How* each mechanism works belongs i
   (Responses)    │                                        │──▶ Claude Code  (Claude Agent SDK)
   Claude Code ──▶│              system host               │──▶ Codex        (Codex SDK)
   (Messages)     │   Cordis plugin runtime, loopback,     │──▶ ACP agents
-  MCP clients ──▶│   single operator                      │──▶ API providers
+  MCP clients ──▶│   single operator                      │──▶ API / local models
   CLI / Web UI ─▶│                                        │──▶ local tools / shell / git
                  └────────────────────────────────────────┘
                         │ durable state (SQLite + blobs)
@@ -63,7 +63,8 @@ internals.
 │               acceptance                                                  │
 ├───────────────────────────────────────────────────────────────────────────┤
 │ Capabilities  ctx.website (Website Core) · ctx.exec (local tools) ·       │
-│               ctx.agentRuntimes (Claude Agent SDK, Codex SDK, ACP)        │
+│               ctx.agentRuntimes (Claude Agent SDK, Codex SDK, ACP) ·      │
+│               ctx.models (API / local models, economy tier)               │
 ├───────────────────────────────────────────────────────────────────────────┤
 │ Provider      ctx.browser · ctx.display · ctx.accounts ·                  │
 │ runtime       ctx.providers (chatgpt-web, gemini-web drivers) ·           │

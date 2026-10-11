@@ -11,6 +11,21 @@ AI Workers and durable multi-agent workflows. Every part of it is a plugin.
 
 > Right Worker, right job. Every effect reconciled, never blindly replayed.
 
+## Why
+
+1. **Save tokens.** Website chat quota (ChatGPT, Gemini) is counted separately
+   from API and coding-agent quota. Research and reasoning go there.
+2. **Use what the websites already have.** That includes Deep Research, web
+   search, and the connectors, apps, and plugins enabled on the account.
+3. **Right Worker, right job.** Website Workers search and synthesize. Local
+   Workers (Claude Code, Codex, local tools) work on local code and data, which
+   stays local.
+4. **Right model, right job.** Cheap models handle low-level work such as triage,
+   extraction, summaries, and formatting. Strong models are kept for hard
+   reasoning and final synthesis.
+
+Full statement: [docs/requirements/purpose.md](docs/requirements/purpose.md).
+
 ## Status
 
 **Design phase.** The repository holds documentation only. The architecture is

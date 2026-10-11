@@ -10,7 +10,8 @@ other documents link to it instead of repeating it.
 
 ## Read order for a change
 
-1. [Requirements](requirements/README.md): what must be true.
+1. [Purpose](requirements/purpose.md) and [requirements](requirements/README.md):
+   why `system` exists and what must be true.
 2. [Architecture](architecture/README.md): where responsibilities and invariants belong.
 3. [Design](design/README.md): how current mechanisms work.
 4. [Decisions](decisions/README.md): why durable choices were made.

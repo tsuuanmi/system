@@ -82,3 +82,13 @@ through a seam or a public protocol. Routing, teams, workflows, and profiles nam
 capabilities, never tools. A second provider must be plausible for every seam,
 and every seam's conformance suite runs against a fake
 ([ADR-0008](../decisions/adr/0008-tool-agnostic.md)).
+
+### INV-12 Data egress is explicit
+
+Local and private data never leaves the machine by default. Content is sent to a
+remote Worker, such as a website, an API, or a remote runtime, only when an
+explicit egress policy from a trusted envelope permits that exact content for that
+Worker class. The check runs on the actual outgoing payload. Results may flow
+from remote Workers to local ones freely
+([routing](../design/routing.md#data-locality-policy),
+[purpose P3](../requirements/purpose.md#p3-right-worker-right-job-with-local-data-staying-local)).

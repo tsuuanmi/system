@@ -13,6 +13,14 @@ implementation: []
 
 ## Problem
 
+The purpose of `system` is stated canonically in
+[requirements/purpose.md](../requirements/purpose.md): saving tokens by using
+separate website quota (P1), reusing website-native capabilities such as Deep
+Research and connectors (P2), putting the right Worker on each job while local
+data stays local (P3), and letting cheap models do the low-level work (P4).
+Release stages, from MVP to production-ready, are defined in
+[release scope](../requirements/release-scope.md). This proposal is about how to build it.
+
 Three related projects each solve part of one problem: getting reliable,
 reconcilable work out of AI Workers, many of which are browser-backed, across
 single turns, teams, and long-running workflows.
@@ -57,6 +65,8 @@ The maintainer's guiding decisions for the unified system are:
 6. Claude Code, Codex, and ACP agents usable as Workers (REQ-WRK-5..6).
 7. Every feature is a plugin composed from configuration, with no tool lock-in
    (REQ-HOST-4..5, INV-10, INV-11).
+8. Quota-aware, locality-aware, tier-aware routing that realizes purposes
+   P1–P4 (REQ-WRK-7..9, REQ-PRV-7, INV-12).
 
 ## Non-goals
 
@@ -141,9 +151,16 @@ packages/
 
 ## Rollout and rollback
 
-Delivered in milestones ([roadmap](roadmap.md)). Each milestone is usable on its
-own, and the reference repos stay usable throughout. The gateways ship last, and
-client configuration edits are journaled and reversible (REQ-HOST-3).
+Delivered in three stages defined in [release scope](../requirements/release-scope.md):
+
+- **MVP:** MCP tools usable from Claude Code and Codex.
+- **Beta:** workflows, teams, and agent-runtime Workers.
+- **Production-ready:** gateways, a second domain, and operational readiness.
+
+The milestones are ordered in the [roadmap](roadmap.md). Each stage is a profile,
+so moving forward adds plugins and never rewrites earlier ones. The reference
+repos stay usable throughout. Client configuration edits are journaled and
+reversible (REQ-HOST-3).
 
 ## Observability and operations
 

@@ -13,6 +13,7 @@ It does not restate structure or invariants. It links to them.
 | [provider-turns.md](provider-turns.md) | turn receipts, reconciliation, two-clock completion | provider runtime |
 | [scheduling-and-leases.md](scheduling-and-leases.md) | per-account scheduler, exclusive fence, lease generations | provider runtime, kernel |
 | [workflow-engine.md](workflow-engine.md) | DAG, durable nodes, handoffs, exact-subject gates, recovery, lineage | orchestration |
+| [routing.md](routing.md) | capability vocabulary, admission, data locality, intelligence tiers, quota-aware deterministic routing | routing |
 | [teams.md](teams.md) | Model A members, independent-first barrier, synthesis | orchestration |
 | [agent-runtimes.md](agent-runtimes.md) | Claude Code, Codex, ACP agents as Workers | capabilities |
 | [gateways.md](gateways.md) | Responses + Anthropic Messages emulation, MCP inversion, turn tokens, drain | gateways |

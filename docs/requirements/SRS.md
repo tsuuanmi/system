@@ -45,7 +45,10 @@
 - **REQ-PRV-5** Provider responses are returned as Markdown that matches the text
   that was streamed.
 - **REQ-PRV-6** Provider-native deep research is available as a distinct
-  capability.
+  capability (purpose P2).
+- **REQ-PRV-7** Website-native features enabled on an account, such as web search
+  and connectors, apps, or plugins, are exposed as named capabilities. Each is
+  proven by a feature probe on that account (purpose P2).
 
 ## Workers (`REQ-WRK`)
 
@@ -62,6 +65,17 @@
 - **REQ-WRK-6** An agent-runtime Worker runs under a workspace, sandbox, and
   approval policy taken from trusted envelopes. A policy the runtime cannot
   express exactly fails the run.
+- **REQ-WRK-7** Work over `local-private` data runs only on local Workers. Content
+  reaches a remote Worker only when an explicit egress policy permits that exact
+  content for that Worker class (purpose P3).
+- **REQ-WRK-8** Routing prefers subscription-chat quota (website accounts) for
+  reasoning, search, research, and review. It keeps agent-plan and metered quota
+  for work only those Workers can do, and excludes accounts whose quota is
+  exhausted before admission (purpose P1).
+- **REQ-WRK-9** Every work requirement declares a minimum intelligence tier
+  (`economy`, `standard`, or `frontier`). Routing selects the lowest tier whose
+  Workers prove the required capabilities. Escalation to a higher tier after an
+  acceptance failure is bounded, configured, and recorded (purpose P4).
 
 ## Teams (`REQ-TEAM`)
 

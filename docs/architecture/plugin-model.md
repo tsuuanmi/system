@@ -40,6 +40,7 @@ can be added without changing consumers.
 | Provider runtime | `providers` (driver registry) | `provider-chatgpt-web`, `provider-gemini-web` | website capability |
 | Capabilities | `website` | `website-core` | Worker providers |
 | Capabilities | `exec` | `exec-local`, later a sandboxed or SSH provider | local-tools Worker |
+| Capabilities | `models` (API and local model providers) | `models-openai-compatible`, `models-anthropic` | Worker providers, especially `economy`-tier jobs ([purpose P4](../requirements/purpose.md#p4-cheap-models-do-low-level-work-strong-models-do-hard-work)) |
 | Capabilities | `agentRuntimes` | `runtime-claude-agent-sdk`, `runtime-codex-sdk`, `runtime-acp` | Worker providers ([agent runtimes](../design/agent-runtimes.md)) |
 | Routing | `workers` (registry, admission, router, acceptance) | `workers-core` | orchestration, gateways |
 | Orchestration | `workflow` | `workflow-engine` | gateways, CLI |
