@@ -110,8 +110,8 @@ export class Accounts extends Service {
 
   /** Save verified portable state after a login (provider runtime only); the account becomes ready. */
   async saveState(id: string, input: { state: PortableState; identityHash: ContentId; verifiedAt: string }, expectedRevision?: number): Promise<AccountView> {
-    return this.mutate(id, expectedRevision, (current) => ({
-      ...current, status: 'ready', state: input.state, identityHash: input.identityHash, verifiedAt: input.verifiedAt, statusEvidence: undefined,
+    return this.mutate(id, expectedRevision, ({ statusEvidence: _cleared, ...current }) => ({
+      ...current, status: 'ready', state: input.state, identityHash: input.identityHash, verifiedAt: input.verifiedAt,
     }))
   }
 

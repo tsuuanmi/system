@@ -41,7 +41,8 @@ can be added without changing consumers.
 | Kernel | `leases` | `@tsuuanmi/system-leases` | scheduler, workflow |
 | Provider runtime | `browser` | `browser-patchright` | provider drivers, remote login |
 | Provider runtime | `display` | `display-virtual` (Xvfb), `display-offscreen`, `display-visible` (headless only in `dev` fakes) | browser, remote login ([browser runtime](../design/browser-runtime.md)) |
-| Provider runtime | `accounts` | `accounts-vault` (secrets through **DSH** `ctx.credentials`, provided by `@tsuuanmi/system-credentials-vault`) | provider runtime, admission |
+| Provider runtime | `accounts` | `@tsuuanmi/system-accounts` (records and credentials as encrypted grants in **DSH** `ctx.credentials`, provided by `@tsuuanmi/system-credentials-vault`) | provider runtime, admission |
+| Provider runtime | `turnReceipts` | `@tsuuanmi/system-turn-receipts` | provider drivers, recovery |
 | Provider runtime | `providers` (driver registry) | `provider-chatgpt-web`, `provider-gemini-web` | website capability |
 | Capabilities | `website` | `website-core` | Worker providers |
 | Capabilities | `exec` | **DSH** `ctx.shell` / `ctx.fs` / `ctx.sandbox` / `ctx.subprocess` (local, sandbox, SSH) | local-tools Worker |

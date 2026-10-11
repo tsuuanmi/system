@@ -23,7 +23,8 @@ work. Each milestone ends with working, tested software and updated canonical do
   `system-leases`, `system-artifacts`, `system-credentials-vault`,
   `system-mcp-server` (`status` live), the `system-bundle` profile, the `system`
   CLI, CI, and an e2e test through `dsh`.
-- **M0 is complete pending review.** Next is M1.
+- **M0 is complete pending review.** Both review rounds were addressed TDD-first.
+- M1 is in progress on branch `m1/provider-runtime`, which is stacked on M0. Done so far: `provider-core` (scheduler, two-clock completion, reconciliation, failure taxonomy), `turn-receipts`, and `accounts`. Next: display (Xvfb), the browser runtime, remote login, and the ChatGPT Web driver.
 
 Later candidates, each needing its own proposal: A2A gateway and runtime
 (cross-runtime peers), an ACP client gateway for editors, sandboxed or SSH `exec`
