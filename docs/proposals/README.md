@@ -21,7 +21,7 @@ accepted/implemented -> superseded
 ## Active proposals
 
 - [PROP-0001: Unified system architecture](0001-unified-system-architecture.md),
-  **proposed**. A standalone host that unifies AgentOS routing and teams, internet
+  **accepted**, implementing. A standalone host that unifies AgentOS routing and teams, internet
   provider durability and workflows, and codex-chatgpt-web gateways.
 - [PROP-0002: Decision-assisted routing](0002-decision-assisted-routing.md),
   **draft**. A `ctx.decisions` seam, with the Jev decision model as a first

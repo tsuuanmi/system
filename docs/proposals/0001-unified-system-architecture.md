@@ -1,7 +1,7 @@
 ---
 id: PROP-0001
 type: proposal
-status: proposed
+status: accepted
 owners: [tsuuanmi]
 created: 2026-10-11
 related-requirements: [REQ-ACC, REQ-PRV, REQ-WRK, REQ-TEAM, REQ-WF, REQ-GW, REQ-HOST]
@@ -186,8 +186,8 @@ codex-chatgpt-web state is not migrated. Accounts are signed in again.
 
 ## Decision
 
-Pending review.
+Accepted on 2026-10-11 by the maintainer (docs PR #2). ADR-0003 to ADR-0006 were accepted with it.
 
 ## Implementation
 
-Not started.
+Started: M0 spike (see [roadmap](roadmap.md)).

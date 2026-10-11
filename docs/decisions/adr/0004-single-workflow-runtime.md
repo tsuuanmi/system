@@ -1,6 +1,6 @@
 # ADR-0004: One workflow runtime
 
-- **Status:** Proposed
+- **Status:** Accepted (2026-10-11, with PROP-0001)
 - **Date:** 2026-10-11
 - **Related:** PROP-0001, INV-1, REQ-WF-*
 
