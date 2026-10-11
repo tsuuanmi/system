@@ -5,7 +5,9 @@
 the [M0 spike](../../../docs/research/m0-dsh-core-spike.md)).
 
 - **Owns:**
-  - one database file (default `<DSH_HOME>/system/system.db`) in WAL mode;
+  - one database file (default `<DSH_HOME>/system/system.db`) in WAL mode, created
+    owner-only (`0600`, as are its `-wal` and `-shm` files; it holds prompts and
+    answers) in an owner-only directory;
   - `transaction()`: `BEGIN IMMEDIATE`, with savepoints when nested;
   - `migrate(owner, migrations)`: per-owner, recorded in `system_migrations`;
   - `updateRevision()`: optimistic revision guard that throws `RevisionConflict`.

@@ -7,6 +7,7 @@ import { DatabaseSync } from 'node:sqlite'
 import { dirname, join } from 'node:path'
 import { type Context, Service } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
+import { chmodSync, closeSync, existsSync, openSync } from 'node:fs'
 import { dshHome, ensurePrivateDir } from '@tsuuanmi/system-libs'
 
 declare module '@deepseek-ai/cordis' {
@@ -59,6 +60,12 @@ export class Store extends Service {
     this.path = config.path ?? join(dshHome(), 'system', 'system.db')
     ctx.effect(() => {
       ensurePrivateDir(dirname(this.path))
+      // The database holds prompts and answers: owner-only. SQLite gives the -wal and -shm
+      // files the database file's mode, so create it 0600 first and tighten older files.
+      closeSync(openSync(this.path, 'a', 0o600))
+      for (const file of [this.path, `${this.path}-wal`, `${this.path}-shm`]) {
+        if (existsSync(file)) chmodSync(file, 0o600)
+      }
       const db = new DatabaseSync(this.path)
       db.exec(`PRAGMA journal_mode=WAL; PRAGMA busy_timeout=${config.busyTimeoutMs ?? 5000}; PRAGMA foreign_keys=ON; PRAGMA synchronous=${config.synchronous === 'NORMAL' ? 'NORMAL' : 'FULL'}`)
       db.exec('CREATE TABLE IF NOT EXISTS system_migrations (owner TEXT NOT NULL, version INTEGER NOT NULL, applied_at TEXT NOT NULL, PRIMARY KEY (owner, version))')

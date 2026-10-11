@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, statSync } from 'node:fs'
+import { mkdtempSync, readdirSync, rmSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
@@ -25,6 +25,15 @@ describe('ctx.store', () => {
     const { ctx, dir } = await boot()
     expect((ctx.store.db.prepare('PRAGMA journal_mode').get() as { journal_mode: string }).journal_mode).toBe('wal')
     expect(statSync(join(dir, 'db')).mode & 0o777).toBe(0o700)
+  })
+
+  it('keeps the database and its WAL files owner-only (they hold prompts and answers)', async () => {
+    const { ctx, dir } = await boot()
+    ctx.store.migrate('t', [{ version: 1, sql: 'CREATE TABLE t (x TEXT)' }])
+    ctx.store.transaction((db) => void db.prepare('INSERT INTO t VALUES (?)').run('secret prompt'))
+    for (const file of readdirSync(join(dir, 'db'))) {
+      expect([file, statSync(join(dir, 'db', file)).mode & 0o077]).toEqual([file, 0])
+    }
   })
 
   it('applies each migration once, per owner', async () => {
