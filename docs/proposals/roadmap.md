@@ -33,7 +33,12 @@ work. Each milestone ends with working, tested software and updated canonical do
 - Claude Code Workers now also have a confined `workspace-write` (verified live), so they prove `develop`.
 - `runtime-acp` runs any ACP agent with a client-enforced policy, for agents the operator vouches for.
 
-Next in M3, all of which need the operator: `runtime-codex-sdk` (a Codex CLI login), the Gemini Web driver (a Gemini account), connectors as capabilities, and an economy-tier model provider (an API key). Meanwhile, M4 orchestration continues: tier escalation, graph growth, and plan artifacts.
+Next in M3, all of which need the operator: `runtime-codex-sdk` (a Codex CLI login), the Gemini Web driver (a Gemini account), connectors as capabilities, and an economy-tier model provider (an API key). M4 orchestration has started:
+- Bounded tier escalation after a rejected result.
+- Graph growth from validated `plan` artifacts, behind a plan approval gate for writing steps.
+- Verified live on 2026-10-12: `investigate` planned a step, ran it, and synthesised an answer with its sources. An earlier live plan that named an unknown capability was refused (fail closed).
+
+Next in M4: teams (Model A, the independent-first barrier), sessions with direct messaging, the `software-development` profile, lineage invalidation, and a Web UI.
 
 Later candidates, each needing its own proposal: A2A gateway and runtime
 (cross-runtime peers), an ACP client gateway for editors, sandboxed or SSH `exec`

@@ -85,6 +85,7 @@ const PLAN_PROMPT = [
   'Plan how to answer the question below in at most 4 independent or chained research steps for another assistant.',
   'Reply with only a JSON object in a ```json block, shaped like:',
   '{"confidence": "high", "nodes": [{"id": "step-1", "objective": "...", "prompt": "the full question for this step", "capabilities": ["reason"], "tier": "economy", "dependsOn": []}]}',
+  'Every step uses "capabilities": ["reason"] exactly; no other capability is available.',
   'Use tier "economy" for lookups and "standard" for analysis. Each prompt must stand on its own.',
   '',
   'Question: {{input}}',
@@ -117,7 +118,7 @@ export const DEFAULT_TEMPLATES: Record<string, NodeTemplate[]> = {
   investigate: [
     {
       nodeId: 'plan:1', objective: 'Plan research steps for the caller\'s question', prompt: PLAN_PROMPT, capabilities: ['reason'],
-      tier: 'standard', conversation: 'temporary', acceptance: 'acceptance.answer', grows: { maxNodes: 4 },
+      tier: 'standard', conversation: 'temporary', acceptance: 'acceptance.answer', grows: { maxNodes: 4, capabilities: ['reason'] },
     },
     {
       nodeId: 'synthesis:1', objective: 'Answer from the steps\' findings', dependsOn: ['plan:1'], prompt: SYNTHESIS_PROMPT, capabilities: ['reason'],
