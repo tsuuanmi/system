@@ -24,3 +24,4 @@ proposal that introduces them.
 | [0013](0013-typed-artifacts-and-decision-records.md) | Typed, content-addressed artifacts; every decision recorded as an artifact | Accepted |
 | [0014](0014-json-schema-contracts.md) | JSON Schema 2020-12 is the canonical contract for records and wire payloads | Accepted |
 | [0015](0015-worker-sessions-and-peer-messaging.md) | Durable Worker sessions with own SessionId and direct peer messaging; A2A for cross-runtime peers, ACP for driving agents | Accepted |
+| [0016](0016-invisible-headed-browser-and-portable-accounts.md) | Invisible headed system Chrome (never headless for provider turns); provider-agnostic multi-account vault | Accepted |

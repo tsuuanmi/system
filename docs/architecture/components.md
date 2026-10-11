@@ -33,7 +33,8 @@ routes back here.
   ([ADR-0005](../decisions/adr/0005-provider-runtime-interface.md)) wrapped by
   `ProviderRuntime.turn(account, request) → TurnOutcome`. Credentials never cross
   upward ([INV-8](invariants.md#inv-8-credentials-never-cross-upward)).
-- **Design:** [provider-turns](../design/provider-turns.md),
+- **Design:** [browser runtime and account vault](../design/browser-runtime.md),
+  [provider-turns](../design/provider-turns.md),
   [scheduling-and-leases](../design/scheduling-and-leases.md).
 
 ## Capabilities

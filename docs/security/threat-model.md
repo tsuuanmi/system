@@ -32,6 +32,7 @@ untrusted:  provider websites · model output · tool output · repository conte
 | Prompt injection claims authority, for example a fake `<environment_context>` | authority comes only from trusted envelopes ([INV-6](../architecture/invariants.md#inv-6-authority-comes-from-trusted-envelopes)) |
 | Prompt injection through tool output leads the model to destructive actions | the client's own sandbox and approvals execute every tool; provider-side approval prompts fail closed unless explicitly enabled, and then only as "allow once" |
 | Credential leakage to upper layers, logs, or the command line | INV-8; secrets are never passed as process arguments; logs redact account state |
+| Account state cross-contamination between accounts | one browser process and context per account; state limited to the driver's `stateOrigins`; records `0600` in a `0700` vault ([browser runtime](../design/browser-runtime.md)) |
 | Remote-login page hijacking | VNC is bound to localhost with a one-time password; the noVNC page sits behind a random token; access is over an SSH tunnel only |
 | Duplicate side effects after a crash (double PR, double message) | receipts and reconciliation ([INV-4](../architecture/invariants.md#inv-4-restart-is-reconciliation-not-replay)) |
 | Stale evidence approving a newer change | exact-subject binding ([INV-5](../architecture/invariants.md#inv-5-exact-subject-binding)) |

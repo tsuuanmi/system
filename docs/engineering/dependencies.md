@@ -14,8 +14,8 @@ code updates this table.
 | Record and wire schemas | JSON Schema 2020-12 + Ajv (`ajv`, `ajv-formats`) | spec + library | `ctx.artifacts`, store, MCP, decisions | [ADR-0014](../decisions/adr/0014-json-schema-contracts.md); strict mode |
 | Types from schemas | `json-schema-to-typescript` (or equivalent) | library | build step | generated types are build output, checked in CI |
 | Durable records | `bun:sqlite` (Node: `better-sqlite3`) | library | `ctx.store` | [ADR-0003](../decisions/adr/0003-sqlite-durable-store.md); hand-written versioned migrations, no ORM |
-| Browser automation | `patchright-core` + system Chrome | library | `ctx.browser` | proven in internet |
-| Remote login display | Xvfb + x11vnc + noVNC | library / system tool | `ctx.display` | taken from system packages, not vendored |
+| Browser automation | `patchright-core` + system Chrome (stable channel), headed | library | `ctx.browser` | proven in internet; removes automation leaks, no fingerprint spoofing ([ADR-0016](../decisions/adr/0016-invisible-headed-browser-and-portable-accounts.md)) |
+| Invisible display, remote login | Xvfb (virtual display for turns) + x11vnc + noVNC (login) | system tool / library | `ctx.display` | taken from system packages, not vendored |
 | HTML → Markdown | `turndown` | library | provider drivers | |
 | Token budgets | `tiktoken` | library | provider runtime, gateways | |
 | MCP | `@modelcontextprotocol/sdk` | protocol SDK | `mcp-server` | |

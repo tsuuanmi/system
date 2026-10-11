@@ -40,7 +40,7 @@ for free. The Responses and Messages gateways, which make `system` look like a
 ```text
 host, libs
 kernel:        store-sqlite, blobs-fs, events-store, leases-store, artifacts-store
-provider:      browser-patchright, display-headless, display-xvfb, remote-login,
+provider:      browser-patchright, display-virtual, display-offscreen, remote-login,
                accounts-vault, provider-chatgpt-web (+ scheduler, receipts)
 capabilities:  website-core
 routing:       workers-core (capabilities, tiers, egress policy, quota exclusion)
@@ -53,7 +53,7 @@ edge:          mcp-server, cli
 
 | Area | Requirements |
 |---|---|
-| Accounts | REQ-ACC-1..5 (ChatGPT Web accounts only) |
+| Accounts | REQ-ACC-1..7 (ChatGPT Web accounts; multiple accounts supported) |
 | Provider turns | REQ-PRV-1..6 (`reason`, `web-search`, `deep-research`) |
 | Routing | REQ-WRK-1..4, REQ-WRK-7 (egress), REQ-WRK-8 (quota exclusion), REQ-WRK-9 (tiers: website modes as `economy`, `standard`, and `frontier`) |
 | Gateways | REQ-GW-3 (MCP tools: `ask`, `research`, `status`, `result`), REQ-GW-4 (CLI: login, status, ask, research, explain) |
@@ -72,6 +72,35 @@ research:1 (frontier · deep-research) ──▶ compact:1 (economy) ──▶ r
 
 Each node has input and output receipts and decision artifacts, so retries and
 restarts never resend or recompute a completed step.
+
+### Delivery order: slice 1 first
+
+The MVP ships in two slices. **Slice 1 (`ask` + `research`)** is the first
+usable build, delivered at milestone M1.5:
+
+| Slice 1 includes | Detail |
+|---|---|
+| MCP tools | `ask`, `research`, `status`, `result`; `ask` and `research` take an optional `sessionId`; `research` returns a `SessionId` at once |
+| CLI | `account add/login/list/remove`, `ask`, `research`, `status` |
+| Browser | invisible headed Chrome (`virtual` on Linux, `offscreen` elsewhere); remote and visible login ([browser runtime](../design/browser-runtime.md)) |
+| Accounts | provider-agnostic vault; one or more ChatGPT accounts; saved state survives restarts |
+| Reliability | turn receipts and reconciliation, two-clock completion, per-account scheduler |
+| Routing | minimal: the first `ready` account in configured priority that proves the capability; tier = the selected ChatGPT mode; route and tier decision artifacts recorded |
+| Execution | each call is a one-node DAG on the engine core |
+
+Slice 1 exit criteria:
+
+1. From both Claude Code and Codex, `ask` answers and `research` returns a
+   Deep Research report, using a saved account and with no browser window
+   visible to the operator.
+2. Killing the host during a `research` run, then restarting, recovers the
+   result without sending the prompt twice.
+3. With two saved accounts, marking one `reauth-required` routes new work to the
+   other, and the decision artifact shows why.
+
+**Slice 2** completes the MVP: the `compact` economy node (a two-node DAG), the
+egress policy, quota exclusion, `explain`, usage reports, and the remaining exit
+criteria below.
 
 ### Explicitly out of MVP
 

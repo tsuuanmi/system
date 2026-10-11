@@ -1,0 +1,17 @@
+{
+  "schema": "account@1.0",
+  "accountId": "chatgpt-main",
+  "provider": "chatgpt-web",
+  "status": "ready",
+  "identityHash": "sha256:7777777777777777777777777777777777777777777777777777777777777777",
+  "verifiedAt": "2026-10-11T07:55:00Z",
+  "state": {
+    "origins": ["https://chatgpt.com", "https://auth.openai.com"],
+    "cookies": [{ "name": "example-session", "value": "<redacted>", "domain": ".chatgpt.com", "path": "/" }],
+    "localStorage": [],
+    "indexedDB": { "status": "captured", "data": [] },
+    "capturedAt": "2026-10-11T07:55:00Z"
+  },
+  "revision": 4,
+  "updatedAt": "2026-10-11T07:55:00Z"
+}

@@ -10,6 +10,7 @@ It does not restate structure or invariants. It links to them.
 
 | Document | Mechanism | Boundary |
 |---|---|---|
+| [browser-runtime.md](browser-runtime.md) | invisible headed browser (Xvfb / off-screen), anti-leak launch, provider-agnostic multi-account vault, login flows | provider runtime |
 | [provider-turns.md](provider-turns.md) | turn receipts, reconciliation, two-clock completion | provider runtime |
 | [scheduling-and-leases.md](scheduling-and-leases.md) | per-account scheduler, exclusive fence, lease generations | provider runtime, kernel |
 | [workflow-engine.md](workflow-engine.md) | DAG, durable nodes, handoffs, exact-subject gates, recovery, lineage | orchestration |

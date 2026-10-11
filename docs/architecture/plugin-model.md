@@ -36,7 +36,7 @@ can be added without changing consumers.
 | Kernel | `events` | `events-store` | CLI, Web UI, observability |
 | Kernel | `leases` | `leases-store` | scheduler, workflow |
 | Provider runtime | `browser` | `browser-patchright` | provider drivers, remote login |
-| Provider runtime | `display` | `display-headless`, `display-xvfb`, `display-visible` | browser, remote login |
+| Provider runtime | `display` | `display-virtual` (Xvfb), `display-offscreen`, `display-visible` (headless only in `dev` fakes) | browser, remote login ([browser runtime](../design/browser-runtime.md)) |
 | Provider runtime | `accounts` | `accounts-vault` | provider runtime, admission |
 | Provider runtime | `providers` (driver registry) | `provider-chatgpt-web`, `provider-gemini-web` | website capability |
 | Capabilities | `website` | `website-core` | Worker providers |

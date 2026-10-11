@@ -31,7 +31,14 @@
   state, never the interactive login profile.
 - **REQ-ACC-5** When an account loses authentication, it is marked
   `reauth-required`, and its queued and running work fails closed with a
-  user-action error.
+  user-action error. Only positive signed-out evidence triggers this state.
+- **REQ-ACC-6** Provider turns run in a headed, genuine system Chrome that the
+  operator does not see: an Xvfb virtual display on Linux, an off-screen window on
+  macOS and Windows. Headless mode is never used for provider turns.
+- **REQ-ACC-7** The account vault is provider-agnostic and supports any number of
+  accounts per provider. Each account's state is saved, isolated (own browser
+  process, scheduler, and bindings), and survives restarts. Accounts that resolve
+  to the same identity are flagged.
 
 ## Provider turns (`REQ-PRV`)
 
