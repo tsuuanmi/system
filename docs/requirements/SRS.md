@@ -88,6 +88,9 @@
   cites the member evidence it relies on.
 - **REQ-TEAM-4** Members of an independence-sensitive team are backed by distinct
   accounts.
+- **REQ-TEAM-5** Reviewers receive the exact subject (for example a diff at a
+  head SHA), the criteria, and the relevant decision artifacts, but not the
+  producer's conversation. Review independence is structural.
 
 ## Workflows (`REQ-WF`)
 
@@ -115,6 +118,11 @@
   runs as an append-only DAG on the single engine. Loops are unrolled into
   bounded new nodes. A planner may propose nodes only through a validated `plan`
   artifact.
+
+- **REQ-WF-11** Before a subgraph that writes executes, its `plan` artifact is
+  approved, either by the operator or automatically when policy allows it. Auto
+  approval requires high confidence and only low-risk side-effect classes. The
+  approval is an `approval` artifact bound to the exact plan.
 
 ## Artifacts and schemas (`REQ-ART`)
 

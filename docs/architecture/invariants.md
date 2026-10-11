@@ -110,3 +110,12 @@ Every persisted record and every wire payload validates against a versioned JSON
 Schema in [`schemas/`](../../schemas/README.md) at each boundary. Unknown major
 versions and invalid records fail closed
 ([ADR-0014](../decisions/adr/0014-json-schema-contracts.md)).
+
+### INV-15 One writer per subject
+
+At any time, at most one Worker execution holds write authority over a given
+subject: a workspace, a branch or PR, or a dataset output. Parallel fan-out is
+allowed only for read-only work, such as research, analysis, and review.
+Additional agents contribute intelligence, not actions. A subgraph that writes
+starts only after its plan is approved
+([reference architectures](../research/reference-architectures.md)).

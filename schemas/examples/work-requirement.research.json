@@ -1,10 +1,35 @@
 {
   "schema": "work-requirement@1.0",
   "objective": "Survey current approaches to mtDNA heteroplasmy calling and summarize trade-offs with citations.",
-  "capabilities": ["reason", "deep-research"],
-  "data": { "classification": "public", "refs": [] },
+  "capabilities": [
+    "reason",
+    "deep-research"
+  ],
+  "data": {
+    "classification": "public",
+    "refs": []
+  },
   "egressPolicy": "egress.public-only",
-  "tier": { "min": "frontier", "source": "profile" },
-  "budget": { "preferQuota": ["subscription-chat"] },
-  "acceptance": { "contract": "acceptance.cited-report", "resultSchema": "report@1.0", "maxEscalations": 0 }
+  "boundaries": [
+    "read-only: do not modify any repository or external system",
+    "cite every claim"
+  ],
+  "effort": {
+    "maxSubWorkers": 0,
+    "maxMinutes": 45
+  },
+  "tier": {
+    "min": "frontier",
+    "source": "profile"
+  },
+  "budget": {
+    "preferQuota": [
+      "subscription-chat"
+    ]
+  },
+  "acceptance": {
+    "contract": "acceptance.cited-report",
+    "resultSchema": "report@1.0",
+    "maxEscalations": 0
+  }
 }

@@ -73,6 +73,10 @@ failure (`USER_ACTION` or `BACKOFF`), not a silent switch to a different provide
   payload**: the rendered prompt plus its attachments. Each artifact ref is
   checked against the policy. A payload that is not permitted fails closed
   ([INV-12](../architecture/invariants.md#inv-12-data-egress-is-explicit)).
+- **Phase separation.** A Worker that browses the web or calls remote connectors
+  never holds local-private content in the same execution. Untrusted web content
+  can carry prompt-injection payloads. Research and private-data processing are
+  separate nodes, joined only through artifacts.
 - What goes back the other way is not restricted. Results from website Workers
   flow freely to local Workers as cited artifacts.
 

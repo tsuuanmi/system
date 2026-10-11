@@ -71,10 +71,32 @@ PR, the engine appends a review cycle bound to that PR's head SHA. When a review
 gate requires changes, it appends a remediation node. Growth is bounded, for
 instance at most 3 review cycles.
 
+## Plan approval gate
+
+A subgraph that holds write authority over a subject
+([INV-15](../architecture/invariants.md#inv-15-one-writer-per-subject)) is
+preceded by a gate node:
+
+```text
+plan (read-only Workers: research, inspect) ─▶ plan artifact ─▶ gate: approval ─▶ write subgraph
+```
+
+- The plan lists files or targets, intended changes, side-effect classes, and a
+  confidence level.
+- **Auto-approve** only when policy allows it, confidence is high, and every step
+  is `none` or `idempotent`. Otherwise the run waits in `BLOCKED` with
+  `USER_ACTION` until the operator approves, edits, or rejects the plan through
+  the CLI or Web UI.
+- The approval is an `approval` artifact bound to the exact plan id. An edited
+  plan is a new artifact that needs a new approval.
+
 ## Handoffs
 
 A handoff passes an upstream result verbatim to a downstream executor, bound by
-SHA-256. Delivery is at least once, and acknowledgement is idempotent. Trusted
+SHA-256. Along with the result, the receiver gets the **decision artifacts the
+result depends on**, such as chosen options and rejected alternatives, so that
+implicit decisions become explicit inputs instead of being lost between
+Workers. Delivery is at least once, and acknowledgement is idempotent. Trusted
 control messages, such as `START_IMPLEMENTATION` and `APPLY_REVIEWS {
 expectedHeadSha }`, are separate from the model payload
 ([INV-6](../architecture/invariants.md#inv-6-authority-comes-from-trusted-envelopes)).

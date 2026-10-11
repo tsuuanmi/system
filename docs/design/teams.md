@@ -36,6 +36,14 @@ acceptance: procedure-specific phase acceptance
   completed member turns
   ([workflow-engine](workflow-engine.md#execution-loop)).
 
+## Independent review
+
+Reviewers are a team procedure with **no shared context** with the producer
+(REQ-TEAM-5). They receive the exact subject, the acceptance criteria, and the
+relevant decision artifacts, and nothing from the producer's conversation.
+Findings are `assessment` artifacts, each with a severity (`blocking`,
+`warning`, or `info`), bound to the subject version.
+
 ## Lead
 
 The lead controls the procedure and observes durable state. It does not relay
