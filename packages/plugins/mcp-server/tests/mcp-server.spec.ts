@@ -82,3 +82,13 @@ describe('system MCP server on ctx.webServer', () => {
     expect(() => statSync(join(dir, 'mcp.json'))).toThrow()
   })
 })
+
+describe('discovery file ownership (PR #3 security review)', () => {
+  it("does not delete another instance's discovery file on unload", async () => {
+    const { dir } = await boot()
+    const { writeFileSync } = await import('node:fs')
+    writeFileSync(join(dir, 'mcp.json'), JSON.stringify({ url: 'http://127.0.0.1:1/mcp', tokenFile: 'x', pid: process.pid + 1 }))
+    while (cleanups.length > 1) await cleanups.pop()!()
+    expect(JSON.parse(readFileSync(join(dir, 'mcp.json'), 'utf8')).pid).toBe(process.pid + 1)
+  })
+})

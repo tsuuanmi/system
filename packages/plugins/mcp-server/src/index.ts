@@ -5,8 +5,7 @@
  * `result` report "not installed" until the provider runtime lands (M1.5).
  * @module @tsuuanmi/system-mcp-server
  */
-import { randomBytes } from 'node:crypto'
-import { constants, closeSync, openSync, renameSync, rmSync, writeSync } from 'node:fs'
+import { readFileSync, rmSync } from 'node:fs'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { dirname, join } from 'node:path'
 import { type Context } from '@deepseek-ai/cordis'
@@ -15,11 +14,11 @@ import z from '@deepseek-ai/schemastery'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
-import { dshHome, ensurePrivateDir, readOrCreateSecretFile } from '@tsuuanmi/system-libs'
+import { dshHome, ensurePrivateDir, readOrCreateSecretFile, writeFileDurable } from '@tsuuanmi/system-libs'
 import { z as zod } from 'zod'
-import { guardRequest } from './guard.ts'
+import { assertSafeBind, endpointUrl, guardRequest } from './guard.ts'
 
-export { guardRequest, hostName, tokenMatches } from './guard.ts'
+export { assertSafeBind, endpointUrl, guardRequest, hostName, tokenMatches } from './guard.ts'
 
 export const name = 'system-mcp-server'
 export const inject = ['webServer']
@@ -93,14 +92,17 @@ async function readBody(req: IncomingMessage, limit: number): Promise<unknown> {
 
 function writeDiscovery(path: string, contents: object): void {
   ensurePrivateDir(dirname(path))
-  const temp = `${path}.${randomBytes(4).toString('hex')}.tmp`
-  const fd = openSync(temp, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o600)
+  writeFileDurable(path, `${JSON.stringify(contents, null, 2)}\n`, 0o600)
+}
+
+/** Remove the discovery file only if this process wrote it (another instance may share DSH_HOME). */
+function removeOwnDiscovery(path: string): void {
   try {
-    writeSync(fd, `${JSON.stringify(contents, null, 2)}\n`)
-  } finally {
-    closeSync(fd)
+    const { pid } = JSON.parse(readFileSync(path, 'utf8')) as { pid?: number }
+    if (pid === process.pid) rmSync(path, { force: true })
+  } catch {
+    // absent or unreadable: nothing of ours to remove
   }
-  renameSync(temp, path)
 }
 
 export function apply(ctx: Context, config: Config): void {
@@ -138,11 +140,13 @@ export function apply(ctx: Context, config: Config): void {
   }
 
   ctx.effect(() => {
+    const bound = { protocol: ctx.webServer.protocol, host: ctx.webServer.host, port: ctx.webServer.port }
+    assertSafeBind(bound)
     const unregister = ctx.webServer.register({ kind: 'exact', path, handler })
-    writeDiscovery(discoveryFile, { url: `http://127.0.0.1:${ctx.webServer.port}${path}`, tokenFile, pid: process.pid })
+    writeDiscovery(discoveryFile, { url: endpointUrl(bound, path), tokenFile, pid: process.pid })
     return () => {
       unregister()
-      rmSync(discoveryFile, { force: true })
+      removeOwnDiscovery(discoveryFile)
     }
   })
 }

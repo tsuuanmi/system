@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto'
 export type ContentId = `sha256:${string}`
 
 /**
- * Canonical JSON: object keys sorted by code point, no insignificant whitespace,
+ * Canonical JSON: object keys sorted by UTF-16 code unit (as RFC 8785 specifies), no insignificant whitespace,
  * `undefined` object members omitted. Non-finite numbers and non-JSON values throw,
  * because a hash over them would not be reproducible (docs/reference/schemas.md).
  */
@@ -14,7 +14,8 @@ export function canonicalJson(value: unknown): string {
     if (!Number.isFinite(value)) throw new TypeError(`canonicalJson: non-finite number ${value}`)
     return JSON.stringify(value)
   }
-  if (Array.isArray(value)) return `[${value.map((item) => canonicalJson(item ?? null)).join(',')}]`
+  // Array.from visits holes in sparse arrays (map would skip them), serializing them as null.
+  if (Array.isArray(value)) return `[${Array.from(value, (item: unknown) => canonicalJson(item ?? null)).join(',')}]`
   if (typeof value === 'object') {
     const prototype = Object.getPrototypeOf(value) as unknown
     if (prototype !== Object.prototype && prototype !== null) {

@@ -46,3 +46,14 @@ describe('ctx.blobs', () => {
     expect(() => ctx.blobs.get('sha256:../../etc/passwd')).toThrow(TypeError)
   })
 })
+
+describe('review fixes (PR #3 security review)', () => {
+  it('repairs a corrupted blob when the same bytes are put again', async () => {
+    const { ctx, dir } = await boot()
+    const { ref } = ctx.blobs.put('x', 'text/plain')
+    const hex = ref.slice(7)
+    writeFileSync(join(dir, 'blobs', 'sha256', hex.slice(0, 2), hex), 'y')
+    ctx.blobs.put('x', 'text/plain')
+    expect(ctx.blobs.get(ref).toString()).toBe('x')
+  })
+})

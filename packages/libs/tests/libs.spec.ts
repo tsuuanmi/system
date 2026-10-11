@@ -51,6 +51,33 @@ describe('readOrCreateSecretFile', () => {
     const path = join(dir, 'loose')
     writeFileSync(path, Buffer.alloc(32))
     chmodSync(path, 0o644)
-    expect(() => readOrCreateSecretFile(path, 32)).toThrow(/0600/)
+    expect(() => readOrCreateSecretFile(path, 32)).toThrow(/owner-only/)
+  })
+})
+
+describe('review fixes (PR #3 security review)', () => {
+  it('serializes sparse arrays as null entries', () => {
+    // eslint-disable-next-line no-sparse-arrays
+    expect(canonicalJson([, 1])).toBe('[null,1]')
+  })
+
+  it('creates a secret file atomically when several processes start at once', async () => {
+    const path = join(dir, 'race', 'key')
+    const { fork } = await import('node:child_process')
+    const worker = join(dir, 'race-worker.mjs')
+    const files = new URL('../src/files.ts', import.meta.url).pathname
+    writeFileSync(worker, `import { readOrCreateSecretFile } from ${JSON.stringify(files)}\nprocess.send(readOrCreateSecretFile(process.argv[2], 32).toString('hex'), () => process.exit(0))\n`)
+    const results = await Promise.all(Array.from({ length: 8 }, () => new Promise<string>((resolve, reject) => {
+      const child = fork(worker, [path], { execArgv: ['--import', 'tsx'] })
+      child.on('message', (m) => resolve(String(m)))
+      child.on('exit', (code) => code !== 0 && reject(new Error(`worker exited ${code}`)))
+    })))
+    expect(new Set(results).size).toBe(1)
+  }, 30_000)
+
+  it('accepts an owner-only read-only secret (0400)', () => {
+    const path = join(dir, 'ro')
+    writeFileSync(path, Buffer.alloc(32, 1), { mode: 0o400 })
+    expect(readOrCreateSecretFile(path, 32)).toHaveLength(32)
   })
 })
