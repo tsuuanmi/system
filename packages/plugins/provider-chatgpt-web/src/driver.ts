@@ -55,6 +55,10 @@ export class ChatGptWebDriver implements ProviderDriver<Page> {
   readonly map: UiMap
   onDrift: ((event: DriftEvent) => void) | undefined
   onHeal: ((event: HealEvent) => void) | undefined
+  /** Records a chosen heal before it acts (INV-13); a throw aborts the action. */
+  beforeHealedAction: ((event: HealEvent) => void | Promise<void>) | undefined
+  /** Whether self-heal may run; the plugin turns it off when no decision store exists. */
+  healEnabled: () => boolean = () => true
   private readonly origin: string
   private readonly timeouts: Required<DriverTimeouts>
   private readonly engines = new WeakMap<Page, UiEngine>()
@@ -256,6 +260,8 @@ export class ChatGptWebDriver implements ProviderDriver<Page> {
       engine = new UiEngine(page, this.map, {
         onDrift: (event) => this.onDrift?.(event),
         onHeal: (event) => this.onHeal?.(event),
+        beforeHealedAction: (event) => this.beforeHealedAction?.(event),
+        heal: this.healEnabled(),
       })
       this.engines.set(page, engine)
     }

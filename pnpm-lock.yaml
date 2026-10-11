@@ -437,6 +437,12 @@ importers:
 
   packages/plugins/provider-chatgpt-web:
     dependencies:
+      '@tsuuanmi/system-artifacts':
+        specifier: workspace:*
+        version: link:../artifacts
+      '@tsuuanmi/system-event-log':
+        specifier: workspace:*
+        version: link:../event-log
       '@tsuuanmi/system-libs':
         specifier: workspace:*
         version: link:../../libs
@@ -462,6 +468,9 @@ importers:
       '@tsuuanmi/system-display-virtual':
         specifier: workspace:*
         version: link:../display-virtual
+      '@tsuuanmi/system-store':
+        specifier: workspace:*
+        version: link:../store
       patchright-core:
         specifier: 1.63.0
         version: 1.63.0

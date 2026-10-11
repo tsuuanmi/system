@@ -40,7 +40,15 @@ export interface HealEvent {
 
 export interface EngineOptions {
   onDrift?: (event: DriftEvent) => void
+  /** After a heal settles: `healed` (verified), `failed` (acted, postcondition not met), or `rejected` (no action). */
   onHeal?: (event: HealEvent) => void
+  /**
+   * Called with the chosen heal **before** the healed element is acted on, so the
+   * decision is recorded before its effect (INV-13). A throw aborts the action.
+   */
+  beforeHealedAction?: (event: HealEvent) => void | Promise<void>
+  /** Set false to disable healing entirely (e.g. no decision store is available). */
+  heal?: boolean
   /** Default resolve timeout when an action does not set one (default 5 s). */
   defaultResolveMs?: number
   /** Default verify timeout when an action does not set one (default 15 s). */
@@ -137,8 +145,11 @@ export class UiEngine {
     } catch (error) {
       if (!(error instanceof ProviderError) || error.kind !== 'ui_drift') throw error
       await this.checkGuards()
-      const heal = await this.heal(id, spec)
-      if (heal) ({ target, event: healed } = heal)
+      const heal = this.options.heal === false ? undefined : await this.heal(id, spec)
+      if (heal) {
+        ;({ target, event: healed } = heal)
+        await this.options.beforeHealedAction?.(heal.event)
+      }
       else if (spec.fallback && options.allowFallback !== false) {
         const on = await this.resolve(spec.fallback.on, resolveMs)
         await on.locator.press(spec.fallback.press)

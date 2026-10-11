@@ -4,7 +4,10 @@
  * shipped map always wins when it still works (docs/design/ui-operations.md).
  */
 import { type ContentId, SchemaRegistry, contentId } from '@tsuuanmi/system-libs'
-import { parse } from 'yaml'
+import { existsSync, readFileSync } from 'node:fs'
+import { dirname } from 'node:path'
+import { ensurePrivateDir, writeFileDurable } from '@tsuuanmi/system-libs'
+import { parse, parseDocument } from 'yaml'
 
 export type Localized = Record<string, string>
 
@@ -157,4 +160,22 @@ function stripSources(elements: Record<string, ElementSpec>): Record<string, unk
     return copy as Candidate
   }
   return Object.fromEntries(Object.entries(elements).map(([id, e]) => [id, { ...e, candidates: e.candidates.map(plain) }]))
+}
+
+/**
+ * Append a verified healed candidate to a local overlay file (owner-only, durable). A
+ * candidate already present is not added twice. The shipped map is never modified; the
+ * comment names the decision so the change can be reviewed and promoted.
+ */
+export function appendOverlay(path: string, element: string, candidate: Candidate, note: string): boolean {
+  ensurePrivateDir(dirname(path))
+  const doc = parseDocument(existsSync(path) ? readFileSync(path, 'utf8') : 'elements: {}\n')
+  const list = (doc.getIn(['elements', element, 'candidates']) as { toJSON(): unknown } | undefined)?.toJSON() as Candidate[] | undefined
+  if (list?.some((c) => JSON.stringify(c) === JSON.stringify(candidate))) return false
+  if (!list) doc.setIn(['elements', element, 'candidates'], doc.createNode([]))
+  const node = doc.createNode(candidate)
+  node.commentBefore = ` ${note}`
+  doc.addIn(['elements', element, 'candidates'], node)
+  writeFileDurable(path, doc.toString(), 0o600)
+  return true
 }

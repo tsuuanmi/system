@@ -144,9 +144,13 @@ can repair the map while the fallback keeps the turn working.
 4. **Verify.** Resolve the ref, check that the match is unique, then check the
    role and `require`. Turn it into a durable locator with `normalize()`, run
    the action, and check `verify`.
-5. **Record.** Write a `ui-heal` **decision artifact** (INV-13). It records the
-   operation, a snapshot hash, the candidate scores, whether a model was used,
-   the chosen locator, and the outcome.
+5. **Record.** Before the healed element is acted on, write a `recovery`
+   **decision artifact** (INV-13), decided by `ui-ops.heal.deterministic`. It
+   records the operation, the map and snapshot hashes, the top candidate scores,
+   and the chosen locator. If the record cannot be written, nothing is clicked.
+   A rejected heal is recorded too, with `fail-closed` as its outcome. Heal and
+   drift outcomes go to the event log (`ui.heal`, `ui.drift`). Without a
+   decision store, healing is off.
 6. **Overlay.** On success, append the normalized locator to the provider's
    local overlay with `source: healed`, the decision id, and `verifiedCount`.
    The overlay is `<DSH_HOME>/system/ui/<provider>.overlay.yaml`, owner-only and

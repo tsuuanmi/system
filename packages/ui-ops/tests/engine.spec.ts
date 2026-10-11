@@ -3,7 +3,7 @@ import { ProviderError } from '@tsuuanmi/system-provider-core'
 import type { Browser, BrowserContext, Page } from 'patchright-core'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { canRunBrowser, launchTestBrowser } from '../../plugins/browser-patchright/tests/support.ts'
-import { type DriftEvent, type HealEvent, UiEngine, loadUiMap } from '../src/index.ts'
+import { type DriftEvent, type EngineOptions, type HealEvent, UiEngine, loadUiMap } from '../src/index.ts'
 
 const MAP = `
 schema: ui-map@1.0
@@ -139,13 +139,13 @@ describe.runIf(canRunBrowser)('UiEngine on a real page', () => {
   let context: BrowserContext
   afterEach(async () => context?.close())
 
-  async function open(content: string, map = loadUiMap(MAP)): Promise<{ engine: UiEngine; tab: Page; drift: DriftEvent[]; heals: HealEvent[] }> {
+  async function open(content: string, map = loadUiMap(MAP), extra: Partial<EngineOptions> = {}): Promise<{ engine: UiEngine; tab: Page; drift: DriftEvent[]; heals: HealEvent[] }> {
     html = content
     context = await browser.newContext()
     const tab = await context.newPage()
     const drift: DriftEvent[] = []
     const heals: HealEvent[] = []
-    const engine = new UiEngine(tab, map, { onDrift: (e) => drift.push(e), onHeal: (e) => heals.push(e), defaultResolveMs: 800 })
+    const engine = new UiEngine(tab, map, { onDrift: (e) => drift.push(e), onHeal: (e) => heals.push(e), defaultResolveMs: 800, ...extra })
     await tab.goto(`${origin}/`)
     return { engine, tab, drift, heals }
   }
@@ -189,6 +189,21 @@ describe.runIf(canRunBrowser)('UiEngine on a real page', () => {
     expect(await engine.count('turn.user')).toBe(1)
     expect(heals).toEqual([expect.objectContaining({ element: 'composer.send', outcome: 'healed', model: false, candidate: { testId: 'submit-v2' } })])
     expect(heals[0]!.scores[0]!.score).toBeGreaterThanOrEqual(0.8)
+  })
+
+  it('records a healed choice before acting, and does not act when recording fails', async () => {
+    const order: string[] = []
+    const ok = await open(DRIFTED, loadUiMap(MAP), { beforeHealedAction: (e) => { order.push(`record ${e.element}`) } })
+    await ok.engine.act('composer.insert', { text: 'hello' })
+    ok.tab.on('request', (r) => { if (r.url().endsWith('/backend-api/conversation')) order.push('send') })
+    await ok.engine.act('composer.send')
+    expect(order).toEqual(['record composer.send', 'send'])
+    await context.close()
+
+    const refused = await open(DRIFTED, loadUiMap(MAP), { beforeHealedAction: () => { throw new Error('audit store down') } })
+    await refused.engine.act('composer.insert', { text: 'hello' })
+    await expect(refused.engine.act('composer.send', {}, { allowFallback: false })).rejects.toThrow(/audit store down/)
+    expect(await refused.engine.count('turn.user')).toBe(0)
   })
 
   it('fails closed with CONFIG_FIX when healing is ambiguous, and never clicks a guess', async () => {

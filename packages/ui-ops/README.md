@@ -20,8 +20,11 @@ not a plugin: provider drivers create one `UiEngine` per turn page.
   - `onDrift` fires when a non-primary candidate wins.
   - `onHeal` fires with `healed`, `rejected`, or `failed`, the scores, the
     snapshot hash, and the durable candidate for the overlay.
-  - The driver turns heals into decision artifacts and overlay entries. The
-    engine never writes the shipped map.
+  - `beforeHealedAction` receives a chosen heal **before** the element is acted
+    on, so the caller records the decision first (INV-13). A throw aborts the
+    action. `heal: false` turns healing off.
+  - `appendOverlay(path, element, candidate, note)` adds a verified candidate to
+    the owner-only local overlay. The engine never writes the shipped map.
 - **Heal:** a deterministic matcher over `ariaSnapshot({ mode: 'ai' })`, with a
   threshold of 0.8 and a margin of 0.15, scoped to the element's scope.
   `aria-ref=` resolves the chosen node, and `normalize()` turns it into a durable

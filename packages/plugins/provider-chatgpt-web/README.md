@@ -22,6 +22,12 @@ The **ChatGPT Web provider driver**
   - the event stream stays open on the live site and is never consulted.
 - **`checkAuth`:** `signed-in` (composer present), `signed-out` (positive
   evidence: login URL or surface), or `unknown`.
+- **Heal audit:**
+  - every chosen heal is a `recovery` decision recorded before the click;
+  - verified heals are appended to `<DSH_HOME>/system/ui/chatgpt-web.overlay.yaml`
+    (0600, with the decision id in a comment);
+  - `ui.drift` / `ui.heal` events are logged;
+  - healing is off when `ctx.artifacts` is absent.
 - **Fixtures:** [`fixtures/fake-chatgpt.ts`](fixtures/fake-chatgpt.ts) is a
   local stand-in built from the live accessibility tree of 2026-10-11, with no
   private data. It reproduces the live traps: a Work default, an open stream,
