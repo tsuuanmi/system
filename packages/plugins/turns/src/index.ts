@@ -181,6 +181,9 @@ export class Turns extends Service {
         for (const timer of this.retries) clearTimeout(timer)
         for (const scheduler of this.schedulers.values()) scheduler.close(new ProviderError('aborted', 'turn runtime stopped'))
         await Promise.allSettled(this.inflight)
+        // Release every caller blocked in wait() while the store is still open.
+        for (const set of this.waiters.values()) for (const wake of set) wake()
+        this.waiters.clear()
       }
     })
     ctx.inject(['mcp'], (c) => this.registerTools(c))
@@ -249,7 +252,7 @@ export class Turns extends Service {
   async wait(turnId: string, timeoutMs: number): Promise<TurnView> {
     const current = this.get(turnId)
     if (!current) throw new ProviderError('invalid_input', `unknown turn ${turnId}`)
-    if (TERMINAL.has(current.status)) return current
+    if (TERMINAL.has(current.status) || this.stopping) return current
     await new Promise<void>((resolve) => {
       let set = this.waiters.get(turnId)
       if (!set) this.waiters.set(turnId, (set = new Set()))

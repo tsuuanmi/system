@@ -103,6 +103,7 @@ export class BrowserPool extends Service {
   async openTurn(account: string, options: OpenTurnOptions = {}): Promise<Turn> {
     options.signal?.throwIfAborted()
     const managed = await this.ensure(account)
+    options.signal?.throwIfAborted()
     managed.turns++
     clearTimeout(managed.idle)
     let context: BrowserContext
@@ -114,6 +115,11 @@ export class BrowserPool extends Service {
     } catch (error) {
       this.release(account, managed)
       throw error
+    }
+    if (options.signal?.aborted) {
+      await context.close().catch(() => undefined)
+      this.release(account, managed)
+      options.signal.throwIfAborted()
     }
     const onAbort = (): void => void context.close().catch(() => undefined)
     options.signal?.addEventListener('abort', onAbort, { once: true })

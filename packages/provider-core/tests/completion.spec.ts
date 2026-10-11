@@ -50,3 +50,20 @@ describe('waitForStableCompletion (two clocks)', () => {
       .rejects.toMatchObject({ kind: 'aborted' })
   })
 })
+
+describe('waitForStableCompletion listener hygiene (review)', () => {
+  it('does not accumulate abort listeners across polls', async () => {
+    const { waitForStableCompletion } = await import('../src/index.ts')
+    const controller = new AbortController()
+    let added = 0
+    let removed = 0
+    const add = controller.signal.addEventListener.bind(controller.signal)
+    const remove = controller.signal.removeEventListener.bind(controller.signal)
+    controller.signal.addEventListener = ((...args: Parameters<typeof add>) => { added++; return add(...args) }) as typeof add
+    controller.signal.removeEventListener = ((...args: Parameters<typeof remove>) => { removed++; return remove(...args) }) as typeof remove
+    let polls = 0
+    await waitForStableCompletion(async () => ({ responsePresent: polls++ > 3, text: 'done', html: '', running: false }), { timeoutMs: 5000, pollMs: 5, stableMs: 20, signal: controller.signal })
+    expect(added).toBeGreaterThan(3)
+    expect(added - removed).toBeLessThanOrEqual(1)
+  })
+})

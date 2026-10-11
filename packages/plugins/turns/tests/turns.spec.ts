@@ -218,6 +218,18 @@ describe.runIf(canRunBrowser)('ctx.turns: ask through a saved account', () => {
     expect(second.ctx.artifacts.get(done.answerArtifact!)).toBeDefined()
   }, 90_000)
 
+  it('settles pending waits promptly when the runtime stops', async () => {
+    const { ctx, stop } = await boot({ fake: { thinkMs: 30_000 } })
+    const started = ctx.turns.ask({ prompt: 'slow' })
+    const waiting = ctx.turns.wait(started.turnId, 55_000)
+    await new Promise((resolve) => setTimeout(resolve, 1500))
+    const t0 = Date.now()
+    await stop()
+    cleanups.splice(cleanups.indexOf(stop), 1)
+    await waiting
+    expect(Date.now() - t0).toBeLessThan(15_000)
+  }, 90_000)
+
   it('serves ask and result over MCP in place of the placeholders', async () => {
     const { dir } = await boot({ fake: { answer: 'via mcp' } })
     const { url, tokenFile } = JSON.parse(readFileSync(join(dir, 'mcp.json'), 'utf8')) as { url: string; tokenFile: string }

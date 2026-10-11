@@ -147,3 +147,20 @@ describe('review fixes (PR #3 kernel review)', () => {
     expect(wrote).toBe(true)
   })
 })
+
+describe('afterCommit inside a rolled-back savepoint (review)', () => {
+  it('drops callbacks queued by the rolled-back nested step, keeps the outer ones', async () => {
+    const { ctx } = await boot()
+    const ran: string[] = []
+    ctx.store.transaction(() => {
+      ctx.store.afterCommit(() => ran.push('outer'))
+      try {
+        ctx.store.transaction(() => {
+          ctx.store.afterCommit(() => ran.push('inner'))
+          throw new Error('nested step failed')
+        })
+      } catch { /* the outer transaction recovers and commits */ }
+    })
+    expect(ran).toEqual(['outer'])
+  })
+})

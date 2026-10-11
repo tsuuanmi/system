@@ -131,6 +131,14 @@ describe.runIf(canRun)('ctx.browser with a real headed Chrome on Xvfb', () => {
     await closed
   }, 60_000)
 
+  it('honours an abort that arrives while Chrome is still launching', async () => {
+    const { ctx } = await boot()
+    const controller = new AbortController()
+    const opening = ctx.browser.openTurn('acct-late', { signal: controller.signal })
+    setTimeout(() => controller.abort(new Error('lease lost')), 50)
+    await expect(opening).rejects.toThrow(/lease lost/)
+  }, 60_000)
+
   it('closes the browsers on a lost display and relaunches on the next display', async () => {
     const { ctx, display } = await boot()
     const turn = await ctx.browser.openTurn('acct-a')

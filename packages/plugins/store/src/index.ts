@@ -99,6 +99,8 @@ export class Store extends Service {
     const outermost = this._depth === 0
     const savepoint = `sp_${this._depth}`
     db.exec(outermost ? 'BEGIN IMMEDIATE' : `SAVEPOINT ${savepoint}`)
+    // Callbacks queued inside a step that rolls back must not run when the outer commits.
+    const pendingAtStart = this.pending.length
     this._depth++
     let result: T
     try {
@@ -111,7 +113,7 @@ export class Store extends Service {
     } catch (error) {
       if (db.isTransaction) db.exec(outermost ? 'ROLLBACK' : `ROLLBACK TO ${savepoint}; RELEASE ${savepoint}`)
       this._depth--
-      if (outermost) this.pending = []
+      this.pending.length = outermost ? 0 : pendingAtStart
       throw error
     }
     this._depth--
