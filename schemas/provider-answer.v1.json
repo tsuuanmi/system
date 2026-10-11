@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:tsuuanmi:system:schema:provider-answer:v1",
+  "title": "Provider answer",
+  "description": "Body of a `report` artifact holding one website Worker answer (design/provider-turns.md). The prompt is referenced by hash only.",
+  "type": "object",
+  "required": ["schema", "provider", "account", "turnId", "conversation", "promptHash", "text"],
+  "properties": {
+    "schema": { "const": "provider-answer@1.0" },
+    "provider": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$", "maxLength": 64 },
+    "account": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$", "maxLength": 64 },
+    "turnId": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+    "sessionId": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+    "conversation": {
+      "type": "object",
+      "required": ["mode"],
+      "properties": {
+        "mode": { "enum": ["temporary", "persistent"] },
+        "binding": { "type": "string", "maxLength": 512 }
+      },
+      "additionalProperties": false
+    },
+    "promptHash": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/sha256" },
+    "text": { "type": "string", "maxLength": 4000000 }
+  },
+  "additionalProperties": false
+}

@@ -38,5 +38,7 @@
       name: '@tsuuanmi/system-provider-chatgpt-web'  # UI map: ui/chatgpt-web.ui.yaml
     - id: login
       name: '@tsuuanmi/system-login'                 # login profiles, Save, account_* MCP tools
+    - id: turns
+      name: '@tsuuanmi/system-turns'                 # the ask runtime; contributes MCP ask/result
     - id: mcp-server
       name: '@tsuuanmi/system-mcp-server'

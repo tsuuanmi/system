@@ -26,7 +26,8 @@
     "@tsuuanmi/system-provider-chatgpt-web": "workspace:*",
     "@tsuuanmi/system-providers": "workspace:*",
     "@tsuuanmi/system-store": "workspace:*",
-    "@tsuuanmi/system-turn-receipts": "workspace:*"
+    "@tsuuanmi/system-turn-receipts": "workspace:*",
+    "@tsuuanmi/system-turns": "workspace:*"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "4.0.5-alpha.1",

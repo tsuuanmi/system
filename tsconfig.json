@@ -65,6 +65,9 @@
       ],
       "@tsuuanmi/system-login": [
         "packages/plugins/login/src/index.ts"
+      ],
+      "@tsuuanmi/system-turns": [
+        "packages/plugins/turns/src/index.ts"
       ]
     }
   },

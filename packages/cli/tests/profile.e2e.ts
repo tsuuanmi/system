@@ -16,7 +16,13 @@ const home = mkdtempSync(join(tmpdir(), 'system-e2e-'))
 const env = { ...process.env, DSH_HOME: home }
 let child: ChildProcess | undefined
 
-const ALLOWED_ROWS = ['timer', 'credentials', 'webserver', 'store', 'blobs', 'event-log', 'leases', 'artifacts', 'accounts', 'turn-receipts', 'display', 'browser', 'providers', 'provider-chatgpt-web', 'login', 'mcp-server']
+const ALLOWED_ROWS = ['timer', 'credentials', 'webserver', 'store', 'blobs', 'event-log', 'leases', 'artifacts', 'accounts', 'turn-receipts', 'display', 'browser', 'providers', 'provider-chatgpt-web', 'login', 'turns', 'mcp-server']
+
+async function client2(url: string, token: string): Promise<Client> {
+  const client = new Client({ name: 'e2e-2', version: '0' })
+  await client.connect(new StreamableHTTPClientTransport(new URL(url), { requestInit: { headers: { authorization: `Bearer ${token}` } } }) as unknown as Transport)
+  return client
+}
 
 async function waitFor(path: string, timeoutMs: number): Promise<void> {
   const deadline = Date.now() + timeoutMs
@@ -67,6 +73,10 @@ describe('system profile (e2e through dsh)', () => {
 
     const listed = execFileSync(process.execPath, [bin, 'account', 'list'], { env, encoding: 'utf8' })
     expect(JSON.parse(listed)).toEqual([])
+    // The runtime replaced the ask placeholder: with no saved account it fails closed, honestly.
+    const second = await client2(url, token)
+    const asked = await second.callTool({ name: 'ask', arguments: { prompt: 'hi', waitSeconds: 10 } }).finally(() => second.close())
+    expect(asked.structuredContent).toMatchObject({ status: 'failed', error: { kind: 'reauth_required', disposition: 'USER_ACTION' } })
 
     expect(existsSync(join(home, 'system', 'system.db'))).toBe(true)
     expect(existsSync(join(home, 'system', 'vault.key'))).toBe(true)

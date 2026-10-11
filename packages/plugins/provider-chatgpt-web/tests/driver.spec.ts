@@ -71,11 +71,20 @@ describe.runIf(canRunBrowser)('ChatGptWebDriver against the fake site', () => {
     expect(fake.sent[0]).toMatchObject({ mode: 'chat', temporary: false })
 
     fake.options.answer = 'second answer'
-    const second = await driver.ask(page, 'two', { conversation: 'persistent', binding: first.binding })
+    const boundaries: Array<string | null> = []
+    const second = await driver.ask(page, 'two', { conversation: 'persistent', binding: first.binding, beforeSend: ({ previousResponse }) => { boundaries.push(previousResponse) } })
+    expect(boundaries).toEqual(['first answer'])
     expect(second.text).toBe('second answer')
     expect(second.binding).toBe(first.binding)
     expect(fake.sent[1]).toMatchObject({ conversationId: first.binding })
   }, 60_000)
+
+  it('sends nothing when beforeSend throws (the receipt could not be persisted)', async () => {
+    const { fake, page, driver } = await site()
+    const failure = driver.ask(page, 'x', { conversation: 'temporary', beforeSend: () => { throw new Error('store unavailable') } })
+    await expect(failure).rejects.toThrow(/store unavailable/)
+    expect(fake.sent).toEqual([])
+  }, 30_000)
 
   it('refuses to send when Chat cannot be selected (Work spends the Codex quota)', async () => {
     const { fake, page, driver } = await site({ chatToggleBroken: true })

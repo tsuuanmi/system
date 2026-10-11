@@ -125,6 +125,27 @@ it is written back **only if** both the account revision and the scheduler lease
 generation are still current. Otherwise the write is dropped
 ([scheduling-and-leases](scheduling-and-leases.md)).
 
+## Runtime (MVP slice 1)
+
+`@tsuuanmi/system-turns` (`ctx.turns`) runs `ask` end to end. The details are in
+its [README](../../packages/plugins/turns/README.md):
+
+- **Accept durably.** The turn is stored as `queued` before anything runs.
+- **Route.** A persistent session stays on its account. Otherwise the turn goes
+  to the first ready account, and the choice is recorded as a `route` decision.
+- **Schedule.** The account's scheduler runs the turn.
+- **Open.** A fresh context is built from the saved state.
+- **Run the driver.**
+  - The receipt is written in `beforeSend`.
+  - Completion binds the conversation, completes the receipt, and stores the
+    answer artifact in **one transaction**.
+- **Restart.** A submitted turn is never resent automatically.
+
+MCP contract: `ask { prompt, sessionId?, persist?, clientRequestId?, waitSeconds? }`
+returns the turn view with `answer` once it is complete. Otherwise it returns
+`status: queued | running` and a `turnId`, which `result { turnId, waitSeconds? }`
+long-polls. The wait stays under common MCP client timeouts (at most 55 s).
+
 ## Large inputs
 
 When a prompt exceeds the measured composer budget, the runtime either fails

@@ -5,6 +5,8 @@ const USAGE = `Usage: system <command>
 
   init                      create or refresh the system DSH profile; ensure Chrome and Xvfb
   browser install           install the managed Chrome pinned in chrome.lock.json
+  ask [--persist] [--session <id>] <prompt...>
+                            ask ChatGPT through a saved account (profile must be running)
   account list              list provider accounts and their status (profile must be running)
   account save <id>         after an interactive login: capture, verify, store encrypted
   start [dsh args...]       boot the profile (e.g. --patch ./overlay.yml)
@@ -25,6 +27,31 @@ async function main(argv: string[]): Promise<number> {
       const { path, installed } = await deps.install()
       console.log(installed ? `installed ${path}` : `already installed: ${path}`)
       return 0
+    }
+    case 'ask': {
+      const args = [...rest]
+      let persist = false
+      let sessionId: string | undefined
+      while (args[0]?.startsWith('--')) {
+        const flag = args.shift()
+        if (flag === '--persist') persist = true
+        else if (flag === '--session') sessionId = args.shift()
+        else break
+      }
+      const prompt = args.join(' ').trim()
+      if (!prompt) break
+      let outcome = await callTool('ask', { prompt, ...(persist ? { persist } : {}), ...(sessionId ? { sessionId } : {}) })
+      for (;;) {
+        if (outcome.isError) throw new Error(outcome.text)
+        const turn = outcome.structured as { turnId: string; status: string; sessionId?: string; answer?: string; error?: { kind: string; message: string } }
+        if (turn.status === 'completed') {
+          console.log(turn.answer)
+          if (turn.sessionId) console.error(`session: ${turn.sessionId}`)
+          return 0
+        }
+        if (turn.status === 'failed') throw new Error(`${turn.error?.kind}: ${turn.error?.message}`)
+        outcome = await callTool('result', { turnId: turn.turnId })
+      }
     }
     case 'account': {
       if (rest[0] === 'list') {

@@ -11,6 +11,13 @@ export interface AskOptions {
   /** Persistent conversation to continue. */
   binding?: string | undefined
   signal?: AbortSignal
+  /**
+   * Called after the prompt is in the composer and the mode is verified, immediately
+   * before the send. The runtime persists the turn receipt here (INV-4); a throw aborts
+   * the turn without sending. `previousResponse` is the last answer already in the
+   * conversation (null for a new one), the boundary used by reconciliation.
+   */
+  beforeSend?: (boundary: { previousResponse: string | null }) => void | Promise<void>
 }
 
 export interface AskResult {

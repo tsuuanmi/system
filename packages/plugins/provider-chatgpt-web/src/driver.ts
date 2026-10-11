@@ -94,8 +94,10 @@ export class ChatGptWebDriver implements ProviderDriver<Page> {
     await this.open(page, options)
     const engine = this.engine(page)
     const before = await engine.count('turn.assistant')
+    const previousResponse = before > 0 ? await this.answerText(engine) : null
     await engine.act('composer.insert', { text: prompt })
     await this.requireChat(engine, 'before sending')
+    await options.beforeSend?.({ previousResponse })
     await engine.act('composer.send')
     const text = await this.waitForAnswer(page, before, options.signal)
     if (options.conversation === 'temporary') return { text, binding: undefined }
@@ -172,14 +174,19 @@ export class ChatGptWebDriver implements ProviderDriver<Page> {
     }
   }
 
+  /** Text of the last assistant answer: the container of its "ChatGPT said:" heading. */
+  private async answerText(engine: UiEngine): Promise<string> {
+    const heading = (await engine.resolve('turn.assistant', 1000)).locator.last()
+    const raw = await heading.locator('xpath=..').innerText().catch(() => '')
+    return raw.replace(/^\s*ChatGPT said:?\s*/i, '').trim()
+  }
+
   private async waitForAnswer(page: Page, before: number, signal: AbortSignal | undefined): Promise<string> {
     const engine = this.engine(page)
     const read = async () => {
       const count = await engine.count('turn.assistant')
       if (count <= before) return { responsePresent: false, text: '', html: '', running: true }
-      const heading = (await engine.resolve('turn.assistant', 1000)).locator.last()
-      const raw = await heading.locator('xpath=..').innerText().catch(() => '')
-      const text = raw.replace(/^\s*ChatGPT said:?\s*/i, '').trim()
+      const text = await this.answerText(engine)
       const finished = (await engine.count('turn.assistant.done')) >= count
       const running = (await engine.state('turn.running')) || !finished
       return { responsePresent: true, text, html: '', running }
