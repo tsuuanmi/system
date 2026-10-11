@@ -148,13 +148,14 @@ export function mcpConfig(client: 'claude' | 'codex', home: string = dshHome()):
   if (!existsSync(path)) throw new Error(`no discovery file at ${path}; is \`system start\` running?`)
   const { url } = JSON.parse(readFileSync(path, 'utf8')) as Discovery
   // The token is never printed here (shell history); clients read it from the environment.
-  const exportLine = 'export SYSTEM_MCP_TOKEN="$(system mcp-token)"'
   if (client === 'claude') {
     // Claude Code runs headersHelper on each connection, so the token never sits in its config.
     const helper = `${process.execPath} ${fileURLToPath(new URL('./bin.js', import.meta.url))} mcp-headers`
     return `claude mcp add-json --scope user system '${JSON.stringify({ type: 'http', url, headersHelper: helper })}'`
   }
-  return [exportLine, '', '# ~/.codex/config.toml', '[mcp_servers.system]', `url = "${url}"`, 'bearer_token_env_var = "SYSTEM_MCP_TOKEN"'].join('\n')
+  // Codex runs the stdio shim, which authenticates from the token file: no token in its config or environment.
+  const bin = fileURLToPath(new URL('./bin.js', import.meta.url))
+  return ['# ~/.codex/config.toml', '[mcp_servers.system]', `command = ${JSON.stringify(process.execPath)}`, `args = [${JSON.stringify(bin)}, "mcp-stdio"]`, `# endpoint: ${url}`].join('\n')
 }
 
 /** `{"Authorization": "Bearer <token>"}` for a client's headersHelper (Claude Code). */
@@ -221,4 +222,32 @@ export async function readAllStdin(): Promise<string> {
   let text = ''
   for await (const chunk of process.stdin) text += String(chunk)
   return text
+}
+
+/**
+ * `system mcp-stdio`: an MCP server on stdio that forwards tool listing and calls to the
+ * running profile's HTTP endpoint, authenticating from the 0600 discovery and token files.
+ * For MCP clients that cannot run a header helper (e.g. Codex): no token in their config or
+ * environment. Tools and results pass through unchanged (INV-7).
+ */
+export async function serveStdio(home: string = dshHome()): Promise<void> {
+  const { Server } = await import('@modelcontextprotocol/sdk/server/index.js')
+  const { StdioServerTransport } = await import('@modelcontextprotocol/sdk/server/stdio.js')
+  const { CallToolRequestSchema, ListToolsRequestSchema } = await import('@modelcontextprotocol/sdk/types.js')
+  const remote = async <T>(use: (client: Client) => Promise<T>): Promise<T> => {
+    const path = join(home, 'system', 'mcp.json')
+    if (!existsSync(path)) throw new Error(`no discovery file at ${path}; is \`system start\` running?`)
+    const { url, tokenFile } = JSON.parse(readFileSync(path, 'utf8')) as Discovery
+    const client = new Client({ name: 'system-mcp-stdio', version: '0.0.0' })
+    await client.connect(new StreamableHTTPClientTransport(new URL(url), { requestInit: { headers: { authorization: `Bearer ${readFileSync(tokenFile).toString('base64url')}` } } }) as unknown as Transport)
+    try {
+      return await use(client)
+    } finally {
+      await client.close()
+    }
+  }
+  const server = new Server({ name: 'system', version: '0.0.0' }, { capabilities: { tools: {} } })
+  server.setRequestHandler(ListToolsRequestSchema, async () => remote((client) => client.listTools()))
+  server.setRequestHandler(CallToolRequestSchema, async (request) => remote((client) => client.callTool(request.params) as never))
+  await server.connect(new StdioServerTransport() as unknown as Transport)
 }

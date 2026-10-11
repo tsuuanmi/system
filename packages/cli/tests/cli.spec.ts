@@ -35,7 +35,7 @@ describe('system CLI (PR #3 kernel review)', () => {
     writeFileSync(join(home, 'system', 'mcp.json'), JSON.stringify({ url: 'http://127.0.0.1:47317/mcp', tokenFile: join(home, 'system', 'mcp.token') }))
     const token = Buffer.alloc(32, 9).toString('base64url')
     for (const client of ['claude', 'codex'] as const) expect(mcpConfig(client, home)).not.toContain(token)
-    expect(mcpConfig('codex', home)).toContain('SYSTEM_MCP_TOKEN')
+    expect(mcpConfig('codex', home)).toMatch(/\[mcp_servers\.system\][\s\S]*mcp-stdio/)
     expect(mcpConfig('claude', home)).toContain('headersHelper')
     expect(readFileSync(join(home, 'system', 'mcp.json'), 'utf8')).toContain('47317')
   })

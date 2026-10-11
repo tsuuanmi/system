@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { browserDeps, callTool, ensureBrowser, init, mcpConfig, mcpHeaders, mcpToken, parseAsk, readAllStdin, start } from './index.ts'
+import { browserDeps, callTool, ensureBrowser, init, mcpConfig, mcpHeaders, mcpToken, parseAsk, readAllStdin, serveStdio, start } from './index.ts'
 
 const USAGE = `Usage: system <command>
 
@@ -18,6 +18,7 @@ const USAGE = `Usage: system <command>
   mcp-config <claude|codex> print client configuration for the running MCP server
   mcp-token                 print the bearer token (for an environment variable)
   mcp-headers               print the Authorization header as JSON (Claude Code headersHelper)
+  mcp-stdio                 serve the running profile's MCP tools on stdio (Codex and other clients)
 `
 
 async function main(argv: string[]): Promise<number> {
@@ -118,6 +119,11 @@ async function main(argv: string[]): Promise<number> {
       console.log(mcpConfig(client))
       return 0
     }
+    case 'mcp-stdio':
+      await serveStdio()
+      // Serve until the client closes stdin.
+      await new Promise<void>((done) => process.stdin.once('close', done).once('end', done))
+      return 0
     case 'mcp-headers':
       console.log(mcpHeaders())
       return 0

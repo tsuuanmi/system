@@ -44,6 +44,7 @@ system init                          # profile, managed Chrome if needed, Xvfb/V
 system start &                       # the daemon (MCP on 127.0.0.1:47317)
 system account login chatgpt-main    # once: sign in through noVNC over ssh -L, then Save
 eval "$(system mcp-config claude)"   # registers MCP server "system" (token via headersHelper)
+system mcp-config codex >> ~/.codex/config.toml   # Codex: runs the stdio shim (system mcp-stdio)
 ```
 
 Claude Code then has `ask`, `research`, `result`, and `status`, plus the
