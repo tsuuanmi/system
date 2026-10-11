@@ -1,0 +1,56 @@
+{
+  "schema": "artifact-envelope@1.0",
+  "id": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+  "kind": "decision",
+  "bodySchema": "decision@1.0",
+  "body": {
+    "schema": "decision@1.0",
+    "decisionType": "route",
+    "question": "Which Worker runs node research:1?",
+    "inputs": [
+      "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+    ],
+    "candidates": [
+      {
+        "option": "worker:chatgpt-thinker/deep-research",
+        "selected": true,
+        "reasons": [
+          "capabilities proven: reason, deep-research",
+          "tier=frontier",
+          "quota=subscription-chat"
+        ]
+      },
+      {
+        "option": "worker:gemini-thinker/deep-research",
+        "selected": false,
+        "reasons": [
+          "account state: reauth-required"
+        ]
+      }
+    ],
+    "decider": {
+      "type": "policy",
+      "id": "routing.default",
+      "version": "1"
+    },
+    "outcome": {
+      "option": "worker:chatgpt-thinker/deep-research"
+    },
+    "deterministic": true,
+    "rationale": "lowest admissible tier for deep-research, preferred quota class"
+  },
+  "classification": "operator-shared",
+  "producer": {
+    "type": "policy",
+    "ref": "routing.default"
+  },
+  "inputs": [
+    "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+    "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+  ],
+  "lineage": {},
+  "runId": "run-2026-10-11-001",
+  "nodeId": "research:1",
+  "createdAt": "2026-10-11T09:30:00Z"
+}

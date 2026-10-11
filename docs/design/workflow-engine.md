@@ -3,7 +3,9 @@
 > Target state. Boundary: [orchestration](../architecture/components.md#orchestration).
 > Requirements: REQ-WF-1..9. Decision: [ADR-0004](../decisions/adr/0004-single-workflow-runtime.md).
 
-There is one engine. It combines three ideas: a **semantic DAG** whose nodes
+There is one engine, and every multi-step job runs on it as an append-only DAG
+([ADR-0012](../decisions/adr/0012-dag-execution-model.md)). It combines three
+ideas: a **semantic DAG** whose nodes
 declare objectives and capability requirements, **durable nodes addressed by
 input hash** so completed work is never redone, and **artifact lineage** so
 superseded evidence invalidates dependent work.
@@ -20,6 +22,8 @@ Lifecycle: `draft → preflight → confirm → accepted → active`.
   to the profile version.
 
 ## Graph model
+
+Exact shape: [`workflow-node.v1.json`](../../schemas/workflow-node.v1.json).
 
 ```ts
 WorkflowNode {
@@ -53,6 +57,15 @@ never crash-loops.
 
 ## Graph growth
 
+Each graph snapshot is acyclic. Loops are unrolled into new nodes with ordinal
+ids. Growth comes from two sources, and both are recorded as `graph-growth`
+decision artifacts:
+
+- **Profile rules** (static).
+- **`plan` artifacts** emitted by a planner node (dynamic). The engine validates
+  a plan (acyclic, admissible capabilities, within bounds) before appending its
+  nodes.
+
 Profiles declare growth rules. For example, when the implementation node reports a
 PR, the engine appends a review cycle bound to that PR's head SHA. When a review
 gate requires changes, it appends a remediation node. Growth is bounded, for
@@ -75,12 +88,10 @@ binds to the new version. Mismatches fail the gate.
 
 ## Artifacts, lineage, invalidation
 
-Results are typed, content-addressed artifacts: objective, criteria, plan,
-finding, evidence, assessment, report, or delivery. Each carries lineage links
-(`derivedFrom`, `supersedes`, `invalidates`). A node's frozen **input bundle**
-lists the artifact refs it consumed. When an artifact is superseded, every node
-whose bundle depends on it, directly or transitively, is fenced and becomes
-re-runnable.
+Node results, receipts, and every engine decision (spec admission, gate, graph
+growth, recovery) are artifacts. Their model, lineage, and invalidation rules are
+canonical in [artifacts](artifacts.md). Every node state transition references
+the decision artifact that caused it.
 
 ## Recovery
 

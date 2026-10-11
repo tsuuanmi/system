@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:tsuuanmi:system:schema:common:v1",
+  "title": "Common definitions",
+  "description": "Shared value types referenced by every system schema.",
+  "$defs": {
+    "schemaTag": {
+      "description": "Schema name and version of a record: <name>@<major>.<minor>.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]*@[0-9]+\\.[0-9]+$"
+    },
+    "sha256": {
+      "description": "Content address: 'sha256:' followed by 64 lowercase hex characters.",
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "artifactRef": { "$ref": "#/$defs/sha256" },
+    "timestamp": { "type": "string", "format": "date-time" },
+    "id": {
+      "description": "Stable, human-readable identifier (deterministic node ids, account ids, policy ids).",
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$"
+    },
+    "classification": {
+      "description": "Data classification driving egress policy (INV-12).",
+      "enum": ["public", "operator-shared", "local-private"]
+    },
+    "tier": {
+      "description": "Intelligence tier (purpose P4).",
+      "enum": ["economy", "standard", "frontier"]
+    },
+    "quotaClass": {
+      "description": "Quota class of a Worker (purpose P1).",
+      "enum": ["subscription-chat", "agent-plan", "metered", "local"]
+    },
+    "capability": {
+      "description": "Named capability; 'connector:<name>' for website connectors.",
+      "type": "string",
+      "pattern": "^([a-z][a-z0-9-]*|connector:[a-z0-9][a-z0-9_-]*)$"
+    },
+    "sideEffectClass": {
+      "description": "Effect class used by restart reconciliation (INV-4).",
+      "enum": ["none", "idempotent", "reconcilable", "irreversible"]
+    },
+    "subject": {
+      "description": "Exact subject an artifact or gate is bound to (INV-5).",
+      "type": "object",
+      "required": ["type", "ref"],
+      "properties": {
+        "type": { "enum": ["content", "git-head", "pull-request", "artifact", "external"] },
+        "ref": { "type": "string", "minLength": 1, "maxLength": 512 },
+        "version": { "type": "string", "maxLength": 128 }
+      },
+      "additionalProperties": false
+    }
+  }
+}

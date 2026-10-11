@@ -1,0 +1,25 @@
+{
+  "schema": "decision@1.0",
+  "decisionType": "route",
+  "question": "Which Worker runs node research:1?",
+  "inputs": [
+    "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+    "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+  ],
+  "candidates": [
+    {
+      "option": "worker:chatgpt-thinker/deep-research",
+      "selected": true,
+      "reasons": ["capabilities proven: reason, deep-research", "tier=frontier", "quota=subscription-chat"]
+    },
+    {
+      "option": "worker:gemini-thinker/deep-research",
+      "selected": false,
+      "reasons": ["account state: reauth-required"]
+    }
+  ],
+  "decider": { "type": "policy", "id": "routing.default", "version": "1" },
+  "outcome": { "option": "worker:chatgpt-thinker/deep-research" },
+  "deterministic": true,
+  "rationale": "lowest admissible tier for deep-research, preferred quota class"
+}

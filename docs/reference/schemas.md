@@ -1,0 +1,74 @@
+# Record schemas
+
+> Target state. Shape: [`schemas/`](../../schemas/README.md) (canonical). Decision:
+> [ADR-0014](../decisions/adr/0014-json-schema-contracts.md).
+
+## Versioning
+
+| Change | Version effect | Requirement |
+|---|---|---|
+| add an optional field | minor (`@1.0 → @1.1`) | readers on `@1.x` keep working |
+| add an enum value | minor, but readers must reject unknown values in decision paths | listed in the changelog of the schema PR |
+| remove, rename, or tighten a field; change meaning | major (`v1 → v2`, new file) | a tested store migration; both majors are readable during migration |
+
+A reader rejects a record whose major version it does not support. It never
+guesses.
+
+## Validation points
+
+| Boundary | Validated | On failure |
+|---|---|---|
+| store write | every record before commit | the write is rejected (typed error) |
+| store read | every record after load | the record is quarantined; the node becomes `BLOCKED` with `CODE_FIX_REQUIRED` |
+| MCP tool input and output | each call | MCP error to the client; nothing is executed |
+| Worker structured output | the result against `acceptance.resultSchema` | an `acceptance` decision with outcome `rejected`, then escalation policy |
+| decision model input and output | each call | `decision: unavailable` path (PROP-0002) |
+| config bundles and patches | at startup | startup fails with the exact path (REQ-HOST-2) |
+
+## Semantics not expressed by the schemas
+
+### `artifact-envelope`
+
+- `id` is computed by the store, never trusted from the producer. It is
+  `sha256(canonicalJSON({kind, body|blob.ref, inputs, lineage, subject}))`.
+  Canonical JSON uses sorted keys, no insignificant whitespace, and UTF-8.
+  `createdAt`, `producer`, and `classification` are excluded so that identical
+  content deduplicates.
+- `classification` of a derived artifact is at least the strictest
+  classification among its `inputs`. A producer cannot downgrade it.
+
+### `decision`
+
+- Exactly one candidate is `selected`, and it equals `outcome.option`. The schema
+  checks that only one candidate is selected. The store checks that it equals
+  the outcome.
+- `decider.version` changes whenever the policy's behavior changes. `hash` is the
+  hash of the effective policy configuration.
+- When `decider.type` is `model`, `deterministic` must be `false`, and
+  reproducibility comes from reuse by input hash.
+
+### `work-requirement`
+
+- `tier.source` records who set the tier. When it is `decision`, `tier.decision`
+  references the `tier` decision artifact.
+- `egressPolicy` must come from a trusted envelope (INV-6). A requirement built
+  from model text alone is invalid.
+
+### `workflow-node`
+
+- `nodeId` is deterministic. Unrolled loops append an ordinal, for example
+  `review:cycle:2` ([ADR-0012](../decisions/adr/0012-dag-execution-model.md)).
+- Every state transition updates `lastDecision` to the decision artifact that
+  caused it ([INV-13](../architecture/invariants.md#inv-13-every-decision-is-an-artifact)).
+
+### `provider-turn-receipt`
+
+- It is persisted *before* submission. `previousResponseHash = null` only for a
+  new conversation.
+- `resubmits ≤ 2` is a hard bound. Each reconciliation appends a decision ref.
+
+### `capability-descriptor`
+
+- `provider` is informational. Routing must not branch on it (INV-11). Only
+  `capabilities`, `tier`, `quotaClass`, `locality`, and `state` are routing
+  inputs.

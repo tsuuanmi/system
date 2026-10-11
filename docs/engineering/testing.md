@@ -21,7 +21,10 @@
 1. Biome, typecheck, and the layer dependency check.
 2. Unit, contract, driver, crash, and concurrency tests.
 3. Real-client smoke (scripted provider).
-4. Documentation checks: every `docs/**` directory has exactly one `README.md`;
+4. Schema checks: every file in `schemas/` compiles under Ajv draft 2020-12 with
+   `strict: true`; every file in `schemas/examples/` validates; generated
+   TypeScript types are current.
+5. Documentation checks: every `docs/**` directory has exactly one `README.md`;
    no `topic.md` alongside `topic/README.md`; every relative Markdown link
    resolves; every package directory has a `README.md`.
 

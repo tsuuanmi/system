@@ -1,0 +1,135 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:tsuuanmi:system:schema:provider-turn-receipt:v1",
+  "title": "Provider turn receipt",
+  "description": "Body of a 'receipt' artifact for one website provider turn (design/provider-turns.md). Persisted before submission.",
+  "type": "object",
+  "required": [
+    "schema",
+    "account",
+    "requestId",
+    "conversation",
+    "promptHash",
+    "previousResponseHash",
+    "mode",
+    "status",
+    "resubmits"
+  ],
+  "properties": {
+    "schema": {
+      "const": "provider-turn-receipt@1.0"
+    },
+    "account": {
+      "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+    },
+    "requestId": {
+      "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+    },
+    "conversation": {
+      "type": "object",
+      "required": [
+        "provider",
+        "binding"
+      ],
+      "properties": {
+        "provider": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "binding": {
+          "type": "string",
+          "maxLength": 512
+        }
+      },
+      "additionalProperties": false
+    },
+    "promptHash": {
+      "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/sha256"
+    },
+    "previousResponseHash": {
+      "description": "Boundary: hash of the last response before this turn, or null for a new conversation.",
+      "oneOf": [
+        {
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/sha256"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "mode": {
+      "type": "object",
+      "required": [
+        "verified",
+        "tier"
+      ],
+      "properties": {
+        "model": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "effort": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "feature": {
+          "enum": [
+            "chat",
+            "web-search",
+            "deep-research"
+          ]
+        },
+        "tier": {
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/tier"
+        },
+        "verified": {
+          "const": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "status": {
+      "enum": [
+        "SUBMITTED",
+        "COMPLETED"
+      ]
+    },
+    "providerTurnId": {
+      "type": "string",
+      "maxLength": 256
+    },
+    "responseHash": {
+      "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/sha256"
+    },
+    "resubmits": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 2
+    },
+    "reconciliations": {
+      "description": "Decision artifacts of type reconciliation.",
+      "type": "array",
+      "items": {
+        "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/artifactRef"
+      }
+    }
+  },
+  "if": {
+    "properties": {
+      "status": {
+        "const": "COMPLETED"
+      }
+    }
+  },
+  "then": {
+    "properties": {
+      "responseHash": true,
+      "providerTurnId": true
+    },
+    "required": [
+      "responseHash",
+      "providerTurnId"
+    ]
+  },
+  "additionalProperties": false
+}

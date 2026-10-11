@@ -39,11 +39,13 @@ for free. The Responses and Messages gateways, which make `system` look like a
 
 ```text
 host, libs
-kernel:        store-sqlite, blobs-fs, events-store, leases-store
+kernel:        store-sqlite, blobs-fs, events-store, leases-store, artifacts-store
 provider:      browser-patchright, display-headless, display-xvfb, remote-login,
                accounts-vault, provider-chatgpt-web (+ scheduler, receipts)
 capabilities:  website-core
 routing:       workers-core (capabilities, tiers, egress policy, quota exclusion)
+orchestration: workflow-engine (MVP subset: static DAG, input-hash reuse, receipts,
+               recovery; no graph growth, teams, or lineage invalidation yet)
 edge:          mcp-server, cli
 ```
 
@@ -55,20 +57,24 @@ edge:          mcp-server, cli
 | Provider turns | REQ-PRV-1..6 (`reason`, `web-search`, `deep-research`) |
 | Routing | REQ-WRK-1..4, REQ-WRK-7 (egress), REQ-WRK-8 (quota exclusion), REQ-WRK-9 (tiers: website modes as `economy`, `standard`, and `frontier`) |
 | Gateways | REQ-GW-3 (MCP tools: `ask`, `research`, `status`), REQ-GW-4 (CLI: login, status, ask, research) |
+| Workflows | REQ-WF-1, REQ-WF-3, REQ-WF-4, REQ-WF-6, REQ-WF-10 (static DAGs only) |
+| Artifacts and schemas | REQ-ART-1..5 (decision artifacts for admission, route, tier, egress, acceptance, reconciliation; `system explain` in the CLI) |
 | Host | REQ-HOST-1, REQ-HOST-2, REQ-HOST-4, REQ-HOST-5 |
 
-The MVP workflow is a **fixed pipeline**, not the general engine:
+The MVP research flow is a **static two-node DAG** that runs on the real engine.
+It is a subset of the engine, not separate code
+([ADR-0012](../decisions/adr/0012-dag-execution-model.md), INV-1):
 
 ```text
-research (frontier or deep-research) → compact handoff (economy) → return
+research:1 (frontier · deep-research) ──▶ compact:1 (economy) ──▶ return handoff artifact
 ```
 
-Each step is a durable record with a receipt, so retries and restarts never
-resend or recompute a completed step.
+Each node has input and output receipts and decision artifacts, so retries and
+restarts never resend or recompute a completed step.
 
 ### Explicitly out of MVP
 
-Gemini, teams, the general workflow engine and profiles, agent-runtime Workers,
+Gemini, teams, graph growth and profiles, agent-runtime Workers,
 connectors (`connector:*`), API and local model providers, the Responses and
 Messages gateways, the Web UI, the DSH bundle, and packaged installers.
 
@@ -84,7 +90,11 @@ Messages gateways, the Web UI, the DSH bundle, and packaged installers.
 4. The compaction step runs on the `economy` tier, and the research step on
    `frontier`. Both are visible in the event log.
 5. A usage report shows, per request, which quota class and tier served it.
-6. The `dev` profile, with fake providers, passes every seam conformance suite in
+   `system explain` shows the full decision chain (route, tier, egress,
+   acceptance) for any result.
+6. Every record written by the MVP validates against its schema in `schemas/`.
+   CI compiles the schemas in strict mode and validates the examples.
+7. The `dev` profile, with fake providers, passes every seam conformance suite in
    CI. The account-bound checklist passes manually.
 
 ## Beta (v0.5)

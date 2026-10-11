@@ -32,6 +32,7 @@ can be added without changing consumers.
 |---|---|---|---|
 | Kernel | `store` | `store-sqlite` | every stateful plugin |
 | Kernel | `blobs` | `blobs-fs` | workflow, website |
+| Kernel | `artifacts` (envelope, ids, lineage, schema validation, explain) | `artifacts-store` | every producer of results or decisions |
 | Kernel | `events` | `events-store` | CLI, Web UI, observability |
 | Kernel | `leases` | `leases-store` | scheduler, workflow |
 | Provider runtime | `browser` | `browser-patchright` | provider drivers, remote login |

@@ -17,10 +17,11 @@ other documents link to it instead of repeating it.
 4. [Decisions](decisions/README.md): why durable choices were made.
 5. [Proposals](proposals/README.md) and [research](research/README.md): changes
    and evidence that are not yet current truth.
-6. Source and tests, once they exist.
-7. [Engineering](engineering/README.md) and [security](security/README.md): how
+6. [Reference](reference/README.md) and [`schemas/`](../schemas/README.md): exact contracts.
+7. Source and tests, once they exist.
+8. [Engineering](engineering/README.md) and [security](security/README.md): how
    the system is delivered and how its trust boundaries are protected.
-8. [Governance](governance/README.md): lifecycle, ids, and documentation policy.
+9. [Governance](governance/README.md): lifecycle, ids, and documentation policy.
 
 ## Authority and durability
 
@@ -29,6 +30,7 @@ other documents link to it instead of repeating it.
 | [Requirements](requirements/README.md) | normative intended behavior | canonical / living |
 | [Architecture](architecture/README.md) | structure, boundaries, invariants | canonical / living |
 | [Design](design/README.md) | current mechanisms | canonical / living |
+| [Reference](reference/README.md) + [`schemas/`](../schemas/README.md) | exact contracts and schemas | canonical / living |
 | source + tests | executable behavior and evidence | executable reality |
 | [Engineering](engineering/README.md) | development and delivery process | canonical / living |
 | [Security](security/README.md) | trust boundaries and controls | canonical / living |
@@ -57,8 +59,10 @@ docs/
 ├── research/
 ├── engineering/
 ├── security/
+├── reference/
 └── governance/
+schemas/              # machine-readable JSON Schemas (repository root)
 ```
 
-`reference/`, `validation/`, and `operations/` will be created when there are
-real public contracts, acceptance evidence, and runtime procedures to put in them.
+`validation/` and `operations/` will be created when there are acceptance
+evidence and runtime procedures to put in them.

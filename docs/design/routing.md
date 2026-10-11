@@ -3,8 +3,12 @@
 > Target state. Boundary: [routing](../architecture/components.md#routing).
 > Purpose: [P1–P4](../requirements/purpose.md). Requirements: REQ-WRK-1..9.
 
-Routing turns a **work requirement** into exactly one admitted Worker, or into a
-typed admission failure. It is deterministic: the same configuration, the same
+Routing turns a **work requirement**
+([`work-requirement.v1.json`](../../schemas/work-requirement.v1.json)) into exactly
+one admitted Worker, or into a typed admission failure. Every admission, route,
+tier, escalation, egress, and acceptance outcome is recorded as a decision
+artifact listing every candidate and the reason it was rejected
+([artifacts](artifacts.md#decision-artifacts)). It is deterministic: the same configuration, the same
 Worker states, and the same requirement always give the same result
 ([INV-2](../architecture/invariants.md#inv-2-fail-closed)).
 

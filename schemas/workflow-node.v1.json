@@ -1,0 +1,190 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:tsuuanmi:system:schema:workflow-node:v1",
+  "title": "Workflow node",
+  "description": "Durable state of one DAG node (design/workflow-engine.md). Mutable state that points at immutable artifacts.",
+  "type": "object",
+  "required": [
+    "schema",
+    "runId",
+    "nodeId",
+    "objective",
+    "executor",
+    "requirement",
+    "dependsOn",
+    "state",
+    "revision"
+  ],
+  "properties": {
+    "schema": {
+      "const": "workflow-node@1.0"
+    },
+    "runId": {
+      "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+    },
+    "nodeId": {
+      "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+    },
+    "objective": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4000
+    },
+    "executor": {
+      "enum": [
+        "worker",
+        "team",
+        "effect",
+        "gate"
+      ]
+    },
+    "requirement": {
+      "$ref": "urn:tsuuanmi:system:schema:work-requirement:v1"
+    },
+    "dependsOn": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+      }
+    },
+    "state": {
+      "enum": [
+        "WAITING",
+        "READY",
+        "RUNNING",
+        "RECOVERING",
+        "COMPLETED",
+        "FAILED",
+        "BLOCKED"
+      ]
+    },
+    "inputReceipt": {
+      "type": "object",
+      "required": [
+        "inputHash",
+        "bundle"
+      ],
+      "properties": {
+        "inputHash": {
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/sha256"
+        },
+        "bundle": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/artifactRef"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "outputReceipt": {
+      "type": "object",
+      "required": [
+        "result",
+        "acceptance"
+      ],
+      "properties": {
+        "result": {
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/artifactRef"
+        },
+        "acceptance": {
+          "description": "Decision artifact (acceptance).",
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/artifactRef"
+        }
+      },
+      "additionalProperties": false
+    },
+    "execution": {
+      "type": "object",
+      "required": [
+        "executionId",
+        "attempt",
+        "owner",
+        "generation",
+        "route"
+      ],
+      "properties": {
+        "executionId": {
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+        },
+        "attempt": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "owner": {
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "leaseExpiresAt": {
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp"
+        },
+        "route": {
+          "description": "Decision artifact (route).",
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/artifactRef"
+        }
+      },
+      "additionalProperties": false
+    },
+    "lastDecision": {
+      "description": "Decision artifact that caused the latest state transition (INV-13).",
+      "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/artifactRef"
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 0
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "state": {
+            "const": "COMPLETED"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "inputReceipt",
+          "outputReceipt",
+          "lastDecision"
+        ],
+        "properties": {
+          "inputReceipt": true,
+          "outputReceipt": true,
+          "lastDecision": true
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "state": {
+            "enum": [
+              "RUNNING",
+              "RECOVERING"
+            ]
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "inputReceipt",
+          "execution",
+          "lastDecision"
+        ],
+        "properties": {
+          "inputReceipt": true,
+          "execution": true,
+          "lastDecision": true
+        }
+      }
+    }
+  ],
+  "additionalProperties": false
+}

@@ -50,8 +50,9 @@ the invariant tensions, and the economics.
      abstract decide(state: DecisionState, questions: QuestionSet): Promise<DecisionReceipt>;
    }
    // QuestionSet: versioned, typed (choice | score | yes/no), with criteria
-   // DecisionReceipt: { inputHash, questionSetVersion, provider, modelVersion,
-   //                    answers: { choice?, score?, probability, probabilities?, confidence? } }
+   // DecisionReceipt = a `decision` artifact (schemas/decision.v1.json) with
+   //   decider.type = "model" and modelAnswers[] filled in (provider, modelVersion,
+   //   questionSetVersion, choice|score|probability, probabilities, confidence)
    ```
 
    Providers:

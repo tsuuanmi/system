@@ -92,3 +92,21 @@ Worker class. The check runs on the actual outgoing payload. Results may flow
 from remote Workers to local ones freely
 ([routing](../design/routing.md#data-locality-policy),
 [purpose P3](../requirements/purpose.md#p3-right-worker-right-job-with-local-data-staying-local)).
+
+### INV-13 Every decision is an artifact
+
+Every decision that changes what runs, where, with what tier, or whether a result
+is accepted produces an immutable decision artifact **before** its effect is
+committed. The artifact records its inputs, every candidate considered with
+reasons, the decider and policy version, and the outcome. The state transition
+references it. Multi-step work runs as an append-only DAG whose growth is itself
+a recorded decision ([artifacts](../design/artifacts.md),
+[ADR-0012](../decisions/adr/0012-dag-execution-model.md),
+[ADR-0013](../decisions/adr/0013-typed-artifacts-and-decision-records.md)).
+
+### INV-14 Every record has a versioned schema
+
+Every persisted record and every wire payload validates against a versioned JSON
+Schema in [`schemas/`](../../schemas/README.md) at each boundary. Unknown major
+versions and invalid records fail closed
+([ADR-0014](../decisions/adr/0014-json-schema-contracts.md)).

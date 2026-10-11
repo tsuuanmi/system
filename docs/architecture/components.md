@@ -11,7 +11,9 @@ routes back here.
 
 ## Kernel
 
-- **Owns:** the durable store (SQLite in WAL mode,
+- **Owns:** the artifact store (immutable, content-addressed, schema-validated
+  artifacts including decision records, [artifacts](../design/artifacts.md)),
+  the durable store (SQLite in WAL mode,
   [ADR-0003](../decisions/adr/0003-sqlite-durable-store.md)), content-addressed
   blobs, the append-only event log, leases with generations, canonical JSON
   hashing, and the injectable clock.
@@ -74,7 +76,8 @@ routes back here.
 
 ## Orchestration
 
-- **Workflow engine:** semantic DAG definitions, durable node state, input-hash
+- **Workflow engine:** runs **all** multi-step work as an append-only DAG
+  ([ADR-0012](../decisions/adr/0012-dag-execution-model.md)): semantic DAG definitions, durable node state, input-hash
   result reuse, handoffs, exact-subject gates, recovery, admission with
   provenance, artifact lineage, and convergence.
   See [workflow-engine](../design/workflow-engine.md).

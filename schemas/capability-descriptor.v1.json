@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:tsuuanmi:system:schema:capability-descriptor:v1",
+  "title": "Worker capability snapshot",
+  "description": "What a Worker has proven right now; input to admission (design/routing.md).",
+  "type": "object",
+  "required": ["schema", "worker", "provider", "tier", "quotaClass", "locality", "capabilities", "state", "observedAt"],
+  "properties": {
+    "schema": { "const": "capability-descriptor@1.0" },
+    "worker": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+    "provider": { "description": "Provider plugin kind; never used for routing semantics (INV-11).", "type": "string", "maxLength": 64 },
+    "tier": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/tier" },
+    "quotaClass": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/quotaClass" },
+    "locality": { "enum": ["local", "remote"] },
+    "capabilities": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "required": ["capability", "evidence"],
+        "properties": {
+          "capability": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/capability" },
+          "evidence": {
+            "type": "object",
+            "required": ["kind", "at"],
+            "properties": {
+              "kind": { "enum": ["probe", "conformance", "plan", "sandbox-policy"] },
+              "ref": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/artifactRef" },
+              "at": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp" }
+            },
+            "additionalProperties": false
+          },
+          "sideEffectClass": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/sideEffectClass" }
+        },
+        "additionalProperties": false
+      }
+    },
+    "state": { "enum": ["ready", "busy", "quota-exhausted", "reauth-required", "unavailable"] },
+    "observedAt": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp" }
+  },
+  "additionalProperties": false
+}

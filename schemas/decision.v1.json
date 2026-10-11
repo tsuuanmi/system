@@ -1,0 +1,250 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:tsuuanmi:system:schema:decision:v1",
+  "title": "Decision record",
+  "description": "Body of a 'decision' artifact: one decision with its inputs, candidates, decider and outcome (INV-13).",
+  "type": "object",
+  "required": [
+    "schema",
+    "decisionType",
+    "question",
+    "inputs",
+    "candidates",
+    "decider",
+    "outcome",
+    "deterministic"
+  ],
+  "properties": {
+    "schema": {
+      "const": "decision@1.0"
+    },
+    "decisionType": {
+      "enum": [
+        "admission",
+        "route",
+        "tier",
+        "escalation",
+        "egress",
+        "acceptance",
+        "gate",
+        "reconciliation",
+        "graph-growth",
+        "recovery",
+        "spec-admission"
+      ]
+    },
+    "question": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 500
+    },
+    "inputs": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/artifactRef"
+      }
+    },
+    "candidates": {
+      "description": "Every option considered, including rejected ones with reasons.",
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 255,
+      "items": {
+        "type": "object",
+        "required": [
+          "option",
+          "selected",
+          "reasons"
+        ],
+        "properties": {
+          "option": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "selected": {
+            "type": "boolean"
+          },
+          "reasons": {
+            "type": "array",
+            "maxItems": 32,
+            "items": {
+              "type": "string",
+              "maxLength": 300
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "decider": {
+      "type": "object",
+      "required": [
+        "type",
+        "id",
+        "version"
+      ],
+      "properties": {
+        "type": {
+          "enum": [
+            "rule",
+            "policy",
+            "model",
+            "operator"
+          ]
+        },
+        "id": {
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "hash": {
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/sha256"
+        }
+      },
+      "additionalProperties": false
+    },
+    "modelAnswers": {
+      "description": "Answers from a decision model, when one contributed (PROP-0002).",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "provider",
+          "modelVersion",
+          "questionId",
+          "type"
+        ],
+        "properties": {
+          "provider": {
+            "type": "string",
+            "maxLength": 64
+          },
+          "modelVersion": {
+            "type": "string",
+            "maxLength": 64
+          },
+          "questionSetVersion": {
+            "type": "string",
+            "maxLength": 64
+          },
+          "questionId": {
+            "type": "string",
+            "maxLength": 64
+          },
+          "type": {
+            "enum": [
+              "choice",
+              "score",
+              "yes-no"
+            ]
+          },
+          "choice": {
+            "type": "string",
+            "maxLength": 128
+          },
+          "score": {
+            "type": "number"
+          },
+          "probability": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "probabilities": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            }
+          },
+          "confidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "outcome": {
+      "type": "object",
+      "required": [
+        "option"
+      ],
+      "properties": {
+        "option": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "detail": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": false
+    },
+    "deterministic": {
+      "description": "false when a model contributed; reproducibility then comes from reuse by input hash.",
+      "type": "boolean"
+    },
+    "rationale": {
+      "type": "string",
+      "maxLength": 1000
+    }
+  },
+  "allOf": [
+    {
+      "description": "Exactly the outcome option is marked selected.",
+      "properties": {
+        "candidates": {
+          "type": "array",
+          "contains": {
+            "type": "object",
+            "properties": {
+              "selected": {
+                "const": true
+              }
+            }
+          },
+          "minContains": 1,
+          "maxContains": 1
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "decider": {
+            "properties": {
+              "type": {
+                "const": "model"
+              }
+            },
+            "type": "object"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "modelAnswers"
+        ],
+        "properties": {
+          "modelAnswers": {
+            "type": "array",
+            "minItems": 1
+          },
+          "deterministic": {
+            "const": false
+          }
+        }
+      }
+    }
+  ],
+  "additionalProperties": false
+}

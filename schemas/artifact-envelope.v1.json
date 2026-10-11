@@ -1,0 +1,156 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:tsuuanmi:system:schema:artifact-envelope:v1",
+  "title": "Artifact envelope",
+  "description": "Immutable, content-addressed envelope shared by every artifact (design/artifacts.md).",
+  "type": "object",
+  "required": [
+    "schema",
+    "id",
+    "kind",
+    "bodySchema",
+    "classification",
+    "producer",
+    "inputs",
+    "lineage",
+    "createdAt"
+  ],
+  "properties": {
+    "schema": {
+      "const": "artifact-envelope@1.0"
+    },
+    "id": {
+      "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/sha256",
+      "description": "sha256 of canonical JSON of {kind, body|blob, inputs, lineage, subject}."
+    },
+    "kind": {
+      "enum": [
+        "objective",
+        "criteria",
+        "plan",
+        "finding",
+        "evidence",
+        "assessment",
+        "report",
+        "handoff",
+        "delivery",
+        "decision",
+        "receipt",
+        "approval"
+      ]
+    },
+    "bodySchema": {
+      "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/schemaTag"
+    },
+    "body": {
+      "description": "Inline body, validated against bodySchema."
+    },
+    "blob": {
+      "description": "Reference to a large body stored in ctx.blobs.",
+      "type": "object",
+      "required": [
+        "ref",
+        "bytes",
+        "mediaType"
+      ],
+      "properties": {
+        "ref": {
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/sha256"
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "mediaType": {
+          "type": "string",
+          "maxLength": 128
+        }
+      },
+      "additionalProperties": false
+    },
+    "classification": {
+      "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/classification"
+    },
+    "producer": {
+      "type": "object",
+      "required": [
+        "type",
+        "ref"
+      ],
+      "properties": {
+        "type": {
+          "enum": [
+            "node",
+            "worker",
+            "policy",
+            "operator",
+            "system"
+          ]
+        },
+        "ref": {
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+        }
+      },
+      "additionalProperties": false
+    },
+    "subject": {
+      "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/subject"
+    },
+    "inputs": {
+      "type": "array",
+      "maxItems": 1000,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/artifactRef"
+      }
+    },
+    "lineage": {
+      "type": "object",
+      "properties": {
+        "supersedes": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/artifactRef"
+          }
+        },
+        "invalidates": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/artifactRef"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "runId": {
+      "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+    },
+    "nodeId": {
+      "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+    },
+    "createdAt": {
+      "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp"
+    }
+  },
+  "oneOf": [
+    {
+      "properties": {
+        "body": true
+      },
+      "required": [
+        "body"
+      ]
+    },
+    {
+      "properties": {
+        "blob": true
+      },
+      "required": [
+        "blob"
+      ]
+    }
+  ],
+  "additionalProperties": false
+}

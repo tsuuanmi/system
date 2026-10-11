@@ -11,9 +11,10 @@ by reference. The standard is not copied here. This file records only
 
 The repository uses the minimum set (`requirements/`, `architecture/`,
 `decisions/`, `engineering/`) plus `design/`, `proposals/`, `research/`,
-`security/`, and `governance/`, because each already has real content.
-`reference/`, `validation/`, and `operations/` will be added when public
-contracts, acceptance evidence, and runtime procedures exist.
+`security/`, `reference/`, and `governance/`, because each already has real
+content. Machine-readable schemas live in the root `schemas/` directory, which
+has its own README. `validation/` and `operations/` will be added when
+acceptance evidence and runtime procedures exist.
 
 ## Identifiers
 

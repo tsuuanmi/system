@@ -49,6 +49,11 @@ Documentation is part of the change:
 - seam added or changed → update the
   [seam catalog](docs/architecture/plugin-model.md#seam-catalog) and the seam's
   conformance suite;
+- record shape changed → update the JSON Schema in `schemas/` (following the
+  versioning rules in [reference/schemas.md](docs/reference/schemas.md)), its
+  examples, and the reference semantics;
+- new decision point → it must emit a decision artifact
+  ([INV-13](docs/architecture/invariants.md#inv-13-every-decision-is-an-artifact));
 - runtime dependency added or code ported → update the
   [dependency register](docs/engineering/dependencies.md);
 - public API, schema, config, or CLI change → update reference material, requirements,

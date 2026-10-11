@@ -11,6 +11,8 @@ code updates this table.
 |---|---|---|---|---|
 | Plugin runtime, DI, lifecycle | `@deepseek-ai/cordis` + loader | library | host | MIT; exact pin; primitives covered by a conformance suite ([ADR-0007](../decisions/adr/0007-everything-is-a-plugin.md)) |
 | Config validation | Schemastery (Cordis-native) | library | every plugin `Config` | keeps one schema system across plugins |
+| Record and wire schemas | JSON Schema 2020-12 + Ajv (`ajv`, `ajv-formats`) | spec + library | `ctx.artifacts`, store, MCP, decisions | [ADR-0014](../decisions/adr/0014-json-schema-contracts.md); strict mode |
+| Types from schemas | `json-schema-to-typescript` (or equivalent) | library | build step | generated types are build output, checked in CI |
 | Durable records | `bun:sqlite` (Node: `better-sqlite3`) | library | `ctx.store` | [ADR-0003](../decisions/adr/0003-sqlite-durable-store.md); hand-written versioned migrations, no ORM |
 | Browser automation | `patchright-core` + system Chrome | library | `ctx.browser` | proven in internet |
 | Remote login display | Xvfb + x11vnc + noVNC | library / system tool | `ctx.display` | taken from system packages, not vendored |

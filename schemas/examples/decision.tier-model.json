@@ -1,0 +1,26 @@
+{
+  "schema": "decision@1.0",
+  "decisionType": "tier",
+  "question": "Which tier does undeclared request req-42 need?",
+  "inputs": ["sha256:3333333333333333333333333333333333333333333333333333333333333333"],
+  "candidates": [
+    { "option": "economy", "selected": false, "reasons": ["mechanical p=0.12 below threshold 0.85"] },
+    { "option": "standard", "selected": true, "reasons": ["routine p=0.71 >= 0.60"] },
+    { "option": "frontier", "selected": false, "reasons": ["complex+deep p=0.17"] }
+  ],
+  "decider": { "type": "model", "id": "decisions.jev", "version": "shadow-1" },
+  "modelAnswers": [
+    {
+      "provider": "decisions-jev",
+      "modelVersion": "jev-1.13.0",
+      "questionSetVersion": "tier-q@1",
+      "questionId": "work-type",
+      "type": "choice",
+      "choice": "routine",
+      "probabilities": { "mechanical": 0.12, "routine": 0.71, "complex": 0.14, "deep": 0.03 },
+      "confidence": 0.64
+    }
+  ],
+  "outcome": { "option": "standard" },
+  "deterministic": false
+}

@@ -12,6 +12,7 @@
 | `REQ-WRK` | Worker admission, routing, and acceptance |
 | `REQ-TEAM` | multi-member teams |
 | `REQ-WF` | durable workflows |
+| `REQ-ART` | artifacts, decision records, schemas |
 | `REQ-GW` | client gateways |
 | `REQ-HOST` | host lifecycle |
 
@@ -109,6 +110,27 @@
   review cycle once a PR exists, up to configured bounds.
 - **REQ-WF-9** At least two domain profiles, software development and scientific
   research, run on the same engine without engine changes.
+
+- **REQ-WF-10** Every multi-step job, including the MVP research pipeline,
+  runs as an append-only DAG on the single engine. Loops are unrolled into
+  bounded new nodes. A planner may propose nodes only through a validated `plan`
+  artifact.
+
+## Artifacts and schemas (`REQ-ART`)
+
+- **REQ-ART-1** Every decision (admission, route, tier, escalation, egress,
+  acceptance, gate, reconciliation, graph growth, recovery, spec admission) is
+  recorded as a decision artifact with its inputs, candidates and their reasons,
+  decider and policy version, and outcome.
+- **REQ-ART-2** Artifacts are immutable and content-addressed. Corrections are
+  new artifacts that supersede old ones.
+- **REQ-ART-3** An operator can ask *why* for any artifact, node, or turn, and
+  get the chain of decisions and inputs that led to it.
+- **REQ-ART-4** Every persisted record and wire payload validates against a
+  versioned JSON Schema. Invalid records and unknown major versions are rejected.
+- **REQ-ART-5** A Worker's structured result is validated against the schema
+  named in its acceptance contract, and the schema is given to the Worker when
+  its provider supports constrained output.
 
 ## Gateways (`REQ-GW`)
 

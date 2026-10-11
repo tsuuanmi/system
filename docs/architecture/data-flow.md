@@ -2,6 +2,10 @@
 
 > Target state. Boundaries are defined in [components](components.md).
 
+Every arrow below that chooses between alternatives (admission, route, tier,
+egress, reconcile, accept, grow) writes a decision artifact before its effect
+([INV-13](invariants.md#inv-13-every-decision-is-an-artifact)).
+
 ## Single turn (gateway → provider)
 
 ```text
