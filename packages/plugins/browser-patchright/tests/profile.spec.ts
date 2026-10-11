@@ -9,7 +9,11 @@ import BrowserPool from '../src/index.ts'
 import { canRunBrowser, testChrome } from './support.ts'
 import { chromium } from 'patchright-core'
 
-describe.runIf(canRunBrowser)('ctx.browser.captureProfile (the Save flow)', () => {
+/** These tests exercise the patchright provider itself, so they use its concrete page and context types. */
+const pool = (ctx: Context): BrowserPool => ctx.browser as unknown as BrowserPool
+
+
+describe.runIf(canRunBrowser)('pool(ctx).captureProfile (the Save flow)', () => {
   let server: Server
   let origin: string
   beforeAll(async () => {
@@ -52,7 +56,7 @@ describe.runIf(canRunBrowser)('ctx.browser.captureProfile (the Save flow)', () =
   it('reopens the login profile invisibly and captures state for the origins only, in memory', async () => {
     const ctx = await boot()
     const dir = await signedInProfile()
-    const { state, result } = await ctx.browser.captureProfile(dir, {
+    const { state, result } = await pool(ctx).captureProfile(dir, {
       url: `${origin}/`, origins: [origin], inspect: (page) => page.locator('p').innerText(),
     })
     expect(result).toBe('signed in')
@@ -64,10 +68,10 @@ describe.runIf(canRunBrowser)('ctx.browser.captureProfile (the Save flow)', () =
     const ctx = await boot()
     const dir = await signedInProfile()
     symlinkSync(`${hostname()}-${process.pid}`, join(dir, 'SingletonLock'))
-    await expect(ctx.browser.captureProfile(dir, { url: `${origin}/`, origins: [origin], inspect: async () => 1 }))
+    await expect(pool(ctx).captureProfile(dir, { url: `${origin}/`, origins: [origin], inspect: async () => 1 }))
       .rejects.toMatchObject({ kind: 'session_broken', message: expect.stringMatching(/in use/) })
     rmSync(join(dir, 'SingletonLock'))
     symlinkSync(`${hostname()}-2147483646`, join(dir, 'SingletonLock'))
-    await expect(ctx.browser.captureProfile(dir, { url: `${origin}/`, origins: [origin], inspect: async () => 1 })).resolves.toMatchObject({ result: 1 })
+    await expect(pool(ctx).captureProfile(dir, { url: `${origin}/`, origins: [origin], inspect: async () => 1 })).resolves.toMatchObject({ result: 1 })
   }, 60_000)
 })

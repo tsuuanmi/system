@@ -57,7 +57,7 @@ can be added without changing consumers.
 | Orchestration | `teams` | `team-runner` | workflow |
 | Orchestration | `profiles` (domain procedures) | `profile-software-development`, `profile-scientific-research` | workflow |
 | Gateways | `clientProtocols` (shared turn broker) | `gateway-responses`, `gateway-anthropic-messages` | — (edge) |
-| Gateways | `mcp` (tools contributed by plugins for their lifetime) | `@tsuuanmi/system-mcp-server` (own; DSH has only an MCP client) | plugins that expose operations: `login` (`account_list`, `account_save`), `turns` (`ask`, `research`, `result`) |
+| Gateways | `mcp` (tools contributed by plugins for their lifetime; definition `McpTools` in `@tsuuanmi/system-gateway-core`) | `@tsuuanmi/system-mcp-server` (own; DSH has only an MCP client) | plugins that expose operations: `login` (`account_list`, `account_save`), `turns` (`ask`, `research`, `result`) |
 | Gateways | — (consumers only) | `cli` (wrapper around `dsh --profile system`), `web-ui` (on **DSH** web app), later `gateway-a2a` | — (edge) |
 
 Gateways only consume services, so they are plain plugins with no seam of their
@@ -159,14 +159,25 @@ unchanged. Claude Code and Codex reach `system` through protocols (MCP now, and
 the Responses and Messages gateways later), so they are unaffected by the host
 choice ([INV-11](invariants.md#inv-11-no-tool-lock-in)).
 
+## Seam definitions and conformance
+
+| Seam | Definition (abstract `Service`) | Conformance suite | Providers that run it |
+|---|---|---|---|
+| `display` | `Display` in `@tsuuanmi/system-provider-core` | `provider-core/conformance/display.ts` | `display-virtual` (real Xvfb), the test fake `KillableDisplay` |
+| `browser` | `Browser<Page, Context>` in `@tsuuanmi/system-provider-core` (engine-neutral) | `provider-core/conformance/browser.ts` | `browser-patchright` |
+| `providers` | `ProviderRegistry` in `@tsuuanmi/system-provider-core` | `provider-core/conformance/providers.ts` | `providers` |
+| `mcp` | `McpTools` in `@tsuuanmi/system-gateway-core` | `gateway-core/conformance/mcp-tools.ts` | `mcp-server` (listed through a real MCP client) |
+
+Consumers depend on definitions only. `turns` and `login` no longer import the
+browser, registry, or gateway implementations. The display suite found a defect
+in the test fake (two Xvfbs for concurrent callers), which was then fixed.
+
 ## Known gaps (tracked)
 
-- **Abstract seams.** `ctx.display` is an abstract seam in
-  `@tsuuanmi/system-provider-core`. `ctx.browser`, `ctx.mcp`, and
-  `ctx.providers` are still concrete services, which their consumers type-import.
-  Swapping the browser engine therefore means providing a compatible class until
-  their abstract seams move into provider-core.
-- **Conformance suites.** Seams are tested through their single provider, and
-  the turn runtime through a real browser on a fake site. A shared conformance
-  suite per seam, plus a scripted fake `ProviderDriver` for the runtime, are
-  still to come (plugin rule 7, [testing](../engineering/testing.md)).
+- **Single-provider kernel and runtime seams.** `store`, `blobs`, `eventLog`,
+  `leases`, `artifacts`, `accounts`, `turnReceipts`, `login`, `turns`, and
+  `egress` are still concrete services with one provider each. They get an
+  abstract definition and a suite when a second provider appears.
+- **A scripted fake `ProviderDriver`** for testing the turn runtime without a
+  browser is still to come; today the runtime is tested through a real browser on
+  the fake site.

@@ -219,6 +219,18 @@ importers:
         specifier: workspace:*
         version: link:../plugins/store
 
+  packages/gateway-core:
+    devDependencies:
+      '@deepseek-ai/cordis':
+        specifier: 4.0.5-alpha.1
+        version: 4.0.5-alpha.1(@deepseek-ai/cordis-plugin-include@1.0.10-alpha.1)(@deepseek-ai/cordis-plugin-loader@1.0.6-alpha.1)
+      '@modelcontextprotocol/sdk':
+        specifier: 1.32.1
+        version: 1.32.1(zod@4.6.5)
+      zod:
+        specifier: ^4.1.0
+        version: 4.6.5
+
   packages/libs:
     dependencies:
       '@tsuuanmi/system-schemas':
@@ -407,24 +419,18 @@ importers:
       '@tsuuanmi/system-accounts':
         specifier: workspace:*
         version: link:../accounts
-      '@tsuuanmi/system-browser-patchright':
-        specifier: workspace:*
-        version: link:../browser-patchright
       '@tsuuanmi/system-display-virtual':
         specifier: workspace:*
         version: link:../display-virtual
+      '@tsuuanmi/system-gateway-core':
+        specifier: workspace:*
+        version: link:../../gateway-core
       '@tsuuanmi/system-libs':
         specifier: workspace:*
         version: link:../../libs
-      '@tsuuanmi/system-mcp-server':
-        specifier: workspace:*
-        version: link:../mcp-server
       '@tsuuanmi/system-provider-core':
         specifier: workspace:*
         version: link:../../provider-core
-      '@tsuuanmi/system-providers':
-        specifier: workspace:*
-        version: link:../providers
       otpauth:
         specifier: 9.5.2
         version: 9.5.2
@@ -444,12 +450,21 @@ importers:
       '@modelcontextprotocol/sdk':
         specifier: 1.32.1
         version: 1.32.1(zod@4.6.5)
+      '@tsuuanmi/system-browser-patchright':
+        specifier: workspace:*
+        version: link:../browser-patchright
       '@tsuuanmi/system-credentials-vault':
         specifier: workspace:*
         version: link:../credentials-vault
+      '@tsuuanmi/system-mcp-server':
+        specifier: workspace:*
+        version: link:../mcp-server
       '@tsuuanmi/system-provider-chatgpt-web':
         specifier: workspace:*
         version: link:../provider-chatgpt-web
+      '@tsuuanmi/system-providers':
+        specifier: workspace:*
+        version: link:../providers
       '@types/ws':
         specifier: 8.18.2
         version: 8.18.2
@@ -465,6 +480,9 @@ importers:
       '@modelcontextprotocol/sdk':
         specifier: 1.32.1
         version: 1.32.1(zod@4.6.5)
+      '@tsuuanmi/system-gateway-core':
+        specifier: workspace:*
+        version: link:../../gateway-core
       '@tsuuanmi/system-libs':
         specifier: workspace:*
         version: link:../../libs
@@ -502,9 +520,6 @@ importers:
       '@tsuuanmi/system-provider-core':
         specifier: workspace:*
         version: link:../../provider-core
-      '@tsuuanmi/system-providers':
-        specifier: workspace:*
-        version: link:../providers
       '@tsuuanmi/system-ui-ops':
         specifier: workspace:*
         version: link:../../ui-ops
@@ -521,6 +536,9 @@ importers:
       '@tsuuanmi/system-display-virtual':
         specifier: workspace:*
         version: link:../display-virtual
+      '@tsuuanmi/system-providers':
+        specifier: workspace:*
+        version: link:../providers
       '@tsuuanmi/system-store':
         specifier: workspace:*
         version: link:../store
@@ -584,15 +602,15 @@ importers:
       '@tsuuanmi/system-artifacts':
         specifier: workspace:*
         version: link:../artifacts
-      '@tsuuanmi/system-browser-patchright':
-        specifier: workspace:*
-        version: link:../browser-patchright
       '@tsuuanmi/system-egress':
         specifier: workspace:*
         version: link:../egress
       '@tsuuanmi/system-event-log':
         specifier: workspace:*
         version: link:../event-log
+      '@tsuuanmi/system-gateway-core':
+        specifier: workspace:*
+        version: link:../../gateway-core
       '@tsuuanmi/system-leases':
         specifier: workspace:*
         version: link:../leases
@@ -602,15 +620,9 @@ importers:
       '@tsuuanmi/system-login':
         specifier: workspace:*
         version: link:../login
-      '@tsuuanmi/system-mcp-server':
-        specifier: workspace:*
-        version: link:../mcp-server
       '@tsuuanmi/system-provider-core':
         specifier: workspace:*
         version: link:../../provider-core
-      '@tsuuanmi/system-providers':
-        specifier: workspace:*
-        version: link:../providers
       '@tsuuanmi/system-store':
         specifier: workspace:*
         version: link:../store
@@ -630,15 +642,24 @@ importers:
       '@modelcontextprotocol/sdk':
         specifier: 1.32.1
         version: 1.32.1(zod@4.6.5)
+      '@tsuuanmi/system-browser-patchright':
+        specifier: workspace:*
+        version: link:../browser-patchright
       '@tsuuanmi/system-credentials-vault':
         specifier: workspace:*
         version: link:../credentials-vault
       '@tsuuanmi/system-display-virtual':
         specifier: workspace:*
         version: link:../display-virtual
+      '@tsuuanmi/system-mcp-server':
+        specifier: workspace:*
+        version: link:../mcp-server
       '@tsuuanmi/system-provider-chatgpt-web':
         specifier: workspace:*
         version: link:../provider-chatgpt-web
+      '@tsuuanmi/system-providers':
+        specifier: workspace:*
+        version: link:../providers
       patchright-core:
         specifier: 1.63.0
         version: 1.63.0

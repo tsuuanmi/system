@@ -107,3 +107,15 @@ describe('discovery file ownership (PR #3 security review)', () => {
     expect(JSON.parse(readFileSync(join(dir, 'mcp.json'), 'utf8')).pid).toBe(process.pid + 1)
   })
 })
+
+const { mcpToolsConformance } = await import('../../../gateway-core/conformance/mcp-tools.ts')
+let endpoint: { url: string; token: string } | undefined
+mcpToolsConformance('mcp-server', async () => {
+  const booted = await boot()
+  endpoint = { url: booted.url, token: booted.token }
+  return { ctx: booted.ctx, dispose: async () => { while (cleanups.length) await cleanups.pop()!() } }
+}, async () => {
+  // What a real MCP client sees over the authenticated endpoint.
+  const client = await connect(endpoint!.url, endpoint!.token)
+  return (await client.listTools()).tools.map((tool) => tool.name)
+})

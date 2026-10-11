@@ -9,9 +9,9 @@
  * (docs/research/dsh-community-plugins-review.md#browser-runtime-second-pass-2026-10-11).
  * @module @tsuuanmi/system-browser-patchright
  */
-import { type Context, Service } from '@deepseek-ai/cordis'
+import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
-import { type PortableState, type PreparedDisplay, ProviderError } from '@tsuuanmi/system-provider-core'
+import { Browser as BrowserSeam, type PortableState, type PreparedDisplay, ProviderError } from '@tsuuanmi/system-provider-core'
 import { lstatSync, readlinkSync, rmSync } from 'node:fs'
 import { hostname } from 'node:os'
 import { join } from 'node:path'
@@ -23,11 +23,6 @@ import { type StorageState, fromStorageState, toStorageState } from './state.ts'
 export { CHROME_LOCK, type ChromeChoice, type ChromeLock, discoverChrome, engineChromiumMajor, installManagedChrome, managedBrowsersDir, managedChromePath } from './chrome.ts'
 export { type CaptureOptions, type StorageState, fromStorageState, toStorageState } from './state.ts'
 
-declare module '@deepseek-ai/cordis' {
-  interface Context {
-    browser: BrowserPool
-  }
-}
 
 /** Pages render and update as if in the foreground (docs/design/browser-runtime.md#display-modes-ctxdisplay). */
 export const CHROME_ARGS = [
@@ -72,7 +67,7 @@ interface Managed {
   idle?: NodeJS.Timeout | undefined
 }
 
-export class BrowserPool extends Service {
+export class BrowserPool extends BrowserSeam<Page, BrowserContext> {
   static inject = ['display']
 
   static Config: z<Config> = z.object({
@@ -86,12 +81,16 @@ export class BrowserPool extends Service {
   private disposed = false
 
   constructor(ctx: Context, private readonly config: Config) {
-    super(ctx, 'browser')
+    super(ctx)
     ctx.effect(() => async () => {
       this.disposed = true
       await Promise.allSettled(this.launches.values())
       await Promise.allSettled([...this.browsers.keys()].map((account) => this.close(account)))
     })
+  }
+
+  executablePath(): string | undefined {
+    return discoverChrome(this.config.chromePath)?.path
   }
 
   /** Accounts with a running browser. */

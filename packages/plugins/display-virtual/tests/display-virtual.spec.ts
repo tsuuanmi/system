@@ -248,3 +248,13 @@ describe.runIf(hasXvfb)('display-virtual with a real Xvfb', () => {
     expect(display.lost.aborted).toBe(true)
   }, 15_000)
 })
+
+if (hasXvfb) {
+  const { displayConformance } = await import('../../../provider-core/conformance/display.ts')
+  displayConformance('display-virtual (real Xvfb)', async () => {
+    const ctx = new Context()
+    const fiber = ctx.plugin(VirtualDisplay, {})
+    await fiber
+    return { ctx, dispose: () => fiber.dispose() }
+  })
+}

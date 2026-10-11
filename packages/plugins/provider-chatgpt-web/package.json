@@ -24,7 +24,6 @@
     "@tsuuanmi/system-event-log": "workspace:*",
     "@tsuuanmi/system-libs": "workspace:*",
     "@tsuuanmi/system-provider-core": "workspace:*",
-    "@tsuuanmi/system-providers": "workspace:*",
     "@tsuuanmi/system-ui-ops": "workspace:*"
   },
   "peerDependencies": {
@@ -37,6 +36,7 @@
     "@deepseek-ai/schemastery": "3.18.5-alpha.1",
     "@tsuuanmi/system-browser-patchright": "workspace:*",
     "@tsuuanmi/system-display-virtual": "workspace:*",
+    "@tsuuanmi/system-providers": "workspace:*",
     "@tsuuanmi/system-store": "workspace:*",
     "otpauth": "9.5.2",
     "patchright-core": "1.63.0"

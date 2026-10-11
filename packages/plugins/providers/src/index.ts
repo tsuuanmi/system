@@ -4,20 +4,14 @@
  * by the account's provider name and never branches on it (ADR-0005).
  * @module @tsuuanmi/system-providers
  */
-import { type Context, Service } from '@deepseek-ai/cordis'
-import { ProviderError, type ProviderDriver } from '@tsuuanmi/system-provider-core'
+import type { Context } from '@deepseek-ai/cordis'
+import { ProviderError, type ProviderDriver, ProviderRegistry } from '@tsuuanmi/system-provider-core'
 
-declare module '@deepseek-ai/cordis' {
-  interface Context {
-    providers: Providers
-  }
-}
-
-export class Providers extends Service {
+export class Providers extends ProviderRegistry {
   private readonly drivers = new Map<string, ProviderDriver>()
 
   constructor(ctx: Context) {
-    super(ctx, 'providers')
+    super(ctx)
   }
 
   /** Register a driver for the calling plugin's lifetime. */

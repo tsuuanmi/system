@@ -28,3 +28,6 @@ describe('ctx.providers', () => {
     expect(() => ctx.providers.get('nope')).toThrow(ProviderError)
   })
 })
+
+const { providerRegistryConformance } = await import('../../../provider-core/conformance/providers.ts')
+providerRegistryConformance('providers', Providers)

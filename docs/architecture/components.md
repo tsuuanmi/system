@@ -44,6 +44,10 @@ routes back here.
   [provider-turns](../design/provider-turns.md),
   [scheduling-and-leases](../design/scheduling-and-leases.md).
 
+Seam definitions for this layer (`Display`, `Browser`, `ProviderRegistry`) live in
+`@tsuuanmi/system-provider-core`. The gateway seam `McpTools` lives in
+`@tsuuanmi/system-gateway-core`.
+
 ## Capabilities
 
 - **Website capability.** **Website Core** owns logical request identity,

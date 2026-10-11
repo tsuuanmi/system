@@ -21,12 +21,10 @@
   "dependencies": {
     "@novnc/novnc": "1.7.0",
     "@tsuuanmi/system-accounts": "workspace:*",
-    "@tsuuanmi/system-browser-patchright": "workspace:*",
     "@tsuuanmi/system-display-virtual": "workspace:*",
+    "@tsuuanmi/system-gateway-core": "workspace:*",
     "@tsuuanmi/system-libs": "workspace:*",
-    "@tsuuanmi/system-mcp-server": "workspace:*",
     "@tsuuanmi/system-provider-core": "workspace:*",
-    "@tsuuanmi/system-providers": "workspace:*",
     "otpauth": "9.5.2",
     "ws": "8.22.0"
   },
@@ -40,8 +38,11 @@
     "@deepseek-ai/dsh-host-webserver": "0.2.1-alpha.2",
     "@deepseek-ai/schemastery": "3.18.5-alpha.1",
     "@modelcontextprotocol/sdk": "1.32.1",
+    "@tsuuanmi/system-browser-patchright": "workspace:*",
     "@tsuuanmi/system-credentials-vault": "workspace:*",
+    "@tsuuanmi/system-mcp-server": "workspace:*",
     "@tsuuanmi/system-provider-chatgpt-web": "workspace:*",
+    "@tsuuanmi/system-providers": "workspace:*",
     "@types/ws": "8.18.2",
     "patchright-core": "1.63.0",
     "zod": "^4.1.0"

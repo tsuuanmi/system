@@ -15,11 +15,9 @@ import { type Context, Service } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { z as zod } from 'zod'
 import type { AccountView } from '@tsuuanmi/system-accounts'
-import { discoverChrome } from '@tsuuanmi/system-browser-patchright'
 import { contentId, dshHome, ensurePrivateDir } from '@tsuuanmi/system-libs'
-import type {} from '@tsuuanmi/system-mcp-server'
+import type {} from '@tsuuanmi/system-gateway-core'
 import { ProviderError } from '@tsuuanmi/system-provider-core'
-import type {} from '@tsuuanmi/system-providers'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -147,14 +145,14 @@ export class Login extends Service {
     if (existing) return existing.info()
     const account = await this.ctx.accounts.get(accountId)
     const driver = this.ctx.providers.get(account.provider)
-    const chrome = discoverChrome(this.config.chromePath)
-    if (!chrome) throw new ProviderError('config_error', 'no usable Chrome: run `system init`')
+    const chromePath = this.config.chromePath ?? this.ctx.browser.executablePath()
+    if (!chromePath) throw new ProviderError('config_error', 'no usable Chrome: run `system init`')
     const vncPath = this.config.vncPath ?? findOnPath(['x0vncserver', 'x11vnc'])
     if (!vncPath) throw new ProviderError('config_error', 'remote login needs a VNC server: apt install tigervnc-scraping-server (x0vncserver) or x11vnc')
     const profileDir = this.profileDir(accountId)
     ensurePrivateDir(profileDir)
     const session = await RemoteLogin.start({
-      account: accountId, profileDir, loginUrl: driver.loginUrl, chromePath: chrome.path, vncPath,
+      account: accountId, profileDir, loginUrl: driver.loginUrl, chromePath, vncPath,
       ttlMs: this.config.remoteTtlMs ?? 30 * 60_000, port: this.config.remotePort ?? 47318,
       onSave: () => this.save(accountId),
       onEnded: () => this.remotes.delete(accountId),

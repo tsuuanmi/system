@@ -16,6 +16,13 @@
 | agent-runtime smoke | the Claude Agent SDK and Codex SDK runtimes on a throwaway repository | probe, run, resume, cancel, sandbox enforcement |
 | manual release checklist | live accounts: sign-in, live turn, tool round trip, full workflow cycle | a failed or skipped item blocks a release |
 
+## Conformance suites
+
+Every seam with an abstract definition ships a suite in its definition
+package's `conformance/` directory. Each provider's tests call the suite with a
+`boot` function, and the test fakes run the same suites. See the
+[seam table](../architecture/plugin-model.md#seam-definitions-and-conformance).
+
 ## Conventions adopted from DSH
 
 - **Real composition over hand wiring.** Every product-visible plugin has a test

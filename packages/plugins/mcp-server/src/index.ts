@@ -10,24 +10,19 @@
 import { readFileSync, rmSync } from 'node:fs'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { dirname, join } from 'node:path'
-import { type Context, Service } from '@deepseek-ai/cordis'
+import type { Context } from '@deepseek-ai/cordis'
+import { McpTools, type ToolHandler, type ToolSpec } from '@tsuuanmi/system-gateway-core'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import z from '@deepseek-ai/schemastery'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
-import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
 import { dshHome, ensurePrivateDir, readOrCreateSecretFile, writeFileDurable } from '@tsuuanmi/system-libs'
-import { type ZodRawShape, z as zod } from 'zod'
+import { z as zod } from 'zod'
 import { assertSafeBind, endpointUrl, guardRequest } from './guard.ts'
 
 export { assertSafeBind, endpointUrl, guardRequest, hostName, tokenMatches } from './guard.ts'
 
-declare module '@deepseek-ai/cordis' {
-  interface Context {
-    mcp: McpEndpoint
-  }
-}
 
 export interface Config {
   path?: string
@@ -37,12 +32,7 @@ export interface Config {
   maxBodyBytes?: number
 }
 
-export interface ToolSpec {
-  description: string
-  inputSchema: ZodRawShape
-}
-
-export type ToolHandler = (args: Record<string, unknown>) => Promise<CallToolResult>
+export type { ToolHandler, ToolSpec } from '@tsuuanmi/system-gateway-core'
 
 interface Tool {
   spec: ToolSpec
@@ -80,7 +70,7 @@ function removeOwnDiscovery(path: string): void {
   }
 }
 
-export class McpEndpoint extends Service {
+export class McpEndpoint extends McpTools {
   static inject = ['webServer']
 
   static Config: z<Config> = z.object({
@@ -94,7 +84,7 @@ export class McpEndpoint extends Service {
   private readonly tools = new Map<string, Tool>()
 
   constructor(ctx: Context, config: Config = {}) {
-    super(ctx, 'mcp')
+    super(ctx)
     this.builtins()
     const path = config.path ?? '/mcp'
     const allowedHosts = config.allowedHosts ?? ['127.0.0.1', 'localhost', '[::1]']

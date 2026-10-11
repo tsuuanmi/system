@@ -15,12 +15,10 @@ import type { Classification } from '@tsuuanmi/system-egress'
 import type {} from '@tsuuanmi/system-event-log'
 import type {} from '@tsuuanmi/system-login'
 import type {} from '@tsuuanmi/system-artifacts'
-import type { Turn } from '@tsuuanmi/system-browser-patchright'
 import { type Lease, LeaseLost, StaleGeneration } from '@tsuuanmi/system-leases'
 import { type ContentId, sha256 } from '@tsuuanmi/system-libs'
-import type {} from '@tsuuanmi/system-mcp-server'
-import { type ConversationMode, type Disposition, type PortableState, ProviderError, type ProviderFeature, ProviderScheduler, type Tier, type TurnReceipt, type TurnSnapshot, dispositionOf, toProviderError } from '@tsuuanmi/system-provider-core'
-import type {} from '@tsuuanmi/system-providers'
+import type {} from '@tsuuanmi/system-gateway-core'
+import { type BrowserTurn, type ConversationMode, type Disposition, type PortableState, ProviderError, type ProviderFeature, ProviderScheduler, type Tier, type TurnReceipt, type TurnSnapshot, dispositionOf, toProviderError } from '@tsuuanmi/system-provider-core'
 import type {} from '@tsuuanmi/system-store'
 import type {} from '@tsuuanmi/system-turn-receipts'
 import { z as zod } from 'zod'
@@ -493,7 +491,7 @@ export class Turns extends Service {
    * the turn still holds its lease and the account is still at the revision the turn
    * started from (docs/design/browser-runtime.md). A failure never fails the answered turn.
    */
-  private async writeBack(accountId: string, turn: Turn, origins: readonly string[], previous: PortableState | undefined, revision: number, lease: () => Lease): Promise<void> {
+  private async writeBack(accountId: string, turn: BrowserTurn, origins: readonly string[], previous: PortableState | undefined, revision: number, lease: () => Lease): Promise<void> {
     try {
       const state = await this.ctx.browser.capture(turn, { origins: [...origins], previous })
       this.ctx.store.transaction(() => this.ctx.leases.fence(lease()))
