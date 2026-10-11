@@ -30,7 +30,10 @@ work. Each milestone ends with working, tested software and updated canonical do
 - Verified live on 2026-10-12: a `review` run went to `agent:claude-review` on agent-plan quota. The Worker session had exactly `Read`, `Grep`, and `Glob`, no MCP servers, and no prompts.
 - The live runs also found two defects, both fixed with tests: an omitted tool list became "no tools", and a stalled run had no deadline.
 
-Next in M3: writable workspaces (verified confinement), `runtime-codex-sdk` and `runtime-acp`, the Gemini Web driver, connectors as capabilities, and an economy-tier model provider.
+- Claude Code Workers now also have a confined `workspace-write` (verified live), so they prove `develop`.
+- `runtime-acp` runs any ACP agent with a client-enforced policy, for agents the operator vouches for.
+
+Next in M3, all of which need the operator: `runtime-codex-sdk` (a Codex CLI login), the Gemini Web driver (a Gemini account), connectors as capabilities, and an economy-tier model provider (an API key). Meanwhile, M4 orchestration continues: tier escalation, graph growth, and plan artifacts.
 
 Later candidates, each needing its own proposal: A2A gateway and runtime
 (cross-runtime peers), an ACP client gateway for editors, sandboxed or SSH `exec`

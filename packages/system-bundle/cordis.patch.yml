@@ -49,6 +49,8 @@
       name: '@tsuuanmi/system-agent-runtimes'
     - id: runtime-claude-agent-sdk
       name: '@tsuuanmi/system-runtime-claude-agent-sdk'   # runs the installed `claude`
+    - id: runtime-acp
+      name: '@tsuuanmi/system-runtime-acp'            # ACP agents (none until configured)
     - id: agent-workers
       name: '@tsuuanmi/system-agent-workers'          # the `agents` Worker source (no workers until configured)
     - id: workflow

@@ -81,6 +81,9 @@
       "@tsuuanmi/system-agent-runtimes": [
         "packages/plugins/agent-runtimes/src/index.ts"
       ],
+      "@tsuuanmi/system-runtime-acp": [
+        "packages/plugins/runtime-acp/src/index.ts"
+      ],
       "@tsuuanmi/system-runtime-claude-agent-sdk": [
         "packages/plugins/runtime-claude-agent-sdk/src/index.ts"
       ],

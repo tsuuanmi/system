@@ -62,7 +62,8 @@ Seam definitions for this layer (`Display`, `Browser`, `ProviderRegistry`) live 
   agents (Claude Code through the Claude Agent SDK, Codex through the Codex SDK,
   any ACP agent) as Workers. See [agent runtimes](../design/agent-runtimes.md).
   Built so far: the seam, its registry, the `agents` Worker source, and the Claude
-  Agent SDK provider (read-only and confined workspace-write).
+  Agent SDK provider (read-only and confined workspace-write), and the ACP
+  provider (read-only, for vouched agents).
 - **Model capability** (`ctx.models`). API and local model providers. They mainly
   serve `economy`-tier jobs such as triage, extraction, and compaction
   ([purpose P4](../requirements/purpose.md#p4-cheap-models-do-low-level-work-strong-models-do-hard-work)).

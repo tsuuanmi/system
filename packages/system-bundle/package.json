@@ -24,6 +24,7 @@
     "@tsuuanmi/system-agent-runtimes": "workspace:*",
     "@tsuuanmi/system-agent-workers": "workspace:*",
     "@tsuuanmi/system-runtime-claude-agent-sdk": "workspace:*",
+    "@tsuuanmi/system-runtime-acp": "workspace:*",
     "@tsuuanmi/system-workflow": "workspace:*",
     "@tsuuanmi/system-event-log": "workspace:*",
     "@tsuuanmi/system-leases": "workspace:*",

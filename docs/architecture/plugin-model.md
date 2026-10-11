@@ -50,7 +50,7 @@ can be added without changing consumers.
 | Capabilities | `website` | `website-core` | Worker providers |
 | Capabilities | `exec` | **DSH** `ctx.shell` / `ctx.fs` / `ctx.sandbox` / `ctx.subprocess` (local, sandbox, SSH) | local-tools Worker |
 | Capabilities | `models` (API and local model providers) | **DSH** `ctx.llm` (`llm-pi-ai`: OpenAI-compatible and others) | Worker providers, especially `economy`-tier jobs ([purpose P4](../requirements/purpose.md#p4-cheap-models-do-low-level-work-strong-models-do-hard-work)) |
-| Capabilities | `agentRuntimes` (definition `AgentRuntimes` in `@tsuuanmi/system-agent-runtime-core`; registry `@tsuuanmi/system-agent-runtimes`) | `@tsuuanmi/system-runtime-claude-agent-sdk`; `runtime-codex-sdk`, `runtime-acp` (planned) | `@tsuuanmi/system-agent-workers`, the `agents` Worker source ([agent runtimes](../design/agent-runtimes.md)) |
+| Capabilities | `agentRuntimes` (definition `AgentRuntimes` in `@tsuuanmi/system-agent-runtime-core`; registry `@tsuuanmi/system-agent-runtimes`) | `@tsuuanmi/system-runtime-claude-agent-sdk`, `@tsuuanmi/system-runtime-acp`; `runtime-codex-sdk` (planned) | `@tsuuanmi/system-agent-workers`, the `agents` Worker source ([agent runtimes](../design/agent-runtimes.md)) |
 | Routing | `workers` (Worker sources, fail-closed admission, deterministic router, acceptance contracts; definition `Workers` in `@tsuuanmi/system-workers-core`) | `@tsuuanmi/system-workers` | the turn runtime (route), the workflow engine (accept) |
 | Orchestration | `workflow` (MVP subset: static DAG templates, durable nodes, acceptance, retries, recovery; MCP `ask`, `research`, `result`, `usage`, `explain`) | `@tsuuanmi/system-workflow` | MCP clients, CLI |
 | Orchestration | `workerSessions` (Worker sessions, bindings, mailbox, wake, budgets) | `worker-sessions-store` | team runner, session nodes, MCP session tools ([design](../design/sessions-and-messaging.md)) |
@@ -168,7 +168,7 @@ choice ([INV-11](invariants.md#inv-11-no-tool-lock-in)).
 | `providers` | `ProviderRegistry` in `@tsuuanmi/system-provider-core` | `provider-core/conformance/providers.ts` | `providers` |
 | `mcp` | `McpTools` in `@tsuuanmi/system-gateway-core` | `gateway-core/conformance/mcp-tools.ts` | `mcp-server` (listed through a real MCP client) |
 | `workers` | `Workers` in `@tsuuanmi/system-workers-core` | `workers-core/conformance/workers.ts` | `workers` |
-| `agentRuntimes` | `AgentRuntimes` in `@tsuuanmi/system-agent-runtime-core`, plus a provider suite | `agent-runtime-core/conformance/agent-runtimes.ts` | `agent-runtimes` (registry); `runtime-claude-agent-sdk` (provider, against a scripted SDK stream) |
+| `agentRuntimes` | `AgentRuntimes` in `@tsuuanmi/system-agent-runtime-core`, plus a provider suite | `agent-runtime-core/conformance/agent-runtimes.ts` | `agent-runtimes` (registry); `runtime-claude-agent-sdk` (against a scripted SDK stream), `runtime-acp` (against a scripted ACP agent subprocess) |
 
 Consumers depend on definitions only. `turns` and `login` no longer import the
 browser, registry, or gateway implementations. The display suite found a defect
@@ -190,8 +190,10 @@ in the test fake (two Xvfbs for concurrent callers), which was then fixed.
   - Only `runtime-claude-agent-sdk` exists. It offers `read-only` and
     `workspace-write`, with writes confined to the workspace (verified live).
     It runs no commands, so no agent Worker proves `validate` yet.
-    `runtime-codex-sdk` (no Codex CLI on the development host) and
-    `runtime-acp` are not built.
+  - `runtime-acp` offers `read-only` only to agents the operator vouches for
+    (`honoursPermissions`). The client cannot stop an agent's own direct
+    effects.
+  - `runtime-codex-sdk` is not built (no Codex CLI on the development host).
   - An agent run interrupted by a stop fails for the operator
     (`reconciliation_failed`); it is not resumed from its native session yet.
 - **The workflow engine is the MVP subset:** static templates only; no graph

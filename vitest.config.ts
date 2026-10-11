@@ -28,6 +28,7 @@ export default defineConfig({
       '@tsuuanmi/system-agent-runtime-core': src('./packages/agent-runtime-core/src/index.ts'),
       '@tsuuanmi/system-agent-workers': src('./packages/plugins/agent-workers/src/index.ts'),
       '@tsuuanmi/system-agent-runtimes': src('./packages/plugins/agent-runtimes/src/index.ts'),
+      '@tsuuanmi/system-runtime-acp': src('./packages/plugins/runtime-acp/src/index.ts'),
       '@tsuuanmi/system-runtime-claude-agent-sdk': src('./packages/plugins/runtime-claude-agent-sdk/src/index.ts'),
       '@tsuuanmi/system-workflow': src('./packages/plugins/workflow/src/index.ts'),
       '@tsuuanmi/system-workers-core': src('./packages/workers-core/src/index.ts'),

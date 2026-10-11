@@ -92,4 +92,8 @@ The Worker registry admits an agent-runtime Worker only on evidence from
   read-only and workspace-write, with exact tools, no prompts, no settings files,
   and no MCP servers. Writes are pre-approved only inside the workspace. There
   is no Bash yet, so no `validate`.
+- [`runtime-acp`](../../packages/plugins/runtime-acp/README.md): any ACP agent,
+  with the client side enforcing the policy. Permission requests are rejected,
+  reads are confined to the workspace, and nothing is advertised for writes or
+  terminals. It offers `read-only` only for agents the operator vouches for.
 - The workflow template `review` routes to these Workers by capability.

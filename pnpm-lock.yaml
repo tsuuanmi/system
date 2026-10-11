@@ -621,6 +621,25 @@ importers:
         specifier: 4.0.5-alpha.1
         version: 4.0.5-alpha.1(@deepseek-ai/cordis-plugin-include@1.0.10-alpha.1)(@deepseek-ai/cordis-plugin-loader@1.0.6-alpha.1)
 
+  packages/plugins/runtime-acp:
+    dependencies:
+      '@agentclientprotocol/sdk':
+        specifier: 1.8.0
+        version: 1.8.0(zod@4.6.5)
+      '@tsuuanmi/system-agent-runtime-core':
+        specifier: workspace:*
+        version: link:../../agent-runtime-core
+      '@tsuuanmi/system-provider-core':
+        specifier: workspace:*
+        version: link:../../provider-core
+    devDependencies:
+      '@deepseek-ai/cordis':
+        specifier: 4.0.5-alpha.1
+        version: 4.0.5-alpha.1(@deepseek-ai/cordis-plugin-include@1.0.10-alpha.1)(@deepseek-ai/cordis-plugin-loader@1.0.6-alpha.1)
+      '@deepseek-ai/schemastery':
+        specifier: 3.18.5-alpha.1
+        version: 3.18.5-alpha.1
+
   packages/plugins/runtime-claude-agent-sdk:
     dependencies:
       '@anthropic-ai/claude-agent-sdk':
@@ -903,6 +922,9 @@ importers:
       '@tsuuanmi/system-providers':
         specifier: workspace:*
         version: link:../plugins/providers
+      '@tsuuanmi/system-runtime-acp':
+        specifier: workspace:*
+        version: link:../plugins/runtime-acp
       '@tsuuanmi/system-runtime-claude-agent-sdk':
         specifier: workspace:*
         version: link:../plugins/runtime-claude-agent-sdk
@@ -972,6 +994,11 @@ packages:
 
   '@agentclientprotocol/sdk@1.4.0':
     resolution: {integrity: sha512-/eufudw+aFY1LKLolT6yFE6UMmYRl7fMJ/DEONSIyR6wI3slHWITBsANRGqXEY8FRzqUxwh7QEaGiZHcJPVThg==}
+    peerDependencies:
+      zod: ^3.25.0 || ^4.0.0
+
+  '@agentclientprotocol/sdk@1.8.0':
+    resolution: {integrity: sha512-fbP7qHZsFyTJVT0/RPrcWJ8An26qLXHEuGCHHEKDyxD1xpXV+Ejyh2LAE6vBAFePkpVjZeeohnbgvuEhZ7wLMg==}
     peerDependencies:
       zod: ^3.25.0 || ^4.0.0
 
@@ -5852,6 +5879,10 @@ ignoredOptionalDependencies:
 snapshots:
 
   '@agentclientprotocol/sdk@1.4.0(zod@4.6.5)':
+    dependencies:
+      zod: 4.6.5
+
+  '@agentclientprotocol/sdk@1.8.0(zod@4.6.5)':
     dependencies:
       zod: 4.6.5
 
