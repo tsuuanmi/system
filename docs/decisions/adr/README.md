@@ -19,3 +19,4 @@ proposal that introduces them.
 | [0008](0008-tool-agnostic.md) | Tool-agnostic boundaries: no model, vendor, agent, client, or infra lock-in | Accepted |
 | [0009](0009-claude-and-codex-first-class.md) | Claude Code and Codex first-class, as clients and as Workers | Accepted |
 | [0010](0010-reuse-before-build.md) | Reuse or adapt existing tools before building; dependency register | Accepted |
+| [0011](0011-mvp-integration-via-mcp.md) | MVP integrates with Claude Code and Codex through MCP first; model gateways in v1.0 | Accepted |

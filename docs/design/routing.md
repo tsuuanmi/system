@@ -89,6 +89,11 @@ failure (`USER_ACTION` or `BACKOFF`), not a silent switch to a different provide
 - Planning and synthesis may use a higher tier than the steps they coordinate,
   in line with "spend intelligence where intelligence matters".
 
+Inferring the tier for work that does not declare one, using a decision model, is
+under consideration in
+[PROP-0002](../proposals/0002-decision-assisted-routing.md). It is not current
+design.
+
 ## Quota and cost policy
 
 - Each account and runtime declares a **quota class**: `subscription-chat` for

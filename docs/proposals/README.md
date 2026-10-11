@@ -23,6 +23,10 @@ accepted/implemented -> superseded
 - [PROP-0001: Unified system architecture](0001-unified-system-architecture.md),
   **proposed**. A standalone host that unifies AgentOS routing and teams, internet
   provider durability and workflows, and codex-chatgpt-web gateways.
+- [PROP-0002: Decision-assisted routing](0002-decision-assisted-routing.md),
+  **draft**. A `ctx.decisions` seam, with the Jev decision model as a first
+  provider, infers the tier and capability need for undeclared work. It runs in
+  shadow mode first.
 
 Use [0000-template.md](0000-template.md) for new proposals. The
 [roadmap](roadmap.md) is a non-normative queue of milestones, not a substitute for

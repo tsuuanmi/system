@@ -10,6 +10,7 @@ decisions, architecture, or design.
 | [agentos-analysis.md](agentos-analysis.md) | [tsuuanmi/AgentOS](https://github.com/tsuuanmi/AgentOS): Worker/Team semantic model | `main` @ 2026-10-11 |
 | [internet-analysis.md](internet-analysis.md) | [tsuuanmi/internet](https://github.com/tsuuanmi/internet): browser providers + durable workflow | `main` @ 2026-10-11 |
 | [dsh-analysis.md](dsh-analysis.md) | [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness): Everything Is A Plugin, Cordis, seams | `main` @ 2026-10-11 |
+| [jev-decision-model.md](jev-decision-model.md) | TypeSafe Jev decision model: routing decisions, prior art, brainstorm D1–D8 | 2026-10-11 (early access) |
 | [codex-chatgpt-web-analysis.md](codex-chatgpt-web-analysis.md) | [miuuyy/codex-chatgpt-web](https://github.com/miuuyy/codex-chatgpt-web): Codex ↔ ChatGPT Web bridge | v6.1.8 |
 
 Each analysis ends with **Adopted** and **Not adopted** lists. Once its findings

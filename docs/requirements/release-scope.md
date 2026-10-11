@@ -29,7 +29,7 @@ is crash-safe.
 
 ### Why MCP first
 
-MCP is the one integration that **both** Claude Code and Codex already support.
+Decided in [ADR-0011](../decisions/adr/0011-mvp-integration-via-mcp.md). MCP is the one integration that **both** Claude Code and Codex already support.
 It satisfies ADR-0009 (both clients) and ADR-0008 (tool-agnostic) at the lowest
 cost. The local agent stays the local Worker for code and data, which gives P3
 for free. The Responses and Messages gateways, which make `system` look like a
