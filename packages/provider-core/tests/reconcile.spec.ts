@@ -46,3 +46,15 @@ describe('reconcileTurn', () => {
     expect(responseHash('x')).not.toBe(contentId('x'))
   })
 })
+
+describe('an unobservable conversation (temporary, or never bound)', () => {
+  it('is always AMBIGUOUS: a submitted prompt is never resent blind', async () => {
+    const { reconcileTurn } = await import('../src/index.ts')
+    const receipt = {
+      schema: 'provider-turn-receipt@1.0', account: 'a', requestId: 'r', conversation: { provider: 'p', binding: '' },
+      promptHash: `sha256:${'1'.repeat(64)}`, previousResponseHash: null, mode: { verified: true, tier: 'standard' }, status: 'SUBMITTED', resubmits: 0,
+    } as const
+    expect(reconcileTurn(receipt, { text: '', running: false })).toBe('RESUBMIT')
+    expect(reconcileTurn(receipt, { text: '', running: false, observable: false })).toBe('AMBIGUOUS')
+  })
+})

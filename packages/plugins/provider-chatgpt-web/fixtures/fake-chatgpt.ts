@@ -179,7 +179,11 @@ async function send() {
     for (const line of decoder.decode(value).split('\\n')) {
       if (!line.startsWith('data: ')) continue
       const event = JSON.parse(line.slice(6))
-      if (event.conversationId && !convId) convId = event.conversationId
+      if (event.conversationId && !convId) {
+        convId = event.conversationId
+        // Like the live site, the conversation URL appears as soon as the stream starts.
+        if (!temporary) history.pushState({}, '', '/c/' + convId)
+      }
       if (event.delta !== undefined) {
         if (!started) { $('log').append(answer); started = true }
         answer.querySelector('p').textContent += event.delta

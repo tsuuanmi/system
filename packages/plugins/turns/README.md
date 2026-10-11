@@ -39,9 +39,13 @@
 - **Restart:**
   - `queued` turns run again;
   - a `running` turn with no receipt was never sent, so it runs again;
-  - a `running` turn **with** a receipt is not resent. It fails with
-    `reconciliation_failed`, because recovering it needs a conversation
-    snapshot and a temporary conversation cannot be reopened.
+  - a `running` turn **with** a submitted receipt is reconciled under its lease.
+    A persistent conversation (bound as soon as its URL shows the id) is reopened
+    and snapshotted. A temporary or never-bound conversation cannot be observed,
+    so it is AMBIGUOUS. The `reconciliation` decision is recorded first (INV-13).
+    Then the turn waits (WAIT), adopts the answer without resending (RECOVER),
+    resends within the bound (RESUBMIT), or fails closed with
+    `reconciliation_failed` (AMBIGUOUS).
   - A stop leaves turns as they are for the next start.
 - **Tiers and modes:**
   - `tier` (or `defaultTier`) maps through the account's catalog `tiers` to the
@@ -61,6 +65,5 @@
 - **Injects:** `store`, `artifacts`, `leases`, `turnReceipts`, `accounts`, `browser`,
   `providers`; `mcp` is optional.
 - **Not yet:**
-  - recovering a submitted persistent turn from its conversation;
   - state write-back after a turn;
   - one-node DAG execution on the workflow engine.

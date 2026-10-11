@@ -160,6 +160,31 @@ describe.runIf(canRunBrowser)('ctx.turns: ask through a saved account', () => {
     expect(fake.sent).toEqual([])
   }, 60_000)
 
+  it('recovers a submitted persistent turn after a restart from its conversation, without resending', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'system-turns-'))
+    cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+    const first = await boot({ dir, fake: { thinkMs: 4000, answer: 'answered while we were down' } })
+    const turn = first.ctx.turns.ask({ prompt: 'survive a crash', persist: true })
+    const until = async (check: () => boolean): Promise<void> => {
+      const deadline = Date.now() + 30_000
+      while (!check()) {
+        if (Date.now() > deadline) throw new Error('timed out')
+        await new Promise((resolve) => setTimeout(resolve, 100))
+      }
+    }
+    await until(() => first.ctx.turns.get(turn.turnId)?.binding !== undefined)
+    await first.stop()
+    cleanups.splice(cleanups.indexOf(first.stop), 1)
+    // The provider keeps working while the host is down.
+    await until(() => [...first.fake.conversations.values()].some((c) => c.turns.some((t) => t.role === 'assistant')))
+    const second = await boot({ dir, shared: first.fake })
+    const recovered = await second.ctx.turns.wait(turn.turnId, 60_000)
+    expect(recovered).toMatchObject({ status: 'completed', answer: 'answered while we were down' })
+    expect(first.fake.sent).toHaveLength(1)
+    const outcome = second.ctx.artifacts.list({ kind: 'decision', decisionType: 'reconciliation' }).map((a) => (a.body as { outcome: { option: string } }).outcome.option)
+    expect(outcome).toEqual(['RECOVER'])
+  }, 120_000)
+
   it('runs a recovered turn in only one of two processes sharing the same home', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'system-turns-'))
     cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
@@ -233,6 +258,9 @@ describe.runIf(canRunBrowser)('ctx.turns: ask through a saved account', () => {
     const turns = second.ctx.turns.list()
     const interrupted = turns.find((t) => t.turnId === submitted.turnId)!
     expect(interrupted).toMatchObject({ status: 'failed', error: { kind: 'reconciliation_failed' } })
+    // The restart decision is recorded (INV-13): a temporary conversation cannot be observed.
+    const reconciliations = second.ctx.artifacts.list({ kind: 'decision', decisionType: 'reconciliation' })
+    expect(reconciliations.map((a) => (a.body as { outcome: { option: string } }).outcome.option)).toEqual(['AMBIGUOUS'])
     expect(turns.map((t) => t.turnId).sort()).toEqual([submitted.turnId, queuedTurn.turnId].sort())
     expect((await second.ctx.turns.wait(queuedTurn.turnId, 60_000)).answer).toBe('resumed')
     expect(second.fake.sent.map((s) => s.prompt)).toEqual(['queued before the crash'])

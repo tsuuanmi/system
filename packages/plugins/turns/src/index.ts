@@ -16,7 +16,7 @@ import type {} from '@tsuuanmi/system-browser-patchright'
 import { type Lease, LeaseLost, StaleGeneration } from '@tsuuanmi/system-leases'
 import { type ContentId, sha256 } from '@tsuuanmi/system-libs'
 import type {} from '@tsuuanmi/system-mcp-server'
-import { type ConversationMode, type Disposition, ProviderError, type ProviderFeature, ProviderScheduler, type Tier, dispositionOf, toProviderError } from '@tsuuanmi/system-provider-core'
+import { type ConversationMode, type Disposition, ProviderError, type ProviderFeature, ProviderScheduler, type Tier, type TurnReceipt, type TurnSnapshot, dispositionOf, toProviderError } from '@tsuuanmi/system-provider-core'
 import type {} from '@tsuuanmi/system-providers'
 import type {} from '@tsuuanmi/system-store'
 import type {} from '@tsuuanmi/system-turn-receipts'
@@ -336,12 +336,8 @@ export class Turns extends Service {
       const row = this.row(turnId)
       if (!row || TERMINAL.has(row.status)) return
       const receipt = row.account ? this.ctx.turnReceipts.read(this.identity(row, row.account)) : undefined
-      if (row.status === 'running' && receipt) {
-        // Its previous owner stopped after sending. Recovering needs a conversation snapshot,
-        // and a temporary conversation cannot be reopened: never resend.
-        this.fail(turnId, new ProviderError('reconciliation_failed',
-          'the host stopped after this prompt was sent; it is not resent automatically (ambiguous whether the provider answered)'), current)
-        return
+      if (row.status === 'running' && receipt?.status === 'SUBMITTED') {
+        if ((await this.reconcileSubmitted(row, receipt, lost.signal, current)) === 'done') return
       }
       const account = row.account ?? (await this.route(row, current))
       const scheduler = this.scheduler(account)
@@ -442,6 +438,8 @@ export class Turns extends Service {
             })
           })
         },
+        // Bind as soon as the conversation has its id, so a crash mid-answer can be reconciled.
+        onBinding: (binding) => this.bind(row, accountId, binding, lease),
       })
     } catch (error) {
       await turn.close()
@@ -452,33 +450,87 @@ export class Turns extends Service {
       throw error
     }
     try {
-      this.ctx.store.transaction(() => {
-        this.ctx.leases.fence(lease())
-        if (result.binding) {
-          this.ctx.turnReceipts.bindConversation(identity, result.binding)
-          if (row.session_id) {
-            this.ctx.store.db.prepare(`INSERT INTO turn_sessions (session_id, account, binding, created_at) VALUES (?, ?, ?, ?)
-              ON CONFLICT (session_id) DO UPDATE SET binding = excluded.binding`).run(row.session_id, accountId, result.binding, now())
-          }
-        }
-        this.ctx.turnReceipts.complete(identity, { response: result.text, providerTurnId: result.binding ?? row.turn_id })
-        const answer = this.ctx.artifacts.put({
-          kind: 'report',
-          bodySchema: 'provider-answer@1.0',
-          body: {
-            schema: 'provider-answer@1.0', provider: view.provider, account: accountId, turnId: row.turn_id,
-            ...(row.session_id ? { sessionId: row.session_id } : {}),
-            conversation: { mode: row.mode, ...(result.binding ? { binding: result.binding } : {}) },
-            promptHash: sha256(row.prompt), text: result.text,
-          },
-          classification: 'local-private',
-          producer: { type: 'worker', ref: `${view.provider}/${accountId}` },
-          inputs: row.route_decision ? [row.route_decision as ContentId] : [],
-        })
-        this.update(row.turn_id, { status: 'completed', answer: result.text, answer_artifact: answer.id, binding: result.binding ?? null }, lease)
-      })
+      this.commit(row, accountId, view.provider, result.text, result.binding, lease)
     } finally {
       await turn.close()
+    }
+  }
+
+  /** Record the conversation binding on the receipt, the session, and the turn (fenced). */
+  private bind(row: Row, accountId: string, binding: string, lease: () => Lease): void {
+    this.ctx.store.transaction((db) => {
+      this.ctx.leases.fence(lease())
+      this.ctx.turnReceipts.bindConversation(this.identity(row, accountId), binding)
+      if (row.session_id) db.prepare('UPDATE turn_sessions SET binding = ?, account = COALESCE(account, ?) WHERE session_id = ?').run(binding, accountId, row.session_id)
+      db.prepare('UPDATE turns SET binding = ?, updated_at = ? WHERE turn_id = ?').run(binding, now(), row.turn_id)
+    })
+  }
+
+  /** Bind, complete the receipt, and store the answer artifact in one fenced transaction. */
+  private commit(row: Row, accountId: string, provider: string, text: string, binding: string | undefined, lease: () => Lease): void {
+    const identity = this.identity(row, accountId)
+    this.ctx.store.transaction(() => {
+      if (binding) this.bind(row, accountId, binding, lease)
+      this.ctx.leases.fence(lease())
+      this.ctx.turnReceipts.complete(identity, { response: text, providerTurnId: binding ?? row.turn_id })
+      const answer = this.ctx.artifacts.put({
+        kind: 'report',
+        bodySchema: 'provider-answer@1.0',
+        body: {
+          schema: 'provider-answer@1.0', provider, account: accountId, turnId: row.turn_id,
+          ...(row.session_id ? { sessionId: row.session_id } : {}),
+          conversation: { mode: row.mode, ...(binding ? { binding } : {}) },
+          promptHash: sha256(row.prompt), text,
+        },
+        classification: 'local-private',
+        producer: { type: 'worker', ref: `${provider}/${accountId}` },
+        inputs: row.route_decision ? [row.route_decision as ContentId] : [],
+      })
+      this.update(row.turn_id, { status: 'completed', answer: text, answer_artifact: answer.id, binding: binding ?? null }, lease)
+    })
+  }
+
+  /**
+   * A turn whose previous owner stopped after sending (INV-4): observe the conversation
+   * (a temporary or never-bound one cannot be observed), record the reconciliation
+   * decision, then wait, recover the answer, resubmit within the bound, or fail closed.
+   */
+  private async reconcileSubmitted(row: Row, receipt: TurnReceipt, signal: AbortSignal, lease: () => Lease): Promise<'resubmit' | 'done'> {
+    const accountId = row.account!
+    const identity = this.identity(row, accountId)
+    const binding = receipt.conversation.binding || this.session(row.session_id ?? '')?.binding || undefined
+    const deadline = Date.now() + (row.feature === 'deep-research' ? this.config.researchTimeoutMs ?? 60 * 60_000 : this.config.turnTimeoutMs ?? 15 * 60_000)
+    let snapshot: TurnSnapshot = { text: '', running: false, observable: false }
+    let provider = ''
+    for (;;) {
+      if (row.mode === 'persistent' && binding) {
+        const view = await this.ctx.accounts.get(accountId)
+        provider = view.provider
+        const driver = this.ctx.providers.get(view.provider)
+        const turn = await this.ctx.browser.openTurn(accountId, { state: await this.ctx.accounts.portableState(accountId), signal })
+        try {
+          snapshot = await driver.snapshot(turn.page, binding)
+        } finally {
+          await turn.close()
+        }
+      }
+      const { outcome, decision } = this.ctx.store.transaction(() => {
+        this.ctx.leases.fence(lease())
+        return this.ctx.turnReceipts.reconcile(identity, snapshot)
+      })
+      if (outcome === 'RECOVER') {
+        this.commit(row, accountId, provider, snapshot.text, binding, lease)
+        return 'done'
+      }
+      if (outcome === 'RESUBMIT') return 'resubmit'
+      if (outcome === 'AMBIGUOUS' || Date.now() > deadline) {
+        this.fail(row.turn_id, new ProviderError('reconciliation_failed',
+          `the host stopped after this prompt was sent and the outcome cannot be established (decision ${decision}); it is not resent automatically`), lease)
+        return 'done'
+      }
+      // WAIT: the provider is still generating; look again shortly.
+      await new Promise((resolve) => setTimeout(resolve, 5000))
+      signal.throwIfAborted()
     }
   }
 

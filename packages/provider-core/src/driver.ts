@@ -3,6 +3,8 @@
  * docs/design/browser-runtime.md#accounts-ctxaccounts-provider-agnostic-multi-account).
  * Generic over the page type so this package stays engine-free.
  */
+import type { TurnSnapshot } from './reconcile.ts'
+
 export type AuthState = 'signed-in' | 'signed-out' | 'unknown'
 export type ConversationMode = 'temporary' | 'persistent'
 
@@ -33,6 +35,11 @@ export interface AskOptions {
    * conversation (null for a new one), the boundary used by reconciliation.
    */
   beforeSend?: (boundary: { previousResponse: string | null; mode: ProviderMode }) => void | Promise<void>
+  /**
+   * Called once, as soon as a new persistent conversation has its canonical id (before the
+   * answer completes), so a crash mid-answer can still be reconciled by reopening it.
+   */
+  onBinding?: (binding: string) => void
 }
 
 export interface AskResult {
@@ -53,4 +60,6 @@ export interface ProviderDriver<Page = unknown> {
   /** A stable identity hint for the signed-in account; only its hash is ever stored. */
   identity(page: Page): Promise<string>
   ask(page: Page, prompt: string, options: AskOptions): Promise<AskResult>
+  /** Reopen a bound conversation and report its last answer and whether it is still generating. */
+  snapshot(page: Page, binding: string): Promise<TurnSnapshot>
 }

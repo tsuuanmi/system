@@ -127,7 +127,7 @@ export class ChatGptWebDriver implements ProviderDriver<Page> {
     options.signal?.throwIfAborted()
     await options.beforeSend?.({ previousResponse, mode })
     await engine.act('composer.send')
-    const text = await this.waitForAnswer(page, before, options.signal, options.deadlines)
+    const text = await this.waitForAnswer(page, before, options.signal, options.deadlines, options.conversation === 'persistent' && !options.binding ? options.onBinding : undefined)
     if (options.conversation === 'temporary') return { text, binding: undefined, mode }
     const binding = await this.binding(page)
     if (options.binding !== undefined && binding !== options.binding) {
@@ -200,11 +200,27 @@ export class ChatGptWebDriver implements ProviderDriver<Page> {
     await this.requireChat(engine, when)
   }
 
+  /** Reopen a bound conversation and read its last answer and running state (for reconciliation). */
+  async snapshot(page: Page, binding: string): Promise<{ text: string; running: boolean; observable: boolean }> {
+    await page.goto(`${this.origin}/c/${binding}`, { waitUntil: 'domcontentloaded' })
+    const auth = await this.checkAuth(page)
+    if (auth === 'signed-out') throw new ProviderError('reauth_required', 'chatgpt-web: signed out')
+    if (auth === 'unknown' || this.bindingOf(page) !== binding) return { text: '', running: false, observable: false }
+    const engine = this.engine(page)
+    const text = (await engine.count('turn.assistant')) > 0 ? await this.answerText(engine) : ''
+    return { text, running: await engine.state('turn.running'), observable: true }
+  }
+
+  private bindingOf(page: Page): string | undefined {
+    const url = new URL(page.url())
+    return CONVERSATION.exec(url.pathname + url.search)?.[1]
+  }
+
   /** The canonical conversation id from the URL, waiting briefly for it to appear. */
   async binding(page: Page): Promise<string> {
     const deadline = Date.now() + this.timeouts.readyMs
     for (;;) {
-      const id = CONVERSATION.exec(new URL(page.url()).pathname + new URL(page.url()).search)?.[1]
+      const id = this.bindingOf(page)
       if (id) return id
       if (Date.now() >= deadline) throw new ProviderError('session_broken', 'chatgpt-web: no conversation id after the answer')
       await new Promise((resolve) => setTimeout(resolve, 100))
@@ -288,9 +304,17 @@ export class ChatGptWebDriver implements ProviderDriver<Page> {
     return raw.replace(/^\s*ChatGPT said:?\s*/i, '').trim()
   }
 
-  private async waitForAnswer(page: Page, before: number, signal: AbortSignal | undefined, deadlines: AskOptions['deadlines']): Promise<string> {
+  private async waitForAnswer(page: Page, before: number, signal: AbortSignal | undefined, deadlines: AskOptions['deadlines'], onBinding?: (binding: string) => void): Promise<string> {
     const engine = this.engine(page)
+    let bound = false
     const read = async () => {
+      if (onBinding && !bound) {
+        const id = this.bindingOf(page)
+        if (id) {
+          bound = true
+          onBinding(id)
+        }
+      }
       const count = await engine.count('turn.assistant')
       if (count <= before) return { responsePresent: false, text: '', html: '', running: true }
       const text = await this.answerText(engine)

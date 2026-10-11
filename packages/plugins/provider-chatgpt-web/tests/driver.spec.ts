@@ -127,6 +127,21 @@ describe.runIf(canRunBrowser)('ChatGptWebDriver against the fake site', () => {
     await expect(driver.ask(page, 'x', { conversation: 'temporary', feature: 'deep-research' })).rejects.toMatchObject({ kind: 'invalid_input' })
   }, 60_000)
 
+  it('reports the conversation binding as soon as the URL shows it, before the answer is complete', async () => {
+    const { page, driver } = await site({ answer: 'late answer', thinkMs: 1500 })
+    const order: string[] = []
+    const turn = await driver.ask(page, 'bind early', { conversation: 'persistent', onBinding: (id) => { order.push(`bound ${id}`) } })
+    order.push('answered')
+    expect(order).toEqual([`bound ${turn.binding}`, 'answered'])
+  }, 40_000)
+
+  it('snapshots a bound conversation: the last answer and whether it is still running', async () => {
+    const { page, driver, context } = await site({ answer: 'kept answer' })
+    const turn = await driver.ask(page, 'remember me', { conversation: 'persistent' })
+    const other = await context.newPage()
+    expect(await driver.snapshot(other, turn.binding!)).toEqual({ text: 'kept answer', running: false, observable: true })
+  }, 40_000)
+
   it('refuses to send when Chat cannot be selected (Work spends the Codex quota)', async () => {
     const { fake, page, driver } = await site({ chatToggleBroken: true })
     const failure = driver.ask(page, 'never sent', { conversation: 'temporary' })

@@ -25,6 +25,8 @@ export interface TurnReceipt {
 export interface TurnSnapshot {
   text: string
   running: boolean
+  /** False when the conversation cannot be observed (temporary, or never bound): never resend blind. */
+  observable?: boolean
 }
 
 export type Reconciliation = 'WAIT' | 'RECOVER' | 'RESUBMIT' | 'AMBIGUOUS'
@@ -40,6 +42,7 @@ export function responseHash(text: string): ContentId {
  * may already have accepted unless nothing new exists after the boundary.
  */
 export function reconcileTurn(receipt: TurnReceipt, snapshot: TurnSnapshot, options: { maxResubmits?: number } = {}): Reconciliation {
+  if (snapshot.observable === false) return 'AMBIGUOUS'
   const text = snapshot.text.trim()
   const current = responseHash(text)
   if (snapshot.running) return receipt.status === 'SUBMITTED' ? 'WAIT' : 'AMBIGUOUS'

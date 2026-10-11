@@ -20,6 +20,9 @@ The **ChatGPT Web provider driver**
   - completion needs the answer's finished marker ("Copy") and stable text, via
     the two-clock `waitForStableCompletion`;
   - the event stream stays open on the live site and is never consulted.
+- **`snapshot(page, binding)`:** reopens `/c/<id>` and returns the last answer
+  and whether it is still running, for reconciliation. `onBinding` reports a new
+  conversation's id as soon as the URL shows it.
 - **`checkAuth`:** `signed-in` (composer present), `signed-out` (positive
   evidence: login URL or surface), or `unknown`.
 - **Heal audit:**

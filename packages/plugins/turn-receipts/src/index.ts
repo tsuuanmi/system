@@ -136,7 +136,7 @@ export class TurnReceipts extends Service {
         inputs: [],
         candidates: OUTCOMES.map((option) => ({ option, selected: option === outcome, reasons: option === outcome ? [this.reason(current, snapshot, outcome)] : [] })),
         decider: { type: 'rule', id: 'provider-turns.reconcile', version: '1' },
-        outcome: { option: outcome, detail: { receipt: receiptId(identity), snapshotHash: responseHash(snapshot.text), running: snapshot.running } },
+        outcome: { option: outcome, detail: { receipt: receiptId(identity), snapshotHash: responseHash(snapshot.text), running: snapshot.running, observable: snapshot.observable !== false } },
         deterministic: true,
       }, { producer: { type: 'system', ref: 'turn-receipts' } })
       this.write(identity, { ...current, reconciliations: [...(current.reconciliations ?? []), envelope.id] })
@@ -170,7 +170,9 @@ export class TurnReceipts extends Service {
       case 'WAIT': return 'provider is still generating the submitted turn'
       case 'RECOVER': return receipt.status === 'COMPLETED' ? 'page shows the recorded response' : 'a new response exists after the boundary'
       case 'RESUBMIT': return `nothing new after the boundary; resubmit ${receipt.resubmits + 1} of ${this.maxResubmits}`
-      default: return snapshot.running ? 'generating after completion' : 'state does not match the receipt or the bound is reached'
+      default:
+        if (snapshot.observable === false) return 'the conversation cannot be observed (temporary or never bound); the prompt may have been answered'
+        return snapshot.running ? 'generating after completion' : 'state does not match the receipt or the bound is reached'
     }
   }
 }

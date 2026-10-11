@@ -12,6 +12,10 @@ Each website is a `ProviderDriver`. The runtime never branches on provider names
 interface ProviderDriver {
   readonly provider: string;                       // "chatgpt-web", "gemini-web", ...
   checkAuth(page): Promise<AuthState>;
+  identity(page): Promise<string>;                 // hashed before storage
+  ask(page, prompt, { conversation, binding?, mode?, feature?, deadlines?, beforeSend, onBinding }): Promise<AskResult>;
+  snapshot(page, binding): Promise<TurnSnapshot>;  // for reconciliation
+  // (target shape; the implemented contract is ProviderDriver in provider-core)
   open(page, binding?: ConversationBinding): Promise<void>;
   selectMode(page, mode: ModeRequest): Promise<VerifiedMode>;   // model, effort, deep research
   snapshot(page): Promise<ProviderSnapshot>;      // turn ids, generating?, last response text
@@ -160,7 +164,10 @@ its [README](../../packages/plugins/turns/README.md):
   - The receipt is written in `beforeSend`.
   - Completion binds the conversation, completes the receipt, and stores the
     answer artifact in **one transaction**.
-- **Restart.** A submitted turn is never resent automatically.
+- **Restart.** A submitted turn is reconciled. Persistent conversations are
+  bound as soon as their id appears, then reopened and snapshotted. Temporary ones
+  cannot be observed and end as AMBIGUOUS. A prompt is resent only on RESUBMIT,
+  within the bound.
 
 MCP contract: `ask { prompt, sessionId?, persist?, clientRequestId?, waitSeconds? }`
 returns the turn view with `answer` once it is complete. Otherwise it returns
