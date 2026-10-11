@@ -6,16 +6,17 @@
 
 | Concern | Tool |
 |---|---|
-| runtime / package manager | Bun ([ADR-0002](../decisions/adr/0002-typescript-on-bun.md)) |
+| runtime / package manager | Node `^22.19 \|\| >=24`, pnpm ([ADR-0018](../decisions/adr/0018-build-on-dsh-core.md)) |
+| host | DSH core, one exact pinned version; `system` bundle + profile |
 | language | TypeScript, `strict` |
 | lint / format | Biome |
 | typecheck | `tsc --noEmit` (or `tsgo`) |
-| tests | `bun test` |
+| tests | Vitest |
 | browser automation | `patchright-core` against a system Chrome (CON-7) |
 
 ## Workspace
 
-Bun workspaces under `packages/`, following the layout in
+pnpm workspaces under `packages/`, following the layout in
 [PROP-0001](../proposals/0001-unified-system-architecture.md#proposed-design).
 Each package has a colocated `README.md` that says what it owns, what it does not
 own, its entry points, and its dependency direction, and links back to
@@ -23,8 +24,9 @@ own, its entry points, and its dependency direction, and links back to
 
 ## Composition
 
-The host is started with a profile. A profile is an ordered list of bundles plus
-patch files ([plugin model](../architecture/plugin-model.md#composition)).
+The host is DSH core, started with the `system` profile: `dsh-base`, then the
+`system` bundle, then patch files
+([plugin model](../architecture/plugin-model.md#composition)).
 Planned profiles: `default` (all layers), `headless` (no gateways or Web UI),
 `gateway-only`, and `dev` (fakes for every external seam, so no accounts are
 needed). The composed tree can be printed for inspection.
@@ -32,10 +34,11 @@ needed). The composed tree can be printed for inspection.
 ## Commands (planned)
 
 ```sh
-bun install
-bun run check     # biome + typecheck + doc checks
-bun test          # unit and contract tests
-bun run verify    # check + test + build + smoke (CI entry point)
+pnpm install
+pnpm check        # biome + typecheck + doc and schema checks
+pnpm test         # unit, contract, and composition tests
+pnpm verify       # check + test + build + smoke (CI entry point)
+system --help     # wrapper around `dsh --profile system`
 ```
 
 The definitive list will be the `scripts` in the root `package.json` once M0 lands.

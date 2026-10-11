@@ -40,8 +40,9 @@ untrusted:  provider websites · model output · tool output · repository conte
 | An agent-runtime Worker acts outside its workspace or approvals | the policy comes from trusted envelopes and maps exactly onto the agent's sandbox and permission modes; a policy that cannot be expressed exactly fails the run (REQ-WRK-6) |
 | Local or private data leaks to a provider website or API through a prompt or attachment | egress check on the actual outgoing payload against an explicit policy; `local-private` work admitted only to local Workers ([INV-12](../architecture/invariants.md#inv-12-data-egress-is-explicit)) |
 | A peer message carries prompt injection or claims authority ("the operator approved this") | peer messages are untrusted data; authority never comes from messages (INV-6); policy and egress are checked on every message; only `approval` artifacts from the operator grant approval |
+| Telemetry or data leaving through host defaults | DSH telemetry rows disabled in the `system` profile; DeepSeek-specific defaults disabled unless configured ([ADR-0018](../decisions/adr/0018-build-on-dsh-core.md)) |
 | A malicious or compromised plugin | plugins run in-process with full host trust, so only operator-installed plugins from the profile are loaded; there is no remote plugin installation; plugin packages are pinned in the lockfile |
-| A supply-chain change in the browser stack or SDKs | committed lockfile, pinned versions, `bun audit` in CI, no vendored binaries |
+| A supply-chain change in the browser stack or SDKs | committed lockfile, one exact pinned DSH version, `pnpm audit` in CI, no vendored binaries |
 | Provider terms or abuse controls lead to account loss | bounded per-account concurrency; no evasion features; operator responsibility (CON-3) |
 
 ## Out of scope (until a requirement exists)

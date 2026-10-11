@@ -25,7 +25,7 @@ behavior lives and under which constraints. *How* each mechanism works belongs i
   Codex ────────▶│                                        │──▶ ChatGPT Web / Gemini Web (browser)
   (Responses)    │                                        │──▶ Claude Code  (Claude Agent SDK)
   Claude Code ──▶│              system host               │──▶ Codex        (Codex SDK)
-  (Messages)     │   Cordis plugin runtime, loopback,     │──▶ ACP agents
+  (Messages)     │   own harness on DSH core (Cordis),    │──▶ ACP agents
   MCP clients ──▶│   single operator                      │──▶ API / local models
   CLI / Web UI ─▶│                                        │──▶ local tools / shell / git
                  └────────────────────────────────────────┘
@@ -57,7 +57,7 @@ internals.
 │               MCP server · CLI · Web UI            [consumers only]       │
 ├───────────────────────────────────────────────────────────────────────────┤
 │ Orchestration ctx.workflow (semantic DAG, durable nodes) · ctx.teams ·    │
-│               ctx.sessions (SessionIds, direct messaging, long-running) · │
+│               ctx.workerSessions (SessionIds, direct messaging) ·         │
 │               ctx.profiles                                                │
 ├───────────────────────────────────────────────────────────────────────────┤
 │ Routing       ctx.workers: registry · admission · deterministic router ·  │
@@ -74,13 +74,17 @@ internals.
 │ Kernel        ctx.store (SQLite/WAL) · ctx.blobs · ctx.events ·           │
 │               ctx.leases · libraries: hashing, clock, schemas             │
 ╞═══════════════════════════════════════════════════════════════════════════╡
-│ Host          Cordis root context + loader · profiles · patches ·         │
+│ Host          DSH core (dsh-base) + system bundle · Cordis loader ·       │
 │               startup validation · drain                                  │
 └───────────────────────────────────────────────────────────────────────────┘
 ```
 
-The **host** is not a layer that contains business logic. It is the Cordis root
-that loads the plugins named by the active profile. Which providers run, and
+The **host** is not a layer that contains business logic. It is **DSH core**
+(the `dsh-base` bundle on Cordis) plus the `system` bundle, launched as the
+`system` profile ([ADR-0018](../decisions/adr/0018-build-on-dsh-core.md)). DSH
+packages provide several seams, such as storage, attachments, credentials,
+approvals, exec, and LLM adapters. The
+[DSH core reuse map](plugin-model.md#dsh-core-reuse-map) lists which. Which providers run, and
 whether a gateway is enabled at all, is decided by configuration.
 
 ## Where the ideas come from
@@ -90,7 +94,7 @@ their known weaknesses. The full analysis lives in [research](../research/README
 
 | Concern | Primary source | Weakness removed |
 |---|---|---|
-| Plugin runtime, seams, composition | DeepSeek Harness / Cordis | — (adopted as a library, not as the host) |
+| Host, plugin runtime, seams, composition, reusable plugins | DeepSeek Harness core / Cordis | used through `system` seams with pinned versions, so there is no lock-in ([ADR-0018](../decisions/adr/0018-build-on-dsh-core.md)) |
 | Routing, teams | AgentOS | bound to an experimental harness API |
 | Provider runtime, workflow durability | internet | no provider interface, lock-free JSON stores, two runtimes |
 | Gateways | codex-chatgpt-web | Codex-only, unauthenticated control surfaces, monolithic modules |

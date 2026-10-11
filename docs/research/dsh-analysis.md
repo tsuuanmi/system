@@ -80,8 +80,23 @@ policy and timeout primitives ("rejected on microkernel grounds").
 | Profiles, bundles, patch composition | [plugin model](../architecture/plugin-model.md#composition) |
 | No hardcoded tunables; disposers; events vs methods | [plugin rules](../architecture/plugin-model.md#plugin-rules) |
 
+Update (2026-10-11): DSH core is now adopted as the host
+([ADR-0018](../decisions/adr/0018-build-on-dsh-core.md)). The package-level
+reuse decisions are in the
+[DSH core reuse map](../architecture/plugin-model.md#dsh-core-reuse-map). Survey
+facts for repository version `0.2.1-alpha.2`:
+
+- `dsh-base` is a code-free patch.
+- Profiles `web`, `headless`, `sdk`, `sdk-minimal`, and `acp` exist.
+- Node `^22.19 || >=24` only.
+- The MCP side is a client only.
+- `dsh-workflow-ptc` is not durable.
+- The Claude Code and Codex subagents are one-shot.
+- Agent teams are experimental and single-process.
+
 ## Not adopted
 
-- DSH itself as the host ([ADR-0001](../decisions/adr/0001-standalone-host.md)).
+- A stock DSH profile with `system` as a plugin inside it. `system` ships its own
+  bundle and profile instead ([ADR-0018](../decisions/adr/0018-build-on-dsh-core.md)).
 - One-shot-only Claude Code and Codex bridges. `system` uses the official SDKs
   with resume ([ADR-0009](../decisions/adr/0009-claude-and-codex-first-class.md)).

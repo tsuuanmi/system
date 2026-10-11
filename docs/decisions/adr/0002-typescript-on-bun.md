@@ -1,6 +1,6 @@
 # ADR-0002: TypeScript on Bun, Node-compatible core
 
-- **Status:** Accepted
+- **Status:** Superseded in part by [ADR-0018](0018-build-on-dsh-core.md) (runtime is Node `^22.19 || >=24`, because DSH does not support Bun; TypeScript stays)
 - **Date:** 2026-10-11
 - **Related:** PROP-0001, CON-2
 

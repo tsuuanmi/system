@@ -1,6 +1,6 @@
 # Worker sessions, direct messaging, and long-running work
 
-> Target state. Seam: `ctx.sessions` ([plugin model](../architecture/plugin-model.md#seam-catalog)).
+> Target state. Seam: `ctx.workerSessions` ([plugin model](../architecture/plugin-model.md#seam-catalog)).
 > Decision: [ADR-0015](../decisions/adr/0015-worker-sessions-and-peer-messaging.md).
 > Requirements: REQ-SES-1..8. Shapes: [`worker-session.v1.json`](../../schemas/worker-session.v1.json),
 > [`message.v1.json`](../../schemas/message.v1.json).

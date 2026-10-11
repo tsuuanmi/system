@@ -9,8 +9,8 @@ proposal that introduces them.
 
 | ADR | Decision | Status |
 |---|---|---|
-| [0001](0001-standalone-host.md) | `system` is a standalone host; other harnesses are clients or adapters | Accepted |
-| [0002](0002-typescript-on-bun.md) | TypeScript on Bun, Node-compatible core | Accepted |
+| [0001](0001-standalone-host.md) | `system` is a standalone host; other harnesses are clients or adapters | Superseded in part by 0018 |
+| [0002](0002-typescript-on-bun.md) | TypeScript on Bun, Node-compatible core | Superseded in part by 0018 (Node runtime) |
 | [0003](0003-sqlite-durable-store.md) | SQLite (WAL) + content-addressed blobs as the durable store | Proposed |
 | [0004](0004-single-workflow-runtime.md) | One workflow runtime combining DAG, input-hash durability, and lineage | Proposed |
 | [0005](0005-provider-runtime-interface.md) | Provider drivers behind one `ProviderDriver` interface | Proposed |
@@ -26,3 +26,4 @@ proposal that introduces them.
 | [0015](0015-worker-sessions-and-peer-messaging.md) | Durable Worker sessions with own SessionId and direct peer messaging; A2A for cross-runtime peers, ACP for driving agents | Accepted |
 | [0016](0016-invisible-headed-browser-and-portable-accounts.md) | Invisible headed system Chrome (never headless for provider turns); provider-agnostic multi-account vault | Accepted |
 | [0017](0017-credential-login-and-linux-remote-browser.md) | Opt-in credential login (email, password, local TOTP) with remote-view fallback; Linux-first MVP; port internet's noVNC remote login | Accepted |
+| [0018](0018-build-on-dsh-core.md) | `system` is our own harness built on DSH core (bundle + profile over `dsh-base`), reusing DSH plugins behind our seams; Node runtime; telemetry off | Accepted |

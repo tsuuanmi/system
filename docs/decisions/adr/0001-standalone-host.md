@@ -1,6 +1,6 @@
 # ADR-0001: `system` is a standalone host
 
-- **Status:** Accepted
+- **Status:** Superseded in part by [ADR-0018](0018-build-on-dsh-core.md) (`system` is now its own harness built on DSH core)
 - **Date:** 2026-10-11
 - **Related:** PROP-0001, CON-1, ADR-0007
 

@@ -108,7 +108,7 @@ Facts from the [protocol overview](https://agentclientprotocol.com/protocol/v2/o
 ## Recommendation
 
 1. **Internal direct communication: a `system`-native durable mailbox** in a new
-   `ctx.sessions` seam. It replaces what DSH `ctx.agentTeams` gave AgentOS. Every
+   `ctx.workerSessions` seam. It replaces what DSH `ctx.agentTeams` gave AgentOS. Every
    continuable Worker participation gets a `SessionId`. Peers address each other
    by `SessionId`. Messages are artifacts. Delivery is durable, at least once,
    and idempotent by `messageId`. Idle sessions are woken by incoming messages.

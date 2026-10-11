@@ -96,9 +96,11 @@ routes back here.
 
 ## Host
 
-- **Owns:** the Cordis root context and loader. It composes the plugins named by
-  the active profile and patches, validates every plugin `Config` at startup,
-  isolates failures per plugin, and runs drain and shutdown.
+- **Owns:** composition on **DSH core**. The `system` profile layers the `system`
+  bundle over `dsh-base`, and the `system` CLI wrapper runs
+  `dsh --profile system`. It validates every plugin `Config` at startup, isolates
+  failures per plugin, disables telemetry, and runs drain and shutdown
+  ([ADR-0018](../decisions/adr/0018-build-on-dsh-core.md)).
 - **Does not own:** business logic. The host never wires layers by hand.
   Dependencies are resolved through `inject`.
 
@@ -112,9 +114,8 @@ routes back here.
 - **MCP server:** exposes `system` capabilities and the per-turn tool bridge.
 - **CLI and Web UI:** the operator surface for turns, workflows, accounts, remote
   login, and maintenance.
-- **DSH bundle:** `system` plugins packaged as a DeepSeek Harness bundle, so a
-  DSH profile can mount them. Because both sides use Cordis, no adapter code is
-  needed ([plugin model](plugin-model.md#portability-to-other-hosts)).
+- **ACP (optional):** DSH's ACP server exposes the harness to ACP editors
+  ([plugin model](plugin-model.md#dsh-core-reuse-map)).
 - **Does not own:** orchestration state. Gateways translate protocols and enforce
   transport-level security only.
 - **Design:** [gateways](../design/gateways.md).

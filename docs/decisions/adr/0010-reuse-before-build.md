@@ -44,7 +44,7 @@ dependency or port updates that register in the same PR.
 ## Consequences
 
 - Less code to own, and mechanisms already proven in production.
-- Dependency risk is managed by pinning, `bun audit` in CI, seam conformance
+- Dependency risk is managed by pinning, `pnpm audit` in CI, seam conformance
   suites, and the rule that every external tool sits behind a seam, so it can be
   replaced ([ADR-0008](0008-tool-agnostic.md)).
 - Ported code is restructured into small modules that fit the seams, not copied

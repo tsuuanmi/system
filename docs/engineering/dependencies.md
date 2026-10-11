@@ -9,11 +9,11 @@ code updates this table.
 
 | Concern | Choice | Rung | Seam / home | Notes |
 |---|---|---|---|---|
-| Plugin runtime, DI, lifecycle | `@deepseek-ai/cordis` + loader | library | host | MIT; exact pin; primitives covered by a conformance suite ([ADR-0007](../decisions/adr/0007-everything-is-a-plugin.md)) |
+| Host, plugin runtime, reusable plugins | **DSH core** (`dsh-base` + selected `@deepseek-ai/dsh-*`) on Cordis | library (core) | host and many seams; see the [reuse map](../architecture/plugin-model.md#dsh-core-reuse-map) | MIT; one exact pinned version; never `latest`; telemetry off ([ADR-0018](../decisions/adr/0018-build-on-dsh-core.md)) |
 | Config validation | Schemastery (Cordis-native) | library | every plugin `Config` | keeps one schema system across plugins |
 | Record and wire schemas | JSON Schema 2020-12 + Ajv (`ajv`, `ajv-formats`) | spec + library | `ctx.artifacts`, store, MCP, decisions | [ADR-0014](../decisions/adr/0014-json-schema-contracts.md); strict mode |
 | Types from schemas | `json-schema-to-typescript` (or equivalent) | library | build step | generated types are build output, checked in CI |
-| Durable records | `bun:sqlite` (Node: `better-sqlite3`) | library | `ctx.store` | [ADR-0003](../decisions/adr/0003-sqlite-durable-store.md); hand-written versioned migrations, no ORM |
+| Durable records | `node:sqlite` via DSH `dsh-storage-sqlite` / `dsh-storage-domain`, or `system` tables on `node:sqlite` where transactions and revisions need more (M0 spike) | library | `ctx.store` | [ADR-0003](../decisions/adr/0003-sqlite-durable-store.md); versioned migrations, no ORM |
 | Browser automation | `patchright-core` + system Chrome (stable channel), headed | library | `ctx.browser` | proven in internet; removes automation leaks, no fingerprint spoofing ([ADR-0016](../decisions/adr/0016-invisible-headed-browser-and-portable-accounts.md)) |
 | Invisible display, remote login | Xvfb (virtual display for turns) + x11vnc + noVNC (login) | system tool / library | `ctx.display` | taken from system packages, not vendored |
 | HTML → Markdown | `turndown` | library | provider drivers | |
@@ -26,6 +26,8 @@ code updates this table.
 | TOTP codes | `otpauth` (RFC 4226/6238) | library | `login-credentials` code provider `totp-local` | computed locally; never via third-party sites |
 | Credential encryption at rest | OS keyring (libsecret / Keychain) or a `0600` key file | system tool / library | `ctx.accounts` | mandatory for passwords and TOTP secrets |
 | Responses emulation, turn broker, completion fence, drain | port from codex-chatgpt-web | port | gateways | MIT; keep attribution in `THIRD_PARTY_NOTICES` |
-| Local exec (shell, fs, sandbox) | evaluate DSH seam providers (`dsh-shell`, `dsh-fs`, `dsh-sandbox`) | adapt (candidate) | `ctx.exec` | adopt only if they mount outside DSH without DSH host packages; otherwise write a thin provider |
+| Local exec (shell, fs, sandbox) | DSH `dsh-shell`, `dsh-fs`, `dsh-sandbox`, `dsh-subprocess` | library (DSH core) | `ctx.exec` | now direct reuse, since `system` runs on DSH core |
+| Economy-tier and API models | DSH `dsh-llm` + `dsh-llm-pi-ai` | library (DSH core) | `ctx.models` | P4 |
+| Approvals, user questions | DSH `dsh-user-approval`, `dsh-user-questions` | library (DSH core) | plan gate, `NEEDS_HUMAN` | |
 | Workflow durability | own engine | build | `ctx.workflow` | [ADR-0004](../decisions/adr/0004-single-workflow-runtime.md); Temporal and similar rejected until a concrete gap appears |
 | Worker admission and routing, team policy | own | build | `ctx.workers`, `ctx.teams` | the semantic remainder: no existing tool provides these contracts |

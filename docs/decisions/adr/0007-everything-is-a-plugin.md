@@ -51,10 +51,10 @@ does not depend on DSH packages.
   2. use only the stable primitives (plugin, inject, service, effect, isolate,
      events, loader);
   3. cover those primitives with a small conformance suite in M0;
-  4. confirm the loader runs on Bun in M0, with Node as the fallback, since the
-     core is already Node-compatible per [ADR-0002](0002-typescript-on-bun.md).
+  4. (Superseded: the runtime is Node, per
+     [ADR-0018](0018-build-on-dsh-core.md).)
 - Pure logic stays in libraries, not services, so the kernel does not grow
   unnecessary indirection.
-- Revisit if Cordis becomes unmaintained or incompatible with Bun and Node. The
+- Revisit if Cordis becomes unmaintained or incompatible with Node. The
   seam definitions are plain classes, so a replacement runtime would affect only
   the composition root and the base class of each seam definition.

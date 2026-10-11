@@ -24,7 +24,7 @@ IBM's Agent Communication Protocol was merged into A2A.
 1. All Worker ↔ Worker communication over A2A, including internally.
 2. Only engine-mediated exchange: peers see each other's outputs in DAG rounds,
    with no direct messages.
-3. **A `system`-native durable session and mailbox seam (`ctx.sessions`)**
+3. **A `system`-native durable session and mailbox seam (`ctx.workerSessions`; renamed from `ctx.sessions` by ADR-0018 because DSH owns that key)**
    modelled to map 1:1 onto A2A, with A2A as an adapter for cross-runtime peers
    and ACP kept for driving agent runtimes.
 

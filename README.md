@@ -1,7 +1,9 @@
 # system
 
-`system` is a standalone, local-first, **tool-agnostic** host for capability-routed
-AI Workers and durable multi-agent workflows. Every part of it is a plugin.
+`system` is a local-first, **tool-agnostic** harness for capability-routed AI
+Workers and durable multi-agent workflows. It is built **on DSH core** as its own
+DSH bundle and profile, reusing DSH plugins without being locked in. Every part of
+it is a plugin.
 
 - **Workers:** browser-backed web providers (ChatGPT Web, Gemini Web), Claude
   Code, Codex, ACP agents, API providers, and local tools.

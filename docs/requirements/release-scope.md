@@ -38,15 +38,15 @@ for free. The Responses and Messages gateways, which make `system` look like a
 ### Included plugins
 
 ```text
-host, libs
-kernel:        store-sqlite, blobs-fs, events-store, leases-store, artifacts-store
+host:          DSH core (dsh-base, pinned; telemetry off) + system bundle/profile; system CLI wrapper; libs
+kernel:        store (DSH storage-sqlite/domain), blobs (DSH attachments), events-store, leases-store, artifacts-store
 provider:      browser-patchright, display-virtual, remote-login (noVNC), login-credentials,
                accounts-vault, provider-chatgpt-web (+ scheduler, receipts)
 capabilities:  website-core
 routing:       workers-core (capabilities, tiers, egress policy, quota exclusion)
 orchestration: workflow-engine (MVP subset: static DAG, input-hash reuse, receipts,
                recovery; no graph growth, teams, or lineage invalidation yet)
-edge:          mcp-server, cli
+edge:          mcp-server (Streamable HTTP on DSH webserver, loopback + token), cli
 ```
 
 ### Included requirements
@@ -112,7 +112,7 @@ criteria below.
 
 Gemini, teams, graph growth and profiles, agent-runtime Workers,
 connectors (`connector:*`), API and local model providers, the Responses and
-Messages gateways, the Web UI, the DSH bundle, and packaged installers.
+Messages gateways, the Web UI (DSH web app), and packaged installers.
 
 ### MVP exit criteria
 
@@ -137,7 +137,7 @@ Messages gateways, the Web UI, the DSH bundle, and packaged installers.
 
 Adds, as plugins:
 
-- **Orchestration:** `workflow-engine`, `sessions-store`, `team-runner`,
+- **Orchestration:** `workflow-engine`, `worker-sessions-store`, `team-runner`,
   `profile-software-development` (REQ-WF-1..11, REQ-TEAM-1..5, REQ-SES-1..8).
   Members are durable sessions that message each other directly.
 - **Workers:** `runtime-claude-agent-sdk`, `runtime-codex-sdk`, `runtime-acp`
@@ -174,7 +174,7 @@ operational readiness.
   (REQ-HOST-3).
 - `profile-scientific-research` with typed artifacts and invalidation, running
   with zero engine changes. This is the architecture test (REQ-WF-9).
-- A DSH bundle, so `system` plugins mount in a DeepSeek Harness profile.
+- Publication of the `system` bundle (`dsh-plugin` topic), so DSH users can mount `system` plugins in their own profiles.
 - A2A, when the first peer appears that `system` does not drive: `gateway-a2a`
   exposes sessions as A2A agents, and `runtime-a2a` uses remote A2A agents
   ([ADR-0006](../decisions/adr/0006-protocol-introduction-gates.md)). It ships in
@@ -187,7 +187,7 @@ operational readiness.
 | Observability | event log queryable by turn, node, and lease; usage and tier reports; health of each account and plugin; alerts for provider UI drift (fixture or live probe failure) |
 | Operations docs | `docs/operations/` with runbooks (login, account re-auth, backup and restore, upgrade with drain, retention cleanup) and playbooks (stuck turn, AMBIGUOUS reconciliation, quota exhaustion, provider UI change) |
 | Data safety | store backup and restore tested; versioned, tested migrations; upgrade path from every v0.x release |
-| Security | every control in the [threat model](../security/threat-model.md) implemented and tested; secrets audit; `bun audit` clean; egress policy covered by tests |
+| Security | every control in the [threat model](../security/threat-model.md) implemented and tested; secrets audit; `pnpm audit` clean; egress policy covered by tests |
 | Validation | `docs/validation/` with acceptance criteria per requirement, traceability from requirement to test, and the recorded manual release checklist |
 | Reference | `docs/reference/` with the MCP tool contracts, gateway compatibility notes, configuration catalog generated from plugin `Config` schemas, and the seam definitions |
 | Reliability | crash-injection suite across every reconcile point passes repeatedly with zero duplicate effects; every bound in INV-9 configured and tested |

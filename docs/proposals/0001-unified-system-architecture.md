@@ -5,7 +5,7 @@ status: proposed
 owners: [tsuuanmi]
 created: 2026-10-11
 related-requirements: [REQ-ACC, REQ-PRV, REQ-WRK, REQ-TEAM, REQ-WF, REQ-GW, REQ-HOST]
-related-decisions: [ADR-0001, ADR-0002, ADR-0003, ADR-0004, ADR-0005, ADR-0006, ADR-0007, ADR-0008, ADR-0009, ADR-0010, ADR-0011, ADR-0012, ADR-0013, ADR-0014, ADR-0015, ADR-0016]
+related-decisions: [ADR-0001, ADR-0002, ADR-0003, ADR-0004, ADR-0005, ADR-0006, ADR-0007, ADR-0008, ADR-0009, ADR-0010, ADR-0011, ADR-0012, ADR-0013, ADR-0014, ADR-0015, ADR-0016, ADR-0017, ADR-0018]
 implementation: []
 ---
 
@@ -94,10 +94,10 @@ The maintainer's guiding decisions for the unified system are:
   [scheduling and leases](../design/scheduling-and-leases.md),
   [workflow engine](../design/workflow-engine.md), [teams](../design/teams.md),
   [agent runtimes](../design/agent-runtimes.md), [gateways](../design/gateways.md).
-- Durable choices: ADR-0001 through ADR-0016.
+- Durable choices: ADR-0001 through ADR-0018. The host is DSH core ([ADR-0018](../decisions/adr/0018-build-on-dsh-core.md)).
 - Exact contracts: [`schemas/`](../../schemas/README.md) and [reference](../reference/README.md).
 
-Planned package layout (Bun workspaces). Each seam has a definition package, and
+Planned package layout (pnpm workspaces; the result is shipped as a DSH bundle). Each seam has a definition package, and
 each provider is its own plugin package. Dependencies follow the layer map:
 
 ```text
@@ -121,12 +121,14 @@ packages/
 
 ## Alternatives considered
 
-- **Extend internet into the unified system.** Rejected. It is tied to DSH, its
-  two runtimes would have to be merged anyway, and its provider abstraction would
-  need rewriting.
-- **Implement AgentOS on DSH as designed.** Rejected
-  ([ADR-0001](../decisions/adr/0001-standalone-host.md)). Its central team
-  mechanism depends on an experimental API that only in-process providers satisfy.
+- **Extend internet into the unified system.** Rejected. It is one monolithic
+  DSH plugin, its two runtimes would have to be merged anyway, and its provider
+  abstraction would need rewriting. Its proven mechanisms are ported instead.
+- **Implement AgentOS on a stock DSH profile as designed.** Rejected. Its central
+  team mechanism depends on DSH's *experimental* agent-team API, which only
+  in-process providers satisfy. `system` builds on DSH core but owns Worker
+  sessions and teams ([ADR-0018](../decisions/adr/0018-build-on-dsh-core.md),
+  [ADR-0015](../decisions/adr/0015-worker-sessions-and-peer-messaging.md)).
 - **A custom composition root or a generic DI container instead of Cordis.**
   Rejected ([ADR-0007](../decisions/adr/0007-everything-is-a-plugin.md)). It
   would rebuild lifecycle, scoping, and configuration-driven composition that
