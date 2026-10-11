@@ -29,7 +29,9 @@ router ([routing](../../../docs/design/routing.md#algorithm)). Definition:
     `AdmissionFailure` carrying every rejection, including each Worker's state.
 - **Acceptance (REQ-WRK-3).** `contract(id, check)` registers a deterministic
   contract for the plugin's lifetime. `accept(result, contract)` checks a stored
-  result and records an `acceptance` decision. An unknown contract or result
+  result and records an `acceptance` decision. `contracts()` lists the
+  registered ids, so a caller can refuse an unknown contract before any work
+  runs. An unknown contract or result
   throws: it never accepts silently. Two contracts are built in:
   - `acceptance.answer`: the answer has text;
   - `acceptance.cited`: the answer also cites at least one http(s) source link.

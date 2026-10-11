@@ -43,6 +43,8 @@ export interface TurnView {
   account?: string
   /** The admitted Worker, `worker:<account>/<tier>`. */
   worker?: string
+  /** The prompt reached the provider (its receipt was written): a caller must never resend it (INV-4). */
+  submitted: boolean
   binding?: string
   answer?: string
   answerArtifact?: ContentId
@@ -70,7 +72,13 @@ export interface AskInput {
   classification?: Classification | undefined
   /** Acceptance contract the result is checked against by its caller (default `acceptance.answer`). */
   acceptance?: string | undefined
+  /** Who set `tier` (default: `caller` when a tier is given, else `default`). */
+  tierSource?: TierSource | undefined
+  /** The work's objective, for its requirement (default: answer the prompt, or write the report). */
+  objective?: string | undefined
 }
+
+export type TierSource = 'caller' | 'default' | 'profile'
 
 export interface ResearchInput {
   question: string
@@ -106,8 +114,10 @@ interface Row {
   mode: ConversationMode
   feature: ProviderFeature
   tier: Tier
-  tier_source: 'caller' | 'default'
+  tier_source: TierSource
   acceptance: string
+  objective: string | null
+  submitted_at: string | null
   prompt: string
   status: TurnStatus
   account: string | null
@@ -223,6 +233,11 @@ export class Turns extends Service {
       // The acceptance contract named in the turn's work requirement.
       version: 5,
       sql: `ALTER TABLE turns ADD COLUMN acceptance TEXT NOT NULL DEFAULT 'acceptance.answer';`,
+    }, {
+      // When the receipt was written (callers must not resend), and the requirement's objective.
+      version: 6,
+      sql: `ALTER TABLE turns ADD COLUMN submitted_at TEXT;
+      ALTER TABLE turns ADD COLUMN objective TEXT;`,
     }])
     ctx.workers.register({ name: 'website', describe: () => this.describeWorkers() })
     ctx.effect(() => {
@@ -277,11 +292,12 @@ export class Turns extends Service {
       }
       const row: Row = {
         turn_id: newId('turn'), request_key: requestKey, session_id: sessionId, mode: sessionId ? 'persistent' : 'temporary', feature, tier,
-        tier_source: input.tier ? 'caller' : 'default', acceptance: input.acceptance ?? DEFAULT_ACCEPTANCE, prompt, status: 'queued', account: null, worker: null, binding: null, answer: null, answer_artifact: null, route_decision: null, tier_decision: null,
+        tier_source: input.tierSource ?? (input.tier ? 'caller' : 'default'), acceptance: input.acceptance ?? DEFAULT_ACCEPTANCE,
+        objective: input.objective ?? null, submitted_at: null, prompt, status: 'queued', account: null, worker: null, binding: null, answer: null, answer_artifact: null, route_decision: null, tier_decision: null,
         egress_decision: null, classification: input.classification ?? null, error: null, created_at: now(), updated_at: now(),
       }
-      db.prepare(`INSERT INTO turns (turn_id, request_key, session_id, mode, feature, tier, tier_source, acceptance, classification, prompt, status, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?)`).run(row.turn_id, requestKey, sessionId, row.mode, feature, tier, row.tier_source, row.acceptance, row.classification, prompt, row.created_at, row.updated_at)
+      db.prepare(`INSERT INTO turns (turn_id, request_key, session_id, mode, feature, tier, tier_source, acceptance, objective, classification, prompt, status, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?)`).run(row.turn_id, requestKey, sessionId, row.mode, feature, tier, row.tier_source, row.acceptance, row.objective, row.classification, prompt, row.created_at, row.updated_at)
       this.ctx.store.afterCommit(() => void this.schedule(row))
       return this.view(row)
     })
@@ -378,18 +394,23 @@ export class Turns extends Service {
     return running
   }
 
+  private retryLater(turnId: string, delayMs: number): void {
+    if (this.stopping) return
+    const timer = setTimeout(() => {
+      this.retries.delete(timer)
+      void this.run(turnId)
+    }, delayMs)
+    timer.unref()
+    this.retries.add(timer)
+  }
+
   private async runOwned(turnId: string): Promise<void> {
     if (this.stopping) return
     const resource = `turn:${turnId}`
     let lease = this.ctx.leases.acquire(resource, LEASE_TTL_MS)
     if (!lease) {
       const holder = this.ctx.leases.current(resource)
-      const timer = setTimeout(() => {
-        this.retries.delete(timer)
-        void this.run(turnId)
-      }, Math.max(1000, (holder?.expiresAt ?? Date.now()) - Date.now() + 1000))
-      timer.unref()
-      this.retries.add(timer)
+      this.retryLater(turnId, Math.max(1000, (holder?.expiresAt ?? Date.now()) - Date.now() + 1000))
       return
     }
     const lost = new AbortController()
@@ -423,7 +444,13 @@ export class Turns extends Service {
         await this.execute(this.row(turnId)!, account, slot.signal, current)
       })
     } catch (error) {
-      if (this.stopping || error instanceof LeaseLost || error instanceof StaleGeneration || lost.signal.aborted) return
+      if (this.stopping) return
+      if (error instanceof LeaseLost || error instanceof StaleGeneration || lost.signal.aborted) {
+        // Lost ownership (for example, the host slept past the lease): look again once the lease
+        // can be taken, so the turn is never stranded until the next start.
+        this.retryLater(turnId, LEASE_TTL_MS)
+        return
+      }
       this.fail(turnId, error, current)
     } finally {
       clearInterval(heartbeat)
@@ -462,15 +489,15 @@ export class Turns extends Service {
     const feature = input.feature ?? 'chat'
     return this.requirementOf({
       feature, mode: input.sessionId || input.persist || feature === 'deep-research' ? 'persistent' : 'temporary',
-      tier: input.tier ?? this.config.defaultTier ?? 'standard', tierSource: input.tier ? 'caller' : 'default',
-      classification: input.classification ?? null, acceptance: input.acceptance ?? DEFAULT_ACCEPTANCE,
+      tier: input.tier ?? this.config.defaultTier ?? 'standard', tierSource: input.tierSource ?? (input.tier ? 'caller' : 'default'),
+      classification: input.classification ?? null, acceptance: input.acceptance ?? DEFAULT_ACCEPTANCE, objective: input.objective ?? null,
     })
   }
 
-  private requirementOf(turn: { feature: ProviderFeature; mode: ConversationMode; tier: Tier; tierSource: 'caller' | 'default'; classification: Classification | null; acceptance: string }): WorkRequirement {
+  private requirementOf(turn: { feature: ProviderFeature; mode: ConversationMode; tier: Tier; tierSource: TierSource; classification: Classification | null; acceptance: string; objective: string | null }): WorkRequirement {
     return {
       schema: 'work-requirement@1.0',
-      objective: turn.feature === 'deep-research' ? 'Write a provider-native research report on the caller\'s question' : 'Answer the caller\'s prompt',
+      objective: turn.objective ?? (turn.feature === 'deep-research' ? 'Write a provider-native research report on the caller\'s question' : 'Answer the caller\'s prompt'),
       capabilities: ['reason', ...(turn.mode === 'persistent' ? ['persistent-conversation'] : []), ...(turn.feature === 'deep-research' ? ['deep-research'] : [])],
       data: { classification: turn.classification ?? this.ctx.egress.defaultClassification, refs: [] },
       egressPolicy: 'egress.classification-and-secrets',
@@ -484,7 +511,7 @@ export class Turns extends Service {
     const session = row.session_id ? this.session(row.session_id) : undefined
     const bound = session?.account ?? undefined
     const requirement = this.requirementOf({
-      feature: row.feature, mode: row.mode, tier: row.tier, tierSource: row.tier_source, classification: row.classification, acceptance: row.acceptance,
+      feature: row.feature, mode: row.mode, tier: row.tier, tierSource: row.tier_source, classification: row.classification, acceptance: row.acceptance, objective: row.objective,
     })
     let admitted: AdmittedWorker
     try {
@@ -518,6 +545,9 @@ export class Turns extends Service {
     const research = row.feature === 'deep-research'
     if (!row.worker) throw new ProviderError('internal', `turn ${row.turn_id} has an account but no Worker`)
     const { tier } = parseWebsiteWorker(row.worker)
+    // Routed before a restart, then unmapped by the operator: never served by another mode (INV-2).
+    const preset = view.tiers[tier]
+    if (!preset) throw new ProviderError('config_error', `${accountId} no longer maps tier ${tier} to a mode; the turn is not sent`)
     const deadlines = research
       ? { timeoutMs: this.config.researchTimeoutMs ?? 60 * 60_000, stallTimeoutMs: this.config.researchStallTimeoutMs ?? 30 * 60_000 }
       : { timeoutMs: this.config.turnTimeoutMs ?? 15 * 60_000, stallTimeoutMs: this.config.stallTimeoutMs ?? 5 * 60_000 }
@@ -527,13 +557,14 @@ export class Turns extends Service {
       result = await driver.ask(turn.page, row.prompt, {
         conversation: row.mode,
         binding: session?.binding ?? undefined,
-        mode: view.tiers[tier],
+        mode: preset,
         feature: row.feature,
         signal,
         deadlines,
         beforeSend: ({ previousResponse, mode }) => {
-          this.ctx.store.transaction(() => {
+          this.ctx.store.transaction((db) => {
             this.ctx.leases.fence(lease())
+            db.prepare('UPDATE turns SET submitted_at = ? WHERE turn_id = ?').run(now(), row.turn_id)
             this.ctx.turnReceipts.submit({
             ...identity, prompt: row.prompt, previousResponse,
             conversation: { provider: view.provider, binding: session?.binding ?? '' },
@@ -706,6 +737,7 @@ export class Turns extends Service {
       ...(row.session_id ? { sessionId: row.session_id } : {}),
       ...(row.account ? { account: row.account } : {}),
       ...(row.worker ? { worker: row.worker } : {}),
+      submitted: row.submitted_at !== null,
       ...(row.binding ? { binding: row.binding } : {}),
       ...(row.answer !== null ? { answer: row.answer } : {}),
       ...(row.answer_artifact ? { answerArtifact: row.answer_artifact as ContentId } : {}),

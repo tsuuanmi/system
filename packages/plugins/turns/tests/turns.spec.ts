@@ -70,7 +70,7 @@ describe.runIf(canRunBrowser)('ctx.turns: ask through a saved account', () => {
     const { ctx, fake } = await boot({ fake: { answer: 'Hello' } })
     const started = ctx.turns.ask({ prompt: 'Say hello' })
     const turn = await ctx.turns.wait(started.turnId, 30_000)
-    expect(turn).toMatchObject({ status: 'completed', account: 'chatgpt-main', mode: 'temporary', answer: 'Hello' })
+    expect(turn).toMatchObject({ status: 'completed', account: 'chatgpt-main', mode: 'temporary', answer: 'Hello', submitted: true })
     expect(turn.sessionId).toBeUndefined()
     expect(fake.sent).toEqual([expect.objectContaining({ prompt: 'Say hello', mode: 'chat', temporary: true })])
     const answer = ctx.artifacts.get(turn.answerArtifact!)
@@ -189,7 +189,7 @@ describe.runIf(canRunBrowser)('ctx.turns: ask through a saved account', () => {
   it('fails closed with USER_ACTION when no account is ready, and sends nothing', async () => {
     const { ctx, fake } = await boot({ ready: [] })
     const turn = await ctx.turns.wait(ctx.turns.ask({ prompt: 'nobody' }).turnId, 10_000)
-    expect(turn).toMatchObject({ status: 'failed', error: { kind: 'reauth_required', disposition: 'USER_ACTION' } })
+    expect(turn).toMatchObject({ status: 'failed', submitted: false, error: { kind: 'reauth_required', disposition: 'USER_ACTION' } })
     expect(fake.sent).toEqual([])
   }, 60_000)
 
@@ -262,6 +262,25 @@ describe.runIf(canRunBrowser)('ctx.turns: ask through a saved account', () => {
     await waiting
     expect(Date.now() - t0).toBeLessThan(15_000)
   }, 90_000)
+
+  it('never serves a routed turn by another mode after its tier was unmapped across a restart (INV-2)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'system-turns-'))
+    cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+    const first = await boot({ dir, capacity: 1, fake: { thinkMs: 60_000 } })
+    first.ctx.turns.ask({ prompt: 'hold the slot' })
+    const queued = first.ctx.turns.ask({ prompt: 'needs frontier', tier: 'frontier' })
+    const deadline = Date.now() + 30_000
+    while (first.ctx.turns.get(queued.turnId)?.worker === undefined) {
+      if (Date.now() > deadline) throw new Error('never routed')
+      await new Promise((resolve) => setTimeout(resolve, 100))
+    }
+    await first.stop()
+    cleanups.splice(cleanups.indexOf(first.stop), 1)
+    const second = await boot({ dir, shared: first.fake, accounts: [account('chatgpt-main', { economy: 'instant', standard: 'medium' })] })
+    const refused = await second.ctx.turns.wait(queued.turnId, 30_000)
+    expect(refused).toMatchObject({ status: 'failed', submitted: false, error: { kind: 'config_error' } })
+    expect(first.fake.sent.map((s) => s.prompt)).not.toContain('needs frontier')
+  }, 120_000)
 
   it('never starts a turn that is still routing when the runtime stops', async () => {
     const { ctx, fake, stop } = await boot()

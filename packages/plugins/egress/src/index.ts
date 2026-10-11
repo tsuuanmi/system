@@ -59,6 +59,13 @@ export interface EgressVerdict {
   reason: string
 }
 
+/**
+ * Credential shapes the recommended rules miss. secretlint's AWS rule needs a word boundary
+ * after the secret key, so a secret ending in `+` or `/` (about 2% of real keys) slips past
+ * it; an access key id is a credential signal on its own.
+ */
+const BUILT_IN_PATTERNS = [{ name: 'aws-access-key-id', regex: /\b(?:AKIA|ASIA)[A-Z2-7]{16}\b/g }]
+
 export class Egress extends Service {
   static inject = ['artifacts']
 
@@ -74,7 +81,10 @@ export class Egress extends Service {
 
   constructor(ctx: Context, private readonly config: Config = {}) {
     super(ctx, 'egress')
-    this.patterns = (config.denyPatterns ?? []).map((p) => ({ name: p.name, regex: new RegExp(p.pattern, 'g') }))
+    this.patterns = [
+      ...(config.scanSecrets !== false ? BUILT_IN_PATTERNS : []),
+      ...(config.denyPatterns ?? []).map((p) => ({ name: p.name, regex: new RegExp(p.pattern, 'g') })),
+    ]
   }
 
   get defaultClassification(): Classification {

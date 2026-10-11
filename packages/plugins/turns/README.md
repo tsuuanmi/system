@@ -81,9 +81,17 @@ invoked by the [workflow engine](../workflow/README.md)
   account `reauth-required`, so new turns route elsewhere.
 - **For the engine:** `requirement(input)` returns the `work-requirement@1.0` an
   ask is routed with; the engine records it on its node. `openSession()` opens
-  an empty persistent session, so a run can return its id at once. An ask names
-  its `acceptance` contract (default `acceptance.answer`), which is recorded in
-  the requirement.
+  an empty persistent session, so a run can return its id at once.
+  - An ask names its `acceptance` contract (default `acceptance.answer`), its
+    `objective`, and its `tierSource` (`caller`, `default`, or `profile`). All
+    three are recorded in the requirement.
+  - A view's `submitted` flag says whether the prompt reached the provider. It
+    is set in the same transaction as the receipt, so a caller never resends.
+- **Fail closed on drift:** a turn routed before a restart whose tier the
+  operator has since unmapped fails with `config_error`. It is never served by
+  another mode.
+- **Lost lease:** the turn is looked at again once its lease can be taken, so it
+  is never stranded until the next start.
 - **Stop:** a stopped runtime starts nothing. A turn caught mid-route stays
   queued for the next start.
 - **Injects:** `store`, `artifacts`, `leases`, `egress`, `turnReceipts`, `accounts`,

@@ -19,6 +19,8 @@ second execution path (INV-1).
     - a prompt may use only `{{input}}` and its own dependencies
       (`{{node:<id>}}`);
     - exactly one final node, whose result is the run's.
+  - At `start`, every node's acceptance contract must be registered with
+    `ctx.workers`; otherwise the run is refused before anything is sent.
 - **Start (admission).**
   - The caller's options are applied, and the resolved spec is hashed. The run
     binds to that `specHash`.
@@ -41,11 +43,22 @@ second execution path (INV-1).
     the node's contract and records an `acceptance` decision. `COMPLETED`
     holds the output receipt (result plus acceptance). A rejection fails the
     node with `acceptance_rejected` (`NONE`).
-- **Retries (REQ-WF-6).** A failure that is `IMMEDIATE`, `BACKOFF`, or
-  `RECREATE_SESSION` is retried up to `maxAttempts`, after
-  `retryDelayMs × 2^(attempt−1)`. Any other failure fails the run.
+- **Retries (REQ-WF-6).**
+  - A failure is retried, up to `maxAttempts` and after
+    `retryDelayMs × 2^(attempt−1)`, only when all of these hold:
+    - its disposition is `IMMEDIATE`, `BACKOFF`, or `RECREATE_SESSION`;
+    - attempts are left;
+    - the prompt never reached the provider (the turn's `submitted` flag).
+  - Once a prompt was sent, only the turn runtime may resubmit it, within its
+    own bound. A retryable failure after sending fails the node as
+    `USER_ACTION`, so the engine never causes a duplicate provider turn
+    (INV-4).
+  - Each choice is a `recovery` decision. It becomes the node's
+    `lastDecision`, and the `retry` or `failed` event names it.
 - **Ownership and restart (REQ-WF-4).**
   - A run advances under a `run:<id>` lease, and every node write is fenced.
+  - A lost lease (a host that slept past it, or a takeover) re-arms the run,
+    so it is taken back as soon as the lease is free.
   - On start, unfinished runs resume. The turn runtime reconciles their turns.
   - A scheduler exception fails the run as `internal` (`CODE_FIX`) and never
     loops.
@@ -57,7 +70,10 @@ second execution path (INV-1).
   - `usage` lists recent runs with each step's Worker, tier, and quota class
     (the usage report).
   - `explain` gives each step's egress, tier, route (or admission), and
-    acceptance decisions with their reasons (REQ-ART-3).
+    acceptance or recovery decisions with their reasons (REQ-ART-3). A node keeps
+    its turn's decision ids, so the chain outlives the turn runtime's retention.
+  - Node requirements carry the node's objective and tier provenance:
+    `profile` for template tiers, `caller` when the caller's tier replaced one.
 - **MCP tools** (they replace the built-in placeholders):
   - `ask` waits up to `waitSeconds` (≤ 55 s);
   - `research` returns at once;

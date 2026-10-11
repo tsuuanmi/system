@@ -55,7 +55,7 @@ export class WorkerRouter extends Workers {
   })
 
   private readonly sources = new Map<string, WorkerSource>()
-  private readonly contracts = new Map<string, AcceptanceContract>(Object.entries(BUILT_IN))
+  private readonly registered = new Map<string, AcceptanceContract>(Object.entries(BUILT_IN))
   private readonly schemas = new SchemaRegistry()
 
   constructor(ctx: Context, private readonly config: Config = {}) {
@@ -142,17 +142,21 @@ export class WorkerRouter extends Workers {
   }
 
   contract(id: string, check: AcceptanceContract): void {
-    if (this.contracts.has(id)) throw new Error(`acceptance contract ${id} is already registered`)
+    if (this.registered.has(id)) throw new Error(`acceptance contract ${id} is already registered`)
     this.ctx.effect(() => {
-      this.contracts.set(id, check)
+      this.registered.set(id, check)
       return () => {
-        if (this.contracts.get(id) === check) this.contracts.delete(id)
+        if (this.registered.get(id) === check) this.registered.delete(id)
       }
     })
   }
 
+  contracts(): string[] {
+    return [...this.registered.keys()].sort()
+  }
+
   accept(result: ArtifactRef, contract: string, options: { producer?: string; runId?: string; nodeId?: string } = {}): Acceptance {
-    const check = this.contracts.get(contract)
+    const check = this.registered.get(contract)
     if (!check) throw new Error(`unknown acceptance contract ${contract}`)
     const envelope = this.ctx.artifacts.get(result)
     if (!envelope) throw new Error(`unknown result artifact ${result}`)

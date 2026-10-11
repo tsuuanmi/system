@@ -129,6 +129,7 @@ export function workersConformance(name: string, boot: Boot): void {
           return typeof text === 'string' && text.trim() ? { accepted: true, reasons: ['has text'] } : { accepted: false, reasons: ['no text'] }
         })
         expect(() => ctx.workers.contract('conformance.has-text', () => ({ accepted: true, reasons: ['x'] }))).toThrow()
+        expect(ctx.workers.contracts()).toContain('conformance.has-text')
         const put = (text: string) => ctx.artifacts.put({
           kind: 'report', bodySchema: 'provider-answer@1.0', classification: 'operator-shared', producer: { type: 'system', ref: 'conformance' },
           body: { schema: 'provider-answer@1.0', provider: 'p', account: 'a', turnId: 't', conversation: { mode: 'temporary' }, promptHash: `sha256:${'0'.repeat(64)}`, text },

@@ -24,7 +24,7 @@ export interface Config {
    * catalogs map tiers to these names.
    */
   modes?: Record<string, ProviderMode>
-  /** Preset for turns whose tier maps to no preset. */
+  /** Preset when a caller names none (the turn runtime always names its Worker's preset). */
   defaultMode?: string
 }
 
@@ -40,7 +40,7 @@ export const Config: z<Config> = z.object({
   origin: z.string().description('Site origin (default https://chatgpt.com)'),
   overlayPath: z.string().description('Local UI overlay file'),
   modes: z.dict(z.object({ model: z.string(), effort: z.string() })).default(DEFAULT_MODES).description('Named mode presets (model and Power level)'),
-  defaultMode: z.string().default('instant').description('Preset for turns whose tier maps to no preset'),
+  defaultMode: z.string().default('instant').description('Preset when a caller names none'),
 })
 
 export function apply(ctx: Context, config: Config = {}): void {

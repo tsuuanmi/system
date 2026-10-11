@@ -33,6 +33,8 @@ export interface CallerOptions {
 
 export interface ResolvedNode extends Omit<NodeTemplate, 'callerTier' | 'conversation'> {
   dependsOn: string[]
+  /** `caller` when the caller's tier replaced the template's (`work-requirement` tier source). */
+  tierSource: 'caller' | 'profile'
   feature: Feature
   session: { sessionId?: string; persist?: boolean }
 }
@@ -115,7 +117,8 @@ export function resolve(template: string, nodes: readonly NodeTemplate[], caller
       : caller.sessionId
         ? { sessionId: caller.sessionId }
         : conversation === 'persistent' || caller.persist ? { persist: true } : {}
-    return { ...node, dependsOn: node.dependsOn ?? [], feature: node.feature ?? 'chat', tier: callerTier && caller.tier ? caller.tier : node.tier, session }
+    const fromCaller = !!(callerTier && caller.tier)
+    return { ...node, dependsOn: node.dependsOn ?? [], feature: node.feature ?? 'chat', tier: fromCaller ? caller.tier! : node.tier, tierSource: fromCaller ? 'caller' : 'profile', session }
   })
   return { template, nodes: resolved, specHash: contentId({ template, nodes: resolved }) }
 }

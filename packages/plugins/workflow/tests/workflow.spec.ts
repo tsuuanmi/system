@@ -110,6 +110,11 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
       expect(record.outputReceipt).toBeDefined()
       expect(ctx.artifacts.get(record.outputReceipt!.acceptance)?.body).toMatchObject({ decisionType: 'acceptance', outcome: { option: 'accept' } })
     }
+    // Template tiers are the profile's, and each requirement carries its node's objective.
+    expect(ctx.workflow.records(started.runId).map((r) => [r.requirement.tier, r.requirement.objective])).toEqual([
+      [{ min: 'frontier', source: 'profile' }, 'Write a cited Deep research report on the caller\'s question'],
+      [{ min: 'economy', source: 'profile' }, 'Compact the report into a cited synthesis'],
+    ])
     // Both tiers are visible in the event log (MVP exit criterion 4).
     const completed = ctx.eventLog.query({ type: 'workflow.node.completed', runId: started.runId })
     expect(completed.map((e) => [e.nodeId, e.data?.tier])).toEqual([['research:1', 'frontier'], ['compact:1', 'economy']])
@@ -150,10 +155,37 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
     const done = await ctx.workflow.wait(run.runId, 60_000)
     expect(done.status).toBe('completed')
     expect(done.nodes[0]!.attempt).toBeGreaterThan(1)
-    expect(ctx.eventLog.query({ type: 'workflow.node.retry', runId: run.runId })[0]?.data).toMatchObject({ kind: 'overloaded', disposition: 'BACKOFF' })
+    const retry = ctx.eventLog.query({ type: 'workflow.node.retry', runId: run.runId })[0]!
+    expect(retry.data).toMatchObject({ kind: 'overloaded', disposition: 'BACKOFF' })
+    // The retry is a decision (INV-13), named by the event.
+    expect(ctx.artifacts.get(retry.decision!)?.body).toMatchObject({ decisionType: 'recovery', outcome: { option: 'retry' } })
     expect((await ctx.turns.wait(blocker.turnId, 10_000)).status).toBe('completed')
     expect(fake.sent.map((s) => s.prompt)).toEqual(['hold the only slot', 'after the blocker'])
   }, 90_000)
+
+  it('never resends a submitted prompt: a timeout after sending fails the node, without a retry (INV-4)', async () => {
+    const { ctx, fake } = await boot({ fake: { thinkMs: 20_000 }, turns: { turnTimeoutMs: 4000, stallTimeoutMs: 3500 }, workflow: { retryDelayMs: 100 } })
+    const done = await ctx.workflow.wait(ctx.workflow.start({ template: 'ask', input: 'slow' }).runId, 60_000)
+    expect(done).toMatchObject({ status: 'failed', error: { disposition: 'USER_ACTION' } })
+    expect(fake.sent).toHaveLength(1)
+    const record = ctx.workflow.records(done.runId)[0]!
+    expect(ctx.artifacts.get(record.lastDecision!)?.body).toMatchObject({ decisionType: 'recovery', outcome: { option: 'fail' } })
+  }, 90_000)
+
+  it('takes a run back after its lease was lost, instead of stranding it', async () => {
+    const { ctx } = await boot({ fake: { thinkMs: 3000 } })
+    const run = ctx.workflow.start({ template: 'ask', input: 'keep going' })
+    await until(() => ctx.workflow.get(run.runId)?.nodes[0]?.state === 'RUNNING')
+    ctx.leases.invalidate(`run:${run.runId}`)
+    expect((await ctx.workflow.wait(run.runId, 60_000)).status).toBe('completed')
+  }, 90_000)
+
+  it('refuses a template whose acceptance contract is unknown before anything is sent', async () => {
+    const typo = [{ nodeId: 'ask:1', objective: 'x', prompt: '{{input}}', tier: 'standard', conversation: 'temporary', acceptance: 'acceptance.anwser' }]
+    const { ctx, fake } = await boot({ workflow: { templates: { typo } } })
+    expect(() => ctx.workflow.start({ template: 'typo', input: 'x' })).toThrow(/unknown acceptance contract acceptance.anwser/)
+    expect(fake.sent).toEqual([])
+  }, 60_000)
 
   it('recovers a run after a restart without sending the research prompt again (REQ-WF-4)', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'system-workflow-'))
@@ -192,6 +224,9 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
       ['compact:1', [['egress', 'allow'], ['tier', 'economy'], ['route', 'worker:chatgpt-main/economy'], ['acceptance', 'accept']]],
     ])
     expect(explained.nodes[1]!.decisions[3]!.reasons).toEqual(['the answer cites 1 source link(s)'])
+    // Runs outlive their turns: the chain survives the turn runtime's retention.
+    ctx.store.db.prepare('DELETE FROM turns').run()
+    expect(ctx.workflow.explain(done.runId)!.nodes.map((n) => n.decisions.length)).toEqual([4, 4])
   }, 90_000)
 
   it('serves ask, research, result, usage, and explain over MCP in place of the placeholders', async () => {

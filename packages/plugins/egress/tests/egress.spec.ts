@@ -54,6 +54,14 @@ describe('ctx.egress (INV-12)', () => {
     }
   })
 
+  it('denies an AWS key pair whose secret ends in + or /, which the recommended rules miss', async () => {
+    const ctx = await boot()
+    // A shape secretlint's AWS rule skips (its pattern needs a word boundary after the secret).
+    const pair = `aws_access_key_id = ${AWS_KEY}\naws_secret_access_key = ${randomBytes(30).toString('base64').slice(0, 39)}+`
+    const verdict = await ctx.egress.check({ payload: pair, classification: 'operator-shared', workerClass: 'website' })
+    expect(verdict).toMatchObject({ allowed: false, findings: [expect.objectContaining({ rule: 'aws-access-key-id' })] })
+  })
+
   it('applies operator deny patterns', async () => {
     const ctx = await boot({ denyPatterns: [{ name: 'internal-hostname', pattern: '\\b[a-z0-9-]+\\.corp\\.example\\b' }] })
     const verdict = await ctx.egress.check({ payload: 'ssh to db1.corp.example', classification: 'operator-shared', workerClass: 'website' })

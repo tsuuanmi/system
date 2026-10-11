@@ -134,6 +134,9 @@ export abstract class Workers extends Service {
   /** Register an acceptance contract for the calling plugin's lifetime. Ids are unique. */
   abstract contract(id: string, check: AcceptanceContract): void
 
+  /** Ids of the contracts registered now, so a caller can refuse an unknown one before any work runs. */
+  abstract contracts(): string[]
+
   /**
    * Check a stored result against a contract and record an `acceptance` decision. A
    * provider's terminal state is not acceptance (REQ-WRK-3); an unknown contract or result
