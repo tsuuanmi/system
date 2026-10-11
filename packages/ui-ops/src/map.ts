@@ -151,5 +151,10 @@ export function loadUiMap(text: string, overlayText?: string): UiMap {
 }
 
 function stripSources(elements: Record<string, ElementSpec>): Record<string, unknown> {
-  return Object.fromEntries(Object.entries(elements).map(([id, e]) => [id, { ...e, candidates: e.candidates.map(({ source: _, ...c }) => c) }]))
+  const plain = (c: SourcedCandidate): Candidate => {
+    const copy: Partial<SourcedCandidate> = { ...c }
+    delete copy.source
+    return copy as Candidate
+  }
+  return Object.fromEntries(Object.entries(elements).map(([id, e]) => [id, { ...e, candidates: e.candidates.map(plain) }]))
 }
