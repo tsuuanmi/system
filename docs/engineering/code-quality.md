@@ -14,8 +14,12 @@
 - **No silent fallback** ([INV-2](../architecture/invariants.md#inv-2-fail-closed)).
 - **Narrow public surface.** Each package exports its contract, not its internals.
   Don't re-export everything from the root.
-- **Dependencies:** prefer a protocol SDK, then a narrow library, then custom code.
-  Every new runtime dependency is justified in its PR. The lockfile is committed.
-  Build output and vendored binaries are not.
+- **Dependencies:** follow the reuse ladder
+  ([ADR-0010](../decisions/adr/0010-reuse-before-build.md)) and record each choice
+  in the [dependency register](dependencies.md). The lockfile is committed. Build
+  output and vendored binaries are not.
+- **Plugins:** follow the [plugin rules](../architecture/plugin-model.md#plugin-rules).
+  In particular: no hardcoded tunables, a disposer for every registration, and
+  seam definitions written as abstract `Service` classes.
 - **Schemas:** persisted records and wire payloads have strict parsers with a
   schema version.

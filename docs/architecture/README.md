@@ -1,6 +1,6 @@
 # Architecture
 
-This area owns the **structure** of `system`: its context, layers, boundaries,
+This area owns the **structure** of `system`: its context, layers, plugin seams,
 dependency direction, data flow, and cross-cutting invariants. It says *where*
 behavior lives and under which constraints. *How* each mechanism works belongs in
 [design](../design/README.md).
@@ -13,68 +13,82 @@ behavior lives and under which constraints. *How* each mechanism works belongs i
 |---|---|
 | this README | system context and the layer map (canonical diagrams) |
 | [invariants.md](invariants.md) | system-wide invariants (binding on all code) |
+| [plugin-model.md](plugin-model.md) | everything-is-a-plugin: seams catalog, composition, plugin rules |
 | [components.md](components.md) | each boundary: what it owns, what it does not own, its contracts |
 | [data-flow.md](data-flow.md) | end-to-end flows across boundaries |
 
 ## System context
 
 ```text
-                 ┌──────────────────────────────────────────────┐
-  Codex ────────▶│                                              │──▶ ChatGPT Web / Gemini Web
-  (Responses)    │                                              │    (real browser sessions)
-  MCP agents ───▶│                 system host                  │──▶ API providers
-  CLI / Web UI ─▶│      (loopback daemon, single operator)      │──▶ Local tools / shell / git
-  DSH adapter ──▶│                                              │──▶ VCS hosting (via Workers)
-                 └──────────────────────────────────────────────┘
+   clients                                                         Workers
+                 ┌────────────────────────────────────────┐
+  Codex ────────▶│                                        │──▶ ChatGPT Web / Gemini Web (browser)
+  (Responses)    │                                        │──▶ Claude Code  (Claude Agent SDK)
+  Claude Code ──▶│              system host               │──▶ Codex        (Codex SDK)
+  (Messages)     │   Cordis plugin runtime, loopback,     │──▶ ACP agents
+  MCP clients ──▶│   single operator                      │──▶ API providers
+  CLI / Web UI ─▶│                                        │──▶ local tools / shell / git
+                 └────────────────────────────────────────┘
                         │ durable state (SQLite + blobs)
                         ▼
                     ~/.system/
 ```
 
-The operator is trusted. Remote websites, tool output, repository content, and
-model text are not (see the [threat model](../security/threat-model.md)).
+The same agent can appear on both sides. Claude Code or Codex can *use* `system`
+as a client and can *be used* by `system` as a Worker
+([ADR-0009](../decisions/adr/0009-claude-and-codex-first-class.md)). No side is
+tied to a particular tool ([INV-11](invariants.md#inv-11-no-tool-lock-in)).
+
+The operator is trusted. Remote websites, tool output, repository content, model
+text, and third-party plugins that the operator has not installed are not (see the
+[threat model](../security/threat-model.md)).
 
 ## Layer map
 
-Dependencies point **downward only**. A layer may use the layers below it through
-their published contract and never reaches past one into a lower layer's internals.
+Every box below is a **plugin**. Each layer publishes its boundary as Cordis
+services, or *seams*, and the layer above consumes them by key
+([plugin model](plugin-model.md)). Dependencies point **downward only**. A layer
+uses lower layers only through their seams and never reaches into a provider's
+internals.
 
 ```text
 ┌───────────────────────────────────────────────────────────────────────────┐
-│ Gateways      CLI · Responses gateway · MCP server · DSH adapter · Web UI │
+│ Gateways      Responses (Codex) · Anthropic Messages (Claude Code) ·      │
+│               MCP server · CLI · Web UI            [consumers only]       │
 ├───────────────────────────────────────────────────────────────────────────┤
-│ Host          composition root: config, profiles, startup validation,     │
-│               drain, failure isolation                                    │
+│ Orchestration ctx.workflow (semantic DAG, durable nodes) · ctx.teams ·    │
+│               ctx.profiles                                                │
 ├───────────────────────────────────────────────────────────────────────────┤
-│ Orchestration Workflow engine (semantic DAG, durable nodes)               │
-│               Team runner (Model A members, barrier, synthesis)           │
+│ Routing       ctx.workers: registry · admission · deterministic router ·  │
+│               acceptance                                                  │
 ├───────────────────────────────────────────────────────────────────────────┤
-│ Routing       Worker registry · admission predicates · deterministic      │
-│               router · acceptance                                         │
+│ Capabilities  ctx.website (Website Core) · ctx.exec (local tools) ·       │
+│               ctx.agentRuntimes (Claude Agent SDK, Codex SDK, ACP)        │
 ├───────────────────────────────────────────────────────────────────────────┤
-│ Capabilities  Website capability (Website Core + WebsiteProviderRuntime)  │
-│               Local execution/tools · API provider capability             │
+│ Provider      ctx.browser · ctx.display · ctx.accounts ·                  │
+│ runtime       ctx.providers (chatgpt-web, gemini-web drivers) ·           │
+│               scheduler · turn receipts · remote login                    │
 ├───────────────────────────────────────────────────────────────────────────┤
-│ Provider      BrowserPort (patchright) · provider drivers · account vault │
-│ runtime       per-account scheduler · turn receipts · remote login        │
-├───────────────────────────────────────────────────────────────────────────┤
-│ Kernel        durable store (SQLite/WAL) · content-addressed blobs ·      │
-│               event log · leases & fences · clock · canonical hashing     │
+│ Kernel        ctx.store (SQLite/WAL) · ctx.blobs · ctx.events ·           │
+│               ctx.leases · libraries: hashing, clock, schemas             │
+╞═══════════════════════════════════════════════════════════════════════════╡
+│ Host          Cordis root context + loader · profiles · patches ·         │
+│               startup validation · drain                                  │
 └───────────────────────────────────────────────────────────────────────────┘
 ```
 
-The Host is the composition root. It *wires* every layer, but at runtime it sits
-between Gateways and Orchestration: gateways ask the host for configured services
-and never construct them.
+The **host** is not a layer that contains business logic. It is the Cordis root
+that loads the plugins named by the active profile. Which providers run, and
+whether a gateway is enabled at all, is decided by configuration.
 
 ## Where the ideas come from
 
-The layer map combines three reference systems. Each layer adopts the strongest
-mechanism from one of them and drops that system's known weakness. The full
-analysis lives in [research](../research/README.md):
+Each layer combines the strongest ideas from the reference systems and removes
+their known weaknesses. The full analysis lives in [research](../research/README.md).
 
-| Layer | Primary source | Weakness removed |
+| Concern | Primary source | Weakness removed |
 |---|---|---|
-| Routing, Teams | AgentOS | bound to an experimental harness API |
-| Provider runtime, Workflow durability | internet | no provider interface, lock-free JSON stores, two runtimes |
-| Gateways | codex-chatgpt-web | unauthenticated control surfaces, monolithic modules |
+| Plugin runtime, seams, composition | DeepSeek Harness / Cordis | — (adopted as a library, not as the host) |
+| Routing, teams | AgentOS | bound to an experimental harness API |
+| Provider runtime, workflow durability | internet | no provider interface, lock-free JSON stores, two runtimes |
+| Gateways | codex-chatgpt-web | Codex-only, unauthenticated control surfaces, monolithic modules |

@@ -27,8 +27,9 @@ Option 2.
 | Protocol | Status | Role |
 |---|---|---|
 | OpenAI Responses (HTTP + SSE) | **now** | client gateway for Codex and Responses clients |
+| Anthropic Messages (HTTP + SSE) | **now** | client gateway for Claude Code and Messages clients ([ADR-0009](0009-claude-and-codex-first-class.md)) |
 | MCP | **now** | capability exposure and the per-turn tool bridge |
-| ACP | optional | controlling an external Worker runtime, once one is needed |
+| ACP | **now**, as a Worker runtime provider | generic driver for ACP-speaking agents (`runtime-acp`). Claude Code and Codex use their official SDKs instead |
 | A2A | deferred | added only after a real cross-runtime direct-peer requirement |
 
 A new protocol is admitted only when all of these hold:

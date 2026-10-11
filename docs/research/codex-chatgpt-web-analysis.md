@@ -54,7 +54,7 @@ ChatGPT developer-mode connector.
 
 | Idea | Where in `system` |
 |---|---|
-| Responses gateway, 426, Origin rejection, bounded response cache | [gateways](../design/gateways.md#responses-gateway) |
+| Responses gateway, 426, Origin rejection, bounded response cache | [gateways](../design/gateways.md#responses-gateway-codex) |
 | MCP inversion, turn tokens, causal barrier, completion fence | [gateways](../design/gateways.md#mcp-tool-inversion) |
 | Authority from native envelope | [INV-6](../architecture/invariants.md#inv-6-authority-comes-from-trusted-envelopes) |
 | Journaled reversible client config edits | REQ-HOST-3 |

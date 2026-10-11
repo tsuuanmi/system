@@ -5,7 +5,7 @@ status: proposed
 owners: [tsuuanmi]
 created: 2026-10-11
 related-requirements: [REQ-ACC, REQ-PRV, REQ-WRK, REQ-TEAM, REQ-WF, REQ-GW, REQ-HOST]
-related-decisions: [ADR-0001, ADR-0002, ADR-0003, ADR-0004, ADR-0005, ADR-0006]
+related-decisions: [ADR-0001, ADR-0002, ADR-0003, ADR-0004, ADR-0005, ADR-0006, ADR-0007, ADR-0008, ADR-0009, ADR-0010]
 implementation: []
 ---
 
@@ -28,8 +28,19 @@ single turns, teams, and long-running workflows.
   gateway, MCP tool inversion, turn tokens, and drain. It is specific to Codex and
   ChatGPT, and it leaves control surfaces unauthenticated.
 
-Today each improvement has to be made three times, and none of the systems has all
-three strengths.
+Today each improvement has to be made three times, none of the systems has all
+three strengths, and each one is locked into a specific host, client, or provider.
+
+The maintainer's guiding decisions for the unified system are:
+
+1. **Tool-agnostic:** no lock-in to any single tool
+   ([ADR-0008](../decisions/adr/0008-tool-agnostic.md)).
+2. **Everything is a plugin,** following the DeepSeek Harness philosophy
+   ([ADR-0007](../decisions/adr/0007-everything-is-a-plugin.md)).
+3. **Claude Code and Codex can both use it,** and it can use them
+   ([ADR-0009](../decisions/adr/0009-claude-and-codex-first-class.md)).
+4. **Reuse or adapt existing tools** wherever they already do the job well
+   ([ADR-0010](../decisions/adr/0010-reuse-before-build.md)).
 
 ## Goals
 
@@ -41,8 +52,11 @@ three strengths.
 3. Deterministic, fail-closed Worker routing and acceptance (REQ-WRK).
 4. One durable workflow engine that runs a software-development profile and a
    scientific-research profile without engine changes (REQ-WF-9).
-5. Responses and MCP gateways so Codex and MCP agents can use `system` Workers
-   (REQ-GW).
+5. Responses, Anthropic Messages, and MCP gateways, so Codex, Claude Code, and
+   MCP agents can use `system` Workers (REQ-GW).
+6. Claude Code, Codex, and ACP agents usable as Workers (REQ-WRK-5..6).
+7. Every feature is a plugin composed from configuration, with no tool lock-in
+   (REQ-HOST-4..5, INV-10, INV-11).
 
 ## Non-goals
 
@@ -59,35 +73,39 @@ three strengths.
 - [AgentOS analysis](../research/agentos-analysis.md)
 - [internet analysis](../research/internet-analysis.md)
 - [codex-chatgpt-web analysis](../research/codex-chatgpt-web-analysis.md)
+- [DeepSeek Harness analysis](../research/dsh-analysis.md) (plugin philosophy)
 
 ## Proposed design
 
 - Structure: [architecture README](../architecture/README.md),
   [components](../architecture/components.md), [data flow](../architecture/data-flow.md).
+- Plugins and seams: [plugin model](../architecture/plugin-model.md).
 - Mechanisms: [provider turns](../design/provider-turns.md),
   [scheduling and leases](../design/scheduling-and-leases.md),
   [workflow engine](../design/workflow-engine.md), [teams](../design/teams.md),
-  [gateways](../design/gateways.md).
-- Durable choices: ADR-0001 through ADR-0006.
+  [agent runtimes](../design/agent-runtimes.md), [gateways](../design/gateways.md).
+- Durable choices: ADR-0001 through ADR-0010.
 
-Planned package layout (Bun workspaces). Dependencies follow the layer map:
+Planned package layout (Bun workspaces). Each seam has a definition package, and
+each provider is its own plugin package. Dependencies follow the layer map:
 
 ```text
 packages/
-  kernel/            store, blobs, events, leases, hashing, clock
-  provider-runtime/  BrowserPort, scheduler, receipts, vault, remote login
-  providers/
-    chatgpt-web/     ProviderDriver
-    gemini-web/      ProviderDriver
-  capabilities/      website core, local exec, api provider
-  routing/           registry, admission, router, acceptance
-  orchestration/     workflow engine, team runner, profiles
-  host/              composition root, config, drain
-  gateways/
-    responses/       Responses API + turn broker
-    mcp/             MCP server
-    cli/             operator CLI
-    web-ui/          loopback operator UI (remote login, status)
+  host/                      Cordis root + loader, profiles, drain
+  libs/                      hashing, clock/timeout, schemas, reconcile decisions (libraries)
+  seams/                     seam definitions only (abstract Service classes + vocabulary types)
+    store/ blobs/ events/ leases/ browser/ display/ accounts/ providers/
+    website/ exec/ agent-runtimes/ workers/ workflow/ teams/ profiles/ client-protocols/
+  plugins/                   providers and consumers
+    store-sqlite/ blobs-fs/ events-store/ leases-store/
+    browser-patchright/ display-xvfb/ display-headless/ accounts-vault/ remote-login/
+    provider-chatgpt-web/ provider-gemini-web/
+    website-core/ exec-local/
+    runtime-claude-agent-sdk/ runtime-codex-sdk/ runtime-acp/
+    workers-core/ workflow-engine/ team-runner/
+    profile-software-development/ profile-scientific-research/
+    gateway-responses/ gateway-anthropic-messages/ mcp-server/ cli/ web-ui/
+  bundles/                   base, browser-providers, agent-runtimes, gateways, dev-fakes, dsh
 ```
 
 ## Alternatives considered
@@ -98,6 +116,10 @@ packages/
 - **Implement AgentOS on DSH as designed.** Rejected
   ([ADR-0001](../decisions/adr/0001-standalone-host.md)). Its central team
   mechanism depends on an experimental API that only in-process providers satisfy.
+- **A custom composition root or a generic DI container instead of Cordis.**
+  Rejected ([ADR-0007](../decisions/adr/0007-everything-is-a-plugin.md)). It
+  would rebuild lifecycle, scoping, and configuration-driven composition that
+  Cordis already provides.
 - **Fork codex-chatgpt-web.** Rejected. It is a single-purpose bridge with no
   workflow or team layer, and much of its complexity is tied to Codex internals.
 
@@ -107,8 +129,11 @@ packages/
 - Provider drivers tested against recorded DOM fixtures.
 - Crash and restart scenarios for every reconcile-before-repeat effect:
   `SUBMITTED` receipts, `RUNNING` nodes, stale lease commits.
-- Smoke tests against the real Codex binary and a real MCP client, driven by a
-  scripted provider adapter.
+- Smoke tests against the real Codex and Claude Code binaries and a real MCP
+  client, driven by a scripted provider adapter. Agent-runtime smoke tests for
+  the Claude Agent SDK and Codex SDK Workers.
+- Composition tests: every shipped profile loads and disposes cleanly, and every
+  seam's conformance suite passes for each of its providers and fakes.
 - A manual, account-bound release checklist for sign-in, a live provider turn, a
   tool round trip, and a full workflow cycle. A skipped item blocks the release.
 - The architecture test: the scientific-research profile runs with zero engine

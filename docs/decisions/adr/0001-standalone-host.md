@@ -2,7 +2,7 @@
 
 - **Status:** Accepted
 - **Date:** 2026-10-11
-- **Related:** PROP-0001, CON-1
+- **Related:** PROP-0001, CON-1, ADR-0007
 
 ## Context
 
@@ -39,3 +39,10 @@ a thin DSH adapter.
   remain references only.
 - Revisit if a host appears that provides the required durability and
   reconciliation semantics through a stable public contract.
+
+## Follow-up (2026-10-11)
+
+[ADR-0007](0007-everything-is-a-plugin.md) builds the standalone host on Cordis,
+the plugin runtime that DSH also uses. `system` stays standalone, but its plugins
+can be mounted by a DSH profile as a bundle. That replaces the "thin DSH adapter"
+mentioned in the decision above.

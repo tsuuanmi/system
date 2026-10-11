@@ -57,6 +57,11 @@
   accepted. Acceptance is a separate check against the work's acceptance contract.
 - **REQ-WRK-4** Work can be cancelled. Cancellation reaches the owning runtime,
   and its outcome is reported.
+- **REQ-WRK-5** Claude Code and Codex can be used as Workers, and any
+  ACP-speaking agent can be added through configuration.
+- **REQ-WRK-6** An agent-runtime Worker runs under a workspace, sandbox, and
+  approval policy taken from trusted envelopes. A policy the runtime cannot
+  express exactly fails the run.
 
 ## Teams (`REQ-TEAM`)
 
@@ -100,6 +105,9 @@
   same remote turn.
 - **REQ-GW-3** The host exposes its capabilities as an MCP server.
 - **REQ-GW-4** A CLI offers turn, workflow, account, and maintenance commands.
+- **REQ-GW-5** The host exposes an Anthropic Messages-compatible endpoint with SSE
+  streaming, so that a Messages client such as Claude Code can select `system`
+  Workers as models, with the same tool semantics as REQ-GW-2.
 
 ## Host (`REQ-HOST`)
 
@@ -109,3 +117,8 @@
   with a precise error when any of them is invalid.
 - **REQ-HOST-3** Any change the host makes to a client's configuration is
   journaled and can be reversed byte for byte.
+- **REQ-HOST-4** Every feature is composed from configuration (profiles and
+  patches). Any feature can be disabled, or its implementation replaced, without
+  code changes.
+- **REQ-HOST-5** No deployment-varying value is hardcoded. Each one is a
+  validated plugin configuration field.

@@ -4,8 +4,10 @@
 > Mechanisms are linked to [design](../design/README.md).
 
 Each boundary below states what it **owns**, what it **does not own**, and its
-**contract** to the layer above. When code exists, each boundary becomes a package
-with a colocated `README.md` that routes back here.
+**contract** to the layer above. Each contract is published as one or more Cordis
+seams ([plugin model](plugin-model.md#seam-catalog)). When code exists, each seam
+definition and each provider becomes a package with a colocated `README.md` that
+routes back here.
 
 ## Kernel
 
@@ -41,6 +43,9 @@ with a colocated `README.md` that routes back here.
 - **Local execution capability.** Runs shell, file, patch, and git tools under an
   explicit sandbox policy from a trusted envelope
   ([INV-6](invariants.md#inv-6-authority-comes-from-trusted-envelopes)).
+- **Agent runtime capability** (`ctx.agentRuntimes`). Drives external coding
+  agents (Claude Code through the Claude Agent SDK, Codex through the Codex SDK,
+  any ACP agent) as Workers. See [agent runtimes](../design/agent-runtimes.md).
 - **API provider capability.** Direct model APIs, for when a requirement needs them.
 - **Does not own:** routing decisions or acceptance.
 - **Contract:** each capability publishes a descriptor with its name, side-effect
@@ -77,19 +82,25 @@ with a colocated `README.md` that routes back here.
 
 ## Host
 
-- **Owns:** the composition root. It loads and validates configuration and
-  profiles, wires the layers, isolates failures per subsystem, and runs drain and
-  shutdown.
-- **Does not own:** business logic.
+- **Owns:** the Cordis root context and loader. It composes the plugins named by
+  the active profile and patches, validates every plugin `Config` at startup,
+  isolates failures per plugin, and runs drain and shutdown.
+- **Does not own:** business logic. The host never wires layers by hand.
+  Dependencies are resolved through `inject`.
 
 ## Gateways
 
 - **Responses gateway:** an OpenAI Responses-compatible endpoint (SSE) so Codex and
   other Responses clients can select `system` Workers as models.
+- **Anthropic Messages gateway:** an Anthropic Messages-compatible endpoint (SSE) so
+  Claude Code and other Messages clients can do the same. It shares the turn broker
+  with the Responses gateway.
 - **MCP server:** exposes `system` capabilities and the per-turn tool bridge.
 - **CLI and Web UI:** the operator surface for turns, workflows, accounts, remote
   login, and maintenance.
-- **DSH adapter:** lets the DeepSeek Harness use `system` as a tool provider.
+- **DSH bundle:** `system` plugins packaged as a DeepSeek Harness bundle, so a
+  DSH profile can mount them. Because both sides use Cordis, no adapter code is
+  needed ([plugin model](plugin-model.md#portability-to-other-hosts)).
 - **Does not own:** orchestration state. Gateways translate protocols and enforce
   transport-level security only.
 - **Design:** [gateways](../design/gateways.md).

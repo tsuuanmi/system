@@ -30,14 +30,15 @@ admitted spec (hashed, with provenance)
   → convergence: list the remaining blockers, or report completion
 ```
 
-## Remote tool call inside a remote turn (Responses gateway)
+## Remote tool call inside a remote turn (client-protocol gateways)
 
 ```text
 remote model calls MCP tool (turn token)
   → MCP server validates token → turn broker queues call
-  → Responses gateway ends the current client response with function_call items
+  → gateway ends the current client response with native tool calls
+       (Responses: function_call · Messages: tool_use)
   → client executes the tool locally (its own sandbox + approvals)
-  → client sends function_call_output in a new request
+  → client sends tool results in a new request
   → broker completes the call → MCP returns inside the same remote turn
 ```
 

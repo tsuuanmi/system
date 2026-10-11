@@ -25,6 +25,14 @@ one.
 - The system-wide invariants in
   [architecture/invariants.md](docs/architecture/invariants.md) are binding.
   Breaking one requires an ADR.
+- Everything is a plugin. New behavior goes on a documented seam or event
+  ([plugin model](docs/architecture/plugin-model.md)), never as a special case in
+  a core path. Deployment-varying values are validated plugin `Config` fields.
+- Never name a specific tool, model, or vendor in routing, team, workflow, or
+  profile code. Reach tools only through seams
+  ([INV-11](docs/architecture/invariants.md#inv-11-no-tool-lock-in)).
+- Reuse or adapt an existing tool before building
+  ([dependency register](docs/engineering/dependencies.md)).
 - Make the smallest coherent production-quality change.
 - Keep one authoritative implementation. Do not add parallel runtimes, fallback
   paths, or compatibility layers unless a requirement demands them.
@@ -38,6 +46,11 @@ Documentation is part of the change:
 - code behavior change → update the affected canonical docs and tests;
 - module responsibility or dependency change → update the nearest source README
   and [architecture/components.md](docs/architecture/components.md);
+- seam added or changed → update the
+  [seam catalog](docs/architecture/plugin-model.md#seam-catalog) and the seam's
+  conformance suite;
+- runtime dependency added or code ported → update the
+  [dependency register](docs/engineering/dependencies.md);
 - public API, schema, config, or CLI change → update reference material, requirements,
   and tests;
 - durable architectural decision → add an ADR; supersede, never rewrite, an accepted one;

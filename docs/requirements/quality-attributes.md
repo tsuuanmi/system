@@ -16,3 +16,4 @@
 | QA-10 | Testability | Each layer is testable without real provider accounts, using fakes at its seam. Account-bound flows have a scripted manual validation checklist. |
 | QA-11 | Portability | The host runs on Linux and macOS. Remote login is Linux-first (see [constraints](constraints.md)). |
 | QA-12 | Cost awareness | Routing considers cost, latency, and context budget as policy inputs. Correctness always wins over cost. |
+| QA-13 | Tool agnosticism | No model, vendor, agent, client, browser engine, or store is required. Each is a replaceable provider behind a seam ([INV-11](../architecture/invariants.md#inv-11-no-tool-lock-in)). |

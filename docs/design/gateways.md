@@ -1,9 +1,16 @@
 # Gateways
 
 > Target state. Boundary: [gateways](../architecture/components.md#gateways).
-> Requirements: REQ-GW-1..4, REQ-HOST-1, REQ-HOST-3. Security: [threat model](../security/threat-model.md).
+> Requirements: REQ-GW-1..5, REQ-HOST-1, REQ-HOST-3. Security: [threat model](../security/threat-model.md).
+> Decision: [ADR-0009](../decisions/adr/0009-claude-and-codex-first-class.md).
 
-## Responses gateway
+Gateways are consumer plugins at the edge. The two **client-protocol gateways**,
+Responses for Codex and Anthropic Messages for Claude Code, are providers of one
+seam, `ctx.clientProtocols`. They share the turn broker, the model catalog, the
+authentication, the drain logic, and the tool-inversion mechanics described
+below. Each one owns only its wire format.
+
+## Responses gateway (Codex)
 
 An OpenAI Responses-compatible HTTP endpoint on loopback.
 
@@ -25,6 +32,24 @@ An OpenAI Responses-compatible HTTP endpoint on loopback.
   output text, and tool requests become `function_call` items. The final text must
   equal the streamed deltas.
 
+## Anthropic Messages gateway (Claude Code)
+
+An Anthropic Messages-compatible HTTP endpoint on the same loopback listener.
+
+- **Routes:** `POST /v1/messages` (SSE), `POST /v1/messages/count_tokens`, and
+  `GET /v1/models`. The admin, authentication, and Origin rules are the same as
+  for the Responses gateway.
+- **Client setup:** Claude Code is pointed at the gateway by its base-URL and
+  auth-token settings. The edit is journaled like every client configuration edit.
+- **Event mapping:** provider status rows become `thinking` blocks when the client
+  requested thinking (otherwise they are omitted), prose becomes `text` blocks,
+  and tool requests become `tool_use` blocks. The final text must equal the
+  streamed deltas.
+- **Conversation state:** Messages is stateless, because the client resends
+  history. The gateway binds a client conversation to a provider conversation by
+  a hash of the stable history prefix. A retained provider chat receives only
+  the new suffix, the same way a Responses `previous_response_id` chain does.
+
 ## MCP tool inversion
 
 A remote Worker, such as a web model, can use the *client's* tools, while the
@@ -37,9 +62,12 @@ client keeps its own sandbox and approvals (REQ-GW-2):
    process and the host) queues the call.
 3. **Causal barrier:** before tools are emitted, the provider runtime checkpoints
    the response text produced so far.
-4. The gateway ends the current client response with `function_call` items.
-5. The client runs the tools and sends `function_call_output`. The gateway requires
-   the result count to equal the outstanding count.
+4. The gateway ends the current client response with the client's native
+   tool-call items: `function_call` for Responses, or `tool_use` with
+   `stop_reason: tool_use` for Messages.
+5. The client runs the tools and sends the results (`function_call_output` or
+   `tool_result`). The gateway requires the result count to equal the
+   outstanding count.
 6. The broker completes the calls, and the MCP calls return inside the **same**
    remote turn. One remote turn can therefore span many client requests.
 7. **Two-phase completion fence:** the turn completes only on a new, stable final
@@ -55,8 +83,8 @@ native envelope or from operator configuration. Text such as
 
 ## Client configuration edits
 
-When the host configures a client, for example by pointing Codex's provider base
-URL at the gateway, the edit is surgical and preserves formatting. It is journaled
+When the host configures a client, for example by pointing Codex's model
+provider or Claude Code's base URL at the gateway, the edit is surgical and preserves formatting. It is journaled
 with the previous bytes, and restored byte for byte on disconnect (REQ-HOST-3).
 
 ## Drain

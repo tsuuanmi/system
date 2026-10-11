@@ -65,3 +65,20 @@ runtime. Layers above it see account ids, states, and results, never secrets.
 
 Concurrency, retries, resubmissions, review cycles, payload sizes, caches, and
 waits all have explicit configured limits. An unbounded loop or queue is a defect.
+
+### INV-10 Everything is a plugin
+
+Every feature is a Cordis plugin, and every boundary between layers is a seam, a
+service claimed by key ([plugin model](plugin-model.md)). There is no privileged
+core to patch. Every registration has a disposer. Deployment-varying behavior is
+validated plugin `Config`, never a hardcoded constant. Pure logic that has nothing
+to swap stays a library
+([ADR-0007](../decisions/adr/0007-everything-is-a-plugin.md)).
+
+### INV-11 No tool lock-in
+
+No model, vendor, agent, client, browser engine, or store is reachable except
+through a seam or a public protocol. Routing, teams, workflows, and profiles name
+capabilities, never tools. A second provider must be plausible for every seam,
+and every seam's conformance suite runs against a fake
+([ADR-0008](../decisions/adr/0008-tool-agnostic.md)).

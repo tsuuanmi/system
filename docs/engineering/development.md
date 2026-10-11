@@ -21,6 +21,14 @@ Each package has a colocated `README.md` that says what it owns, what it does no
 own, its entry points, and its dependency direction, and links back to
 [components](../architecture/components.md).
 
+## Composition
+
+The host is started with a profile. A profile is an ordered list of bundles plus
+patch files ([plugin model](../architecture/plugin-model.md#composition)).
+Planned profiles: `default` (all layers), `headless` (no gateways or Web UI),
+`gateway-only`, and `dev` (fakes for every external seam, so no accounts are
+needed). The composed tree can be printed for inspection.
+
 ## Commands (planned)
 
 ```sh
