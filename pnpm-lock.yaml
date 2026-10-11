@@ -339,6 +339,34 @@ importers:
         specifier: 3.18.5-alpha.1
         version: 3.18.5-alpha.1
 
+  packages/plugins/egress:
+    dependencies:
+      '@secretlint/core':
+        specifier: 13.0.5
+        version: 13.0.5
+      '@secretlint/secretlint-rule-preset-recommend':
+        specifier: 13.0.5
+        version: 13.0.5
+      '@tsuuanmi/system-artifacts':
+        specifier: workspace:*
+        version: link:../artifacts
+      '@tsuuanmi/system-libs':
+        specifier: workspace:*
+        version: link:../../libs
+      '@tsuuanmi/system-provider-core':
+        specifier: workspace:*
+        version: link:../../provider-core
+    devDependencies:
+      '@deepseek-ai/cordis':
+        specifier: 4.0.5-alpha.1
+        version: 4.0.5-alpha.1(@deepseek-ai/cordis-plugin-include@1.0.10-alpha.1)(@deepseek-ai/cordis-plugin-loader@1.0.6-alpha.1)
+      '@deepseek-ai/schemastery':
+        specifier: 3.18.5-alpha.1
+        version: 3.18.5-alpha.1
+      '@tsuuanmi/system-store':
+        specifier: workspace:*
+        version: link:../store
+
   packages/plugins/event-log:
     dependencies:
       '@tsuuanmi/system-libs':
@@ -559,6 +587,9 @@ importers:
       '@tsuuanmi/system-browser-patchright':
         specifier: workspace:*
         version: link:../browser-patchright
+      '@tsuuanmi/system-egress':
+        specifier: workspace:*
+        version: link:../egress
       '@tsuuanmi/system-event-log':
         specifier: workspace:*
         version: link:../event-log
@@ -645,6 +676,9 @@ importers:
       '@tsuuanmi/system-display-virtual':
         specifier: workspace:*
         version: link:../plugins/display-virtual
+      '@tsuuanmi/system-egress':
+        specifier: workspace:*
+        version: link:../plugins/egress
       '@tsuuanmi/system-event-log':
         specifier: workspace:*
         version: link:../plugins/event-log
@@ -4134,6 +4168,21 @@ packages:
   '@sec-ant/readable-stream@0.4.1':
     resolution: {integrity: sha512-831qok9r2t8AlxLko40y2ebgSDhenenCatLVeW/uBtnHPyhHOvG0C7TvfgecV+wHzIm5KUICgzmVpWS+IMEAeg==}
 
+  '@secretlint/core@13.0.5':
+    resolution: {integrity: sha512-GOT2sDxb3Gz1kLx1/1zfSbnzjQrmZ/8rB62jcz98uA2eavtMNkwgybsaW0toNIaGGCVvnfYJ35pwRR6UG8lJRQ==}
+    engines: {node: '>=22.0.0'}
+
+  '@secretlint/profiler@13.0.5':
+    resolution: {integrity: sha512-FAQIuD+sHgBqUl3zf4PN/zPW4aMDo5Ou9z3lMqL7vWSDvujhqwqolyLbdK/FKsmpdE8L87vfiabL2XvWqufZ7Q==}
+
+  '@secretlint/secretlint-rule-preset-recommend@13.0.5':
+    resolution: {integrity: sha512-dxOmTLf1w7I6rQEFPL8Hkdz6dR1FQXF0bzmTahH/Wyezy89TMPLL+8LbZ2YD8trkmYBnS37zUmOsZT6rMVftKQ==}
+    engines: {node: '>=22.0.0'}
+
+  '@secretlint/types@13.0.5':
+    resolution: {integrity: sha512-VUIv9iZ9pg2lcWARUmR+7psoi02QBjgUtQnQGPRmAq/3Yt1whB5y52xwP2v5zxfj7C8KGrM2fxf7GhbHCHJUgQ==}
+    engines: {node: '>=22.0.0'}
+
   '@sindresorhus/is@7.2.0':
     resolution: {integrity: sha512-P1Cz1dWaFfR4IR+U13mqqiGsLFf1KbayybWwdd2vfctdV6hDpUkgCY0nKOLLTMSoRd/jJNjtbqzf13K8DCCXQw==}
     engines: {node: '>=18'}
@@ -4341,6 +4390,9 @@ packages:
   body-parser@2.3.0:
     resolution: {integrity: sha512-2cGmJupaNgg+QUwVLAucDuWuoMZ6EX9iHDRswZ5lsNYEmwPaRknMPCLZz07yTzVq/83p4o/wzbDZbBrTvGGTIw==}
     engines: {node: '>=18'}
+
+  boundary@2.0.0:
+    resolution: {integrity: sha512-rJKn5ooC9u8q13IMCrW0RSp31pxBCHE3y9V/tp3TdWSLf8Em3p6Di4NBpfzbJge9YjjFEsD0RtFEjtvHL5VyEA==}
 
   bowser@2.14.1:
     resolution: {integrity: sha512-tzPjzCxygAKWFOJP011oxFHs57HzIhOEracIgAePE4pqB3LikALKnSzUyU4MGs9/iCEUuHlAJTjTc5M+u7YEGg==}
@@ -5319,6 +5371,9 @@ packages:
 
   strip-literal@3.1.0:
     resolution: {integrity: sha512-8r3mkIM/2+PpjHoOtiAW8Rg3jJLHaV7xPwG+YRGrv6FP0wwk/toTpATxWYOW0BKdWwl82VT2tFYi5DlROa0Mxg==}
+
+  structured-source@4.0.0:
+    resolution: {integrity: sha512-qGzRFNJDjFieQkl/sVOI2dUjHKRyL9dAJi2gCPGJLbJHBIkyOHxjuocpIEfbLioX+qSJpvbYdT49/YCdMznKxA==}
 
   tiny-inflate@1.0.3:
     resolution: {integrity: sha512-pkY1fj1cKHb2seWDy0B16HeWyczlJA9/WW3u3c4z/NiWDsO3DOU5D7nhTLE9CF0yXv/QZFY7sEJmj24dK+Rrqw==}
@@ -9603,6 +9658,21 @@ snapshots:
 
   '@sec-ant/readable-stream@0.4.1': {}
 
+  '@secretlint/core@13.0.5':
+    dependencies:
+      '@secretlint/profiler': 13.0.5
+      '@secretlint/types': 13.0.5
+      debug: 4.4.3
+      structured-source: 4.0.0
+    transitivePeerDependencies:
+      - supports-color
+
+  '@secretlint/profiler@13.0.5': {}
+
+  '@secretlint/secretlint-rule-preset-recommend@13.0.5': {}
+
+  '@secretlint/types@13.0.5': {}
+
   '@sindresorhus/is@7.2.0': {}
 
   '@sindresorhus/merge-streams@4.0.0': {}
@@ -9811,6 +9881,8 @@ snapshots:
       type-is: 2.1.0
     transitivePeerDependencies:
       - supports-color
+
+  boundary@2.0.0: {}
 
   bowser@2.14.1: {}
 
@@ -10849,6 +10921,10 @@ snapshots:
   strip-literal@3.1.0:
     dependencies:
       js-tokens: 9.0.1
+
+  structured-source@4.0.0:
+    dependencies:
+      boundary: 2.0.0
 
   tiny-inflate@1.0.3: {}
 

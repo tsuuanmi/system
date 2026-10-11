@@ -19,6 +19,7 @@
     "@tsuuanmi/system-browser-patchright": "workspace:*",
     "@tsuuanmi/system-credentials-vault": "workspace:*",
     "@tsuuanmi/system-display-virtual": "workspace:*",
+    "@tsuuanmi/system-egress": "workspace:*",
     "@tsuuanmi/system-event-log": "workspace:*",
     "@tsuuanmi/system-leases": "workspace:*",
     "@tsuuanmi/system-login": "workspace:*",

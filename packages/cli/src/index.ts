@@ -201,6 +201,7 @@ export interface AskRequest {
   persist?: true
   sessionId?: string
   tier?: string
+  classification?: string
 }
 
 /** `system ask [--persist] [--session <id>] [--tier <tier>] (<prompt...> | -)`; `-` reads stdin. */
@@ -212,6 +213,7 @@ export async function parseAsk(args: readonly string[], readStdin: () => Promise
     if (flag === '--persist') request.persist = true
     else if (flag === '--session' && rest[0]) request.sessionId = rest.shift()!
     else if (flag === '--tier' && rest[0]) request.tier = rest.shift()!
+    else if (flag === '--classification' && rest[0]) request.classification = rest.shift()!
     else return undefined
   }
   const prompt = (rest.length === 1 && rest[0] === '-' ? await readStdin() : rest.join(' ')).trim()

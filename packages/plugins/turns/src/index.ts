@@ -11,6 +11,7 @@ import { randomBytes } from 'node:crypto'
 import { type Context, Service } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import type {} from '@tsuuanmi/system-accounts'
+import type { Classification } from '@tsuuanmi/system-egress'
 import type {} from '@tsuuanmi/system-event-log'
 import type {} from '@tsuuanmi/system-login'
 import type {} from '@tsuuanmi/system-artifacts'
@@ -46,6 +47,7 @@ export interface TurnView {
   answerArtifact?: ContentId
   routeDecision?: ContentId
   tierDecision?: ContentId
+  egressDecision?: ContentId
   error?: { kind: string; disposition: Disposition; message: string }
   createdAt: string
   updatedAt: string
@@ -63,10 +65,13 @@ export interface AskInput {
   tier?: Tier | undefined
   /** `deep-research` always runs in a persistent session. */
   feature?: ProviderFeature | undefined
+  /** Data classification of the prompt, stated by the caller (default from ctx.egress). */
+  classification?: Classification | undefined
 }
 
 export interface ResearchInput {
   question: string
+  classification?: Classification | undefined
   sessionId?: string | undefined
   clientRequestId?: string | undefined
 }
@@ -106,6 +111,8 @@ interface Row {
   answer_artifact: string | null
   route_decision: string | null
   tier_decision: string | null
+  egress_decision: string | null
+  classification: Classification | null
   error: string | null
   created_at: string
   updated_at: string
@@ -124,7 +131,7 @@ const TERMINAL: ReadonlySet<TurnStatus> = new Set(['completed', 'failed'])
 const LEASE_TTL_MS = 60_000
 
 export class Turns extends Service {
-  static inject = ['store', 'artifacts', 'leases', 'turnReceipts', 'accounts', 'browser', 'providers']
+  static inject = ['store', 'artifacts', 'leases', 'egress', 'turnReceipts', 'accounts', 'browser', 'providers']
 
   static Config: z<Config> = z.object({
     maxConcurrentTurnsPerAccount: z.natural().min(1).default(2).description('Parallel turns per account (different sessions)'),
@@ -168,6 +175,11 @@ export class Turns extends Service {
       INSERT INTO turn_sessions_v2 SELECT session_id, account, binding, created_at FROM turn_sessions;
       DROP TABLE turn_sessions;
       ALTER TABLE turn_sessions_v2 RENAME TO turn_sessions;`,
+    }, {
+      // The caller's data classification and the egress decision (INV-12).
+      version: 3,
+      sql: `ALTER TABLE turns ADD COLUMN classification TEXT;
+      ALTER TABLE turns ADD COLUMN egress_decision TEXT;`,
     }])
     ctx.effect(() => {
       queueMicrotask(() => {
@@ -223,10 +235,10 @@ export class Turns extends Service {
       const row: Row = {
         turn_id: newId('turn'), request_key: requestKey, session_id: sessionId, mode: sessionId ? 'persistent' : 'temporary', feature, tier,
         prompt, status: 'queued', account: null, binding: null, answer: null, answer_artifact: null, route_decision: null, tier_decision: null,
-        error: null, created_at: now(), updated_at: now(),
+        egress_decision: null, classification: input.classification ?? null, error: null, created_at: now(), updated_at: now(),
       }
-      db.prepare(`INSERT INTO turns (turn_id, request_key, session_id, mode, feature, tier, prompt, status, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?)`).run(row.turn_id, requestKey, sessionId, row.mode, feature, tier, prompt, row.created_at, row.updated_at)
+      db.prepare(`INSERT INTO turns (turn_id, request_key, session_id, mode, feature, tier, classification, prompt, status, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?)`).run(row.turn_id, requestKey, sessionId, row.mode, feature, tier, row.classification, prompt, row.created_at, row.updated_at)
       this.ctx.store.afterCommit(() => void this.schedule(row))
       return this.view(row)
     })
@@ -236,7 +248,7 @@ export class Turns extends Service {
   /** Start Deep research in a persistent session; returns at once (REQ-SES-8). */
   research(input: ResearchInput): TurnView {
     return this.ask({
-      prompt: input.question, feature: 'deep-research', sessionId: input.sessionId, clientRequestId: input.clientRequestId,
+      prompt: input.question, feature: 'deep-research', sessionId: input.sessionId, clientRequestId: input.clientRequestId, classification: input.classification,
       ...(input.sessionId ? {} : { persist: true }),
     })
   }
@@ -343,6 +355,13 @@ export class Turns extends Service {
       const receipt = row.account ? this.ctx.turnReceipts.read(this.identity(row, row.account)) : undefined
       if (row.status === 'running' && receipt?.status === 'SUBMITTED') {
         if ((await this.reconcileSubmitted(row, receipt, lost.signal, current)) === 'done') return
+      }
+      // INV-12: the actual outgoing payload is checked before any Worker is chosen or anything is sent.
+      const egress = await this.ctx.egress.check({ payload: row.prompt, classification: row.classification ?? undefined, workerClass: 'website' })
+      this.update(turnId, { egress_decision: egress.decision }, current)
+      if (!egress.allowed) {
+        this.fail(turnId, new ProviderError('egress_denied', `${egress.reason} (decision ${egress.decision})`), current)
+        return
       }
       const account = row.account ?? (await this.route(row, current))
       const scheduler = this.scheduler(account)
@@ -567,6 +586,8 @@ export class Turns extends Service {
     const failure = (error: unknown) => ({ isError: true, content: [{ type: 'text' as const, text: (error as Error).message }] })
     const waitSeconds = zod.number().int().min(0).max(55).optional().describe('How long to wait for the answer before returning (default 45 s)')
     const tier = zod.enum(['economy', 'standard', 'frontier']).optional().describe('Intelligence tier; the account catalog maps it to a model and effort preset')
+    const classification = zod.enum(['public', 'operator-shared', 'local-private']).optional()
+      .describe('Data classification of the prompt; local-private content never leaves the machine (INV-12)')
     c.mcp.tool('ask', {
       description: 'Ask a website model (a separate chat quota) through a saved account. One-shot by default (temporary conversation); persist=true or sessionId continues a conversation. Returns the answer, or a turnId to poll with `result` if it takes longer than waitSeconds.',
       inputSchema: {
@@ -574,6 +595,7 @@ export class Turns extends Service {
         sessionId: zod.string().max(200).optional().describe('Continue an existing persistent session'),
         persist: zod.boolean().optional().describe('Start a persistent session (a normal conversation)'),
         tier,
+        classification,
         clientRequestId: zod.string().max(200).optional().describe('Retry-safe request key'),
         waitSeconds,
       },
@@ -582,7 +604,7 @@ export class Turns extends Service {
         const started = this.ask({
           prompt: String(args.prompt), sessionId: args.sessionId as string | undefined,
           persist: args.persist as boolean | undefined, clientRequestId: args.clientRequestId as string | undefined,
-          tier: args.tier as Tier | undefined,
+          tier: args.tier as Tier | undefined, classification: args.classification as Classification | undefined,
         })
         return shape(await this.wait(started.turnId, ((args.waitSeconds as number | undefined) ?? 45) * 1000))
       } catch (error) {
@@ -594,12 +616,14 @@ export class Turns extends Service {
       inputSchema: {
         question: zod.string().min(1).max(32_000),
         sessionId: zod.string().max(200).optional().describe('Run in an existing persistent session'),
+        classification,
         clientRequestId: zod.string().max(200).optional().describe('Retry-safe request key'),
       },
     }, async (args) => {
       try {
         return shape(this.research({
           question: String(args.question), sessionId: args.sessionId as string | undefined, clientRequestId: args.clientRequestId as string | undefined,
+          classification: args.classification as Classification | undefined,
         }))
       } catch (error) {
         return failure(error)
@@ -665,6 +689,7 @@ export class Turns extends Service {
       ...(row.answer_artifact ? { answerArtifact: row.answer_artifact as ContentId } : {}),
       ...(row.route_decision ? { routeDecision: row.route_decision as ContentId } : {}),
       ...(row.tier_decision ? { tierDecision: row.tier_decision as ContentId } : {}),
+      ...(row.egress_decision ? { egressDecision: row.egress_decision as ContentId } : {}),
       ...(row.error ? { error: JSON.parse(row.error) as TurnView['error'] & object } : {}),
       createdAt: row.created_at, updatedAt: row.updated_at,
     }

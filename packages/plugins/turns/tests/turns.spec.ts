@@ -8,6 +8,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
 import Accounts from '@tsuuanmi/system-accounts'
 import Artifacts from '@tsuuanmi/system-artifacts'
+import Egress from '@tsuuanmi/system-egress'
 import Leases from '@tsuuanmi/system-leases'
 import Login from '@tsuuanmi/system-login'
 import BrowserPool from '@tsuuanmi/system-browser-patchright'
@@ -42,6 +43,7 @@ async function boot(options: { fake?: FakeOptions; accounts?: CatalogEntry[]; re
     ctx.plugin(Store, { path: join(dir, 'system.db') }),
     ctx.plugin(Artifacts, {}),
     ctx.plugin(Leases, {}),
+    ctx.plugin(Egress, {}),
     ctx.plugin(TurnReceipts, {}),
     ctx.plugin(Vault, { path: join(dir, 'vault.enc'), keyFile: join(dir, 'vault.key') }),
     ctx.plugin(Accounts, { accounts: options.accounts ?? [account('chatgpt-main')] }),
@@ -248,6 +250,19 @@ describe.runIf(canRunBrowser)('ctx.turns: ask through a saved account', () => {
     cleanups.splice(cleanups.indexOf(stop), 1)
     await waiting
     expect(Date.now() - t0).toBeLessThan(15_000)
+  }, 90_000)
+
+  it('checks egress before sending: credentials or local-private content never leave (INV-12)', async () => {
+    const { ctx, fake } = await boot()
+    const pem = String((await import('node:crypto')).generateKeyPairSync('rsa', { modulusLength: 1024 }).privateKey.export({ type: 'pkcs1', format: 'pem' }))
+    const leaked = await ctx.turns.wait(ctx.turns.ask({ prompt: `why does this key fail?\n${pem}` }).turnId, 30_000)
+    expect(leaked).toMatchObject({ status: 'failed', error: { kind: 'egress_denied', disposition: 'USER_ACTION' } })
+    const local = await ctx.turns.wait(ctx.turns.ask({ prompt: 'my notes', classification: 'local-private' }).turnId, 30_000)
+    expect(local).toMatchObject({ status: 'failed', error: { kind: 'egress_denied' } })
+    expect(fake.sent).toEqual([])
+    const fine = await ctx.turns.wait(ctx.turns.ask({ prompt: 'public question' }).turnId, 30_000)
+    expect(fine.status).toBe('completed')
+    expect(ctx.artifacts.get(fine.egressDecision!)?.body).toMatchObject({ decisionType: 'egress', outcome: { option: 'allow' } })
   }, 90_000)
 
   it('serves ask and result over MCP in place of the placeholders', async () => {

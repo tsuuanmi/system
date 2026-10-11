@@ -7,6 +7,10 @@
   once. The prompt is stored locally, and is never returned by views or MCP.
   `clientRequestId` makes retries idempotent; the same key with another prompt is
   refused.
+- **Egress (INV-12):** before routing or sending, `ctx.egress` checks the prompt
+  against the caller's `classification` (default `operator-shared`) for the
+  `website` Worker class, and scans it for credentials. A denial fails the turn
+  as `egress_denied` with the decision id, and nothing is sent.
 - **Routing:** a persistent session stays on its account. Otherwise the turn goes
   to the first `ready` account in catalog order that has a driver. Each choice
   is a `route` decision artifact that lists why every other account was skipped.

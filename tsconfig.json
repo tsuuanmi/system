@@ -68,6 +68,9 @@
       ],
       "@tsuuanmi/system-turns": [
         "packages/plugins/turns/src/index.ts"
+      ],
+      "@tsuuanmi/system-egress": [
+        "packages/plugins/egress/src/index.ts"
       ]
     }
   },

@@ -22,6 +22,7 @@
     "@tsuuanmi/system-accounts": "workspace:*",
     "@tsuuanmi/system-artifacts": "workspace:*",
     "@tsuuanmi/system-browser-patchright": "workspace:*",
+    "@tsuuanmi/system-egress": "workspace:*",
     "@tsuuanmi/system-event-log": "workspace:*",
     "@tsuuanmi/system-leases": "workspace:*",
     "@tsuuanmi/system-libs": "workspace:*",

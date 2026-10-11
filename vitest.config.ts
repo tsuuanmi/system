@@ -24,6 +24,7 @@ export default defineConfig({
       '@tsuuanmi/system-providers': src('./packages/plugins/providers/src/index.ts'),
       '@tsuuanmi/system-login': src('./packages/plugins/login/src/index.ts'),
       '@tsuuanmi/system-turns': src('./packages/plugins/turns/src/index.ts'),
+      '@tsuuanmi/system-egress': src('./packages/plugins/egress/src/index.ts'),
       '@tsuuanmi/system-provider-core': src('./packages/provider-core/src/index.ts'),
     },
   },

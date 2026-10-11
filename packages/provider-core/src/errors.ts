@@ -4,7 +4,7 @@ export type Disposition = 'IMMEDIATE' | 'BACKOFF' | 'RECREATE_SESSION' | 'USER_A
 export type ProviderErrorKind =
   | 'network' | 'timeout' | 'provider_stalled' | 'session_broken'
   | 'reauth_required' | 'challenge' | 'quota_exhausted' | 'reconciliation_failed'
-  | 'ui_drift' | 'config_error' | 'aborted' | 'invalid_input' | 'internal' | 'overloaded'
+  | 'ui_drift' | 'config_error' | 'aborted' | 'invalid_input' | 'internal' | 'overloaded' | 'egress_denied'
 
 const DISPOSITIONS: Record<ProviderErrorKind, Disposition> = {
   network: 'BACKOFF',
@@ -19,6 +19,7 @@ const DISPOSITIONS: Record<ProviderErrorKind, Disposition> = {
   config_error: 'CODE_FIX',
   internal: 'CODE_FIX',
   overloaded: 'BACKOFF',
+  egress_denied: 'USER_ACTION',
   aborted: 'NONE',
   invalid_input: 'NONE',
 }

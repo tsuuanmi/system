@@ -5,7 +5,8 @@ const USAGE = `Usage: system <command>
 
   init                      create or refresh the system DSH profile; ensure Chrome and Xvfb
   browser install           install the managed Chrome pinned in chrome.lock.json
-  ask [--persist] [--session <id>] [--tier economy|standard|frontier] (<prompt...> | -)
+  ask [--persist] [--session <id>] [--tier economy|standard|frontier]
+      [--classification public|operator-shared|local-private] (<prompt...> | -)
                             ask a website model through a saved account; - reads the prompt
                             from stdin (profile must be running)
   account list              list provider accounts and their status (profile must be running)
