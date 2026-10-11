@@ -25,6 +25,29 @@ Shared mechanics, which are the same for every driver, live in the runtime:
 receipts, completion, scheduling, auth-state write-back, and error
 classification.
 
+## Conversation modes
+
+The runtime picks the mode from the request and never from the website's
+default. Live observations are in the
+[research](../research/browser-interaction-and-self-healing.md#live-check-2026-10-11-signed-in-account-read-only).
+
+| Request | Mode | Binding | Why |
+|---|---|---|---|
+| a one-shot `ask` or `research` call with no session | **temporary** (ChatGPT: Temporary chat, `?temporary-chat=true`) | none kept after the turn | stays out of the operator's history; no conversation to resume |
+| a turn in a Worker session (`SessionId`), or any long-running or multi-turn work | **persistent** (a normal chat) | the canonical conversation id (`/c/<id>`), stored in the receipt and the session | later turns, recovery after a crash, and Deep Research return to the same conversation |
+
+- A temporary turn cannot be reopened after its page is gone. Its reconciliation
+  can only conclude WAIT (same page still open), RESUBMIT (no submission
+  evidence), or AMBIGUOUS, never RECOVER.
+- A persistent conversation is opened by its bound URL. A binding never moves to
+  another conversation.
+- **Workspace mode is part of `selectMode`.** Before a new conversation is
+  started, the composer's mode group must show **Chat** selected
+  (`aria-pressed=true`). ChatGPT's **Work** mode spends a different quota (Codex),
+  so it is never used for chat turns. If the mode group is shown and Chat is not
+  selected after one attempt, the turn fails before sending. Temporary chat does
+  not show the group; Chat is selected on the home page before switching to it.
+
 ## Turn receipt
 
 A receipt is persisted **before** submission. It binds:
@@ -72,9 +95,23 @@ Completion is observed with two independent deadlines:
 - **stall deadline:** reset only by *meaningful* transitions, meaning response text
   changed or generation started or stopped.
 
-A turn completes when generation has stopped and the response text has been
-unchanged for `stableMs`. Completion and canonical conversation binding are
-awaited together, so a turn without a canonical binding fails. A hard timeout and a
+**Generating** is read from the composer's action slot. While the website
+generates, the slot shows **Stop**. When it is idle, the slot shows **Send** again
+(disabled while the composer is empty), or a voice button on an empty home page.
+The rule is:
+
+- **running:** Stop is visible;
+- **idle:** Stop is gone and Send (or the idle voice button) is back.
+
+A turn completes when it is idle **and** the new answer's action buttons are
+present (ChatGPT: "Copy", "Regenerate response") **and** the answer text has
+been unchanged for `stableMs`. Idle alone is not enough, because the slot can
+flip between phases of a long answer (thinking, tool calls, Deep Research).
+Network streams are not used to decide "running": on ChatGPT the event stream
+stays open after the answer is complete. They serve as submission evidence and
+as typed error signals. In persistent mode, completion and the canonical
+conversation binding are awaited together, so a turn without a canonical binding
+fails. A hard timeout and a
 stall timeout are reported as distinct errors.
 
 ## Write-back

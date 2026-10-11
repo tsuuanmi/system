@@ -2,46 +2,133 @@
   "schema": "ui-map@1.0",
   "provider": "chatgpt-web",
   "uiRevision": "2026-10-09",
-  "locales": ["en", "vi"],
+  "locales": [
+    "en",
+    "vi"
+  ],
   "elements": {
     "composer.form": {
-      "candidates": [{ "css": "form[data-type=\"unified-composer\"]" }, { "role": "form" }]
+      "candidates": [
+        {
+          "css": "form[data-type=\"unified-composer\"]"
+        },
+        {
+          "role": "form"
+        }
+      ]
     },
     "composer.input": {
       "scope": "composer.form",
-      "candidates": [{ "testId": "prompt-textarea" }, { "role": "textbox" }],
-      "fingerprint": { "role": "textbox" }
+      "candidates": [
+        {
+          "testId": "prompt-textarea"
+        },
+        {
+          "role": "textbox"
+        }
+      ],
+      "fingerprint": {
+        "role": "textbox"
+      }
     },
     "composer.send": {
       "scope": "composer.form",
       "candidates": [
-        { "testId": "send-button" },
-        { "role": "button", "name": { "en": "^Send prompt$", "vi": "^Gửi lời nhắc$" } }
+        {
+          "testId": "send-button"
+        },
+        {
+          "role": "button",
+          "name": {
+            "en": "^Send prompt$",
+            "vi": "^Gửi lời nhắc$"
+          }
+        }
       ],
-      "fingerprint": { "role": "button", "name": { "en": "send", "vi": "gửi" }, "nearRole": "textbox" }
+      "fingerprint": {
+        "role": "button",
+        "name": {
+          "en": "send",
+          "vi": "gửi"
+        },
+        "nearRole": "textbox"
+      }
     },
-    "response.stop": { "candidates": [{ "testId": "stop-button" }, { "role": "button", "name": { "en": "^Stop" } }] },
-    "turn.user": { "cardinality": "many", "candidates": [{ "css": "[data-message-author-role=\"user\"]" }] }
+    "response.stop": {
+      "candidates": [
+        {
+          "testId": "stop-button"
+        },
+        {
+          "role": "button",
+          "name": {
+            "en": "^Stop"
+          }
+        }
+      ]
+    },
+    "turn.user": {
+      "cardinality": "many",
+      "candidates": [
+        {
+          "css": "[data-message-author-role=\"user\"]"
+        }
+      ]
+    }
   },
   "actions": {
     "composer.send": {
       "do": "click",
       "target": "composer.send",
-      "require": ["enabled"],
-      "fallback": { "press": "Enter", "on": "composer.input" },
-      "verify": { "anyOf": [{ "network": "conversation.post" }, { "countIncreased": "turn.user" }] },
+      "require": [
+        "enabled"
+      ],
+      "fallback": {
+        "press": "Enter",
+        "on": "composer.input"
+      },
+      "verify": {
+        "anyOf": [
+          {
+            "network": "conversation.post"
+          },
+          {
+            "countIncreased": "turn.user"
+          }
+        ]
+      },
       "sideEffect": "irreversible",
       "heal": "deterministic",
-      "timeouts": { "resolveMs": 5000, "verifyMs": 20000 }
+      "timeouts": {
+        "resolveMs": 5000,
+        "verifyMs": 20000
+      }
     }
   },
   "network": {
-    "conversation.post": { "method": "POST", "url": "/backend-api/(f/)?conversation$" },
-    "stream.open": { "url": "/backend-api/(f/)?conversation$", "contentType": "text/event-stream", "open": true },
-    "challenge": { "url": ".*", "header": { "name": "cf-mitigated", "equals": "challenge" } }
+    "conversation.post": {
+      "method": "POST",
+      "url": "/backend-api/(f/)?conversation$"
+    },
+    "challenge": {
+      "url": ".*",
+      "header": {
+        "name": "cf-mitigated",
+        "equals": "challenge"
+      }
+    }
   },
   "states": {
-    "turn.running": { "anyOf": [{ "visible": "response.stop" }, { "network": "stream.open" }] }
+    "turn.running": {
+      "visible": "response.stop"
+    }
   },
-  "errors": [{ "when": { "network": "challenge" }, "kind": "challenge" }]
+  "errors": [
+    {
+      "when": {
+        "network": "challenge"
+      },
+      "kind": "challenge"
+    }
+  ]
 }

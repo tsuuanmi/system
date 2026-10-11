@@ -64,12 +64,12 @@ actions:
     timeouts: { resolveMs: 5000, verifyMs: 20000 }
 network:
   conversation.post: { method: POST, url: '/backend-api/(f/)?conversation$' }
-  stream.open: { url: '/backend-api/(f/)?conversation$', contentType: text/event-stream, open: true }
   challenge: { header: { name: cf-mitigated, equals: challenge } }
 states:
-  turn.running: { anyOf: [{ visible: response.stop }, { network: stream.open }] }
+  turn.running: { visible: composer.stop }          # the action slot shows Stop
+  turn.idle: { allOf: [{ hidden: composer.stop }, { anyOf: [{ visible: composer.send }, { visible: composer.voice }] }] }
   turn.complete:
-    allOf: [{ not: turn.running }, { visible: turn.assistant.last.copy }, { stableTextMs: 1500, of: turn.assistant.last }]
+    allOf: [{ state: turn.idle }, { visible: turn.assistant.last.actions }, { stableTextMs: 1500, of: turn.assistant.last }]
 ```
 
 | Field | Meaning |
@@ -113,8 +113,9 @@ The engine subscribes to `request`, `response`, `requestfinished`, and
 patterns. It only observes; it never sends requests of its own to private
 endpoints. Uses:
 
-- **running and completion:** an open `text/event-stream` counts as running even
-  when the stop button is not found, so completion is never declared early;
+- **not for running:** on ChatGPT the conversation's event stream stays open
+  after the answer is complete, so "running" and "complete" come from the DOM
+  ([two-clock completion](provider-turns.md#two-clock-completion));
 - **submission evidence:** the conversation POST proves that a send happened,
   which the turn receipt records
   ([reconciliation](provider-turns.md#reconciliation));
