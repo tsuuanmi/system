@@ -23,9 +23,12 @@ afterEach(async () => {
 class ScriptedAgent implements AgentRuntimeProvider {
   readonly kind = 'scripted'
   readonly runs: RunSpec[] = []
-  constructor(private readonly options: { sandboxes?: SandboxMode[]; resume?: boolean; available?: boolean; holdMs?: number; fail?: Error } = {}) {}
+  constructor(private readonly options: { sandboxes?: SandboxMode[]; resume?: boolean; available?: boolean; holdMs?: number; fail?: Error; executes?: boolean } = {}) {}
   async probe() {
-    return { available: this.options.available ?? true, detail: 'scripted 1.0', version: '1.0', sandboxes: this.options.sandboxes ?? ['read-only'], resume: this.options.resume ?? true }
+    return {
+      available: this.options.available ?? true, detail: 'scripted 1.0', version: '1.0', sandboxes: this.options.sandboxes ?? ['read-only'],
+      resume: this.options.resume ?? true, executes: this.options.executes ?? false,
+    }
   }
   async run(spec: RunSpec, signal: AbortSignal, onHandle?: (handle: string) => void) {
     this.runs.push(spec)
@@ -80,6 +83,14 @@ describe('ctx.workers source `agents`: agent runtimes as Workers', () => {
     // The runtime cannot enforce workspace-write: that Worker is unavailable, never loosened.
     expect(workers['agent:writer']).toMatchObject({ state: 'unavailable', capabilities: [] })
     expect(workers['agent:ghost']).toMatchObject({ state: 'unavailable', capabilities: [] })
+  })
+
+  it('proves develop for a confined writable Worker, and validate only when the runtime can run commands', async () => {
+    const config = { workers: [worker({ id: 'writer', sandbox: 'workspace-write' as const })] }
+    const without = await boot(new ScriptedAgent({ sandboxes: ['read-only', 'workspace-write'] }), config)
+    expect((await without.ctx.workers.list())[0]!.capabilities.map((c) => c.capability)).toEqual(['review', 'local-data', 'develop', 'persistent-conversation'])
+    const runs = await boot(new ScriptedAgent({ sandboxes: ['read-only', 'workspace-write'], executes: true }), config)
+    expect((await runs.ctx.workers.list())[0]!.capabilities.map((c) => c.capability)).toEqual(['review', 'local-data', 'develop', 'validate', 'persistent-conversation'])
   })
 
   it('runs work once with the policy from configuration, and stores the result as agent-result@1.0', async () => {

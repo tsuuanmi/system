@@ -5,20 +5,25 @@ the official Claude Agent SDK. It runs the operator's installed `claude`
 (config `executable`, or found on PATH). The SDK's bundled builds are not
 installed.
 
-- **Probe:** `claude --version`; it never runs a task. It offers `read-only` and
-  `resume`.
+- **Probe:** `claude --version`; it never runs a task. It offers `read-only`,
+  `workspace-write`, and `resume`. It reports `executes: false` (no Bash), so its
+  Workers never prove `validate`.
 - **Policy, exactly or refused:**
   - only the listed built-in tools exist (`tools`) and are pre-approved
-    (`allowedTools`). The default is `Read`, `Grep`, `Glob`; anything else in a
-    read-only run is refused before starting;
+    (`allowedTools`). The defaults are `Read`, `Grep`, `Glob` for `read-only`;
+    `workspace-write` adds `Edit` and `Write`. Any other tool is refused before
+    starting;
+  - `Edit` and `Write` are pre-approved only as `Edit(./**)` and `Write(./**)`,
+    scoped to the workspace. On 2026-10-12, a bare `Write` rule let a live
+    session write outside its workspace. The scoped rules held against `..`
+    traversal, a symlink out of the workspace, and a home path, and a live
+    develop run edited inside while its outside write was denied;
   - `permissionMode: dontAsk` with no approval surface, so anything else is
     denied without a prompt;
   - `settingSources: []`: the operator's own Claude Code settings and hooks
     never widen a Worker;
   - no MCP server at all (`strictMcpConfig` with none given). Without this, the
     live check of 2026-10-12 showed the account's claude.ai connectors attached;
-  - `workspace-write` is refused until confining writes to the workspace is
-    verified.
 - **Run:**
   - the SDK's session id is reported as the native handle as soon as it appears,
     and `resume` continues it;

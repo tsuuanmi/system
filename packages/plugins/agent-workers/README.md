@@ -10,7 +10,8 @@ The **`agents` Worker source**: agent runtimes as Workers
   has a `tier`, and a `quotaClass` (default `agent-plan`). The Worker is local.
 - **Capabilities are what `probe()` proves now** (cached for `probeTtlMs`):
   - `review` and `local-data`;
-  - `develop` and `validate` for a writable sandbox;
+  - `develop` for a writable sandbox, and `validate` only if the runtime can
+    also run commands confined to the workspace (`executes`);
   - `persistent-conversation` when the runtime can resume.
 
   A Worker never offers plain `reason`, so ordinary asks never spend agent-plan

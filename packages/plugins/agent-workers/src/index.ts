@@ -149,7 +149,11 @@ export class AgentWorkers extends Service {
       const evidence = await this.evidence(worker)
       const ready = evidence.available && evidence.sandboxes.includes(worker.sandbox)
       const proven = ready
-        ? ['review', 'local-data', ...(worker.sandbox === 'workspace-write' ? ['develop', 'validate'] : []), ...(evidence.resume ? ['persistent-conversation'] : [])]
+        ? [
+            'review', 'local-data',
+            ...(worker.sandbox === 'workspace-write' ? ['develop', ...(evidence.executes ? ['validate'] : [])] : []),
+            ...(evidence.resume ? ['persistent-conversation'] : []),
+          ]
         : []
       return {
         schema: 'capability-descriptor@1.0', worker: id, provider: worker.runtime, tier: worker.tier, quotaClass: worker.quotaClass ?? 'agent-plan',
@@ -161,10 +165,10 @@ export class AgentWorkers extends Service {
 
   private async evidence(worker: AgentWorkerConfig): Promise<RuntimeEvidence> {
     const provider = this.ctx.agentRuntimes.get(worker.runtime)
-    if (!provider) return { available: false, detail: `no ${worker.runtime} runtime is registered`, sandboxes: [], resume: false }
+    if (!provider) return { available: false, detail: `no ${worker.runtime} runtime is registered`, sandboxes: [], resume: false, executes: false }
     const cached = this.probes.get(worker.runtime)
     if (cached && Date.now() - cached.at < (this.config.probeTtlMs ?? 5 * 60_000)) return cached.evidence
-    const evidence = await provider.probe().catch((error: unknown): RuntimeEvidence => ({ available: false, detail: (error as Error).message.slice(0, 200), sandboxes: [], resume: false }))
+    const evidence = await provider.probe().catch((error: unknown): RuntimeEvidence => ({ available: false, detail: (error as Error).message.slice(0, 200), sandboxes: [], resume: false, executes: false }))
     this.probes.set(worker.runtime, { at: Date.now(), evidence })
     return evidence
   }

@@ -82,10 +82,14 @@ The Worker registry admits an agent-runtime Worker only on evidence from
     and a tier. They are local and use `agent-plan` quota.
   - Capabilities come from `probe()`: `review`, `local-data`, plus `develop` and
     `validate` when writable, plus `persistent-conversation` when resumable.
+    `validate` also needs the runtime to execute commands confined to the
+    workspace.
     Never plain `reason`, so plain asks never spend the agent plan (P1).
   - Runs are durable, one at a time per Worker. A run started before a stop
     fails as `reconciliation_failed` and names its native session; it is never
     re-run.
 - [`runtime-claude-agent-sdk`](../../packages/plugins/runtime-claude-agent-sdk/README.md):
-  read-only only, with exact tools, no prompts, and no settings files.
+  read-only and workspace-write, with exact tools, no prompts, no settings files,
+  and no MCP servers. Writes are pre-approved only inside the workspace. There
+  is no Bash yet, so no `validate`.
 - The workflow template `review` routes to these Workers by capability.

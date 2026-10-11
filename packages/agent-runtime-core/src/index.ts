@@ -26,6 +26,8 @@ export interface RuntimeEvidence {
   sandboxes: SandboxMode[]
   /** A finished run can be continued by its native handle (`persistent-conversation`). */
   resume: boolean
+  /** It can run commands (tests, builds) confined to the workspace; required for `validate`. */
+  executes: boolean
 }
 
 export interface RunSpec {

@@ -8,8 +8,9 @@
  * - no settings files are loaded (`settingSources: []`) and no MCP server is attached
  *   (`strictMcpConfig` with none given, live check 2026-10-12: the account's claude.ai
  *   connectors were attached otherwise), so nothing outside the policy widens a Worker;
- * - `read-only` only for now: confining writes to the workspace is not verified yet, so
- *   `workspace-write` is refused.
+ * - `workspace-write` adds `Edit` and `Write`, pre-approved only by workspace-scoped rules
+ *   (verified live against traversal, symlinks, and home paths); `Bash` is not offered, as
+ *   commands cannot be confined yet, so the runtime does not `validate`.
  * The SDK's session stays native; only its id crosses as the run's handle (INV-7).
  * @module @tsuuanmi/system-runtime-claude-agent-sdk
  */
@@ -27,6 +28,16 @@ export type QueryFn = typeof query
 
 /** Built-in tools that only read. */
 const READ_ONLY_TOOLS = ['Read', 'Grep', 'Glob']
+/** Built-in tools that write files; always approved through workspace-scoped rules only. */
+const WRITE_TOOLS = ['Edit', 'Write']
+const ALLOWED: Record<'read-only' | 'workspace-write', string[]> = { 'read-only': READ_ONLY_TOOLS, 'workspace-write': [...READ_ONLY_TOOLS, ...WRITE_TOOLS] }
+
+/**
+ * Pre-approval rule for one tool. A bare `Write` or `Edit` rule let a live session write
+ * outside its workspace (2026-10-12); `./**` scopes them to the working directory, which held
+ * against `..` traversal, a symlink out of the workspace, and a home path.
+ */
+const rule = (tool: string): string => (WRITE_TOOLS.includes(tool) ? `${tool}(./**)` : tool)
 
 export interface RuntimeOptions {
   /** The `claude` executable; found on PATH when absent. */
@@ -46,25 +57,25 @@ export class ClaudeAgentRuntime implements AgentRuntimeProvider {
 
   async probe(): Promise<RuntimeEvidence> {
     const executable = this.executable()
-    if (!executable) return { available: false, detail: 'Claude Code is not installed (no claude executable on PATH)', sandboxes: [], resume: false }
+    if (!executable) return { available: false, detail: 'Claude Code is not installed (no claude executable on PATH)', sandboxes: [], resume: false, executes: false }
     try {
       const version = await (this.options.version ?? claudeVersion)(executable)
-      return { available: true, detail: `Claude Code ${version}`, version, sandboxes: ['read-only'], resume: true }
+      // No Bash: commands cannot be confined to the workspace yet, so it cannot validate.
+      return { available: true, detail: `Claude Code ${version}`, version, sandboxes: ['read-only', 'workspace-write'], resume: true, executes: false }
     } catch (error) {
-      return { available: false, detail: `claude --version failed: ${(error as Error).message.slice(0, 160)}`, sandboxes: [], resume: false }
+      return { available: false, detail: `claude --version failed: ${(error as Error).message.slice(0, 160)}`, sandboxes: [], resume: false, executes: false }
     }
   }
 
   async run(spec: RunSpec, signal: AbortSignal, onHandle?: (handle: string) => void): Promise<RunResult> {
     if (!isAbsolute(spec.workspace)) throw new ProviderError('config_error', 'claude-agent-sdk: the workspace must be an absolute path')
-    if (spec.sandbox !== 'read-only') {
-      throw new ProviderError('config_error', `claude-agent-sdk: ${spec.sandbox} is not offered: confining writes to the workspace is not verified yet`)
-    }
-    // Absent or empty means the minimal read set; an empty `tools` would disable every tool.
-    const tools = spec.tools?.length ? spec.tools : READ_ONLY_TOOLS
-    const refused = tools.filter((tool) => !READ_ONLY_TOOLS.includes(tool))
+    const allowed = ALLOWED[spec.sandbox]
+    if (!allowed) throw new ProviderError('config_error', `claude-agent-sdk: unknown sandbox ${String(spec.sandbox)}`)
+    // Absent or empty means the sandbox's default set; an empty `tools` would disable every tool.
+    const tools = spec.tools?.length ? spec.tools : allowed
+    const refused = tools.filter((tool) => !allowed.includes(tool))
     if (refused.length) {
-      throw new ProviderError('config_error', `claude-agent-sdk: a read-only run allows only ${READ_ONLY_TOOLS.join(', ')}; refusing ${refused.join(', ')}`)
+      throw new ProviderError('config_error', `claude-agent-sdk: a ${spec.sandbox} run allows only ${allowed.join(', ')}; refusing ${refused.join(', ')}`)
     }
     const executable = this.executable()
     if (!executable) throw new ProviderError('config_error', 'claude-agent-sdk: Claude Code is not installed')
@@ -78,7 +89,7 @@ export class ClaudeAgentRuntime implements AgentRuntimeProvider {
       const messages = this.query({
         prompt: spec.prompt,
         options: {
-          cwd: spec.workspace, tools, allowedTools: tools, permissionMode: 'dontAsk', permissionPrompts: 'none', settingSources: [],
+          cwd: spec.workspace, tools, allowedTools: tools.map(rule), permissionMode: 'dontAsk', permissionPrompts: 'none', settingSources: [],
           // No MCP server at all: not the operator's, not a project's, not the account's connectors.
           mcpServers: {}, strictMcpConfig: true,
           pathToClaudeCodeExecutable: executable, abortController: controller,

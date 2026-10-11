@@ -12,7 +12,7 @@ import type { AgentRuntimeProvider } from '../src/index.ts'
 
 const provider = (kind: string): AgentRuntimeProvider => ({
   kind,
-  probe: async () => ({ available: true, detail: 'test', sandboxes: ['read-only'], resume: false }),
+  probe: async () => ({ available: true, detail: 'test', sandboxes: ['read-only'], resume: false, executes: false }),
   run: async () => ({ text: '' }),
 })
 

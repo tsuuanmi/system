@@ -30,7 +30,7 @@ describe('claude-agent-sdk: the configured policy, exactly', () => {
   afterAll(() => rmSync(workspace, { recursive: true, force: true }))
 
   it('probes the installed Claude Code without running a task, and offers only what it can confine', async () => {
-    expect(await runtime(scripted()).probe()).toEqual({ available: true, detail: 'Claude Code 2.1.294', version: '2.1.294', sandboxes: ['read-only'], resume: true })
+    expect(await runtime(scripted()).probe()).toEqual({ available: true, detail: 'Claude Code 2.1.294', version: '2.1.294', sandboxes: ['read-only', 'workspace-write'], resume: true, executes: false })
     expect(await runtime(scripted(), null).probe()).toMatchObject({ available: false, detail: expect.stringMatching(/not installed/) })
   })
 
@@ -50,12 +50,22 @@ describe('claude-agent-sdk: the configured policy, exactly', () => {
     expect(calls[0]!.options).toMatchObject({ tools: ['Read', 'Grep', 'Glob'], allowedTools: ['Read', 'Grep', 'Glob'] })
   })
 
-  it('refuses tools a read-only run cannot hold, and writable sandboxes, before running', async () => {
+  it('refuses tools the sandbox cannot hold, before running', async () => {
     const calls: Call[] = []
-    await expect(runtime(scripted(calls)).run({ prompt: 'x', workspace, sandbox: 'read-only', tools: ['Read', 'Bash'] }, new AbortController().signal))
+    await expect(runtime(scripted(calls)).run({ prompt: 'x', workspace, sandbox: 'read-only', tools: ['Read', 'Write'] }, new AbortController().signal))
+      .rejects.toMatchObject({ kind: 'config_error', message: expect.stringContaining('Write') })
+    await expect(runtime(scripted(calls)).run({ prompt: 'x', workspace, sandbox: 'workspace-write', tools: ['Edit', 'Bash'] }, new AbortController().signal))
       .rejects.toMatchObject({ kind: 'config_error', message: expect.stringContaining('Bash') })
-    await expect(runtime(scripted(calls)).run({ prompt: 'x', workspace, sandbox: 'workspace-write' }, new AbortController().signal)).rejects.toMatchObject({ kind: 'config_error' })
     expect(calls).toEqual([])
+  })
+
+  it('confines a writable run to its workspace with path-scoped rules (bare rules wrote outside, live 2026-10-12)', async () => {
+    const calls: Call[] = []
+    await runtime(scripted(calls)).run({ prompt: 'fix it', workspace, sandbox: 'workspace-write' }, new AbortController().signal)
+    expect(calls[0]!.options).toMatchObject({
+      cwd: workspace, permissionMode: 'dontAsk', tools: ['Read', 'Grep', 'Glob', 'Edit', 'Write'],
+      allowedTools: ['Read', 'Grep', 'Glob', 'Edit(./**)', 'Write(./**)'],
+    })
   })
 
   it('maps the agent\'s terminal errors to the failure taxonomy', async () => {

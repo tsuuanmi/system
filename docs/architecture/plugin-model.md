@@ -187,9 +187,11 @@ in the test fake (two Xvfbs for concurrent callers), which was then fixed.
   rejection fails the run (`acceptance_rejected`, `NONE`). The workflow engine
   has no graph growth yet, which escalation needs.
 - **Agent runtimes, first slice.**
-  - Only `runtime-claude-agent-sdk` exists, and only `read-only`: confining
-    writes to the workspace is not verified yet. `runtime-codex-sdk` (no Codex
-    CLI on the development host) and `runtime-acp` are not built.
+  - Only `runtime-claude-agent-sdk` exists. It offers `read-only` and
+    `workspace-write`, with writes confined to the workspace (verified live).
+    It runs no commands, so no agent Worker proves `validate` yet.
+    `runtime-codex-sdk` (no Codex CLI on the development host) and
+    `runtime-acp` are not built.
   - An agent run interrupted by a stop fails for the operator
     (`reconciliation_failed`); it is not resumed from its native session yet.
 - **The workflow engine is the MVP subset:** static templates only; no graph
