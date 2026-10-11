@@ -12,10 +12,30 @@
       "node"
     ],
     "noEmit": true,
-    "allowImportingTsExtensions": true
+    "allowImportingTsExtensions": true,
+    "baseUrl": ".",
+    "paths": {
+      "@tsuuanmi/system-libs": [
+        "packages/libs/src/index.ts"
+      ],
+      "@tsuuanmi/system-store": [
+        "packages/plugins/store/src/index.ts"
+      ],
+      "@tsuuanmi/system-artifacts": [
+        "packages/plugins/artifacts/src/index.ts"
+      ],
+      "@tsuuanmi/system-credentials-vault": [
+        "packages/plugins/credentials-vault/src/index.ts"
+      ],
+      "@tsuuanmi/system-mcp-server": [
+        "packages/plugins/mcp-server/src/index.ts"
+      ]
+    }
   },
   "include": [
     "scripts/**/*.ts",
-    "spikes/**/*.ts"
+    "spikes/**/*.ts",
+    "packages/**/src/**/*.ts",
+    "packages/**/tests/**/*.ts"
   ]
 }

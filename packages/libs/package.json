@@ -1,0 +1,17 @@
+{
+  "name": "@tsuuanmi/system-libs",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Pure libraries shared by system plugins: canonical JSON, content ids, schema validation",
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "exports": { ".": { "types": "./lib/index.d.ts", "default": "./lib/index.js" } },
+  "files": ["lib"],
+  "scripts": { "build": "tsc -p tsconfig.build.json" },
+  "dependencies": {
+    "@tsuuanmi/system-schemas": "workspace:*",
+    "ajv": "^8.17.1",
+    "ajv-formats": "^3.0.1"
+  }
+}

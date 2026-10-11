@@ -17,6 +17,13 @@ work. Each milestone ends with working, tested software and updated canonical do
 | **v1.0** | **M5 Gateways** | Responses and Anthropic Messages gateways, shared turn broker, journaled client configuration, drain |
 | **v1.0** | **M6 Second domain + readiness** | `scientific-research` profile, operations, validation, and reference docs, hardening, packaging, bundle publication, Web UI on DSH web app. **Production-ready release** |
 
+**Progress (2026-10-11).** M0 is in progress on branch `m0/dsh-core-spike`.
+
+- Done: the DSH core spike, `system-store`, `system-artifacts`,
+  `system-credentials-vault`, `system-mcp-server` (`status` live), the
+  `system-bundle` profile, the `system` CLI, CI, and an e2e test through `dsh`.
+- Remaining: `eventLog`, `leases`, and `blobs`.
+
 Later candidates, each needing its own proposal: A2A gateway and runtime
 (cross-runtime peers), an ACP client gateway for editors, sandboxed or SSH `exec`
 providers, additional website providers, and a desktop launcher.

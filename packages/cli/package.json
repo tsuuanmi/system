@@ -1,0 +1,21 @@
+{
+  "name": "@tsuuanmi/system-cli",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The system CLI: a thin wrapper that creates and boots the `system` DSH profile (ADR-0018, ADR-0019)",
+  "type": "module",
+  "bin": { "system": "lib/bin.js" },
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "exports": { ".": { "types": "./lib/index.d.ts", "default": "./lib/index.js" } },
+  "files": ["lib"],
+  "scripts": { "build": "tsc -p tsconfig.build.json && chmod +x lib/bin.js" },
+  "dependencies": {
+    "@deepseek-ai/dsh": "0.2.1-alpha.2",
+    "@tsuuanmi/system-bundle": "workspace:*",
+    "@tsuuanmi/system-libs": "workspace:*"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/sdk": "1.32.1"
+  }
+}

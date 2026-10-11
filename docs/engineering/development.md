@@ -47,9 +47,25 @@ needed). The composed tree can be printed for inspection.
 
 ## Commands
 
-The root [`package.json`](../../package.json) `scripts` are canonical. Today:
-`pnpm install`, `pnpm check` (docs, schemas, lint, typecheck), and `pnpm test`.
-CI runs the same commands on Node 22 and 24
+The root [`package.json`](../../package.json) `scripts` are canonical:
+
+```sh
+pnpm install
+pnpm check       # docs, schemas, oxlint, typecheck
+pnpm test        # unit and integration tests (bare workspace imports resolve to src/)
+pnpm build       # tsc → lib/ for every package
+pnpm test:e2e    # build, then boot the real profile through dsh (packages/cli/tests)
+```
+
+Run it locally on Linux:
+
+```sh
+node packages/cli/lib/bin.js init              # profile with only @tsuuanmi/system-bundle
+node packages/cli/lib/bin.js start             # loopback daemon; MCP on 127.0.0.1:47317/mcp
+node packages/cli/lib/bin.js mcp-config claude # or codex
+```
+
+CI runs check, test, build, and e2e on Node 22 and 24
 ([`.github/workflows/ci.yml`](../../.github/workflows/ci.yml)).
 
 ## Data directory

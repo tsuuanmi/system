@@ -8,12 +8,15 @@ import addFormatsModule from 'ajv-formats'
 
 const addFormats = addFormatsModule as unknown as (ajv: Ajv2020) => Ajv2020
 
+/** Schema files are named `<name>.v<major>.json`; package.json and examples are not schemas. */
+export const schemaFiles = (dir: string): string[] => readdirSync(dir).filter((f) => /\.v\d+\.json$/.test(f))
+
 export const schemaId = (name: string): string => `urn:tsuuanmi:system:schema:${name}:v1`
 
 export function loadSchemas(dir: string): Ajv2020 {
   const ajv = new Ajv2020({ strict: true, allErrors: true })
   addFormats(ajv)
-  for (const file of readdirSync(dir).filter((f) => f.endsWith('.json'))) {
+  for (const file of schemaFiles(dir)) {
     ajv.addSchema(JSON.parse(readFileSync(join(dir, file), 'utf8')))
   }
   return ajv
@@ -22,7 +25,7 @@ export function loadSchemas(dir: string): Ajv2020 {
 export function checkSchemas(dir: string): string[] {
   const problems: string[] = []
   const ajv = loadSchemas(dir)
-  for (const file of readdirSync(dir).filter((f) => f.endsWith('.json'))) {
+  for (const file of schemaFiles(dir)) {
     const { $id } = JSON.parse(readFileSync(join(dir, file), 'utf8')) as { $id: string }
     try {
       if (!ajv.getSchema($id)) problems.push(`${file}: not registered`)

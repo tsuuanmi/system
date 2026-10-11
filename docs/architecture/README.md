@@ -71,7 +71,7 @@ internals.
 │ runtime       ctx.providers (chatgpt-web, gemini-web drivers) ·           │
 │               scheduler · turn receipts · remote login                    │
 ├───────────────────────────────────────────────────────────────────────────┤
-│ Kernel        ctx.store (SQLite/WAL) · ctx.blobs · ctx.events ·           │
+│ Kernel        ctx.store (SQLite/WAL) · ctx.blobs · ctx.eventLog ·         │
 │               ctx.leases · libraries: hashing, clock, schemas             │
 ╞═══════════════════════════════════════════════════════════════════════════╡
 │ Host          DSH core (allow-listed rows) + system bundle · Cordis loader│

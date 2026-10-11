@@ -22,9 +22,11 @@
   that boots a test-only `cordis.yml` through the DSH Loader, mocking only
   external or non-deterministic boundaries (provider websites, models, clock).
   Hand-built `ctx.plugin(...)` suites alone are not enough.
-- **Built-artifact smoke tests.** The `system` wrapper and the `system` profile
-  are also tested from built `lib/` under plain `node`, which catches failures
-  that `tsx` masks.
+- **Built-artifact smoke tests** (**implemented**:
+  [`packages/cli/tests/profile.e2e.ts`](../../packages/cli/tests/profile.e2e.ts)).
+  The `system` wrapper boots the shipped profile from built `lib/` through the
+  real `dsh` launcher. The test asserts the exact allow-listed row set, calls
+  MCP with a token, and checks cleanup on SIGTERM.
 - **HMR safety.** Every registry gets a test that disposes the contributing
   plugin and asserts cleanup (plugin rule 3).
 - **Mock only the expensive boundary.** Keep the real registry, store, and

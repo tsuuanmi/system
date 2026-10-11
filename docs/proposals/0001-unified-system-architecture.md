@@ -108,7 +108,7 @@ packages/
     store/ blobs/ events/ leases/ browser/ display/ accounts/ providers/
     website/ exec/ agent-runtimes/ workers/ workflow/ teams/ profiles/ client-protocols/
   plugins/                   providers and consumers
-    store-sqlite/ blobs-fs/ events-store/ leases-store/
+    store/ blobs-fs/ event-log-store/ leases-store/ artifacts/ credentials-vault/
     browser-patchright/ display-virtual/ display-offscreen/ display-visible/ accounts-vault/ remote-login/
     provider-chatgpt-web/ provider-gemini-web/
     website-core/ exec-local/

@@ -39,7 +39,7 @@ for free. The Responses and Messages gateways, which make `system` look like a
 
 ```text
 host:          DSH core rows only (timer, credentials, webserver; no dsh-base; pinned) + system bundle/profile; system CLI wrapper; libs
-kernel:        store (system tables on node:sqlite), blobs (system blob store; DSH attachments optional later), events-store, leases-store, artifacts-store
+kernel:        store (system tables on node:sqlite), blobs (system blob store; DSH attachments optional later), event-log-store, leases-store, artifacts
 provider:      browser-patchright, display-virtual, remote-login (noVNC), login-credentials,
                accounts-vault, provider-chatgpt-web (+ scheduler, receipts)
 capabilities:  website-core

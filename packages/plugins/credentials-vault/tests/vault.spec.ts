@@ -1,0 +1,80 @@
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { Context } from '@deepseek-ai/cordis'
+import { type CredentialRecord, credentialKey, credentialRef } from '@deepseek-ai/dsh-credentials'
+import { afterEach, describe, expect, it } from 'vitest'
+import VaultCredentialProvider from '../src/index.ts'
+
+const cleanups: Array<() => unknown> = []
+afterEach(async () => {
+  while (cleanups.length) await cleanups.pop()!()
+})
+
+function tempDir(): string {
+  const dir = mkdtempSync(join(tmpdir(), 'system-vault-'))
+  cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+  return dir
+}
+
+async function boot(dir: string): Promise<Context> {
+  const ctx = new Context()
+  const fiber = ctx.plugin(VaultCredentialProvider, { path: join(dir, 'vault.enc'), keyFile: join(dir, 'vault.key') })
+  await fiber
+  cleanups.push(() => fiber.dispose())
+  return ctx
+}
+
+const REF = credentialRef('SYSTEM_TEST_SECRET')
+const ACCOUNT = credentialKey('system-accounts', 'chatgpt-main')
+
+describe('encrypted ctx.credentials provider', () => {
+  it('round-trips a reference and never writes the value in plaintext', async () => {
+    const dir = tempDir()
+    const ctx = await boot(dir)
+    await ctx.credentials.set(REF, 'hunter2-plaintext-marker')
+    expect(await ctx.credentials.resolve(REF)).toEqual({ value: 'hunter2-plaintext-marker', source: 'vault' })
+    expect(await ctx.credentials.describe(REF)).toEqual({ configured: true, source: 'vault', writable: true })
+    expect(readFileSync(join(dir, 'vault.enc'), 'utf8')).not.toContain('hunter2')
+  })
+
+  it('stores account credentials as an opaque grant record', async () => {
+    const dir = tempDir()
+    const ctx = await boot(dir)
+    const record: CredentialRecord = { kind: 'grant', payload: { email: 'me@example.com', password: 'pw-marker', totpSecret: 'JBSWY3DPEHPK3PXP' } }
+    await ctx.credentials.modifyRecord(ACCOUNT, async () => record)
+    expect(await ctx.credentials.readRecord(ACCOUNT)).toEqual(record)
+    expect(await ctx.credentials.listRecords()).toEqual([{ key: ACCOUNT, kind: 'grant' }])
+    expect(readFileSync(join(dir, 'vault.enc'), 'utf8')).not.toMatch(/pw-marker|JBSWY3DP/)
+    await ctx.credentials.deleteRecord(ACCOUNT)
+    expect(await ctx.credentials.describeRecord(ACCOUNT)).toEqual({ configured: false, writable: true })
+  })
+
+  it('lets the launch environment shadow the vault and refuses writes it would hide', async () => {
+    const dir = tempDir()
+    const ctx = await boot(dir)
+    process.env[REF] = 'from-env'
+    cleanups.push(() => delete process.env[REF])
+    expect(await ctx.credentials.resolve(REF)).toEqual({ value: 'from-env', source: 'env' })
+    await expect(ctx.credentials.set(REF, 'x')).rejects.toThrow(/shadows/)
+  })
+
+  it('detects a wrong key and a modified file', async () => {
+    const dir = tempDir()
+    const ctx = await boot(dir)
+    await ctx.credentials.set(REF, 'v')
+    const sealed = JSON.parse(readFileSync(join(dir, 'vault.enc'), 'utf8')) as { data: string }
+    sealed.data = Buffer.from('tampered').toString('base64')
+    writeFileSync(join(dir, 'vault.enc'), JSON.stringify(sealed))
+    await expect(ctx.credentials.resolve(REF)).rejects.toThrow(/authentication failed/)
+  })
+
+  it('loses no update when two providers race on one record', async () => {
+    const dir = tempDir()
+    const [a, b] = [await boot(dir), await boot(dir)]
+    const bump = async (current: CredentialRecord | undefined): Promise<CredentialRecord> =>
+      ({ kind: 'grant', payload: { n: ((current?.kind === 'grant' ? (current.payload as { n: number }).n : 0) + 1) } })
+    await Promise.all(Array.from({ length: 20 }, (_, i) => (i % 2 ? a : b).credentials.modifyRecord(ACCOUNT, bump)))
+    expect(await a.credentials.readRecord(ACCOUNT)).toEqual({ kind: 'grant', payload: { n: 20 } })
+  })
+})

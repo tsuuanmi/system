@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   check:
-    name: node ${{ matrix.node }} / check + test
+    name: node ${{ matrix.node }} / check + test + e2e
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -26,3 +26,4 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm check
       - run: pnpm test
+      - run: pnpm test:e2e

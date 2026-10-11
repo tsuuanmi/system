@@ -23,3 +23,10 @@
   seam definitions written as abstract `Service` classes.
 - **Schemas:** persisted records and wire payloads have strict parsers with a
   schema version.
+- **Cordis service classes:** do not use JavaScript `#private` fields in a
+  `Service` subclass. Cordis hands consumers a proxy, and `#private` access through
+  it throws. Use TypeScript `private`, as DSH does. `Config` interface fields are
+  optional, with defaults resolved in code, so partial configs type-check and a
+  default never depends on the schema alone.
+- **Native build scripts** of dependencies are denied unless needed
+  (`allowBuilds` in `pnpm-workspace.yaml`). Only `esbuild` is allowed.
