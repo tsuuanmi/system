@@ -12,6 +12,9 @@ second execution path (INV-1).
     1. `research:1` runs Deep research on `frontier` in a persistent session.
     2. `compact:1` gets the report verbatim and compacts it on `economy` in a
        temporary chat.
+
+    Both nodes use `acceptance.answer`. A live report can have no citation
+    links, so a deployment that requires them configures `acceptance.cited`.
   - Config `templates` adds or replaces templates. A template is checked at
     load (preflight):
     - valid, unique node ids;

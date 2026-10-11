@@ -57,4 +57,15 @@ describe('an unobservable conversation (temporary, or never bound)', () => {
     expect(reconcileTurn(receipt, { text: '', running: false })).toBe('RESUBMIT')
     expect(reconcileTurn(receipt, { text: '', running: false, observable: false })).toBe('AMBIGUOUS')
   })
+
+  it('never resends a prompt the conversation shows as its last user turn, even with no answer yet (live 2026-10-12)', () => {
+    const prompt = 'Compare  the transports:\nwhen to use each?'
+    // The page shows the prompt (with the tool chip's label and other spacing): the provider has it.
+    const shown = { text: previous, running: false, lastPrompt: 'Deep research Compare the transports: when to use each?' }
+    expect(reconcileTurn(base, shown, { prompt })).toBe('AMBIGUOUS')
+    // Another prompt is last: ours never arrived, so it may be resent within the bound.
+    expect(reconcileTurn(base, { ...shown, lastPrompt: 'an older question' }, { prompt })).toBe('RESUBMIT')
+    // An answer after the boundary is still recovered.
+    expect(reconcileTurn(base, { ...shown, text: 'Late answer' }, { prompt })).toBe('RECOVER')
+  })
 })

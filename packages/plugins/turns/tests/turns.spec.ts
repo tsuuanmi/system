@@ -101,7 +101,7 @@ describe.runIf(canRunBrowser)('ctx.turns: ask through a saved account', () => {
     expect(started).toMatchObject({ status: 'queued', mode: 'persistent', feature: 'deep-research' })
     expect(started.sessionId).toMatch(/^ses_/)
     const done = await ctx.turns.wait(started.turnId, 60_000)
-    expect(done).toMatchObject({ status: 'completed', answer: 'Research report' })
+    expect(done).toMatchObject({ status: 'completed', answer: 'Research findings\nResearch report' })
     expect(fake.sent[0]).toMatchObject({ deepResearch: true, temporary: false, prompt: 'Survey the plugin catalog' })
   }, 90_000)
 
@@ -217,6 +217,27 @@ describe.runIf(canRunBrowser)('ctx.turns: ask through a saved account', () => {
     const outcome = second.ctx.artifacts.list({ kind: 'decision', decisionType: 'reconciliation' }).map((a) => (a.body as { outcome: { option: string } }).outcome.option)
     expect(outcome).toEqual(['RECOVER'])
   }, 120_000)
+
+  it('recovers a Deep research turn after a restart from its run, without resending (live 2026-10-12)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'system-turns-'))
+    cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+    const first = await boot({ dir, fake: { researchMs: 9000, report: 'Report written while we were down.' } })
+    const turn = first.ctx.turns.research({ question: 'survive a crash' })
+    const deadline = Date.now() + 30_000
+    while (first.ctx.turns.get(turn.turnId)?.binding === undefined) {
+      if (Date.now() > deadline) throw new Error('never bound')
+      await new Promise((resolve) => setTimeout(resolve, 100))
+    }
+    await first.stop()
+    cleanups.splice(cleanups.indexOf(first.stop), 1)
+    const second = await boot({ dir, shared: first.fake })
+    const recovered = await second.ctx.turns.wait(turn.turnId, 60_000)
+    expect(recovered).toMatchObject({ status: 'completed', answer: 'Research findings\nReport written while we were down.' })
+    expect(first.fake.sent).toHaveLength(1)
+    const outcomes = second.ctx.artifacts.list({ kind: 'decision', decisionType: 'reconciliation' }).map((a) => (a.body as { outcome: { option: string } }).outcome.option)
+    expect(outcomes).not.toContain('RESUBMIT')
+    expect(outcomes.at(-1)).toBe('RECOVER')
+  }, 150_000)
 
   it('runs a recovered turn in only one of two processes sharing the same home', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'system-turns-'))

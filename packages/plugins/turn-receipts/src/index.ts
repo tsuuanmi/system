@@ -9,7 +9,7 @@ import { type Context, Service } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import type {} from '@tsuuanmi/system-artifacts'
 import { type ContentId, SchemaRegistry, sha256 } from '@tsuuanmi/system-libs'
-import { ProviderError, type Reconciliation, type TurnReceipt, type TurnSnapshot, reconcileTurn, responseHash } from '@tsuuanmi/system-provider-core'
+import { ProviderError, promptShown, type Reconciliation, type TurnReceipt, type TurnSnapshot, reconcileTurn, responseHash } from '@tsuuanmi/system-provider-core'
 import type {} from '@tsuuanmi/system-store'
 
 declare module '@deepseek-ai/cordis' {
@@ -126,15 +126,16 @@ export class TurnReceipts extends Service {
   }
 
   /** Decide WAIT / RECOVER / RESUBMIT / AMBIGUOUS and record the decision (INV-13). */
-  reconcile(identity: TurnIdentity, snapshot: TurnSnapshot): { outcome: Reconciliation; decision: ContentId } {
+  /** `prompt`: the turn's prompt, so one the page already shows is never resent (INV-4). */
+  reconcile(identity: TurnIdentity, snapshot: TurnSnapshot, options: { prompt?: string } = {}): { outcome: Reconciliation; decision: ContentId } {
     return this.ctx.store.transaction(() => {
       const current = this.require(identity)
-      const outcome = reconcileTurn(current, snapshot, { maxResubmits: this.maxResubmits })
+      const outcome = reconcileTurn(current, snapshot, { maxResubmits: this.maxResubmits, ...options })
       const envelope = this.ctx.artifacts.recordDecision({
         decisionType: 'reconciliation',
         question: `How to continue provider turn ${current.requestId} on ${current.account}?`,
         inputs: [],
-        candidates: OUTCOMES.map((option) => ({ option, selected: option === outcome, reasons: option === outcome ? [this.reason(current, snapshot, outcome)] : [] })),
+        candidates: OUTCOMES.map((option) => ({ option, selected: option === outcome, reasons: option === outcome ? [this.reason(current, snapshot, outcome, options.prompt)] : [] })),
         decider: { type: 'rule', id: 'provider-turns.reconcile', version: '1' },
         outcome: { option: outcome, detail: { receipt: receiptId(identity), snapshotHash: responseHash(snapshot.text), running: snapshot.running, observable: snapshot.observable !== false } },
         deterministic: true,
@@ -165,13 +166,14 @@ export class TurnReceipts extends Service {
     return receipt
   }
 
-  private reason(receipt: TurnReceipt, snapshot: TurnSnapshot, outcome: Reconciliation): string {
+  private reason(receipt: TurnReceipt, snapshot: TurnSnapshot, outcome: Reconciliation, prompt?: string): string {
     switch (outcome) {
       case 'WAIT': return 'provider is still generating the submitted turn'
       case 'RECOVER': return receipt.status === 'COMPLETED' ? 'page shows the recorded response' : 'a new response exists after the boundary'
       case 'RESUBMIT': return `nothing new after the boundary; resubmit ${receipt.resubmits + 1} of ${this.maxResubmits}`
       default:
-        if (snapshot.observable === false) return 'the conversation cannot be observed (temporary or never bound); the prompt may have been answered'
+        if (snapshot.observable === false) return 'the conversation cannot be observed (temporary, never bound, or not rendered); the prompt may have been answered'
+        if (prompt !== undefined && promptShown(snapshot.lastPrompt, prompt)) return 'the page shows the prompt as the last user turn, without an answer yet; resending would duplicate it'
         return snapshot.running ? 'generating after completion' : 'state does not match the receipt or the bound is reached'
     }
   }

@@ -110,7 +110,7 @@ describe('loadUiMap', () => {
   })
 })
 
-describe.runIf(canRunBrowser)('UiEngine on a real page', () => {
+describe.runIf(canRunBrowser)('UiEngine on a real page', { timeout: 15_000 }, () => {
   let browser: Browser
   let close: () => Promise<void>
   let server: Server

@@ -147,6 +147,29 @@ This confirms the design choice: role plus accessible name first, structural
 display (`-localhost`, `VncAuth`), with noVNC and websockify in front. This is
 the fallback when `x11vnc` is not installed.
 
+## Live check (2026-10-12, a Deep research session with two runs, read only)
+
+Found while verifying the `research` workflow; the conversation was reopened
+read-only afterwards.
+
+- **The report layout changed.** There is no "Deep Research Report" heading any
+  more. The report frame now shows:
+  - the summary "Research completed in 2m · <n> citations · <n> searches", with
+    each count rendered as a 0–9 digit reel;
+  - the title;
+  - Export and Expand buttons;
+  - the report itself, in the container of a level-1 heading with the report's
+    title.
+
+  This run had no citation links at all. The driver saw "completed" but read an
+  empty report, so it waited until the 30-minute stall deadline.
+- **Each run has an embedded app frame** (a `web-sandbox` URL) after its
+  prompt, with the report frame nested inside. Resolving "the first frame that
+  matches" reads the oldest run in a session.
+- **A freshly reopened conversation can take more than 5 s to render.** A
+  snapshot taken before any turn rendered looked like "nothing new", and the
+  ported reconciliation chose RESUBMIT.
+
 ## Findings
 
 1. No existing tool keeps a website's operations **as data** with ordered

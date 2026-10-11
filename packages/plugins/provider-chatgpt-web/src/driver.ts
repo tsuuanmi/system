@@ -8,9 +8,9 @@
  *   marker and stable text (the event stream stays open, so it is never consulted).
  */
 import { readFileSync } from 'node:fs'
-import { type AskOptions, type AskResult, type AuthState, type ConversationMode, ProviderError, type ProviderDriver, type ProviderMode, waitForStableCompletion } from '@tsuuanmi/system-provider-core'
+import { type AskOptions, type AskResult, type AuthState, type ConversationMode, ProviderError, type ProviderDriver, type ProviderFeature, type ProviderMode, type TurnSnapshot, waitForStableCompletion } from '@tsuuanmi/system-provider-core'
 import { type DriftEvent, type HealEvent, UiEngine, type UiMap, loadUiMap } from '@tsuuanmi/system-ui-ops'
-import type { Page } from 'patchright-core'
+import type { Frame, Page } from 'patchright-core'
 
 export type { AskOptions, AskResult, AuthState, ConversationMode, ProviderMode }
 
@@ -26,6 +26,10 @@ export interface DriverTimeouts {
   readyMs?: number
   /** After Deep research's acknowledgement, how long to wait for its frame before treating the reply as a clarifying question (default 60 s). */
   researchStartMs?: number
+  /** How long a reopened conversation may take to render before it counts as not observed (default 20 s). */
+  snapshotMs?: number
+  /** How long a completed Deep research report may stay unreadable before it is UI drift (default 30 s). */
+  reportReadMs?: number
 }
 
 export interface DriverOptions {
@@ -81,7 +85,7 @@ export class ChatGptWebDriver implements ProviderDriver<Page> {
     }
     this.loginUrl = `${this.origin}/auth/login`
     this.stateOrigins = [this.origin]
-    this.timeouts = { turnMs: 15 * 60_000, stallMs: 3 * 60_000, stableMs: 1500, pollMs: 250, readyMs: 30_000, researchStartMs: 60_000, ...options.timeouts }
+    this.timeouts = { turnMs: 15 * 60_000, stallMs: 3 * 60_000, stableMs: 1500, pollMs: 250, readyMs: 30_000, researchStartMs: 60_000, snapshotMs: 20_000, reportReadMs: 30_000, ...options.timeouts }
   }
 
   /** Signed in (composer present), signed out (positive evidence only), or unknown. */
@@ -222,19 +226,69 @@ export class ChatGptWebDriver implements ProviderDriver<Page> {
     await this.requireChat(engine, when)
   }
 
-  /** Reopen a bound conversation and read its last answer and running state (for reconciliation). */
-  async snapshot(page: Page, binding: string): Promise<{ text: string; running: boolean; observable: boolean }> {
+  /**
+   * Reopen a bound conversation and report what it shows, for reconciliation. Only positive
+   * evidence counts: a page that has not rendered a user turn was not observed, and for Deep
+   * research only the run after the last prompt counts, never its acknowledgement.
+   */
+  async snapshot(page: Page, binding: string, options: { feature?: ProviderFeature } = {}): Promise<TurnSnapshot> {
     await page.goto(`${this.origin}/c/${binding}`, { waitUntil: 'domcontentloaded' })
     const auth = await this.checkAuth(page)
     if (auth === 'signed-out') throw new ProviderError('reauth_required', 'chatgpt-web: signed out')
     if (auth === 'unknown' || this.bindingOf(page) !== binding) return { text: '', running: false, observable: false }
     const engine = this.engine(page)
-    // A Deep research conversation is running until its report frame shows the report.
-    await engine.waitFor({ anyOf: [{ visible: 'research.running' }, { visible: 'research.completed' }, { visible: 'turn.assistant' }] }, 5000).catch(() => undefined)
-    if ((await engine.count('research.completed')) > 0) return { text: await this.reportText(engine), running: false, observable: true }
-    if ((await engine.count('research.running')) > 0) return { text: '', running: true, observable: true }
+    const rendered = await engine.waitFor({ visible: 'turn.user' }, this.timeouts.snapshotMs).then(() => true, () => false)
+    if (!rendered) return { text: '', running: false, observable: false }
+    const lastPrompt = await this.promptText(engine)
+    if (options.feature === 'deep-research') {
+      const deadline = Date.now() + this.timeouts.snapshotMs
+      for (;;) {
+        const research = await this.researchState(engine)
+        if (research.done && research.text) return { text: research.text, running: false, observable: true, lastPrompt }
+        if (research.running) return { text: '', running: true, observable: true, lastPrompt }
+        // No readable run after the prompt yet (frames load late), or a clarifying question.
+        if (Date.now() > deadline) return { text: '', running: false, observable: false, lastPrompt }
+        await page.waitForTimeout(500)
+      }
+    }
+    await engine.waitFor({ visible: 'turn.assistant' }, 5000).catch(() => undefined)
     const text = (await engine.count('turn.assistant')) > 0 ? await this.answerText(engine) : ''
-    return { text, running: await engine.state('turn.running'), observable: true }
+    return { text, running: await engine.state('turn.running'), observable: true, lastPrompt }
+  }
+
+  /** Text of the last user turn: the container of its "You said:" heading. */
+  private async promptText(engine: UiEngine): Promise<string> {
+    const heading = (await engine.resolve('turn.user', 1000)).locator.last()
+    const raw = await heading.locator('xpath=..').innerText().catch(() => '')
+    return raw.replace(/^\s*You said:?\s*/i, '').trim()
+  }
+
+  /**
+   * The frames of the Deep research run that belongs to the last prompt: the last run host,
+   * if it follows the last user turn, and every frame nested in it. A session can hold
+   * several runs; an earlier run's frames never count.
+   */
+  private async researchFrames(engine: UiEngine): Promise<Frame[]> {
+    if ((await engine.count('research.host')) === 0) return []
+    const host = (await engine.resolve('research.host', 1000)).locator.last()
+    if ((await engine.count('turn.user')) > 0) {
+      const user = await (await engine.resolve('turn.user', 1000)).locator.last().elementHandle()
+      const after = await host.evaluate((h, u) => !!u && (u.compareDocumentPosition(h) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0, user).catch(() => false)
+      if (!after) return []
+    }
+    const frame = await (await host.elementHandle().catch(() => null))?.contentFrame()
+    if (!frame) return []
+    const frames = [frame]
+    for (let i = 0; i < frames.length; i++) frames.push(...frames[i]!.childFrames())
+    return frames
+  }
+
+  private async researchState(engine: UiEngine): Promise<{ running: boolean; done: boolean; text: string }> {
+    for (const frame of await this.researchFrames(engine)) {
+      if (await engine.findIn('research.completed', frame)) return { running: false, done: true, text: await this.reportText(engine, frame) }
+      if (await engine.findIn('research.running', frame)) return { running: true, done: false, text: '' }
+    }
+    return { running: false, done: false, text: '' }
   }
 
   private bindingOf(page: Page): string | undefined {
@@ -374,12 +428,25 @@ export class ChatGptWebDriver implements ProviderDriver<Page> {
    */
   private async waitForResearch(page: Page, reply: string, signal: AbortSignal | undefined, deadlines: AskOptions['deadlines']): Promise<string> {
     const engine = this.engine(page)
-    const started = await engine.waitFor({ anyOf: [{ visible: 'research.running' }, { visible: 'research.completed' }] }, this.timeouts.researchStartMs).then(() => true, () => false)
-    if (!started) return reply
+    const startBy = Date.now() + this.timeouts.researchStartMs
+    for (;;) {
+      const state = await this.researchState(engine)
+      if (state.running || state.done) break
+      if (Date.now() > startBy) return reply
+      signal?.throwIfAborted()
+      await page.waitForTimeout(500)
+    }
+    let unreadableSince: number | undefined
     const completed = await waitForStableCompletion(async () => {
-      const done = (await engine.count('research.completed')) > 0
-      const running = (await engine.count('research.running')) > 0
-      return { responsePresent: done, text: done ? await this.reportText(engine) : '', html: '', running: running || !done }
+      const state = await this.researchState(engine)
+      // Completed but unreadable is drift: fail fast instead of waiting out the stall deadline.
+      if (state.done && !state.text) {
+        unreadableSince ??= Date.now()
+        if (Date.now() - unreadableSince > this.timeouts.reportReadMs) {
+          throw new ProviderError('ui_drift', 'chatgpt-web: Deep research completed, but its report cannot be read; update research.report-title in the UI map')
+        }
+      } else unreadableSince = undefined
+      return { responsePresent: state.done && state.text !== '', text: state.text, html: '', running: !state.done }
     }, {
       timeoutMs: deadlines?.timeoutMs ?? this.timeouts.turnMs,
       stallTimeoutMs: deadlines?.stallTimeoutMs ?? this.timeouts.stallMs,
@@ -391,22 +458,19 @@ export class ChatGptWebDriver implements ProviderDriver<Page> {
   }
 
   /**
-   * The report body: everything after the "Deep Research Report" heading in its frame, then
-   * its citation links as a `Sources:` list, since rendered text keeps only the link labels.
+   * The report in its frame: the container of the report's title (live layout of 2026-10-12),
+   * then its citation links as a `Sources:` list, since rendered text keeps only the labels.
    */
-  private async reportText(engine: UiEngine): Promise<string> {
-    const heading = await engine.resolve('research.report-heading', 2000).catch(() => undefined)
-    if (!heading) return ''
-    const frame = heading.locator.locator('xpath=ancestor::body[1]')
-    const body = await frame.innerText().catch(() => '')
-    const title = (await heading.locator.innerText().catch(() => '')).trim()
-    const at = body.indexOf(title)
-    const text = (at >= 0 ? body.slice(at + title.length) : body).trim()
-    const anchors = await frame.locator('a[href^="http"]').evaluateAll((links) => links.map((a) => [(a.textContent ?? '').trim(), (a as HTMLAnchorElement).href]))
+  private async reportText(engine: UiEngine, frame: Frame): Promise<string> {
+    const title = await engine.findIn('research.report-title', frame)
+    if (!title) return ''
+    const report = title.locator.locator('xpath=..')
+    const text = (await report.innerText().catch(() => '')).trim()
+    const anchors = await report.locator('a[href^="http"]').evaluateAll((links) => links.map((a) => [(a.textContent ?? '').trim(), (a as HTMLAnchorElement).href]))
       .catch(() => [] as string[][])
     const sources = new Map<string, string>()
     for (const [label, href] of anchors) if (href && !sources.has(href)) sources.set(href, label ?? '')
-    if (!sources.size) return text
+    if (!text || !sources.size) return text
     return `${text}\n\nSources:\n${[...sources].map(([href, label]) => `- ${label ? `${label} ` : ''}${href}`).join('\n')}`
   }
 

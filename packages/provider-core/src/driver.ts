@@ -72,5 +72,5 @@ export interface ProviderDriver<Page = unknown> {
    */
   signIn?(page: Page, credentials: { email: string; password: string }, code: (kind: 'totp' | 'email') => Promise<string>): Promise<void>
   /** Reopen a bound conversation and report its last answer and whether it is still generating. */
-  snapshot(page: Page, binding: string): Promise<TurnSnapshot>
+  snapshot(page: Page, binding: string, options?: { feature?: ProviderFeature }): Promise<TurnSnapshot>
 }

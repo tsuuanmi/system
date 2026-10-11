@@ -54,13 +54,22 @@ The **ChatGPT Web provider driver**
 - **Deep research** (`feature: 'deep-research'`, persistent only):
   - "+" → "Deep research" → the mention chip is checked → the prompt goes after
     the chip;
-  - the acknowledgement is skipped, and the driver waits for the report frame
-    (`research.running` / `research.completed`, `frames: any`);
-  - the report text follows "Deep Research Report". Its citation links are
-    appended as a `Sources:` list (label and URL), because rendered text keeps
-    only the link labels;
+  - the acknowledgement is skipped. The driver reads only the run of this
+    prompt: the last `research.host` (the embedded app frame) after the last
+    user turn, and the frames nested in it. A session can hold several runs;
+  - `research.running` / `research.completed` are resolved inside those frames.
+    The report is the container of the report's title (`research.report-title`,
+    the live layout of 2026-10-12);
+  - citation links are appended as a `Sources:` list (label and URL), because
+    rendered text keeps only the link labels;
+  - a completed report that stays unreadable for `reportReadMs` (30 s) fails as
+    `ui_drift`, not by waiting out the stall deadline;
   - a reply with no frame within `researchStartMs` is a clarifying question.
-  - Live-verified on 2026-10-12.
+  - Live-verified on 2026-10-12, including the layout change found that day.
+- **Snapshot** (reconciliation) needs positive evidence. A page that has not
+  rendered a user turn within `snapshotMs` (20 s) is not observed. The last
+  user turn is reported as `lastPrompt`, so a prompt the page already shows is
+  never resent. For Deep research only the run after the last prompt counts.
 - **Not yet:**
   - Markdown extraction (the answer is returned as text);
   - attachments;

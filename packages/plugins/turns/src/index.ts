@@ -666,14 +666,14 @@ export class Turns extends Service {
         const driver = this.ctx.providers.get(view.provider)
         const turn = await this.ctx.browser.openTurn(accountId, { state: await this.ctx.accounts.portableState(accountId), signal })
         try {
-          snapshot = await driver.snapshot(turn.page, binding)
+          snapshot = await driver.snapshot(turn.page, binding, { feature: row.feature })
         } finally {
           await turn.close()
         }
       }
       const { outcome, decision } = this.ctx.store.transaction(() => {
         this.ctx.leases.fence(lease())
-        return this.ctx.turnReceipts.reconcile(identity, snapshot)
+        return this.ctx.turnReceipts.reconcile(identity, snapshot, { prompt: row.prompt })
       })
       if (outcome === 'RECOVER') {
         this.commit(row, accountId, provider, snapshot.text, binding, lease)

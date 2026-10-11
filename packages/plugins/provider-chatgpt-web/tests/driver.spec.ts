@@ -7,7 +7,7 @@ import type { Browser, BrowserContext, Page } from 'patchright-core'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { canRunBrowser, launchTestBrowser } from '../../browser-patchright/tests/support.ts'
 import { FakeChatGpt, type FakeOptions } from '../fixtures/fake-chatgpt.ts'
-import ChatGptWebPlugin, { ChatGptWebDriver, shippedMap } from '../src/index.ts'
+import ChatGptWebPlugin, { ChatGptWebDriver, type DriverTimeouts, shippedMap } from '../src/index.ts'
 
 describe('the shipped ChatGPT UI map', () => {
   it('validates, and Send is irreversible with deterministic healing only', () => {
@@ -35,14 +35,15 @@ describe.runIf(canRunBrowser)('ChatGptWebDriver against the fake site', () => {
     while (cleanups.length) await cleanups.pop()!()
   })
 
-  async function site(options: FakeOptions = {}): Promise<{ fake: FakeChatGpt; page: Page; context: BrowserContext; driver: ChatGptWebDriver }> {
+  async function site(all: FakeOptions & { timeouts?: DriverTimeouts } = {}): Promise<{ fake: FakeChatGpt; page: Page; context: BrowserContext; driver: ChatGptWebDriver }> {
+    const { timeouts, ...options } = all
     const fake = new FakeChatGpt(options)
     await fake.start()
     const context = await browser.newContext()
     cleanups.push(() => fake.stop(), () => context.close())
     const page = await context.newPage()
     const driver = new ChatGptWebDriver({
-      origin: fake.origin, timeouts: { turnMs: 20_000, stallMs: 10_000, stableMs: 400, pollMs: 100, researchStartMs: 3000 },
+      origin: fake.origin, timeouts: { turnMs: 20_000, stallMs: 10_000, stableMs: 400, pollMs: 100, researchStartMs: 3000, ...timeouts },
       modes: { instant: { model: 'Latest', effort: 'Instant' }, deep: { model: 'GPT-6', effort: 'High' }, locked: { model: 'GPT-5.6 Sol', effort: 'Medium' }, missing: { model: 'GPT-9' } },
       defaultMode: 'instant',
     })
@@ -123,7 +124,7 @@ describe.runIf(canRunBrowser)('ChatGptWebDriver against the fake site', () => {
     const { fake, page, driver } = await site({ report })
     const turn = await driver.ask(page, 'Survey the DSH plugin catalog', { conversation: 'persistent', feature: 'deep-research' })
     // Not the acknowledgement: the report from the research frame, with its citation links kept.
-    expect(turn.text).toBe('A detailed report [1] with sources [1].\n\nSources:\n- [1] https://src.example/a\n- sources https://src.example/b')
+    expect(turn.text).toBe('Research findings\nA detailed report [1] with sources [1].\n\nSources:\n- [1] https://src.example/a\n- sources https://src.example/b')
     expect(turn.binding).toMatch(/^[0-9a-f-]{36}$/)
     expect(fake.sent[0]).toMatchObject({ prompt: 'Survey the DSH plugin catalog', deepResearch: true, mode: 'chat', temporary: false })
     await expect(driver.ask(page, 'x', { conversation: 'temporary', feature: 'deep-research' })).rejects.toMatchObject({ kind: 'invalid_input' })
@@ -141,7 +142,7 @@ describe.runIf(canRunBrowser)('ChatGptWebDriver against the fake site', () => {
     const { page, driver, context } = await site({ answer: 'kept answer' })
     const turn = await driver.ask(page, 'remember me', { conversation: 'persistent' })
     const other = await context.newPage()
-    expect(await driver.snapshot(other, turn.binding!)).toEqual({ text: 'kept answer', running: false, observable: true })
+    expect(await driver.snapshot(other, turn.binding!)).toEqual({ text: 'kept answer', running: false, observable: true, lastPrompt: expect.stringContaining('remember me') })
   }, 40_000)
 
   it('returns Deep research\'s clarifying question when no research starts', async () => {
@@ -155,13 +156,28 @@ describe.runIf(canRunBrowser)('ChatGptWebDriver against the fake site', () => {
     let binding = ''
     const asking = driver.ask(page, 'long research', { conversation: 'persistent', feature: 'deep-research', onBinding: (id) => { binding = id } })
     await expect.poll(() => fake.conversations.size, { timeout: 15_000 }).toBe(1)
-    await expect.poll(() => [...fake.conversations.values()][0]?.research !== undefined, { timeout: 15_000 }).toBe(true)
+    await expect.poll(() => [...fake.conversations.values()][0]?.researches.length, { timeout: 15_000 }).toBe(1)
     const other = await context.newPage()
     await expect.poll(() => binding, { timeout: 15_000 }).not.toBe('')
-    expect(await driver.snapshot(other, binding)).toMatchObject({ running: true, observable: true })
+    expect(await driver.snapshot(other, binding, { feature: 'deep-research' })).toMatchObject({ running: true, observable: true, lastPrompt: expect.stringContaining('long research') })
     await asking
-    expect(await driver.snapshot(other, binding)).toEqual({ text: 'Final report.', running: false, observable: true })
+    expect(await driver.snapshot(other, binding, { feature: 'deep-research' })).toMatchObject({ text: 'Research findings\nFinal report.', running: false, observable: true })
   }, 90_000)
+
+  it('reads only the run after the last prompt when a session holds several Deep research runs', async () => {
+    const { fake, page, driver } = await site({ researchMs: 1500, report: 'First report.' })
+    const first = await driver.ask(page, 'first research', { conversation: 'persistent', feature: 'deep-research' })
+    expect(first.text).toBe('Research findings\nFirst report.')
+    fake.options.report = 'Second report.'
+    const second = await driver.ask(page, 'second research', { conversation: 'persistent', binding: first.binding, feature: 'deep-research' })
+    expect(second.text).toBe('Research findings\nSecond report.')
+  }, 120_000)
+
+  it('reports a conversation that shows no turn as not observed, never as nothing new (live 2026-10-12)', async () => {
+    const { page, driver } = await site({ timeouts: { snapshotMs: 1500 } })
+    // A bound URL whose page never renders a user turn: no evidence either way.
+    expect(await driver.snapshot(page, '00000000-0000-4000-8000-000000000000')).toEqual({ text: '', running: false, observable: false })
+  }, 60_000)
 
   it('refuses to send when Chat cannot be selected (Work spends the Codex quota)', async () => {
     const { fake, page, driver } = await site({ chatToggleBroken: true })

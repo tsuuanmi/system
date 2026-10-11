@@ -30,13 +30,30 @@ Full statement: [docs/requirements/purpose.md](docs/requirements/purpose.md).
 
 ## Status
 
-**M1.5 (MVP slice 1 in progress).** `ask` and `research` run end to end
-through MCP and the `system` CLI against ChatGPT Web, with a saved account, an
-invisible headed Chrome, receipts, and reconciliation. The architecture is
-accepted in [PROP-0001](docs/proposals/0001-unified-system-architecture.md), and
-implementation follows the [roadmap](docs/proposals/roadmap.md).
+**M2 (MVP slice 2 in progress).** `ask` and `research` run end to end through
+MCP and the `system` CLI against ChatGPT Web, as runs on the workflow engine.
+They use a saved account, an invisible headed Chrome, receipts, and
+reconciliation. Every turn is routed through fail-closed Worker admission, and
+every step's result is checked against an acceptance contract. The architecture
+is accepted in [PROP-0001](docs/proposals/0001-unified-system-architecture.md),
+and implementation follows the [roadmap](docs/proposals/roadmap.md).
 
 ## Connect Claude Code (works today)
+
+Declare the account in the operator's profile patch,
+`~/.dsh/profiles/system/cordis.patch.yml`. Each tier maps to a mode preset of the
+driver (`instant`, `medium`, `high`), and each mapped tier is one Worker. A tier
+left unmapped is never served, and `research` needs `frontier`:
+
+```yaml
+- id: accounts
+  config:
+    accounts:
+      - id: chatgpt-main
+        provider: chatgpt-web
+        quotaClass: subscription-chat
+        tiers: { economy: instant, standard: medium, frontier: high }
+```
 
 ```bash
 alias system="node $PWD/packages/cli/lib/bin.js"

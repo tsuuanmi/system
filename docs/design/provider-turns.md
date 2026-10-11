@@ -99,8 +99,15 @@ a provider snapshot and decides:
 |---|---|
 | provider is still generating after the boundary | **WAIT**: resume observing |
 | a new completed response exists after the boundary | **RECOVER**: adopt it, do not resend |
+| the page shows the prompt as its last user turn, with no answer yet | **AMBIGUOUS**: the provider has it, so resending would duplicate it |
 | no trace of the prompt after the boundary | **RESUBMIT**: at most `maxResubmits` (default 2) per receipt |
-| anything else (boundary missing, conflicting turns) | **AMBIGUOUS**: fail closed (`provider_reconciliation_failed`) |
+| anything else (boundary missing, conflicting turns, a page that rendered no user turn) | **AMBIGUOUS**: fail closed (`reconciliation_failed`) |
+
+A snapshot counts only on positive evidence. A conversation that has not
+rendered a user turn was not observed, and it is never read as "nothing new".
+For Deep research, only the run that follows the last prompt counts, and never
+its acknowledgement. Both rules come from a live restart on 2026-10-12, where a
+snapshot of a page that had not rendered yet chose RESUBMIT.
 
 This applies [INV-4](../architecture/invariants.md#inv-4-restart-is-reconciliation-not-replay)
 to provider turns.

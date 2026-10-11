@@ -26,7 +26,7 @@ import WorkerRouter from '@tsuuanmi/system-workers'
 import { afterEach, describe, expect, it } from 'vitest'
 import { canRunBrowser, testChrome } from '../../browser-patchright/tests/support.ts'
 import { FakeChatGpt, type FakeOptions } from '../../provider-chatgpt-web/fixtures/fake-chatgpt.ts'
-import Workflow from '../src/index.ts'
+import Workflow, { DEFAULT_TEMPLATES } from '../src/index.ts'
 
 const cleanups: Array<() => unknown> = []
 afterEach(async () => {
@@ -98,7 +98,7 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
     expect(fake.sent[0]).toMatchObject({ prompt: 'Survey the plugin catalog', deepResearch: true, temporary: false, model: 'GPT-6', power: 'High' })
     expect(fake.sent[1]).toMatchObject({ deepResearch: false, temporary: true, model: 'Latest', power: 'Instant' })
     // Editors may change blank-line spacing; every line of the report arrives verbatim.
-    expect(fake.sent[1]!.prompt.replace(/\n{2,}/g, '\n\n')).toContain('<report>\nPlugins matter [1].\n\nSources:\n- [1] https://src.example/catalog\n</report>')
+    expect(fake.sent[1]!.prompt.replace(/\n{2,}/g, '\n\n')).toContain('<report>\nResearch findings\nPlugins matter [1].\n\nSources:\n- [1] https://src.example/catalog\n</report>')
     expect(done.nodes.map((n) => [n.nodeId, n.state, n.worker, n.quotaClass])).toEqual([
       ['research:1', 'COMPLETED', 'worker:chatgpt-main/frontier', 'subscription-chat'],
       ['compact:1', 'COMPLETED', 'worker:chatgpt-main/economy', 'subscription-chat'],
@@ -141,7 +141,9 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
   }, 60_000)
 
   it('fails the run when a result is rejected by its acceptance contract, and never runs the next node (REQ-WRK-3)', async () => {
-    const { ctx, fake } = await boot({ fake: { report: 'A report without any source.' } })
+    // A deployment that requires cited reports.
+    const cited = DEFAULT_TEMPLATES.research!.map((node) => ({ ...node, acceptance: 'acceptance.cited' }))
+    const { ctx, fake } = await boot({ fake: { report: 'A report without any source.' }, workflow: { templates: { research: cited } } })
     const done = await ctx.workflow.wait(ctx.workflow.start({ template: 'research', input: 'q' }).runId, 60_000)
     expect(done).toMatchObject({ status: 'failed', error: { kind: 'acceptance_rejected', disposition: 'NONE' } })
     expect(done.nodes.map((n) => n.state)).toEqual(['FAILED', 'WAITING'])
@@ -223,7 +225,7 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
       ['research:1', [['egress', 'allow'], ['tier', 'frontier'], ['route', 'worker:chatgpt-main/frontier'], ['acceptance', 'accept']]],
       ['compact:1', [['egress', 'allow'], ['tier', 'economy'], ['route', 'worker:chatgpt-main/economy'], ['acceptance', 'accept']]],
     ])
-    expect(explained.nodes[1]!.decisions[3]!.reasons).toEqual(['the answer cites 1 source link(s)'])
+    expect(explained.nodes[1]!.decisions[3]!.reasons).toEqual(['the answer has text'])
     // Runs outlive their turns: the chain survives the turn runtime's retention.
     ctx.store.db.prepare('DELETE FROM turns').run()
     expect(ctx.workflow.explain(done.runId)!.nodes.map((n) => n.decisions.length)).toEqual([4, 4])

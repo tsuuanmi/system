@@ -120,6 +120,14 @@ elements:
       - { role: button, name: { en: '^Deep research\b' } }
     fingerprint: { role: button, name: { en: 'deep research' } }
 
+  research.host:
+    description: >-
+      The embedded app frame of one Deep research run; the report frame is nested inside it.
+      One per run in a conversation, so the run of the last prompt is the last host after the
+      last user turn (live check 2026-10-12, a session with two runs).
+    cardinality: many
+    candidates:
+      - { css: 'iframe[src*="web-sandbox"]' }
   research.running:
     description: Deep research in progress, inside its nested report frame (live run 2026-10-12).
     frames: any
@@ -131,12 +139,12 @@ elements:
     frames: any
     candidates:
       - { text: { en: '^Research completed' } }
-  research.report-heading:
-    description: The report starts after this heading, in the same frame.
-    frames: any
+  research.report-title:
+    description: >-
+      The report's own title (level-1 heading) in the report frame; its container holds the
+      whole report (live layout of 2026-10-12, under "Export" and "Expand").
     candidates:
-      - { role: heading, name: { en: '^Deep Research Report$' } }
-      - { text: { en: '^Deep Research Report$' } }
+      - { css: 'h1' }
 
   model.menu:
     description: Opened by composer.model. Two views (checked 2026-10-12) - A, the Power slider plus a view toggle labelled with the level; B, after the toggle, the model radios.
@@ -166,7 +174,7 @@ elements:
       - { role: status }
 
   turn.user:
-    description: One heading per user turn.
+    description: One heading per user turn; the prompt is the heading's container. A rendered conversation always has one.
     cardinality: many
     candidates:
       - { role: heading, name: { en: '^You said:?$' } }

@@ -62,11 +62,11 @@ export const DEFAULT_TEMPLATES: Record<string, NodeTemplate[]> = {
   research: [
     {
       nodeId: 'research:1', objective: 'Write a cited Deep research report on the caller\'s question', prompt: '{{input}}',
-      feature: 'deep-research', tier: 'frontier', conversation: 'persistent', acceptance: 'acceptance.cited',
+      feature: 'deep-research', tier: 'frontier', conversation: 'persistent', acceptance: 'acceptance.answer',
     },
     {
       nodeId: 'compact:1', objective: 'Compact the report into a cited synthesis', dependsOn: ['research:1'], prompt: COMPACT_PROMPT,
-      tier: 'economy', conversation: 'temporary', acceptance: 'acceptance.cited',
+      tier: 'economy', conversation: 'temporary', acceptance: 'acceptance.answer',
     },
   ],
 }
