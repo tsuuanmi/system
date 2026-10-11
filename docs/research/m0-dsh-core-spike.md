@@ -29,16 +29,17 @@ served `initialize`. It used **about 91 MB RSS, against about 153 MB** for the
 - **Host:** confirmed. `system` runs as a resident DSH profile. A webserver row is
   needed only for HTTP surfaces (MCP, admin).
 - **MCP server:** a thin plugin on `ctx.webServer` using the official MCP SDK
-  works. Before building the real one, existing community plugins are being
-  evaluated ([research-before-build rule](../engineering/dependencies.md)).
+  works. The community MCP-server plugins were reviewed and rejected, so we
+  build our own ([review](dsh-community-plugins-review.md)).
 - **Store:** `dsh-storage-sqlite` is only a key-value facet. `system`'s records
   (nodes, receipts, sessions, artifacts index, leases) live in **`system`-owned
   tables on `node:sqlite`**, in their own database file. `node:sqlite` still
   prints an `ExperimentalWarning` on Node 22. DSH depends on it too, and the
   pinned Node range is the same.
 - **Credentials:** a `ctx.credentials` provider that **encrypts at rest** is
-  required for passwords and TOTP secrets (ADR-0017). Candidates are being
-  evaluated before we build one.
+  required for passwords and TOTP secrets (ADR-0017). No community candidate
+  encrypts on headless Linux, so we build an AEAD provider
+  ([review](dsh-community-plugins-review.md)).
 - **Install footprint:** about 560 packages and about 2 minutes on a cold install.
   CI caches the pnpm store.
 

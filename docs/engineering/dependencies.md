@@ -18,16 +18,17 @@ code updates this table.
 | Invisible display, remote login | Xvfb (virtual display for turns) + x11vnc + noVNC (login) | system tool / library | `ctx.display` | taken from system packages, not vendored |
 | HTML → Markdown | `turndown` | library | provider drivers | |
 | Token budgets | `tiktoken` | library | provider runtime, gateways | |
-| MCP | `@modelcontextprotocol/sdk` (`StreamableHTTPServerTransport`) on DSH `ctx.webServer` | protocol SDK | `mcp-server` | proven in the M0 spike; community MCP-server plugins under review before building |
+| MCP | `@modelcontextprotocol/sdk` (`StreamableHTTPServerTransport`) on DSH `ctx.webServer` | protocol SDK + thin own plugin | `mcp-server` | proven in the M0 spike; community MCP-server plugins rejected, codex-bridge patterns (idempotency key, cursor long-poll, `0600` discovery file) borrowed ([review](../research/dsh-community-plugins-review.md)) |
 | Claude Code as Worker | Claude Agent SDK | protocol SDK | `ctx.agentRuntimes` | check its license terms before release |
 | Codex as Worker | `@openai/codex-sdk` | protocol SDK | `ctx.agentRuntimes` | Apache-2.0 |
 | Other agents as Workers | `@agentclientprotocol/sdk` | protocol SDK | `ctx.agentRuntimes` | Apache-2.0 |
+| ChatGPT Web UI handling (stage timeouts, composer and attachment transactions, submission evidence, DOM to Markdown) | read `@wlv-zedd/dsh-chatgpt-web` (MIT) for patterns only | reference | `provider-chatgpt-web` | do not copy its headless default, Temporary-Chat statelessness, or unauthenticated sidecar ([review](../research/dsh-community-plugins-review.md)) |
 | Provider receipts, scheduler, account vault, remote login (Xvfb + x11vnc + noVNC, tokens, Save/Cancel) | port from internet | port | provider runtime | same maintainer; restructure into seams ([ADR-0017](../decisions/adr/0017-credential-login-and-linux-remote-browser.md)); TigerVNC `Xvnc` is a later swap-in |
 | TOTP codes | `otpauth` (RFC 4226/6238) | library | `login-credentials` code provider `totp-local` | computed locally; never via third-party sites |
-| Credential encryption at rest | a `ctx.credentials` provider that encrypts (OS keyring or a `0600` key file); `dsh-credentials-local` is plain YAML ([M0 spike](../research/m0-dsh-core-spike.md)) | to decide: community candidates under review before building | `ctx.accounts` | mandatory for passwords and TOTP secrets |
+| Credential encryption at rest | own `ctx.credentials` provider: AES-256-GCM via `node:crypto`, key from `systemd-creds`, a `0600` key file, or a passphrase KDF; file-hygiene checks from `@dsh-enhanced/credentials-keychain` | build (no candidate encrypts on headless Linux: [review](../research/dsh-community-plugins-review.md)) | `ctx.accounts` | mandatory for passwords and TOTP secrets |
 | Responses emulation, turn broker, completion fence, drain | port from codex-chatgpt-web | port | gateways | MIT; keep attribution in `THIRD_PARTY_NOTICES` |
 | Local exec (shell, fs, sandbox) | DSH `dsh-shell`, `dsh-fs`, `dsh-sandbox`, `dsh-subprocess` | library (DSH core) | `ctx.exec` | now direct reuse, since `system` runs on DSH core |
 | Economy-tier and API models | DSH `dsh-llm` + `dsh-llm-pi-ai` | library (DSH core) | `ctx.models` | P4 |
 | Approvals, user questions | DSH `dsh-user-approval`, `dsh-user-questions` | library (DSH core) | plan gate, `NEEDS_HUMAN` | |
-| Workflow durability | own engine | build | `ctx.workflow` | [ADR-0004](../decisions/adr/0004-single-workflow-runtime.md); Temporal and similar rejected until a concrete gap appears |
+| Workflow durability | own engine modelled on `@gm-hz/agent-dag-workflow` (journal + CAS, `invocationId`, `needs_attention`, content-addressed artifacts) | build (reimplement; fork possible, MIT) | `ctx.workflow` | [ADR-0004](../decisions/adr/0004-single-workflow-runtime.md); adds node leases, input-hash reuse, append-only growth, decision artifacts ([review](../research/dsh-community-plugins-review.md)) |
 | Worker admission and routing, team policy | own | build | `ctx.workers`, `ctx.teams` | the semantic remainder: no existing tool provides these contracts |
