@@ -38,7 +38,8 @@ const REPORT = 'Plugins matter <a href="https://src.example/catalog">[1]</a>.'
 /** Compaction answers cite; anything else answers plainly. */
 const answer = (prompt: string): string => (prompt.includes('<report>') ? 'Synthesis: plugins matter (https://src.example/catalog).' : 'Plain answer.')
 
-async function boot(options: { fake?: FakeOptions; dir?: string; shared?: FakeChatGpt; turns?: Record<string, unknown>; workflow?: Record<string, unknown>; ready?: boolean } = {}) {
+async function boot(options: { fake?: FakeOptions; dir?: string; shared?: FakeChatGpt; turns?: Record<string, unknown>; workflow?: Record<string, unknown>; ready?: boolean; accounts?: string[] } = {}) {
+  const ids = options.accounts ?? ['chatgpt-main']
   const fake = options.shared ?? new FakeChatGpt({ answer, report: REPORT, ...options.fake })
   if (!options.shared) await fake.start()
   const dir = options.dir ?? mkdtempSync(join(tmpdir(), 'system-workflow-'))
@@ -53,7 +54,7 @@ async function boot(options: { fake?: FakeOptions; dir?: string; shared?: FakeCh
     ctx.plugin(Egress, {}),
     ctx.plugin(TurnReceipts, {}),
     ctx.plugin(Vault, { path: join(dir, 'vault.enc'), keyFile: join(dir, 'vault.key') }),
-    ctx.plugin(Accounts, { accounts: [{ id: 'chatgpt-main', provider: 'chatgpt-web', quotaClass: 'subscription-chat', tiers: { economy: 'instant', standard: 'medium', frontier: 'high' } }] }),
+    ctx.plugin(Accounts, { accounts: ids.map((id) => ({ id, provider: 'chatgpt-web', quotaClass: 'subscription-chat' as const, tiers: { economy: 'instant', standard: 'medium', frontier: 'high' } })) }),
     ctx.plugin(VirtualDisplay, {}),
     ctx.plugin(BrowserPool, { chromePath: testChrome! }),
     ctx.plugin(Providers),
@@ -71,10 +72,12 @@ async function boot(options: { fake?: FakeOptions; dir?: string; shared?: FakeCh
   }
   cleanups.push(stop)
   if (!options.shared && options.ready !== false) {
-    await ctx.accounts.saveState('chatgpt-main', {
-      state: { origins: [fake.origin], cookies: [], capturedAt: '2026-10-12T00:00:00Z' },
-      identityHash: `sha256:${'a'.repeat(64)}`, verifiedAt: '2026-10-12T00:00:00Z',
-    })
+    for (const [index, id] of ids.entries()) {
+      await ctx.accounts.saveState(id, {
+        state: { origins: [fake.origin], cookies: [], capturedAt: '2026-10-12T00:00:00Z' },
+        identityHash: `sha256:${String(index).repeat(64)}`, verifiedAt: '2026-10-12T00:00:00Z',
+      })
+    }
   }
   return { ctx, fake, dir, stop }
 }
@@ -225,6 +228,34 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
     expect(await ctx.workflow.wait(second.runId, 30_000)).toMatchObject({ status: 'failed', error: { kind: 'plan_rejected' } })
     expect(() => ctx.workflow.approve(second.runId, { verdict: 'approved' })).toThrow(/waiting for approval/)
   }, 150_000)
+
+  it('runs a panel: independent first answers behind a barrier, critiques, and a cited synthesis, on distinct accounts (REQ-TEAM-1..4)', async () => {
+    const answer = (prompt: string): string => {
+      if (prompt.includes("final answers")) return 'Both hold [m1] [m2].'
+      if (prompt.includes('other panel members')) return `revised after reading: ${prompt.includes('first answer') ? 'peers' : 'nothing'}`
+      return 'first answer'
+    }
+    const { ctx, fake } = await boot({ fake: { answer }, accounts: ['chatgpt-main', 'chatgpt-2'] })
+    const done = await ctx.workflow.wait(ctx.workflow.start({ template: 'panel', input: 'Is it safe?' }).runId, 120_000)
+    expect(done).toMatchObject({ status: 'completed', answer: 'Both hold [m1] [m2].' })
+    const byId = Object.fromEntries(done.nodes.map((n) => [n.nodeId, n]))
+    // Distinct accounts, and each member stays on its own for every round (one identity, one Worker).
+    const account = (id: string) => byId[id]!.worker!.split('/')[0]
+    expect(account('panel:m1:r1')).not.toBe(account('panel:m2:r1'))
+    expect(account('panel:m1:r2')).toBe(account('panel:m1:r1'))
+    expect(account('panel:m2:r2')).toBe(account('panel:m2:r1'))
+    // The barrier: every first-round prompt went out before any critique, and none carried a peer's answer.
+    const kinds = fake.sent.map((s) => (s.prompt.includes('other panel members') ? 'r2' : s.prompt.includes('final answers') ? 'synthesis' : 'r1'))
+    expect(kinds).toEqual(['r1', 'r1', 'r2', 'r2', 'synthesis'])
+    expect(fake.sent.filter((s) => !s.prompt.includes('other panel members') && !s.prompt.includes('final answers')).every((s) => !s.prompt.includes('first answer'))).toBe(true)
+    expect(ctx.artifacts.get(ctx.workflow.records(done.runId).at(-1)!.outputReceipt!.acceptance)?.body).toMatchObject({ decisionType: 'acceptance', outcome: { option: 'accept' } })
+  }, 180_000)
+
+  it('fails closed when a team needs more distinct accounts than are ready (REQ-TEAM-4)', async () => {
+    const { ctx } = await boot({ fake: { answer: 'x' } })
+    const done = await ctx.workflow.wait(ctx.workflow.start({ template: 'panel', input: 'q' }).runId, 60_000)
+    expect(done).toMatchObject({ status: 'failed', error: { kind: 'config_error', message: expect.stringContaining('distinct accounts') } })
+  }, 90_000)
 
   it('retries a node that failed with a back-off disposition, within the bound (REQ-WF-6)', async () => {
     const { ctx, fake } = await boot({ fake: { thinkMs: 1500 }, turns: { maxPendingTurns: 1 }, workflow: { retryDelayMs: 1000, maxAttempts: 6 } })

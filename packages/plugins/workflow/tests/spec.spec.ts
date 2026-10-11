@@ -69,4 +69,26 @@ describe('workflow specs', () => {
     expect(bad([step('a'), step('a')])).toMatchObject({ ok: false, reason: expect.stringMatching(/duplicate/) })
     expect(bad([step('a', { tier: 'ultra' })])).toMatchObject({ ok: false })
   })
+
+  it('unrolls a team into independent first-round members, critique rounds behind a barrier, and a synthesis under the team\'s id', () => {
+    const team = node('panel', { prompt: '{{input}}', team: { members: 2, rounds: 2 } })
+    const spec = resolve('t', [team, node('after', { dependsOn: ['panel'], prompt: '{{node:panel}}' })], {})
+    expect(spec.nodes.map((n) => [n.nodeId, n.dependsOn])).toEqual([
+      ['panel:m1:r1', []], ['panel:m2:r1', []],
+      ['panel:m1:r2', ['panel:m1:r1', 'panel:m2:r1']], ['panel:m2:r2', ['panel:m1:r1', 'panel:m2:r1']],
+      ['panel', ['panel:m1:r2', 'panel:m2:r2']],
+      ['after', ['panel']],
+    ])
+    // Round 1 never sees a peer; later rounds read the peers; the synthesis reads every member.
+    expect(spec.nodes[0]!.prompt).not.toContain('{{peers}}')
+    expect(spec.nodes[2]!.prompt).toContain('{{peers}}')
+    expect(spec.nodes[4]!.prompt).toContain('{{members}}')
+    expect(spec.nodes[0]!.session).toEqual({ member: 'panel:m1' })
+    expect(spec.nodes[2]!.session).toEqual({ member: 'panel:m1' })
+    expect(spec.nodes[0]!.team).toMatchObject({ id: 'panel', role: 'member', member: 1, round: 1, members: 2, distinct: true })
+    expect(spec.nodes[4]).toMatchObject({ acceptance: 'acceptance.team-synthesis', team: { role: 'synthesis' } })
+    expect(() => preflight([node('t', { team: { members: 1 } })])).toThrow(/team/)
+    expect(() => preflight([node('t', { team: { members: 2, rounds: 9 } })])).toThrow(/team/)
+    expect(preflight(DEFAULT_TEMPLATES.panel!)).toEqual(['panel'])
+  })
 })

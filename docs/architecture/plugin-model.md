@@ -193,9 +193,10 @@ in the test fake (two Xvfbs for concurrent callers), which was then fixed.
   - `runtime-codex-sdk` is not built (no Codex CLI on the development host).
   - An agent run interrupted by a stop fails for the operator
     (`reconciliation_failed`); it is not resumed from its native session yet.
-- **The workflow engine** has templates, plan-based graph growth, and plan
-  approval gates. It does not have profile growth rules, teams, lineage
-  invalidation, or the `continue`/`stop` operator commands yet.
+- **The workflow engine** has templates, plan-based graph growth, plan
+  approval gates, and panel teams. It does not have profile growth rules, team
+  leads or direct messages, lineage invalidation, or the `continue`/`stop`
+  operator commands yet.
 - **Capability evidence is declared, not probed.** A website Worker proves what its
   driver declares (`ProviderDriver.capabilities`, covered by the driver's tests).
   Per-account probes, for example whether an account's plan offers Deep research,

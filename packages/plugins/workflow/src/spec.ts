@@ -29,6 +29,32 @@ export interface NodeTemplate {
    * (graph growth, REQ-WF-8). Its dependents wait for those steps and read them as `{{grown}}`.
    */
   grows?: GrowthPolicy
+  /**
+   * A team (docs/design/teams.md, Model A): unrolled into members answering independently in
+   * round 1, critique rounds behind a barrier, and a synthesis that keeps this node's id.
+   */
+  team?: TeamPolicy
+}
+
+export interface TeamPolicy {
+  /** 2 to 5 members. */
+  members: number
+  /** 1 to 3 rounds (default 2): round 1 independent, later rounds see the peers' answers. */
+  rounds?: number
+  /** Members are backed by distinct accounts (REQ-TEAM-4; default true). */
+  distinctAccounts?: boolean
+  synthesisTier?: Tier
+}
+
+/** A node's place in an unrolled team. */
+export interface TeamRole {
+  id: string
+  role: 'member' | 'synthesis'
+  member?: number
+  round?: number
+  members: number
+  rounds: number
+  distinct: boolean
 }
 
 export interface GrowthPolicy {
@@ -60,7 +86,7 @@ export interface CallerOptions {
   persist?: boolean | undefined
 }
 
-export interface ResolvedNode extends Omit<NodeTemplate, 'callerTier' | 'conversation'> {
+export interface ResolvedNode extends Omit<NodeTemplate, 'callerTier' | 'conversation' | 'team'> {
   dependsOn: string[]
   /** `caller` when the caller's tier replaced the template's; `decision` for a step a plan added. */
   tierSource: 'caller' | 'profile' | 'decision'
@@ -72,7 +98,9 @@ export interface ResolvedNode extends Omit<NodeTemplate, 'callerTier' | 'convers
   plan?: string
   /** A plan step's prompt is model text: used as it is, never expanded as a template. */
   literal?: boolean
-  session: { sessionId?: string; persist?: boolean }
+  /** `member` names a team member's identity; the engine issues its session at admission. */
+  session: { sessionId?: string; persist?: boolean; member?: string }
+  team?: TeamRole
 }
 
 export interface ResolvedSpec {
@@ -125,6 +153,12 @@ export const DEFAULT_TEMPLATES: Record<string, NodeTemplate[]> = {
       tier: 'standard', conversation: 'temporary', acceptance: 'acceptance.answer',
     },
   ],
+  panel: [
+    {
+      nodeId: 'panel', objective: 'Answer the caller\'s question as a panel', prompt: '{{input}}', capabilities: ['reason'], tier: 'standard',
+      conversation: 'temporary', acceptance: 'acceptance.team-synthesis', team: { members: 2, rounds: 2, distinctAccounts: true },
+    },
+  ],
   review: [
     {
       nodeId: 'review:1', objective: 'Review the caller\'s subject on this machine and report findings', prompt: '{{input}}',
@@ -157,6 +191,7 @@ export function preflight(nodes: readonly NodeTemplate[]): string[] {
   }
   for (const node of nodes) {
     if (node.grows !== undefined && node.grows !== null) checkGrowth(node.nodeId, node.grows)
+    if (node.team !== undefined && node.team !== null) checkTeam(node.nodeId, node.team)
     for (const dep of node.dependsOn ?? []) if (!byId.has(dep)) throw new TypeError(`node ${node.nodeId} depends on unknown node ${dep}`)
     for (const [, used] of node.prompt.matchAll(REFERENCE)) {
       if (!(node.dependsOn ?? []).includes(used!)) throw new TypeError(`node ${node.nodeId} uses ${used}, which it does not depend on`)
@@ -182,6 +217,61 @@ export function preflight(nodes: readonly NodeTemplate[]): string[] {
   return order
 }
 
+function checkTeam(nodeId: string, team: unknown): void {
+  const policy = team as Record<string, unknown>
+  const members = policy?.members
+  const rounds = policy?.rounds
+  if (typeof policy !== 'object' || !Number.isInteger(members) || (members as number) < 2 || (members as number) > 5
+    || (rounds !== undefined && !(Number.isInteger(rounds) && (rounds as number) >= 1 && (rounds as number) <= 3))
+    || (policy.distinctAccounts !== undefined && typeof policy.distinctAccounts !== 'boolean')
+    || (policy.synthesisTier !== undefined && !TIERS.includes(policy.synthesisTier as Tier))) {
+    throw new TypeError(`node ${nodeId}: team must be {members (2-5), rounds (1-3), distinctAccounts, synthesisTier}`)
+  }
+}
+
+const PEERS_PROMPT = (round: number): string => [
+  `Here are the other panel members' answers from round ${round}:`,
+  '',
+  '{{peers}}',
+  '',
+  'Point out where they are wrong, keep what is right, and give your revised answer to the original question.',
+].join('\n')
+
+/** Unroll each team node into its members' rounds and a synthesis under the team's own id. */
+function unrollTeams(nodes: readonly NodeTemplate[]): NodeTemplate[] {
+  return nodes.flatMap((node): NodeTemplate[] => {
+    if (!node.team) return [node]
+    const { team, ...base } = node
+    const rounds = team.rounds ?? 2
+    const id = (k: number, r: number): string => `${node.nodeId}:m${k}:r${r}`
+    const members = Array.from({ length: team.members }, (_, i) => i + 1)
+    const role = (extra: Partial<TeamRole>): TeamRole => ({ id: node.nodeId, role: 'member', members: team.members, rounds, distinct: team.distinctAccounts ?? true, ...extra })
+    const unrolled: Array<NodeTemplate & { teamRole: TeamRole }> = []
+    for (let r = 1; r <= rounds; r++) {
+      for (const k of members) {
+        unrolled.push({
+          ...base, nodeId: id(k, r), objective: `${node.objective} (member ${k}, round ${r})`,
+          dependsOn: r === 1 ? node.dependsOn ?? [] : members.map((m) => id(m, r - 1)),
+          prompt: r === 1
+            ? `${node.prompt}\n\nYou are member ${k} of a panel of ${team.members}. Answer on your own; you will see the others' answers afterwards.`
+            : PEERS_PROMPT(r - 1),
+          acceptance: 'acceptance.answer', teamRole: role({ member: k, round: r }),
+        })
+      }
+    }
+    unrolled.push({
+      ...base, nodeId: node.nodeId, objective: `${node.objective} (synthesis)`, tier: team.synthesisTier ?? node.tier,
+      dependsOn: [...members.map((m) => id(m, rounds)), ...(node.dependsOn ?? [])],
+      prompt: [
+        'Question:', node.prompt, '', 'The panel members\' final answers:', '', '{{members}}', '',
+        'Give the strongest-supported answer. Cite the members you rely on as [m1], [m2], and so on.',
+      ].join('\n'),
+      acceptance: 'acceptance.team-synthesis', teamRole: role({ role: 'synthesis' }),
+    })
+    return unrolled
+  })
+}
+
 function checkGrowth(nodeId: string, grows: unknown): void {
   const policy = grows as Record<string, unknown>
   const strings = (value: unknown): boolean => value === undefined || (Array.isArray(value) && value.every((v) => typeof v === 'string'))
@@ -195,10 +285,18 @@ function checkGrowth(nodeId: string, grows: unknown): void {
 
 /** Apply the caller's options to a validated template, in dependency order, and hash the result. */
 export function resolve(template: string, nodes: readonly NodeTemplate[], caller: CallerOptions): ResolvedSpec {
-  const order = preflight(nodes)
-  const byId = new Map(nodes.map((n) => [n.nodeId, n]))
+  preflight(nodes)
+  const expanded = unrollTeams(nodes)
+  const order = preflight(expanded)
+  const byId = new Map(expanded.map((n) => [n.nodeId, n as NodeTemplate & { teamRole?: TeamRole }]))
   const resolved = order.map((id): ResolvedNode => {
-    const { callerTier, conversation, ...node } = byId.get(id)!
+    const { callerTier, conversation, teamRole, ...template } = byId.get(id)!
+    // Teams are unrolled by now; the remaining fields are the node's own.
+    const node = Object.fromEntries(Object.entries(template).filter(([key]) => key !== 'team')) as Omit<NodeTemplate, 'callerTier' | 'conversation' | 'team'>
+    if (teamRole) {
+      const session = teamRole.role === 'member' ? { member: `${teamRole.id}:m${teamRole.member}` } : {}
+      return { ...node, dependsOn: node.dependsOn ?? [], tier: node.tier, tierSource: 'profile', session, team: teamRole }
+    }
     const session = conversation === 'temporary'
       ? {}
       : caller.sessionId
@@ -210,9 +308,20 @@ export function resolve(template: string, nodes: readonly NodeTemplate[], caller
   return { template, nodes: resolved, specHash: contentId({ template, nodes: resolved }) }
 }
 
+/** Engine-computed texts: a planner's steps, a member's peers, a team's members. */
+export interface RenderExtras {
+  grown?: string
+  peers?: string
+  members?: string
+}
+
 /** Fill a prompt in one pass, so text from a dependency is never expanded again. */
-export function render(prompt: string, input: string, results: Readonly<Record<string, string>>, grown = ''): string {
-  return prompt.replace(/\{\{(input|grown|node:[^}]+)\}\}/g, (_, key: string) => (key === 'input' ? input : key === 'grown' ? grown : results[key.slice(5)] ?? ''))
+export function render(prompt: string, input: string, results: Readonly<Record<string, string>>, extras: RenderExtras = {}): string {
+  return prompt.replace(/\{\{(input|grown|peers|members|node:[^}]+)\}\}/g, (_, key: string) => {
+    if (key === 'input') return input
+    if (key === 'grown' || key === 'peers' || key === 'members') return extras[key] ?? ''
+    return results[key.slice(5)] ?? ''
+  })
 }
 
 const STEP_ID = /^[a-z0-9][a-z0-9-]{0,40}$/

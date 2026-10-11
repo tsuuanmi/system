@@ -52,3 +52,17 @@ content between members. Each member is a durable session with its own
 mailbox, under the group policy and barriers
 ([sessions and messaging](sessions-and-messaging.md)). Rounds are the
 procedure's checkpoints, not the only channel.
+
+## Built so far
+
+The [workflow engine](../../packages/plugins/workflow/README.md) unrolls a
+template's `team` node:
+
+- independent first-round members;
+- critique rounds behind the barrier;
+- a synthesis that must cite members (`acceptance.team-synthesis`).
+
+Each member is a persistent session, so it keeps one identity and one Worker.
+Members can be held to distinct accounts at routing time. The `panel` template
+uses this. Not built yet: a lead, direct messages between members, and
+independent review with `assessment` artifacts.

@@ -18,6 +18,8 @@ second execution path (INV-1).
   - `review` is one node, `review:1`, requiring `review` and `local-data`. It
     routes to a local agent Worker (`agents` source), never to a website
     account.
+  - `panel` is a team of two members over two rounds, on distinct accounts,
+    and a cited synthesis (see Teams).
   - `investigate` is a planner, `plan:1`, then `synthesis:1`. The planner's plan
     adds the research steps (graph growth), and the synthesis answers from their
     findings (`{{grown}}`).
@@ -90,6 +92,23 @@ second execution path (INV-1).
     `approval@1.0` bound to that exact plan, then a `gate` decision. Approved,
     the steps run; rejected, the run fails as `plan_rejected`.
   - `autoApprovePlans` (default off) approves a high-confidence plan by policy.
+- **Teams (REQ-TEAM-1..4, [design](../../../docs/design/teams.md)).**
+  - A template node with `team: { members (2-5), rounds (1-3, default 2),
+    distinctAccounts (default true), synthesisTier }` is unrolled at admission:
+    - `id:m<k>:r1` per member: no dependency on a peer and no peer text. This
+      is the independent-first barrier, made structural;
+    - `id:m<k>:r<n>`: each depends on every member's previous round and reads
+      the peers' answers (`{{peers}}`) to critique and revise;
+    - a synthesis under the team node's own id, which reads every final answer
+      (`{{members}}`).
+  - Each member is one persistent session that the engine issues, so session
+    affinity keeps one identity and one Worker for the team's lifetime
+    (Model A).
+  - With `distinctAccounts`, members route one at a time, each avoiding every
+    account another member holds. Too few ready accounts fails closed
+    (`config_error`).
+  - The synthesis must pass `acceptance.team-synthesis`: it must have text and
+    cite members as `[m<k>]` (REQ-TEAM-3).
 - **Retries (REQ-WF-6).**
   - A failure is retried, up to `maxAttempts` and after
     `retryDelayMs × 2^(attempt−1)`, only when all of these hold:
@@ -131,8 +150,12 @@ second execution path (INV-1).
   - `explain` takes a run id, or any artifact id (its input tree).
 - **Retention:** runs are deleted only by the operator (no command yet). After
   `retainDays`, a finished run's input text and rendered prompts are cleared.
-- **Not yet:** profile growth rules (growth comes only from plans), teams,
-  lineage invalidation, and the operator commands `stop`, `continue`, and
-  `delete`.
+- **Not yet:**
+  - profile growth rules (growth comes only from plans);
+  - team procedures beyond panel critique: a lead, and direct messages between
+    members;
+  - independent review with assessment artifacts;
+  - lineage invalidation;
+  - the operator commands `stop`, `continue`, and `delete`.
 - **Injects:** `store`, `artifacts`, `eventLog`, `leases`, `egress`, `workers`;
   `mcp` is optional.

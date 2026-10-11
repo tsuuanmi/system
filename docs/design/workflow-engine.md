@@ -158,7 +158,9 @@ static templates (`ask`, and `research` → `compact`). It has:
 - leases, and recovery on restart.
 
 - graph growth from validated `plan` artifacts (with `graph-growth` decisions);
-- the plan approval gate, with `approval` artifacts bound to the exact plan.
+- the plan approval gate, with `approval` artifacts bound to the exact plan;
+- teams unrolled into members, rounds, and a synthesis
+  ([teams](teams.md#built-so-far)).
 
 Profile growth rules, teams, handoff envelopes, and lineage invalidation are not
 built yet.

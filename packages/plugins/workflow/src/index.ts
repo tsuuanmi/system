@@ -258,6 +258,13 @@ export class Workflow extends Service {
       }
     })
     ctx.inject(['mcp'], (c) => this.registerTools(c))
+    // A team's synthesis must have text and cite the member evidence it relies on (REQ-TEAM-3).
+    ctx.workers.contract('acceptance.team-synthesis', ({ body }) => {
+      const text = String((body as { text?: unknown } | undefined)?.text ?? '')
+      const cited = [...new Set(text.match(/\[m\d+\]/g) ?? [])]
+      if (!text.trim()) return { accepted: false, reasons: ['the synthesis is empty'] }
+      return cited.length ? { accepted: true, reasons: [`the synthesis cites ${cited.join(', ')}`] } : { accepted: false, reasons: ['the synthesis cites no member ([m1], [m2], ...)'] }
+    })
   }
 
   /** Admit a run: validated, hashed, and durable at once; it runs in the background. */
@@ -295,8 +302,12 @@ export class Workflow extends Service {
       }
       db.prepare(`INSERT INTO workflow_runs (run_id, request_key, template, spec_hash, input, classification, session_id, status, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, 'running', ?, ?)`).run(run.run_id, requestKey, run.template, run.spec_hash, run.input, run.classification, run.session_id, run.created_at, run.updated_at)
+      // Each team member is one persistent session for the team's lifetime (Model A, REQ-TEAM-2).
+      const memberSessions = new Map<string, string>()
+      const sessionOf = (member: string): string => memberSessions.get(member) ?? memberSessions.set(member, newId('ses')).get(member)!
       spec.nodes.forEach((node, ordinal) => {
-        const resolved: ResolvedNode = { ...node, session: node.session.persist ? { sessionId: sessionId! } : node.session }
+        const session = node.session.member ? { sessionId: sessionOf(node.session.member) } : node.session.persist ? { sessionId: sessionId! } : node.session
+        const resolved: ResolvedNode = { ...node, session }
         const record: NodeRecord = {
           schema: 'workflow-node@1.0', runId: run.run_id, nodeId: node.nodeId, objective: node.objective, executor: 'worker',
           requirement: this.requirementOf(node, resolved.session.sessionId !== undefined, input.classification),
@@ -500,10 +511,31 @@ export class Workflow extends Service {
     const deps = spec.dependsOn.map((id) => nodes.find((n) => n.node_id === id)!)
     const results = deps.map((d) => (JSON.parse(d.record) as NodeRecord).outputReceipt!.result)
     const texts = Object.fromEntries(deps.map((d, i) => [d.node_id, this.resultText(results[i]!)]))
-    const grown = spec.prompt.includes('{{grown}}') ? this.grownText(spec, nodes) : ''
-    const prompt = spec.literal ? spec.prompt : render(spec.prompt, run.input, texts, grown)
+    const extras = {
+      ...(spec.prompt.includes('{{grown}}') ? { grown: this.grownText(spec, nodes) } : {}),
+      ...(spec.team ? this.teamTexts(spec, nodes) : {}),
+    }
+    const prompt = spec.literal ? spec.prompt : render(spec.prompt, run.input, texts, extras)
     const inputHash = sha256(canonicalJson({ node: spec, prompt, dependencies: results }))
     this.writeNode(node, { state: 'READY', prompt }, (record) => ({ ...record, inputReceipt: { inputHash, bundle: results } }), lease)
+  }
+
+  /**
+   * A member's peers (the other members' previous round) or, for the synthesis, every member's
+   * final answer, each under its member label. Round 1 gets nothing: the barrier (REQ-TEAM-1).
+   */
+  private teamTexts(spec: ResolvedNode, nodes: NodeRow[]): { peers?: string; members?: string } {
+    const team = spec.team!
+    const answers = (round: number, except?: number): string => nodes
+      .map((n) => ({ n, s: JSON.parse(n.spec) as ResolvedNode }))
+      .filter(({ s }) => s.team?.id === team.id && s.team.role === 'member' && s.team.round === round && s.team.member !== except)
+      .map(({ n, s }) => {
+        const result = (JSON.parse(n.record) as NodeRecord).outputReceipt?.result
+        return `### [m${s.team!.member}]\n${result ? this.resultText(result) : ''}`
+      })
+      .join('\n\n')
+    if (team.role === 'synthesis') return { members: answers(team.rounds) }
+    return team.round && team.round > 1 ? { peers: answers(team.round - 1, team.member) } : {}
   }
 
   /** The findings of the steps a planner this node depends on added, in order, under their objectives. */
@@ -668,23 +700,28 @@ export class Workflow extends Service {
       if (delay > 0 && !(await sleep(delay, signal))) return
       const record = JSON.parse(node.record) as NodeRecord
       const attempt = node.attempt + 1
-      const affinity = spec.session.sessionId ? this.ctx.workers.affinity(spec.session.sessionId) : undefined
+      // Members of one team route one at a time, so each sees which accounts the others hold.
+      const release = await this.routingTurn(run.run_id)
       let admitted: AdmittedWorker
       try {
-        admitted = await this.ctx.workers.route(record.requirement, {
-          producer: 'workflow',
-          ...(affinity ? { restrict: { workers: affinity, reason: `session ${spec.session.sessionId} stays on its Worker` } } : {}),
-        })
+        admitted = await this.ctx.workers.route(record.requirement, { producer: 'workflow', ...(await this.restriction(run, spec)) })
       } catch (error) {
+        release()
         if (!(error instanceof AdmissionFailure)) throw error
         const hint = error.rejections.length ? '' : ': no Worker is configured (for website Workers, map tiers to modes in the account catalog, then sign the account in)'
         return this.failAttempt(run, { ...node, attempt }, { kind: admissionKind(error), disposition: dispositionOf(admissionKind(error)), message: `${error.message}${hint}` },
           { sent: false, decisions: [error.decision] }, lease)
       }
       // A stop while routing starts nothing: the node is routed again on the next start.
-      if (signal.aborted) return
+      if (signal.aborted) {
+        release()
+        return
+      }
       const source = this.ctx.workers.source(admitted.source)
-      if (!source) throw new Error(`Worker source ${admitted.source} is gone`)
+      if (!source) {
+        release()
+        throw new Error(`Worker source ${admitted.source} is gone`)
+      }
       const routed = {
         worker: admitted.worker.worker, source: admitted.source, served_tier: admitted.worker.tier, quota_class: admitted.worker.quotaClass,
         decisions: JSON.stringify([admitted.decisions.tier, admitted.decisions.route]),
@@ -707,6 +744,8 @@ export class Workflow extends Service {
       } catch (error) {
         if (error instanceof LeaseLost || error instanceof StaleGeneration) throw error
         return this.failAttempt(run, { ...node, attempt }, errorOf(error), { sent: false, decisions: [admitted.decisions.tier, admitted.decisions.route] }, lease)
+      } finally {
+        release()
       }
       node = this.nodeRow(run.run_id, node.node_id)!
     }
@@ -731,6 +770,42 @@ export class Workflow extends Service {
       return this.failAttempt(run, node, current.error ?? { kind: 'internal', disposition: 'CODE_FIX', message: 'the execution failed without an error' }, { sent: current.submitted, execution: current }, lease)
     }
     this.complete(run, node, spec, current, lease)
+  }
+
+  private readonly routing = new Map<string, Promise<void>>()
+
+  /** Wait for this run's turn to route; the returned function ends it. */
+  private async routingTurn(runId: string): Promise<() => void> {
+    const previous = this.routing.get(runId) ?? Promise.resolve()
+    let done!: () => void
+    const turn = new Promise<void>((resolve) => (done = resolve))
+    const chained = previous.then(() => turn)
+    this.routing.set(runId, chained)
+    await previous
+    let released = false
+    return () => {
+      if (released) return
+      released = true
+      done()
+      if (this.routing.get(runId) === chained) this.routing.delete(runId)
+    }
+  }
+
+  /**
+   * Which Workers may take a node: a session stays on its Worker; a team member of a team that
+   * needs distinct accounts avoids every account another member already holds (REQ-TEAM-4).
+   */
+  private async restriction(run: RunRow, spec: ResolvedNode): Promise<{ restrict?: { workers: string[]; reason: string } }> {
+    const own = spec.session.sessionId ? this.ctx.workers.affinity(spec.session.sessionId) : undefined
+    if (own) return { restrict: { workers: own, reason: `session ${spec.session.sessionId} stays on its Worker` } }
+    if (!spec.team?.distinct || spec.team.role !== 'member') return {}
+    const taken = new Set(this.nodeRows(run.run_id)
+      .map((n) => JSON.parse(n.spec) as ResolvedNode)
+      .filter((s) => s.team?.id === spec.team!.id && s.team.member !== spec.team!.member && s.session.sessionId)
+      .flatMap((s) => this.ctx.workers.affinity(s.session.sessionId!) ?? []))
+    if (!taken.size) return {}
+    const workers = (await this.ctx.workers.list()).map((w) => w.worker).filter((w) => !taken.has(w))
+    return { restrict: { workers, reason: `team ${spec.team.id}: members use distinct accounts (REQ-TEAM-4); another member holds this account` } }
   }
 
   /** A finished execution: check its result against the node's contract, then commit the output receipt. */
