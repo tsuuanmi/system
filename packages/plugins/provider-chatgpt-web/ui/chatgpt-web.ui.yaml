@@ -121,6 +121,7 @@ actions:
 
 network:
   conversation.post: { method: POST, url: '/backend-api/f/conversation$' }
+  account.me: { method: GET, url: '/backend-api/me$' }
   conversation.too-large: { url: '/backend-api/f/conversation$', status: 413 }
   challenge: { url: '.*', header: { name: cf-mitigated, equals: challenge } }
 

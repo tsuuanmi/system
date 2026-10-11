@@ -8,12 +8,11 @@
  *   marker and stable text (the event stream stays open, so it is never consulted).
  */
 import { readFileSync } from 'node:fs'
-import { ProviderError, waitForStableCompletion } from '@tsuuanmi/system-provider-core'
+import { type AskOptions, type AskResult, type AuthState, type ConversationMode, ProviderError, type ProviderDriver, waitForStableCompletion } from '@tsuuanmi/system-provider-core'
 import { type DriftEvent, type HealEvent, UiEngine, type UiMap, loadUiMap } from '@tsuuanmi/system-ui-ops'
 import type { Page } from 'patchright-core'
 
-export type AuthState = 'signed-in' | 'signed-out' | 'unknown'
-export type ConversationMode = 'temporary' | 'persistent'
+export type { AskOptions, AskResult, AuthState, ConversationMode }
 
 export interface DriverTimeouts {
   /** Hard deadline for one turn (default 15 min). */
@@ -35,19 +34,6 @@ export interface DriverOptions {
   timeouts?: DriverTimeouts
 }
 
-export interface AskOptions {
-  conversation: ConversationMode
-  /** Persistent conversation to continue (`/c/<id>`). */
-  binding?: string | undefined
-  signal?: AbortSignal
-}
-
-export interface AskResult {
-  text: string
-  /** Canonical conversation id for persistent turns; undefined for temporary ones. */
-  binding: string | undefined
-}
-
 const MAP_URL = new URL('../ui/chatgpt-web.ui.yaml', import.meta.url)
 const CONVERSATION = /\/c\/([0-9a-f-]{36})(?:[/?#]|$)/
 
@@ -56,8 +42,10 @@ export function shippedMap(overlay?: string): UiMap {
   return loadUiMap(readFileSync(MAP_URL, 'utf8'), overlay)
 }
 
-export class ChatGptWebDriver {
+export class ChatGptWebDriver implements ProviderDriver<Page> {
   readonly provider = 'chatgpt-web'
+  readonly loginUrl: string
+  readonly stateOrigins: readonly string[]
   readonly map: UiMap
   onDrift: ((event: DriftEvent) => void) | undefined
   onHeal: ((event: HealEvent) => void) | undefined
@@ -68,6 +56,8 @@ export class ChatGptWebDriver {
   constructor(options: DriverOptions = {}) {
     this.map = shippedMap(options.overlay)
     this.origin = (options.origin ?? 'https://chatgpt.com').replace(/\/$/, '')
+    this.loginUrl = `${this.origin}/auth/login`
+    this.stateOrigins = [this.origin]
     this.timeouts = { turnMs: 15 * 60_000, stallMs: 3 * 60_000, stableMs: 1500, pollMs: 250, readyMs: 30_000, ...options.timeouts }
   }
 
@@ -81,6 +71,22 @@ export class ChatGptWebDriver {
       return 'unknown'
     }
     return (await engine.state('auth.signed-out')) ? 'signed-out' : 'signed-in'
+  }
+
+  /**
+   * The signed-in account's id, observed passively from the page's own account request
+   * (the map's `account.me` signal). The page is reloaded so the request happens again;
+   * nothing is requested by the driver itself. Only a hash of the result is ever stored.
+   */
+  async identity(page: Page): Promise<string> {
+    const pattern = this.map.network['account.me']
+    if (!pattern) throw new ProviderError('config_error', 'chatgpt-web: the UI map has no account.me signal')
+    const url = new RegExp(pattern.url)
+    const response = page.waitForResponse((r) => r.request().method() === (pattern.method ?? 'GET') && url.test(new URL(r.url()).pathname), { timeout: this.timeouts.readyMs })
+    await page.reload({ waitUntil: 'domcontentloaded' })
+    const body = (await (await response).json().catch(() => ({}))) as { id?: unknown }
+    if (typeof body.id !== 'string' || !body.id) throw new ProviderError('ui_drift', 'chatgpt-web: the account response carried no id')
+    return `${this.provider}:${body.id}`
   }
 
   /** One turn: open the conversation, select Chat, submit, and wait for the answer. */

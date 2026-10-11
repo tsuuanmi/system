@@ -1,7 +1,8 @@
 # @tsuuanmi/system-mcp-server
 
 An MCP Streamable HTTP endpoint inside the `system` profile, on DSH
-`ctx.webServer`, for Claude Code and Codex
+`ctx.webServer`, published as **`ctx.mcp`**. It serves Claude Code, Codex, and
+the `system` CLI
 ([ADR-0011](../../../docs/decisions/adr/0011-mvp-integration-via-mcp.md)).
 
 - **Security:**
@@ -12,9 +13,16 @@ An MCP Streamable HTTP endpoint inside the `system` profile, on DSH
 - **Discovery:** writes `{url, tokenFile, pid}` to a `0600` file (default
   `<DSH_HOME>/system/mcp.json`) and removes it on unload. This pattern comes from
   dsh-codex-bridge.
-- **Tools (slice 1 surface):**
-  - `status` works today.
-  - `ask`, `research`, and `result` return an explicit "not installed" error
-    until the provider runtime lands (M1.5). They never pretend to work.
-- **Injects:** `webServer`. It uses `ctx.get('artifacts')` and `ctx.get('store')`
-  optionally.
+- **Tools contributed by plugins:** `ctx.mcp.tool(name, { description,
+  inputSchema }, handler)` registers a tool for the calling plugin's lifetime, so
+  unloading the plugin removes it. A name is unique, except that a built-in
+  placeholder may be replaced. For example, `login` contributes `account_list`
+  and `account_save`.
+- **Built-in tools (slice 1 surface):**
+  - `status` reports the stage, store, artifacts, kernel seams, and registered
+    providers.
+  - `ask`, `research`, and `result` are placeholders. They return an explicit
+    "not installed" error until the provider runtime contributes them (M1.5),
+    and never pretend to work.
+- **Injects:** `webServer`. It uses `ctx.get('artifacts')`, `ctx.get('store')`,
+  and `ctx.get('providers')` optionally.

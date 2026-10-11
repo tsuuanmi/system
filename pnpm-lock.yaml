@@ -193,6 +193,9 @@ importers:
       '@deepseek-ai/dsh':
         specifier: 0.2.1-alpha.2
         version: 0.2.1-alpha.2(3b2fdb5e011fb9c5d15d65d4d0a9ae99)
+      '@modelcontextprotocol/sdk':
+        specifier: 1.32.1
+        version: 1.32.1(zod@4.6.5)
       '@tsuuanmi/system-browser-patchright':
         specifier: workspace:*
         version: link:../plugins/browser-patchright
@@ -202,10 +205,6 @@ importers:
       '@tsuuanmi/system-libs':
         specifier: workspace:*
         version: link:../libs
-    devDependencies:
-      '@modelcontextprotocol/sdk':
-        specifier: 1.32.1
-        version: 1.32.1(zod@4.6.5)
 
   packages/libs:
     dependencies:
@@ -359,6 +358,55 @@ importers:
         specifier: 3.18.5-alpha.1
         version: 3.18.5-alpha.1
 
+  packages/plugins/login:
+    dependencies:
+      '@tsuuanmi/system-accounts':
+        specifier: workspace:*
+        version: link:../accounts
+      '@tsuuanmi/system-browser-patchright':
+        specifier: workspace:*
+        version: link:../browser-patchright
+      '@tsuuanmi/system-libs':
+        specifier: workspace:*
+        version: link:../../libs
+      '@tsuuanmi/system-mcp-server':
+        specifier: workspace:*
+        version: link:../mcp-server
+      '@tsuuanmi/system-provider-core':
+        specifier: workspace:*
+        version: link:../../provider-core
+      '@tsuuanmi/system-providers':
+        specifier: workspace:*
+        version: link:../providers
+    devDependencies:
+      '@deepseek-ai/cordis':
+        specifier: 4.0.5-alpha.1
+        version: 4.0.5-alpha.1(@deepseek-ai/cordis-plugin-include@1.0.10-alpha.1)(@deepseek-ai/cordis-plugin-loader@1.0.6-alpha.1)
+      '@deepseek-ai/dsh-host-webserver':
+        specifier: 0.2.1-alpha.2
+        version: 0.2.1-alpha.2(@deepseek-ai/cordis@4.0.5-alpha.1)
+      '@deepseek-ai/schemastery':
+        specifier: 3.18.5-alpha.1
+        version: 3.18.5-alpha.1
+      '@modelcontextprotocol/sdk':
+        specifier: 1.32.1
+        version: 1.32.1(zod@4.6.5)
+      '@tsuuanmi/system-credentials-vault':
+        specifier: workspace:*
+        version: link:../credentials-vault
+      '@tsuuanmi/system-display-virtual':
+        specifier: workspace:*
+        version: link:../display-virtual
+      '@tsuuanmi/system-provider-chatgpt-web':
+        specifier: workspace:*
+        version: link:../provider-chatgpt-web
+      patchright-core:
+        specifier: 1.63.0
+        version: 1.63.0
+      zod:
+        specifier: ^4.1.0
+        version: 4.6.5
+
   packages/plugins/mcp-server:
     dependencies:
       '@modelcontextprotocol/sdk':
@@ -389,13 +437,25 @@ importers:
 
   packages/plugins/provider-chatgpt-web:
     dependencies:
+      '@tsuuanmi/system-libs':
+        specifier: workspace:*
+        version: link:../../libs
       '@tsuuanmi/system-provider-core':
         specifier: workspace:*
         version: link:../../provider-core
+      '@tsuuanmi/system-providers':
+        specifier: workspace:*
+        version: link:../providers
       '@tsuuanmi/system-ui-ops':
         specifier: workspace:*
         version: link:../../ui-ops
     devDependencies:
+      '@deepseek-ai/cordis':
+        specifier: 4.0.5-alpha.1
+        version: 4.0.5-alpha.1(@deepseek-ai/cordis-plugin-include@1.0.10-alpha.1)(@deepseek-ai/cordis-plugin-loader@1.0.6-alpha.1)
+      '@deepseek-ai/schemastery':
+        specifier: 3.18.5-alpha.1
+        version: 3.18.5-alpha.1
       '@tsuuanmi/system-browser-patchright':
         specifier: workspace:*
         version: link:../browser-patchright
@@ -405,6 +465,16 @@ importers:
       patchright-core:
         specifier: 1.63.0
         version: 1.63.0
+
+  packages/plugins/providers:
+    dependencies:
+      '@tsuuanmi/system-provider-core':
+        specifier: workspace:*
+        version: link:../../provider-core
+    devDependencies:
+      '@deepseek-ai/cordis':
+        specifier: 4.0.5-alpha.1
+        version: 4.0.5-alpha.1(@deepseek-ai/cordis-plugin-include@1.0.10-alpha.1)(@deepseek-ai/cordis-plugin-loader@1.0.6-alpha.1)
 
   packages/plugins/store:
     dependencies:
@@ -477,9 +547,18 @@ importers:
       '@tsuuanmi/system-leases':
         specifier: workspace:*
         version: link:../plugins/leases
+      '@tsuuanmi/system-login':
+        specifier: workspace:*
+        version: link:../plugins/login
       '@tsuuanmi/system-mcp-server':
         specifier: workspace:*
         version: link:../plugins/mcp-server
+      '@tsuuanmi/system-provider-chatgpt-web':
+        specifier: workspace:*
+        version: link:../plugins/provider-chatgpt-web
+      '@tsuuanmi/system-providers':
+        specifier: workspace:*
+        version: link:../plugins/providers
       '@tsuuanmi/system-store':
         specifier: workspace:*
         version: link:../plugins/store

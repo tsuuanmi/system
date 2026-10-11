@@ -59,6 +59,12 @@
       ],
       "@tsuuanmi/system-provider-chatgpt-web": [
         "packages/plugins/provider-chatgpt-web/src/index.ts"
+      ],
+      "@tsuuanmi/system-providers": [
+        "packages/plugins/providers/src/index.ts"
+      ],
+      "@tsuuanmi/system-login": [
+        "packages/plugins/login/src/index.ts"
       ]
     }
   },

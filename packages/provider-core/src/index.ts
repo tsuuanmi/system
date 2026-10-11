@@ -4,3 +4,4 @@ export { type Reconciliation, type Tier, type TurnReceipt, type TurnSnapshot, re
 export { type ProviderLease, ProviderScheduler } from './scheduler.ts'
 export { Display, type DisplayMode, type PreparedDisplay } from './display.ts'
 export type { PortableState } from './state.ts'
+export type { AskOptions, AskResult, AuthState, ConversationMode, ProviderDriver } from './driver.ts'

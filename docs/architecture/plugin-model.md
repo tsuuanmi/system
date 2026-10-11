@@ -41,9 +41,10 @@ can be added without changing consumers.
 | Kernel | `leases` | `@tsuuanmi/system-leases` | scheduler, workflow |
 | Provider runtime | `browser` (`openTurn`, `capture`, `close`; ours to define, since DSH `ctx.browserUse` only names a model-facing tool provider) | `@tsuuanmi/system-browser-patchright` | provider drivers, remote login |
 | Provider runtime | `display` (abstract `Display` in `@tsuuanmi/system-provider-core`; `prepare('invisible' \| 'visible')`, where `visible` is the operator's `DISPLAY` for every provider) | `@tsuuanmi/system-display-virtual` (Xvfb, Linux), `display-offscreen` (v1.0); never headless | browser ([browser runtime](../design/browser-runtime.md)) |
+| Provider runtime | `login` (login profiles, Save) | `@tsuuanmi/system-login` | operators (`account_save`), remote login |
 | Provider runtime | `accounts` | `@tsuuanmi/system-accounts` (records and credentials as encrypted grants in **DSH** `ctx.credentials`, provided by `@tsuuanmi/system-credentials-vault`) | provider runtime, admission |
 | Provider runtime | `turnReceipts` | `@tsuuanmi/system-turn-receipts` | provider drivers, recovery |
-| Provider runtime | `providers` (driver registry) | `@tsuuanmi/system-provider-chatgpt-web` (driver implemented; registration lands with the registry), `provider-gemini-web` | website capability |
+| Provider runtime | `providers` (driver registry) | `@tsuuanmi/system-providers` registry; drivers: `@tsuuanmi/system-provider-chatgpt-web`, `provider-gemini-web` | website capability |
 | Capabilities | `website` | `website-core` | Worker providers |
 | Capabilities | `exec` | **DSH** `ctx.shell` / `ctx.fs` / `ctx.sandbox` / `ctx.subprocess` (local, sandbox, SSH) | local-tools Worker |
 | Capabilities | `models` (API and local model providers) | **DSH** `ctx.llm` (`llm-pi-ai`: OpenAI-compatible and others) | Worker providers, especially `economy`-tier jobs ([purpose P4](../requirements/purpose.md#p4-cheap-models-do-low-level-work-strong-models-do-hard-work)) |
@@ -54,7 +55,8 @@ can be added without changing consumers.
 | Orchestration | `teams` | `team-runner` | workflow |
 | Orchestration | `profiles` (domain procedures) | `profile-software-development`, `profile-scientific-research` | workflow |
 | Gateways | `clientProtocols` (shared turn broker) | `gateway-responses`, `gateway-anthropic-messages` | — (edge) |
-| Gateways | — (consumers only) | `mcp-server` (own; DSH has only an MCP client), `cli` (wrapper around `dsh --profile system`), `web-ui` (on **DSH** web app), later `gateway-a2a` | — (edge) |
+| Gateways | `mcp` (tools contributed by plugins for their lifetime) | `@tsuuanmi/system-mcp-server` (own; DSH has only an MCP client) | plugins that expose operations: `login`, later the turn runtime (`ask`, `research`, `result`) |
+| Gateways | — (consumers only) | `cli` (wrapper around `dsh --profile system`), `web-ui` (on **DSH** web app), later `gateway-a2a` | — (edge) |
 
 Gateways only consume services, so they are plain plugins with no seam of their
 own. The exception is the shared turn broker that the two client-protocol

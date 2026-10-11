@@ -6,17 +6,35 @@
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",
-  "exports": { ".": { "types": "./lib/index.d.ts", "default": "./lib/index.js" } },
-  "files": ["lib", "ui"],
-  "scripts": { "build": "tsc -p tsconfig.build.json" },
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    }
+  },
+  "files": [
+    "lib",
+    "ui"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json"
+  },
   "dependencies": {
+    "@tsuuanmi/system-libs": "workspace:*",
     "@tsuuanmi/system-provider-core": "workspace:*",
+    "@tsuuanmi/system-providers": "workspace:*",
     "@tsuuanmi/system-ui-ops": "workspace:*"
   },
-  "peerDependencies": { "patchright-core": "1.63.0" },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "4.0.5-alpha.1",
+    "@deepseek-ai/schemastery": "3.18.5-alpha.1",
+    "patchright-core": "1.63.0"
+  },
   "devDependencies": {
-    "patchright-core": "1.63.0",
+    "@deepseek-ai/cordis": "4.0.5-alpha.1",
+    "@deepseek-ai/schemastery": "3.18.5-alpha.1",
     "@tsuuanmi/system-browser-patchright": "workspace:*",
-    "@tsuuanmi/system-display-virtual": "workspace:*"
+    "@tsuuanmi/system-display-virtual": "workspace:*",
+    "patchright-core": "1.63.0"
   }
 }

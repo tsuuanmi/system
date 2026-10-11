@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { CHROME_LOCK } from '@tsuuanmi/system-browser-patchright'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { ensureBrowser, exitCode, mergeProfileManifest, mcpConfig } from '../src/index.ts'
+import { callTool, ensureBrowser, exitCode, mergeProfileManifest, mcpConfig } from '../src/index.ts'
 
 const dirs: string[] = []
 afterEach(() => {
@@ -59,5 +59,13 @@ describe('system init: browser prerequisites', () => {
     expect(install).toHaveBeenCalledOnce()
     expect(report[0]).toBe(`chrome: installed managed Chrome ${CHROME_LOCK.buildId} at /home/u/.dsh/system/browsers/chrome`)
     expect(report[1]).toMatch(/xvfb: missing .*apt install xvfb/)
+  })
+})
+
+describe('system account (an MCP client of the running profile)', () => {
+  it('explains that the profile must be running when there is no discovery file', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'system-cli-'))
+    dirs.push(home)
+    await expect(callTool('account_list', {}, home)).rejects.toThrow(/system start/)
   })
 })

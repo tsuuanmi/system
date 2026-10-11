@@ -21,6 +21,8 @@ export default defineConfig({
       '@tsuuanmi/system-browser-patchright': src('./packages/plugins/browser-patchright/src/index.ts'),
       '@tsuuanmi/system-ui-ops': src('./packages/ui-ops/src/index.ts'),
       '@tsuuanmi/system-provider-chatgpt-web': src('./packages/plugins/provider-chatgpt-web/src/index.ts'),
+      '@tsuuanmi/system-providers': src('./packages/plugins/providers/src/index.ts'),
+      '@tsuuanmi/system-login': src('./packages/plugins/login/src/index.ts'),
       '@tsuuanmi/system-provider-core': src('./packages/provider-core/src/index.ts'),
     },
   },

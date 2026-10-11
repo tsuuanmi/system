@@ -12,6 +12,10 @@
 import { type Context, Service } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { type PortableState, type PreparedDisplay, ProviderError } from '@tsuuanmi/system-provider-core'
+import { lstatSync, readlinkSync, rmSync } from 'node:fs'
+import { hostname } from 'node:os'
+import { join } from 'node:path'
+import { ensurePrivateDir } from '@tsuuanmi/system-libs'
 import { type Browser, type BrowserContext, type Page, chromium } from 'patchright-core'
 import { discoverChrome } from './chrome.ts'
 import { type StorageState, fromStorageState, toStorageState } from './state.ts'
@@ -144,6 +148,45 @@ export class BrowserPool extends Service {
     })
   }
 
+  /**
+   * The Save flow's capture step (docs/design/browser-runtime.md#save-both-modes): reopen an
+   * account's login profile headed on the invisible display, let the driver `inspect` the
+   * page (auth, identity), and capture the portable state for `origins`. The state stays
+   * in memory; the caller verifies it and stores it encrypted.
+   */
+  async captureProfile<T>(profileDir: string, options: { url: string; origins: string[]; previous?: PortableState | undefined; inspect: (page: Page) => Promise<T> }): Promise<{ state: PortableState; result: T }> {
+    ensurePrivateDir(profileDir)
+    releaseStaleProfileLock(profileDir)
+    const display = await this.ctx.display.prepare('invisible')
+    const chrome = discoverChrome(this.config.chromePath)
+    if (!chrome) throw new ProviderError('config_error', 'no usable Chrome: run `system init` or set chromePath / CHROME_PATH')
+    const context = await chromium.launchPersistentContext(profileDir, {
+      executablePath: chrome.path,
+      headless: false,
+      env: { ...process.env, ...display.env },
+      viewport: display.viewport,
+      ignoreDefaultArgs: IGNORED_DEFAULT_ARGS,
+      // Session cookies survive the operator's browser → automated reopen only with session restore.
+      args: ['--restore-last-session', '--disable-background-mode', ...CHROME_ARGS, ...display.windowArgs],
+    })
+    try {
+      const page = context.pages()[0] ?? (await context.newPage())
+      await page.goto(options.url, { waitUntil: 'domcontentloaded' })
+      const result = await options.inspect(page)
+      const raw = await context.storageState({ indexedDB: true })
+      const state = fromStorageState(raw as unknown as StorageState, {
+        origins: options.origins,
+        previous: options.previous,
+        now: new Date().toISOString(),
+        maxIndexedDbBytes: this.config.maxIndexedDbBytes ?? 16 * 1024 * 1024,
+      })
+      return { state, result }
+    } finally {
+      await context.close().catch(() => undefined)
+      releaseStaleProfileLock(profileDir)
+    }
+  }
+
   /** Closes the account's browser and every context on it. */
   async close(account: string): Promise<void> {
     const managed = this.browsers.get(account)
@@ -215,6 +258,36 @@ export class BrowserPool extends Service {
       if (managed.turns === 0 && this.browsers.get(account) === managed) void this.close(account)
     }, this.config.closeAfterMs ?? 30 * 60_000)
     managed.idle.unref()
+  }
+}
+
+/**
+ * Chrome's `SingletonLock` names `<host>-<pid>` of the browser that owns a profile. A lock
+ * held by a live process means the operator's login browser is still open: refuse. A lock
+ * left by a dead process (or another host's leftover) is removed, as tsuuanmi/internet does.
+ */
+function releaseStaleProfileLock(profileDir: string): void {
+  const lock = join(profileDir, 'SingletonLock')
+  let target: string
+  try {
+    if (!lstatSync(lock).isSymbolicLink()) return
+    target = readlinkSync(lock)
+  } catch {
+    return
+  }
+  const match = /^(.*)-(\d+)$/.exec(target)
+  if (match && match[1] === hostname() && processAlive(Number(match[2]))) {
+    throw new ProviderError('session_broken', `login profile ${profileDir} is in use by process ${match[2]}; close that browser first`)
+  }
+  for (const name of ['SingletonLock', 'SingletonCookie', 'SingletonSocket']) rmSync(join(profileDir, name), { force: true })
+}
+
+function processAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'EPERM'
   }
 }
 

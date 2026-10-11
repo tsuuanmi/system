@@ -9,6 +9,9 @@ import { createRequire } from 'node:module'
 import { constants as osConstants } from 'node:os'
 import { dirname, join } from 'node:path'
 import { CHROME_LOCK, type ChromeChoice, discoverChrome, installManagedChrome } from '@tsuuanmi/system-browser-patchright'
+import { Client } from '@modelcontextprotocol/sdk/client/index.js'
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
+import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
 import { dshHome } from '@tsuuanmi/system-libs'
 
 const require = createRequire(import.meta.url)
@@ -142,4 +145,31 @@ export function mcpConfig(client: 'claude' | 'codex', home: string = dshHome()):
 export function mcpToken(home: string = dshHome()): string {
   const { tokenFile } = JSON.parse(readFileSync(join(home, 'system', 'mcp.json'), 'utf8')) as Discovery
   return readFileSync(tokenFile).toString('base64url')
+}
+
+export interface ToolOutcome {
+  isError: boolean
+  text: string
+  structured: Record<string, unknown> | undefined
+}
+
+/** Call a tool on the running profile's MCP endpoint, authenticated from the discovery file. */
+export async function callTool(name: string, args: Record<string, unknown>, home: string = dshHome()): Promise<ToolOutcome> {
+  const path = join(home, 'system', 'mcp.json')
+  if (!existsSync(path)) throw new Error(`no discovery file at ${path}; is \`system start\` running?`)
+  const { url, tokenFile } = JSON.parse(readFileSync(path, 'utf8')) as Discovery
+  const token = readFileSync(tokenFile).toString('base64url')
+  const client = new Client({ name: 'system-cli', version: '0.0.0' })
+  await client.connect(new StreamableHTTPClientTransport(new URL(url), { requestInit: { headers: { authorization: `Bearer ${token}` } } }) as unknown as Transport)
+  try {
+    const result = await client.callTool({ name, arguments: args })
+    const content = (result.content ?? []) as Array<{ type: string; text?: string }>
+    return {
+      isError: result.isError === true,
+      text: content.map((c) => c.text ?? '').join('\n'),
+      structured: result.structuredContent as Record<string, unknown> | undefined,
+    }
+  } finally {
+    await client.close()
+  }
 }

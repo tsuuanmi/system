@@ -21,7 +21,10 @@
     "@tsuuanmi/system-display-virtual": "workspace:*",
     "@tsuuanmi/system-event-log": "workspace:*",
     "@tsuuanmi/system-leases": "workspace:*",
+    "@tsuuanmi/system-login": "workspace:*",
     "@tsuuanmi/system-mcp-server": "workspace:*",
+    "@tsuuanmi/system-provider-chatgpt-web": "workspace:*",
+    "@tsuuanmi/system-providers": "workspace:*",
     "@tsuuanmi/system-store": "workspace:*",
     "@tsuuanmi/system-turn-receipts": "workspace:*"
   },

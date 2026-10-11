@@ -19,6 +19,10 @@ export interface FakeOptions {
   /** Clicking Chat does nothing (the driver must refuse to send). */
   chatToggleBroken?: boolean
   signedIn?: boolean
+  /** Signed in only with the `session=valid` cookie (Save-flow tests). */
+  requireCookie?: boolean
+  /** Account id returned by `GET /backend-api/me`. */
+  userId?: string
   /** Accessible name of the send button (drift tests). */
   sendLabel?: string
   /** Answer text; streamed word by word. */
@@ -138,6 +142,7 @@ async function send() {
   }
 }
 render()
+fetch('/backend-api/me')
 </script></body></html>`
 }
 
@@ -151,7 +156,7 @@ export class FakeChatGpt {
   origin = ''
 
   constructor(options: FakeOptions = {}) {
-    this.options = { startOnWork: true, chatToggleBroken: false, signedIn: true, sendLabel: 'Send', answer: 'OK', thinkMs: 300, ...options }
+    this.options = { startOnWork: true, chatToggleBroken: false, signedIn: true, requireCookie: false, userId: 'user-fake123', sendLabel: 'Send', answer: 'OK', thinkMs: 300, ...options }
   }
 
   async start(): Promise<string> {
@@ -190,7 +195,13 @@ export class FakeChatGpt {
       // Like the live site, the stream is left open after the answer is complete.
       return
     }
-    if (!this.options.signedIn && !url.pathname.startsWith('/auth')) {
+    const signedIn = this.options.requireCookie ? /(?:^|; )session=valid(?:;|$)/.test(req.headers.cookie ?? '') : this.options.signedIn
+    if (url.pathname === '/backend-api/me' && req.method === 'GET') {
+      res.writeHead(signedIn ? 200 : 401, { 'content-type': 'application/json' })
+      res.end(JSON.stringify(signedIn ? { id: this.options.userId, object: 'user' } : { detail: 'unauthorized' }))
+      return
+    }
+    if (!signedIn && !url.pathname.startsWith('/auth')) {
       res.writeHead(302, { location: '/auth/login' })
       res.end()
       return

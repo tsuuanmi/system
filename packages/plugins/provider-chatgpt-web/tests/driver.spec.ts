@@ -1,11 +1,13 @@
 import { readFileSync } from 'node:fs'
+import { Context } from '@deepseek-ai/cordis'
+import Providers from '@tsuuanmi/system-providers'
 import { ProviderError } from '@tsuuanmi/system-provider-core'
 import { loadUiMap } from '@tsuuanmi/system-ui-ops'
 import type { Browser, BrowserContext, Page } from 'patchright-core'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { canRunBrowser, launchTestBrowser } from '../../browser-patchright/tests/support.ts'
 import { FakeChatGpt, type FakeOptions } from '../fixtures/fake-chatgpt.ts'
-import { ChatGptWebDriver, shippedMap } from '../src/index.ts'
+import ChatGptWebPlugin, { ChatGptWebDriver, shippedMap } from '../src/index.ts'
 
 describe('the shipped ChatGPT UI map', () => {
   it('validates, and Send is irreversible with deterministic healing only', () => {
@@ -102,4 +104,37 @@ describe.runIf(canRunBrowser)('ChatGptWebDriver against the fake site', () => {
 it('ships a map that loads with the generic loader too', () => {
   const text = readFileSync(new URL('../ui/chatgpt-web.ui.yaml', import.meta.url), 'utf8')
   expect(loadUiMap(text).hash).toMatch(/^sha256:/)
+})
+
+describe.runIf(canRunBrowser)('the driver as a provider plugin', () => {
+  let browser: Browser
+  let close: () => Promise<void>
+  beforeAll(async () => {
+    ;({ browser, close } = await launchTestBrowser())
+  })
+  afterAll(async () => close())
+
+  it('exposes login support: login URL, state origins, and a hashed-only identity hint', async () => {
+    const fake = new FakeChatGpt({ userId: 'user-abc' })
+    await fake.start()
+    const context = await browser.newContext()
+    try {
+      const driver = new ChatGptWebDriver({ origin: fake.origin })
+      expect(driver.loginUrl).toBe(`${fake.origin}/auth/login`)
+      expect(driver.stateOrigins).toEqual([fake.origin])
+      const page = await context.newPage()
+      expect(await driver.checkAuth(page)).toBe('signed-in')
+      expect(await driver.identity(page)).toBe('chatgpt-web:user-abc')
+    } finally {
+      await context.close()
+      await fake.stop()
+    }
+  }, 30_000)
+
+  it('registers itself on ctx.providers', async () => {
+    const ctx = new Context()
+    await ctx.plugin(Providers)
+    await ctx.plugin(ChatGptWebPlugin, { origin: 'http://127.0.0.1:9' })
+    expect(ctx.providers.get('chatgpt-web')).toBeInstanceOf(ChatGptWebDriver)
+  })
 })
