@@ -22,7 +22,9 @@ code updates this table.
 | Claude Code as Worker | Claude Agent SDK | protocol SDK | `ctx.agentRuntimes` | check its license terms before release |
 | Codex as Worker | `@openai/codex-sdk` | protocol SDK | `ctx.agentRuntimes` | Apache-2.0 |
 | Other agents as Workers | `@agentclientprotocol/sdk` | protocol SDK | `ctx.agentRuntimes` | Apache-2.0 |
-| Provider receipts, scheduler, account vault, remote login | port from internet | port | provider runtime | same maintainer; restructure into seams |
+| Provider receipts, scheduler, account vault, remote login (Xvfb + x11vnc + noVNC, tokens, Save/Cancel) | port from internet | port | provider runtime | same maintainer; restructure into seams ([ADR-0017](../decisions/adr/0017-credential-login-and-linux-remote-browser.md)); TigerVNC `Xvnc` is a later swap-in |
+| TOTP codes | `otpauth` (RFC 4226/6238) | library | `login-credentials` code provider `totp-local` | computed locally; never via third-party sites |
+| Credential encryption at rest | OS keyring (libsecret / Keychain) or a `0600` key file | system tool / library | `ctx.accounts` | mandatory for passwords and TOTP secrets |
 | Responses emulation, turn broker, completion fence, drain | port from codex-chatgpt-web | port | gateways | MIT; keep attribution in `THIRD_PARTY_NOTICES` |
 | Local exec (shell, fs, sandbox) | evaluate DSH seam providers (`dsh-shell`, `dsh-fs`, `dsh-sandbox`) | adapt (candidate) | `ctx.exec` | adopt only if they mount outside DSH without DSH host packages; otherwise write a thin provider |
 | Workflow durability | own engine | build | `ctx.workflow` | [ADR-0004](../decisions/adr/0004-single-workflow-runtime.md); Temporal and similar rejected until a concrete gap appears |

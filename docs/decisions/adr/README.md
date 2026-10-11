@@ -25,3 +25,4 @@ proposal that introduces them.
 | [0014](0014-json-schema-contracts.md) | JSON Schema 2020-12 is the canonical contract for records and wire payloads | Accepted |
 | [0015](0015-worker-sessions-and-peer-messaging.md) | Durable Worker sessions with own SessionId and direct peer messaging; A2A for cross-runtime peers, ACP for driving agents | Accepted |
 | [0016](0016-invisible-headed-browser-and-portable-accounts.md) | Invisible headed system Chrome (never headless for provider turns); provider-agnostic multi-account vault | Accepted |
+| [0017](0017-credential-login-and-linux-remote-browser.md) | Opt-in credential login (email, password, local TOTP) with remote-view fallback; Linux-first MVP; port internet's noVNC remote login | Accepted |

@@ -39,6 +39,13 @@
   accounts per provider. Each account's state is saved, isolated (own browser
   process, scheduler, and bindings), and survives restarts. Accounts that resolve
   to the same identity are flagged.
+- **REQ-ACC-8** An account may opt in to credential login with email, password,
+  and TOTP. It runs only after positive sign-out evidence. TOTP codes are
+  computed locally and never obtained from a third party. Anything it cannot
+  satisfy (an email code without an opted-in provider, a challenge, an unknown
+  page, or a second failure) falls back to interactive login on the same profile.
+- **REQ-ACC-9** Credentials are encrypted at rest and decrypted only in memory.
+  They never appear in logs, prompts, artifacts, or process arguments.
 
 ## Provider turns (`REQ-PRV`)
 

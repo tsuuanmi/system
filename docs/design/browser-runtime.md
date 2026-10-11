@@ -3,7 +3,7 @@
 > Target state. Seams: `ctx.browser`, `ctx.display`, `ctx.accounts`
 > ([plugin model](../architecture/plugin-model.md#seam-catalog)).
 > Decision: [ADR-0016](../decisions/adr/0016-invisible-headed-browser-and-portable-accounts.md).
-> Requirements: REQ-ACC-1..7. Shape: [`account.v1.json`](../../schemas/account.v1.json).
+> Requirements: REQ-ACC-1..9. Shape: [`account.v1.json`](../../schemas/account.v1.json).
 > Evidence: how [internet](../research/internet-analysis.md) and
 > [codex-chatgpt-web](../research/codex-chatgpt-web-analysis.md) run their browsers.
 
@@ -34,7 +34,7 @@ pretend to be a different machine.
 | Mode | How | Default on | Use |
 |---|---|---|---|
 | `virtual` | headed Chrome on a plugin-owned **Xvfb** (`-screen 0 1920x1080x24 -nolisten tcp`, `-displayfd`); window `--window-size=1920,1080` | **Linux** (including servers without a display) | provider turns |
-| `offscreen` | headed window at `--window-position=-10000,-10000` with an explicit size (≥ 1280×900) | **macOS, Windows** | provider turns |
+| `offscreen` | headed window at `--window-position=-10000,-10000` with an explicit size (≥ 1280×900) | **macOS, Windows** (v1.0; the MVP is Linux-only) | provider turns |
 | `visible` | a normal on-screen window | — | interactive login, debugging, resolving a challenge |
 | `headless` | Chrome headless | **never for provider turns** | only the `dev` profile with fake providers |
 
@@ -95,20 +95,67 @@ interface ProviderAccountSupport {          // part of ProviderDriver
 
 ## Login flows
 
-Both flows use a **plain Chrome with no automation attached**, so the operator
-signs in exactly as usual, including SSO popups, passkeys where the platform
-supports them, and 2FA.
+Decision: [ADR-0017](../decisions/adr/0017-credential-login-and-linux-remote-browser.md).
+Every account has a **login mode**: `manual` (the default) or `credentials`
+(opt-in).
+
+### Interactive login (`manual`, and the fallback for everything)
+
+A **plain Chrome with no automation attached** opens the account's login
+profile, so the operator signs in exactly as usual, including SSO popups and 2FA.
 
 | Flow | Platform | How |
 |---|---|---|
-| **remote** | Linux (servers) | Chrome on its own Xvfb, `x11vnc -localhost` with a one-time password file, and a token-gated **noVNC** page on loopback. The operator connects through an SSH tunnel. Pages have Save, Cancel, and paste-from-host |
-| **visible** | desktop | Chrome opens on screen with the account's login profile |
+| **remote** | **Linux (MVP)** | **ported from tsuuanmi/internet**: Chrome on its own Xvfb, `x11vnc -localhost` with a one-time password file, and a token-gated **noVNC** page on 127.0.0.1. The operator runs `ssh -L <port>:127.0.0.1:<port> host` and opens the printed URL. The page has Save, Cancel, and paste-from-host buttons. The session is started on demand, and its token expires after a short TTL |
+| **visible** | desktop (v1.0) | Chrome opens on screen with the account's login profile |
 
-**Save:** close Chrome gracefully and wait for the profile lock to release.
-Reopen the profile headed in the invisible display, capture the state for
-`stateOrigins` with IndexedDB, then verify it with `checkAuth` in a **fresh**
-context from the captured state. Hash `identity()`, then write the record with
-`revision + 1`. A failed verification saves nothing.
+### Credential login (`credentials`, opt-in)
+
+A deterministic state machine runs on the **persistent login profile**, so the
+device stays recognized. It starts **only after positive sign-out evidence**,
+never on a schedule:
+
+```text
+probe chatgpt.com ── signed in ──▶ done (most runs end here)
+   │ signed out
+   ▼
+email page ─▶ password page ─▶ branch on what loads (timeout per step):
+   ├─ authenticator (TOTP) ──▶ code from code provider ──▶ submit once ──▶ verify
+   ├─ other MFA offered first ──▶ "try another method" ──▶ authenticator
+   ├─ email code / push ──▶ code provider if one is opted in, otherwise NEEDS_HUMAN
+   ├─ passkey upsell ──▶ "not now"
+   └─ Turnstile / CAPTCHA / unknown page / error ──▶ NEEDS_HUMAN
+NEEDS_HUMAN ──▶ remote browser on the SAME profile + `account.status = reauth-required`
+```
+
+- **Steps are matched by URL path and accessible role**, not brittle CSS.
+  The language is forced to `en-US`. DOM fixtures cover every page, and drift
+  fails closed with `CODE_FIX`.
+- **Code providers:**
+  - `totp-local` computes RFC 6238 locally with `otpauth`. If fewer than 5 seconds
+    remain in the window, it waits for the next window. Codes are never reused.
+  - `manual`: the operator runs `system account code <id> <code>`, or types the
+    code in the remote view.
+  - `imap` (later, opt-in) reads the one-time code from the operator's own mailbox.
+- **Bounds:** at most 2 submission attempts per login, then `NEEDS_HUMAN`.
+  Nothing is retried in a way that could lock the account. Challenges are never
+  solved (CON-3).
+- **Secrets:** the email, password, and TOTP secret live in an **encrypted
+  credential record**. The key comes from the OS keyring, or from a `0600` key
+  file on servers. Values are decrypted only in memory and never logged, sent to
+  a model, or stored in an artifact. **A TOTP secret is never sent to any website
+  or service** (for example 2fa.live), because that would hand over the second
+  factor permanently.
+
+### Save (both modes)
+
+1. Close Chrome gracefully and wait for the profile lock to release.
+2. Reopen the profile headed in the invisible display.
+3. Capture the state for `stateOrigins`, including IndexedDB.
+4. Verify it with `checkAuth` in a **fresh** context built from the captured state.
+5. Hash `identity()`, then write the record with `revision + 1`.
+
+A failed verification saves nothing.
 
 ## Context lifecycle
 

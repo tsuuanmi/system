@@ -40,7 +40,7 @@ for free. The Responses and Messages gateways, which make `system` look like a
 ```text
 host, libs
 kernel:        store-sqlite, blobs-fs, events-store, leases-store, artifacts-store
-provider:      browser-patchright, display-virtual, display-offscreen, remote-login,
+provider:      browser-patchright, display-virtual, remote-login (noVNC), login-credentials,
                accounts-vault, provider-chatgpt-web (+ scheduler, receipts)
 capabilities:  website-core
 routing:       workers-core (capabilities, tiers, egress policy, quota exclusion)
@@ -53,7 +53,8 @@ edge:          mcp-server, cli
 
 | Area | Requirements |
 |---|---|
-| Accounts | REQ-ACC-1..7 (ChatGPT Web accounts; multiple accounts supported) |
+| Platform | Linux x64 only; macOS and Windows in v1.0 |
+| Accounts | REQ-ACC-1..9 (ChatGPT Web accounts; multiple accounts; opt-in credential login with local TOTP) |
 | Provider turns | REQ-PRV-1..6 (`reason`, `web-search`, `deep-research`) |
 | Routing | REQ-WRK-1..4, REQ-WRK-7 (egress), REQ-WRK-8 (quota exclusion), REQ-WRK-9 (tiers: website modes as `economy`, `standard`, and `frontier`) |
 | Gateways | REQ-GW-3 (MCP tools: `ask`, `research`, `status`, `result`), REQ-GW-4 (CLI: login, status, ask, research, explain) |
@@ -82,8 +83,9 @@ usable build, delivered at milestone M1.5:
 |---|---|
 | MCP tools | `ask`, `research`, `status`, `result`; `ask` and `research` take an optional `sessionId`; `research` returns a `SessionId` at once |
 | CLI | `account add/login/list/remove`, `ask`, `research`, `status` |
-| Browser | invisible headed Chrome (`virtual` on Linux, `offscreen` elsewhere); remote and visible login ([browser runtime](../design/browser-runtime.md)) |
-| Accounts | provider-agnostic vault; one or more ChatGPT accounts; saved state survives restarts |
+| Platform | **Linux x64 only** |
+| Browser | invisible headed Chrome on Xvfb (`virtual`); remote login over noVNC through an SSH tunnel, ported from tsuuanmi/internet ([browser runtime](../design/browser-runtime.md#login-flows)) |
+| Accounts | provider-agnostic vault; one or more ChatGPT accounts; saved state survives restarts; optional credential login (email, password, local TOTP) with fallback to the remote view; `system account code <id> <code>` |
 | Reliability | turn receipts and reconciliation, two-clock completion, per-account scheduler |
 | Routing | minimal: the first `ready` account in configured priority that proves the capability; tier = the selected ChatGPT mode; route and tier decision artifacts recorded |
 | Execution | each call is a one-node DAG on the engine core |
@@ -97,6 +99,10 @@ Slice 1 exit criteria:
    result without sending the prompt twice.
 3. With two saved accounts, marking one `reauth-required` routes new work to the
    other, and the decision artifact shows why.
+4. On a Linux server with no display, an operator can sign in through
+   `ssh -L` and the noVNC page. An account with credential login re-authenticates
+   with TOTP after a forced sign-out, and an email-code challenge falls back to
+   the remote view.
 
 **Slice 2** completes the MVP: the `compact` economy node (a two-node DAG), the
 egress policy, quota exclusion, `explain`, usage reports, and the remaining exit
@@ -185,7 +191,7 @@ operational readiness.
 | Validation | `docs/validation/` with acceptance criteria per requirement, traceability from requirement to test, and the recorded manual release checklist |
 | Reference | `docs/reference/` with the MCP tool contracts, gateway compatibility notes, configuration catalog generated from plugin `Config` schemas, and the seam definitions |
 | Reliability | crash-injection suite across every reconcile point passes repeatedly with zero duplicate effects; every bound in INV-9 configured and tested |
-| Platforms | Linux and macOS supported; remote login on Linux; packaged distribution with checksum-verified artifacts |
+| Platforms | Linux and macOS supported (Windows best-effort): `offscreen` display and visible login join Linux's `virtual` display and noVNC remote login; packaged distribution with checksum-verified artifacts |
 
 ### Production-ready exit criteria
 

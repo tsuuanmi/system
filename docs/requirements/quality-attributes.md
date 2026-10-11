@@ -14,6 +14,6 @@
 | QA-8 | Boundedness | Concurrency per account, retries, review cycles, resubmissions, caches, and payload sizes all have configured upper bounds. |
 | QA-9 | Replaceability | A provider, browser engine, store, or protocol adapter can be replaced behind its seam without changing the layers above it. |
 | QA-10 | Testability | Each layer is testable without real provider accounts, using fakes at its seam. Account-bound flows have a scripted manual validation checklist. |
-| QA-11 | Portability | The host runs on Linux and macOS. Remote login is Linux-first (see [constraints](constraints.md)). |
+| QA-11 | Portability | The MVP runs on Linux x64 (Xvfb virtual display, remote login over noVNC through an SSH tunnel). v1.0 adds macOS (and Windows best-effort) with the off-screen display and visible login (see [constraints](constraints.md)). |
 | QA-12 | Token economy | Routing places work on the lowest intelligence tier (P4) and the cheapest quota class (P1) that prove the required capabilities. Handoffs carry compact syntheses, not transcripts. Correctness always wins over cost. |
 | QA-13 | Tool agnosticism | No model, vendor, agent, client, browser engine, or store is required. Each is a replaceable provider behind a seam ([INV-11](../architecture/invariants.md#inv-11-no-tool-lock-in)). |
