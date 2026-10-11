@@ -15,6 +15,12 @@
     # --- system kernel and edge ---
     - id: store
       name: '@tsuuanmi/system-store'
+    - id: blobs
+      name: '@tsuuanmi/system-blobs'
+    - id: event-log
+      name: '@tsuuanmi/system-event-log'
+    - id: leases
+      name: '@tsuuanmi/system-leases'
     - id: artifacts
       name: '@tsuuanmi/system-artifacts'
     - id: mcp-server

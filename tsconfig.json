@@ -29,6 +29,15 @@
       ],
       "@tsuuanmi/system-mcp-server": [
         "packages/plugins/mcp-server/src/index.ts"
+      ],
+      "@tsuuanmi/system-leases": [
+        "packages/plugins/leases/src/index.ts"
+      ],
+      "@tsuuanmi/system-event-log": [
+        "packages/plugins/event-log/src/index.ts"
+      ],
+      "@tsuuanmi/system-blobs": [
+        "packages/plugins/blobs/src/index.ts"
       ]
     }
   },

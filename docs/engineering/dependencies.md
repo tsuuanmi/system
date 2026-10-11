@@ -32,5 +32,7 @@ code updates this table.
 | Local exec (shell, fs, sandbox) | DSH `dsh-shell`, `dsh-fs`, `dsh-sandbox`, `dsh-subprocess` | library (DSH core) | `ctx.exec` | now direct reuse, since `system` runs on DSH core |
 | Economy-tier and API models | DSH `dsh-llm` + `dsh-llm-pi-ai` | library (DSH core) | `ctx.models` | P4 |
 | Approvals, user questions | DSH `dsh-user-approval`, `dsh-user-questions` | library (DSH core) | plan gate, `NEEDS_HUMAN` | |
+| Leases | own `@tsuuanmi/system-leases`: token claim, heartbeat, and release as in `@gm-hz/agent-dag-workflow`, plus a per-resource monotonic generation fence (that package leaves fencing out of scope) | build | `ctx.leases` | [scheduling and leases](../design/scheduling-and-leases.md) |
+| Blobs | own `@tsuuanmi/system-blobs`; DSH `ctx.attachments` normalizes images and binds files to sessions, so it does not fit a generic content-addressed store | build | `ctx.blobs` | verified on read |
 | Workflow durability | own engine modelled on `@gm-hz/agent-dag-workflow` (journal + CAS, `invocationId`, `needs_attention`, content-addressed artifacts) | build (reimplement; fork possible, MIT) | `ctx.workflow` | [ADR-0004](../decisions/adr/0004-single-workflow-runtime.md); adds node leases, input-hash reuse, append-only growth, decision artifacts ([review](../research/dsh-community-plugins-review.md)) |
 | Worker admission and routing, team policy | own | build | `ctx.workers`, `ctx.teams` | the semantic remainder: no existing tool provides these contracts |

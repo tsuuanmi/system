@@ -12,6 +12,9 @@ export default defineConfig({
       '@tsuuanmi/system-artifacts': src('./packages/plugins/artifacts/src/index.ts'),
       '@tsuuanmi/system-credentials-vault': src('./packages/plugins/credentials-vault/src/index.ts'),
       '@tsuuanmi/system-mcp-server': src('./packages/plugins/mcp-server/src/index.ts'),
+      '@tsuuanmi/system-leases': src('./packages/plugins/leases/src/index.ts'),
+      '@tsuuanmi/system-event-log': src('./packages/plugins/event-log/src/index.ts'),
+      '@tsuuanmi/system-blobs': src('./packages/plugins/blobs/src/index.ts'),
     },
   },
   test: {

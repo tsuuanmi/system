@@ -1,0 +1,15 @@
+{
+  "name": "@tsuuanmi/system-leases",
+  "version": "0.0.0",
+  "private": true,
+  "description": "ctx.leases: token leases with monotonic generations used as commit fences (INV-4)",
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "exports": { ".": { "types": "./lib/index.d.ts", "default": "./lib/index.js" } },
+  "files": ["lib"],
+  "scripts": { "build": "tsc -p tsconfig.build.json" },
+  "dependencies": { "@tsuuanmi/system-libs": "workspace:*", "@tsuuanmi/system-store": "workspace:*" },
+  "peerDependencies": { "@deepseek-ai/cordis": "4.0.5-alpha.1", "@deepseek-ai/schemastery": "3.18.5-alpha.1" },
+  "devDependencies": { "@deepseek-ai/cordis": "4.0.5-alpha.1", "@deepseek-ai/schemastery": "3.18.5-alpha.1" }
+}

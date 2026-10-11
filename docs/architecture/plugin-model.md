@@ -35,10 +35,10 @@ can be added without changing consumers.
 | Layer | Seam (`ctx.*`) | Planned providers | Main consumers |
 |---|---|---|---|
 | Kernel | `store` | `@tsuuanmi/system-store` (`system` tables on `node:sqlite`) | every stateful plugin |
-| Kernel | `blobs` | **DSH** `ctx.attachments` (local provider), behind a `system` adapter | workflow, website |
+| Kernel | `blobs` | `@tsuuanmi/system-blobs` (DSH `ctx.attachments` is prompt-attachment oriented, so not reused) | workflow, website |
 | Kernel | `artifacts` (envelope, ids, lineage, schema validation, explain) | `@tsuuanmi/system-artifacts` | every producer of results or decisions |
-| Kernel | `eventLog` (named so because Cordis owns `ctx.events`) | `event-log-store` | CLI, Web UI, observability |
-| Kernel | `leases` | `leases-store` | scheduler, workflow |
+| Kernel | `eventLog` (named so because Cordis owns `ctx.events`) | `@tsuuanmi/system-event-log` | CLI, Web UI, observability |
+| Kernel | `leases` | `@tsuuanmi/system-leases` | scheduler, workflow |
 | Provider runtime | `browser` | `browser-patchright` | provider drivers, remote login |
 | Provider runtime | `display` | `display-virtual` (Xvfb), `display-offscreen`, `display-visible` (headless only in `dev` fakes) | browser, remote login ([browser runtime](../design/browser-runtime.md)) |
 | Provider runtime | `accounts` | `accounts-vault` (secrets through **DSH** `ctx.credentials`, provided by `@tsuuanmi/system-credentials-vault`) | provider runtime, admission |

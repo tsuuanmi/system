@@ -4,11 +4,20 @@
   "private": true,
   "description": "The system profile's only bundle: allow-listed DSH core rows + system plugins, no dsh-base (ADR-0019)",
   "type": "module",
-  "files": ["cordis.patch.yml"],
-  "dsh": { "bundle": { "patch": "./cordis.patch.yml" } },
+  "files": [
+    "cordis.patch.yml"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
   "dependencies": {
     "@tsuuanmi/system-artifacts": "workspace:*",
+    "@tsuuanmi/system-blobs": "workspace:*",
     "@tsuuanmi/system-credentials-vault": "workspace:*",
+    "@tsuuanmi/system-event-log": "workspace:*",
+    "@tsuuanmi/system-leases": "workspace:*",
     "@tsuuanmi/system-mcp-server": "workspace:*",
     "@tsuuanmi/system-store": "workspace:*"
   },

@@ -19,10 +19,11 @@ work. Each milestone ends with working, tested software and updated canonical do
 
 **Progress (2026-10-11).** M0 is in progress on branch `m0/dsh-core-spike`.
 
-- Done: the DSH core spike, `system-store`, `system-artifacts`,
-  `system-credentials-vault`, `system-mcp-server` (`status` live), the
-  `system-bundle` profile, the `system` CLI, CI, and an e2e test through `dsh`.
-- Remaining: `eventLog`, `leases`, and `blobs`.
+- Done: the DSH core spike, `system-store`, `system-blobs`, `system-event-log`,
+  `system-leases`, `system-artifacts`, `system-credentials-vault`,
+  `system-mcp-server` (`status` live), the `system-bundle` profile, the `system`
+  CLI, CI, and an e2e test through `dsh`.
+- **M0 is complete pending review.** Next is M1.
 
 Later candidates, each needing its own proposal: A2A gateway and runtime
 (cross-runtime peers), an ACP client gateway for editors, sandboxed or SSH `exec`

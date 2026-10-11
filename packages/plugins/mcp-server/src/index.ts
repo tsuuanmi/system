@@ -72,6 +72,7 @@ export function createMcpServer(ctx: Context): McpServer {
       stage: 'M0',
       store: ctx.get('store') ? 'ok' : 'absent',
       artifacts: artifacts ? artifacts.list({ limit: 1000 }).length : null,
+      kernel: ['store', 'blobs', 'eventLog', 'leases', 'artifacts', 'credentials'].filter((key) => ctx.get(key) !== undefined),
       providers: [] as string[],
     }
     return { content: [{ type: 'text' as const, text: JSON.stringify(status) }], structuredContent: status }
