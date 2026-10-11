@@ -4,15 +4,28 @@
 
 ## Toolchain
 
-| Concern | Tool |
+The toolchain **mirrors DSH's own**, so `system` packages build, lint, and test
+the same way as the DSH packages they run beside
+([ADR-0018](../decisions/adr/0018-build-on-dsh-core.md)). **Bun is not used.**
+
+| Concern | Tool (same as DSH) |
 |---|---|
-| runtime / package manager | Node `^22.19 \|\| >=24`, pnpm ([ADR-0018](../decisions/adr/0018-build-on-dsh-core.md)) |
+| runtime | Node `^22.19 \|\| >=24` (CI on 22 and 24) |
+| package manager | pnpm 11 workspaces (`packageManager` pinned) |
 | host | DSH core, one exact pinned version; `system` bundle + profile |
-| language | TypeScript, `strict` |
-| lint / format | Biome |
+| language | TypeScript, `strict`, project references like DSH's `tsconfig.base.json` |
+| dev run | `tsx` (source); built `lib/` under plain `node` for smoke tests |
+| build | `tsdown` |
+| lint | `oxlint` + `oxlint-tsgolint` (type-aware), ESLint with `@stylistic` for formatting rules |
 | typecheck | `tsc --noEmit` (or `tsgo`) |
-| tests | Vitest |
+| tests | Vitest (+ `@vitest/coverage-v8`, `fast-check` for property tests) |
+| git hooks | `lefthook` |
+| package hygiene | `publint`, `jscpd` (duplication) |
 | browser automation | `patchright-core` against a system Chrome (CON-7) |
+
+DSH packages and `@deepseek-ai/cordis` are declared as **`peerDependencies` +
+`devDependencies` at one exact version**, as DSH requires for out-of-tree
+plugins.
 
 ## Workspace
 
@@ -35,7 +48,7 @@ needed). The composed tree can be printed for inspection.
 
 ```sh
 pnpm install
-pnpm check        # biome + typecheck + doc and schema checks
+pnpm check        # oxlint + eslint + typecheck + doc and schema checks
 pnpm test         # unit, contract, and composition tests
 pnpm verify       # check + test + build + smoke (CI entry point)
 system --help     # wrapper around `dsh --profile system`

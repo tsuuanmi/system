@@ -16,9 +16,23 @@
 | agent-runtime smoke | the Claude Agent SDK and Codex SDK runtimes on a throwaway repository | probe, run, resume, cancel, sandbox enforcement |
 | manual release checklist | live accounts: sign-in, live turn, tool round trip, full workflow cycle | a failed or skipped item blocks a release |
 
+## Conventions adopted from DSH
+
+- **Real composition over hand wiring.** Every product-visible plugin has a test
+  that boots a test-only `cordis.yml` through the DSH Loader, mocking only
+  external or non-deterministic boundaries (provider websites, models, clock).
+  Hand-built `ctx.plugin(...)` suites alone are not enough.
+- **Built-artifact smoke tests.** The `system` wrapper and the `system` profile
+  are also tested from built `lib/` under plain `node`, which catches failures
+  that `tsx` masks.
+- **HMR safety.** Every registry gets a test that disposes the contributing
+  plugin and asserts cleanup (plugin rule 3).
+- **Mock only the expensive boundary.** Keep the real registry, store, and
+  engine downstream of a scripted provider.
+
 ## CI gates (planned)
 
-1. Biome, typecheck, and the layer dependency check.
+1. oxlint and ESLint, typecheck, and the layer dependency check.
 2. Unit, contract, driver, crash, and concurrency tests.
 3. Real-client smoke (scripted provider).
 4. Schema checks: every file in `schemas/` compiles under Ajv draft 2020-12 with
