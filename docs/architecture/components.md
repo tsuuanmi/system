@@ -25,7 +25,7 @@ routes back here.
 ## Provider runtime
 
 - **Owns:** `BrowserPort` (patchright/Chrome contexts), the display backends
-  (headless, visible, Xvfb), remote login, the account vault (portable auth
+  (invisible: Xvfb or off-screen; visible: the operator's screen; never headless for turns), remote login, the account vault (portable auth
   state, revisioned), conversation bindings, the per-account scheduler, provider
   turn receipts, and one **provider driver** per website.
 - **Does not own:** prompts, team or workflow semantics, or Worker admission.

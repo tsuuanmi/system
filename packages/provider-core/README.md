@@ -1,7 +1,8 @@
 # @tsuuanmi/system-provider-core
 
-Provider-runtime **libraries**, not plugins. They are ported from tsuuanmi/internet
-together with their tests, which serve as the spec (TDD).
+Provider-runtime **libraries**, not plugins, plus the abstract seams that provider
+plugins implement. The libraries are ported from tsuuanmi/internet together with
+their tests, which serve as the spec (TDD).
 
 | Export | Design |
 |---|---|
@@ -9,3 +10,4 @@ together with their tests, which serve as the spec (TDD).
 | `waitForStableCompletion` | two clocks: a hard `timeout` and a `provider_stalled` stall clock ([provider turns](../../docs/design/provider-turns.md#two-clock-completion)) |
 | `reconcileTurn`, `responseHash` | WAIT / RECOVER / RESUBMIT / AMBIGUOUS over `provider-turn-receipt@1.0` ([reconciliation](../../docs/design/provider-turns.md#reconciliation)) |
 | `ProviderError`, `dispositionOf` | failure kind → retry disposition ([recovery](../../docs/design/workflow-engine.md#recovery)) |
+| `Display` (abstract, `ctx.display`) | `prepare('invisible' \| 'visible')`; invisible never means headless; `visible` uses the operator's `DISPLAY` ([display modes](../../docs/design/browser-runtime.md#display-modes-ctxdisplay)); provided by `@tsuuanmi/system-display-virtual` |

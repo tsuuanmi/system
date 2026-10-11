@@ -2,3 +2,4 @@ export { type CompletedResponse, type CompletionSnapshot, type ProviderProgressE
 export { type Disposition, ProviderError, type ProviderErrorKind, abortReason, dispositionOf } from './errors.ts'
 export { type Reconciliation, type Tier, type TurnReceipt, type TurnSnapshot, reconcileTurn, responseHash } from './reconcile.ts'
 export { type ProviderLease, ProviderScheduler } from './scheduler.ts'
+export { Display, type DisplayMode, type PreparedDisplay } from './display.ts'

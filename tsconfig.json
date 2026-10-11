@@ -47,6 +47,9 @@
       ],
       "@tsuuanmi/system-accounts": [
         "packages/plugins/accounts/src/index.ts"
+      ],
+      "@tsuuanmi/system-display-virtual": [
+        "packages/plugins/display-virtual/src/index.ts"
       ]
     }
   },

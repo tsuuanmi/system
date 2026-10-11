@@ -48,8 +48,13 @@ foreground:
 - Disable background throttling (`--disable-background-timer-throttling`,
   `--disable-renderer-backgrounding`, `--disable-backgrounding-occluded-windows`).
 - Prevent system sleep while turns are active.
-- Xvfb is health-monitored. If it dies, every browser on it is closed, and
-  in-flight turns go through receipt reconciliation (INV-4).
+- Xvfb is health-monitored. Every prepared display carries a `lost` signal and a
+  `generation`. If Xvfb dies, the signal aborts with `session_broken`, every
+  browser on it is closed, and in-flight turns go through receipt reconciliation
+  (INV-4). The next `prepare` starts a new Xvfb with the next generation; a
+  startup failure is not cached, so the next turn retries.
+- `invisible` fails closed: when Xvfb cannot start, the turn fails with
+  `config_error`. It never falls back to the operator's `DISPLAY` or to headless.
 
 ## Browser launch (`ctx.browser`)
 
