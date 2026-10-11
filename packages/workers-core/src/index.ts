@@ -1,0 +1,112 @@
+/**
+ * Routing seam definition: `ctx.workers`, the Worker registry and deterministic router
+ * (docs/design/routing.md). Worker sources (the website turn runtime today; agent runtimes
+ * later) register for their plugin's lifetime and describe what each Worker proves now;
+ * `route` turns a work requirement into one admitted Worker or an {@link AdmissionFailure}.
+ * The vocabulary below mirrors `schemas/common.v1.json`, which is canonical.
+ * @module @tsuuanmi/system-workers-core
+ */
+import { type Context, Service } from '@deepseek-ai/cordis'
+
+declare module '@deepseek-ai/cordis' {
+  interface Context {
+    workers: Workers
+  }
+}
+
+/** A content id (`sha256:<hex>`) of an artifact. */
+export type ArtifactRef = `sha256:${string}`
+export type Tier = 'economy' | 'standard' | 'frontier'
+/** Tiers in ascending order of intelligence (purpose P4). */
+export const TIERS: readonly Tier[] = ['economy', 'standard', 'frontier']
+export type QuotaClass = 'subscription-chat' | 'agent-plan' | 'metered' | 'local'
+export type Classification = 'public' | 'operator-shared' | 'local-private'
+export type WorkerState = 'ready' | 'busy' | 'quota-exhausted' | 'reauth-required' | 'unavailable'
+
+/** What a Worker has proven right now (`capability-descriptor@1.0`). */
+export interface CapabilityDescriptor {
+  schema: 'capability-descriptor@1.0'
+  worker: string
+  /** Informational only; routing never branches on it (INV-11). */
+  provider: string
+  tier: Tier
+  quotaClass: QuotaClass
+  locality: 'local' | 'remote'
+  capabilities: Array<{ capability: string; evidence: { kind: 'probe' | 'conformance' | 'plan' | 'sandbox-policy'; ref?: ArtifactRef; at: string } }>
+  state: WorkerState
+  observedAt: string
+}
+
+/** The input to routing (`work-requirement@1.0`). */
+export interface WorkRequirement {
+  schema: 'work-requirement@1.0'
+  objective: string
+  capabilities: string[]
+  data: { classification: Classification; refs: ArtifactRef[] }
+  /** Policy id from a trusted envelope (INV-6, INV-12). */
+  egressPolicy: string
+  boundaries?: string[]
+  effort?: { maxToolCalls?: number; maxSubWorkers?: number; maxMinutes?: number }
+  writes?: { type: 'content' | 'git-head' | 'pull-request' | 'artifact' | 'external'; ref: string; version?: string }
+  tier: { min: Tier; max?: Tier; source: 'profile' | 'caller' | 'decision' | 'default'; decision?: ArtifactRef }
+  budget?: { maxTokens?: number; preferQuota?: QuotaClass[] }
+  acceptance: { contract: string; resultSchema?: string; maxEscalations?: number }
+}
+
+/** Contributes Workers; `describe` is called on every route, so states are current. */
+export interface WorkerSource {
+  readonly name: string
+  describe(): Promise<CapabilityDescriptor[]>
+}
+
+/** The admission checks, in the order the router applies them. */
+export type AdmissionCheck = 'restricted' | 'capability' | 'locality' | 'state' | 'tier'
+
+export interface Rejection {
+  worker: string
+  /** The Worker's state when it was rejected. */
+  state: WorkerState
+  /** Every check the Worker failed, with why; never empty. */
+  failed: Array<{ check: AdmissionCheck; reason: string }>
+}
+
+export interface RouteOptions {
+  /** Only these Workers may take the work, e.g. a persistent session's own account. */
+  restrict?: { workers: readonly string[]; reason: string }
+  /** Who asked, recorded as the producer of the decisions. */
+  producer?: string
+}
+
+export interface AdmittedWorker {
+  worker: CapabilityDescriptor
+  /** The stored work requirement and the decisions that chose the Worker (INV-13). */
+  requirement: ArtifactRef
+  decisions: { tier: ArtifactRef; route: ArtifactRef }
+}
+
+/** No Worker is admissible; fail closed (INV-2). `decision` is the `admission` artifact. */
+export class AdmissionFailure extends Error {
+  constructor(readonly rejections: readonly Rejection[], readonly decision: ArtifactRef, message: string) {
+    super(message)
+    this.name = 'AdmissionFailure'
+  }
+}
+
+export abstract class Workers extends Service {
+  constructor(ctx: Context) {
+    super(ctx, 'workers')
+  }
+
+  /** Register a Worker source for the calling plugin's lifetime. Names are unique. */
+  abstract register(source: WorkerSource): void
+
+  /** Every registered Worker as its source describes it now, ordered by id. */
+  abstract list(): Promise<CapabilityDescriptor[]>
+
+  /**
+   * Admit and choose exactly one Worker, deterministically for the same configuration,
+   * Worker states, and requirement (REQ-WRK-1, REQ-WRK-2). Records a `tier` and a `route`
+   * decision, or an `admission` decision and throws {@link AdmissionFailure}.
+   */
+  abstract route(requirement: WorkRequirement, options?: RouteOptions): Promise<AdmittedWorker>
+}

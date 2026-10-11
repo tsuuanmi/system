@@ -40,6 +40,8 @@
       name: '@tsuuanmi/system-login'                 # login profiles, Save, account_* MCP tools
     - id: egress
       name: '@tsuuanmi/system-egress'                # INV-12: classification policy + credential scan
+    - id: workers
+      name: '@tsuuanmi/system-workers'               # Worker registry, admission, deterministic router
     - id: turns
       name: '@tsuuanmi/system-turns'                 # the ask runtime; contributes MCP ask/result
     - id: mcp-server

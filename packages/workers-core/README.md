@@ -1,0 +1,19 @@
+# @tsuuanmi/system-workers-core
+
+Routing **seam definition**
+([plugin model](../../docs/architecture/plugin-model.md#seam-catalog), plugin rule 2;
+[routing](../../docs/design/routing.md)).
+
+| Seam | Definition | Provider |
+|---|---|---|
+| `ctx.workers` | abstract `Workers` with `register(source)`, `list()`, `route(requirement, options)`; `WorkerSource`, `CapabilityDescriptor`, `WorkRequirement`, `AdmittedWorker`, `AdmissionFailure` | `@tsuuanmi/system-workers` |
+
+- The types mirror `capability-descriptor@1.0` and `work-requirement@1.0`. The
+  schemas in `schemas/` are canonical.
+- Worker sources (the website turn runtime today) and callers depend on this package
+  only. It depends on nothing but Cordis.
+- The conformance suite is [`conformance/workers.ts`](conformance/workers.ts):
+  - source lifetime and duplicate names;
+  - capability admission, data locality, state, and tier bounds;
+  - the order: lowest tier, then quota class, then id;
+  - restriction, determinism, and the decision artifacts.

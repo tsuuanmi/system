@@ -6,7 +6,7 @@ import { ProviderError } from '../src/errors.ts'
 import type {} from '../src/registry.ts'
 
 const driver = (provider: string): ProviderDriver => ({
-  provider, loginUrl: 'https://example.test/login', stateOrigins: ['https://example.test'],
+  provider, capabilities: ['reason'], loginUrl: 'https://example.test/login', stateOrigins: ['https://example.test'],
   checkAuth: async () => 'signed-in', identity: async () => 'id', ask: async () => ({ text: '', binding: undefined, mode: {} }),
   snapshot: async () => ({ text: '', running: false }),
 })

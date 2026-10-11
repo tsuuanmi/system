@@ -29,7 +29,8 @@
     "@tsuuanmi/system-login": "workspace:*",
     "@tsuuanmi/system-provider-core": "workspace:*",
     "@tsuuanmi/system-store": "workspace:*",
-    "@tsuuanmi/system-turn-receipts": "workspace:*"
+    "@tsuuanmi/system-turn-receipts": "workspace:*",
+    "@tsuuanmi/system-workers-core": "workspace:*"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "4.0.5-alpha.1",
@@ -47,6 +48,7 @@
     "@tsuuanmi/system-mcp-server": "workspace:*",
     "@tsuuanmi/system-provider-chatgpt-web": "workspace:*",
     "@tsuuanmi/system-providers": "workspace:*",
+    "@tsuuanmi/system-workers": "workspace:*",
     "patchright-core": "1.63.0",
     "zod": "^4.1.0"
   }

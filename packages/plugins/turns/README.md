@@ -11,11 +11,20 @@
   against the caller's `classification` (default `operator-shared`) for the
   `website` Worker class, and scans it for credentials. A denial fails the turn
   as `egress_denied` with the decision id, and nothing is sent.
-- **Routing:** a persistent session stays on its account. Otherwise the turn goes
-  to the first `ready` account in catalog order that has a driver. Each choice
-  is a `route` decision artifact that lists why every other account was skipped.
-  If no account is ready, the turn fails with `reauth_required` (`USER_ACTION`)
-  and nothing is sent.
+- **Routing through `ctx.workers`:**
+  - this runtime registers the `website` Worker source: one Worker
+    `worker:<account>/<tier>` per account and tier its catalog maps to a mode
+    preset, proving what the account's driver declares, in a state taken from the
+    account's status;
+  - each turn becomes a `work-requirement@1.0`: `reason`, plus
+    `persistent-conversation` for a session and `deep-research` for research;
+    the caller's classification; and the minimum tier;
+  - a persistent session is restricted to its account's Workers;
+  - the router records `tier` and `route` decisions. When nothing is admissible
+    it records an `admission` decision, and the turn fails with nothing sent:
+    `reauth_required` when there is no Worker at all or a Worker was kept out
+    only by its account's state, `config_error` when no Worker serves the
+    capabilities or tier.
 - **Execution:**
   - each account has its own `ProviderScheduler` (capacity
     `maxConcurrentTurnsPerAccount`; one session runs in order);
@@ -57,8 +66,9 @@
     `reconciliation_failed` (AMBIGUOUS).
   - A stop leaves turns as they are for the next start.
 - **Tiers and modes:**
-  - `tier` (or `defaultTier`) maps through the account's catalog `tiers` to the
-    driver's mode preset, and a `tier` decision records the preset;
+  - `tier` (or `defaultTier`) is the **minimum**: the router picks the lowest
+    admitted tier at or above it, and the chosen Worker's tier maps through the
+    account's catalog `tiers` to the driver's mode preset;
   - the receipt records the model and effort that were read back.
 - **Deep research:** `research` starts in a new (or the given) persistent
   session and returns at once (`researchTimeoutMs`, `researchStallTimeoutMs`).
@@ -71,7 +81,7 @@
 - **MCP:** contributes `research`, `ask` (it waits up to `waitSeconds`, default 45 s, max
   55 s, then returns the `turnId`) and `result` (long-polls a `turnId`). These
   replace the built-in placeholders.
-- **Injects:** `store`, `artifacts`, `leases`, `turnReceipts`, `accounts`, `browser`,
-  `providers`; `mcp` is optional.
+- **Injects:** `store`, `artifacts`, `leases`, `egress`, `turnReceipts`, `accounts`,
+  `browser`, `providers`, `workers`; `mcp` is optional.
 - **Not yet:**
   - one-node DAG execution on the workflow engine.

@@ -629,6 +629,9 @@ importers:
       '@tsuuanmi/system-turn-receipts':
         specifier: workspace:*
         version: link:../turn-receipts
+      '@tsuuanmi/system-workers-core':
+        specifier: workspace:*
+        version: link:../../workers-core
     devDependencies:
       '@deepseek-ai/cordis':
         specifier: 4.0.5-alpha.1
@@ -660,12 +663,37 @@ importers:
       '@tsuuanmi/system-providers':
         specifier: workspace:*
         version: link:../providers
+      '@tsuuanmi/system-workers':
+        specifier: workspace:*
+        version: link:../workers
       patchright-core:
         specifier: 1.63.0
         version: 1.63.0
       zod:
         specifier: ^4.1.0
         version: 4.6.5
+
+  packages/plugins/workers:
+    dependencies:
+      '@tsuuanmi/system-artifacts':
+        specifier: workspace:*
+        version: link:../artifacts
+      '@tsuuanmi/system-libs':
+        specifier: workspace:*
+        version: link:../../libs
+      '@tsuuanmi/system-workers-core':
+        specifier: workspace:*
+        version: link:../../workers-core
+    devDependencies:
+      '@deepseek-ai/cordis':
+        specifier: 4.0.5-alpha.1
+        version: 4.0.5-alpha.1(@deepseek-ai/cordis-plugin-include@1.0.10-alpha.1)(@deepseek-ai/cordis-plugin-loader@1.0.6-alpha.1)
+      '@deepseek-ai/schemastery':
+        specifier: 3.18.5-alpha.1
+        version: 3.18.5-alpha.1
+      '@tsuuanmi/system-store':
+        specifier: workspace:*
+        version: link:../store
 
   packages/provider-core:
     dependencies:
@@ -727,6 +755,9 @@ importers:
       '@tsuuanmi/system-turns':
         specifier: workspace:*
         version: link:../plugins/turns
+      '@tsuuanmi/system-workers':
+        specifier: workspace:*
+        version: link:../plugins/workers
     devDependencies:
       '@deepseek-ai/cordis':
         specifier: 4.0.5-alpha.1
@@ -762,6 +793,15 @@ importers:
       patchright-core:
         specifier: 1.63.0
         version: 1.63.0
+
+  packages/workers-core:
+    devDependencies:
+      '@deepseek-ai/cordis':
+        specifier: 4.0.5-alpha.1
+        version: 4.0.5-alpha.1(@deepseek-ai/cordis-plugin-include@1.0.10-alpha.1)(@deepseek-ai/cordis-plugin-loader@1.0.6-alpha.1)
+      '@tsuuanmi/system-artifacts':
+        specifier: workspace:*
+        version: link:../plugins/artifacts
 
   schemas: {}
 

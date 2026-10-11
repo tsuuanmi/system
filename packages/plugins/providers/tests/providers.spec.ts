@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest'
 import Providers from '../src/index.ts'
 
 const driver = (provider: string): ProviderDriver => ({
-  provider, loginUrl: 'https://example.test/login', stateOrigins: ['https://example.test'],
+  provider, capabilities: ['reason'], loginUrl: 'https://example.test/login', stateOrigins: ['https://example.test'],
   checkAuth: async () => 'signed-in', identity: async () => 'user-1', ask: async () => ({ text: 'ok', binding: undefined, mode: {} }), snapshot: async () => ({ text: '', running: false }),
 })
 

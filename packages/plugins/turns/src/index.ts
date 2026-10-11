@@ -1,7 +1,8 @@
 /**
  * `ctx.turns`: the website turn runtime (MVP slice 1, `ask`). A turn is durable from the
- * moment it is accepted: routed to the first ready account (a `route` decision, INV-13),
- * run on that account's scheduler in a fresh browser context, receipted immediately
+ * moment it is accepted: routed through `ctx.workers`, to which this runtime contributes one
+ * website Worker per account and mapped tier (`tier` and `route` decisions, INV-13), run on
+ * that account's scheduler in a fresh browser context, receipted immediately
  * before the send (INV-4), and answered as a `report` artifact. One-shot asks use the
  * provider's temporary conversation; `persist` or `sessionId` uses a persistent one bound
  * to its conversation id (docs/design/provider-turns.md#conversation-modes).
@@ -10,7 +11,7 @@
 import { randomBytes } from 'node:crypto'
 import { type Context, Service } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
-import type {} from '@tsuuanmi/system-accounts'
+import type { AccountStatus } from '@tsuuanmi/system-accounts'
 import type { Classification } from '@tsuuanmi/system-egress'
 import type {} from '@tsuuanmi/system-event-log'
 import type {} from '@tsuuanmi/system-login'
@@ -18,9 +19,10 @@ import type {} from '@tsuuanmi/system-artifacts'
 import { type Lease, LeaseLost, StaleGeneration } from '@tsuuanmi/system-leases'
 import { type ContentId, sha256 } from '@tsuuanmi/system-libs'
 import type {} from '@tsuuanmi/system-gateway-core'
-import { type BrowserTurn, type ConversationMode, type Disposition, type PortableState, ProviderError, type ProviderFeature, ProviderScheduler, type Tier, type TurnReceipt, type TurnSnapshot, dispositionOf, toProviderError } from '@tsuuanmi/system-provider-core'
+import { type BrowserTurn, type ConversationMode, type Disposition, type PortableState, ProviderError, type ProviderErrorKind, type ProviderFeature, ProviderScheduler, type Tier, type TurnReceipt, type TurnSnapshot, dispositionOf, toProviderError } from '@tsuuanmi/system-provider-core'
 import type {} from '@tsuuanmi/system-store'
 import type {} from '@tsuuanmi/system-turn-receipts'
+import { AdmissionFailure, type AdmittedWorker, type CapabilityDescriptor, type WorkRequirement, type WorkerState } from '@tsuuanmi/system-workers-core'
 import { z as zod } from 'zod'
 
 declare module '@deepseek-ai/cordis' {
@@ -37,9 +39,12 @@ export interface TurnView {
   status: TurnStatus
   mode: ConversationMode
   feature: ProviderFeature
+  /** The minimum tier asked for; the Worker's own tier may be higher. */
   tier: Tier
   sessionId?: string
   account?: string
+  /** The admitted Worker, `worker:<account>/<tier>`. */
+  worker?: string
   binding?: string
   answer?: string
   answerArtifact?: ContentId
@@ -59,7 +64,7 @@ export interface AskInput {
   persist?: boolean | undefined
   /** Retry-safe request key: the same key returns the same turn. */
   clientRequestId?: string | undefined
-  /** Intelligence tier; mapped through the account's catalog to a provider mode preset. */
+  /** Minimum intelligence tier; routing picks the lowest admitted tier at or above it (REQ-WRK-9). */
   tier?: Tier | undefined
   /** `deep-research` always runs in a persistent session. */
   feature?: ProviderFeature | undefined
@@ -101,9 +106,11 @@ interface Row {
   mode: ConversationMode
   feature: ProviderFeature
   tier: Tier
+  tier_source: 'caller' | 'default'
   prompt: string
   status: TurnStatus
   account: string | null
+  worker: string | null
   binding: string | null
   answer: string | null
   answer_artifact: string | null
@@ -122,6 +129,31 @@ interface SessionRow {
   binding: string | null
 }
 
+/** Account status → Worker state (capability-descriptor@1.0). */
+const WORKER_STATE: Record<AccountStatus, WorkerState> = { ready: 'ready', new: 'reauth-required', 'reauth-required': 'reauth-required', challenge: 'unavailable', disabled: 'unavailable' }
+
+const websiteWorker = (account: string, tier: Tier): string => `worker:${account}/${tier}`
+
+function parseWebsiteWorker(worker: string): { account: string; tier: Tier } {
+  const match = /^worker:([a-z][a-z0-9-]*)\/(economy|standard|frontier)$/.exec(worker)
+  if (!match) throw new ProviderError('internal', `${worker} is not a website Worker`)
+  return { account: match[1]!, tier: match[2] as Tier }
+}
+
+/**
+ * How a refused admission is handled: by the state that kept an otherwise fitting Worker
+ * out. With no Worker at all, the operator still has to add and sign in an account.
+ */
+function admissionKind(failure: AdmissionFailure): ProviderErrorKind {
+  if (failure.rejections.length === 0) return 'reauth_required'
+  const onlyState = failure.rejections.filter((r) => r.failed.every((f) => f.check === 'state'))
+  if (onlyState.some((r) => r.state === 'reauth-required' || r.state === 'unavailable')) return 'reauth_required'
+  if (onlyState.some((r) => r.state === 'quota-exhausted')) return 'quota_exhausted'
+  if (onlyState.length) return 'overloaded'
+  if (failure.rejections.some((r) => r.failed.every((f) => f.check === 'locality'))) return 'egress_denied'
+  return 'config_error'
+}
+
 const newId = (prefix: string): string => `${prefix}_${randomBytes(8).toString('hex')}`
 const now = (): string => new Date().toISOString()
 const TERMINAL: ReadonlySet<TurnStatus> = new Set(['completed', 'failed'])
@@ -129,7 +161,7 @@ const TERMINAL: ReadonlySet<TurnStatus> = new Set(['completed', 'failed'])
 const LEASE_TTL_MS = 60_000
 
 export class Turns extends Service {
-  static inject = ['store', 'artifacts', 'leases', 'egress', 'turnReceipts', 'accounts', 'browser', 'providers']
+  static inject = ['store', 'artifacts', 'leases', 'egress', 'turnReceipts', 'accounts', 'browser', 'providers', 'workers']
 
   static Config: z<Config> = z.object({
     maxConcurrentTurnsPerAccount: z.natural().min(1).default(2).description('Parallel turns per account (different sessions)'),
@@ -178,7 +210,14 @@ export class Turns extends Service {
       version: 3,
       sql: `ALTER TABLE turns ADD COLUMN classification TEXT;
       ALTER TABLE turns ADD COLUMN egress_decision TEXT;`,
+    }, {
+      // The admitted Worker (ctx.workers) and who set the minimum tier.
+      version: 4,
+      sql: `ALTER TABLE turns ADD COLUMN worker TEXT;
+      ALTER TABLE turns ADD COLUMN tier_source TEXT NOT NULL DEFAULT 'caller';
+      UPDATE turns SET worker = 'worker:' || account || '/' || tier WHERE account IS NOT NULL;`,
     }])
+    ctx.workers.register({ name: 'website', describe: () => this.describeWorkers() })
     ctx.effect(() => {
       queueMicrotask(() => {
         this.purge()
@@ -232,11 +271,11 @@ export class Turns extends Service {
       }
       const row: Row = {
         turn_id: newId('turn'), request_key: requestKey, session_id: sessionId, mode: sessionId ? 'persistent' : 'temporary', feature, tier,
-        prompt, status: 'queued', account: null, binding: null, answer: null, answer_artifact: null, route_decision: null, tier_decision: null,
+        tier_source: input.tier ? 'caller' : 'default', prompt, status: 'queued', account: null, worker: null, binding: null, answer: null, answer_artifact: null, route_decision: null, tier_decision: null,
         egress_decision: null, classification: input.classification ?? null, error: null, created_at: now(), updated_at: now(),
       }
-      db.prepare(`INSERT INTO turns (turn_id, request_key, session_id, mode, feature, tier, classification, prompt, status, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?)`).run(row.turn_id, requestKey, sessionId, row.mode, feature, tier, row.classification, prompt, row.created_at, row.updated_at)
+      db.prepare(`INSERT INTO turns (turn_id, request_key, session_id, mode, feature, tier, tier_source, classification, prompt, status, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?)`).run(row.turn_id, requestKey, sessionId, row.mode, feature, tier, row.tier_source, row.classification, prompt, row.created_at, row.updated_at)
       this.ctx.store.afterCommit(() => void this.schedule(row))
       return this.view(row)
     })
@@ -380,52 +419,57 @@ export class Turns extends Service {
     }
   }
 
-  /** Persistent sessions stay on their account; otherwise the first ready account in catalog order. */
-  private async route(row: Row, lease: () => Lease): Promise<string> {
-    const accounts = await this.ctx.accounts.list()
+  /**
+   * The website Workers: one per account and tier its catalog maps to a mode preset. They
+   * prove what the account's driver declares; a missing driver makes them unavailable.
+   */
+  private async describeWorkers(): Promise<CapabilityDescriptor[]> {
     const providers = new Set(this.ctx.providers.list())
+    const observedAt = now()
+    return (await this.ctx.accounts.list()).flatMap((account) => {
+      const driver = providers.has(account.provider) ? this.ctx.providers.get(account.provider) : undefined
+      return TIERS.filter((tier) => account.tiers[tier]).map((tier): CapabilityDescriptor => ({
+        schema: 'capability-descriptor@1.0', worker: websiteWorker(account.id, tier), provider: account.provider, tier,
+        quotaClass: account.quotaClass, locality: 'remote',
+        capabilities: (driver?.capabilities ?? []).map((capability) => ({ capability, evidence: { kind: 'conformance', at: observedAt } })),
+        state: driver ? WORKER_STATE[account.status] : 'unavailable',
+        observedAt,
+      }))
+    })
+  }
+
+  /** Admit a Worker through ctx.workers; a persistent session stays on its account. */
+  private async route(row: Row, lease: () => Lease): Promise<string> {
     const session = row.session_id ? this.session(row.session_id) : undefined
     const bound = session?.account ?? undefined
-    let chosen: string | undefined
-    const candidates = accounts.map((a) => {
-      const reasons: string[] = []
-      if (bound && a.id !== bound) reasons.push(`session is bound to ${bound}`)
-      else if (!providers.has(a.provider)) reasons.push(`no driver for ${a.provider}`)
-      else if (a.status !== 'ready') reasons.push(`status ${a.status}`)
-      const selected = reasons.length === 0 && chosen === undefined
-      if (selected) chosen = a.id
-      else if (reasons.length === 0) reasons.push('a ready account earlier in the catalog was chosen')
-      return { option: a.id, selected, reasons: selected ? [bound ? 'the session\'s account' : 'first ready account'] : reasons }
-    })
-    if (!chosen) {
-      throw new ProviderError('reauth_required', `no ready account can take this turn (${candidates.map((c) => `${c.option}: ${c.reasons.join(', ')}`).join('; ') || 'no accounts configured'})`)
+    const requirement: WorkRequirement = {
+      schema: 'work-requirement@1.0',
+      objective: row.feature === 'deep-research' ? 'Write a provider-native research report on the caller\'s question' : 'Answer the caller\'s prompt',
+      capabilities: ['reason', ...(row.mode === 'persistent' ? ['persistent-conversation'] : []), ...(row.feature === 'deep-research' ? ['deep-research'] : [])],
+      data: { classification: row.classification ?? this.ctx.egress.defaultClassification, refs: [] },
+      egressPolicy: 'egress.classification-and-secrets',
+      tier: { min: row.tier, source: row.tier_source },
+      acceptance: { contract: 'acceptance.provider-terminal' },
     }
-    const decision = this.ctx.artifacts.recordDecision({
-      decisionType: 'route',
-      question: `Which account runs turn ${row.turn_id}?`,
-      inputs: [],
-      candidates,
-      decider: { type: 'rule', id: 'turns.route.first-ready', version: '1' },
-      outcome: { option: chosen },
-      deterministic: true,
-    }, { producer: { type: 'system', ref: 'turns' } })
-    const account = chosen
-    const preset = accounts.find((a) => a.id === account)?.tiers[row.tier]
-    const tier = this.ctx.artifacts.recordDecision({
-      decisionType: 'tier',
-      question: `Which intelligence tier and mode preset does turn ${row.turn_id} use on ${account}?`,
-      inputs: [decision.id],
-      candidates: TIERS.map((t) => ({ option: t, selected: t === row.tier, reasons: t === row.tier ? [row.tier === (this.config.defaultTier ?? 'standard') ? 'requested or default tier' : 'requested tier'] : [] })),
-      decider: { type: 'rule', id: 'turns.tier.catalog', version: '1' },
-      outcome: { option: row.tier, detail: { account, preset: preset ?? null } },
-      deterministic: true,
-    }, { producer: { type: 'system', ref: 'turns' } })
+    let admitted: AdmittedWorker
+    try {
+      admitted = await this.ctx.workers.route(requirement, {
+        producer: 'turns',
+        ...(bound ? { restrict: { workers: TIERS.map((t) => websiteWorker(bound, t)), reason: `the session is bound to ${bound}` } } : {}),
+      })
+    } catch (error) {
+      if (!(error instanceof AdmissionFailure)) throw error
+      this.update(row.turn_id, { route_decision: error.decision }, lease)
+      const hint = error.rejections.length ? '' : ': add an account with a tier → mode map to the catalog, then sign it in'
+      throw new ProviderError(admissionKind(error), `${error.message}${hint}`, { cause: error })
+    }
+    const { account } = parseWebsiteWorker(admitted.worker.worker)
     this.ctx.store.transaction((db) => {
       this.ctx.leases.fence(lease())
       // A new persistent session is bound to the first account that runs it.
       if (row.session_id) db.prepare('UPDATE turn_sessions SET account = COALESCE(account, ?) WHERE session_id = ?').run(account, row.session_id)
     })
-    this.update(row.turn_id, { account, route_decision: decision.id, tier_decision: tier.id }, lease)
+    this.update(row.turn_id, { account, worker: admitted.worker.worker, route_decision: admitted.decisions.route, tier_decision: admitted.decisions.tier }, lease)
     return account
   }
 
@@ -437,6 +481,8 @@ export class Turns extends Service {
     const session = row.session_id ? this.session(row.session_id) : undefined
     const identity = this.identity(row, accountId)
     const research = row.feature === 'deep-research'
+    if (!row.worker) throw new ProviderError('internal', `turn ${row.turn_id} has an account but no Worker`)
+    const { tier } = parseWebsiteWorker(row.worker)
     const deadlines = research
       ? { timeoutMs: this.config.researchTimeoutMs ?? 60 * 60_000, stallTimeoutMs: this.config.researchStallTimeoutMs ?? 30 * 60_000 }
       : { timeoutMs: this.config.turnTimeoutMs ?? 15 * 60_000, stallTimeoutMs: this.config.stallTimeoutMs ?? 5 * 60_000 }
@@ -446,7 +492,7 @@ export class Turns extends Service {
       result = await driver.ask(turn.page, row.prompt, {
         conversation: row.mode,
         binding: session?.binding ?? undefined,
-        mode: view.tiers[row.tier],
+        mode: view.tiers[tier],
         feature: row.feature,
         signal,
         deadlines,
@@ -456,7 +502,7 @@ export class Turns extends Service {
             this.ctx.turnReceipts.submit({
             ...identity, prompt: row.prompt, previousResponse,
             conversation: { provider: view.provider, binding: session?.binding ?? '' },
-            mode: { verified: true, tier: row.tier, ...mode, feature: row.feature },
+            mode: { verified: true, tier, ...mode, feature: row.feature },
             })
           })
         },
@@ -583,7 +629,7 @@ export class Turns extends Service {
     const shape = (view: TurnView) => ({ content: [{ type: 'text' as const, text: view.answer ?? JSON.stringify(view) }], structuredContent: { ...view } })
     const failure = (error: unknown) => ({ isError: true, content: [{ type: 'text' as const, text: (error as Error).message }] })
     const waitSeconds = zod.number().int().min(0).max(55).optional().describe('How long to wait for the answer before returning (default 45 s)')
-    const tier = zod.enum(['economy', 'standard', 'frontier']).optional().describe('Intelligence tier; the account catalog maps it to a model and effort preset')
+    const tier = zod.enum(['economy', 'standard', 'frontier']).optional().describe('Minimum intelligence tier; the lowest admitted tier at or above it runs, through its account\'s model and effort preset')
     const classification = zod.enum(['public', 'operator-shared', 'local-private']).optional()
       .describe('Data classification of the prompt; local-private content never leaves the machine (INV-12)')
     c.mcp.tool('ask', {
@@ -682,6 +728,7 @@ export class Turns extends Service {
       turnId: row.turn_id, status: row.status, mode: row.mode, feature: row.feature, tier: row.tier,
       ...(row.session_id ? { sessionId: row.session_id } : {}),
       ...(row.account ? { account: row.account } : {}),
+      ...(row.worker ? { worker: row.worker } : {}),
       ...(row.binding ? { binding: row.binding } : {}),
       ...(row.answer !== null ? { answer: row.answer } : {}),
       ...(row.answer_artifact ? { answerArtifact: row.answer_artifact as ContentId } : {}),

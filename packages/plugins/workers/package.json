@@ -1,0 +1,19 @@
+{
+  "name": "@tsuuanmi/system-workers",
+  "version": "0.0.0",
+  "private": true,
+  "description": "ctx.workers: Worker registry, fail-closed admission, and the deterministic router; every outcome is a decision artifact",
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "exports": { ".": { "types": "./lib/index.d.ts", "default": "./lib/index.js" } },
+  "files": ["lib"],
+  "scripts": { "build": "tsc -p tsconfig.build.json" },
+  "dependencies": {
+    "@tsuuanmi/system-artifacts": "workspace:*",
+    "@tsuuanmi/system-libs": "workspace:*",
+    "@tsuuanmi/system-workers-core": "workspace:*"
+  },
+  "peerDependencies": { "@deepseek-ai/cordis": "4.0.5-alpha.1", "@deepseek-ai/schemastery": "3.18.5-alpha.1" },
+  "devDependencies": { "@deepseek-ai/cordis": "4.0.5-alpha.1", "@deepseek-ai/schemastery": "3.18.5-alpha.1", "@tsuuanmi/system-store": "workspace:*" }
+}

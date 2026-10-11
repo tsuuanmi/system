@@ -55,6 +55,7 @@ export function shippedMap(overlay?: string): UiMap {
 
 export class ChatGptWebDriver implements ProviderDriver<Page> {
   readonly provider = 'chatgpt-web'
+  readonly capabilities = ['reason', 'persistent-conversation', 'deep-research'] as const
   readonly loginUrl: string
   readonly stateOrigins: readonly string[]
   readonly map: UiMap

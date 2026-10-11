@@ -4,7 +4,8 @@
 ([browser runtime](../../../docs/design/browser-runtime.md)).
 
 - **Catalog:** configuration. Any number of accounts per provider, each with an id,
-  provider, quota class, and a tier → mode map (P4).
+  provider, quota class, and a tier → mode map (P4). Each mapped tier is one
+  website Worker for routing; a tier left unmapped is never served by the account.
 - **Storage:** each account's `account@1.0` record, including its portable browser
   state, and its login credentials are separate **encrypted** grant records in
   `ctx.credentials` (`system-accounts/<id>`, `system-credentials/<id>`). Writes are

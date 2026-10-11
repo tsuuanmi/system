@@ -52,6 +52,11 @@ export interface AskResult {
 
 export interface ProviderDriver<Page = unknown> {
   readonly provider: string
+  /**
+   * Routing capabilities this driver implements and its tests prove (docs/design/routing.md
+   * #capability-vocabulary), e.g. `reason`, `persistent-conversation`, `deep-research`.
+   */
+  readonly capabilities: readonly string[]
   /** Where an interactive login starts. */
   readonly loginUrl: string
   /** Origins whose cookies, localStorage, and IndexedDB make up the portable state. */

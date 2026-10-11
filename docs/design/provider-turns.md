@@ -61,10 +61,11 @@ default. Live observations are in the
     and its `defaultMode`;
   - each account's catalog `tiers` (tier → preset name);
   - the turn runtime's `defaultTier`.
-- **Resolution.** A turn's tier (requested, or `defaultTier`) maps through the
-  account's `tiers` to a preset. A tier with no preset uses the driver's
-  `defaultMode`. The choice is recorded as a `tier` decision that names the
-  preset.
+- **Resolution.** A turn's tier (requested, or `defaultTier`) is a minimum.
+  Each tier an account maps to a preset is one Worker. The router
+  ([routing](routing.md#algorithm)) picks the lowest admitted tier at or above
+  the minimum and records a `tier` decision. A tier the catalog does not map has
+  no Worker, so it is never served by some other mode.
 - **Verification.** The driver selects the model radio and steps the Power
   slider, then **reads both back**. An unknown preset, an unknown or locked
   model, or an unreachable level fails with `config_error` before anything is
@@ -160,8 +161,9 @@ generation are still current. Otherwise the write is dropped
 its [README](../../packages/plugins/turns/README.md):
 
 - **Accept durably.** The turn is stored as `queued` before anything runs.
-- **Route.** A persistent session stays on its account. Otherwise the turn goes
-  to the first ready account, and the choice is recorded as a `route` decision.
+- **Route.** `ctx.workers` admits one website Worker (an account at a tier) and
+  records `tier` and `route` decisions, or an `admission` decision when none
+  fits. A persistent session stays on its account.
 - **Schedule.** The account's scheduler runs the turn.
 - **Open.** A fresh context is built from the saved state.
 - **Run the driver.**

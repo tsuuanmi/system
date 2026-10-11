@@ -78,7 +78,7 @@ export class Accounts extends Service {
       provider: z.string().pattern(ID).required(),
       label: z.string(),
       quotaClass: z.union(['subscription-chat', 'agent-plan', 'metered', 'local']).required(),
-      tiers: z.dict(z.string()).default({}),
+      tiers: z.dict(z.string()).default({}).description('Tier → provider mode preset; each mapped tier is one Worker, an unmapped tier is never served'),
     })).default([]).description('Account catalog: any number of accounts per provider'),
   }) as unknown as z<Config>
 

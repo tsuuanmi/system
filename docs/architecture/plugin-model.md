@@ -43,15 +43,15 @@ can be added without changing consumers.
 | Provider runtime | `display` (abstract `Display` in `@tsuuanmi/system-provider-core`; `prepare('invisible' \| 'visible')`, where `visible` is the operator's `DISPLAY` for every provider) | `@tsuuanmi/system-display-virtual` (Xvfb, Linux), `display-offscreen` (v1.0); never headless | browser ([browser runtime](../design/browser-runtime.md)) |
 | Provider runtime | `login` (login profiles, Save) | `@tsuuanmi/system-login` | operators (`account_save`), remote login |
 | Provider runtime | `accounts` | `@tsuuanmi/system-accounts` (records and credentials as encrypted grants in **DSH** `ctx.credentials`, provided by `@tsuuanmi/system-credentials-vault`) | provider runtime, admission |
-| Routing | `egress` (INV-12: classification policy per Worker class + credential scan of the actual payload; `egress` decisions) | `@tsuuanmi/system-egress` | the turn runtime; later Worker admission |
-| Provider runtime | `turns` (the ask runtime: durable turns, routing, scheduling, MCP `ask`/`result`) | `@tsuuanmi/system-turns` | MCP clients, CLI `system ask` |
+| Routing | `egress` (INV-12: classification policy per Worker class + credential scan of the actual payload; `egress` decisions) | `@tsuuanmi/system-egress` | the turn runtime, before routing |
+| Provider runtime | `turns` (the ask runtime: durable turns, the website Worker source, scheduling, MCP `ask`/`result`) | `@tsuuanmi/system-turns` | MCP clients, CLI `system ask` |
 | Provider runtime | `turnReceipts` | `@tsuuanmi/system-turn-receipts` | provider drivers, recovery |
 | Provider runtime | `providers` (driver registry) | `@tsuuanmi/system-providers` registry; drivers: `@tsuuanmi/system-provider-chatgpt-web`, `provider-gemini-web` | website capability |
 | Capabilities | `website` | `website-core` | Worker providers |
 | Capabilities | `exec` | **DSH** `ctx.shell` / `ctx.fs` / `ctx.sandbox` / `ctx.subprocess` (local, sandbox, SSH) | local-tools Worker |
 | Capabilities | `models` (API and local model providers) | **DSH** `ctx.llm` (`llm-pi-ai`: OpenAI-compatible and others) | Worker providers, especially `economy`-tier jobs ([purpose P4](../requirements/purpose.md#p4-cheap-models-do-low-level-work-strong-models-do-hard-work)) |
 | Capabilities | `agentRuntimes` | `runtime-claude-agent-sdk`, `runtime-codex-sdk`, `runtime-acp` | Worker providers ([agent runtimes](../design/agent-runtimes.md)) |
-| Routing | `workers` (registry, admission, router, acceptance) | `workers-core` | orchestration, gateways |
+| Routing | `workers` (Worker sources, fail-closed admission, deterministic router; acceptance later; definition `Workers` in `@tsuuanmi/system-workers-core`) | `@tsuuanmi/system-workers` | the turn runtime; later orchestration and gateways |
 | Orchestration | `workflow` | `workflow-engine` | gateways, CLI |
 | Orchestration | `workerSessions` (Worker sessions, bindings, mailbox, wake, budgets) | `worker-sessions-store` | team runner, session nodes, MCP session tools ([design](../design/sessions-and-messaging.md)) |
 | Orchestration | `teams` | `team-runner` | workflow |
@@ -167,6 +167,7 @@ choice ([INV-11](invariants.md#inv-11-no-tool-lock-in)).
 | `browser` | `Browser<Page, Context>` in `@tsuuanmi/system-provider-core` (engine-neutral) | `provider-core/conformance/browser.ts` | `browser-patchright` |
 | `providers` | `ProviderRegistry` in `@tsuuanmi/system-provider-core` | `provider-core/conformance/providers.ts` | `providers` |
 | `mcp` | `McpTools` in `@tsuuanmi/system-gateway-core` | `gateway-core/conformance/mcp-tools.ts` | `mcp-server` (listed through a real MCP client) |
+| `workers` | `Workers` in `@tsuuanmi/system-workers-core` | `workers-core/conformance/workers.ts` | `workers` |
 
 Consumers depend on definitions only. `turns` and `login` no longer import the
 browser, registry, or gateway implementations. The display suite found a defect
@@ -181,3 +182,11 @@ in the test fake (two Xvfbs for concurrent callers), which was then fixed.
 - **A scripted fake `ProviderDriver`** for testing the turn runtime without a
   browser is still to come; today the runtime is tested through a real browser on
   the fake site.
+- **Worker acceptance** (`accept(result, contract)`, REQ-WRK-3) and **tier
+  escalation** belong to `ctx.workers` but arrive with the workflow engine (M3),
+  the first caller that has an acceptance contract to check.
+- **Capability evidence is declared, not probed.** A website Worker proves what its
+  driver declares (`ProviderDriver.capabilities`, covered by the driver's tests).
+  Per-account probes, for example whether an account's plan offers Deep research,
+  come with P2. Quota exhaustion is not yet observed, so no Worker reports
+  `quota-exhausted`.

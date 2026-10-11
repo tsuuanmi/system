@@ -16,7 +16,7 @@ const home = mkdtempSync(join(tmpdir(), 'system-e2e-'))
 const env = { ...process.env, DSH_HOME: home }
 let child: ChildProcess | undefined
 
-const ALLOWED_ROWS = ['timer', 'credentials', 'webserver', 'store', 'blobs', 'event-log', 'leases', 'artifacts', 'accounts', 'turn-receipts', 'display', 'browser', 'providers', 'provider-chatgpt-web', 'login', 'egress', 'turns', 'mcp-server']
+const ALLOWED_ROWS = ['timer', 'credentials', 'webserver', 'store', 'blobs', 'event-log', 'leases', 'artifacts', 'accounts', 'turn-receipts', 'display', 'browser', 'providers', 'provider-chatgpt-web', 'login', 'egress', 'workers', 'turns', 'mcp-server']
 
 async function client2(url: string, token: string): Promise<Client> {
   const client = new Client({ name: 'e2e-2', version: '0' })

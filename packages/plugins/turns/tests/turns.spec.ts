@@ -14,6 +14,7 @@ import Login from '@tsuuanmi/system-login'
 import BrowserPool from '@tsuuanmi/system-browser-patchright'
 import Vault from '@tsuuanmi/system-credentials-vault'
 import VirtualDisplay from '@tsuuanmi/system-display-virtual'
+import WorkerRouter from '@tsuuanmi/system-workers'
 import McpEndpoint from '@tsuuanmi/system-mcp-server'
 import ChatGptWeb from '@tsuuanmi/system-provider-chatgpt-web'
 import Providers from '@tsuuanmi/system-providers'
@@ -30,7 +31,7 @@ afterEach(async () => {
 })
 
 type CatalogEntry = { id: string; provider: string; quotaClass: 'subscription-chat'; tiers: Record<string, string> }
-const account = (id: string): CatalogEntry => ({ id, provider: 'chatgpt-web', quotaClass: 'subscription-chat', tiers: { economy: 'instant', standard: 'medium', frontier: 'high' } })
+const account = (id: string, tiers: Record<string, string> = { economy: 'instant', standard: 'medium', frontier: 'high' }): CatalogEntry => ({ id, provider: 'chatgpt-web', quotaClass: 'subscription-chat', tiers })
 
 async function boot(options: { fake?: FakeOptions; accounts?: CatalogEntry[]; ready?: string[]; dir?: string; capacity?: number; shared?: FakeChatGpt; turns?: Record<string, unknown> } = {}) {
   const fake = options.shared ?? new FakeChatGpt({ answer: 'OK', ...options.fake })
@@ -52,6 +53,7 @@ async function boot(options: { fake?: FakeOptions; accounts?: CatalogEntry[]; re
     ctx.plugin(Providers),
     ctx.plugin(ChatGptWeb, { origin: fake.origin, overlayPath: join(dir, 'none.yaml'), modes: { instant: { model: 'Latest', effort: 'Instant' }, medium: { model: 'Latest', effort: 'Medium' }, high: { model: 'GPT-6', effort: 'High' } }, defaultMode: 'instant' }),
     ctx.plugin(Login, { profilesDir: join(dir, 'profiles') }),
+    ctx.plugin(WorkerRouter, {}),
     ctx.plugin(Turns, { turnTimeoutMs: 90_000, stallTimeoutMs: 80_000, maxConcurrentTurnsPerAccount: options.capacity ?? 2, ...options.turns }),
     ctx.plugin(WebServer, { host: '127.0.0.1', port: 0 }),
     ctx.plugin(McpEndpoint, { tokenFile: join(dir, 'mcp.token'), discoveryFile: join(dir, 'mcp.json') }),
@@ -81,7 +83,7 @@ describe.runIf(canRunBrowser)('ctx.turns: ask through a saved account', () => {
     const answer = ctx.artifacts.get(turn.answerArtifact!)
     expect(answer?.body).toMatchObject({ schema: 'provider-answer@1.0', text: 'Hello', conversation: { mode: 'temporary' } })
     const route = ctx.artifacts.get(turn.routeDecision!)
-    expect(route?.body).toMatchObject({ decisionType: 'route', outcome: { option: 'chatgpt-main' } })
+    expect(route?.body).toMatchObject({ decisionType: 'route', outcome: { option: 'worker:chatgpt-main/standard' } })
     expect(ctx.turnReceipts.read({ account: 'chatgpt-main', sessionId: turn.turnId, requestId: turn.turnId })).toMatchObject({ status: 'COMPLETED' })
   }, 90_000)
 
@@ -92,8 +94,9 @@ describe.runIf(canRunBrowser)('ctx.turns: ask through a saved account', () => {
     expect(fake.sent[0]).toMatchObject({ model: 'GPT-6', power: 'High' })
     const receipt = ctx.turnReceipts.read({ account: 'chatgpt-main', sessionId: turn.turnId, requestId: turn.turnId })
     expect(receipt?.mode).toEqual({ verified: true, tier: 'frontier', model: 'GPT-6', effort: 'High', feature: 'chat' })
+    expect(turn.worker).toBe('worker:chatgpt-main/frontier')
     const tier = ctx.artifacts.get(turn.tierDecision!)?.body
-    expect(tier).toMatchObject({ decisionType: 'tier', outcome: { option: 'frontier', detail: { preset: 'high' } } })
+    expect(tier).toMatchObject({ decisionType: 'tier', outcome: { option: 'frontier' } })
     const plain = await ctx.turns.wait(ctx.turns.ask({ prompt: 'default tier' }).turnId, 30_000)
     expect(plain.tier).toBe('standard')
     expect(fake.sent[1]).toMatchObject({ model: 'Latest', power: 'Medium' })
@@ -164,15 +167,30 @@ describe.runIf(canRunBrowser)('ctx.turns: ask through a saved account', () => {
     expect(() => ctx.turns.ask({ prompt: 'different', clientRequestId: 'req-1' })).toThrow(/different prompt/)
   }, 90_000)
 
-  it('routes to the first ready account and records why the others were skipped', async () => {
+  it('routes through ctx.workers to an admitted Worker and records why every other one was not chosen', async () => {
     const { ctx } = await boot({ accounts: [account('chatgpt-main'), account('chatgpt-2')], ready: ['chatgpt-2'] })
     const turn = await ctx.turns.wait(ctx.turns.ask({ prompt: 'route me' }).turnId, 30_000)
-    expect(turn).toMatchObject({ status: 'completed', account: 'chatgpt-2' })
+    expect(turn).toMatchObject({ status: 'completed', account: 'chatgpt-2', worker: 'worker:chatgpt-2/standard' })
     const route = ctx.artifacts.get(turn.routeDecision!)?.body as { candidates: Array<{ option: string; selected: boolean; reasons: string[] }> }
-    expect(route.candidates).toEqual([
-      { option: 'chatgpt-main', selected: false, reasons: ['status new'] },
-      { option: 'chatgpt-2', selected: true, reasons: ['first ready account'] },
-    ])
+    const reasons = Object.fromEntries(route.candidates.map((c) => [c.option, c.reasons]))
+    expect(reasons['worker:chatgpt-2/standard']).toContain('proves reason')
+    expect(reasons['worker:chatgpt-2/frontier']).toEqual(['admitted; worker:chatgpt-2/standard has the lower tier standard'])
+    expect(reasons['worker:chatgpt-main/standard']).toEqual(['state reauth-required'])
+    expect(reasons['worker:chatgpt-main/economy']).toEqual(['state reauth-required', 'tier economy is below the minimum standard'])
+  }, 90_000)
+
+  it('treats the tier as a minimum, and fails closed when no Worker serves it (REQ-WRK-9)', async () => {
+    const { ctx, fake } = await boot({ accounts: [account('chatgpt-main', { economy: 'instant', frontier: 'high' })] })
+    const up = await ctx.turns.wait(ctx.turns.ask({ prompt: 'standard or better', tier: 'standard' }).turnId, 30_000)
+    expect(up).toMatchObject({ status: 'completed', tier: 'standard', worker: 'worker:chatgpt-main/frontier' })
+    expect(fake.sent[0]).toMatchObject({ model: 'GPT-6', power: 'High' })
+    const cheap = await ctx.turns.wait(ctx.turns.ask({ prompt: 'easy', tier: 'economy' }).turnId, 30_000)
+    expect(cheap.worker).toBe('worker:chatgpt-main/economy')
+    const none = await boot({ accounts: [account('chatgpt-main', { economy: 'instant' })] })
+    const refused = await none.ctx.turns.wait(none.ctx.turns.ask({ prompt: 'too hard', tier: 'frontier' }).turnId, 10_000)
+    expect(refused).toMatchObject({ status: 'failed', error: { kind: 'config_error' } })
+    expect(none.ctx.artifacts.get(refused.routeDecision!)?.body).toMatchObject({ decisionType: 'admission', outcome: { option: 'none' } })
+    expect(none.fake.sent).toEqual([])
   }, 90_000)
 
   it('fails closed with USER_ACTION when no account is ready, and sends nothing', async () => {

@@ -31,11 +31,11 @@ routes back here.
   state, revisioned), conversation bindings, the per-account scheduler, provider
   turn receipts, and one **provider driver** per website.
   The **turn runtime** (`ctx.turns`) runs `ask`/`research`. It stores the turn
-  and its prompt locally for a bounded time, routes to the first ready account
-  (MVP slice 1 stand-in for Worker routing), and contributes the MCP `ask`,
+  and its prompt locally for a bounded time, contributes the website Workers to
+  `ctx.workers` and routes each turn through it, and contributes the MCP `ask`,
   `research`, and `result` tools. Login profiles and Save belong to `ctx.login`.
-- **Does not own:** team or workflow semantics, or Worker admission (slice 1
-  routing is the minimal first-ready rule, recorded as a decision).
+- **Does not own:** team or workflow semantics, or Worker admission (owned by
+  [routing](#routing)).
 - **Contract:** the `ProviderDriver` interface in `@tsuuanmi/system-provider-core`
   ([ADR-0005](../decisions/adr/0005-provider-runtime-interface.md)): `checkAuth`,
   `identity`, `ask`, `snapshot`. `ctx.turns` drives it. Credentials never cross
@@ -85,6 +85,10 @@ Seam definitions for this layer (`Display`, `Browser`, `ProviderRegistry`) live 
   quota class and account readiness. This is where the three
   [purposes](../requirements/purpose.md) become mechanics.
 - **Design:** [routing](../design/routing.md).
+- **Built so far:** the registry, admission, and router
+  ([`workers`](../../packages/plugins/workers/README.md)); the turn runtime is the
+  first Worker source and the first caller. Acceptance arrives with the workflow
+  engine.
 
 ## Orchestration
 
