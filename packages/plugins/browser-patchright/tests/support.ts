@@ -1,25 +1,18 @@
 /** Test-only helpers for suites that need a real headed Chrome on a private Xvfb. */
 import { execFileSync } from 'node:child_process'
-import { existsSync, readdirSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { type XvfbHandle, startXvfb } from '@tsuuanmi/system-display-virtual'
 import { type Browser, chromium } from 'patchright-core'
+import { CHROME_ARGS, IGNORED_DEFAULT_ARGS, discoverChrome } from '../src/index.ts'
 
-/** A modern Chrome: CHROME_PATH, a system Chrome ≥ 120, or Chrome for Testing in ~/.cache/system-chrome. */
+/**
+ * The Chrome the product itself would choose (configured path, CHROME_PATH, a system Chrome
+ * no older than the engine, the managed build), else the same pinned build in the developer
+ * cache `~/.cache/system-chrome` (same layout, e.g. from `npx @puppeteer/browsers install`).
+ */
 export function findTestChrome(): string | undefined {
-  if (process.env.CHROME_PATH) return process.env.CHROME_PATH
-  for (const path of ['/usr/bin/google-chrome', '/usr/bin/google-chrome-stable']) {
-    try {
-      const major = Number(/(\d+)\./.exec(execFileSync(path, ['--version'], { encoding: 'utf8' }))?.[1])
-      if (major >= 120) return path
-    } catch { /* not installed */ }
-  }
-  const cache = join(homedir(), '.cache', 'system-chrome', 'chrome')
-  if (!existsSync(cache)) return undefined
-  const newest = readdirSync(cache).sort().at(-1)
-  const path = newest && join(cache, newest, 'chrome-linux64', 'chrome')
-  return path && existsSync(path) ? path : undefined
+  return (discoverChrome(undefined) ?? discoverChrome(undefined, { managedDir: join(homedir(), '.cache', 'system-chrome') }))?.path
 }
 
 export const hasXvfb = process.platform === 'linux' && (() => {
@@ -44,7 +37,7 @@ export async function launchTestBrowser(): Promise<{ browser: Browser; close(): 
   const xvfb: XvfbHandle = await startXvfb({ executable: 'Xvfb', startupTimeoutMs: 5000 })
   const browser = await chromium.launch({
     executablePath: testChrome!, headless: false, env: { ...process.env, DISPLAY: xvfb.display, XAUTHORITY: xvfb.authority },
-    ignoreDefaultArgs: ['--no-sandbox'], args: ['--no-first-run', '--no-default-browser-check'],
+    ignoreDefaultArgs: IGNORED_DEFAULT_ARGS, args: [...CHROME_ARGS, '--window-size=1920,1080'],
   })
   return { browser, close: async () => { await browser.close(); await xvfb.stop() } }
 }

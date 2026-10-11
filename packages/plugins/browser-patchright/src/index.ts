@@ -30,7 +30,7 @@ declare module '@deepseek-ai/cordis' {
 }
 
 /** Pages render and update as if in the foreground (docs/design/browser-runtime.md#display-modes-ctxdisplay). */
-const CHROME_ARGS = [
+export const CHROME_ARGS = [
   '--no-first-run',
   '--no-default-browser-check',
   '--disable-background-timer-throttling',
@@ -38,7 +38,7 @@ const CHROME_ARGS = [
   '--disable-backgrounding-occluded-windows',
 ]
 /** Keep the sandbox and the OS keyring; never advertise automation. */
-const IGNORED_DEFAULT_ARGS = ['--no-sandbox', '--password-store=basic', '--use-mock-keychain', '--enable-automation']
+export const IGNORED_DEFAULT_ARGS = ['--no-sandbox', '--password-store=basic', '--use-mock-keychain', '--enable-automation']
 
 export interface Config {
   /** Chrome executable; defaults to `CHROME_PATH`, a recent system Chrome, then the managed build. */
