@@ -41,6 +41,9 @@
       ],
       "@tsuuanmi/system-provider-core": [
         "packages/provider-core/src/index.ts"
+      ],
+      "@tsuuanmi/system-turn-receipts": [
+        "packages/plugins/turn-receipts/src/index.ts"
       ]
     }
   },
