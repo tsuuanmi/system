@@ -11,7 +11,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { dirname, join } from 'node:path'
 import { Browser, computeExecutablePath, install as puppeteerInstall } from '@puppeteer/browsers'
-import { dshHome } from '@tsuuanmi/system-libs'
+import { dshHome, ensurePrivateDir } from '@tsuuanmi/system-libs'
 import { ProviderError } from '@tsuuanmi/system-provider-core'
 
 export interface ChromeLock {
@@ -57,6 +57,9 @@ export async function installManagedChrome(options: { dir?: string; lock?: Chrom
   const lock = options.lock ?? CHROME_LOCK
   const existing = managedChromePath(dir, lock)
   if (existing) return { path: existing, installed: false }
+  // The installer creates directories with the process umask; create ours owner-only
+  // first so `<DSH_HOME>/system` still passes the kernel plugins' private-dir check.
+  ensurePrivateDir(dir)
   const install = options.install ?? ((o) => puppeteerInstall({ ...o, unpack: true }))
   const { executablePath } = await install({ browser: Browser.CHROME, buildId: lock.buildId, cacheDir: dir })
   return { path: executablePath, installed: true }

@@ -1,4 +1,4 @@
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { ProviderError } from '@tsuuanmi/system-provider-core'
@@ -48,6 +48,21 @@ describe('the pinned managed Chrome (chrome.lock.json)', () => {
     const second = await installManagedChrome({ dir: managedDir, install })
     expect(install).toHaveBeenCalledTimes(1)
     expect(second.installed).toBe(false)
+  })
+})
+
+describe('installing into the harness home', () => {
+  it('creates <home>/system owner-only first, so the kernel plugins still accept it', async () => {
+    const home = join(dir, 'home-e2e')
+    const managedDir = join(home, 'system', 'browsers')
+    // The real installer creates directories with the process umask (e.g. 0775).
+    const install = async (options: { cacheDir: string }) => {
+      mkdirSync(options.cacheDir, { recursive: true, mode: 0o775 })
+      return { executablePath: fakeManaged(options.cacheDir) }
+    }
+    await installManagedChrome({ dir: managedDir, install })
+    expect(statSync(join(home, 'system')).mode & 0o077).toBe(0)
+    expect(statSync(managedDir).mode & 0o077).toBe(0)
   })
 })
 
