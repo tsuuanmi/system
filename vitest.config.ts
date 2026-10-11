@@ -16,6 +16,7 @@ export default defineConfig({
       '@tsuuanmi/system-event-log': src('./packages/plugins/event-log/src/index.ts'),
       '@tsuuanmi/system-blobs': src('./packages/plugins/blobs/src/index.ts'),
       '@tsuuanmi/system-turn-receipts': src('./packages/plugins/turn-receipts/src/index.ts'),
+      '@tsuuanmi/system-accounts': src('./packages/plugins/accounts/src/index.ts'),
       '@tsuuanmi/system-provider-core': src('./packages/provider-core/src/index.ts'),
     },
   },

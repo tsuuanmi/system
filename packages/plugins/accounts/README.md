@@ -1,0 +1,18 @@
+# @tsuuanmi/system-accounts
+
+**`ctx.accounts`**: a provider-agnostic, multi-account vault
+([browser runtime](../../../docs/design/browser-runtime.md)).
+
+- **Catalog:** configuration. Any number of accounts per provider, each with an id,
+  provider, quota class, and a tier → mode map (P4).
+- **Storage:** each account's `account@1.0` record, including its portable browser
+  state, and its login credentials are separate **encrypted** grant records in
+  `ctx.credentials` (`system-accounts/<id>`, `system-credentials/<id>`). Writes are
+  guarded by revision.
+- **Views:** `list`/`get` return secret-free views (INV-8). `portableState` and
+  `credentials` are for the provider runtime only.
+- **Rules:**
+  - `markSignedOut` needs positive evidence (`login-url` / `login-surface`).
+  - `markChallenge` keeps the state.
+  - `duplicateIdentities` flags accounts that share an identity (REQ-TEAM-4).
+- **Injects:** `credentials`.

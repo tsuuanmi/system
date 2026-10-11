@@ -44,6 +44,9 @@
       ],
       "@tsuuanmi/system-turn-receipts": [
         "packages/plugins/turn-receipts/src/index.ts"
+      ],
+      "@tsuuanmi/system-accounts": [
+        "packages/plugins/accounts/src/index.ts"
       ]
     }
   },
