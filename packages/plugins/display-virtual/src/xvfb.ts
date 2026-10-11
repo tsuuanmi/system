@@ -3,6 +3,10 @@
  * free display itself (`-displayfd`), so there is no port-guessing race; TCP is off.
  */
 import { type ChildProcess, spawn as nodeSpawn } from 'node:child_process'
+import { randomBytes } from 'node:crypto'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import type { Readable } from 'node:stream'
 import { ProviderError } from '@tsuuanmi/system-provider-core'
 
@@ -31,6 +35,8 @@ export interface XvfbExit {
 export interface XvfbHandle {
   /** `:N` */
   display: string
+  /** Xauthority file (0600) holding the only cookie this server accepts; give it to X clients as XAUTHORITY. */
+  authority: string
   /** Settles when the process exits, for any reason. */
   exited: Promise<XvfbExit>
   /** SIGTERM, then SIGKILL; throws only if the process survives both. */
@@ -43,6 +49,20 @@ const unavailable = (detail: string): ProviderError => new ProviderError(
 )
 
 /** A child that failed to spawn has no pid and will never emit `exit`. */
+/**
+ * An Xauthority file with one FamilyWild record and no display number, which libXau matches
+ * for any host and display (so it works with `-displayfd`), and which the server loads via
+ * `-auth`. Without it any local user could connect, screenshot, and inject input.
+ */
+function writeAuthority(): { path: string; remove(): void } {
+  const dir = mkdtempSync(join(tmpdir(), 'system-xauth-'))
+  const path = join(dir, 'Xauthority')
+  const field = (b: Buffer): Buffer => Buffer.concat([Buffer.from([b.length >> 8, b.length & 0xff]), b])
+  const record = Buffer.concat([Buffer.from([0xff, 0xff]), field(Buffer.alloc(0)), field(Buffer.alloc(0)), field(Buffer.from('MIT-MAGIC-COOKIE-1')), field(randomBytes(16))])
+  writeFileSync(path, record, { mode: 0o600 })
+  return { path, remove: () => rmSync(dir, { recursive: true, force: true }) }
+}
+
 const running = (child: ChildProcess): boolean => child.pid !== undefined && child.exitCode === null && child.signalCode === null
 
 function waitForExit(child: ChildProcess, timeoutMs: number): Promise<boolean> {
@@ -72,6 +92,7 @@ async function terminate(child: ChildProcess, timeoutMs: number): Promise<void> 
 export function startXvfb(options: XvfbOptions): Promise<XvfbHandle> {
   const spawn = options.spawn ?? ((command, args, spawnOptions) => nodeSpawn(command, args, spawnOptions))
   const shutdownTimeoutMs = options.shutdownTimeoutMs ?? 2000
+  const authority = writeAuthority()
   return new Promise((resolve, reject) => {
     let child: ChildProcess
     let output = ''
@@ -90,18 +111,22 @@ export function startXvfb(options: XvfbOptions): Promise<XvfbHandle> {
     const timer = setTimeout(() => fail('startup timed out'), options.startupTimeoutMs)
 
     try {
-      child = spawn(options.executable, ['-displayfd', '3', '-screen', '0', XVFB_SCREEN, '-nolisten', 'tcp'], {
+      child = spawn(options.executable, ['-displayfd', '3', '-screen', '0', XVFB_SCREEN, '-nolisten', 'tcp', '-auth', authority.path], {
         env: { ...process.env },
         stdio: ['ignore', 'ignore', 'pipe', 'pipe'],
       })
     } catch (error) {
       settled = true
       clearTimeout(timer)
+      authority.remove()
       reject(unavailable((error as Error).message))
       return
     }
     const exited = new Promise<XvfbExit>((resolveExit) => {
-      child.once('exit', (code: number | null, signal: NodeJS.Signals | null) => resolveExit({ code, signal }))
+      child.once('exit', (code: number | null, signal: NodeJS.Signals | null) => {
+        authority.remove()
+        resolveExit({ code, signal })
+      })
     })
     const stderr = child.stdio[2] as Readable | null
     const displayFd = child.stdio[3] as Readable | null
@@ -126,7 +151,7 @@ export function startXvfb(options: XvfbOptions): Promise<XvfbHandle> {
       }
       settled = true
       clearTimeout(timer)
-      resolve({ display: `:${number}`, exited, stop: () => terminate(child, shutdownTimeoutMs) })
+      resolve({ display: `:${number}`, authority: authority.path, exited, stop: () => terminate(child, shutdownTimeoutMs) })
     })
   })
 }

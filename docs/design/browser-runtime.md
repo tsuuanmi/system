@@ -33,7 +33,7 @@ pretend to be a different machine.
 
 | Mode | How | Default on | Use |
 |---|---|---|---|
-| `virtual` | headed Chrome on a plugin-owned **Xvfb** (`-screen 0 1920x1080x24 -nolisten tcp`, `-displayfd`); window `--window-size=1920,1080` | **Linux** (including servers without a display) | provider turns |
+| `virtual` | headed Chrome on a plugin-owned **Xvfb** (`-screen 0 1920x1080x24 -nolisten tcp`, `-displayfd`, `-auth` with a private cookie); window `--window-size=1920,1080` | **Linux** (including servers without a display) | provider turns |
 | `offscreen` | headed window at `--window-position=-10000,-10000` with an explicit size (≥ 1280×900) | **macOS, Windows** (v1.0; the MVP is Linux-only) | provider turns |
 | `visible` | a normal on-screen window | — | interactive login, debugging, resolving a challenge |
 | `headless` | Chrome headless | **never for provider turns** | only the `dev` profile with fake providers |

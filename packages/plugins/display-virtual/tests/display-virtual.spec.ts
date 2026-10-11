@@ -1,7 +1,7 @@
 import type { ChildProcess } from 'node:child_process'
 import { execFileSync } from 'node:child_process'
 import { EventEmitter } from 'node:events'
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync, statSync } from 'node:fs'
 import { PassThrough } from 'node:stream'
 import { Context } from '@deepseek-ai/cordis'
 import { ProviderError } from '@tsuuanmi/system-provider-core'
@@ -69,7 +69,10 @@ describe('startXvfb (ported from tsuuanmi/internet)', () => {
     const { spawn, calls } = fakeSpawner()
     const xvfb = await startXvfb({ executable: 'Xvfb', startupTimeoutMs: 200, spawn })
     expect(xvfb.display).toBe(':7')
-    expect(calls[0]!.args).toEqual(['-displayfd', '3', '-screen', '0', '1920x1080x24', '-nolisten', 'tcp'])
+    expect(calls[0]!.args).toEqual(['-displayfd', '3', '-screen', '0', '1920x1080x24', '-nolisten', 'tcp', '-auth', xvfb.authority])
+    await xvfb.stop()
+    await xvfb.exited
+    expect(existsSync(xvfb.authority)).toBe(false)
   })
 
   it('fails closed with Xvfb diagnostics when it exits before reporting a display', async () => {
@@ -189,7 +192,50 @@ const hasXvfb = process.platform === 'linux' && (() => {
   }
 })()
 
+/** X11 connection setup over the display's socket: 1 = Success, 0 = Failed (e.g. no valid cookie). */
+async function x11Handshake(display: string, cookie?: Buffer): Promise<number> {
+  const { connect } = await import('node:net')
+  const name = cookie ? Buffer.from('MIT-MAGIC-COOKIE-1') : Buffer.alloc(0)
+  const data = cookie ?? Buffer.alloc(0)
+  const pad = (b: Buffer): Buffer => Buffer.concat([b, Buffer.alloc((4 - (b.length % 4)) % 4)])
+  const head = Buffer.alloc(12)
+  head.write('l', 0)
+  head.writeUInt16LE(11, 2)
+  head.writeUInt16LE(name.length, 6)
+  head.writeUInt16LE(data.length, 8)
+  return new Promise((resolve, reject) => {
+    const socket = connect(`/tmp/.X11-unix/X${display.slice(1)}`)
+    socket.once('error', reject)
+    socket.once('data', (reply) => { socket.destroy(); resolve(reply[0]!) })
+    socket.write(Buffer.concat([head, pad(name), pad(data)]))
+  })
+}
+
+/** The single cookie of an Xauthority file written by display-virtual (FamilyWild record). */
+function cookieOf(path: string): Buffer {
+  const file = readFileSync(path)
+  let at = 2
+  const field = (): Buffer => { const n = file.readUInt16BE(at); at += 2; const v = file.subarray(at, at + n); at += n; return v }
+  field(); field(); field()
+  return field()
+}
+
 describe.runIf(hasXvfb)('display-virtual with a real Xvfb', () => {
+  it('requires the X authority cookie, so other local users cannot see or drive the browser', async () => {
+    const ctx = new Context()
+    const fiber = ctx.plugin(VirtualDisplay, {})
+    await fiber
+    try {
+      const display = await ctx.display.prepare('invisible')
+      const authority = display.env.XAUTHORITY!
+      expect(statSync(authority).mode & 0o777).toBe(0o600)
+      expect(await x11Handshake(display.env.DISPLAY!)).toBe(0)
+      expect(await x11Handshake(display.env.DISPLAY!, cookieOf(authority))).toBe(1)
+    } finally {
+      await fiber.dispose()
+    }
+  }, 15_000)
+
   it('starts a private X server and stops it on dispose', async () => {
     const ctx = new Context()
     const fiber = ctx.plugin(VirtualDisplay, {})

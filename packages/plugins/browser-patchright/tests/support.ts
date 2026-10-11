@@ -43,7 +43,7 @@ if (process.env.SYSTEM_REQUIRE_BROWSER === '1' && !canRunBrowser) {
 export async function launchTestBrowser(): Promise<{ browser: Browser; close(): Promise<void> }> {
   const xvfb: XvfbHandle = await startXvfb({ executable: 'Xvfb', startupTimeoutMs: 5000 })
   const browser = await chromium.launch({
-    executablePath: testChrome!, headless: false, env: { ...process.env, DISPLAY: xvfb.display },
+    executablePath: testChrome!, headless: false, env: { ...process.env, DISPLAY: xvfb.display, XAUTHORITY: xvfb.authority },
     ignoreDefaultArgs: ['--no-sandbox'], args: ['--no-first-run', '--no-default-browser-check'],
   })
   return { browser, close: async () => { await browser.close(); await xvfb.stop() } }

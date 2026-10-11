@@ -25,7 +25,7 @@ class KillableDisplay extends Display {
     const lost = new AbortController()
     void xvfb.exited.then(() => lost.abort(new ProviderError('session_broken', 'Xvfb exited')))
     this.xvfb = xvfb
-    this.prepared = { kind: 'virtual', env: { DISPLAY: xvfb.display }, windowArgs: ['--window-size=1920,1080'], viewport: null, generation: ++this.generation, lost: lost.signal }
+    this.prepared = { kind: 'virtual', env: { DISPLAY: xvfb.display, XAUTHORITY: xvfb.authority }, windowArgs: ['--window-size=1920,1080'], viewport: null, generation: ++this.generation, lost: lost.signal }
     return this.prepared
   }
 }

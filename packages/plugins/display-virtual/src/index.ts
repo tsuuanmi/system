@@ -79,7 +79,7 @@ export class VirtualDisplay extends Display {
     const lost = new AbortController()
     const prepared: PreparedDisplay = {
       kind: 'virtual',
-      env: { DISPLAY: xvfb.display },
+      env: { DISPLAY: xvfb.display, XAUTHORITY: xvfb.authority },
       windowArgs: ['--window-size=1920,1080'],
       viewport: null,
       generation: ++this.generation,
