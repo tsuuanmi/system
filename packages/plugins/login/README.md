@@ -19,4 +19,7 @@
 - **MCP tools** (when `ctx.mcp` is mounted): `account_list` (secret-free views)
   and `account_save { account }`. The `system account list|save` CLI commands
   call these tools.
+- **Live-verified on 2026-10-11:** `system account save chatgpt-main` against the
+  running profile stored a real account (`ready`, revision 1). The vault holds only
+  ciphertext.
 - **Injects:** `accounts`, `browser`, `providers`; `mcp` is optional.

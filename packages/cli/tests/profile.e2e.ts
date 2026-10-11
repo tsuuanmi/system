@@ -32,7 +32,15 @@ beforeAll(() => {
 }, 180_000)
 
 afterAll(async () => {
-  child?.kill('SIGKILL')
+  // Kill the whole process group: SIGKILL on the wrapper alone orphans the dsh child,
+  // which kept running (with its MCP port) after earlier failed runs.
+  if (child?.pid !== undefined && child.exitCode === null) {
+    try {
+      process.kill(-child.pid, 'SIGKILL')
+    } catch {
+      // the group already exited
+    }
+  }
   rmSync(home, { recursive: true, force: true })
 })
 
@@ -45,7 +53,7 @@ describe('system profile (e2e through dsh)', () => {
   }, 60_000)
 
   it('boots, serves MCP to an authenticated client, and cleans up on SIGTERM', async () => {
-    child = spawn(process.execPath, [bin, 'start', '--patch', join(home, 'port0.yml')], { env, stdio: 'pipe' })
+    child = spawn(process.execPath, [bin, 'start', '--patch', join(home, 'port0.yml')], { env, stdio: 'pipe', detached: true })
     const discoveryPath = join(home, 'system', 'mcp.json')
     await waitFor(discoveryPath, 60_000)
     const { url, tokenFile } = JSON.parse(readFileSync(discoveryPath, 'utf8')) as { url: string; tokenFile: string }
