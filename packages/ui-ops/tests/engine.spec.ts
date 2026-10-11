@@ -216,6 +216,12 @@ describe.runIf(canRunBrowser)('UiEngine on a real page', () => {
     expect(await tab.getByRole('textbox').innerText()).toContain('Deep research')
   })
 
+  it('accepts a multi-line prompt, which the composer splits into paragraphs', async () => {
+    const { engine, tab } = await open(CURRENT)
+    await engine.act('composer.insert', { text: 'line one\nline two\n\n- item' })
+    expect(await tab.getByRole('textbox').innerText()).toMatch(/line one[\s\S]*line two[\s\S]*- item/)
+  })
+
   it('does not heal while a guard state is showing', async () => {
     const { engine, heals } = await open(SIGNED_OUT)
     const failure = engine.act('composer.send')

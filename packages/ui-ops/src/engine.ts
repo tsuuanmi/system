@@ -60,6 +60,8 @@ export interface ActOptions {
 
 const TICK_MS = 100
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
+/** Lines with inner spacing collapsed and blank lines dropped: what an editor must preserve. */
+const lineText = (s: string | null): string => (s ?? '').split('\n').map((l) => l.replace(/[\s\u00a0]+/g, ' ').trim()).filter(Boolean).join('\n')
 const normalizeText = (s: string | null): string => (s ?? '').replace(/ /g, ' ').trim()
 const drift = (message: string): ProviderError => new ProviderError('ui_drift', message)
 
@@ -260,12 +262,27 @@ export class UiEngine {
         await this.page.keyboard.insertText(text)
         const value = await locator.evaluate((el) => {
           if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) return el.value
-          // Non-editable islands (tool mention chips) are not part of the typed text.
-          const copy = el.cloneNode(true) as Element
-          for (const island of copy.querySelectorAll('[contenteditable="false"]')) island.remove()
-          return copy.textContent
+          // Block-aware text: each paragraph, div, or <br> is a line; non-editable islands
+          // (tool mention chips) are not part of the typed text.
+          const lines: string[] = ['']
+          const walk = (node: Node): void => {
+            if (node.nodeType === Node.TEXT_NODE) {
+              lines[lines.length - 1] += node.textContent ?? ''
+              return
+            }
+            if (!(node instanceof Element) || node.getAttribute('contenteditable') === 'false') return
+            if (node.tagName === 'BR') lines.push('')
+            const block = /^(P|DIV|LI|PRE|BLOCKQUOTE|H[1-6])$/.test(node.tagName)
+            if (block && lines[lines.length - 1] !== '') lines.push('')
+            for (const child of node.childNodes) walk(child)
+            if (block) lines.push('')
+          }
+          for (const child of el.childNodes) walk(child)
+          return lines.join('\n')
         })
-        if (normalizeText(value) !== normalizeText(text)) {
+        // Editors turn line breaks into paragraphs and may change spacing; the lines and
+        // their characters must survive.
+        if (lineText(value) !== lineText(text)) {
           throw new ProviderError('ui_drift', `${this.map.provider}: ${spec.target} readback differs from the inserted text`)
         }
       }

@@ -97,6 +97,12 @@ describe.runIf(canRunBrowser)('ChatGptWebDriver against the fake site', () => {
     expect(fake.sent[0]).toMatchObject({ model: 'GPT-6', power: 'High', mode: 'chat' })
   }, 40_000)
 
+  it('sends a multi-line prompt intact', async () => {
+    const { fake, page, driver } = await site()
+    await driver.ask(page, 'first line\nsecond line', { conversation: 'temporary' })
+    expect(fake.sent[0]!.prompt.split(/\n+/)).toEqual(['first line', 'second line'])
+  }, 40_000)
+
   it('uses the default mode when none is requested', async () => {
     const { fake, page, driver } = await site()
     const turn = await driver.ask(page, 'plain', { conversation: 'temporary' })

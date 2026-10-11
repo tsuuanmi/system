@@ -152,9 +152,11 @@ $('input').addEventListener('input', render)
 $('input').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); if (!running && $('input').textContent.trim()) send() } })
 async function send() {
   const deepResearch = !!$('input').querySelector('[data-prompt-link-href="app://connector_openai_deep_research"]')
-  const copy = $('input').cloneNode(true)
-  for (const island of copy.querySelectorAll('[contenteditable="false"]')) island.remove()
-  const prompt = copy.textContent.replace(/\u00a0/g, ' ').trim()
+  // Like the live site: the typed text, paragraphs as lines, without mention chips.
+  const chips = [...$('input').querySelectorAll('[contenteditable="false"]')].map((el) => el.innerText)
+  let prompt = $('input').innerText
+  for (const chip of chips) prompt = prompt.replace(chip, '')
+  prompt = prompt.replace(/\u00a0/g, ' ').trim()
   $('input').textContent = ''
   const user = document.createElement('div')
   user.className = 'turn'
