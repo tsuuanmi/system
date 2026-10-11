@@ -96,6 +96,21 @@ guesses.
   `capabilities`, `tier`, `quotaClass`, `locality`, and `state` are routing
   inputs.
 
+### `plan`
+
+- Proposed by a planner node, and validated by the engine before anything is
+  appended: unique ids under the planner's prefix, dependencies only among its
+  own nodes, acyclic, within the node bound, allowed capabilities only.
+- A `graph-growth` decision records whether it was appended and why.
+- An edited plan is a new artifact with a new id. An approval of the old one
+  never covers it.
+
+### `approval`
+
+- `subject` is the exact artifact approved (INV-5). Today that is a plan.
+- It is written only through an operator channel (CLI or MCP `approve`), never
+  from model output (INV-6).
+
 ### `agent-result`
 
 - Written once per finished agent-runtime run, as the body of a `report`

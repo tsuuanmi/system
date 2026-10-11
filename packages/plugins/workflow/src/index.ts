@@ -20,7 +20,7 @@ import type {} from '@tsuuanmi/system-egress'
 import { dispositionOf, type ProviderErrorKind } from '@tsuuanmi/system-provider-core'
 import { AdmissionFailure, type AdmittedWorker, type ArtifactRef, type Classification, type Tier, TIERS, type WorkRequirement, type WorkerExecution } from '@tsuuanmi/system-workers-core'
 import { z as zod } from 'zod'
-import { type CallerOptions, DEFAULT_TEMPLATES, type NodeTemplate, render, type ResolvedNode, resolve } from './spec.ts'
+import { type CallerOptions, DEFAULT_GROWTH, DEFAULT_TEMPLATES, type NodeTemplate, parsePlan, type PlannedNode, render, type ResolvedNode, resolve } from './spec.ts'
 
 export { DEFAULT_TEMPLATES, preflight, render, resolve } from './spec.ts'
 export type { NodeTemplate, ResolvedNode, ResolvedSpec } from './spec.ts'
@@ -32,7 +32,7 @@ declare module '@deepseek-ai/cordis' {
 }
 
 export type RunStatus = 'running' | 'completed' | 'failed'
-export type NodeState = 'WAITING' | 'READY' | 'RUNNING' | 'COMPLETED' | 'FAILED'
+export type NodeState = 'WAITING' | 'READY' | 'RUNNING' | 'BLOCKED' | 'COMPLETED' | 'FAILED'
 
 export interface WorkflowError {
   kind: string
@@ -46,7 +46,7 @@ export interface NodeRecord {
   runId: string
   nodeId: string
   objective: string
-  executor: 'worker'
+  executor: 'worker' | 'gate'
   requirement: WorkRequirement
   dependsOn: string[]
   state: NodeState
@@ -86,6 +86,8 @@ export interface RunView {
   result?: ArtifactRef
   answer?: string
   nodes: NodeView[]
+  /** A gate waiting for the operator: approve or reject `plan` with `approve`. */
+  blocked?: { nodeId: string; plan: ArtifactRef }
   error?: WorkflowError
   createdAt: string
   updatedAt: string
@@ -127,6 +129,8 @@ export interface Config {
   maxActiveRuns?: number
   /** A finished run's input text and prompts are cleared after this many days (default 30); the run stays. */
   retainDays?: number
+  /** Approve a high-confidence plan by policy (`by: policy`) instead of waiting for the operator (default false). */
+  autoApprovePlans?: boolean
 }
 
 interface RunRow {
@@ -187,11 +191,14 @@ export class Workflow extends Service {
       conversation: z.union(['temporary', 'persistent', 'caller']).required(),
       acceptance: z.string().required(),
       maxEscalations: z.natural().max(3),
+      // Not z.object: an omitted object would come back as {} and make every node a planner.
+      grows: z.any().description('Planner policy {maxNodes, capabilities, approvalRequired}; checked by preflight'),
     }))).default({}).description('Workflow templates by name, added to the built-in ask and research'),
     maxAttempts: z.natural().min(1).max(10).default(3).description('Attempts per node for retryable failures'),
     retryDelayMs: z.natural().default(5000).description('First back-off delay, doubled per attempt'),
     maxActiveRuns: z.natural().min(1).default(16).description('Unfinished runs accepted at once'),
     retainDays: z.natural().min(1).default(30).description('Days a finished run keeps its input text and prompts'),
+    autoApprovePlans: z.boolean().default(false).description('Approve a high-confidence plan by policy instead of waiting for the operator'),
   }) as unknown as z<Config>
 
   private readonly schemas = new SchemaRegistry()
@@ -373,7 +380,7 @@ export class Workflow extends Service {
       capabilities: [...new Set([...node.capabilities, ...(persistent ? ['persistent-conversation'] : [])])],
       data: { classification: classification ?? this.ctx.egress.defaultClassification, refs: [] },
       egressPolicy: 'egress.classification-and-secrets',
-      tier: { min: node.tier, source: node.tierSource },
+      tier: { min: node.tier, source: node.tierSource, ...(node.tierDecision ? { decision: node.tierDecision as ArtifactRef } : {}) },
       acceptance: { contract: node.acceptance, maxEscalations: node.maxEscalations ?? 1 },
     }
   }
@@ -455,8 +462,12 @@ export class Workflow extends Service {
         for (const node of nodes) {
           if (node.state === 'WAITING' && node.dependsOnCompleted(nodes)) this.promote(run, node, nodes, current)
         }
-        const active = this.nodeRows(runId).filter((n) => n.state === 'READY' || n.state === 'RUNNING')
+        const current_ = this.nodeRows(runId)
+        if (current_.some((n) => n.state === 'FAILED')) continue
+        const active = current_.filter((n) => n.state === 'READY' || n.state === 'RUNNING')
         if (!active.length) {
+          // Waiting for the operator: park until `approve` schedules the run again.
+          if (current_.some((n) => n.state === 'BLOCKED')) return
           return this.finish(run, 'failed', { error: JSON.stringify({ kind: 'internal', disposition: 'CODE_FIX', message: 'no node can run' }) }, current)
         }
         await Promise.all(active.map((node) => this.execute(run, node, current, signal)))
@@ -485,12 +496,164 @@ export class Workflow extends Service {
   /** WAITING → READY: render the input from the dependencies' results and bind it by hash. */
   private promote(run: RunRow, node: NodeRow & NodeHelpers, nodes: NodeRow[], lease: () => Lease): void {
     const spec = JSON.parse(node.spec) as ResolvedNode
+    if (spec.executor === 'gate') return this.block(run, node, spec, lease)
     const deps = spec.dependsOn.map((id) => nodes.find((n) => n.node_id === id)!)
     const results = deps.map((d) => (JSON.parse(d.record) as NodeRecord).outputReceipt!.result)
     const texts = Object.fromEntries(deps.map((d, i) => [d.node_id, this.resultText(results[i]!)]))
-    const prompt = render(spec.prompt, run.input, texts)
+    const grown = spec.prompt.includes('{{grown}}') ? this.grownText(spec, nodes) : ''
+    const prompt = spec.literal ? spec.prompt : render(spec.prompt, run.input, texts, grown)
     const inputHash = sha256(canonicalJson({ node: spec, prompt, dependencies: results }))
     this.writeNode(node, { state: 'READY', prompt }, (record) => ({ ...record, inputReceipt: { inputHash, bundle: results } }), lease)
+  }
+
+  /** The findings of the steps a planner this node depends on added, in order, under their objectives. */
+  private grownText(spec: ResolvedNode, nodes: NodeRow[]): string {
+    const planners = spec.dependsOn.filter((id) => (JSON.parse(nodes.find((n) => n.node_id === id)!.spec) as ResolvedNode).grows)
+    return nodes
+      .filter((n) => planners.some((p) => n.node_id.startsWith(`${p}:`)) && (JSON.parse(n.spec) as ResolvedNode).executor !== 'gate')
+      .map((n) => {
+        const step = JSON.parse(n.spec) as ResolvedNode
+        const result = (JSON.parse(n.record) as NodeRecord).outputReceipt?.result
+        return `### ${step.objective}\n${result ? this.resultText(result) : ''}`
+      })
+      .join('\n\n')
+  }
+
+  /** A gate whose planner finished waits for an approval of the exact plan (REQ-WF-11). */
+  private block(run: RunRow, node: NodeRow, spec: ResolvedNode, lease: () => Lease): void {
+    const plan = spec.plan as ArtifactRef
+    const inputHash = sha256(canonicalJson({ node: spec, plan }))
+    this.ctx.store.transaction(() => {
+      this.writeNode(node, { state: 'BLOCKED' }, (record) => ({ ...record, inputReceipt: { inputHash, bundle: [plan] } }), lease)
+      this.ctx.eventLog.append({ type: 'workflow.node.blocked', runId: run.run_id, nodeId: node.node_id, data: { plan } })
+    })
+    const body = this.ctx.artifacts.get(plan)?.body as { confidence?: string } | undefined
+    if (this.config.autoApprovePlans && body?.confidence === 'high') {
+      this.decideGate(run, this.nodeRow(run.run_id, node.node_id)!, { verdict: 'approved', by: 'policy', note: 'high-confidence plan approved by policy (autoApprovePlans)' }, lease)
+    }
+  }
+
+  /**
+   * The operator's verdict on a run's waiting plan, through a trusted channel (MCP or CLI,
+   * never model text; INV-6): an `approval` artifact bound to the exact plan (INV-5), then a
+   * `gate` decision. Approved, the steps run; rejected, the run fails.
+   */
+  approve(runId: string, input: { verdict: 'approved' | 'rejected'; note?: string }): RunView {
+    const run = this.runRow(runId)
+    if (!run) throw new WorkflowFailure('invalid_input', `unknown run ${runId}`)
+    const gate = this.nodeRows(runId).find((n) => n.state === 'BLOCKED')
+    if (!gate || run.status !== 'running') throw new WorkflowFailure('invalid_input', `run ${runId} is not waiting for approval`)
+    const lease = this.ctx.leases.acquire(`run:${runId}`, LEASE_TTL_MS)
+    if (!lease) throw new WorkflowFailure('overloaded', `run ${runId} is busy; retry in a moment`)
+    try {
+      this.decideGate(run, gate, { verdict: input.verdict, by: 'operator', ...(input.note ? { note: input.note } : {}) }, () => lease)
+    } finally {
+      this.ctx.leases.release(lease)
+    }
+    this.schedule(runId)
+    return this.get(runId)!
+  }
+
+  private decideGate(run: RunRow, gate: NodeRow, verdict: { verdict: 'approved' | 'rejected'; by: 'operator' | 'policy'; note?: string }, lease: () => Lease): void {
+    const spec = JSON.parse(gate.spec) as ResolvedNode
+    const plan = spec.plan as ArtifactRef
+    this.ctx.store.transaction(() => {
+      const approval = this.ctx.artifacts.put({
+        kind: 'approval', bodySchema: 'approval@1.0',
+        body: { schema: 'approval@1.0', subject: { type: 'artifact', ref: plan }, verdict: verdict.verdict, by: verdict.by, ...(verdict.note ? { note: verdict.note } : {}) },
+        classification: run.classification ?? this.ctx.egress.defaultClassification, producer: { type: verdict.by, ref: verdict.by === 'operator' ? 'operator' : 'workflow' },
+        inputs: [plan], subject: { type: 'artifact', ref: plan }, runId: run.run_id, nodeId: gate.node_id,
+      })
+      const approved = verdict.verdict === 'approved'
+      const reason = `${verdict.by} ${verdict.verdict} plan ${plan}${verdict.note ? `: ${verdict.note}` : ''}`
+      const decision = this.ctx.artifacts.recordDecision({
+        decisionType: 'gate',
+        question: `May the steps of plan ${plan} run in run ${run.run_id}?`,
+        inputs: [approval.id],
+        candidates: [{ option: 'open', selected: approved, reasons: approved ? [reason] : [] }, { option: 'closed', selected: !approved, reasons: approved ? [] : [reason] }],
+        decider: { type: verdict.by === 'operator' ? 'operator' : 'policy', id: verdict.by === 'operator' ? 'operator.approval' : 'workflow.auto-approve', version: '1' },
+        outcome: { option: approved ? 'open' : 'closed' },
+        deterministic: verdict.by === 'policy',
+      }, { producer: { type: 'system', ref: 'workflow' }, runId: run.run_id, nodeId: gate.node_id })
+      const id = approval.id as ArtifactRef
+      if (approved) {
+        this.writeNode(gate, { state: 'COMPLETED' }, (r) => ({ ...r, outputReceipt: { result: id, acceptance: decision.id as ArtifactRef }, lastDecision: decision.id as ArtifactRef }), lease)
+      } else {
+        const error: WorkflowError = { kind: 'plan_rejected', disposition: 'NONE', message: reason }
+        this.writeNode(gate, { state: 'FAILED', error: JSON.stringify(error) }, (r) => ({ ...r, lastDecision: decision.id as ArtifactRef }), lease)
+      }
+      this.ctx.eventLog.append({ type: `workflow.gate.${approved ? 'opened' : 'closed'}`, runId: run.run_id, nodeId: gate.node_id, decision: decision.id, data: { plan, by: verdict.by } })
+    })
+  }
+
+  /**
+   * Graph growth (REQ-WF-8, REQ-WF-10): a planner's accepted answer must carry a valid plan.
+   * The plan is stored, a `graph-growth` decision records the outcome, and its steps are
+   * appended after the planner; the planner's dependents now wait for them. Steps that need
+   * approval run only behind a gate on the exact plan. Returns the reason when refused.
+   */
+  private grow(run: RunRow, planner: NodeRow, spec: ResolvedNode, result: ArtifactRef, lease: () => Lease): string | undefined {
+    const policy = { ...DEFAULT_GROWTH, ...spec.grows }
+    const parsed = parsePlan(this.resultText(result), planner.node_id, policy)
+    const classification = run.classification ?? this.ctx.egress.defaultClassification
+    const plan = parsed.ok
+      ? this.ctx.artifacts.put({
+        kind: 'plan', bodySchema: 'plan@1.0',
+        body: { schema: 'plan@1.0', runId: run.run_id, planner: planner.node_id, nodes: parsed.nodes, confidence: parsed.confidence },
+        classification, producer: { type: 'node', ref: planner.node_id }, inputs: [result], runId: run.run_id, nodeId: planner.node_id,
+      })
+      : undefined
+    const gated = parsed.ok && parsed.nodes.some((n) => n.capabilities.some((c) => policy.approvalRequired.includes(c)))
+    const reason = parsed.ok
+      ? `${parsed.nodes.length} step(s) within the bounds (at most ${policy.maxNodes}; capabilities ${policy.capabilities.join(', ')})${gated ? '; steps needing approval wait behind a gate' : ''}`
+      : parsed.reason
+    const decision = this.ctx.artifacts.recordDecision({
+      decisionType: 'graph-growth',
+      question: `Does run ${run.run_id} append the steps planner ${planner.node_id} proposed?`,
+      inputs: [plan ? (plan.id as ArtifactRef) : result],
+      candidates: [{ option: 'append', selected: parsed.ok, reasons: parsed.ok ? [reason] : [] }, { option: 'refuse', selected: !parsed.ok, reasons: parsed.ok ? [] : [reason] }],
+      decider: { type: 'policy', id: 'workflow.graph-growth', version: '1' },
+      outcome: { option: parsed.ok ? 'append' : 'refuse', ...(parsed.ok ? { detail: { steps: parsed.nodes.map((n) => n.nodeId), gated } } : {}) },
+      deterministic: true,
+    }, { producer: { type: 'system', ref: 'workflow' }, runId: run.run_id, nodeId: planner.node_id })
+    if (!parsed.ok || !plan) return `${reason} (decision ${decision.id})`
+    const gateId = `${planner.node_id}:gate`
+    const added: ResolvedNode[] = [
+      ...(gated ? [{
+        nodeId: gateId, objective: `Approve the plan of ${planner.node_id}`, executor: 'gate' as const, plan: plan.id, prompt: '', capabilities: ['review'],
+        tier: 'economy' as Tier, tierSource: 'profile' as const, acceptance: 'acceptance.answer', dependsOn: [planner.node_id], session: {},
+      }] : []),
+      ...parsed.nodes.map((step: PlannedNode): ResolvedNode => ({
+        nodeId: step.nodeId, objective: step.objective, prompt: step.prompt, literal: true, capabilities: step.capabilities, tier: step.tier,
+        tierSource: 'decision', tierDecision: decision.id, acceptance: 'acceptance.answer',
+        dependsOn: step.dependsOn.length ? step.dependsOn : [gated ? gateId : planner.node_id], session: {},
+      })),
+    ]
+    this.ctx.store.transaction((db) => {
+      this.ctx.leases.fence(lease())
+      db.prepare('UPDATE workflow_nodes SET ordinal = ordinal + ? WHERE run_id = ? AND ordinal > ?').run(added.length, run.run_id, planner.ordinal)
+      added.forEach((node, index) => {
+        const record: NodeRecord = {
+          schema: 'workflow-node@1.0', runId: run.run_id, nodeId: node.nodeId, objective: node.objective, executor: node.executor ?? 'worker',
+          requirement: this.requirementOf(node, false, run.classification ?? undefined), dependsOn: node.dependsOn, state: 'WAITING', revision: 0,
+        }
+        this.schemas.assertRecord(record)
+        db.prepare(`INSERT INTO workflow_nodes (run_id, node_id, ordinal, spec, record, state, updated_at) VALUES (?, ?, ?, ?, ?, 'WAITING', ?)`)
+          .run(run.run_id, node.nodeId, planner.ordinal + 1 + index, JSON.stringify(node), JSON.stringify(record), now())
+      })
+      // The planner's dependents now also wait for every appended step.
+      const steps = parsed.nodes.map((n) => n.nodeId)
+      for (const dependent of this.nodeRows(run.run_id)) {
+        const dspec = JSON.parse(dependent.spec) as ResolvedNode
+        if (!dspec.dependsOn.includes(planner.node_id) || added.some((a) => a.nodeId === dependent.node_id)) continue
+        const dependsOn = [...new Set([...dspec.dependsOn, ...steps])]
+        const drecord = JSON.parse(dependent.record) as NodeRecord
+        db.prepare('UPDATE workflow_nodes SET spec = ?, record = ?, updated_at = ? WHERE run_id = ? AND node_id = ?')
+          .run(JSON.stringify({ ...dspec, dependsOn }), JSON.stringify({ ...drecord, dependsOn, revision: drecord.revision + 1 }), now(), run.run_id, dependent.node_id)
+      }
+      this.ctx.eventLog.append({ type: 'workflow.graph.grown', runId: run.run_id, nodeId: planner.node_id, decision: decision.id, data: { steps, gated } })
+    })
+    return undefined
   }
 
   /**
@@ -577,7 +740,12 @@ export class Workflow extends Service {
     const decisions = { decisions: JSON.stringify([...execution.decisions, ...this.routedDecisions(node)]) }
     const data = { executionId: execution.id, source: node.source, worker: node.worker, tier: node.served_tier, quotaClass: node.quota_class, accepted: acceptance.accepted }
     this.ctx.store.transaction(() => {
-      if (acceptance.accepted) {
+      const refused = acceptance.accepted && spec.grows ? this.grow(run, node, spec, result, lease) : undefined
+      if (refused) {
+        const error: WorkflowError = { kind: 'plan_rejected', disposition: 'NONE', message: refused }
+        this.writeNode(node, { state: 'FAILED', error: JSON.stringify(error), ...decisions }, (r) => ({ ...r, lastDecision: acceptance.decision }), lease)
+        this.ctx.eventLog.append({ type: 'workflow.node.failed', runId: run.run_id, nodeId: node.node_id, decision: acceptance.decision, data: { ...data, kind: error.kind } })
+      } else if (acceptance.accepted) {
         this.writeNode(node, { state: 'COMPLETED', error: null, ...decisions }, (r) => ({ ...r, outputReceipt: { result, acceptance: acceptance.decision }, lastDecision: acceptance.decision }), lease)
         this.ctx.eventLog.append({ type: 'workflow.node.completed', runId: run.run_id, nodeId: node.node_id, decision: acceptance.decision, data })
       } else if (!this.escalate(run, node, spec, result, acceptance.decision, acceptance.reasons, decisions, lease)) {
@@ -744,9 +912,15 @@ export class Workflow extends Service {
       ...(run.session_id ? { sessionId: run.session_id } : {}),
       ...(run.result ? { result: run.result as ArtifactRef, answer: this.resultText(run.result as ArtifactRef) } : {}),
       nodes,
+      ...this.blockedOf(run.run_id),
       ...(run.error ? { error: JSON.parse(run.error) as WorkflowError } : {}),
       createdAt: run.created_at, updatedAt: run.updated_at,
     }
+  }
+
+  private blockedOf(runId: string): { blocked?: { nodeId: string; plan: ArtifactRef } } {
+    const gate = this.nodeRows(runId).find((n) => n.state === 'BLOCKED')
+    return gate ? { blocked: { nodeId: gate.node_id, plan: (JSON.parse(gate.spec) as ResolvedNode).plan as ArtifactRef } } : {}
   }
 
   private registerTools(c: Context): void {
@@ -811,6 +985,20 @@ export class Workflow extends Service {
           tier: args.tier as Tier | undefined, classification: args.classification as Classification | undefined, clientRequestId: args.clientRequestId as string | undefined,
         })
         return shape(await this.wait(run.runId, ((args.waitSeconds as number | undefined) ?? 45) * 1000))
+      } catch (error) {
+        return failure(error)
+      }
+    })
+    c.mcp.tool('approve', {
+      description: 'Approve or reject the plan a run is waiting on (an operator decision, bound to that exact plan).',
+      inputSchema: {
+        runId: zod.string().max(200),
+        verdict: zod.enum(['approved', 'rejected']),
+        note: zod.string().max(2000).optional(),
+      },
+    }, async (args) => {
+      try {
+        return shape(this.approve(String(args.runId), { verdict: args.verdict as 'approved' | 'rejected', ...(args.note ? { note: String(args.note) } : {}) }))
       } catch (error) {
         return failure(error)
       }

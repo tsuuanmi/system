@@ -10,6 +10,7 @@ the supported way to run a DSH harness
 | `system ask [--persist] [--session <id>] [--tier <t>] [--classification <c>] (<prompt> \| -)` | asks through the running profile's MCP `ask`, then polls `result` with the `runId` until the answer arrives; prints the answer (and the session id for persistent asks) |
 | `system research [--session <id>] [--classification <c>] (<question> \| -)` | starts the `research` run (Deep research, then a cited compaction), prints step progress to stderr, and prints the compacted synthesis |
 | `system run <template> [flags] (<input> \| -)` | starts any workflow template through MCP `run`, for example `review` on a local agent Worker, and prints the answer |
+| `system approve <runId> [--reject] [note]` | the operator's verdict on the plan a run waits on (MCP `approve`), bound to that exact plan; approving then waits for the run |
 | `system result <runId>` | waits for a run and prints its answer |
 | `system usage [<limit>]` | recent runs: per step, the Worker, tier, and quota class that served it (usage report) |
 | `system explain <runId\|artifact>` | a run's decision chain per step (egress, tier, route or admission, acceptance), or any artifact's input tree |

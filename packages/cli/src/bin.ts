@@ -13,6 +13,8 @@ const USAGE = `Usage: system <command>
                             Deep research, then a cited compaction on a cheap tier; waits
   run <template> [--session <id>] [--persist] [--tier <t>] [--classification <c>] (<input...> | -)
                             start any workflow template (e.g. review, on a local agent Worker)
+  approve <runId> [--reject] [note...]
+                            approve (or reject) the plan a run is waiting on, bound to that exact plan
   result <runId>            wait for a run and print its answer
   usage [<limit>]           recent runs: per step, the Worker, tier, and quota class used
   explain <runId|artifact>  the decision chain behind a run (egress, tier, route, acceptance)
@@ -35,6 +37,7 @@ interface RunOutcome {
   sessionId?: string
   answer?: string
   nodes?: Array<{ nodeId: string; state: string }>
+  blocked?: { nodeId: string; plan: string }
   error?: { kind: string; message: string }
 }
 
@@ -47,6 +50,10 @@ async function awaitRun(first: ToolOutcome): Promise<number> {
     const run = outcome.structured as unknown as RunOutcome
     const now = (run.nodes ?? []).map((n) => `${n.nodeId} ${n.state}`).join(', ')
     if (run.status === 'running' && now !== progress) console.error(`${run.runId}: ${(progress = now)}`)
+    if (run.status === 'running' && run.blocked) {
+      console.error(`waiting for approval of plan ${run.blocked.plan}: system approve ${run.runId} [--reject] [note]`)
+      return 0
+    }
     if (run.status === 'completed') {
       console.log(run.answer)
       if (run.sessionId) console.error(`session: ${run.sessionId}`)
@@ -88,6 +95,16 @@ async function main(argv: string[]): Promise<number> {
       if (!template || !request) break
       const { prompt, ...options } = request
       return awaitRun(await callTool('run', { template, input: prompt, ...options }))
+    }
+    case 'approve': {
+      const [runId, ...args] = rest
+      if (!runId) break
+      const reject = args[0] === '--reject'
+      const note = (reject ? args.slice(1) : args).join(' ').trim()
+      const outcome = await callTool('approve', { runId, verdict: reject ? 'rejected' : 'approved', ...(note ? { note } : {}) })
+      if (outcome.isError) throw new Error(outcome.text)
+      console.log(`${reject ? 'rejected' : 'approved'}: ${runId}`)
+      return reject ? 0 : awaitRun(await callTool('result', { runId, waitSeconds: 55 }))
     }
     case 'result': {
       if (!rest[0]) break

@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:tsuuanmi:system:schema:approval:v1",
+  "title": "Approval",
+  "description": "Body of an `approval` artifact: an operator's verdict on one exact subject, such as a plan artifact (INV-5, REQ-WF-11). Authority comes from the operator's trusted channel, never from model text (INV-6).",
+  "type": "object",
+  "required": ["schema", "subject", "verdict", "by"],
+  "properties": {
+    "schema": { "const": "approval@1.0" },
+    "subject": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/subject" },
+    "verdict": { "enum": ["approved", "rejected"] },
+    "by": { "enum": ["operator", "policy"] },
+    "note": { "type": "string", "maxLength": 2000 }
+  },
+  "additionalProperties": false
+}

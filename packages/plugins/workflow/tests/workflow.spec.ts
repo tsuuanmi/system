@@ -168,6 +168,64 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
     expect(ctx.eventLog.query({ type: 'workflow.node.escalated', runId: done.runId })).toHaveLength(1)
   }, 90_000)
 
+  it('grows the graph from a planner\'s validated plan, and feeds the steps\' findings to its dependent (REQ-WF-8, REQ-WF-10)', async () => {
+    const answer = (prompt: string): string => {
+      if (prompt.includes('Plan how to answer')) {
+        return '```json\n' + JSON.stringify({ confidence: 'high', nodes: [
+          { id: 'step-1', objective: 'Look up one', prompt: 'step one: look it up', capabilities: ['reason'], tier: 'economy' },
+          { id: 'step-2', objective: 'Analyse two', prompt: 'step two: analyse {{input}}', capabilities: ['reason'], tier: 'standard', dependsOn: ['step-1'] },
+        ] }) + '\n```'
+      }
+      if (prompt.includes('<findings>')) return `Synthesis of ${['finding A', 'finding B'].filter((f) => prompt.includes(f)).join(' and ')}`
+      return prompt.includes('step one') ? 'finding A' : 'finding B'
+    }
+    const { ctx, fake } = await boot({ fake: { answer } })
+    const done = await ctx.workflow.wait(ctx.workflow.start({ template: 'investigate', input: 'why?' }).runId, 90_000)
+    expect(done).toMatchObject({ status: 'completed', answer: 'Synthesis of finding A and finding B' })
+    expect(done.nodes.map((n) => [n.nodeId, n.state, n.tier])).toEqual([
+      ['plan:1', 'COMPLETED', 'standard'], ['plan:1:step-1', 'COMPLETED', 'economy'], ['plan:1:step-2', 'COMPLETED', 'standard'], ['synthesis:1', 'COMPLETED', 'standard'],
+    ])
+    // A plan's text is used literally: its prompts are never expanded as templates.
+    expect(fake.sent.map((s) => s.prompt)).toContain('step two: analyse {{input}}')
+    const schemas = new SchemaRegistry()
+    for (const record of ctx.workflow.records(done.runId)) schemas.assertRecord(record)
+    const growth = ctx.artifacts.list({ kind: 'decision', decisionType: 'graph-growth', runId: done.runId })
+    expect(growth.map((g) => (g.body as { outcome: { option: string } }).outcome.option)).toEqual(['append'])
+    expect(ctx.artifacts.get(growth[0]!.inputs[0]!)).toMatchObject({ kind: 'plan', bodySchema: 'plan@1.0' })
+  }, 120_000)
+
+  it('refuses an invalid plan without appending anything', async () => {
+    const { ctx, fake } = await boot({ fake: { answer: () => '```json\n{"confidence":"high","nodes":[{"id":"a","objective":"o","prompt":"p","capabilities":["develop"],"tier":"economy"}]}\n```' } })
+    const done = await ctx.workflow.wait(ctx.workflow.start({ template: 'investigate', input: 'q' }).runId, 60_000)
+    expect(done).toMatchObject({ status: 'failed', error: { kind: 'plan_rejected', disposition: 'NONE' } })
+    expect(done.nodes.map((n) => n.nodeId)).toEqual(['plan:1', 'synthesis:1'])
+    expect(fake.sent).toHaveLength(1)
+  }, 60_000)
+
+  it('holds steps that need approval until the operator approves the exact plan (REQ-WF-11)', async () => {
+    const gated = DEFAULT_TEMPLATES.investigate!.map((n) => (n.grows ? { ...n, grows: { maxNodes: 2, approvalRequired: ['reason'] } } : n))
+    const answer = (prompt: string): string => (prompt.includes('Plan how to answer')
+      ? '```json\n{"confidence":"high","nodes":[{"id":"only","objective":"o","prompt":"the step","capabilities":["reason"],"tier":"economy"}]}\n```'
+      : prompt.includes('<findings>') ? 'final' : 'step done')
+    const { ctx, fake } = await boot({ fake: { answer }, workflow: { templates: { gated, rejectable: gated } } })
+    const run = ctx.workflow.start({ template: 'gated', input: 'q' })
+    await until(() => ctx.workflow.get(run.runId)?.blocked !== undefined, 60_000)
+    const blocked = ctx.workflow.get(run.runId)!
+    expect(blocked).toMatchObject({ status: 'running', blocked: { nodeId: 'plan:1:gate' } })
+    expect(fake.sent).toHaveLength(1)
+    ctx.workflow.approve(run.runId, { verdict: 'approved', note: 'fine' })
+    const done = await ctx.workflow.wait(run.runId, 60_000)
+    expect(done).toMatchObject({ status: 'completed', answer: 'final' })
+    const approval = ctx.artifacts.list({ kind: 'approval', runId: run.runId })[0]!
+    expect(approval.body).toMatchObject({ verdict: 'approved', by: 'operator', subject: { type: 'artifact', ref: blocked.blocked!.plan } })
+    // A rejection fails the run, and the steps never run.
+    const second = ctx.workflow.start({ template: 'rejectable', input: 'q2' })
+    await until(() => ctx.workflow.get(second.runId)?.blocked !== undefined, 60_000)
+    ctx.workflow.approve(second.runId, { verdict: 'rejected' })
+    expect(await ctx.workflow.wait(second.runId, 30_000)).toMatchObject({ status: 'failed', error: { kind: 'plan_rejected' } })
+    expect(() => ctx.workflow.approve(second.runId, { verdict: 'approved' })).toThrow(/waiting for approval/)
+  }, 150_000)
+
   it('retries a node that failed with a back-off disposition, within the bound (REQ-WF-6)', async () => {
     const { ctx, fake } = await boot({ fake: { thinkMs: 1500 }, turns: { maxPendingTurns: 1 }, workflow: { retryDelayMs: 1000, maxAttempts: 6 } })
     const blocker = ctx.workflow.start({ template: 'ask', input: 'hold the only slot' })

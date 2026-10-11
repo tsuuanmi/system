@@ -157,5 +157,8 @@ static templates (`ask`, and `research` → `compact`). It has:
 - bounded retries by disposition;
 - leases, and recovery on restart.
 
-Graph growth, plan gates, teams, handoff envelopes, and lineage invalidation are
-not built yet.
+- graph growth from validated `plan` artifacts (with `graph-growth` decisions);
+- the plan approval gate, with `approval` artifacts bound to the exact plan.
+
+Profile growth rules, teams, handoff envelopes, and lineage invalidation are not
+built yet.

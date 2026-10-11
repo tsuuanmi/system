@@ -18,6 +18,9 @@ second execution path (INV-1).
   - `review` is one node, `review:1`, requiring `review` and `local-data`. It
     routes to a local agent Worker (`agents` source), never to a website
     account.
+  - `investigate` is a planner, `plan:1`, then `synthesis:1`. The planner's plan
+    adds the research steps (graph growth), and the synthesis answers from their
+    findings (`{{grown}}`).
   - Config `templates` adds or replaces templates. A template is checked at
     load (preflight):
     - valid, unique node ids;
@@ -64,6 +67,29 @@ second execution path (INV-1).
     choice is an `escalation` decision either way, and `workflow.node.escalated`
     names it. With no tier left, or the bound reached, the node fails with
     `acceptance_rejected` (`NONE`).
+- **Graph growth (REQ-WF-8, REQ-WF-10).**
+  - A node with `grows` is a planner. Its accepted answer must carry a JSON
+    plan, which is untrusted input checked against bounds:
+    - short unique ids under the planner's prefix;
+    - dependencies only among its own steps, and acyclic;
+    - at most `maxNodes` steps (default 6);
+    - capabilities only from `capabilities` (default reason, web-search, review,
+      local-data), and a known tier.
+  - A valid plan is stored as a `plan@1.0` artifact and recorded as a
+    `graph-growth` decision. Its steps are appended after the planner, in the
+    same transaction as the planner's completion, and the planner's dependents
+    wait for them. A step's prompt is used literally; its tier comes from the
+    decision.
+  - An invalid plan fails the planner as `plan_rejected` (`NONE`), and nothing
+    is appended.
+- **Approval gate (REQ-WF-11).**
+  - Steps that need a capability in `approvalRequired` (default `develop`) run
+    behind a `gate` node, which waits `BLOCKED`. The run is parked, not failed,
+    and its view shows `blocked { nodeId, plan }`.
+  - `approve(runId, verdict)` (MCP `approve`, `system approve`) records an
+    `approval@1.0` bound to that exact plan, then a `gate` decision. Approved,
+    the steps run; rejected, the run fails as `plan_rejected`.
+  - `autoApprovePlans` (default off) approves a high-confidence plan by policy.
 - **Retries (REQ-WF-6).**
   - A failure is retried, up to `maxAttempts` and after
     `retryDelayMs × 2^(attempt−1)`, only when all of these hold:
@@ -98,13 +124,15 @@ second execution path (INV-1).
 - **MCP tools** (they replace the built-in placeholders):
   - `ask` waits up to `waitSeconds` (≤ 55 s);
   - `run { template, input, … }` starts any template, and waits like `ask`;
+  - `approve { runId, verdict, note? }` gives the operator's verdict on a waiting plan;
   - `research` returns at once;
   - `result` takes a `runId` and long-polls it;
   - `usage`;
   - `explain` takes a run id, or any artifact id (its input tree).
 - **Retention:** runs are deleted only by the operator (no command yet). After
   `retainDays`, a finished run's input text and rendered prompts are cleared.
-- **Not yet:** graph growth, plan approval gates, teams, lineage invalidation,
-  and the operator commands `stop`, `continue`, and `delete`.
+- **Not yet:** profile growth rules (growth comes only from plans), teams,
+  lineage invalidation, and the operator commands `stop`, `continue`, and
+  `delete`.
 - **Injects:** `store`, `artifacts`, `eventLog`, `leases`, `egress`, `workers`;
   `mcp` is optional.
