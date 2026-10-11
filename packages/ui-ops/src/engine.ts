@@ -5,7 +5,7 @@
  */
 import { createHash } from 'node:crypto'
 import { ProviderError } from '@tsuuanmi/system-provider-core'
-import type { Locator, Page } from 'patchright-core'
+import type { Frame, Locator, Page } from 'patchright-core'
 import { type Scored, choose, parseAiSnapshot, scoreNodes } from './heal.ts'
 import { candidateFromLocator, toLocator } from './locate.ts'
 import type { ActionSpec, Candidate, Condition, ElementSpec, UiMap } from './map.ts'
@@ -171,12 +171,23 @@ export class UiEngine {
 
   private async tryResolve(id: string): Promise<Resolved | undefined> {
     const spec = this.element(id)
+    if (spec.frames === 'any') {
+      for (const frame of this.page.frames()) {
+        const found = await this.matchIn(id, spec, frame)
+        if (found) return found
+      }
+      return undefined
+    }
     let root: Page | Locator = this.page
     if (spec.scope) {
       const scope = await this.tryResolve(spec.scope)
       if (!scope) return undefined
       root = scope.locator
     }
+    return this.matchIn(id, spec, root)
+  }
+
+  private async matchIn(id: string, spec: ElementSpec, root: Page | Locator | Frame): Promise<Resolved | undefined> {
     for (const [index, candidate] of spec.candidates.entries()) {
       const locator = toLocator(root, candidate, this.map.locales)
       const visible = locator.filter({ visible: true })

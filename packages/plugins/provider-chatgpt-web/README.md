@@ -47,10 +47,15 @@ The **ChatGPT Web provider driver**
     or if a model is locked.
   - Models seen on 2026-10-12: Latest, GPT-6, GPT-5.6 Sol, GPT-5.5. Power
     levels: Instant, Medium, High.
-- **Deep research** (`feature: 'deep-research'`, persistent only): "+" →
-  "Deep research" → the mention chip is checked → the prompt goes after the
-  chip.
+- **Deep research** (`feature: 'deep-research'`, persistent only):
+  - "+" → "Deep research" → the mention chip is checked → the prompt goes after
+    the chip;
+  - the acknowledgement is skipped, and the driver waits for the report frame
+    (`research.running` / `research.completed`, `frames: any`);
+  - the report text follows "Deep Research Report";
+  - a reply with no frame within `researchStartMs` is a clarifying question.
+  - Live-verified on 2026-10-12.
 - **Not yet:**
   - Markdown extraction (the answer is returned as text);
   - attachments;
-  - observing a live Deep research run to completion.
+  - Deep research options (sources, apps) beyond the default run.

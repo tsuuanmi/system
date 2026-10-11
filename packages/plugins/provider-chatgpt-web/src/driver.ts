@@ -24,6 +24,8 @@ export interface DriverTimeouts {
   pollMs?: number
   /** Page readiness after navigation (default 30 s). */
   readyMs?: number
+  /** After Deep research's acknowledgement, how long to wait for its frame before treating the reply as a clarifying question (default 60 s). */
+  researchStartMs?: number
 }
 
 export interface DriverOptions {
@@ -75,7 +77,7 @@ export class ChatGptWebDriver implements ProviderDriver<Page> {
     }
     this.loginUrl = `${this.origin}/auth/login`
     this.stateOrigins = [this.origin]
-    this.timeouts = { turnMs: 15 * 60_000, stallMs: 3 * 60_000, stableMs: 1500, pollMs: 250, readyMs: 30_000, ...options.timeouts }
+    this.timeouts = { turnMs: 15 * 60_000, stallMs: 3 * 60_000, stableMs: 1500, pollMs: 250, readyMs: 30_000, researchStartMs: 60_000, ...options.timeouts }
   }
 
   /** Signed in (composer present), signed out (positive evidence only), or unknown. */
@@ -127,7 +129,9 @@ export class ChatGptWebDriver implements ProviderDriver<Page> {
     options.signal?.throwIfAborted()
     await options.beforeSend?.({ previousResponse, mode })
     await engine.act('composer.send')
-    const text = await this.waitForAnswer(page, before, options.signal, options.deadlines, options.conversation === 'persistent' && !options.binding ? options.onBinding : undefined)
+    const reply = await this.waitForAnswer(page, before, options.signal, options.deadlines, options.conversation === 'persistent' && !options.binding ? options.onBinding : undefined)
+    // Deep research answers with an acknowledgement; the report arrives later in its frame.
+    const text = feature === 'deep-research' ? await this.waitForResearch(page, reply, options.signal, options.deadlines) : reply
     if (options.conversation === 'temporary') return { text, binding: undefined, mode }
     const binding = await this.binding(page)
     if (options.binding !== undefined && binding !== options.binding) {
@@ -221,6 +225,10 @@ export class ChatGptWebDriver implements ProviderDriver<Page> {
     if (auth === 'signed-out') throw new ProviderError('reauth_required', 'chatgpt-web: signed out')
     if (auth === 'unknown' || this.bindingOf(page) !== binding) return { text: '', running: false, observable: false }
     const engine = this.engine(page)
+    // A Deep research conversation is running until its report frame shows the report.
+    await engine.waitFor({ anyOf: [{ visible: 'research.running' }, { visible: 'research.completed' }, { visible: 'turn.assistant' }] }, 5000).catch(() => undefined)
+    if ((await engine.count('research.completed')) > 0) return { text: await this.reportText(engine), running: false, observable: true }
+    if ((await engine.count('research.running')) > 0) return { text: '', running: true, observable: true }
     const text = (await engine.count('turn.assistant')) > 0 ? await this.answerText(engine) : ''
     return { text, running: await engine.state('turn.running'), observable: true }
   }
@@ -309,6 +317,39 @@ export class ChatGptWebDriver implements ProviderDriver<Page> {
     if ((await this.pressed(engine)) !== 'true') {
       throw new ProviderError('ui_drift', `chatgpt-web: Chat mode is not selected ${when}; refusing to use Work (Codex quota)`)
     }
+  }
+
+  /**
+   * Wait for Deep research's report. If no research frame appears within `researchStartMs`,
+   * the reply was a clarifying question, which is returned so the caller can answer it in the
+   * same session.
+   */
+  private async waitForResearch(page: Page, reply: string, signal: AbortSignal | undefined, deadlines: AskOptions['deadlines']): Promise<string> {
+    const engine = this.engine(page)
+    const started = await engine.waitFor({ anyOf: [{ visible: 'research.running' }, { visible: 'research.completed' }] }, this.timeouts.researchStartMs).then(() => true, () => false)
+    if (!started) return reply
+    const completed = await waitForStableCompletion(async () => {
+      const done = (await engine.count('research.completed')) > 0
+      const running = (await engine.count('research.running')) > 0
+      return { responsePresent: done, text: done ? await this.reportText(engine) : '', html: '', running: running || !done }
+    }, {
+      timeoutMs: deadlines?.timeoutMs ?? this.timeouts.turnMs,
+      stallTimeoutMs: deadlines?.stallTimeoutMs ?? this.timeouts.stallMs,
+      stableMs: this.timeouts.stableMs,
+      pollMs: Math.max(this.timeouts.pollMs, 1000),
+      ...(signal ? { signal } : {}),
+    })
+    return completed.text
+  }
+
+  /** The report body: everything after the "Deep Research Report" heading in its frame. */
+  private async reportText(engine: UiEngine): Promise<string> {
+    const heading = await engine.resolve('research.report-heading', 2000).catch(() => undefined)
+    if (!heading) return ''
+    const body = await heading.locator.locator('xpath=ancestor::body[1]').innerText().catch(() => '')
+    const title = (await heading.locator.innerText().catch(() => '')).trim()
+    const at = body.indexOf(title)
+    return (at >= 0 ? body.slice(at + title.length) : body).trim()
   }
 
   /** Text of the last assistant answer: the container of its "ChatGPT said:" heading. */

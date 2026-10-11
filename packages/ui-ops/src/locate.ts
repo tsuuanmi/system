@@ -1,8 +1,8 @@
 /** Compile UI map candidates to engine locators, and back (for overlay entries). */
-import type { Locator, Page } from 'patchright-core'
+import type { Frame, Locator, Page } from 'patchright-core'
 import type { Candidate, Localized } from './map.ts'
 
-type Root = Page | Locator
+type Root = Page | Locator | Frame
 
 /** One regex accepting any configured locale's variant. */
 export function localizedRegex(names: Localized, locales: readonly string[]): RegExp {

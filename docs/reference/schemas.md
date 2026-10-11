@@ -108,3 +108,6 @@ guesses.
 - A local overlay has the same shape, holds only extra candidates, and is
   merged after the shipped candidates. It never replaces the shipped map.
 - `heal` is capped by `sideEffect`: an `irreversible` action never uses `model`.
+- `ui-map@1.1` adds the optional element field `frames` (`main` or `any`).
+  Elements with `frames: any` are searched in every frame and take no `scope`.
+  Readers accept 1.0 and 1.1.

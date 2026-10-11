@@ -42,7 +42,7 @@ describe.runIf(canRunBrowser)('ChatGptWebDriver against the fake site', () => {
     cleanups.push(() => fake.stop(), () => context.close())
     const page = await context.newPage()
     const driver = new ChatGptWebDriver({
-      origin: fake.origin, timeouts: { turnMs: 20_000, stallMs: 10_000, stableMs: 400, pollMs: 100 },
+      origin: fake.origin, timeouts: { turnMs: 20_000, stallMs: 10_000, stableMs: 400, pollMs: 100, researchStartMs: 3000 },
       modes: { instant: { model: 'Latest', effort: 'Instant' }, deep: { model: 'GPT-6', effort: 'High' }, locked: { model: 'GPT-5.6 Sol', effort: 'Medium' }, missing: { model: 'GPT-9' } },
       defaultMode: 'instant',
     })
@@ -119,9 +119,10 @@ describe.runIf(canRunBrowser)('ChatGptWebDriver against the fake site', () => {
   }, 60_000)
 
   it('runs Deep research from the + tools in a persistent conversation, with the prompt free of the tool chip', async () => {
-    const { fake, page, driver } = await site({ answer: 'A detailed report' })
+    const { fake, page, driver } = await site({ report: 'A detailed report with sources.' })
     const turn = await driver.ask(page, 'Survey the DSH plugin catalog', { conversation: 'persistent', feature: 'deep-research' })
-    expect(turn.text).toBe('A detailed report')
+    // Not the acknowledgement: the report from the research frame.
+    expect(turn.text).toBe('A detailed report with sources.')
     expect(turn.binding).toMatch(/^[0-9a-f-]{36}$/)
     expect(fake.sent[0]).toMatchObject({ prompt: 'Survey the DSH plugin catalog', deepResearch: true, mode: 'chat', temporary: false })
     await expect(driver.ask(page, 'x', { conversation: 'temporary', feature: 'deep-research' })).rejects.toMatchObject({ kind: 'invalid_input' })
@@ -141,6 +142,25 @@ describe.runIf(canRunBrowser)('ChatGptWebDriver against the fake site', () => {
     const other = await context.newPage()
     expect(await driver.snapshot(other, turn.binding!)).toEqual({ text: 'kept answer', running: false, observable: true })
   }, 40_000)
+
+  it('returns Deep research\'s clarifying question when no research starts', async () => {
+    const { page, driver } = await site({ clarify: true })
+    const turn = await driver.ask(page, 'Research something vague', { conversation: 'persistent', feature: 'deep-research' })
+    expect(turn.text).toBe('Which aspect should the research focus on?')
+  }, 60_000)
+
+  it('snapshots a Deep research conversation: running until the report is complete', async () => {
+    const { page, driver, context, fake } = await site({ researchMs: 4000, report: 'Final report.' })
+    let binding = ''
+    const asking = driver.ask(page, 'long research', { conversation: 'persistent', feature: 'deep-research', onBinding: (id) => { binding = id } })
+    await expect.poll(() => fake.conversations.size, { timeout: 15_000 }).toBe(1)
+    await expect.poll(() => [...fake.conversations.values()][0]?.research !== undefined, { timeout: 15_000 }).toBe(true)
+    const other = await context.newPage()
+    await expect.poll(() => binding, { timeout: 15_000 }).not.toBe('')
+    expect(await driver.snapshot(other, binding)).toMatchObject({ running: true, observable: true })
+    await asking
+    expect(await driver.snapshot(other, binding)).toEqual({ text: 'Final report.', running: false, observable: true })
+  }, 90_000)
 
   it('refuses to send when Chat cannot be selected (Work spends the Codex quota)', async () => {
     const { fake, page, driver } = await site({ chatToggleBroken: true })

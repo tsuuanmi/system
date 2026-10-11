@@ -1,7 +1,7 @@
 # ChatGPT Web UI map (ui-map@1.0, ADR-0021). Checked against the live site on 2026-10-11
 # (docs/research/browser-interaction-and-self-healing.md#live-check-2026-10-11-signed-in-account-read-only).
 # When the site changes, edit this file (and the fixture), not the driver code.
-schema: ui-map@1.0
+schema: ui-map@1.1
 provider: chatgpt-web
 uiRevision: '2026-10-11'
 locales: [en]
@@ -86,6 +86,24 @@ elements:
     candidates:
       - { role: button, name: { en: '^Deep research\b' } }
     fingerprint: { role: button, name: { en: 'deep research' } }
+
+  research.running:
+    description: Deep research in progress, inside its nested report frame (live run 2026-10-12).
+    frames: any
+    candidates:
+      - { role: button, name: { en: '^Stop research$' } }
+      - { text: { en: '^Researching' } }
+  research.completed:
+    description: '"Research completed in <time> · <n> citations · <n> searches" above the report.'
+    frames: any
+    candidates:
+      - { text: { en: '^Research completed' } }
+  research.report-heading:
+    description: The report starts after this heading, in the same frame.
+    frames: any
+    candidates:
+      - { role: heading, name: { en: '^Deep Research Report$' } }
+      - { text: { en: '^Deep Research Report$' } }
 
   model.menu:
     description: Opened by composer.model. Two views (checked 2026-10-12) - A, the Power slider plus a view toggle labelled with the level; B, after the toggle, the model radios.

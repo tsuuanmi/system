@@ -237,6 +237,20 @@ describe.runIf(canRunBrowser)('UiEngine on a real page', () => {
     expect(await tab.getByRole('textbox').innerText()).toMatch(/line one[\s\S]*line two[\s\S]*- item/)
   })
 
+  it('finds elements inside nested iframes when the map says frames: any', async () => {
+    const framed = page(`<form data-type="composer"><div contenteditable data-testid="prompt-textarea" role="textbox"></div></form>`,
+      `<iframe srcdoc="<iframe srcdoc='<main><p>Research completed in 2m</p><h2>Deep Research Report</h2><p>The answer.</p></main>'></iframe>"></iframe>`)
+    const map = loadUiMap(MAP.replace('schema: ui-map@1.0', 'schema: ui-map@1.1').replace('elements:\n', `elements:
+  research.completed:
+    frames: any
+    candidates: [{ text: { en: '^Research completed' } }]
+`))
+    const { engine } = await open(framed, map)
+    await expect.poll(() => engine.count('research.completed'), { timeout: 5000 }).toBe(1)
+    expect(await engine.state('turn.running')).toBe(false)
+    expect(await (await engine.resolve('research.completed')).locator.innerText()).toBe('Research completed in 2m')
+  })
+
   it('does not heal while a guard state is showing', async () => {
     const { engine, heals } = await open(SIGNED_OUT)
     const failure = engine.act('composer.send')

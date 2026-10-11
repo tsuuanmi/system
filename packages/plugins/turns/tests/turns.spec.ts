@@ -96,7 +96,7 @@ describe.runIf(canRunBrowser)('ctx.turns: ask through a saved account', () => {
   }, 90_000)
 
   it('starts Deep research at once in a persistent session and delivers the report through result', async () => {
-    const { ctx, fake } = await boot({ fake: { answer: 'Research report', thinkMs: 1500 } })
+    const { ctx, fake } = await boot({ fake: { report: 'Research report', thinkMs: 1500 } })
     const started = ctx.turns.research({ question: 'Survey the plugin catalog' })
     expect(started).toMatchObject({ status: 'queued', mode: 'persistent', feature: 'deep-research' })
     expect(started.sessionId).toMatch(/^ses_/)

@@ -123,6 +123,22 @@ answer, so a second prompt was sent.
   persistent conversation. How a run completes (clarifying questions, report
   rendering) is not observed yet; it needs one live run.
 
+**Live Deep research run (2026-10-12, one question, about 2 minutes).**
+
+- **Acknowledgement first.** The thread's "ChatGPT said:" answer is only an
+  acknowledgement ("Deep Research has started investigating ... the final
+  report will appear here"), and it completes like a normal answer. Treating it
+  as the result was the first defect found live.
+- **The report frame.** The research runs in **nested iframes** under the turn:
+  - while it runs, the frame shows a heading (the research title), the plan as
+    a list, "Researching...", and `button "Stop research"`;
+  - when it finishes, it shows "Research completed in 2m · N citations · N
+    searches", then "Deep Research Report", then the report with its sources.
+- **The composer slot stays idle** ("Start Voice") during the research, so
+  Stop/Send does not signal a running Deep research. Its signals are the frame's.
+- **Clarifying questions.** The prompt asked for none, and none came. A reply with
+  no research frame is treated as a clarifying question.
+
 This confirms the design choice: role plus accessible name first, structural
 `data-*` attributes second, test ids only where they still exist.
 

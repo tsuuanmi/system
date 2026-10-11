@@ -35,6 +35,8 @@ export interface Fingerprint {
 
 export interface ElementSpec {
   description?: string
+  /** `any` searches every frame (a report rendered in an iframe); such elements take no scope. */
+  frames?: 'main' | 'any'
   scope?: string
   cardinality?: 'one' | 'many'
   candidates: SourcedCandidate[]
@@ -72,7 +74,7 @@ export interface ErrorRule {
 }
 
 export interface UiMap {
-  schema: 'ui-map@1.0'
+  schema: 'ui-map@1.0' | 'ui-map@1.1'
   provider: string
   uiRevision: string
   locales: string[]
@@ -137,7 +139,7 @@ export function loadUiMap(text: string, overlayText?: string): UiMap {
     }
   }
   const map = {
-    schema: 'ui-map@1.0' as const,
+    schema: shipped.schema,
     provider: shipped.provider,
     uiRevision: shipped.uiRevision,
     locales: shipped.locales,

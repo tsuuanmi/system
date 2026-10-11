@@ -10,6 +10,8 @@ not a plugin: provider drivers create one `UiEngine` per turn page.
     reference resolves;
   - appends the local overlay's candidates after the shipped ones;
   - returns the merged map with its content `hash`.
+- **Frames:** an element with `frames: any` (`ui-map@1.1`) is searched in every
+  frame, for content rendered in iframes such as a research report.
 - **`UiEngine`:**
   - `resolve`: ordered candidates, exactly one visible match, within `scope`;
   - `act`: guards from the map's `errors`, then resolve, then a bounded heal,

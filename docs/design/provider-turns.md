@@ -70,7 +70,11 @@ default. Live observations are in the
   model, or an unreachable level fails with `config_error` before anything is
   sent (INV-2). The receipt records the verified model and effort.
 - **Deep research** (`feature: deep-research`) runs only in persistent
-  conversations: Temporary chat does not offer it. `research` returns at once,
+  conversations: Temporary chat does not offer it. Its first reply is an
+  acknowledgement, and the report arrives later in a nested frame. The driver
+  waits for that frame's "Research completed" state (running while "Stop
+  research" shows) and returns the report. If no frame appears, the reply was a
+  clarifying question and is returned as the answer. `research` returns at once,
   with longer deadlines (default 60 min, stall 30 min).
 
 ## Turn receipt

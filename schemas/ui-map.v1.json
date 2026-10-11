@@ -13,7 +13,11 @@
   ],
   "properties": {
     "schema": {
-      "const": "ui-map@1.0"
+      "enum": [
+        "ui-map@1.0",
+        "ui-map@1.1"
+      ],
+      "description": "1.1 adds element `frames`."
     },
     "provider": {
       "type": "string",
@@ -443,6 +447,13 @@
             }
           },
           "additionalProperties": false
+        },
+        "frames": {
+          "enum": [
+            "main",
+            "any"
+          ],
+          "description": "`any` searches every frame (e.g. a report rendered in an iframe); such elements take no scope."
         }
       },
       "additionalProperties": false

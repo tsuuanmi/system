@@ -13,7 +13,10 @@
  *   (`[data-model-picker-view-toggle]`) labelled with the level; view B, after the toggle, shows only the model
  *   radios. Choosing a model returns to view A;
  * - the "+" popover lists tools as buttons ("Deep research Get a detailed report"); Deep research inserts a
- *   non-editable mention chip into the composer and is not offered in Temporary chat.
+ *   non-editable mention chip into the composer and is not offered in Temporary chat;
+ * - Deep research (live run, 2026-10-12) first answers with a short acknowledgement, then renders its plan in
+ *   nested iframes ("Researching...", "Stop research") and finally "Research completed in ..." with the
+ *   "Deep Research Report" in the same frame; it may instead ask a clarifying question (no frame).
  * No private data from the live account is included.
  */
 import { randomUUID } from 'node:crypto'
@@ -39,6 +42,12 @@ export interface FakeOptions {
   models?: string[]
   /** Models shown but locked for this account. */
   lockedModels?: string[]
+  /** Deep research: time from acknowledgement to the finished report, in ms. */
+  researchMs?: number
+  /** Deep research report text. */
+  report?: string
+  /** Deep research asks a clarifying question instead of starting. */
+  clarify?: boolean
 }
 
 export interface Sent {
@@ -54,6 +63,16 @@ export interface Sent {
 interface Conversation {
   id: string
   turns: Array<{ role: 'user' | 'assistant'; text: string }>
+  research?: { done: boolean; report: string }
+}
+
+/** The Deep research frame as the live site nests it: an iframe holding an iframe. */
+export function researchFrame(research: { done: boolean; report: string }): string {
+  const inner = research.done
+    ? `<main><p>Research completed in 1m · 3 citations · 2 searches</p><h2>Deep Research Report</h2><div>${research.report}</div></main>`
+    : '<main><h2>Plan</h2><ul><li>Search sources</li></ul><p>Researching...</p><button>Stop research</button></main>'
+  const escape = (s: string): string => s.replace(/&/g, '&amp;').replace(/"/g, '&quot;')
+  return `<iframe id="research" srcdoc="${escape(`<iframe srcdoc="${escape(inner)}"></iframe>`)}"></iframe>`
 }
 
 function html(options: Required<FakeOptions>, conversation: Conversation | undefined): string {
@@ -61,6 +80,7 @@ function html(options: Required<FakeOptions>, conversation: Conversation | undef
     ? `<div class="turn"><h4 class="sr-only">You said:</h4><div>${t.text}</div><button aria-label="Copy message">c</button><button aria-label="Edit message">e</button></div>`
     : `<div class="turn"><div><h4 class="sr-only">ChatGPT said:</h4><p>${t.text}</p></div><div><button aria-label="Copy">c</button><button aria-label="Regenerate response">r</button></div></div>`).join('')
   const state = JSON.stringify({ options, conversationId: conversation?.id })
+  const research = conversation?.research ? researchFrame(conversation.research) : ''
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>ChatGPT</title>
 <style>.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}[hidden]{display:none}</style></head>
 <body>
@@ -73,7 +93,7 @@ function html(options: Required<FakeOptions>, conversation: Conversation | undef
   </div>
   <main>
     <h1 id="title">Where should we begin?</h1>
-    <section role="region" aria-label="Conversation" id="log">${turns}</section>
+    <section role="region" aria-label="Conversation" id="log">${turns}${research}</section>
     <form data-chatgpt-composer data-thread-find-composer><input aria-label="Find in chat" type="search"></form>
     <form data-chatgpt-composer data-composer-placement="home" id="composer">
       <button type="button" aria-label="Add files and more">+</button>
@@ -194,6 +214,18 @@ async function send() {
         if (!started) { $('log').append(answer); started = true }
         answer.querySelector('p').textContent += event.delta
       }
+      if (event.research) {
+        // Poll the server for the research frame, like the live page updates it.
+        const poll = async () => {
+          const r = await (await fetch('/research/' + convId)).json()
+          let frame = document.getElementById('research')
+          if (!frame) { const holder = document.createElement('div'); $('log').append(holder); holder.outerHTML = r.frame; frame = document.getElementById('research') }
+          else if (frame.dataset.done !== String(r.done)) { frame.outerHTML = r.frame }
+          document.getElementById('research').dataset.done = String(r.done)
+          if (!r.done) setTimeout(poll, 300)
+        }
+        setTimeout(poll, 300)
+      }
       if (event.done) {
         const actions = document.createElement('div')
         actions.innerHTML = '<button aria-label="Copy">c</button><button aria-label="Regenerate response">r</button>'
@@ -222,7 +254,8 @@ export class FakeChatGpt {
   constructor(options: FakeOptions = {}) {
     this.options = {
       startOnWork: true, chatToggleBroken: false, signedIn: true, requireCookie: false, userId: 'user-fake123', sendLabel: 'Send',
-      answer: 'OK', thinkMs: 300, models: ['Latest', 'GPT-6', 'GPT-5.6 Sol', 'GPT-5.5'], lockedModels: [], ...options,
+      answer: 'OK', thinkMs: 300, models: ['Latest', 'GPT-6', 'GPT-5.6 Sol', 'GPT-5.5'], lockedModels: [],
+      researchMs: 1500, report: 'Deep research report body.', clarify: false, ...options,
     }
   }
 
@@ -249,21 +282,36 @@ export class FakeChatGpt {
       const conversation = this.conversations.get(id) ?? { id, turns: [] }
       this.conversations.set(id, conversation)
       conversation.turns.push({ role: 'user', text: sent.prompt })
+      const research = sent.deepResearch && !this.options.clarify
+      const answer = sent.deepResearch
+        ? (this.options.clarify ? 'Which aspect should the research focus on?' : 'Deep Research has started investigating. The final report will appear here.')
+        : this.options.answer
+      if (research) {
+        conversation.research = { done: false, report: this.options.report }
+        setTimeout(() => { conversation.research!.done = true }, this.options.researchMs).unref()
+      }
       // Like a real session, the cookie is refreshed while answering.
       res.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8', 'set-cookie': `session_refresh=${this.sent.length}; Path=/; Max-Age=3600` })
       this.streams.add(res)
       res.write(`data: ${JSON.stringify({ conversationId: id })}\n\n`)
       await new Promise((resolve) => setTimeout(resolve, this.options.thinkMs))
-      for (const word of this.options.answer.split(/(?<= )/)) {
+      for (const word of answer.split(/(?<= )/)) {
         res.write(`data: ${JSON.stringify({ delta: word })}\n\n`)
         await new Promise((resolve) => setTimeout(resolve, 60))
       }
-      conversation.turns.push({ role: 'assistant', text: this.options.answer })
-      res.write(`data: ${JSON.stringify({ done: true })}\n\n`)
+      conversation.turns.push({ role: 'assistant', text: answer })
+      res.write(`data: ${JSON.stringify({ done: true, research })}\n\n`)
       // Like the live site, the stream is left open after the answer is complete.
       return
     }
     const signedIn = this.options.requireCookie ? /(?:^|; )session=valid(?:;|$)/.test(req.headers.cookie ?? '') : this.options.signedIn
+    const researchMatch = /^\/research\/([0-9a-f-]+)$/.exec(url.pathname)
+    if (researchMatch) {
+      const research = this.conversations.get(researchMatch[1]!)?.research
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end(JSON.stringify(research ? { done: research.done, frame: researchFrame(research) } : { done: true, frame: '' }))
+      return
+    }
     if (url.pathname === '/backend-api/me' && req.method === 'GET') {
       res.writeHead(signedIn ? 200 : 401, { 'content-type': 'application/json' })
       res.end(JSON.stringify(signedIn ? { id: this.options.userId, object: 'user' } : { detail: 'unauthorized' }))
