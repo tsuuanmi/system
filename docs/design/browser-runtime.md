@@ -44,7 +44,8 @@ foreground:
 - Use an explicit window size and viewport. A window is never minimized or
   hidden, because a hidden view collapses its viewport.
 - Enable focus emulation (`Emulation.setFocusEmulationEnabled`) so that
-  background windows accept input and focus events.
+  background windows accept input and focus events. The engine (Playwright and
+  patchright on Chromium) enables it on every page; a real-browser test guards it.
 - Disable background throttling (`--disable-background-timer-throttling`,
   `--disable-renderer-backgrounding`, `--disable-backgrounding-occluded-windows`).
 - Prevent system sleep while turns are active.
@@ -60,8 +61,8 @@ foreground:
 
 - **Engine:** `patchright-core` driving the **system Chrome stable channel**.
   The search order is the configured path, then `CHROME_PATH`, then standard
-  install locations. A bundled Chrome for Testing is a last resort and produces
-  a warning.
+  install locations. There is no bundled fallback: a missing Chrome fails closed
+  with `config_error`.
 - **Flags:** no `--enable-automation`, no `--no-sandbox` for headed runs, and the
   OS keyring is kept, without `--password-store=basic` or `--use-mock-keychain`.
 - **No exposed debugging port.** Contexts are owned in-process. If a CDP endpoint

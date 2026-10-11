@@ -11,7 +11,9 @@ import { type Context, Service } from '@deepseek-ai/cordis'
 import { type CredentialKey, type CredentialRecord, credentialKey } from '@deepseek-ai/dsh-credentials'
 import z from '@deepseek-ai/schemastery'
 import { type ContentId, SchemaRegistry } from '@tsuuanmi/system-libs'
-import { ProviderError, type Tier } from '@tsuuanmi/system-provider-core'
+import { type PortableState, ProviderError, type Tier } from '@tsuuanmi/system-provider-core'
+
+export type { PortableState }
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -30,14 +32,6 @@ export interface CatalogEntry {
   quotaClass: QuotaClass
   /** Tier → provider mode, e.g. `{ economy: 'instant', frontier: 'pro' }` (purpose P4). */
   tiers: Partial<Record<Tier, string>>
-}
-
-export interface PortableState {
-  origins: string[]
-  cookies: Record<string, unknown>[]
-  localStorage?: Record<string, unknown>[]
-  indexedDB?: { status: 'captured' | 'kept-previous' | 'absent'; data?: Record<string, unknown>[] }
-  capturedAt: string
 }
 
 export interface LoginCredentials {

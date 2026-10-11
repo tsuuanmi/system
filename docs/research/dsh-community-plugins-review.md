@@ -31,6 +31,25 @@ the pinned DSH version is **unverified for every candidate**.
 | Worker sessions, teams | `@contexera/dsh-agent-team@0.2.2` | reference | A SQLite ledger with revision tokens, direct messages that wake the recipient, and context-rollover checkpoints. Members are **in-process DSH agents only**. Heavily coupled to the UI. Peers exclude 0.2.1 |
 | Claude Code integration | — | none found | No candidate covers Claude Code |
 
+## Browser runtime (second pass, 2026-10-11)
+
+About 420 browser-related catalog entries were triaged by summary, and the closest
+ones were read. Almost all of them are **LLM-facing browsing tools**, not a provider
+runtime.
+
+| Candidate | Verdict | Why |
+|---|---|---|
+| `@anweat/dsh-browser@0.2.1` | **reference** | Peers exclude `0.2.1-alpha.2` and pin `cordis 4.0.4`. Headless and `channel: chromium` by default. Optional `--remote-debugging-port`. No IndexedDB. Writes captured state back unfiltered. No idle close and no display integration. Worth borrowing: domain filtering before `newContext`, a single in-flight launch, ignoring a late `disconnected` from an older process |
+| `@deepseek-ai/dsh-browser-slotpool` | reject | One script on fixed CDP ports 9222/9223 |
+| `dsh-browser-service` | reject | A headless `chrome-headless-shell` daemon with `--no-sandbox`. Its loopback CDP proxy with a token is a reference for the "if ever needed" case |
+| `@hy-sde-org/dsh-browser` | reject | Stealth scripts plus CloakBrowser, headless default, relay open without a token. Its orphan registry (browser PIDs per host PID, reaped after `ESRCH`) is a reference for host-crash cleanup |
+| `chrome-faithful`, `browserrig`, `dsh-browser-crossplatform` | reject | Drive the operator's own Chrome through an extension |
+| `dsh-browser-panel` | reference (remote login) | Headed Chrome on a private Xvfb with a CDP screencast for human takeover. Uses `--remote-allow-origins=*`, a CDP port, and `--password-store=basic` |
+| npm `@crawlee/browser-pool` | reject | Fingerprint injection on by default; heavy |
+| DSH core `browser-use`, `computer-use`, `web` | not a fit | `ctx.browserUse` and `ctx.computerUse` only hold an exclusive provider name for model-facing tools; `web` is search and fetch. DSH core has no browser runtime seam or Chrome launcher to consume |
+
+Nothing in the catalog provides noVNC, x11vnc, or websockify.
+
 ## Decisions taken
 
 1. **MCP server: build our own** thin plugin on `ctx.webServer` (the route shape
@@ -51,5 +70,11 @@ the pinned DSH version is **unverified for every candidate**.
    possible (MIT, clean `./core` export), but the dependency weight, the single
    maintainer, and the gaps favor reimplementing.
 5. **A2A and teams:** reference only for now (planned and Beta respectively).
+6. **Browser runtime: build our own** thin `browser-patchright` plugin, ported
+   from internet's runtime (per-account browsers, contexts closed on abort,
+   IndexedDB preservation). It adds what internet lacks (focus emulation,
+   no-throttling flags, an idle timer, `ctx.display.lost`), is headed only, and
+   borrows anweat's origin filter and launch patterns. `ctx.browser` is ours to
+   define; it does not register with DSH `ctx.browserUse`.
 
 These choices are recorded in the [dependency register](../engineering/dependencies.md).

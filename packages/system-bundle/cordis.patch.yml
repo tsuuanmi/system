@@ -28,5 +28,9 @@
       name: '@tsuuanmi/system-accounts'              # catalog is configured in the operator's profile patch
     - id: turn-receipts
       name: '@tsuuanmi/system-turn-receipts'
+    - id: display
+      name: '@tsuuanmi/system-display-virtual'       # Xvfb starts on the first turn, not at boot
+    - id: browser
+      name: '@tsuuanmi/system-browser-patchright'    # Chrome starts per account on demand
     - id: mcp-server
       name: '@tsuuanmi/system-mcp-server'

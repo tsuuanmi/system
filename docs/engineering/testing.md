@@ -32,6 +32,20 @@
 - **Mock only the expensive boundary.** Keep the real registry, store, and
   engine downstream of a scripted provider.
 
+## Real display and browser tests
+
+`display-virtual` and `browser-patchright` are tested against a real Xvfb and a real
+headed Chrome, not a mocked engine: invisibility, foreground behavior, and the
+absence of automation leaks are properties of the real browser.
+
+- They need Xvfb and a modern Chrome. The tests use `CHROME_PATH`, then a system
+  Chrome of version 120 or later, then Chrome for Testing installed with
+  `npx @puppeteer/browsers install chrome@stable --path ~/.cache/system-chrome`
+  (no root needed).
+- Locally they are skipped when either is missing. CI sets
+  `SYSTEM_REQUIRE_BROWSER=1`, so a missing browser **fails** the run instead of
+  skipping silently.
+
 ## CI gates (planned)
 
 1. oxlint and ESLint, typecheck, and the layer dependency check.

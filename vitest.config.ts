@@ -18,6 +18,7 @@ export default defineConfig({
       '@tsuuanmi/system-turn-receipts': src('./packages/plugins/turn-receipts/src/index.ts'),
       '@tsuuanmi/system-accounts': src('./packages/plugins/accounts/src/index.ts'),
       '@tsuuanmi/system-display-virtual': src('./packages/plugins/display-virtual/src/index.ts'),
+      '@tsuuanmi/system-browser-patchright': src('./packages/plugins/browser-patchright/src/index.ts'),
       '@tsuuanmi/system-provider-core': src('./packages/provider-core/src/index.ts'),
     },
   },

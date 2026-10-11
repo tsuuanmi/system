@@ -50,6 +50,9 @@
       ],
       "@tsuuanmi/system-display-virtual": [
         "packages/plugins/display-virtual/src/index.ts"
+      ],
+      "@tsuuanmi/system-browser-patchright": [
+        "packages/plugins/browser-patchright/src/index.ts"
       ]
     }
   },

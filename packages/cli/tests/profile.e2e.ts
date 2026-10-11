@@ -16,7 +16,7 @@ const home = mkdtempSync(join(tmpdir(), 'system-e2e-'))
 const env = { ...process.env, DSH_HOME: home }
 let child: ChildProcess | undefined
 
-const ALLOWED_ROWS = ['timer', 'credentials', 'webserver', 'store', 'blobs', 'event-log', 'leases', 'artifacts', 'accounts', 'turn-receipts', 'mcp-server']
+const ALLOWED_ROWS = ['timer', 'credentials', 'webserver', 'store', 'blobs', 'event-log', 'leases', 'artifacts', 'accounts', 'turn-receipts', 'display', 'browser', 'mcp-server']
 
 async function waitFor(path: string, timeoutMs: number): Promise<void> {
   const deadline = Date.now() + timeoutMs
