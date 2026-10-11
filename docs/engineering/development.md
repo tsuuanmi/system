@@ -70,6 +70,7 @@ CI runs check, test, build, and e2e on Node 22 and 24
 
 ## Data directory
 
-Runtime state lives under `~/.system/` by default (directories 0700, credential
-files 0600). The development profile uses a separate data directory and separate
+Runtime state lives under `<DSH_HOME>/system/` (default `~/.dsh/system/`), with
+directories `0700` and files `0600`. This includes the store, vault, blobs, MCP
+discovery and token, login profiles, the managed Chrome, and UI overlays. The development profile uses a separate data directory and separate
 provider accounts, so development never touches production state.

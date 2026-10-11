@@ -31,7 +31,7 @@ behavior lives and under which constraints. *How* each mechanism works belongs i
                  └────────────────────────────────────────┘
                         │ durable state (SQLite + blobs)
                         ▼
-                    ~/.system/
+                    <DSH_HOME>/system/
 ```
 
 The same agent can appear on both sides. Claude Code or Codex can *use* `system`
@@ -54,7 +54,7 @@ internals.
 ```text
 ┌───────────────────────────────────────────────────────────────────────────┐
 │ Gateways      Responses (Codex) · Anthropic Messages (Claude Code) ·      │
-│               MCP server · CLI · Web UI            [consumers only]       │
+│               ctx.mcp (tools contributed by plugins) · CLI · Web UI       │
 ├───────────────────────────────────────────────────────────────────────────┤
 │ Orchestration ctx.workflow (semantic DAG, durable nodes) · ctx.teams ·    │
 │               ctx.workerSessions (SessionIds, direct messaging) ·         │
@@ -67,9 +67,10 @@ internals.
 │               ctx.agentRuntimes (Claude Agent SDK, Codex SDK, ACP) ·      │
 │               ctx.models (API / local models, economy tier)               │
 ├───────────────────────────────────────────────────────────────────────────┤
-│ Provider      ctx.browser · ctx.display · ctx.accounts ·                  │
-│ runtime       ctx.providers (chatgpt-web, gemini-web drivers) ·           │
-│               scheduler · turn receipts · remote login                    │
+│ Provider      ctx.turns (ask/research runtime) · ctx.turnReceipts ·       │
+│ runtime       ctx.browser · ctx.display · ctx.accounts · ctx.login ·      │
+│               ctx.providers (chatgpt-web driver) · UI engine (ui-ops) ·   │
+│               scheduler · remote login                                    │
 ├───────────────────────────────────────────────────────────────────────────┤
 │ Kernel        ctx.store (SQLite/WAL) · ctx.blobs · ctx.eventLog ·         │
 │               ctx.leases · libraries: hashing, clock, schemas             │

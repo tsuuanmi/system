@@ -81,7 +81,7 @@ usable build, delivered at milestone M1.5:
 
 | Slice 1 includes | Detail |
 |---|---|
-| MCP tools | `ask`, `research`, `status`, `result`; `ask` and `research` take an optional `sessionId`; `research` returns a `SessionId` at once |
+| MCP tools | `ask`, `research`, `status`, `result`. `ask` and `research` take an optional `sessionId`. `research` returns a `turnId` and `SessionId` at once. `ask` waits up to `waitSeconds` (≤ 55 s) and otherwise returns its `turnId`. `result` long-polls a `turnId` ([contract](../design/provider-turns.md#runtime-mvp-slice-1)) |
 | CLI | `account add/login/list/remove`, `ask`, `research`, `status` |
 | Platform | **Linux x64 only** |
 | Browser | invisible headed Chrome on Xvfb (`virtual`); remote login over noVNC through an SSH tunnel, ported from tsuuanmi/internet ([browser runtime](../design/browser-runtime.md#login-flows)) |

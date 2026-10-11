@@ -1,12 +1,13 @@
 #!/usr/bin/env node
-import { browserDeps, callTool, ensureBrowser, init, mcpConfig, mcpToken, start } from './index.ts'
+import { browserDeps, callTool, ensureBrowser, init, mcpConfig, mcpToken, parseAsk, readAllStdin, start } from './index.ts'
 
 const USAGE = `Usage: system <command>
 
   init                      create or refresh the system DSH profile; ensure Chrome and Xvfb
   browser install           install the managed Chrome pinned in chrome.lock.json
-  ask [--persist] [--session <id>] <prompt...>
-                            ask ChatGPT through a saved account (profile must be running)
+  ask [--persist] [--session <id>] [--tier economy|standard|frontier] (<prompt...> | -)
+                            ask a website model through a saved account; - reads the prompt
+                            from stdin (profile must be running)
   account list              list provider accounts and their status (profile must be running)
   account save <id>         after an interactive login: capture, verify, store encrypted
   start [dsh args...]       boot the profile (e.g. --patch ./overlay.yml)
@@ -29,18 +30,9 @@ async function main(argv: string[]): Promise<number> {
       return 0
     }
     case 'ask': {
-      const args = [...rest]
-      let persist = false
-      let sessionId: string | undefined
-      while (args[0]?.startsWith('--')) {
-        const flag = args.shift()
-        if (flag === '--persist') persist = true
-        else if (flag === '--session') sessionId = args.shift()
-        else break
-      }
-      const prompt = args.join(' ').trim()
-      if (!prompt) break
-      let outcome = await callTool('ask', { prompt, ...(persist ? { persist } : {}), ...(sessionId ? { sessionId } : {}) })
+      const request = await parseAsk(rest, readAllStdin)
+      if (!request) break
+      let outcome = await callTool('ask', { ...request })
       for (;;) {
         if (outcome.isError) throw new Error(outcome.text)
         const turn = outcome.structured as { turnId: string; status: string; sessionId?: string; answer?: string; error?: { kind: string; message: string } }

@@ -30,10 +30,15 @@ routes back here.
   (invisible: Xvfb or off-screen; visible: the operator's screen; never headless for turns), remote login, the account vault (portable auth
   state, revisioned), conversation bindings, the per-account scheduler, provider
   turn receipts, and one **provider driver** per website.
-- **Does not own:** prompts, team or workflow semantics, or Worker admission.
-- **Contract:** the `ProviderDriver` interface
-  ([ADR-0005](../decisions/adr/0005-provider-runtime-interface.md)) wrapped by
-  `ProviderRuntime.turn(account, request) → TurnOutcome`. Credentials never cross
+  The **turn runtime** (`ctx.turns`) runs `ask`/`research`. It stores the turn
+  and its prompt locally for a bounded time, routes to the first ready account
+  (MVP slice 1 stand-in for Worker routing), and contributes the MCP `ask`,
+  `research`, and `result` tools. Login profiles and Save belong to `ctx.login`.
+- **Does not own:** team or workflow semantics, or Worker admission (slice 1
+  routing is the minimal first-ready rule, recorded as a decision).
+- **Contract:** the `ProviderDriver` interface in `@tsuuanmi/system-provider-core`
+  ([ADR-0005](../decisions/adr/0005-provider-runtime-interface.md)): `checkAuth`,
+  `identity`, `ask`, `snapshot`. `ctx.turns` drives it. Credentials never cross
   upward ([INV-8](invariants.md#inv-8-credentials-never-cross-upward)).
 - **Design:** [browser runtime and account vault](../design/browser-runtime.md),
   [provider-turns](../design/provider-turns.md),

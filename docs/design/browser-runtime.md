@@ -31,6 +31,10 @@ pretend to be a different machine.
 
 ## Display modes (`ctx.display`)
 
+`ctx.display.prepare('invisible')` returns the platform's invisible kind
+(`virtual` on Linux, `offscreen` elsewhere). `prepare('visible')` returns the
+operator's screen. `headless` is never offered for provider turns.
+
 | Mode | How | Default on | Use |
 |---|---|---|---|
 | `virtual` | headed Chrome on a plugin-owned **Xvfb** (`-screen 0 1920x1080x24 -nolisten tcp`, `-displayfd`, `-auth` with a private cookie); window `--window-size=1920,1080` | **Linux** (including servers without a display) | provider turns |
@@ -94,7 +98,7 @@ interface ProviderAccountSupport {          // part of ProviderDriver
 | Catalog | accounts are **configuration**: id, provider, label, roles, quota class, and tier-to-mode map. Any number per provider, for example `chatgpt-main`, `chatgpt-2`, `gemini-main` |
 | Portable state | per account: cookies, localStorage, and **IndexedDB** for `stateOrigins` only, in one revisioned record ([`account.v1.json`](../../schemas/account.v1.json)). If IndexedDB is too large to capture, the previous IndexedDB is kept and a warning is recorded |
 | Login profile | a per-account native Chrome profile directory, machine-local, used **only** for interactive login and re-auth. Automated turns never use it |
-| Storage | vault directory `0700`, records `0600`, atomic write (temp file, fsync, rename), reads reject wrong permissions. Encryption at rest with a key from the OS keyring is an optional provider of the same seam |
+| Storage | account records and login credentials are encrypted grant records in `ctx.credentials`, provided by the AES-256-GCM vault (canonical: [credentials vault](../../packages/plugins/credentials-vault/README.md)) |
 | Isolation | one browser process, scheduler, and set of conversation bindings per account. Ports are allocated dynamically, not by index. Two accounts never share a context |
 | Distinct identities | at save time, `identity()` is hashed. Accounts whose hashes match are flagged, which REQ-TEAM-4 needs for independent team members |
 | Write-back | after each turn, refreshed state is written only if both the account revision and the scheduler lease generation are current ([scheduling](scheduling-and-leases.md)) |
@@ -149,8 +153,8 @@ NEEDS_HUMAN ──▶ remote browser on the SAME profile + `account.status = rea
   Nothing is retried in a way that could lock the account. Challenges are never
   solved (CON-3).
 - **Secrets:** the email, password, and TOTP secret live in an **encrypted
-  credential record**. The key comes from the OS keyring, or from a `0600` key
-  file on servers. Values are decrypted only in memory and never logged, sent to
+  credential record** in the vault, whose key handling is described in the
+  [credentials vault](../../packages/plugins/credentials-vault/README.md). Values are decrypted only in memory and never logged, sent to
   a model, or stored in an artifact. **A TOTP secret is never sent to any website
   or service** (for example 2fa.live), because that would hand over the second
   factor permanently.

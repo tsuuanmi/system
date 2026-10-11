@@ -30,7 +30,9 @@ Full statement: [docs/requirements/purpose.md](docs/requirements/purpose.md).
 
 ## Status
 
-**M0 (implementation started).** The architecture is
+**M1.5 (MVP slice 1 in progress).** `ask` and `research` run end to end
+through MCP and the `system` CLI against ChatGPT Web, with a saved account, an
+invisible headed Chrome, receipts, and reconciliation. The architecture is
 accepted in [PROP-0001](docs/proposals/0001-unified-system-architecture.md), and
 implementation follows the [roadmap](docs/proposals/roadmap.md).
 

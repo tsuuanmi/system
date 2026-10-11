@@ -11,6 +11,9 @@ It replaces `dsh-credentials-local`, which stores plain YAML
   Writes are atomic: a `0600` temp file, fsync, then rename.
 - **Concurrency:** an in-process queue plus DSH `withFileLock` held across the whole read-modify-write, including the async `mutate` (seam contract: a rotating refresh token is never spent twice).
 
+- **Disposal:** waits for in-flight mutations before wiping the key in memory,
+  and refuses any write afterwards, so a write can never seal the vault under a
+  wiped key.
 - **Precedence:** the launch environment shadows the vault (read-only). A write
   that would be shadowed is refused.
 - **Key:** a 32-byte owner-only file (`0600`, or `0400` such as a systemd credential), created atomically on first use (default

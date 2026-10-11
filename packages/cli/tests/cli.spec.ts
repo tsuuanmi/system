@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { CHROME_LOCK } from '@tsuuanmi/system-browser-patchright'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { callTool, ensureBrowser, exitCode, mergeProfileManifest, mcpConfig } from '../src/index.ts'
+import { callTool, ensureBrowser, exitCode, mergeProfileManifest, mcpConfig, parseAsk } from '../src/index.ts'
 
 const dirs: string[] = []
 afterEach(() => {
@@ -67,5 +67,14 @@ describe('system account (an MCP client of the running profile)', () => {
     const home = mkdtempSync(join(tmpdir(), 'system-cli-'))
     dirs.push(home)
     await expect(callTool('account_list', {}, home)).rejects.toThrow(/system start/)
+  })
+})
+
+describe('system ask arguments', () => {
+  it('reads the prompt from stdin with -, so it stays out of the process list and shell history', async () => {
+    expect(await parseAsk(['--persist', '-'], async () => 'secret prompt\n')).toEqual({ prompt: 'secret prompt', persist: true })
+    expect(await parseAsk(['--session', 'ses_1', 'hello', 'world'], async () => '')).toEqual({ prompt: 'hello world', sessionId: 'ses_1' })
+    expect(await parseAsk(['--tier', 'frontier', 'q'], async () => '')).toEqual({ prompt: 'q', tier: 'frontier' })
+    expect(await parseAsk([], async () => '')).toBeUndefined()
   })
 })

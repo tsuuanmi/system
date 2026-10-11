@@ -39,11 +39,11 @@ other documents link to it instead of repeating it.
 | [Proposals](proposals/README.md) | reviewed change under evolution | evolutionary |
 | [Research](research/README.md) | evidence, analysis of external systems | exploratory |
 
-**Design-phase note.** No source exists yet. Until
-[PROP-0001](proposals/0001-unified-system-architecture.md) is accepted and
-implemented, the requirements, architecture, and design documents describe the
-**target** system. Each one states this in its header. They become current truth
-once code realizes them.
+**Target and current state.** Implementation is under way (see the
+[roadmap](proposals/roadmap.md)). Requirements, architecture, and design
+documents describe the **target** system and say so in their headers. Package
+`README.md` files describe what is built now. Where a design describes behavior
+that a package implements, the package README links to it.
 
 ## Directory layout
 

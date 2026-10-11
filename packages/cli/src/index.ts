@@ -173,3 +173,31 @@ export async function callTool(name: string, args: Record<string, unknown>, home
     await client.close()
   }
 }
+
+export interface AskRequest {
+  prompt: string
+  persist?: true
+  sessionId?: string
+  tier?: string
+}
+
+/** `system ask [--persist] [--session <id>] [--tier <tier>] (<prompt...> | -)`; `-` reads stdin. */
+export async function parseAsk(args: readonly string[], readStdin: () => Promise<string>): Promise<AskRequest | undefined> {
+  const rest = [...args]
+  const request: Partial<AskRequest> = {}
+  while (rest[0]?.startsWith('--')) {
+    const flag = rest.shift()
+    if (flag === '--persist') request.persist = true
+    else if (flag === '--session' && rest[0]) request.sessionId = rest.shift()!
+    else if (flag === '--tier' && rest[0]) request.tier = rest.shift()!
+    else return undefined
+  }
+  const prompt = (rest.length === 1 && rest[0] === '-' ? await readStdin() : rest.join(' ')).trim()
+  return prompt ? { prompt, ...request } : undefined
+}
+
+export async function readAllStdin(): Promise<string> {
+  let text = ''
+  for await (const chunk of process.stdin) text += String(chunk)
+  return text
+}

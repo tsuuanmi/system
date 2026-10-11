@@ -20,9 +20,10 @@ driver: submitPrompt(text)                     engine                          U
   read    turn.assistant.last           ─▶  DOM → Markdown             ◀─  elements.turn.assistant.last
 ```
 
-The ChatGPT procedures are `probeAuth`, `openConversation`, `selectMode`
-(model, effort, Deep Research), `attach`, `submitPrompt`, `waitForCompletion`,
-`readResponse`, and `bindConversation` (URL `/c/<id>`). They hold no selectors.
+The ChatGPT driver's procedures are `checkAuth`, `identity`, `open` (new or bound
+conversation, Chat mode, Temporary chat), `selectMode` (model and Power, read
+back), `ask` (Deep research tool, insert, send, wait, read), `snapshot`, and
+`binding` (URL `/c/<id>`). They hold no selectors. Attachments are not built yet.
 
 ## UI map (`ui-map@1.0`)
 

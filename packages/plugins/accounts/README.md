@@ -15,4 +15,7 @@
   - `markSignedOut` needs positive evidence (`login-url` / `login-surface`).
   - `markChallenge` keeps the state.
   - `duplicateIdentities` flags accounts that share an identity (REQ-TEAM-4).
+- **Known limitation:** every read decrypts the whole vault, including every
+  account's portable state. That is fine for a few accounts; caching by file
+  change, or one record per file, is the next step if the catalog grows.
 - **Injects:** `credentials`.

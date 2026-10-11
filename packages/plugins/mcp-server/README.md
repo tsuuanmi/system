@@ -21,8 +21,9 @@ the `system` CLI
 - **Built-in tools (slice 1 surface):**
   - `status` reports the stage, store, artifacts, kernel seams, and registered
     providers.
-  - `ask`, `research`, and `result` are placeholders. They return an explicit
-    "not installed" error until the provider runtime contributes them (M1.5),
-    and never pretend to work.
+  - `ask`, `research`, and `result` are placeholders. When `ctx.turns` is
+    mounted (it is in the `system` bundle), the runtime's tools replace them.
+    Otherwise they return an explicit "not installed" error and never pretend to
+    work.
 - **Injects:** `webServer`. It uses `ctx.get('artifacts')`, `ctx.get('store')`,
   and `ctx.get('providers')` optionally.

@@ -3,7 +3,8 @@
  * (ADR-0011, M0 spike), published as **`ctx.mcp`** so other plugins contribute tools for
  * their own lifetime (everything is a plugin). Claude Code, Codex, and the `system` CLI
  * connect with the URL and bearer token from the 0600 discovery file. `ask`, `research`,
- * and `result` report "not installed" until the provider runtime contributes them (M1.5).
+ * and `result` are placeholders that report "not installed" unless a runtime plugin
+ * (`ctx.turns`) contributes them.
  * @module @tsuuanmi/system-mcp-server
  */
 import { readFileSync, rmSync } from 'node:fs'
