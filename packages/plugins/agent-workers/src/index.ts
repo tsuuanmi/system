@@ -45,6 +45,8 @@ export interface Config {
   workers: AgentWorkerConfig[]
   /** How long a probe result stands (default 5 min). */
   probeTtlMs?: number
+  /** Hard deadline per run; the agent is stopped and the run fails as `timeout` (default 15 min). */
+  runTimeoutMs?: number
 }
 
 interface RunRow {
@@ -85,6 +87,7 @@ export class AgentWorkers extends Service {
       quotaClass: z.union(['subscription-chat', 'agent-plan', 'metered', 'local']).default('agent-plan'),
     })).default([]).description('Agent-runtime Workers; each policy comes from here only (INV-6)'),
     probeTtlMs: z.natural().default(5 * 60_000).description('How long a probe result stands'),
+    runTimeoutMs: z.natural().min(1).default(15 * 60_000).description('Hard deadline per run'),
   }) as unknown as z<Config>
 
   private readonly workers = new Map<string, AgentWorkerConfig>()
@@ -275,17 +278,22 @@ export class AgentWorkers extends Service {
       : undefined
     const spec: RunSpec = {
       prompt: row.prompt, workspace: worker.workspace, sandbox: worker.sandbox,
-      ...(worker.tools ? { tools: worker.tools } : {}), ...(worker.model ? { model: worker.model } : {}), ...(worker.maxTurns ? { maxTurns: worker.maxTurns } : {}),
+      // Omitted or empty means the runtime's minimal set: the config schema turns an omitted list into [].
+      ...(worker.tools?.length ? { tools: worker.tools } : {}), ...(worker.model ? { model: worker.model } : {}), ...(worker.maxTurns ? { maxTurns: worker.maxTurns } : {}),
       ...(session?.native_handle ? { resume: session.native_handle } : {}),
     }
     // Submitted from here on: the agent may act as soon as it starts.
     this.update(row.run_id, { status: 'running', submitted_at: now() }, lease)
-    const result = await provider.run(spec, signal, (handle) => {
+    const deadline = AbortSignal.timeout(this.config.runTimeoutMs ?? 15 * 60_000)
+    const result = await provider.run(spec, AbortSignal.any([signal, deadline]), (handle) => {
       this.ctx.store.transaction((db) => {
         this.ctx.leases.fence(lease())
         db.prepare('UPDATE agent_runs SET native_handle = ?, updated_at = ? WHERE run_id = ?').run(handle, now(), row.run_id)
         if (row.session_id) db.prepare('UPDATE agent_sessions SET native_handle = ? WHERE session_id = ?').run(handle, row.session_id)
       })
+    }).catch((error: unknown) => {
+      if (deadline.aborted && !signal.aborted) throw new ProviderError('timeout', `${row.worker} did not finish within ${this.config.runTimeoutMs ?? 15 * 60_000} ms; it was stopped`, { cause: error })
+      throw error
     })
     const handle = result.nativeHandle ?? this.row(row.run_id)?.native_handle ?? undefined
     this.ctx.store.transaction((db) => {

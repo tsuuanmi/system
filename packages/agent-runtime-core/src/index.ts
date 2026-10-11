@@ -33,7 +33,7 @@ export interface RunSpec {
   /** Absolute workspace root. */
   workspace: string
   sandbox: SandboxMode
-  /** Tool allow-list; absent means the provider's minimal set for the sandbox. */
+  /** Tool allow-list; absent or empty means the provider's minimal set for the sandbox. */
   tools?: string[] | undefined
   /** Operator configuration; never a routing input (INV-11). */
   model?: string | undefined

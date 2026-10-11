@@ -99,6 +99,23 @@ describe('ctx.workers source `agents`: agent runtimes as Workers', () => {
     expect(result.body).toMatchObject({ worker: 'agent:reviewer', runtime: 'scripted', sandbox: 'read-only', text: 'echo: look at it', nativeHandle: 'h-1' })
   })
 
+  it('treats an omitted or empty tool list as the runtime\'s minimal set, never as no tools (live 2026-10-12)', async () => {
+    const agent = new ScriptedAgent()
+    const { ctx } = await boot(agent, { workers: [worker({ tools: [] })] })
+    const admitted = await ctx.workers.route(requirement())
+    const source = ctx.workers.source('agents')!
+    await source.wait(source.start({ key: 'k', worker: 'agent:reviewer', prompt: 'x', requirement: requirement(), decisions: admitted.decisions }).id, 10_000)
+    expect(agent.runs[0]).not.toHaveProperty('tools')
+  })
+
+  it('stops a run that outlives its deadline, and reports a timeout', async () => {
+    const { ctx } = await boot(new ScriptedAgent({ holdMs: 30_000 }), { workers: [worker()], runTimeoutMs: 300 })
+    const admitted = await ctx.workers.route(requirement())
+    const source = ctx.workers.source('agents')!
+    const done = await source.wait(source.start({ key: 'k', worker: 'agent:reviewer', prompt: 'x', requirement: requirement(), decisions: admitted.decisions }).id, 10_000)
+    expect(done).toMatchObject({ status: 'failed', submitted: true, error: { kind: 'timeout' } })
+  })
+
   it('reports a failed run with its kind, after it was submitted', async () => {
     const { ctx } = await boot(new ScriptedAgent({ fail: new ProviderError('timeout', 'max turns') }))
     const admitted = await ctx.workers.route(requirement())

@@ -44,6 +44,12 @@ describe('claude-agent-sdk: the configured policy, exactly', () => {
     })
   })
 
+  it('never runs with no tools: an empty list means the minimal read set (live 2026-10-12)', async () => {
+    const calls: Call[] = []
+    await runtime(scripted(calls)).run({ prompt: 'x', workspace, sandbox: 'read-only', tools: [] }, new AbortController().signal)
+    expect(calls[0]!.options).toMatchObject({ tools: ['Read', 'Grep', 'Glob'], allowedTools: ['Read', 'Grep', 'Glob'] })
+  })
+
   it('refuses tools a read-only run cannot hold, and writable sandboxes, before running', async () => {
     const calls: Call[] = []
     await expect(runtime(scripted(calls)).run({ prompt: 'x', workspace, sandbox: 'read-only', tools: ['Read', 'Bash'] }, new AbortController().signal))

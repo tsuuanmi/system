@@ -5,7 +5,8 @@ The **`agents` Worker source**: agent runtimes as Workers
 
 - **Workers come from configuration only** (INV-6). Each entry is `agent:<id>`
   with a `runtime` kind, an absolute `workspace`, a `sandbox` (`read-only` or
-  `workspace-write`), and optional `tools`, `model`, and `maxTurns`. It also
+  `workspace-write`), and optional `tools` (omitted or empty: the runtime's
+  minimal set), `model`, and `maxTurns`. It also
   has a `tier`, and a `quotaClass` (default `agent-plan`). The Worker is local.
 - **Capabilities are what `probe()` proves now** (cached for `probeTtlMs`):
   - `review` and `local-data`;
@@ -21,6 +22,8 @@ The **`agents` Worker source**: agent runtimes as Workers
   - under a lease;
   - each result is a `report` artifact (`agent-result@1.0`) with the requirement's
     classification.
+- **Deadline:** a run longer than `runTimeoutMs` (15 min) is stopped and fails
+  as `timeout`. The run was submitted, so it is not retried automatically.
 - **Restart:** a queued run starts. A run that had started is never run again:
   the agent may already have acted. It fails as `reconciliation_failed`
   (`USER_ACTION`) and names its native session.

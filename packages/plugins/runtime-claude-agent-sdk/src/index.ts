@@ -59,7 +59,8 @@ export class ClaudeAgentRuntime implements AgentRuntimeProvider {
     if (spec.sandbox !== 'read-only') {
       throw new ProviderError('config_error', `claude-agent-sdk: ${spec.sandbox} is not offered: confining writes to the workspace is not verified yet`)
     }
-    const tools = spec.tools ?? READ_ONLY_TOOLS
+    // Absent or empty means the minimal read set; an empty `tools` would disable every tool.
+    const tools = spec.tools?.length ? spec.tools : READ_ONLY_TOOLS
     const refused = tools.filter((tool) => !READ_ONLY_TOOLS.includes(tool))
     if (refused.length) {
       throw new ProviderError('config_error', `claude-agent-sdk: a read-only run allows only ${READ_ONLY_TOOLS.join(', ')}; refusing ${refused.join(', ')}`)
