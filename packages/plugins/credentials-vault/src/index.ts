@@ -54,7 +54,10 @@ export class VaultCredentialProvider extends CredentialProvider {
     this.lockWaitMs = config.lockWaitMs ?? 30_000
     ensurePrivateDir(dirname(this.path))
     this.key = readOrCreateSecretFile(config.keyFile ?? join(dshHome(), 'system', 'vault.key'), 32)
-    ctx.effect(() => () => {
+    ctx.effect(() => async () => {
+      // Let in-flight mutations finish with the real key before it is wiped; a write
+      // sealed under a zeroed key would make the whole vault unreadable.
+      await this.queue
       this.closed = true
       this.key.fill(0)
     })
@@ -120,7 +123,7 @@ export class VaultCredentialProvider extends CredentialProvider {
         const next = await mutate(current)
         if (next === undefined) return current
         document.records[key] = JSON.parse(JSON.stringify(next)) as unknown
-        writeVault(this.path, document, this.key)
+        this.write(document)
         changed = true
         return next
       }, { waitMs: this.lockWaitMs }),
@@ -143,6 +146,11 @@ export class VaultCredentialProvider extends CredentialProvider {
     return readVault(this.path, this.key)
   }
 
+  private write(document: VaultDocument): void {
+    if (this.closed || this.key.every((byte) => byte === 0)) throw new Error('vault: refusing to write after disposal')
+    writeVault(this.path, document, this.key)
+  }
+
   private assertNotShadowed(ref: CredentialRef): void {
     if (envValue(ref)) throw new Error(`vault: ${ref} is set in the launch environment, which shadows the vault`)
   }
@@ -152,7 +160,7 @@ export class VaultCredentialProvider extends CredentialProvider {
       withFileLock(this.path, async () => {
         const document = this.read()
         apply(document)
-        writeVault(this.path, document, this.key)
+        this.write(document)
       }, { waitMs: this.lockWaitMs }),
     )
   }

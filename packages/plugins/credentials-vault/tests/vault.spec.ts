@@ -140,3 +140,25 @@ describe('review fixes (PR #3 security review)', () => {
     expect(readdirSync(dir).filter((name) => name.endsWith('.tmp'))).toEqual([])
   })
 })
+
+describe('disposal during an in-flight mutation (review)', () => {
+  it('never seals the vault with a wiped key: dispose waits for the mutation', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'system-vault-dispose-'))
+    cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+    const ctx = new Context()
+    const fiber = ctx.plugin(VaultCredentialProvider, { path: join(dir, 'vault.enc'), keyFile: join(dir, 'vault.key') })
+    await fiber
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    const pending = ctx.credentials.modifyRecord(ACCOUNT, async () => {
+      await gate
+      return { kind: 'grant', provider: 'test', grant: { token: 'kept' } } as never
+    })
+    const disposed = fiber.dispose()
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    release()
+    await Promise.allSettled([pending, disposed])
+    const reopened = await boot(dir)
+    expect(await reopened.credentials.readRecord(ACCOUNT)).toMatchObject({ grant: { token: 'kept' } })
+  })
+})
