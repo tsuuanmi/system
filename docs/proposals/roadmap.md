@@ -24,7 +24,7 @@ work. Each milestone ends with working, tested software and updated canonical do
   `system-mcp-server` (`status` live), the `system-bundle` profile, the `system`
   CLI, CI, and an e2e test through `dsh`.
 - **M0 is complete pending review.** Both review rounds were addressed TDD-first.
-- M1 is in progress on branch `m1/provider-runtime`, which is stacked on M0. Done so far: `provider-core` (scheduler, two-clock completion, reconciliation, failure taxonomy, the `Display` seam, `PortableState`), `turn-receipts`, `accounts`, `display-virtual` (Xvfb), and `browser-patchright` (headed Chrome per account, fresh context per turn, filtered capture), all mounted in the bundle. Next: the ChatGPT Web driver with DOM fixtures, then remote login (noVNC) and credential login.
+- M1 is in progress on branch `m1/provider-runtime`, which is stacked on M0. Done so far: `provider-core` (scheduler, two-clock completion, reconciliation, failure taxonomy, the `Display` seam, `PortableState`), `turn-receipts`, `accounts`, `display-virtual` (Xvfb), and `browser-patchright` (headed Chrome per account, fresh context per turn, filtered capture), all mounted in the bundle. Also done: the pinned managed Chrome (`system init`, ADR-0020) and the UI engine `ui-ops` (UI maps as data, verified resolution, passive network signals, bounded self-heal; ADR-0021). Next: the ChatGPT Web driver (`chatgpt-web.ui.yaml`, DOM fixtures, overlay and heal decisions), then remote login (noVNC) and credential login.
 
 Later candidates, each needing its own proposal: A2A gateway and runtime
 (cross-runtime peers), an ACP client gateway for editors, sandboxed or SSH `exec`

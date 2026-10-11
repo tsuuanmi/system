@@ -19,6 +19,7 @@ export default defineConfig({
       '@tsuuanmi/system-accounts': src('./packages/plugins/accounts/src/index.ts'),
       '@tsuuanmi/system-display-virtual': src('./packages/plugins/display-virtual/src/index.ts'),
       '@tsuuanmi/system-browser-patchright': src('./packages/plugins/browser-patchright/src/index.ts'),
+      '@tsuuanmi/system-ui-ops': src('./packages/ui-ops/src/index.ts'),
       '@tsuuanmi/system-provider-core': src('./packages/provider-core/src/index.ts'),
     },
   },

@@ -53,6 +53,9 @@
       ],
       "@tsuuanmi/system-browser-patchright": [
         "packages/plugins/browser-patchright/src/index.ts"
+      ],
+      "@tsuuanmi/system-ui-ops": [
+        "packages/ui-ops/src/index.ts"
       ]
     }
   },

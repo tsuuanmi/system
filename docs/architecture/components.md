@@ -24,7 +24,9 @@ routes back here.
 
 ## Provider runtime
 
-- **Owns:** `BrowserPort` (patchright/Chrome contexts), the display backends
+- **Owns:** the UI engine (`@tsuuanmi/system-ui-ops`: UI maps as data, resolution,
+  verification, passive network signals, bounded self-heal;
+  [UI operations](../design/ui-operations.md)), `BrowserPort` (patchright/Chrome contexts), the display backends
   (invisible: Xvfb or off-screen; visible: the operator's screen; never headless for turns), remote login, the account vault (portable auth
   state, revisioned), conversation bindings, the per-account scheduler, provider
   turn receipts, and one **provider driver** per website.

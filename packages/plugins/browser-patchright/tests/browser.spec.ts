@@ -1,42 +1,10 @@
-import { execFileSync } from 'node:child_process'
-import { existsSync, readdirSync } from 'node:fs'
 import { type Server, createServer } from 'node:http'
-import { homedir } from 'node:os'
-import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import { type XvfbHandle, startXvfb } from '@tsuuanmi/system-display-virtual'
 import { Display, type PreparedDisplay, ProviderError } from '@tsuuanmi/system-provider-core'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import BrowserPool from '../src/index.ts'
-
-/** A modern Chrome for the real-browser tests: CHROME_PATH, a recent system Chrome, or Chrome for Testing in ~/.cache/system-chrome. */
-function findTestChrome(): string | undefined {
-  if (process.env.CHROME_PATH) return process.env.CHROME_PATH
-  for (const path of ['/usr/bin/google-chrome', '/usr/bin/google-chrome-stable']) {
-    try {
-      const major = Number(/(\d+)\./.exec(execFileSync(path, ['--version'], { encoding: 'utf8' }))?.[1])
-      if (major >= 120) return path
-    } catch { /* not installed */ }
-  }
-  const cache = join(homedir(), '.cache', 'system-chrome', 'chrome')
-  if (!existsSync(cache)) return undefined
-  const newest = readdirSync(cache).sort().at(-1)
-  const path = newest && join(cache, newest, 'chrome-linux64', 'chrome')
-  return path && existsSync(path) ? path : undefined
-}
-
-const hasXvfb = process.platform === 'linux' && (() => {
-  try {
-    execFileSync('sh', ['-c', 'command -v Xvfb'], { stdio: 'ignore' })
-    return true
-  } catch {
-    return false
-  }
-})()
-const chrome = findTestChrome()
-const canRun = hasXvfb && chrome !== undefined
-// CI sets SYSTEM_REQUIRE_BROWSER=1 so a missing browser fails instead of silently skipping.
-if (process.env.SYSTEM_REQUIRE_BROWSER === '1' && !canRun) throw new Error('real-browser tests need Xvfb and a modern Chrome (set CHROME_PATH)')
+import { canRunBrowser as canRun, testChrome as chrome } from './support.ts'
 
 /** A display provider whose Xvfb the test can kill, to simulate a lost display. */
 class KillableDisplay extends Display {

@@ -123,8 +123,11 @@ endpoints. Uses:
 
 ## Self-heal
 
-The heal step runs only when every candidate (and the fallback) fails, the guards
-pass, and the operation's heal policy allows it.
+The heal step runs only when every candidate fails, the guards (the map's
+`errors` conditions, such as the login surface) are clear, and the operation's
+heal policy allows it. An action's `fallback` (for example, Enter in the composer)
+runs only when healing is not allowed or finds no confident match, so a heal
+can repair the map while the fallback keeps the turn working.
 
 1. **Snapshot.** Take `ariaSnapshot({ mode: 'ai' })` of the operation's scope (or
    the page), which yields `[ref=eN]` references.
