@@ -6,7 +6,7 @@ Routing **seam definition**
 
 | Seam | Definition | Provider |
 |---|---|---|
-| `ctx.workers` | abstract `Workers` with `register(source)`, `list()`, `route(requirement, options)`; `WorkerSource`, `CapabilityDescriptor`, `WorkRequirement`, `AdmittedWorker`, `AdmissionFailure` | `@tsuuanmi/system-workers` |
+| `ctx.workers` | abstract `Workers` with `register(source)`, `list()`, `route(requirement, options)`, `contract(id, check)`, `accept(result, contract)`; `WorkerSource`, `CapabilityDescriptor`, `WorkRequirement`, `AdmittedWorker`, `AdmissionFailure`, `AcceptanceContract` | `@tsuuanmi/system-workers` |
 
 - The types mirror `capability-descriptor@1.0` and `work-requirement@1.0`. The
   schemas in `schemas/` are canonical.
@@ -16,4 +16,5 @@ Routing **seam definition**
   - source lifetime and duplicate names;
   - capability admission, data locality, state, and tier bounds;
   - the order: lowest tier, then quota class, then id;
-  - restriction, determinism, and the decision artifacts.
+  - restriction, determinism, and the decision artifacts;
+  - acceptance contracts and the `acceptance` decision.

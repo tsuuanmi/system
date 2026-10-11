@@ -1,6 +1,7 @@
 # @tsuuanmi/system-turns
 
-**`ctx.turns`**: the website turn runtime, MVP slice 1 `ask`
+**`ctx.turns`**: the website turn runtime: the website Worker's owning runtime,
+invoked by the [workflow engine](../workflow/README.md)
 ([provider turns](../../../docs/design/provider-turns.md#runtime-mvp-slice-1)).
 
 - **Durable from acceptance.** `ask` writes the turn (`queued`) and returns at
@@ -78,10 +79,14 @@
   - turns of one session run in acceptance order.
 - **Sign-out:** a driver `reauth_required` (it saw the login surface) marks the
   account `reauth-required`, so new turns route elsewhere.
-- **MCP:** contributes `research`, `ask` (it waits up to `waitSeconds`, default 45 s, max
-  55 s, then returns the `turnId`) and `result` (long-polls a `turnId`). These
-  replace the built-in placeholders.
+- **For the engine:** `requirement(input)` returns the `work-requirement@1.0` an
+  ask is routed with; the engine records it on its node. `openSession()` opens
+  an empty persistent session, so a run can return its id at once. An ask names
+  its `acceptance` contract (default `acceptance.answer`), which is recorded in
+  the requirement.
+- **Stop:** a stopped runtime starts nothing. A turn caught mid-route stays
+  queued for the next start.
 - **Injects:** `store`, `artifacts`, `leases`, `egress`, `turnReceipts`, `accounts`,
   `browser`, `providers`, `workers`; `mcp` is optional.
-- **Not yet:**
-  - one-node DAG execution on the workflow engine.
+- **MCP:** none of its own; the workflow engine serves `ask`, `research`, and
+  `result` as runs.

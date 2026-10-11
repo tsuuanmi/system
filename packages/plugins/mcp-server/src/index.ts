@@ -3,8 +3,8 @@
  * (ADR-0011, M0 spike), published as **`ctx.mcp`** so other plugins contribute tools for
  * their own lifetime (everything is a plugin). Claude Code, Codex, and the `system` CLI
  * connect with the URL and bearer token from the 0600 discovery file. `ask`, `research`,
- * and `result` are placeholders that report "not installed" unless a runtime plugin
- * (`ctx.turns`) contributes them.
+ * and `result` are placeholders that report "not installed" unless the workflow engine
+ * (`ctx.workflow`) contributes them.
  * @module @tsuuanmi/system-mcp-server
  */
 import { readFileSync, rmSync } from 'node:fs'
@@ -164,16 +164,16 @@ export class McpEndpoint extends McpTools {
       this.tools.set(name, { spec, handler: notInstalled, placeholder: true })
     }
     placeholder('ask', {
-      description: 'Ask a website Worker (separate chat quota). Returns a sessionId to poll with status/result.',
+      description: 'Ask a website Worker (separate chat quota). Returns a runId to poll with result.',
       inputSchema: { prompt: zod.string().min(1).max(32_000), tier: zod.enum(['economy', 'standard', 'frontier']).optional(), ...session, ...idempotency },
     })
     placeholder('research', {
-      description: 'Run provider-native Deep Research on a website Worker. Returns a sessionId immediately.',
+      description: 'Run provider-native Deep Research on a website Worker. Returns a runId and sessionId immediately.',
       inputSchema: { question: zod.string().min(1).max(32_000), ...session, ...idempotency },
     })
     placeholder('result', {
-      description: 'Fetch the result of a session, with an opaque cursor for long-polling.',
-      inputSchema: { sessionId: zod.string().max(200), cursor: zod.string().max(200).optional() },
+      description: 'Fetch the result of a run, waiting up to waitSeconds.',
+      inputSchema: { runId: zod.string().max(200), waitSeconds: zod.number().int().min(0).max(55).optional() },
     })
     this.tools.set('status', {
       placeholder: false,
@@ -183,7 +183,7 @@ export class McpEndpoint extends McpTools {
         const providers = this.ctx.get('providers')
         const status = {
           harness: 'system',
-          stage: 'M1',
+          stage: 'M2',
           store: this.ctx.get('store') ? 'ok' : 'absent',
           artifacts: artifacts ? artifacts.list({ limit: 1000 }).length : null,
           kernel: ['store', 'blobs', 'eventLog', 'leases', 'artifacts', 'credentials'].filter((key) => this.ctx.get(key) !== undefined),

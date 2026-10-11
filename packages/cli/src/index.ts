@@ -220,6 +220,36 @@ export async function parseAsk(args: readonly string[], readStdin: () => Promise
   return prompt ? { prompt, ...request } : undefined
 }
 
+interface UsageNode { nodeId: string; state: string; minTier: string; tier?: string; worker?: string; quotaClass?: string }
+interface UsageRun { runId: string; template: string; status: string; createdAt: string; nodes: UsageNode[] }
+
+/** `system usage`: per request and step, the Worker, tier, and quota class that served it. */
+export function formatUsage(usage: { runs: UsageRun[] }): string[] {
+  return usage.runs.flatMap((run) => [
+    `${run.runId}  ${run.template}  ${run.status}  ${run.createdAt}`,
+    ...run.nodes.map((n) => `  ${n.nodeId}  ${n.state}  ${n.tier ?? '-'}  ${n.quotaClass ?? '-'}  ${n.worker ?? '-'}`),
+  ])
+}
+
+interface Explained {
+  runId: string
+  template: string
+  status: string
+  specHash: string
+  nodes: Array<{ nodeId: string; state: string; worker?: string; quotaClass?: string; turnId?: string; decisions: Array<{ id: string; type: string; outcome: string; reasons: string[] }> }>
+}
+
+/** `system explain <runId>`: each step's decisions (egress, tier, route, acceptance) with their reasons. */
+export function formatExplanation(explained: Explained): string[] {
+  return [
+    `${explained.runId}  ${explained.template}  ${explained.status}  spec ${explained.specHash}`,
+    ...explained.nodes.flatMap((n) => [
+      `  ${n.nodeId}  ${n.state}  ${n.worker ?? '-'}  ${n.quotaClass ?? '-'}  ${n.turnId ?? '-'}`,
+      ...n.decisions.map((d) => `    ${d.type}  ${d.outcome}  ${d.reasons.join('; ')}  (${d.id})`),
+    ]),
+  ]
+}
+
 export async function readAllStdin(): Promise<string> {
   let text = ''
   for await (const chunk of process.stdin) text += String(chunk)

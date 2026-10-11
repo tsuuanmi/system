@@ -84,6 +84,27 @@ export interface AdmittedWorker {
   decisions: { tier: ArtifactRef; route: ArtifactRef }
 }
 
+/** A result as an acceptance contract sees it: the stored artifact. */
+export interface AcceptanceSubject {
+  id: ArtifactRef
+  bodySchema: string
+  body: unknown
+}
+
+export interface AcceptanceCheck {
+  accepted: boolean
+  /** Why, in either case; never empty. */
+  reasons: string[]
+}
+
+/** A deterministic check of a result against a contract id (REQ-WRK-3). */
+export type AcceptanceContract = (result: AcceptanceSubject) => AcceptanceCheck
+
+export interface Acceptance extends AcceptanceCheck {
+  /** The `acceptance` decision artifact (INV-13). */
+  decision: ArtifactRef
+}
+
 /** No Worker is admissible; fail closed (INV-2). `decision` is the `admission` artifact. */
 export class AdmissionFailure extends Error {
   constructor(readonly rejections: readonly Rejection[], readonly decision: ArtifactRef, message: string) {
@@ -109,4 +130,14 @@ export abstract class Workers extends Service {
    * decision, or an `admission` decision and throws {@link AdmissionFailure}.
    */
   abstract route(requirement: WorkRequirement, options?: RouteOptions): Promise<AdmittedWorker>
+
+  /** Register an acceptance contract for the calling plugin's lifetime. Ids are unique. */
+  abstract contract(id: string, check: AcceptanceContract): void
+
+  /**
+   * Check a stored result against a contract and record an `acceptance` decision. A
+   * provider's terminal state is not acceptance (REQ-WRK-3); an unknown contract or result
+   * fails closed with an error, never a silent accept.
+   */
+  abstract accept(result: ArtifactRef, contract: string, options?: { producer?: string; runId?: string; nodeId?: string }): Acceptance
 }

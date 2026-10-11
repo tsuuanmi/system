@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { browserDeps, callTool, ensureBrowser, init, mcpConfig, mcpHeaders, mcpToken, parseAsk, readAllStdin, serveStdio, start } from './index.ts'
+import { browserDeps, callTool, ensureBrowser, formatExplanation, formatUsage, init, mcpConfig, mcpHeaders, mcpToken, parseAsk, readAllStdin, serveStdio, start, type ToolOutcome } from './index.ts'
 
 const USAGE = `Usage: system <command>
 
@@ -9,6 +9,11 @@ const USAGE = `Usage: system <command>
       [--classification public|operator-shared|local-private] (<prompt...> | -)
                             ask a website model through a saved account; - reads the prompt
                             from stdin (profile must be running)
+  research [--session <id>] [--classification <c>] (<question...> | -)
+                            Deep research, then a cited compaction on a cheap tier; waits
+  result <runId>            wait for a run and print its answer
+  usage [<limit>]           recent runs: per step, the Worker, tier, and quota class used
+  explain <runId|artifact>  the decision chain behind a run (egress, tier, route, acceptance)
   account list              list provider accounts and their status (profile must be running)
   account login <id>        open a remote login desktop (noVNC over ssh -L); Save stores the account
   account credentials <id>  store login credentials from stdin as JSON {"email","password","totpSecret"?}
@@ -21,6 +26,34 @@ const USAGE = `Usage: system <command>
   mcp-headers               print the Authorization header as JSON (Claude Code headersHelper)
   mcp-stdio                 serve the running profile's MCP tools on stdio (Codex and other clients)
 `
+
+interface RunOutcome {
+  runId: string
+  status: string
+  sessionId?: string
+  answer?: string
+  nodes?: Array<{ nodeId: string; state: string }>
+  error?: { kind: string; message: string }
+}
+
+/** Poll a run until it finishes; progress goes to stderr, the answer to stdout. */
+async function awaitRun(first: ToolOutcome): Promise<number> {
+  let outcome = first
+  let progress = ''
+  for (;;) {
+    if (outcome.isError) throw new Error(outcome.text)
+    const run = outcome.structured as unknown as RunOutcome
+    const now = (run.nodes ?? []).map((n) => `${n.nodeId} ${n.state}`).join(', ')
+    if (run.status === 'running' && now !== progress) console.error(`${run.runId}: ${(progress = now)}`)
+    if (run.status === 'completed') {
+      console.log(run.answer)
+      if (run.sessionId) console.error(`session: ${run.sessionId}`)
+      return 0
+    }
+    if (run.status === 'failed') throw new Error(`${run.error?.kind}: ${run.error?.message} (system explain ${run.runId})`)
+    outcome = await callTool('result', { runId: run.runId, waitSeconds: 55 })
+  }
+}
 
 async function main(argv: string[]): Promise<number> {
   const [command, ...rest] = argv
@@ -39,18 +72,32 @@ async function main(argv: string[]): Promise<number> {
     case 'ask': {
       const request = await parseAsk(rest, readAllStdin)
       if (!request) break
-      let outcome = await callTool('ask', { ...request })
-      for (;;) {
-        if (outcome.isError) throw new Error(outcome.text)
-        const turn = outcome.structured as { turnId: string; status: string; sessionId?: string; answer?: string; error?: { kind: string; message: string } }
-        if (turn.status === 'completed') {
-          console.log(turn.answer)
-          if (turn.sessionId) console.error(`session: ${turn.sessionId}`)
-          return 0
-        }
-        if (turn.status === 'failed') throw new Error(`${turn.error?.kind}: ${turn.error?.message}`)
-        outcome = await callTool('result', { turnId: turn.turnId })
-      }
+      return awaitRun(await callTool('ask', { ...request }))
+    }
+    case 'research': {
+      const request = await parseAsk(rest, readAllStdin)
+      if (!request || request.persist || request.tier) break
+      const { prompt, ...options } = request
+      return awaitRun(await callTool('research', { question: prompt, ...options }))
+    }
+    case 'result': {
+      if (!rest[0]) break
+      return awaitRun(await callTool('result', { runId: rest[0], waitSeconds: 55 }))
+    }
+    case 'usage': {
+      const outcome = await callTool('usage', rest[0] ? { limit: Number(rest[0]) } : {})
+      if (outcome.isError) throw new Error(outcome.text)
+      for (const line of formatUsage(outcome.structured as unknown as Parameters<typeof formatUsage>[0])) console.log(line)
+      return 0
+    }
+    case 'explain': {
+      if (!rest[0]) break
+      const outcome = await callTool('explain', { id: rest[0] })
+      if (outcome.isError) throw new Error(outcome.text)
+      const explained = outcome.structured as unknown as Parameters<typeof formatExplanation>[0]
+      // A run prints as its decision chain; any other artifact as its input tree.
+      console.log(Array.isArray(explained.nodes) ? formatExplanation(explained).join('\n') : JSON.stringify(outcome.structured, null, 2))
+      return 0
     }
     case 'account': {
       if (rest[0] === 'list') {

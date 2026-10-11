@@ -139,4 +139,21 @@ reports list the blockers explicitly, not just a percentage.
 ## Retention
 
 Cleanup is explicit and operator-only. A preview lists the affected runs, and
-deletion is keyed on the exact `runId` and `updatedAt`.
+deletion is keyed on the exact `runId` and `updatedAt`. What expires on its own
+is private text only: after a retention period, a finished run's input and
+rendered prompts are cleared, and the run and its records stay.
+
+## Built so far (MVP subset)
+
+[`@tsuuanmi/system-workflow`](../../packages/plugins/workflow/README.md) runs
+static templates (`ask`, and `research` → `compact`). It has:
+
+- preflight and a spec hash;
+- durable node records, and input receipts bound by `inputHash`;
+- `worker` nodes run as turns keyed by run, node, attempt, and input hash;
+- acceptance through `ctx.workers`;
+- bounded retries by disposition;
+- leases, and recovery on restart.
+
+Graph growth, plan gates, teams, handoff envelopes, and lineage invalidation are
+not built yet.

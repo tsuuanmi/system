@@ -32,8 +32,9 @@ routes back here.
   turn receipts, and one **provider driver** per website.
   The **turn runtime** (`ctx.turns`) runs `ask`/`research`. It stores the turn
   and its prompt locally for a bounded time, contributes the website Workers to
-  `ctx.workers` and routes each turn through it, and contributes the MCP `ask`,
-  `research`, and `result` tools. Login profiles and Save belong to `ctx.login`.
+  `ctx.workers` and routes each turn through it. It is the website Worker's
+  owning runtime: the workflow engine invokes it, and callers never reach it
+  directly. Login profiles and Save belong to `ctx.login`.
 - **Does not own:** team or workflow semantics, or Worker admission (owned by
   [routing](#routing)).
 - **Contract:** the `ProviderDriver` interface in `@tsuuanmi/system-provider-core`
@@ -85,10 +86,10 @@ Seam definitions for this layer (`Display`, `Browser`, `ProviderRegistry`) live 
   quota class and account readiness. This is where the three
   [purposes](../requirements/purpose.md) become mechanics.
 - **Design:** [routing](../design/routing.md).
-- **Built so far:** the registry, admission, and router
-  ([`workers`](../../packages/plugins/workers/README.md)); the turn runtime is the
-  first Worker source and the first caller. Acceptance arrives with the workflow
-  engine.
+- **Built so far:** the registry, admission, router, and acceptance contracts
+  ([`workers`](../../packages/plugins/workers/README.md)). The turn runtime is
+  the first Worker source and routes through it. The workflow engine checks
+  every node result with `accept`.
 
 ## Orchestration
 
@@ -96,7 +97,9 @@ Seam definitions for this layer (`Display`, `Browser`, `ProviderRegistry`) live 
   ([ADR-0012](../decisions/adr/0012-dag-execution-model.md)): semantic DAG definitions, durable node state, input-hash
   result reuse, handoffs, exact-subject gates, recovery, admission with
   provenance, artifact lineage, and convergence.
-  See [workflow-engine](../design/workflow-engine.md).
+  See [workflow-engine](../design/workflow-engine.md). Built so far: the MVP
+  subset ([`workflow`](../../packages/plugins/workflow/README.md)); every MCP
+  `ask` and `research` call is a run on it.
 - **Sessions:** durable Worker sessions, each with its own `SessionId`, an
   execution binding to the native handle, a mailbox for direct peer messages,
   wake-on-message, checkpoints, compaction, and budgets for long-running work.

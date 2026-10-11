@@ -10,7 +10,7 @@ import z from '@deepseek-ai/schemastery'
 import type {} from '@tsuuanmi/system-artifacts'
 import { SchemaRegistry } from '@tsuuanmi/system-libs'
 import {
-  type AdmissionCheck, AdmissionFailure, type AdmittedWorker, type ArtifactRef, type CapabilityDescriptor, type QuotaClass,
+  type Acceptance, type AcceptanceContract, type AdmissionCheck, AdmissionFailure, type AdmittedWorker, type ArtifactRef, type CapabilityDescriptor, type QuotaClass,
   type Rejection, type RouteOptions, TIERS, type Tier, type WorkRequirement, type WorkerSource, Workers,
 } from '@tsuuanmi/system-workers-core'
 
@@ -26,6 +26,24 @@ export interface Config {
 const QUOTA_CLASSES: QuotaClass[] = ['subscription-chat', 'local', 'agent-plan', 'metered']
 const DECIDER = { type: 'policy', id: 'workers.route.deterministic', version: '1' } as const
 
+const textOf = (body: unknown): string => {
+  const text = (body as { text?: unknown } | undefined)?.text
+  return typeof text === 'string' ? text : ''
+}
+
+/** Contracts every deployment has; a plugin adds its own with `contract()`. */
+const BUILT_IN: Record<string, AcceptanceContract> = {
+  'acceptance.answer': ({ body }) => (textOf(body).trim()
+    ? { accepted: true, reasons: ['the answer has text'] }
+    : { accepted: false, reasons: ['the answer is empty'] }),
+  'acceptance.cited': ({ body }) => {
+    const text = textOf(body)
+    if (!text.trim()) return { accepted: false, reasons: ['the answer is empty'] }
+    const links = new Set((text.match(/https?:\/\/[^\s)\]>"']+/g) ?? []).map((url) => url.replace(/[.,;:!?]+$/, ''))).size
+    return links ? { accepted: true, reasons: [`the answer cites ${links} source link(s)`] } : { accepted: false, reasons: ['the answer cites no source link'] }
+  },
+}
+
 type Failed = Rejection['failed']
 
 export class WorkerRouter extends Workers {
@@ -37,6 +55,7 @@ export class WorkerRouter extends Workers {
   })
 
   private readonly sources = new Map<string, WorkerSource>()
+  private readonly contracts = new Map<string, AcceptanceContract>(Object.entries(BUILT_IN))
   private readonly schemas = new SchemaRegistry()
 
   constructor(ctx: Context, private readonly config: Config = {}) {
@@ -120,6 +139,41 @@ export class WorkerRouter extends Workers {
       deterministic: true,
     }, { producer, classification: requirement.data.classification })
     return { worker: chosen, requirement: requirementRef, decisions: { tier: tier.id as ArtifactRef, route: route.id as ArtifactRef } }
+  }
+
+  contract(id: string, check: AcceptanceContract): void {
+    if (this.contracts.has(id)) throw new Error(`acceptance contract ${id} is already registered`)
+    this.ctx.effect(() => {
+      this.contracts.set(id, check)
+      return () => {
+        if (this.contracts.get(id) === check) this.contracts.delete(id)
+      }
+    })
+  }
+
+  accept(result: ArtifactRef, contract: string, options: { producer?: string; runId?: string; nodeId?: string } = {}): Acceptance {
+    const check = this.contracts.get(contract)
+    if (!check) throw new Error(`unknown acceptance contract ${contract}`)
+    const envelope = this.ctx.artifacts.get(result)
+    if (!envelope) throw new Error(`unknown result artifact ${result}`)
+    const verdict = check({ id: result, bodySchema: envelope.bodySchema, body: envelope.body })
+    if (!verdict.reasons.length) throw new TypeError(`acceptance contract ${contract} gave no reason`)
+    const decision = this.ctx.artifacts.recordDecision({
+      decisionType: 'acceptance',
+      question: `Does result ${result} satisfy ${contract}?`,
+      inputs: [result],
+      candidates: [
+        { option: 'accept', selected: verdict.accepted, reasons: verdict.accepted ? verdict.reasons : [] },
+        { option: 'reject', selected: !verdict.accepted, reasons: verdict.accepted ? [] : verdict.reasons },
+      ],
+      decider: { type: 'rule', id: contract, version: '1' },
+      outcome: { option: verdict.accepted ? 'accept' : 'reject' },
+      deterministic: true,
+    }, {
+      producer: { type: 'system', ref: options.producer ?? 'workers' },
+      ...(options.runId !== undefined ? { runId: options.runId } : {}), ...(options.nodeId !== undefined ? { nodeId: options.nodeId } : {}),
+    })
+    return { accepted: verdict.accepted, reasons: verdict.reasons, decision: decision.id as ArtifactRef }
   }
 
   /** Every failed admission check, in the design's order; empty means admitted (REQ-WRK-1, -7, -9). */

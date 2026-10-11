@@ -25,6 +25,7 @@ export default defineConfig({
       '@tsuuanmi/system-login': src('./packages/plugins/login/src/index.ts'),
       '@tsuuanmi/system-turns': src('./packages/plugins/turns/src/index.ts'),
       '@tsuuanmi/system-egress': src('./packages/plugins/egress/src/index.ts'),
+      '@tsuuanmi/system-workflow': src('./packages/plugins/workflow/src/index.ts'),
       '@tsuuanmi/system-workers-core': src('./packages/workers-core/src/index.ts'),
       '@tsuuanmi/system-workers': src('./packages/plugins/workers/src/index.ts'),
       '@tsuuanmi/system-gateway-core': src('./packages/gateway-core/src/index.ts'),

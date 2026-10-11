@@ -157,8 +157,9 @@ generation are still current. Otherwise the write is dropped
 
 ## Runtime (MVP slice 1)
 
-`@tsuuanmi/system-turns` (`ctx.turns`) runs `ask` end to end. The details are in
-its [README](../../packages/plugins/turns/README.md):
+`@tsuuanmi/system-turns` (`ctx.turns`) runs one turn end to end. The workflow
+engine calls it for every `worker` node. The details are in its
+[README](../../packages/plugins/turns/README.md):
 
 - **Accept durably.** The turn is stored as `queued` before anything runs.
 - **Route.** `ctx.workers` admits one website Worker (an account at a tier) and
@@ -175,10 +176,13 @@ its [README](../../packages/plugins/turns/README.md):
   cannot be observed and end as AMBIGUOUS. A prompt is resent only on RESUBMIT,
   within the bound.
 
-MCP contract: `ask { prompt, sessionId?, persist?, clientRequestId?, waitSeconds? }`
-returns the turn view with `answer` once it is complete. Otherwise it returns
-`status: queued | running` and a `turnId`, which `result { turnId, waitSeconds? }`
-long-polls. The wait stays under common MCP client timeouts (at most 55 s).
+MCP contract (served by the [workflow engine](../../packages/plugins/workflow/README.md)):
+`ask { prompt, sessionId?, persist?, tier?, classification?, clientRequestId?, waitSeconds? }`
+returns the run view with `answer` once it is complete. Otherwise it returns
+`status: running` and a `runId`, which `result { runId, waitSeconds? }`
+long-polls. `research { question, sessionId?, classification?, clientRequestId? }`
+returns at once with a `runId` and a `sessionId`. The wait stays under common MCP
+client timeouts (at most 55 s).
 
 ## Large inputs
 

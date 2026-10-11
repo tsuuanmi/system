@@ -1,11 +1,7 @@
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
-import WebServer from '@deepseek-ai/dsh-host-webserver'
-import { Client } from '@modelcontextprotocol/sdk/client/index.js'
-import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
-import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
 import Accounts from '@tsuuanmi/system-accounts'
 import Artifacts from '@tsuuanmi/system-artifacts'
 import Egress from '@tsuuanmi/system-egress'
@@ -15,7 +11,6 @@ import BrowserPool from '@tsuuanmi/system-browser-patchright'
 import Vault from '@tsuuanmi/system-credentials-vault'
 import VirtualDisplay from '@tsuuanmi/system-display-virtual'
 import WorkerRouter from '@tsuuanmi/system-workers'
-import McpEndpoint from '@tsuuanmi/system-mcp-server'
 import ChatGptWeb from '@tsuuanmi/system-provider-chatgpt-web'
 import Providers from '@tsuuanmi/system-providers'
 import Store from '@tsuuanmi/system-store'
@@ -55,8 +50,6 @@ async function boot(options: { fake?: FakeOptions; accounts?: CatalogEntry[]; re
     ctx.plugin(Login, { profilesDir: join(dir, 'profiles') }),
     ctx.plugin(WorkerRouter, {}),
     ctx.plugin(Turns, { turnTimeoutMs: 90_000, stallTimeoutMs: 80_000, maxConcurrentTurnsPerAccount: options.capacity ?? 2, ...options.turns }),
-    ctx.plugin(WebServer, { host: '127.0.0.1', port: 0 }),
-    ctx.plugin(McpEndpoint, { tokenFile: join(dir, 'mcp.token'), discoveryFile: join(dir, 'mcp.json') }),
   ]
   await Promise.all(fibers)
   const stop = async (): Promise<void> => {
@@ -270,6 +263,20 @@ describe.runIf(canRunBrowser)('ctx.turns: ask through a saved account', () => {
     expect(Date.now() - t0).toBeLessThan(15_000)
   }, 90_000)
 
+  it('never starts a turn that is still routing when the runtime stops', async () => {
+    const { ctx, fake, stop } = await boot()
+    let routing!: () => void
+    const entered = new Promise<void>((resolve) => (routing = resolve))
+    ctx.workers.register({ name: 'slow', describe: async () => (routing(), await new Promise((resolve) => setTimeout(resolve, 2000)), []) })
+    ctx.turns.ask({ prompt: 'caught mid-route' })
+    await entered
+    const t0 = Date.now()
+    await stop()
+    cleanups.splice(cleanups.indexOf(stop), 1)
+    expect(Date.now() - t0).toBeLessThan(10_000)
+    expect(fake.sent).toEqual([])
+  }, 60_000)
+
   it('checks egress before sending: credentials or local-private content never leave (INV-12)', async () => {
     const { ctx, fake } = await boot()
     const pem = String((await import('node:crypto')).generateKeyPairSync('rsa', { modulusLength: 1024 }).privateKey.export({ type: 'pkcs1', format: 'pem' }))
@@ -281,22 +288,6 @@ describe.runIf(canRunBrowser)('ctx.turns: ask through a saved account', () => {
     const fine = await ctx.turns.wait(ctx.turns.ask({ prompt: 'public question' }).turnId, 30_000)
     expect(fine.status).toBe('completed')
     expect(ctx.artifacts.get(fine.egressDecision!)?.body).toMatchObject({ decisionType: 'egress', outcome: { option: 'allow' } })
-  }, 90_000)
-
-  it('serves ask and result over MCP in place of the placeholders', async () => {
-    const { dir } = await boot({ fake: { answer: 'via mcp' } })
-    const { url, tokenFile } = JSON.parse(readFileSync(join(dir, 'mcp.json'), 'utf8')) as { url: string; tokenFile: string }
-    const client = new Client({ name: 'claude-code', version: '0' })
-    await client.connect(new StreamableHTTPClientTransport(new URL(url), { requestInit: { headers: { authorization: `Bearer ${readFileSync(tokenFile).toString('base64url')}` } } }) as unknown as Transport)
-    cleanups.push(() => client.close())
-    const asked = await client.callTool({ name: 'ask', arguments: { prompt: 'hi', waitSeconds: 25 } })
-    expect(asked.isError).toBeFalsy()
-    expect(asked.structuredContent).toMatchObject({ status: 'completed', answer: 'via mcp' })
-    const { turnId } = asked.structuredContent as { turnId: string }
-    const fetched = await client.callTool({ name: 'result', arguments: { turnId } })
-    expect(fetched.structuredContent).toMatchObject({ turnId, status: 'completed', answer: 'via mcp' })
-    const missing = await client.callTool({ name: 'result', arguments: { turnId: 'turn_nope' } })
-    expect(missing.isError).toBe(true)
   }, 90_000)
 
   it('resumes a queued turn after a restart, and never resends one that was already submitted', async () => {

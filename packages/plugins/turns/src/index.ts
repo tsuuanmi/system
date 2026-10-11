@@ -18,12 +18,10 @@ import type {} from '@tsuuanmi/system-login'
 import type {} from '@tsuuanmi/system-artifacts'
 import { type Lease, LeaseLost, StaleGeneration } from '@tsuuanmi/system-leases'
 import { type ContentId, sha256 } from '@tsuuanmi/system-libs'
-import type {} from '@tsuuanmi/system-gateway-core'
 import { type BrowserTurn, type ConversationMode, type Disposition, type PortableState, ProviderError, type ProviderErrorKind, type ProviderFeature, ProviderScheduler, type Tier, type TurnReceipt, type TurnSnapshot, dispositionOf, toProviderError } from '@tsuuanmi/system-provider-core'
 import type {} from '@tsuuanmi/system-store'
 import type {} from '@tsuuanmi/system-turn-receipts'
 import { AdmissionFailure, type AdmittedWorker, type CapabilityDescriptor, type WorkRequirement, type WorkerState } from '@tsuuanmi/system-workers-core'
-import { z as zod } from 'zod'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -70,6 +68,8 @@ export interface AskInput {
   feature?: ProviderFeature | undefined
   /** Data classification of the prompt, stated by the caller (default from ctx.egress). */
   classification?: Classification | undefined
+  /** Acceptance contract the result is checked against by its caller (default `acceptance.answer`). */
+  acceptance?: string | undefined
 }
 
 export interface ResearchInput {
@@ -107,6 +107,7 @@ interface Row {
   feature: ProviderFeature
   tier: Tier
   tier_source: 'caller' | 'default'
+  acceptance: string
   prompt: string
   status: TurnStatus
   account: string | null
@@ -153,6 +154,8 @@ function admissionKind(failure: AdmissionFailure): ProviderErrorKind {
   if (failure.rejections.some((r) => r.failed.every((f) => f.check === 'locality'))) return 'egress_denied'
   return 'config_error'
 }
+
+const DEFAULT_ACCEPTANCE = 'acceptance.answer'
 
 const newId = (prefix: string): string => `${prefix}_${randomBytes(8).toString('hex')}`
 const now = (): string => new Date().toISOString()
@@ -216,6 +219,10 @@ export class Turns extends Service {
       sql: `ALTER TABLE turns ADD COLUMN worker TEXT;
       ALTER TABLE turns ADD COLUMN tier_source TEXT NOT NULL DEFAULT 'caller';
       UPDATE turns SET worker = 'worker:' || account || '/' || tier WHERE account IS NOT NULL;`,
+    }, {
+      // The acceptance contract named in the turn's work requirement.
+      version: 5,
+      sql: `ALTER TABLE turns ADD COLUMN acceptance TEXT NOT NULL DEFAULT 'acceptance.answer';`,
     }])
     ctx.workers.register({ name: 'website', describe: () => this.describeWorkers() })
     ctx.effect(() => {
@@ -237,7 +244,6 @@ export class Turns extends Service {
         this.waiters.clear()
       }
     })
-    ctx.inject(['mcp'], (c) => this.registerTools(c))
   }
 
   /** Accept an ask: durable at once, run in the background. */
@@ -271,15 +277,25 @@ export class Turns extends Service {
       }
       const row: Row = {
         turn_id: newId('turn'), request_key: requestKey, session_id: sessionId, mode: sessionId ? 'persistent' : 'temporary', feature, tier,
-        tier_source: input.tier ? 'caller' : 'default', prompt, status: 'queued', account: null, worker: null, binding: null, answer: null, answer_artifact: null, route_decision: null, tier_decision: null,
+        tier_source: input.tier ? 'caller' : 'default', acceptance: input.acceptance ?? DEFAULT_ACCEPTANCE, prompt, status: 'queued', account: null, worker: null, binding: null, answer: null, answer_artifact: null, route_decision: null, tier_decision: null,
         egress_decision: null, classification: input.classification ?? null, error: null, created_at: now(), updated_at: now(),
       }
-      db.prepare(`INSERT INTO turns (turn_id, request_key, session_id, mode, feature, tier, tier_source, classification, prompt, status, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?)`).run(row.turn_id, requestKey, sessionId, row.mode, feature, tier, row.tier_source, row.classification, prompt, row.created_at, row.updated_at)
+      db.prepare(`INSERT INTO turns (turn_id, request_key, session_id, mode, feature, tier, tier_source, acceptance, classification, prompt, status, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?)`).run(row.turn_id, requestKey, sessionId, row.mode, feature, tier, row.tier_source, row.acceptance, row.classification, prompt, row.created_at, row.updated_at)
       this.ctx.store.afterCommit(() => void this.schedule(row))
       return this.view(row)
     })
     return view
+  }
+
+  /**
+   * Open an empty persistent session, bound to an account by its first turn. A caller that
+   * must hand out the session id before any turn exists (the workflow engine) uses this.
+   */
+  openSession(): string {
+    const sessionId = newId('ses')
+    this.ctx.store.db.prepare('INSERT INTO turn_sessions (session_id, account, binding, created_at) VALUES (?, NULL, NULL, ?)').run(sessionId, now())
+    return sessionId
   }
 
   /** Start Deep research in a persistent session; returns at once (REQ-SES-8). */
@@ -438,19 +454,38 @@ export class Turns extends Service {
     })
   }
 
+  /**
+   * The work requirement an ask would be routed with (`work-requirement@1.0`). The workflow
+   * engine records it on its node; routing uses the same function, so the two never differ.
+   */
+  requirement(input: Omit<AskInput, 'prompt' | 'clientRequestId'>): WorkRequirement {
+    const feature = input.feature ?? 'chat'
+    return this.requirementOf({
+      feature, mode: input.sessionId || input.persist || feature === 'deep-research' ? 'persistent' : 'temporary',
+      tier: input.tier ?? this.config.defaultTier ?? 'standard', tierSource: input.tier ? 'caller' : 'default',
+      classification: input.classification ?? null, acceptance: input.acceptance ?? DEFAULT_ACCEPTANCE,
+    })
+  }
+
+  private requirementOf(turn: { feature: ProviderFeature; mode: ConversationMode; tier: Tier; tierSource: 'caller' | 'default'; classification: Classification | null; acceptance: string }): WorkRequirement {
+    return {
+      schema: 'work-requirement@1.0',
+      objective: turn.feature === 'deep-research' ? 'Write a provider-native research report on the caller\'s question' : 'Answer the caller\'s prompt',
+      capabilities: ['reason', ...(turn.mode === 'persistent' ? ['persistent-conversation'] : []), ...(turn.feature === 'deep-research' ? ['deep-research'] : [])],
+      data: { classification: turn.classification ?? this.ctx.egress.defaultClassification, refs: [] },
+      egressPolicy: 'egress.classification-and-secrets',
+      tier: { min: turn.tier, source: turn.tierSource },
+      acceptance: { contract: turn.acceptance },
+    }
+  }
+
   /** Admit a Worker through ctx.workers; a persistent session stays on its account. */
   private async route(row: Row, lease: () => Lease): Promise<string> {
     const session = row.session_id ? this.session(row.session_id) : undefined
     const bound = session?.account ?? undefined
-    const requirement: WorkRequirement = {
-      schema: 'work-requirement@1.0',
-      objective: row.feature === 'deep-research' ? 'Write a provider-native research report on the caller\'s question' : 'Answer the caller\'s prompt',
-      capabilities: ['reason', ...(row.mode === 'persistent' ? ['persistent-conversation'] : []), ...(row.feature === 'deep-research' ? ['deep-research'] : [])],
-      data: { classification: row.classification ?? this.ctx.egress.defaultClassification, refs: [] },
-      egressPolicy: 'egress.classification-and-secrets',
-      tier: { min: row.tier, source: row.tier_source },
-      acceptance: { contract: 'acceptance.provider-terminal' },
-    }
+    const requirement = this.requirementOf({
+      feature: row.feature, mode: row.mode, tier: row.tier, tierSource: row.tier_source, classification: row.classification, acceptance: row.acceptance,
+    })
     let admitted: AdmittedWorker
     try {
       admitted = await this.ctx.workers.route(requirement, {
@@ -575,7 +610,7 @@ export class Turns extends Service {
         },
         classification: 'local-private',
         producer: { type: 'worker', ref: `${provider}/${accountId}` },
-        inputs: row.route_decision ? [row.route_decision as ContentId] : [],
+        inputs: [row.route_decision, row.egress_decision].filter((d): d is string => !!d) as ContentId[],
       })
       this.update(row.turn_id, { status: 'completed', answer: text, answer_artifact: answer.id, binding: binding ?? null }, lease)
     })
@@ -625,67 +660,9 @@ export class Turns extends Service {
     }
   }
 
-  private registerTools(c: Context): void {
-    const shape = (view: TurnView) => ({ content: [{ type: 'text' as const, text: view.answer ?? JSON.stringify(view) }], structuredContent: { ...view } })
-    const failure = (error: unknown) => ({ isError: true, content: [{ type: 'text' as const, text: (error as Error).message }] })
-    const waitSeconds = zod.number().int().min(0).max(55).optional().describe('How long to wait for the answer before returning (default 45 s)')
-    const tier = zod.enum(['economy', 'standard', 'frontier']).optional().describe('Minimum intelligence tier; the lowest admitted tier at or above it runs, through its account\'s model and effort preset')
-    const classification = zod.enum(['public', 'operator-shared', 'local-private']).optional()
-      .describe('Data classification of the prompt; local-private content never leaves the machine (INV-12)')
-    c.mcp.tool('ask', {
-      description: 'Ask a website model (a separate chat quota) through a saved account. One-shot by default (temporary conversation); persist=true or sessionId continues a conversation. Returns the answer, or a turnId to poll with `result` if it takes longer than waitSeconds.',
-      inputSchema: {
-        prompt: zod.string().min(1).max(32_000),
-        sessionId: zod.string().max(200).optional().describe('Continue an existing persistent session'),
-        persist: zod.boolean().optional().describe('Start a persistent session (a normal conversation)'),
-        tier,
-        classification,
-        clientRequestId: zod.string().max(200).optional().describe('Retry-safe request key'),
-        waitSeconds,
-      },
-    }, async (args) => {
-      try {
-        const started = this.ask({
-          prompt: String(args.prompt), sessionId: args.sessionId as string | undefined,
-          persist: args.persist as boolean | undefined, clientRequestId: args.clientRequestId as string | undefined,
-          tier: args.tier as Tier | undefined, classification: args.classification as Classification | undefined,
-        })
-        return shape(await this.wait(started.turnId, ((args.waitSeconds as number | undefined) ?? 45) * 1000))
-      } catch (error) {
-        return failure(error)
-      }
-    })
-    c.mcp.tool('research', {
-      description: 'Start provider-native Deep research in a persistent session. Returns at once with a turnId and sessionId; poll `result` (runs take minutes to tens of minutes).',
-      inputSchema: {
-        question: zod.string().min(1).max(32_000),
-        sessionId: zod.string().max(200).optional().describe('Run in an existing persistent session'),
-        classification,
-        clientRequestId: zod.string().max(200).optional().describe('Retry-safe request key'),
-      },
-    }, async (args) => {
-      try {
-        return shape(this.research({
-          question: String(args.question), sessionId: args.sessionId as string | undefined, clientRequestId: args.clientRequestId as string | undefined,
-          classification: args.classification as Classification | undefined,
-        }))
-      } catch (error) {
-        return failure(error)
-      }
-    })
-    c.mcp.tool('result', {
-      description: 'Fetch a turn started by `ask`; waits up to waitSeconds for it to finish.',
-      inputSchema: { turnId: zod.string().max(200), waitSeconds },
-    }, async (args) => {
-      try {
-        return shape(await this.wait(String(args.turnId), ((args.waitSeconds as number | undefined) ?? 45) * 1000))
-      } catch (error) {
-        return failure(error)
-      }
-    })
-  }
-
+  /** A stopped runtime starts nothing: a turn caught mid-route stays as it is for the next start. */
   private scheduler(account: string): ProviderScheduler {
+    if (this.stopping) throw new ProviderError('aborted', 'turn runtime stopped')
     let scheduler = this.schedulers.get(account)
     if (!scheduler) this.schedulers.set(account, (scheduler = new ProviderScheduler(this.config.maxConcurrentTurnsPerAccount ?? 2)))
     return scheduler

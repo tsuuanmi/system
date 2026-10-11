@@ -64,7 +64,7 @@ describe('system MCP server on ctx.webServer', () => {
     const { tools } = await client.listTools()
     expect(tools.map((tool) => tool.name).sort()).toEqual(['ask', 'research', 'result', 'status'])
     const status = await client.callTool({ name: 'status', arguments: {} })
-    expect(status.structuredContent).toMatchObject({ harness: 'system', stage: 'M1', store: 'ok', artifacts: 0, kernel: ['store', 'artifacts'] })
+    expect(status.structuredContent).toMatchObject({ harness: 'system', stage: 'M2', store: 'ok', artifacts: 0, kernel: ['store', 'artifacts'] })
   })
 
   it('reports ask as not installed rather than pretending to work', async () => {

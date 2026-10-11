@@ -72,6 +72,9 @@
       "@tsuuanmi/system-egress": [
         "packages/plugins/egress/src/index.ts"
       ],
+      "@tsuuanmi/system-workflow": [
+        "packages/plugins/workflow/src/index.ts"
+      ],
       "@tsuuanmi/system-workers-core": [
         "packages/workers-core/src/index.ts"
       ],

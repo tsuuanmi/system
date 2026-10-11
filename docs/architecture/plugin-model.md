@@ -44,20 +44,20 @@ can be added without changing consumers.
 | Provider runtime | `login` (login profiles, Save) | `@tsuuanmi/system-login` | operators (`account_save`), remote login |
 | Provider runtime | `accounts` | `@tsuuanmi/system-accounts` (records and credentials as encrypted grants in **DSH** `ctx.credentials`, provided by `@tsuuanmi/system-credentials-vault`) | provider runtime, admission |
 | Routing | `egress` (INV-12: classification policy per Worker class + credential scan of the actual payload; `egress` decisions) | `@tsuuanmi/system-egress` | the turn runtime, before routing |
-| Provider runtime | `turns` (the ask runtime: durable turns, the website Worker source, scheduling, MCP `ask`/`result`) | `@tsuuanmi/system-turns` | MCP clients, CLI `system ask` |
+| Provider runtime | `turns` (the website Worker runtime: durable turns, the website Worker source, scheduling, receipts) | `@tsuuanmi/system-turns` | the workflow engine |
 | Provider runtime | `turnReceipts` | `@tsuuanmi/system-turn-receipts` | provider drivers, recovery |
 | Provider runtime | `providers` (driver registry) | `@tsuuanmi/system-providers` registry; drivers: `@tsuuanmi/system-provider-chatgpt-web`, `provider-gemini-web` | website capability |
 | Capabilities | `website` | `website-core` | Worker providers |
 | Capabilities | `exec` | **DSH** `ctx.shell` / `ctx.fs` / `ctx.sandbox` / `ctx.subprocess` (local, sandbox, SSH) | local-tools Worker |
 | Capabilities | `models` (API and local model providers) | **DSH** `ctx.llm` (`llm-pi-ai`: OpenAI-compatible and others) | Worker providers, especially `economy`-tier jobs ([purpose P4](../requirements/purpose.md#p4-cheap-models-do-low-level-work-strong-models-do-hard-work)) |
 | Capabilities | `agentRuntimes` | `runtime-claude-agent-sdk`, `runtime-codex-sdk`, `runtime-acp` | Worker providers ([agent runtimes](../design/agent-runtimes.md)) |
-| Routing | `workers` (Worker sources, fail-closed admission, deterministic router; acceptance later; definition `Workers` in `@tsuuanmi/system-workers-core`) | `@tsuuanmi/system-workers` | the turn runtime; later orchestration and gateways |
-| Orchestration | `workflow` | `workflow-engine` | gateways, CLI |
+| Routing | `workers` (Worker sources, fail-closed admission, deterministic router, acceptance contracts; definition `Workers` in `@tsuuanmi/system-workers-core`) | `@tsuuanmi/system-workers` | the turn runtime (route), the workflow engine (accept) |
+| Orchestration | `workflow` (MVP subset: static DAG templates, durable nodes, acceptance, retries, recovery; MCP `ask`, `research`, `result`, `usage`, `explain`) | `@tsuuanmi/system-workflow` | MCP clients, CLI |
 | Orchestration | `workerSessions` (Worker sessions, bindings, mailbox, wake, budgets) | `worker-sessions-store` | team runner, session nodes, MCP session tools ([design](../design/sessions-and-messaging.md)) |
 | Orchestration | `teams` | `team-runner` | workflow |
 | Orchestration | `profiles` (domain procedures) | `profile-software-development`, `profile-scientific-research` | workflow |
 | Gateways | `clientProtocols` (shared turn broker) | `gateway-responses`, `gateway-anthropic-messages` | — (edge) |
-| Gateways | `mcp` (tools contributed by plugins for their lifetime; definition `McpTools` in `@tsuuanmi/system-gateway-core`) | `@tsuuanmi/system-mcp-server` (own; DSH has only an MCP client) | plugins that expose operations: `login` (`account_list`, `account_save`), `turns` (`ask`, `research`, `result`) |
+| Gateways | `mcp` (tools contributed by plugins for their lifetime; definition `McpTools` in `@tsuuanmi/system-gateway-core`) | `@tsuuanmi/system-mcp-server` (own; DSH has only an MCP client) | plugins that expose operations: `login` (`account_list`, `account_save`), `workflow` (`ask`, `research`, `result`, `usage`, `explain`) |
 | Gateways | — (consumers only) | `cli` (wrapper around `dsh --profile system`), `web-ui` (on **DSH** web app), later `gateway-a2a` | — (edge) |
 
 Gateways only consume services, so they are plain plugins with no seam of their
@@ -182,9 +182,12 @@ in the test fake (two Xvfbs for concurrent callers), which was then fixed.
 - **A scripted fake `ProviderDriver`** for testing the turn runtime without a
   browser is still to come; today the runtime is tested through a real browser on
   the fake site.
-- **Worker acceptance** (`accept(result, contract)`, REQ-WRK-3) and **tier
-  escalation** belong to `ctx.workers` but arrive with the workflow engine (M3),
-  the first caller that has an acceptance contract to check.
+- **Tier escalation** after a rejected result (REQ-WRK-9) is not built: a
+  rejection fails the run (`acceptance_rejected`, `NONE`). The workflow engine
+  has no graph growth yet, which escalation needs.
+- **The workflow engine is the MVP subset:** static templates only; no graph
+  growth, plan approval, teams, lineage invalidation, or `continue`/`stop`
+  operator commands yet.
 - **Capability evidence is declared, not probed.** A website Worker proves what its
   driver declares (`ProviderDriver.capabilities`, covered by the driver's tests).
   Per-account probes, for example whether an account's plan offers Deep research,

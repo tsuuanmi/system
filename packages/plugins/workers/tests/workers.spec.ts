@@ -42,6 +42,22 @@ describe('ctx.workers: configured preferences', () => {
     }
   })
 
+  it('ships the acceptance.answer and acceptance.cited contracts', async () => {
+    const { ctx, dispose } = await boot()
+    try {
+      const put = (text: string) => ctx.artifacts.put({
+        kind: 'report', bodySchema: 'provider-answer@1.0', classification: 'operator-shared', producer: { type: 'system', ref: 'test' },
+        body: { schema: 'provider-answer@1.0', provider: 'p', account: 'a', turnId: 't', conversation: { mode: 'temporary' }, promptHash: `sha256:${'0'.repeat(64)}`, text },
+      }).id as `sha256:${string}`
+      expect(ctx.workers.accept(put('fine'), 'acceptance.answer').accepted).toBe(true)
+      expect(ctx.workers.accept(put('fine'), 'acceptance.cited')).toMatchObject({ accepted: false, reasons: ['the answer cites no source link'] })
+      const cited = 'See [A](https://a.example/x) and https://b.example/y, again https://a.example/x.'
+      expect(ctx.workers.accept(put(cited), 'acceptance.cited')).toMatchObject({ accepted: true, reasons: ['the answer cites 2 source link(s)'] })
+    } finally {
+      await dispose()
+    }
+  })
+
   it('refuses a source that describes an invalid or duplicate Worker', async () => {
     const { ctx, dispose } = await boot()
     try {

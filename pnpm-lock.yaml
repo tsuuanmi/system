@@ -608,9 +608,6 @@ importers:
       '@tsuuanmi/system-event-log':
         specifier: workspace:*
         version: link:../event-log
-      '@tsuuanmi/system-gateway-core':
-        specifier: workspace:*
-        version: link:../../gateway-core
       '@tsuuanmi/system-leases':
         specifier: workspace:*
         version: link:../leases
@@ -636,15 +633,9 @@ importers:
       '@deepseek-ai/cordis':
         specifier: 4.0.5-alpha.1
         version: 4.0.5-alpha.1(@deepseek-ai/cordis-plugin-include@1.0.10-alpha.1)(@deepseek-ai/cordis-plugin-loader@1.0.6-alpha.1)
-      '@deepseek-ai/dsh-host-webserver':
-        specifier: 0.2.1-alpha.2
-        version: 0.2.1-alpha.2(@deepseek-ai/cordis@4.0.5-alpha.1)
       '@deepseek-ai/schemastery':
         specifier: 3.18.5-alpha.1
         version: 3.18.5-alpha.1
-      '@modelcontextprotocol/sdk':
-        specifier: 1.32.1
-        version: 1.32.1(zod@4.6.5)
       '@tsuuanmi/system-browser-patchright':
         specifier: workspace:*
         version: link:../browser-patchright
@@ -654,9 +645,6 @@ importers:
       '@tsuuanmi/system-display-virtual':
         specifier: workspace:*
         version: link:../display-virtual
-      '@tsuuanmi/system-mcp-server':
-        specifier: workspace:*
-        version: link:../mcp-server
       '@tsuuanmi/system-provider-chatgpt-web':
         specifier: workspace:*
         version: link:../provider-chatgpt-web
@@ -669,9 +657,6 @@ importers:
       patchright-core:
         specifier: 1.63.0
         version: 1.63.0
-      zod:
-        specifier: ^4.1.0
-        version: 4.6.5
 
   packages/plugins/workers:
     dependencies:
@@ -694,6 +679,85 @@ importers:
       '@tsuuanmi/system-store':
         specifier: workspace:*
         version: link:../store
+
+  packages/plugins/workflow:
+    dependencies:
+      '@tsuuanmi/system-artifacts':
+        specifier: workspace:*
+        version: link:../artifacts
+      '@tsuuanmi/system-event-log':
+        specifier: workspace:*
+        version: link:../event-log
+      '@tsuuanmi/system-gateway-core':
+        specifier: workspace:*
+        version: link:../../gateway-core
+      '@tsuuanmi/system-leases':
+        specifier: workspace:*
+        version: link:../leases
+      '@tsuuanmi/system-libs':
+        specifier: workspace:*
+        version: link:../../libs
+      '@tsuuanmi/system-store':
+        specifier: workspace:*
+        version: link:../store
+      '@tsuuanmi/system-turns':
+        specifier: workspace:*
+        version: link:../turns
+      '@tsuuanmi/system-workers-core':
+        specifier: workspace:*
+        version: link:../../workers-core
+    devDependencies:
+      '@deepseek-ai/cordis':
+        specifier: 4.0.5-alpha.1
+        version: 4.0.5-alpha.1(@deepseek-ai/cordis-plugin-include@1.0.10-alpha.1)(@deepseek-ai/cordis-plugin-loader@1.0.6-alpha.1)
+      '@deepseek-ai/dsh-host-webserver':
+        specifier: 0.2.1-alpha.2
+        version: 0.2.1-alpha.2(@deepseek-ai/cordis@4.0.5-alpha.1)
+      '@deepseek-ai/schemastery':
+        specifier: 3.18.5-alpha.1
+        version: 3.18.5-alpha.1
+      '@modelcontextprotocol/sdk':
+        specifier: 1.32.1
+        version: 1.32.1(zod@4.6.5)
+      '@tsuuanmi/system-accounts':
+        specifier: workspace:*
+        version: link:../accounts
+      '@tsuuanmi/system-browser-patchright':
+        specifier: workspace:*
+        version: link:../browser-patchright
+      '@tsuuanmi/system-credentials-vault':
+        specifier: workspace:*
+        version: link:../credentials-vault
+      '@tsuuanmi/system-display-virtual':
+        specifier: workspace:*
+        version: link:../display-virtual
+      '@tsuuanmi/system-egress':
+        specifier: workspace:*
+        version: link:../egress
+      '@tsuuanmi/system-login':
+        specifier: workspace:*
+        version: link:../login
+      '@tsuuanmi/system-mcp-server':
+        specifier: workspace:*
+        version: link:../mcp-server
+      '@tsuuanmi/system-provider-chatgpt-web':
+        specifier: workspace:*
+        version: link:../provider-chatgpt-web
+      '@tsuuanmi/system-providers':
+        specifier: workspace:*
+        version: link:../providers
+      '@tsuuanmi/system-turn-receipts':
+        specifier: workspace:*
+        version: link:../turn-receipts
+      '@tsuuanmi/system-workers':
+        specifier: workspace:*
+        version: link:../workers
+      patchright-core:
+        specifier: 1.63.0
+        version: 1.63.0
+      zod:
+        specifier: ^4.1.0
+        version: 4.6.5
 
   packages/provider-core:
     dependencies:
@@ -758,6 +822,9 @@ importers:
       '@tsuuanmi/system-workers':
         specifier: workspace:*
         version: link:../plugins/workers
+      '@tsuuanmi/system-workflow':
+        specifier: workspace:*
+        version: link:../plugins/workflow
     devDependencies:
       '@deepseek-ai/cordis':
         specifier: 4.0.5-alpha.1

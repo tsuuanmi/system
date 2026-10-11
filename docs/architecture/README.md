@@ -67,7 +67,7 @@ internals.
 │               ctx.agentRuntimes (Claude Agent SDK, Codex SDK, ACP) ·      │
 │               ctx.models (API / local models, economy tier)               │
 ├───────────────────────────────────────────────────────────────────────────┤
-│ Provider      ctx.turns (ask/research runtime) · ctx.turnReceipts ·       │
+│ Provider      ctx.turns (website Worker runtime) · ctx.turnReceipts ·     │
 │ runtime       ctx.browser · ctx.display · ctx.accounts · ctx.login ·      │
 │               ctx.providers (chatgpt-web driver) · UI engine (ui-ops) ·   │
 │               scheduler · remote login                                    │

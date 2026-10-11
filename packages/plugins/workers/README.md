@@ -27,8 +27,13 @@ router ([routing](../../../docs/design/routing.md#algorithm)). Definition:
     that was not chosen says what put the winner first.
   - **Failure:** an `admission` decision with outcome `none`, and
     `AdmissionFailure` carrying every rejection, including each Worker's state.
-- **Not yet:** acceptance and tier escalation arrive with the workflow engine
-  (M3). See
+- **Acceptance (REQ-WRK-3).** `contract(id, check)` registers a deterministic
+  contract for the plugin's lifetime. `accept(result, contract)` checks a stored
+  result and records an `acceptance` decision. An unknown contract or result
+  throws: it never accepts silently. Two contracts are built in:
+  - `acceptance.answer`: the answer has text;
+  - `acceptance.cited`: the answer also cites at least one http(s) source link.
+- **Not yet:** tier escalation after a rejection. See
   [known gaps](../../../docs/architecture/plugin-model.md#known-gaps-tracked).
 - **Config:** `quotaPreference`, `priority`.
 - **Injects:** `artifacts`.

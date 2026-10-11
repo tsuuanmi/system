@@ -47,10 +47,11 @@ eval "$(system mcp-config claude)"   # registers MCP server "system" (token via 
 system mcp-config codex >> ~/.codex/config.toml   # Codex: runs the stdio shim (system mcp-stdio)
 ```
 
-Claude Code then has `ask`, `research`, `result`, and `status`, plus the
-operator tools `account_*`. For example, `ask` with `{ "prompt": "..." }`
-returns ChatGPT's answer, and `research` starts a Deep research run whose report
-`result` returns.
+Claude Code then has `ask`, `research`, `result`, `usage`, `explain`, and
+`status`, plus the operator tools `account_*`. For example, `ask` with
+`{ "prompt": "..." }` returns ChatGPT's answer. `research` starts a run (Deep
+research on `frontier`, then a cited compaction on `economy`) whose synthesis
+`result` returns. `system explain <runId>` shows why each step ran where it did.
 
 ## Simplest use case (target)
 

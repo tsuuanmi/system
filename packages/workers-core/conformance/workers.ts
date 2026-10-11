@@ -121,6 +121,31 @@ export function workersConformance(name: string, boot: Boot): void {
       })
     })
 
+    it('accepts or rejects a stored result by contract, records the decision, and fails closed on unknowns (REQ-WRK-3)', async () => {
+      const { ctx, dispose } = await boot()
+      try {
+        ctx.workers.contract('conformance.has-text', (result) => {
+          const text = (result.body as { text?: unknown }).text
+          return typeof text === 'string' && text.trim() ? { accepted: true, reasons: ['has text'] } : { accepted: false, reasons: ['no text'] }
+        })
+        expect(() => ctx.workers.contract('conformance.has-text', () => ({ accepted: true, reasons: ['x'] }))).toThrow()
+        const put = (text: string) => ctx.artifacts.put({
+          kind: 'report', bodySchema: 'provider-answer@1.0', classification: 'operator-shared', producer: { type: 'system', ref: 'conformance' },
+          body: { schema: 'provider-answer@1.0', provider: 'p', account: 'a', turnId: 't', conversation: { mode: 'temporary' }, promptHash: `sha256:${'0'.repeat(64)}`, text },
+        }).id as `sha256:${string}`
+        const good = ctx.workers.accept(put('an answer'), 'conformance.has-text', { runId: 'run-1', nodeId: 'n:1' })
+        expect(good).toMatchObject({ accepted: true, reasons: ['has text'] })
+        expect(body(ctx, good.decision)).toMatchObject({ decisionType: 'acceptance', outcome: { option: 'accept' } })
+        const bad = ctx.workers.accept(put(' '), 'conformance.has-text')
+        expect(bad).toMatchObject({ accepted: false, reasons: ['no text'] })
+        expect(body(ctx, bad.decision)).toMatchObject({ decisionType: 'acceptance', outcome: { option: 'reject' } })
+        expect(() => ctx.workers.accept(put('x'), 'conformance.unknown')).toThrow()
+        expect(() => ctx.workers.accept(`sha256:${'f'.repeat(64)}`, 'conformance.has-text')).toThrow()
+      } finally {
+        await dispose()
+      }
+    })
+
     it('refuses a malformed work requirement', async () => {
       await withWorkers([worker('w:a')], async (ctx) => {
         await expect(ctx.workers.route({ ...requirement(), capabilities: [] })).rejects.toThrow()

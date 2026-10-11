@@ -390,14 +390,24 @@ export class ChatGptWebDriver implements ProviderDriver<Page> {
     return completed.text
   }
 
-  /** The report body: everything after the "Deep Research Report" heading in its frame. */
+  /**
+   * The report body: everything after the "Deep Research Report" heading in its frame, then
+   * its citation links as a `Sources:` list, since rendered text keeps only the link labels.
+   */
   private async reportText(engine: UiEngine): Promise<string> {
     const heading = await engine.resolve('research.report-heading', 2000).catch(() => undefined)
     if (!heading) return ''
-    const body = await heading.locator.locator('xpath=ancestor::body[1]').innerText().catch(() => '')
+    const frame = heading.locator.locator('xpath=ancestor::body[1]')
+    const body = await frame.innerText().catch(() => '')
     const title = (await heading.locator.innerText().catch(() => '')).trim()
     const at = body.indexOf(title)
-    return (at >= 0 ? body.slice(at + title.length) : body).trim()
+    const text = (at >= 0 ? body.slice(at + title.length) : body).trim()
+    const anchors = await frame.locator('a[href^="http"]').evaluateAll((links) => links.map((a) => [(a.textContent ?? '').trim(), (a as HTMLAnchorElement).href]))
+      .catch(() => [] as string[][])
+    const sources = new Map<string, string>()
+    for (const [label, href] of anchors) if (href && !sources.has(href)) sources.set(href, label ?? '')
+    if (!sources.size) return text
+    return `${text}\n\nSources:\n${[...sources].map(([href, label]) => `- ${label ? `${label} ` : ''}${href}`).join('\n')}`
   }
 
   /** Text of the last assistant answer: the container of its "ChatGPT said:" heading. */

@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { CHROME_LOCK } from '@tsuuanmi/system-browser-patchright'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { callTool, ensureBrowser, exitCode, mcpConfig, mcpHeaders, mergeProfileManifest, parseAsk } from '../src/index.ts'
+import { callTool, ensureBrowser, exitCode, formatExplanation, formatUsage, mcpConfig, mcpHeaders, mergeProfileManifest, parseAsk } from '../src/index.ts'
 
 const dirs: string[] = []
 afterEach(() => {
@@ -75,6 +75,41 @@ describe('system ask arguments', () => {
     expect(await parseAsk(['--session', 'ses_1', 'hello', 'world'], async () => '')).toEqual({ prompt: 'hello world', sessionId: 'ses_1' })
     expect(await parseAsk(['--tier', 'frontier', 'q'], async () => '')).toEqual({ prompt: 'q', tier: 'frontier' })
     expect(await parseAsk([], async () => '')).toBeUndefined()
+  })
+})
+
+describe('system usage and explain output', () => {
+  it('shows, per request and step, the Worker, tier, and quota class that served it', () => {
+    const lines = formatUsage({
+      runs: [{
+        runId: 'run_1', template: 'research', status: 'completed', createdAt: '2026-10-12T01:02:03.000Z',
+        nodes: [
+          { nodeId: 'research:1', state: 'COMPLETED', minTier: 'frontier', tier: 'frontier', worker: 'worker:chatgpt-main/frontier', quotaClass: 'subscription-chat' },
+          { nodeId: 'compact:1', state: 'WAITING', minTier: 'economy' },
+        ],
+      }],
+    })
+    expect(lines).toEqual([
+      'run_1  research  completed  2026-10-12T01:02:03.000Z',
+      '  research:1  COMPLETED  frontier  subscription-chat  worker:chatgpt-main/frontier',
+      '  compact:1  WAITING  -  -  -',
+    ])
+  })
+
+  it('prints a run\'s decision chain, step by step', () => {
+    const lines = formatExplanation({
+      runId: 'run_1', template: 'ask', status: 'completed', specHash: 'sha256:ab',
+      nodes: [{ nodeId: 'ask:1', state: 'COMPLETED', worker: 'worker:a/standard', quotaClass: 'subscription-chat', turnId: 'turn_1', decisions: [
+        { id: 'sha256:01', type: 'egress', outcome: 'allow', reasons: ['public content is permitted'] },
+        { id: 'sha256:02', type: 'route', outcome: 'worker:a/standard', reasons: ['proves reason', 'quota class subscription-chat'] },
+      ] }],
+    })
+    expect(lines).toEqual([
+      'run_1  ask  completed  spec sha256:ab',
+      '  ask:1  COMPLETED  worker:a/standard  subscription-chat  turn_1',
+      '    egress  allow  public content is permitted  (sha256:01)',
+      '    route  worker:a/standard  proves reason; quota class subscription-chat  (sha256:02)',
+    ])
   })
 })
 

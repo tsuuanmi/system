@@ -56,7 +56,9 @@ The **ChatGPT Web provider driver**
     the chip;
   - the acknowledgement is skipped, and the driver waits for the report frame
     (`research.running` / `research.completed`, `frames: any`);
-  - the report text follows "Deep Research Report";
+  - the report text follows "Deep Research Report". Its citation links are
+    appended as a `Sources:` list (label and URL), because rendered text keeps
+    only the link labels;
   - a reply with no frame within `researchStartMs` is a clarifying question.
   - Live-verified on 2026-10-12.
 - **Not yet:**

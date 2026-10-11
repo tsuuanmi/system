@@ -43,6 +43,8 @@
     - id: workers
       name: '@tsuuanmi/system-workers'               # Worker registry, admission, deterministic router
     - id: turns
-      name: '@tsuuanmi/system-turns'                 # the ask runtime; contributes MCP ask/result
+      name: '@tsuuanmi/system-turns'                 # the website Worker runtime (durable turns)
+    - id: workflow
+      name: '@tsuuanmi/system-workflow'              # the single engine; MCP ask/research/result/usage/explain
     - id: mcp-server
       name: '@tsuuanmi/system-mcp-server'
