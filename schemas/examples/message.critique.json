@@ -1,0 +1,10 @@
+{
+  "schema": "message@1.0",
+  "messageId": "msg-thinker-2-0007",
+  "from": "session:team-a:member-2",
+  "to": { "session": "session:team-a:member-1" },
+  "intent": "critique",
+  "inReplyTo": "msg-thinker-1-0004",
+  "body": "Your option B ignores the quota-exhaustion path; see the cited finding.",
+  "refs": ["sha256:5555555555555555555555555555555555555555555555555555555555555555"]
+}

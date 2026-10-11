@@ -45,10 +45,11 @@ can be added without changing consumers.
 | Capabilities | `agentRuntimes` | `runtime-claude-agent-sdk`, `runtime-codex-sdk`, `runtime-acp` | Worker providers ([agent runtimes](../design/agent-runtimes.md)) |
 | Routing | `workers` (registry, admission, router, acceptance) | `workers-core` | orchestration, gateways |
 | Orchestration | `workflow` | `workflow-engine` | gateways, CLI |
+| Orchestration | `sessions` (sessions, bindings, mailbox, wake, budgets) | `sessions-store` | team runner, session nodes, MCP session tools ([design](../design/sessions-and-messaging.md)) |
 | Orchestration | `teams` | `team-runner` | workflow |
 | Orchestration | `profiles` (domain procedures) | `profile-software-development`, `profile-scientific-research` | workflow |
 | Gateways | `clientProtocols` (shared turn broker) | `gateway-responses`, `gateway-anthropic-messages` | — (edge) |
-| Gateways | — (consumers only) | `mcp-server`, `cli`, `web-ui` | — (edge) |
+| Gateways | — (consumers only) | `mcp-server`, `cli`, `web-ui`, later `gateway-a2a` | — (edge) |
 
 Gateways only consume services, so they are plain plugins with no seam of their
 own. The exception is the shared turn broker that the two client-protocol

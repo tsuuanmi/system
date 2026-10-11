@@ -34,6 +34,7 @@
         "report",
         "handoff",
         "delivery",
+        "message",
         "decision",
         "receipt",
         "approval"

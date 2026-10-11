@@ -15,6 +15,7 @@ It does not restate structure or invariants. It links to them.
 | [workflow-engine.md](workflow-engine.md) | DAG, durable nodes, handoffs, exact-subject gates, recovery, lineage | orchestration |
 | [artifacts.md](artifacts.md) | artifact envelope, kinds, decision records, lineage, explain | kernel, orchestration |
 | [routing.md](routing.md) | capability vocabulary, admission, data locality, intelligence tiers, quota-aware deterministic routing | routing |
+| [sessions-and-messaging.md](sessions-and-messaging.md) | Worker sessions (SessionId), direct peer messaging, long-running mechanics, A2A alignment | orchestration |
 | [teams.md](teams.md) | Model A members, independent-first barrier, synthesis | orchestration |
 | [agent-runtimes.md](agent-runtimes.md) | Claude Code, Codex, ACP agents as Workers | capabilities |
 | [gateways.md](gateways.md) | Responses + Anthropic Messages emulation, MCP inversion, turn tokens, drain | gateways |

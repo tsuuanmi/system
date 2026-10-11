@@ -13,6 +13,7 @@
 | `REQ-TEAM` | multi-member teams |
 | `REQ-WF` | durable workflows |
 | `REQ-ART` | artifacts, decision records, schemas |
+| `REQ-SES` | Worker sessions, direct messaging, long-running work |
 | `REQ-GW` | client gateways |
 | `REQ-HOST` | host lifecycle |
 
@@ -139,6 +140,30 @@
 - **REQ-ART-5** A Worker's structured result is validated against the schema
   named in its acceptance contract, and the schema is given to the Worker when
   its provider supports constrained output.
+
+## Sessions and long-running work (`REQ-SES`)
+
+- **REQ-SES-1** Every continuable Worker participation has a system-owned
+  `SessionId`. It is stable across activations and host restarts, and it is bound
+  to the Worker's native handle with a generation fence.
+- **REQ-SES-2** Sessions in a group can address each other by `SessionId` and
+  exchange messages directly. The engine records messages but does not relay or
+  rewrite their content.
+- **REQ-SES-3** Messages are durable `message` artifacts, delivered at least once,
+  in order per mailbox, and deduplicated by `messageId`.
+- **REQ-SES-4** The group policy (who may message whom, barriers, budgets, egress)
+  is enforced on every message. A rejected message produces a decision artifact.
+- **REQ-SES-5** An idle session is woken by an incoming message, cold-resumed
+  when needed. Peers never poll each other.
+- **REQ-SES-6** Long-running sessions emit checkpoint artifacts at bounded
+  intervals. When context grows past a threshold, an engine-owned compaction
+  writes a `handoff` summary, and the session continues from it.
+- **REQ-SES-7** A session can enter `INPUT_REQUIRED` and resume when the operator
+  or a peer supplies input. Lifetime, idle, turn, message, and token budgets are
+  bounded, and exceeding one is a classified failure.
+- **REQ-SES-8** Calls that start long work (MCP, CLI) return a `SessionId` or run
+  id immediately. Clients continue, poll, or stream by that id, and never block
+  for the duration of the work.
 
 ## Gateways (`REQ-GW`)
 

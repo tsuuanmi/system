@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:tsuuanmi:system:schema:worker-session:v1",
+  "title": "Worker session",
+  "description": "Durable participation of one Worker with its own SessionId (design/sessions-and-messaging.md). Mutable state record.",
+  "type": "object",
+  "required": ["schema", "sessionId", "worker", "role", "state", "binding", "policy", "budgets", "mailboxSeq", "createdAt", "revision"],
+  "properties": {
+    "schema": { "const": "worker-session@1.0" },
+    "sessionId": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+    "group": { "description": "Session group (team) id, if any.", "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+    "runId": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+    "nodeId": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+    "worker": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+    "role": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "formation": { "description": "Admission decision that selected the Worker.", "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/artifactRef" },
+    "state": { "enum": ["FORMING", "IDLE", "ACTIVE", "INPUT_REQUIRED", "FAILED", "CLOSED"] },
+    "binding": {
+      "type": "object",
+      "required": ["runtime", "generation"],
+      "properties": {
+        "runtime": { "enum": ["website", "claude-agent-sdk", "codex-sdk", "acp", "a2a", "local-tool", "model-api"] },
+        "nativeHandle": { "description": "Conversation URL, SDK session/thread id, ACP sessionId or A2A contextId; absent until first activation.", "type": "string", "maxLength": 512 },
+        "generation": { "type": "integer", "minimum": 0 },
+        "activationLease": {
+          "type": "object",
+          "required": ["owner", "expiresAt"],
+          "properties": {
+            "owner": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+            "expiresAt": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "policy": {
+      "type": "object",
+      "required": ["mayMessage"],
+      "properties": {
+        "mayMessage": { "type": "array", "uniqueItems": true, "maxItems": 64, "items": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" } },
+        "barrier": { "description": "Barrier id gating inbound peer messages (independent-first).", "type": "string", "maxLength": 64 },
+        "writes": { "description": "Subject this session may write (INV-15); absent means read-only.", "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/subject" }
+      },
+      "additionalProperties": false
+    },
+    "budgets": {
+      "type": "object",
+      "required": ["maxTurns", "maxMessages", "maxLifetimeMinutes"],
+      "properties": {
+        "maxTurns": { "type": "integer", "minimum": 1, "maximum": 10000 },
+        "maxMessages": { "type": "integer", "minimum": 0, "maximum": 10000 },
+        "maxLifetimeMinutes": { "type": "integer", "minimum": 1, "maximum": 43200 },
+        "maxIdleMinutes": { "type": "integer", "minimum": 1, "maximum": 43200 },
+        "checkpointEveryTurns": { "type": "integer", "minimum": 1, "maximum": 1000 },
+        "compactAtTokens": { "type": "integer", "minimum": 1000 }
+      },
+      "additionalProperties": false
+    },
+    "usage": {
+      "type": "object",
+      "properties": {
+        "turns": { "type": "integer", "minimum": 0 },
+        "messagesSent": { "type": "integer", "minimum": 0 },
+        "estimatedTokens": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "mailboxSeq": { "description": "Last delivered inbound sequence number.", "type": "integer", "minimum": 0 },
+    "lastCheckpoint": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/artifactRef" },
+    "lastSummary": { "description": "Latest engine-owned compaction handoff.", "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/artifactRef" },
+    "lastDecision": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/artifactRef" },
+    "createdAt": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp" },
+    "revision": { "type": "integer", "minimum": 0 }
+  },
+  "allOf": [
+    { "if": { "properties": { "state": { "enum": ["ACTIVE", "INPUT_REQUIRED"] } } }, "then": { "properties": { "binding": { "type": "object", "required": ["nativeHandle"], "properties": { "nativeHandle": true } } } } }
+  ],
+  "additionalProperties": false
+}

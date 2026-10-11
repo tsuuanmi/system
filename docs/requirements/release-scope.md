@@ -56,7 +56,8 @@ edge:          mcp-server, cli
 | Accounts | REQ-ACC-1..5 (ChatGPT Web accounts only) |
 | Provider turns | REQ-PRV-1..6 (`reason`, `web-search`, `deep-research`) |
 | Routing | REQ-WRK-1..4, REQ-WRK-7 (egress), REQ-WRK-8 (quota exclusion), REQ-WRK-9 (tiers: website modes as `economy`, `standard`, and `frontier`) |
-| Gateways | REQ-GW-3 (MCP tools: `ask`, `research`, `status`), REQ-GW-4 (CLI: login, status, ask, research) |
+| Gateways | REQ-GW-3 (MCP tools: `ask`, `research`, `status`, `result`), REQ-GW-4 (CLI: login, status, ask, research, explain) |
+| Sessions | REQ-SES-1 (`SessionId` bound to the ChatGPT conversation; `ask` and `research` accept a `sessionId` to continue the same session), REQ-SES-8 (`research` returns at once; Deep Research runs for tens of minutes, longer than MCP tool-call timeouts) |
 | Workflows | REQ-WF-1, REQ-WF-3, REQ-WF-4, REQ-WF-6, REQ-WF-10 (static DAGs only) |
 | Artifacts and schemas | REQ-ART-1..5 (decision artifacts for admission, route, tier, egress, acceptance, reconciliation; `system explain` in the CLI) |
 | Host | REQ-HOST-1, REQ-HOST-2, REQ-HOST-4, REQ-HOST-5 |
@@ -101,8 +102,9 @@ Messages gateways, the Web UI, the DSH bundle, and packaged installers.
 
 Adds, as plugins:
 
-- **Orchestration:** `workflow-engine`, `team-runner`, `profile-software-development`
-  (REQ-WF-1..8, REQ-TEAM-1..4).
+- **Orchestration:** `workflow-engine`, `sessions-store`, `team-runner`,
+  `profile-software-development` (REQ-WF-1..11, REQ-TEAM-1..5, REQ-SES-1..8).
+  Members are durable sessions that message each other directly.
 - **Workers:** `runtime-claude-agent-sdk`, `runtime-codex-sdk`, `runtime-acp`
   (REQ-WRK-5..6). Claude Code and Codex become Workers as well as clients.
 - **Providers:** `provider-gemini-web`, connectors as capabilities (REQ-PRV-7), and
@@ -115,7 +117,10 @@ Beta exit criteria:
    validation → exact-head review → bounded remediation) runs across mixed
    Workers. Killing the host mid-workflow never repeats a completed node.
 2. A two-member team uses two distinct accounts, and the independent-first
-   barrier is proven by test.
+   barrier is proven by test. Members exchange direct messages, and killing the
+   host mid-conversation loses or duplicates no message.
+4. A long-running session (several hours, past the compaction threshold) survives
+   a host restart, keeps its `SessionId`, and continues from its handoff summary.
 3. Agent-runtime Workers pass probe, run, resume, cancel, and sandbox-enforcement
    smoke tests.
 
@@ -135,6 +140,10 @@ operational readiness.
 - `profile-scientific-research` with typed artifacts and invalidation, running
   with zero engine changes. This is the architecture test (REQ-WF-9).
 - A DSH bundle, so `system` plugins mount in a DeepSeek Harness profile.
+- A2A, when the first peer appears that `system` does not drive: `gateway-a2a`
+  exposes sessions as A2A agents, and `runtime-a2a` uses remote A2A agents
+  ([ADR-0006](../decisions/adr/0006-protocol-introduction-gates.md)). It ships in
+  v1.0 if that requirement exists by then, otherwise later.
 
 ### Operational readiness
 

@@ -62,6 +62,8 @@ design.
 | No mirrored protocol objects; protocol gates | INV-7, [ADR-0006](../decisions/adr/0006-protocol-introduction-gates.md) |
 | Restart is reconciliation; three effect classes | [INV-4](../architecture/invariants.md#inv-4-restart-is-reconciliation-not-replay) |
 | Semantic DAG + node router; profiles; second domain as test | [workflow-engine](../design/workflow-engine.md), REQ-WF-9 |
+| Direct Worker ↔ Worker messaging, own session per member, long-running teams (DSH `ctx.agentTeams` model) | [sessions and messaging](../design/sessions-and-messaging.md), [ADR-0015](../decisions/adr/0015-worker-sessions-and-peer-messaging.md), implemented natively |
+| A2A introduction gate | A2A planned for cross-runtime peers only ([ADR-0006](../decisions/adr/0006-protocol-introduction-gates.md)) |
 | Website Core / `WebsiteProviderRuntime` split | [components: capabilities](../architecture/components.md#capabilities) |
 
 ## Not adopted

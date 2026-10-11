@@ -81,6 +81,10 @@ routes back here.
   result reuse, handoffs, exact-subject gates, recovery, admission with
   provenance, artifact lineage, and convergence.
   See [workflow-engine](../design/workflow-engine.md).
+- **Sessions:** durable Worker sessions, each with its own `SessionId`, an
+  execution binding to the native handle, a mailbox for direct peer messages,
+  wake-on-message, checkpoints, compaction, and budgets for long-running work.
+  See [sessions and messaging](../design/sessions-and-messaging.md).
 - **Team runner:** Model A membership, the independent-first barrier, peer
   exchange rounds, synthesis, and phase acceptance.
   See [teams](../design/teams.md).

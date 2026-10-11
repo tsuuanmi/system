@@ -57,6 +57,7 @@ internals.
 │               MCP server · CLI · Web UI            [consumers only]       │
 ├───────────────────────────────────────────────────────────────────────────┤
 │ Orchestration ctx.workflow (semantic DAG, durable nodes) · ctx.teams ·    │
+│               ctx.sessions (SessionIds, direct messaging, long-running) · │
 │               ctx.profiles                                                │
 ├───────────────────────────────────────────────────────────────────────────┤
 │ Routing       ctx.workers: registry · admission · deterministic router ·  │

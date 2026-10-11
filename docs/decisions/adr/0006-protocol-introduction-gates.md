@@ -2,7 +2,7 @@
 
 - **Status:** Proposed
 - **Date:** 2026-10-11
-- **Related:** PROP-0001, INV-7, REQ-GW-*
+- **Related:** PROP-0001, INV-7, REQ-GW-*, ADR-0015
 
 ## Context
 
@@ -30,7 +30,8 @@ Option 2.
 | Anthropic Messages (HTTP + SSE) | **now** | client gateway for Claude Code and Messages clients ([ADR-0009](0009-claude-and-codex-first-class.md)) |
 | MCP | **now** | capability exposure and the per-turn tool bridge |
 | ACP | **now**, as a Worker runtime provider | generic driver for ACP-speaking agents (`runtime-acp`). Claude Code and Codex use their official SDKs instead |
-| A2A | deferred | added only after a real cross-runtime direct-peer requirement |
+| A2A 1.0 | **planned** (post-MVP) | cross-runtime peers only: `gateway-a2a` exposes `system` sessions, and `runtime-a2a` uses remote A2A agents as Workers. Introduced with the first peer `system` does not drive. Internal peer messaging uses the native mailbox ([ADR-0015](0015-worker-sessions-and-peer-messaging.md)) |
+| IBM Agent Communication Protocol | rejected | merged into A2A (2025); not to be confused with the Agent Client Protocol (ACP) above |
 
 A new protocol is admitted only when all of these hold:
 

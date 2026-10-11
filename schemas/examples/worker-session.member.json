@@ -1,0 +1,23 @@
+{
+  "schema": "worker-session@1.0",
+  "sessionId": "session:team-a:member-1",
+  "group": "team-a",
+  "runId": "run-2026-10-11-002",
+  "nodeId": "research:team-a",
+  "worker": "worker:chatgpt-thinker/standard",
+  "role": "thinker",
+  "formation": "sha256:6666666666666666666666666666666666666666666666666666666666666666",
+  "state": "ACTIVE",
+  "binding": {
+    "runtime": "website",
+    "nativeHandle": "https://chatgpt.com/c/0000-example",
+    "generation": 3,
+    "activationLease": { "owner": "host-1", "expiresAt": "2026-10-11T10:05:00Z" }
+  },
+  "policy": { "mayMessage": ["session:team-a:member-2", "session:team-a:synthesizer"], "barrier": "independent-first" },
+  "budgets": { "maxTurns": 40, "maxMessages": 60, "maxLifetimeMinutes": 720, "maxIdleMinutes": 120, "checkpointEveryTurns": 5, "compactAtTokens": 60000 },
+  "usage": { "turns": 12, "messagesSent": 9, "estimatedTokens": 41000 },
+  "mailboxSeq": 14,
+  "createdAt": "2026-10-11T08:00:00Z",
+  "revision": 27
+}

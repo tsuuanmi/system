@@ -5,7 +5,7 @@ status: proposed
 owners: [tsuuanmi]
 created: 2026-10-11
 related-requirements: [REQ-ACC, REQ-PRV, REQ-WRK, REQ-TEAM, REQ-WF, REQ-GW, REQ-HOST]
-related-decisions: [ADR-0001, ADR-0002, ADR-0003, ADR-0004, ADR-0005, ADR-0006, ADR-0007, ADR-0008, ADR-0009, ADR-0010, ADR-0011, ADR-0012, ADR-0013, ADR-0014]
+related-decisions: [ADR-0001, ADR-0002, ADR-0003, ADR-0004, ADR-0005, ADR-0006, ADR-0007, ADR-0008, ADR-0009, ADR-0010, ADR-0011, ADR-0012, ADR-0013, ADR-0014, ADR-0015]
 implementation: []
 ---
 
@@ -94,7 +94,7 @@ The maintainer's guiding decisions for the unified system are:
   [scheduling and leases](../design/scheduling-and-leases.md),
   [workflow engine](../design/workflow-engine.md), [teams](../design/teams.md),
   [agent runtimes](../design/agent-runtimes.md), [gateways](../design/gateways.md).
-- Durable choices: ADR-0001 through ADR-0014.
+- Durable choices: ADR-0001 through ADR-0015.
 - Exact contracts: [`schemas/`](../../schemas/README.md) and [reference](../reference/README.md).
 
 Planned package layout (Bun workspaces). Each seam has a definition package, and

@@ -47,4 +47,8 @@ Findings are `assessment` artifacts, each with a severity (`blocking`,
 ## Lead
 
 The lead controls the procedure and observes durable state. It does not relay
-content between members. Peers exchange outputs through the plan's rounds.
+content between members. Each member is a durable session with its own
+`SessionId`, and peers **message each other directly** through the session
+mailbox, under the group policy and barriers
+([sessions and messaging](sessions-and-messaging.md)). Rounds are the
+procedure's checkpoints, not the only channel.

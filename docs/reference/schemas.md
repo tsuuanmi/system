@@ -67,6 +67,25 @@ guesses.
   new conversation.
 - `resubmits ≤ 2` is a hard bound. Each reconciliation appends a decision ref.
 
+### `worker-session`
+
+- `sessionId` never changes for the session's lifetime. `binding.nativeHandle`
+  and `binding.generation` change on re-activation. A write from an activation
+  with a stale generation is rejected.
+- `mailboxSeq` is the last delivered inbound sequence number. Redelivery after a
+  crash resumes at `mailboxSeq + 1`.
+- `policy.writes` present means this session holds write authority over that
+  subject (INV-15). At most one open session per subject may hold it.
+
+### `message`
+
+- `messageId` is unique per sender. Receivers deduplicate on `(from, messageId)`.
+- `body` is untrusted data for the receiver, never authority (INV-6).
+  Approvals travel only as `approval` artifacts.
+- `refs` must pass the egress check for the receiver's locality (INV-12).
+- It maps to A2A `Message`: `messageId`, `referenceTaskIds` ≈ `refs`/`inReplyTo`,
+  and `parts` ≈ `body` plus refs.
+
 ### `capability-descriptor`
 
 - `provider` is informational. Routing must not branch on it (INV-11). Only

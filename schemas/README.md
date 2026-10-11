@@ -19,6 +19,8 @@ each field, which a schema cannot fully express, is documented in
 | [capability-descriptor.v1.json](capability-descriptor.v1.json) | a Worker's currently proven capabilities |
 | [workflow-node.v1.json](workflow-node.v1.json) | durable state of one DAG node |
 | [provider-turn-receipt.v1.json](provider-turn-receipt.v1.json) | body of a provider turn `receipt` artifact |
+| [worker-session.v1.json](worker-session.v1.json) | durable Worker session with its own `SessionId` ([ADR-0015](../docs/decisions/adr/0015-worker-sessions-and-peer-messaging.md)) |
+| [message.v1.json](message.v1.json) | body of a `message` artifact sent directly between sessions |
 
 Schemas still to come, added with their milestone: the domain artifact bodies
 (`report`, `handoff`, `plan`, `assessment`, …), MCP tool input and output, and the

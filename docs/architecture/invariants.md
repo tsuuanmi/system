@@ -54,7 +54,10 @@ user-pasted text. Trusted control messages travel separately from model data.
 Native protocol objects (MCP, Responses, ACP) cross their own boundaries
 unchanged. Adapters translate *behavior*, not data models. There is no universal
 Task, Message, or Artifact type that mirrors every protocol, and no global Worker
-id ([ADR-0006](../decisions/adr/0006-protocol-introduction-gates.md)).
+id ([ADR-0006](../decisions/adr/0006-protocol-introduction-gates.md)). A
+system-owned `SessionId` identifies a durable collaboration session and binds to
+native handles. It is neither a Worker id nor a protocol mirror
+([ADR-0015](../decisions/adr/0015-worker-sessions-and-peer-messaging.md)).
 
 ### INV-8 Credentials never cross upward
 

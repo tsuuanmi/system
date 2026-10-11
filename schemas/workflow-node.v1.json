@@ -34,6 +34,7 @@
       "enum": [
         "worker",
         "team",
+        "session",
         "effect",
         "gate"
       ]
