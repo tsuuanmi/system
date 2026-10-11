@@ -75,3 +75,60 @@ describe('ctx.artifacts', () => {
     })
   })
 })
+
+describe('review fixes (PR #3 kernel review)', () => {
+  const tierOf = (n: number) => ({ ...route, decisionType: 'tier', question: `q${n}`, candidates: [{ option: `t${n}`, selected: true, reasons: [] }], outcome: { option: `t${n}` } })
+
+  it('explains a diamond-shaped graph in linear time with shared nodes', async () => {
+    const ctx = await boot()
+    let layer = [ctx.artifacts.recordDecision(tierOf(0), { producer }).id]
+    let n = 1
+    for (let depth = 0; depth < 15; depth++) {
+      layer = [0, 1, 2, 3].map(() => ctx.artifacts.recordDecision({ ...tierOf(n++), inputs: layer }, { producer }).id)
+    }
+    const top = ctx.artifacts.recordDecision({ ...tierOf(n++), inputs: layer }, { producer })
+    const started = Date.now()
+    const tree = ctx.artifacts.explain(top.id)!
+    expect(Date.now() - started).toBeLessThan(1000)
+    const unique = new Set<string>()
+    const walk = (node: { id: string; inputs: unknown[] }): void => {
+      if (unique.has(node.id)) return
+      unique.add(node.id)
+      for (const input of node.inputs as { id: string; inputs: unknown[] }[]) walk(input)
+    }
+    walk(tree)
+    expect(unique.size).toBe(n)
+  })
+
+  it('rejects unknown input references (the classification floor cannot fail open)', async () => {
+    const ctx = await boot()
+    expect(() => ctx.artifacts.recordDecision({ ...route, inputs: [`sha256:${'9'.repeat(64)}`] }, { producer })).toThrow(/unknown input/)
+  })
+
+  it('refuses to downgrade on deduplication', async () => {
+    const ctx = await boot()
+    ctx.artifacts.recordDecision(route, { producer, classification: 'public' })
+    expect(() => ctx.artifacts.recordDecision(route, { producer, classification: 'local-private' })).toThrow(/classification/)
+  })
+
+  it('hashes the body schema and treats inputs as a set', async () => {
+    const ctx = await boot()
+    const a = ctx.artifacts.recordDecision(tierOf(1), { producer })
+    const b = ctx.artifacts.recordDecision(tierOf(2), { producer })
+    const ab = ctx.artifacts.recordDecision({ ...tierOf(3), inputs: [a.id, b.id] }, { producer })
+    const ba = ctx.artifacts.recordDecision({ ...tierOf(3), inputs: [b.id, a.id] }, { producer })
+    expect(ba.id).toBe(ab.id)
+  })
+
+  it('lists identical content under every run that produced it', async () => {
+    const ctx = await boot()
+    ctx.artifacts.recordDecision(route, { producer, runId: 'run-1' })
+    ctx.artifacts.recordDecision(route, { producer, runId: 'run-2' })
+    expect(ctx.artifacts.list({ runId: 'run-2' })).toHaveLength(1)
+  })
+
+  it('requires a model decider to be non-deterministic', async () => {
+    const ctx = await boot()
+    expect(() => ctx.artifacts.recordDecision({ ...route, decider: { type: 'model', id: 'm', version: '1' } }, { producer })).toThrow()
+  })
+})

@@ -48,3 +48,28 @@ describe('ctx.eventLog', () => {
     expect(ctx.eventLog.query()).toEqual([])
   })
 })
+
+describe('review fixes (PR #3 kernel review)', () => {
+  it('announces only committed entries and never lets a listener veto or fail the append', async () => {
+    const ctx = await boot()
+    const seen: string[] = []
+    ctx.on('system/event', (event) => {
+      seen.push(`${event.seq}:${event.type}`)
+      throw new Error('listener failure')
+    })
+    expect(() => ctx.store.transaction(() => {
+      ctx.eventLog.append({ type: 'a.phantom' })
+      throw new Error('outer rollback')
+    })).toThrow('outer rollback')
+    expect(() => ctx.eventLog.append({ type: 'b.real' })).not.toThrow()
+    expect(seen).toEqual(['1:b.real'])
+    expect(ctx.eventLog.query().map((event) => `${event.seq}:${event.type}`)).toEqual(['1:b.real'])
+  })
+
+  it('clamps non-integer limits instead of failing', async () => {
+    const ctx = await boot()
+    ctx.eventLog.append({ type: 'a.b' })
+    expect(ctx.eventLog.query({ limit: Number.NaN })).toHaveLength(1)
+    expect(ctx.eventLog.query({ limit: 2.5 })).toHaveLength(1)
+  })
+})

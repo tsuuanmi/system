@@ -34,17 +34,25 @@ export interface Config {
   path?: string
   /** How long a writer waits for the database lock, in milliseconds (default 5000). */
   busyTimeoutMs?: number
+  /** SQLite `synchronous` level (default FULL: a committed lease generation or event seq survives power loss). */
+  synchronous?: 'FULL' | 'NORMAL'
 }
+
+/** A transaction callback must be synchronous; a Promise-returning callback does not compile. */
+export type TransactionCallback<T> = (db: DatabaseSync) => T extends PromiseLike<unknown> ? never : T
 
 export class Store extends Service {
   static Config: z<Config> = z.object({
     path: z.string().description('Database file; defaults to <DSH_HOME>/system/system.db'),
     busyTimeoutMs: z.natural().default(5000).description('Writer lock wait in milliseconds'),
+    synchronous: z.union(['FULL', 'NORMAL']).default('FULL').description('SQLite synchronous level'),
   })
 
   readonly path: string
   private _db: DatabaseSync | undefined
   private _depth = 0
+  private poisoned: Error | undefined
+  private pending: Array<() => void> = []
 
   constructor(ctx: Context, config: Config) {
     super(ctx, 'store')
@@ -52,12 +60,16 @@ export class Store extends Service {
     ctx.effect(() => {
       ensurePrivateDir(dirname(this.path))
       const db = new DatabaseSync(this.path)
-      db.exec(`PRAGMA journal_mode=WAL; PRAGMA busy_timeout=${config.busyTimeoutMs ?? 5000}; PRAGMA foreign_keys=ON; PRAGMA synchronous=NORMAL`)
+      db.exec(`PRAGMA journal_mode=WAL; PRAGMA busy_timeout=${config.busyTimeoutMs ?? 5000}; PRAGMA foreign_keys=ON; PRAGMA synchronous=${config.synchronous === 'NORMAL' ? 'NORMAL' : 'FULL'}`)
       db.exec('CREATE TABLE IF NOT EXISTS system_migrations (owner TEXT NOT NULL, version INTEGER NOT NULL, applied_at TEXT NOT NULL, PRIMARY KEY (owner, version))')
       this._db = db
       return () => {
-        this._db = undefined
-        db.close()
+        // Close after the current dispose pass, so dependents that write from their own
+        // disposers (release a lease, flush an event) still reach an open database.
+        setImmediate(() => {
+          if (this._db === db) this._db = undefined
+          if (db.isOpen) db.close()
+        })
       }
     })
   }
@@ -71,22 +83,57 @@ export class Store extends Service {
   /**
    * Run `fn` atomically. The outermost call holds a `BEGIN IMMEDIATE` write lock, so
    * revision checks inside it are safe across processes; nested calls use savepoints.
+   * The depth is only unwound after COMMIT/RELEASE succeeds; a failed COMMIT rolls back
+   * (if SQLite has not already) and surfaces the original error.
    */
-  transaction<T>(fn: (db: DatabaseSync) => T): T {
+  transaction<T>(fn: TransactionCallback<T>): T {
+    if (this.poisoned) throw this.poisoned
     const db = this.db
+    const outermost = this._depth === 0
     const savepoint = `sp_${this._depth}`
-    db.exec(this._depth === 0 ? 'BEGIN IMMEDIATE' : `SAVEPOINT ${savepoint}`)
+    db.exec(outermost ? 'BEGIN IMMEDIATE' : `SAVEPOINT ${savepoint}`)
     this._depth++
+    let result: T
     try {
-      const result = fn(db)
-      if (result instanceof Promise) throw new TypeError('store.transaction callbacks must be synchronous')
-      this._depth--
-      db.exec(this._depth === 0 ? 'COMMIT' : `RELEASE ${savepoint}`)
-      return result
+      result = (fn as (db: DatabaseSync) => T)(db)
+      if (result instanceof Promise) {
+        this.poisoned = new Error('store poisoned: a transaction callback returned a promise (callbacks must be synchronous); restart the plugin')
+        throw new TypeError('store.transaction callbacks must be synchronous')
+      }
+      db.exec(outermost ? 'COMMIT' : `RELEASE ${savepoint}`)
     } catch (error) {
+      if (db.isTransaction) db.exec(outermost ? 'ROLLBACK' : `ROLLBACK TO ${savepoint}; RELEASE ${savepoint}`)
       this._depth--
-      db.exec(this._depth === 0 ? 'ROLLBACK' : `ROLLBACK TO ${savepoint}; RELEASE ${savepoint}`)
+      if (outermost) this.pending = []
       throw error
+    }
+    this._depth--
+    if (outermost) this.flushAfterCommit()
+    return result
+  }
+
+  /**
+   * Run `cb` after the outermost transaction commits (immediately when none is open);
+   * dropped if it rolls back. Callback errors are logged, never propagated: a committed
+   * write must not look failed because an observer threw.
+   */
+  afterCommit(cb: () => void): void {
+    if (this._depth === 0) return this.runSafely(cb)
+    this.pending.push(cb)
+  }
+
+  private flushAfterCommit(): void {
+    const callbacks = this.pending
+    this.pending = []
+    for (const cb of callbacks) this.runSafely(cb)
+  }
+
+  private runSafely(cb: () => void): void {
+    try {
+      cb()
+    } catch (error) {
+      this.ctx.logger.warn('store: an afterCommit callback failed')
+      this.ctx.logger.warn(error)
     }
   }
 
@@ -95,7 +142,7 @@ export class Store extends Service {
     const sorted = [...migrations].sort((a, b) => a.version - b.version)
     let applied = 0
     for (const migration of sorted) {
-      this.transaction((db) => {
+      this.transaction((db): void => {
         const done = db.prepare('SELECT 1 FROM system_migrations WHERE owner = ? AND version = ?').get(owner, migration.version)
         if (done) return
         db.exec(migration.sql)

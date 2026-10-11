@@ -39,8 +39,8 @@ describe('ctx.leases', () => {
     const next = ctx.leases.acquire(R, 1000, 'b', 1500)!
     expect(next.generation).toBe(2)
     expect(() => ctx.leases.renew(old, 1000, 1600)).toThrow(LeaseLost)
-    expect(() => ctx.leases.fence(R, old.generation)).toThrow(StaleGeneration)
-    expect(() => ctx.leases.fence(R, next.generation)).not.toThrow()
+    expect(() => ctx.store.transaction(() => ctx.leases.fence(old, 1600))).toThrow(StaleGeneration)
+    expect(() => ctx.store.transaction(() => ctx.leases.fence(next, 1600))).not.toThrow()
   })
 
   it('renews a live lease and refuses to renew after expiry', async () => {
@@ -70,5 +70,23 @@ describe('ctx.leases', () => {
     const ctx = await boot()
     expect(ctx.leases.acquire(R, 10 ** 9, 'a', 0)!.expiresAt).toBe(600_000)
     expect(() => ctx.leases.acquire('other', 0, 'a', 0)).toThrow(RangeError)
+  })
+})
+
+describe('review fixes (PR #3 kernel review)', () => {
+  it('fences by token and generation, inside a transaction, while the lease is live', async () => {
+    const ctx = await boot()
+    const lease = ctx.leases.acquire(R, 1000, 'a', 0)!
+    expect(() => ctx.leases.fence(lease, 10)).toThrow(/transaction/)
+    ctx.store.transaction(() => ctx.leases.fence(lease, 10))
+    expect(() => ctx.store.transaction(() => ctx.leases.fence({ ...lease, token: 'x'.repeat(24) }, 10))).toThrow(StaleGeneration)
+    expect(() => ctx.store.transaction(() => ctx.leases.fence(lease, 2000))).toThrow(LeaseLost)
+    ctx.leases.release(lease)
+    expect(() => ctx.store.transaction(() => ctx.leases.fence(lease, 10))).toThrow(StaleGeneration)
+  })
+
+  it('validates lease records against lease@1.0', async () => {
+    const ctx = await boot()
+    expect(() => ctx.leases.acquire('bad resource with spaces!', 1000, 'a', 0)).toThrow(/lease@1.0/)
   })
 })

@@ -30,12 +30,16 @@ guesses.
 ### `artifact-envelope`
 
 - `id` is computed by the store, never trusted from the producer. It is
-  `sha256(canonicalJSON({kind, body|blob.ref, inputs, lineage, subject}))`.
-  Canonical JSON uses sorted keys, no insignificant whitespace, and UTF-8.
-  `createdAt`, `producer`, and `classification` are excluded so that identical
-  content deduplicates.
-- `classification` of a derived artifact is at least the strictest
-  classification among its `inputs`. A producer cannot downgrade it.
+  `sha256(canonicalJSON({kind, bodySchema, body | blob{ref, mediaType}, inputs, lineage, subject}))`.
+  `inputs` are deduplicated and **sorted**, because they form a set. Canonical JSON
+  uses keys sorted by UTF-16 code unit (as in RFC 8785), no insignificant whitespace,
+  and UTF-8. `createdAt`, `producer`, `classification`, `runId`, and `nodeId` are
+  excluded, so identical content deduplicates. The runs that produced an artifact
+  are tracked separately.
+- `classification` of a derived artifact is at least the strictest classification
+  among its `inputs` and its lineage references. **Unknown references are refused**,
+  so the floor cannot fail open. Deduplication refuses a request that would need a
+  stricter classification than the stored one. A producer can never downgrade.
 
 ### `decision`
 
