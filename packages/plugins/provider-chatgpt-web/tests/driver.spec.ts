@@ -74,6 +74,13 @@ describe.runIf(canRunBrowser)('ChatGptWebDriver against the fake site, with no r
     expect((await driver.ask(page, 'Answer in Markdown', { conversation: 'temporary' })).text).toBe(answer)
   }, 40_000)
 
+  it('asks on an account without a model picker (ChatGPT Free) with an empty preset, assuming no mode', async () => {
+    const { fake, page } = await site({ answer: 'free answer', modelPicker: false })
+    const sitePreset = new ChatGptWebDriver({ origin: fake.origin, modes: { site: {} }, defaultMode: 'site', timeouts: { stableMs: 200 } })
+    expect(await sitePreset.ask(page, 'hello', { conversation: 'temporary' })).toMatchObject({ text: 'free answer', mode: {} })
+    expect(fake.sent).toEqual([expect.objectContaining({ prompt: 'hello', mode: 'chat', temporary: true })])
+  }, 60_000)
+
   it('probes the account\'s features from the tools popover, sending nothing (REQ-PRV-7)', async () => {
     const all = await site()
     expect(await all.driver.probeFeatures(all.page)).toEqual(['deep-research', 'web-search', 'image-generation'])

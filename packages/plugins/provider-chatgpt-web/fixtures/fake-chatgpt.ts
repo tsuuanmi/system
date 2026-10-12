@@ -49,6 +49,8 @@ export interface FakeOptions {
   researchMs?: number
   /** Deep research report text. */
   report?: string
+  /** Whether the account has a model picker (ChatGPT Free has none; default true). */
+  modelPicker?: boolean
   /** Features this account's tools popover offers (default all). */
   features?: string[]
   /** Deep research asks a clarifying question instead of starting. */
@@ -125,7 +127,7 @@ function html(options: Required<FakeOptions>, conversation: Conversation | undef
     <form data-chatgpt-composer data-composer-placement="home" id="composer">
       <button type="button" aria-label="Add files and more">+</button>
       <div contenteditable="true" role="textbox" aria-multiline="true" aria-label="Ask ChatGPT" data-composer-markdown id="input"></div>
-      <button type="button" aria-label="Select ChatGPT model" aria-haspopup="menu" aria-expanded="false" id="picker">Instant</button>
+      <button type="button" aria-label="Select ChatGPT model" aria-haspopup="menu" aria-expanded="false" id="picker"\${options.modelPicker === false ? ' hidden' : ''}>Instant</button>
       <button type="button" aria-label="Dictate">d</button>
       <span id="slot"></span>
     </form>
@@ -313,7 +315,7 @@ export class FakeChatGpt {
     this.options = {
       startOnWork: true, chatToggleBroken: false, signedIn: true, requireCookie: false, userId: 'user-fake123', sendLabel: 'Send',
       answer: 'OK', thinkMs: 300, models: ['Latest', 'GPT-6', 'GPT-5.6 Sol', 'GPT-5.5'], lockedModels: [],
-      researchMs: 1500, report: 'Deep research report body.', clarify: false, features: ['deep-research', 'web-search', 'image-generation'],
+      researchMs: 1500, report: 'Deep research report body.', clarify: false, features: ['deep-research', 'web-search', 'image-generation'], modelPicker: true,
       mfa: 'totp', email: 'operator@example.test', password: 'correct horse', totpSecret: 'JBSWY3DPEHPK3PXP', ...options,
     }
   }

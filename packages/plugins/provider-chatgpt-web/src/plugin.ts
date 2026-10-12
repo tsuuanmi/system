@@ -32,6 +32,8 @@ const DEFAULT_MODES: Record<string, ProviderMode> = {
   instant: { model: 'Latest', effort: 'Instant' },
   medium: { model: 'Latest', effort: 'Medium' },
   high: { model: 'Latest', effort: 'High' },
+  // An account without a model picker (ChatGPT Free): nothing is selected, and nothing is assumed.
+  site: {},
 }
 
 export const name = 'provider-chatgpt-web'
@@ -39,7 +41,7 @@ export const inject = ['providers']
 export const Config: z<Config> = z.object({
   origin: z.string().description('Site origin (default https://chatgpt.com)'),
   overlayPath: z.string().description('Local UI overlay file'),
-  modes: z.dict(z.object({ model: z.string(), effort: z.string() })).default(DEFAULT_MODES).description('Named mode presets (model and Power level)'),
+  modes: z.dict(z.object({ model: z.string(), effort: z.string() })).default(DEFAULT_MODES).description('Named mode presets (model and Power level); an empty preset selects nothing'),
   defaultMode: z.string().default('instant').description('Preset when a caller names none'),
 })
 

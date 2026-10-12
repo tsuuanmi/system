@@ -159,6 +159,9 @@ export class ChatGptWebDriver implements ProviderDriver<Page> {
    */
   async selectMode(page: Page, wanted: ProviderMode | undefined): Promise<ProviderMode> {
     const engine = this.engine(page)
+    // An account without a model picker (ChatGPT Free) has nothing to select: an empty preset
+    // records no mode rather than guessing one. A preset that names a model or Power still needs the picker.
+    if (!wanted?.model && !wanted?.effort && (await engine.count('composer.model')) === 0) return {}
     try {
       // View A: the Power level.
       await this.openModelMenu(engine)
