@@ -49,6 +49,28 @@ async function boot() {
 }
 
 describe('web UI: the operator\'s view, loopback and token-gated', () => {
+  it('registers nothing on a plain-HTTP bind beyond loopback: the token would travel in clear text (QA-5)', async () => {
+    const routes: unknown[] = []
+    class LanWebServer extends Service {
+      protocol = 'http:'
+      host = '192.0.2.10'
+      port = 47317
+      constructor(ctx: Context) { super(ctx, 'webServer') }
+      register(route: unknown): () => void { routes.push(route); return () => undefined }
+    }
+    const dir = mkdtempSync(join(tmpdir(), 'system-ui-lan-'))
+    cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+    const ctx = new Context()
+    await ctx.plugin(StubWorkflow)
+    await ctx.plugin(LanWebServer)
+    try {
+      await ctx.plugin(WebUi, { tokenFile: join(dir, 'mcp.token') })
+    } catch {
+      // the refusal itself is the point
+    }
+    expect(routes).toEqual([])
+  })
+
   it('serves a data-free shell under a strict content security policy', async () => {
     const { origin } = await boot()
     const page = await fetch(`${origin}/ui/`)

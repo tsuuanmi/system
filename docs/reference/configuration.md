@@ -51,15 +51,6 @@ No options.
 | `explainDepth` | number (1…64) | `16` | Maximum depth explain walks |
 | `explainBudget` | number (1…) | `1000` | Maximum distinct artifacts one explain visits |
 
-## `blobs`
-
-[@tsuuanmi/system-blobs](../../packages/plugins/blobs/README.md)
-
-| Option | Type | Default | Description |
-|---|---|---|---|
-| `dir` | string |  | Blob directory; defaults to <DSH_HOME>/system/blobs |
-| `maxBytes` | number (1…) | `67108864` | Largest accepted blob |
-
 ## `browser-patchright`
 
 [@tsuuanmi/system-browser-patchright](../../packages/plugins/browser-patchright/README.md)
@@ -96,7 +87,7 @@ No options.
 
 | Option | Type | Default | Description |
 |---|---|---|---|
-| `workerClasses` | Record<string, ("public" \| "operator-shared" \| "local-private")[]> | `{"website":["public","operator-shared"]}` | Classifications each remote Worker class may receive |
+| `workerClasses` | Record<string, ("public" \| "operator-shared" \| "local-private")[]> | `{"website":["public","operator-shared"],"agent":["public","operator-shared"]}` | Classifications each remote Worker class may receive |
 | `defaultClassification` | "public" \| "operator-shared" \| "local-private" | `"operator-shared"` | Classification when the caller states none |
 | `scanSecrets` | boolean | `true` | Scan payloads for credentials (secretlint recommended rules) |
 | `denyPatterns` | object[] | `[]` | Operator patterns that must never leave the machine |
@@ -221,7 +212,8 @@ No options.
 | `agents[].name` (required) | string |  |  |
 | `agents[].command` (required) | string |  |  |
 | `agents[].args` | string[] | `[]` |  |
-| `agents[].env` | Record<string, string> | `{}` |  |
+| `agents[].env` | Record<string, string> | `{}` | Explicit environment for the agent (no secrets; use forwardEnv) |
+| `agents[].forwardEnv` | string[] | `[]` | Daemon environment variables forwarded by name, such as an API key the agent needs |
 | `agents[].honoursPermissions` | boolean | `false` | The operator vouches that the agent asks permission before acting |
 
 ## `runtime-claude-agent-sdk`
@@ -231,6 +223,8 @@ No options.
 | Option | Type | Default | Description |
 |---|---|---|---|
 | `executable` | string |  | Path to the claude executable (default: found on PATH) |
+| `env` | Record<string, string> | `{}` | Explicit environment for Claude Code (no secrets; use forwardEnv) |
+| `forwardEnv` | string[] | `[]` | Daemon environment variables forwarded by name, such as an API key Claude Code should use |
 
 ## `runtime-codex-sdk`
 
@@ -240,7 +234,8 @@ No options.
 |---|---|---|---|
 | `executable` | string |  | Path to the codex executable (default: found on PATH) |
 | `config` | Record<string, any> | `{}` | Codex --config overrides, such as model_provider and model_providers (operator configuration) |
-| `env` | Record<string, string> | `{}` | Extra environment for the codex process, such as the variable a provider env_key names |
+| `env` | Record<string, string> | `{}` | Explicit environment for the codex process (no secrets; use forwardEnv) |
+| `forwardEnv` | string[] | `[]` | Daemon environment variables forwarded by name, such as the one a provider env_key names |
 
 ## `store`
 

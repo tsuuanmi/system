@@ -70,6 +70,29 @@ async function boot() {
 const TOOLS = [{ name: 'Read', description: 'Reads a file.', input_schema: { properties: { file_path: { type: 'string' } }, required: ['file_path'] } }]
 
 describe('Anthropic Messages gateway over HTTP', () => {
+  it('registers nothing on a plain-HTTP bind beyond loopback: the token would travel in clear text (QA-5)', async () => {
+    const routes: unknown[] = []
+    class LanWebServer extends Service {
+      protocol = 'http:'
+      host = '192.0.2.10'
+      port = 47317
+      constructor(ctx: Context) { super(ctx, 'webServer') }
+      register(route: unknown): () => void { routes.push(route); return () => undefined }
+    }
+    const ctx = new Context()
+    const dir = mkdtempSync(join(tmpdir(), 'system-gw-lan-'))
+    cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+    await ctx.plugin(Store, { path: join(dir, 'system.db') })
+    await ctx.plugin(StubWorkflow)
+    await ctx.plugin(LanWebServer)
+    try {
+      await ctx.plugin(Gateway, { tokenFile: join(dir, 'mcp.token') })
+    } catch {
+      // the refusal itself is the point
+    }
+    expect(routes).toEqual([])
+  })
+
   it('guards like the MCP endpoint: token, no browser origin', async () => {
     const { base, auth } = await boot()
     const body = JSON.stringify({ model: 'claude-opus-5-5', messages: [{ role: 'user', content: 'hi' }] })

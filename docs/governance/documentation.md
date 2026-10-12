@@ -11,10 +11,9 @@ by reference. The standard is not copied here. This file records only
 
 The repository uses the minimum set (`requirements/`, `architecture/`,
 `decisions/`, `engineering/`) plus `design/`, `proposals/`, `research/`,
-`security/`, `reference/`, and `governance/`, because each already has real
-content. Machine-readable schemas live in the root `schemas/` directory, which
-has its own README. `validation/` and `operations/` will be added when
-acceptance evidence and runtime procedures exist.
+`security/`, `reference/`, `validation/`, `operations/`, and `governance/`,
+because each has real content. Machine-readable schemas live in the root
+`schemas/` directory, which has its own README.
 
 ## Identifiers
 
@@ -26,20 +25,30 @@ acceptance evidence and runtime procedures exist.
 | `ADR-<nnnn>` | [decisions/adr](../decisions/adr/README.md) | append-only |
 | `PROP-<nnnn>` | [proposals](../proposals/README.md) | status in front matter |
 
-## Design-phase rule
+## Target and current state
 
-Until code exists, canonical documents describe the target system and carry a
-"Target state" header. When a component lands, the PR that adds it removes the
-header from the documents it makes true, and corrects them wherever the
-implementation differs.
+Requirements, architecture, and design documents describe the **target** system
+and say so in a "Target state" header, which stays when code lands. Current
+state has its own homes, set out in
+[status ownership](../README.md#status-ownership): package READMEs say what is
+built, and a design document links to its implementation in one line, noting
+where it differs from the target. A change that makes the code differ from a
+canonical document corrects one of the two in the same change.
+
+## Amending an accepted ADR
+
+An accepted ADR is not rewritten. A clarification that does **not** change the
+decision, such as a detail found while implementing it, may be appended as a
+dated section, `## Amendment (YYYY-MM-DD): <title>`, below the original text.
+Anything that changes the decision needs a new ADR that supersedes the old one,
+in whole or in part.
 
 ## Enforcement
 
-The documentation CI checks are defined in
-[engineering/testing.md](../engineering/testing.md#ci-gates-planned) and arrive with
-M0. Until then, reviewers check that:
+CI checks the documentation structure and links (`pnpm check:docs`) and the
+freshness of generated pages ([CI gates](../engineering/testing.md#ci-gates)).
+Reviewers also check that:
 
-- every `docs/**` directory has exactly one `README.md` router;
 - every fact has one canonical home. Diagrams of the layer map live only in
   [architecture/README.md](../architecture/README.md);
-- relative links resolve.
+- diagrams are Mermaid, so they render on GitHub and stay diffable.

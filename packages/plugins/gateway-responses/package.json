@@ -19,6 +19,7 @@
     "build": "tsc -p tsconfig.build.json"
   },
   "dependencies": {
+    "@tsuuanmi/system-gateway-core": "workspace:*",
     "@tsuuanmi/system-gateway-turns": "workspace:*",
     "@tsuuanmi/system-libs": "workspace:*",
     "@tsuuanmi/system-store": "workspace:*",

@@ -6,5 +6,5 @@ These documents describe **current** commands. Every command here is a
 
 | Document | Owns |
 |---|---|
-| [runbooks.md](runbooks.md) | planned procedures: first start, account re-auth, backup and restore, upgrade with drain, retention |
+| [runbooks.md](runbooks.md) | routine procedures: first start, account re-auth, backup and restore, upgrade with drain, retention |
 | [playbooks.md](playbooks.md) | responses to incidents: a stuck run, an AMBIGUOUS reconciliation, quota exhaustion, a provider UI change |

@@ -40,13 +40,15 @@ operations kept in a separate configuration file.
 4. **Bounded self-heal.** When every candidate fails and no login or challenge
    guard is showing, the engine takes an ARIA snapshot of the operation's scope.
    A deterministic matcher scores it against the operation's fingerprint. An
-   economy-tier model may propose a ref once the `ctx.models` seam exists. The
+   economy-tier model may propose a ref once the `ctx.models` seam exists
+   (planned; `heal: model` acts as `deterministic` until then). The
    result is accepted only if it is unique, scores above the threshold with a
    margin, and passes the preconditions and postconditions.
-   - `irreversible` operations (send) never use a model proposal and never retry.
+   - `irreversible` operations (send) never use a model proposal and never retry
+     (planned: the side-effect class is parsed but not yet enforced).
    - Every heal is a **decision artifact**. A successful heal is written to a
      **local overlay**, never to the shipped map. Promotion to the shipped map
-     is a reviewed change (`system ui doctor`, then a PR).
+     is a reviewed change (`system ui doctor`, planned, then a PR).
 5. **Drift is a configuration fix.** A UI drift failure carries the new
    disposition `CONFIG_FIX` instead of `CODE_FIX`.
 

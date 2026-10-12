@@ -14,7 +14,6 @@ export default defineConfig({
       '@tsuuanmi/system-mcp-server': src('./packages/plugins/mcp-server/src/index.ts'),
       '@tsuuanmi/system-leases': src('./packages/plugins/leases/src/index.ts'),
       '@tsuuanmi/system-event-log': src('./packages/plugins/event-log/src/index.ts'),
-      '@tsuuanmi/system-blobs': src('./packages/plugins/blobs/src/index.ts'),
       '@tsuuanmi/system-turn-receipts': src('./packages/plugins/turn-receipts/src/index.ts'),
       '@tsuuanmi/system-accounts': src('./packages/plugins/accounts/src/index.ts'),
       '@tsuuanmi/system-display-virtual': src('./packages/plugins/display-virtual/src/index.ts'),

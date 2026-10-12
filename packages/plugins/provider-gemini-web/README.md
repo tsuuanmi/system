@@ -59,7 +59,8 @@ driver, its operations are data: a UI map,
   - Accounts are signed in with `system account login <id>` (remote desktop),
     then saved encrypted, as for ChatGPT.
 - **Readiness:** pages get 60 s to render, since the live app took over 30 s
-  several times.
+  several times. A conversation that does not open in time fails before
+  sending, or is reported as not observed.
 - **No self-heal.** A drifted element fails closed until the map is updated.
 - **Fixtures:** [`fixtures/fake-gemini.ts`](fixtures/fake-gemini.ts) is a local
   stand-in built from the signed-in page read live on 2026-10-12, with no
@@ -70,19 +71,8 @@ driver, its operations are data: a UI map,
   - a Deep research plan that already has Copy, and its Start research turn.
 
   Tests drive it in a real headed Chrome.
-- **Live-verified on 2026-10-12:**
-  - through `system ask`, Temporary-chat turns: economy read back
-    `3.5 Flash-Lite` / `Low`, frontier `3.1 Pro` / `High`, and an answer came
-    back as Markdown with an indented Python block;
-  - `system account probe` proved `deep-research`;
-  - `snapshot` reopened a finished Deep research conversation and read its
-    report (about 17,000 characters) and its sources. That run was driven by a
-    recording script following the map's steps, since the operator allowed one
-    run; a run through `ask` is not yet verified live;
-  - `ask` continued that conversation by its binding: it cleared the Deep
-    research chip, read back `3.8 Flash` / `Medium`, used the research reply as
-    the boundary, and kept the binding; `snapshot` then read the answer and the
-    prompt. A new persistent conversation (`onBinding`) is verified on the fake
-    site only, since live Gemini tests stay in Temporary chat;
-  - the app sometimes took over a minute to open a conversation; the driver
-    then failed before sending, or reported the conversation as not observed.
+- **Live checks:** what was verified on the live site, and what is verified
+  on the fake site only, is in the
+  [release checklist](../../../docs/validation/release-checklist.md).
+- **Config:** `origin`, `modes`, `defaultMode`.
+- **Injects:** `providers`.

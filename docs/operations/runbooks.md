@@ -22,7 +22,7 @@
 
    A Codex Worker needs `codex` the same way:
    `npm i --prefix ~/.dsh/system/tools/codex @openai/codex`, then set the
-   runtime's `executable`.
+   runtime's `executable` ([agent Workers](#agent-workers)).
 4. Sign in each account: run `system account login <id>`, open the printed
    noVNC link through the printed `ssh -L` command, sign in, and press
    **Save account**. Alternatively, run `system account save <id>` after the
@@ -33,6 +33,31 @@
    them to `flash-lite`, `flash`, and `pro` (model and thinking level).
 6. Connect the clients: `system mcp-config claude|codex` connects over MCP;
    `system claude-env` and `system codex-env` connect through the gateways.
+
+## Agent Workers
+
+An agent Worker (Claude Code, Codex, an ACP agent) runs on this machine, under
+an `agent-workers` row.
+
+- **Credentials:** the agent process starts without the daemon's credentials.
+  Every variable whose name contains `KEY`, `PASSWORD`, `SECRET`, or `TOKEN`,
+  and every `DSH_*` variable, is removed. A credential the agent needs is
+  forwarded **by name** with the runtime's `forwardEnv`; its value stays in the
+  daemon's environment, never in a config file or in `env`.
+  - **Codex on the Responses gateway:** when a Codex Worker's model provider is
+    the system gateway, keep the token in the daemon's environment as the
+    variable the provider's `env_key` names, and set
+    `forwardEnv: ['SYSTEM_MCP_TOKEN']` on the `runtime-codex-sdk` row. Without
+    it, Codex cannot authenticate to the gateway.
+  - **Claude Code:** its own sign-in in `~/.claude` needs nothing. An API key or
+    OAuth token taken from the environment must be named in the
+    `runtime-claude-agent-sdk` row's `forwardEnv`.
+  - **ACP agents:** each `runtime-acp` agent entry has its own `forwardEnv`.
+- **`local-private` work:** refused at egress by default (`egress_denied`,
+  nothing sent), because the agent's model is remote. Routing still admits the
+  Worker, since it is local. If the agent's model runs on this machine, set the
+  egress row's `workerClasses` with `local-private` added to `agent`. List
+  `website` too: the setting replaces the whole default.
 
 ## Account re-auth
 
@@ -53,7 +78,6 @@ Then continue the failed run: `system continue <runId>`.
 
 State lives in `~/.dsh/system`:
 - the store (`system.db`);
-- content-addressed blobs;
 - the encrypted vault (`vault.enc`) and its key (`vault.key`).
 
 Login profiles and the managed browser are not state; a new login recreates
@@ -100,6 +124,7 @@ example to let work finish before maintenance on a provider account.
 - **Private text:** after `retainDays` (default 30), a finished run's input
   text and rendered prompts are cleared, daily. Decision chains stay, so
   `system explain` still works.
-- **Turns:** finished turns, their prompts, and sessions with no turns left are
-  deleted after the turn runtime's `retainDays`.
+- **Turns:** finished turns, their prompts, their receipts, and sessions with no
+  turns left are deleted after the turn runtime's `retainDays` (default 30).
+  Answers stay as artifacts.
 - **Backups** are yours to rotate.

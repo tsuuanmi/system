@@ -11,7 +11,7 @@ import { readFileSync, rmSync } from 'node:fs'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { dirname, join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
-import { McpTools, type ToolHandler, type ToolSpec } from '@tsuuanmi/system-gateway-core'
+import { assertSafeBind, endpointUrl, guardRequest, LOOPBACK_HOSTS, McpTools, readJsonBody, type ToolHandler, type ToolSpec } from '@tsuuanmi/system-gateway-core'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import z from '@deepseek-ai/schemastery'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
@@ -19,9 +19,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
 import { dshHome, ensurePrivateDir, readOrCreateSecretFile, writeFileDurable } from '@tsuuanmi/system-libs'
 import { z as zod } from 'zod'
-import { assertSafeBind, endpointUrl, guardRequest } from './guard.ts'
 
-export { assertSafeBind, endpointUrl, guardRequest, hostName, tokenMatches } from './guard.ts'
 
 
 export interface Config {
@@ -42,18 +40,7 @@ interface Tool {
 }
 
 const NOT_INSTALLED =
-  'The provider runtime is not installed in this build yet; ask/research arrive with MVP slice 1 (milestone M1.5, docs/proposals/roadmap.md).'
-
-async function readBody(req: IncomingMessage, limit: number): Promise<unknown> {
-  let size = 0
-  const chunks: Buffer[] = []
-  for await (const chunk of req as AsyncIterable<Buffer>) {
-    size += chunk.length
-    if (size > limit) throw Object.assign(new Error('request body too large'), { status: 413 })
-    chunks.push(chunk)
-  }
-  return size ? (JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown) : undefined
-}
+  'The workflow engine is not mounted in this composition, so this tool has nothing to run; mount the workflow plugin (the system bundle does).'
 
 function writeDiscovery(path: string, contents: object): void {
   ensurePrivateDir(dirname(path))
@@ -77,7 +64,7 @@ export class McpEndpoint extends McpTools {
     path: z.string().default('/mcp').description('Route on the DSH webserver'),
     tokenFile: z.string().description('Bearer token secret file; defaults to <DSH_HOME>/system/mcp.token'),
     discoveryFile: z.string().description('0600 discovery file {url, tokenFile, pid}; defaults to <DSH_HOME>/system/mcp.json'),
-    allowedHosts: z.array(z.string()).default(['127.0.0.1', 'localhost', '[::1]']).description('Accepted Host header names'),
+    allowedHosts: z.array(z.string()).default([...LOOPBACK_HOSTS]).description('Accepted Host header names'),
     maxBodyBytes: z.natural().default(1_048_576).description('Largest accepted request body'),
   })
 
@@ -87,7 +74,7 @@ export class McpEndpoint extends McpTools {
     super(ctx)
     this.builtins()
     const path = config.path ?? '/mcp'
-    const allowedHosts = config.allowedHosts ?? ['127.0.0.1', 'localhost', '[::1]']
+    const allowedHosts = config.allowedHosts ?? LOOPBACK_HOSTS
     const maxBodyBytes = config.maxBodyBytes ?? 1_048_576
     const tokenFile = config.tokenFile ?? join(dshHome(), 'system', 'mcp.token')
     const discoveryFile = config.discoveryFile ?? join(dshHome(), 'system', 'mcp.json')
@@ -101,7 +88,7 @@ export class McpEndpoint extends McpTools {
       }
       let body: unknown
       try {
-        body = await readBody(req, maxBodyBytes)
+        body = await readJsonBody(req, maxBodyBytes)
       } catch (error) {
         res.writeHead((error as { status?: number }).status ?? 400, { 'content-type': 'text/plain' }).end('invalid request body')
         return
@@ -177,16 +164,15 @@ export class McpEndpoint extends McpTools {
     })
     this.tools.set('status', {
       placeholder: false,
-      spec: { description: 'Health of the system harness: stage, store, artifacts, installed providers.', inputSchema: {} },
+      spec: { description: 'Health of the system harness: store, artifacts, kernel services, installed providers.', inputSchema: {} },
       handler: async () => {
         const artifacts = this.ctx.get('artifacts')
         const providers = this.ctx.get('providers')
         const status = {
           harness: 'system',
-          stage: 'M2',
           store: this.ctx.get('store') ? 'ok' : 'absent',
           artifacts: artifacts ? artifacts.list({ limit: 1000 }).length : null,
-          kernel: ['store', 'blobs', 'eventLog', 'leases', 'artifacts', 'credentials'].filter((key) => this.ctx.get(key) !== undefined),
+          kernel: ['store', 'eventLog', 'leases', 'artifacts', 'credentials'].filter((key) => this.ctx.get(key) !== undefined),
           providers: providers ? providers.list() : [],
         }
         return { content: [{ type: 'text', text: JSON.stringify(status) }], structuredContent: status }

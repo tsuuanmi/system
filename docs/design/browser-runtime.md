@@ -6,6 +6,15 @@
 > Requirements: REQ-ACC-1..9. Shape: [`account.v1.json`](../../schemas/account.v1.json).
 > Evidence: how [internet](../research/internet-analysis.md) and
 > [codex-chatgpt-web](../research/codex-chatgpt-web-analysis.md) run their browsers.
+>
+> Implemented in [`display-virtual`](../../packages/plugins/display-virtual/README.md),
+> [`browser-patchright`](../../packages/plugins/browser-patchright/README.md),
+> [`accounts`](../../packages/plugins/accounts/README.md),
+> [`login`](../../packages/plugins/login/README.md), and
+> [`credentials-vault`](../../packages/plugins/credentials-vault/README.md); differs from
+> target: Linux only (no `offscreen`); `system account remove`, retained pages per session,
+> sleep prevention, the challenge reload outside a turn, the `imap` code provider, and flagging
+> accounts with equal identity hashes are planned.
 
 ## Principle: a genuine browser, headed but invisible
 
@@ -40,7 +49,7 @@ operator's screen. `headless` is never offered for provider turns.
 | `virtual` | headed Chrome on a plugin-owned **Xvfb** (`-screen 0 1920x1080x24 -nolisten tcp`, `-displayfd`, `-auth` with a private cookie); window `--window-size=1920,1080` | **Linux** (including servers without a display) | provider turns |
 | `offscreen` | headed window at `--window-position=-10000,-10000` with an explicit size (≥ 1280×900) | **macOS, Windows** (v1.0; the MVP is Linux-only) | provider turns |
 | `visible` | a normal on-screen window | — | interactive login, debugging, resolving a challenge |
-| `headless` | Chrome headless | **never for provider turns** | only the `dev` profile with fake providers |
+| `headless` | Chrome headless | **never** | not offered |
 
 Rules for invisible modes, so pages render and update as if they were in the
 foreground:
@@ -87,8 +96,8 @@ generic. Everything provider-specific comes from the provider driver
 ```ts
 interface ProviderAccountSupport {          // part of ProviderDriver
   loginUrl: string;
-  stateOrigins: string[];                   // origins whose cookies, localStorage, and IndexedDB are captured
-  checkAuth(page): Promise<AuthState>;      // signed-in | signed-out (with evidence) | challenge | unknown
+  stateOrigins: string[];                   // origins whose cookies, localStorage, IndexedDB are kept
+  checkAuth(page): Promise<AuthState>;      // signed-in | signed-out (with evidence) | unknown
   identity(page): Promise<string>;          // stable identity hint; only its hash is stored
 }
 ```
@@ -101,9 +110,9 @@ interface ProviderAccountSupport {          // part of ProviderDriver
 | Storage | account records and login credentials are encrypted grant records in `ctx.credentials`, provided by the AES-256-GCM vault (canonical: [credentials vault](../../packages/plugins/credentials-vault/README.md)) |
 | Isolation | one browser process, scheduler, and set of conversation bindings per account. Ports are allocated dynamically, not by index. Two accounts never share a context |
 | Distinct identities | at save time, `identity()` is hashed. Accounts whose hashes match are flagged, which REQ-TEAM-4 needs for independent team members |
-| Write-back | after each turn, refreshed state is written only if both the account revision and the scheduler lease generation are current ([scheduling](scheduling-and-leases.md)) |
+| Write-back | after each turn, refreshed state is written only if both the account revision and the scheduler lease generation are current ([scheduling](scheduling-and-leases.md)). A Save or relogin made while the turn ran has a newer revision, so the turn's write-back is skipped and the newer sign-in wins |
 | Re-auth | only **positive** signed-out evidence (a login URL or login surface) sets `reauth-required`. A challenge or an unknown state never does |
-| Removal | `system account remove <id>` deletes the record and the login profile after confirmation |
+| Removal | `system account remove <id>` (planned) deletes the record and the login profile after confirmation |
 
 ## Login flows
 
@@ -127,17 +136,19 @@ A deterministic state machine runs on the **persistent login profile**, so the
 device stays recognized. It starts **only after positive sign-out evidence**,
 never on a schedule:
 
-```text
-probe chatgpt.com ── signed in ──▶ done (most runs end here)
-   │ signed out
-   ▼
-email page ─▶ password page ─▶ branch on what loads (timeout per step):
-   ├─ authenticator (TOTP) ──▶ code from code provider ──▶ submit once ──▶ verify
-   ├─ other MFA offered first ──▶ "try another method" ──▶ authenticator
-   ├─ email code / push ──▶ code provider if one is opted in, otherwise NEEDS_HUMAN
-   ├─ passkey upsell ──▶ "not now"
-   └─ Turnstile / CAPTCHA / unknown page / error ──▶ NEEDS_HUMAN
-NEEDS_HUMAN ──▶ remote browser on the SAME profile + `account.status = reauth-required`
+```mermaid
+flowchart TD
+  P[probe the site] -->|signed in| D[done: most runs end here]
+  P -->|signed out| E[email page] --> W[password page]
+  W --> B{what loads, with a timeout per step}
+  B -->|authenticator| T[code from the code provider] --> S[submit once] --> V[verify]
+  B -->|other MFA offered first| A[try another method] --> T
+  B -->|email code or push| C{code provider opted in?}
+  C -->|yes| T
+  C -->|no| H[NEEDS_HUMAN]
+  B -->|passkey upsell| N[not now] --> B
+  B -->|Turnstile, CAPTCHA, unknown page, error| H
+  H --> R["remote browser on the SAME profile; account status reauth-required"]
 ```
 
 - **Steps are matched by URL path and accessible role**, not brittle CSS.
@@ -154,8 +165,9 @@ NEEDS_HUMAN ──▶ remote browser on the SAME profile + `account.status = rea
   solved (CON-3).
 - **Secrets:** the email, password, and TOTP secret live in an **encrypted
   credential record** in the vault, whose key handling is described in the
-  [credentials vault](../../packages/plugins/credentials-vault/README.md). Values are decrypted only in memory and never logged, sent to
-  a model, or stored in an artifact. **A TOTP secret is never sent to any website
+  [credentials vault](../../packages/plugins/credentials-vault/README.md). Values
+  are decrypted only in memory and never logged, sent to a model, or stored in an
+  artifact. **A TOTP secret is never sent to any website
   or service** (for example 2fa.live), because that would hand over the second
   factor permanently.
 
@@ -176,7 +188,7 @@ A failed verification saves nothing.
 - **Default: a fresh context per turn**, created from the portable state. The
   turn opens the bound conversation URL, and the context is closed in `finally`.
   This gives isolation and a clean recovery path.
-- **Retained page per session**, opt-in per capability. For long sessions and
+- **Retained page per session** (planned), opt-in per capability. For long sessions and
   Deep Research, one page stays bound to a `SessionId`
   ([sessions](sessions-and-messaging.md)), with a TTL, a cap per account, and
   heartbeat sweeps. Eviction falls back to the fresh-context path.

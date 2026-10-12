@@ -23,12 +23,15 @@ the host, or over `ssh -L <port>:127.0.0.1:<port> host` like the login desktop.
     server;
   - the script moves it to session storage and removes it from the address bar;
   - it then sends it as `Authorization: Bearer` to `/ui/api`.
-- **API guard** (in order):
+- **API guard**, the one every client endpoint shares
+  ([`gateway-core`](../../gateway-core/README.md#the-request-guard)), in order:
   - a loopback `Host` (against DNS rebinding);
-  - no `Origin` other than the UI's own;
+  - no `Origin` other than the UI's own (`sameOrigin`);
   - the bearer token, compared in constant time.
 
   A page on another site cannot read the token and gets no CORS answer.
+- **Bind:** on plain HTTP on a non-loopback host, `/ui` is not registered
+  (`assertSafeBind`).
 - **Actions** take a JSON body only (a form post cannot reach them) and go to
   the workflow engine as operator decisions.
 - **Rendering:** the page is built with DOM methods and `textContent` only.

@@ -29,7 +29,11 @@ export interface DenyPattern {
 }
 
 export interface Config {
-  /** Classifications each remote Worker class may receive (default: website ← public, operator-shared). */
+  /**
+   * Classifications each remote Worker class may receive (default: `website` and `agent` ←
+   * public, operator-shared). `agent` is an agent runtime Worker: it runs here, but its model is
+   * remote; widen it only for an agent whose model runs on this machine.
+   */
   workerClasses?: Record<string, Classification[]>
   /** Classification of content whose caller states none (default operator-shared). */
   defaultClassification?: Classification
@@ -70,7 +74,7 @@ export class Egress extends Service {
   static inject = ['artifacts']
 
   static Config: z<Config> = z.object({
-    workerClasses: z.dict(z.array(z.union(['public', 'operator-shared', 'local-private']))).default({ website: ['public', 'operator-shared'] })
+    workerClasses: z.dict(z.array(z.union(['public', 'operator-shared', 'local-private']))).default({ website: ['public', 'operator-shared'], agent: ['public', 'operator-shared'] })
       .description('Classifications each remote Worker class may receive'),
     defaultClassification: z.union(['public', 'operator-shared', 'local-private']).default('operator-shared').description('Classification when the caller states none'),
     scanSecrets: z.boolean().default(true).description('Scan payloads for credentials (secretlint recommended rules)'),
@@ -94,7 +98,7 @@ export class Egress extends Service {
   /** Decide whether `payload` may go to `workerClass`, and record why (INV-13). */
   async check(request: EgressRequest): Promise<EgressVerdict> {
     const classification = request.classification ?? this.defaultClassification
-    const classes = this.config.workerClasses ?? { website: ['public', 'operator-shared'] }
+    const classes = this.config.workerClasses ?? { website: ['public', 'operator-shared'], agent: ['public', 'operator-shared'] }
     const permitted = classes[request.workerClass]
     const findings = await this.scan(request.payload)
     let reason: string

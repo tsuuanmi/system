@@ -20,13 +20,15 @@ the neutral turns here and owns nothing else.
     the provider conversation already holds its own replies.
   - Each exchange is an `ask` run on the workflow engine, plus at most one
     nudge when the model claims it cannot reach the user's files.
-- **The guard** (`guard.ts`), with the MCP endpoint's rules:
-  - a loopback `Host`;
-  - no browser `Origin`;
-  - the MCP bearer token (or `x-api-key`), compared in constant time.
+- **The guard factory** (`guard.ts`): `guard()` reads the MCP token file and
+  applies the request guard every client endpoint shares (`guardRequest` from
+  [`gateway-core`](../gateway-core/README.md#the-request-guard)), with
+  `x-api-key` also accepted (`apiKeyHeader`). `MAX_REQUEST_BYTES` (16 MiB) bounds
+  a gateway's request body.
 
 ## Dependency direction
 
-Depends on `system-libs`, `system-store`, and the workflow engine's types. Only
+Depends on `system-gateway-core`, `system-libs`, `system-store`, and the
+workflow engine's types. Only
 gateway plugins depend on it. It is a library, not a seam: the shared turn
 broker for MCP tool inversion stays the target.

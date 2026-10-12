@@ -1,7 +1,19 @@
 # Teams
 
 > Target state. Boundary: [orchestration](../architecture/components.md#orchestration).
-> Requirements: REQ-TEAM-1..4.
+> Requirements: REQ-TEAM-1..5.
+>
+> Implemented in [`workflow`](../../packages/plugins/workflow/README.md) (the `team` option on a
+> template node, unrolled by the engine) and
+> [`worker-sessions`](../../packages/plugins/worker-sessions/README.md) (members and their
+> mailboxes); differs from target: the only procedure is critique rounds (the `panel` template);
+> auxiliary Workers are not built; independent review is the engine's exact-subject review on a
+> read-only Worker, not a team procedure.
+
+There is no team seam or team runner. A team is the `team` option on a workflow template node
+(`members`, `rounds`, `distinctAccounts`, `synthesisTier`, `lead`). The engine unrolls it into
+member nodes per round, optional lead nodes, and a synthesis node that keeps the team node's
+id. Each member is a Worker session.
 
 ## Membership: Model A
 
@@ -19,20 +31,33 @@ Members of an independence-sensitive team must be backed by distinct accounts
 
 ## Plan
 
-A team run follows a deterministic `TeamPlan`:
+A team run follows a deterministic plan:
 
-```text
-round 1  : every member answers independently           ── barrier ──
-round 2..n: each member sees peers' prior outputs, critiques, revises
-synthesis: synthesizer produces strongest-supported result with cited member evidence
-acceptance: procedure-specific phase acceptance
+```mermaid
+flowchart LR
+  subgraph R1[round 1: independent]
+    M11[member 1]
+    M21[member 2]
+  end
+  R1 -->|barrier opens| L1{lead: converged?}
+  L1 -->|no| R2
+  L1 -->|yes: later rounds carry each member's last answer| S
+  subgraph R2[round 2..n: critique and revise]
+    M12[member 1 reads its inbox]
+    M22[member 2 reads its inbox]
+  end
+  R2 --> S[synthesis: the strongest-supported answer, citing members]
+  S --> A[acceptance: acceptance.team-synthesis]
 ```
+
+The lead is optional (`team.lead`). Without it, every round runs.
 
 - The **independent-first barrier** guarantees no member sees a peer's output
   before every member has produced an independent result. It opens once they
   all have, whether or not another round follows.
 - Debate, critique, and plain parallel review are *procedures* that a profile
-  selects. None of them is built into the core.
+  selects. The engine's unrolling provides critique rounds; the others are
+  planned.
 - Each member step is a durable workflow node, so a crash mid-round does not repeat
   completed member turns
   ([workflow-engine](workflow-engine.md#execution-loop)).
@@ -54,35 +79,12 @@ mailbox, under the group policy and barriers
 ([sessions and messaging](sessions-and-messaging.md)). Rounds are the
 procedure's checkpoints, not the only channel.
 
-## Built so far
-
-The [workflow engine](../../packages/plugins/workflow/README.md) unrolls a
-template's `team` node:
-
-- independent first-round members;
-- critique rounds behind the barrier;
-- a synthesis that must cite members (`acceptance.team-synthesis`).
-
-Each member is a persistent session, so it keeps one identity and one Worker.
-Members can be held to distinct accounts at routing time. The `panel` template
-uses this.
-
-Members talk through `ctx.workerSessions`. Each answer is the member's message
-to the team, held behind the first-round barrier. `To m<k>: …` lines are direct
-messages. Critique rounds read each member's own inbox.
-
-Independent review is built for the `develop` profile: a read-only Worker in a fresh session reviews the exact subject, and its findings are an `assessment` artifact bound to it ([engine](workflow-engine.md#built-so-far)). A lead is built as an option on a team (`team.lead`).
 - A lead step sits after each round but the last. It is a cheap `reason` step
-  in a temporary conversation.
+  (default tier `economy`) in a temporary conversation.
 - It reads the members' current answers and decides only whether they have
-  converged. It never answers the question and never relays content.
+  converged (`acceptance.team-lead`). It never answers the question.
 - Its decision is a `gate` decision decided by a model, with its answer
   recorded.
 - When the members have converged, the later rounds run nothing: each member
-  keeps its last answer, and the lead's decision is the recorded cause. The
-  synthesis then reads those answers.
-- Verified live on 2026-10-12 with a configured `team.lead`, on two ChatGPT
-  accounts: the lead closed after round 1, and rounds 2 and 3 sent nothing.
-  A message to a member afterwards woke it in its own conversation. The first
-  live run found that a closed team kept its barrier shut, which held that
-  message; this is now fixed, with a test.
+  keeps its last answer, with the lead's decision as the cause. The synthesis
+  then reads those answers.

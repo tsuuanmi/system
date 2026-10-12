@@ -10,7 +10,9 @@
  *   connectors were attached otherwise), so nothing outside the policy widens a Worker;
  * - `workspace-write` adds `Edit` and `Write`, pre-approved only by workspace-scoped rules
  *   (verified live against traversal, symlinks, and home paths); `Bash` is not offered, as
- *   commands cannot be confined yet, so the runtime does not `validate`.
+ *   commands cannot be confined yet, so the runtime does not `validate`;
+ * - Claude Code starts without the daemon's credentials: only the variables the operator
+ *   forwards by name (`forwardEnv`) or sets (`env`) reach it (INV-8).
  * The SDK's session stays native; only its id crosses as the run's handle (INV-7).
  * @module @tsuuanmi/system-runtime-claude-agent-sdk
  */
@@ -21,7 +23,7 @@ import { promisify } from 'node:util'
 import { query } from '@anthropic-ai/claude-agent-sdk'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
-import type { AgentRuntimeProvider, RunResult, RunSpec, RuntimeEvidence } from '@tsuuanmi/system-agent-runtime-core'
+import { type AgentRuntimeProvider, type RunResult, type RunSpec, type RuntimeEvidence, childEnvironment } from '@tsuuanmi/system-agent-runtime-core'
 import { ProviderError, type ProviderErrorKind } from '@tsuuanmi/system-provider-core'
 
 export type QueryFn = typeof query
@@ -42,6 +44,10 @@ const rule = (tool: string): string => (WRITE_TOOLS.includes(tool) ? `${tool}(./
 export interface RuntimeOptions {
   /** The `claude` executable; found on PATH when absent. */
   executable?: string | undefined
+  /** Explicit environment for Claude Code (no secrets: they belong in `forwardEnv`). */
+  env?: Record<string, string> | undefined
+  /** Daemon environment variables forwarded by name, such as an API key Claude Code should use. */
+  forwardEnv?: string[] | undefined
   query?: QueryFn
   findExecutable?: () => string | undefined
   version?: (executable: string) => Promise<string>
@@ -93,6 +99,8 @@ export class ClaudeAgentRuntime implements AgentRuntimeProvider {
           // No MCP server at all: not the operator's, not a project's, not the account's connectors.
           mcpServers: {}, strictMcpConfig: true,
           pathToClaudeCodeExecutable: executable, abortController: controller,
+          // Without the daemon's credentials (INV-8); its own sign-in lives in ~/.claude.
+          env: childEnvironment(this.options.forwardEnv, this.options.env),
           ...(spec.model ? { model: spec.model } : {}), ...(spec.maxTurns ? { maxTurns: spec.maxTurns } : {}), ...(spec.resume ? { resume: spec.resume } : {}),
         },
       })
@@ -159,14 +167,18 @@ async function claudeVersion(executable: string): Promise<string> {
 export interface Config {
   /** Path to `claude`; found on PATH when absent. */
   executable?: string
+  env?: Record<string, string>
+  forwardEnv?: string[]
 }
 
 export const name = 'runtime-claude-agent-sdk'
 export const inject = ['agentRuntimes']
 export const Config: z<Config> = z.object({
   executable: z.string().description('Path to the claude executable (default: found on PATH)'),
+  env: z.dict(z.string()).description('Explicit environment for Claude Code (no secrets; use forwardEnv)'),
+  forwardEnv: z.array(z.string()).description('Daemon environment variables forwarded by name, such as an API key Claude Code should use'),
 })
 
 export function apply(ctx: Context, config: Config = {}): void {
-  ctx.agentRuntimes.register(new ClaudeAgentRuntime({ executable: config.executable }))
+  ctx.agentRuntimes.register(new ClaudeAgentRuntime({ executable: config.executable, env: config.env, forwardEnv: config.forwardEnv }))
 }

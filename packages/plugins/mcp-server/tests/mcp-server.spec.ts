@@ -64,7 +64,9 @@ describe('system MCP server on ctx.webServer', () => {
     const { tools } = await client.listTools()
     expect(tools.map((tool) => tool.name).sort()).toEqual(['ask', 'research', 'result', 'status'])
     const status = await client.callTool({ name: 'status', arguments: {} })
-    expect(status.structuredContent).toMatchObject({ harness: 'system', stage: 'M2', store: 'ok', artifacts: 0, kernel: ['store', 'artifacts'] })
+    expect(status.structuredContent).toMatchObject({ harness: 'system', store: 'ok', artifacts: 0, kernel: ['store', 'artifacts'] })
+    // No milestone baked into the code: status reports what is mounted, not a roadmap stage.
+    expect(status.structuredContent).not.toHaveProperty('stage')
   })
 
   it('reports ask as not installed rather than pretending to work', async () => {
@@ -72,7 +74,7 @@ describe('system MCP server on ctx.webServer', () => {
     const client = await connect(url, token)
     const result = await client.callTool({ name: 'ask', arguments: { prompt: 'hello' } })
     expect(result.isError).toBe(true)
-    expect(JSON.stringify(result.content)).toMatch(/M1\.5/)
+    expect(JSON.stringify(result.content)).toMatch(/workflow engine is not mounted/)
   })
 
   it('rejects a missing token, a browser origin, and a foreign Host header (QA-5)', async () => {

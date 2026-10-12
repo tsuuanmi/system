@@ -13,8 +13,9 @@ import { type Context, Service } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import type { RunSpec, RuntimeEvidence, SandboxMode } from '@tsuuanmi/system-agent-runtime-core'
 import type {} from '@tsuuanmi/system-artifacts'
+import type { Classification } from '@tsuuanmi/system-egress'
 import { type Lease, LeaseLost, StaleGeneration } from '@tsuuanmi/system-leases'
-import { captureGitSubject, sha256 } from '@tsuuanmi/system-libs'
+import { captureGitSubject, type ContentId, sha256 } from '@tsuuanmi/system-libs'
 import { ProviderError, ProviderScheduler, dispositionOf, toProviderError } from '@tsuuanmi/system-provider-core'
 import type {} from '@tsuuanmi/system-store'
 import type { ArtifactRef, CapabilityDescriptor, ExecutionStatus, QuotaClass, Tier, WorkerExecution, WorkerStart } from '@tsuuanmi/system-workers-core'
@@ -61,6 +62,8 @@ interface RunRow {
   native_handle: string | null
   result: string | null
   error: string | null
+  /** The run's egress decision (INV-12), part of its decision chain. */
+  egress_decision?: string | null
   created_at: string
   updated_at: string
 }
@@ -72,7 +75,7 @@ const newId = (): string => `arun_${randomBytes(8).toString('hex')}`
 const now = (): string => new Date().toISOString()
 
 export class AgentWorkers extends Service {
-  static inject = ['store', 'artifacts', 'leases', 'workers', 'agentRuntimes']
+  static inject = ['store', 'artifacts', 'leases', 'workers', 'agentRuntimes', 'egress']
 
   static Config: z<Config> = z.object({
     workers: z.array(z.object({
@@ -115,6 +118,10 @@ export class AgentWorkers extends Service {
       );
       CREATE INDEX agent_runs_status ON agent_runs (status);
       CREATE TABLE agent_sessions (session_id TEXT PRIMARY KEY, worker TEXT NOT NULL, native_handle TEXT, created_at TEXT NOT NULL);`,
+    }, {
+      // The egress decision of each run (INV-12): the agent runs here, but its model is remote.
+      version: 2,
+      sql: 'ALTER TABLE agent_runs ADD COLUMN egress_decision TEXT;',
     }])
     ctx.workers.register({
       name: 'agents',
@@ -286,6 +293,13 @@ export class AgentWorkers extends Service {
       }
       const worker = this.workers.get(row.worker)
       if (!worker) throw new ProviderError('config_error', `${row.worker} is no longer configured`)
+      // INV-12: the prompt reaches the agent's remote model, so it is checked before anything starts.
+      const egress = await this.ctx.egress.check({ payload: row.prompt, classification: row.classification as Classification, workerClass: 'agent' })
+      this.ctx.store.db.prepare('UPDATE agent_runs SET egress_decision = ? WHERE run_id = ?').run(egress.decision, row.run_id)
+      if (!egress.allowed) {
+        this.fail(row, new ProviderError('egress_denied', `${egress.reason} (decision ${egress.decision})`), current)
+        return
+      }
       await this.scheduler(row.worker).runTurn(row.worker, signal, async (slot) => this.execute(row, worker, AbortSignal.any([signal, slot.signal]), current))
     } catch (error) {
       if (this.stopped.signal.aborted || error instanceof LeaseLost || error instanceof StaleGeneration || lost.signal.aborted) return
@@ -390,7 +404,7 @@ function execution(row: RunRow): WorkerExecution {
     id: row.run_id, status: row.status, submitted: row.submitted_at !== null,
     ...(row.result ? { result: row.result as ArtifactRef } : {}),
     ...(row.error ? { error: JSON.parse(row.error) as WorkerExecution['error'] & object } : {}),
-    decisions: [],
+    decisions: row.egress_decision ? [row.egress_decision as ContentId] : [],
   }
 }
 

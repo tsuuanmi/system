@@ -48,6 +48,17 @@ SYSTEM_MCP_TOKEN="$(… mcp-token)" codex -c model_provider=system \
     (numeric usage) or `response.failed`.
   - `sequence_number` counts up from 0.
 
+## Security
+
+- **Guard:** the request guard every client endpoint shares
+  ([`gateway-core`](../../gateway-core/README.md#the-request-guard), through
+  [`gateway-turns`](../../gateway-turns/README.md)): a loopback `Host`, no
+  browser `Origin`, and the MCP token as a bearer token, compared in constant
+  time.
+- **Bind:** on plain HTTP on a non-loopback host, the route is not registered
+  (`assertSafeBind`).
+- **Body:** at most 16 MiB of JSON.
+
 ## Compaction
 
 Codex compacts locally for a custom provider. Its summary request continues the

@@ -1,150 +1,194 @@
 # Components and boundaries
 
-> Target state. Layer placement is defined in the [layer map](README.md#layer-map).
-> Mechanisms are linked to [design](../design/README.md).
+> Target state. Layer placement is defined in the [layer map](README.md#layer-map); the packages
+> of each layer and their dependencies are generated in [packages](packages.md). Mechanisms are
+> linked to [design](../design/README.md). What each package does now is in its own `README.md`.
 
-Each boundary below states what it **owns**, what it **does not own**, and its
-**contract** to the layer above. Each contract is published as one or more Cordis
-seams ([plugin model](plugin-model.md#seam-catalog)). When code exists, each seam
-definition and each provider becomes a package with a colocated `README.md` that
-routes back here.
+Each boundary below states what it **owns**, what it **does not own**, and its **contracts** to
+the layers above. Each contract is published as one or more Cordis seams
+([seam catalog](plugin-model.md#seam-catalog)).
 
 ## Kernel
 
-- **Owns:** the artifact store (immutable, content-addressed, schema-validated
-  artifacts including decision records, [artifacts](../design/artifacts.md)),
-  the durable store (SQLite in WAL mode,
-  [ADR-0003](../decisions/adr/0003-sqlite-durable-store.md)), content-addressed
-  blobs, the append-only event log, leases with generations, canonical JSON
-  hashing, and the injectable clock.
-- **Does not own:** domain semantics. The kernel stores receipts, but it does not
-  know what a workflow is.
-- **Contract:** typed repositories with optimistic revision checks, `lease.acquire
-  / renew / fence`, `blob.put / get` by SHA-256, and `events.append / query`.
+- **Owns:**
+  - the durable store: SQLite in WAL mode, per-plugin migrations, transactions, and
+    `afterCommit` hooks ([ADR-0003](../decisions/adr/0003-sqlite-durable-store.md));
+  - artifacts: immutable, content-addressed, schema-validated envelopes with lineage, including
+    decision records ([artifacts](../design/artifacts.md));
+  - the append-only event log, written in the same transaction as the change it reports;
+  - leases with generations, and fencing of writes by a stale owner;
+  - the encrypted credential vault behind DSH `ctx.credentials`;
+  - the libraries: canonical JSON hashing, the schema registry, durable owner-only files.
+- **Does not own:** domain semantics. The kernel stores receipts and decisions, but it does not
+  know what a workflow, a turn, or a Worker is.
+- **Contracts:** `store.transaction / afterCommit / migrate`;
+  `artifacts.put / get / list / recordDecision / explain`; `eventLog.append / query`;
+  `leases.acquire / renew / release / fence / current`; DSH `credentials.resolve / set`.
+- **Packages:** [store](../../packages/plugins/store/README.md),
+  [artifacts](../../packages/plugins/artifacts/README.md),
+  [event-log](../../packages/plugins/event-log/README.md),
+  [leases](../../packages/plugins/leases/README.md),
+  [credentials-vault](../../packages/plugins/credentials-vault/README.md),
+  [libs](../../packages/libs/README.md).
 
 ## Provider runtime
 
-- **Owns:** the UI engine (`@tsuuanmi/system-ui-ops`: UI maps as data, resolution,
-  verification, passive network signals, bounded self-heal;
-  [UI operations](../design/ui-operations.md)), `BrowserPort` (patchright/Chrome contexts), the display backends
-  (invisible: Xvfb or off-screen; visible: the operator's screen; never headless for turns), remote login, the account vault (portable auth
-  state, revisioned), conversation bindings, the per-account scheduler, provider
-  turn receipts, and one **provider driver** per website.
-  The **turn runtime** (`ctx.turns`) runs `ask`/`research`. It stores the turn
-  and its prompt locally for a bounded time, and contributes the `website`
-  Worker source to `ctx.workers`. It is the website Worker's owning runtime: the
-  workflow engine routes, then starts each turn on the admitted Worker through
-  the source. Callers never reach it directly. Login profiles and Save belong to `ctx.login`.
-- **Does not own:** team or workflow semantics, or Worker admission (owned by
-  [routing](#routing)).
-- **Contract:** the `ProviderDriver` interface in `@tsuuanmi/system-provider-core`
-  ([ADR-0005](../decisions/adr/0005-provider-runtime-interface.md)): `checkAuth`,
-  `identity`, `ask`, `snapshot`. `ctx.turns` drives it. Credentials never cross
-  upward ([INV-8](invariants.md#inv-8-credentials-never-cross-upward)).
-- **Design:** [browser runtime and account vault](../design/browser-runtime.md),
-  [provider-turns](../design/provider-turns.md),
-  [scheduling-and-leases](../design/scheduling-and-leases.md).
+- **Owns:**
+  - the display (`ctx.display`): a private, X-authenticated Xvfb; never headless for turns;
+  - the browser (`ctx.browser`): one headed Chrome context per account, opened from its
+    portable state, and filtered capture of refreshed state;
+  - accounts (`ctx.accounts`): records, revisioned portable auth state, credentials, and proven
+    features, as encrypted grants in `ctx.credentials`;
+  - login (`ctx.login`): login profiles, Save, the remote login desktop, and credential
+    sign-in;
+  - provider turn receipts (`ctx.turnReceipts`) and the reconciliation decision;
+  - the driver registry (`ctx.providers`) and one **driver** per website: `chatgpt-web` and
+    `gemini-web`;
+  - the libraries: the per-account scheduler, two-clock completion, the failure taxonomy
+    (`provider-core`), and the UI engine: UI maps as data, verification, and bounded self-heal
+    ([UI operations](../design/ui-operations.md), `ui-ops`).
+- **Does not own:** Worker admission ([routing](#routing)), workflow semantics, or when a turn
+  runs ([capabilities](#capabilities)).
+- **Contracts:** the `ProviderDriver` interface in `@tsuuanmi/system-provider-core`
+  ([ADR-0005](../decisions/adr/0005-provider-runtime-interface.md)):
+  - `provider`, `capabilities` (what the driver proves), `features` and `probeFeatures` (what
+    an account may offer, proven per account without sending anything);
+  - `loginUrl`, `stateOrigins` (what makes up the portable state), `checkAuth`, `identity`,
+    and optional `signIn` (bounded credential sign-in);
+  - `ask` (with `beforeSend`, where the receipt is written, and `onBinding`) and `snapshot`
+    (reopen a bound conversation for reconciliation).
 
-Seam definitions for this layer (`Display`, `Browser`, `ProviderRegistry`) live in
-`@tsuuanmi/system-provider-core`. The gateway seam `McpTools` lives in
-`@tsuuanmi/system-gateway-core`.
+  Credentials never cross upward ([INV-8](invariants.md#inv-8-credentials-never-cross-upward)).
+- **Design:** [browser runtime and account vault](../design/browser-runtime.md),
+  [provider turns](../design/provider-turns.md),
+  [scheduling and leases](../design/scheduling-and-leases.md).
+- **Packages:** [provider-core](../../packages/provider-core/README.md),
+  [ui-ops](../../packages/ui-ops/README.md),
+  [display-virtual](../../packages/plugins/display-virtual/README.md),
+  [browser-patchright](../../packages/plugins/browser-patchright/README.md),
+  [accounts](../../packages/plugins/accounts/README.md),
+  [login](../../packages/plugins/login/README.md),
+  [turn-receipts](../../packages/plugins/turn-receipts/README.md),
+  [providers](../../packages/plugins/providers/README.md),
+  [provider-chatgpt-web](../../packages/plugins/provider-chatgpt-web/README.md),
+  [provider-gemini-web](../../packages/plugins/provider-gemini-web/README.md).
 
 ## Capabilities
 
-- **Website capability.** **Website Core** owns logical request identity,
-  retained-result idempotency, fail-closed handling of conflicting reuse, result
-  projection, and cancellation. It calls the `WebsiteProviderRuntime` seam, which
-  is implemented by the provider runtime above, or later by an API or remote backend.
-- **Local execution capability.** Runs shell, file, patch, and git tools under an
-  explicit sandbox policy from a trusted envelope
-  ([INV-6](invariants.md#inv-6-authority-comes-from-trusted-envelopes)).
-- **Agent runtime capability** (`ctx.agentRuntimes`). Drives external coding
-  agents (Claude Code through the Claude Agent SDK, Codex through the Codex SDK,
-  any ACP agent) as Workers. See [agent runtimes](../design/agent-runtimes.md).
-  Built so far: the seam, its registry, the `agents` Worker source, and the Claude
-  Agent SDK provider (read-only and confined workspace-write), and the ACP
-  provider (read-only, for vouched agents).
-- **Model capability** (`ctx.models`). API and local model providers. They mainly
-  serve `economy`-tier jobs such as triage, extraction, and compaction
+The capabilities are the **Worker sources**: each describes its Workers to `ctx.workers` and
+runs the work the router admitted to them. Callers never reach a source directly.
+
+- **Website Workers** (`ctx.turns`): one Worker per account and tier. It owns the durable turn
+  (idempotent by request key), the egress check of the actual prompt, the per-account
+  scheduler, the receipt before send, the write-back of refreshed state, the answer artifact,
+  and reconciliation after a restart. Persistent sessions stay on their account.
+- **Agent Workers** (`ctx.agentWorkers`): one Worker per configured agent, held to a policy from
+  configuration (workspace, sandbox, tool allow-list). A Worker's capabilities are what its
+  runtime's `probe()` proves now; a policy the runtime cannot enforce leaves it unavailable.
+  Runs are durable, one at a time per Worker, and a run that started is never rerun by itself.
+  The agent runs here but its model is remote, so each prompt passes the egress check first.
+- **Agent runtimes** (`ctx.agentRuntimes`): providers for Claude Code (Claude Agent SDK), Codex
+  (Codex SDK), and ACP agents ([agent runtimes](../design/agent-runtimes.md)). Each agent
+  process starts without the daemon's credentials.
+- **Models** (`ctx.models`, planned): API and local models for `economy`-tier jobs
   ([purpose P4](../requirements/purpose.md#p4-cheap-models-do-low-level-work-strong-models-do-hard-work)).
-- **Does not own:** routing decisions or acceptance.
-- **Contract:** each capability publishes a descriptor with its name, side-effect
-  class (`none | idempotent | reconcilable | irreversible`), and input and output
-  schemas.
+- **Does not own:** routing decisions, acceptance, or the steps of a workflow.
+- **Contracts:** the `WorkerSource` interface in `@tsuuanmi/system-workers-core`:
+  `describe` (capability descriptors with evidence), `start` (durable at once, idempotent by
+  `key`), `get`, `wait`, and optional `affinity`, `handle`, `reset`, `cancel`. An agent runtime
+  provides `kind`, `probe()` (`RuntimeEvidence`), and `run(spec, signal, onHandle)`.
+- **Packages:** [turns](../../packages/plugins/turns/README.md),
+  [agent-workers](../../packages/plugins/agent-workers/README.md),
+  [agent-runtime-core](../../packages/agent-runtime-core/README.md),
+  [agent-runtimes](../../packages/plugins/agent-runtimes/README.md),
+  [runtime-claude-agent-sdk](../../packages/plugins/runtime-claude-agent-sdk/README.md),
+  [runtime-codex-sdk](../../packages/plugins/runtime-codex-sdk/README.md),
+  [runtime-acp](../../packages/plugins/runtime-acp/README.md).
 
 ## Routing
 
-- **Owns:** the Worker registry, admission predicates, deterministic routing
-  policy, cancellation, and acceptance.
-- **Worker:** an *opaque assignable executable unit with proven current
-  capabilities*. A Worker answers only three questions:
+- **Owns:** the registry of Worker sources, fail-closed admission, the deterministic router,
+  acceptance contracts, and the egress policy (classification per Worker class and a credential
+  scan of the actual payload, [INV-12](invariants.md#inv-12-data-egress-is-explicit)).
+- **Worker:** an *opaque assignable executable unit with proven current capabilities*. A Worker
+  answers only three questions:
   1. Can it accept this work now?
   2. How is it invoked or cancelled through its owning runtime?
   3. What result and evidence did it produce?
-- **Does not own:** the internals of a Worker. Model, runtime, tools, and state are
-  not normalized into a universal interface.
-- **Contract:** `route(workRequirement) → AdmittedWorker | AdmissionFailure`, and
-  `accept(result, contract) → Accepted | Rejected(reasons)`.
-- **Policy inputs:** proven capabilities, data locality and egress policy, and
-  quota class and account readiness. This is where the three
-  [purposes](../requirements/purpose.md) become mechanics.
+- **Does not own:** the internals of a Worker. Model, runtime, tools, and state are not
+  normalized into a universal interface.
+- **Contracts:** `workers.route(requirement, { restrict }) → AdmittedWorker` (with `tier` and
+  `route` decisions) or `AdmissionFailure` (with an `admission` decision);
+  `workers.accept(result, contract) → Acceptance` (with an `acceptance` decision);
+  `workers.register(source)`, `workers.contract(id, check)`, `workers.source(name)`;
+  `egress.check({ payload, classification, workerClass }) → allowed + egress decision`.
+- **Policy inputs:** proven capabilities, data locality, Worker state, tier, and session
+  affinity. This is where the three [purposes](../requirements/purpose.md) become mechanics.
 - **Design:** [routing](../design/routing.md).
-- **Built so far:** the registry, admission, router, and acceptance contracts
-  ([`workers`](../../packages/plugins/workers/README.md)). The turn runtime is
-  the first Worker source. The workflow engine routes every node by its
-  capabilities, starts it through the admitted Worker's source, and checks every
-  result with `accept`.
+- **Packages:** [workers-core](../../packages/workers-core/README.md),
+  [workers](../../packages/plugins/workers/README.md),
+  [egress](../../packages/plugins/egress/README.md).
 
 ## Orchestration
 
-- **Workflow engine:** runs **all** multi-step work as an append-only DAG
-  ([ADR-0012](../decisions/adr/0012-dag-execution-model.md)): semantic DAG definitions, durable node state, input-hash
-  result reuse, handoffs, exact-subject gates, recovery, admission with
-  provenance, artifact lineage, and convergence.
-  See [workflow-engine](../design/workflow-engine.md). Built so far: the MVP
-  subset ([`workflow`](../../packages/plugins/workflow/README.md)); every MCP
-  `ask` and `research` call is a run on it.
-- **Sessions:** durable Worker sessions, each with its own `SessionId`, an
-  execution binding to the native handle, a mailbox for direct peer messages,
-  wake-on-message, checkpoints, compaction, and budgets for long-running work.
-  See [sessions and messaging](../design/sessions-and-messaging.md).
-- **Team runner:** Model A membership, the independent-first barrier, peer
-  exchange rounds, synthesis, and phase acceptance.
-  See [teams](../design/teams.md).
-- **Profiles:** declarative domain procedures (`software-development`,
-  `scientific-research`) built from node objectives and capability requirements.
-  A profile never names a provider, browser, or account. Each is a plugin that
-  contributes templates through `ctx.workflow.template`, and acceptance
-  contracts through `ctx.workers`. It holds no engine code.
-- **Does not own:** provider mechanics or protocol framing.
+- **Workflow engine** (`ctx.workflow`): runs **all** multi-step work as an append-only DAG
+  ([ADR-0012](../decisions/adr/0012-dag-execution-model.md)): templates, durable nodes,
+  input-hash binding, routing every node by its requirement, acceptance, escalation, retries,
+  graph growth from plans, plan approval gates, teams (rounds, barrier, leads), exact-subject
+  review and remediation cycles, wake-on-message, operator stop, continue, supersede, and
+  delete, drain and resume ([workflow engine](../design/workflow-engine.md),
+  [teams](../design/teams.md)).
+- **Worker sessions** (`ctx.workerSessions`): durable sessions, each with its own `SessionId`,
+  a binding to the native handle, groups, and a mailbox for direct peer messages under
+  barriers ([sessions and messaging](../design/sessions-and-messaging.md)).
+- **Profiles:** plugins that contribute templates through `ctx.workflow.template` (`develop`;
+  `research`, `research-deep`) and acceptance contracts through `ctx.workers`. A profile never
+  names a provider, browser, or account, and holds no engine code.
+- **Does not own:** provider mechanics, Worker admission, or protocol framing.
+- **Contracts:** `workflow.start / wait / get / approve / stop / continue / supersede / delete /
+  drain / resume / explain / usage`, `workflow.template(name, nodes)`;
+  `workerSessions.join / send / inbox / ack / openBarrier / activate / settle`.
+- **Packages:** [workflow](../../packages/plugins/workflow/README.md),
+  [worker-sessions](../../packages/plugins/worker-sessions/README.md),
+  [profile-software-development](../../packages/plugins/profile-software-development/README.md),
+  [profile-scientific-research](../../packages/plugins/profile-scientific-research/README.md).
 
 ## Host
 
-- **Owns:** composition on **DSH core**. The `system` profile contains only the
-  `system` bundle, which inserts the allow-listed DSH rows and `system` plugins,
-  with no `dsh-base` ([ADR-0019](../decisions/adr/0019-explicit-minimal-dsh-core.md)).
-  The `system` CLI wrapper creates the profile and runs `dsh --profile system`. It validates every plugin `Config` at startup, isolates
-  failures per plugin, disables telemetry, and runs drain and shutdown
+- **Owns:** composition on **DSH core**. The `system` profile lists the `system` bundle first,
+  which inserts the allow-listed DSH rows and the `system` plugins, with no `dsh-base`
+  ([ADR-0019](../decisions/adr/0019-explicit-minimal-dsh-core.md)). The `system` CLI creates
+  the profile and runs `dsh --profile system` with telemetry off. Cordis validates every
+  plugin `Config` at startup, isolates failures per plugin, and runs disposers on shutdown
   ([ADR-0018](../decisions/adr/0018-build-on-dsh-core.md)).
-- **Does not own:** business logic. The host never wires layers by hand.
-  Dependencies are resolved through `inject`.
+- **Does not own:** business logic. The host never wires layers by hand; dependencies are
+  resolved through `inject`.
+- **Packages:** [system-bundle](../../packages/system-bundle/README.md),
+  [cli](../../packages/cli/README.md).
 
 ## Gateways
 
-- **Responses gateway:** an OpenAI Responses-compatible endpoint (SSE) so Codex and
-  other Responses clients can select `system` Workers as models.
-- **Anthropic Messages gateway:** an Anthropic Messages-compatible endpoint (SSE) so
-  Claude Code and other Messages clients can do the same. It shares the turn broker
-  with the Responses gateway.
-- **Gateway turns (built):** the library both client-protocol gateways share:
-  the text tool protocol, threads bound to provider conversations, and the guard
-  ([`gateway-turns`](../../packages/gateway-turns/README.md)). Each gateway owns
-  only its wire format.
-- **MCP server:** exposes `system` capabilities and the per-turn tool bridge.
-- **CLI and Web UI:** the operator surface for turns, workflows, accounts, remote
-  login, and maintenance.
-- **ACP (optional):** DSH's ACP server exposes the harness to ACP editors
-  ([plugin model](plugin-model.md#dsh-core-reuse-map)).
-- **Does not own:** orchestration state. Gateways translate protocols and enforce
-  transport-level security only.
-- **Design:** [gateways](../design/gateways.md).
+- **MCP server** (`ctx.mcp`): Streamable HTTP at `/mcp` behind a bearer token. Plugins
+  contribute tools for their lifetime ([MCP tools](../reference/mcp-tools.md)).
+- **Request guard** (in `gateway-core`): one set of transport checks for every client endpoint
+  (MCP, both protocol gateways, the web UI): a loopback `Host`, no browser `Origin`, the bearer
+  token in constant time, bounded JSON bodies, and no route on a plain-HTTP non-loopback bind.
+- **Anthropic Messages gateway** (`/anthropic`) and **Responses gateway** (`/openai`): Claude
+  Code and Codex use website Workers as their model. Each request is an `ask` run on a thread
+  bound to one persistent provider conversation; the client's tools travel through the text
+  tool protocol and the client runs every call
+  ([ADR-0022](../decisions/adr/0022-text-protocol-tool-calls-for-website-models.md)).
+- **Gateway turns** (library): the text tool protocol and threads, shared by both
+  client-protocol gateways. Each gateway owns only its wire format.
+- **Web UI** (`/ui`) and **CLI**: the operator surface for runs, approvals, accounts, remote
+  login, and maintenance. The CLI calls the MCP tools of the running profile.
+- **Does not own:** orchestration state. Gateways translate protocols and enforce transport
+  security only.
+- **Design:** [gateways](../design/gateways.md); wire details in
+  [reference](../reference/gateways.md).
+- **Packages:** [mcp-server](../../packages/plugins/mcp-server/README.md),
+  [gateway-core](../../packages/gateway-core/README.md),
+  [gateway-turns](../../packages/gateway-turns/README.md),
+  [gateway-anthropic](../../packages/plugins/gateway-anthropic/README.md),
+  [gateway-responses](../../packages/plugins/gateway-responses/README.md),
+  [web-ui](../../packages/plugins/web-ui/README.md), [cli](../../packages/cli/README.md).

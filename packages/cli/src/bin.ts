@@ -33,7 +33,7 @@ const USAGE = `Usage: system <command>
   account probe <id>        prove which website features the account offers (Deep research, Web search, ...)
   start [dsh args...]       boot the profile (e.g. --patch ./overlay.yml)
   backup <dir> [--include-key]
-                            snapshot the store, blobs, and encrypted vault into an empty dir (the key only with --include-key)
+                            snapshot the store and encrypted vault into an empty dir (the key only with --include-key)
   restore <dir> [--yes]     preview, then restore a backup (the profile must be stopped)
   drain [--deadline <s>]    admit no new runs and wait for running ones (default 600 s)
   resume                    admit new runs again after a drain

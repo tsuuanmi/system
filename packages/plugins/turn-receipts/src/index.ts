@@ -145,11 +145,9 @@ export class TurnReceipts extends Service {
     })
   }
 
-  /** Remove every receipt of one owner session. */
-  deleteSession(account: string, sessionId: string): number {
-    const result = this.ctx.store.transaction((db) =>
-      db.prepare('DELETE FROM turn_receipts WHERE account = ? AND session_hash = ?').run(account, sha256(required(sessionId, 'session id'))))
-    return Number(result.changes)
+  /** Remove one turn's receipt, when its turn is forgotten (retention, INV-9). True if one existed. */
+  delete(identity: TurnIdentity): boolean {
+    return Number(this.ctx.store.db.prepare('DELETE FROM turn_receipts WHERE id = ?').run(receiptId(identity)).changes) > 0
   }
 
   private require(identity: TurnIdentity): TurnReceipt {

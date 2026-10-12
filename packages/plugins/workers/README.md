@@ -8,7 +8,9 @@ router ([routing](../../../docs/design/routing.md#algorithm)). Definition:
   source describes its Workers, runs work on them (`start`, `get`, `wait`), and
   may name the Workers a session must stay on (`affinity`). The router
   returns the admitted Worker with its source's name; `source(name)` finds the
-  source.
+  source. Two sources register today: website Workers (`ctx.turns`, one Worker
+  per account and mapped tier) and agent Workers
+  ([`agent-workers`](../agent-workers/README.md)).
   `describe()` runs on every route, so admission sees current states. Each
   descriptor is validated against `capability-descriptor@1.0`. A Worker id that
   two sources describe is refused.
@@ -39,7 +41,8 @@ router ([routing](../../../docs/design/routing.md#algorithm)). Definition:
   throws: it never accepts silently. Two contracts are built in:
   - `acceptance.answer`: the answer has text;
   - `acceptance.cited`: the answer also cites at least one http(s) source link.
-- **Not yet:** tier escalation after a rejection. See
-  [known gaps](../../../docs/architecture/plugin-model.md#known-gaps-tracked).
+- **Escalation** is not the router's: after a rejection, the workflow engine
+  opens a new execution at the next tier and routes it again
+  ([workflow](../workflow/README.md)).
 - **Config:** `quotaPreference`, `priority`.
 - **Injects:** `artifacts`.

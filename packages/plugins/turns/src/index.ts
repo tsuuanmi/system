@@ -339,11 +339,13 @@ export class Turns extends Service {
     return this.get(turnId)!
   }
 
-  /** Delete finished turns (and their prompts) past the retention period; answers stay as artifacts. */
+  /** Delete finished turns (their prompts and receipts) past the retention period; answers stay as artifacts. */
   private purge(): void {
     if (this.stopping) return
     const cutoff = new Date(Date.now() - (this.config.retainDays ?? 30) * 24 * 60 * 60_000).toISOString()
     this.ctx.store.transaction((db) => {
+      const expired = db.prepare("SELECT * FROM turns WHERE status IN ('completed', 'failed') AND updated_at < ?").all(cutoff) as unknown as Row[]
+      for (const row of expired) if (row.account) this.ctx.turnReceipts.delete(this.identity(row, row.account))
       db.prepare("DELETE FROM turns WHERE status IN ('completed', 'failed') AND updated_at < ?").run(cutoff)
       db.prepare('DELETE FROM turn_sessions WHERE created_at < ? AND session_id NOT IN (SELECT session_id FROM turns WHERE session_id IS NOT NULL)').run(cutoff)
     })

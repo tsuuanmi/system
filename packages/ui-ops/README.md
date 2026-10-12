@@ -6,8 +6,8 @@ The **UI engine** for website drivers
 not a plugin: provider drivers create one `UiEngine` per turn page.
 
 - **`loadUiMap(text, overlay?)`:**
-  - validates a provider's `ui-map@1.0` (YAML or JSON) and checks that every
-    reference resolves;
+  - validates a provider's map, `ui-map@1.0` or `ui-map@1.1` (YAML or JSON),
+    and checks that every reference resolves;
   - appends the local overlay's candidates after the shipped ones;
   - returns the merged map with its content `hash`.
 - **Frames:** an element with `frames: any` (`ui-map@1.1`) is searched in every
@@ -32,6 +32,8 @@ not a plugin: provider drivers create one `UiEngine` per turn page.
 - **Heal:** a deterministic matcher over `ariaSnapshot({ mode: 'ai' })`, with a
   threshold of 0.8 and a margin of 0.15, scoped to the element's scope.
   `aria-ref=` resolves the chosen node, and `normalize()` turns it into a durable
-  locator. Model proposals arrive with the `ctx.models` seam.
+  locator. Any `heal` other than `off` heals deterministically: `model` is
+  parsed, and model proposals wait for a `ctx.models` seam (planned). The
+  action's `sideEffect` class is parsed but does not yet cap healing.
 - **Depends on:** `patchright-core` (peer), `yaml`, `@tsuuanmi/system-libs`
   (schema registry), and `@tsuuanmi/system-provider-core` (typed failures).

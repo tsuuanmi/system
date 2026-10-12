@@ -1025,8 +1025,8 @@ export class Workflow extends Service {
   }
 
   /**
-   * A review that requested changes with blocking findings grows a remediation cycle (a profile
-   * growth rule, docs/design/workflow-engine.md): a fix on the producer's capabilities, then a
+   * A review that requested changes with blocking findings grows a remediation cycle (an engine
+   * rule for any node offering `review`, docs/design/workflow-engine.md): a fix on the producer's capabilities, then a
    * re-review bound to the new subject; whatever waited for the review waits for both. Bounded
    * by `maxReviewCycles`; either way a `graph-growth` decision records why.
    */

@@ -298,8 +298,8 @@ function listFiles(dir: string, prefix = ''): string[] {
 
 /**
  * Back up the harness state (docs/operations/runbooks.md#backup-and-restore): a consistent
- * snapshot of the store (`VACUUM INTO`, safe while the profile runs), the content-addressed
- * blobs, and the encrypted vault, with a manifest of hashes. The vault key is left out unless
+ * snapshot of the store (`VACUUM INTO`, safe while the profile runs) and the encrypted vault,
+ * with a manifest of hashes. The vault key is left out unless
  * `includeKey`: a backup with its key is as sensitive as the host. Login profiles and the
  * managed browser are not state: a new login recreates them.
  */
@@ -307,16 +307,12 @@ export function backupHost(target: string, options: { home?: string; includeKey?
   const state = join(options.home ?? dshHome(), 'system')
   if (!existsSync(join(state, 'system.db'))) throw new Error(`no store at ${join(state, 'system.db')}`)
   if (existsSync(target) && readdirSync(target).length) throw new Error(`${target} is not empty`)
-  mkdirSync(join(target, 'blobs'), { recursive: true, mode: 0o700 })
+  mkdirSync(target, { recursive: true, mode: 0o700 })
   const db = new DatabaseSync(join(state, 'system.db'))
   try {
     db.prepare('VACUUM INTO ?').run(join(target, 'system.db'))
   } finally {
     db.close()
-  }
-  for (const blob of listFiles(join(state, 'blobs'))) {
-    mkdirSync(dirname(join(target, 'blobs', blob)), { recursive: true, mode: 0o700 })
-    copyFileSync(join(state, 'blobs', blob), join(target, 'blobs', blob))
   }
   for (const file of ['vault.enc', ...(options.includeKey ? ['vault.key'] : [])]) {
     if (existsSync(join(state, file))) copyFileSync(join(state, file), join(target, file))
@@ -343,7 +339,7 @@ function profileRunning(state: string): boolean {
 /**
  * Restore a backup into the harness state: refused while the profile runs, and only after every
  * file matches the manifest. Without `yes` it only reports what it would do. The replaced store
- * is kept beside it (`system.db.before-restore-<time>`); blobs are merged (content-addressed).
+ * is kept beside it (`system.db.before-restore-<time>`).
  */
 export function restoreHost(source: string, options: { home?: string; yes?: boolean } = {}): { manifest: BackupManifest; applied: boolean; keptAside?: string } {
   const state = join(options.home ?? dshHome(), 'system')

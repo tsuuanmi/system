@@ -17,6 +17,8 @@
   them, and routing uses only these.
 - **`refreshState(id, state, expectedRevision)`:** the turn runtime's write-back.
   It applies only to a `ready` account and keeps the identity and verification.
+  At any other revision it is refused, so a Save or relogin made while a turn
+  ran is never overwritten by that turn's older state.
 - **Rules:**
   - `markSignedOut` needs positive evidence (`login-url` / `login-surface`).
   - `markChallenge` keeps the state.

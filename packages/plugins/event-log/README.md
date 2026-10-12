@@ -11,5 +11,7 @@
   - `query`: reads after a cursor, with filters.
 - **Rule:** an entry references artifacts or decisions. It never carries secrets
   or private content.
+- **Used by:** `workflow`, `turns`, and `provider-chatgpt-web` append;
+  `profile-scientific-research` listens to `system/event`.
 - **Injects:** `store`.
 - **Config:** `maxDataBytes`.

@@ -171,6 +171,17 @@ describe.runIf(canRunBrowser)('ctx.turns: ask through a saved account', () => {
     expect((await ctx.accounts.portableState('chatgpt-main'))?.cookies.map((c) => c.name)).toContain('session_refresh')
   }, 90_000)
 
+  it('never overwrites a sign-in saved while a turn ran: its write-back is at a stale revision and is skipped', async () => {
+    const { ctx, fake } = await boot({ fake: { thinkMs: 1500 } })
+    const started = await ask(ctx, { prompt: 'slow one' })
+    for (let i = 0; i < 100 && !fake.sent.length; i++) await new Promise((resolve) => setTimeout(resolve, 100))
+    // The operator saves the account (Save or relogin) while the turn is still answering.
+    const saved = { origins: [fake.origin], cookies: [{ name: 'saved_by_operator', value: 'v', domain: '127.0.0.1', path: '/' }], capturedAt: '2026-10-12T00:00:00Z' }
+    await ctx.accounts.saveState('chatgpt-main', { state: saved, identityHash: `sha256:${'a'.repeat(64)}`, verifiedAt: '2026-10-12T00:00:00Z' })
+    expect((await ctx.turns.wait(started.turnId, 30_000)).status).toBe('completed')
+    expect((await ctx.accounts.portableState('chatgpt-main'))?.cookies.map((c) => c.name)).toEqual(['saved_by_operator'])
+  }, 90_000)
+
   it('keeps a persistent session on one conversation across asks', async () => {
     const { ctx, fake } = await boot({ fake: { answer: 'first' } })
     const first = await ctx.turns.wait((await ask(ctx, { prompt: 'one', persist: true })).turnId, 30_000)
@@ -285,7 +296,7 @@ describe.runIf(canRunBrowser)('ctx.turns: ask through a saved account', () => {
     await ask(ctx, { prompt: 'three' })
   }, 90_000)
 
-  it('forgets finished turns (and their prompts) after the retention period', async () => {
+  it('forgets finished turns (their prompts and receipts) after the retention period (INV-9)', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'system-turns-'))
     cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
     const first = await boot({ dir })
@@ -295,6 +306,7 @@ describe.runIf(canRunBrowser)('ctx.turns: ask through a saved account', () => {
     cleanups.splice(cleanups.indexOf(first.stop), 1)
     const second = await boot({ dir, turns: { retainDays: 30 } })
     expect(second.ctx.turns.get(done.turnId)).toBeUndefined()
+    expect(second.ctx.turnReceipts.read({ account: 'chatgpt-main', sessionId: done.turnId, requestId: done.turnId })).toBeUndefined()
     expect(second.ctx.artifacts.get(done.answerArtifact!)).toBeDefined()
   }, 90_000)
 

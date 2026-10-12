@@ -7,7 +7,8 @@ import { agentRuntimeProviderConformance } from '../../../agent-runtime-core/con
 import { AcpAgentRuntime } from '../src/index.ts'
 
 const SCRIPTED = fileURLToPath(new URL('./fixtures/scripted-agent.mjs', import.meta.url))
-const runtime = (honoursPermissions = true) => new AcpAgentRuntime({ name: 'scripted', command: process.execPath, args: [SCRIPTED], honoursPermissions })
+const runtime = (honoursPermissions = true, extra: Partial<ConstructorParameters<typeof AcpAgentRuntime>[0]> = {}, timing?: ConstructorParameters<typeof AcpAgentRuntime>[1]) =>
+  new AcpAgentRuntime({ name: 'scripted', command: process.execPath, args: [SCRIPTED], honoursPermissions, ...extra }, timing)
 
 agentRuntimeProviderConformance('acp:scripted', () => runtime())
 
@@ -52,6 +53,23 @@ describe('acp: the client side enforces the policy', () => {
     const result = await runtime().run({ prompt: 'again', workspace, sandbox: 'read-only', resume: 'h-1' }, signal())
     expect(result).toMatchObject({ text: 'echo: again', nativeHandle: 'h-1' })
   })
+
+  it('starts the agent without the daemon\'s credentials; a credential reaches it only when forwarded by name (INV-8)', async () => {
+    Object.assign(process.env, { SYSTEM_MCP_TOKEN: 'daemon-token' })
+    try {
+      expect((await runtime().run({ prompt: 'env:SYSTEM_MCP_TOKEN', workspace, sandbox: 'read-only' }, signal())).text).toBe('env: unset')
+      expect((await runtime(true, { forwardEnv: ['SYSTEM_MCP_TOKEN'] }).run({ prompt: 'env:SYSTEM_MCP_TOKEN', workspace, sandbox: 'read-only' }, signal())).text).toBe('env: daemon-token')
+    } finally {
+      delete process.env.SYSTEM_MCP_TOKEN
+    }
+  })
+
+  it('kills an agent that ignores both the cancel and SIGTERM, so an aborted run still ends', async () => {
+    const controller = new AbortController()
+    const running = runtime(true, {}, { cancelMs: 200, killMs: 300 }).run({ prompt: 'stubborn', workspace, sandbox: 'read-only' }, controller.signal)
+    setTimeout(() => controller.abort(), 300)
+    await expect(running).rejects.toMatchObject({ kind: 'aborted' })
+  }, 10_000)
 
   it('cancels a running prompt when aborted, and reports it as aborted', async () => {
     const controller = new AbortController()

@@ -24,12 +24,19 @@ installed.
     never widen a Worker;
   - no MCP server at all (`strictMcpConfig` with none given). Without this, the
     live check of 2026-10-12 showed the account's claude.ai connectors attached;
+  - **no daemon credentials** (INV-8): Claude Code starts with
+    `childEnvironment` (agent-runtime-core), so credential-shaped and `DSH_*`
+    variables are scrubbed. Its own sign-in in `~/.claude` keeps working. An API
+    key or OAuth token it should take from the environment must be forwarded by
+    name (`forwardEnv`);
 - **Run:**
   - the SDK's session id is reported as the native handle as soon as it appears,
     and `resume` continues it;
   - terminal errors map to the failure taxonomy: `error_max_turns` → `timeout`,
     `error_max_budget_usd` → `quota_exhausted`, anything else →
     `session_broken`; an abort → `aborted`.
+- **Config:** `executable` (default: `claude` on PATH); `forwardEnv`, daemon
+  variables passed by name; `env`, explicit values, never a secret.
 - **License:** the SDK is © Anthropic, under Anthropic's legal agreements
   ([dependency register](../../../docs/engineering/dependencies.md)).
 - **Injects:** `agentRuntimes`.

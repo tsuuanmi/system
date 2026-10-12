@@ -15,8 +15,6 @@
     # --- system kernel and edge ---
     - id: store
       name: '@tsuuanmi/system-store'
-    - id: blobs
-      name: '@tsuuanmi/system-blobs'
     - id: event-log
       name: '@tsuuanmi/system-event-log'
     - id: leases
@@ -64,7 +62,7 @@
     - id: profile-software-development
       name: '@tsuuanmi/system-profile-software-development'  # the develop procedure (a template contributed to the engine)
     - id: profile-scientific-research
-      name: '@tsuuanmi/system-profile-scientific-research'  # the study procedures (templates, contracts, typed artifacts)
+      name: '@tsuuanmi/system-profile-scientific-research'  # the research procedures (templates, contracts, typed artifacts)
     - id: gateway-anthropic
       name: '@tsuuanmi/system-gateway-anthropic'     # Claude Code → website Workers as its model (system claude-env)
     - id: gateway-responses

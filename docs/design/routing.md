@@ -2,6 +2,13 @@
 
 > Target state. Boundary: [routing](../architecture/components.md#routing).
 > Purpose: [P1–P4](../requirements/purpose.md). Requirements: REQ-WRK-1..9.
+>
+> Implemented in [`workers`](../../packages/plugins/workers/README.md) (admission, order,
+> decisions, acceptance) and [`workflow`](../../packages/plugins/workflow/README.md) (tier
+> escalation); differs from target: `connector:<name>` is not proven by any Worker; nothing sets
+> a Worker `quota-exhausted`, and usage is reported per run step, not estimated per account; the
+> resume conformance test behind `persistent-conversation` and egress exceptions naming exact
+> artifacts are planned.
 
 Routing turns a **work requirement**
 ([`work-requirement.v1.json`](../../schemas/work-requirement.v1.json)) into exactly
@@ -15,14 +22,19 @@ Worker states, and the same requirement always give the same result
 ## Work requirement
 
 ```ts
-WorkRequirement {
+WorkRequirement {                    // work-requirement@1.0
+  objective: string;
   capabilities: Capability[];        // all must be proven
   data: { classification: "public" | "operator-shared" | "local-private";
           refs: ArtifactRef[] };      // what the work must read
-  egress: EgressPolicyRef;           // what may leave the machine (from a trusted envelope)
-  tier: { min: Tier; max?: Tier };   // "economy" | "standard" | "frontier"   (P4)
+  egressPolicy: string;              // policy id from a trusted envelope (INV-6, INV-12)
+  boundaries?: string[];             // what the Worker must not do or touch
+  effort?: { maxToolCalls?, maxSubWorkers?, maxMinutes? };
+  writes?: { type, ref, version? };  // the subject the work writes, if any
+  tier: { min: Tier; max?: Tier;     // "economy" | "standard" | "frontier"   (P4)
+          source: "profile" | "caller" | "decision" | "default"; decision?: ArtifactRef };
   budget?: { maxTokens?, preferQuota?: QuotaClass[] };
-  acceptance: AcceptanceContract;
+  acceptance: { contract: string; resultSchema?: string; maxEscalations?: number };
 }
 ```
 
@@ -34,14 +46,14 @@ each one with evidence from the sources shown below.
 
 | Capability | Meaning | Typical evidence |
 |---|---|---|
-| `reason` | general reasoning and synthesis | provider driver conformance |
+| `reason` | general reasoning and synthesis | provider driver conformance (website Workers) |
 | `web-search` | search the live web with citations | feature probe on the account |
 | `deep-research` | provider-native multi-step research report | plan + feature probe (P2) |
 | `connector:<name>` | a website connector or app enabled on the account, e.g. `connector:github` | connector probe on the account (P2) |
-| `persistent-conversation` | resumable multi-turn identity | resume conformance test |
+| `persistent-conversation` | resumable multi-turn identity | driver conformance (website Workers); the runtime probe's `resume` flag (agent Workers). A resume conformance test for agent runtimes is planned |
 | `local-data` | can read local files and datasets in place | runs on this machine; sandbox policy allows the paths |
-| `develop`, `validate` | edit code, run tests in a workspace | agent-runtime probe + sandbox mode |
-| `review` | assess a provided subject against criteria | driver or runtime conformance |
+| `develop`, `validate` | edit code, run tests in a workspace | agent-runtime probe + writable sandbox; `validate` also needs `executes` |
+| `review` | assess a provided subject against criteria | a read-only agent Worker (runtime probe + read-only sandbox) |
 
 Profiles express each node as capabilities, not Worker kinds. A research node
 requires `deep-research` or `web-search` together with `reason`. An implementation
@@ -49,15 +61,22 @@ node requires `develop` and `local-data`.
 
 ## Algorithm
 
-```text
-candidates = registry.workers
-  → filter: every required capability proven now          (admission, fail-closed)
-  → filter: data locality policy                          (P3)
-  → filter: account state ready, quota not exhausted      (P1)
-  → filter: tier within [min, max]                        (P4)
-  → order:  lowest tier first, then quota class preference (P1),
-            then configured priority list, then stable id
-  → first candidate, or AdmissionFailure listing why each candidate was rejected
+```mermaid
+flowchart TD
+  A[every Worker every source describes now] --> B{inside the caller's restriction?}
+  B -->|yes| C{proves every required capability?}
+  C -->|yes| D{local, when the data is local-private?}
+  D -->|yes| E{state ready?}
+  E -->|yes| F{tier within min and max?}
+  F -->|yes| G[admitted]
+  B -->|no| R[rejected, with the failed check]
+  C -->|no| R
+  D -->|no| R
+  E -->|no| R
+  F -->|no| R
+  G --> H["order: lowest tier, budget.preferQuota, quotaPreference, priority list, id"]
+  H --> I[first candidate: tier and route decisions]
+  R --> J[none admitted: an admission decision and AdmissionFailure with every rejection]
 ```
 
 Quota and health are inputs **before** admission. Once a turn starts on a Worker,
@@ -73,6 +92,12 @@ failure (`USER_ACTION` or `BACKOFF`), not a silent switch to a different provide
   payload**: the rendered prompt plus its attachments. Each artifact ref is
   checked against the policy. A payload that is not permitted fails closed
   ([INV-12](../architecture/invariants.md#inv-12-data-egress-is-explicit)).
+  The check runs inside the Worker source, after `workers.route`, before
+  anything is sent.
+- An **agent Worker** runs locally, so routing admits `local-private` work to it,
+  but its model is remote. Its source therefore checks egress too, for the Worker
+  class `agent`, which by default receives `public` and `operator-shared` only.
+  An operator whose agent model runs on this machine widens that class.
 - **Phase separation.** A Worker that browses the web or calls remote connectors
   never holds local-private content in the same execution. Untrusted web content
   can carry prompt-injection payloads. Research and private-data processing are
@@ -90,10 +115,11 @@ failure (`USER_ACTION` or `BACKOFF`), not a silent switch to a different provide
 - Profiles declare each node's minimum tier, for example triage → `economy`,
   research → `frontier`, compacting a handoff → `economy`, final synthesis →
   `frontier`.
-- **Escalation:** if acceptance rejects a result, the policy can open a *new*
-  execution at the next tier, at most `maxEscalations` times (default 1). The
-  rejected result stays as evidence. Escalation is recorded in the event log and
-  is never applied to a running turn.
+- **Escalation:** if acceptance rejects a result, the workflow engine opens a
+  *new* execution of the node at the next tier above the one that served it, at
+  most `maxEscalations` times (per node, default 1, at most 3). The rejected
+  result stays as evidence. The choice is an `escalation` decision either way,
+  and it is never applied to a running turn.
 - Planning and synthesis may use a higher tier than the steps they coordinate,
   in line with "spend intelligence where intelligence matters".
 
@@ -106,10 +132,10 @@ design.
 
 - Each account and runtime declares a **quota class**: `subscription-chat` for
   website accounts, `agent-plan` for Claude Code and Codex plans, and `metered`
-  for APIs. The routing policy prefers `subscription-chat` for `reason`,
-  `web-search`, `deep-research`, and `review`, and keeps `agent-plan` and
-  `metered` for capabilities only they prove, such as `develop` and `local-data`
-  (P1).
+  for APIs. The routing order prefers `subscription-chat`, then `local`,
+  `agent-plan`, and `metered` (`quotaPreference`). Agent Workers never offer plain
+  `reason`, so `agent-plan` and `metered` are spent only on capabilities only they
+  prove, such as `develop`, `review`, and `local-data` (P1).
 - Usage is recorded per account from observable signals (turn counts and
   estimated tokens) and treated as an estimate (CON-4). A provider "limit
   reached" state marks the account temporarily not ready, and routing excludes

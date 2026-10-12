@@ -26,6 +26,13 @@ The **`agents` Worker source**: agent runtimes as Workers
   - each result is a `report` artifact (`agent-result@1.1`) with the requirement's
     classification. It carries the workspace and, when that is a git working
     tree, its exact subject after the run, which a review binds to.
+- **Egress (INV-12):** the agent runs on this machine, but its model is remote.
+  So before a run starts, its prompt is checked by `ctx.egress` with
+  `workerClass: 'agent'`. The decision is part of the run's decision chain (as for website
+  turns), so `system explain` shows it. A denial fails the run as `egress_denied`,
+  never submitted. By default `local-private` work is refused here, although
+  routing admits it (the Worker is local); see the egress plugin's
+  `workerClasses`.
 - **Cancel (REQ-WRK-4):** a running agent is stopped, and a queued run never
   starts. Both fail as `aborted`.
 - **Deadline:** a run longer than `runTimeoutMs` (15 min) is stopped and fails
@@ -35,4 +42,4 @@ The **`agents` Worker source**: agent runtimes as Workers
   (`USER_ACTION`) and names its native session.
 - **Sessions:** a session id is bound to its Worker (`affinity`). Later runs
   resume the agent's native session.
-- **Injects:** `store`, `artifacts`, `leases`, `workers`, `agentRuntimes`.
+- **Injects:** `store`, `artifacts`, `leases`, `workers`, `agentRuntimes`, `egress`.

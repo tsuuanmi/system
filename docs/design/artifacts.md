@@ -4,6 +4,11 @@
 > Invariant: [INV-13](../architecture/invariants.md#inv-13-every-decision-is-an-artifact).
 > Exact shapes: [`schemas/`](../../schemas/README.md) (canonical), with semantics in
 > [reference: schemas](../reference/schemas.md).
+>
+> Implemented in [`artifacts`](../../packages/plugins/artifacts/README.md); differs from target:
+> bodies are inline only (no large-body store); no `spec-admission` decision is recorded; the
+> store does not itself reject a transition without a decision id; re-planning when a
+> planner's input is superseded is planned.
 
 An **artifact** is an immutable, typed, content-addressed record. The work that
 `system` produces is artifacts, and so is the record of how `system` decided.
@@ -21,7 +26,7 @@ Every artifact shares one envelope
 | `id` | `sha256:` of the canonical JSON of `{kind, body, inputs, lineage, subject}`; equal content means an equal id |
 | `kind` | one of the kinds below |
 | `bodySchema` | schema of the body, e.g. `decision@1.0` |
-| `body` or `blob` | inline body (small) or a blob ref by SHA-256 (large) |
+| `body` or `blob` | inline body, or a SHA-256 ref to a large body (planned) |
 | `classification` | `public`, `operator-shared`, or `local-private`; drives egress ([INV-12](../architecture/invariants.md#inv-12-data-egress-is-explicit)) |
 | `producer` | who made it: `{ type: node, worker, policy, operator, system; ref }` |
 | `subject` | what it is about, when exact-subject binding applies (e.g. a git head SHA) |
@@ -43,6 +48,7 @@ Every artifact shares one envelope
 | control | `decision` | routing, engine, policies, operator | see below |
 | control | `receipt` | provider runtime, engine | provider turn receipt, node input and output receipts |
 | control | `approval` | operator | a human approval bound to an exact subject |
+| control | `message` | worker sessions | a peer message in a session mailbox ([sessions](sessions-and-messaging.md)) |
 
 ## Decision artifacts
 
@@ -103,26 +109,32 @@ superseded, every node whose bundle depends on it, directly or transitively, is
 fenced and becomes re-runnable. Its replacement execution records a `recovery`
 decision that points at the superseding artifact.
 
-Built so far: the operator's `supersede` on a workflow node
-([workflow](../../packages/plugins/workflow/README.md)). Re-planning when a
-planner's input is superseded is not built yet.
+The operator's `supersede` on a workflow node starts this
+([workflow](../../packages/plugins/workflow/README.md)).
 
 ## Explain
 
 Because every effect points at a decision and every decision points at its
 inputs, the CLI can answer "why?" by walking backwards:
 
-```text
-system explain <artifact|node|turn>
-  delivery sha256:… ← node implement:1 ← route decision (selected runtime-codex, rejected …)
-                     ← tier decision (standard; decision model routine p=0.71)
-                     ← handoff sha256:… ← report ← deep-research turn receipt …
+```mermaid
+flowchart RL
+  D["delivery sha256:…"] --> N[node implement:1]
+  N --> RT["route decision: selected Worker, rejected candidates"]
+  N --> TR["tier decision: standard"]
+  N --> H["handoff sha256:…"]
+  H --> RP[report]
+  RP --> RC[deep-research turn receipt]
 ```
+
+`system explain <runId>` gives each step's egress, tier, route (or admission), and acceptance
+or recovery decisions with their reasons; `system explain <artifact id>` walks that artifact's
+inputs, within `explainDepth` and `explainBudget`.
 
 ## Storage
 
-Envelopes and small bodies are stored in `ctx.store`, indexed by id, kind,
-`runId`, `nodeId`, subject, and decision type. Large bodies are stored in
-`ctx.blobs` by SHA-256. Retention follows the workflow retention rules. A
-decision artifact is kept for as long as any artifact or state that references
-it.
+Envelopes and their bodies are stored in `ctx.store`, indexed by id, kind,
+`runId`, `nodeId`, subject, and decision type. A store for large bodies, addressed
+by the envelope's `blob` ref, is planned. Retention follows the workflow retention
+rules. A decision artifact is kept for as long as any artifact or state that
+references it.

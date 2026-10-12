@@ -10,6 +10,9 @@ operator's installed `codex` through the official Codex TypeScript SDK.
   - approvals are `never`, so whatever the sandbox refuses fails instead of
     waiting for a person;
   - network access and web search are off;
+  - the `codex` process starts without the daemon's credentials (INV-8):
+    always with `childEnvironment` (agent-runtime-core), so credential-shaped
+    and `DSH_*` variables are scrubbed;
   - Codex has no tool allow-list and no turn limit, so a configured `tools` or
     `maxTurns` is refused, not ignored.
 - **Probe:** `codex --version`. Both sandboxes are supported, threads resume,
@@ -21,10 +24,13 @@ operator's installed `codex` through the official Codex TypeScript SDK.
 - **Configuration:**
   - `executable` (default: `codex` on PATH);
   - `config`: Codex `--config` overrides, such as its model provider;
-  - `env`: extra environment for the process.
+  - `forwardEnv`: daemon variables passed to the process by name;
+  - `env`: explicit values for the process, never a secret.
   To run Codex on website Workers, point its model provider at the system
-  Responses gateway. Then put the gateway token into the daemon's environment
-  as the variable the provider's `env_key` names, never into a config file.
+  Responses gateway. Put the gateway token into the daemon's environment as the
+  variable the provider's `env_key` names (for example `SYSTEM_MCP_TOKEN`), never
+  into a config file, and name that variable in `forwardEnv`: without it, the
+  scrub removes the token and Codex cannot reach the gateway.
 - **Dependencies:** `@openai/codex-sdk`. Its per-platform Codex builds are
   ignored optional dependencies.
 - **Verified live on 2026-10-12:** a `review` ran on a read-only Codex Worker

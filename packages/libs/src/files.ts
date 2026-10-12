@@ -47,7 +47,7 @@ function writeTemp(path: string, data: string | Uint8Array, mode: number): strin
 /**
  * Durably replace `path`: exclusive temp file with `mode`, fsync, rename, fsync the
  * directory. The temp file is removed on any failure. (DSH's writeFileAtomic leaves
- * crash durability out of scope, which the vault and blobs need.)
+ * crash durability out of scope, which the vault and the discovery file need.)
  */
 export function writeFileDurable(path: string, data: string | Uint8Array, mode = 0o600): void {
   const temp = writeTemp(path, data, mode)

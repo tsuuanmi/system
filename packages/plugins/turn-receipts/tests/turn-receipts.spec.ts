@@ -93,12 +93,13 @@ describe('ctx.turnReceipts', () => {
     expect(ctx.turnReceipts.read(id)?.reconciliations).toEqual([decision])
   })
 
-  it('deletes one session without touching sibling sessions', async () => {
+  it('deletes one receipt without touching the session\'s other turns (retention, INV-9)', async () => {
     const ctx = await boot()
     ctx.turnReceipts.submit(submission)
-    ctx.turnReceipts.submit({ ...submission, sessionId: 'session-b' })
-    expect(ctx.turnReceipts.deleteSession('chatgpt-main', 'session-a')).toBe(1)
+    ctx.turnReceipts.submit({ ...submission, requestId: 'turn-2' })
+    expect(ctx.turnReceipts.delete(id)).toBe(true)
+    expect(ctx.turnReceipts.delete(id)).toBe(false)
     expect(ctx.turnReceipts.read(id)).toBeUndefined()
-    expect(ctx.turnReceipts.read({ ...id, sessionId: 'session-b' })).toBeDefined()
+    expect(ctx.turnReceipts.read({ ...id, requestId: 'turn-2' })).toBeDefined()
   })
 })

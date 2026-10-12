@@ -38,14 +38,19 @@ invoked by the [workflow engine](../workflow/README.md)
   if the turn still holds its lease and the account is still at the revision the
   turn started from. A failure is logged (`account.write-back-skipped`) and never
   fails an answered turn.
+  - **Concurrent sign-in:** a Save or relogin while a turn runs writes a newer
+    revision, so the turn's write-back is skipped and the newer sign-in wins
+    (tested). Login therefore does not take `ProviderScheduler.runExclusive`:
+    wrapping the in-turn relogin in it would deadlock.
 - **Completion:**
   - one transaction binds the conversation and completes the receipt;
   - the answer becomes a `report` artifact (`provider-answer@1.0`,
     `local-private`) linked to the route decision.
 - **Bounds (INV-9):** at most `maxPendingTurns` (default 32) accepted but
   unfinished turns; more are refused with `overloaded` (BACKOFF). Finished turns,
-  their prompts, and sessions with no turns left are deleted after `retainDays`
-  (default 30). Answers stay as artifacts, which hold the prompt by hash only.
+  their prompts, their receipts (`turnReceipts.delete`), and sessions with no
+  turns left are deleted after `retainDays` (default 30), in one transaction.
+  Answers stay as artifacts, which hold the prompt by hash only.
 - **Ownership:**
   - every turn runs under a `turn:<id>` lease from `ctx.leases` (60 s, renewed
     every 20 s);

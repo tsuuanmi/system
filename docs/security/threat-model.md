@@ -2,58 +2,206 @@
 
 > Target state. Deployment assumption: a single operator on a single machine
 > (CON-6).
+>
+> Not built yet (target only): turn tokens for MCP tool inversion (the gateways use the
+> text tool protocol of
+> [ADR-0022](../decisions/adr/0022-text-protocol-tool-calls-for-website-models.md)),
+> `/admin/*` routes, a separate operator token scope, and a dependency audit in CI.
 
 ## Assets
 
 - Provider account sessions: cookies, auth storage, and conversation history.
 - The local workspace: files, shell, and VCS credentials reachable through tools.
-- Local and private data: datasets, documents, and repository content that must not leave the machine without policy.
+- Local and private data: datasets, documents, and repository content that must not
+  leave the machine without policy.
 - Workflow state and results.
-- Control credentials: the gateway bearer token and turn tokens.
+- Control credentials: the bearer token every client endpoint accepts (the MCP token), and,
+  in the target, turn tokens for MCP tool inversion.
+- Credentials in the daemon's environment: API keys, the gateway token a Codex Worker's model
+  provider reads, and any other secret the operator exported.
 
 ## Trust boundaries
 
-```text
-trusted:    operator · host process · account vault · operator configuration · plugins the operator installed
-semi:       local client (Codex, Claude Code, MCP agent) — trusted for its own envelope, sandbox, approvals
-            agent-runtime Workers (Claude Code, Codex, ACP agents) — run under policies set by system
-untrusted:  provider websites · model output · tool output · repository content ·
-            web pages · other local processes · other users on the machine
-```
+| Zone | Who |
+|---|---|
+| trusted | the operator, the host process, the account vault, operator configuration, plugins the operator installed |
+| semi-trusted | local clients (Codex, Claude Code, MCP agents), trusted for their own envelope, sandbox, and approvals; agent-runtime Workers (Claude Code, Codex, ACP agents), confined by their own runtime's sandbox under the operator's policy |
+| untrusted | provider websites, model output, tool output, repository content, web pages, other local processes, other users on the machine |
 
 ## Threats and controls
 
-| Threat | Control |
-|---|---|
-| A web page in the operator's browser calls the loopback gateway | non-GET requests with `Origin` are rejected; the bearer token is required ([gateways](../design/gateways.md#responses-gateway-codex)) |
-| A website model's answer proposes a harmful tool call through the Messages or Responses gateway | the model only *proposes* calls. A tag becomes a native call (`tool_use`, `function_call`) only for a tool the client offered in that request, with object arguments, and the client runs it under its own sandbox and approvals ([ADR-0022](../decisions/adr/0022-text-protocol-tool-calls-for-website-models.md)). What the client sends is egress-checked at the gateway's configured classification |
-| Another local process drives the gateway or control routes | the bearer token comes from a 0600 credential file; `/admin/*` needs the same token |
-| Another local process drives the logged-in browser through a debug port | no remote-debugging port is exposed. Browser contexts are owned in-process by the provider runtime. If a port is ever needed, it is bound to loopback with a random port and an access token, and owned by the runtime |
-| Another local user connects to the invisible display and screenshots or drives the signed-in browser | every plugin-owned Xvfb runs with `-nolisten tcp` and `-auth` over a fresh owner-only Xauthority cookie (one FamilyWild record in a `0700` temp directory, removed when Xvfb exits); X clients get it through `XAUTHORITY`. Without the cookie the X handshake is refused (tested against a real Xvfb) |
-| A remote model calls tools outside its turn, or tools the client did not offer | turn-scoped random tokens, limited to the tools the current turn advertised |
-| Prompt injection claims authority, for example a fake `<environment_context>` | authority comes only from trusted envelopes ([INV-6](../architecture/invariants.md#inv-6-authority-comes-from-trusted-envelopes)) |
-| Prompt injection through tool output leads the model to destructive actions | the client's own sandbox and approvals execute every tool; provider-side approval prompts fail closed unless explicitly enabled, and then only as "allow once" |
-| Credential leakage to upper layers, logs, or the command line | INV-8; secrets are never passed as process arguments; logs redact account state |
-| Account state cross-contamination between accounts | one browser process and context per account; state limited to the driver's `stateOrigins`; records `0600` in a `0700` vault ([browser runtime](../design/browser-runtime.md)) |
-| Stolen password or TOTP secret | credentials encrypted at rest and decrypted only in memory; never logged or sent to models; TOTP computed locally, never sent to sites like 2fa.live; credential login runs only after sign-out evidence, with at most 2 attempts ([ADR-0017](../decisions/adr/0017-credential-login-and-linux-remote-browser.md)) |
-| Remote-login page hijacking | the VNC server listens only on an owner-only unix socket (no TCP port) on a private, X-authenticated Xvfb. The noVNC page and its WebSocket sit behind a random 256-bit URL token on loopback and check the Host header. Save and Cancel accept only POSTs from the page's own origin. Responses are `no-store`, `no-referrer`, and frame-denied. Access is over an SSH tunnel only, and the desktop expires (default 30 min) |
-| Duplicate side effects after a crash (double PR, double message) | receipts and reconciliation ([INV-4](../architecture/invariants.md#inv-4-restart-is-reconciliation-not-replay)) |
-| Stale evidence approving a newer change | exact-subject binding ([INV-5](../architecture/invariants.md#inv-5-exact-subject-binding)) |
-| An agent-runtime Worker acts outside its workspace or approvals | the policy comes from trusted envelopes and maps exactly onto the agent's sandbox and permission modes; a policy that cannot be expressed exactly fails the run (REQ-WRK-6) |
-| Local or private data leaks to a provider website or API through a prompt or attachment | `ctx.egress` checks the **actual outgoing payload** before any Worker is chosen or anything is sent ([INV-12](../architecture/invariants.md#inv-12-data-egress-is-explicit)). The check combines two rules. First, the caller's classification must be permitted for the Worker class (by default `website` receives only `public` and `operator-shared`, so `local-private` is denied). Second, a credential scan must find nothing (secretlint's recommended rules plus operator deny patterns). Every check is an `egress` decision, and findings keep rule ids and offsets, never the secret. A denial fails the turn as `egress_denied` (USER_ACTION) and nothing is sent. A scan cannot recognize every kind of private data, so classification remains the caller's statement |
-| An AI client holding the MCP token triggers operator actions | `account_list` returns secret-free views. `account_save` only re-captures the operator's own login profile and returns no secrets. Both share the operator's bearer token in slice 1. A separate operator scope is planned before tools with wider effect are added |
-| Login profiles leak sessions for every site the operator visited during login | profiles live in `<DSH_HOME>/system/login-profiles/<id>` (`0700`) and are used only for interactive login and Save. Only the driver's `stateOrigins` are captured into the encrypted vault. Chrome's own cookie protection without an OS keyring is weak, so the profile directory's permissions are the control. Operators should log in only to the provider site in that profile |
-| A tampered managed Chrome download | `@puppeteer/browsers` downloads the pinned Chrome for Testing build from Google over TLS (no separate checksum is published per build). The pin is reviewed in `chrome.lock.json`. A recent system Chrome is preferred when present ([ADR-0020](../decisions/adr/0020-pinned-managed-chrome.md)) |
-| A web page in the operator's browser reads or drives the operator UI | the `/ui` shell carries no data. The token rides in the URL fragment (never sent to a server) and moves to session storage. `/ui/api` needs a loopback `Host`, no foreign `Origin`, and the bearer token (constant time); actions take JSON bodies only. A strict CSP (`self` only, no frames, no forms) applies, and data is rendered with `textContent`, never parsed as HTML ([web UI](../../packages/plugins/web-ui/README.md)) |
-| MCP client configs leaking the bearer token | Claude Code gets the header from `system mcp-headers` (`headersHelper`) on each connection; Codex runs the stdio shim `system mcp-stdio`, which reads the token file itself. Neither client config holds the token |
-| A prompt visible in the process list or shell history | `system ask -` reads the prompt from stdin; MCP calls carry prompts in request bodies, never in arguments |
-| A peer message carries prompt injection or claims authority ("the operator approved this") | peer messages are untrusted data; authority never comes from messages (INV-6); policy and egress are checked on every message; only `approval` artifacts from the operator grant approval |
-| Telemetry or data leaving through host defaults | DSH telemetry rows disabled in the `system` profile; DeepSeek-specific defaults disabled unless configured ([ADR-0018](../decisions/adr/0018-build-on-dsh-core.md)) |
-| Prompts kept indefinitely on disk | the store is `0600`; finished turns and their prompt text are deleted after `retainDays` (default 30), while answers remain as artifacts holding the prompt hash only |
-| Local-private artifact bodies read from disk by another account or from a backup | blobs and the store are `0600` in `0700` directories; only credentials are encrypted at rest (vault). Full-disk or home-directory encryption is recommended for hosts holding private data |
-| A malicious or compromised plugin | plugins run in-process with full host trust, so only operator-installed plugins from the profile are loaded; there is no remote plugin installation; plugin packages are pinned in the lockfile |
-| A supply-chain change in the browser stack or SDKs | committed lockfile, one exact pinned DSH version, `pnpm audit` in CI, no vendored binaries |
-| Provider terms or abuse controls lead to account loss | bounded per-account concurrency; no evasion features; operator responsibility (CON-3) |
+- **A web page in the operator's browser calls a loopback endpoint (DNS rebinding,
+  cross-site requests).** Every client endpoint (MCP, both protocol gateways, the web
+  UI) passes one request guard
+  ([`gateway-core`](../../packages/gateway-core/README.md#the-request-guard)): a
+  `Host` on the loopback allow-list (`421` otherwise), no browser `Origin` (`403`, no
+  CORS; only the web UI accepts its own origin), then the bearer token compared in
+  constant time (`401`). An empty token never matches, and `x-api-key` is accepted
+  only by the Anthropic gateway. What answers without the token carries no data:
+  the gateways' `HEAD`, `GET /` (and `/healthz`), and the web UI's static shell.
+- **The bearer token crosses a network in clear text.** Every endpoint refuses to
+  register its route on plain HTTP on a non-loopback host (`assertSafeBind`); a
+  non-loopback bind needs TLS.
+- **An oversized request body exhausts memory.** Every endpoint reads JSON bodies
+  through one bounded reader (`413` past the limit, `400` for invalid JSON): 1 MiB
+  for MCP, 16 MiB for a gateway, 16 KiB for the web UI
+  ([INV-9](../architecture/invariants.md#inv-9-everything-is-bounded)).
+- **A website model's answer proposes a harmful tool call through the Messages or
+  Responses gateway.** The model only *proposes* calls. A tag becomes a native call
+  (`tool_use`, `function_call`) only for a tool the client offered in that request,
+  with object arguments, and the client runs it under its own sandbox and approvals
+  ([ADR-0022](../decisions/adr/0022-text-protocol-tool-calls-for-website-models.md)).
+  What the client sends is egress-checked at the gateway's configured
+  classification.
+- **Another local process drives the gateways or the operator's controls.** The
+  bearer token comes from a 0600 credential file, and the same guard protects MCP
+  (whose tools include drain, resume, stop, and delete), both gateways, and the web
+  UI. Target: `/admin/*` routes (not built) behind the same token.
+- **Another local process drives the logged-in browser through a debug port.** No
+  remote-debugging port is exposed. Browser contexts are owned in-process by the
+  provider runtime. If a port is ever needed, it is bound to loopback with a random
+  port and an access token, and owned by the runtime.
+- **Another local user connects to the invisible display and screenshots or drives
+  the signed-in browser.** Every plugin-owned Xvfb runs with `-nolisten tcp` and
+  `-auth` over a fresh owner-only Xauthority cookie (one FamilyWild record in a
+  `0700` temp directory, removed when Xvfb exits); X clients get it through
+  `XAUTHORITY`. Without the cookie the X handshake is refused (tested against a real
+  Xvfb).
+- **A remote model calls tools outside its turn, or tools the client did not
+  offer.** A website model has no tool access of its own: through the gateways it
+  can only propose a call in its answer, which becomes a native call only for a
+  tool the client offered in that request, and the client runs it
+  ([ADR-0022](../decisions/adr/0022-text-protocol-tool-calls-for-website-models.md)).
+  Target, with MCP tool inversion (not built): turn-scoped random tokens, limited
+  to the tools the current turn advertised.
+- **Prompt injection claims authority, for example a fake `<environment_context>`.**
+  Authority comes only from trusted envelopes
+  ([INV-6](../architecture/invariants.md#inv-6-authority-comes-from-trusted-envelopes)).
+- **Prompt injection through tool output leads the model to destructive actions.**
+  The client's own sandbox and approvals execute every tool; provider-side approval
+  prompts fail closed unless explicitly enabled, and then only as "allow once".
+- **Credential leakage to upper layers, logs, or the command line.** INV-8; secrets
+  are never passed as process arguments; logs redact account state.
+- **An agent-runtime Worker (or anything its model makes it run) reads the daemon's
+  credentials from its environment.** Every agent process starts from DSH's own
+  scrub of the daemon environment (`childEnvironment` in
+  [`agent-runtime-core`](../../packages/agent-runtime-core/README.md)): names
+  matching `KEY`, `PASSWORD`, `SECRET`, or `TOKEN`, and every `DSH_*` name, are
+  removed. A credential the agent needs is forwarded by name (`forwardEnv`), so its
+  value never sits in configuration, and only the named variable reaches the agent.
+- **Account state cross-contamination between accounts.** One browser process and
+  context per account; state limited to the driver's `stateOrigins`; records `0600`
+  in a `0700` vault ([browser runtime](../design/browser-runtime.md)).
+- **Stolen password or TOTP secret.** Credentials encrypted at rest and decrypted
+  only in memory; never logged or sent to models; TOTP computed locally, never sent
+  to sites like 2fa.live; credential login runs only after sign-out evidence, with
+  at most 2 attempts
+  ([ADR-0017](../decisions/adr/0017-credential-login-and-linux-remote-browser.md)).
+- **Remote-login page hijacking.** The VNC server listens only on an owner-only unix
+  socket (no TCP port) on a private, X-authenticated Xvfb. The noVNC page and its
+  WebSocket sit behind a random 256-bit URL token on loopback and check the Host
+  header. Save and Cancel accept only POSTs from the page's own origin. Responses
+  are `no-store`, `no-referrer`, and frame-denied. Access is over an SSH tunnel
+  only, and the desktop expires (default 30 min).
+- **Duplicate side effects after a crash (double PR, double message).** Receipts and
+  reconciliation
+  ([INV-4](../architecture/invariants.md#inv-4-restart-is-reconciliation-not-replay)).
+- **Stale evidence approving a newer change.** Exact-subject binding
+  ([INV-5](../architecture/invariants.md#inv-5-exact-subject-binding)).
+- **An agent-runtime Worker acts outside its workspace or approvals.** The policy
+  comes only from operator configuration (each `agent-workers` row's workspace,
+  sandbox, and tools; INV-6). Each runtime enforces it with its own sandbox,
+  exactly, or the run is refused before it starts (REQ-WRK-6):
+  - Claude Code (`runtime-claude-agent-sdk`): only the listed built-in tools
+    exist and are pre-approved (`Read`, `Grep`, `Glob` for `read-only`;
+    `workspace-write` adds `Edit(./**)` and `Write(./**)`, scoped to the
+    workspace); `permissionMode: dontAsk` denies anything else without a prompt;
+    `settingSources: []` keeps the operator's own settings and hooks out; no MCP
+    server is attached;
+  - Codex (`runtime-codex-sdk`): its own `sandboxMode` (`read-only`, or
+    `workspace-write` confined to the workspace) and working directory,
+    approvals `never`, network access and web search off;
+  - ACP agents (`runtime-acp`): the client side enforces the policy. Every
+    permission request is rejected, file reads are served inside the workspace
+    only, and no write or terminal capability or MCP server is offered. Because
+    an ACP agent can still act on the disk without asking, `read-only` is
+    offered only for an agent the operator vouches for (`honoursPermissions`).
+    An aborted ACP agent that ignores the cancel gets SIGTERM, then SIGKILL, so
+    it cannot hang a run.
+
+  A Worker whose runtime cannot enforce its configured sandbox is unavailable,
+  and only read-only Workers prove `review`. The confinement is only as strong as
+  each runtime's sandbox.
+- **Local or private data leaks to a provider website or API through a prompt or
+  attachment.** `ctx.egress` checks the **actual outgoing payload** inside the
+  Worker source, after routing chose the Worker and before anything is sent
+  ([INV-12](../architecture/invariants.md#inv-12-data-egress-is-explicit)). This
+  holds for both Worker sources: a website turn (class `website`) and an agent run
+  (class `agent`: the agent runs here, but its model is remote, so routing admitting
+  a local Worker is not enough). The check combines two rules. First, the caller's
+  classification must be permitted for the Worker class (by default `website` and
+  `agent` receive only `public` and `operator-shared`, so `local-private` is
+  denied; an operator whose agent model runs locally widens `agent`). Second, a
+  credential scan must find nothing (secretlint's recommended rules plus operator
+  deny patterns). Every check is an `egress` decision, and findings keep rule ids
+  and offsets, never the secret. A denial fails the turn or agent run as
+  `egress_denied` (USER_ACTION) and nothing is sent. A scan cannot recognize every
+  kind of private data, so classification remains the caller's statement.
+- **An AI client holding the MCP token triggers operator actions.** `account_list`
+  returns secret-free views. `account_save` only re-captures the operator's own
+  login profile and returns no secrets. Both share the operator's bearer token in
+  slice 1. A separate operator scope is planned before tools with wider effect are
+  added.
+- **Login profiles leak sessions for every site the operator visited during login.**
+  Profiles live in `<DSH_HOME>/system/login-profiles/<id>` (`0700`) and are used
+  only for interactive login and Save. Only the driver's `stateOrigins` are captured
+  into the encrypted vault. Chrome's own cookie protection without an OS keyring is
+  weak, so the profile directory's permissions are the control. Operators should log
+  in only to the provider site in that profile.
+- **A tampered managed Chrome download.** `@puppeteer/browsers` downloads the pinned
+  Chrome for Testing build from Google over TLS (no separate checksum is published
+  per build). The pin is reviewed in `chrome.lock.json`. A recent system Chrome is
+  preferred when present
+  ([ADR-0020](../decisions/adr/0020-pinned-managed-chrome.md)).
+- **A web page in the operator's browser reads or drives the operator UI.** The
+  `/ui` shell carries no data. The token rides in the URL fragment (never sent to a
+  server) and moves to session storage. `/ui/api` passes the shared guard: a
+  loopback `Host`, no `Origin` but the UI's own, and the bearer token (constant
+  time); actions take JSON bodies only. A strict CSP (`self` only, no frames, no
+  forms) applies, and data is rendered with `textContent`, never parsed as HTML
+  ([web UI](../../packages/plugins/web-ui/README.md)).
+- **MCP client configs leaking the bearer token.** Claude Code gets the header from
+  `system mcp-headers` (`headersHelper`) on each connection; Codex runs the stdio
+  shim `system mcp-stdio`, which reads the token file itself. Neither client config
+  holds the token.
+- **A prompt visible in the process list or shell history.** `system ask -` reads
+  the prompt from stdin; MCP calls carry prompts in request bodies, never in
+  arguments.
+- **A peer message carries prompt injection or claims authority ("the operator
+  approved this").** Peer messages are untrusted data; authority never comes from
+  messages (INV-6); policy and egress are checked on every message; only `approval`
+  artifacts from the operator grant approval.
+- **Telemetry or data leaving through host defaults.** DSH telemetry rows disabled
+  in the `system` profile; DeepSeek-specific defaults disabled unless configured
+  ([ADR-0018](../decisions/adr/0018-build-on-dsh-core.md)).
+- **Prompts kept indefinitely on disk.** The store is `0600`; finished turns, their
+  prompt text, and their receipts are deleted after `retainDays` (default 30), in
+  one transaction, while answers remain as artifacts holding the prompt hash only
+  ([INV-9](../architecture/invariants.md#inv-9-everything-is-bounded)).
+- **Local-private artifact bodies read from disk by another account or from a
+  backup.** The store and everything else under `<DSH_HOME>/system/` are `0600` in
+  `0700` directories; only credentials are encrypted at rest (vault). Full-disk or
+  home-directory encryption is recommended for hosts holding private data.
+- **A malicious or compromised plugin.** Plugins run in-process with full host
+  trust, so only operator-installed plugins from the profile are loaded; there is no
+  remote plugin installation; plugin packages are pinned in the lockfile.
+- **A supply-chain change in the browser stack or SDKs.** Committed lockfile
+  (installed with `--frozen-lockfile` in CI), one exact pinned DSH version, no
+  vendored binaries. A clean `pnpm audit` is a
+  [production-ready requirement](../requirements/release-scope.md#operational-readiness);
+  as a CI gate it is target only (not built).
+- **Provider terms or abuse controls lead to account loss.** Bounded per-account
+  concurrency; no evasion features; operator responsibility (CON-3).
 
 ## Out of scope (until a requirement exists)
 

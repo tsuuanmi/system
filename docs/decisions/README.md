@@ -13,6 +13,8 @@ architecture, design, source, and tests.
   explored or reviewed.
 - Create an ADR only for a durable architectural, contract, security, or
   operational decision.
-- Accepted ADRs are append-only history. A material replacement creates a
-  successor that explicitly supersedes the earlier record.
+- Accepted ADRs are append-only history. A clarification that leaves the
+  decision unchanged may be appended as a dated amendment
+  ([rule](../governance/documentation.md#amending-an-accepted-adr)); a material
+  replacement creates a successor that explicitly supersedes the earlier record.
 - Do not use ADRs as current-state design manuals.

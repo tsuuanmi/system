@@ -34,6 +34,25 @@ describe('claude-agent-sdk: the configured policy, exactly', () => {
     expect(await runtime(scripted(), null).probe()).toMatchObject({ available: false, detail: expect.stringMatching(/not installed/) })
   })
 
+  it('starts Claude Code without the daemon\'s credentials; a credential reaches it only when forwarded by name (INV-8)', async () => {
+    Object.assign(process.env, { SYSTEM_MCP_TOKEN: 'daemon-token', ANTHROPIC_API_KEY: 'daemon-key' })
+    try {
+      const calls: Call[] = []
+      await runtime(scripted(calls)).run({ prompt: 'x', workspace, sandbox: 'read-only' }, new AbortController().signal)
+      expect(calls[0]!.options.env).toMatchObject({ PATH: process.env.PATH })
+      expect(calls[0]!.options.env).not.toHaveProperty('SYSTEM_MCP_TOKEN')
+      expect(calls[0]!.options.env).not.toHaveProperty('ANTHROPIC_API_KEY')
+      const forwarded: Call[] = []
+      await new ClaudeAgentRuntime({ query: scripted(forwarded), executable: '/usr/bin/claude', forwardEnv: ['ANTHROPIC_API_KEY'] })
+        .run({ prompt: 'x', workspace, sandbox: 'read-only' }, new AbortController().signal)
+      expect(forwarded[0]!.options.env).toMatchObject({ ANTHROPIC_API_KEY: 'daemon-key' })
+      expect(forwarded[0]!.options.env).not.toHaveProperty('SYSTEM_MCP_TOKEN')
+    } finally {
+      delete process.env.SYSTEM_MCP_TOKEN
+      delete process.env.ANTHROPIC_API_KEY
+    }
+  })
+
   it('runs read-only: no prompts, no settings files, only the allowed tools, in the workspace', async () => {
     const calls: Call[] = []
     const result = await runtime(scripted(calls)).run({ prompt: 'review', workspace, sandbox: 'read-only', model: 'opus-x', maxTurns: 5, resume: 'h-0' }, new AbortController().signal)

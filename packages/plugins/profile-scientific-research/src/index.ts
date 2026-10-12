@@ -1,7 +1,7 @@
 /**
  * The scientific-research profile (REQ-WF-9): the second domain on the same engine, and the
- * architecture test. It ships with no engine change: its procedure is contributed through the
- * `profiles` seam (`ctx.workflow.template`), its structured steps through the engine's
+ * architecture test. It ships with no engine change: its procedure is contributed as workflow
+ * templates (`ctx.workflow.template`), its structured steps through the engine's
  * `resultSchema` (REQ-ART-5), its other checks through `ctx.workers.contract`, and its typed
  * artifacts through `ctx.artifacts`, from the engine's own event log.
  *

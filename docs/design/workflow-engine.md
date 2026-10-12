@@ -1,7 +1,15 @@
 # Workflow engine
 
 > Target state. Boundary: [orchestration](../architecture/components.md#orchestration).
-> Requirements: REQ-WF-1..9. Decision: [ADR-0004](../decisions/adr/0004-single-workflow-runtime.md).
+> Requirements: REQ-WF-1..11. Decision: [ADR-0004](../decisions/adr/0004-single-workflow-runtime.md).
+> Templates: [workflow templates](../reference/workflow-templates.md).
+>
+> Implemented in [`workflow`](../../packages/plugins/workflow/README.md); differs from target:
+> admission has preflight and a spec hash but no provenance or confirmation step; only `worker`
+> and `gate` nodes run (teams are unrolled into `worker` nodes); `RECOVERING` is not used;
+> a scheduler exception fails the run as `internal` (`CODE_FIX`) instead of blocking it;
+> handoff envelopes, the plan's side-effect classes, convergence blocker reports, and
+> re-planning after a superseded input are planned.
 
 There is one engine, and every multi-step job runs on it as an append-only DAG
 ([ADR-0012](../decisions/adr/0012-dag-execution-model.md)). It combines three
@@ -43,13 +51,36 @@ input bundle, and the output hashes of its dependencies.
 
 ## Execution loop
 
-```text
-reconcile → promote READY (deps COMPLETED; compute inputHash)
-         → for each runnable node (bounded concurrency):
-              result store hit on (run, node, inputHash) → commit, no execution
-              else start execution (lease + heartbeat) → route by executor
-                   → store result blob → commit outputReceipt under current generation
-         → apply graph growth → evaluate convergence → sleep until next wake
+```mermaid
+flowchart TD
+  R[reconcile unfinished nodes] --> P["promote READY: dependencies COMPLETED, prompt rendered, inputHash computed"]
+  P --> N{runnable node, within concurrency}
+  N -->|"execution for (run, node, attempt, inputHash) exists"| A[re-attach; nothing is sent again]
+  N -->|otherwise| S["start: lease and heartbeat, route by executor"]
+  A --> C[commit the output receipt under the current generation]
+  S --> C
+  C --> G[apply graph growth]
+  G --> V[evaluate convergence]
+  V --> W[sleep until the next wake]
+  W --> R
+```
+
+Node lifecycle (the states of [`workflow-node.v1.json`](../../schemas/workflow-node.v1.json)):
+
+```mermaid
+stateDiagram-v2
+  [*] --> WAITING
+  WAITING --> READY: every dependency COMPLETED
+  READY --> RUNNING: routed and started
+  READY --> BLOCKED: gate waits for the operator
+  BLOCKED --> COMPLETED: plan approved
+  BLOCKED --> FAILED: plan rejected
+  RUNNING --> COMPLETED: result accepted
+  RUNNING --> READY: retry (prompt never sent) or tier escalation
+  RUNNING --> FAILED: not retryable, bound reached, or stopped
+  FAILED --> READY: operator continue
+  COMPLETED --> WAITING: an input was superseded
+  COMPLETED --> [*]
 ```
 
 A scheduler exception moves the run to `BLOCKED` with `CODE_FIX_REQUIRED`. It
@@ -57,19 +88,19 @@ never crash-loops.
 
 ## Graph growth
 
-Each graph snapshot is acyclic. Loops are unrolled into new nodes with ordinal
-ids. Growth comes from two sources, and both are recorded as `graph-growth`
-decision artifacts:
+Each graph snapshot is acyclic. Loops are unrolled into new nodes with ordinal ids. Growth
+comes from two sources, and both are recorded as `graph-growth` decision artifacts:
 
-- **Profile rules** (static).
-- **`plan` artifacts** emitted by a planner node (dynamic). The engine validates
-  a plan (acyclic, admissible capabilities, within bounds) before appending its
-  nodes.
+- **`plan` artifacts** emitted by a planner node (dynamic). The engine validates a plan
+  (acyclic, admissible capabilities, within bounds) before appending its nodes.
+- **Engine rules** (static), the same for every profile. The one rule today is
+  **remediation**: when a node that requires the `review` capability is bound to an exact
+  subject, its assessment requests changes with blocking findings, and a step it depends on
+  wrote the change (`develop`), the engine appends a fix step (on that step's capabilities) and
+  a re-review bound to the new subject. Whatever waited for the review waits for both. Cycles are bounded by the engine
+  configuration `maxReviewCycles` (default 3, the first review included).
 
-Profiles declare growth rules. For example, when the implementation node reports a
-PR, the engine appends a review cycle bound to that PR's head SHA. When a review
-gate requires changes, it appends a remediation node. Growth is bounded, for
-instance at most 3 review cycles.
+A profile contributes templates only; it declares no growth rules of its own.
 
 ## Plan approval gate
 
@@ -77,8 +108,12 @@ A subgraph that holds write authority over a subject
 ([INV-15](../architecture/invariants.md#inv-15-one-writer-per-subject)) is
 preceded by a gate node:
 
-```text
-plan (read-only Workers: research, inspect) ─▶ plan artifact ─▶ gate: approval ─▶ write subgraph
+```mermaid
+flowchart LR
+  P["plan (read-only Workers: research, inspect)"] --> A[plan artifact]
+  A --> G{gate: approval}
+  G -->|approved| W[write subgraph]
+  G -->|rejected| F[run fails: plan_rejected]
 ```
 
 - The plan lists files or targets, intended changes, side-effect classes, and a
@@ -107,6 +142,11 @@ A review must report `reviewedSubject === currentSubject`, for example
 `reviewedHeadSha === pr.headSha`. Remediation must keep the subject's identity, such
 as the same PR, and must advance its version, such as a new head. The next cycle
 binds to the new version. Mismatches fail the gate.
+
+For a local agent's change, the subject is the working tree's git subject,
+`git:<HEAD>:<hash of every change on top>`. The `assessment` is stored only when it
+names that subject and the tree is still it, as an exact-subject `gate` decision;
+otherwise the step fails as `stale_subject`.
 
 ## Artifacts, lineage, invalidation
 
@@ -142,39 +182,3 @@ Cleanup is explicit and operator-only. A preview lists the affected runs, and
 deletion is keyed on the exact `runId` and `updatedAt`. What expires on its own
 is private text only: after a retention period, a finished run's input and
 rendered prompts are cleared, and the run and its records stay.
-
-## Built so far
-
-[`@tsuuanmi/system-workflow`](../../packages/plugins/workflow/README.md) runs
-templates from configuration (`ask`, `research` → `compact`, `investigate`,
-`panel`, `review`). It has:
-
-- preflight and a spec hash;
-- durable node records, and input receipts bound by `inputHash`;
-- routing of every `worker` node by its capabilities, then execution on the
-  admitted Worker's source, keyed by run, node, attempt, escalation, and input
-  hash;
-- acceptance through `ctx.workers`, with bounded tier escalation after a
-  rejection (an `escalation` decision);
-- bounded retries by disposition, never resending a submitted prompt;
-- leases, and recovery on restart;
-- graph growth from validated `plan` artifacts (`graph-growth` decisions), with
-  the plan approval gate (`approval` artifacts bound to the exact plan);
-- teams unrolled into members, rounds, and a synthesis
-  ([teams](teams.md#built-so-far));
-- operator `stop`, `continue` (one failed node, as a new attempt), `delete` (on
-  the exact previewed version), and `supersede` (lineage invalidation);
-- exact-subject review: a review of an agent's change is bound to the working
-  tree's git subject, `git:<HEAD>:<hash of every change on top>`. Its
-  `assessment` is stored only when it names that subject and the tree is still
-  it, as an exact-subject `gate` decision. Verified live on 2026-10-12: a
-  writable agent fixed a file, a read-only agent reviewed the exact change,
-  and the gate passed.
-- remediation cycles, the first profile growth rule: a review that requests
-  changes with blocking findings appends a fix and a re-review of the new
-  subject, bounded by `maxReviewCycles` (default 3);
-- wake-on-message for idle Worker sessions
-  ([sessions](sessions-and-messaging.md#built-so-far)).
-
-Other profile growth rules, handoff envelopes, and re-planning after a
-superseded input are not built yet. Team leads are built ([teams](teams.md#built-so-far)).

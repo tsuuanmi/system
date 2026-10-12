@@ -6,7 +6,10 @@
  * - every permission request is rejected;
  * - file reads are served inside the workspace only (symlinks resolved); no write and no
  *   terminal capability is advertised; no MCP server is passed;
- * - what ACP cannot express exactly (a tool list, a model, a turn limit) is refused.
+ * - what ACP cannot express exactly (a tool list, a model, a turn limit) is refused;
+ * - the agent starts without the daemon's credentials: only the variables the operator forwards
+ *   by name (`forwardEnv`) or sets (`env`) reach it (INV-8);
+ * - an aborted run cancels the prompt, then ends the agent: SIGTERM, then SIGKILL.
  * An agent can still act on its own without asking, so `read-only` is offered only for an
  * agent the operator vouches for in configuration (`honoursPermissions`, INV-6); any other
  * agent offers no sandbox and stays unavailable as a Worker.
@@ -19,7 +22,7 @@ import { Readable, Writable } from 'node:stream'
 import { type Client, ClientSideConnection, ndJsonStream, PROTOCOL_VERSION } from '@agentclientprotocol/sdk'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
-import type { AgentRuntimeProvider, RunResult, RunSpec, RuntimeEvidence } from '@tsuuanmi/system-agent-runtime-core'
+import { type AgentRuntimeProvider, type RunResult, type RunSpec, type RuntimeEvidence, childEnvironment } from '@tsuuanmi/system-agent-runtime-core'
 import { ProviderError, type ProviderErrorKind } from '@tsuuanmi/system-provider-core'
 
 export interface AcpAgentConfig {
@@ -27,7 +30,10 @@ export interface AcpAgentConfig {
   name: string
   command: string
   args?: string[]
+  /** Explicit environment for the agent (no secrets: they belong in `forwardEnv`). */
   env?: Record<string, string>
+  /** Daemon environment variables forwarded by name, such as an API key the agent needs. */
+  forwardEnv?: string[]
   /** The operator vouches that this agent asks permission before acting (default false). */
   honoursPermissions?: boolean
 }
@@ -35,11 +41,20 @@ export interface AcpAgentConfig {
 const PROBE_MS = 15_000
 const CLIENT_INFO = { name: 'system', version: '0.0.0' }
 
+export interface AcpTiming {
+  /** After an abort, how long the agent has to honour the cancel before it is ended (default 3 s). */
+  cancelMs?: number
+  /** After SIGTERM, how long before SIGKILL (default 5 s). */
+  killMs?: number
+}
+
 export class AcpAgentRuntime implements AgentRuntimeProvider {
   readonly kind: string
+  private readonly timing: Required<AcpTiming>
 
-  constructor(private readonly agent: AcpAgentConfig) {
+  constructor(private readonly agent: AcpAgentConfig, timing: AcpTiming = {}) {
     this.kind = `acp:${agent.name}`
+    this.timing = { cancelMs: 3000, killMs: 5000, ...timing }
   }
 
   async probe(): Promise<RuntimeEvidence> {
@@ -97,7 +112,7 @@ export class AcpAgentRuntime implements AgentRuntimeProvider {
     let sessionId: string | undefined
     const abort = (): void => {
       if (sessionId) void session.connection.cancel({ sessionId }).catch(() => undefined)
-      setTimeout(() => session.close(), 3000).unref()
+      setTimeout(() => session.close(), this.timing.cancelMs).unref()
     }
     signal.addEventListener('abort', abort, { once: true })
     try {
@@ -130,7 +145,7 @@ export class AcpAgentRuntime implements AgentRuntimeProvider {
   }
 
   private spawn(cwd: string, client: () => Client): { connection: ClientSideConnection; close: () => void; stderr: () => string } {
-    const child: ChildProcess = spawn(this.agent.command, this.agent.args ?? [], { cwd, env: { ...process.env, ...this.agent.env }, stdio: ['pipe', 'pipe', 'pipe'] })
+    const child: ChildProcess = spawn(this.agent.command, this.agent.args ?? [], { cwd, env: childEnvironment(this.agent.forwardEnv, this.agent.env), stdio: ['pipe', 'pipe', 'pipe'] })
     let stderr = ''
     child.stderr!.on('data', (chunk: Buffer) => {
       if (stderr.length < 4000) stderr += String(chunk)
@@ -151,7 +166,14 @@ export class AcpAgentRuntime implements AgentRuntimeProvider {
     return {
       connection: guard,
       close: () => {
-        if (child.exitCode === null && !child.killed) child.kill('SIGTERM')
+        if (child.exitCode !== null || child.signalCode !== null) return
+        child.kill('SIGTERM')
+        // An agent that ignores SIGTERM is killed, so nothing waits on it forever.
+        const kill = setTimeout(() => {
+          if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL')
+        }, this.timing.killMs)
+        kill.unref()
+        child.once('exit', () => clearTimeout(kill))
       },
       stderr: () => stderr.trim(),
     }
@@ -197,7 +219,8 @@ export const Config: z<Config> = z.object({
     name: z.string().pattern(/^[a-z][a-z0-9-]*$/).required(),
     command: z.string().required(),
     args: z.array(z.string()).default([]),
-    env: z.dict(z.string()).default({}),
+    env: z.dict(z.string()).default({}).description('Explicit environment for the agent (no secrets; use forwardEnv)'),
+    forwardEnv: z.array(z.string()).default([]).description('Daemon environment variables forwarded by name, such as an API key the agent needs'),
     honoursPermissions: z.boolean().default(false).description('The operator vouches that the agent asks permission before acting'),
   })).default([]).description('ACP agents, each registered as the runtime acp:<name>'),
 }) as unknown as z<Config>

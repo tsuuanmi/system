@@ -1,11 +1,9 @@
 # Code quality
 
-> Planned.
-
-- **Layering is enforced.** A package imports only from packages in the same layer
-  or a lower one ([layer map](../architecture/README.md#layer-map)). A lint rule
-  or dependency check in CI enforces this.
-- **Small modules.** Provider drivers, brokers, and engines are split by
+- **Layering.** A package imports only from packages in the same layer
+  or a lower one ([layer map](../architecture/README.md#layer-map)). No CI rule
+  checks this yet, so reviewers do.
+- **Small modules.** Provider drivers, gateways, and engines are split by
   mechanism. A file that grows past roughly 800 lines is a design smell to address.
   The reference repos' multi-thousand-line files are the counterexample.
 - **Typed failures.** Errors carry a failure class that maps to a retry

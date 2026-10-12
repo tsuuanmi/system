@@ -192,6 +192,13 @@ importers:
         version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@24.19.2)(vite@7.3.7(@types/node@24.19.2)(tsx@4.23.15)(yaml@2.9.1))
 
   packages/agent-runtime-core:
+    dependencies:
+      '@deepseek-ai/dsh-http-proxy':
+        specifier: 0.2.1-alpha.2
+        version: 0.2.1-alpha.2(@deepseek-ai/cordis@4.0.5-alpha.1)
+      '@deepseek-ai/dsh-subprocess':
+        specifier: 0.2.1-alpha.2
+        version: 0.2.1-alpha.2(@deepseek-ai/cordis@4.0.5-alpha.1)(@deepseek-ai/dsh-http-proxy@0.2.1-alpha.2(@deepseek-ai/cordis@4.0.5-alpha.1))
     devDependencies:
       '@deepseek-ai/cordis':
         specifier: 4.0.5-alpha.1
@@ -242,6 +249,9 @@ importers:
 
   packages/gateway-turns:
     dependencies:
+      '@tsuuanmi/system-gateway-core':
+        specifier: workspace:*
+        version: link:../gateway-core
       '@tsuuanmi/system-libs':
         specifier: workspace:*
         version: link:../libs
@@ -308,6 +318,9 @@ importers:
       '@tsuuanmi/system-artifacts':
         specifier: workspace:*
         version: link:../artifacts
+      '@tsuuanmi/system-egress':
+        specifier: workspace:*
+        version: link:../egress
       '@tsuuanmi/system-leases':
         specifier: workspace:*
         version: link:../leases
@@ -333,9 +346,6 @@ importers:
       '@tsuuanmi/system-agent-runtimes':
         specifier: workspace:*
         version: link:../agent-runtimes
-      '@tsuuanmi/system-egress':
-        specifier: workspace:*
-        version: link:../egress
       '@tsuuanmi/system-event-log':
         specifier: workspace:*
         version: link:../event-log
@@ -357,19 +367,6 @@ importers:
       '@tsuuanmi/system-store':
         specifier: workspace:*
         version: link:../store
-    devDependencies:
-      '@deepseek-ai/cordis':
-        specifier: 4.0.5-alpha.1
-        version: 4.0.5-alpha.1(@deepseek-ai/cordis-plugin-include@1.0.10-alpha.1)(@deepseek-ai/cordis-plugin-loader@1.0.6-alpha.1)
-      '@deepseek-ai/schemastery':
-        specifier: 3.18.5-alpha.1
-        version: 3.18.5-alpha.1
-
-  packages/plugins/blobs:
-    dependencies:
-      '@tsuuanmi/system-libs':
-        specifier: workspace:*
-        version: link:../../libs
     devDependencies:
       '@deepseek-ai/cordis':
         specifier: 4.0.5-alpha.1
@@ -481,6 +478,9 @@ importers:
 
   packages/plugins/gateway-anthropic:
     dependencies:
+      '@tsuuanmi/system-gateway-core':
+        specifier: workspace:*
+        version: link:../../gateway-core
       '@tsuuanmi/system-gateway-turns':
         specifier: workspace:*
         version: link:../../gateway-turns
@@ -506,6 +506,9 @@ importers:
 
   packages/plugins/gateway-responses:
     dependencies:
+      '@tsuuanmi/system-gateway-core':
+        specifier: workspace:*
+        version: link:../../gateway-core
       '@tsuuanmi/system-gateway-turns':
         specifier: workspace:*
         version: link:../../gateway-turns
@@ -920,6 +923,9 @@ importers:
 
   packages/plugins/web-ui:
     dependencies:
+      '@tsuuanmi/system-gateway-core':
+        specifier: workspace:*
+        version: link:../../gateway-core
       '@tsuuanmi/system-libs':
         specifier: workspace:*
         version: link:../../libs
@@ -1099,9 +1105,6 @@ importers:
       '@tsuuanmi/system-artifacts':
         specifier: workspace:*
         version: link:../plugins/artifacts
-      '@tsuuanmi/system-blobs':
-        specifier: workspace:*
-        version: link:../plugins/blobs
       '@tsuuanmi/system-browser-patchright':
         specifier: workspace:*
         version: link:../plugins/browser-patchright

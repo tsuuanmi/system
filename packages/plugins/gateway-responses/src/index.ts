@@ -12,7 +12,8 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import z from '@deepseek-ai/schemastery'
-import { DEFAULT_HOSTS, guard, readJson, type Tier, Threads, tierOf } from '@tsuuanmi/system-gateway-turns'
+import { assertSafeBind, LOOPBACK_HOSTS, readJsonBody } from '@tsuuanmi/system-gateway-core'
+import { guard, MAX_REQUEST_BYTES, type Tier, Threads, tierOf } from '@tsuuanmi/system-gateway-turns'
 import { conversationKey, type ResponseObject, type ResponsesRequest, responseOf, streamEvents, toolsOf, turnsOf } from './protocol.ts'
 
 export * from './protocol.ts'
@@ -37,7 +38,7 @@ export const inject = ['webServer', 'workflow', 'store']
 export const Config: z<Config> = z.object({
   path: z.string().default('/openai').description('Route prefix; Codex\'s model provider base_url is <origin><path>/v1'),
   tokenFile: z.string().description('Bearer token file (default: the MCP token)'),
-  allowedHosts: z.array(z.string()).default(DEFAULT_HOSTS),
+  allowedHosts: z.array(z.string()).default([...LOOPBACK_HOSTS]),
   models: z.dict(z.union(['economy', 'standard', 'frontier'])).default({}).description('Model-name patterns → tier'),
   classification: z.union(['public', 'operator-shared', 'local-private']).default('operator-shared').description('Classification of what the client sends'),
   timeoutMs: z.natural().min(1000).default(15 * 60_000),
@@ -69,7 +70,7 @@ export function apply(ctx: Context, config: Config = {}): void {
     if (path !== '/v1/responses') return error(res, 404, 'invalid_request_error', `unknown route ${path}`, 'not_found')
     let request: ResponsesRequest
     try {
-      request = await readJson(req) as ResponsesRequest
+      request = await readJsonBody(req, MAX_REQUEST_BYTES) as ResponsesRequest
       if (!request || typeof request.model !== 'string' || (typeof request.input !== 'string' && !Array.isArray(request.input))) {
         throw Object.assign(new Error('model and input are required'), { status: 400 })
       }
@@ -120,8 +121,12 @@ export function apply(ctx: Context, config: Config = {}): void {
     }
   }
 
-  ctx.effect(() => ctx.webServer.register({ kind: 'prefix', path: prefix, handler: (req, res) => void handle(req, res).catch((e: unknown) => {
-    if (!res.headersSent) error(res, 500, 'server_error', (e as Error).message)
-    else res.end()
-  }) }))
+  ctx.effect(() => {
+    // The token must not travel in clear text over a network (QA-5): no route on such a bind.
+    assertSafeBind({ protocol: ctx.webServer.protocol, host: ctx.webServer.host })
+    return ctx.webServer.register({ kind: 'prefix', path: prefix, handler: (req, res) => void handle(req, res).catch((e: unknown) => {
+      if (!res.headersSent) error(res, 500, 'server_error', (e as Error).message)
+      else res.end()
+    }) })
+  })
 }

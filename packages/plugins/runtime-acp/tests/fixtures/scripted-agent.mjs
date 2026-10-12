@@ -1,5 +1,6 @@
 // A scripted ACP agent over stdio, for tests. It answers `echo: <prompt>`; "permission" asks for
-// permission first, "read:<path>" asks the client to read a file, "hang" waits for a cancel.
+// permission first, "read:<path>" asks the client to read a file, "hang" waits for a cancel,
+// "stubborn" ignores both a cancel and SIGTERM, "env:<NAME>" answers with that variable.
 import { Readable, Writable } from 'node:stream'
 import { AgentSideConnection, ndJsonStream, PROTOCOL_VERSION } from '@agentclientprotocol/sdk'
 
@@ -23,6 +24,15 @@ new AgentSideConnection((conn) => ({
   async prompt({ sessionId, prompt }) {
     const text = prompt.map((b) => (b.type === 'text' ? b.text : '')).join('')
     const say = (t) => conn.sessionUpdate({ sessionId, update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: t } } })
+    if (text.includes('stubborn')) {
+      process.on('SIGTERM', () => undefined)
+      await new Promise(() => undefined)
+    }
+    const env = /env:(\S+)/.exec(text)
+    if (env) {
+      await say(`env: ${process.env[env[1]] ?? 'unset'}`)
+      return { stopReason: 'end_turn' }
+    }
     if (text.includes('hang')) {
       await new Promise((resolve) => cancelled.set(sessionId, resolve))
       return { stopReason: 'cancelled' }

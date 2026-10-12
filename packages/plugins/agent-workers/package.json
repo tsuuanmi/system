@@ -21,6 +21,7 @@
   "dependencies": {
     "@tsuuanmi/system-agent-runtime-core": "workspace:*",
     "@tsuuanmi/system-artifacts": "workspace:*",
+    "@tsuuanmi/system-egress": "workspace:*",
     "@tsuuanmi/system-leases": "workspace:*",
     "@tsuuanmi/system-libs": "workspace:*",
     "@tsuuanmi/system-provider-core": "workspace:*",

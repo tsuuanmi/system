@@ -6,7 +6,10 @@
 MVP subset. Every MCP `ask` and `research` call is a run on it; there is no
 second execution path (INV-1).
 
-- **Templates are configuration.**
+- **Templates are data.** The built-in ones are `ask`, `investigate`, `panel`,
+  `review`, and `deep-research`; profiles add theirs; config `templates` adds or
+  replaces any. Each one's nodes are listed in the
+  [workflow templates](../../../docs/reference/workflow-templates.md) reference.
   - `ask` is one node, `ask:1`. It takes the caller's tier and session.
   - `deep-research` is two nodes (the `research` procedure comes from the
     research profile, [`profile-scientific-research`](../profile-scientific-research/README.md)):
@@ -42,15 +45,17 @@ second execution path (INV-1).
       assessment names that subject and the working tree is still it. The
       `assessment@1.0` artifact is then stored, bound to the subject.
       Otherwise the step fails as `stale_subject`.
-  - **Remediation cycles** (a profile growth rule).
-    - An assessment that requests changes with blocking findings appends a
+  - **Remediation cycles** (an engine rule for every template, keyed on the
+    `review` capability).
+    - When a step that proves `review` is bound to an exact subject, and its
+      assessment requests changes with blocking findings, the engine appends a
       fix step, on the capabilities of the step that wrote the change. Its
       prompt is engine-composed and quotes the findings as data.
     - It then appends a re-review bound to the new subject. Whatever waited
       for the review waits for both.
-    - Cycles stop at `maxReviewCycles` reviews (default 3). Each choice, the
-      bound included, is a `graph-growth` decision
-      (`workflow.remediation`).
+    - Cycles stop at the engine config `maxReviewCycles` reviews (default 3,
+      the first included). Each choice, the bound included, is a
+      `graph-growth` decision (`workflow.remediation`).
   - `investigate` is a planner, `plan:1`, then `synthesis:1`. The planner's plan
     adds the research steps (graph growth), and the synthesis answers from their
     findings (`{{grown}}`).
@@ -211,8 +216,9 @@ second execution path (INV-1).
   - On start, unfinished runs resume. The turn runtime reconciles their turns.
   - A scheduler exception fails the run as `internal` (`CODE_FIX`) and never
     loops.
-- **Events:** `workflow.run.started|completed|failed` and
-  `workflow.node.started|running|retry|completed|failed`. A completed node's
+- **Events:** `workflow.run.started|completed|failed|continued|deleted`,
+  `workflow.node.started|retry|completed|failed|blocked|escalated|superseded`,
+  `workflow.graph.grown`, and `workflow.gate.opened|closed`. A completed node's
   event carries the Worker, tier, and quota class that served it.
 - **Read side:**
   - `get`, `wait`, and `records` read a run and its node records.
@@ -228,6 +234,9 @@ second execution path (INV-1).
   - `run { template, input, … }` starts any template, and waits like `ask`;
   - `approve { runId, verdict, note? }` gives the operator's verdict on a waiting plan;
   - `stop`, `continue`, `delete`, and `supersede` are the operator controls above;
+  - `drain` admits no new run (a new one is refused as `overloaded`) and
+    reports the runs still executing; call it again to poll. `resume` admits
+    runs again;
   - `research` returns at once;
   - `result` takes a `runId` and long-polls it;
   - `usage`;
@@ -255,8 +264,6 @@ second execution path (INV-1).
     ends; it is never dropped.
 - **Retention:** runs are deleted only by the operator (`delete`). After
   `retainDays`, a finished run's input text and rendered prompts are cleared.
-- **Not yet:**
-  - profile growth rules (growth comes only from plans);
-  - re-planning after a superseded input.
+- **Not yet:** re-planning after a superseded input.
 - **Injects:** `store`, `artifacts`, `eventLog`, `leases`, `egress`, `workers`, `workerSessions`;
   `mcp` is optional.

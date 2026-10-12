@@ -1,7 +1,15 @@
 # Provider turns
 
 > Target state. Boundary: [provider runtime](../architecture/components.md#provider-runtime).
-> Requirements: REQ-PRV-1..6, REQ-ACC-4..5.
+> Requirements: REQ-PRV-1..7, REQ-ACC-4..5.
+>
+> Implemented in [`turns`](../../packages/plugins/turns/README.md),
+> [`turn-receipts`](../../packages/plugins/turn-receipts/README.md),
+> [`provider-core`](../../packages/provider-core/README.md), and the drivers
+> [`provider-chatgpt-web`](../../packages/plugins/provider-chatgpt-web/README.md) and
+> [`provider-gemini-web`](../../packages/plugins/provider-gemini-web/README.md); differs from
+> target: the driver steps (open, mode, submit, binding, extract) run inside `ask`; turns are not
+> bound by provider turn id; large inputs and attachments are planned.
 
 ## Driver interface
 
@@ -9,21 +17,27 @@ Each website is a `ProviderDriver`. The runtime never branches on provider names
 ([ADR-0005](../decisions/adr/0005-provider-runtime-interface.md)).
 
 ```ts
-interface ProviderDriver {
-  readonly provider: string;                       // "chatgpt-web", "gemini-web", ...
-  checkAuth(page): Promise<AuthState>;
+interface ProviderDriver<Page> {                   // provider-core
+  readonly provider: string;                       // "chatgpt-web", "gemini-web"
+  readonly capabilities: readonly string[];        // proven by its tests, e.g. reason
+  readonly features?: readonly string[];           // per account, e.g. deep-research
+  probeFeatures?(page): Promise<string[]>;         // read from the site; sends nothing
+  readonly loginUrl: string;
+  readonly stateOrigins: readonly string[];
+  checkAuth(page): Promise<AuthState>;             // signed-in | signed-out | unknown
   identity(page): Promise<string>;                 // hashed before storage
-  ask(page, prompt, { conversation, binding?, mode?, feature?, deadlines?, beforeSend, onBinding }): Promise<AskResult>;
-  snapshot(page, binding): Promise<TurnSnapshot>;  // for reconciliation
-  // (target shape; the implemented contract is ProviderDriver in provider-core)
-  open(page, binding?: ConversationBinding): Promise<void>;
-  selectMode(page, mode: ModeRequest): Promise<VerifiedMode>;   // model, effort, deep research
-  snapshot(page): Promise<ProviderSnapshot>;      // turn ids, generating?, last response text
-  submit(page, prompt: PreparedPrompt): Promise<SubmitAck>;
-  canonicalBinding(page): Promise<ConversationBinding | undefined>;
-  extract(page, turn: TurnRef): Promise<Markdown>;
+  ask(page, prompt, { conversation, mode?, feature?, binding?, signal?, deadlines?,
+                      beforeSend?, onBinding? }): Promise<AskResult>;  // { text, binding, mode }
+  signIn?(page, credentials, code): Promise<void>; // credential login (ADR-0017)
+  snapshot(page, binding, { feature? }): Promise<TurnSnapshot>;     // for reconciliation
 }
 ```
+
+`ask` holds the whole turn: open the conversation (new, bound, or Temporary chat), select and
+read back the mode, insert and send the prompt, wait for completion, and read the answer as
+Markdown. `beforeSend` runs after the mode is verified and immediately before the send; the
+runtime writes the turn receipt there, and a throw sends nothing. `onBinding` reports a new
+persistent conversation's id as soon as it appears.
 
 Shared mechanics, which are the same for every driver, live in the runtime:
 receipts, completion, scheduling, auth-state write-back, and error
@@ -99,7 +113,10 @@ A receipt is persisted **before** submission. It binds:
 - status `SUBMITTED → COMPLETED`, with `responseHash` on completion.
 
 A receipt cannot be rebound to another conversation, and cannot be completed with
-content that differs from its hashes.
+content that differs from its hashes. It lives as long as its turn: when retention deletes a
+finished turn, its receipt goes in the same transaction
+([INV-9](../architecture/invariants.md#inv-9-everything-is-bounded)); the answer stays as an
+artifact.
 
 ## Reconciliation
 
@@ -118,8 +135,7 @@ A snapshot counts only on positive evidence. A conversation that has not
 rendered a user turn was not observed, and it is never read as "nothing new".
 For Deep research, only the run that follows the last prompt counts, and never
 its acknowledgement or plan. A reopened Gemini conversation whose plan was never
-started shows the prompt with no research after it, so it is never resent. Both rules come from a live restart on 2026-10-12, where a
-snapshot of a page that had not rendered yet chose RESUBMIT.
+started shows the prompt with no research after it, so it is never resent.
 
 This applies [INV-4](../architecture/invariants.md#inv-4-restart-is-reconciliation-not-replay)
 to provider turns.
@@ -134,7 +150,8 @@ to provider turns.
    continue on another model.
 4. Insert the prompt by a method that bypasses editor shortcuts, read it back, and
    compare hashes before sending.
-5. Bind the turn by provider turn id, not by display index.
+5. Bind the turn by provider turn id, not by display index (planned: today the
+   receipt binds the conversation and the response boundary).
 
 ## Two-clock completion
 
@@ -176,36 +193,56 @@ generation are still current. Otherwise the write is dropped
 
 ## Runtime (MVP slice 1)
 
-`@tsuuanmi/system-turns` (`ctx.turns`) runs one turn end to end, on the website
-Worker the workflow engine admitted. The details are in its
-[README](../../packages/plugins/turns/README.md):
+`ctx.turns` is the website Worker source: it runs one turn end to end on the website Worker
+the workflow engine admitted. The full path of a turn, from any entry point:
 
-- **Accept durably.** The turn is stored as `queued` before anything runs.
-- **Route.** `ctx.workers` admits one website Worker (an account at a tier) and
-  records `tier` and `route` decisions, or an `admission` decision when none
-  fits. A persistent session stays on its account.
-- **Schedule.** The account's scheduler runs the turn.
-- **Open.** A fresh context is built from the saved state.
-- **Run the driver.**
-  - The receipt is written in `beforeSend`.
-  - Completion binds the conversation, completes the receipt, and stores the
-    answer artifact in **one transaction**.
-- **Restart.** A submitted turn is reconciled. Persistent conversations are
-  bound as soon as their id appears, then reopened and snapshotted. Temporary ones
-  cannot be observed and end as AMBIGUOUS. A prompt is resent only on RESUBMIT,
-  within the bound.
+```mermaid
+sequenceDiagram
+  participant E as Entry (CLI, MCP, gateway)
+  participant W as Workflow engine
+  participant R as ctx.workers
+  participant T as Worker source (turns)
+  participant X as ctx.egress
+  participant S as Account scheduler
+  participant D as Driver (browser page)
+  E->>W: start(template, input)
+  W->>R: route(requirement)
+  R-->>W: admitted Worker, tier and route decisions
+  W->>T: start(key, Worker, prompt)
+  T->>T: store the turn as queued (durable)
+  T->>X: check(actual payload, classification)
+  X-->>T: egress decision (if denied, egress_denied and nothing is sent)
+  T->>S: runTurn(session), under the turn's lease
+  S->>D: fresh context from the saved state; ask(...)
+  D->>T: beforeSend writes the receipt (SUBMITTED)
+  D-->>T: answer, binding, verified mode
+  T->>T: one transaction binds, completes the receipt, stores the answer
+  T-->>W: execution completed
+  W->>R: accept(result, contract), an acceptance decision
+  W-->>E: run view with the answer
+```
 
-MCP contract (served by the [workflow engine](../../packages/plugins/workflow/README.md)):
+An agent Worker's run takes the same path through its own source,
+[`agent-workers`](../../packages/plugins/agent-workers/README.md), with a scheduler per Worker.
+The Worker is local but its model is remote, so the source checks the prompt at egress too,
+for the Worker class `agent`, before the agent starts.
+
+- **Route.** A persistent session stays on its account (session affinity).
+- **Restart.** A submitted turn is reconciled. Persistent conversations are bound as soon as
+  their id appears, then reopened and snapshotted. Temporary ones cannot be observed and end as
+  AMBIGUOUS. A prompt is resent only on RESUBMIT, within the bound.
+
+MCP contract (served by the [workflow engine](../../packages/plugins/workflow/README.md);
+exact shapes in [MCP tools](../reference/mcp-tools.md)):
 `ask { prompt, sessionId?, persist?, tier?, classification?, clientRequestId?, waitSeconds? }`
-returns the run view with `answer` once it is complete. Otherwise it returns
-`status: running` and a `runId`, which `result { runId, waitSeconds? }`
-long-polls. `research { question, sessionId?, classification?, clientRequestId? }`
-returns at once with a `runId` and a `sessionId`. The wait stays under common MCP
-client timeouts (at most 55 s).
+returns the run view with `answer` once it is complete. Otherwise it returns `status: running`
+and a `runId`, which `result { runId, waitSeconds? }` long-polls.
+`research { question, sessionId?, classification?, clientRequestId? }` returns at once with a
+`runId` and a `sessionId`. The wait stays under common MCP client timeouts (at most 55 s).
 
 ## Large inputs
 
-When a prompt exceeds the measured composer budget, the runtime either fails
+Planned. When a prompt exceeds the measured composer budget, the runtime either fails
 before opening a browser turn or, if the capability allows it, sends a multipart
 transfer. Each part carries complete records and must be acknowledged with its
 exact SHA-256 before the next one is sent. Any failure aborts the whole transfer.

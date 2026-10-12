@@ -16,7 +16,7 @@ const home = mkdtempSync(join(tmpdir(), 'system-e2e-'))
 const env = { ...process.env, DSH_HOME: home }
 let child: ChildProcess | undefined
 
-const ALLOWED_ROWS = ['timer', 'credentials', 'webserver', 'store', 'blobs', 'event-log', 'leases', 'artifacts', 'accounts', 'turn-receipts', 'display', 'browser', 'providers', 'provider-chatgpt-web', 'provider-gemini-web', 'login', 'egress', 'workers', 'turns', 'agent-runtimes', 'runtime-claude-agent-sdk', 'runtime-codex-sdk', 'runtime-acp', 'agent-workers', 'worker-sessions', 'workflow', 'profile-software-development', 'profile-scientific-research', 'gateway-anthropic', 'gateway-responses', 'web-ui', 'mcp-server']
+const ALLOWED_ROWS = ['timer', 'credentials', 'webserver', 'store', 'event-log', 'leases', 'artifacts', 'accounts', 'turn-receipts', 'display', 'browser', 'providers', 'provider-chatgpt-web', 'provider-gemini-web', 'login', 'egress', 'workers', 'turns', 'agent-runtimes', 'runtime-claude-agent-sdk', 'runtime-codex-sdk', 'runtime-acp', 'agent-workers', 'worker-sessions', 'workflow', 'profile-software-development', 'profile-scientific-research', 'gateway-anthropic', 'gateway-responses', 'web-ui', 'mcp-server']
 
 async function client2(url: string, token: string): Promise<Client> {
   const client = new Client({ name: 'e2e-2', version: '0' })
@@ -68,7 +68,7 @@ describe('system profile (e2e through dsh)', () => {
     const token = readFileSync(tokenFile).toString('base64url')
     await client.connect(new StreamableHTTPClientTransport(new URL(url), { requestInit: { headers: { authorization: `Bearer ${token}` } } }) as unknown as Transport)
     const status = await client.callTool({ name: 'status', arguments: {} })
-    expect(status.structuredContent).toMatchObject({ harness: 'system', store: 'ok', artifacts: 0, kernel: ['store', 'blobs', 'eventLog', 'leases', 'artifacts', 'credentials'], providers: ['chatgpt-web', 'gemini-web'] })
+    expect(status.structuredContent).toMatchObject({ harness: 'system', store: 'ok', artifacts: 0, kernel: ['store', 'eventLog', 'leases', 'artifacts', 'credentials'], providers: ['chatgpt-web', 'gemini-web'] })
     await client.close()
 
     const listed = execFileSync(process.execPath, [bin, 'account', 'list'], { env, encoding: 'utf8' })
@@ -80,7 +80,7 @@ describe('system profile (e2e through dsh)', () => {
 
     expect(existsSync(join(home, 'system', 'system.db'))).toBe(true)
     expect(existsSync(join(home, 'system', 'vault.key'))).toBe(true)
-    expect(existsSync(join(home, 'system', 'blobs'))).toBe(true)
+    expect(existsSync(join(home, 'system', 'blobs'))).toBe(false)
 
     const exited = new Promise((resolve) => child?.on('exit', resolve))
     child.kill('SIGTERM')

@@ -6,6 +6,7 @@
  * @module @tsuuanmi/system-agent-runtime-core
  */
 import { type Context, Service } from '@deepseek-ai/cordis'
+import { scrubbedParentEnv } from '@deepseek-ai/dsh-subprocess'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -76,4 +77,19 @@ export abstract class AgentRuntimes extends Service {
 
   /** Registered kinds, sorted. */
   abstract list(): string[]
+}
+
+/**
+ * The environment an agent runtime's child process starts with (INV-8): DSH's own scrub of the
+ * daemon environment (credential-shaped and `DSH_*` names removed; PATH, HOME, locale, proxy
+ * kept), then the variables the operator forwards by name (never by value in configuration,
+ * e.g. the gateway token a Codex Worker's model provider reads), then explicit values.
+ */
+export function childEnvironment(forward: readonly string[] = [], explicit: Record<string, string> = {}): Record<string, string> {
+  const env = scrubbedParentEnv()
+  for (const name of forward) {
+    const value = process.env[name]
+    if (value !== undefined) env[name] = value
+  }
+  return { ...env, ...explicit }
 }

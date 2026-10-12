@@ -1,12 +1,12 @@
 ---
 id: PROP-0001
 type: proposal
-status: accepted
+status: implementing
 owners: [tsuuanmi]
 created: 2026-10-11
 related-requirements: [REQ-ACC, REQ-PRV, REQ-WRK, REQ-TEAM, REQ-WF, REQ-GW, REQ-HOST]
-related-decisions: [ADR-0001, ADR-0002, ADR-0003, ADR-0004, ADR-0005, ADR-0006, ADR-0007, ADR-0008, ADR-0009, ADR-0010, ADR-0011, ADR-0012, ADR-0013, ADR-0014, ADR-0015, ADR-0016, ADR-0017, ADR-0018]
-implementation: []
+related-decisions: [ADR-0001, ADR-0002, ADR-0003, ADR-0004, ADR-0005, ADR-0006, ADR-0007, ADR-0008, ADR-0009, ADR-0010, ADR-0011, ADR-0012, ADR-0013, ADR-0014, ADR-0015, ADR-0016, ADR-0017, ADR-0018, ADR-0019, ADR-0020, ADR-0021, ADR-0022]
+implementation: [packages/system-bundle/cordis.patch.yml]
 ---
 
 # Proposal: Unified system architecture
@@ -97,8 +97,11 @@ The maintainer's guiding decisions for the unified system are:
 - Durable choices: ADR-0001 through ADR-0018. The host is DSH core ([ADR-0018](../decisions/adr/0018-build-on-dsh-core.md)).
 - Exact contracts: [`schemas/`](../../schemas/README.md) and [reference](../reference/README.md).
 
-Planned package layout (pnpm workspaces; the result is shipped as a DSH bundle). Each seam has a definition package, and
-each provider is its own plugin package. Dependencies follow the layer map:
+Package layout as proposed (pnpm workspaces; the result is shipped as a DSH
+bundle). Each seam has a definition package, and each provider is its own plugin
+package. Dependencies follow the layer map. The layout as built differs (no
+`blobs`, `website`, `exec`, `teams`, or `client-protocols` seam; one bundle); it is
+in [development](../engineering/development.md#workspace):
 
 ```text
 packages/
@@ -190,4 +193,6 @@ Accepted on 2026-10-11 by the maintainer (docs PR #2). ADR-0003 to ADR-0006 were
 
 ## Implementation
 
-Started: M0 spike (see [roadmap](roadmap.md)).
+Implementing. The [`system` bundle](../../packages/system-bundle/cordis.patch.yml)
+mounts every plugin built so far; milestone status and what remains are in the
+[roadmap](roadmap.md).

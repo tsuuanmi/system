@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process'
+import { generateKeyPairSync } from 'node:crypto'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -72,7 +73,8 @@ async function boot(agent: AgentRuntimeProvider, config: Config = { workers: [wo
 
 const requirement = (overrides: Partial<WorkRequirement> = {}): WorkRequirement => ({
   schema: 'work-requirement@1.0', objective: 'review the change', capabilities: ['review', 'local-data'],
-  data: { classification: 'local-private', refs: [] }, egressPolicy: 'egress.classification-and-secrets',
+  // An agent's model is remote: local-private never reaches it by default (INV-12).
+  data: { classification: 'operator-shared', refs: [] }, egressPolicy: 'egress.classification-and-secrets',
   tier: { min: 'economy', source: 'caller' }, acceptance: { contract: 'acceptance.answer' }, ...overrides,
 })
 
@@ -140,9 +142,31 @@ describe('ctx.workers source `agents`: agent runtimes as Workers', () => {
     expect(done).toMatchObject({ status: 'completed', submitted: true })
     expect(agent.runs).toEqual([{ prompt: 'look at it', workspace: WORKSPACE, sandbox: 'read-only', tools: ['Read', 'Grep'], model: 'model-x' }])
     const result = ctx.artifacts.get(done.result!)!
-    expect(result).toMatchObject({ kind: 'report', bodySchema: 'agent-result@1.1', classification: 'local-private' })
+    expect(result).toMatchObject({ kind: 'report', bodySchema: 'agent-result@1.1', classification: 'operator-shared' })
     expect(result.body).toMatchObject({ worker: 'agent:reviewer', runtime: 'scripted', sandbox: 'read-only', workspace: WORKSPACE, text: 'echo: look at it', nativeHandle: 'h-1' })
     expect(result.body).not.toHaveProperty('subject') // not a git repository
+  })
+
+  it('checks the prompt at egress before the agent starts: its model is remote, so a credential or local-private data never leaves (INV-12)', async () => {
+    const agent = new ScriptedAgent()
+    const { ctx } = await boot(agent)
+    const source = ctx.workers.source('agents')!
+    const shared = requirement()
+    const admitted = await ctx.workers.route(shared)
+    // Generated at run time: never a real secret in the repository.
+    const secret = String(generateKeyPairSync('rsa', { modulusLength: 1024 }).privateKey.export({ type: 'pkcs1', format: 'pem' }))
+    const leaked = await source.wait(source.start({ key: 'k-secret', worker: 'agent:reviewer', prompt: `debug this: ${secret}`, requirement: shared, decisions: admitted.decisions }).id, 10_000)
+    expect(leaked).toMatchObject({ status: 'failed', submitted: false, error: { kind: 'egress_denied' } })
+    // The egress decision is part of the run's decision chain (INV-13), as for website turns.
+    expect(leaked.decisions).toHaveLength(1)
+    expect(ctx.artifacts.get(leaked.decisions[0]!)!.body).toMatchObject({ outcome: { option: 'deny' } })
+    const local = requirement({ data: { classification: 'local-private', refs: [] } })
+    const privateRun = await source.wait(source.start({ key: 'k-private', worker: 'agent:reviewer', prompt: 'read the notes', requirement: local, decisions: (await ctx.workers.route(local)).decisions }).id, 10_000)
+    expect(privateRun).toMatchObject({ status: 'failed', submitted: false, error: { kind: 'egress_denied' } })
+    expect(agent.runs).toEqual([])
+    const fine = await source.wait(source.start({ key: 'k-fine', worker: 'agent:reviewer', prompt: 'look at it', requirement: shared, decisions: admitted.decisions }).id, 10_000)
+    expect(fine.status).toBe('completed')
+    expect(ctx.artifacts.get(fine.decisions[0]!)!.body).toMatchObject({ outcome: { option: 'allow' } })
   })
 
   it('treats an omitted or empty tool list as the runtime\'s minimal set, never as no tools (live 2026-10-12)', async () => {
@@ -354,7 +378,7 @@ describe('ctx.workers source `agents`: agent runtimes as Workers', () => {
   it('routes a review run to the local agent by capability, end to end through the engine', async () => {
     const agent = new ScriptedAgent()
     const { ctx } = await boot(agent)
-    const run = await ctx.workflow.wait(ctx.workflow.start({ template: 'review', input: 'Check the diff', classification: 'local-private' }).runId, 10_000)
+    const run = await ctx.workflow.wait(ctx.workflow.start({ template: 'review', input: 'Check the diff', classification: 'operator-shared' }).runId, 10_000)
     expect(run).toMatchObject({ status: 'completed', answer: 'echo: Check the diff', nodes: [{ nodeId: 'review:1', source: 'agents', worker: 'agent:reviewer', quotaClass: 'agent-plan' }] })
   })
 })

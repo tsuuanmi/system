@@ -8,12 +8,12 @@
  * - the API accepts a loopback host only, no foreign Origin, and the token in constant time.
  * @module @tsuuanmi/system-web-ui
  */
-import { createHash, timingSafeEqual } from 'node:crypto'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import z from '@deepseek-ai/schemastery'
+import { assertSafeBind, guardRequest, LOOPBACK_HOSTS, readJsonBody } from '@tsuuanmi/system-gateway-core'
 import { dshHome, readOrCreateSecretFile } from '@tsuuanmi/system-libs'
 import type {} from '@tsuuanmi/system-workflow'
 import { APP_CSS, APP_JS, PAGE } from './assets.ts'
@@ -28,7 +28,7 @@ export const name = 'web-ui'
 export const inject = ['webServer', 'workflow']
 export const Config: z<Config> = z.object({
   tokenFile: z.string().description('Bearer token file (default: the MCP token)'),
-  allowedHosts: z.array(z.string()).default(['127.0.0.1', 'localhost', '[::1]']).description('Host names the UI answers'),
+  allowedHosts: z.array(z.string()).default([...LOOPBACK_HOSTS]).description('Host names the UI answers'),
 }) as unknown as z<Config>
 
 const CSP = "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
@@ -36,8 +36,7 @@ const MAX_BODY = 16_384
 
 export function apply(ctx: Context, config: Config = {}): void {
   const token = readOrCreateSecretFile(config.tokenFile ?? join(dshHome(), 'system', 'mcp.token'), 32).toString('base64url')
-  const hosts = config.allowedHosts ?? ['127.0.0.1', 'localhost', '[::1]']
-  const digest = (value: string): Buffer => createHash('sha256').update(value).digest()
+  const hosts = config.allowedHosts ?? LOOPBACK_HOSTS
 
   const send = (res: ServerResponse, status: number, body: string, type: string): void => {
     res.writeHead(status, {
@@ -49,27 +48,14 @@ export function apply(ctx: Context, config: Config = {}): void {
 
   /** Loopback host, no foreign Origin, the bearer token: or the reason it is refused. */
   const refuse = (req: IncomingMessage): [number, string] | undefined => {
-    const host = (req.headers.host ?? '').replace(/:\d+$/, '')
-    if (!hosts.includes(host)) return [421, 'host not allowed']
-    const origin = req.headers.origin
-    if (origin !== undefined && origin !== `http://${req.headers.host}`) return [403, 'foreign origin']
-    const header = req.headers.authorization ?? ''
-    const presented = /^bearer /i.test(header) ? header.slice(7) : ''
-    if (!timingSafeEqual(digest(presented), digest(token))) return [401, 'missing or invalid token']
-    return undefined
+    const verdict = guardRequest(req, { token, allowedHosts: hosts, sameOrigin: true })
+    return verdict.ok ? undefined : [verdict.status, verdict.reason]
   }
 
   const readJson = async (req: IncomingMessage): Promise<Record<string, unknown>> => {
     if (!/^application\/json\b/.test(req.headers['content-type'] ?? '')) throw Object.assign(new Error('a JSON body is required'), { status: 415 })
-    let size = 0
-    const chunks: Buffer[] = []
-    for await (const chunk of req) {
-      size += (chunk as Buffer).length
-      if (size > MAX_BODY) throw Object.assign(new Error('body too large'), { status: 413 })
-      chunks.push(chunk as Buffer)
-    }
-    const value = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}') as unknown
-    if (!value || typeof value !== 'object' || Array.isArray(value)) throw Object.assign(new Error('a JSON object is required'), { status: 400 })
+    const value = (await readJsonBody(req, MAX_BODY)) ?? {}
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) throw Object.assign(new Error('a JSON object is required'), { status: 400 })
     return value as Record<string, unknown>
   }
 
@@ -112,5 +98,9 @@ export function apply(ctx: Context, config: Config = {}): void {
     return send(res, 404, 'not found', 'text/plain')
   }
 
-  ctx.effect(() => ctx.webServer.register({ kind: 'prefix', path: '/ui', handler }))
+  ctx.effect(() => {
+    // The token must not travel in clear text over a network (QA-5): no route on such a bind.
+    assertSafeBind({ protocol: ctx.webServer.protocol, host: ctx.webServer.host })
+    return ctx.webServer.register({ kind: 'prefix', path: '/ui', handler })
+  })
 }

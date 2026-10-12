@@ -58,6 +58,24 @@ describe('codex-sdk runtime (REQ-WRK-5, REQ-WRK-6)', () => {
     expect(s.lastClient.env).toMatchObject({ SYSTEM_MCP_TOKEN: 't', PATH: process.env.PATH })
   })
 
+  it('starts codex without the daemon\'s credentials; a credential reaches it only when forwarded by name (INV-8)', async () => {
+    Object.assign(process.env, { SYSTEM_MCP_TOKEN: 'daemon-token', OPENAI_API_KEY: 'daemon-key' })
+    try {
+      const plain = scripted()
+      await runtime(plain).run({ prompt: 'x', workspace: '/w', sandbox: 'read-only' }, new AbortController().signal)
+      expect(plain.lastClient.env).toMatchObject({ PATH: process.env.PATH })
+      expect(plain.lastClient.env).not.toHaveProperty('SYSTEM_MCP_TOKEN')
+      expect(plain.lastClient.env).not.toHaveProperty('OPENAI_API_KEY')
+      const forwarded = scripted()
+      await runtime(forwarded, { forwardEnv: ['SYSTEM_MCP_TOKEN'] }).run({ prompt: 'x', workspace: '/w', sandbox: 'read-only' }, new AbortController().signal)
+      expect(forwarded.lastClient.env).toMatchObject({ SYSTEM_MCP_TOKEN: 'daemon-token' })
+      expect(forwarded.lastClient.env).not.toHaveProperty('OPENAI_API_KEY')
+    } finally {
+      delete process.env.SYSTEM_MCP_TOKEN
+      delete process.env.OPENAI_API_KEY
+    }
+  })
+
   it('refuses what Codex cannot express exactly: a tool allow-list or a turn limit, before running', async () => {
     const s = scripted()
     await expect(runtime(s).run({ prompt: 'x', workspace: '/w', sandbox: 'read-only', tools: ['Read'] }, new AbortController().signal)).rejects.toMatchObject({ kind: 'config_error' })

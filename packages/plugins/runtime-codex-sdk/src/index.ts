@@ -7,6 +7,8 @@
  *   the sandbox refuses fails instead of waiting for a person;
  * - commands run inside the same sandbox, so a writable Codex Worker can also `validate`;
  * - network access and web search are off;
+ * - the `codex` process starts without the daemon's credentials: only the variables the operator
+ *   forwards by name (`forwardEnv`) or sets (`env`) reach it (INV-8);
  * - Codex has no per-tool allow-list and no turn limit: a configured `tools` or `maxTurns` is
  *   refused, not ignored.
  * Codex's own configuration (its model provider and model) is the operator's, passed as
@@ -21,7 +23,7 @@ import { promisify } from 'node:util'
 import { Codex, type CodexOptions, type ThreadEvent, type ThreadOptions } from '@openai/codex-sdk'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
-import type { AgentRuntimeProvider, RunResult, RunSpec, RuntimeEvidence } from '@tsuuanmi/system-agent-runtime-core'
+import { type AgentRuntimeProvider, type RunResult, type RunSpec, type RuntimeEvidence, childEnvironment } from '@tsuuanmi/system-agent-runtime-core'
 import { ProviderError } from '@tsuuanmi/system-provider-core'
 
 /** The part of a Codex thread a run uses (the SDK's `Thread`, or a test double). */
@@ -40,8 +42,10 @@ export interface RuntimeOptions {
   executable?: string | undefined
   /** Codex `--config` overrides, such as its model provider (operator configuration). */
   config?: Record<string, unknown> | undefined
-  /** Extra environment for the `codex` process, such as the variable a provider's `env_key` names. */
+  /** Explicit environment for the `codex` process (no secrets: they belong in `forwardEnv`). */
   env?: Record<string, string> | undefined
+  /** Daemon environment variables forwarded by name, such as the one a provider's `env_key` names. */
+  forwardEnv?: string[] | undefined
   client?: (options: CodexOptions) => CodexClient
   findExecutable?: () => string | undefined
   version?: (executable: string) => Promise<string>
@@ -75,7 +79,7 @@ export class CodexRuntime implements AgentRuntimeProvider {
     const client = (this.options.client ?? ((options) => new Codex(options)))({
       codexPathOverride: executable,
       ...(this.options.config ? { config: this.options.config as NonNullable<CodexOptions['config']> } : {}),
-      ...(this.options.env ? { env: { ...inherited(), ...this.options.env } } : {}),
+      env: childEnvironment(this.options.forwardEnv, this.options.env),
     })
     const thread: ThreadOptions = {
       workingDirectory: spec.workspace, sandboxMode: spec.sandbox, approvalPolicy: 'never', skipGitRepoCheck: true,
@@ -104,11 +108,6 @@ export class CodexRuntime implements AgentRuntimeProvider {
   }
 }
 
-/** The environment the `codex` process inherits when extra variables are given (the SDK then inherits nothing). */
-function inherited(): Record<string, string> {
-  return Object.fromEntries(Object.entries(process.env).filter((e): e is [string, string] => typeof e[1] === 'string'))
-}
-
 function findOnPath(command: string): string | undefined {
   for (const dir of (process.env.PATH ?? '').split(delimiter)) {
     if (!dir) continue
@@ -132,6 +131,7 @@ export interface Config {
   executable?: string
   config?: Record<string, unknown>
   env?: Record<string, string>
+  forwardEnv?: string[]
 }
 
 export const name = 'runtime-codex-sdk'
@@ -139,9 +139,10 @@ export const inject = ['agentRuntimes']
 export const Config: z<Config> = z.object({
   executable: z.string().description('Path to the codex executable (default: found on PATH)'),
   config: z.dict(z.any()).description('Codex --config overrides, such as model_provider and model_providers (operator configuration)'),
-  env: z.dict(z.string()).description('Extra environment for the codex process, such as the variable a provider env_key names'),
+  env: z.dict(z.string()).description('Explicit environment for the codex process (no secrets; use forwardEnv)'),
+  forwardEnv: z.array(z.string()).description('Daemon environment variables forwarded by name, such as the one a provider env_key names'),
 })
 
 export function apply(ctx: Context, config: Config = {}): void {
-  ctx.agentRuntimes.register(new CodexRuntime({ executable: config.executable, config: config.config, env: config.env }))
+  ctx.agentRuntimes.register(new CodexRuntime({ executable: config.executable, config: config.config, env: config.env, forwardEnv: config.forwardEnv }))
 }

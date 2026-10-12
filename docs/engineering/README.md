@@ -3,9 +3,6 @@
 This area covers **how `system` is built and delivered**: developer setup, code
 quality, testing, and CI.
 
-> Planned. No code exists yet. These documents set the expectations M0 will
-> implement ([roadmap](../proposals/roadmap.md)).
-
 | Document | Owns |
 |---|---|
 | [development.md](development.md) | toolchain, workspace layout, local commands |

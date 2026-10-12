@@ -6,13 +6,12 @@
 > Invariants: [INV-10](invariants.md#inv-10-everything-is-a-plugin),
 > [INV-11](invariants.md#inv-11-no-tool-lock-in).
 
-`system` follows the **Everything Is A Plugin** philosophy of DeepSeek Harness,
-and is built **on DSH core**. `system` is its own harness: a DSH bundle and
-profile that mounts only the DSH core rows it uses (no `dsh-base`), running on
-the same plugin runtime,
-[Cordis](../research/dsh-analysis.md). Every part of the product is a plugin, including the store, the provider drivers, the
-router, the workflow engine, and each gateway. There is no privileged core to
-patch. You extend `system` by mounting a plugin beside the others, and every
+`system` follows the **Everything Is A Plugin** philosophy of DeepSeek Harness, and is built
+**on DSH core**. `system` is its own harness: a DSH bundle and profile that mounts only the DSH
+core rows it uses (no `dsh-base`), running on the same plugin runtime,
+[Cordis](../research/dsh-analysis.md). Every part of the product is a plugin, including the
+store, the provider drivers, the router, the workflow engine, and each gateway. There is no
+privileged core to patch. You extend `system` by mounting a plugin beside the others, and every
 registration is an effect that unwinds when its plugin unloads.
 
 ## Vocabulary
@@ -28,138 +27,142 @@ registration is an effect that unwinds when its plugin unloads.
 
 ## Seam catalog
 
-Each architectural boundary in [components](components.md) is published as one or
-more seams. The providers listed are the planned first implementations. Others
-can be added without changing consumers.
+Each architectural boundary in [components](components.md) is published as one or more seams.
+Status is one word: **built**, **planned**, or **not planned**. Who injects what is generated
+from the code in [packages](packages.md); this table names the roles.
 
-| Layer | Seam (`ctx.*`) | Planned providers | Main consumers |
-|---|---|---|---|
-| Kernel | `store` | `@tsuuanmi/system-store` (`system` tables on `node:sqlite`) | every stateful plugin |
-| Kernel | `blobs` | `@tsuuanmi/system-blobs` (DSH `ctx.attachments` is prompt-attachment oriented, so not reused) | workflow, website |
-| Kernel | `artifacts` (envelope, ids, lineage, schema validation, explain) | `@tsuuanmi/system-artifacts` | every producer of results or decisions |
-| Kernel | `eventLog` (named so because Cordis owns `ctx.events`) | `@tsuuanmi/system-event-log` | CLI, Web UI, observability |
-| Kernel | `leases` | `@tsuuanmi/system-leases` | scheduler, workflow |
-| Provider runtime | `browser` (`openTurn`, `capture`, `close`; ours to define, since DSH `ctx.browserUse` only names a model-facing tool provider) | `@tsuuanmi/system-browser-patchright` | provider drivers, remote login |
-| Provider runtime | `display` (abstract `Display` in `@tsuuanmi/system-provider-core`; `prepare('invisible' \| 'visible')`, where `visible` is the operator's `DISPLAY` for every provider) | `@tsuuanmi/system-display-virtual` (Xvfb, Linux), `display-offscreen` (v1.0); never headless | browser ([browser runtime](../design/browser-runtime.md)) |
-| Provider runtime | `login` (login profiles, Save) | `@tsuuanmi/system-login` | operators (`account_save`), remote login |
-| Provider runtime | `accounts` | `@tsuuanmi/system-accounts` (records and credentials as encrypted grants in **DSH** `ctx.credentials`, provided by `@tsuuanmi/system-credentials-vault`) | provider runtime, admission |
-| Routing | `egress` (INV-12: classification policy per Worker class + credential scan of the actual payload; `egress` decisions) | `@tsuuanmi/system-egress` | the turn runtime, before routing |
-| Provider runtime | `turns` (the website Worker runtime: durable turns, the `website` Worker source that the engine starts work through, scheduling, receipts) | `@tsuuanmi/system-turns` | `ctx.workers` (as a source), so the workflow engine |
-| Provider runtime | `turnReceipts` | `@tsuuanmi/system-turn-receipts` | provider drivers, recovery |
-| Provider runtime | `providers` (driver registry) | `@tsuuanmi/system-providers` registry; drivers: `@tsuuanmi/system-provider-chatgpt-web`, `provider-gemini-web` | website capability |
-| Capabilities | `website` | `website-core` | Worker providers |
-| Capabilities | `exec` | **DSH** `ctx.shell` / `ctx.fs` / `ctx.sandbox` / `ctx.subprocess` (local, sandbox, SSH) | local-tools Worker |
-| Capabilities | `models` (API and local model providers) | **DSH** `ctx.llm` (`llm-pi-ai`: OpenAI-compatible and others) | Worker providers, especially `economy`-tier jobs ([purpose P4](../requirements/purpose.md#p4-cheap-models-do-low-level-work-strong-models-do-hard-work)) |
-| Capabilities | `agentRuntimes` (definition `AgentRuntimes` in `@tsuuanmi/system-agent-runtime-core`; registry `@tsuuanmi/system-agent-runtimes`) | `@tsuuanmi/system-runtime-claude-agent-sdk`, `@tsuuanmi/system-runtime-codex-sdk`, `@tsuuanmi/system-runtime-acp` | `@tsuuanmi/system-agent-workers`, the `agents` Worker source ([agent runtimes](../design/agent-runtimes.md)) |
-| Routing | `workers` (Worker sources, fail-closed admission, deterministic router, acceptance contracts; definition `Workers` in `@tsuuanmi/system-workers-core`) | `@tsuuanmi/system-workers` | the turn runtime (route), the workflow engine (accept) |
-| Orchestration | `workflow` (MVP subset: static DAG templates, durable nodes, acceptance, retries, recovery; drain and resume (REQ-HOST-1); MCP `ask`, `research`, `result`, `usage`, `explain`) | `@tsuuanmi/system-workflow` | MCP clients, CLI |
-| Orchestration | `workerSessions` (Worker sessions, groups, mailboxes, peer messages under policy and barriers; MCP `session_send`, `session_inbox`) | `@tsuuanmi/system-worker-sessions` | the workflow engine (panel teams), MCP clients ([design](../design/sessions-and-messaging.md)) |
-| Orchestration | `teams` | `team-runner` | workflow |
-| Orchestration | `profiles` (domain procedures; definition `ctx.workflow.template(name, nodes)` in `@tsuuanmi/system-workflow`, conformance `conformance/profiles.ts`) | `@tsuuanmi/system-profile-software-development` (`develop`), `@tsuuanmi/system-profile-scientific-research` (`research`, `research-deep`; built with no engine change, REQ-WF-9) | workflow |
-| Gateways | `clientProtocols` (shared turn broker) | `@tsuuanmi/system-gateway-anthropic`, `@tsuuanmi/system-gateway-responses` (built without the broker; they share `@tsuuanmi/system-gateway-turns`, the text protocol of [ADR-0022](../decisions/adr/0022-text-protocol-tool-calls-for-website-models.md)) | — (edge) |
-| Gateways | `mcp` (tools contributed by plugins for their lifetime; definition `McpTools` in `@tsuuanmi/system-gateway-core`) | `@tsuuanmi/system-mcp-server` (own; DSH has only an MCP client) | plugins that expose operations: `login` (`account_list`, `account_save`), `workflow` (`ask`, `research`, `result`, `usage`, `explain`) |
-| Gateways | — (consumers only) | `cli` (wrapper around `dsh --profile system`), `@tsuuanmi/system-web-ui` (operator UI at `/ui` on the DSH webserver; the DSH web app is the v1.0 option), later `gateway-a2a` | — (edge) |
+| Layer | Seam (`ctx.*`) | Status | Definition and providers | Main consumers |
+|---|---|---|---|---|
+| Kernel | `store` | built | `system-store` (`node:sqlite`, WAL) | every stateful plugin |
+| Kernel | `artifacts` | built | `system-artifacts`: envelope, ids, lineage, schema validation, decisions | every producer of results or decisions |
+| Kernel | `eventLog` | built | `system-event-log` (named so because Cordis owns `ctx.events`) | append: workflow, turns, provider-chatgpt-web; listen: profile-scientific-research |
+| Kernel | `leases` | built | `system-leases` (generations, fencing) | workflow, turns, agent-workers |
+| Kernel | `credentials` | built | definition: **DSH** `dsh-credentials`; provider: `system-credentials-vault` (encrypted at rest) | accounts |
+| Provider runtime | `display` | built | `Display` in `system-provider-core`; `system-display-virtual` (Xvfb) | browser |
+| Provider runtime | `browser` | built | `Browser` in `system-provider-core`; `system-browser-patchright` | turns, login |
+| Provider runtime | `providers` | built | `ProviderRegistry` in `system-provider-core`; registry `system-providers`; drivers `provider-chatgpt-web`, `provider-gemini-web` register into it | turns, login |
+| Provider runtime | `accounts` | built | `system-accounts` (records and grants in `ctx.credentials`) | turns, login |
+| Provider runtime | `login` | built | `system-login`: login profiles, Save, remote login, credential sign-in | operators (MCP `account_*`), turns |
+| Provider runtime | `turnReceipts` | built | `system-turn-receipts` | turns |
+| Capabilities | `turns` | built | `system-turns`: the `website` Worker source | `ctx.workers`, through the source it registers |
+| Capabilities | `agentRuntimes` | built | `AgentRuntimes` in `system-agent-runtime-core`; registry `system-agent-runtimes`; providers `runtime-claude-agent-sdk`, `runtime-codex-sdk`, `runtime-acp` | agent-workers |
+| Capabilities | `agentWorkers` | built | `system-agent-workers`: the `agents` Worker source | `ctx.workers`, through the source it registers |
+| Capabilities | `models` | planned | **DSH** `ctx.llm` (`llm-pi-ai`) behind a `system` seam | economy-tier Workers ([purpose P4](../requirements/purpose.md#p4-cheap-models-do-low-level-work-strong-models-do-hard-work)) |
+| Routing | `workers` | built | `Workers` in `system-workers-core`; `system-workers` | workflow; profile-scientific-research adds acceptance contracts |
+| Routing | `egress` | built | `system-egress`: classification policy and credential scan (INV-12) | turns, agent-workers, workflow |
+| Orchestration | `workflow` | built | `system-workflow`; templates through `ctx.workflow.template` | gateways, web-ui, profiles |
+| Orchestration | `workerSessions` | built | `system-worker-sessions` ([design](../design/sessions-and-messaging.md)) | workflow |
+| Gateways | `mcp` | built | `McpTools` in `system-gateway-core`; `system-mcp-server` (own: DSH has only an MCP client) | tool contributors: login, turns, workflow, worker-sessions; mcp-server adds `status` |
+| Host | `webServer` | built | **DSH** `dsh-host-webserver` (loopback) | mcp-server, gateway-anthropic, gateway-responses, web-ui |
+| — | `website` (Website Core) | not planned | replaced by `ctx.turns` and the engine's request keys and result reuse | — |
+| — | `exec` (local tools) | not planned | agent runtimes run commands inside their own sandbox | — |
+| — | `teams` | not planned | the `team` option of workflow nodes, unrolled by the engine; members are Worker sessions ([teams](../design/teams.md)) | — |
+| — | `profiles` | not planned | profile plugins contribute templates through `ctx.workflow.template` | — |
+| — | `clientProtocols` (turn broker) | not planned | gateways are plain plugins that share the `gateway-turns` library ([ADR-0022](../decisions/adr/0022-text-protocol-tool-calls-for-website-models.md)) | — |
 
-Gateways only consume services, so they are plain plugins with no seam of their
-own. The exception is the shared turn broker that the two client-protocol
-gateways use ([gateways](../design/gateways.md)).
+Gateways (`gateway-anthropic`, `gateway-responses`, `web-ui`, the CLI) only consume services,
+so they are plain plugins with no seam of their own. The two client-protocol gateways share
+the library `gateway-turns`: the text tool protocol and threads bound to provider
+conversations ([gateways](../design/gateways.md)). Every client endpoint, MCP included, shares
+the request guard in the library part of `system-gateway-core`.
 
 ## What is not a plugin
 
-A plugin exists only when something can really be swapped or scoped. These stay
-**libraries**: canonical JSON and hashing, the pure reconciliation decision
-function, the failure-class taxonomy, the timeout and deadline primitives, and the
-record schemas. These pieces have exactly one correct answer per process, and
-turning them into services would make the kernel "know too much".
+A plugin exists only when something can really be swapped or scoped. These stay **libraries**:
+canonical JSON and hashing, the pure reconciliation decision function, the failure-class
+taxonomy, the timeout and deadline primitives, the per-account scheduler, the UI engine, and
+the record schemas. These pieces have exactly one correct answer per process, and turning them
+into services would make the kernel "know too much".
 
-A plugin that registers only event listeners, such as a policy hook, is a plugin
-but not a seam.
+A plugin that registers only event listeners, such as a policy hook, is a plugin but not a
+seam.
 
 ## DSH core reuse map
 
-This table is the canonical **allow-list of DSH rows** that `system` mounts. The
-`system` bundle inserts exactly these rows. It does **not** use `dsh-base`,
-which mounts 94 rows ([ADR-0019](../decisions/adr/0019-explicit-minimal-dsh-core.md)).
-DSH services reach `system` domain plugins only through `system` seams or
-`system-dsh-*` adapter plugins (lock-in safeguard 1 of
-[ADR-0018](../decisions/adr/0018-build-on-dsh-core.md)). Adding a row updates
-this table and the composition test that asserts the exact row set.
+This table is the canonical **allow-list of DSH rows** that `system` mounts. The `system` bundle
+inserts exactly the **mounted** rows. It does **not** use `dsh-base`, which mounts 94 rows
+([ADR-0019](../decisions/adr/0019-explicit-minimal-dsh-core.md)). DSH services reach `system`
+domain plugins only through `system` seams or `system-dsh-*` adapter plugins (lock-in safeguard
+1 of [ADR-0018](../decisions/adr/0018-build-on-dsh-core.md)). Adding a row updates this table
+and the composition test that asserts the exact row set.
 
-| Stage | DSH row (package) | Serves | Risk |
+| Status | DSH row (package) | Serves | Notes |
 |---|---|---|---|
-| **slice 1** | `timer` (`@deepseek-ai/cordis-plugin-timer`) | deadlines, idle close, heartbeats | low |
-| **slice 1** | `credentials` (`dsh-credentials` seam + a provider that encrypts at rest; `dsh-credentials-local` stores plain YAML, so it is used only in `dev`) | secrets for `ctx.accounts` | medium |
-| **slice 1** | `webserver` (`dsh-host-webserver`, loopback) | MCP Streamable HTTP endpoint, admin API | medium |
-| M2 | `approval`, `user-questions` (`dsh-user-approval`, `dsh-user-questions`) | plan-approval gate (REQ-WF-11), `NEEDS_HUMAN`, `INPUT_REQUIRED` | low–medium |
-| Beta | `llm`, `llm-pi-ai`, `llm-retry` | `ctx.models`, the economy tier (P4) | low |
-| Beta | `subprocess`, `sandbox`, `sandbox-policy`, `shell`/`fs` providers | `ctx.exec` for local-tool Workers | low–medium |
-| Beta (optional) | `hmr` | development reloads | low |
-| v1.0 | `dsh-web-app` rows, `dsh-client-ui-*` | operator Web UI | high (churn) |
-| v1.0 (optional) | `dsh-acp` | ACP editor client gateway | medium |
-| **never inserted** | telemetry (`otel`, `session-telemetry-otel`), DeepSeek account and default-model rows, agent loop, session log, tools, compaction, goals, skills, web search, plugin manager, config editor | not needed by `system`; inserted later only when a requirement asks for them | — |
-| **not provided by DSH; `system` builds it** | — | durable DAG engine, artifacts and decision records, leases, Worker routing, Worker sessions and mailbox, resumable agent runtimes, provider runtime (browser, display, accounts vault, drivers, receipts), MCP server, Responses and Messages gateways, records on `node:sqlite` | — |
-| **avoided** (experimental) | agent teams, hook bridges, browser-use and computer-use providers, webhooks | — | high |
+| **mounted** | `timer` (`@deepseek-ai/cordis-plugin-timer`) | the Cordis `timer` service | no `system` plugin injects it ([packages](packages.md)) |
+| **mounted** | `credentials` (`dsh-credentials` seam) | secrets for `ctx.accounts` | provided by `system-credentials-vault`; `dsh-credentials-local` (plain YAML) is not used in any composition |
+| **mounted** | `webserver` (`dsh-host-webserver`) | `/mcp`, `/anthropic`, `/openai`, `/ui` | loopback `127.0.0.1:47317` |
+| not mounted | `approval`, `user-questions` | — | plan approval is the engine's own `approval@1.0` artifact bound to the exact plan |
+| not mounted | `attachments` (`dsh-attachment-local`) | — | depends on the native `sharp`, requires a display name, and is not an allow-listed row |
+| planned | `llm`, `llm-pi-ai`, `llm-retry` | `ctx.models`, the economy tier (P4) | — |
+| planned (optional) | `dsh-acp` | ACP editor client gateway | — |
+| optional | `hmr` | development reloads | — |
+| not mounted | `subprocess`, `sandbox`, `sandbox-policy`, `shell`/`fs` providers | — | no `exec` seam; agent runtimes run commands in their own sandbox. `agent-runtime-core` imports only the `dsh-subprocess` library function `scrubbedParentEnv` for agent child environments |
+| not mounted | `dsh-web-app` rows, `dsh-client-ui-*` | — | needs `dsh-base`; the operator UI is the small `/ui` page of `system-web-ui` |
+| not mounted | `dsh-subagent-claude-code`, `-codex`, `-acp` | — | one-shot, no resume or probe, sandbox not held exactly; `ctx.agentRuntimes` uses the official SDKs ([dependency register](../engineering/dependencies.md)) |
+| **never inserted** | telemetry (`otel`, `session-telemetry-otel`), DeepSeek account and default-model rows, agent loop, session log, tools, compaction, goals, skills, web search, plugin manager, config editor | — | inserted only when a requirement asks for them |
+| **avoided** (experimental) | agent teams, hook bridges, browser-use and computer-use providers, webhooks | — | — |
+| **not provided by DSH** | — | everything else in the [seam catalog](#seam-catalog) | `system` builds it ([dependency register](../engineering/dependencies.md)) |
 
 One exact DSH version is pinned for every row.
 
 ## Composition
 
-`system` is launched as a DSH profile, through the `system` CLI wrapper, which
-runs `dsh --profile system`. What runs is decided entirely by configuration:
+`system` is launched as a DSH profile through the `system` CLI wrapper: `system start` runs
+`dsh --profile system`. What runs is decided entirely by configuration:
 
-```text
-empty entry list
-  → @tsuuanmi/system-bundle (the allow-listed DSH core rows + system plugins; no dsh-base)
-  → profile patch file
-  → operator home patch
-  → --patch overlays from the command line
+```mermaid
+flowchart LR
+  e["empty entry list"] --> b["@tsuuanmi/system-bundle<br/>allow-listed DSH rows + system plugins<br/>(no dsh-base)"]
+  b --> o["bundles the operator added<br/>(kept by system init)"]
+  o --> p["the profile's cordis.patch.yml<br/>(operator overrides)"]
+  p --> c["--patch overlays<br/>from the command line"]
 ```
 
-A patch can insert rows, or target a row by `id` to replace its `config`, set
-`disabled`, or change `inject` or `isolate`. A targeted patch replaces the whole
-config of that row and does not deep-merge. Removing a capability means
-disabling its row. Deleting code is never required.
+A patch can insert rows, or target a row by `id` to replace its `config`, set `disabled`, or
+change `inject` or `isolate`. A targeted patch replaces the whole config of that row and does
+not deep-merge. Removing a capability means disabling its row. Deleting code is never required.
 
 Examples:
 
-- To run only the gateways against a remote host, disable the provider bundle.
-- To swap the browser engine, disable `browser-patchright` and insert another
-  provider of `ctx.browser`.
-- To give one workflow a sandboxed `exec`, use an `isolate` scope with a different
-  `exec` provider. The parent scope is unaffected.
+- To drop a website, disable its driver row (`provider-gemini-web`).
+- To swap the browser engine, disable the `browser` row and insert another provider of
+  `ctx.browser`.
+- To give part of the tree its own provider of a seam, mount it in an `isolate` scope. The
+  parent scope is unaffected.
 
 ## Plugin rules
 
-1. **Plugins, not core changes.** New behavior goes on a documented seam or event.
-   A change to a seam definition updates this document and the seam's conformance
-   suite.
-2. **A seam is complete.** It is defined with all three roles: definition,
-   provider, and consumer. A definition is an abstract `Service` class, not a bare
-   TypeScript `interface`, so it can own its `ctx` key.
-3. **Every registration has a disposer**, and disposal reaches quiescence. Nothing
-   outlives its plugin.
-4. **No hardcoded tunables.** Anything that varies by deployment is a validated
-   `Config` field. Protocol constants, external specifications, and security
-   invariants stay fixed in code.
-5. **Events for interception and policy, service methods for direct calls.** An
-   event's dispatch mode (`emit`, `waterfall`, `parallel`, `serial`, `bail`) is part
-   of its public contract.
-6. **Durable state lives in the store, not in service memory.** A plugin reload
-   never loses committed state.
-7. **Every seam ships a conformance suite.** Every provider, including fakes,
-   passes the same suite ([testing](../engineering/testing.md)).
+1. **Plugins, not core changes.** New behavior goes on a documented seam or event. A change to a
+   seam definition updates this document and the seam's conformance suite.
+2. **A seam is complete.** It is defined with all three roles: definition, provider, and
+   consumer. A definition is an abstract `Service` class, not a bare TypeScript `interface`, so
+   it can own its `ctx` key.
+3. **Every registration has a disposer**, and disposal reaches quiescence. Nothing outlives its
+   plugin.
+4. **No hardcoded tunables.** Anything that varies by deployment is a validated `Config` field.
+   Protocol constants, external specifications, and security invariants stay fixed in code.
+5. **Events for interception and policy, service methods for direct calls.** An event's
+   dispatch mode (`emit`, `waterfall`, `parallel`, `serial`, `bail`) is part of its public
+   contract.
+6. **Durable state lives in the store, not in service memory.** A plugin reload never loses
+   committed state.
+7. **Every seam ships a conformance suite.** Every provider, including fakes, passes the same
+   suite ([testing](../engineering/testing.md)).
 
 ## Portability and exit path
 
-`system` *is* a DSH bundle, so a DSH user can also mount `system` plugins in
-their own profile. Moving off DSH is still possible, because every seam is
-defined by `system` and the runtime is Cordis. It means replacing the
-`system-dsh-*` adapters and the composition root, while domain plugins stay
-unchanged. Claude Code and Codex reach `system` through protocols (MCP now, and
-the Responses and Messages gateways later), so they are unaffected by the host
-choice ([INV-11](invariants.md#inv-11-no-tool-lock-in)).
+`system` *is* a DSH bundle, so a DSH user can also mount `system` plugins in their own profile.
+Moving off DSH is still possible, because every seam is defined by `system` and the runtime is
+Cordis. It means replacing the `system-dsh-*` adapters and the composition root, while domain
+plugins stay unchanged. Claude Code and Codex reach `system` through protocols (MCP and the
+Responses and Messages gateways), so they are unaffected by the host choice
+([INV-11](invariants.md#inv-11-no-tool-lock-in)).
 
 ## Seam definitions and conformance
+
+A seam with one provider may stay a concrete service until a second provider appears; it then
+gets an abstract definition and a conformance suite (plugin rule 2). Consumers depend on
+definitions only.
 
 | Seam | Definition (abstract `Service`) | Conformance suite | Providers that run it |
 |---|---|---|---|
@@ -168,41 +171,5 @@ choice ([INV-11](invariants.md#inv-11-no-tool-lock-in)).
 | `providers` | `ProviderRegistry` in `@tsuuanmi/system-provider-core` | `provider-core/conformance/providers.ts` | `providers` |
 | `mcp` | `McpTools` in `@tsuuanmi/system-gateway-core` | `gateway-core/conformance/mcp-tools.ts` | `mcp-server` (listed through a real MCP client) |
 | `workers` | `Workers` in `@tsuuanmi/system-workers-core` | `workers-core/conformance/workers.ts` | `workers` |
-| `agentRuntimes` | `AgentRuntimes` in `@tsuuanmi/system-agent-runtime-core`, plus a provider suite | `agent-runtime-core/conformance/agent-runtimes.ts` | `agent-runtimes` (registry); `runtime-claude-agent-sdk` (against a scripted SDK stream), `runtime-acp` (against a scripted ACP agent subprocess) |
-
-Consumers depend on definitions only. `turns` and `login` no longer import the
-browser, registry, or gateway implementations. The display suite found a defect
-in the test fake (two Xvfbs for concurrent callers), which was then fixed.
-
-## Known gaps (tracked)
-
-- **Single-provider kernel and runtime seams.** `store`, `blobs`, `eventLog`,
-  `leases`, `artifacts`, `accounts`, `turnReceipts`, `login`, `turns`, and
-  `egress` are still concrete services with one provider each. They get an
-  abstract definition and a suite when a second provider appears.
-- **A scripted fake `ProviderDriver`** for testing the turn runtime without a
-  browser is still to come; today the runtime is tested through a real browser on
-  the fake site.
-- **Agent runtimes, first slice.**
-  - Only `runtime-claude-agent-sdk` exists. It offers `read-only` and
-    `workspace-write`, with writes confined to the workspace (verified live).
-    It runs no commands, so no agent Worker proves `validate` yet.
-  - `runtime-acp` offers `read-only` only to agents the operator vouches for
-    (`honoursPermissions`). The client cannot stop an agent's own direct
-    effects.
-  - `runtime-codex-sdk` holds Codex to its own sandbox. Commands run inside it,
-    so a writable Codex Worker proves `validate`.
-  - An agent run interrupted by a stop fails for the operator
-    (`reconciliation_failed`); it is not resumed from its native session yet.
-- **The workflow engine** has templates, plan-based graph growth, plan
-  approval gates, panel teams, operator stop, continue, and delete, and lineage
-  invalidation by `supersede`. Panel members talk through
-  `ctx.workerSessions` mailboxes. It does not have profile growth rules, team
-  leads, wake-on-message sessions outside rounds, or re-planning yet. The
-  `develop` profile cannot yet bind a review to an exact git head: there is no
-  confined command execution.
-- **Capability evidence is declared, not probed.** A website Worker proves what its
-  driver declares (`ProviderDriver.capabilities`, covered by the driver's tests).
-  Per-account probes, for example whether an account's plan offers Deep research,
-  come with P2. Quota exhaustion is not yet observed, so no Worker reports
-  `quota-exhausted`.
+| `agentRuntimes` | `AgentRuntimes` in `@tsuuanmi/system-agent-runtime-core`, plus a provider suite | `agent-runtime-core/conformance/agent-runtimes.ts` | `agent-runtimes` (registry); `runtime-claude-agent-sdk`, `runtime-codex-sdk`, `runtime-acp` (against scripted streams and agents) |
+| workflow templates | `ctx.workflow.template(name, nodes)` | `workflow/conformance/profiles.ts` | `profile-software-development`, `profile-scientific-research` |

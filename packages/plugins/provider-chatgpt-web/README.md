@@ -5,10 +5,10 @@ The **ChatGPT Web provider driver**
 [UI operations](../../../docs/design/ui-operations.md)).
 
 - **Procedures only.** Every element, action, state, and network signal lives in
-  [`ui/chatgpt-web.ui.yaml`](ui/chatgpt-web.ui.yaml), validated as `ui-map@1.0`.
-  A UI change is a map change. A local overlay
-  (`DriverOptions.overlay`) can add healed candidates.
-- **`ask(page, prompt, { conversation, binding })`:**
+  [`ui/chatgpt-web.ui.yaml`](ui/chatgpt-web.ui.yaml), validated as `ui-map@1.1`.
+  A UI change is a map change. A local overlay (`Config.overlayPath`, default
+  `<DSH_HOME>/system/ui/chatgpt-web.overlay.yaml`) adds healed candidates.
+- **`ask(page, prompt, { conversation, binding, mode, feature })`:**
   - `temporary`: Temporary chat; no binding is kept;
   - `persistent`: a normal chat; returns, and continues, the conversation id
     from `/c/<id>`.
@@ -24,9 +24,7 @@ The **ChatGPT Web provider driver**
   popover and reports which known entries it offers: Deep research, Web
   search, and Create image. Then it closes the popover, sending nothing. A
   `web-search` turn picks Web search, and its pill
-  (`chatgpt-system-hint://search`) is verified in the composer. Verified live on
-  2026-10-12: the account offers all three, and a `research` run did its literature
-  review with Web search.
+  (`chatgpt-system-hint://search`) is verified in the composer.
 - **The answer is Markdown (REQ-PRV-5).**
   - The finished answer's own Copy button gives the Markdown. It is read from
     the clipboard and kept only if its words are the rendered answer's words,
@@ -34,9 +32,8 @@ The **ChatGPT Web provider driver**
     under `white-space: pre-wrap`.
   - Copy rebuilds code blocks from the page and loses their line breaks, so
     each fenced block's text comes from its rendered element (`answer.code`).
-  - Verified live on 2026-10-12: headings, lists, links, inline code, and code
-    blocks with their indentation came back. Emphasis and a fence's language
-    did not, which matches the rendered answer.
+  - Emphasis and a fence's language do not come back, which matches the
+    rendered answer.
 - **`snapshot(page, binding)`:** reopens `/c/<id>` and returns the last answer
   and whether it is still running, for reconciliation. `onBinding` reports a new
   conversation's id as soon as the URL shows it.
@@ -48,26 +45,23 @@ The **ChatGPT Web provider driver**
   evidence: login URL or surface), or `unknown`.
 - **Heal audit:**
   - every chosen heal is a `recovery` decision recorded before the click;
-  - verified heals are appended to `<DSH_HOME>/system/ui/chatgpt-web.overlay.yaml`
-    (0600, with the decision id in a comment);
+  - verified heals are appended to the overlay (0600, with the decision id in a
+    comment);
   - `ui.drift` / `ui.heal` events are logged;
   - healing is off when `ctx.artifacts` is absent.
 - **Fixtures:** [`fixtures/fake-chatgpt.ts`](fixtures/fake-chatgpt.ts) is a
   local stand-in built from the live accessibility tree of 2026-10-11, with no
   private data. It reproduces the live traps: a Work default, an open stream,
   and two composer forms. Tests drive it in a real headed Chrome.
-- **Live-verified on 2026-10-11:**
-  - a Temporary chat answer through this driver;
-  - every primary candidate resolving without drift.
 - **Modes:**
   - `Config.modes` holds named presets of `{ model, effort }`. The defaults are
     `instant`, `medium` and `high` on **Latest**, and `defaultMode: instant`.
-  - The model menu has two views (checked live on 2026-10-12): Power first,
-    then the model list behind the view toggle. The driver steps the Power
-    slider, switches to the model list, picks the radio, and reads both back. It fails before sending if a preset, model or level is unknown,
-    or if a model is locked.
-  - Models seen on 2026-10-12: Latest, GPT-6, GPT-5.6 Sol, GPT-5.5. Power
-    levels: Instant, Medium, High.
+  - The model menu has two views: Power first, then the model list behind the
+    view toggle. The driver steps the Power slider, switches to the model list,
+    picks the radio, and reads both back. It fails before sending if a preset,
+    model or level is unknown, or if a model is locked.
+  - The empty preset `site` selects nothing, for an account without a model
+    picker (such as ChatGPT Free).
 - **Deep research** (`feature: 'deep-research'`, persistent only):
   - "+" → "Deep research" → the mention chip is checked → the prompt goes after
     the chip;
@@ -82,12 +76,15 @@ The **ChatGPT Web provider driver**
   - a completed report that stays unreadable for `reportReadMs` (30 s) fails as
     `ui_drift`, not by waiting out the stall deadline;
   - a reply with no frame within `researchStartMs` is a clarifying question.
-  - Live-verified on 2026-10-12, including the layout change found that day.
 - **Snapshot** (reconciliation) needs positive evidence. A page that has not
   rendered a user turn within `snapshotMs` (20 s) is not observed. The last
   user turn is reported as `lastPrompt`, so a prompt the page already shows is
   never resent. For Deep research only the run after the last prompt counts.
+- **Live checks:** what was verified on the live site, and when, is in the
+  [release checklist](../../../docs/validation/release-checklist.md).
+- **Config:** `origin`, `overlayPath`, `modes`, `defaultMode`.
+- **Injects:** `providers`. It uses `artifacts` and `eventLog` when present,
+  for the heal audit.
 - **Not yet:**
-  - Markdown extraction (the answer is returned as text);
   - attachments;
   - Deep research options (sources, apps) beyond the default run.

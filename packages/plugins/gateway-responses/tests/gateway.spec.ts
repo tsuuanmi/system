@@ -110,6 +110,29 @@ async function boot() {
 const post = (base: string, auth: Record<string, string>, body: unknown) => fetch(`${base}/responses`, { method: 'POST', headers: auth, body: JSON.stringify(body) })
 
 describe('Responses gateway over HTTP', () => {
+  it('registers nothing on a plain-HTTP bind beyond loopback: the token would travel in clear text (QA-5)', async () => {
+    const routes: unknown[] = []
+    class LanWebServer extends Service {
+      protocol = 'http:'
+      host = '192.0.2.10'
+      port = 47317
+      constructor(ctx: Context) { super(ctx, 'webServer') }
+      register(route: unknown): () => void { routes.push(route); return () => undefined }
+    }
+    const ctx = new Context()
+    const dir = mkdtempSync(join(tmpdir(), 'system-gw-lan-'))
+    cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+    await ctx.plugin(Store, { path: join(dir, 'system.db') })
+    await ctx.plugin(StubWorkflow)
+    await ctx.plugin(LanWebServer)
+    try {
+      await ctx.plugin(Gateway, { tokenFile: join(dir, 'mcp.token') })
+    } catch {
+      // the refusal itself is the point
+    }
+    expect(routes).toEqual([])
+  })
+
   it('guards like the MCP endpoint, lists tier models, and refuses WebSocket upgrades', async () => {
     const { base, auth } = await boot()
     expect((await fetch(`${base}/responses`, { method: 'POST', body: JSON.stringify(CODEX) })).status).toBe(401)

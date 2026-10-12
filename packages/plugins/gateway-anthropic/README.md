@@ -42,8 +42,14 @@ and approvals (INV-6).
 
 ## Security
 
-The guard is shared ([`gateway-turns`](../../gateway-turns/README.md)) and
-matches the MCP endpoint's rules.
+- **Guard:** the request guard every client endpoint shares
+  ([`gateway-core`](../../gateway-core/README.md#the-request-guard), through
+  [`gateway-turns`](../../gateway-turns/README.md)): a loopback `Host`, no
+  browser `Origin`, and the MCP token as a bearer token or `x-api-key`, compared
+  in constant time.
+- **Bind:** on plain HTTP on a non-loopback host, the route is not registered
+  (`assertSafeBind`).
+- **Body:** at most 16 MiB of JSON.
 
 ## Not yet
 

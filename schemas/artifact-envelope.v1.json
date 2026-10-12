@@ -47,7 +47,7 @@
       "description": "Inline body, validated against bodySchema."
     },
     "blob": {
-      "description": "Reference to a large body stored in ctx.blobs.",
+      "description": "Reference to a large body stored out of line, by its SHA-256. Reserved: no producer writes one today (ADR-0003 amendment).",
       "type": "object",
       "required": [
         "ref",

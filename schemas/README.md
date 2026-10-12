@@ -46,4 +46,4 @@ decision question sets.
 - Everything is bounded: string lengths, array sizes, retry counts (INV-9).
 - The files must compile under Ajv with `strict: true`, and every file in
   `examples/` must validate. CI enforces both
-  ([testing](../docs/engineering/testing.md#ci-gates-planned)).
+  ([testing](../docs/engineering/testing.md#ci-gates)).

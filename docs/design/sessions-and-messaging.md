@@ -4,6 +4,13 @@
 > Decision: [ADR-0015](../decisions/adr/0015-worker-sessions-and-peer-messaging.md).
 > Requirements: REQ-SES-1..8. Shapes: [`worker-session.v1.json`](../../schemas/worker-session.v1.json),
 > [`message.v1.json`](../../schemas/message.v1.json).
+>
+> Implemented in [`worker-sessions`](../../packages/plugins/worker-sessions/README.md) (sessions,
+> groups, mailboxes, budgets) and [`workflow`](../../packages/plugins/workflow/README.md)
+> (wake-on-message, checkpoints, compaction); differs from target: Workers message only through
+> the engine (a member's answer, or a `To m<k>: …` line), and `session_send` is the operator's;
+> sessions start `IDLE` at their first admission (no `FORMING`) and are never `CLOSED`; a group
+> lives for its run, not inside one `team` node; the A2A adapter is planned.
 
 ## Concepts
 
@@ -34,12 +41,17 @@ A Worker can serve a session only if it proves `persistent-conversation`
 
 ## Session states
 
-```text
-FORMING → IDLE ⇄ ACTIVE → CLOSED
-            │       │
-            │       ├─→ INPUT_REQUIRED ─(operator or peer input)→ ACTIVE
-            │       └─→ FAILED (classified; recovery per workflow engine)
-            └─(message arrives)→ ACTIVE   (wake-on-message, cold resume if needed)
+```mermaid
+stateDiagram-v2
+  [*] --> FORMING
+  FORMING --> IDLE
+  IDLE --> ACTIVE: a turn, or a message arrives (wake-on-message, cold resume if needed)
+  ACTIVE --> IDLE: the turn settles
+  ACTIVE --> INPUT_REQUIRED: the session asks a question
+  INPUT_REQUIRED --> ACTIVE: operator or peer input
+  ACTIVE --> FAILED: classified failure or a spent budget
+  IDLE --> CLOSED
+  CLOSED --> [*]
 ```
 
 `INPUT_REQUIRED` maps to A2A's `TASK_STATE_INPUT_REQUIRED` and to a node in
@@ -48,10 +60,12 @@ FORMING → IDLE ⇄ ACTIVE → CLOSED
 ## Direct messaging
 
 1. A session sends `message(to: SessionId | group, body, inReplyTo?, refs[])`.
-   - Local agent Workers send through a `system` MCP tool (`session_send`,
-     `session_inbox`).
-   - Website Workers declare outgoing messages in a schema-validated block of
-     their response, and incoming messages are injected as their next turn.
+   - A Worker's outgoing messages come from its response: a team member's
+     accepted answer is its message to the team, and a `To m<k>: …` line is a
+     direct message to one member. Incoming messages are injected as its next
+     turn.
+   - The operator sends with the MCP tool `session_send` and reads with
+     `session_inbox`.
 2. **Policy check.** The group policy decides whether the sender may address the
    target, whether a barrier is open, whether the message and turn budgets have
    room, and whether egress allows it (a remote Worker must not receive
@@ -102,46 +116,3 @@ conversational work inside a node
 | domain artifacts | `Artifact` |
 | `INPUT_REQUIRED`, `CLOSED`, `FAILED` | `TASK_STATE_INPUT_REQUIRED`, `COMPLETED`, `FAILED` / `CANCELED` |
 | wake-on-message, session events | streaming, `SubscribeToTask`, push notifications |
-
-## Built so far
-
-[`@tsuuanmi/system-worker-sessions`](../../packages/plugins/worker-sessions/README.md):
-
-- sessions formed at a member's first admission (Model A);
-- groups whose barriers are mailbox gates;
-- policy-checked messages, stored as `message@1.0` artifacts in ordered,
-  deduplicated mailboxes with acknowledgement;
-- the operator's `session_send` and `session_inbox`.
-
-Panel teams use it:
-
-- each member's answer is its message to the team;
-- `To m<k>: …` lines are direct messages;
-- critique rounds read the member's inbox after the first-round barrier opens.
-
-Wake-on-message is built: an idle session with unread mail takes one turn on
-its own Worker, and its reply goes back to the peers who wrote
-([engine](../../packages/plugins/workflow/README.md)).
-- A reply's intent is `answer`, which wakes nobody, so peers cannot loop.
-- The Worker seam gained `handle(sessionId)`, because an ACTIVE session must
-  record its native conversation handle.
-- Verified live on 2026-10-12: after a panel on two ChatGPT accounts, an
-  operator message woke a member, which answered in its own conversation.
-
-Long-running bounds are built (REQ-SES-6, REQ-SES-7):
-- **Budgets:** the turn, lifetime, and idle budgets are checked at every
-  activation. Exceeding one fails the session with a `gate` decision naming the
-  budget. Messages are bounded at send.
-- **`INPUT_REQUIRED`:** a session that cannot go on without input answers with
-  an `INPUT_REQUIRED:` line. Its question goes to its peers as `input-required`,
-  and any reply wakes it.
-- **Checkpoints:** every `checkpointEveryTurns` turns, the engine writes a
-  `report` artifact (`session-summary@1.0`).
-- **Compaction:**
-  1. Past `compactAtTokens`, the session writes a handoff summary in its own
-     conversation, stored as a `handoff` artifact.
-  2. The Worker source resets the session's native conversation, through
-     `reset(sessionId)` on the Worker seam, and the binding generation
-     advances.
-  3. The next turn opens a fresh conversation with the summary. The `SessionId`
-     never changes.

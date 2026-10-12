@@ -5,11 +5,13 @@ An MCP Streamable HTTP endpoint inside the `system` profile, on DSH
 the `system` CLI
 ([ADR-0011](../../../docs/decisions/adr/0011-mvp-integration-via-mcp.md)).
 
-- **Security:**
+- **Security:** the request guard every client endpoint shares
+  ([`gateway-core`](../../gateway-core/README.md#the-request-guard)):
   - Host allow-list: `421` otherwise, which blocks DNS rebinding.
   - No browser origins: `403`, and no CORS.
   - Bearer token compared in constant time over SHA-256 digests: `401` otherwise.
-  - 1 MB body limit.
+  - Plain HTTP on a non-loopback host is refused (`assertSafeBind`).
+  - 1 MiB body limit (`maxBodyBytes`).
 - **Discovery:** writes `{url, tokenFile, pid}` to a `0600` file (default
   `<DSH_HOME>/system/mcp.json`) and removes it on unload. This pattern comes from
   dsh-codex-bridge.

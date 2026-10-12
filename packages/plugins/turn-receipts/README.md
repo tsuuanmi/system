@@ -11,7 +11,8 @@ It is ported from tsuuanmi/internet's receipt store, and its tests were ported f
   - `complete`: idempotent, and refuses conflicting content.
   - `reconcile`: WAIT, RECOVER, RESUBMIT, or AMBIGUOUS, **recorded as a decision
     artifact** that the receipt references (INV-13).
-  - `deleteSession`.
+  - `delete(identity)`: removes one turn's receipt when its turn is forgotten
+    (the `turns` retention purge, INV-9).
 - **Records:** validated against [`provider-turn-receipt@1.0`](../../../schemas/provider-turn-receipt.v1.json)
   on every write.
 - **Injects:** `store`, `artifacts`.

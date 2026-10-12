@@ -1,4 +1,4 @@
-// Documentation structure and link checks (docs/engineering/testing.md#ci-gates-planned).
+// Documentation structure and link checks (docs/engineering/testing.md#ci-gates).
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { dirname, join, normalize, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'

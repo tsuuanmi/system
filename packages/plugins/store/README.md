@@ -11,6 +11,8 @@ the [M0 spike](../../../docs/research/m0-dsh-core-spike.md)).
   - `transaction()`: `BEGIN IMMEDIATE`, with savepoints when nested;
   - `migrate(owner, migrations)`: per-owner, recorded in `system_migrations`;
   - `updateRevision()`: optimistic revision guard that throws `RevisionConflict`.
+    No plugin calls it yet: those with revisioned records (such as `accounts`)
+    check and bump the revision in their own write.
   - `afterCommit(cb)`: runs `cb` after the outermost commit and drops it on rollback.
     Callback errors are logged and never fail the write.
   - A failed COMMIT rolls back and surfaces the original error. A Promise-returning
@@ -18,6 +20,6 @@ the [M0 spike](../../../docs/research/m0-dsh-core-spike.md)).
   - `synchronous=FULL` by default (configurable).
 - **Does not own:** domain tables. Each plugin migrates its own, as `artifacts`
   does.
-- **Config:** `path`, `busyTimeoutMs`.
+- **Config:** `path`, `busyTimeoutMs`, `synchronous`.
 - **Lifecycle:** the database opens in a `ctx.effect`. On unload it closes after
   the current dispose pass, so dependents can still write from their own disposers.

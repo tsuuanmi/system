@@ -4,20 +4,51 @@
 > Shape: [`ui-map.v1.json`](../../schemas/ui-map.v1.json). Evidence:
 > [research](../research/browser-interaction-and-self-healing.md). Used by the
 > provider drivers on [`ctx.browser`](browser-runtime.md).
+>
+> Implemented in [`ui-ops`](../../packages/ui-ops/README.md), with the heal audit in
+> [`provider-chatgpt-web`](../../packages/plugins/provider-chatgpt-web/README.md); differs from
+> target: every heal is deterministic (`heal: model` is parsed but acts as `deterministic`, since
+> there is no `ctx.models` seam); `sideEffect` is parsed but caps neither healing nor failure
+> handling; `system ui doctor`, `system ui overlay export`, and the diagnostic bundle are planned;
+> the Gemini driver runs with healing off.
 
 ## How a driver uses a website
 
 A driver procedure is a short sequence of **operation ids**. The engine turns each
 id into an element on the page by using the provider's UI map:
 
-```text
-driver: submitPrompt(text)                     engine                          UI map (data)
-  guard   auth.signed-in                ─▶  evaluate state             ◀─  states.auth.signed-in
-  ensure  composer.input                ─▶  resolve → unique element   ◀─  elements.composer.input
-  insert  composer.input  text          ─▶  insertText + readback      ◀─  actions.composer.insert
-  act     composer.send                 ─▶  resolve, click, verify     ◀─  actions.composer.send
-  wait    turn.complete                 ─▶  state machine + network    ◀─  states.turn.complete
-  read    turn.assistant.last           ─▶  DOM → Markdown             ◀─  elements.turn.assistant.last
+```mermaid
+flowchart LR
+  subgraph D[driver: submitPrompt]
+    D1[guard auth.signed-in]
+    D2[ensure composer.input]
+    D3[insert composer.input text]
+    D4[act composer.send]
+    D5[wait turn.complete]
+    D6[read turn.assistant.last]
+  end
+  subgraph E[engine]
+    E1[evaluate state]
+    E2[resolve to a unique element]
+    E3[insertText and read back]
+    E4[resolve, click, verify]
+    E5[state machine and network]
+    E6[DOM to text, or the Copy Markdown]
+  end
+  subgraph M[UI map: data]
+    M1[states.auth.signed-in]
+    M2[elements.composer.input]
+    M3[actions.composer.insert]
+    M4[actions.composer.send]
+    M5[states.turn.complete]
+    M6[elements.turn.assistant.last]
+  end
+  D1 --> E1 --- M1
+  D2 --> E2 --- M2
+  D3 --> E3 --- M3
+  D4 --> E4 --- M4
+  D5 --> E5 --- M5
+  D6 --> E6 --- M6
 ```
 
 The ChatGPT driver's procedures are `checkAuth`, `identity`, `open` (new or bound
@@ -25,14 +56,14 @@ conversation, Chat mode, Temporary chat), `selectMode` (model and Power, read
 back), `ask` (Deep research tool, insert, send, wait, read), `snapshot`, and
 `binding` (URL `/c/<id>`). They hold no selectors. Attachments are not built yet.
 
-## UI map (`ui-map@1.0`)
+## UI map (`ui-map@1.1`)
 
 One YAML file per provider, shipped with the driver package (for example,
 `packages/plugins/provider-chatgpt-web/ui/chatgpt-web.ui.yaml`). It is validated
-against the JSON Schema at load.
+against the JSON Schema at load. Version 1.1 adds the element field `frames`.
 
 ```yaml
-schema: ui-map@1.0
+schema: ui-map@1.1
 provider: chatgpt-web
 uiRevision: '2026-10-09'          # when the map was last checked against the live site
 locales: [en, vi]                  # localized names are listed per locale
@@ -77,12 +108,13 @@ states:
 |---|---|
 | `candidates` | ordered locators. Kinds: `testId`, `role` + `name` (a regex per locale), `label`, `text`, and `css`, which comes last. Every kind compiles to a Playwright locator |
 | `scope` | another element that must resolve first; the search runs inside it |
+| `frames` | `any`: search every frame, for content rendered in iframes such as a research report (1.1) |
 | `cardinality` | `one` (default: zero or several matches is a failure, never a guess) or `many` (lists such as turns) |
 | `fingerprint` | what the element *is* (role, name keywords, nearby role), used only by the heal matcher |
 | `require` | preconditions checked on the resolved element: `visible` (always), `enabled`, `editable` |
 | `verify` | the postcondition that proves the action worked. Conditions: `visible`, `hidden`, `countIncreased`, `attr`, `url`, `network`, `anyOf`, `allOf`, `not`, `stableTextMs` |
 | `sideEffect` | `none` (reads), `reversible` (opening a menu, choosing a mode: undone by a fresh context), `irreversible` (sending a prompt) |
-| `heal` | `off`, `deterministic`, or `model`; capped by the side-effect class (below) |
+| `heal` | `off`, `deterministic`, or `model`; target: capped by the side-effect class (below) |
 | `fallback` | a non-locator alternative, such as pressing Enter in the composer |
 
 `uiRevision` and the map's content hash (after the overlay is merged) are recorded
@@ -100,8 +132,9 @@ For an element:
    candidates come before overlay candidates.
 3. Check `require` on the match.
 4. For an action, run it, then poll `verify` until `verifyMs` expires.
-5. If a non-primary candidate won, emit a `system/ui-drift` event. The turn
-   still succeeds; the event feeds the health view and `system ui doctor`.
+5. If a non-primary candidate won, report drift (`onDrift`, logged as
+   `ui.drift`). The turn still succeeds; the event feeds the health view and,
+   once built, `system ui doctor`.
 
 Prompt text is inserted with an insert-text method that does not trigger editor
 shortcuts, read back, and compared by hash before sending
@@ -138,8 +171,8 @@ can repair the map while the fallback keeps the turn working.
    Levenshtein), test-id similarity, and the nearby role. Accept the best node
    only if its score is at least `τ` (default 0.8) and it beats the second best by
    a margin (default 0.15).
-3. **Model proposal** (only with `heal: model`, once the `ctx.models` seam
-   exists). An **economy-tier** model receives the trimmed snapshot, the
+3. **Model proposal** (planned: only with `heal: model`, once the `ctx.models`
+   seam exists). An **economy-tier** model receives the trimmed snapshot, the
    operation description, and the fingerprint, and returns one ref. It is reached
    only through the seam; no model is named in the map or code (INV-11).
 4. **Verify.** Resolve the ref, check that the match is unique, then check the
@@ -157,6 +190,9 @@ can repair the map while the fallback keeps the turn working.
    The overlay is `<DSH_HOME>/system/ui/<provider>.overlay.yaml`, owner-only and
    written durably. The shipped map is never modified at run time.
 
+Target cap by side-effect class (planned; today `sideEffect` is parsed and not
+enforced):
+
 | Side-effect class | Heal allowed | On failed verification |
 |---|---|---|
 | `none` | deterministic or model | the turn fails with `ui_drift` (`CONFIG_FIX`) |
@@ -165,18 +201,20 @@ can repair the map while the fallback keeps the turn working.
 
 ## Drift workflow
 
-```text
-turn: candidate miss ─▶ heal ok ─▶ overlay + decision + drift event ─▶ turn continues
-                     └─ heal fails ─▶ diagnostic bundle + ui_drift (CONFIG_FIX) ─▶ turn fails closed
-operator: system ui doctor <provider>
-  ├─ opens a signed-in context; resolves every element; dry-runs reversible actions;
-  │  checks that irreversible actions resolve without clicking
-  ├─ reports per-candidate match counts, overlay entries, and drift events
-  └─ system ui overlay export ─▶ a map diff (with fixture updates) for review and a PR
+```mermaid
+flowchart TD
+  T[turn: candidate miss] --> H{heal}
+  H -->|ok| O[overlay, decision, drift event] --> C[turn continues]
+  H -->|fails| F["ui_drift (CONFIG_FIX): turn fails closed"]
+  subgraph Planned[operator tools: planned]
+    U[system ui doctor provider] --> U1[signed-in context: resolve every element, dry-run reversible actions, resolve irreversible ones without clicking]
+    U --> U2[report per-candidate matches, overlay entries, drift events]
+    U --> X[system ui overlay export: a map diff with fixture updates, for review and a PR]
+  end
 ```
 
-The **diagnostic bundle** (saved under the turn's artifacts, classified
-`sensitive`) holds:
+The **diagnostic bundle** (planned; saved under the turn's artifacts, classified
+`local-private`) holds:
 - match counts for every candidate of every operation the procedure used;
 - the scoped ARIA snapshot;
 - the page URL;

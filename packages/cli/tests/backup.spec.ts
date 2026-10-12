@@ -15,26 +15,25 @@ const temp = (): string => {
   return dir
 }
 
-/** A harness home with a WAL store holding an uncheckpointed write, a blob, and a vault. */
+/** A harness home with a WAL store holding an uncheckpointed write, and a vault. */
 function home(): { home: string; db: DatabaseSync } {
   const dir = temp()
   const state = join(dir, 'system')
-  mkdirSync(join(state, 'blobs', 'ab'), { recursive: true })
+  mkdirSync(state, { recursive: true })
   const db = new DatabaseSync(join(state, 'system.db'))
   db.exec("PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0; CREATE TABLE t (v TEXT); INSERT INTO t VALUES ('kept')")
-  writeFileSync(join(state, 'blobs', 'ab', 'abcdef'), 'blob body')
   writeFileSync(join(state, 'vault.enc'), 'ciphertext')
   writeFileSync(join(state, 'vault.key'), 'k'.repeat(32))
   return { home: dir, db }
 }
 
 describe('backup and restore (operations runbook, QA-4)', () => {
-  it('snapshots a running store (WAL included), blobs, and the vault without its key; restores only after a verified preview', async () => {
+  it('snapshots a running store (WAL included) and the vault without its key; restores only after a verified preview', async () => {
     const source = home()
     const target = join(temp(), 'b')
     const manifest = backupHost(target, { home: source.home })
     source.db.close()
-    expect(Object.keys(manifest.files).sort()).toEqual(['blobs/ab/abcdef', 'system.db', 'vault.enc'])
+    expect(Object.keys(manifest.files).sort()).toEqual(['system.db', 'vault.enc'])
     expect(manifest.includesKey).toBe(false)
     expect(statSync(join(target, 'system.db')).mode & 0o777).toBe(0o600)
     // A host that keeps its own key (the key travels separately).
@@ -50,7 +49,6 @@ describe('backup and restore (operations runbook, QA-4)', () => {
     const restored = new DatabaseSync(join(into, 'system', 'system.db'))
     expect(restored.prepare('SELECT v FROM t').all()).toEqual([{ v: 'kept' }])
     restored.close()
-    expect(readFileSync(join(into, 'system', 'blobs', 'ab', 'abcdef'), 'utf8')).toBe('blob body')
   })
 
   it('refuses a tampered backup, a backup without a key on a host without one, a running profile, and a non-empty target', () => {
