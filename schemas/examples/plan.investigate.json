@@ -1,0 +1,10 @@
+{
+  "schema": "plan@1.0",
+  "runId": "run_6f1c2a0e9b7d4c3a",
+  "planner": "plan:1",
+  "nodes": [
+    { "nodeId": "plan:1:step-1", "objective": "Find the current MCP transports", "prompt": "List the transports the MCP specification defines.", "capabilities": ["reason"], "tier": "economy", "dependsOn": [] },
+    { "nodeId": "plan:1:step-2", "objective": "Compare them", "prompt": "Compare the transports for a local tool server.", "capabilities": ["reason"], "tier": "standard", "dependsOn": ["plan:1:step-1"] }
+  ],
+  "confidence": "high"
+}

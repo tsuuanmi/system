@@ -30,12 +30,16 @@ guesses.
 ### `artifact-envelope`
 
 - `id` is computed by the store, never trusted from the producer. It is
-  `sha256(canonicalJSON({kind, body|blob.ref, inputs, lineage, subject}))`.
-  Canonical JSON uses sorted keys, no insignificant whitespace, and UTF-8.
-  `createdAt`, `producer`, and `classification` are excluded so that identical
-  content deduplicates.
-- `classification` of a derived artifact is at least the strictest
-  classification among its `inputs`. A producer cannot downgrade it.
+  `sha256(canonicalJSON({kind, bodySchema, body | blob{ref, mediaType}, inputs, lineage, subject}))`.
+  `inputs` are deduplicated and **sorted**, because they form a set. Canonical JSON
+  uses keys sorted by UTF-16 code unit (as in RFC 8785), no insignificant whitespace,
+  and UTF-8. `createdAt`, `producer`, `classification`, `runId`, and `nodeId` are
+  excluded, so identical content deduplicates. The runs that produced an artifact
+  are tracked separately.
+- `classification` of a derived artifact is at least the strictest classification
+  among its `inputs` and its lineage references. **Unknown references are refused**,
+  so the floor cannot fail open. Deduplication refuses a request that would need a
+  stricter classification than the stored one. A producer can never downgrade.
 
 ### `decision`
 
@@ -91,3 +95,82 @@ guesses.
 - `provider` is informational. Routing must not branch on it (INV-11). Only
   `capabilities`, `tier`, `quotaClass`, `locality`, and `state` are routing
   inputs.
+
+### `plan`
+
+- Proposed by a planner node, and validated by the engine before anything is
+  appended: unique ids under the planner's prefix, dependencies only among its
+  own nodes, acyclic, within the node bound, allowed capabilities only.
+- A `graph-growth` decision records whether it was appended and why.
+- An edited plan is a new artifact with a new id. An approval of the old one
+  never covers it.
+
+### `approval`
+
+- `subject` is the exact artifact approved (INV-5). Today that is a plan.
+- It is written only through an operator channel (CLI or MCP `approve`), never
+  from model output (INV-6).
+
+### `agent-result`
+
+- Written once per finished agent-runtime run, as the body of a `report`
+  artifact. The prompt is kept by hash only.
+- `nativeHandle` names the agent's own session (for example, a Claude Code
+  session id). The session itself is never mirrored (INV-7).
+- `sandbox` is the policy the run was held to, taken from trusted
+  configuration.
+- `agent-result@1.1` adds `workspace` (from configuration) and `subject`. The
+  subject is the workspace's exact git subject after the run:
+  `{type: git-head, ref: HEAD, version: hash of every change on top}`. A
+  review binds to it.
+
+### `account`
+
+- `account@1.1` adds `features`: the website features a probe proved on the
+  account, and when (REQ-PRV-7). Routing uses only these. A missing or stale
+  probe is refreshed; a feature is never assumed.
+
+### `session-summary`
+
+- A Worker session's `report` checkpoint (every `checkpointEveryTurns` turns)
+  or `handoff` compaction (past `compactAtTokens`), derived from the turn's
+  result.
+- `generation` is the binding generation it was written in. A compaction
+  starts the next one, and the session continues from the summary in a new
+  native conversation.
+
+### `hypothesis-set` and `evidence-table`
+
+- These are the scientific-research profile's typed artifacts: `criteria` and
+  `evidence`. Each is derived from the accepted answer of its step
+  (`inputs: [result]`).
+- Ids are stable within one study: hypotheses are `H1`, `H2`, …, and
+  evidence is `E1`, `E2`, …. Conclusions cite evidence by id, and every
+  evidence `source` is a URL.
+- When the step's result changes (superseded, then run again), the new
+  artifact `supersedes` the last one.
+
+### `assessment`
+
+- An independent review's verdict and findings, each finding with a severity
+  (`blocking`, `warning`, `info`).
+- `subject` is the exact subject the reviewer was given. The engine stores an
+  assessment only if the review names that subject, and the working tree is
+  still that subject when the review is accepted. Either way, the outcome is a
+  `gate` decision (REQ-WF-5).
+
+### `ui-map`
+
+- Operation ids are dotted lowercase names. Drivers refer to them; they never
+  contain selectors ([UI operations](../design/ui-operations.md)).
+- `candidates` are ordered; the first with **exactly one** visible match wins.
+  Name and text values are regular expressions per locale, written with their own
+  anchors.
+- `network` patterns are matched against requests and responses the page makes
+  on its own. They are never used to send requests.
+- A local overlay has the same shape, holds only extra candidates, and is
+  merged after the shipped candidates. It never replaces the shipped map.
+- `heal` is capped by `sideEffect`: an `irreversible` action never uses `model`.
+- `ui-map@1.1` adds the optional element field `frames` (`main` or `any`).
+  Elements with `frames: any` are searched in every frame and take no `scope`.
+  Readers accept 1.0 and 1.1.

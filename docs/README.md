@@ -13,15 +13,17 @@ other documents link to it instead of repeating it.
 1. [Purpose](requirements/purpose.md) and [requirements](requirements/README.md):
    why `system` exists and what must be true.
 2. [Architecture](architecture/README.md): where responsibilities and invariants belong.
-3. [Design](design/README.md): how current mechanisms work.
+3. [Design](design/README.md): how the mechanisms work.
 4. [Decisions](decisions/README.md): why durable choices were made.
 5. [Proposals](proposals/README.md) and [research](research/README.md): changes
    and evidence that are not yet current truth.
 6. [Reference](reference/README.md) and [`schemas/`](../schemas/README.md): exact contracts.
-7. Source and tests, once they exist.
+7. Source and tests, starting from the nearest package `README.md`.
 8. [Engineering](engineering/README.md) and [security](security/README.md): how
    the system is delivered and how its trust boundaries are protected.
-9. [Governance](governance/README.md): lifecycle, ids, and documentation policy.
+9. [Validation](validation/README.md) and [operations](operations/README.md):
+   the acceptance evidence, and how the built system is run.
+10. [Governance](governance/README.md): lifecycle, ids, and documentation policy.
 
 ## Authority and durability
 
@@ -29,21 +31,32 @@ other documents link to it instead of repeating it.
 |---|---|---|
 | [Requirements](requirements/README.md) | normative intended behavior | canonical / living |
 | [Architecture](architecture/README.md) | structure, boundaries, invariants | canonical / living |
-| [Design](design/README.md) | current mechanisms | canonical / living |
+| [Design](design/README.md) | mechanisms (target, with a link to what is implemented) | canonical / living |
 | [Reference](reference/README.md) + [`schemas/`](../schemas/README.md) | exact contracts and schemas | canonical / living |
 | source + tests | executable behavior and evidence | executable reality |
 | [Engineering](engineering/README.md) | development and delivery process | canonical / living |
 | [Security](security/README.md) | trust boundaries and controls | canonical / living |
 | [Governance](governance/README.md) | lifecycle and documentation policy | canonical / living |
+| [Validation](validation/README.md) | acceptance evidence: traceability, release checklist | canonical / living |
+| [Operations](operations/README.md) | runbooks and playbooks for the built system | canonical / living |
 | [Decisions](decisions/README.md) | historical rationale | historical / durable |
 | [Proposals](proposals/README.md) | reviewed change under evolution | evolutionary |
 | [Research](research/README.md) | evidence, analysis of external systems | exploratory |
 
-**Design-phase note.** No source exists yet. Until
-[PROP-0001](proposals/0001-unified-system-architecture.md) is accepted and
-implemented, the requirements, architecture, and design documents describe the
-**target** system. Each one states this in its header. They become current truth
-once code realizes them.
+## Status ownership
+
+Each kind of status has one home, so it is never stated twice:
+
+| Status | Home |
+|---|---|
+| what a package does **now** | the package's own `README.md` |
+| what was **verified live**, and on which date | the [release checklist](validation/release-checklist.md) only |
+| which milestones are done, and what remains | the [roadmap](proposals/roadmap.md), as a short table |
+| the **target** mechanism | the design document, which says it describes the target and adds one line, "Implemented in [package]; differs from target: …" |
+
+Requirements, architecture, and design documents describe the **target** system
+and say so in their headers. Architecture documents carry no status narrative.
+A seam's status is one word: **built**, **planned**, or **not planned**.
 
 ## Directory layout
 
@@ -60,9 +73,8 @@ docs/
 ├── engineering/
 ├── security/
 ├── reference/
+├── validation/
+├── operations/
 └── governance/
 schemas/              # machine-readable JSON Schemas (repository root)
 ```
-
-`validation/` and `operations/` will be created when there are acceptance
-evidence and runtime procedures to put in them.

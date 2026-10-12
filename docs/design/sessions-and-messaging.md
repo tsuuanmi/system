@@ -4,6 +4,13 @@
 > Decision: [ADR-0015](../decisions/adr/0015-worker-sessions-and-peer-messaging.md).
 > Requirements: REQ-SES-1..8. Shapes: [`worker-session.v1.json`](../../schemas/worker-session.v1.json),
 > [`message.v1.json`](../../schemas/message.v1.json).
+>
+> Implemented in [`worker-sessions`](../../packages/plugins/worker-sessions/README.md) (sessions,
+> groups, mailboxes, budgets) and [`workflow`](../../packages/plugins/workflow/README.md)
+> (wake-on-message, checkpoints, compaction); differs from target: Workers message only through
+> the engine (a member's answer, or a `To m<k>: …` line), and `session_send` is the operator's;
+> sessions start `IDLE` at their first admission (no `FORMING`) and are never `CLOSED`; a group
+> lives for its run, not inside one `team` node; the A2A adapter is planned.
 
 ## Concepts
 
@@ -34,12 +41,17 @@ A Worker can serve a session only if it proves `persistent-conversation`
 
 ## Session states
 
-```text
-FORMING → IDLE ⇄ ACTIVE → CLOSED
-            │       │
-            │       ├─→ INPUT_REQUIRED ─(operator or peer input)→ ACTIVE
-            │       └─→ FAILED (classified; recovery per workflow engine)
-            └─(message arrives)→ ACTIVE   (wake-on-message, cold resume if needed)
+```mermaid
+stateDiagram-v2
+  [*] --> FORMING
+  FORMING --> IDLE
+  IDLE --> ACTIVE: a turn, or a message arrives (wake-on-message, cold resume if needed)
+  ACTIVE --> IDLE: the turn settles
+  ACTIVE --> INPUT_REQUIRED: the session asks a question
+  INPUT_REQUIRED --> ACTIVE: operator or peer input
+  ACTIVE --> FAILED: classified failure or a spent budget
+  IDLE --> CLOSED
+  CLOSED --> [*]
 ```
 
 `INPUT_REQUIRED` maps to A2A's `TASK_STATE_INPUT_REQUIRED` and to a node in
@@ -48,10 +60,12 @@ FORMING → IDLE ⇄ ACTIVE → CLOSED
 ## Direct messaging
 
 1. A session sends `message(to: SessionId | group, body, inReplyTo?, refs[])`.
-   - Local agent Workers send through a `system` MCP tool (`session_send`,
-     `session_inbox`).
-   - Website Workers declare outgoing messages in a schema-validated block of
-     their response, and incoming messages are injected as their next turn.
+   - A Worker's outgoing messages come from its response: a team member's
+     accepted answer is its message to the team, and a `To m<k>: …` line is a
+     direct message to one member. Incoming messages are injected as its next
+     turn.
+   - The operator sends with the MCP tool `session_send` and reads with
+     `session_inbox`.
 2. **Policy check.** The group policy decides whether the sender may address the
    target, whether a barrier is open, whether the message and turn budgets have
    room, and whether egress allows it (a remote Worker must not receive
@@ -65,7 +79,10 @@ FORMING → IDLE ⇄ ACTIVE → CLOSED
    content. The lead controls the procedure, not the conversation.
 
 Barriers (the independent-first rule in [teams](teams.md)) are mailbox gates.
-Messages to a member are held until the barrier opens.
+Messages to a member are held until the barrier opens. A team's barrier opens
+as soon as every member has finished round 1, even when no later round runs (a
+lead closed the team, or it has a single round), so later messages still reach
+the members.
 
 ## Long-running mechanics
 

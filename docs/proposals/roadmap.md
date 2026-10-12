@@ -1,22 +1,45 @@
 # Roadmap
 
-Non-normative. This is an ordered queue of milestones for
-[PROP-0001](0001-unified-system-architecture.md). What each stage must deliver,
-and its exit criteria, are defined canonically in
-[release scope](../requirements/release-scope.md). This file only orders the
-work. Each milestone ends with working, tested software and updated canonical docs.
+Non-normative. This is the ordered queue of milestones for
+[PROP-0001](0001-unified-system-architecture.md). What each release stage must
+deliver, and its exit criteria, are defined in
+[release scope](../requirements/release-scope.md). This file only orders the work
+and says what remains. What a package does now is in its own `README.md`; what was
+verified on live accounts, and when, is in the
+[release checklist](../validation/release-checklist.md)
+([status ownership](../README.md#status-ownership)).
 
-| Stage | Milestone | Scope |
-|---|---|---|
-| **MVP** | **M0 Host on DSH core + kernel + engineering** | pnpm workspace on Node, CI, doc and schema checks; `system` bundle + profile on a pinned `dsh-base` (telemetry off) and the `system` CLI wrapper; **spike** for ADR-0018's verification points (resident profile without web-app, MCP over HTTP on the DSH webserver, `node:sqlite` revisions, credential encryption); kernel adapters (store, blobs on DSH) and own seams (events, leases, artifacts with schema validation) |
-| **MVP** | **M1 Provider runtime + ChatGPT Web** | invisible headed browser (Xvfb / off-screen), remote login, provider-agnostic multi-account vault, scheduler, receipts, `chatgpt-web` driver with `reason`, `web-search`, `deep-research`, and mode-to-tier mapping |
-| **MVP** | **M1.5 First usable: `ask` + `research`** | MCP tools and CLI for `ask`/`research`/`status`/`result`, invisible headed browser, multi-account vault and login, receipts, minimal routing, one-node DAGs. **Slice 1** ([release scope](../requirements/release-scope.md#delivery-order-slice-1-first)) |
-| **MVP** | **M2 Routing + DAG core + MCP + CLI** | Website Core, `workers-core` (admission, tiers, egress policy, quota exclusion, decision artifacts), the workflow-engine subset (static DAG) running research → compact, MCP server, CLI with `explain`. **MVP release** |
-| **Beta** | **M3 Workers** | agent runtimes (Claude Agent SDK, Codex SDK, ACP), Gemini Web driver, connectors as capabilities, economy-tier API or local model provider |
-| **Beta** | **M4 Orchestration** | full workflow engine (graph growth, `plan` artifacts, lineage invalidation), sessions with direct messaging and long-running mechanics, team runner, `software-development` profile, Web UI. **Beta release** |
-| **v1.0** | **M5 Gateways** | Responses and Anthropic Messages gateways, shared turn broker, journaled client configuration, drain |
-| **v1.0** | **M6 Second domain + readiness** | `scientific-research` profile, operations, validation, and reference docs, hardening, packaging, bundle publication, Web UI on DSH web app. **Production-ready release** |
+## Milestones
 
-Later candidates, each needing its own proposal: A2A gateway and runtime
-(cross-runtime peers), an ACP client gateway for editors, sandboxed or SSH `exec`
-providers, additional website providers, and a desktop launcher.
+| Milestone | State | What remains | Evidence |
+|---|---|---|---|
+| **M0** Host on DSH core, kernel, engineering (MVP) | done | — | [spike](../research/m0-dsh-core-spike.md), [e2e test](../../packages/cli/tests/profile.e2e.ts) |
+| **M1** Provider runtime and ChatGPT Web (MVP) | done, one check open | credential re-login past the email page (needs the operator) | [checklist](../validation/release-checklist.md), [login](../../packages/plugins/login/README.md) |
+| **M1.5** First usable: `ask` and `research` (MVP slice 1) | done | — | [checklist](../validation/release-checklist.md) |
+| **M2** Routing, DAG core, MCP, CLI (MVP release) | done | — | [traceability](../validation/traceability.md) |
+| **M3** Workers (Beta) | mostly done | an economy-tier API or local-model provider (`ctx.models`); connectors as capabilities (`connector:<name>`); Gemini Deep research through `ask`, and a new persistent Gemini chat (both verified on the fake site only, by operator choice) | [agent Workers](../../packages/plugins/agent-workers/README.md), [Gemini Web](../../packages/plugins/provider-gemini-web/README.md) |
+| **M4** Orchestration (Beta release) | mostly done | handoff envelopes; re-planning after a superseded input | [workflow](../../packages/plugins/workflow/README.md), [checklist](../validation/release-checklist.md) |
+| **M5** Gateways (v1.0) | done, one item open | journaled client configuration edits (REQ-HOST-3), once `system` edits a client file; today `system claude-env` and `codex-env` only print commands | [gateway turns](../../packages/gateway-turns/README.md), [checklist](../validation/release-checklist.md) |
+| **M6** Second domain and readiness (production-ready release) | started | hardening, packaging and bundle publication, macOS; the refactors below | [scientific research](../../packages/plugins/profile-scientific-research/README.md), [operations](../operations/README.md) |
+
+The operator web page stays the small `/ui` page in
+[`web-ui`](../../packages/plugins/web-ui/README.md); `system` does not build a UI
+inside the DSH web app.
+
+## Refactors found by review
+
+These change no behavior. Each lands with its tests unchanged:
+
+- split `packages/plugins/workflow/src/index.ts` into modules by mechanism;
+- a shared driver kit for `provider-chatgpt-web` and `provider-gemini-web`;
+- one durable-run mechanism for website turns (`turns`) and agent runs
+  (`agent-workers`);
+- replace `dshHome()` in `libs` with `resolveDshHome()` from
+  `@deepseek-ai/dsh-home-paths`;
+- remove dead exports.
+
+## Later candidates
+
+Each needs its own proposal: an A2A gateway and runtime (cross-runtime peers), an
+ACP client gateway for editors, sandboxed or SSH `exec` providers, more website
+providers, and a desktop launcher.

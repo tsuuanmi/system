@@ -1,0 +1,10 @@
+{
+  "schema": "session-summary@1.0",
+  "sessionId": "ses_92d284d1bc6add82",
+  "reason": "compaction",
+  "turns": 14,
+  "generation": 0,
+  "estimatedTokens": 61200,
+  "summary": "Decisions: keep the flag off by default. Open: whether the migration needs a backfill. State: tests pass; the report is drafted.",
+  "refs": []
+}

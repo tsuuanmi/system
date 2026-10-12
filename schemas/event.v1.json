@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:tsuuanmi:system:schema:event:v1",
+  "title": "Event log entry",
+  "description": "One append-only observability event (QA-7, ctx.eventLog). Never carries secrets or private content; it references artifacts instead.",
+  "type": "object",
+  "required": ["schema", "seq", "at", "type"],
+  "properties": {
+    "schema": { "const": "event@1.0" },
+    "seq": { "description": "Monotonic sequence assigned by the log.", "type": "integer", "minimum": 1 },
+    "at": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp" },
+    "type": { "description": "Dotted event type, e.g. provider.turn.submitted.", "type": "string", "pattern": "^[a-z][a-z0-9-]*(\\.[a-z][a-z0-9-]*)+$", "maxLength": 100 },
+    "runId": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+    "nodeId": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+    "sessionId": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+    "turnId": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+    "decision": { "description": "Decision artifact behind this event, when one exists (INV-13).", "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/artifactRef" },
+    "data": { "description": "Small structured detail; bounded by the log (default 16 KiB serialized).", "type": "object", "maxProperties": 64 }
+  },
+  "additionalProperties": false
+}

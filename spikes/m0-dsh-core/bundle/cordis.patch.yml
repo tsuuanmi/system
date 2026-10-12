@@ -1,0 +1,13 @@
+# M0 spike: explicit DSH core rows only, no dsh-base (ADR-0019).
+# Use this bundle as the profile's ONLY bundle; telemetry rows are never inserted.
+- insert:
+    - id: timer
+      name: '@deepseek-ai/cordis-plugin-timer'
+    - id: credentials
+      name: '@deepseek-ai/dsh-credentials-local'   # dev only: plain YAML (see spike report)
+    - id: webserver
+      name: '@deepseek-ai/dsh-host-webserver'
+      config: { host: 127.0.0.1, port: 0 }
+    - id: system-probe
+      name: system-m0-probe-bundle
+      config: { token: probe-token }

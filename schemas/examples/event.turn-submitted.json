@@ -1,0 +1,12 @@
+{
+  "schema": "event@1.0",
+  "seq": 42,
+  "at": "2026-10-11T09:31:02Z",
+  "type": "provider.turn.submitted",
+  "runId": "run-2026-10-11-001",
+  "nodeId": "research:1",
+  "sessionId": "session:research-1",
+  "turnId": "turn-7",
+  "decision": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+  "data": { "account": "chatgpt-main", "tier": "frontier", "feature": "deep-research" }
+}

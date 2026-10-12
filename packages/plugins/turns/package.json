@@ -1,0 +1,51 @@
+{
+  "name": "@tsuuanmi/system-turns",
+  "version": "0.0.0",
+  "private": true,
+  "description": "ctx.turns: the website turn runtime (ask): durable turns, first-ready routing with decision artifacts, per-account scheduling, receipts before send, answers as artifacts, MCP ask/result",
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    }
+  },
+  "files": [
+    "lib"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json"
+  },
+  "dependencies": {
+    "@tsuuanmi/system-accounts": "workspace:*",
+    "@tsuuanmi/system-artifacts": "workspace:*",
+    "@tsuuanmi/system-egress": "workspace:*",
+    "@tsuuanmi/system-event-log": "workspace:*",
+    "@tsuuanmi/system-gateway-core": "workspace:*",
+    "@tsuuanmi/system-leases": "workspace:*",
+    "@tsuuanmi/system-libs": "workspace:*",
+    "@tsuuanmi/system-login": "workspace:*",
+    "@tsuuanmi/system-provider-core": "workspace:*",
+    "@tsuuanmi/system-store": "workspace:*",
+    "@tsuuanmi/system-turn-receipts": "workspace:*",
+    "@tsuuanmi/system-workers-core": "workspace:*",
+    "zod": "^4.1.0"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "4.0.5-alpha.1",
+    "@deepseek-ai/schemastery": "3.18.5-alpha.1"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "4.0.5-alpha.1",
+    "@deepseek-ai/schemastery": "3.18.5-alpha.1",
+    "@tsuuanmi/system-browser-patchright": "workspace:*",
+    "@tsuuanmi/system-credentials-vault": "workspace:*",
+    "@tsuuanmi/system-display-virtual": "workspace:*",
+    "@tsuuanmi/system-provider-chatgpt-web": "workspace:*",
+    "@tsuuanmi/system-providers": "workspace:*",
+    "@tsuuanmi/system-workers": "workspace:*",
+    "patchright-core": "1.63.0"
+  }
+}

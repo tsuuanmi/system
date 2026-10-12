@@ -21,8 +21,11 @@ accepted/implemented -> superseded
 ## Active proposals
 
 - [PROP-0001: Unified system architecture](0001-unified-system-architecture.md),
-  **accepted**, implementing. A standalone host that unifies AgentOS routing and teams, internet
-  provider durability and workflows, and codex-chatgpt-web gateways.
+  **implementing**. Our own harness built on DSH core
+  ([ADR-0018](../decisions/adr/0018-build-on-dsh-core.md), which superseded in
+  part the standalone host of ADR-0001). It unifies AgentOS routing and teams,
+  internet's provider durability and workflows, and the model gateways that
+  codex-chatgpt-web pioneered (built anew, ADR-0022).
 - [PROP-0002: Decision-assisted routing](0002-decision-assisted-routing.md),
   **draft**. A `ctx.decisions` seam, with the Jev decision model as a first
   provider, infers the tier and capability need for undeclared work. It runs in

@@ -1,0 +1,8 @@
+{
+  "schema": "lease@1.0",
+  "resource": "node:run-2026-10-11-001/research:1",
+  "owner": "host-1:4242:ab12cd",
+  "token": "Zq3v9mN2xK7pL0sT4wY8rB",
+  "generation": 3,
+  "expiresAt": 1791704966331
+}

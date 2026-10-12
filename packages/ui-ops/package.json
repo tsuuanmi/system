@@ -1,0 +1,23 @@
+{
+  "name": "@tsuuanmi/system-ui-ops",
+  "version": "0.0.0",
+  "private": true,
+  "description": "UI engine for website drivers: UI maps as data, deterministic resolution and verification, passive network signals, bounded self-heal (ADR-0021)",
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "exports": { ".": { "types": "./lib/index.d.ts", "default": "./lib/index.js" } },
+  "files": ["lib"],
+  "scripts": { "build": "tsc -p tsconfig.build.json" },
+  "dependencies": {
+    "@tsuuanmi/system-libs": "workspace:*",
+    "@tsuuanmi/system-provider-core": "workspace:*",
+    "yaml": "2.9.1"
+  },
+  "peerDependencies": { "patchright-core": "1.63.0" },
+  "devDependencies": {
+    "patchright-core": "1.63.0",
+    "@tsuuanmi/system-display-virtual": "workspace:*",
+    "@tsuuanmi/system-browser-patchright": "workspace:*"
+  }
+}

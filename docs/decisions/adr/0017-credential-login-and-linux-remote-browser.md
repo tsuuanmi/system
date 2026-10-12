@@ -1,6 +1,6 @@
 # ADR-0017: Opt-in credential login with local TOTP; Linux-first remote browser
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by [ADR-0021](0021-ui-operations-as-data.md) (UI drift is `CONFIG_FIX`)
 - **Date:** 2026-10-11
 - **Related:** ADR-0010, ADR-0016, CON-3,
   [research](../../research/chatgpt-login-and-remote-browser.md),

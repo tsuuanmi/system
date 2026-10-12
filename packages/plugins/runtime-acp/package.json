@@ -1,0 +1,19 @@
+{
+  "name": "@tsuuanmi/system-runtime-acp",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Agent runtime providers acp:<name>: any Agent Client Protocol agent as a Worker, through the official ACP SDK, with the client side enforcing the policy",
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "exports": { ".": { "types": "./lib/index.d.ts", "default": "./lib/index.js" } },
+  "files": ["lib"],
+  "scripts": { "build": "tsc -p tsconfig.build.json" },
+  "dependencies": {
+    "@agentclientprotocol/sdk": "1.8.0",
+    "@tsuuanmi/system-agent-runtime-core": "workspace:*",
+    "@tsuuanmi/system-provider-core": "workspace:*"
+  },
+  "peerDependencies": { "@deepseek-ai/cordis": "4.0.5-alpha.1", "@deepseek-ai/schemastery": "3.18.5-alpha.1" },
+  "devDependencies": { "@deepseek-ai/cordis": "4.0.5-alpha.1", "@deepseek-ai/schemastery": "3.18.5-alpha.1" }
+}

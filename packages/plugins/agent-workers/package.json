@@ -1,0 +1,45 @@
+{
+  "name": "@tsuuanmi/system-agent-workers",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The `agents` Worker source: configured agent-runtime Workers (Claude Code, Codex, ACP agents) with probe-proven capabilities, durable runs, and sessions",
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    }
+  },
+  "files": [
+    "lib"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json"
+  },
+  "dependencies": {
+    "@tsuuanmi/system-agent-runtime-core": "workspace:*",
+    "@tsuuanmi/system-artifacts": "workspace:*",
+    "@tsuuanmi/system-egress": "workspace:*",
+    "@tsuuanmi/system-leases": "workspace:*",
+    "@tsuuanmi/system-libs": "workspace:*",
+    "@tsuuanmi/system-provider-core": "workspace:*",
+    "@tsuuanmi/system-store": "workspace:*",
+    "@tsuuanmi/system-workers-core": "workspace:*"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "4.0.5-alpha.1",
+    "@deepseek-ai/schemastery": "3.18.5-alpha.1"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "4.0.5-alpha.1",
+    "@deepseek-ai/schemastery": "3.18.5-alpha.1",
+    "@tsuuanmi/system-agent-runtimes": "workspace:*",
+    "@tsuuanmi/system-egress": "workspace:*",
+    "@tsuuanmi/system-event-log": "workspace:*",
+    "@tsuuanmi/system-worker-sessions": "workspace:*",
+    "@tsuuanmi/system-workers": "workspace:*",
+    "@tsuuanmi/system-workflow": "workspace:*"
+  }
+}

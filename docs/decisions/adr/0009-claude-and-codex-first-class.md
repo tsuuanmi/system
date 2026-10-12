@@ -30,12 +30,15 @@ Option 2, symmetric for both agents:
 | client: tools and capabilities | MCP server | MCP server |
 | Worker | `runtime-codex-sdk` | `runtime-claude-agent-sdk` |
 
-- Both client gateways share one turn broker. Remote tool requests become the
-  client's native tool-call items (`function_call` for Responses, `tool_use` for
-  Messages) and are executed by the client under its own sandbox and approvals
-  ([gateways](../../design/gateways.md)).
+- Both client gateways share one turn broker (planned; until then they share the
+  `gateway-turns` library and the text protocol of
+  [ADR-0022](0022-text-protocol-tool-calls-for-website-models.md)). Remote tool
+  requests become the client's native tool-call items (`function_call` for
+  Responses, `tool_use` for Messages) and are executed by the client under its own
+  sandbox and approvals ([gateways](../../design/gateways.md)).
 - Worker runtimes use the official TypeScript SDKs. A runtime is admitted as a
-  continuable Team member only if its resume conformance test passes
+  continuable Team member only if its resume conformance test passes (planned;
+  today admission rests on the runtime probe's `resume` flag)
   ([agent runtimes](../../design/agent-runtimes.md)).
 - Any other ACP-speaking agent is reachable through `runtime-acp`.
 
@@ -48,7 +51,8 @@ Option 2, symmetric for both agents:
   smoke tests against both real clients keep them aligned
   ([testing](../../engineering/testing.md)).
 - Client configuration edits (the Codex `config.toml` and Claude Code settings)
-  are journaled and reversible (REQ-HOST-3).
+  are journaled and reversible (REQ-HOST-3; planned: today `system codex-env` and
+  `system claude-env` print a command and edit nothing).
 - Supersedes nothing. It extends the protocol table in
   [ADR-0006](0006-protocol-introduction-gates.md), which was updated in the same
   change.

@@ -6,6 +6,15 @@
 > Requirements: REQ-ACC-1..9. Shape: [`account.v1.json`](../../schemas/account.v1.json).
 > Evidence: how [internet](../research/internet-analysis.md) and
 > [codex-chatgpt-web](../research/codex-chatgpt-web-analysis.md) run their browsers.
+>
+> Implemented in [`display-virtual`](../../packages/plugins/display-virtual/README.md),
+> [`browser-patchright`](../../packages/plugins/browser-patchright/README.md),
+> [`accounts`](../../packages/plugins/accounts/README.md),
+> [`login`](../../packages/plugins/login/README.md), and
+> [`credentials-vault`](../../packages/plugins/credentials-vault/README.md); differs from
+> target: Linux only (no `offscreen`); `system account remove`, retained pages per session,
+> sleep prevention, the challenge reload outside a turn, the `imap` code provider, and flagging
+> accounts with equal identity hashes are planned.
 
 ## Principle: a genuine browser, headed but invisible
 
@@ -31,12 +40,16 @@ pretend to be a different machine.
 
 ## Display modes (`ctx.display`)
 
+`ctx.display.prepare('invisible')` returns the platform's invisible kind
+(`virtual` on Linux, `offscreen` elsewhere). `prepare('visible')` returns the
+operator's screen. `headless` is never offered for provider turns.
+
 | Mode | How | Default on | Use |
 |---|---|---|---|
-| `virtual` | headed Chrome on a plugin-owned **Xvfb** (`-screen 0 1920x1080x24 -nolisten tcp`, `-displayfd`); window `--window-size=1920,1080` | **Linux** (including servers without a display) | provider turns |
+| `virtual` | headed Chrome on a plugin-owned **Xvfb** (`-screen 0 1920x1080x24 -nolisten tcp`, `-displayfd`, `-auth` with a private cookie); window `--window-size=1920,1080` | **Linux** (including servers without a display) | provider turns |
 | `offscreen` | headed window at `--window-position=-10000,-10000` with an explicit size (≥ 1280×900) | **macOS, Windows** (v1.0; the MVP is Linux-only) | provider turns |
 | `visible` | a normal on-screen window | — | interactive login, debugging, resolving a challenge |
-| `headless` | Chrome headless | **never for provider turns** | only the `dev` profile with fake providers |
+| `headless` | Chrome headless | **never** | not offered |
 
 Rules for invisible modes, so pages render and update as if they were in the
 foreground:
@@ -44,19 +57,27 @@ foreground:
 - Use an explicit window size and viewport. A window is never minimized or
   hidden, because a hidden view collapses its viewport.
 - Enable focus emulation (`Emulation.setFocusEmulationEnabled`) so that
-  background windows accept input and focus events.
+  background windows accept input and focus events. The engine (Playwright and
+  patchright on Chromium) enables it on every page; a real-browser test guards it.
 - Disable background throttling (`--disable-background-timer-throttling`,
   `--disable-renderer-backgrounding`, `--disable-backgrounding-occluded-windows`).
 - Prevent system sleep while turns are active.
-- Xvfb is health-monitored. If it dies, every browser on it is closed, and
-  in-flight turns go through receipt reconciliation (INV-4).
+- Xvfb is health-monitored. Every prepared display carries a `lost` signal and a
+  `generation`. If Xvfb dies, the signal aborts with `session_broken`, every
+  browser on it is closed, and in-flight turns go through receipt reconciliation
+  (INV-4). The next `prepare` starts a new Xvfb with the next generation; a
+  startup failure is not cached, so the next turn retries.
+- `invisible` fails closed: when Xvfb cannot start, the turn fails with
+  `config_error`. It never falls back to the operator's `DISPLAY` or to headless.
 
 ## Browser launch (`ctx.browser`)
 
 - **Engine:** `patchright-core` driving the **system Chrome stable channel**.
-  The search order is the configured path, then `CHROME_PATH`, then standard
-  install locations. A bundled Chrome for Testing is a last resort and produces
-  a warning.
+  The search order is the configured path, then `CHROME_PATH`, then a system
+  Chrome no older than the engine's Chromium, then the **managed** Chrome for
+  Testing build pinned in `chrome.lock.json`, which `system init` installs under
+  `<DSH_HOME>/system/browsers` ([ADR-0020](../decisions/adr/0020-pinned-managed-chrome.md)).
+  When none is usable, the turn fails closed with `config_error`.
 - **Flags:** no `--enable-automation`, no `--no-sandbox` for headed runs, and the
   OS keyring is kept, without `--password-store=basic` or `--use-mock-keychain`.
 - **No exposed debugging port.** Contexts are owned in-process. If a CDP endpoint
@@ -75,8 +96,8 @@ generic. Everything provider-specific comes from the provider driver
 ```ts
 interface ProviderAccountSupport {          // part of ProviderDriver
   loginUrl: string;
-  stateOrigins: string[];                   // origins whose cookies, localStorage, and IndexedDB are captured
-  checkAuth(page): Promise<AuthState>;      // signed-in | signed-out (with evidence) | challenge | unknown
+  stateOrigins: string[];                   // origins whose cookies, localStorage, IndexedDB are kept
+  checkAuth(page): Promise<AuthState>;      // signed-in | signed-out (with evidence) | unknown
   identity(page): Promise<string>;          // stable identity hint; only its hash is stored
 }
 ```
@@ -86,12 +107,12 @@ interface ProviderAccountSupport {          // part of ProviderDriver
 | Catalog | accounts are **configuration**: id, provider, label, roles, quota class, and tier-to-mode map. Any number per provider, for example `chatgpt-main`, `chatgpt-2`, `gemini-main` |
 | Portable state | per account: cookies, localStorage, and **IndexedDB** for `stateOrigins` only, in one revisioned record ([`account.v1.json`](../../schemas/account.v1.json)). If IndexedDB is too large to capture, the previous IndexedDB is kept and a warning is recorded |
 | Login profile | a per-account native Chrome profile directory, machine-local, used **only** for interactive login and re-auth. Automated turns never use it |
-| Storage | vault directory `0700`, records `0600`, atomic write (temp file, fsync, rename), reads reject wrong permissions. Encryption at rest with a key from the OS keyring is an optional provider of the same seam |
+| Storage | account records and login credentials are encrypted grant records in `ctx.credentials`, provided by the AES-256-GCM vault (canonical: [credentials vault](../../packages/plugins/credentials-vault/README.md)) |
 | Isolation | one browser process, scheduler, and set of conversation bindings per account. Ports are allocated dynamically, not by index. Two accounts never share a context |
 | Distinct identities | at save time, `identity()` is hashed. Accounts whose hashes match are flagged, which REQ-TEAM-4 needs for independent team members |
-| Write-back | after each turn, refreshed state is written only if both the account revision and the scheduler lease generation are current ([scheduling](scheduling-and-leases.md)) |
+| Write-back | after each turn, refreshed state is written only if both the account revision and the scheduler lease generation are current ([scheduling](scheduling-and-leases.md)). A Save or relogin made while the turn ran has a newer revision, so the turn's write-back is skipped and the newer sign-in wins |
 | Re-auth | only **positive** signed-out evidence (a login URL or login surface) sets `reauth-required`. A challenge or an unknown state never does |
-| Removal | `system account remove <id>` deletes the record and the login profile after confirmation |
+| Removal | `system account remove <id>` (planned) deletes the record and the login profile after confirmation |
 
 ## Login flows
 
@@ -106,7 +127,7 @@ profile, so the operator signs in exactly as usual, including SSO popups and 2FA
 
 | Flow | Platform | How |
 |---|---|---|
-| **remote** | **Linux (MVP)** | **ported from tsuuanmi/internet**: Chrome on its own Xvfb, `x11vnc -localhost` with a one-time password file, and a token-gated **noVNC** page on 127.0.0.1. The operator runs `ssh -L <port>:127.0.0.1:<port> host` and opens the printed URL. The page has Save, Cancel, and paste-from-host buttons. The session is started on demand, and its token expires after a short TTL |
+| **remote** | **Linux (MVP)** | **ported from tsuuanmi/internet**: `system account login <id>` opens Chrome on its own X-authenticated Xvfb, with `x0vncserver` or `x11vnc` on an owner-only unix socket and a token-gated **noVNC** page on 127.0.0.1. The operator runs `ssh -L <port>:127.0.0.1:<port> host` and opens the printed URL. The page has Save and Cancel (paste-from-host is not built yet). The session is started on demand and expires after a short TTL |
 | **visible** | desktop (v1.0) | Chrome opens on screen with the account's login profile |
 
 ### Credential login (`credentials`, opt-in)
@@ -115,35 +136,42 @@ A deterministic state machine runs on the **persistent login profile**, so the
 device stays recognized. It starts **only after positive sign-out evidence**,
 never on a schedule:
 
-```text
-probe chatgpt.com ── signed in ──▶ done (most runs end here)
-   │ signed out
-   ▼
-email page ─▶ password page ─▶ branch on what loads (timeout per step):
-   ├─ authenticator (TOTP) ──▶ code from code provider ──▶ submit once ──▶ verify
-   ├─ other MFA offered first ──▶ "try another method" ──▶ authenticator
-   ├─ email code / push ──▶ code provider if one is opted in, otherwise NEEDS_HUMAN
-   ├─ passkey upsell ──▶ "not now"
-   └─ Turnstile / CAPTCHA / unknown page / error ──▶ NEEDS_HUMAN
-NEEDS_HUMAN ──▶ remote browser on the SAME profile + `account.status = reauth-required`
+```mermaid
+flowchart TD
+  P[probe the site] -->|signed in| D[done: most runs end here]
+  P -->|signed out| E[email page] --> W[password page]
+  W --> B{what loads, with a timeout per step}
+  B -->|authenticator| T[code from the code provider] --> S[submit once] --> V[verify]
+  B -->|other MFA offered first| A[try another method] --> T
+  B -->|email code or push| C{code provider opted in?}
+  C -->|yes| T
+  C -->|no| H[NEEDS_HUMAN]
+  B -->|passkey upsell| N[not now] --> B
+  B -->|Turnstile, CAPTCHA, unknown page, error| H
+  H --> R["remote browser on the SAME profile; account status reauth-required"]
 ```
 
 - **Steps are matched by URL path and accessible role**, not brittle CSS.
   The language is forced to `en-US`. DOM fixtures cover every page, and drift
-  fails closed with `CODE_FIX`.
+  fails closed with `CONFIG_FIX` ([UI operations](ui-operations.md)).
 - **Code providers:**
   - `totp-local` computes RFC 6238 locally with `otpauth`. If fewer than 5 seconds
     remain in the window, it waits for the next window. Codes are never reused.
   - `manual`: the operator runs `system account code <id> <code>`, or types the
     code in the remote view.
   - `imap` (later, opt-in) reads the one-time code from the operator's own mailbox.
+- **Same identity:** a credential login never switches accounts. If it signs in
+  as a different identity than the one saved, it is refused (`reauth_required`)
+  and nothing is stored, so a changed credential cannot redirect the account.
+  Only a manual Save at the remote login may switch it.
 - **Bounds:** at most 2 submission attempts per login, then `NEEDS_HUMAN`.
   Nothing is retried in a way that could lock the account. Challenges are never
   solved (CON-3).
 - **Secrets:** the email, password, and TOTP secret live in an **encrypted
-  credential record**. The key comes from the OS keyring, or from a `0600` key
-  file on servers. Values are decrypted only in memory and never logged, sent to
-  a model, or stored in an artifact. **A TOTP secret is never sent to any website
+  credential record** in the vault, whose key handling is described in the
+  [credentials vault](../../packages/plugins/credentials-vault/README.md). Values
+  are decrypted only in memory and never logged, sent to a model, or stored in an
+  artifact. **A TOTP secret is never sent to any website
   or service** (for example 2fa.live), because that would hand over the second
   factor permanently.
 
@@ -164,7 +192,7 @@ A failed verification saves nothing.
 - **Default: a fresh context per turn**, created from the portable state. The
   turn opens the bound conversation URL, and the context is closed in `finally`.
   This gives isolation and a clean recovery path.
-- **Retained page per session**, opt-in per capability. For long sessions and
+- **Retained page per session** (planned), opt-in per capability. For long sessions and
   Deep Research, one page stays bound to a `SessionId`
   ([sessions](sessions-and-messaging.md)), with a TTL, a cap per account, and
   heartbeat sweeps. Eviction falls back to the fresh-context path.
@@ -178,4 +206,4 @@ A failed verification saves nothing.
 | Cloudflare challenge response (`cf-mitigated: challenge`) **outside** an active turn | reload once, then confirm with a 2xx |
 | a challenge during a turn, or after the reload | turn fails as `USER_ACTION` (`challenge`). The operator resolves it through the `visible` or `remote` view. Nothing is auto-solved |
 | signed out (positive evidence) | `reauth-required`; queued work for the account fails closed (REQ-ACC-5) |
-| UI drift (selector or fixture mismatch) | turn fails closed with `CODE_FIX`; a health alert is raised |
+| UI drift (no candidate resolves) | bounded self-heal ([UI operations](ui-operations.md#self-heal)); if it fails, the turn fails closed with `CONFIG_FIX` and a diagnostic bundle, and a health alert is raised |

@@ -11,8 +11,8 @@ For any non-trivial change:
 1. Read the repository [README.md](README.md) for scope and status.
 2. Read [docs/README.md](docs/README.md) to find the authoritative requirements,
    architecture, decisions, design, and engineering documents.
-3. Read the nearest `README.md` in the affected source directory (once source exists)
-   to understand what the module owns and which way its dependencies point.
+3. Read the nearest `README.md` in the affected source directory to understand
+   what the module owns and which way its dependencies point.
 4. Read the affected source and tests.
 5. Read proposals and research only for context. They are not current authority.
 

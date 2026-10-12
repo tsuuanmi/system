@@ -1,0 +1,51 @@
+import { fileURLToPath } from 'node:url'
+import { defineConfig } from 'vitest/config'
+
+const src = (path: string): string => fileURLToPath(new URL(path, import.meta.url))
+
+export default defineConfig({
+  resolve: {
+    // Bare workspace imports resolve to source, never to built lib/ (DSH testing convention).
+    alias: {
+      '@tsuuanmi/system-libs': src('./packages/libs/src/index.ts'),
+      '@tsuuanmi/system-store': src('./packages/plugins/store/src/index.ts'),
+      '@tsuuanmi/system-artifacts': src('./packages/plugins/artifacts/src/index.ts'),
+      '@tsuuanmi/system-credentials-vault': src('./packages/plugins/credentials-vault/src/index.ts'),
+      '@tsuuanmi/system-mcp-server': src('./packages/plugins/mcp-server/src/index.ts'),
+      '@tsuuanmi/system-leases': src('./packages/plugins/leases/src/index.ts'),
+      '@tsuuanmi/system-event-log': src('./packages/plugins/event-log/src/index.ts'),
+      '@tsuuanmi/system-turn-receipts': src('./packages/plugins/turn-receipts/src/index.ts'),
+      '@tsuuanmi/system-accounts': src('./packages/plugins/accounts/src/index.ts'),
+      '@tsuuanmi/system-display-virtual': src('./packages/plugins/display-virtual/src/index.ts'),
+      '@tsuuanmi/system-browser-patchright': src('./packages/plugins/browser-patchright/src/index.ts'),
+      '@tsuuanmi/system-ui-ops': src('./packages/ui-ops/src/index.ts'),
+      '@tsuuanmi/system-provider-gemini-web': src('./packages/plugins/provider-gemini-web/src/index.ts'),
+      '@tsuuanmi/system-provider-chatgpt-web': src('./packages/plugins/provider-chatgpt-web/src/index.ts'),
+      '@tsuuanmi/system-providers': src('./packages/plugins/providers/src/index.ts'),
+      '@tsuuanmi/system-login': src('./packages/plugins/login/src/index.ts'),
+      '@tsuuanmi/system-turns': src('./packages/plugins/turns/src/index.ts'),
+      '@tsuuanmi/system-egress': src('./packages/plugins/egress/src/index.ts'),
+      '@tsuuanmi/system-agent-runtime-core': src('./packages/agent-runtime-core/src/index.ts'),
+      '@tsuuanmi/system-agent-workers': src('./packages/plugins/agent-workers/src/index.ts'),
+      '@tsuuanmi/system-agent-runtimes': src('./packages/plugins/agent-runtimes/src/index.ts'),
+      '@tsuuanmi/system-runtime-acp': src('./packages/plugins/runtime-acp/src/index.ts'),
+      '@tsuuanmi/system-runtime-codex-sdk': src('./packages/plugins/runtime-codex-sdk/src/index.ts'),
+      '@tsuuanmi/system-runtime-claude-agent-sdk': src('./packages/plugins/runtime-claude-agent-sdk/src/index.ts'),
+      '@tsuuanmi/system-gateway-turns': src('./packages/gateway-turns/src/index.ts'),
+      '@tsuuanmi/system-profile-scientific-research': src('./packages/plugins/profile-scientific-research/src/index.ts'),
+      '@tsuuanmi/system-profile-software-development': src('./packages/plugins/profile-software-development/src/index.ts'),
+      '@tsuuanmi/system-gateway-responses': src('./packages/plugins/gateway-responses/src/index.ts'),
+      '@tsuuanmi/system-gateway-anthropic': src('./packages/plugins/gateway-anthropic/src/index.ts'),
+      '@tsuuanmi/system-web-ui': src('./packages/plugins/web-ui/src/index.ts'),
+      '@tsuuanmi/system-worker-sessions': src('./packages/plugins/worker-sessions/src/index.ts'),
+      '@tsuuanmi/system-workflow': src('./packages/plugins/workflow/src/index.ts'),
+      '@tsuuanmi/system-workers-core': src('./packages/workers-core/src/index.ts'),
+      '@tsuuanmi/system-workers': src('./packages/plugins/workers/src/index.ts'),
+      '@tsuuanmi/system-gateway-core': src('./packages/gateway-core/src/index.ts'),
+      '@tsuuanmi/system-provider-core': src('./packages/provider-core/src/index.ts'),
+    },
+  },
+  test: {
+    include: ['scripts/**/*.spec.ts', 'spikes/**/*.spec.ts', 'packages/**/tests/**/*.spec.ts'],
+  },
+})

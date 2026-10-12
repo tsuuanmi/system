@@ -1,0 +1,20 @@
+{
+  "name": "@tsuuanmi/system-gateway-turns",
+  "version": "0.0.0",
+  "private": true,
+  "description": "What the client-protocol gateways share: the text tool protocol for website models (ADR-0022), conversation threads bound to provider conversations, and the loopback guard",
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "exports": { ".": { "types": "./lib/index.d.ts", "default": "./lib/index.js" } },
+  "files": ["lib"],
+  "scripts": { "build": "tsc -p tsconfig.build.json" },
+  "dependencies": {
+    "@tsuuanmi/system-gateway-core": "workspace:*",
+    "@tsuuanmi/system-libs": "workspace:*",
+    "@tsuuanmi/system-store": "workspace:*",
+    "@tsuuanmi/system-workflow": "workspace:*"
+  },
+  "peerDependencies": { "@deepseek-ai/cordis": "4.0.5-alpha.1" },
+  "devDependencies": { "@deepseek-ai/cordis": "4.0.5-alpha.1" }
+}

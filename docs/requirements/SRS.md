@@ -175,9 +175,10 @@
 - **REQ-SES-7** A session can enter `INPUT_REQUIRED` and resume when the operator
   or a peer supplies input. Lifetime, idle, turn, message, and token budgets are
   bounded, and exceeding one is a classified failure.
-- **REQ-SES-8** Calls that start long work (MCP, CLI) return a `SessionId` or run
-  id immediately. Clients continue, poll, or stream by that id, and never block
-  for the duration of the work.
+- **REQ-SES-8** Calls that start long work (MCP, CLI) return a `SessionId` or a
+  turn or run id immediately, or within a bounded wait below client timeouts.
+  Clients continue, poll, or stream by that id, and never block for the duration
+  of the work.
 
 ## Gateways (`REQ-GW`)
 

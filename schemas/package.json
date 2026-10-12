@@ -1,0 +1,9 @@
+{
+  "name": "@tsuuanmi/system-schemas",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Canonical JSON Schemas (draft 2020-12) for system records and wire payloads",
+  "type": "module",
+  "files": ["*.v*.json", "examples/*.json"],
+  "exports": { "./*": "./*", "./package.json": "./package.json" }
+}

@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:tsuuanmi:system:schema:agent-result:v1",
+  "title": "Agent result",
+  "description": "Body of a `report` artifact holding one agent-runtime Worker run's final message (design/agent-runtimes.md). The prompt is referenced by hash only; the agent's own session stays native and is named by its handle.",
+  "type": "object",
+  "required": [
+    "schema",
+    "worker",
+    "runtime",
+    "runId",
+    "promptHash",
+    "sandbox",
+    "text"
+  ],
+  "properties": {
+    "schema": {
+      "enum": [
+        "agent-result@1.0",
+        "agent-result@1.1"
+      ],
+      "description": "1.1 adds `workspace` and `subject`."
+    },
+    "worker": {
+      "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+    },
+    "runtime": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9:-]*$",
+      "maxLength": 64
+    },
+    "runId": {
+      "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+    },
+    "sessionId": {
+      "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+    },
+    "nativeHandle": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "promptHash": {
+      "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/sha256"
+    },
+    "sandbox": {
+      "enum": [
+        "read-only",
+        "workspace-write"
+      ]
+    },
+    "workspace": {
+      "description": "Absolute path of the workspace the agent worked in (from operator configuration, never model text).",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096
+    },
+    "subject": {
+      "description": "The workspace's exact subject after the run (a git working tree), when it is a repository.",
+      "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/subject"
+    },
+    "turns": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "costUsd": {
+      "type": "number",
+      "minimum": 0
+    },
+    "text": {
+      "type": "string",
+      "maxLength": 4000000
+    }
+  },
+  "additionalProperties": false
+}

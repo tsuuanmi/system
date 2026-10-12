@@ -1,33 +1,71 @@
 # Dependency register
 
-> Planned. Policy: [ADR-0010](../decisions/adr/0010-reuse-before-build.md).
-> Every external tool sits behind a seam ([plugin model](../architecture/plugin-model.md)).
+Policy: [ADR-0010](../decisions/adr/0010-reuse-before-build.md). Every external tool
+sits behind a seam ([plugin model](../architecture/plugin-model.md)).
 
-This file is the canonical list of what `system` reuses, adapts, or builds, and on
-which rung of the reuse ladder. Every PR that adds a runtime dependency or ports
-code updates this table.
+This file is the canonical list of what `system` reuses, adapts, or builds, on
+which rung of the reuse ladder, and what was compared. Every change that adds a
+runtime dependency or ports code updates this table. Exact versions are in each
+package's `package.json`. **Status** is one of **in use**, **planned**, or
+**dropped**.
 
-| Concern | Choice | Rung | Seam / home | Notes |
+## Reused and adapted
+
+| Concern | Choice | Rung | Home | Status | Why, and what was compared |
+|---|---|---|---|---|---|
+| Host, plugin runtime | **DSH core**: only the allow-listed `@deepseek-ai/*` rows on Cordis, no `dsh-base` | library | host; [reuse map](../architecture/plugin-model.md#dsh-core-reuse-map) | in use | one exact pin, telemetry off ([ADR-0018](../decisions/adr/0018-build-on-dsh-core.md), [ADR-0019](../decisions/adr/0019-explicit-minimal-dsh-core.md)) |
+| DSH launcher | `@deepseek-ai/dsh` | library | `cli` | in use | the supported way to run a DSH harness |
+| Config validation | Schemastery (Cordis-native) | library | every plugin `Config` | in use | one schema system across plugins |
+| Record and wire schemas | JSON Schema 2020-12, `ajv`, `ajv-formats` | spec + library | `libs`, `schemas/` | in use | strict mode ([ADR-0014](../decisions/adr/0014-json-schema-contracts.md)) |
+| MCP server | `@modelcontextprotocol/sdk` (stateless Streamable HTTP) on DSH `ctx.webServer`, `zod` for tool schemas | protocol SDK | `mcp-server` | in use | DSH has only an MCP client ([review](../research/dsh-community-plugins-review.md)) |
+| Cross-process writer lock | DSH `@deepseek-ai/dsh-atomic-write` `withFileLock` | library (DSH) | `credentials-vault` | in use | its `writeFileAtomic` skips fsync, so `libs` keeps `writeFileDurable` |
+| DSH home path | `@deepseek-ai/dsh-home-paths` `resolveDshHome()` | library (DSH) | `libs` | planned | replaces the duplicate `dshHome()` ([roadmap](../proposals/roadmap.md#refactors-found-by-review)) |
+| Browser automation | `patchright-core` and a system Chrome, headed | library | `browser-patchright`, `ui-ops` | in use | removes automation leaks ([ADR-0016](../decisions/adr/0016-invisible-headed-browser-and-portable-accounts.md)); `@anweat/dsh-browser` is headless with no IndexedDB ([review](../research/dsh-community-plugins-review.md#browser-runtime-second-pass-2026-10-11)) |
+| Managed Chrome download | `@puppeteer/browsers`, the build pinned in `chrome.lock.json` | library | `browser-patchright`, `system init` | in use | only when the host has no recent Chrome ([ADR-0020](../decisions/adr/0020-pinned-managed-chrome.md)) |
+| Invisible display | Xvfb from system packages; own manager ported from internet | system tool + port | `display-virtual` | in use | uses `-displayfd` and X auth; `xvfb-run -a` and `@cypress/xvfb` guess display numbers |
+| Remote login desktop | `@novnc/novnc`, `ws`; TigerVNC `x0vncserver` or `x11vnc` from system packages | library + system tool | `login` | in use | owner-only VNC unix socket, token, Host and origin checks, no Python; websockify, neko, and Kasm compared ([login](../../packages/plugins/login/README.md)) |
+| TOTP codes | `otpauth` | library | `login` | in use | computed locally, never by a third-party site |
+| UI maps | `yaml` | library | `ui-ops` | in use | maps are data ([ADR-0021](../decisions/adr/0021-ui-operations-as-data.md)) |
+| Credential scan for egress | `@secretlint/core`, `@secretlint/secretlint-rule-preset-recommend` | library | `egress` | in use | a thin policy layer over secretlint; gitleaks (Go), detect-secrets (Python), and Presidio need another runtime |
+| Exact git subjects | the installed `git`, read-only, fixed arguments | system tool | `libs` | in use | a review subject must match what git sees; isomorphic-git would reimplement it |
+| Claude Code as a Worker | `@anthropic-ai/claude-agent-sdk`, running the operator's `claude` | protocol SDK | `runtime-claude-agent-sdk` | in use | exact tool list, `settingSources: []`, resume; © Anthropic, review the terms before a release |
+| Codex as a Worker | `@openai/codex-sdk`, running the operator's `codex` | protocol SDK | `runtime-codex-sdk` | in use | exact sandbox mode, resume ([runtime](../../packages/plugins/runtime-codex-sdk/README.md)) |
+| ACP agents as Workers | `@agentclientprotocol/sdk`, client side over stdio | protocol SDK | `runtime-acp` | in use | client-enforced policy ([runtime](../../packages/plugins/runtime-acp/README.md)) |
+| Agent child environment | DSH `@deepseek-ai/dsh-subprocess` `scrubbedParentEnv()`, with its peer `@deepseek-ai/dsh-http-proxy` (proxy variables) | library (DSH) | `agent-runtime-core` (`childEnvironment`) | in use | DSH's own scrub of credential-shaped and `DSH_*` names (INV-8); operator variables are forwarded by name on top. Hand-filtering `process.env` would duplicate it |
+| Local exec (shell, fs, sandbox) | DSH `dsh-shell`, `dsh-fs`, `dsh-sandbox`, `dsh-subprocess` | library (DSH) | `ctx.exec` | planned | no seam is mounted |
+| Economy-tier and API models | DSH `dsh-llm`, `dsh-llm-pi-ai` | library (DSH) | `ctx.models` | planned | P4; needs an API key or a local model |
+
+## Built, with what was compared
+
+Each of these is built because nothing fits; the comparison is the reason.
+
+| Concern | Ours | Home | Status | Compared and rejected |
 |---|---|---|---|---|
-| Host, plugin runtime, reusable plugins | **DSH core** (`dsh-base` + selected `@deepseek-ai/dsh-*`) on Cordis | library (core) | host and many seams; see the [reuse map](../architecture/plugin-model.md#dsh-core-reuse-map) | MIT; one exact pinned version; never `latest`; telemetry off ([ADR-0018](../decisions/adr/0018-build-on-dsh-core.md)) |
-| Config validation | Schemastery (Cordis-native) | library | every plugin `Config` | keeps one schema system across plugins |
-| Record and wire schemas | JSON Schema 2020-12 + Ajv (`ajv`, `ajv-formats`) | spec + library | `ctx.artifacts`, store, MCP, decisions | [ADR-0014](../decisions/adr/0014-json-schema-contracts.md); strict mode |
-| Types from schemas | `json-schema-to-typescript` (or equivalent) | library | build step | generated types are build output, checked in CI |
-| Durable records | `node:sqlite` via DSH `dsh-storage-sqlite` / `dsh-storage-domain`, or `system` tables on `node:sqlite` where transactions and revisions need more (M0 spike) | library | `ctx.store` | [ADR-0003](../decisions/adr/0003-sqlite-durable-store.md); versioned migrations, no ORM |
-| Browser automation | `patchright-core` + system Chrome (stable channel), headed | library | `ctx.browser` | proven in internet; removes automation leaks, no fingerprint spoofing ([ADR-0016](../decisions/adr/0016-invisible-headed-browser-and-portable-accounts.md)) |
-| Invisible display, remote login | Xvfb (virtual display for turns) + x11vnc + noVNC (login) | system tool / library | `ctx.display` | taken from system packages, not vendored |
-| HTML → Markdown | `turndown` | library | provider drivers | |
-| Token budgets | `tiktoken` | library | provider runtime, gateways | |
-| MCP | `@modelcontextprotocol/sdk` | protocol SDK | `mcp-server` | |
-| Claude Code as Worker | Claude Agent SDK | protocol SDK | `ctx.agentRuntimes` | check its license terms before release |
-| Codex as Worker | `@openai/codex-sdk` | protocol SDK | `ctx.agentRuntimes` | Apache-2.0 |
-| Other agents as Workers | `@agentclientprotocol/sdk` | protocol SDK | `ctx.agentRuntimes` | Apache-2.0 |
-| Provider receipts, scheduler, account vault, remote login (Xvfb + x11vnc + noVNC, tokens, Save/Cancel) | port from internet | port | provider runtime | same maintainer; restructure into seams ([ADR-0017](../decisions/adr/0017-credential-login-and-linux-remote-browser.md)); TigerVNC `Xvnc` is a later swap-in |
-| TOTP codes | `otpauth` (RFC 4226/6238) | library | `login-credentials` code provider `totp-local` | computed locally; never via third-party sites |
-| Credential encryption at rest | OS keyring (libsecret / Keychain) or a `0600` key file | system tool / library | `ctx.accounts` | mandatory for passwords and TOTP secrets |
-| Responses emulation, turn broker, completion fence, drain | port from codex-chatgpt-web | port | gateways | MIT; keep attribution in `THIRD_PARTY_NOTICES` |
-| Local exec (shell, fs, sandbox) | DSH `dsh-shell`, `dsh-fs`, `dsh-sandbox`, `dsh-subprocess` | library (DSH core) | `ctx.exec` | now direct reuse, since `system` runs on DSH core |
-| Economy-tier and API models | DSH `dsh-llm` + `dsh-llm-pi-ai` | library (DSH core) | `ctx.models` | P4 |
-| Approvals, user questions | DSH `dsh-user-approval`, `dsh-user-questions` | library (DSH core) | plan gate, `NEEDS_HUMAN` | |
-| Workflow durability | own engine | build | `ctx.workflow` | [ADR-0004](../decisions/adr/0004-single-workflow-runtime.md); Temporal and similar rejected until a concrete gap appears |
-| Worker admission and routing, team policy | own | build | `ctx.workers`, `ctx.teams` | the semantic remainder: no existing tool provides these contracts |
+| Durable records | tables on `node:sqlite` (WAL, `BEGIN IMMEDIATE`, revisions, migrations) | `store` | in use | DSH `dsh-storage`, `-domain`, `-json` are key-value only; relational records need transactions ([ADR-0003](../decisions/adr/0003-sqlite-durable-store.md)) |
+| Event log | `ctx.eventLog` | `event-log` | in use | DSH `dsh-chunked-list`; `dsh-otel` is telemetry (banned). Ours commits in the same SQLite transaction (`afterCommit`) |
+| Leases | `ctx.leases`, adapted from `@gm-hz/agent-dag-workflow` | `leases` | in use | proper-lockfile, redlock, DSH `withFileLock`; ours adds a generation fence ([scheduling](../design/scheduling-and-leases.md)) |
+| Artifacts | `ctx.artifacts` | `artifacts` | in use | nothing in DSH; in-toto and W3C PROV are formats only. Decision artifacts (INV-13) |
+| Credential encryption at rest | AES-256-GCM via `node:crypto`, `0600` key file; provides DSH `ctx.credentials` | `credentials-vault` | in use | DSH `dsh-credentials-local` is plain YAML; keytar needs a desktop keyring; sops and age are external tools |
+| Provider runtime | scheduler, two-clock completion, reconciliation, failure taxonomy, ported from internet | `provider-core` | in use | p-queue, p-limit, DSH `dsh-jobs`; ours adds per-account capacity, fences, and generations ([ADR-0017](../decisions/adr/0017-credential-login-and-linux-remote-browser.md)) |
+| Website UI operations | UI maps as data; audited, fail-closed self-heal | `ui-ops` | in use | Stagehand, Midscene, browser-use, Skyvern, Healenium, the Playwright healer need a debugging endpoint or their own browser, or are LLM-first ([research](../research/browser-interaction-and-self-healing.md)) |
+| Accounts | `ctx.accounts`, an encrypted multi-account vault | `accounts` | in use | stored through DSH `ctx.credentials`, which holds secrets but has no accounts, tiers, or portable browser state |
+| Website turns | durable turns, receipts before send, reconciliation | `turns`, `turn-receipts` | in use | DSH `dsh-jobs` is process-local, with no leases or receipts |
+| ChatGPT Web driver | UI map, mode read-back | `provider-chatgpt-web` | in use | `@wlv-zedd/dsh-chatgpt-web` and miuuyy/codex-chatgpt-web read for patterns only |
+| Gemini Web driver | UI map, mode read-back, Node | `provider-gemini-web` | in use | HanaokaYuzu/Gemini-API, Gemini-FastAPI, `gemi`: all Python, on private endpoints with raw cookies |
+| Worker admission and routing | `ctx.workers`, fail-closed admission, decision artifacts | `workers`, `workers-core` | in use | DSH `ctx.subagents` picks a provider by name; Composio, claw-orchestrator, vibe-kanban dispatch without capability evidence |
+| Agent Workers | `ctx.agentRuntimes` providers, the `agents` Worker source | `agent-runtimes`, `agent-workers` | in use | DSH `dsh-subagent-claude-code`, `-codex`, `-acp`: one-shot, no resume or probe; Claude settings, hooks, and MCP servers apply; Codex sandbox left at its default |
+| Workflow durability | one engine modelled on `@gm-hz/agent-dag-workflow` | `workflow` | in use | DSH `dsh-workflow`, `-ptc` (no journal or resume); Temporal, Restate, Inngest, Trigger.dev (need a server); DBOS TS (Postgres); Mastra and LangGraph.js lack lease generations, input-hash receipts, the never-resend rule, decision artifacts, and exact-subject gates ([ADR-0004](../decisions/adr/0004-single-workflow-runtime.md)) |
+| Worker sessions | `ctx.workerSessions`: barrier, distinct accounts, decision artifacts | `worker-sessions` | in use | DSH `dsh-experimental-agent-team` is experimental and in-process ([ADR-0019](../decisions/adr/0019-explicit-minimal-dsh-core.md)) |
+| Model gateways | `/anthropic` and `/openai` on the `gateway-turns` library | `gateway-anthropic`, `gateway-responses` | in use | claude-code-router, claude-code-proxy, LiteLLM, claudex translate API to API; ours drives web chat through durable, receipted runs ([ADR-0022](../decisions/adr/0022-text-protocol-tool-calls-for-website-models.md)). Nothing was ported from codex-chatgpt-web |
+| Operator web UI | the small `/ui` page | `web-ui` | in use | DSH `dsh-web-app` needs `dsh-base` (ADR-0019); operator decision |
+| CLI | the `system` binary with a stdio MCP shim | `cli` | in use | commander, citty; mcp-remote and supergateway would put the token in client config |
+
+## Dropped
+
+| Concern | Choice | Why |
+|---|---|---|
+| Blob store | own `blobs` plugin | no plugin consumed it ([ADR-0003 amendment](../decisions/adr/0003-sqlite-durable-store.md#amendment-2026-10-12-no-blob-store-until-a-consumer-exists)). DSH `dsh-attachment-local` was not adopted: it depends on the native `sharp`, requires a display name, and is not an allow-listed row (it already stores files by SHA-256 and verifies on read) |
+| HTML to Markdown | `turndown` | drivers take Markdown from the site's own Copy |
+| Token budgets | `tiktoken` | no package counts tokens |
+| Types from schemas | `json-schema-to-typescript` | no package generates types; records are validated at runtime with Ajv |
+| Approvals, user questions | DSH `dsh-user-approval`, `dsh-user-questions` | not mounted: plan approval is the engine's own (`approval.v1.json`) |

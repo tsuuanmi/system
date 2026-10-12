@@ -1,0 +1,341 @@
+# ChatGPT Web UI map (ui-map@1.0, ADR-0021). Checked against the live site on 2026-10-11
+# (docs/research/browser-interaction-and-self-healing.md#live-check-2026-10-11-signed-in-account-read-only).
+# When the site changes, edit this file (and the fixture), not the driver code.
+schema: ui-map@1.1
+provider: chatgpt-web
+uiRevision: '2026-10-11'
+locales: [en]
+
+elements:
+  auth.login:
+    description: Sign-in entry points shown to a signed-out visitor.
+    candidates:
+      - { role: button, name: { en: '^Log in$' } }
+      - { role: link, name: { en: '^Log in$' } }
+      - { role: heading, name: { en: '^Log in or sign up$' } }
+      - { testId: login-button }
+
+  # Credential sign-in (ADR-0017). The email page was seen live on 2026-10-11; the later
+  # steps (password, codes, method choice, challenge) are NOT yet verified live.
+  login.email:
+    candidates:
+      - { role: textbox, name: { en: '^Email address$' } }
+      - { label: { en: '^Email address$' } }
+  login.password:
+    candidates:
+      - { label: { en: '^Password$' } }
+  login.code:
+    candidates:
+      - { label: { en: '^(Code|Enter code|Verification code|One-time code)$' } }
+  login.continue:
+    candidates:
+      - { role: button, name: { en: '^Continue$' } }
+  login.try-another:
+    candidates:
+      - { role: button, name: { en: '^Try another method$' } }
+      - { role: link, name: { en: '^Try another method$' } }
+  login.authenticator:
+    candidates:
+      - { role: button, name: { en: '^Authenticator app\b' } }
+  login.not-now:
+    candidates:
+      - { role: button, name: { en: '^(Not now|Skip|Maybe later)$' } }
+  login.email-code-hint:
+    candidates:
+      - { role: heading, name: { en: '^Check your (inbox|email)$' } }
+  login.challenge:
+    candidates:
+      - { css: 'iframe[title*="challenge" i]' }
+      - { role: heading, name: { en: '^Verify you are human$' } }
+
+  mode.group:
+    description: Chat / Work switch on the home page; Work spends the Codex quota.
+    candidates:
+      - { role: group, name: { en: '^Composer mode$' } }
+  mode.chat:
+    scope: mode.group
+    candidates:
+      - { role: button, name: { en: '^Chat$' }, exact: true }
+    fingerprint: { role: button, name: { en: '^chat$' } }
+  mode.work:
+    scope: mode.group
+    candidates:
+      - { role: button, name: { en: '^Work$' }, exact: true }
+
+  temporary.toggle:
+    candidates:
+      - { role: button, name: { en: '^Temporary chat$' } }
+    fingerprint: { role: button, name: { en: 'temporary' } }
+  temporary.off:
+    candidates:
+      - { role: button, name: { en: '^Turn off temporary chat$' } }
+
+  composer.form:
+    description: The composer. Live, two visible forms carry data-chatgpt-composer; only one holds the textbox.
+    candidates:
+      - { css: 'form[data-chatgpt-composer]:has([role="textbox"][contenteditable="true"])' }
+      - { css: 'form:has([role="textbox"][contenteditable="true"])' }
+  composer.input:
+    scope: composer.form
+    candidates:
+      - { role: textbox, name: { en: '^Ask ChatGPT$' } }
+      - { css: '[contenteditable="true"][data-composer-markdown]' }
+      - { testId: prompt-textarea }
+    fingerprint: { role: textbox }
+  composer.send:
+    scope: composer.form
+    candidates:
+      - { role: button, name: { en: '^Send( prompt)?$' } }
+      - { testId: send-button }
+    fingerprint: { role: button, name: { en: 'send|submit' }, nearRole: textbox }
+  composer.stop:
+    scope: composer.form
+    candidates:
+      - { role: button, name: { en: '^Stop' } }
+      - { testId: stop-button }
+  composer.voice:
+    scope: composer.form
+    candidates:
+      - { role: button, name: { en: '^Start Voice$' } }
+  composer.model:
+    scope: composer.form
+    candidates:
+      - { role: button, name: { en: '^Select ChatGPT model$' } }
+
+  composer.tools:
+    description: The "+" button that opens tools (files, Web search, Deep research, apps).
+    scope: composer.form
+    candidates:
+      - { role: button, name: { en: '^Add files and more$' } }
+  composer.deep-research:
+    description: The Deep research mention chip inserted into the composer (checked 2026-10-12).
+    scope: composer.form
+    candidates:
+      - { css: '[data-prompt-link-href="app://connector_openai_deep_research"]' }
+      - { css: '[app-mention-name="deep-research"]' }
+      - { role: img, name: { en: '^Deep research$' } }
+  composer.web-search:
+    description: The Web search pill inserted into the composer (checked 2026-10-12).
+    scope: composer.form
+    candidates:
+      - { css: '[data-prompt-link-href="chatgpt-system-hint://search"]' }
+      - { css: '[data-system-hint-type="search"]' }
+  tools.deep-research:
+    description: The Deep research entry of the "+" tools popover (absent in Temporary chat).
+    candidates:
+      - { role: button, name: { en: '^Deep research\b' } }
+    fingerprint: { role: button, name: { en: 'deep research' } }
+  tools.web-search:
+    description: The Web search entry of the "+" tools popover ("Web search Find real-time news and info").
+    candidates:
+      - { role: button, name: { en: '^Web search\b' } }
+      - { role: menuitem, name: { en: '^Web search\b' } }
+  tools.create-image:
+    description: The Create image entry of the "+" tools popover.
+    candidates:
+      - { role: button, name: { en: '^Create image\b' } }
+      - { role: menuitem, name: { en: '^Create image\b' } }
+
+  research.host:
+    description: >-
+      The embedded app frame of one Deep research run; the report frame is nested inside it.
+      One per run in a conversation, so the run of the last prompt is the last host after the
+      last user turn (live check 2026-10-12, a session with two runs).
+    cardinality: many
+    candidates:
+      - { css: 'iframe[src*="web-sandbox"]' }
+  research.running:
+    description: Deep research in progress, inside its nested report frame (live run 2026-10-12).
+    frames: any
+    candidates:
+      - { role: button, name: { en: '^Stop research$' } }
+      - { text: { en: '^Researching' } }
+  research.completed:
+    description: '"Research completed in <time> · <n> citations · <n> searches" above the report.'
+    frames: any
+    candidates:
+      - { text: { en: '^Research completed' } }
+  research.report-title:
+    description: >-
+      The report's own title (level-1 heading) in the report frame; its container holds the
+      whole report (live layout of 2026-10-12, under "Export" and "Expand").
+    candidates:
+      - { css: 'h1' }
+
+  model.menu:
+    description: Opened by composer.model. Two views (checked 2026-10-12) - A, the Power slider plus a view toggle labelled with the level; B, after the toggle, the model radios.
+    candidates:
+      - { role: menu, name: { en: '^Select ChatGPT model$' } }
+  model.view-toggle:
+    description: Switches the model menu between the Power view and the model list.
+    scope: model.menu
+    candidates:
+      - { css: '[data-model-picker-view-toggle]' }
+  model.option:
+    description: One radio per model (view B); the accessible name starts with the model name.
+    scope: model.menu
+    cardinality: many
+    candidates:
+      - { role: menuitemradio }
+  model.power:
+    description: The Power slider; ArrowRight/ArrowLeft step through the levels.
+    scope: model.menu
+    candidates:
+      - { role: menuitem, name: { en: '^Power$' } }
+      - { css: '[data-reasoning-slider]' }
+  model.power-status:
+    description: 'Reads "<level>, <n> of <total>."'
+    scope: model.menu
+    candidates:
+      - { role: status }
+
+  turn.user:
+    description: One heading per user turn; the prompt is the heading's container. A rendered conversation always has one.
+    cardinality: many
+    candidates:
+      - { role: heading, name: { en: '^You said:?$' } }
+  turn.assistant:
+    description: One heading per assistant turn; the answer is the heading's container.
+    cardinality: many
+    candidates:
+      - { role: heading, name: { en: '^ChatGPT said:?$' } }
+  turn.assistant.done:
+    description: Present under every finished answer.
+    cardinality: many
+    candidates:
+      - { role: button, name: { en: '^Copy$' }, exact: true }
+  answer.code:
+    description: A code block's text in an answer, one line per row (the answer's Copy loses those rows).
+    cardinality: many
+    candidates:
+      - { role: textbox, name: { en: '^Edit code$' } }
+      - { css: 'pre code' }
+
+actions:
+  mode.select-chat:
+    do: click
+    target: mode.chat
+    verify: { attr: { of: mode.chat, name: aria-pressed, equals: 'true' } }
+    sideEffect: reversible
+    heal: deterministic
+    timeouts: { resolveMs: 5000, verifyMs: 3000 }
+  temporary.enable:
+    do: click
+    target: temporary.toggle
+    verify: { anyOf: [{ url: 'temporary-chat=true' }, { visible: temporary.off }] }
+    sideEffect: reversible
+    heal: deterministic
+    timeouts: { resolveMs: 5000, verifyMs: 5000 }
+  login.fill-email:
+    do: insertText
+    target: login.email
+    verify: { visible: login.email }
+    sideEffect: none
+  login.fill-password:
+    do: insertText
+    target: login.password
+    verify: { visible: login.password }
+    sideEffect: none
+  login.fill-code:
+    do: insertText
+    target: login.code
+    verify: { visible: login.code }
+    sideEffect: none
+  login.submit-email:
+    do: click
+    target: login.continue
+    verify: { hidden: login.email }
+    sideEffect: reversible
+    timeouts: { resolveMs: 5000, verifyMs: 15000 }
+  login.submit-password:
+    do: click
+    target: login.continue
+    verify: { hidden: login.password }
+    sideEffect: reversible
+    timeouts: { resolveMs: 5000, verifyMs: 15000 }
+  login.submit-code:
+    # A wrong code shows the same page again; the sign-in loop judges the outcome.
+    do: click
+    target: login.continue
+    verify: { url: '.' }
+    sideEffect: irreversible
+    timeouts: { resolveMs: 5000, verifyMs: 1000 }
+  login.choose-another:
+    do: click
+    target: login.try-another
+    verify: { visible: login.authenticator }
+    sideEffect: reversible
+  login.choose-authenticator:
+    do: click
+    target: login.authenticator
+    verify: { visible: login.code }
+    sideEffect: reversible
+  model.open:
+    do: click
+    target: composer.model
+    verify: { visible: model.menu }
+    sideEffect: reversible
+    heal: deterministic
+    timeouts: { resolveMs: 5000, verifyMs: 5000 }
+  model.show-models:
+    do: click
+    target: model.view-toggle
+    verify: { visible: model.option }
+    sideEffect: reversible
+    timeouts: { resolveMs: 3000, verifyMs: 3000 }
+  tools.open:
+    do: click
+    target: composer.tools
+    verify: { anyOf: [{ visible: tools.deep-research }, { visible: tools.web-search }, { visible: tools.create-image }] }
+    sideEffect: reversible
+    heal: deterministic
+    timeouts: { resolveMs: 5000, verifyMs: 5000 }
+  tools.deep-research:
+    do: click
+    target: tools.deep-research
+    verify: { visible: composer.deep-research }
+    sideEffect: reversible
+    heal: deterministic
+    timeouts: { resolveMs: 5000, verifyMs: 5000 }
+  tools.web-search:
+    do: click
+    target: tools.web-search
+    verify: { visible: composer.web-search }
+    sideEffect: reversible
+    heal: deterministic
+    timeouts: { resolveMs: 5000, verifyMs: 5000 }
+  composer.insert:
+    do: insertText
+    target: composer.input
+    require: [editable]
+    # The engine reads the text back; Send's label is not part of this check, so a renamed Send cannot fail it.
+    verify: { visible: composer.input }
+    sideEffect: none
+    heal: deterministic
+    timeouts: { resolveMs: 15000, verifyMs: 5000 }
+  composer.send:
+    do: click
+    target: composer.send
+    require: [enabled]
+    fallback: { press: Enter, on: composer.input }
+    verify: { anyOf: [{ network: conversation.post }, { countIncreased: turn.user }, { visible: composer.stop }] }
+    sideEffect: irreversible
+    heal: deterministic
+    timeouts: { resolveMs: 5000, verifyMs: 20000 }
+
+network:
+  conversation.post: { method: POST, url: '/backend-api/f/conversation$' }
+  account.me: { method: GET, url: '/backend-api/me$' }
+  conversation.too-large: { url: '/backend-api/f/conversation$', status: 413 }
+  challenge: { url: '.*', header: { name: cf-mitigated, equals: challenge } }
+
+states:
+  auth.signed-in: { visible: composer.input }
+  auth.signed-out: { anyOf: [{ url: '^https?://auth\.openai\.com/|/auth/login' }, { visible: auth.login }] }
+  turn.running: { visible: composer.stop }
+  turn.idle: { allOf: [{ hidden: composer.stop }, { anyOf: [{ visible: composer.send }, { visible: composer.voice }] }] }
+
+errors:
+  - { when: { state: auth.signed-out }, kind: reauth_required, message: 'chatgpt-web: signed out' }
+  - { when: { network: challenge }, kind: challenge, message: 'chatgpt-web: challenge page' }
+  - { when: { network: conversation.too-large }, kind: invalid_input, message: 'chatgpt-web: message too long' }

@@ -1,6 +1,6 @@
 # ADR-0016: Invisible headed browser and portable multi-account vault
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by [ADR-0020](0020-pinned-managed-chrome.md) (managed Chrome when no recent system Chrome exists)
 - **Date:** 2026-10-11
 - **Related:** ADR-0005, CON-3, CON-5, [browser runtime](../../design/browser-runtime.md)
 

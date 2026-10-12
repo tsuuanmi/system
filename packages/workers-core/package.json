@@ -1,0 +1,14 @@
+{
+  "name": "@tsuuanmi/system-workers-core",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Routing seam definition: ctx.workers, the Worker registry and deterministic router, with its conformance suite",
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "exports": { ".": { "types": "./lib/index.d.ts", "default": "./lib/index.js" } },
+  "files": ["lib"],
+  "scripts": { "build": "tsc -p tsconfig.build.json" },
+  "peerDependencies": { "@deepseek-ai/cordis": "4.0.5-alpha.1" },
+  "devDependencies": { "@deepseek-ai/cordis": "4.0.5-alpha.1", "@tsuuanmi/system-artifacts": "workspace:*" }
+}

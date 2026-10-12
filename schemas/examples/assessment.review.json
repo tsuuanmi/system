@@ -1,0 +1,22 @@
+{
+  "schema": "assessment@1.0",
+  "subject": {
+    "type": "git-head",
+    "ref": "3f2a9c0d1e4b5a6978c0d1e2f3a4b5c6d7e8f901",
+    "version": "9b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c"
+  },
+  "verdict": "changes-requested",
+  "findings": [
+    {
+      "severity": "blocking",
+      "title": "add() ignores negative inputs",
+      "detail": "The test for add(-2, 3) is missing.",
+      "file": "calc.py"
+    },
+    {
+      "severity": "info",
+      "title": "Docstring could name the return type"
+    }
+  ],
+  "reviewer": "agent:claude-review"
+}

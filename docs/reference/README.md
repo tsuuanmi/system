@@ -11,7 +11,12 @@ explain the semantics that a schema cannot express.
 | Document | Owns |
 |---|---|
 | [schemas.md](schemas.md) | semantics of the core record schemas, versioning, validation points |
+| [configuration.md](configuration.md) | every plugin's options. It is generated from each plugin's `Config` schema (`pnpm gen:reference`), and CI fails when it is stale |
+| [mcp-tools.md](mcp-tools.md) | the MCP tool contracts, as a running profile serves them. It is generated with `system tools --markdown` |
+| [cli.md](cli.md) | every `system` command, grouped, one line each. Hand-written from the CLI's usage text |
+| [workflow-templates.md](workflow-templates.md) | every workflow template (built-in and from profiles): its nodes, tiers, capabilities, conversation mode, and acceptance contract. Hand-written from the code |
+| [gateways.md](gateways.md) | gateway compatibility: what Claude Code and Codex send, and what the gateways answer |
+| [glossary.md](glossary.md) | short definitions of the terms the documents use, each linking to its canonical document |
 
-To be added with their milestones: MCP tool contracts (MVP), the configuration
-catalog generated from plugin `Config` schemas, seam definitions, and gateway
-compatibility notes (v1.0).
+Seam definitions are the abstract classes in the `*-core` packages, listed in
+the [seam catalog](../architecture/plugin-model.md#seam-catalog).

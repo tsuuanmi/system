@@ -1,0 +1,73 @@
+# The system profile lists ONLY this bundle (no dsh-base, ADR-0019).
+# Every DSH row here is on the allow-list in docs/architecture/plugin-model.md#dsh-core-reuse-map;
+# adding one updates that table and the composition test. Telemetry rows are never inserted.
+- insert:
+    # --- DSH core (slice 1) ---
+    - id: timer
+      name: '@deepseek-ai/cordis-plugin-timer'
+    - id: credentials
+      name: '@tsuuanmi/system-credentials-vault'   # ctx.credentials, encrypted at rest
+    - id: webserver
+      name: '@deepseek-ai/dsh-host-webserver'
+      config:
+        host: 127.0.0.1                             # loopback only
+        port: 47317
+    # --- system kernel and edge ---
+    - id: store
+      name: '@tsuuanmi/system-store'
+    - id: event-log
+      name: '@tsuuanmi/system-event-log'
+    - id: leases
+      name: '@tsuuanmi/system-leases'
+    - id: artifacts
+      name: '@tsuuanmi/system-artifacts'
+    # --- provider runtime (M1) ---
+    - id: accounts
+      name: '@tsuuanmi/system-accounts'              # catalog is configured in the operator's profile patch
+    - id: turn-receipts
+      name: '@tsuuanmi/system-turn-receipts'
+    - id: display
+      name: '@tsuuanmi/system-display-virtual'       # Xvfb starts on the first turn, not at boot
+    - id: browser
+      name: '@tsuuanmi/system-browser-patchright'    # Chrome starts per account on demand
+    - id: providers
+      name: '@tsuuanmi/system-providers'
+    - id: provider-chatgpt-web
+      name: '@tsuuanmi/system-provider-chatgpt-web'  # UI map: ui/chatgpt-web.ui.yaml
+    - id: provider-gemini-web
+      name: '@tsuuanmi/system-provider-gemini-web'    # UI map: ui/gemini-web.ui.yaml
+    - id: login
+      name: '@tsuuanmi/system-login'                 # login profiles, Save, account_* MCP tools
+    - id: egress
+      name: '@tsuuanmi/system-egress'                # INV-12: classification policy + credential scan
+    - id: workers
+      name: '@tsuuanmi/system-workers'               # Worker registry, admission, deterministic router
+    - id: turns
+      name: '@tsuuanmi/system-turns'                 # the website Worker runtime (durable turns)
+    # --- agent runtimes (M3): Claude Code and others as Workers; configure workers in the operator patch ---
+    - id: agent-runtimes
+      name: '@tsuuanmi/system-agent-runtimes'
+    - id: runtime-claude-agent-sdk
+      name: '@tsuuanmi/system-runtime-claude-agent-sdk'   # runs the installed `claude`
+    - id: runtime-codex-sdk
+      name: '@tsuuanmi/system-runtime-codex-sdk'      # Codex as a Worker (the operator's installed codex)
+    - id: runtime-acp
+      name: '@tsuuanmi/system-runtime-acp'            # ACP agents (none until configured)
+    - id: agent-workers
+      name: '@tsuuanmi/system-agent-workers'          # the `agents` Worker source (no workers until configured)
+    - id: worker-sessions
+      name: '@tsuuanmi/system-worker-sessions'       # sessions, mailboxes, peer messages; MCP session_send/session_inbox
+    - id: workflow
+      name: '@tsuuanmi/system-workflow'              # the single engine; MCP ask/research/result/usage/explain
+    - id: profile-software-development
+      name: '@tsuuanmi/system-profile-software-development'  # the develop procedure (a template contributed to the engine)
+    - id: profile-scientific-research
+      name: '@tsuuanmi/system-profile-scientific-research'  # the research procedures (templates, contracts, typed artifacts)
+    - id: gateway-anthropic
+      name: '@tsuuanmi/system-gateway-anthropic'     # Claude Code → website Workers as its model (system claude-env)
+    - id: gateway-responses
+      name: '@tsuuanmi/system-gateway-responses'     # Codex → website Workers as its model (system codex-env)
+    - id: web-ui
+      name: '@tsuuanmi/system-web-ui'                # operator UI at /ui (system ui prints the link)
+    - id: mcp-server
+      name: '@tsuuanmi/system-mcp-server'

@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:tsuuanmi:system:schema:lease:v1",
+  "title": "Lease",
+  "description": "A held lease on one resource (docs/design/scheduling-and-leases.md). The generation increases on every new holder and on invalidation; commits present it as a fence (INV-4).",
+  "type": "object",
+  "required": ["schema", "resource", "owner", "token", "generation", "expiresAt"],
+  "properties": {
+    "schema": { "const": "lease@1.0" },
+    "resource": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+    "owner": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+    "token": { "description": "Random capability proving this holder; required to renew or release.", "type": "string", "pattern": "^[A-Za-z0-9_-]{16,128}$" },
+    "generation": { "type": "integer", "minimum": 1 },
+    "expiresAt": { "description": "Epoch milliseconds.", "type": "integer", "minimum": 0 }
+  },
+  "additionalProperties": false
+}

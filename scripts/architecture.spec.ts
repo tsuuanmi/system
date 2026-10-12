@@ -1,0 +1,80 @@
+/**
+ * Architecture tests: rules about the codebase itself, checked on every change
+ * (docs/architecture/invariants.md, docs/architecture/plugin-model.md).
+ */
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
+import { join, relative } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { describe, expect, it } from 'vitest'
+
+const root = fileURLToPath(new URL('..', import.meta.url))
+const packages = join(root, 'packages')
+const plugins = join(packages, 'plugins')
+
+function sources(dir: string, out: string[] = []): string[] {
+  if (!existsSync(dir)) return out
+  for (const entry of readdirSync(dir)) {
+    const path = join(dir, entry)
+    if (statSync(path).isDirectory()) sources(path, out)
+    else if (entry.endsWith('.ts')) out.push(path)
+  }
+  return out
+}
+
+/** Code without comments: what a rule about code must look at. */
+const code = (text: string): string => text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:'"`])\/\/.*$/gm, '$1')
+
+describe('architecture rules', () => {
+  it('routing, workflows, profiles, and the gateways\' shared turns name capabilities, never a model, vendor, client, or browser (INV-11, QA-13)', () => {
+    const governed = [
+      join(packages, 'workers-core', 'src'), join(plugins, 'workers', 'src'), join(plugins, 'workflow', 'src'), join(packages, 'gateway-turns', 'src'),
+      ...readdirSync(plugins).filter((d) => d.startsWith('profile-')).map((d) => join(plugins, d, 'src')),
+    ]
+    const named = /\b(chatgpt|openai|anthropic|claude|gemini|codex|patchright|chrome|chromium)\b/i
+    const offenders = governed.flatMap((dir) => sources(dir)).flatMap((file) => code(readFileSync(file, 'utf8')).split('\n')
+      .map((line, i) => (named.test(line) ? `${relative(root, file)}:${i + 1}: ${line.trim()}` : '')).filter(Boolean))
+    expect(offenders).toEqual([])
+  })
+
+  it('has one authoritative runtime per concern: each service is provided by exactly one package (INV-1)', () => {
+    const providers = new Map<string, string[]>()
+    for (const dir of readdirSync(plugins)) {
+      for (const file of sources(join(plugins, dir, 'src'))) {
+        for (const m of readFileSync(file, 'utf8').matchAll(/super\(ctx, '([A-Za-z]+)'\)/g)) providers.set(m[1]!, [...new Set([...(providers.get(m[1]!) ?? []), dir])])
+      }
+    }
+    expect(providers.get('workflow')).toEqual(['workflow'])
+    expect([...providers].filter(([, dirs]) => dirs.length > 1)).toEqual([])
+  })
+
+  it('composes every feature from configuration: each plugin is one bundle row a profile can disable or replace (REQ-HOST-4)', () => {
+    const rows = [...readFileSync(join(packages, 'system-bundle', 'cordis.patch.yml'), 'utf8').matchAll(/- id: ([\w-]+)\n\s+name: '([^']+)'/g)].map((m) => ({ id: m[1]!, name: m[2]! }))
+    const ours = rows.filter((r) => r.name.startsWith('@tsuuanmi/'))
+    for (const dir of readdirSync(plugins)) {
+      const { name } = JSON.parse(readFileSync(join(plugins, dir, 'package.json'), 'utf8')) as { name: string }
+      expect(ours.filter((r) => r.name === name), name).toHaveLength(1)
+    }
+    expect(new Set(rows.map((r) => r.id)).size).toBe(rows.length)
+  })
+
+  it('defines every seam with a conformance suite its providers must pass, so each is replaceable behind it (QA-9)', () => {
+    const cores = readdirSync(packages).filter((d) => d.endsWith('-core'))
+    for (const core of cores) {
+      const defines = sources(join(packages, core, 'src')).some((f) => /export abstract class/.test(readFileSync(f, 'utf8')))
+      if (defines) expect(readdirSync(join(packages, core, 'conformance')).filter((f) => f.endsWith('.ts')).length, core).toBeGreaterThan(0)
+    }
+    expect(existsSync(join(plugins, 'workflow', 'conformance', 'profiles.ts'))).toBe(true)
+  })
+
+  it('never lets a provider name select an account: a work requirement names capabilities, and has no provider field (REQ-ACC-2)', async () => {
+    const { SchemaRegistry } = await import('../packages/libs/src/index.ts')
+    const schemas = new SchemaRegistry()
+    const requirement = {
+      schema: 'work-requirement@1.0', objective: 'answer', capabilities: ['reason'], data: { classification: 'operator-shared', refs: [] },
+      egressPolicy: 'default', tier: { min: 'standard', source: 'profile' }, acceptance: { contract: 'acceptance.answer' },
+    }
+    expect(() => schemas.assert('work-requirement@1.0', requirement)).not.toThrow()
+    expect(() => schemas.assert('work-requirement@1.0', { ...requirement, provider: 'chatgpt-web' })).toThrow()
+    expect(() => schemas.assert('work-requirement@1.0', { ...requirement, account: 'chatgpt-main' })).toThrow()
+  })
+})

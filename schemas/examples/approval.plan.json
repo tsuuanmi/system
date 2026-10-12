@@ -1,0 +1,7 @@
+{
+  "schema": "approval@1.0",
+  "subject": { "type": "artifact", "ref": "sha256:4f0b5a1b2a4d3c9e8f7a6b5c4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f9a8b7c6d5e" },
+  "verdict": "approved",
+  "by": "operator",
+  "note": "Steps limited to the docs directory."
+}

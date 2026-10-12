@@ -1,0 +1,15 @@
+{
+  "name": "@tsuuanmi/system-display-virtual",
+  "version": "0.0.0",
+  "private": true,
+  "description": "ctx.display on Linux: headed browsers draw on one plugin-owned, health-monitored Xvfb (invisible, never headless); ported from tsuuanmi/internet",
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "exports": { ".": { "types": "./lib/index.d.ts", "default": "./lib/index.js" } },
+  "files": ["lib"],
+  "scripts": { "build": "tsc -p tsconfig.build.json" },
+  "dependencies": { "@tsuuanmi/system-provider-core": "workspace:*" },
+  "peerDependencies": { "@deepseek-ai/cordis": "4.0.5-alpha.1", "@deepseek-ai/schemastery": "3.18.5-alpha.1" },
+  "devDependencies": { "@deepseek-ai/cordis": "4.0.5-alpha.1", "@deepseek-ai/schemastery": "3.18.5-alpha.1" }
+}

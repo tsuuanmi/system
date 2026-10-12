@@ -5,9 +5,11 @@ deliver** and how its exit is judged. The order of the work lives in the
 [roadmap](../proposals/roadmap.md). The full target architecture, which is what
 production-ready means, lives in [architecture](../architecture/README.md).
 
-Because everything is a plugin, each stage is a **profile**: a set of plugins
-from the [seam catalog](../architecture/plugin-model.md#seam-catalog). Moving to
-the next stage adds plugins. It does not rewrite the earlier ones.
+Because everything is a plugin, each stage is a set of plugins (rows of the
+`system` bundle) on the seams in the
+[seam catalog](../architecture/plugin-model.md#seam-catalog). Moving to the next
+stage adds plugins. It does not rewrite the earlier ones. Package names below are
+the directories under `packages/` and `packages/plugins/`.
 
 ## Overview
 
@@ -29,7 +31,8 @@ is crash-safe.
 
 ### Why MCP first
 
-Decided in [ADR-0011](../decisions/adr/0011-mvp-integration-via-mcp.md). MCP is the one integration that **both** Claude Code and Codex already support.
+Decided in [ADR-0011](../decisions/adr/0011-mvp-integration-via-mcp.md). MCP is
+the one integration that **both** Claude Code and Codex already support.
 It satisfies ADR-0009 (both clients) and ADR-0008 (tool-agnostic) at the lowest
 cost. The local agent stays the local Worker for code and data, which gives P3
 for free. The Responses and Messages gateways, which make `system` look like a
@@ -37,17 +40,15 @@ for free. The Responses and Messages gateways, which make `system` look like a
 
 ### Included plugins
 
-```text
-host:          DSH core (dsh-base, pinned; telemetry off) + system bundle/profile; system CLI wrapper; libs
-kernel:        store (DSH storage-sqlite/domain), blobs (DSH attachments), events-store, leases-store, artifacts-store
-provider:      browser-patchright, display-virtual, remote-login (noVNC), login-credentials,
-               accounts-vault, provider-chatgpt-web (+ scheduler, receipts)
-capabilities:  website-core
-routing:       workers-core (capabilities, tiers, egress policy, quota exclusion)
-orchestration: workflow-engine (MVP subset: static DAG, input-hash reuse, receipts,
-               recovery; no graph growth, teams, or lineage invalidation yet)
-edge:          mcp-server (Streamable HTTP on DSH webserver, loopback + token), cli
-```
+| Layer | Packages |
+|---|---|
+| host | DSH core rows only (timer, credentials, webserver; no `dsh-base`; one pinned version), `system-bundle`, `cli`, `libs` |
+| kernel | `store` (system tables on `node:sqlite`), `event-log`, `leases`, `artifacts`, `credentials-vault` |
+| provider | `display-virtual`, `browser-patchright`, `accounts`, `login` (remote login over noVNC, credential login), `providers`, `provider-chatgpt-web`, `turn-receipts`, and the `provider-core` library (scheduler, completion, reconciliation) |
+| website Workers | `turns`: the website Worker runtime (durable turns) |
+| routing | `egress`, `workers` and the `workers-core` definition (capabilities, tiers, egress policy, quota exclusion) |
+| orchestration | `workflow`, MVP subset: static DAG, input-hash reuse, receipts, recovery; no graph growth, teams, or lineage invalidation yet |
+| edge | `mcp-server` (Streamable HTTP on the DSH webserver, loopback and token), `cli` |
 
 ### Included requirements
 
@@ -57,7 +58,7 @@ edge:          mcp-server (Streamable HTTP on DSH webserver, loopback + token), 
 | Accounts | REQ-ACC-1..9 (ChatGPT Web accounts; multiple accounts; opt-in credential login with local TOTP) |
 | Provider turns | REQ-PRV-1..6 (`reason`, `web-search`, `deep-research`) |
 | Routing | REQ-WRK-1..4, REQ-WRK-7 (egress), REQ-WRK-8 (quota exclusion), REQ-WRK-9 (tiers: website modes as `economy`, `standard`, and `frontier`) |
-| Gateways | REQ-GW-3 (MCP tools: `ask`, `research`, `status`, `result`), REQ-GW-4 (CLI: login, status, ask, research, explain) |
+| Gateways | REQ-GW-3 (MCP tools: `ask`, `research`, `status`, `result`), REQ-GW-4 (CLI: `account login`, `ask`, `research`, `result`, `usage`, `explain`) |
 | Sessions | REQ-SES-1 (`SessionId` bound to the ChatGPT conversation; `ask` and `research` accept a `sessionId` to continue the same session), REQ-SES-8 (`research` returns at once; Deep Research runs for tens of minutes, longer than MCP tool-call timeouts) |
 | Workflows | REQ-WF-1, REQ-WF-3, REQ-WF-4, REQ-WF-6, REQ-WF-10 (static DAGs only) |
 | Artifacts and schemas | REQ-ART-1..5 (decision artifacts for admission, route, tier, egress, acceptance, reconciliation; `system explain` in the CLI) |
@@ -65,10 +66,13 @@ edge:          mcp-server (Streamable HTTP on DSH webserver, loopback + token), 
 
 The MVP research flow is a **static two-node DAG** that runs on the real engine.
 It is a subset of the engine, not separate code
-([ADR-0012](../decisions/adr/0012-dag-execution-model.md), INV-1):
+([ADR-0012](../decisions/adr/0012-dag-execution-model.md), INV-1). It is now the
+built-in `deep-research` template; the name `research` later went to the
+scientific-research procedure (production-ready):
 
-```text
-research:1 (frontier · deep-research) ──▶ compact:1 (economy) ──▶ return handoff artifact
+```mermaid
+flowchart LR
+  R["research:1<br/>frontier, deep-research"] --> C["compact:1<br/>economy"] --> H[handoff artifact]
 ```
 
 Each node has input and output receipts and decision artifacts, so retries and
@@ -81,14 +85,18 @@ usable build, delivered at milestone M1.5:
 
 | Slice 1 includes | Detail |
 |---|---|
-| MCP tools | `ask`, `research`, `status`, `result`; `ask` and `research` take an optional `sessionId`; `research` returns a `SessionId` at once |
-| CLI | `account add/login/list/remove`, `ask`, `research`, `status` |
+| MCP tools | `ask`, `research`, `status`, `result`. `ask` and `research` take an optional `sessionId`. `research` returns a `runId` and `SessionId` at once. `ask` waits up to `waitSeconds` (≤ 55 s) and otherwise returns its `runId`. `result` long-polls a `runId` ([contract](../design/provider-turns.md#runtime-mvp-slice-1)) |
+| CLI | `account login`, `account list`, `account save`, `ask`, `research`, `result`. Accounts are declared in the operator's profile patch; `account add` and `account remove` are planned |
 | Platform | **Linux x64 only** |
 | Browser | invisible headed Chrome on Xvfb (`virtual`); remote login over noVNC through an SSH tunnel, ported from tsuuanmi/internet ([browser runtime](../design/browser-runtime.md#login-flows)) |
 | Accounts | provider-agnostic vault; one or more ChatGPT accounts; saved state survives restarts; optional credential login (email, password, local TOTP) with fallback to the remote view; `system account code <id> <code>` |
 | Reliability | turn receipts and reconciliation, two-clock completion, per-account scheduler |
 | Routing | minimal: the first `ready` account in configured priority that proves the capability; tier = the selected ChatGPT mode; route and tier decision artifacts recorded |
 | Execution | each call is a one-node DAG on the engine core |
+
+Demo scenario: the [motivating example](purpose.md#a-motivating-example-from-building-system-itself),
+a reuse survey over the DSH plugin catalog delegated from Claude Code to ChatGPT
+Web Deep Research.
 
 Slice 1 exit criteria:
 
@@ -112,12 +120,13 @@ criteria below.
 
 Gemini, teams, graph growth and profiles, agent-runtime Workers,
 connectors (`connector:*`), API and local model providers, the Responses and
-Messages gateways, the Web UI (DSH web app), and packaged installers.
+Messages gateways, the operator Web UI, and packaged installers.
 
 ### MVP exit criteria
 
-1. From **both** Claude Code and Codex, the MCP `research` tool returns a cited,
-   compacted synthesis produced by ChatGPT Web Deep Research.
+1. From **both** Claude Code and Codex, the two-node research flow (MCP `run`
+   with the `deep-research` template) returns a cited, compacted synthesis
+   produced by ChatGPT Web Deep Research.
 2. Killing the host at every reconcile point (before submit, after submit, during
    generation, after completion) never produces a duplicate provider turn. Every
    case resolves to WAIT, RECOVER, RESUBMIT, or AMBIGUOUS.
@@ -130,21 +139,25 @@ Messages gateways, the Web UI (DSH web app), and packaged installers.
    acceptance) for any result.
 6. Every record written by the MVP validates against its schema in `schemas/`.
    CI compiles the schemas in strict mode and validates the examples.
-7. The `dev` profile, with fake providers, passes every seam conformance suite in
-   CI. The account-bound checklist passes manually.
+7. With fake providers, every seam passes its conformance suite in CI. The
+   account-bound checklist passes manually.
 
 ## Beta (v0.5)
 
 Adds, as plugins:
 
-- **Orchestration:** `workflow-engine`, `worker-sessions-store`, `team-runner`,
+- **Orchestration:** the full `workflow` engine, `worker-sessions`, and
   `profile-software-development` (REQ-WF-1..11, REQ-TEAM-1..5, REQ-SES-1..8).
-  Members are durable sessions that message each other directly.
-- **Workers:** `runtime-claude-agent-sdk`, `runtime-codex-sdk`, `runtime-acp`
-  (REQ-WRK-5..6). Claude Code and Codex become Workers as well as clients.
+  A team is the `team` option of a workflow node, which the engine unrolls; its
+  members are durable sessions that message each other directly.
+- **Workers:** `agent-runtimes`, `agent-workers`, `runtime-claude-agent-sdk`,
+  `runtime-codex-sdk`, `runtime-acp` (REQ-WRK-5..6). Claude Code and Codex become
+  Workers as well as clients.
 - **Providers:** `provider-gemini-web`, connectors as capabilities (REQ-PRV-7), and
   an economy-tier model provider for API or local models (P4).
-- **Edge:** `web-ui` (status, watch, remote login).
+- **Edge:** `web-ui`, the operator page at `/ui`: runs, steps, decision chains,
+  and answers; approve or reject a plan, stop, and continue. Remote login stays
+  on the `login` plugin's noVNC page.
 
 Beta exit criteria:
 
@@ -154,9 +167,9 @@ Beta exit criteria:
 2. A two-member team uses two distinct accounts, and the independent-first
    barrier is proven by test. Members exchange direct messages, and killing the
    host mid-conversation loses or duplicates no message.
-4. A long-running session (several hours, past the compaction threshold) survives
+3. A long-running session (several hours, past the compaction threshold) survives
    a host restart, keeps its `SessionId`, and continues from its handoff summary.
-3. Agent-runtime Workers pass probe, run, resume, cancel, and sandbox-enforcement
+4. Agent-runtime Workers pass probe, run, resume, cancel, and sandbox-enforcement
    smoke tests.
 
 ## Production-ready (v1.0)
@@ -168,13 +181,16 @@ operational readiness.
 
 ### Functional additions
 
-- `gateway-responses` and `gateway-anthropic-messages` with the shared turn
-  broker (REQ-GW-1, REQ-GW-2, REQ-GW-5). Codex and Claude Code can select
-  `system` Workers *as models*. Client configuration edits are journaled
-  (REQ-HOST-3).
+- `gateway-responses` and `gateway-anthropic`, which share the `gateway-turns`
+  library: the text tool protocol
+  ([ADR-0022](../decisions/adr/0022-text-protocol-tool-calls-for-website-models.md)),
+  conversation threads, and the guard (REQ-GW-1, REQ-GW-2, REQ-GW-5). Codex and
+  Claude Code can select `system` Workers *as models*. Client configuration
+  edits are journaled (REQ-HOST-3).
 - `profile-scientific-research` with typed artifacts and invalidation, running
   with zero engine changes. This is the architecture test (REQ-WF-9).
-- Publication of the `system` bundle (`dsh-plugin` topic), so DSH users can mount `system` plugins in their own profiles.
+- Publication of the `system` bundle (`dsh-plugin` topic), so DSH users can
+  mount `system` plugins in their own profiles.
 - A2A, when the first peer appears that `system` does not drive: `gateway-a2a`
   exposes sessions as A2A agents, and `runtime-a2a` uses remote A2A agents
   ([ADR-0006](../decisions/adr/0006-protocol-introduction-gates.md)). It ships in

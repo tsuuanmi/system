@@ -1,11 +1,9 @@
 # Code quality
 
-> Planned.
-
-- **Layering is enforced.** A package imports only from packages in the same layer
-  or a lower one ([layer map](../architecture/README.md#layer-map)). A lint rule
-  or dependency check in CI enforces this.
-- **Small modules.** Provider drivers, brokers, and engines are split by
+- **Layering.** A package imports only from packages in the same layer
+  or a lower one ([layer map](../architecture/README.md#layer-map)). No CI rule
+  checks this yet, so reviewers do.
+- **Small modules.** Provider drivers, gateways, and engines are split by
   mechanism. A file that grows past roughly 800 lines is a design smell to address.
   The reference repos' multi-thousand-line files are the counterexample.
 - **Typed failures.** Errors carry a failure class that maps to a retry
@@ -23,3 +21,10 @@
   seam definitions written as abstract `Service` classes.
 - **Schemas:** persisted records and wire payloads have strict parsers with a
   schema version.
+- **Cordis service classes:** do not use JavaScript `#private` fields in a
+  `Service` subclass. Cordis hands consumers a proxy, and `#private` access through
+  it throws. Use TypeScript `private`, as DSH does. `Config` interface fields are
+  optional, with defaults resolved in code, so partial configs type-check and a
+  default never depends on the schema alone.
+- **Native build scripts** of dependencies are denied unless needed
+  (`allowBuilds` in `pnpm-workspace.yaml`). Only `esbuild` is allowed.

@@ -1,22 +1,24 @@
 # Design
 
-This area owns **how current mechanisms work**: algorithms, state machines, and
-protocols inside the boundaries defined by [architecture](../architecture/README.md).
-It does not restate structure or invariants. It links to them.
+This area owns **how mechanisms work**: algorithms, state machines, and protocols inside the
+boundaries defined by [architecture](../architecture/README.md). It does not restate structure
+or invariants. It links to them.
 
-> Target state: these documents specify the mechanisms
-> [PROP-0001](../proposals/0001-unified-system-architecture.md) will implement.
-> Each becomes current-state design when its code lands.
+Each document describes the **target** mechanism and says so. It names its implementation in
+one line, "Implemented in [package]; differs from target: …". The package READMEs own the
+current state, and the [release checklist](../validation/release-checklist.md) owns what was
+verified live.
 
 | Document | Mechanism | Boundary |
 |---|---|---|
-| [browser-runtime.md](browser-runtime.md) | invisible headed browser (Xvfb / off-screen), anti-leak launch, provider-agnostic multi-account vault, login flows | provider runtime |
-| [provider-turns.md](provider-turns.md) | turn receipts, reconciliation, two-clock completion | provider runtime |
+| [browser-runtime.md](browser-runtime.md) | invisible headed browser (Xvfb), anti-leak launch, provider-agnostic multi-account vault, login flows | provider runtime |
+| [ui-operations.md](ui-operations.md) | UI maps as data, deterministic resolution, passive network signals, bounded self-heal with local overlay | provider runtime |
+| [provider-turns.md](provider-turns.md) | driver contract, turn receipts, reconciliation, two-clock completion, the turn path | provider runtime |
 | [scheduling-and-leases.md](scheduling-and-leases.md) | per-account scheduler, exclusive fence, lease generations | provider runtime, kernel |
-| [workflow-engine.md](workflow-engine.md) | DAG, durable nodes, handoffs, exact-subject gates, recovery, lineage | orchestration |
+| [workflow-engine.md](workflow-engine.md) | DAG, durable nodes, graph growth, remediation, exact-subject gates, recovery, lineage | orchestration |
 | [artifacts.md](artifacts.md) | artifact envelope, kinds, decision records, lineage, explain | kernel, orchestration |
 | [routing.md](routing.md) | capability vocabulary, admission, data locality, intelligence tiers, quota-aware deterministic routing | routing |
 | [sessions-and-messaging.md](sessions-and-messaging.md) | Worker sessions (SessionId), direct peer messaging, long-running mechanics, A2A alignment | orchestration |
-| [teams.md](teams.md) | Model A members, independent-first barrier, synthesis | orchestration |
+| [teams.md](teams.md) | the `team` option on a workflow node: Model A members, independent-first barrier, lead, synthesis | orchestration |
 | [agent-runtimes.md](agent-runtimes.md) | Claude Code, Codex, ACP agents as Workers | capabilities |
-| [gateways.md](gateways.md) | Responses + Anthropic Messages emulation, MCP inversion, turn tokens, drain | gateways |
+| [gateways.md](gateways.md) | Messages and Responses gateways, the text tool protocol, threads, drain; MCP inversion as target | gateways |

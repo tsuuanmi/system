@@ -1,0 +1,38 @@
+{
+  "name": "@tsuuanmi/system-gateway-responses",
+  "version": "0.0.0",
+  "private": true,
+  "description": "OpenAI Responses gateway: Codex uses a website model as its model, each request a workflow run, the client's tools through a text protocol (ADR-0022)",
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    }
+  },
+  "files": [
+    "lib"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json"
+  },
+  "dependencies": {
+    "@tsuuanmi/system-gateway-core": "workspace:*",
+    "@tsuuanmi/system-gateway-turns": "workspace:*",
+    "@tsuuanmi/system-libs": "workspace:*",
+    "@tsuuanmi/system-store": "workspace:*",
+    "@tsuuanmi/system-workflow": "workspace:*"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "4.0.5-alpha.1",
+    "@deepseek-ai/dsh-host-webserver": "0.2.1-alpha.2",
+    "@deepseek-ai/schemastery": "3.18.5-alpha.1"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "4.0.5-alpha.1",
+    "@deepseek-ai/dsh-host-webserver": "0.2.1-alpha.2",
+    "@deepseek-ai/schemastery": "3.18.5-alpha.1"
+  }
+}

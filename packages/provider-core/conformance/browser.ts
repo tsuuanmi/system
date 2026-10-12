@@ -1,0 +1,75 @@
+/** Conformance suite for `ctx.browser` (plugin rule 7), over a local HTTP origin. */
+import { type Server, createServer } from 'node:http'
+import type { Context } from '@deepseek-ai/cordis'
+import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import type {} from '../src/browser.ts'
+import type { Boot } from './display.ts'
+
+/** The engine-neutral page operations the suite needs, supplied by the provider's test. */
+export interface PageProbe {
+  goto(page: unknown, url: string): Promise<void>
+  /** Runs in the page: `document.cookie`, `localStorage.length`, `visibilityState`. */
+  read(page: unknown): Promise<{ cookie: string; storage: number; visibility: string }>
+  setStorage(page: unknown, key: string, value: string): Promise<void>
+}
+
+export function browserConformance(name: string, boot: Boot, probe: PageProbe): void {
+  describe(`ctx.browser conformance: ${name}`, () => {
+    let server: Server
+    let origin = ''
+    beforeAll(async () => {
+      server = createServer((_req, res) => void res.writeHead(200, { 'content-type': 'text/html' }).end('<!doctype html><p>ok</p>'))
+      await new Promise<void>((done) => server.listen(0, '127.0.0.1', done))
+      origin = `http://127.0.0.1:${(server.address() as { port: number }).port}`
+    })
+    afterAll(() => new Promise<void>((done) => server.close(() => done())))
+
+    it('opens visible, isolated turns built from portable state', async () => {
+      const { ctx, dispose } = await boot()
+      try {
+        const host = new URL(origin).hostname
+        const state = { origins: [origin], capturedAt: '2026-10-12T00:00:00Z', cookies: [{ name: 's', value: '1', domain: host, path: '/', expires: -1, httpOnly: false, secure: false, sameSite: 'Lax' }] }
+        const a = await ctx.browser.openTurn('acct', { state })
+        await probe.goto(a.page, `${origin}/`)
+        expect(await probe.read(a.page)).toMatchObject({ cookie: 's=1', visibility: 'visible' })
+        const b = await ctx.browser.openTurn('acct')
+        await probe.goto(b.page, `${origin}/`)
+        expect((await probe.read(b.page)).cookie).toBe('')
+        await Promise.all([a.close(), b.close()])
+        expect(ctx.browser.openAccounts()).toContain('acct')
+        await ctx.browser.close('acct')
+        expect(ctx.browser.openAccounts()).not.toContain('acct')
+      } finally {
+        await dispose()
+      }
+    }, 60_000)
+
+    it('captures state for the requested origins only', async () => {
+      const { ctx, dispose } = await boot()
+      try {
+        const turn = await ctx.browser.openTurn('acct')
+        await probe.goto(turn.page, `${origin}/`)
+        await probe.setStorage(turn.page, 'k', 'v')
+        const captured = await ctx.browser.capture(turn, { origins: [origin] })
+        expect(captured.origins).toEqual([origin])
+        expect(JSON.stringify(captured.localStorage)).toContain('"k"')
+        const elsewhere = await ctx.browser.capture(turn, { origins: ['https://other.example'] })
+        expect(elsewhere.localStorage ?? []).toEqual([])
+        await turn.close()
+      } finally {
+        await dispose()
+      }
+    }, 60_000)
+
+    it('names the executable it launches', async () => {
+      const { ctx, dispose } = await boot()
+      try {
+        expect(ctx.browser.executablePath()).toBeTruthy()
+      } finally {
+        await dispose()
+      }
+    })
+  })
+}
+
+export type { Context }

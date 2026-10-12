@@ -37,3 +37,13 @@ owner-only (0600), and the account vault is a separate file.
 - An external runtime (option 3) is rejected until a concrete durability gap
   appears that SQLite plus reconciliation cannot close. This follows AgentOS's
   ecosystem evaluation.
+
+## Amendment (2026-10-12): no blob store until a consumer exists
+
+The content-addressed file store for large payloads was built as `ctx.blobs`, but no plugin
+ever wrote to it: answers and reports fit in SQLite records. It was removed so that no
+speculative store is shipped. The decision stands: records live in SQLite. When a payload
+outgrows a record, the first candidate is DSH's own attachment store (it already stores
+files by SHA-256 and verifies them on read); it was not adopted today because
+`dsh-attachment-local` depends on the native `sharp`, requires a display name, and is not an
+allow-listed row. The `blob` reference in `artifact-envelope` is kept, reserved.

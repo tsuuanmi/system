@@ -14,7 +14,11 @@
   ],
   "properties": {
     "schema": {
-      "const": "account@1.0"
+      "enum": [
+        "account@1.0",
+        "account@1.1"
+      ],
+      "description": "1.1 adds `features`."
     },
     "accountId": {
       "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
@@ -148,6 +152,28 @@
           "additionalProperties": false
         },
         "capturedAt": {
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp"
+        }
+      },
+      "additionalProperties": false
+    },
+    "features": {
+      "description": "Website features this account was proven to offer by a feature probe (REQ-PRV-7), and when.",
+      "type": "object",
+      "required": [
+        "names",
+        "provedAt"
+      ],
+      "properties": {
+        "names": {
+          "type": "array",
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/capability"
+          }
+        },
+        "provedAt": {
           "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp"
         }
       },

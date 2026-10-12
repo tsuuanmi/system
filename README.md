@@ -5,11 +5,12 @@ Workers and durable multi-agent workflows. It is built **on DSH core** as its ow
 DSH bundle and profile, reusing DSH plugins without being locked in. Every part of
 it is a plugin.
 
-- **Workers:** browser-backed web providers (ChatGPT Web, Gemini Web), Claude
-  Code, Codex, ACP agents, API providers, and local tools.
+- **Workers:** website Workers on browser-backed accounts (ChatGPT Web, Gemini
+  Web), and agent Workers (Claude Code, Codex, ACP agents). API and local-model
+  providers are planned.
 - **Workflows:** durable and reconcilable, built from Workers and teams.
-- **Clients:** Codex (Responses API), Claude Code (Anthropic Messages API), any
-  MCP client, and a CLI.
+- **Clients:** Claude Code (Anthropic Messages gateway), Codex (Responses
+  gateway), any MCP client, and the `system` CLI.
 
 > Right Worker, right job. Every effect reconciled, never blindly replayed.
 
@@ -30,31 +31,138 @@ Full statement: [docs/requirements/purpose.md](docs/requirements/purpose.md).
 
 ## Status
 
-**Design phase.** The repository holds documentation only. The architecture is
-proposed in [PROP-0001](docs/proposals/0001-unified-system-architecture.md), and
-implementation follows the [roadmap](docs/proposals/roadmap.md).
+Milestones M0 to M5 are done apart from a few listed items, and M6 (second
+domain and readiness) has started. The [roadmap](docs/proposals/roadmap.md) has
+the milestone table and what remains. What each package does today is in its own
+`README.md`; what was verified on live accounts, and when, is in the
+[release checklist](docs/validation/release-checklist.md).
 
-## Simplest use case (target)
+Built today:
 
-```text
-Codex ──────── Responses ──┐                                  ┌──▶ ChatGPT Web account
-                           ├──▶ system gateway ──▶ Worker ───┼──▶ Claude Code / Codex
-Claude Code ── Messages ───┘          ▲              router   └──▶ ACP agents, APIs, …
-                                      │                          │
-                                      └─ remote tool calls run ◀─┘
-                                         in the client (MCP)
+- website Workers on ChatGPT Web and Gemini Web, in an invisible headed Chrome,
+  with saved accounts, receipts, and restart reconciliation;
+- agent Workers on Claude Code, Codex, and ACP agents, held to each runtime's own
+  sandbox;
+- the workflow engine: capability routing with decision artifacts, acceptance
+  contracts, graph growth with plan approval, panels with team leads, Worker
+  sessions with peer messages, and exact-subject review;
+- profiles for software development (`develop`) and scientific research
+  (`research`, `research-deep`);
+- the MCP server, the Anthropic Messages and Responses gateways, the `system`
+  CLI, and an operator web page at `/ui`.
+
+## Quick start (Linux)
+
+Declare accounts in the operator's profile patch,
+`~/.dsh/profiles/system/cordis.patch.yml`. Each tier maps to a mode preset of
+the account's driver, and each mapped tier is one Worker. A tier left unmapped is
+never served. A common pattern is three accounts:
+
+```yaml
+- id: accounts
+  config:
+    accounts:
+      - id: chatgpt-main                 # every tier; Deep research needs frontier
+        provider: chatgpt-web
+        quotaClass: subscription-chat
+        tiers: { economy: instant, standard: medium, frontier: high }
+      - id: chatgpt-second               # panels hold members to distinct accounts
+        provider: chatgpt-web
+        quotaClass: subscription-chat
+        tiers: { economy: site, standard: site }
+      - id: gemini-main
+        provider: gemini-web
+        quotaClass: subscription-chat
+        tiers: { economy: flash-lite, standard: flash, frontier: pro }
 ```
 
-1. Sign in a provider account once through the remote-login page.
-2. Point a client (Codex, Claude Code, an MCP agent, or the `system` CLI) at the
-   loopback gateway.
-3. Run a single turn, or start a durable workflow such as research → implement →
-   validate → review.
+Agent Workers (Claude Code, Codex, ACP agents) are rows of the `agent-workers`
+plugin ([configuration](docs/reference/configuration.md#agent-workers)).
+
+```bash
+alias system="node $PWD/packages/cli/lib/bin.js"
+system init                          # profile, managed Chrome if needed, Xvfb/VNC check
+system start &                       # the daemon on 127.0.0.1:47317
+system account login chatgpt-main    # once per account: sign in through noVNC over ssh -L, then Save
+system account probe chatgpt-main    # prove which website features the account offers
+eval "$(system mcp-config claude)"   # Claude Code: MCP server "system" (token via headersHelper)
+system mcp-config codex >> ~/.codex/config.toml   # Codex: runs the stdio shim (system mcp-stdio)
+```
+
+## What clients get
+
+- **MCP tools:** `ask` (one turn on a website Worker), `research`, `run` (any
+  workflow template), `result`, `usage`, `explain`, and `status`; operator tools
+  for runs (`approve`, `stop`, `continue`, `supersede`, `delete`, `drain`,
+  `resume`), accounts (`account_*`), and sessions (`session_send`,
+  `session_inbox`). The full contracts are generated in
+  [docs/reference/mcp-tools.md](docs/reference/mcp-tools.md).
+- **`research` vs `deep-research`:** `research` is the scientific-research
+  procedure: testable hypotheses, a cited literature review with web search, an
+  evidence table, an independent critique, and a conclusion per hypothesis
+  (`research-deep` reviews with Deep research instead). `deep-research` is the
+  built-in template that runs one Deep research report on `frontier`, then
+  compacts it into a cited synthesis on `economy`
+  (`system run deep-research "…"`).
+- **Website Workers as the model:** `system claude-env` and `system codex-env`
+  print commands that run Claude Code or Codex on the gateways, with a website
+  Worker as their model.
+- **Inspection:** `system explain <runId>` shows why each step ran where it did,
+  and `system usage` which quota class and tier served each step. `system ui`
+  prints the link to the operator page.
+
+## How it fits together
+
+```mermaid
+flowchart LR
+  subgraph clients["Clients"]
+    CC["Claude Code"]
+    CX["Codex"]
+    MC["MCP client"]
+    CLI["system CLI"]
+  end
+  subgraph host["system on DSH core (127.0.0.1)"]
+    GA["/anthropic<br/>Messages gateway"]
+    GR["/openai<br/>Responses gateway"]
+    MCP["/mcp<br/>MCP server"]
+    WF["workflow engine"]
+    RT["egress check and<br/>capability router"]
+  end
+  subgraph workers["Workers"]
+    WEB["website Workers<br/>ChatGPT Web, Gemini Web"]
+    AG["agent Workers<br/>Claude Code, Codex, ACP agents"]
+  end
+  CC -- "model turns" --> GA
+  CX -- "model turns" --> GR
+  CC -- "MCP tools" --> MCP
+  CX -- "MCP tools" --> MCP
+  MC --> MCP
+  CLI --> MCP
+  GA --> WF
+  GR --> WF
+  MCP --> WF
+  WF --> RT
+  RT --> WEB
+  RT --> AG
+  GA -. "native tool calls, run by the client" .-> CC
+  GR -. "native tool calls, run by the client" .-> CX
+```
+
+1. Sign in each provider account once through the remote-login page.
+2. Point a client at `system`: over MCP, or through a gateway that makes a
+   website Worker its model. Through a gateway, the model proposes the client's
+   tool calls in text, and the client runs them locally
+   ([ADR-0022](docs/decisions/adr/0022-text-protocol-tool-calls-for-website-models.md)).
+3. Run a single turn, or a durable workflow such as plan → implement → review.
 
 ## Build / run / test
 
-There is no code yet. The planned toolchain and commands are in
-[engineering](docs/engineering/README.md).
+```sh
+pnpm install && pnpm build && pnpm check && pnpm test
+```
+
+The toolchain, commands, and CI gates are in
+[engineering](docs/engineering/development.md).
 
 ## Read next
 

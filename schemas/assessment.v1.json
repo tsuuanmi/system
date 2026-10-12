@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:tsuuanmi:system:schema:assessment:v1",
+  "title": "Review assessment",
+  "description": "Body of an 'assessment' artifact: an independent review's verdict and findings, bound to the exact subject it reviewed (REQ-TEAM-5, REQ-WF-5).",
+  "type": "object",
+  "required": [
+    "schema",
+    "subject",
+    "verdict",
+    "findings"
+  ],
+  "properties": {
+    "schema": {
+      "const": "assessment@1.0"
+    },
+    "subject": {
+      "description": "The exact subject reviewed; it equals the subject current when the review was accepted.",
+      "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/subject"
+    },
+    "verdict": {
+      "enum": [
+        "approve",
+        "changes-requested"
+      ]
+    },
+    "findings": {
+      "type": "array",
+      "maxItems": 200,
+      "items": {
+        "type": "object",
+        "required": [
+          "severity",
+          "title"
+        ],
+        "properties": {
+          "severity": {
+            "enum": [
+              "blocking",
+              "warning",
+              "info"
+            ]
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          },
+          "detail": {
+            "type": "string",
+            "maxLength": 8000
+          },
+          "file": {
+            "type": "string",
+            "maxLength": 1024
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "reviewer": {
+      "description": "The Worker that reviewed.",
+      "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+    }
+  },
+  "additionalProperties": false
+}

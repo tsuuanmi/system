@@ -1,0 +1,136 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "verbatimModuleSyntax": true,
+    "skipLibCheck": true,
+    "types": [
+      "node"
+    ],
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "baseUrl": ".",
+    "paths": {
+      "@tsuuanmi/system-libs": [
+        "packages/libs/src/index.ts"
+      ],
+      "@tsuuanmi/system-store": [
+        "packages/plugins/store/src/index.ts"
+      ],
+      "@tsuuanmi/system-artifacts": [
+        "packages/plugins/artifacts/src/index.ts"
+      ],
+      "@tsuuanmi/system-credentials-vault": [
+        "packages/plugins/credentials-vault/src/index.ts"
+      ],
+      "@tsuuanmi/system-mcp-server": [
+        "packages/plugins/mcp-server/src/index.ts"
+      ],
+      "@tsuuanmi/system-leases": [
+        "packages/plugins/leases/src/index.ts"
+      ],
+      "@tsuuanmi/system-event-log": [
+        "packages/plugins/event-log/src/index.ts"
+      ],
+      "@tsuuanmi/system-provider-core": [
+        "packages/provider-core/src/index.ts"
+      ],
+      "@tsuuanmi/system-turn-receipts": [
+        "packages/plugins/turn-receipts/src/index.ts"
+      ],
+      "@tsuuanmi/system-accounts": [
+        "packages/plugins/accounts/src/index.ts"
+      ],
+      "@tsuuanmi/system-display-virtual": [
+        "packages/plugins/display-virtual/src/index.ts"
+      ],
+      "@tsuuanmi/system-browser-patchright": [
+        "packages/plugins/browser-patchright/src/index.ts"
+      ],
+      "@tsuuanmi/system-ui-ops": [
+        "packages/ui-ops/src/index.ts"
+      ],
+      "@tsuuanmi/system-provider-gemini-web": [
+        "packages/plugins/provider-gemini-web/src/index.ts"
+      ],
+      "@tsuuanmi/system-provider-chatgpt-web": [
+        "packages/plugins/provider-chatgpt-web/src/index.ts"
+      ],
+      "@tsuuanmi/system-providers": [
+        "packages/plugins/providers/src/index.ts"
+      ],
+      "@tsuuanmi/system-login": [
+        "packages/plugins/login/src/index.ts"
+      ],
+      "@tsuuanmi/system-turns": [
+        "packages/plugins/turns/src/index.ts"
+      ],
+      "@tsuuanmi/system-egress": [
+        "packages/plugins/egress/src/index.ts"
+      ],
+      "@tsuuanmi/system-agent-runtime-core": [
+        "packages/agent-runtime-core/src/index.ts"
+      ],
+      "@tsuuanmi/system-agent-workers": [
+        "packages/plugins/agent-workers/src/index.ts"
+      ],
+      "@tsuuanmi/system-agent-runtimes": [
+        "packages/plugins/agent-runtimes/src/index.ts"
+      ],
+      "@tsuuanmi/system-runtime-acp": [
+        "packages/plugins/runtime-acp/src/index.ts"
+      ],
+      "@tsuuanmi/system-runtime-codex-sdk": [
+        "packages/plugins/runtime-codex-sdk/src/index.ts"
+      ],
+      "@tsuuanmi/system-runtime-claude-agent-sdk": [
+        "packages/plugins/runtime-claude-agent-sdk/src/index.ts"
+      ],
+      "@tsuuanmi/system-gateway-turns": [
+        "packages/gateway-turns/src/index.ts"
+      ],
+      "@tsuuanmi/system-profile-scientific-research": [
+        "packages/plugins/profile-scientific-research/src/index.ts"
+      ],
+      "@tsuuanmi/system-profile-software-development": [
+        "packages/plugins/profile-software-development/src/index.ts"
+      ],
+      "@tsuuanmi/system-gateway-responses": [
+        "packages/plugins/gateway-responses/src/index.ts"
+      ],
+      "@tsuuanmi/system-gateway-anthropic": [
+        "packages/plugins/gateway-anthropic/src/index.ts"
+      ],
+      "@tsuuanmi/system-web-ui": [
+        "packages/plugins/web-ui/src/index.ts"
+      ],
+      "@tsuuanmi/system-worker-sessions": [
+        "packages/plugins/worker-sessions/src/index.ts"
+      ],
+      "@tsuuanmi/system-workflow": [
+        "packages/plugins/workflow/src/index.ts"
+      ],
+      "@tsuuanmi/system-workers-core": [
+        "packages/workers-core/src/index.ts"
+      ],
+      "@tsuuanmi/system-workers": [
+        "packages/plugins/workers/src/index.ts"
+      ],
+      "@tsuuanmi/system-gateway-core": [
+        "packages/gateway-core/src/index.ts"
+      ]
+    }
+  },
+  "include": [
+    "packages/**/conformance/**/*.ts",
+    "packages/**/fixtures/**/*.ts",
+    "packages/**/src/**/*.ts",
+    "packages/**/tests/**/*.ts",
+    "scripts/**/*.ts",
+    "spikes/**/*.ts"
+  ]
+}

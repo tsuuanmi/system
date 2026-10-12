@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:tsuuanmi:system:schema:session-summary:v1",
+  "title": "Session summary",
+  "description": "Body of a session's 'report' checkpoint or 'handoff' compaction artifact (REQ-SES-6): where a long-running Worker session stands, so it can be followed or continued from.",
+  "type": "object",
+  "required": [
+    "schema",
+    "sessionId",
+    "reason",
+    "turns",
+    "summary"
+  ],
+  "properties": {
+    "schema": {
+      "const": "session-summary@1.0"
+    },
+    "sessionId": {
+      "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+    },
+    "reason": {
+      "enum": [
+        "checkpoint",
+        "compaction"
+      ]
+    },
+    "turns": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "generation": {
+      "description": "The binding generation the summary was written in; a compaction starts the next one.",
+      "type": "integer",
+      "minimum": 0
+    },
+    "estimatedTokens": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 32000
+    },
+    "refs": {
+      "type": "array",
+      "maxItems": 64,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/artifactRef"
+      }
+    }
+  },
+  "additionalProperties": false
+}

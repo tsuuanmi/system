@@ -1,0 +1,21 @@
+# Glossary
+
+Short definitions of the terms the documents use. Each links to the document that owns the
+term; that document is canonical. Plugin-model vocabulary (plugin, service, seam, library,
+bundle) is in the [plugin model](../architecture/plugin-model.md#vocabulary).
+
+| Term | Meaning |
+|---|---|
+| **Barrier** | A mailbox gate on a session group: messages are stored but not delivered until it opens. A team's independent-first barrier opens once every member has answered round 1 ([teams](../design/teams.md#plan), [sessions](../design/sessions-and-messaging.md#direct-messaging)). |
+| **Capability** | A named semantic, never a tool name, that a Worker must prove with current evidence before routing admits it, such as `reason`, `deep-research`, `develop`, or `review` ([capability vocabulary](../design/routing.md#capability-vocabulary)). |
+| **Decision artifact** | An immutable record of one decision (admission, route, tier, egress, acceptance, gate, recovery, …) with every candidate and why it was or was not chosen, written before its effect commits ([artifacts](../design/artifacts.md#decision-artifacts), [INV-13](../architecture/invariants.md#inv-13-every-decision-is-an-artifact)). |
+| **Feature** | A website feature that one account may or may not offer, such as Deep research or Web search. It becomes a routing capability of that account's Workers only after the account's feature probe proves it (`system account probe`; [driver interface](../design/provider-turns.md#driver-interface)). |
+| **Lease** | A time-bounded, token-holding claim on a resource with a monotonic generation. Every commit fences on the exact lease inside its transaction, so a stale holder cannot commit ([scheduling and leases](../design/scheduling-and-leases.md#lease-generations)). |
+| **Profile** | Two meanings. A **DSH profile** is the composition of bundles and the operator's patch that `system start` boots ([plugin model](../architecture/plugin-model.md#vocabulary)). A **domain profile** is a plugin, such as `profile-software-development`, that contributes workflow templates through `ctx.workflow.template` ([workflow templates](workflow-templates.md#profile-templates)). |
+| **Quota class** | What a Worker spends: `subscription-chat` (website accounts), `agent-plan` (Claude Code and Codex plans), `metered` (APIs), or `local`. Routing prefers them in the configured order ([quota and cost policy](../design/routing.md#quota-and-cost-policy)). |
+| **Receipt** | A provider turn receipt, persisted immediately before a prompt is sent. It binds the account, conversation, request, and prompt and response hashes, so a restart reconciles the turn instead of resending it ([turn receipt](../design/provider-turns.md#turn-receipt)). |
+| **SessionId** | The durable identity of one Worker session: a Worker's participation across turns and restarts, with its own mailbox. The native conversation handle behind it may change; the `SessionId` does not ([sessions](../design/sessions-and-messaging.md#concepts)). |
+| **Template** | A named list of workflow nodes, each with capabilities, a minimum tier, a conversation mode, and an acceptance contract. Built in, contributed by a domain profile, or configured ([workflow templates](workflow-templates.md)). |
+| **Tier** | The intelligence level a Worker configuration declares: `economy`, `standard`, or `frontier`. A node's tier is a minimum; routing picks the lowest admitted tier at or above it ([intelligence tiers](../design/routing.md#intelligence-tiers)). |
+| **Worker** | An opaque assignable executable unit with proven current capabilities: a website account at one tier, or a configured agent runtime. Routing admits Workers by capability, never by name ([components](../architecture/components.md#capabilities)). |
+| **Worker source** | A plugin that describes its Workers to `ctx.workers` and runs work on them: `turns` for website Workers and `agent-workers` for agent-runtime Workers ([routing](../design/routing.md), [components](../architecture/components.md#capabilities)). |

@@ -14,6 +14,9 @@ decisions, architecture, or design.
 | [reference-architectures.md](reference-architectures.md) | Claude (Anthropic), ChatGPT/OpenAI, Devin (Cognition): agent architecture patterns and verdicts | 2026-10-11 |
 | [agent-protocols-a2a-acp.md](agent-protocols-a2a-acp.md) | A2A 1.0 vs ACP (Agent Client Protocol) vs native mailbox for direct Worker messaging and long-running work | 2026-10-11 |
 | [chatgpt-login-and-remote-browser.md](chatgpt-login-and-remote-browser.md) | existing projects for ChatGPT email/password/TOTP login; remote browser components for Linux (noVNC over SSH) | 2026-10-11 |
+| [m0-dsh-core-spike.md](m0-dsh-core-spike.md) | M0 spike: DSH profile residency, MCP over HTTP on `ctx.webServer`, `node:sqlite` revisions, credential storage, telemetry | 2026-10-11 |
+| [dsh-community-plugins-review.md](dsh-community-plugins-review.md) | reuse review of DSH community plugins (MCP server, ChatGPT Web, credentials, DAG, A2A, teams) | 2026-10-11 |
+| [browser-interaction-and-self-healing.md](browser-interaction-and-self-healing.md) | how drivers operate fast-changing website UIs: AgentOS, internet, codex-chatgpt-web, BrowserSkill, Stagehand, Playwright ARIA snapshots and healer, MCP browser servers, Healenium | 2026-10-11 |
 | [codex-chatgpt-web-analysis.md](codex-chatgpt-web-analysis.md) | [miuuyy/codex-chatgpt-web](https://github.com/miuuyy/codex-chatgpt-web): Codex ↔ ChatGPT Web bridge | v6.1.8 |
 
 Each analysis ends with **Adopted** and **Not adopted** lists. Once its findings

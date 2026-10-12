@@ -1,0 +1,58 @@
+{
+  "name": "@tsuuanmi/system-bundle",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The system profile's only bundle: allow-listed DSH core rows + system plugins, no dsh-base (ADR-0019)",
+  "type": "module",
+  "files": [
+    "cordis.patch.yml"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "dependencies": {
+    "@tsuuanmi/system-accounts": "workspace:*",
+    "@tsuuanmi/system-artifacts": "workspace:*",
+    "@tsuuanmi/system-browser-patchright": "workspace:*",
+    "@tsuuanmi/system-credentials-vault": "workspace:*",
+    "@tsuuanmi/system-display-virtual": "workspace:*",
+    "@tsuuanmi/system-egress": "workspace:*",
+    "@tsuuanmi/system-workers": "workspace:*",
+    "@tsuuanmi/system-agent-runtimes": "workspace:*",
+    "@tsuuanmi/system-agent-workers": "workspace:*",
+    "@tsuuanmi/system-runtime-claude-agent-sdk": "workspace:*",
+    "@tsuuanmi/system-runtime-codex-sdk": "workspace:*",
+    "@tsuuanmi/system-runtime-acp": "workspace:*",
+    "@tsuuanmi/system-worker-sessions": "workspace:*",
+    "@tsuuanmi/system-workflow": "workspace:*",
+    "@tsuuanmi/system-gateway-anthropic": "workspace:*",
+    "@tsuuanmi/system-profile-scientific-research": "workspace:*",
+    "@tsuuanmi/system-profile-software-development": "workspace:*",
+    "@tsuuanmi/system-gateway-responses": "workspace:*",
+    "@tsuuanmi/system-web-ui": "workspace:*",
+    "@tsuuanmi/system-event-log": "workspace:*",
+    "@tsuuanmi/system-leases": "workspace:*",
+    "@tsuuanmi/system-login": "workspace:*",
+    "@tsuuanmi/system-mcp-server": "workspace:*",
+    "@tsuuanmi/system-provider-chatgpt-web": "workspace:*",
+    "@tsuuanmi/system-provider-gemini-web": "workspace:*",
+    "@tsuuanmi/system-providers": "workspace:*",
+    "@tsuuanmi/system-store": "workspace:*",
+    "@tsuuanmi/system-turn-receipts": "workspace:*",
+    "@tsuuanmi/system-turns": "workspace:*"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "4.0.5-alpha.1",
+    "@deepseek-ai/cordis-plugin-timer": "1.1.7-alpha.1",
+    "@deepseek-ai/dsh-credentials": "0.2.1-alpha.2",
+    "@deepseek-ai/dsh-host-webserver": "0.2.1-alpha.2"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "4.0.5-alpha.1",
+    "@deepseek-ai/cordis-plugin-timer": "1.1.7-alpha.1",
+    "@deepseek-ai/dsh-credentials": "0.2.1-alpha.2",
+    "@deepseek-ai/dsh-host-webserver": "0.2.1-alpha.2"
+  }
+}
