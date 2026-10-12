@@ -4,8 +4,8 @@
 > invariants, and from the titles of the tests that cite them; do not edit by hand. CI fails
 > when it is stale. A test cites an id in its title, for example `... (REQ-WF-7)`.
 
-**86 of 91** ids have at least one test that cites them.
-Not yet cited by a test: REQ-PRV-5, REQ-PRV-7, REQ-WRK-5, QA-11, INV-7. Some are covered by live or manual checks in the [release checklist](release-checklist.md).
+**87 of 91** ids have at least one test that cites them.
+Not yet cited by a test: REQ-PRV-7, REQ-WRK-5, QA-11, INV-7. Some are covered by live or manual checks in the [release checklist](release-checklist.md).
 
 ## Requirements
 
@@ -22,10 +22,10 @@ Not yet cited by a test: REQ-PRV-5, REQ-PRV-7, REQ-WRK-5, QA-11, INV-7. Some are
 | REQ-ACC-9 | Credentials are encrypted at rest and decrypted only in memory. | [accounts.spec.ts:69](../../packages/plugins/accounts/tests/accounts.spec.ts#L69), [vault.spec.ts:41](../../packages/plugins/credentials-vault/tests/vault.spec.ts#L41) |
 | REQ-PRV-1 | Every turn submitted with a logical request id is idempotent. | [turns.spec.ts:170](../../packages/plugins/turns/tests/turns.spec.ts#L170) |
 | REQ-PRV-2 | After a crash or restart, an in-flight turn is reconciled against the provider's observable state before any resubmission. | [turns.spec.ts:206](../../packages/plugins/turns/tests/turns.spec.ts#L206), [reconcile.spec.ts:20](../../packages/provider-core/tests/reconcile.spec.ts#L20) |
-| REQ-PRV-3 | The selected model and reasoning effort are verified before submission. | [driver.spec.ts:100](../../packages/plugins/provider-chatgpt-web/tests/driver.spec.ts#L100), [driver.spec.ts:120](../../packages/plugins/provider-chatgpt-web/tests/driver.spec.ts#L120) |
+| REQ-PRV-3 | The selected model and reasoning effort are verified before submission. | [driver.spec.ts:113](../../packages/plugins/provider-chatgpt-web/tests/driver.spec.ts#L113), [driver.spec.ts:133](../../packages/plugins/provider-chatgpt-web/tests/driver.spec.ts#L133) |
 | REQ-PRV-4 | A turn ends either on stable completion or on one of two deadlines, a hard limit and a no-progress stall limit, each reported distinctly. | [completion.spec.ts:14](../../packages/provider-core/tests/completion.spec.ts#L14), [completion.spec.ts:20](../../packages/provider-core/tests/completion.spec.ts#L20) |
-| REQ-PRV-5 | Provider responses are returned as Markdown that matches the text that was streamed. | **none yet** |
-| REQ-PRV-6 | Provider-native deep research is available as a distinct capability (purpose P2). | [driver.spec.ts:128](../../packages/plugins/provider-chatgpt-web/tests/driver.spec.ts#L128), [turns.spec.ts:115](../../packages/plugins/turns/tests/turns.spec.ts#L115) |
+| REQ-PRV-5 | Provider responses are returned as Markdown that matches the text that was streamed. | [driver.spec.ts:71](../../packages/plugins/provider-chatgpt-web/tests/driver.spec.ts#L71), [driver.spec.ts:77](../../packages/plugins/provider-chatgpt-web/tests/driver.spec.ts#L77), [driver.spec.ts:263](../../packages/plugins/provider-chatgpt-web/tests/driver.spec.ts#L263) |
+| REQ-PRV-6 | Provider-native deep research is available as a distinct capability (purpose P2). | [driver.spec.ts:141](../../packages/plugins/provider-chatgpt-web/tests/driver.spec.ts#L141), [turns.spec.ts:115](../../packages/plugins/turns/tests/turns.spec.ts#L115) |
 | REQ-PRV-7 | Website-native features enabled on an account, such as web search and connectors, apps, or plugins, are exposed as named capabilities. | **none yet** |
 | REQ-WRK-1 | A Worker is admitted for a piece of work only when its current composition proves every required capability. | [agent-workers.spec.ts:108](../../packages/plugins/agent-workers/tests/agent-workers.spec.ts#L108), [turns.spec.ts:180](../../packages/plugins/turns/tests/turns.spec.ts#L180) |
 | REQ-WRK-2 | Routing among admitted Workers is deterministic for a given configuration and input. | [workers.ts:114](../../packages/workers-core/conformance/workers.ts#L114) |

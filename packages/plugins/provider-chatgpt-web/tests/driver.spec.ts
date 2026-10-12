@@ -68,6 +68,19 @@ describe.runIf(canRunBrowser)('ChatGptWebDriver against the fake site, with no r
     expect(turn.binding).toBeUndefined()
   }, 40_000)
 
+  it('returns the answer as the Markdown that was streamed, not its rendering (REQ-PRV-5)', async () => {
+    const answer = 'A **bold** claim with `code`, and [a source](https://src.example/a).'
+    const { page, driver } = await site({ answer })
+    expect((await driver.ask(page, 'Answer in Markdown', { conversation: 'temporary' })).text).toBe(answer)
+  }, 40_000)
+
+  it('keeps a code block\'s lines, which the answer\'s Copy loses, from the rendered block (REQ-PRV-5)', async () => {
+    const answer = 'Here it is:\n```python\ndef add(a, b):\n    return a + b\n```\nDone.'
+    const { page, driver } = await site({ answer })
+    // The live Copy drops the fence's language too; the lines are what matter.
+    expect((await driver.ask(page, 'Write add', { conversation: 'temporary' })).text).toBe('Here it is:\n```\ndef add(a, b):\n    return a + b\n```\nDone.')
+  }, 40_000)
+
   it('keeps runs of spaces in the answer (indentation in a tool call\'s arguments)', async () => {
     const answer = '<call tool="Edit">{"new_string": "def add(a, b):\\n    return a + b"}</call>'
     const { page, driver } = await site({ answer })
@@ -246,3 +259,14 @@ describe.runIf(canRunBrowser)('the driver as a provider plugin', () => {
     expect(ctx.providers.get('chatgpt-web')).toBeInstanceOf(ChatGptWebDriver)
   })
 })
+
+describe('Markdown from the clipboard is kept only when it is the rendered answer (REQ-PRV-5)', () => {
+  it('matches Markdown to its rendering, and refuses another answer', async () => {
+    const { sameWords } = await import('../src/driver.ts')
+    expect(sameWords('A **bold** claim with `code`, and [a source](https://src.example/a).', 'A bold claim with code, and a source.')).toBe(true)
+    expect(sameWords('```ts\nconst x = 1\n```\n- one\n- two', 'ts\nCopy code\nconst x = 1\none\ntwo')).toBe(true)
+    expect(sameWords('Another account\'s answer.', 'A bold claim with code, and a source.')).toBe(false)
+    expect(sameWords('', 'anything')).toBe(false)
+  })
+})
+

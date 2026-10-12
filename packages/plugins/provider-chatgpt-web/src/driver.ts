@@ -139,7 +139,7 @@ export class ChatGptWebDriver implements ProviderDriver<Page> {
     await engine.act('composer.send')
     const reply = await this.waitForAnswer(page, before, options.signal, options.deadlines, options.conversation === 'persistent' && !options.binding ? options.onBinding : undefined)
     // Deep research answers with an acknowledgement; the report arrives later in its frame.
-    const text = feature === 'deep-research' ? await this.waitForResearch(page, reply, options.signal, options.deadlines) : reply
+    const text = feature === 'deep-research' ? await this.waitForResearch(page, reply, options.signal, options.deadlines) : await this.markdownOf(page, reply)
     if (options.conversation === 'temporary') return { text, binding: undefined, mode }
     const binding = await this.binding(page)
     if (options.binding !== undefined && binding !== options.binding) {
@@ -488,6 +488,41 @@ export class ChatGptWebDriver implements ProviderDriver<Page> {
     return raw.replace(/^\s*ChatGPT said:?\s*/i, '').trim()
   }
 
+  /**
+   * The answer as the Markdown that was streamed (REQ-PRV-5), from its own Copy button: read from
+   * the clipboard, and kept only when its words are the rendered answer's words (the clipboard
+   * may be shared). Otherwise the rendered text stands.
+   */
+  private async markdownOf(page: Page, rendered: string): Promise<string> {
+    try {
+      await page.context().grantPermissions(['clipboard-read', 'clipboard-write'], { origin: new URL(page.url()).origin })
+      const copy = (await this.engine(page).resolve('turn.assistant.done', 1000)).locator.last()
+      await page.evaluate(() => navigator.clipboard.writeText(''))
+      await copy.click({ timeout: 3000 })
+      let markdown = ''
+      for (let tries = 0; tries < 10 && !markdown; tries++) {
+        markdown = await page.evaluate(() => navigator.clipboard.readText())
+        if (!markdown) await page.waitForTimeout(100)
+      }
+      if (!markdown || !sameWords(markdown, rendered)) return rendered
+      // Copy rebuilds code blocks from the page and loses their line breaks: take each block's
+      // text from its rendered element instead, or keep the rendered answer if they do not pair.
+      const fences = [...markdown.matchAll(/^(```[^\n]*)\n([\s\S]*?)\n```[ \t]*$/gm)]
+      if (!fences.length) return markdown.trim()
+      const answer = (await this.engine(page).resolve('turn.assistant', 1000)).locator.last().locator('xpath=..')
+      const code = await this.engine(page).findIn('answer.code', answer)
+      const blocks = code ? await code.locator.evaluateAll((els) => els.map((el) => {
+        ;(el as HTMLElement).style.whiteSpace = 'pre-wrap'
+        return (el as HTMLElement).innerText.replace(/\n$/, '')
+      })) : []
+      if (blocks.length !== fences.length) return rendered
+      let index = 0
+      return markdown.replace(/^(```[^\n]*)\n([\s\S]*?)\n```[ \t]*$/gm, (_, open: string) => `${open}\n${blocks[index++]}\n\`\`\``).trim()
+    } catch {
+      return rendered
+    }
+  }
+
   private async waitForAnswer(page: Page, before: number, signal: AbortSignal | undefined, deadlines: AskOptions['deadlines'], onBinding?: (binding: string) => void): Promise<string> {
     const engine = this.engine(page)
     let bound = false
@@ -516,3 +551,27 @@ export class ChatGptWebDriver implements ProviderDriver<Page> {
     return completed.text
   }
 }
+
+/** The words of a Markdown text as it renders: fences, emphasis, link targets, and markers dropped. */
+export function renderedWords(markdown: string): string[] {
+  const plain = markdown
+    .replace(/^```[^\n]*$/gm, ' ')
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/^\s{0,3}(?:#{1,6}|>|[-*+]|\d+[.)])\s+/gm, ' ')
+  return plain.match(/[\p{L}\p{N}]+/gu) ?? []
+}
+
+/**
+ * Whether Markdown is the rendered answer: its words appear in the rendered words in order, and
+ * rendering added only labels (a code block's language and its Copy button), nothing else.
+ */
+export function sameWords(markdown: string, rendered: string): boolean {
+  const md = renderedWords(markdown)
+  const shown = rendered.match(/[\p{L}\p{N}]+/gu) ?? []
+  const blocks = Math.ceil((markdown.match(/^```/gm) ?? []).length / 2)
+  if (!md.length || shown.length - md.length > 2 + 3 * blocks) return false
+  let at = 0
+  for (const word of shown) if (at < md.length && word === md[at]) at++
+  return at === md.length
+}
+

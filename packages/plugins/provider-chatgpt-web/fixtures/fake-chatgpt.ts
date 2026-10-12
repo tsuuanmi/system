@@ -222,6 +222,7 @@ async function send() {
   answer.className = 'turn'
   answer.innerHTML = '<div><h4 class="sr-only">ChatGPT said:</h4><p></p></div>'
   let started = false
+  let raw = ''
   const decoder = new TextDecoder()
   for (;;) {
     const { value, done } = await reader.read()
@@ -236,6 +237,7 @@ async function send() {
       }
       if (event.delta !== undefined) {
         if (!started) { $('log').append(answer); started = true }
+        raw += event.delta
         answer.querySelector('p').textContent += event.delta
       }
       if (typeof event.research === 'number') {
@@ -245,8 +247,13 @@ async function send() {
         holder.outerHTML = '<iframe title="Deep research" src="/web-sandbox.oai/' + convId + '/' + event.research + '" style="display:block;width:960px;height:640px;border:0"></iframe>'
       }
       if (event.done) {
+        // Like the live site: the finished answer renders its Markdown; Copy copies the Markdown itself.
+        const markdown = raw
+        answer.querySelector('p').innerHTML = renderMarkdown(markdown)
         const actions = document.createElement('div')
         actions.innerHTML = '<button aria-label="Copy">c</button><button aria-label="Regenerate response">r</button>'
+        // Like the live site, Copy rebuilds code blocks from the page and loses their line breaks.
+        actions.firstChild.addEventListener('click', () => navigator.clipboard.writeText(markdown.replace(/(\x60\x60\x60)[^\\n]*\\n([\\s\\S]*?)\\n\x60\x60\x60/g, (_, f, code) => f + '\\n' + code.split('\\n').join('') + '\\n' + f)))
         answer.append(actions)
         running = false
         history.pushState({}, '', '/c/' + convId + (temporary ? '?temporary-chat=true' : ''))
@@ -254,6 +261,13 @@ async function send() {
       }
     }
   }
+}
+function renderMarkdown(text) {
+  const escaped = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/\x60\x60\x60([^\\n]*)\\n([\\s\\S]*?)\\n\x60\x60\x60/g, (_, lang, code) => '<div>' + (lang || 'Code') + '</div><div role="textbox" aria-label="Edit code">'
+      + code.split('\\n').map((line) => '<div style="white-space:pre">' + line + '</div>').join('') + '</div>')
+  return escaped.replace(/\\*\\*([^*]+)\\*\\*/g, '<strong>$1</strong>').replace(/\x60([^\x60]+)\x60/g, '<code>$1</code>')
+    .replace(/\\[([^\\]]+)\\]\\(([^)]+)\\)/g, '<a href="$2">$1</a>')
 }
 render()
 fetch('/backend-api/me')

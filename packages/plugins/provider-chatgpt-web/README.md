@@ -20,6 +20,16 @@ The **ChatGPT Web provider driver**
   - completion needs the answer's finished marker ("Copy") and stable text, via
     the two-clock `waitForStableCompletion`;
   - the event stream stays open on the live site and is never consulted.
+- **The answer is Markdown (REQ-PRV-5).**
+  - The finished answer's own Copy button gives the Markdown. It is read from
+    the clipboard and kept only if its words are the rendered answer's words,
+    since the clipboard may be shared. Otherwise the rendered text stands, read
+    under `white-space: pre-wrap`.
+  - Copy rebuilds code blocks from the page and loses their line breaks, so
+    each fenced block's text comes from its rendered element (`answer.code`).
+  - Verified live on 2026-10-12: headings, lists, links, inline code, and code
+    blocks with their indentation came back. Emphasis and a fence's language
+    did not, which matches the rendered answer.
 - **`snapshot(page, binding)`:** reopens `/c/<id>` and returns the last answer
   and whether it is still running, for reconciliation. `onBinding` reports a new
   conversation's id as soon as the URL shows it.

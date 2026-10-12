@@ -188,6 +188,12 @@ elements:
     cardinality: many
     candidates:
       - { role: button, name: { en: '^Copy$' }, exact: true }
+  answer.code:
+    description: A code block's text in an answer, one line per row (the answer's Copy loses those rows).
+    cardinality: many
+    candidates:
+      - { role: textbox, name: { en: '^Edit code$' } }
+      - { css: 'pre code' }
 
 actions:
   mode.select-chat:

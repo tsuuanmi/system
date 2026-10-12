@@ -108,10 +108,11 @@ export class UiEngine {
    * Resolve an element inside one given frame (for example, the frames of one embedded app),
    * instead of the first frame anywhere that matches. Undefined when nothing matches there.
    */
-  async findIn(id: string, frame: Frame): Promise<Resolved | undefined> {
-    if (frame.isDetached()) return undefined
-    return this.matchIn(id, this.element(id), frame).catch((error: unknown) => {
-      if (frame.isDetached() || /detached/i.test((error as Error).message)) return undefined
+  async findIn(id: string, root: Frame | Locator): Promise<Resolved | undefined> {
+    const detached = (): boolean => 'isDetached' in root && root.isDetached()
+    if (detached()) return undefined
+    return this.matchIn(id, this.element(id), root).catch((error: unknown) => {
+      if (detached() || /detached/i.test((error as Error).message)) return undefined
       throw error
     })
   }
