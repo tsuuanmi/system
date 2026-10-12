@@ -92,6 +92,11 @@ export class WorkerRouter extends Workers {
     return undefined
   }
 
+  reset(sessionId: string): boolean {
+    for (const source of this.sources.values()) if (source.reset?.(sessionId)) return true
+    return false
+  }
+
   async list(): Promise<CapabilityDescriptor[]> {
     return (await this.described()).map((d) => d.worker)
   }

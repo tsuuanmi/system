@@ -100,6 +100,8 @@ export interface WorkerSource {
   affinity?(sessionId: string): string[] | undefined
   /** The session's native conversation handle (conversation URL, SDK session or thread id), once known. */
   handle?(sessionId: string): string | undefined
+  /** Start the session's next work in a fresh native conversation, on the same Worker (a compaction, REQ-SES-6). */
+  reset?(sessionId: string): boolean
   /**
    * Cancel an execution (REQ-WRK-4): a queued one never starts, a running one is aborted and
    * fails as `aborted`. False when it had already finished. Work already sent is not undone.
@@ -182,6 +184,9 @@ export abstract class Workers extends Service {
 
   /** A session's native conversation handle, from the source that owns it. */
   abstract handle(sessionId: string): string | undefined
+
+  /** Start a session's next work in a fresh native conversation; false when no source owns it. */
+  abstract reset(sessionId: string): boolean
 
   /**
    * Admit and choose exactly one Worker, deterministically for the same configuration,

@@ -40,7 +40,15 @@
     refusal is a `gate` decision. `settle` makes it idle again.
   - `pending()` lists sessions with unread mail, and `ofRun(runId)` lists a
     run's members.
-- **Not yet:**
-  - checkpoints and compaction for long-running sessions;
-  - budgets beyond messages.
+- **Budgets (REQ-SES-7).**
+  - Config `maxTurns`, `maxLifetimeMinutes`, `maxIdleMinutes`, and
+    `maxMessages` are recorded on each session.
+  - `activate` refuses a spent turn, lifetime, or idle budget: the session
+    becomes FAILED, with a `gate` decision naming the budget.
+  - `settle` takes the turn's estimated tokens and native handle. With
+    `inputRequired`, the session waits in INPUT_REQUIRED, and any message then
+    wakes it.
+  - `rebind` advances the binding generation after a compaction.
+  - Config `checkpointEveryTurns` and `compactAtTokens` drive the engine's
+    checkpoints and compaction.
 - **Injects:** `store`, `artifacts`; `mcp` is optional.

@@ -58,6 +58,7 @@ M6 has started:
 - The `profiles` seam: `ctx.workflow.template` lets a profile plugin contribute templates. `develop` moved into `profile-software-development`.
 - `profile-scientific-research` (`study`, `study-deep`): hypotheses, a cited review, an evidence table, an independent critique, and conclusions citing evidence. It has typed artifacts and invalidation, and was added with no engine change, which passes the architecture test (REQ-WF-9). Verified live on 2026-10-12.
 
+- Long-running sessions: budgets on turns, lifetime, and idle time; `INPUT_REQUIRED`; checkpoints; and compaction into a handoff the session continues from in a new conversation (REQ-SES-6, REQ-SES-7). Structured results checked against their schema (REQ-ART-5), verified live.
 - Readiness:
   - reference docs: a configuration catalog generated from every plugin's `Config`, MCP tool contracts from `system tools`, and gateway compatibility;
   - validation: traceability generated from test titles, and a release checklist on live accounts;

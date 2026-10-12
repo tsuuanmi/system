@@ -215,6 +215,8 @@ export class Turns extends Service {
         return account ? TIERS.map((t) => websiteWorker(account, t)) : undefined
       },
       handle: (sessionId) => this.session(sessionId)?.binding ?? undefined,
+      // The account stays (session affinity); without a binding the next turn opens a new conversation.
+      reset: (sessionId) => Number(this.ctx.store.db.prepare('UPDATE turn_sessions SET binding = NULL WHERE session_id = ?').run(sessionId).changes) > 0,
       cancel: (id) => this.cancel(id),
     })
     ctx.effect(() => {

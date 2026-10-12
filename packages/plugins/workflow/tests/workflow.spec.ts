@@ -39,7 +39,7 @@ const REPORT = 'Plugins matter <a href="https://src.example/catalog">[1]</a>.'
 /** Compaction answers cite; anything else answers plainly. */
 const answer = (prompt: string): string => (prompt.includes('<report>') ? 'Synthesis: plugins matter (https://src.example/catalog).' : 'Plain answer.')
 
-async function boot(options: { fake?: FakeOptions; dir?: string; shared?: FakeChatGpt; turns?: Record<string, unknown>; workflow?: Record<string, unknown>; ready?: boolean; accounts?: string[] } = {}) {
+async function boot(options: { fake?: FakeOptions; dir?: string; shared?: FakeChatGpt; turns?: Record<string, unknown>; workflow?: Record<string, unknown>; sessions?: Record<string, unknown>; ready?: boolean; accounts?: string[] } = {}) {
   const ids = options.accounts ?? ['chatgpt-main']
   const fake = options.shared ?? new FakeChatGpt({ answer, report: REPORT, ...options.fake })
   if (!options.shared) await fake.start()
@@ -63,7 +63,7 @@ async function boot(options: { fake?: FakeOptions; dir?: string; shared?: FakeCh
     ctx.plugin(Login, { profilesDir: join(dir, 'profiles') }),
     ctx.plugin(WorkerRouter, {}),
     ctx.plugin(Turns, { turnTimeoutMs: 90_000, stallTimeoutMs: 80_000, ...options.turns }),
-    ctx.plugin(WorkerSessions, {}),
+    ctx.plugin(WorkerSessions, options.sessions ?? {}),
     ctx.plugin(Workflow, { retryDelayMs: 300, ...options.workflow }),
     ctx.plugin(WebServer, { host: '127.0.0.1', port: 0 }),
     ctx.plugin(McpEndpoint, { tokenFile: join(dir, 'mcp.token'), discoveryFile: join(dir, 'mcp.json') }),
@@ -328,6 +328,57 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
     expect(fake.sent).toHaveLength(7)
     expect(ctx.workerSessions.session(m1!.sessionId)!.usage).toMatchObject({ turns: 2 })
   }, 240_000)
+
+  it('lets a session ask for input it cannot go on without, then resume when a peer answers (REQ-SES-7)', async () => {
+    const answer = (prompt: string): string => {
+      if (prompt.includes('final answers')) return 'Both hold [m1] [m2].'
+      if (prompt.includes('Messages for you (m1)')) return prompt.includes('the unit is metres') ? 'resolved: 42 metres' : 'INPUT_REQUIRED: which unit?'
+      if (prompt.includes('Messages for you (m2)')) return 'the unit is metres'
+      return 'an answer'
+    }
+    const { ctx, fake } = await boot({ fake: { answer }, accounts: ['chatgpt-main', 'chatgpt-2'] })
+    const done = await ctx.workflow.wait(ctx.workflow.start({ template: 'panel', input: 'How far?' }).runId, 120_000)
+    const members = ctx.workerSessions.ofRun(done.runId)
+    const m1 = members.find((m) => m.role === 'm1')!
+    const m2 = members.find((m) => m.role === 'm2')!
+    ctx.workerSessions.send({ from: m2.sessionId, messageId: 'how-far', to: { session: m1.sessionId }, intent: 'request', body: 'How far is it?' })
+    // m1 asks; m2 is woken by the question and answers; the answer wakes m1, which resolves.
+    await until(() => ctx.workerSessions.inbox(m2.sessionId).some((m) => m.message.body === 'resolved: 42 metres'), 120_000)
+    const kinds = ctx.artifacts.list({ kind: 'message' }).map((a) => a.body as { from: string; intent?: string; body: string }).filter((m) => m.from === m1.sessionId || m.from === m2.sessionId)
+      .map((m) => `${m.from === m1.sessionId ? 'm1' : 'm2'}:${m.intent}:${m.body}`).filter((m) => !m.includes('answer:an answer') && !m.includes('critique'))
+    expect(kinds.slice(-4)).toEqual(['m2:request:How far is it?', 'm1:input-required:INPUT_REQUIRED: which unit?', 'm2:answer:the unit is metres', 'm1:answer:resolved: 42 metres'])
+    await until(() => ctx.workerSessions.session(m1.sessionId)!.state === 'IDLE', 30_000)
+    expect(fake.sent.filter((s) => s.prompt.includes('Messages for you'))).toHaveLength(3)
+  }, 240_000)
+
+  it('checkpoints a long-running session, and compacts it into a handoff it continues from in a new conversation (REQ-SES-6)', async () => {
+    const answer = (prompt: string): string => {
+      if (prompt.includes('final answers')) return 'Both hold [m1] [m2].'
+      if (prompt.includes('Write a handoff summary')) return 'HANDOFF: the plan is agreed; the open question is the deadline.'
+      if (prompt.includes('<handoff>')) return 'continuing from the handoff'
+      if (prompt.includes('Messages for you')) return `noted ${'x'.repeat(6000)}`
+      return 'an answer'
+    }
+    const { ctx, fake } = await boot({ fake: { answer }, accounts: ['chatgpt-main', 'chatgpt-2'], sessions: { checkpointEveryTurns: 3, compactAtTokens: 1000 } })
+    const done = await ctx.workflow.wait(ctx.workflow.start({ template: 'panel', input: 'Plan it' }).runId, 120_000)
+    const m1 = ctx.workerSessions.ofRun(done.runId).find((m) => m.role === 'm1')!
+    const conversationBefore = ctx.workers.handle(m1.sessionId)
+    ctx.workerSessions.send({ from: 'operator', messageId: 'long-1', to: { session: m1.sessionId }, body: 'Long update one.' })
+    // Past the threshold: the session writes its handoff in its own conversation, and continues in a new one.
+    await until(() => ctx.artifacts.list({ kind: 'handoff' }).length === 1, 120_000)
+    const [handoff] = ctx.artifacts.list({ kind: 'handoff' })
+    expect(handoff).toMatchObject({ bodySchema: 'session-summary@1.0', body: { sessionId: m1.sessionId, reason: 'compaction', summary: 'HANDOFF: the plan is agreed; the open question is the deadline.', generation: 0 } })
+    await until(() => ctx.workerSessions.session(m1.sessionId)!.binding.generation === 1 && ctx.workerSessions.session(m1.sessionId)!.state === 'IDLE', 30_000)
+    ctx.workerSessions.send({ from: 'operator', messageId: 'after', to: { session: m1.sessionId }, body: 'What is open?' })
+    await until(() => fake.sent.some((s) => s.prompt.includes('<handoff>')), 120_000)
+    const resumed = fake.sent.find((s) => s.prompt.includes('<handoff>'))!
+    expect(resumed.prompt).toContain('the open question is the deadline')
+    await until(() => ctx.workerSessions.session(m1.sessionId)!.state === 'IDLE' && ctx.workers.handle(m1.sessionId) !== undefined, 60_000)
+    expect(ctx.workers.handle(m1.sessionId)).not.toBe(conversationBefore)
+    expect(ctx.workerSessions.session(m1.sessionId)).toMatchObject({ sessionId: m1.sessionId, binding: { generation: 1, nativeHandle: ctx.workers.handle(m1.sessionId) } })
+    // Checkpoints at bounded intervals: the third turn (the two panel rounds do not count) writes one.
+    expect(ctx.artifacts.list({ kind: 'report' }).filter((a) => a.bodySchema === 'session-summary@1.0').length).toBeGreaterThanOrEqual(1)
+  }, 300_000)
 
   it('fails closed when a team needs more distinct accounts than are ready (REQ-TEAM-4)', async () => {
     const { ctx } = await boot({ fake: { answer: 'x' } })

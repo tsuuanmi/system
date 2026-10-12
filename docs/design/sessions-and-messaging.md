@@ -125,4 +125,20 @@ its own Worker, and its reply goes back to the peers who wrote
 - Live verification needs a second account: panel teams are the only source of
   member sessions.
 
-Checkpoints and compaction for long-running sessions are not built yet.
+Long-running bounds are built (REQ-SES-6, REQ-SES-7):
+- **Budgets:** the turn, lifetime, and idle budgets are checked at every
+  activation. Exceeding one fails the session with a `gate` decision naming the
+  budget. Messages are bounded at send.
+- **`INPUT_REQUIRED`:** a session that cannot go on without input answers with
+  an `INPUT_REQUIRED:` line. Its question goes to its peers as `input-required`,
+  and any reply wakes it.
+- **Checkpoints:** every `checkpointEveryTurns` turns, the engine writes a
+  `report` artifact (`session-summary@1.0`).
+- **Compaction:**
+  1. Past `compactAtTokens`, the session writes a handoff summary in its own
+     conversation, stored as a `handoff` artifact.
+  2. The Worker source resets the session's native conversation, through
+     `reset(sessionId)` on the Worker seam, and the binding generation
+     advances.
+  3. The next turn opens a fresh conversation with the summary. The `SessionId`
+     never changes.

@@ -50,8 +50,8 @@ export interface WorkerSession {
   state: SessionState
   binding: { runtime: Runtime; nativeHandle?: string; generation: number }
   policy: { mayMessage: string[]; barrier?: string }
-  budgets: { maxTurns: number; maxMessages: number; maxLifetimeMinutes: number }
-  usage?: { turns: number; messagesSent: number }
+  budgets: { maxTurns: number; maxMessages: number; maxLifetimeMinutes: number; maxIdleMinutes?: number; checkpointEveryTurns?: number; compactAtTokens?: number }
+  usage?: { turns: number; messagesSent: number; estimatedTokens?: number }
   mailboxSeq: number
   createdAt: string
   revision: number
@@ -88,15 +88,31 @@ export type SendResult = { accepted: true; artifact: ContentId; delivered: strin
 export interface Config {
   /** Messages one session may send (default 200). */
   maxMessages?: number
+  /** Turns one session may take (default 100). */
+  maxTurns?: number
+  /** Minutes a session lives (default 1440). */
+  maxLifetimeMinutes?: number
+  /** Minutes a session may sit idle before it can no longer be woken (default 720). */
+  maxIdleMinutes?: number
+  /** A checkpoint artifact every this many turns (default 10, REQ-SES-6). */
+  checkpointEveryTurns?: number
+  /** Estimated context tokens at which the session is compacted into a handoff (default 60000). */
+  compactAtTokens?: number
 }
 
-const BUDGETS = { maxTurns: 100, maxLifetimeMinutes: 1440 }
+/** A refused activation, classified by the budget it would exceed (REQ-SES-7). */
+export type Refusal = { activated: false; reason: string; budget?: 'turns' | 'lifetime' | 'idle' }
 const now = (): string => new Date().toISOString()
 
 export class WorkerSessions extends Service {
   static inject = ['store', 'artifacts']
   static Config: z<Config> = z.object({
     maxMessages: z.natural().min(1).default(200).description('Messages one session may send'),
+    maxTurns: z.natural().min(1).max(10_000).default(100).description('Turns one session may take'),
+    maxLifetimeMinutes: z.natural().min(1).max(43_200).default(1440).description('Minutes a session lives'),
+    maxIdleMinutes: z.natural().min(1).max(43_200).default(720).description('Minutes a session may sit idle and still be woken'),
+    checkpointEveryTurns: z.natural().min(1).max(1000).default(10).description('A checkpoint artifact every this many turns'),
+    compactAtTokens: z.natural().min(1000).default(60_000).description('Estimated context tokens at which a session is compacted into a handoff'),
   })
 
   private readonly schemas = new SchemaRegistry()
@@ -110,6 +126,10 @@ export class WorkerSessions extends Service {
       CREATE TABLE session_groups (group_id TEXT PRIMARY KEY, barrier_open INTEGER NOT NULL, created_at TEXT NOT NULL);
       CREATE TABLE mailbox (session_id TEXT NOT NULL, seq INTEGER NOT NULL, sender TEXT NOT NULL, message_id TEXT NOT NULL, artifact TEXT NOT NULL, created_at TEXT NOT NULL,
         PRIMARY KEY (session_id, seq), UNIQUE (session_id, sender, message_id));`,
+    }, {
+      // The idle budget is measured from the last activation (REQ-SES-7).
+      version: 2,
+      sql: 'ALTER TABLE worker_sessions ADD COLUMN last_active TEXT;',
     }])
     ctx.inject(['mcp'], (c) => {
       const json = (value: object) => ({ content: [{ type: 'text' as const, text: JSON.stringify(value) }], structuredContent: { ...value } })
@@ -168,7 +188,11 @@ export class WorkerSessions extends Service {
         ...(member.runId ? { runId: member.runId } : {}), ...(member.nodeId ? { nodeId: member.nodeId } : {}),
         worker: member.worker, role: member.role, formation: member.formation, state: 'IDLE', binding: { runtime: member.runtime, generation: 0 },
         policy: { mayMessage: member.mayMessage ?? [group], ...(row.barrier_open ? {} : { barrier: 'independent-first' }) },
-        budgets: { ...BUDGETS, maxMessages: this.config.maxMessages ?? 200 }, usage: { turns: 0, messagesSent: 0 },
+        budgets: {
+          maxTurns: this.config.maxTurns ?? 100, maxMessages: this.config.maxMessages ?? 200, maxLifetimeMinutes: this.config.maxLifetimeMinutes ?? 1440,
+          maxIdleMinutes: this.config.maxIdleMinutes ?? 720, checkpointEveryTurns: this.config.checkpointEveryTurns ?? 10, compactAtTokens: this.config.compactAtTokens ?? 60_000,
+        },
+        usage: { turns: 0, messagesSent: 0, estimatedTokens: 0 },
         mailboxSeq: 0, createdAt: now(), revision: 0,
       }
       this.schemas.assertRecord(record)
@@ -213,8 +237,10 @@ export class WorkerSessions extends Service {
           .run(id, next, message.from, message.messageId, artifact, now())
         if (Number(inserted.changes) > 0) delivered.push(id)
       }
-      if (sender && delivered.length) this.update(sender.sessionId, (r) => ({ ...r, usage: { turns: r.usage?.turns ?? 0, messagesSent: (r.usage?.messagesSent ?? 0) + 1 } }))
-      if (delivered.length && WAKING.has(message.intent)) this.ctx.store.afterCommit(() => this.ctx.emit('worker-sessions/delivered', delivered))
+      if (sender && delivered.length) this.update(sender.sessionId, (r) => ({ ...r, usage: { ...r.usage, turns: r.usage?.turns ?? 0, messagesSent: (r.usage?.messagesSent ?? 0) + 1 } }))
+      // A session waiting for input wakes on any reply; an idle one only on a message that asks for one.
+      const waking = delivered.filter((id) => WAKING.has(message.intent) || this.session(id)?.state === 'INPUT_REQUIRED')
+      if (waking.length) this.ctx.store.afterCommit(() => this.ctx.emit('worker-sessions/delivered', waking))
       return { accepted: true, artifact, delivered }
     })
   }
@@ -242,39 +268,65 @@ export class WorkerSessions extends Service {
   }
 
   /**
-   * Activate an idle session for one turn (wake-on-message): ACTIVE, and its turn counted.
-   * Refused (a `gate` decision) when the session is not idle or its turn budget is spent.
+   * Activate a session for one turn (wake-on-message): from IDLE, or from INPUT_REQUIRED once
+   * input arrived. ACTIVE needs the native conversation it resumes. A spent turn, lifetime, or
+   * idle budget is a classified failure (REQ-SES-7): the session becomes FAILED and a `gate`
+   * decision names the budget.
    */
-  activate(sessionId: string, nativeHandle: string | undefined): { activated: true } | { activated: false; reason: string } {
-    return this.ctx.store.transaction(() => {
+  activate(sessionId: string, nativeHandle: string | undefined, now: number = Date.now()): { activated: true } | Refusal {
+    return this.ctx.store.transaction((db) => {
       const session = this.session(sessionId)
-      const turns = session?.usage?.turns ?? 0
-      const reason = !session ? `no session ${sessionId}`
-        : session.state !== 'IDLE' ? `session ${sessionId} is ${session.state}`
-          : turns >= session.budgets.maxTurns ? `session ${sessionId} has used its ${session.budgets.maxTurns} turns`
-            : !nativeHandle ? `session ${sessionId} has no conversation to resume` : undefined
-      if (reason) {
-        if (session && session.state === 'IDLE') {
-          this.ctx.artifacts.recordDecision({
-            decisionType: 'gate',
-            question: `May session ${sessionId} take another turn?`,
-            inputs: [],
-            candidates: [{ option: 'activate', selected: false, reasons: [] }, { option: 'refuse', selected: true, reasons: [reason] }],
-            decider: { type: 'policy', id: 'sessions.budget', version: '1' },
-            outcome: { option: 'refuse', detail: { turns } },
-            deterministic: true,
-          }, { producer: { type: 'system', ref: 'worker-sessions' } })
-        }
-        return { activated: false, reason }
+      if (!session) return { activated: false, reason: `no session ${sessionId}` }
+      if (session.state !== 'IDLE' && session.state !== 'INPUT_REQUIRED') return { activated: false, reason: `session ${sessionId} is ${session.state}` }
+      const turns = session.usage?.turns ?? 0
+      const lastActive = (db.prepare('SELECT last_active FROM worker_sessions WHERE session_id = ?').get(sessionId) as { last_active: string | null }).last_active ?? session.createdAt
+      const idle = session.budgets.maxIdleMinutes
+      const exceeded: [Refusal['budget'] & string, string] | undefined = turns >= session.budgets.maxTurns ? ['turns', `session ${sessionId} has used its ${session.budgets.maxTurns} turns`]
+        : now - Date.parse(session.createdAt) > session.budgets.maxLifetimeMinutes * 60_000 ? ['lifetime', `session ${sessionId} has outlived its ${session.budgets.maxLifetimeMinutes} minutes`]
+          : idle !== undefined && now - Date.parse(lastActive) > idle * 60_000 ? ['idle', `session ${sessionId} has been idle longer than ${idle} minutes`] : undefined
+      if (exceeded) {
+        this.ctx.artifacts.recordDecision({
+          decisionType: 'gate',
+          question: `May session ${sessionId} take another turn?`,
+          inputs: [],
+          candidates: [{ option: 'activate', selected: false, reasons: [] }, { option: 'refuse', selected: true, reasons: [exceeded[1]] }],
+          decider: { type: 'policy', id: 'sessions.budget', version: '1' },
+          outcome: { option: 'refuse', detail: { budget: exceeded[0], turns } },
+          deterministic: true,
+        }, { producer: { type: 'system', ref: 'worker-sessions' } })
+        this.update(sessionId, (r) => ({ ...r, state: 'FAILED' }))
+        return { activated: false, reason: exceeded[1], budget: exceeded[0] }
       }
-      this.update(sessionId, (r) => ({ ...r, state: 'ACTIVE', binding: { ...r.binding, nativeHandle: nativeHandle! }, usage: { turns: turns + 1, messagesSent: r.usage?.messagesSent ?? 0 } }))
+      if (!nativeHandle) return { activated: false, reason: `session ${sessionId} has no conversation to resume` }
+      this.update(sessionId, (r) => ({ ...r, state: 'ACTIVE', binding: { ...r.binding, nativeHandle }, usage: { ...r.usage, turns: turns + 1, messagesSent: r.usage?.messagesSent ?? 0 } }))
       return { activated: true }
     })
   }
 
-  /** End an activation: the session is idle again. */
-  settle(sessionId: string): void {
-    this.update(sessionId, (r) => (r.state === 'ACTIVE' ? { ...r, state: 'IDLE' } : r))
+  /**
+   * End an activation: idle again, or INPUT_REQUIRED when the session asked for input it cannot
+   * proceed without (REQ-SES-7). The turn's estimated tokens add to the session's context, and the
+   * native handle is the one the turn ran in (a fresh conversation after a compaction).
+   */
+  settle(sessionId: string, turn: { inputRequired?: boolean; tokens?: number; nativeHandle?: string } = {}): WorkerSession {
+    const next = this.update(sessionId, (r) => (r.state === 'ACTIVE'
+      ? {
+        ...r, state: turn.inputRequired ? 'INPUT_REQUIRED' : 'IDLE',
+        binding: { ...r.binding, ...(turn.nativeHandle ? { nativeHandle: turn.nativeHandle } : {}) },
+        usage: { ...r.usage, turns: r.usage?.turns ?? 0, messagesSent: r.usage?.messagesSent ?? 0, estimatedTokens: (r.usage?.estimatedTokens ?? 0) + (turn.tokens ?? 0) },
+      }
+      : r))
+    this.ctx.store.db.prepare('UPDATE worker_sessions SET last_active = ? WHERE session_id = ?').run(now(), sessionId)
+    return next
+  }
+
+  /**
+   * After a compaction (REQ-SES-6): the session continues in a new native conversation, from its
+   * handoff summary. Its SessionId stays; its binding generation advances, and its context is the
+   * summary's size.
+   */
+  rebind(sessionId: string, tokens: number): WorkerSession {
+    return this.update(sessionId, (r) => ({ ...r, binding: { ...r.binding, generation: r.binding.generation + 1 }, usage: { ...r.usage, turns: r.usage?.turns ?? 0, messagesSent: r.usage?.messagesSent ?? 0, estimatedTokens: tokens } }))
   }
 
   /** The sessions a run formed (its team members). */

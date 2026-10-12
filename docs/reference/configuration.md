@@ -270,6 +270,11 @@ No options.
 | Option | Type | Default | Description |
 |---|---|---|---|
 | `maxMessages` | number (1…) | `200` | Messages one session may send |
+| `maxTurns` | number (1…10000) | `100` | Turns one session may take |
+| `maxLifetimeMinutes` | number (1…43200) | `1440` | Minutes a session lives |
+| `maxIdleMinutes` | number (1…43200) | `720` | Minutes a session may sit idle and still be woken |
+| `checkpointEveryTurns` | number (1…1000) | `10` | A checkpoint artifact every this many turns |
+| `compactAtTokens` | number (1000…) | `60000` | Estimated context tokens at which a session is compacted into a handoff |
 
 ## `workers`
 

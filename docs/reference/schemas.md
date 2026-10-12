@@ -124,6 +124,15 @@ guesses.
   `{type: git-head, ref: HEAD, version: hash of every change on top}`. A
   review binds to it.
 
+### `session-summary`
+
+- A Worker session's `report` checkpoint (every `checkpointEveryTurns` turns)
+  or `handoff` compaction (past `compactAtTokens`), derived from the turn's
+  result.
+- `generation` is the binding generation it was written in. A compaction
+  starts the next one, and the session continues from the summary in a new
+  native conversation.
+
 ### `hypothesis-set` and `evidence-table`
 
 - These are the scientific-research profile's typed artifacts: `criteria` and

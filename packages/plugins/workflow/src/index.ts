@@ -259,6 +259,11 @@ export class Workflow extends Service {
       // A review bound to an exact subject: the working tree it must review (REQ-WF-5).
       version: 6,
       sql: 'ALTER TABLE workflow_nodes ADD COLUMN subject TEXT;',
+    }, {
+      // Long-running sessions (REQ-SES-6): compaction turns, and handoffs a session continues from.
+      version: 7,
+      sql: `ALTER TABLE workflow_wakes ADD COLUMN kind TEXT NOT NULL DEFAULT 'wake';
+      CREATE TABLE session_handoffs (session_id TEXT PRIMARY KEY, artifact TEXT NOT NULL);`,
     }])
     ctx.effect(() => {
       queueMicrotask(() => {
@@ -503,21 +508,27 @@ export class Workflow extends Service {
     const sessions = this.ctx.workerSessions
     return this.ctx.store.transaction((db) => {
       const session = sessions.session(sessionId)
-      if (!session || session.state !== 'IDLE') return undefined
+      if (!session || (session.state !== 'IDLE' && session.state !== 'INPUT_REQUIRED')) return undefined
       if (session.runId && this.get(session.runId)?.status === 'running') return undefined
       if (db.prepare('SELECT 1 FROM workflow_wakes WHERE session_id = ? AND done = 0').get(sessionId)) return undefined
       const inbox = sessions.inbox(sessionId)
       if (!inbox.length) return undefined
-      if (!sessions.activate(sessionId, this.ctx.workers.handle(sessionId)).activated) return undefined
+      // After a compaction the next turn opens a fresh conversation; until it binds, the last handle stands.
+      if (!sessions.activate(sessionId, this.ctx.workers.handle(sessionId) ?? session.binding.nativeHandle).activated) return undefined
       const through = inbox.at(-1)!.seq
       const replyTo = [...new Set(inbox.map((m) => m.from).filter((from) => from !== 'operator' && from !== sessionId))]
+      const handoff = db.prepare('SELECT artifact FROM session_handoffs WHERE session_id = ?').get(sessionId) as { artifact: string } | undefined
+      const summary = handoff ? (this.ctx.artifacts.get(handoff.artifact)?.body as { summary?: string } | undefined)?.summary : undefined
       const prompt = [
+        ...(summary ? [`You continue a long-running session. Your earlier conversation was compacted into this handoff summary:\n<handoff>\n${summary}\n</handoff>`] : []),
         `Messages for you (${session.role}), in order:`,
         ...inbox.map((m) => `### From [${sessions.session(m.from)?.role ?? m.from}] (${m.message.intent ?? 'request'})\n${m.message.body}`),
         replyTo.length ? 'Reply to them. Your reply is sent to each peer who wrote.' : 'Reply to them.',
+        'If you cannot go on without input from the operator or a peer, start your reply with a line `INPUT_REQUIRED: <your question>`.',
       ].join('\n\n')
       const run = this.start({ template: 'ask', input: prompt, sessionId, clientRequestId: `wake:${sessionId}:${through}`, classification: 'operator-shared' })
-      db.prepare('INSERT OR IGNORE INTO workflow_wakes (run_id, session_id, through_seq, reply_to) VALUES (?, ?, ?, ?)').run(run.runId, sessionId, through, JSON.stringify(replyTo))
+      db.prepare("INSERT OR IGNORE INTO workflow_wakes (run_id, session_id, through_seq, reply_to, kind) VALUES (?, ?, ?, ?, 'wake')").run(run.runId, sessionId, through, JSON.stringify(replyTo))
+      if (handoff) db.prepare('DELETE FROM session_handoffs WHERE session_id = ?').run(sessionId)
       return run
     })
   }
@@ -530,26 +541,82 @@ export class Workflow extends Service {
     }
   }
 
-  /** A wake run finished: post the reply to the peers (as an answer, which wakes nobody), acknowledge, settle. */
+  /**
+   * A wake run finished: post the reply to the peers (an answer wakes nobody; a question the
+   * session cannot go on without is `input-required`), acknowledge, settle. Then the session's
+   * long-running bounds (REQ-SES-6): a checkpoint every few turns, and a compaction once its
+   * context is past the threshold. A compaction run finished: store the handoff and continue the
+   * session in a fresh conversation from it.
+   */
   private settleWake(runId: string): void {
-    const wake = this.ctx.store.db.prepare('SELECT session_id, through_seq, reply_to FROM workflow_wakes WHERE run_id = ? AND done = 0').get(runId) as { session_id: string; through_seq: number; reply_to: string } | undefined
+    const wake = this.ctx.store.db.prepare('SELECT session_id, through_seq, reply_to, kind FROM workflow_wakes WHERE run_id = ? AND done = 0').get(runId) as { session_id: string; through_seq: number; reply_to: string; kind: string } | undefined
     if (!wake) return
     const sessions = this.ctx.workerSessions
     const run = this.get(runId)
+    const answer = run?.status === 'completed' ? run.answer?.trim() ?? '' : ''
+    const result = run?.status === 'completed' ? this.records(runId).at(-1)?.outputReceipt?.result : undefined
+    let compact = false
     this.ctx.store.transaction((db) => {
-      if (run?.status === 'completed' && run.answer?.trim()) {
-        for (const peer of JSON.parse(wake.reply_to) as string[]) {
-          sessions.send({ from: wake.session_id, messageId: `wake:${runId}`, to: { session: peer }, intent: 'answer', body: run.answer.length > 32_000 ? `${run.answer.slice(0, 31_900)}\n…(truncated)` : run.answer })
+      if (wake.kind === 'compaction') {
+        if (answer && result) {
+          const session = sessions.session(wake.session_id)!
+          const handoff = this.ctx.artifacts.put({
+            kind: 'handoff', bodySchema: 'session-summary@1.0', inputs: [result], classification: 'operator-shared', producer: { type: 'system', ref: 'workflow' },
+            body: { schema: 'session-summary@1.0', sessionId: wake.session_id, reason: 'compaction', turns: session.usage?.turns ?? 0, generation: session.binding.generation,
+              estimatedTokens: session.usage?.estimatedTokens ?? 0, summary: answer.slice(0, 32_000), refs: [result] },
+          }).id
+          sessions.settle(wake.session_id)
+          this.ctx.workers.reset(wake.session_id)
+          sessions.rebind(wake.session_id, estimateTokens(answer))
+          db.prepare('INSERT OR REPLACE INTO session_handoffs (session_id, artifact) VALUES (?, ?)').run(wake.session_id, handoff)
+        } else {
+          sessions.settle(wake.session_id)
         }
+      } else {
+        const inputRequired = /^\s*INPUT_REQUIRED:/m.test(answer)
+        if (answer) {
+          for (const peer of JSON.parse(wake.reply_to) as string[]) {
+            sessions.send({ from: wake.session_id, messageId: `wake:${runId}`, to: { session: peer }, intent: inputRequired ? 'input-required' : 'answer', body: answer.length > 32_000 ? `${answer.slice(0, 31_900)}\n…(truncated)` : answer })
+          }
+        }
+        // A failed wake is acknowledged too: the failure is the run's, and the message is not retried in a loop.
+        sessions.ack(wake.session_id, wake.through_seq)
+        const handle = this.ctx.workers.handle(wake.session_id)
+        const settled = sessions.settle(wake.session_id, { inputRequired, tokens: estimateTokens(`${this.runRow(runId)?.input ?? ''}${answer}`), ...(handle ? { nativeHandle: handle } : {}) })
+        const turns = settled.usage?.turns ?? 0
+        if (answer && result && settled.budgets.checkpointEveryTurns && turns % settled.budgets.checkpointEveryTurns === 0) {
+          this.ctx.artifacts.put({
+            kind: 'report', bodySchema: 'session-summary@1.0', inputs: [result], classification: 'operator-shared', producer: { type: 'system', ref: 'workflow' },
+            body: { schema: 'session-summary@1.0', sessionId: wake.session_id, reason: 'checkpoint', turns, generation: settled.binding.generation,
+              estimatedTokens: settled.usage?.estimatedTokens ?? 0, summary: answer.slice(0, 4000), refs: [result] },
+          })
+        }
+        compact = !inputRequired && (settled.usage?.estimatedTokens ?? 0) >= (settled.budgets.compactAtTokens ?? Number.POSITIVE_INFINITY)
       }
-      // A failed wake is acknowledged too: the failure is the run's, and the message is not retried in a loop.
-      sessions.ack(wake.session_id, wake.through_seq)
-      sessions.settle(wake.session_id)
       db.prepare('UPDATE workflow_wakes SET done = 1 WHERE run_id = ?').run(runId)
     })
-    // Messages that arrived during the turn wake it again.
-    this.ctx.store.afterCommit(() => this.wakeSafely(wake.session_id))
+    // Messages that arrived during the turn wake it again, after a compaction if one is due.
+    this.ctx.store.afterCommit(() => (compact ? this.compact(wake.session_id) : this.wakeSafely(wake.session_id)))
   }
+
+  /** Compaction (REQ-SES-6): the session writes its own handoff summary, in its own conversation, as one more turn. */
+  private compact(sessionId: string): void {
+    try {
+      this.ctx.store.transaction((db) => {
+        const session = this.ctx.workerSessions.session(sessionId)
+        if (!session || this.draining || this.stopped.signal.aborted) return
+        if (!this.ctx.workerSessions.activate(sessionId, this.ctx.workers.handle(sessionId) ?? session.binding.nativeHandle).activated) return
+        const run = this.start({
+          template: 'ask', sessionId, classification: 'operator-shared', clientRequestId: `compact:${sessionId}:${session.binding.generation}`,
+          input: 'Your context is getting long. Write a handoff summary for yourself to continue from: the decisions made, the open questions, the current state, and anything a peer is waiting on. Be complete but concise; this summary replaces the conversation.',
+        })
+        db.prepare("INSERT OR IGNORE INTO workflow_wakes (run_id, session_id, through_seq, reply_to, kind) VALUES (?, ?, 0, '[]', 'compaction')").run(run.runId, sessionId)
+      })
+    } catch (error) {
+      this.ctx.logger.warn(`workflow: could not compact session ${sessionId}: ${(error as Error).message}`)
+    }
+  }
+
 
   /**
    * Runs are deleted only by the operator (docs/design/workflow-engine.md#retention); what
@@ -1696,6 +1763,9 @@ interface NodeHelpers {
 }
 
 const teamGroup = (runId: string, team: string): string => `team:${runId}:${team}`
+
+/** A rough token count of session context (no tokenizer for website models). */
+const estimateTokens = (text: string): number => Math.ceil(text.length / 4)
 
 /** The session record's runtime, from the Worker's source and provider (metadata, never routing). */
 function runtimeOf(source: string, provider: string): Runtime {

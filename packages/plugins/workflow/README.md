@@ -168,6 +168,16 @@ second execution path (INV-1).
     session, and bounded by the session's turn budget.
   - It is durable (`workflow_wakes`). On start, unfinished wakes are settled
     and sessions with unread mail are woken.
+  - **Input required:** a reply starting `INPUT_REQUIRED: <question>` goes to
+    the peers as `input-required`. The session waits until any reply wakes it.
+  - **Checkpoints:** every `checkpointEveryTurns` turns, the engine writes a
+    `report` artifact (`session-summary@1.0`) with the latest reply.
+  - **Compaction:**
+    1. Past `compactAtTokens` (estimated), the session writes a handoff summary
+       as one more turn. It is stored as a `handoff` artifact.
+    2. The Worker source resets the native conversation (`workers.reset`), and
+       the session's generation advances.
+    3. The next wake opens a fresh conversation that starts from the handoff.
   - `lead: { tier }` (default `economy`) adds a lead after each round but the
     last ([lead](../../../docs/design/teams.md#lead)). It reads the members'
     current answers and replies `{"converged": …, "reason": …}`

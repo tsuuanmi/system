@@ -111,4 +111,41 @@ describe('ctx.workerSessions: sessions, mailboxes, direct messages (ADR-0015)', 
     expect(again.workerSessions.inbox('ses_a').map((m) => m.message.body)).toEqual(['question'])
     expect(() => again.workerSessions.join('grp-1', { sessionId: 'ses_a', role: 'm1', runtime: 'website', worker: 'worker:other/standard', formation: H('d') })).toThrow(/bound/)
   })
+
+  it('bounds turns, lifetime, and idle time: exceeding one fails the session, classified by budget (REQ-SES-7)', async () => {
+    const decisions = (ctx: Awaited<ReturnType<typeof boot>>) => ctx.artifacts.list({ kind: 'decision', decisionType: 'gate' })
+      .map((a) => (a.body as { outcome: { detail?: { budget?: string } } }).outcome.detail?.budget).filter(Boolean)
+    const turns = await boot()
+    team(turns, false)
+    for (let i = 0; i < 100; i++) {
+      expect(turns.workerSessions.activate('ses_a', 'h')).toEqual({ activated: true })
+      turns.workerSessions.settle('ses_a')
+    }
+    expect(turns.workerSessions.activate('ses_a', 'h')).toMatchObject({ activated: false, budget: 'turns' })
+    expect(turns.workerSessions.session('ses_a')!.state).toBe('FAILED')
+    expect(decisions(turns)).toEqual(['turns'])
+    const old = await boot()
+    team(old, false)
+    expect(old.workerSessions.activate('ses_a', 'h', Date.now() + 1441 * 60_000)).toMatchObject({ activated: false, budget: 'lifetime' })
+    expect(old.workerSessions.activate('ses_b', 'h')).toEqual({ activated: true })
+    old.workerSessions.settle('ses_b')
+    expect(old.workerSessions.activate('ses_b', 'h', Date.now() + 721 * 60_000)).toMatchObject({ activated: false, budget: 'idle' })
+    expect(decisions(old).sort()).toEqual(['idle', 'lifetime'])
+  })
+
+  it('waits in INPUT_REQUIRED until input arrives, then any reply wakes it; a compaction advances the generation (REQ-SES-7, REQ-SES-6)', async () => {
+    const ctx = await boot()
+    team(ctx, false)
+    const woken: string[][] = []
+    ctx.on('worker-sessions/delivered', (ids) => void woken.push(ids))
+    ctx.workerSessions.activate('ses_a', 'h-1')
+    expect(ctx.workerSessions.settle('ses_a', { inputRequired: true, tokens: 120, nativeHandle: 'h-1' })).toMatchObject({ state: 'INPUT_REQUIRED', usage: { estimatedTokens: 120 } })
+    new SchemaRegistry().assertRecord(ctx.workerSessions.session('ses_a')!)
+    ctx.workerSessions.send({ from: 'ses_b', messageId: 'a1', to: { session: 'ses_a' }, intent: 'answer', body: 'metres' })
+    expect(woken).toEqual([['ses_a']])
+    expect(ctx.workerSessions.activate('ses_a', 'h-1')).toEqual({ activated: true })
+    ctx.workerSessions.settle('ses_a', { tokens: 80 })
+    expect(ctx.workerSessions.rebind('ses_a', 30)).toMatchObject({ state: 'IDLE', binding: { generation: 1, nativeHandle: 'h-1' }, usage: { estimatedTokens: 30 } })
+  })
 })
+

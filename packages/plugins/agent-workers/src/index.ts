@@ -131,6 +131,8 @@ export class AgentWorkers extends Service {
         return session ? [session.worker] : undefined
       },
       handle: (sessionId) => (this.ctx.store.db.prepare('SELECT native_handle FROM agent_sessions WHERE session_id = ?').get(sessionId) as { native_handle: string | null } | undefined)?.native_handle ?? undefined,
+      // The Worker stays (session affinity); without a handle the next run starts a new agent session.
+      reset: (sessionId) => Number(this.ctx.store.db.prepare('UPDATE agent_sessions SET native_handle = NULL WHERE session_id = ?').run(sessionId).changes) > 0,
     })
     ctx.effect(() => {
       queueMicrotask(() => this.recover())
