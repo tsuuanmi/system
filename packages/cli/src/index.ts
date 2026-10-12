@@ -4,10 +4,12 @@
  * @module @tsuuanmi/system-cli
  */
 import { spawn, spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { chmodSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { constants as osConstants } from 'node:os'
 import { dirname, join } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 import { fileURLToPath } from 'node:url'
 import { CHROME_LOCK, type ChromeChoice, discoverChrome, installManagedChrome } from '@tsuuanmi/system-browser-patchright'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
@@ -273,6 +275,98 @@ export async function shutdownHost(deadlineMs: number, options: { home?: string;
   for (const until = Date.now() + 60_000; alive() && Date.now() < until;) await new Promise((resolve) => setTimeout(resolve, 250))
   if (alive()) throw new Error(`process ${pid} did not exit within 60 s of SIGTERM`)
   return { ...drained, pid }
+}
+
+const BACKUP_MANIFEST = 'system-backup.json'
+
+interface BackupManifest {
+  schema: 'system-backup@1'
+  createdAt: string
+  /** Relative path → sha256 hex, for every file in the backup but the manifest. */
+  files: Record<string, string>
+  includesKey: boolean
+}
+
+const fileHash = (path: string): string => createHash('sha256').update(readFileSync(path)).digest('hex')
+
+function listFiles(dir: string, prefix = ''): string[] {
+  if (!existsSync(dir)) return []
+  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => entry.isDirectory()
+    ? listFiles(join(dir, entry.name), `${prefix}${entry.name}/`)
+    : entry.isFile() ? [`${prefix}${entry.name}`] : [])
+}
+
+/**
+ * Back up the harness state (docs/operations/runbooks.md#backup-and-restore): a consistent
+ * snapshot of the store (`VACUUM INTO`, safe while the profile runs), the content-addressed
+ * blobs, and the encrypted vault, with a manifest of hashes. The vault key is left out unless
+ * `includeKey`: a backup with its key is as sensitive as the host. Login profiles and the
+ * managed browser are not state: a new login recreates them.
+ */
+export function backupHost(target: string, options: { home?: string; includeKey?: boolean } = {}): BackupManifest {
+  const state = join(options.home ?? dshHome(), 'system')
+  if (!existsSync(join(state, 'system.db'))) throw new Error(`no store at ${join(state, 'system.db')}`)
+  if (existsSync(target) && readdirSync(target).length) throw new Error(`${target} is not empty`)
+  mkdirSync(join(target, 'blobs'), { recursive: true, mode: 0o700 })
+  const db = new DatabaseSync(join(state, 'system.db'))
+  try {
+    db.prepare('VACUUM INTO ?').run(join(target, 'system.db'))
+  } finally {
+    db.close()
+  }
+  for (const blob of listFiles(join(state, 'blobs'))) {
+    mkdirSync(dirname(join(target, 'blobs', blob)), { recursive: true, mode: 0o700 })
+    copyFileSync(join(state, 'blobs', blob), join(target, 'blobs', blob))
+  }
+  for (const file of ['vault.enc', ...(options.includeKey ? ['vault.key'] : [])]) {
+    if (existsSync(join(state, file))) copyFileSync(join(state, file), join(target, file))
+  }
+  const files = Object.fromEntries(listFiles(target).map((f) => [f, fileHash(join(target, f))]))
+  for (const f of Object.keys(files)) chmodSync(join(target, f), 0o600)
+  const manifest: BackupManifest = { schema: 'system-backup@1', createdAt: new Date().toISOString(), files, includesKey: !!options.includeKey && 'vault.key' in files }
+  writeFileSync(join(target, BACKUP_MANIFEST), `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o600 })
+  return manifest
+}
+
+/** Whether the profile that owns this state is running (its discovery file names a live process). */
+function profileRunning(state: string): boolean {
+  try {
+    const { pid } = JSON.parse(readFileSync(join(state, 'mcp.json'), 'utf8')) as Discovery
+    if (!pid) return false
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Restore a backup into the harness state: refused while the profile runs, and only after every
+ * file matches the manifest. Without `yes` it only reports what it would do. The replaced store
+ * is kept beside it (`system.db.before-restore-<time>`); blobs are merged (content-addressed).
+ */
+export function restoreHost(source: string, options: { home?: string; yes?: boolean } = {}): { manifest: BackupManifest; applied: boolean; keptAside?: string } {
+  const state = join(options.home ?? dshHome(), 'system')
+  const manifest = JSON.parse(readFileSync(join(source, BACKUP_MANIFEST), 'utf8')) as BackupManifest
+  if (manifest.schema !== 'system-backup@1') throw new Error(`${source} is not a system backup`)
+  for (const [file, hash] of Object.entries(manifest.files)) {
+    if (!existsSync(join(source, file)) || fileHash(join(source, file)) !== hash) throw new Error(`${file} does not match the backup manifest`)
+  }
+  if (!manifest.includesKey && existsSync(join(source, 'vault.enc')) && !existsSync(join(state, 'vault.key'))) {
+    throw new Error('the backup has no vault key and this host has none: restore vault.key from where you keep it first')
+  }
+  if (!options.yes) return { manifest, applied: false }
+  if (profileRunning(state)) throw new Error('the profile is running: run `system shutdown` first')
+  mkdirSync(state, { recursive: true, mode: 0o700 })
+  const keptAside = existsSync(join(state, 'system.db')) ? join(state, `system.db.before-restore-${Date.now()}`) : undefined
+  if (keptAside) renameSync(join(state, 'system.db'), keptAside)
+  for (const sidecar of ['system.db-wal', 'system.db-shm']) rmSync(join(state, sidecar), { force: true })
+  for (const file of Object.keys(manifest.files)) {
+    mkdirSync(dirname(join(state, file)), { recursive: true, mode: 0o700 })
+    copyFileSync(join(source, file), join(state, file))
+    chmodSync(join(state, file), 0o600)
+  }
+  return { manifest, applied: true, ...(keptAside ? { keptAside } : {}) }
 }
 
 export interface ToolContract {

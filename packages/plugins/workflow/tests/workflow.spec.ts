@@ -146,7 +146,7 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
     expect(() => ctx.workflow.start({ template: 'nope', input: 'x' })).toThrow(/unknown workflow template/)
   }, 60_000)
 
-  it('fails the run when a result is rejected by its acceptance contract, and never runs the next node (REQ-WRK-3)', async () => {
+  it('fails the run when a result is rejected by its acceptance contract, and never runs the next node (REQ-WRK-3, INV-3)', async () => {
     // A deployment that requires cited reports.
     const cited = DEFAULT_TEMPLATES.research!.map((node) => ({ ...node, acceptance: 'acceptance.cited' }))
     const { ctx, fake } = await boot({ fake: { report: 'A report without any source.' }, workflow: { templates: { research: cited } } })
@@ -291,7 +291,7 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
       .toEqual(['r1', 'r1', 'lead', 'r2', 'r2', 'lead', 'synthesis'])
   }, 240_000)
 
-  it('wakes an idle member on a message after its team finished; its reply goes to the peer, and an answer wakes nobody', async () => {
+  it('wakes an idle member on a message after its team finished; its reply goes to the peer, and an answer wakes nobody (REQ-SES-2, REQ-SES-5)', async () => {
     const answer = (prompt: string): string => {
       if (prompt.includes('final answers')) return 'Both hold [m1] [m2].'
       if (prompt.includes('Messages for you (m1)')) return prompt.includes('from m2') ? 'm1 answers m2' : 'm1 answers the operator'
@@ -390,7 +390,7 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
     expect(ctx.artifacts.get(done.result!)).toBeDefined()
   }, 60_000)
 
-  it('re-runs everything downstream of a superseded result, and records why (lineage invalidation)', async () => {
+  it('re-runs everything downstream of a superseded result, and records why (lineage invalidation, REQ-ART-2)', async () => {
     const { ctx, fake } = await boot()
     const done = await ctx.workflow.wait(ctx.workflow.start({ template: 'research', input: 'q' }).runId, 60_000)
     expect(done.status).toBe('completed')
@@ -526,7 +526,7 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
     expect(ctx.workflow.explain(done.runId)!.nodes.map((n) => n.decisions.length)).toEqual([4, 4])
   }, 90_000)
 
-  it('serves ask, research, run, result, usage, and explain over MCP in place of the placeholders', async () => {
+  it('serves ask, research, run, result, usage, and explain over MCP in place of the placeholders (REQ-GW-3, REQ-SES-8)', async () => {
     const { dir } = await boot()
     const { url, tokenFile } = JSON.parse(readFileSync(join(dir, 'mcp.json'), 'utf8')) as { url: string; tokenFile: string }
     const client = new Client({ name: 'test', version: '0' })

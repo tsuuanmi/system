@@ -112,7 +112,7 @@ describe.runIf(canRunBrowser)('ctx.turns: ask through a saved account', () => {
     expect(fake.sent[1]).toMatchObject({ model: 'Latest', power: 'Medium' })
   }, 90_000)
 
-  it('starts Deep research at once in a persistent session and delivers the report through result', async () => {
+  it('starts Deep research at once in a persistent session and delivers the report through result (REQ-PRV-6)', async () => {
     const { ctx, fake } = await boot({ fake: { report: 'Research report', thinkMs: 1500 } })
     const started = await ask(ctx, { research: true, prompt: 'Survey the plugin catalog' })
     expect(started).toMatchObject({ status: 'queued', mode: 'persistent', feature: 'deep-research' })
@@ -139,7 +139,7 @@ describe.runIf(canRunBrowser)('ctx.turns: ask through a saved account', () => {
     expect(await ctx.accounts.get('chatgpt-main')).toMatchObject({ status: 'ready' })
   }, 150_000)
 
-  it('marks the account reauth-required on positive sign-out evidence, so the next turn routes elsewhere', async () => {
+  it('marks the account reauth-required on positive sign-out evidence, so the next turn routes elsewhere (REQ-ACC-5)', async () => {
     const { ctx } = await boot({ fake: { signedIn: false } })
     const turn = await ctx.turns.wait((await ask(ctx, { prompt: 'x' })).turnId, 30_000)
     expect(turn).toMatchObject({ status: 'failed', error: { kind: 'reauth_required' } })
@@ -167,7 +167,7 @@ describe.runIf(canRunBrowser)('ctx.turns: ask through a saved account', () => {
     expect(fake.sent[1]).toMatchObject({ conversationId: first.binding, temporary: false })
   }, 120_000)
 
-  it('is idempotent on clientRequestId and sends once', async () => {
+  it('is idempotent on clientRequestId and sends once (REQ-PRV-1)', async () => {
     const { ctx, fake } = await boot()
     const a = await ask(ctx, { prompt: 'once', key: 'req-1' })
     const b = await ask(ctx, { prompt: 'once', key: 'req-1' })
@@ -177,7 +177,7 @@ describe.runIf(canRunBrowser)('ctx.turns: ask through a saved account', () => {
     await expect(ask(ctx, { prompt: 'different', key: 'req-1' })).rejects.toThrow(/different prompt/)
   }, 90_000)
 
-  it('routes through ctx.workers to an admitted Worker and records why every other one was not chosen', async () => {
+  it('routes through ctx.workers to an admitted Worker and records why every other one was not chosen (REQ-WRK-1, REQ-ART-1)', async () => {
     const { ctx } = await boot({ accounts: [account('chatgpt-main'), account('chatgpt-2')], ready: ['chatgpt-2'] })
     const turn = await ctx.turns.wait((await ask(ctx, { prompt: 'route me' })).turnId, 30_000)
     expect(turn).toMatchObject({ status: 'completed', account: 'chatgpt-2', worker: 'worker:chatgpt-2/standard' })
@@ -203,7 +203,7 @@ describe.runIf(canRunBrowser)('ctx.turns: ask through a saved account', () => {
     expect(none.fake.sent).toEqual([])
   }, 90_000)
 
-  it('recovers a submitted persistent turn after a restart from its conversation, without resending', async () => {
+  it('recovers a submitted persistent turn after a restart from its conversation, without resending (REQ-PRV-2, QA-1)', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'system-turns-'))
     cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
     const first = await boot({ dir, fake: { thinkMs: 4000, answer: 'answered while we were down' } })
@@ -294,7 +294,7 @@ describe.runIf(canRunBrowser)('ctx.turns: ask through a saved account', () => {
     expect(Date.now() - t0).toBeLessThan(15_000)
   }, 90_000)
 
-  it('never serves a routed turn by another mode after its tier was unmapped across a restart (INV-2)', async () => {
+  it('never serves a routed turn by another mode after its tier was unmapped across a restart (INV-2, QA-3)', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'system-turns-'))
     cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
     const first = await boot({ dir, capacity: 1, fake: { thinkMs: 60_000 } })

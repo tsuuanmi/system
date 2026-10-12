@@ -43,7 +43,7 @@ async function connect(url: string, token: string): Promise<Client> {
 }
 
 describe('system MCP server on ctx.webServer', () => {
-  it('serves tools contributed by plugins, for the contributing plugin\'s lifetime only', async () => {
+  it('serves tools contributed by plugins, for the contributing plugin\'s lifetime only (REQ-GW-3, INV-10)', async () => {
     const { url, token, ctx } = await boot()
     const fiber = ctx.inject(['mcp'], (c) => {
       c.mcp.tool('echo', { description: 'Echo back', inputSchema: { text: zod.string() } }, async ({ text }) => ({ content: [{ type: 'text' as const, text: String(text) }] }))
@@ -75,7 +75,7 @@ describe('system MCP server on ctx.webServer', () => {
     expect(JSON.stringify(result.content)).toMatch(/M1\.5/)
   })
 
-  it('rejects a missing token, a browser origin, and a foreign Host header', async () => {
+  it('rejects a missing token, a browser origin, and a foreign Host header (QA-5)', async () => {
     const { url, token } = await boot()
     const init = { method: 'POST', body: '{}', headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream' } }
     expect((await fetch(url, init)).status).toBe(401)

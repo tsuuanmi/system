@@ -11,13 +11,13 @@ describe('waitForStableCompletion (two clocks)', () => {
     expect(response).toEqual({ text: 'Final answer', html: '<p>Final answer</p>' })
   })
 
-  it('throws a hard timeout when the response keeps changing', async () => {
+  it('throws a hard timeout when the response keeps changing (REQ-PRV-4)', async () => {
     let calls = 0
     await expect(waitForStableCompletion(async () => snapshot(String(++calls), false), { timeoutMs: 80, stallTimeoutMs: 60, pollMs: 5, stableMs: 2000 }))
       .rejects.toMatchObject({ kind: 'timeout' })
   })
 
-  it('classifies an unchanged running response as a stall before the hard deadline', async () => {
+  it('classifies an unchanged running response as a stall before the hard deadline (REQ-PRV-4)', async () => {
     await expect(waitForStableCompletion(async () => snapshot('same', true), { timeoutMs: 500, stallTimeoutMs: 40, pollMs: 5, stableMs: 20 }))
       .rejects.toMatchObject({ kind: 'provider_stalled' })
   })

@@ -22,7 +22,7 @@ async function boot(): Promise<Context> {
 }
 
 describe('ctx.eventLog', () => {
-  it('assigns monotonic sequence numbers and announces each entry live', async () => {
+  it('assigns monotonic sequence numbers and announces each entry live (QA-7)', async () => {
     const ctx = await boot()
     const seen: SystemEvent[] = []
     ctx.on('system/event', (event) => void seen.push(event))
@@ -32,7 +32,7 @@ describe('ctx.eventLog', () => {
     expect(seen.map((event) => event.seq)).toEqual([1, 2])
   })
 
-  it('queries after a cursor with filters', async () => {
+  it('queries after a cursor with filters (QA-7)', async () => {
     const ctx = await boot()
     ctx.eventLog.append({ type: 'node.started', runId: 'run-1' })
     ctx.eventLog.append({ type: 'node.started', runId: 'run-2' })

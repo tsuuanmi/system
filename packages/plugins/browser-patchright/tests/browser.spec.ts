@@ -91,7 +91,7 @@ describe.runIf(canRun)('ctx.browser with a real headed Chrome on Xvfb', () => {
     return { ctx, display: ctx.display as KillableDisplay }
   }
 
-  it('opens a turn page that is headed, foreground, and free of automation leaks', async () => {
+  it('opens a turn page that is headed, foreground, and free of automation leaks (REQ-ACC-6)', async () => {
     const { ctx } = await boot()
     const turn = await pool(ctx).openTurn('acct-a')
     await turn.page.goto(`${origin}/`)
@@ -110,7 +110,7 @@ describe.runIf(canRun)('ctx.browser with a real headed Chrome on Xvfb', () => {
     await turn.close()
   }, 60_000)
 
-  it('builds each turn in a fresh context from portable state and captures it back filtered', async () => {
+  it('builds each turn in a fresh context from portable state and captures it back filtered (REQ-ACC-4)', async () => {
     const { ctx } = await boot()
     const origins = [origin]
     const host = new URL(origin).hostname
@@ -142,7 +142,7 @@ describe.runIf(canRun)('ctx.browser with a real headed Chrome on Xvfb', () => {
     await fresh.close()
   }, 60_000)
 
-  it('keeps one browser per account and closes it after the idle timeout', async () => {
+  it('keeps one browser per account and closes it after the idle timeout (REQ-ACC-7)', async () => {
     const { ctx } = await boot({ closeAfterMs: 300 })
     const [a1, a2, b] = await Promise.all([pool(ctx).openTurn('acct-a'), pool(ctx).openTurn('acct-a'), pool(ctx).openTurn('acct-b')])
     expect(pool(ctx).openAccounts().sort()).toEqual(['acct-a', 'acct-b'])

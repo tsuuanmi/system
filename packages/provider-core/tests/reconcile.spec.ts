@@ -17,7 +17,7 @@ describe('reconcileTurn', () => {
     expect(reconcileTurn(base, { text: previous, running: true })).toBe('WAIT')
   })
 
-  it('recovers a new completed response after the boundary instead of resending', () => {
+  it('recovers a new completed response after the boundary instead of resending (REQ-PRV-2)', () => {
     expect(reconcileTurn(base, { text: 'Late answer', running: false })).toBe('RECOVER')
   })
 
@@ -48,7 +48,7 @@ describe('reconcileTurn', () => {
 })
 
 describe('an unobservable conversation (temporary, or never bound)', () => {
-  it('is always AMBIGUOUS: a submitted prompt is never resent blind', async () => {
+  it('is always AMBIGUOUS: a submitted prompt is never resent blind (QA-1)', async () => {
     const { reconcileTurn } = await import('../src/index.ts')
     const receipt = {
       schema: 'provider-turn-receipt@1.0', account: 'a', requestId: 'r', conversation: { provider: 'p', binding: '' },

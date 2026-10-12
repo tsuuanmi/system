@@ -42,7 +42,7 @@ describe('ctx.workerSessions: sessions, mailboxes, direct messages (ADR-0015)', 
     expect(() => ctx.workerSessions.group('grp-1')).toThrow(/already/)
   })
 
-  it('holds messages behind a closed barrier, then delivers them in order (the barrier is a mailbox gate)', async () => {
+  it('holds messages behind a closed barrier, then delivers them in order (the barrier is a mailbox gate, REQ-SES-3)', async () => {
     const ctx = await boot()
     team(ctx)
     const sent = ctx.workerSessions.send({ from: 'ses_a', messageId: 'a-1', to: { group: 'grp-1' }, intent: 'answer', body: 'A says one' })
@@ -59,7 +59,7 @@ describe('ctx.workerSessions: sessions, mailboxes, direct messages (ADR-0015)', 
     expect(ctx.workerSessions.session('ses_b')).toMatchObject({ mailboxSeq: 1 })
   })
 
-  it('refuses what the group policy does not allow, and records why', async () => {
+  it('refuses what the group policy does not allow, and records why (REQ-SES-4)', async () => {
     const ctx = await boot()
     team(ctx, false)
     const refused = ctx.workerSessions.send({ from: 'ses_c', messageId: 'c-2', to: { session: 'ses_b' }, body: 'not allowed' })
@@ -69,7 +69,7 @@ describe('ctx.workerSessions: sessions, mailboxes, direct messages (ADR-0015)', 
     expect(ctx.workerSessions.inbox('ses_b')).toEqual([])
   })
 
-  it('delivers at most once per sender message id, and lets the operator write to a session', async () => {
+  it('delivers at most once per sender message id, and lets the operator write to a session (REQ-SES-3)', async () => {
     const ctx = await boot()
     team(ctx, false)
     ctx.workerSessions.send({ from: 'ses_a', messageId: 'a-1', to: { session: 'ses_b' }, body: 'once' })
@@ -78,7 +78,7 @@ describe('ctx.workerSessions: sessions, mailboxes, direct messages (ADR-0015)', 
     expect(ctx.workerSessions.inbox('ses_b').map((m) => [m.from, m.message.body])).toEqual([['ses_a', 'once'], ['operator', 'please cite']])
   })
 
-  it('announces deliveries that ask for a reply, and activates an idle session once per turn within its budget', async () => {
+  it('announces deliveries that ask for a reply, and activates an idle session once per turn within its budget (REQ-SES-5)', async () => {
     const ctx = await boot()
     team(ctx, false)
     const woken: string[][] = []

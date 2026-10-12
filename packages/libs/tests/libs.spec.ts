@@ -23,7 +23,7 @@ describe('canonicalJson', () => {
 describe('SchemaRegistry', () => {
   const registry = new SchemaRegistry()
 
-  it('validates a record by its schema tag', () => {
+  it('validates a record by its schema tag (REQ-ART-4)', () => {
     const decision: Record<string, unknown> = {
       schema: 'decision@1.0', decisionType: 'route', question: 'q', inputs: [],
       candidates: [{ option: 'a', selected: true, reasons: [] }],
@@ -33,7 +33,7 @@ describe('SchemaRegistry', () => {
     expect(() => registry.assertRecord({ ...decision, candidates: [] } as Record<string, unknown>)).toThrow(SchemaError)
   })
 
-  it('rejects unknown majors and malformed tags', () => {
+  it('rejects unknown majors and malformed tags (REQ-ART-4, INV-14)', () => {
     expect(() => registry.assert('decision@9.0', {})).toThrow(/unsupported major/)
     expect(() => registry.assert('nope', {})).toThrow(/malformed/)
   })
@@ -47,7 +47,7 @@ describe('readOrCreateSecretFile', () => {
     expect(readOrCreateSecretFile(path, 32).equals(first)).toBe(true)
   })
 
-  it('refuses a secret with loose permissions', () => {
+  it('refuses a secret with loose permissions (QA-6)', () => {
     const path = join(dir, 'loose')
     writeFileSync(path, Buffer.alloc(32))
     chmodSync(path, 0o644)

@@ -58,6 +58,12 @@ M6 has started:
 - The `profiles` seam: `ctx.workflow.template` lets a profile plugin contribute templates. `develop` moved into `profile-software-development`.
 - `profile-scientific-research` (`study`, `study-deep`): hypotheses, a cited review, an evidence table, an independent critique, and conclusions citing evidence. It has typed artifacts and invalidation, and was added with no engine change, which passes the architecture test (REQ-WF-9). Verified live on 2026-10-12.
 
+- Readiness:
+  - reference docs: a configuration catalog generated from every plugin's `Config`, MCP tool contracts from `system tools`, and gateway compatibility;
+  - validation: traceability generated from test titles, and a release checklist on live accounts;
+  - operations: runbooks and playbooks;
+  - `system backup` and `system restore`.
+
 M5 gateways have started:
 - The Anthropic Messages gateway (`system claude-env`) lets Claude Code use website Workers as its model. Its tools go through a text protocol ([ADR-0022](../decisions/adr/0022-text-protocol-tool-calls-for-website-models.md)).
 - Verified live on 2026-10-12: Claude Code ran a `Read` → `Edit` → answer loop on ChatGPT.

@@ -46,7 +46,7 @@ describe('workflow specs', () => {
     expect(() => preflight([node('p', { grows: { maxNodes: 99 } })])).toThrow(/grows must be/)
   })
 
-  it('parses a model-written plan as untrusted input, and refuses anything outside the bounds', () => {
+  it('parses a model-written plan as untrusted input, and refuses anything outside the bounds (INV-6)', () => {
     const text = 'Here is the plan:\n```json\n' + JSON.stringify({
       confidence: 'high',
       nodes: [

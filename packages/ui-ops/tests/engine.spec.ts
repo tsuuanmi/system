@@ -191,7 +191,7 @@ describe.runIf(canRunBrowser)('UiEngine on a real page', { timeout: 15_000 }, ()
     expect(heals[0]!.scores[0]!.score).toBeGreaterThanOrEqual(0.8)
   })
 
-  it('records a healed choice before acting, and does not act when recording fails', async () => {
+  it('records a healed choice before acting, and does not act when recording fails (INV-13)', async () => {
     const order: string[] = []
     const ok = await open(DRIFTED, loadUiMap(MAP), { beforeHealedAction: (e) => { order.push(`record ${e.element}`) } })
     await ok.engine.act('composer.insert', { text: 'hello' })

@@ -44,7 +44,7 @@ describe('ctx.store', () => {
     expect(ctx.store.migrate('other', [{ version: 1, sql: 'CREATE TABLE u (id TEXT)' }])).toBe(1)
   })
 
-  it('rolls back the outer transaction when a nested step fails', async () => {
+  it('rolls back the outer transaction when a nested step fails (QA-4)', async () => {
     const { ctx } = await boot()
     ctx.store.migrate('test', [{ version: 1, sql: 'CREATE TABLE t (id TEXT PRIMARY KEY, revision INTEGER NOT NULL, v TEXT)' }])
     expect(() =>
@@ -121,7 +121,7 @@ describe('review fixes (PR #3 kernel review)', () => {
     }))).not.toThrow()
   })
 
-  it('defaults to synchronous=FULL and accepts a configured level', async () => {
+  it('defaults to synchronous=FULL and accepts a configured level (QA-4)', async () => {
     const { ctx } = await boot()
     expect(ctx.store.db.prepare('PRAGMA synchronous').get()).toEqual({ synchronous: 2 })
   })

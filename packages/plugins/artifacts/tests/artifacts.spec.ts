@@ -37,7 +37,7 @@ const route: Omit<Decision, 'schema'> = {
 const producer = { type: 'policy', ref: 'routing.default' } as const
 
 describe('ctx.artifacts', () => {
-  it('stores a decision with a computed content id and deduplicates identical content', async () => {
+  it('stores a decision with a computed content id and deduplicates identical content (REQ-ART-2)', async () => {
     const ctx = await boot()
     const first = ctx.artifacts.recordDecision(route, { producer, runId: 'run-1', nodeId: 'research:1' })
     expect(first.id).toMatch(/^sha256:[0-9a-f]{64}$/)
@@ -50,7 +50,7 @@ describe('ctx.artifacts', () => {
     expect(() => ctx.artifacts.recordDecision({ ...route, outcome: { option: 'worker:chatgpt-2/deep-research' } }, { producer })).toThrow(/outcome/)
   })
 
-  it('rejects a body that does not match its schema', async () => {
+  it('rejects a body that does not match its schema (INV-14)', async () => {
     const ctx = await boot()
     expect(() => ctx.artifacts.recordDecision({ ...route, candidates: [] }, { producer })).toThrow(/decision@1.0/)
   })

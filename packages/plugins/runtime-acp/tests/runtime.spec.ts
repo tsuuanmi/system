@@ -42,7 +42,7 @@ describe('acp: the client side enforces the policy', () => {
     expect(await read(`${workspace}/../secret.txt`)).toMatch(/^read refused/)
   })
 
-  it('refuses what ACP cannot express exactly: tool lists, a model, a turn limit', async () => {
+  it('refuses what ACP cannot express exactly: tool lists, a model, a turn limit (REQ-WRK-6)', async () => {
     for (const extra of [{ tools: ['Read'] }, { model: 'm' }, { maxTurns: 3 }]) {
       await expect(runtime().run({ prompt: 'x', workspace, sandbox: 'read-only', ...extra }, signal())).rejects.toMatchObject({ kind: 'config_error' })
     }

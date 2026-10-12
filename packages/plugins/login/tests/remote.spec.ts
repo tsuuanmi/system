@@ -56,7 +56,7 @@ describe.runIf(canRunBrowser && vnc)('ctx.login.remote: the noVNC login desktop'
     })
   }
 
-  it('serves a token-gated page whose WebSocket reaches the VNC server over a private socket', async () => {
+  it('serves a token-gated page whose WebSocket reaches the VNC server over a private socket (REQ-ACC-3)', async () => {
     const { ctx } = await boot()
     const session = await ctx.login.remote('chatgpt-main')
     expect(session.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/[A-Za-z0-9_-]{40,}\/$/)
@@ -74,7 +74,7 @@ describe.runIf(canRunBrowser && vnc)('ctx.login.remote: the noVNC login desktop'
     expect(existsSync(session.socketDir)).toBe(false)
   }, 90_000)
 
-  it('the noVNC page connects from a real browser and shows the remote desktop', async () => {
+  it('the noVNC page connects from a real browser and shows the remote desktop (REQ-ACC-3)', async () => {
     const { ctx } = await boot()
     const session = await ctx.login.remote('chatgpt-main')
     const viewer = await launchTestBrowser()

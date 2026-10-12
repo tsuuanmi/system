@@ -105,7 +105,7 @@ function chatWorker(ctx: Context): string[] {
 }
 
 describe('ctx.workers source `agents`: agent runtimes as Workers', () => {
-  it('describes each configured Worker with the capabilities its probe proves, never plain reason', async () => {
+  it('describes each configured Worker with the capabilities its probe proves, never plain reason (REQ-WRK-1)', async () => {
     const { ctx } = await boot(new ScriptedAgent({ resume: true }), {
       workers: [worker(), worker({ id: 'writer', sandbox: 'workspace-write' }), worker({ id: 'ghost', runtime: 'missing' })],
     })
@@ -127,7 +127,7 @@ describe('ctx.workers source `agents`: agent runtimes as Workers', () => {
     expect((await runs.ctx.workers.list())[0]!.capabilities.map((c) => c.capability)).toEqual(['local-data', 'develop', 'validate', 'persistent-conversation'])
   })
 
-  it('runs work once with the policy from configuration, and stores the result as agent-result@1.1', async () => {
+  it('runs work once with the policy from configuration, and stores the result as agent-result@1.1 (REQ-WRK-6, INV-6)', async () => {
     const agent = new ScriptedAgent()
     const { ctx } = await boot(agent)
     const admitted = await ctx.workers.route(requirement())
@@ -295,7 +295,7 @@ describe('ctx.workers source `agents`: agent runtimes as Workers', () => {
       expect(done.nodes.at(-1)!.nodeId).toBe('report:1')
     })
 
-    it('stops remediating at the review cycle bound, and says so', async () => {
+    it('stops remediating at the review cycle bound, and says so (QA-8)', async () => {
       const { ctx, done } = await develop((prompt) => changes(subjectOf(prompt)))
       expect(done.status).toBe('completed')
       expect(done.nodes.map((n) => n.nodeId).filter((id) => id.includes(':review'))).toEqual([
@@ -319,13 +319,13 @@ describe('ctx.workers source `agents`: agent runtimes as Workers', () => {
       expect(`git:${(stored!.body as { subject: { ref: string; version: string } }).subject.ref}:${(stored!.body as { subject: { version: string } }).subject.version}`).toBe(subjectOf(prompt))
     })
 
-    it('fails the gate when the review names another subject', async () => {
+    it('fails the gate when the review names another subject (INV-5)', async () => {
       const { done } = await develop(() => assessment('git:0000000000000000000000000000000000000000:old'))
       expect(done).toMatchObject({ status: 'failed', error: { kind: 'stale_subject' } })
       expect(done.error!.message).toMatch(/not the subject it was given/)
     })
 
-    it('fails the gate when the working tree changes during the review', async () => {
+    it('fails the gate when the working tree changes during the review (INV-5)', async () => {
       const { done } = await develop((prompt, ws) => {
         writeFileSync(join(ws, 'calc.py'), 'def add(a, b):\n    return b + a\n')
         return assessment(subjectOf(prompt))

@@ -52,7 +52,7 @@ describe('ctx.turnReceipts', () => {
     expect(() => ctx.turnReceipts.submit({ ...submission, previousResponse: 'moved on' })).toThrow(/boundary/)
   })
 
-  it('counts resubmissions of the same logical request and stops at the schema bound', async () => {
+  it('counts resubmissions of the same logical request and stops at the schema bound (QA-8)', async () => {
     const ctx = await boot()
     ctx.turnReceipts.submit(submission)
     expect(ctx.turnReceipts.submit(submission).resubmits).toBe(1)
@@ -84,7 +84,7 @@ describe('ctx.turnReceipts', () => {
     expect(() => ctx.turnReceipts.complete({ ...id, requestId: 'missing' }, { response: 'x', providerTurnId: 't' })).toThrow(/does not exist/)
   })
 
-  it('records every reconciliation as a decision artifact referenced by the receipt', async () => {
+  it('records every reconciliation as a decision artifact referenced by the receipt (INV-13)', async () => {
     const ctx = await boot()
     ctx.turnReceipts.submit(submission)
     const { outcome, decision } = ctx.turnReceipts.reconcile(id, { text: 'late answer', running: false })

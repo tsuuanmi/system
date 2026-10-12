@@ -35,6 +35,8 @@ other documents link to it instead of repeating it.
 | [Engineering](engineering/README.md) | development and delivery process | canonical / living |
 | [Security](security/README.md) | trust boundaries and controls | canonical / living |
 | [Governance](governance/README.md) | lifecycle and documentation policy | canonical / living |
+| [Validation](validation/README.md) | acceptance evidence: traceability, release checklist | canonical / living |
+| [Operations](operations/README.md) | runbooks and playbooks for the built system | canonical / living |
 | [Decisions](decisions/README.md) | historical rationale | historical / durable |
 | [Proposals](proposals/README.md) | reviewed change under evolution | evolutionary |
 | [Research](research/README.md) | evidence, analysis of external systems | exploratory |
@@ -60,9 +62,8 @@ docs/
 ├── engineering/
 ├── security/
 ├── reference/
+├── validation/
+├── operations/
 └── governance/
 schemas/              # machine-readable JSON Schemas (repository root)
 ```
-
-`validation/` and `operations/` will be created when there are acceptance
-evidence and runtime procedures to put in them.

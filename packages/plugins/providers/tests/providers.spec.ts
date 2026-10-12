@@ -9,7 +9,7 @@ const driver = (provider: string): ProviderDriver => ({
 })
 
 describe('ctx.providers', () => {
-  it('registers drivers from plugins and removes them when the plugin unloads', async () => {
+  it('registers drivers from plugins and removes them when the plugin unloads (INV-10)', async () => {
     const ctx = new Context()
     await ctx.plugin(Providers)
     const fiber = ctx.plugin({ inject: ['providers'], apply: (c: Context) => { c.providers.register(driver('site-a')) } })

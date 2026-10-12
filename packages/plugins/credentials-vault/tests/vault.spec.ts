@@ -38,7 +38,7 @@ describe('encrypted ctx.credentials provider', () => {
     expect(readFileSync(join(dir, 'vault.enc'), 'utf8')).not.toContain('hunter2')
   })
 
-  it('stores account credentials as an opaque grant record', async () => {
+  it('stores account credentials as an opaque grant record (REQ-ACC-9)', async () => {
     const dir = tempDir()
     const ctx = await boot(dir)
     const record: CredentialRecord = { kind: 'grant', payload: { email: 'me@example.com', password: 'pw-marker', totpSecret: 'JBSWY3DPEHPK3PXP' } }

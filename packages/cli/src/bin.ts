@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { browserDeps, callTool, claudeGatewayCommand, codexGatewayCommand, drainHost, formatTools, listTools, shutdownHost, ensureBrowser, formatExplanation, formatUsage, init, mcpConfig, mcpHeaders, mcpToken, parseAsk, readAllStdin, serveStdio, start, type ToolOutcome, uiUrl } from './index.ts'
+import { backupHost, browserDeps, callTool, claudeGatewayCommand, codexGatewayCommand, drainHost, formatTools, listTools, restoreHost, shutdownHost, ensureBrowser, formatExplanation, formatUsage, init, mcpConfig, mcpHeaders, mcpToken, parseAsk, readAllStdin, serveStdio, start, type ToolOutcome, uiUrl } from './index.ts'
 
 const USAGE = `Usage: system <command>
 
@@ -30,6 +30,9 @@ const USAGE = `Usage: system <command>
   account code <id> <code>  supply a one-time code a running sign-in is waiting for
   account save <id>         after an interactive login: capture, verify, store encrypted
   start [dsh args...]       boot the profile (e.g. --patch ./overlay.yml)
+  backup <dir> [--include-key]
+                            snapshot the store, blobs, and encrypted vault into an empty dir (the key only with --include-key)
+  restore <dir> [--yes]     preview, then restore a backup (the profile must be stopped)
   drain [--deadline <s>]    admit no new runs and wait for running ones (default 600 s)
   resume                    admit new runs again after a drain
   shutdown [--deadline <s>] drain, then stop the running profile (unfinished runs resume on start)
@@ -264,6 +267,23 @@ async function main(argv: string[]): Promise<number> {
     case 'tools': {
       const tools = await listTools()
       console.log(rest.includes('--markdown') ? formatTools(tools) : tools.map((t) => `${t.name.padEnd(18)} ${(t.description ?? '').split('. ')[0]}`).join('\n'))
+      return 0
+    }
+    case 'backup': {
+      if (!rest[0]) break
+      const manifest = backupHost(rest[0], { includeKey: rest.includes('--include-key') })
+      console.log(`backed up ${Object.keys(manifest.files).length} file(s) to ${rest[0]}${manifest.includesKey ? ' (with the vault key: keep it as safe as this host)' : '; the vault key is not in it, keep ~/.dsh/system/vault.key safe separately'}`)
+      return 0
+    }
+    case 'restore': {
+      if (!rest[0]) break
+      const outcome = restoreHost(rest[0], { yes: rest.includes('--yes') })
+      if (!outcome.applied) {
+        console.log(`backup of ${outcome.manifest.createdAt}: ${Object.keys(outcome.manifest.files).length} file(s), verified${outcome.manifest.includesKey ? ', with the vault key' : ''}`)
+        console.log(`restore it with: system restore ${rest[0]} --yes`)
+        return 0
+      }
+      console.log(`restored${outcome.keptAside ? `; the previous store is kept at ${outcome.keptAside}` : ''}`)
       return 0
     }
     case 'resume': {

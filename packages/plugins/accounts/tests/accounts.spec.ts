@@ -34,7 +34,7 @@ const state: PortableState = {
 }
 
 describe('ctx.accounts', () => {
-  it('lists the configured catalog as secret-free views, all new until signed in', async () => {
+  it('lists the configured catalog as secret-free views, all new until signed in (REQ-ACC-1)', async () => {
     const { ctx } = await boot()
     expect(await ctx.accounts.list()).toEqual([
       { id: 'chatgpt-main', provider: 'chatgpt-web', quotaClass: 'subscription-chat', tiers: { economy: 'instant', frontier: 'pro' }, status: 'new', loginMode: 'manual', revision: 0 },
@@ -42,7 +42,7 @@ describe('ctx.accounts', () => {
     ])
   })
 
-  it('saves portable state encrypted and marks the account ready', async () => {
+  it('saves portable state encrypted and marks the account ready (QA-6, INV-8)', async () => {
     const { ctx, dir } = await boot()
     const view = await ctx.accounts.saveState('chatgpt-main', { state, identityHash: `sha256:${'a'.repeat(64)}`, verifiedAt: '2026-10-11T08:00:00Z' })
     expect(view).toMatchObject({ status: 'ready', revision: 1 })
@@ -51,7 +51,7 @@ describe('ctx.accounts', () => {
     expect(readFileSync(join(dir, 'vault.enc'), 'utf8')).not.toContain('cookie-secret-marker')
   })
 
-  it('marks reauth-required only on positive sign-out evidence, guarded by revision', async () => {
+  it('marks reauth-required only on positive sign-out evidence, guarded by revision (REQ-ACC-5)', async () => {
     const { ctx } = await boot()
     await ctx.accounts.saveState('chatgpt-main', { state, identityHash: `sha256:${'a'.repeat(64)}`, verifiedAt: '2026-10-11T08:00:00Z' })
     await expect(ctx.accounts.markSignedOut('chatgpt-main', 'unknown' as never, 1)).rejects.toThrow(/evidence/)
@@ -66,7 +66,7 @@ describe('ctx.accounts', () => {
     expect(await ctx.accounts.portableState('chatgpt-main')).toEqual(state)
   })
 
-  it('stores login credentials in a separate encrypted record and switches to credential login', async () => {
+  it('stores login credentials in a separate encrypted record and switches to credential login (REQ-ACC-9)', async () => {
     const { ctx, dir } = await boot()
     const view = await ctx.accounts.setCredentials('chatgpt-main', { email: 'me@example.com', password: 'pw-marker', totpSecret: 'JBSWY3DPEHPK3PXP' })
     expect(view.loginMode).toBe('credentials')
@@ -74,7 +74,7 @@ describe('ctx.accounts', () => {
     expect(readFileSync(join(dir, 'vault.enc'), 'utf8')).not.toMatch(/pw-marker|JBSWY3DP/)
   })
 
-  it('flags accounts that resolve to the same identity', async () => {
+  it('flags accounts that resolve to the same identity (REQ-ACC-7)', async () => {
     const { ctx } = await boot()
     const same = `sha256:${'b'.repeat(64)}` as const
     await ctx.accounts.saveState('chatgpt-main', { state, identityHash: same, verifiedAt: '2026-10-11T08:00:00Z' })

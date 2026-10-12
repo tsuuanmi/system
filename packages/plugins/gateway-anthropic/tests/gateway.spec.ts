@@ -80,7 +80,7 @@ describe('Anthropic Messages gateway over HTTP', () => {
     expect((await (await fetch(`${base}/v1/models`, { headers: auth })).json()).data.map((m: { id: string }) => m.id)).toEqual(['system-economy', 'system-standard', 'system-frontier'])
   })
 
-  it('turns a proposed call into tool_use, then sends only the tool result into the same conversation', async () => {
+  it('turns a proposed call into tool_use, then sends only the tool result into the same conversation (REQ-GW-2)', async () => {
     const { base, auth, workflow } = await boot()
     workflow.answers = ['I will read it.\n<call tool="Read">{"file_path": "/repo/README.md"}</call>', 'The heading is "system".']
     const first: MessagesRequest = { model: 'claude-opus-5-5', system: 'Be brief.', tools: TOOLS, messages: [{ role: 'user', content: 'What is the first heading of README.md?' }] }
@@ -94,7 +94,7 @@ describe('Anthropic Messages gateway over HTTP', () => {
     expect(String(workflow.starts[1]!.input)).toMatch(/^TOOL_RESULT Read \(toolu_[0-9a-f]+\):\n# system/)
   })
 
-  it('streams server-sent events for stream: true', async () => {
+  it('streams server-sent events for stream: true (REQ-GW-5)', async () => {
     const { base, auth, workflow } = await boot()
     workflow.answers = ['four']
     const res = await fetch(`${base}/v1/messages?beta=true`, { method: 'POST', headers: auth, body: JSON.stringify({ model: 'claude-haiku-5-5', stream: true, messages: [{ role: 'user', content: '2+2?' }] }) })

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { ProviderError, dispositionOf } from '../src/index.ts'
 
 describe('failure taxonomy (docs/design/workflow-engine.md#recovery)', () => {
-  it('maps each failure kind to one retry disposition', () => {
+  it('maps each failure kind to one retry disposition (REQ-WF-6)', () => {
     expect(dispositionOf('network')).toBe('BACKOFF')
     expect(dispositionOf('timeout')).toBe('BACKOFF')
     expect(dispositionOf('provider_stalled')).toBe('RECREATE_SESSION')

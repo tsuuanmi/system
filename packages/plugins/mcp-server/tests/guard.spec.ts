@@ -38,7 +38,7 @@ describe('review fixes (PR #3 security review)', () => {
     expect(endpointUrl({ protocol: 'https:', host: '::1', port: 5 }, '/mcp')).toBe('https://[::1]:5/mcp')
   })
 
-  it('refuses a non-loopback bind unless TLS is on', () => {
+  it('refuses a non-loopback bind unless TLS is on (QA-5)', () => {
     expect(() => assertSafeBind({ protocol: 'http:', host: '192.168.1.5' })).toThrow(/loopback/)
     expect(() => assertSafeBind({ protocol: 'https:', host: '192.168.1.5' })).not.toThrow()
     expect(() => assertSafeBind({ protocol: 'http:', host: '127.0.0.1' })).not.toThrow()

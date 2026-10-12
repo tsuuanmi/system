@@ -25,7 +25,7 @@ async function boot(config: Config = {}) {
 workersConformance('@tsuuanmi/system-workers', () => boot())
 
 describe('ctx.workers: configured preferences', () => {
-  it('orders by the configured priority list after tier and quota class, and says why each admitted Worker lost', async () => {
+  it('orders by the configured priority list after tier and quota class, and says why each admitted Worker lost (REQ-ART-1)', async () => {
     const { ctx, dispose } = await boot({ priority: ['w:z'] })
     try {
       ctx.workers.register(source('test', [worker('w:a'), worker('w:z'), worker('w:eco', { tier: 'economy', quotaClass: 'metered' })]))

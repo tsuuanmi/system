@@ -77,7 +77,7 @@ describe.runIf(canRunBrowser)('ctx.login.save', () => {
     expect(await ctx.accounts.get('chatgpt-main')).toMatchObject({ status: 'new', revision: 0 })
   }, 90_000)
 
-  it('offers account_list and account_save to the operator over the authenticated MCP endpoint', async () => {
+  it('offers account_list and account_save to the operator over the authenticated MCP endpoint (INV-8)', async () => {
     const { ctx, fake, dir } = await boot()
     await operatorSignsIn(ctx.login.profileDir('chatgpt-main'), fake.origin)
     const { url, tokenFile } = JSON.parse(readFileSync(join(dir, 'mcp.json'), 'utf8')) as { url: string; tokenFile: string }
@@ -121,7 +121,7 @@ describe.runIf(canRunBrowser)('ctx.login.relogin (credential login with local TO
     return { ctx, fake, dir }
   }
 
-  it('signs in with stored credentials and a local TOTP code, then saves the account', async () => {
+  it('signs in with stored credentials and a local TOTP code, then saves the account (REQ-ACC-8)', async () => {
     const { ctx, dir } = await bootCredentials('totp')
     const view = await ctx.login.relogin('chatgpt-main')
     expect(view).toMatchObject({ status: 'ready', loginMode: 'credentials' })
@@ -137,7 +137,7 @@ describe.runIf(canRunBrowser)('ctx.login.relogin (credential login with local TO
     expect(await relogin).toMatchObject({ status: 'ready' })
   }, 120_000)
 
-  it('marks the account reauth-required at a challenge and points to the remote login', async () => {
+  it('marks the account reauth-required at a challenge and points to the remote login (REQ-ACC-8)', async () => {
     const { ctx } = await bootCredentials('challenge')
     await expect(ctx.login.relogin('chatgpt-main')).rejects.toMatchObject({ kind: 'challenge' })
     expect(await ctx.accounts.get('chatgpt-main')).toMatchObject({ status: 'reauth-required' })

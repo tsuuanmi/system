@@ -97,7 +97,7 @@ describe.runIf(canRunBrowser)('ChatGptWebDriver against the fake site', () => {
     expect(fake.sent).toEqual([])
   }, 30_000)
 
-  it('selects and verifies the configured model and power before sending, and reports them', async () => {
+  it('selects and verifies the configured model and power before sending, and reports them (REQ-PRV-3)', async () => {
     const { fake, page, driver } = await site({ answer: 'deep' })
     const turn = await driver.ask(page, 'think hard', { conversation: 'temporary', mode: 'deep' })
     expect(turn.mode).toEqual({ model: 'GPT-6', effort: 'High' })
@@ -117,7 +117,7 @@ describe.runIf(canRunBrowser)('ChatGptWebDriver against the fake site', () => {
     expect(fake.sent[0]).toMatchObject({ model: 'Latest', power: 'Instant' })
   }, 40_000)
 
-  it('fails before sending on an unknown preset, an unknown model, or a locked model', async () => {
+  it('fails before sending on an unknown preset, an unknown model, or a locked model (REQ-PRV-3)', async () => {
     const { fake, page, driver } = await site({ lockedModels: ['GPT-5.6 Sol'] })
     await expect(driver.ask(page, 'x', { conversation: 'temporary', mode: 'nope' })).rejects.toMatchObject({ kind: 'config_error', message: expect.stringMatching(/unknown mode nope/) })
     await expect(driver.ask(page, 'x', { conversation: 'temporary', mode: 'missing' })).rejects.toMatchObject({ kind: 'config_error', message: expect.stringMatching(/GPT-9.*Latest, GPT-6/) })
@@ -125,7 +125,7 @@ describe.runIf(canRunBrowser)('ChatGptWebDriver against the fake site', () => {
     expect(fake.sent).toEqual([])
   }, 60_000)
 
-  it('runs Deep research from the + tools in a persistent conversation, with the prompt free of the tool chip', async () => {
+  it('runs Deep research from the + tools in a persistent conversation, with the prompt free of the tool chip (REQ-PRV-6)', async () => {
     const report = 'A detailed report <a href="https://src.example/a">[1]</a> with <a href="https://src.example/b">sources</a> <a href="https://src.example/a">[1]</a>.'
     const { fake, page, driver } = await site({ report })
     const turn = await driver.ask(page, 'Survey the DSH plugin catalog', { conversation: 'persistent', feature: 'deep-research' })

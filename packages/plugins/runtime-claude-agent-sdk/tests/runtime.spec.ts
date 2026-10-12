@@ -50,7 +50,7 @@ describe('claude-agent-sdk: the configured policy, exactly', () => {
     expect(calls[0]!.options).toMatchObject({ tools: ['Read', 'Grep', 'Glob'], allowedTools: ['Read', 'Grep', 'Glob'] })
   })
 
-  it('refuses tools the sandbox cannot hold, before running', async () => {
+  it('refuses tools the sandbox cannot hold, before running (REQ-WRK-6)', async () => {
     const calls: Call[] = []
     await expect(runtime(scripted(calls)).run({ prompt: 'x', workspace, sandbox: 'read-only', tools: ['Read', 'Write'] }, new AbortController().signal))
       .rejects.toMatchObject({ kind: 'config_error', message: expect.stringContaining('Write') })

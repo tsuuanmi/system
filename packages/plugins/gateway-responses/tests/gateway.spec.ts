@@ -118,7 +118,7 @@ describe('Responses gateway over HTTP', () => {
     expect((await fetch(`${base}/responses`, { headers: auth })).status).toBe(426)
   })
 
-  it('turns a proposed call into a function_call, then sends only the output into the same conversation', async () => {
+  it('turns a proposed call into a function_call, then sends only the output into the same conversation (REQ-GW-2)', async () => {
     const { base, auth, workflow } = await boot()
     workflow.answers = ['<call tool="exec_command">{"cmd": "cat calc.py"}</call>', 'Fixed.']
     const one = await (await post(base, auth, CODEX)).json()
@@ -147,7 +147,7 @@ describe('Responses gateway over HTTP', () => {
     expect(workflow.starts[2]!.sessionId).toBeUndefined()
   })
 
-  it('streams created, the items, and exactly one terminal event; a failed run is response.failed', async () => {
+  it('streams created, the items, and exactly one terminal event; a failed run is response.failed (REQ-GW-1)', async () => {
     const { base, auth, workflow } = await boot()
     workflow.answers = ['four', new Error('no Worker can take this work')]
     const text = await (await post(base, auth, { ...CODEX, stream: true })).text()

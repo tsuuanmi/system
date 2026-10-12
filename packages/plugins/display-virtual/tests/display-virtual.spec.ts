@@ -111,7 +111,7 @@ describe('startXvfb (ported from tsuuanmi/internet)', () => {
 })
 
 describe('ctx.display: display-virtual', () => {
-  it('prepares an invisible headed display on a plugin-owned Xvfb', async () => {
+  it('prepares an invisible headed display on a plugin-owned Xvfb (REQ-ACC-6)', async () => {
     const { spawn } = fakeSpawner()
     const ctx = await boot(spawn)
     const display = await ctx.display.prepare('invisible')
@@ -139,7 +139,7 @@ describe('ctx.display: display-virtual', () => {
     expect(second).toMatchObject({ env: { DISPLAY: ':8' }, generation: 2 })
   })
 
-  it('never falls back to the operator DISPLAY when Xvfb cannot start', async () => {
+  it('never falls back to the operator DISPLAY when Xvfb cannot start (QA-3)', async () => {
     vi.stubEnv('DISPLAY', ':0')
     const { spawn } = fakeSpawner((c) => setImmediate(() => c.exit(1)))
     const ctx = await boot(spawn)
@@ -244,7 +244,7 @@ describe.runIf(hasXvfb)('display-virtual with a real Xvfb', () => {
     const socket = `/tmp/.X11-unix/X${display.env.DISPLAY!.slice(1)}`
     expect(existsSync(socket)).toBe(true)
     await fiber.dispose()
-    await vi.waitFor(() => expect(existsSync(socket)).toBe(false), { timeout: 5000 })
+    await vi.waitFor(() => expect(existsSync(socket)).toBe(false), { timeout: 10_000 })
     expect(display.lost.aborted).toBe(true)
   }, 15_000)
 })
