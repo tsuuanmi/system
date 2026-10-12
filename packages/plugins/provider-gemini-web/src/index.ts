@@ -1,5 +1,5 @@
 /**
- * Registers the Gemini Web driver on `ctx.providers` (Temporary-chat turns; see driver.ts).
+ * Registers the Gemini Web driver on `ctx.providers` (see driver.ts).
  * @module @tsuuanmi/system-provider-gemini-web
  */
 import type { Context } from '@deepseek-ai/cordis'

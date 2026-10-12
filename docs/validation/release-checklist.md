@@ -26,5 +26,6 @@ blocks the release.**
 | A team lead closing early; wake-on-message after a panel | a template with `team.lead` in `workflow.templates`; `session_send` to a member | 2026-10-12 |
 | A Codex Worker | an `agent-workers` row with runtime `codex-sdk`, then a run routed to it | 2026-10-12 |
 | Gemini: a Temporary-chat ask on the Chat tab, with the tier's model and thinking level read back | `system ask --tier economy\|frontier "…"` routed to a Gemini account | 2026-10-12 |
+| Gemini: Deep research proven by the probe; a run's report and sources read back by the driver from its reopened conversation | `system account probe <id>`; `snapshot` of a finished run's conversation | 2026-10-12 (the run itself was driven by a recording script with the map's steps; a run through `ask` is not yet verified) |
 | Credential re-login past the email page (local TOTP) | `system account relogin <id>` | **not yet** (needs the operator) |
 | An economy-tier API provider | | **not built** (needs an API key) |

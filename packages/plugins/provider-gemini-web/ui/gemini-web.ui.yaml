@@ -1,6 +1,6 @@
 # Gemini Web UI map (ui-map@1.1, ADR-0021). Read live on 2026-10-12 from a signed-in account's
-# /app page (read-only, plus Temporary-chat prompts), except where a description says otherwise;
-# the fake site in fixtures/ follows it.
+# /app page (read-only, Temporary-chat prompts, and one Deep research run); the fake site in
+# fixtures/ follows it.
 # When the site changes, edit this file (and the fixture), not the driver code.
 schema: ui-map@1.1
 provider: gemini-web
@@ -58,6 +58,61 @@ elements:
       - { css: '[data-test-id="bard-mode-menu-button"]' }
       - { role: button, name: { en: '^Open mode picker' } }
 
+  composer.tools:
+    description: The "+" button that opens uploads and tools.
+    candidates:
+      - { role: button, name: { en: '^Upload & tools$' } }
+  tools.more:
+    description: Reveals more tools (Deep research, Guided learning) in the tools menu.
+    candidates:
+      - { css: '[data-test-id="more-tools-button"]' }
+      - { role: button, name: { en: '^More tools$' } }
+  tools.deep-research:
+    description: The Deep research entry, offered in a normal chat only (never in a Temporary chat).
+    candidates:
+      - { role: menuitemcheckbox, name: { en: '^Deep research' } }
+  composer.deep-research:
+    description: The chip shown in the composer while Deep research is chosen.
+    candidates:
+      - { role: button, name: { en: '^Deselect Deep research$' } }
+
+  research.start:
+    description: >-
+      The plan's "Start research" (Deep research first replies with a plan, which already has
+      Copy). A started plan keeps its button, disabled, so only an enabled one counts.
+    candidates:
+      - { css: 'button[aria-label="Start research"]:not([disabled])' }
+  research.running:
+    description: 'The research card while it works ("Starting research...", "Writing your report...").'
+    cardinality: many
+    candidates:
+      - { css: 'gem-processing-card.processing' }
+  research.completed:
+    description: The research card once the report is done; clicking it opens the report panel.
+    cardinality: many
+    candidates:
+      - { css: 'gem-processing-card.completed' }
+  research.panel:
+    description: The report panel, opened beside the chat.
+    candidates:
+      - { css: 'deep-research-immersive-panel' }
+  research.report:
+    description: The report itself, without the panel's toolbar.
+    scope: research.panel
+    candidates:
+      - { css: '#extended-response-message-content' }
+      - { css: 'message-content' }
+  research.source:
+    description: One link per source used ("Sources used in the report"; the sources read but not used come after).
+    scope: research.panel
+    cardinality: many
+    candidates:
+      - { css: '[data-test-id="used-sources-button"] + * a[data-test-id="browse-web-item-link"]' }
+  research.source-title:
+    description: The source's title, inside its link.
+    candidates:
+      - { css: '[data-test-id="sub-title"]' }
+
   mode.menu:
     description: One menu holding the models and the thinking levels.
     candidates:
@@ -84,11 +139,15 @@ elements:
       - { css: '[role="menuitem"]:not([data-test-id^="bard-mode-option-"]).selected' }
 
   turn.user:
-    description: Not yet seen live (the saved answer page held only the model's turn); composer.send is also verified by Stop.
     cardinality: many
     candidates:
       - { css: 'user-query' }
       - { role: heading, name: { en: '^You said' } }
+  turn.user.text:
+    description: The prompt's paragraphs inside a turn.user; its heading ("You said") repeats the prompt shortened.
+    cardinality: many
+    candidates:
+      - { css: 'p' }
   turn.assistant:
     description: One per answer; the heading "Gemini said" is inside it, the text in answer.content.
     cardinality: many
@@ -117,6 +176,32 @@ actions:
     verify: { visible: temporary.notice }
     sideEffect: reversible
     timeouts: { resolveMs: 5000, verifyMs: 5000 }
+  tools.open:
+    do: click
+    target: composer.tools
+    verify: { anyOf: [{ visible: tools.more }, { visible: tools.deep-research }] }
+    sideEffect: reversible
+    timeouts: { resolveMs: 5000, verifyMs: 5000 }
+  tools.show-more:
+    do: click
+    target: tools.more
+    verify: { visible: tools.deep-research }
+    sideEffect: reversible
+    timeouts: { resolveMs: 3000, verifyMs: 3000 }
+  tools.deep-research:
+    do: click
+    target: tools.deep-research
+    verify: { visible: composer.deep-research }
+    sideEffect: reversible
+    timeouts: { resolveMs: 3000, verifyMs: 5000 }
+  research.start:
+    # Starts the research the plan describes; the plan's prompt is already sent.
+    do: click
+    target: research.start
+    require: [enabled]
+    verify: { anyOf: [{ visible: research.running }, { visible: research.completed }] }
+    sideEffect: irreversible
+    timeouts: { resolveMs: 5000, verifyMs: 30000 }
   mode.open:
     do: click
     target: composer.mode

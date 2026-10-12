@@ -37,7 +37,7 @@
     - id: provider-chatgpt-web
       name: '@tsuuanmi/system-provider-chatgpt-web'  # UI map: ui/chatgpt-web.ui.yaml
     - id: provider-gemini-web
-      name: '@tsuuanmi/system-provider-gemini-web'    # UI map: ui/gemini-web.ui.yaml (Temporary-chat turns)
+      name: '@tsuuanmi/system-provider-gemini-web'    # UI map: ui/gemini-web.ui.yaml
     - id: login
       name: '@tsuuanmi/system-login'                 # login profiles, Save, account_* MCP tools
     - id: egress

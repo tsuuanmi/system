@@ -38,7 +38,7 @@ default. Live observations are in the
 | Request | Mode | Binding | Why |
 |---|---|---|---|
 | a one-shot `ask` or `research` call with no session | **temporary** (ChatGPT: Temporary chat, `?temporary-chat=true`; Gemini: Temporary chat, shown only by its notice) | none kept after the turn | stays out of the operator's history; no conversation to resume |
-| a turn in a Worker session (`SessionId`), or any long-running or multi-turn work | **persistent** (a normal chat) | the canonical conversation id (`/c/<id>`), stored in the receipt and the session | later turns, recovery after a crash, and Deep Research return to the same conversation |
+| a turn in a Worker session (`SessionId`), or any long-running or multi-turn work | **persistent** (a normal chat) | the canonical conversation id (ChatGPT `/c/<id>`, Gemini `/app/<id>`), stored in the receipt and the session | later turns, recovery after a crash, and Deep Research return to the same conversation |
 
 - A temporary turn cannot be reopened after its page is gone. Its reconciliation
   can only conclude WAIT (same page still open), RESUBMIT (no submission
@@ -53,9 +53,6 @@ default. Live observations are in the
   not show the group; Chat is selected on the home page before switching to it.
   Gemini's agent tab, **Spark**, is refused the same way: where the tabs are
   shown, the **Chat** tab must be active before sending.
-- **Gemini serves temporary turns only.** Its persistent conversations are not
-  proven, so its driver declares no `persistent-conversation` and refuses a
-  persistent turn; sessions are never routed to it.
 
 ## Modes and tiers
 
@@ -83,6 +80,13 @@ default. Live observations are in the
   research" shows) and returns the report. If no frame appears, the reply was a
   clarifying question and is returned as the answer. `research` returns at once,
   with longer deadlines (default 60 min, stall 30 min).
+- **Gemini's Deep research** is a two-step start. Its first reply is a plan,
+  which already carries Copy, so a plain completion check would take the plan
+  for the answer. The driver clicks **Start research**, which the site records
+  as a user turn of its own, then follows the research card from `processing`
+  to `completed`. It reads the report from the report panel, followed by the
+  sources it used. A reply with no plan is a clarifying question, returned as
+  the answer.
 
 ## Turn receipt
 
@@ -112,7 +116,8 @@ a provider snapshot and decides:
 A snapshot counts only on positive evidence. A conversation that has not
 rendered a user turn was not observed, and it is never read as "nothing new".
 For Deep research, only the run that follows the last prompt counts, and never
-its acknowledgement. Both rules come from a live restart on 2026-10-12, where a
+its acknowledgement or plan. A reopened Gemini conversation whose plan was never
+started shows the prompt with no research after it, so it is never resent. Both rules come from a live restart on 2026-10-12, where a
 snapshot of a page that had not rendered yet chose RESUBMIT.
 
 This applies [INV-4](../architecture/invariants.md#inv-4-restart-is-reconciliation-not-replay)

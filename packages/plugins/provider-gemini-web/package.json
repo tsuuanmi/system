@@ -2,7 +2,7 @@
   "name": "@tsuuanmi/system-provider-gemini-web",
   "version": "0.0.0",
   "private": true,
-  "description": "Gemini Web provider driver: sign-in, and Temporary-chat turns on the Chat tab with the model and thinking level read back",
+  "description": "Gemini Web provider driver: Temporary-chat and persistent turns on the Chat tab, with the model and thinking level read back, and Deep research",
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",

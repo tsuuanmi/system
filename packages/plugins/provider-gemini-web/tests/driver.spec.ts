@@ -21,13 +21,18 @@ describe('the Gemini Web UI map and driver contract', () => {
     expect(Object.keys(map.states)).toEqual(expect.arrayContaining(['auth.signed-in', 'auth.signed-out', 'turn.running']))
   })
 
-  it('proves reasoning only: Temporary-chat turns, never a persistent conversation or a site feature', async () => {
+  it('proves reasoning and persistent conversations, and offers Deep research as an account feature', async () => {
     const driver: ProviderDriver<Page> = new GeminiWebDriver({ modes: PRESETS })
-    expect(driver.capabilities).toEqual(['reason'])
-    expect(driver.features).toBeUndefined()
-    await expect(driver.ask({} as Page, 'hi', { conversation: 'persistent' })).rejects.toMatchObject({ kind: 'invalid_input' })
+    expect(driver.capabilities).toEqual(['reason', 'persistent-conversation'])
+    expect(driver.features).toEqual(['deep-research'])
+  })
+
+  it('refuses what the site does not offer, before opening anything', async () => {
+    const driver = new GeminiWebDriver({ modes: PRESETS })
+    // Temporary chat offers no Deep research, and a temporary turn has no conversation to continue.
     await expect(driver.ask({} as Page, 'hi', { conversation: 'temporary', feature: 'deep-research' })).rejects.toMatchObject({ kind: 'invalid_input' })
-    await expect(driver.snapshot({} as Page, 'abc')).rejects.toMatchObject({ kind: 'invalid_input' })
+    await expect(driver.ask({} as Page, 'hi', { conversation: 'temporary', binding: '7b75f8c2d641e476' })).rejects.toMatchObject({ kind: 'invalid_input' })
+    await expect(driver.ask({} as Page, 'hi', { conversation: 'persistent', feature: 'web-search' })).rejects.toMatchObject({ kind: 'invalid_input' })
   })
 
   it('fails closed on an unknown preset, before opening anything', async () => {
@@ -74,7 +79,7 @@ describe.runIf(canRunBrowser)('GeminiWebDriver against the fake site', { timeout
     const boundaries: unknown[] = []
     const result = await driver.ask(page, 'Say OK', { conversation: 'temporary', mode: 'pro', beforeSend: (b) => void boundaries.push(b) })
     expect(result).toEqual({ text: 'Gemini test OK.', binding: undefined, mode: { model: '3.1 Pro', effort: 'High' } })
-    expect(fake.sent).toEqual([{ prompt: 'Say OK', tab: 'chat', temporary: true, model: '3.1 Pro', level: 'High' }])
+    expect(fake.sent).toEqual([{ prompt: 'Say OK', tab: 'chat', temporary: true, model: '3.1 Pro', level: 'High', deepResearch: false }])
     expect(boundaries).toEqual([{ previousResponse: null, mode: { model: '3.1 Pro', effort: 'High' } }])
   })
 
@@ -116,6 +121,69 @@ describe.runIf(canRunBrowser)('GeminiWebDriver against the fake site', { timeout
     expect((await driver.ask(page, 'hi', { conversation: 'temporary', mode: 'site' })).mode).toEqual({})
     await expect(driver.ask(page, 'hi', { conversation: 'temporary', mode: 'pro' })).rejects.toMatchObject({ kind: 'ui_drift' })
     expect(fake.sent).toHaveLength(1)
+  })
+
+  it('continues a persistent conversation by its /app/<id> binding, reported as soon as it exists', async () => {
+    const { page, driver, fake } = await open({ answer: 'first answer' })
+    const bound: string[] = []
+    const first = await driver.ask(page, 'one', { conversation: 'persistent', onBinding: (b) => void bound.push(b) })
+    expect(first.binding).toMatch(/^[0-9a-f]{16}$/)
+    expect(bound).toEqual([first.binding])
+    const boundaries: unknown[] = []
+    const second = await driver.ask(page, 'two', { conversation: 'persistent', binding: first.binding, beforeSend: (b) => void boundaries.push(b) })
+    expect(second.binding).toBe(first.binding)
+    expect(boundaries).toEqual([{ previousResponse: 'first answer', mode: { model: '3.8 Flash', effort: 'Medium' } }])
+    expect(fake.sent.map((s) => [s.temporary, s.conversationId])).toEqual([[false, undefined], [false, first.binding]])
+  })
+
+  it('reopens a bound conversation for reconciliation; a missing one is not observed', async () => {
+    const { page, driver } = await open({ answer: 'kept answer' })
+    const { binding } = await driver.ask(page, 'a prompt longer than its heading', { conversation: 'persistent' })
+    expect(await driver.snapshot(page, binding!)).toEqual({ text: 'kept answer', running: false, observable: true, lastPrompt: 'a prompt longer than its heading' })
+    expect(await driver.snapshot(page, 'ffffffffffffffff')).toEqual({ text: '', running: false, observable: false })
+  })
+
+  it('does not observe a conversation whose prompt it cannot read, so nothing is resent blind', async () => {
+    const { page, driver, fake } = await open()
+    const { binding } = await driver.ask(page, 'the prompt', { conversation: 'persistent' })
+    fake.options.promptParagraphs = false
+    expect(await driver.snapshot(page, binding!)).toEqual({ text: '', running: false, observable: false })
+  })
+
+  it('runs Deep research: chosen from More tools, its plan started, and its report returned with the sources it used', async () => {
+    const { page, driver, fake } = await open()
+    const result = await driver.ask(page, 'Compare HTTP/2 and HTTP/3', { conversation: 'persistent', feature: 'deep-research' })
+    expect(result.text).toBe('HTTP/3 runs over QUIC, not TCP.\n\nSources:\n- RFC 9114: HTTP/3 https://www.rfc-editor.org/rfc/rfc9114')
+    expect(fake.sent).toEqual([expect.objectContaining({ deepResearch: true, temporary: false })])
+    expect(fake.started).toEqual([result.binding])
+  })
+
+  it('returns a clarifying question as the answer when Deep research asks one instead of a plan', async () => {
+    const { page, driver, fake } = await open({ clarify: 'Which aspect should the research focus on?' })
+    const result = await driver.ask(page, 'Compare HTTP/2 and HTTP/3', { conversation: 'persistent', feature: 'deep-research' })
+    expect(result.text).toBe('Which aspect should the research focus on?')
+    expect(fake.started).toEqual([])
+  })
+
+  it('reopens a Deep research turn as running while its card works, then as its report', async () => {
+    const { page, driver, fake } = await open({ researchMs: 6000 })
+    let binding: string | undefined
+    const asked = driver.ask(page, 'Compare HTTP/2 and HTTP/3', { conversation: 'persistent', feature: 'deep-research', onBinding: (b) => { binding = b } })
+    for (let i = 0; i < 100 && !fake.started.length; i++) await new Promise((resolve) => setTimeout(resolve, 100))
+    expect(fake.started).toEqual([binding])
+    const other = await context!.newPage()
+    expect(await driver.snapshot(other, binding!, { feature: 'deep-research' })).toMatchObject({ text: '', running: true, observable: true })
+    const result = await asked
+    // Starting the plan is the conversation's last user turn.
+    expect(await driver.snapshot(other, binding!, { feature: 'deep-research' })).toEqual({ text: result.text, running: false, observable: true, lastPrompt: 'Start research' })
+  })
+
+  it('probes the account\'s features in a new chat, sending nothing (REQ-PRV-7)', async () => {
+    const { page, driver, fake } = await open()
+    expect(await driver.probeFeatures(page)).toEqual(['deep-research'])
+    const none = await open({ deepResearch: false })
+    expect(await none.driver.probeFeatures(none.page)).toEqual([])
+    expect([...fake.sent, ...none.fake.sent]).toEqual([])
   })
 
   it('sends nothing when the receipt cannot be written', async () => {
