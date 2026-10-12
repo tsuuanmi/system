@@ -197,7 +197,9 @@ in the test fake (two Xvfbs for concurrent callers), which was then fixed.
   approval gates, panel teams, operator stop, continue, and delete, and lineage
   invalidation by `supersede`. Panel members talk through
   `ctx.workerSessions` mailboxes. It does not have profile growth rules, team
-  leads, wake-on-message sessions outside rounds, or re-planning yet.
+  leads, wake-on-message sessions outside rounds, or re-planning yet. The
+  `develop` profile cannot yet bind a review to an exact git head: there is no
+  confined command execution.
 - **Capability evidence is declared, not probed.** A website Worker proves what its
   driver declares (`ProviderDriver.capabilities`, covered by the driver's tests).
   Per-account probes, for example whether an account's plan offers Deep research,

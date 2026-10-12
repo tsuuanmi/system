@@ -9,7 +9,7 @@ import EventLog from '@tsuuanmi/system-event-log'
 import Leases from '@tsuuanmi/system-leases'
 import { ProviderError } from '@tsuuanmi/system-provider-core'
 import Store from '@tsuuanmi/system-store'
-import WorkerRouter, { type WorkRequirement } from '@tsuuanmi/system-workers'
+import WorkerRouter, { type WorkerExecution, type WorkRequirement } from '@tsuuanmi/system-workers'
 import WorkerSessions from '@tsuuanmi/system-worker-sessions'
 import Workflow from '@tsuuanmi/system-workflow'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -181,6 +181,51 @@ describe('ctx.workers source `agents`: agent runtimes as Workers', () => {
     expect(done.error!.message).toContain('h-1')
     expect(again.runs).toEqual([])
   })
+
+  it('runs the software-development profile: plan, approval, a writable agent implements, a fresh session reviews, a report', async () => {
+    const agent = new ScriptedAgent({ sandboxes: ['read-only', 'workspace-write'] })
+    const { ctx } = await boot(agent, { workers: [worker({ id: 'dev', sandbox: 'workspace-write', tools: [] }), worker({ id: 'reviewer' })] })
+    // A scripted chat Worker (reason) stands in for the website planner and reporter.
+    const plans: string[] = []
+    const executions = new Map<string, WorkerExecution>()
+    ctx.workers.register({
+      name: 'chat',
+      describe: async () => [{ schema: 'capability-descriptor@1.0', worker: 'chat:a', provider: 'test', tier: 'standard', quotaClass: 'subscription-chat', locality: 'remote',
+        capabilities: [{ capability: 'reason', evidence: { kind: 'conformance', at: '2026-10-12T00:00:00Z' } }], state: 'ready', observedAt: '2026-10-12T00:00:00Z' }],
+      start: (request) => {
+        plans.push(request.prompt)
+        const text = request.prompt.includes('Plan the software change')
+          ? '```json\n' + JSON.stringify({ confidence: 'high', nodes: [
+            { id: 'implement', objective: 'Implement', prompt: 'add the flag', capabilities: ['develop', 'local-data'], tier: 'standard' },
+            { id: 'review', objective: 'Review', prompt: 'review the flag change', capabilities: ['review', 'local-data'], tier: 'standard', dependsOn: ['implement'] },
+          ] }) + '\n```'
+          : 'Report: the flag was added; the review found nothing blocking.'
+        const result = ctx.artifacts.put({ kind: 'report', bodySchema: 'provider-answer@1.0', classification: 'operator-shared', producer: { type: 'worker', ref: 'chat:a' },
+          body: { schema: 'provider-answer@1.0', provider: 'test', account: 'a', turnId: `t-${plans.length}`, conversation: { mode: 'temporary' }, promptHash: `sha256:${'0'.repeat(64)}`, text } }).id
+        const execution: WorkerExecution = { id: `chat-${plans.length}`, status: 'completed', submitted: true, result: result as `sha256:${string}`, decisions: [] }
+        executions.set(execution.id, execution)
+        return execution
+      },
+      get: (id) => executions.get(id),
+      wait: async (id) => executions.get(id)!,
+    })
+    const run = ctx.workflow.start({ template: 'develop', input: 'Add a --dry-run flag' })
+    const deadline = Date.now() + 10_000
+    while (!ctx.workflow.get(run.runId)?.blocked) {
+      if (Date.now() > deadline) throw new Error(`never blocked: ${JSON.stringify(ctx.workflow.get(run.runId))}`)
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    }
+    expect(agent.runs).toEqual([])
+    ctx.workflow.approve(run.runId, { verdict: 'approved' })
+    const done = await ctx.workflow.wait(run.runId, 10_000)
+    expect(done).toMatchObject({ status: 'completed', answer: 'Report: the flag was added; the review found nothing blocking.' })
+    const byId = Object.fromEntries(done.nodes.map((n) => [n.nodeId, n]))
+    expect(byId['plan:1:implement']).toMatchObject({ state: 'COMPLETED', worker: 'agent:dev' })
+    expect(byId['plan:1:review']!.state).toBe('COMPLETED')
+    // The implementation ran with a writable sandbox; the review ran in a fresh session (no resume).
+    expect(agent.runs.map((r) => [r.prompt, r.sandbox, r.resume])).toEqual([['add the flag', 'workspace-write', undefined], ['review the flag change', expect.any(String), undefined]])
+    expect(plans.at(-1)).toContain('echo: add the flag')
+  }, 60_000)
 
   it('routes a review run to the local agent by capability, end to end through the engine', async () => {
     const agent = new ScriptedAgent()

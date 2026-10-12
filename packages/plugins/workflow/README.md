@@ -20,6 +20,17 @@ second execution path (INV-1).
     account.
   - `panel` is a team of two members over two rounds, on distinct accounts,
     and a cited synthesis (see Teams).
+  - `develop` is the software-development profile, MVP form:
+    1. a planner, `plan:1`, proposes implementation steps (`develop`,
+       `local-data`) and a review (`review`, `local-data`);
+    2. the writing steps wait for the operator's approval of the exact plan,
+       then run on a writable local agent Worker;
+    3. the review runs in a fresh session, sharing no context with the
+       producer (REQ-TEAM-5);
+    4. `report:1` summarises the steps.
+
+    Not yet: binding the review to an exact git head, and keeping the review
+    off writable Workers (any Worker proving `review` may take it).
   - `investigate` is a planner, `plan:1`, then `synthesis:1`. The planner's plan
     adds the research steps (graph growth), and the synthesis answers from their
     findings (`{{grown}}`).

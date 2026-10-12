@@ -1008,6 +1008,9 @@ export class Workflow extends Service {
     if (current.status === 'failed') {
       return this.failAttempt(run, node, current.error ?? { kind: 'internal', disposition: 'CODE_FIX', message: 'the execution failed without an error' }, { sent: current.submitted, execution: current }, lease)
     }
+    if (!current.result) {
+      return this.failAttempt(run, node, { kind: 'internal', disposition: 'CODE_FIX', message: `${node.source} reported execution ${current.id} completed without a result` }, { sent: true, execution: current }, lease)
+    }
     this.complete(run, node, spec, current, lease)
   }
 

@@ -43,7 +43,9 @@ Next in M3, all of which need the operator: `runtime-codex-sdk` (a Codex CLI log
 
 - An operator web UI at `/ui` (`system ui`): runs, steps, decision chains, approve, stop, continue.
 
-Next in M4: team leads and wake-on-message sessions, and the `software-development` profile.
+- The `develop` template, the software-development profile in MVP form: plan, the approval gate, local agents implement, a fresh-session review, and a report.
+
+Next in M4: team leads, wake-on-message sessions, and exact-head review (which needs confined command execution).
 
 Later candidates, each needing its own proposal: A2A gateway and runtime
 (cross-runtime peers), an ACP client gateway for editors, sandboxed or SSH `exec`
