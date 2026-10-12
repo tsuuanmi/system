@@ -29,7 +29,8 @@ acceptance: procedure-specific phase acceptance
 ```
 
 - The **independent-first barrier** guarantees no member sees a peer's output
-  before every member has produced an independent result.
+  before every member has produced an independent result. It opens once they
+  all have, whether or not another round follows.
 - Debate, critique, and plain parallel review are *procedures* that a profile
   selects. None of them is built into the core.
 - Each member step is a durable workflow node, so a crash mid-round does not repeat
@@ -80,5 +81,8 @@ Independent review is built for the `develop` profile: a read-only Worker in a f
 - When the members have converged, the later rounds run nothing: each member
   keeps its last answer, and the lead's decision is the recorded cause. The
   synthesis then reads those answers.
-- It is verified on the fake site. Live verification needs the second
-  account that panels require.
+- Verified live on 2026-10-12 with a configured `team.lead`, on two ChatGPT
+  accounts: the lead closed after round 1, and rounds 2 and 3 sent nothing.
+  A message to a member afterwards woke it in its own conversation. The first
+  live run found that a closed team kept its barrier shut, which held that
+  message; this is now fixed, with a test.

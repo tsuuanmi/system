@@ -22,7 +22,9 @@ blocks the release.**
 | Web UI: approve, stop, continue | `system ui` | 2026-10-12 |
 | Backup while the profile runs, and a verified restore preview | `system backup`, `system restore` | 2026-10-12 |
 | Restart while a turn runs: reconciled, never resent | start an ask, `system shutdown`, `system start` | 2026-10-12 |
+| A panel on two distinct accounts | `system run panel "…"` | 2026-10-12 |
+| A team lead closing early; wake-on-message after a panel | a template with `team.lead` in `workflow.templates`; `session_send` to a member | 2026-10-12 |
+| A Codex Worker | an `agent-workers` row with runtime `codex-sdk`, then a run routed to it | 2026-10-12 |
+| Gemini: a Temporary-chat ask on the Chat tab, with the tier's model and thinking level read back | `system ask --tier economy\|frontier "…"` routed to a Gemini account | 2026-10-12 |
 | Credential re-login past the email page (local TOTP) | `system account relogin <id>` | **not yet** (needs the operator) |
-| A panel on two distinct accounts | `system run panel "…"` | **not yet** (needs a second account) |
-| A team lead closing early; wake-on-message after a panel | a led panel template; `session_send` to a member | **not yet** (needs a second account) |
-| Gemini Web driver; an economy-tier API provider | | **not built** (needs an account and an API key) |
+| An economy-tier API provider | | **not built** (needs an API key) |

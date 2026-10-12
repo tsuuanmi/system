@@ -29,7 +29,8 @@
    sign-in.
 5. Map the account's tiers to modes in the account catalog (`accounts[].tiers`),
    then check `system account list`. A ChatGPT account without a model picker
-   (Free) maps its tiers to the empty preset `site`.
+   (Free) maps its tiers to the empty preset `site`. A Gemini account maps
+   them to `flash-lite`, `flash`, and `pro` (model and thinking level).
 6. Connect the clients: `system mcp-config claude|codex` connects over MCP;
    `system claude-env` and `system codex-env` connect through the gateways.
 

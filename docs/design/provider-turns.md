@@ -37,7 +37,7 @@ default. Live observations are in the
 
 | Request | Mode | Binding | Why |
 |---|---|---|---|
-| a one-shot `ask` or `research` call with no session | **temporary** (ChatGPT: Temporary chat, `?temporary-chat=true`) | none kept after the turn | stays out of the operator's history; no conversation to resume |
+| a one-shot `ask` or `research` call with no session | **temporary** (ChatGPT: Temporary chat, `?temporary-chat=true`; Gemini: Temporary chat, shown only by its notice) | none kept after the turn | stays out of the operator's history; no conversation to resume |
 | a turn in a Worker session (`SessionId`), or any long-running or multi-turn work | **persistent** (a normal chat) | the canonical conversation id (`/c/<id>`), stored in the receipt and the session | later turns, recovery after a crash, and Deep Research return to the same conversation |
 
 - A temporary turn cannot be reopened after its page is gone. Its reconciliation
@@ -51,6 +51,11 @@ default. Live observations are in the
   so it is never used for chat turns. If the mode group is shown and Chat is not
   selected after one attempt, the turn fails before sending. Temporary chat does
   not show the group; Chat is selected on the home page before switching to it.
+  Gemini's agent tab, **Spark**, is refused the same way: where the tabs are
+  shown, the **Chat** tab must be active before sending.
+- **Gemini serves temporary turns only.** Its persistent conversations are not
+  proven, so its driver declares no `persistent-conversation` and refuses a
+  persistent turn; sessions are never routed to it.
 
 ## Modes and tiers
 

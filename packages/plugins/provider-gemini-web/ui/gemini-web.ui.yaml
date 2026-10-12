@@ -1,5 +1,5 @@
-# Gemini Web UI map (ui-map@1.1, ADR-0021). Sign-in only for now: the conversation elements are
-# added once a signed-in account's page has been read live (read-only).
+# Gemini Web UI map (ui-map@1.1, ADR-0021). Read live on 2026-10-12 from a signed-in account's
+# /app page (read-only, plus Temporary-chat prompts); the fake site in fixtures/ follows it.
 # When the site changes, edit this file (and the fixture), not the driver code.
 schema: ui-map@1.1
 provider: gemini-web
@@ -18,6 +18,128 @@ elements:
       - { role: button, name: { en: '^Google Account:' } }
       - { role: link, name: { en: '^Google Account:' } }
 
+  tab.any:
+    description: The Chat / Spark tabs; Spark is the agent, never used for turns. Some layouts show no tabs.
+    cardinality: many
+    candidates:
+      - { css: 'button[data-test-id^="app-tab-"]' }
+  tab.chat:
+    candidates:
+      - { css: 'button[data-test-id="app-tab-chat"]' }
+      - { role: button, name: { en: '^Chat$' }, exact: true }
+  tab.chat-active:
+    description: The Chat tab while it is the active one (only its class shows it).
+    candidates:
+      - { css: 'button[data-test-id="app-tab-chat"].app-tab--active' }
+
+  temporary.toggle:
+    description: An icon button with no pressed state.
+    candidates:
+      - { role: button, name: { en: '^Temporary chat$' } }
+  temporary.notice:
+    description: The only sign that Temporary chat is on ("Temporary chats don't appear in recent chats ...").
+    candidates:
+      - { text: { en: 'appear in recent chats' } }
+
+  composer.input:
+    candidates:
+      - { role: textbox, name: { en: '^Enter a prompt for Gemini$' } }
+      - { css: 'rich-textarea [contenteditable="true"]' }
+  composer.send:
+    candidates:
+      - { role: button, name: { en: '^Send message$' } }
+  composer.stop:
+    candidates:
+      - { role: button, name: { en: '^Stop response$' } }
+  composer.mode:
+    description: The mode picker ("Open mode picker, currently Flash"); some accounts have none.
+    candidates:
+      - { css: '[data-test-id="bard-mode-menu-button"]' }
+      - { role: button, name: { en: '^Open mode picker' } }
+
+  mode.menu:
+    description: One menu holding the models and the thinking levels.
+    candidates:
+      - { css: '[role="menu"]:has([data-test-id^="bard-mode-option-"])' }
+  mode.model:
+    description: 'One item per model; its first line is the name ("3.8 Flash"), then a note. The chosen one is mode.model.selected.'
+    scope: mode.menu
+    cardinality: many
+    candidates:
+      - { css: '[role="menuitem"][data-test-id^="bard-mode-option-"]' }
+  mode.level:
+    description: 'One item per thinking level ("Low", "Medium", "High"); the chosen one is mode.level.selected.'
+    scope: mode.menu
+    cardinality: many
+    candidates:
+      - { css: '[role="menuitem"]:not([data-test-id^="bard-mode-option-"])' }
+  mode.model.selected:
+    scope: mode.menu
+    candidates:
+      - { css: '[role="menuitem"][data-test-id^="bard-mode-option-"].selected' }
+  mode.level.selected:
+    scope: mode.menu
+    candidates:
+      - { css: '[role="menuitem"]:not([data-test-id^="bard-mode-option-"]).selected' }
+
+  turn.user:
+    cardinality: many
+    candidates:
+      - { css: 'user-query' }
+      - { role: heading, name: { en: '^You said' } }
+  turn.assistant:
+    description: One per answer; the heading "Gemini said" is inside it, the text in answer.content.
+    cardinality: many
+    candidates:
+      - { css: 'model-response' }
+  answer.content:
+    description: The rendered answer inside a turn.assistant.
+    candidates:
+      - { css: 'message-content' }
+  turn.assistant.done:
+    description: The answer's own Copy, present under every finished answer (a code block's is "Copy code").
+    cardinality: many
+    candidates:
+      - { role: button, name: { en: '^Copy$' }, exact: true }
+
+actions:
+  tab.select-chat:
+    do: click
+    target: tab.chat
+    verify: { visible: tab.chat-active }
+    sideEffect: reversible
+    timeouts: { resolveMs: 5000, verifyMs: 3000 }
+  temporary.enable:
+    do: click
+    target: temporary.toggle
+    verify: { visible: temporary.notice }
+    sideEffect: reversible
+    timeouts: { resolveMs: 5000, verifyMs: 5000 }
+  mode.open:
+    do: click
+    target: composer.mode
+    verify: { visible: mode.model }
+    sideEffect: reversible
+    timeouts: { resolveMs: 5000, verifyMs: 5000 }
+  composer.insert:
+    do: insertText
+    target: composer.input
+    require: [editable]
+    verify: { visible: composer.input }
+    sideEffect: none
+    timeouts: { resolveMs: 15000, verifyMs: 5000 }
+  composer.send:
+    do: click
+    target: composer.send
+    require: [enabled]
+    verify: { anyOf: [{ countIncreased: turn.user }, { visible: composer.stop }] }
+    sideEffect: irreversible
+    timeouts: { resolveMs: 5000, verifyMs: 20000 }
+
 states:
   auth.signed-in: { visible: auth.account }
   auth.signed-out: { anyOf: [{ url: '^https?://accounts\.google\.com/' }, { visible: auth.login }] }
+  turn.running: { visible: composer.stop }
+
+errors:
+  - { when: { state: auth.signed-out }, kind: reauth_required, message: 'gemini-web: signed out' }

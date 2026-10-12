@@ -150,6 +150,14 @@ describe.runIf(canRunBrowser)('UiEngine on a real page', { timeout: 15_000 }, ()
     return { engine, tab, drift, heals }
   }
 
+  it('reads what a copy control put on the clipboard, and never an earlier copy', async () => {
+    const { engine, tab } = await open(page('<form data-type="composer"><div contenteditable role="textbox"></div></form>',
+      '<button id="copy" onclick="navigator.clipboard.writeText(\'## Plan\\n**bold**\')">Copy</button><button id="noop">Copy</button>'))
+    expect(await engine.copied(tab.locator('#copy'))).toBe('## Plan\n**bold**')
+    // The clipboard still holds the first copy; a control that copies nothing reads as nothing.
+    expect(await engine.copied(tab.locator('#noop'))).toBe('')
+  })
+
   it('resolves the primary candidate inside its scope, with no drift', async () => {
     const { engine, drift } = await open(CURRENT)
     const send = await engine.resolve('composer.send')

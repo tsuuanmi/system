@@ -33,7 +33,10 @@ work. Each milestone ends with working, tested software and updated canonical do
 - Claude Code Workers now also have a confined `workspace-write` (verified live), so they prove `develop`.
 - `runtime-acp` runs any ACP agent with a client-enforced policy, for agents the operator vouches for.
 
-Next in M3, all of which need the operator: `runtime-codex-sdk` (a Codex CLI login), the Gemini Web driver (a Gemini account), connectors as capabilities, and an economy-tier model provider (an API key). M4 orchestration has started:
+- `runtime-codex-sdk` makes Codex a Worker; verified live with a review on a read-only Codex Worker.
+- The Gemini Web driver serves Temporary-chat turns on the Chat tab, with each tier's model and thinking level read back; verified live on 2026-10-12. Its persistent conversations and Deep research are not proven yet.
+
+Next in M3, both of which need the operator: connectors as capabilities (`connector:<name>`), and an economy-tier model provider (an API key). M4 orchestration has started:
 - Bounded tier escalation after a rejected result.
 - Graph growth from validated `plan` artifacts, behind a plan approval gate for writing steps.
 - Verified live on 2026-10-12: `investigate` planned a step, ran it, and synthesised an answer with its sources. An earlier live plan that named an unknown capability was refused (fail closed).
@@ -48,11 +51,11 @@ Next in M3, all of which need the operator: `runtime-codex-sdk` (a Codex CLI log
 - Exact-head review: a review of an agent's change binds to the working tree's git subject, and its `assessment` is stored only if the subject still holds (an exact-subject gate). Only read-only Workers prove `review`. Verified live on 2026-10-12.
 
 - Remediation cycles: a review that requests changes with blocking findings appends a fix and a re-review of the new subject, bounded at three reviews.
-- Team leads: an optional lead after each round decides whether the members have converged, and later rounds then carry each member's last answer without sending anything. This is verified on the fake site.
+- Team leads: an optional lead after each round decides whether the members have converged, and later rounds then carry each member's last answer without sending anything. Verified live on 2026-10-12 on two ChatGPT accounts.
 
-M4 is complete apart from live checks that need a second account (panels, the lead, wake-on-message), handoff envelopes, and re-planning after a superseded input.
+M4 is complete apart from handoff envelopes and re-planning after a superseded input. Its live checks (a panel on two accounts, the lead, wake-on-message) passed on 2026-10-12. The first wake check found that a team closed by its lead kept its barrier shut; this is fixed, with a test.
 
-- Wake-on-message: an idle Worker session with unread mail takes one turn on its own Worker, and its reply goes to the peers who wrote, as an answer that wakes nobody. It is verified on the fixture; live verification needs a second account.
+- Wake-on-message: an idle Worker session with unread mail takes one turn on its own Worker, and its reply goes to the peers who wrote, as an answer that wakes nobody. Verified live on 2026-10-12.
 
 M6 has started:
 - The `profiles` seam: `ctx.workflow.template` lets a profile plugin contribute templates. `develop` moved into `profile-software-development`.

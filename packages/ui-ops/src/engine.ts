@@ -145,6 +145,23 @@ export class UiEngine {
   }
 
   /**
+   * What a copy control puts on the clipboard: the clipboard is cleared, the control clicked,
+   * and the clipboard read until it holds text (briefly). Empty when the control copied
+   * nothing, so an earlier copy is never mistaken for this one.
+   */
+  async copied(control: Locator): Promise<string> {
+    await this.page.context().grantPermissions(['clipboard-read', 'clipboard-write'], { origin: new URL(this.page.url()).origin })
+    await this.page.evaluate(() => navigator.clipboard.writeText(''))
+    await control.click({ timeout: 3000 })
+    let text = ''
+    for (let tries = 0; tries < 10 && !text; tries++) {
+      text = await this.page.evaluate(() => navigator.clipboard.readText())
+      if (!text) await sleep(100)
+    }
+    return text
+  }
+
+  /**
    * Run an action: guards, resolve (candidates, then a bounded heal, then the fallback),
    * preconditions, the action itself, and its postcondition.
    */

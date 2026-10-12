@@ -65,7 +65,10 @@ FORMING → IDLE ⇄ ACTIVE → CLOSED
    content. The lead controls the procedure, not the conversation.
 
 Barriers (the independent-first rule in [teams](teams.md)) are mailbox gates.
-Messages to a member are held until the barrier opens.
+Messages to a member are held until the barrier opens. A team's barrier opens
+as soon as every member has finished round 1, even when no later round runs (a
+lead closed the team, or it has a single round), so later messages still reach
+the members.
 
 ## Long-running mechanics
 
@@ -122,8 +125,8 @@ its own Worker, and its reply goes back to the peers who wrote
 - A reply's intent is `answer`, which wakes nobody, so peers cannot loop.
 - The Worker seam gained `handle(sessionId)`, because an ACTIVE session must
   record its native conversation handle.
-- Live verification needs a second account: panel teams are the only source of
-  member sessions.
+- Verified live on 2026-10-12: after a panel on two ChatGPT accounts, an
+  operator message woke a member, which answered in its own conversation.
 
 Long-running bounds are built (REQ-SES-6, REQ-SES-7):
 - **Budgets:** the turn, lifetime, and idle budgets are checked at every

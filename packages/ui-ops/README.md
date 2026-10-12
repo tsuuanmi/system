@@ -17,6 +17,8 @@ not a plugin: provider drivers create one `UiEngine` per turn page.
   - `act`: guards from the map's `errors`, then resolve, then a bounded heal,
     then the fallback, then `require`, the action, and the `verify` postcondition;
   - `state`, `waitFor`, `count`, and `text`;
+  - `copied`: what a copy control puts on the clipboard (cleared first, so an
+    earlier copy never counts);
   - `network`: a passive `NetworkObserver`.
 - **Events:**
   - `onDrift` fires when a non-primary candidate wins.

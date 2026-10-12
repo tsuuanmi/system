@@ -199,7 +199,9 @@ export class Workflow extends Service {
       // Not z.object: an omitted object would come back as {} and make every node a planner.
       grows: z.any().description('Planner policy {maxNodes, capabilities, approvalRequired}; checked by preflight'),
       resultSchema: z.string().description('Schema tag the answer\'s JSON must be valid against (REQ-ART-5)'),
-    }))).default({}).description('Workflow templates by name, added to the built-in ask and research'),
+      // Not z.object, for the same reason as grows.
+      team: z.any().description('Team policy {members, rounds, distinctAccounts, synthesisTier, lead: {tier}}; checked by preflight'),
+    }))).default({}).description('Workflow templates by name, added to the built-in ones (a same-named one replaces it)'),
     maxAttempts: z.natural().min(1).max(10).default(3).description('Attempts per node for retryable failures'),
     retryDelayMs: z.natural().default(5000).description('First back-off delay, doubled per attempt'),
     maxActiveRuns: z.natural().min(1).default(16).description('Unfinished runs accepted at once'),
@@ -1077,12 +1079,13 @@ export class Workflow extends Service {
         return `### [m${s.team!.member}]\n${result ? this.resultText(result) : ''}`
       })
       .join('\n\n')
+    const sessions = this.ctx.workerSessions
+    // Every member finished round 1 (a lead, a later round, and the synthesis all depend on it):
+    // the barrier opens, also when a lead closes the team or it has a single round.
+    if (team.role !== 'member' || (team.round ?? 1) > 1) sessions.openBarrier(teamGroup(nodes[0]!.run_id, team.id))
     if (team.role === 'synthesis') return { members: answers(team.rounds) }
     if (team.role === 'lead') return { members: answers(team.round!) }
     if (!team.round || team.round === 1 || !spec.session.sessionId) return {}
-    // Every member finished round 1 (this node depends on them): the barrier opens.
-    const sessions = this.ctx.workerSessions
-    sessions.openBarrier(teamGroup(nodes[0]!.run_id, team.id))
     const inbox = sessions.inbox(spec.session.sessionId)
     if (inbox.length) sessions.ack(spec.session.sessionId, inbox.at(-1)!.seq)
     return {

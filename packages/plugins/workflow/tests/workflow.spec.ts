@@ -266,15 +266,16 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
     expect(sessions).toHaveLength(2)
   }, 180_000)
 
-  it('lets a lead close a converged team early: later rounds carry each member\'s last answer, nothing is sent (teams.md#lead)', async () => {
+  it('lets a lead close a converged team early: later rounds carry each member\'s last answer, nothing is sent, and the barrier still opens (teams.md#lead, REQ-TEAM-1)', async () => {
     const leadAfter = (closeAt: number) => (prompt: string): string => {
       if (prompt.includes('final answers')) return 'Both hold [m1] [m2].'
       const round = /After round (\d)/.exec(prompt)
       if (round) return JSON.stringify({ converged: Number(round[1]) >= closeAt, reason: `round ${round[1]}` })
       return prompt.includes('other panel members') ? 'revised answer' : 'first answer'
     }
-    const templates = { 'led-panel': [{ nodeId: 'panel', objective: 'Answer as a panel', prompt: '{{input}}', capabilities: ['reason'], tier: 'standard', conversation: 'temporary',
-      acceptance: 'acceptance.team-synthesis', team: { members: 2, rounds: 3, distinctAccounts: true, lead: { tier: 'economy' } } }] }
+    const panel = (team: object) => [{ nodeId: 'panel', objective: 'Answer as a panel', prompt: '{{input}}', capabilities: ['reason'], tier: 'standard', conversation: 'temporary',
+      acceptance: 'acceptance.team-synthesis', team: { members: 2, distinctAccounts: true, ...team } }]
+    const templates = { 'led-panel': panel({ rounds: 3, lead: { tier: 'economy' } }), 'one-round': panel({ rounds: 1 }) }
     // Converged after round 1: rounds 2 and 3 run nothing.
     const early = await boot({ fake: { answer: leadAfter(1) }, accounts: ['chatgpt-main', 'chatgpt-2'], workflow: { templates } })
     const one = await early.ctx.workflow.wait(early.ctx.workflow.start({ template: 'led-panel', input: 'Is it safe?' }).runId, 120_000)
@@ -285,6 +286,20 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
     const lead = early.ctx.artifacts.get(records['panel:lead:1']!.lastDecision!)!.body as { decisionType: string; decider: { type: string }; outcome: { option: string } }
     expect(lead).toMatchObject({ decisionType: 'gate', decider: { type: 'model' }, outcome: { option: 'close' } })
     expect(records['panel:m2:r2']!.lastDecision).toBe(records['panel:lead:1']!.lastDecision)
+    // The barrier opened once round 1 was done, though no later round ran (nor exists in a
+    // one-round team): a message after the run still reaches a member and wakes it.
+    const wakes = async (runId: string): Promise<void> => {
+      const m1 = early.ctx.workerSessions.ofRun(runId).find((m) => m.role === 'm1')!
+      const before = early.ctx.workflow.usage(50).map((r) => r.runId)
+      early.ctx.workerSessions.send({ from: 'operator', messageId: `after-${runId}`, to: { session: m1.sessionId }, body: 'one more question', intent: 'request' })
+      let woke: string | undefined
+      await until(() => !!(woke = early.ctx.workflow.usage(50).map((r) => r.runId).find((r) => !before.includes(r))))
+      expect((await early.ctx.workflow.wait(woke!, 60_000)).status).toBe('completed')
+    }
+    await wakes(one.runId)
+    const single = await early.ctx.workflow.wait(early.ctx.workflow.start({ template: 'one-round', input: 'Is it safe?' }).runId, 120_000)
+    expect(single.status).toBe('completed')
+    await wakes(single.runId)
     // Not converged after round 1, converged after round 2: round 2 runs, round 3 carries.
     const later = await boot({ fake: { answer: leadAfter(2) }, accounts: ['chatgpt-main', 'chatgpt-2'], workflow: { templates } })
     const two = await later.ctx.workflow.wait(later.ctx.workflow.start({ template: 'led-panel', input: 'Is it safe?' }).runId, 120_000)

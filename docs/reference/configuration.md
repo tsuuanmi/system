@@ -202,6 +202,8 @@ No options.
 | Option | Type | Default | Description |
 |---|---|---|---|
 | `origin` | string |  | Site origin (default https://gemini.google.com) |
+| `modes` | Record<string, object> | `{"flash-lite":{"model":"Flash-Lite","effort":"Low"},"flash":{"model":"Flash","effort":"Medium"},"pro":{"model":"Pro","effort":"High"},"site":{}}` | Named mode presets (model and thinking level); an empty preset selects nothing |
+| `defaultMode` | string | `"flash"` | Preset when a caller names none |
 
 ## `providers`
 
@@ -310,7 +312,7 @@ No options.
 
 | Option | Type | Default | Description |
 |---|---|---|---|
-| `templates` | Record<string, object[]> | `{}` | Workflow templates by name, added to the built-in ask and research |
+| `templates` | Record<string, object[]> | `{}` | Workflow templates by name, added to the built-in ones (a same-named one replaces it) |
 | `maxAttempts` | number (1…10) | `3` | Attempts per node for retryable failures |
 | `retryDelayMs` | number (0…) | `5000` | First back-off delay, doubled per attempt |
 | `maxActiveRuns` | number (1…) | `16` | Unfinished runs accepted at once |

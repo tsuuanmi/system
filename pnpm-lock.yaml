@@ -736,6 +736,9 @@ importers:
       '@tsuuanmi/system-display-virtual':
         specifier: workspace:*
         version: link:../display-virtual
+      '@tsuuanmi/system-providers':
+        specifier: workspace:*
+        version: link:../providers
       patchright-core:
         specifier: 1.63.0
         version: 1.63.0

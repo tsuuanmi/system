@@ -8,7 +8,7 @@
  *   marker and stable text (the event stream stays open, so it is never consulted).
  */
 import { readFileSync } from 'node:fs'
-import { type AskOptions, type AskResult, type AuthState, type ConversationMode, ProviderError, type ProviderDriver, type ProviderFeature, type ProviderMode, type TurnSnapshot, waitForStableCompletion } from '@tsuuanmi/system-provider-core'
+import { type AskOptions, type AskResult, type AuthState, type ConversationMode, ProviderError, type ProviderDriver, type ProviderFeature, type ProviderMode, type TurnSnapshot, sameWords, waitForStableCompletion } from '@tsuuanmi/system-provider-core'
 import { type DriftEvent, type HealEvent, UiEngine, type UiMap, loadUiMap } from '@tsuuanmi/system-ui-ops'
 import type { Frame, Page } from 'patchright-core'
 
@@ -517,22 +517,15 @@ export class ChatGptWebDriver implements ProviderDriver<Page> {
    */
   private async markdownOf(page: Page, rendered: string): Promise<string> {
     try {
-      await page.context().grantPermissions(['clipboard-read', 'clipboard-write'], { origin: new URL(page.url()).origin })
-      const copy = (await this.engine(page).resolve('turn.assistant.done', 1000)).locator.last()
-      await page.evaluate(() => navigator.clipboard.writeText(''))
-      await copy.click({ timeout: 3000 })
-      let markdown = ''
-      for (let tries = 0; tries < 10 && !markdown; tries++) {
-        markdown = await page.evaluate(() => navigator.clipboard.readText())
-        if (!markdown) await page.waitForTimeout(100)
-      }
+      const engine = this.engine(page)
+      const markdown = await engine.copied((await engine.resolve('turn.assistant.done', 1000)).locator.last())
       if (!markdown || !sameWords(markdown, rendered)) return rendered
       // Copy rebuilds code blocks from the page and loses their line breaks: take each block's
       // text from its rendered element instead, or keep the rendered answer if they do not pair.
       const fences = [...markdown.matchAll(/^(```[^\n]*)\n([\s\S]*?)\n```[ \t]*$/gm)]
       if (!fences.length) return markdown.trim()
-      const answer = (await this.engine(page).resolve('turn.assistant', 1000)).locator.last().locator('xpath=..')
-      const code = await this.engine(page).findIn('answer.code', answer)
+      const answer = (await engine.resolve('turn.assistant', 1000)).locator.last().locator('xpath=..')
+      const code = await engine.findIn('answer.code', answer)
       const blocks = code ? await code.locator.evaluateAll((els) => els.map((el) => {
         ;(el as HTMLElement).style.whiteSpace = 'pre-wrap'
         return (el as HTMLElement).innerText.replace(/\n$/, '')
@@ -573,27 +566,3 @@ export class ChatGptWebDriver implements ProviderDriver<Page> {
     return completed.text
   }
 }
-
-/** The words of a Markdown text as it renders: fences, emphasis, link targets, and markers dropped. */
-export function renderedWords(markdown: string): string[] {
-  const plain = markdown
-    .replace(/^```[^\n]*$/gm, ' ')
-    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')
-    .replace(/^\s{0,3}(?:#{1,6}|>|[-*+]|\d+[.)])\s+/gm, ' ')
-  return plain.match(/[\p{L}\p{N}]+/gu) ?? []
-}
-
-/**
- * Whether Markdown is the rendered answer: its words appear in the rendered words in order, and
- * rendering added only labels (a code block's language and its Copy button), nothing else.
- */
-export function sameWords(markdown: string, rendered: string): boolean {
-  const md = renderedWords(markdown)
-  const shown = rendered.match(/[\p{L}\p{N}]+/gu) ?? []
-  const blocks = Math.ceil((markdown.match(/^```/gm) ?? []).length / 2)
-  if (!md.length || shown.length - md.length > 2 + 3 * blocks) return false
-  let at = 0
-  for (const word of shown) if (at < md.length && word === md[at]) at++
-  return at === md.length
-}
-
