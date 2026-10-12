@@ -474,10 +474,17 @@ export class ChatGptWebDriver implements ProviderDriver<Page> {
     return `${text}\n\nSources:\n${[...sources].map(([href, label]) => `- ${label ? `${label} ` : ''}${href}`).join('\n')}`
   }
 
-  /** Text of the last assistant answer: the container of its "ChatGPT said:" heading. */
+  /**
+   * Text of the last assistant answer: the container of its "ChatGPT said:" heading. It is read
+   * under `white-space: pre-wrap`, so runs of spaces survive (rendering collapses them, which
+   * would strip the indentation from code in a tool call's arguments).
+   */
   private async answerText(engine: UiEngine): Promise<string> {
     const heading = (await engine.resolve('turn.assistant', 1000)).locator.last()
-    const raw = await heading.locator('xpath=..').innerText().catch(() => '')
+    const raw = await heading.locator('xpath=..').evaluate((el) => {
+      ;(el as HTMLElement).style.whiteSpace = 'pre-wrap'
+      return (el as HTMLElement).innerText
+    }).catch(() => '')
     return raw.replace(/^\s*ChatGPT said:?\s*/i, '').trim()
   }
 

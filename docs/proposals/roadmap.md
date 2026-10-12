@@ -52,7 +52,10 @@ M5 gateways have started:
 - Verified live on 2026-10-12: Claude Code ran a `Read` → `Edit` → answer loop on ChatGPT.
 - The same runs found two issues, both fixed: ChatGPT hides tool-call-shaped JSON at the end of a reply, and it sometimes refuses until it is nudged.
 
-Next in M5: the Responses gateway for Codex, then drain and admin routes.
+- The Responses gateway (`system codex-env`) does the same for Codex. Both gateways share `gateway-turns`: the protocol, conversation threads, and the guard.
+- Verified live on 2026-10-12: Codex fixed a bug through the gateway, with its indentation intact. That run found that ChatGPT's renderer collapses spaces outside code blocks, so tool calls now go in a code block (ADR-0022 amendment). Claude Code was rerun on the same protocol.
+
+Next in M5: remote compaction, then drain and admin routes.
 
 Later candidates, each needing its own proposal: A2A gateway and runtime
 (cross-runtime peers), an ACP client gateway for editors, sandboxed or SSH `exec`

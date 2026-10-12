@@ -59,6 +59,8 @@
       name: '@tsuuanmi/system-workflow'              # the single engine; MCP ask/research/result/usage/explain
     - id: gateway-anthropic
       name: '@tsuuanmi/system-gateway-anthropic'     # Claude Code → website Workers as its model (system claude-env)
+    - id: gateway-responses
+      name: '@tsuuanmi/system-gateway-responses'     # Codex → website Workers as its model (system codex-env)
     - id: web-ui
       name: '@tsuuanmi/system-web-ui'                # operator UI at /ui (system ui prints the link)
     - id: mcp-server

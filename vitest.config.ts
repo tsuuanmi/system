@@ -30,6 +30,8 @@ export default defineConfig({
       '@tsuuanmi/system-agent-runtimes': src('./packages/plugins/agent-runtimes/src/index.ts'),
       '@tsuuanmi/system-runtime-acp': src('./packages/plugins/runtime-acp/src/index.ts'),
       '@tsuuanmi/system-runtime-claude-agent-sdk': src('./packages/plugins/runtime-claude-agent-sdk/src/index.ts'),
+      '@tsuuanmi/system-gateway-turns': src('./packages/gateway-turns/src/index.ts'),
+      '@tsuuanmi/system-gateway-responses': src('./packages/plugins/gateway-responses/src/index.ts'),
       '@tsuuanmi/system-gateway-anthropic': src('./packages/plugins/gateway-anthropic/src/index.ts'),
       '@tsuuanmi/system-web-ui': src('./packages/plugins/web-ui/src/index.ts'),
       '@tsuuanmi/system-worker-sessions': src('./packages/plugins/worker-sessions/src/index.ts'),

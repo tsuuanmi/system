@@ -171,6 +171,21 @@ export function claudeGatewayCommand(home: string = dshHome()): string {
   return `ANTHROPIC_BASE_URL=${new URL(url).origin}/anthropic claude --settings '${JSON.stringify({ apiKeyHelper: helper })}'`
 }
 
+/**
+ * A command that runs Codex on the Responses gateway with a `system` model provider (ADR-0022).
+ * The token reaches Codex only through its env_key variable, set from `system mcp-token` in a
+ * subshell, so it is never printed. Codex's own retries are off: a retried request would send a
+ * website turn again.
+ */
+export function codexGatewayCommand(home: string = dshHome()): string {
+  const path = join(home, 'system', 'mcp.json')
+  if (!existsSync(path)) throw new Error(`no discovery file at ${path}; is \`system start\` running?`)
+  const { url } = JSON.parse(readFileSync(path, 'utf8')) as Discovery
+  const helper = `${process.execPath} ${fileURLToPath(new URL('./bin.js', import.meta.url))} mcp-token`
+  const provider = `{name="system",base_url="${new URL(url).origin}/openai/v1",env_key="SYSTEM_MCP_TOKEN",wire_api="responses",request_max_retries=0,stream_max_retries=0,stream_idle_timeout_ms=900000}`
+  return `SYSTEM_MCP_TOKEN="$(${helper})" codex -c model_provider=system -c 'model_providers.system=${provider}' -m system-standard`
+}
+
 /** `{"Authorization": "Bearer <token>"}` for a client's headersHelper (Claude Code). */
 export function mcpHeaders(home: string = dshHome()): string {
   return JSON.stringify({ Authorization: `Bearer ${mcpToken(home)}` })

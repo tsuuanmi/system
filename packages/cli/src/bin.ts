@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { browserDeps, callTool, claudeGatewayCommand, ensureBrowser, formatExplanation, formatUsage, init, mcpConfig, mcpHeaders, mcpToken, parseAsk, readAllStdin, serveStdio, start, type ToolOutcome, uiUrl } from './index.ts'
+import { browserDeps, callTool, claudeGatewayCommand, codexGatewayCommand, ensureBrowser, formatExplanation, formatUsage, init, mcpConfig, mcpHeaders, mcpToken, parseAsk, readAllStdin, serveStdio, start, type ToolOutcome, uiUrl } from './index.ts'
 
 const USAGE = `Usage: system <command>
 
@@ -32,6 +32,7 @@ const USAGE = `Usage: system <command>
   start [dsh args...]       boot the profile (e.g. --patch ./overlay.yml)
   mcp-config <claude|codex> print client configuration for the running MCP server
   claude-env                print a command that runs Claude Code with website Workers as its model
+  codex-env                 print a command that runs Codex with website Workers as its model
   ui                        print the web UI link (runs, steps, decisions; approve, stop, continue)
   mcp-token                 print the bearer token (for an environment variable)
   mcp-headers               print the Authorization header as JSON (Claude Code headersHelper)
@@ -244,6 +245,10 @@ async function main(argv: string[]): Promise<number> {
     case 'claude-env':
       // Claude Code with website Workers as its model (the Messages gateway).
       console.log(claudeGatewayCommand())
+      return 0
+    case 'codex-env':
+      // Codex with website Workers as its model (the Responses gateway).
+      console.log(codexGatewayCommand())
       return 0
     case 'ui':
       // Opened over ssh -L like the login desktop; the link carries the token in its fragment.

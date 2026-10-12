@@ -50,26 +50,33 @@ An Anthropic Messages-compatible HTTP endpoint on the same loopback listener.
   a hash of the stable history prefix. A retained provider chat receives only
   the new suffix, the same way a Responses `previous_response_id` chain does.
 
-### Built so far (M5, first slice)
+### Built so far (M5)
 
 `@tsuuanmi/system-gateway-anthropic` serves the Messages routes under
-`/anthropic` ([source README](../../packages/plugins/gateway-anthropic/README.md)).
-It differs from the target in four ways:
+`/anthropic`, and `@tsuuanmi/system-gateway-responses` serves the Responses
+routes under `/openai` ([source READMEs](../../packages/plugins/gateway-responses/README.md)).
+They share one implementation of everything except the wire format:
+[`@tsuuanmi/system-gateway-turns`](../../packages/gateway-turns/README.md) holds
+the text tool protocol, the threads bound to provider conversations, and the
+guard.
+
+They differ from the target in four ways:
 
 - **Tools use a text protocol** ([ADR-0022](../decisions/adr/0022-text-protocol-tool-calls-for-website-models.md)),
   not MCP inversion.
-- **The client setup is not journaled:** `system claude-env` prints a command
-  whose `apiKeyHelper` reads the token.
-- **Status rows are omitted,** rather than mapped to `thinking` blocks.
-- **There are no admin or drain routes yet.**
+- **The client setup is not journaled:** `system claude-env` and
+  `system codex-env` print a command that reads the token through a helper or
+  subshell.
+- **Status rows are omitted,** rather than mapped to `thinking` blocks or
+  reasoning summaries.
+- **Some routes are missing:** remote compaction, admin, and drain.
 
 Each request is an `ask` run, so it is routed, egress-checked, and explainable
 like any other run.
 
-Verified live on 2026-10-12, with Claude Code on ChatGPT (`standard`):
-
-- `Read`, then the answer;
-- a `Read` → `Edit` → answer loop that fixed a bug in a file.
+Verified live on 2026-10-12, on ChatGPT (`standard`), with both Claude Code and
+Codex: a read, edit, and answer loop that fixed a bug in a file, with its
+indentation intact.
 
 ## MCP tool inversion
 

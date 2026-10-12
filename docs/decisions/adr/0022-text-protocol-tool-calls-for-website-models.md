@@ -72,3 +72,19 @@ can support it.
   parameters), so the model sees less detail than an API model would.
 - Moving to MCP inversion later changes only the gateway's tool path. The
   client-facing wire format stays the same.
+
+## Amendment (2026-10-12): calls go in a code block
+
+This was found live, with Codex on the Responses gateway. ChatGPT's answer
+renderer rebuilds prose as word spans, which collapses runs of spaces before the
+text reaches the DOM. An edit's indentation was lost, and the file was rewritten
+with one space.
+
+Text inside a fenced code block is kept exactly. So the turn now asks for all
+call tags in one fenced code block, one tag per line, and the gateway drops the
+block's rendered label line ("Code"). Bare tags are still parsed. The answer is
+also read under `white-space: pre-wrap`, so any spaces that are in the DOM
+survive.
+
+Prompts are unaffected: the composer keeps indentation (verified live).
+

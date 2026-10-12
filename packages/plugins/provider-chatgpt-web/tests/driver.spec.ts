@@ -68,6 +68,12 @@ describe.runIf(canRunBrowser)('ChatGptWebDriver against the fake site', () => {
     expect(turn.binding).toBeUndefined()
   }, 40_000)
 
+  it('keeps runs of spaces in the answer (indentation in a tool call\'s arguments)', async () => {
+    const answer = '<call tool="Edit">{"new_string": "def add(a, b):\\n    return a + b"}</call>'
+    const { page, driver } = await site({ answer })
+    expect((await driver.ask(page, 'Fix add', { conversation: 'temporary' })).text).toBe(answer)
+  }, 40_000)
+
   it('keeps a persistent conversation id and continues the same conversation', async () => {
     const { fake, page, driver } = await site({ answer: 'first answer' })
     const first = await driver.ask(page, 'one', { conversation: 'persistent' })

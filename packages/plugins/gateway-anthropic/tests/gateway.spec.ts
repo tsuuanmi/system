@@ -6,47 +6,26 @@ import WebServer from '@deepseek-ai/dsh-host-webserver'
 import Store from '@tsuuanmi/system-store'
 import { afterEach, describe, expect, it } from 'vitest'
 import * as Gateway from '../src/index.ts'
-import { claimsNoAccess, type MessagesRequest, NUDGE, parseToolCalls, renderOpening, renderTools, streamEvents, messageOf, tierOf } from '../src/index.ts'
+import { type MessagesRequest, messageOf, streamEvents, systemText, turnsOf } from '../src/index.ts'
 
 const cleanups: Array<() => unknown> = []
 afterEach(async () => {
   while (cleanups.length) await cleanups.pop()!()
 })
 
-describe('Messages ↔ website turn protocol (ADR-0022)', () => {
-  it('maps model names to tiers', () => {
-    expect(tierOf('system-frontier', {})).toBe('frontier')
-    expect(tierOf('claude-haiku-5-5', { haiku: 'economy' })).toBe('economy')
-    expect(tierOf('claude-opus-5-5', { haiku: 'economy' })).toBe('standard')
-  })
-
-  it('lists tools compactly, and renders the opening turn without client billing metadata', () => {
-    const tools = [{ name: 'Read', description: 'Reads a file. Long details follow.', input_schema: { properties: { file_path: { type: 'string' }, limit: { type: 'number' } }, required: ['file_path'] } }]
-    expect(renderTools(tools)).toBe('- Read(file_path: string, limit?: number) — Reads a file.')
-    const opening = renderOpening({ model: 'm', system: [{ type: 'text', text: 'x-anthropic-billing-header: v=1' }, { type: 'text', text: 'Be helpful.' }], tools, messages: [{ role: 'user', content: 'hi' }] }, new Map())
-    expect(opening).toContain('<call tool="Read">{"file_path"')
-    expect(opening).toContain('<agent-instructions>\nBe helpful.\n</agent-instructions>')
-    expect(opening.trimEnd().endsWith("The user's request: hi\nIf it needs a file, a command, or any other tool, reply now with only call tags; otherwise give the final answer.")).toBe(true)
-    expect(opening).not.toContain('billing')
-    expect(opening).toContain('[user]\nhi')
-  })
-
-  it('takes only well-formed calls to offered tools; the rest stays text', () => {
-    let n = 0
-    const id = () => `toolu_${++n}`
-    const answer = 'Let me look.\n<call tool="Read">{"file_path": "/a {b}.txt"}</call>\n<call tool="Rm">{}</call>\n<call tool="Read">["bad"]</call> <call tool="Read">{"file_path": "/broken"</call>'
-    const parsed = parseToolCalls(answer, new Set(['Read']), id)
-    expect(parsed.calls).toEqual([{ id: 'toolu_1', name: 'Read', input: { file_path: '/a {b}.txt' } }])
-    expect(parsed.text).toContain('Let me look.')
-    expect(parsed.text).not.toContain('"/a {b}.txt"')
-    expect(parsed.text).toContain('<call tool="Rm">{}</call>')
-    expect(parseToolCalls('Just an answer.', new Set(['Read']), id)).toEqual({ text: 'Just an answer.', calls: [] })
-  })
-
-  it('recognises a claim that the model cannot reach the agent tools', () => {
-    expect(claimsNoAccess("I can't access the specified local README.md through the tools available.")).toBe(true)
-    expect(claimsNoAccess('I couldn’t access calc.py, so the bug remains.')).toBe(true)
-    expect(claimsNoAccess('add() returns a - b; it cannot return the sum. Fixed.')).toBe(false)
+describe('Messages ↔ neutral turns', () => {
+  it('drops client billing metadata from the system prompt, and maps tool use and results', () => {
+    expect(systemText([{ type: 'text', text: 'x-anthropic-billing-header: v=1' }, { type: 'text', text: 'Be helpful.' }])).toBe('Be helpful.')
+    const turns = turnsOf({ model: 'm', messages: [
+      { role: 'user', content: 'hi' },
+      { role: 'assistant', content: [{ type: 'text', text: 'reading' }, { type: 'tool_use', id: 'toolu_1', name: 'Read', input: { file_path: '/x' } }] },
+      { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: [{ type: 'text', text: 'body' }], is_error: true }] },
+    ] })
+    expect(turns).toEqual([
+      { role: 'user', parts: [{ kind: 'text', text: 'hi' }] },
+      { role: 'assistant', parts: [{ kind: 'text', text: 'reading' }, { kind: 'call', id: 'toolu_1', name: 'Read', input: { file_path: '/x' } }] },
+      { role: 'user', parts: [{ kind: 'result', id: 'toolu_1', text: 'body', error: true }] },
+    ])
   })
 
   it('streams in the Messages event order, with the final text equal to the deltas', () => {
@@ -107,24 +86,12 @@ describe('Anthropic Messages gateway over HTTP', () => {
     const first: MessagesRequest = { model: 'claude-opus-5-5', system: 'Be brief.', tools: TOOLS, messages: [{ role: 'user', content: 'What is the first heading of README.md?' }] }
     const one = await (await fetch(`${base}/v1/messages`, { method: 'POST', headers: auth, body: JSON.stringify(first) })).json()
     expect(one).toMatchObject({ stop_reason: 'tool_use', content: [{ type: 'text', text: 'I will read it.' }, { type: 'tool_use', name: 'Read', input: { file_path: '/repo/README.md' } }] })
-    expect(workflow.starts[0]).toMatchObject({ template: 'ask', tier: 'standard', persist: true, classification: 'operator-shared' })
-    const toolUse = one.content[1]
-    const second: MessagesRequest = { ...first, messages: [...first.messages, { role: 'assistant', content: one.content }, { role: 'user', content: [{ type: 'tool_result', tool_use_id: toolUse.id, content: '# system' }] }] }
+    expect(one.content[1].id).toMatch(/^toolu_/)
+    const second: MessagesRequest = { ...first, messages: [...first.messages, { role: 'assistant', content: one.content }, { role: 'user', content: [{ type: 'tool_result', tool_use_id: one.content[1].id, content: '# system' }] }] }
     const two = await (await fetch(`${base}/v1/messages`, { method: 'POST', headers: auth, body: JSON.stringify(second) })).json()
     expect(two).toMatchObject({ stop_reason: 'end_turn', content: [{ type: 'text', text: 'The heading is "system".' }] })
-    // Same provider conversation; only the new suffix, labelled by tool.
     expect(workflow.starts[1]).toMatchObject({ sessionId: 'ses_1' })
-    expect(String(workflow.starts[1]!.input)).toMatch(new RegExp(`^TOOL_RESULT Read \\(${toolUse.id}\\):\\n# system\\n\\nContinue the task`))
-  })
-
-  it('nudges once, in the same conversation, when a tooled answer claims it cannot reach files', async () => {
-    const { base, auth, workflow } = await boot()
-    workflow.answers = ["I can't access README.md from here.", '<call tool="Read">{"file_path": "/repo/README.md"}</call>']
-    const request: MessagesRequest = { model: 'claude-opus-5-5', tools: TOOLS, messages: [{ role: 'user', content: 'Heading of README.md?' }] }
-    const reply = await (await fetch(`${base}/v1/messages`, { method: 'POST', headers: auth, body: JSON.stringify(request) })).json()
-    expect(reply).toMatchObject({ stop_reason: 'tool_use', content: [{ type: 'tool_use', name: 'Read' }] })
-    expect(workflow.starts[1]).toMatchObject({ sessionId: 'ses_1', input: NUDGE })
-    expect(workflow.starts).toHaveLength(2)
+    expect(String(workflow.starts[1]!.input)).toMatch(/^TOOL_RESULT Read \(toolu_[0-9a-f]+\):\n# system/)
   })
 
   it('streams server-sent events for stream: true', async () => {

@@ -134,6 +134,10 @@ Seam definitions for this layer (`Display`, `Browser`, `ProviderRegistry`) live 
 - **Anthropic Messages gateway:** an Anthropic Messages-compatible endpoint (SSE) so
   Claude Code and other Messages clients can do the same. It shares the turn broker
   with the Responses gateway.
+- **Gateway turns (built):** the library both client-protocol gateways share:
+  the text tool protocol, threads bound to provider conversations, and the guard
+  ([`gateway-turns`](../../packages/gateway-turns/README.md)). Each gateway owns
+  only its wire format.
 - **MCP server:** exposes `system` capabilities and the per-turn tool bridge.
 - **CLI and Web UI:** the operator surface for turns, workflows, accounts, remote
   login, and maintenance.
