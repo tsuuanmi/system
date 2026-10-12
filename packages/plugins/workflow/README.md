@@ -20,7 +20,9 @@ second execution path (INV-1).
     account.
   - `panel` is a team of two members over two rounds, on distinct accounts,
     and a cited synthesis (see Teams).
-  - `develop` is the software-development profile, MVP form:
+  - `develop` comes from the software-development profile
+    ([`profile-software-development`](../profile-software-development/README.md)),
+    contributed through `template()` (see Profiles):
     1. a planner, `plan:1`, proposes implementation steps (`develop`,
        `local-data`) and a review (`review`, `local-data`);
     2. the writing steps wait for the operator's approval of the exact plan,
@@ -51,6 +53,11 @@ second execution path (INV-1).
   - `investigate` is a planner, `plan:1`, then `synthesis:1`. The planner's plan
     adds the research steps (graph growth), and the synthesis answers from their
     findings (`{{grown}}`).
+  - **Profiles (REQ-WF-9).** A profile plugin contributes templates with
+    `ctx.workflow.template(name, nodes)` for its lifetime. Each is checked like
+    a configured one. Admitted runs keep their resolved spec, so withdrawing a
+    template never touches them. `templateNames()` lists what is served. The
+    seam's conformance suite is [`conformance/profiles.ts`](conformance/profiles.ts).
   - Config `templates` adds or replaces templates. A template is checked at
     load (preflight):
     - valid, unique node ids;

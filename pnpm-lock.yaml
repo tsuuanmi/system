@@ -637,6 +637,16 @@ importers:
         specifier: workspace:*
         version: link:../store
 
+  packages/plugins/profile-software-development:
+    dependencies:
+      '@tsuuanmi/system-workflow':
+        specifier: workspace:*
+        version: link:../workflow
+    devDependencies:
+      '@deepseek-ai/cordis':
+        specifier: 4.0.5-alpha.1
+        version: 4.0.5-alpha.1(@deepseek-ai/cordis-plugin-include@1.0.10-alpha.1)(@deepseek-ai/cordis-plugin-loader@1.0.6-alpha.1)
+
   packages/plugins/provider-chatgpt-web:
     dependencies:
       '@tsuuanmi/system-artifacts':
@@ -1044,6 +1054,9 @@ importers:
       '@tsuuanmi/system-mcp-server':
         specifier: workspace:*
         version: link:../plugins/mcp-server
+      '@tsuuanmi/system-profile-software-development':
+        specifier: workspace:*
+        version: link:../plugins/profile-software-development
       '@tsuuanmi/system-provider-chatgpt-web':
         specifier: workspace:*
         version: link:../plugins/provider-chatgpt-web

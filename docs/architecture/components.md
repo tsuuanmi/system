@@ -113,7 +113,9 @@ Seam definitions for this layer (`Display`, `Browser`, `ProviderRegistry`) live 
   See [teams](../design/teams.md).
 - **Profiles:** declarative domain procedures (`software-development`,
   `scientific-research`) built from node objectives and capability requirements.
-  A profile never names a provider, browser, or account.
+  A profile never names a provider, browser, or account. Each is a plugin that
+  contributes templates through `ctx.workflow.template`, and acceptance
+  contracts through `ctx.workers`. It holds no engine code.
 - **Does not own:** provider mechanics or protocol framing.
 
 ## Host

@@ -13,6 +13,7 @@ import Store from '@tsuuanmi/system-store'
 import WorkerRouter, { type WorkerExecution, type WorkRequirement } from '@tsuuanmi/system-workers'
 import WorkerSessions from '@tsuuanmi/system-worker-sessions'
 import Workflow from '@tsuuanmi/system-workflow'
+import * as SoftwareDevelopment from '@tsuuanmi/system-profile-software-development'
 import { afterEach, describe, expect, it } from 'vitest'
 import AgentWorkers, { type Config } from '../src/index.ts'
 
@@ -58,6 +59,9 @@ async function boot(agent: AgentRuntimeProvider, config: Config = { workers: [wo
     ctx.plugin(WorkerRouter, {}), ctx.plugin(AgentRuntimeRegistry), ctx.plugin(AgentWorkers, config), ctx.plugin(WorkerSessions, {}), ctx.plugin(Workflow, { retryDelayMs: 100 }),
   ]
   await Promise.all(fibers)
+  // The profile contributes its template once the engine is up.
+  fibers.push(ctx.plugin(SoftwareDevelopment))
+  await fibers.at(-1)
   ctx.agentRuntimes.register(agent)
   const stop = async (): Promise<void> => {
     for (const fiber of [...fibers].reverse()) await fiber.dispose()

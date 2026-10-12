@@ -128,26 +128,6 @@ const PLAN_PROMPT = [
   'Question: {{input}}',
 ].join('\n')
 
-const DEVELOP_PLAN_PROMPT = [
-  'Plan the software change below for local coding agents working in the operator\'s workspace.',
-  'Reply with only a JSON object in a ```json block, shaped like:',
-  '{"confidence": "high", "nodes": [{"id": "implement", "objective": "...", "prompt": "the full instruction", "capabilities": ["develop", "local-data"], "tier": "standard", "dependsOn": []},',
-  ' {"id": "review", "objective": "...", "prompt": "review the change against the request", "capabilities": ["review", "local-data"], "tier": "standard", "dependsOn": ["implement"]}]}',
-  'Implementation steps use ["develop", "local-data"]; end with one review step using ["review", "local-data"] that depends on them. Each prompt must stand on its own.',
-  '',
-  'Change: {{input}}',
-].join('\n')
-
-const DEVELOP_REPORT_PROMPT = [
-  'Report to the operator what was changed and what the independent review found, from the steps below. Be concise and list open issues.',
-  '',
-  'Change: {{input}}',
-  '',
-  '<steps>',
-  '{{grown}}',
-  '</steps>',
-].join('\n')
-
 const SYNTHESIS_PROMPT = [
   'Answer the question below from the findings of the research steps. Keep their sources. Be concise.',
   '',
@@ -186,22 +166,6 @@ export const DEFAULT_TEMPLATES: Record<string, NodeTemplate[]> = {
     {
       nodeId: 'panel', objective: 'Answer the caller\'s question as a panel', prompt: '{{input}}', capabilities: ['reason'], tier: 'standard',
       conversation: 'temporary', acceptance: 'acceptance.team-synthesis', team: { members: 2, rounds: 2, distinctAccounts: true },
-    },
-  ],
-  /**
-   * The software-development profile (MVP form): a planner proposes implementation steps for
-   * local agent Workers and a review; writing steps wait for the operator's approval of the
-   * exact plan; the review runs in a fresh session, sharing no context with the producer.
-   */
-  develop: [
-    {
-      nodeId: 'plan:1', objective: 'Plan the change', prompt: DEVELOP_PLAN_PROMPT, capabilities: ['reason'], tier: 'standard',
-      conversation: 'temporary', acceptance: 'acceptance.answer',
-      grows: { maxNodes: 4, capabilities: ['develop', 'review', 'local-data'], approvalRequired: ['develop'] },
-    },
-    {
-      nodeId: 'report:1', objective: 'Report the change and its review', dependsOn: ['plan:1'], prompt: DEVELOP_REPORT_PROMPT, capabilities: ['reason'],
-      tier: 'standard', conversation: 'temporary', acceptance: 'acceptance.answer',
     },
   ],
   review: [

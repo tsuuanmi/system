@@ -309,6 +309,27 @@ export class Workflow extends Service {
     return { draining: false, active: [...this.running.keys()] }
   }
 
+  /**
+   * A profile contributes a procedure (REQ-WF-9; the `profiles` seam in
+   * docs/architecture/plugin-model.md). The template is checked like a configured one (preflight)
+   * and served until the returned disposer runs; admitted runs keep their resolved spec, so
+   * withdrawing a template never touches them. Its acceptance contracts come from `ctx.workers`.
+   */
+  template(name: string, nodes: NodeTemplate[]): () => void {
+    if (!/^[a-z][a-z0-9-]{0,63}$/.test(name)) throw new TypeError(`template name ${name} must be lowercase letters, digits, and hyphens`)
+    if (this.templates[name]) throw new Error(`template ${name} already exists`)
+    resolve(name, nodes, {})
+    this.templates[name] = nodes
+    return () => {
+      if (this.templates[name] === nodes) delete this.templates[name]
+    }
+  }
+
+  /** The templates served now: built-in, configured, and contributed by profiles. */
+  templateNames(): string[] {
+    return Object.keys(this.templates).sort()
+  }
+
   /** Admit a run: validated, hashed, and durable at once; it runs in the background. */
   start(input: StartInput): RunView {
     if (this.draining) throw new WorkflowFailure('overloaded', 'the host is draining for a stop or upgrade; retry after it restarts')
@@ -1553,7 +1574,7 @@ export class Workflow extends Service {
       }
     })
     c.mcp.tool('run', {
-      description: `Start any workflow template (${Object.keys(this.templates).sort().join(', ')}); its steps are routed by capability to website or local agent Workers. Waits up to waitSeconds; otherwise returns a runId for \`result\`.`,
+      description: `Start a workflow template by name (built in: ${Object.keys(DEFAULT_TEMPLATES).sort().join(', ')}; profiles add more, such as develop); its steps are routed by capability to website or local agent Workers. Waits up to waitSeconds; otherwise returns a runId for \`result\`.`,
       inputSchema: {
         template: zod.string().max(100),
         input: zod.string().min(1).max(32_000),

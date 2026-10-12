@@ -90,6 +90,9 @@
       "@tsuuanmi/system-gateway-turns": [
         "packages/gateway-turns/src/index.ts"
       ],
+      "@tsuuanmi/system-profile-software-development": [
+        "packages/plugins/profile-software-development/src/index.ts"
+      ],
       "@tsuuanmi/system-gateway-responses": [
         "packages/plugins/gateway-responses/src/index.ts"
       ],

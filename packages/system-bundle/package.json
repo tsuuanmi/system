@@ -28,6 +28,7 @@
     "@tsuuanmi/system-worker-sessions": "workspace:*",
     "@tsuuanmi/system-workflow": "workspace:*",
     "@tsuuanmi/system-gateway-anthropic": "workspace:*",
+    "@tsuuanmi/system-profile-software-development": "workspace:*",
     "@tsuuanmi/system-gateway-responses": "workspace:*",
     "@tsuuanmi/system-web-ui": "workspace:*",
     "@tsuuanmi/system-event-log": "workspace:*",
