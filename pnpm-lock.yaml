@@ -460,6 +460,28 @@ importers:
         specifier: 3.18.5-alpha.1
         version: 3.18.5-alpha.1
 
+  packages/plugins/gateway-anthropic:
+    dependencies:
+      '@tsuuanmi/system-libs':
+        specifier: workspace:*
+        version: link:../../libs
+      '@tsuuanmi/system-store':
+        specifier: workspace:*
+        version: link:../store
+      '@tsuuanmi/system-workflow':
+        specifier: workspace:*
+        version: link:../workflow
+    devDependencies:
+      '@deepseek-ai/cordis':
+        specifier: 4.0.5-alpha.1
+        version: 4.0.5-alpha.1(@deepseek-ai/cordis-plugin-include@1.0.10-alpha.1)(@deepseek-ai/cordis-plugin-loader@1.0.6-alpha.1)
+      '@deepseek-ai/dsh-host-webserver':
+        specifier: 0.2.1-alpha.2
+        version: 0.2.1-alpha.2(@deepseek-ai/cordis@4.0.5-alpha.1)
+      '@deepseek-ai/schemastery':
+        specifier: 3.18.5-alpha.1
+        version: 3.18.5-alpha.1
+
   packages/plugins/leases:
     dependencies:
       '@tsuuanmi/system-libs':
@@ -963,6 +985,9 @@ importers:
       '@tsuuanmi/system-event-log':
         specifier: workspace:*
         version: link:../plugins/event-log
+      '@tsuuanmi/system-gateway-anthropic':
+        specifier: workspace:*
+        version: link:../plugins/gateway-anthropic
       '@tsuuanmi/system-leases':
         specifier: workspace:*
         version: link:../plugins/leases

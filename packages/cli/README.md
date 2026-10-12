@@ -22,6 +22,7 @@ the supported way to run a DSH harness
 | `system browser install` | installs the managed Chrome pinned in `chrome.lock.json` under `<DSH_HOME>/system/browsers` |
 | `system start [dsh args]` | runs `dsh --profile system …` with `DSH_TELEMETRY_DISABLED=1` |
 | `system mcp-config claude\|codex` | prints the client configuration from the running profile's discovery file. For Claude Code it is a `claude mcp add-json --scope user` command whose `headersHelper` runs `system mcp-headers`, so the token never sits in Claude Code's config. For Codex it is a `[mcp_servers.system]` block that runs `system mcp-stdio`. The token is never printed into the command |
+| `system claude-env` | prints a command that runs Claude Code on the Messages gateway (`ANTHROPIC_BASE_URL=…/anthropic`), with website Workers as its model. Its `apiKeyHelper` runs `system mcp-token`, so the token is never printed or written to Claude Code's settings |
 | `system mcp-token` | prints only the bearer token, for `export SYSTEM_MCP_TOKEN="$(system mcp-token)"` (Codex) |
 | `system mcp-stdio` | an MCP server on stdio that forwards tool listing and calls to the running profile, authenticating from the token file. Codex (and any client without a header helper) runs it as a local server, so no token sits in its config or environment |
 | `system mcp-headers` | prints `{"Authorization": "Bearer …"}` for Claude Code's `headersHelper`, read from the `0600` token file on every connection |

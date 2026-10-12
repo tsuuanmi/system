@@ -158,6 +158,19 @@ export function mcpConfig(client: 'claude' | 'codex', home: string = dshHome()):
   return ['# ~/.codex/config.toml', '[mcp_servers.system]', `command = ${JSON.stringify(process.execPath)}`, `args = [${JSON.stringify(bin)}, "mcp-stdio"]`, `# endpoint: ${url}`].join('\n')
 }
 
+/**
+ * A command that runs Claude Code on the Messages gateway: website Workers become its model
+ * (ADR-0022). Its apiKeyHelper runs `system mcp-token` per connection, so the token is never
+ * printed, exported, or written to Claude Code's settings.
+ */
+export function claudeGatewayCommand(home: string = dshHome()): string {
+  const path = join(home, 'system', 'mcp.json')
+  if (!existsSync(path)) throw new Error(`no discovery file at ${path}; is \`system start\` running?`)
+  const { url } = JSON.parse(readFileSync(path, 'utf8')) as Discovery
+  const helper = `${process.execPath} ${fileURLToPath(new URL('./bin.js', import.meta.url))} mcp-token`
+  return `ANTHROPIC_BASE_URL=${new URL(url).origin}/anthropic claude --settings '${JSON.stringify({ apiKeyHelper: helper })}'`
+}
+
 /** `{"Authorization": "Bearer <token>"}` for a client's headersHelper (Claude Code). */
 export function mcpHeaders(home: string = dshHome()): string {
   return JSON.stringify({ Authorization: `Bearer ${mcpToken(home)}` })

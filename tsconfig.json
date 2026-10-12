@@ -87,6 +87,9 @@
       "@tsuuanmi/system-runtime-claude-agent-sdk": [
         "packages/plugins/runtime-claude-agent-sdk/src/index.ts"
       ],
+      "@tsuuanmi/system-gateway-anthropic": [
+        "packages/plugins/gateway-anthropic/src/index.ts"
+      ],
       "@tsuuanmi/system-web-ui": [
         "packages/plugins/web-ui/src/index.ts"
       ],

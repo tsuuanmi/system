@@ -50,6 +50,27 @@ An Anthropic Messages-compatible HTTP endpoint on the same loopback listener.
   a hash of the stable history prefix. A retained provider chat receives only
   the new suffix, the same way a Responses `previous_response_id` chain does.
 
+### Built so far (M5, first slice)
+
+`@tsuuanmi/system-gateway-anthropic` serves the Messages routes under
+`/anthropic` ([source README](../../packages/plugins/gateway-anthropic/README.md)).
+It differs from the target in four ways:
+
+- **Tools use a text protocol** ([ADR-0022](../decisions/adr/0022-text-protocol-tool-calls-for-website-models.md)),
+  not MCP inversion.
+- **The client setup is not journaled:** `system claude-env` prints a command
+  whose `apiKeyHelper` reads the token.
+- **Status rows are omitted,** rather than mapped to `thinking` blocks.
+- **There are no admin or drain routes yet.**
+
+Each request is an `ask` run, so it is routed, egress-checked, and explainable
+like any other run.
+
+Verified live on 2026-10-12, with Claude Code on ChatGPT (`standard`):
+
+- `Read`, then the answer;
+- a `Read` → `Edit` → answer loop that fixed a bug in a file.
+
 ## MCP tool inversion
 
 A remote Worker, such as a web model, can use the *client's* tools, while the

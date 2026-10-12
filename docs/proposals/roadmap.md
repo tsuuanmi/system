@@ -47,6 +47,13 @@ Next in M3, all of which need the operator: `runtime-codex-sdk` (a Codex CLI log
 
 Next in M4: team leads, wake-on-message sessions, and exact-head review (which needs confined command execution).
 
+M5 gateways have started:
+- The Anthropic Messages gateway (`system claude-env`) lets Claude Code use website Workers as its model. Its tools go through a text protocol ([ADR-0022](../decisions/adr/0022-text-protocol-tool-calls-for-website-models.md)).
+- Verified live on 2026-10-12: Claude Code ran a `Read` → `Edit` → answer loop on ChatGPT.
+- The same runs found two issues, both fixed: ChatGPT hides tool-call-shaped JSON at the end of a reply, and it sometimes refuses until it is nudged.
+
+Next in M5: the Responses gateway for Codex, then drain and admin routes.
+
 Later candidates, each needing its own proposal: A2A gateway and runtime
 (cross-runtime peers), an ACP client gateway for editors, sandboxed or SSH `exec`
 providers, additional website providers, and a desktop launcher.

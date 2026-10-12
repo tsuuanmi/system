@@ -56,7 +56,7 @@ can be added without changing consumers.
 | Orchestration | `workerSessions` (Worker sessions, groups, mailboxes, peer messages under policy and barriers; MCP `session_send`, `session_inbox`) | `@tsuuanmi/system-worker-sessions` | the workflow engine (panel teams), MCP clients ([design](../design/sessions-and-messaging.md)) |
 | Orchestration | `teams` | `team-runner` | workflow |
 | Orchestration | `profiles` (domain procedures) | `profile-software-development`, `profile-scientific-research` | workflow |
-| Gateways | `clientProtocols` (shared turn broker) | `gateway-responses`, `gateway-anthropic-messages` | — (edge) |
+| Gateways | `clientProtocols` (shared turn broker) | `@tsuuanmi/system-gateway-anthropic` (built without the broker; tools use the text protocol of [ADR-0022](../decisions/adr/0022-text-protocol-tool-calls-for-website-models.md)), `gateway-responses` (planned) | — (edge) |
 | Gateways | `mcp` (tools contributed by plugins for their lifetime; definition `McpTools` in `@tsuuanmi/system-gateway-core`) | `@tsuuanmi/system-mcp-server` (own; DSH has only an MCP client) | plugins that expose operations: `login` (`account_list`, `account_save`), `workflow` (`ask`, `research`, `result`, `usage`, `explain`) |
 | Gateways | — (consumers only) | `cli` (wrapper around `dsh --profile system`), `@tsuuanmi/system-web-ui` (operator UI at `/ui` on the DSH webserver; the DSH web app is the v1.0 option), later `gateway-a2a` | — (edge) |
 
