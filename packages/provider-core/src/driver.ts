@@ -15,7 +15,7 @@ export interface ProviderMode {
   effort?: string
 }
 
-export type ProviderFeature = 'chat' | 'deep-research'
+export type ProviderFeature = 'chat' | 'deep-research' | 'web-search'
 
 export interface AskOptions {
   conversation: ConversationMode
@@ -57,6 +57,13 @@ export interface ProviderDriver<Page = unknown> {
    * #capability-vocabulary), e.g. `reason`, `persistent-conversation`, `deep-research`.
    */
   readonly capabilities: readonly string[]
+  /**
+   * Website features an account may or may not have (REQ-PRV-7), each a routing capability once
+   * `probeFeatures` proved it on that account, e.g. `deep-research`, `web-search`.
+   */
+  readonly features?: readonly string[]
+  /** Which of `features` this signed-in account offers now, read from the site without sending anything. */
+  probeFeatures?(page: Page): Promise<string[]>
   /** Where an interactive login starts. */
   readonly loginUrl: string
   /** Origins whose cookies, localStorage, and IndexedDB make up the portable state. */

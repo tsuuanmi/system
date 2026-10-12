@@ -74,6 +74,20 @@ describe.runIf(canRunBrowser)('ChatGptWebDriver against the fake site, with no r
     expect((await driver.ask(page, 'Answer in Markdown', { conversation: 'temporary' })).text).toBe(answer)
   }, 40_000)
 
+  it('probes the account\'s features from the tools popover, sending nothing (REQ-PRV-7)', async () => {
+    const all = await site()
+    expect(await all.driver.probeFeatures(all.page)).toEqual(['deep-research', 'web-search', 'image-generation'])
+    const some = await site({ features: ['web-search'] })
+    expect(await some.driver.probeFeatures(some.page)).toEqual(['web-search'])
+    expect([...all.fake.sent, ...some.fake.sent]).toEqual([])
+  }, 60_000)
+
+  it('turns Web search on for a web-search turn', async () => {
+    const { fake, page, driver } = await site({ answer: 'News' })
+    expect((await driver.ask(page, 'What happened today?', { conversation: 'temporary', feature: 'web-search' })).text).toBe('News')
+    expect(fake.sent).toEqual([expect.objectContaining({ prompt: 'What happened today?', webSearch: true })])
+  }, 40_000)
+
   it('keeps a code block\'s lines, which the answer\'s Copy loses, from the rendered block (REQ-PRV-5)', async () => {
     const answer = 'Here it is:\n```python\ndef add(a, b):\n    return a + b\n```\nDone.'
     const { page, driver } = await site({ answer })

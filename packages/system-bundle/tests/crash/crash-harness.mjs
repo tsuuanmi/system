@@ -47,6 +47,7 @@ if (mode === 'start') {
   await ctx.accounts.saveState('chatgpt-main', {
     state: { origins: [origin], cookies: [], capturedAt: '2026-10-12T00:00:00Z' }, identityHash: `sha256:${'0'.repeat(64)}`, verifiedAt: '2026-10-12T00:00:00Z',
   })
+  await ctx.accounts.setFeatures('chatgpt-main', ['deep-research', 'web-search', 'image-generation'])
   const [conversation, prompt] = rest
   runId = ctx.workflow.start({ template: 'ask', input: prompt, ...(conversation === 'persist' ? { persist: true } : {}) }).runId
 } else {

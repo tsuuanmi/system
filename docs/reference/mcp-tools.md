@@ -26,6 +26,14 @@ Open a remote login desktop for an account (noVNC over an SSH tunnel). Returns t
 |---|---|---|---|
 | `account` | string | yes |  |
 
+## `account_probe`
+
+Prove which website features an account offers now (Deep research, Web search, ...), read from the site without sending anything; routing uses only proven features.
+
+| Argument | Type | Required | Description |
+|---|---|---|---|
+| `account` | string | yes |  |
+
 ## `account_relogin`
 
 Operator tool: sign an account in again with its stored credentials (local TOTP; an emailed code is supplied with account_code).

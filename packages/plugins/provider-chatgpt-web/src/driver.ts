@@ -57,9 +57,14 @@ export function shippedMap(overlay?: string): UiMap {
   return loadUiMap(readFileSync(MAP_URL, 'utf8'), overlay)
 }
 
+/** The tools popover entry that proves each account feature. */
+const FEATURE_ENTRIES = [['deep-research', 'tools.deep-research'], ['web-search', 'tools.web-search'], ['image-generation', 'tools.create-image']] as const
+
 export class ChatGptWebDriver implements ProviderDriver<Page> {
   readonly provider = 'chatgpt-web'
-  readonly capabilities = ['reason', 'persistent-conversation', 'deep-research'] as const
+  readonly capabilities = ['reason', 'persistent-conversation'] as const
+  /** Account features, each proven on the account by `probeFeatures` (REQ-PRV-7). */
+  readonly features = ['deep-research', 'web-search', 'image-generation'] as const
   readonly loginUrl: string
   readonly stateOrigins: readonly string[]
   readonly map: UiMap
@@ -128,9 +133,9 @@ export class ChatGptWebDriver implements ProviderDriver<Page> {
     const before = await engine.count('turn.assistant')
     const previousResponse = before > 0 ? await this.answerText(engine) : null
     const mode = await this.selectMode(page, preset)
-    if (feature === 'deep-research') {
+    if (feature === 'deep-research' || feature === 'web-search') {
       await engine.act('tools.open')
-      await engine.act('tools.deep-research')
+      await engine.act(feature === 'deep-research' ? 'tools.deep-research' : 'tools.web-search')
     }
     await engine.act('composer.insert', { text: prompt })
     await this.requireChat(engine, 'before sending')
@@ -194,6 +199,20 @@ export class ChatGptWebDriver implements ProviderDriver<Page> {
   /** Open the model menu unless it is already open. */
   private async openModelMenu(engine: UiEngine): Promise<void> {
     if ((await engine.count('model.menu')) === 0) await engine.act('model.open')
+  }
+
+  /**
+   * Which features this account offers (REQ-PRV-7): a new chat's "+" tools popover is opened and
+   * read, then closed. Nothing is typed or sent.
+   */
+  async probeFeatures(page: Page): Promise<string[]> {
+    await this.open(page, { conversation: 'persistent' })
+    const engine = this.engine(page)
+    await engine.act('tools.open')
+    const found: string[] = []
+    for (const [feature, element] of FEATURE_ENTRIES) if ((await engine.count(element)) > 0) found.push(feature)
+    await page.keyboard.press('Escape')
+    return found
   }
 
   /** Navigate to a new or bound conversation in the requested mode. */

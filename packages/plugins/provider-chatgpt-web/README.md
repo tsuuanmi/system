@@ -20,6 +20,13 @@ The **ChatGPT Web provider driver**
   - completion needs the answer's finished marker ("Copy") and stable text, via
     the two-clock `waitForStableCompletion`;
   - the event stream stays open on the live site and is never consulted.
+- **Feature probe (REQ-PRV-7):** `probeFeatures` opens a new chat's "+" tools
+  popover and reports which known entries it offers: Deep research, Web
+  search, and Create image. Then it closes the popover, sending nothing. A
+  `web-search` turn picks Web search, and its pill
+  (`chatgpt-system-hint://search`) is verified in the composer. Verified live on
+  2026-10-12: the account offers all three, and a `study` ran its literature
+  review with Web search.
 - **The answer is Markdown (REQ-PRV-5).**
   - The finished answer's own Copy button gives the Markdown. It is read from
     the clipboard and kept only if its words are the rendered answer's words,

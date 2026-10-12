@@ -48,10 +48,12 @@ export interface AccountView extends Omit<CatalogEntry, 'label'> {
   revision: number
   verifiedAt?: string
   statusEvidence?: string
+  /** Website features a probe proved on this account (REQ-PRV-7), and when. */
+  features?: { names: string[]; provedAt: string }
 }
 
 interface AccountRecord {
-  schema: 'account@1.0'
+  schema: 'account@1.0' | 'account@1.1'
   accountId: string
   provider: string
   status: AccountStatus
@@ -60,6 +62,7 @@ interface AccountRecord {
   verifiedAt?: string
   statusEvidence?: string
   state?: PortableState
+  features?: { names: string[]; provedAt: string }
   revision: number
   updatedAt: string
 }
@@ -142,6 +145,11 @@ export class Accounts extends Service {
   }
 
   /** Provider runtime only: the portable browser state of a ready account. */
+  /** Record which website features a probe proved on the account (REQ-PRV-7). */
+  async setFeatures(id: string, names: readonly string[], provedAt: string = new Date().toISOString()): Promise<AccountView> {
+    return this.mutate(id, undefined, (current) => ({ ...current, features: { names: [...new Set(names)].sort(), provedAt } }))
+  }
+
   async portableState(id: string): Promise<PortableState | undefined> {
     this.entry(id)
     return (await this.record(id))?.state
@@ -192,7 +200,7 @@ export class Accounts extends Service {
       if (expectedRevision !== undefined && current.revision !== expectedRevision) {
         throw new ProviderError('reconciliation_failed', `account ${id}: expected revision ${expectedRevision}, found ${current.revision}`)
       }
-      const next = JSON.parse(JSON.stringify({ ...change(current), revision: current.revision + 1, updatedAt: new Date().toISOString() })) as AccountRecord
+      const next = JSON.parse(JSON.stringify({ ...change(current), schema: 'account@1.1', revision: current.revision + 1, updatedAt: new Date().toISOString() })) as AccountRecord
       this.schemas.assertRecord(next)
       return { kind: 'grant', payload: next }
     })
@@ -208,6 +216,7 @@ export class Accounts extends Service {
       revision: record?.revision ?? 0,
       ...(record?.verifiedAt !== undefined && { verifiedAt: record.verifiedAt }),
       ...(record?.statusEvidence !== undefined && { statusEvidence: record.statusEvidence }),
+      ...(record?.features !== undefined && { features: record.features }),
     }
   }
 }

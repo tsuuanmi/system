@@ -29,6 +29,7 @@ const USAGE = `Usage: system <command>
   account relogin <id>      sign in again with the stored credentials (TOTP computed locally)
   account code <id> <code>  supply a one-time code a running sign-in is waiting for
   account save <id>         after an interactive login: capture, verify, store encrypted
+  account probe <id>        prove which website features the account offers (Deep research, Web search, ...)
   start [dsh args...]       boot the profile (e.g. --patch ./overlay.yml)
   backup <dir> [--include-key]
                             snapshot the store, blobs, and encrypted vault into an empty dir (the key only with --include-key)
@@ -174,6 +175,12 @@ async function main(argv: string[]): Promise<number> {
       return 0
     }
     case 'account': {
+      if (rest[0] === 'probe' && rest[1]) {
+        const outcome = await callTool('account_probe', { account: rest[1] })
+        if (outcome.isError) throw new Error(outcome.text)
+        console.log(`${rest[1]}: ${outcome.text}`)
+        return 0
+      }
       if (rest[0] === 'list') {
         const outcome = await callTool('account_list', {})
         if (outcome.isError) throw new Error(outcome.text)

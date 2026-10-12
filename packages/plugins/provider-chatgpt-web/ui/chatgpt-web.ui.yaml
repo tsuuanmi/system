@@ -114,11 +114,27 @@ elements:
       - { css: '[data-prompt-link-href="app://connector_openai_deep_research"]' }
       - { css: '[app-mention-name="deep-research"]' }
       - { role: img, name: { en: '^Deep research$' } }
+  composer.web-search:
+    description: The Web search pill inserted into the composer (checked 2026-10-12).
+    scope: composer.form
+    candidates:
+      - { css: '[data-prompt-link-href="chatgpt-system-hint://search"]' }
+      - { css: '[data-system-hint-type="search"]' }
   tools.deep-research:
     description: The Deep research entry of the "+" tools popover (absent in Temporary chat).
     candidates:
       - { role: button, name: { en: '^Deep research\b' } }
     fingerprint: { role: button, name: { en: 'deep research' } }
+  tools.web-search:
+    description: The Web search entry of the "+" tools popover ("Web search Find real-time news and info").
+    candidates:
+      - { role: button, name: { en: '^Web search\b' } }
+      - { role: menuitem, name: { en: '^Web search\b' } }
+  tools.create-image:
+    description: The Create image entry of the "+" tools popover.
+    candidates:
+      - { role: button, name: { en: '^Create image\b' } }
+      - { role: menuitem, name: { en: '^Create image\b' } }
 
   research.host:
     description: >-
@@ -270,7 +286,7 @@ actions:
   tools.open:
     do: click
     target: composer.tools
-    verify: { visible: tools.deep-research }
+    verify: { anyOf: [{ visible: tools.deep-research }, { visible: tools.web-search }, { visible: tools.create-image }] }
     sideEffect: reversible
     heal: deterministic
     timeouts: { resolveMs: 5000, verifyMs: 5000 }
@@ -278,6 +294,13 @@ actions:
     do: click
     target: tools.deep-research
     verify: { visible: composer.deep-research }
+    sideEffect: reversible
+    heal: deterministic
+    timeouts: { resolveMs: 5000, verifyMs: 5000 }
+  tools.web-search:
+    do: click
+    target: tools.web-search
+    verify: { visible: composer.web-search }
     sideEffect: reversible
     heal: deterministic
     timeouts: { resolveMs: 5000, verifyMs: 5000 }

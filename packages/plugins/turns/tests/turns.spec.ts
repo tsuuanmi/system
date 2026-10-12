@@ -29,14 +29,14 @@ afterEach(async () => {
 type CatalogEntry = { id: string; provider: string; quotaClass: 'subscription-chat'; tiers: Record<string, string> }
 const account = (id: string, tiers: Record<string, string> = { economy: 'instant', standard: 'medium', frontier: 'high' }): CatalogEntry => ({ id, provider: 'chatgpt-web', quotaClass: 'subscription-chat', tiers })
 
-type AskSpec = { prompt: string; tier?: Tier; sessionId?: string; persist?: boolean; research?: boolean; classification?: WorkRequirement['data']['classification']; key?: string }
+type AskSpec = { prompt: string; tier?: Tier; sessionId?: string; persist?: boolean; research?: boolean; search?: boolean; classification?: WorkRequirement['data']['classification']; key?: string }
 
 /** What the workflow engine does before a turn: build the requirement, route it, start it on the admitted Worker. */
 async function ask(ctx: Context, input: AskSpec) {
   const sessionId = input.sessionId ?? (input.persist || input.research ? `ses_${randomBytes(8).toString('hex')}` : undefined)
   const requirement: WorkRequirement = {
     schema: 'work-requirement@1.0', objective: 'test', egressPolicy: 'egress.classification-and-secrets',
-    capabilities: ['reason', ...(sessionId ? ['persistent-conversation'] : []), ...(input.research ? ['deep-research'] : [])],
+    capabilities: ['reason', ...(sessionId ? ['persistent-conversation'] : []), ...(input.research ? ['deep-research'] : []), ...(input.search ? ['web-search'] : [])],
     data: { classification: input.classification ?? 'operator-shared', refs: [] },
     tier: { min: input.tier ?? 'standard', source: input.tier ? 'caller' : 'default' }, acceptance: { contract: 'acceptance.answer' },
   }
@@ -78,6 +78,8 @@ async function boot(options: { fake?: FakeOptions; accounts?: CatalogEntry[]; re
       state: { origins: [fake.origin], cookies: [], capturedAt: '2026-10-11T00:00:00Z' },
       identityHash: `sha256:${id === 'chatgpt-main' ? 'a'.repeat(64) : 'b'.repeat(64)}`, verifiedAt: '2026-10-11T00:00:00Z',
     })
+    // As a feature probe on the fake site would find (REQ-PRV-7); fresh, so no background probe runs.
+    await ctx.accounts.setFeatures(id, ['deep-research', 'web-search', 'image-generation'])
   }
   return { ctx, fake, dir, stop }
 }
@@ -95,6 +97,20 @@ describe.runIf(canRunBrowser)('ctx.turns: ask through a saved account', () => {
     const route = ctx.artifacts.get(turn.routeDecision!)
     expect(route?.body).toMatchObject({ decisionType: 'route', outcome: { option: 'worker:chatgpt-main/standard' } })
     expect(ctx.turnReceipts.read({ account: 'chatgpt-main', sessionId: turn.turnId, requestId: turn.turnId })).toMatchObject({ status: 'COMPLETED' })
+  }, 90_000)
+
+  it('proves an account\'s website features by a probe that sends nothing, and routes only on proven ones (REQ-PRV-7)', async () => {
+    const { ctx, fake } = await boot({ fake: { answer: 'Found it', features: ['web-search'] } })
+    expect(await ctx.turns.probe('chatgpt-main')).toEqual(['web-search'])
+    expect(fake.sent).toEqual([])
+    expect((await ctx.accounts.get('chatgpt-main')).features).toMatchObject({ names: ['web-search'] })
+    const worker = (await ctx.workers.list()).find((w) => w.worker === 'worker:chatgpt-main/standard')!
+    expect(worker.capabilities.map((c) => [c.capability, c.evidence.kind])).toEqual([['reason', 'conformance'], ['persistent-conversation', 'conformance'], ['web-search', 'probe']])
+    // A feature the account does not offer fails closed; one it offers is used for the turn.
+    await expect(ask(ctx, { prompt: 'Research it', research: true })).rejects.toThrow(/deep-research/)
+    const turn = await ctx.turns.wait((await ask(ctx, { prompt: 'Latest news?', search: true })).turnId, 30_000)
+    expect(turn).toMatchObject({ status: 'completed', answer: 'Found it' })
+    expect(fake.sent).toEqual([expect.objectContaining({ prompt: 'Latest news?', webSearch: true, deepResearch: false })])
   }, 90_000)
 
   it('maps the requested tier through the account catalog to a mode preset, verifies it, and records it', async () => {

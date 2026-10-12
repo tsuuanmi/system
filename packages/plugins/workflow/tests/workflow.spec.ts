@@ -79,6 +79,8 @@ async function boot(options: { fake?: FakeOptions; dir?: string; shared?: FakeCh
         state: { origins: [fake.origin], cookies: [], capturedAt: '2026-10-12T00:00:00Z' },
         identityHash: `sha256:${String(index).repeat(64)}`, verifiedAt: '2026-10-12T00:00:00Z',
       })
+      // As a feature probe on the fake site would find (REQ-PRV-7); fresh, so no background probe runs.
+      await ctx.accounts.setFeatures(id, ['deep-research', 'web-search', 'image-generation'])
     }
   }
   return { ctx, fake, dir, stop }

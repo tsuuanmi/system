@@ -23,13 +23,15 @@
     "@tsuuanmi/system-artifacts": "workspace:*",
     "@tsuuanmi/system-egress": "workspace:*",
     "@tsuuanmi/system-event-log": "workspace:*",
+    "@tsuuanmi/system-gateway-core": "workspace:*",
     "@tsuuanmi/system-leases": "workspace:*",
     "@tsuuanmi/system-libs": "workspace:*",
     "@tsuuanmi/system-login": "workspace:*",
     "@tsuuanmi/system-provider-core": "workspace:*",
     "@tsuuanmi/system-store": "workspace:*",
     "@tsuuanmi/system-turn-receipts": "workspace:*",
-    "@tsuuanmi/system-workers-core": "workspace:*"
+    "@tsuuanmi/system-workers-core": "workspace:*",
+    "zod": "^4.1.0"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "4.0.5-alpha.1",

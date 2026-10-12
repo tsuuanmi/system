@@ -253,6 +253,7 @@ No options.
 | `researchStallTimeoutMs` | number (0…) | `1800000` | No-progress deadline per Deep research turn, in milliseconds |
 | `maxPendingTurns` | number (1…) | `32` | Accepted but unfinished turns; more are refused |
 | `retainDays` | number (1…) | `30` | Days a finished turn (and its prompt) is kept |
+| `probeTtlMs` | number (60000…) | `86400000` | How long a ready account's feature probe stands before it is refreshed |
 
 ## `web-ui`
 

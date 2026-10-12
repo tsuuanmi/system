@@ -41,7 +41,7 @@ function scholar(ctx: Context): string[] {
   ctx.workers.register({
     name: 'chat',
     describe: async () => [{ schema: 'capability-descriptor@1.0', worker: 'chat:a', provider: 'test', tier: 'standard', quotaClass: 'subscription-chat', locality: 'remote',
-      capabilities: [{ capability: 'reason', evidence: { kind: 'conformance', at: '2026-10-12T00:00:00Z' } }], state: 'ready', observedAt: '2026-10-12T00:00:00Z' }],
+      capabilities: [{ capability: 'reason', evidence: { kind: 'conformance', at: '2026-10-12T00:00:00Z' } }, { capability: 'web-search', evidence: { kind: 'probe', at: '2026-10-12T00:00:00Z' } }], state: 'ready', observedAt: '2026-10-12T00:00:00Z' }],
     start: (request) => {
       prompts.push(request.prompt)
       const p = request.prompt

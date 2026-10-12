@@ -88,7 +88,7 @@ function study(deep: boolean): NodeTemplate[] {
       nodeId: 'literature:1', objective: 'Review the published evidence, with citations', dependsOn: ['frame:1'], prompt: LITERATURE,
       ...(deep
         ? { capabilities: ['reason', 'deep-research'], tier: 'frontier' as const, conversation: 'persistent' as const }
-        : { capabilities: ['reason'], tier: 'standard' as const, conversation: 'temporary' as const }),
+        : { capabilities: ['reason', 'web-search'], tier: 'standard' as const, conversation: 'temporary' as const }),
       acceptance: 'acceptance.cited',
     },
     { nodeId: 'evidence:1', objective: 'Extract the evidence table', dependsOn: ['frame:1', 'literature:1'], prompt: EVIDENCE, capabilities: ['reason'], tier: 'economy', conversation: 'temporary', acceptance: 'acceptance.answer', resultSchema: 'evidence-table@1.0' },

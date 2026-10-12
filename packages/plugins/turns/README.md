@@ -70,6 +70,17 @@ invoked by the [workflow engine](../workflow/README.md)
     driver's mode preset. The router chose that tier as the lowest admitted one
     at or above the requirement's minimum;
   - the receipt records the model and effort that were read back.
+- **Account features (REQ-PRV-7):**
+  - A Worker proves its driver's conformance capabilities (`reason`,
+    `persistent-conversation`). It also proves each website feature that a
+    probe found on its account (`deep-research`, `web-search`,
+    `image-generation`), with `probe` evidence.
+  - `probe(account)` runs the driver's `probeFeatures` on the account's
+    scheduler. It reads the tools popover, sends nothing, and records the
+    result on the account (MCP `account_probe`, `system account probe <id>`).
+  - Ready accounts whose probe is missing or older than `probeTtlMs`
+    (default 24 h) are probed in the background, at start and hourly.
+  - A requirement with `web-search` runs with Web search turned on.
 - **Deep research:** a requirement with `deep-research` runs as Deep research in
   its persistent session (`researchTimeoutMs`, `researchStallTimeoutMs`).
 - **Sessions:**

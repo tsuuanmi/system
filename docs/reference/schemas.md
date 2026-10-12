@@ -124,6 +124,12 @@ guesses.
   `{type: git-head, ref: HEAD, version: hash of every change on top}`. A
   review binds to it.
 
+### `account`
+
+- `account@1.1` adds `features`: the website features a probe proved on the
+  account, and when (REQ-PRV-7). Routing uses only these. A missing or stale
+  probe is refreshed; a feature is never assumed.
+
 ### `session-summary`
 
 - A Worker session's `report` checkpoint (every `checkpointEveryTurns` turns)

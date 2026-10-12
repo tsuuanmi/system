@@ -49,6 +49,8 @@ export interface FakeOptions {
   researchMs?: number
   /** Deep research report text. */
   report?: string
+  /** Features this account's tools popover offers (default all). */
+  features?: string[]
   /** Deep research asks a clarifying question instead of starting. */
   clarify?: boolean
   /** Sign-in flow after the password (requireCookie mode): none, totp, push-first (then "Try another method"), email-code, or challenge. */
@@ -68,6 +70,7 @@ export interface Sent {
   model: string
   power: string
   deepResearch: boolean
+  webSearch: boolean
 }
 
 interface Conversation {
@@ -140,6 +143,7 @@ function html(options: Required<FakeOptions>, conversation: Conversation | undef
   <button type="button">Add photos &amp; files Upload from computer</button>
   <button type="button" id="tool-web">Web search Find real-time news and info</button>
   <button type="button" id="tool-dr">Deep research Get a detailed report</button>
+  <button type="button" id="tool-image">Create image Visualize anything</button>
 </div>
 <script>
 const { options, conversationId } = ${state}
@@ -187,7 +191,19 @@ $('power').addEventListener('keydown', (e) => {
   renderMenu()
 })
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { $('model-menu').hidden = true; $('tools').hidden = true; $('picker').setAttribute('aria-expanded', 'false') } })
-document.querySelector('[aria-label="Add files and more"]').onclick = () => { $('tool-dr').hidden = temporary; $('tools').hidden = !$('tools').hidden }
+document.querySelector('[aria-label="Add files and more"]').onclick = () => {
+  const features = options.features ?? ['deep-research', 'web-search', 'image-generation']
+  $('tool-dr').hidden = temporary || !features.includes('deep-research')
+  $('tool-web').hidden = !features.includes('web-search')
+  $('tool-image').hidden = !features.includes('image-generation')
+  $('tools').hidden = !$('tools').hidden
+}
+$('tool-web').onclick = () => {
+  // Like the live site: an inline "Web search" pill in the composer.
+  $('input').innerHTML = '<p><span contenteditable="false" data-system-hint-type="search" data-prompt-link-href="chatgpt-system-hint://search"><span>Web search</span></span>&nbsp;</p>'
+  $('tools').hidden = true
+  render()
+}
 $('tool-dr').onclick = () => {
   const chip = '<span contenteditable="false" data-prompt-link-href="app://connector_openai_deep_research" app-mention-name="deep-research"><img alt="Deep research">Deep research</span>&nbsp;'
   $('input').innerHTML = '<p>' + chip + '</p>'
@@ -202,6 +218,7 @@ $('input').addEventListener('input', render)
 $('input').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); if (!running && $('input').textContent.trim()) send() } })
 async function send() {
   const deepResearch = !!$('input').querySelector('[data-prompt-link-href="app://connector_openai_deep_research"]')
+  const webSearch = !!$('input').querySelector('[data-prompt-link-href="chatgpt-system-hint://search"]')
   // Like the live site: the typed text, paragraphs as lines, without mention chips.
   const chips = [...$('input').querySelectorAll('[contenteditable="false"]')].map((el) => el.innerText)
   let prompt = $('input').innerText
@@ -216,7 +233,7 @@ async function send() {
   running = true
   render()
   const res = await fetch('/backend-api/f/conversation', { method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ prompt, mode, temporary, conversationId: convId, model, power: POWERS[power], deepResearch }) })
+    body: JSON.stringify({ prompt, mode, temporary, conversationId: convId, model, power: POWERS[power], deepResearch, webSearch }) })
   const reader = res.body.getReader()
   const answer = document.createElement('div')
   answer.className = 'turn'
@@ -296,7 +313,7 @@ export class FakeChatGpt {
     this.options = {
       startOnWork: true, chatToggleBroken: false, signedIn: true, requireCookie: false, userId: 'user-fake123', sendLabel: 'Send',
       answer: 'OK', thinkMs: 300, models: ['Latest', 'GPT-6', 'GPT-5.6 Sol', 'GPT-5.5'], lockedModels: [],
-      researchMs: 1500, report: 'Deep research report body.', clarify: false,
+      researchMs: 1500, report: 'Deep research report body.', clarify: false, features: ['deep-research', 'web-search', 'image-generation'],
       mfa: 'totp', email: 'operator@example.test', password: 'correct horse', totpSecret: 'JBSWY3DPEHPK3PXP', ...options,
     }
   }

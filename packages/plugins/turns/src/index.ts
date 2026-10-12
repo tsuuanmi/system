@@ -14,6 +14,7 @@ import z from '@deepseek-ai/schemastery'
 import type { AccountStatus } from '@tsuuanmi/system-accounts'
 import type { Classification } from '@tsuuanmi/system-egress'
 import type {} from '@tsuuanmi/system-event-log'
+import type {} from '@tsuuanmi/system-gateway-core'
 import type {} from '@tsuuanmi/system-login'
 import type {} from '@tsuuanmi/system-artifacts'
 import { type Lease, LeaseLost, StaleGeneration } from '@tsuuanmi/system-leases'
@@ -22,6 +23,7 @@ import { type BrowserTurn, type ConversationMode, type Disposition, type Portabl
 import type {} from '@tsuuanmi/system-store'
 import type {} from '@tsuuanmi/system-turn-receipts'
 import type { CapabilityDescriptor, WorkerExecution, WorkerStart, WorkerState } from '@tsuuanmi/system-workers-core'
+import { z as zod } from 'zod'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -72,6 +74,8 @@ export interface Config {
   maxPendingTurns?: number
   /** Finished turns, with their prompts, are deleted after this many days (default 30). */
   retainDays?: number
+  /** A ready account's feature probe is refreshed after this long (default 24 h, REQ-PRV-7). */
+  probeTtlMs?: number
 }
 
 interface Row {
@@ -145,6 +149,7 @@ export class Turns extends Service {
     researchStallTimeoutMs: z.natural().default(30 * 60_000).description('No-progress deadline per Deep research turn, in milliseconds'),
     maxPendingTurns: z.natural().min(1).default(32).description('Accepted but unfinished turns; more are refused'),
     retainDays: z.natural().min(1).default(30).description('Days a finished turn (and its prompt) is kept'),
+    probeTtlMs: z.natural().min(60_000).default(24 * 60 * 60_000).description('How long a ready account\'s feature probe stands before it is refreshed'),
   })
 
   private readonly schedulers = new Map<string, ProviderScheduler>()
@@ -219,6 +224,19 @@ export class Turns extends Service {
       reset: (sessionId) => Number(this.ctx.store.db.prepare('UPDATE turn_sessions SET binding = NULL WHERE session_id = ?').run(sessionId).changes) > 0,
       cancel: (id) => this.cancel(id),
     })
+    ctx.inject(['mcp'], (c) => {
+      c.mcp.tool('account_probe', {
+        description: 'Prove which website features an account offers now (Deep research, Web search, ...), read from the site without sending anything; routing uses only proven features.',
+        inputSchema: { account: zod.string().max(100) },
+      }, async (args) => {
+        try {
+          const features = await this.probe(String(args.account))
+          return { content: [{ type: 'text' as const, text: features.join(', ') || '(none)' }], structuredContent: { account: String(args.account), features } }
+        } catch (error) {
+          return { isError: true, content: [{ type: 'text' as const, text: (error as Error).message }] }
+        }
+      })
+    })
     ctx.effect(() => {
       queueMicrotask(() => {
         this.purge()
@@ -226,10 +244,17 @@ export class Turns extends Service {
       })
       const daily = setInterval(() => this.purge(), 24 * 60 * 60_000)
       daily.unref()
+      // Features are proven per account (REQ-PRV-7): missing or stale probes are refreshed in the background.
+      const probing = setTimeout(() => void this.refreshProbes(), 2000)
+      const hourly = setInterval(() => void this.refreshProbes(), 60 * 60_000)
+      probing.unref()
+      hourly.unref()
       return async () => {
         // A stop is not a failure: running and queued turns stay as they are for the next start.
         this.stopping = true
         clearInterval(daily)
+        clearTimeout(probing)
+        clearInterval(hourly)
         for (const timer of this.retries) clearTimeout(timer)
         for (const scheduler of this.schedulers.values()) scheduler.close(new ProviderError('aborted', 'turn runtime stopped'))
         await Promise.allSettled(this.inflight)
@@ -270,7 +295,7 @@ export class Turns extends Service {
       const requirement = request.requirement
       const row: Row = {
         turn_id: newId('turn'), request_key: requestKey, session_id: sessionId, mode: sessionId ? 'persistent' : 'temporary',
-        feature: requirement.capabilities.includes('deep-research') ? 'deep-research' : 'chat', tier, tier_source: requirement.tier.source,
+        feature: requirement.capabilities.includes('deep-research') ? 'deep-research' : requirement.capabilities.includes('web-search') ? 'web-search' : 'chat', tier, tier_source: requirement.tier.source,
         acceptance: requirement.acceptance.contract, objective: requirement.objective, submitted_at: null, prompt, status: 'queued',
         account, worker: request.worker, binding: null, answer: null, answer_artifact: null,
         route_decision: request.decisions.route, tier_decision: request.decisions.tier, egress_decision: null,
@@ -469,11 +494,50 @@ export class Turns extends Service {
       return TIERS.filter((tier) => account.tiers[tier]).map((tier): CapabilityDescriptor => ({
         schema: 'capability-descriptor@1.0', worker: websiteWorker(account.id, tier), provider: account.provider, tier,
         quotaClass: account.quotaClass, locality: 'remote',
-        capabilities: (driver?.capabilities ?? []).map((capability) => ({ capability, evidence: { kind: 'conformance', at: observedAt } })),
+        capabilities: [
+          ...(driver?.capabilities ?? []).map((capability) => ({ capability, evidence: { kind: 'conformance' as const, at: observedAt } })),
+          // An account feature counts only once a probe on this account proved it (REQ-PRV-7).
+          ...(account.features?.names ?? []).filter((f) => driver?.features?.includes(f)).map((capability) => ({ capability, evidence: { kind: 'probe' as const, at: account.features!.provedAt } })),
+        ],
         state: driver ? WORKER_STATE[account.status] : 'unavailable',
         observedAt,
       }))
     })
+  }
+
+  /**
+   * Prove which website features an account offers (REQ-PRV-7): the driver reads them from the
+   * site without sending anything, on the account's own scheduler, and they are recorded on the
+   * account. Only features the driver declares are kept.
+   */
+  async probe(accountId: string, signal?: AbortSignal): Promise<string[]> {
+    const view = await this.ctx.accounts.get(accountId)
+    if (view.status !== 'ready') throw new ProviderError('reauth_required', `${accountId} is ${view.status}`)
+    const driver = this.ctx.providers.get(view.provider)
+    const found = driver.probeFeatures
+      ? await this.scheduler(accountId).runTurn(`probe:${accountId}`, signal, async () => {
+        const turn = await this.ctx.browser.openTurn(accountId, { state: await this.ctx.accounts.portableState(accountId), ...(signal ? { signal } : {}) })
+        try {
+          return await driver.probeFeatures!(turn.page)
+        } finally {
+          await turn.close()
+        }
+      })
+      : []
+    const names = found.filter((f) => driver.features?.includes(f))
+    await this.ctx.accounts.setFeatures(accountId, names)
+    return names
+  }
+
+  private async refreshProbes(): Promise<void> {
+    if (this.stopping) return
+    const ttl = this.config.probeTtlMs ?? 24 * 60 * 60_000
+    for (const account of await this.ctx.accounts.list().catch(() => [])) {
+      if (this.stopping) return
+      const fresh = account.features && Date.now() - Date.parse(account.features.provedAt) < ttl
+      if (account.status !== 'ready' || fresh || !this.ctx.providers.list().includes(account.provider)) continue
+      await this.probe(account.id).catch((error: unknown) => this.ctx.logger.warn(`turns: feature probe of ${account.id} failed: ${(error as Error).message}`))
+    }
   }
 
   private async execute(row: Row, accountId: string, signal: AbortSignal, lease: () => Lease, relogged = false): Promise<void> {
