@@ -165,6 +165,21 @@ describe.runIf(canRunBrowser)('GeminiWebDriver against the fake site', { timeout
     expect(fake.started).toEqual([])
   })
 
+  it('clears Deep research, which a reopened conversation keeps chosen, before a plain follow-up', async () => {
+    const { page, driver, fake } = await open({ clarify: 'Which aspect?', answer: 'a plain answer' })
+    const { binding } = await driver.ask(page, 'Compare HTTP/2 and HTTP/3', { conversation: 'persistent', feature: 'deep-research' })
+    const follow = await driver.ask(page, 'Which RFC defines HTTP/3?', { conversation: 'persistent', binding })
+    expect(follow.text).toBe('a plain answer')
+    expect(fake.sent.map((s) => s.deepResearch)).toEqual([true, false])
+  })
+
+  it('keeps Deep research chosen, never toggled off, for a Deep research follow-up in the same conversation', async () => {
+    const { page, driver, fake } = await open({ clarify: 'Which aspect?' })
+    const { binding } = await driver.ask(page, 'Compare HTTP/2 and HTTP/3', { conversation: 'persistent', feature: 'deep-research' })
+    await driver.ask(page, 'Latency, please', { conversation: 'persistent', feature: 'deep-research', binding })
+    expect(fake.sent.map((s) => s.deepResearch)).toEqual([true, true])
+  })
+
   it('reopens a Deep research turn as running while its card works, then as its report', async () => {
     const { page, driver, fake } = await open({ researchMs: 6000 })
     let binding: string | undefined

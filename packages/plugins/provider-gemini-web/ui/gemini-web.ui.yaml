@@ -72,7 +72,7 @@ elements:
     candidates:
       - { role: menuitemcheckbox, name: { en: '^Deep research' } }
   composer.deep-research:
-    description: The chip shown in the composer while Deep research is chosen.
+    description: The chip shown in the composer while Deep research is chosen; a reopened Deep research conversation still shows it.
     candidates:
       - { role: button, name: { en: '^Deselect Deep research$' } }
 
@@ -194,6 +194,12 @@ actions:
     verify: { visible: composer.deep-research }
     sideEffect: reversible
     timeouts: { resolveMs: 3000, verifyMs: 5000 }
+  composer.clear-deep-research:
+    do: click
+    target: composer.deep-research
+    verify: { hidden: composer.deep-research }
+    sideEffect: reversible
+    timeouts: { resolveMs: 3000, verifyMs: 3000 }
   research.start:
     # Starts the research the plan describes; the plan's prompt is already sent.
     do: click

@@ -34,7 +34,7 @@ work. Each milestone ends with working, tested software and updated canonical do
 - `runtime-acp` runs any ACP agent with a client-enforced policy, for agents the operator vouches for.
 
 - `runtime-codex-sdk` makes Codex a Worker; verified live with a review on a read-only Codex Worker.
-- The Gemini Web driver serves Temporary-chat and persistent turns on the Chat tab, with each tier's model and thinking level read back, and Deep research (plan, Start research, the report with its sources). Verified live on 2026-10-12: Temporary-chat asks, the feature probe, and a Deep research report read back by reopening its conversation. That run was driven by a recording script following the map's steps; a run through the driver's `ask` is not yet verified, since the operator allowed one run.
+- The Gemini Web driver serves Temporary-chat and persistent turns on the Chat tab, with each tier's model and thinking level read back, and Deep research (plan, Start research, the report with its sources). Verified live on 2026-10-12: Temporary-chat asks, the feature probe, and a Deep research report read back by reopening its conversation. That run was driven by a recording script following the map's steps; a run through the driver's `ask` is not yet verified, since the operator allowed one run. A persistent `ask` continued that conversation live, clearing the Deep research chip it keeps; that check found the sticky chip, which a plain turn would otherwise have sent as Deep research.
 
 Next in M3, both of which need the operator: connectors as capabilities (`connector:<name>`), and an economy-tier model provider (an API key). M4 orchestration has started:
 - Bounded tier escalation after a rejected result.

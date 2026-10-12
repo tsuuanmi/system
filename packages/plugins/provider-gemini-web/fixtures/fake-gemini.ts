@@ -16,10 +16,10 @@
  *   `message-content`); a finished answer gets "Copy" and "Redo"; Stop is "Stop response";
  * - the answer's Copy gives its Markdown, with a blank line before a code block's closing fence;
  * - Deep research is under "Upload & tools" → "More tools" (not offered in a Temporary chat) and
- *   shows a "Deselect Deep research" chip. Its first reply is a plan, already with Copy, and
- *   "Start research"; started, a user turn "Start research" follows, then a reply holds a card
- *   (`gem-processing-card`, class `processing`, then `completed`) while Stop shows, and the
- *   report opens in a panel
+ *   shows a "Deselect Deep research" chip, still selected when its conversation is reopened.
+ *   Its first reply is a plan, already with Copy, and "Start research". Started, a user turn
+ *   "Start research" follows, then a reply holds a card (`gem-processing-card`, class
+ *   `processing`, then `completed`) while Stop shows, and the report opens in a panel
  *   (`deep-research-immersive-panel`): its title, the report, then "Sources used in the report".
  * No private data from the live account is included.
  */
@@ -113,7 +113,8 @@ function renderMenu() {
 $('picker').onclick = () => { renderMenu(); $('menu').hidden = !$('menu').hidden }
 $('tools').onclick = () => { $('more').hidden = true; $('tools-menu').hidden = !$('tools-menu').hidden }
 $('more-tools').onclick = () => { $('more').hidden = false; $('dr').hidden = temporary || !options.deepResearch }
-$('dr').onclick = () => { deepResearch = true; $('tools-menu').hidden = true; render() }
+// A checkbox, like the live entry: choosing it again turns Deep research off.
+$('dr').onclick = () => { deepResearch = !deepResearch; $('tools-menu').hidden = true; render() }
 $('chip').onclick = () => { deepResearch = false; render() }
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { $('menu').hidden = true; $('tools-menu').hidden = true } })
 $('tab-chat').onclick = () => { if (!options.chatTabBroken) tab = 'chat'; render() }
@@ -202,7 +203,10 @@ function renderLog(turns) {
 }
 async function refresh() {
   const res = await fetch('/_/c/' + conversationId)
-  const turns = await res.json()
+  const state = await res.json()
+  const turns = state.turns
+  // Like the live site, a conversation reopens with Deep research still chosen if it was.
+  deepResearch = state.deepResearch
   renderLog(turns)
   if (turns.some((t) => t.role === 'research' && !t.done)) setTimeout(refresh, 200)
 }
@@ -287,6 +291,8 @@ export class FakeGemini {
   readonly sent: Sent[] = []
   readonly started: string[] = []
   readonly conversations = new Map<string, Turn[]>()
+  /** Whether each conversation's last prompt was sent with Deep research chosen. */
+  private readonly chips = new Map<string, boolean>()
   private server: Server | undefined
   options: Required<FakeOptions>
   origin = ''
@@ -328,7 +334,10 @@ export class FakeGemini {
       this.sent.push(sent)
       const id = sent.temporary ? undefined : sent.conversationId ?? randomBytes(8).toString('hex')
       const turns = id ? this.conversations.get(id) ?? [] : []
-      if (id) this.conversations.set(id, turns)
+      if (id) {
+        this.conversations.set(id, turns)
+        this.chips.set(id, sent.deepResearch)
+      }
       turns.push({ role: 'user', text: sent.prompt })
       res.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
       if (id) res.write(`data: ${JSON.stringify({ conversationId: id })}\n\n`)
@@ -360,7 +369,7 @@ export class FakeGemini {
       return json(200, {})
     }
     const state = /^\/_\/c\/([0-9a-f]{16})$/.exec(url.pathname)
-    if (state) return this.conversations.has(state[1]!) ? json(200, this.view(state[1]!)) : json(404, [])
+    if (state) return this.conversations.has(state[1]!) ? json(200, { turns: this.view(state[1]!), deepResearch: this.chips.get(state[1]!) ?? false }) : json(404, {})
     const page = /^\/app(?:\/([0-9a-f]{16}))?$/.exec(url.pathname)
     if (page) {
       if (page[1] && !this.conversations.has(page[1])) {

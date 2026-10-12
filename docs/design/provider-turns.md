@@ -86,7 +86,8 @@ default. Live observations are in the
   as a user turn of its own, then follows the research card from `processing`
   to `completed`. It reads the report from the report panel, followed by the
   sources it used. A reply with no plan is a clarifying question, returned as
-  the answer.
+  the answer. A reopened Deep research conversation keeps Deep research chosen,
+  so a plain turn there clears it first and sends nothing if it cannot.
 
 ## Turn receipt
 

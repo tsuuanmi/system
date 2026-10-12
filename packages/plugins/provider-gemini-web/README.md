@@ -30,6 +30,9 @@ driver, its operations are data: a UI map,
     without the picker.
 - **Deep research** (normal chats only; Temporary chat does not offer it):
   - It is chosen under Upload & tools → More tools, and its chip proves it.
+  - A reopened Deep research conversation keeps it chosen: a plain turn there
+    clears the chip first (or sends nothing), and a Deep research follow-up
+    keeps it, since choosing its checkbox again would turn it off.
   - Its first reply is a plan, which already has Copy. The driver clicks
     **Start research**, which the site records as a user turn of its own.
   - The research card goes from `processing` to `completed`. The report is read
@@ -75,5 +78,11 @@ driver, its operations are data: a UI map,
   - `snapshot` reopened a finished Deep research conversation and read its
     report (about 17,000 characters) and its sources. That run was driven by a
     recording script following the map's steps, since the operator allowed one
-    run; a run through `ask` and a plain persistent turn are not yet verified
-    live.
+    run; a run through `ask` is not yet verified live;
+  - `ask` continued that conversation by its binding: it cleared the Deep
+    research chip, read back `3.8 Flash` / `Medium`, used the research reply as
+    the boundary, and kept the binding; `snapshot` then read the answer and the
+    prompt. A new persistent conversation (`onBinding`) is verified on the fake
+    site only, since live Gemini tests stay in Temporary chat;
+  - the app sometimes took over a minute to open a conversation; the driver
+    then failed before sending, or reported the conversation as not observed.

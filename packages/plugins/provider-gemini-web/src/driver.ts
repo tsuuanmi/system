@@ -127,6 +127,8 @@ export class GeminiWebDriver implements ProviderDriver<Page> {
     const before = await engine.count('turn.assistant')
     const previousResponse = before > 0 ? await this.answerText(engine) : null
     if (feature === 'deep-research') await this.chooseDeepResearch(engine)
+    // A reopened Deep research conversation keeps Deep research chosen: a plain turn clears it.
+    else if ((await engine.count('composer.deep-research')) > 0) await engine.act('composer.clear-deep-research')
     await engine.act('composer.insert', { text: prompt })
     const mode = await this.selectMode(page, preset)
     await this.requireChat(engine, 'before sending')
@@ -222,8 +224,13 @@ export class GeminiWebDriver implements ProviderDriver<Page> {
     }
   }
 
-  /** Deep research, from the tools menu (its more tools when it is not shown at once); the chip proves it. */
+  /**
+   * Deep research, from the tools menu (its more tools when it is not shown at once); the chip
+   * proves it. Already chosen (a reopened Deep research conversation), it is kept: its entry is a
+   * checkbox, so choosing it again would turn it off.
+   */
   private async chooseDeepResearch(engine: UiEngine): Promise<void> {
+    if ((await engine.count('composer.deep-research')) > 0) return
     await engine.act('tools.open')
     if ((await engine.count('tools.deep-research')) === 0) await engine.act('tools.show-more')
     await engine.act('tools.deep-research')
