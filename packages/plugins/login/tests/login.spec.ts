@@ -129,6 +129,17 @@ describe.runIf(canRunBrowser)('ctx.login.relogin (credential login with local TO
     for (const secret of ['correct horse', 'JBSWY3DPEHPK3PXP', 'operator@example.test']) expect(vault.includes(Buffer.from(secret))).toBe(false)
   }, 120_000)
 
+  it('never saves a different account through a credential relogin: stored credentials for another user are refused', async () => {
+    const { ctx, fake } = await bootCredentials('totp')
+    // The account was saved before as someone else; the stored credentials sign in user-cred.
+    const before = await ctx.accounts.saveState('chatgpt-main', {
+      state: { origins: [fake.origin], cookies: [], capturedAt: '2026-10-12T00:00:00Z' }, identityHash: `sha256:${'e'.repeat(64)}`, verifiedAt: '2026-10-12T00:00:00Z',
+    })
+    await expect(ctx.login.relogin('chatgpt-main')).rejects.toMatchObject({ kind: 'reauth_required', message: expect.stringMatching(/different account/) })
+    expect((await ctx.accounts.portableState('chatgpt-main'))?.capturedAt).toBe('2026-10-12T00:00:00Z')
+    expect((await ctx.accounts.get('chatgpt-main')).revision).toBeGreaterThanOrEqual(before.revision)
+  }, 120_000)
+
   it('waits for an operator-supplied code when the site emails one', async () => {
     const { ctx } = await bootCredentials('email-code')
     const relogin = ctx.login.relogin('chatgpt-main')

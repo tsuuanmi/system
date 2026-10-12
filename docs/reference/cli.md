@@ -23,7 +23,7 @@
 | `system ask [--persist] [--session <id>] [--tier <t>] [--classification <c>] (<prompt…> \| -)` | ask a website model through a saved account (template `ask`) |
 | `system research [--classification <c>] (<question…> \| -)` | the research procedure: hypotheses, a cited review, evidence, critique, conclusions (template `research`) |
 | `system run <template> [--session <id>] [--persist] [--tier <t>] [--classification <c>] (<input…> \| -)` | start any [workflow template](workflow-templates.md) |
-| `system approve <runId> [--reject] [note…]` | approve (or reject) the plan a run is waiting on, bound to that exact plan |
+| `system approve <runId> [--plan <id>] [--reject] [note…]` | approve (or reject) the plan a run is waiting on, bound to that exact plan (name it with `--plan` when several wait) |
 | `system result <runId>` | wait for a run and print its answer |
 | `system watch <runId>` | the same as `result` |
 | `system stop <runId> [reason]` | stop a run: running work is cancelled, nothing is resent |
@@ -53,7 +53,7 @@
 | Command | What it does |
 |---|---|
 | `system backup <dir> [--include-key]` | snapshot the store and the encrypted vault into an empty directory (the key only with `--include-key`) |
-| `system restore <dir> [--yes]` | preview, then restore a backup (the profile must be stopped) |
+| `system restore <dir> [--yes]` | preview, then restore a backup (the profile must be stopped; a manifest naming any file but the store and the vault is refused) |
 | `system drain [--deadline <s>]` | admit no new runs and wait for running ones (default 600 s) |
 | `system resume` | admit new runs again after a drain |
 | `system shutdown [--deadline <s>]` | drain, then stop the running profile (unfinished runs resume on start) |

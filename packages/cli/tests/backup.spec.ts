@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -68,6 +69,26 @@ describe('backup and restore (operations runbook, QA-4)', () => {
     expect(() => restoreHost(target, { home: running, yes: true })).toThrow(/does not match/)
     expect(existsSync(join(running, 'system', 'system.db'))).toBe(false)
     expect(readdirSync(join(running, 'system')).sort()).toEqual(['mcp.json', 'vault.key'])
+  })
+
+  it('restores only the files a backup holds: a manifest naming a path outside the state is refused', () => {
+    const source = home()
+    const target = join(temp(), 'b')
+    backupHost(target, { home: source.home })
+    source.db.close()
+    // A tampered backup that plants a file beside it and lists it by a path that climbs out.
+    const into = temp()
+    mkdirSync(join(into, 'system'))
+    writeFileSync(join(into, 'system', 'vault.key'), 'k'.repeat(32))
+    mkdirSync(join(target, '..', 'planted'), { recursive: true })
+    writeFileSync(join(target, '..', 'planted', 'authorized_keys'), 'attacker key')
+    const manifestPath = join(target, 'system-backup.json')
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
+    manifest.files['../planted/authorized_keys'] = createHash('sha256').update('attacker key').digest('hex')
+    writeFileSync(manifestPath, JSON.stringify(manifest))
+    expect(() => restoreHost(target, { home: into, yes: true })).toThrow(/not a file a backup holds/)
+    expect(existsSync(join(into, 'planted'))).toBe(false)
+    expect(readdirSync(join(into, 'system'))).toEqual(['vault.key'])
   })
 
   it('includes the key only when asked', () => {

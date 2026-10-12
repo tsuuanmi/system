@@ -13,11 +13,14 @@ installed.
     (`allowedTools`). The defaults are `Read`, `Grep`, `Glob` for `read-only`;
     `workspace-write` adds `Edit` and `Write`. Any other tool is refused before
     starting;
-  - `Edit` and `Write` are pre-approved only as `Edit(./**)` and `Write(./**)`,
-    scoped to the workspace. On 2026-10-12, a bare `Write` rule let a live
-    session write outside its workspace. The scoped rules held against `..`
-    traversal, a symlink out of the workspace, and a home path, and a live
-    develop run edited inside while its outside write was denied;
+  - every pre-approval is scoped to the workspace, reads included:
+    `Read(./**)`, `Grep(./**)`, `Glob(./**)`, `Edit(./**)`, `Write(./**)`. A
+    bare rule reaches the whole disk: live sessions wrote (`Write`) and read and
+    grepped (`Read`, `Grep`) outside their workspace, which would expose the
+    daemon's own state (`vault.key`, `mcp.token`). The scoped rules held against
+    `..` traversal, a symlink out of the workspace, and a home path; outside
+    reads and writes are denied while the workspace stays readable and writable
+    ([release checklist](../../../docs/validation/release-checklist.md));
   - `permissionMode: dontAsk` with no approval surface, so anything else is
     denied without a prompt;
   - `settingSources: []`: the operator's own Claude Code settings and hooks

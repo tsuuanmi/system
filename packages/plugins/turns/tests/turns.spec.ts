@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 import { Context } from '@deepseek-ai/cordis'
 import Accounts from '@tsuuanmi/system-accounts'
 import Artifacts from '@tsuuanmi/system-artifacts'
@@ -13,7 +14,9 @@ import Vault from '@tsuuanmi/system-credentials-vault'
 import VirtualDisplay from '@tsuuanmi/system-display-virtual'
 import WorkerRouter, { AdmissionFailure, type Tier, type WorkRequirement } from '@tsuuanmi/system-workers'
 import ChatGptWeb from '@tsuuanmi/system-provider-chatgpt-web'
+import { ProviderError } from '@tsuuanmi/system-provider-core'
 import Providers from '@tsuuanmi/system-providers'
+import { contentId } from '@tsuuanmi/system-libs'
 import Store from '@tsuuanmi/system-store'
 import TurnReceipts from '@tsuuanmi/system-turn-receipts'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -76,7 +79,8 @@ async function boot(options: { fake?: FakeOptions; accounts?: CatalogEntry[]; re
   for (const id of options.shared ? [] : options.ready ?? ['chatgpt-main']) {
     await ctx.accounts.saveState(id, {
       state: { origins: [fake.origin], cookies: [], capturedAt: '2026-10-11T00:00:00Z' },
-      identityHash: `sha256:${id === 'chatgpt-main' ? 'a'.repeat(64) : 'b'.repeat(64)}`, verifiedAt: '2026-10-11T00:00:00Z',
+      // The identity the account signs in as (a relogin must sign in as the same account).
+      identityHash: contentId({ provider: 'chatgpt-web', identity: `chatgpt-web:${id === 'chatgpt-main' ? fake.options.userId : `${id}-user`}` }), verifiedAt: '2026-10-11T00:00:00Z',
     })
     // As a feature probe on the fake site would find (REQ-PRV-7); fresh, so no background probe runs.
     await ctx.accounts.setFeatures(id, ['deep-research', 'web-search', 'image-generation'])
@@ -154,6 +158,27 @@ describe.runIf(canRunBrowser)('ctx.turns: ask through a saved account', () => {
     expect(fake.sent).toHaveLength(1)
     expect(await ctx.accounts.get('chatgpt-main')).toMatchObject({ status: 'ready' })
   }, 150_000)
+
+  it('signs in again only before anything was sent: a sign-out seen after the send fails the turn, never resent (INV-4)', async () => {
+    const { ctx, fake } = await boot()
+    await ctx.accounts.setCredentials('chatgpt-main', { email: fake.options.email, password: fake.options.password })
+    // A driver that sends (its receipt is written), then finds itself signed out.
+    const chatgpt = ctx.providers.get('chatgpt-web')
+    let asks = 0
+    const ask0 = chatgpt.ask.bind(chatgpt)
+    chatgpt.ask = async (page, prompt, options) => {
+      asks++
+      await options.beforeSend?.({ previousResponse: null, mode: {} })
+      throw new ProviderError('reauth_required', 'signed out after the send')
+    }
+    try {
+      const turn = await ctx.turns.wait((await ask(ctx, { prompt: 'sent once' })).turnId, 60_000)
+      expect(turn).toMatchObject({ status: 'failed', error: { kind: 'reauth_required' } })
+      expect(asks).toBe(1)
+    } finally {
+      chatgpt.ask = ask0
+    }
+  }, 120_000)
 
   it('marks the account reauth-required on positive sign-out evidence, so the next turn routes elsewhere (REQ-ACC-5)', async () => {
     const { ctx } = await boot({ fake: { signedIn: false } })
@@ -295,6 +320,57 @@ describe.runIf(canRunBrowser)('ctx.turns: ask through a saved account', () => {
     await ctx.turns.wait(first.turnId, 30_000)
     await ask(ctx, { prompt: 'three' })
   }, 90_000)
+
+  it('keeps a session\'s turns in order across a restart: a later turn waits while an earlier one cannot be reconciled yet (INV-4)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'system-turns-'))
+    cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+    const first = await boot({ dir, fake: { thinkMs: 4000, answer: (prompt: string) => `answer to ${prompt}` } })
+    const t1 = await ask(first.ctx, { prompt: 'one', persist: true })
+    const settled = async (check: () => boolean): Promise<void> => {
+      for (let i = 0; i < 300 && !check(); i++) await new Promise((resolve) => setTimeout(resolve, 100))
+    }
+    await settled(() => first.ctx.turns.get(t1.turnId)?.binding !== undefined)
+    const t2 = await ask(first.ctx, { prompt: 'two', sessionId: t1.sessionId! })
+    expect(first.ctx.turns.get(t2.turnId)?.status).toBe('queued')
+    await first.stop()
+    cleanups.splice(cleanups.indexOf(first.stop), 1)
+    // A crash: the dead process's lease on the first turn stays live for a while after the restart.
+    const db = new DatabaseSync(join(dir, 'system.db'))
+    db.prepare("UPDATE leases SET owner = 'dead:1:x', token = 'dead', expires_at = ? WHERE resource = ?").run(Date.now() + 15_000, `turn:${t1.turnId}`)
+    db.close()
+    const second = await boot({ dir, shared: first.fake })
+    const one = await second.ctx.turns.wait(t1.turnId, 90_000)
+    const two = await second.ctx.turns.wait(t2.turnId, 90_000)
+    expect([one.answer, two.answer]).toEqual(['answer to one', 'answer to two'])
+    expect(first.fake.sent.map((s) => s.prompt)).toEqual(['one', 'two'])
+  }, 180_000)
+
+  it('lets the operator cancel, and the runtime stop, while a restarted turn waits for its answer to finish', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'system-turns-'))
+    cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+    const first = await boot({ dir, fake: { researchMs: 120_000, report: 'late report' } })
+    const turn = await ask(first.ctx, { research: true, prompt: 'long research' })
+    const settled = async (check: () => boolean, ms = 60_000): Promise<void> => {
+      for (let t = Date.now(); !check() && Date.now() - t < ms;) await new Promise((resolve) => setTimeout(resolve, 100))
+    }
+    await settled(() => first.ctx.turns.get(turn.turnId)?.binding !== undefined)
+    await first.stop()
+    cleanups.splice(cleanups.indexOf(first.stop), 1)
+    const second = await boot({ dir, shared: first.fake })
+    const waits = () => second.ctx.artifacts.list({ kind: 'decision', decisionType: 'reconciliation' })
+      .filter((a) => (a.body as { outcome: { option: string } }).outcome.option === 'WAIT')
+    await settled(() => waits().length > 0)
+    await new Promise((resolve) => setTimeout(resolve, 25_000))
+    // Waiting is one decision, not one per look (INV-9).
+    expect(waits()).toHaveLength(1)
+    expect(second.ctx.turns.cancel(turn.turnId)).toBe(true)
+    await settled(() => second.ctx.turns.get(turn.turnId)?.status === 'failed', 3000)
+    expect(second.ctx.turns.get(turn.turnId)).toMatchObject({ status: 'failed', error: { kind: 'aborted' } })
+    const started = Date.now()
+    await second.stop()
+    cleanups.splice(cleanups.indexOf(second.stop), 1)
+    expect(Date.now() - started).toBeLessThan(5000)
+  }, 240_000)
 
   it('forgets finished turns (their prompts and receipts) after the retention period (INV-9)', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'system-turns-'))

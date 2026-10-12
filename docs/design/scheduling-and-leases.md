@@ -16,7 +16,10 @@ There is one scheduler per account (and one per agent Worker, with capacity 1).
 
 - **Capacity:** `maxConcurrentTurnsPerAccount` (default 2).
 - **Ordering:** turns in the same conversation session run strictly in order.
-  Turns from different sessions may run in parallel up to capacity.
+  Turns from different sessions may run in parallel up to capacity. The order is
+  decided from durable state, so it holds across processes and restarts: a later
+  website turn waits while an earlier turn of its session is unfinished, even one
+  whose lease a crashed process still holds.
 - **Exclusive fence:** `runExclusive(job)` waits for every earlier turn to finish,
   runs `job` alone, then releases later turns (FIFO). It is meant for visible
   runs and account close; nothing calls it yet. Login does not take it: a
@@ -43,6 +46,9 @@ Every scheduled unit holds a lease `{ owner, generation, expiresAt, signal }`.
   receipt written before the send, the routing, and the completion are fenced, so
   two processes sharing one home never send the same turn twice. This is covered
   by a two-process test.
+- Agent runs (`agent-workers`) hold an `agent-run:<id>` lease. A run whose lease
+  another process holds, or whose lease was lost, is looked at again once the
+  lease can be taken, so it is never stranded until the next start.
 - Workflow executions use the same lease primitive with heartbeats. Target: on
   startup, a `RUNNING` node with an expired lease or a foreign owner moves to
   `RECOVERING`. Today a run advances under a `run:<id>` lease; a lost lease re-arms

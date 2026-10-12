@@ -40,7 +40,7 @@ function scripted(script: (prompt: string) => ThreadEvent[] = (prompt) => [
 }
 
 const runtime = (s = scripted(), extra: Partial<ConstructorParameters<typeof CodexRuntime>[0]> = {}) =>
-  new CodexRuntime({ executable: '/usr/bin/codex', client: s.client, version: async () => '0.162.1', ...extra })
+  new CodexRuntime({ executable: '/usr/bin/codex', home: '/codex-home', client: s.client, version: async () => '0.162.1', mcpServers: async () => [], ...extra })
 
 agentRuntimeProviderConformance('codex-sdk', () => runtime())
 
@@ -74,6 +74,24 @@ describe('codex-sdk runtime (REQ-WRK-5, REQ-WRK-6)', () => {
       delete process.env.SYSTEM_MCP_TOKEN
       delete process.env.OPENAI_API_KEY
     }
+  })
+
+  it('runs Codex in its own home, never the operator\'s (whose MCP servers would reach the Worker)', async () => {
+    const s = scripted()
+    await runtime(s).run({ prompt: 'x', workspace: '/w', sandbox: 'read-only' }, new AbortController().signal)
+    expect(s.lastClient.env).toMatchObject({ CODEX_HOME: '/codex-home' })
+  })
+
+  it('fails closed when its Codex home has an MCP server: the Worker would reach tools outside its sandbox', async () => {
+    const homes: string[] = []
+    const withServer = (s = scripted()) => runtime(s, { mcpServers: async (home) => (homes.push(home), ['system']) })
+    expect(await withServer().probe()).toMatchObject({ available: false, detail: expect.stringMatching(/MCP server.*system/) })
+    const s = scripted()
+    await expect(withServer(s).run({ prompt: 'x', workspace: '/w', sandbox: 'read-only' }, new AbortController().signal)).rejects.toMatchObject({ kind: 'config_error' })
+    expect(s.calls).toEqual([])
+    expect(homes).toEqual(['/codex-home', '/codex-home'])
+    // An MCP server given through configuration is refused the same way.
+    expect(() => new CodexRuntime({ config: { mcp_servers: { x: { command: 'y' } } } })).toThrow(/mcp_servers/)
   })
 
   it('refuses what Codex cannot express exactly: a tool allow-list or a turn limit, before running', async () => {

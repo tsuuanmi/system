@@ -9,6 +9,7 @@
  * @module @tsuuanmi/system-turns
  */
 import { randomBytes } from 'node:crypto'
+import { setTimeout as sleep } from 'node:timers/promises'
 import { type Context, Service } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import type { AccountStatus } from '@tsuuanmi/system-accounts'
@@ -163,6 +164,8 @@ export class Turns extends Service {
   /** Operator cancellation of turns running in this process. */
   private readonly cancels = new Map<string, AbortController>()
   private stopping = false
+  /** Aborted when the runtime stops, so waits in progress end at once. */
+  private readonly halted = new AbortController()
 
   constructor(ctx: Context, private readonly config: Config = {}) {
     super(ctx, 'turns')
@@ -252,6 +255,7 @@ export class Turns extends Service {
       return async () => {
         // A stop is not a failure: running and queued turns stay as they are for the next start.
         this.stopping = true
+        this.halted.abort(new ProviderError('aborted', 'turn runtime stopped'))
         clearInterval(daily)
         clearTimeout(probing)
         clearInterval(hourly)
@@ -407,6 +411,11 @@ export class Turns extends Service {
     return running
   }
 
+  private earlierUnfinished(turnId: string): boolean {
+    return !!this.ctx.store.db.prepare(`SELECT 1 FROM turns earlier JOIN turns me ON me.session_id = earlier.session_id
+      WHERE me.turn_id = ? AND earlier.rowid < me.rowid AND earlier.status IN ('queued', 'running') LIMIT 1`).get(turnId)
+  }
+
   private retryLater(turnId: string, delayMs: number): void {
     if (this.stopping) return
     const timer = setTimeout(() => {
@@ -419,6 +428,13 @@ export class Turns extends Service {
 
   private async runOwned(turnId: string): Promise<void> {
     if (this.stopping) return
+    // A session's turns run in order, decided by the store, not by this process's memory: while
+    // an earlier turn of the session is unfinished (even one held by a crashed process's lease),
+    // a later one waits, so it never answers into a conversation that is not reconciled yet.
+    if (this.earlierUnfinished(turnId)) {
+      this.retryLater(turnId, 1000)
+      return
+    }
     const resource = `turn:${turnId}`
     let lease = this.ctx.leases.acquire(resource, LEASE_TTL_MS)
     if (!lease) {
@@ -443,7 +459,7 @@ export class Turns extends Service {
       if (!row || TERMINAL.has(row.status)) return
       const receipt = row.account ? this.ctx.turnReceipts.read(this.identity(row, row.account)) : undefined
       if (row.status === 'running' && receipt?.status === 'SUBMITTED') {
-        if ((await this.reconcileSubmitted(row, receipt, lost.signal, current)) === 'done') return
+        if ((await this.reconcileSubmitted(row, receipt, AbortSignal.any([lost.signal, cancel.signal, this.halted.signal]), current)) === 'done') return
       }
       // INV-12: the actual outgoing payload is checked before any Worker is chosen or anything is sent.
       const egress = await this.ctx.egress.check({ payload: row.prompt, classification: row.classification ?? undefined, workerClass: 'website' })
@@ -586,9 +602,11 @@ export class Turns extends Service {
       await turn.close()
       if (error instanceof ProviderError && error.kind === 'reauth_required') {
         // Signed out before anything was sent: a credentials-mode account signs in again once
-        // (ADR-0017), then the turn runs again; otherwise the account needs the operator.
+        // (ADR-0017), then the turn runs again; otherwise the account needs the operator. A turn
+        // whose receipt exists may have been sent, so it is never run again (INV-4).
         const login = this.ctx.get('login')
-        if (!relogged && view.loginMode === 'credentials' && login) {
+        const sent = this.ctx.turnReceipts.read(this.identity(row, accountId)) !== undefined
+        if (!relogged && !sent && view.loginMode === 'credentials' && login) {
           await login.relogin(accountId)
           return this.execute(this.row(row.turn_id)!, accountId, signal, lease, true)
         }
@@ -692,9 +710,8 @@ export class Turns extends Service {
           `the host stopped after this prompt was sent and the outcome cannot be established (decision ${decision}); it is not resent automatically`), lease)
         return 'done'
       }
-      // WAIT: the provider is still generating; look again shortly.
-      await new Promise((resolve) => setTimeout(resolve, 5000))
-      signal.throwIfAborted()
+      // WAIT: the provider is still generating; look again shortly (a cancel or a stop ends the wait).
+      await sleep(5000, undefined, { signal })
     }
   }
 

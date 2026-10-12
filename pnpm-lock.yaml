@@ -805,6 +805,9 @@ importers:
       '@tsuuanmi/system-agent-runtime-core':
         specifier: workspace:*
         version: link:../../agent-runtime-core
+      '@tsuuanmi/system-libs':
+        specifier: workspace:*
+        version: link:../../libs
       '@tsuuanmi/system-provider-core':
         specifier: workspace:*
         version: link:../../provider-core

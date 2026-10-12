@@ -260,7 +260,7 @@ export class Login extends Service {
       state,
       identityHash: contentId({ provider: account.provider, identity }),
       verifiedAt: new Date().toISOString(),
-    }, account.revision)
+    }, account.revision, { sameIdentity: !!options.signIn })
   }
 }
 

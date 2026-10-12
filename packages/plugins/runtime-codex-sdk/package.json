@@ -21,6 +21,7 @@
   "dependencies": {
     "@openai/codex-sdk": "0.162.1",
     "@tsuuanmi/system-agent-runtime-core": "workspace:*",
+    "@tsuuanmi/system-libs": "workspace:*",
     "@tsuuanmi/system-provider-core": "workspace:*"
   },
   "peerDependencies": {

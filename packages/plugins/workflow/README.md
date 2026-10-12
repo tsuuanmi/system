@@ -136,9 +136,14 @@ second execution path (INV-1).
   - Steps that need a capability in `approvalRequired` (default `develop`) run
     behind a `gate` node, which waits `BLOCKED`. The run is parked, not failed,
     and its view shows `blocked { nodeId, plan }`.
-  - `approve(runId, verdict)` (MCP `approve`, `system approve`) records an
-    `approval@1.0` bound to that exact plan, then a `gate` decision. Approved,
-    the steps run; rejected, the run fails as `plan_rejected`.
+  - `approve(runId, { verdict, note?, plan? })` (MCP `approve`,
+    `system approve`) records an `approval@1.0` bound to that exact plan, then a
+    `gate` decision. Approved, the steps run; rejected, the run fails as
+    `plan_rejected`.
+  - The verdict is bound to the plan the operator read: `plan` names it, and the
+    gate is read under the run's lease. Without `plan` the run must wait on
+    exactly one plan; with several waiting, the call is refused and lists them,
+    so a plan that arrived later is never approved unseen.
   - `autoApprovePlans` (default off) approves a high-confidence plan by policy.
 - **Teams (REQ-TEAM-1..4, [design](../../../docs/design/teams.md)).**
   - A template node with `team: { members (2-5), rounds (1-3, default 2),
@@ -232,7 +237,8 @@ second execution path (INV-1).
 - **MCP tools** (they replace the built-in placeholders):
   - `ask` waits up to `waitSeconds` (≤ 55 s);
   - `run { template, input, … }` starts any template, and waits like `ask`;
-  - `approve { runId, verdict, note? }` gives the operator's verdict on a waiting plan;
+  - `approve { runId, verdict, note?, plan? }` gives the operator's verdict on a
+    waiting plan (`plan` is required when several plans wait);
   - `stop`, `continue`, `delete`, and `supersede` are the operator controls above;
   - `drain` admits no new run (a new one is refused as `overloaded`) and
     reports the runs still executing; call it again to poll. `resume` admits

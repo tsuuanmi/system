@@ -160,6 +160,10 @@ flowchart TD
   - `manual`: the operator runs `system account code <id> <code>`, or types the
     code in the remote view.
   - `imap` (later, opt-in) reads the one-time code from the operator's own mailbox.
+- **Same identity:** a credential login never switches accounts. If it signs in
+  as a different identity than the one saved, it is refused (`reauth_required`)
+  and nothing is stored, so a changed credential cannot redirect the account.
+  Only a manual Save at the remote login may switch it.
 - **Bounds:** at most 2 submission attempts per login, then `NEEDS_HUMAN`.
   Nothing is retried in a way that could lock the account. Challenges are never
   solved (CON-3).

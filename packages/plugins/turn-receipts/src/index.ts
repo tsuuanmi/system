@@ -131,6 +131,11 @@ export class TurnReceipts extends Service {
     return this.ctx.store.transaction(() => {
       const current = this.require(identity)
       const outcome = reconcileTurn(current, snapshot, { maxResubmits: this.maxResubmits, ...options })
+      // Waiting is recorded once: a provider still generating is looked at again and again.
+      const last = current.reconciliations?.at(-1)
+      if (outcome === 'WAIT' && last && (this.ctx.artifacts.get(last)?.body as { outcome?: { option?: string } } | undefined)?.outcome?.option === 'WAIT') {
+        return { outcome, decision: last }
+      }
       const envelope = this.ctx.artifacts.recordDecision({
         decisionType: 'reconciliation',
         question: `How to continue provider turn ${current.requestId} on ${current.account}?`,

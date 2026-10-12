@@ -39,7 +39,8 @@ SYSTEM_MCP_TOKEN="$(… mcp-token)" codex -c model_provider=system \
     as `custom_tool_call`;
   - hosted tools (`web_search`) and namespaces are not offered.
 - **Binding:** Codex's `prompt_cache_key` (its thread id) binds a conversation.
-  Without one, the stable prefix does.
+  Without one, the stable prefix does. Either way, a request resumes only the
+  conversation its own history came from.
 - **Events:**
   - The stream starts with `response.created`. While the turn runs,
     `response.in_progress` is the keepalive.

@@ -93,6 +93,19 @@ describe('ctx.turnReceipts', () => {
     expect(ctx.turnReceipts.read(id)?.reconciliations).toEqual([decision])
   })
 
+  it('records waiting once: a repeated WAIT reuses its decision, and a change of outcome is recorded (INV-9)', async () => {
+    const ctx = await boot()
+    ctx.turnReceipts.submit(submission)
+    const first = ctx.turnReceipts.reconcile(id, { text: '', running: true })
+    const again = ctx.turnReceipts.reconcile(id, { text: '', running: true })
+    expect([first.outcome, again.outcome]).toEqual(['WAIT', 'WAIT'])
+    expect(again.decision).toBe(first.decision)
+    expect(ctx.turnReceipts.read(id)?.reconciliations).toEqual([first.decision])
+    const done = ctx.turnReceipts.reconcile(id, { text: 'the answer', running: false })
+    expect(done.outcome).toBe('RECOVER')
+    expect(ctx.turnReceipts.read(id)?.reconciliations).toEqual([first.decision, done.decision])
+  })
+
   it('deletes one receipt without touching the session\'s other turns (retention, INV-9)', async () => {
     const ctx = await boot()
     ctx.turnReceipts.submit(submission)

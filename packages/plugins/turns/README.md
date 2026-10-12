@@ -69,6 +69,9 @@ invoked by the [workflow engine](../workflow/README.md)
     Then the turn waits (WAIT), adopts the answer without resending (RECOVER),
     resends within the bound (RESUBMIT), or fails closed with
     `reconciliation_failed` (AMBIGUOUS).
+  - **WAIT** looks again every 5 s with an abortable sleep, so an operator
+    cancel or a runtime stop ends the wait at once. Consecutive WAITs are one
+    decision (`turnReceipts.reconcile`).
   - A stop leaves turns as they are for the next start.
 - **Tiers and modes:**
   - the Worker's tier maps through the account's catalog `tiers` to the
@@ -91,9 +94,18 @@ invoked by the [workflow engine](../workflow/README.md)
 - **Sessions:**
   - the caller issues session ids; a session is bound to the account of its
     first turn;
-  - turns of one session run in acceptance order.
+  - turns of one session run in acceptance order, **decided by the store**, not
+    by this process's memory: a later turn waits (looked at again every second)
+    while an earlier turn of its session is `queued` or `running`, including one
+    whose lease a crashed process still holds. So it never answers into a
+    conversation that is not reconciled yet; otherwise, after a quick restart,
+    a turn could be recorded with the next turn's answer.
 - **Sign-out:** a driver `reauth_required` (it saw the login surface) marks the
-  account `reauth-required`, so new turns route elsewhere.
+  account `reauth-required`, so new turns route elsewhere. A credentials-mode
+  account signs in again once (`login.relogin`, ADR-0017) and the turn runs
+  again, but only while the turn has no receipt. A `reauth_required` after the
+  receipt exists means the prompt may have been sent, so the turn fails instead
+  (INV-4).
 - **Submitted:** a view's `submitted` flag says whether the prompt reached the
   provider. It is set in the same transaction as the receipt, so a caller never
   resends.

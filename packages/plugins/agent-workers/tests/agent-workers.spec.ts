@@ -3,6 +3,7 @@ import { generateKeyPairSync } from 'node:crypto'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 import { Context } from '@deepseek-ai/cordis'
 import AgentRuntimeRegistry, { type AgentRuntimeProvider, type RunSpec, type SandboxMode } from '@tsuuanmi/system-agent-runtimes'
 import Artifacts from '@tsuuanmi/system-artifacts'
@@ -239,6 +240,26 @@ describe('ctx.workers source `agents`: agent runtimes as Workers', () => {
     expect(ctx.workers.affinity('ses_agent')).toEqual(['agent:reviewer'])
   })
 
+  it('runs a queued run once a crashed process\'s lease on it expires, instead of stranding it until the next start', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'system-agents-'))
+    const first = await boot(new ScriptedAgent({ holdMs: 30_000 }), undefined, dir)
+    const admitted = await first.ctx.workers.route(requirement())
+    const source = first.ctx.workers.source('agents')!
+    source.start({ key: 'k-1', worker: 'agent:reviewer', prompt: 'long', requirement: requirement(), decisions: admitted.decisions })
+    const queued = source.start({ key: 'k-2', worker: 'agent:reviewer', prompt: 'next', requirement: requirement(), decisions: admitted.decisions })
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    await first.stop()
+    cleanups.splice(cleanups.indexOf(first.stop), 1)
+    // A crash: the dead process still holds the queued run's lease for a few seconds.
+    const db = new DatabaseSync(join(dir, 'system.db'))
+    db.prepare("INSERT OR REPLACE INTO leases (resource, owner, token, generation, expires_at) VALUES (?, 'dead:1:x', 'dead', 7, ?)").run(`agent-run:${queued.id}`, Date.now() + 3000)
+    db.close()
+    const again = new ScriptedAgent()
+    const second = await boot(again, undefined, dir)
+    expect(await second.ctx.workers.source('agents')!.wait(queued.id, 15_000)).toMatchObject({ status: 'completed', submitted: true })
+    expect(again.runs.map((r) => r.prompt)).toEqual(['next'])
+  }, 60_000)
+
   it('never runs a started run again after a restart: it fails for the operator to inspect (INV-4)', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'system-agents-'))
     const first = await boot(new ScriptedAgent({ holdMs: 30_000 }), undefined, dir)
@@ -278,7 +299,8 @@ describe('ctx.workers source `agents`: agent runtimes as Workers', () => {
     expect(plans.at(-1)).toContain('echo: add the flag')
   }, 60_000)
 
-  describe('exact-head review (REQ-TEAM-5, REQ-WF-5)', () => {
+  // Real git repositories and several review cycles: slower than the 5 s default on CI runners.
+  describe('exact-head review (REQ-TEAM-5, REQ-WF-5)', { timeout: 60_000 }, () => {
     const gitRepo = (): string => {
       const dir = mkdtempSync(join(tmpdir(), 'system-review-ws-'))
       cleanups.push(() => rmSync(dir, { recursive: true, force: true }))

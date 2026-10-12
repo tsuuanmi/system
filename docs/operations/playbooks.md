@@ -15,8 +15,10 @@
    - an agent run by `runTimeoutMs`;
    - a gateway request by its `timeoutMs`.
    A step that passes its bound fails; it does not hang.
-4. A run that waits for approval is BLOCKED. Run `system approve <runId>`, or
-   approve with `--reject`.
+4. A run that waits for approval is BLOCKED. Run
+   `system approve <runId> --plan <plan id>` for the plan you read (the id is
+   printed with the wait; `--plan` is required when several plans wait), or add
+   `--reject`.
 5. `system stop <runId>` cancels running work and resends nothing.
    `system continue <runId>` then reopens the failed step as a new attempt.
 

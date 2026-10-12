@@ -106,10 +106,18 @@ export class Accounts extends Service {
   }
 
   /** Save verified portable state after a login (provider runtime only); the account becomes ready. */
-  async saveState(id: string, input: { state: PortableState; identityHash: ContentId; verifiedAt: string }, expectedRevision?: number): Promise<AccountView> {
-    return this.mutate(id, expectedRevision, ({ statusEvidence: _cleared, ...current }) => ({
-      ...current, status: 'ready', state: input.state, identityHash: input.identityHash, verifiedAt: input.verifiedAt,
-    }))
+  /**
+   * Store a verified sign-in. With `sameIdentity` (an unattended credential relogin), a sign-in as
+   * a different account than the one saved is refused and nothing is stored: stored credentials
+   * may have been changed by a client, and only the operator, at the remote login, may switch.
+   */
+  async saveState(id: string, input: { state: PortableState; identityHash: ContentId; verifiedAt: string }, expectedRevision?: number, options: { sameIdentity?: boolean } = {}): Promise<AccountView> {
+    return this.mutate(id, expectedRevision, ({ statusEvidence: _cleared, ...current }) => {
+      if (options.sameIdentity && current.identityHash && current.identityHash !== input.identityHash) {
+        throw new ProviderError('reauth_required', `account ${id}: the sign-in is a different account than the one saved; nothing was saved (sign in at the remote login to switch)`)
+      }
+      return { ...current, status: 'ready', state: input.state, identityHash: input.identityHash, verifiedAt: input.verifiedAt }
+    })
   }
 
   /**

@@ -124,6 +124,9 @@ flowchart LR
   the CLI or Web UI.
 - The approval is an `approval` artifact bound to the exact plan id. An edited
   plan is a new artifact that needs a new approval.
+- A verdict names the plan the operator read. With several plans waiting, a
+  verdict that names none is refused and lists them, so a plan that arrived later
+  is never approved unseen. The gate is read and decided under the run's lease.
 
 ## Handoffs
 

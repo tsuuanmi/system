@@ -58,7 +58,7 @@ describe('claude-agent-sdk: the configured policy, exactly', () => {
     const result = await runtime(scripted(calls)).run({ prompt: 'review', workspace, sandbox: 'read-only', model: 'opus-x', maxTurns: 5, resume: 'h-0' }, new AbortController().signal)
     expect(result).toEqual({ text: 'echo: review', nativeHandle: 'h-1', turns: 2, costUsd: 0.01 })
     expect(calls[0]!.options).toMatchObject({
-      cwd: workspace, permissionMode: 'dontAsk', permissionPrompts: 'none', allowedTools: ['Read', 'Grep', 'Glob'], tools: ['Read', 'Grep', 'Glob'],
+      cwd: workspace, permissionMode: 'dontAsk', permissionPrompts: 'none', allowedTools: ['Read(./**)', 'Grep(./**)', 'Glob(./**)'], tools: ['Read', 'Grep', 'Glob'],
       settingSources: [], mcpServers: {}, strictMcpConfig: true, pathToClaudeCodeExecutable: '/usr/bin/claude', model: 'opus-x', maxTurns: 5, resume: 'h-0',
     })
   })
@@ -66,7 +66,7 @@ describe('claude-agent-sdk: the configured policy, exactly', () => {
   it('never runs with no tools: an empty list means the minimal read set (live 2026-10-12)', async () => {
     const calls: Call[] = []
     await runtime(scripted(calls)).run({ prompt: 'x', workspace, sandbox: 'read-only', tools: [] }, new AbortController().signal)
-    expect(calls[0]!.options).toMatchObject({ tools: ['Read', 'Grep', 'Glob'], allowedTools: ['Read', 'Grep', 'Glob'] })
+    expect(calls[0]!.options).toMatchObject({ tools: ['Read', 'Grep', 'Glob'], allowedTools: ['Read(./**)', 'Grep(./**)', 'Glob(./**)'] })
   })
 
   it('refuses tools the sandbox cannot hold, before running (REQ-WRK-6)', async () => {
@@ -83,7 +83,7 @@ describe('claude-agent-sdk: the configured policy, exactly', () => {
     await runtime(scripted(calls)).run({ prompt: 'fix it', workspace, sandbox: 'workspace-write' }, new AbortController().signal)
     expect(calls[0]!.options).toMatchObject({
       cwd: workspace, permissionMode: 'dontAsk', tools: ['Read', 'Grep', 'Glob', 'Edit', 'Write'],
-      allowedTools: ['Read', 'Grep', 'Glob', 'Edit(./**)', 'Write(./**)'],
+      allowedTools: ['Read(./**)', 'Grep(./**)', 'Glob(./**)', 'Edit(./**)', 'Write(./**)'],
     })
   })
 

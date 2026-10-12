@@ -105,13 +105,13 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     const { origin, token, workflow } = await boot()
     const post = (path: string, body: unknown, type = 'application/json') =>
       fetch(`${origin}/ui/api/runs/run_abc/${path}`, { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': type, origin }, body: JSON.stringify(body) })
-    expect((await post('approve', { verdict: 'approved', note: 'ok' })).status).toBe(200)
+    expect((await post('approve', { verdict: 'approved', note: 'ok', plan: 'sha256:11' })).status).toBe(200)
     expect((await post('stop', { reason: 'enough' })).status).toBe(200)
     expect((await post('continue', {})).status).toBe(200)
     expect((await post('approve', { verdict: 'maybe' })).status).toBe(400)
     expect((await post('stop', {}, 'text/plain')).status).toBe(415)
     expect((await post('delete', {})).status).toBe(404)
-    expect(workflow.calls).toEqual([['approve', 'run_abc', { verdict: 'approved', note: 'ok' }], ['stop', 'run_abc', 'enough'], ['continue', 'run_abc', undefined]])
+    expect(workflow.calls).toEqual([['approve', 'run_abc', { verdict: 'approved', note: 'ok', plan: 'sha256:11' }], ['stop', 'run_abc', 'enough'], ['continue', 'run_abc', undefined]])
   })
 
   it.runIf(canRunBrowser)('renders runs, steps, and decisions in a real browser, and approves a waiting plan', async () => {
@@ -129,5 +129,7 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     await page.getByRole('button', { name: 'Approve plan' }).click()
     await expect.poll(() => workflow.calls.length).toBe(1)
     expect(workflow.calls[0]![0]).toBe('approve')
+    // The page approves the plan it shows (INV-5).
+    expect(workflow.calls[0]![2]).toMatchObject({ verdict: 'approved', plan: 'sha256:11' })
   }, 60_000)
 })

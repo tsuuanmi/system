@@ -41,8 +41,13 @@
   - It stops at any challenge (never solved), at an unknown page, or after two
     rejected codes. In those cases the account is marked `reauth-required` and
     nothing is saved.
+  - **It never switches accounts.** Its `save` passes `sameIdentity`
+    (`accounts.saveState`): a sign-in as a different account than the one saved
+    is refused with `reauth_required`, and nothing is stored. Only a manual Save
+    at the remote login may switch the account.
   - The turn runtime calls `relogin` once when a credentials-mode account turns
-    out to be signed out (before anything was sent).
+    out to be signed out, and only while the turn has no receipt (nothing was
+    sent).
 - **MCP tools** (when `ctx.mcp` is mounted): `account_list` (secret-free views),
   `account_login { account }` (returns the URL and the `ssh -L` command),
   `account_save { account }`, and the credential-login tools

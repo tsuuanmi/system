@@ -48,11 +48,26 @@ an `agent-workers` row.
     the system gateway, keep the token in the daemon's environment as the
     variable the provider's `env_key` names, and set
     `forwardEnv: ['SYSTEM_MCP_TOKEN']` on the `runtime-codex-sdk` row. Without
-    it, Codex cannot authenticate to the gateway.
+    it, Codex cannot authenticate to the gateway. Such a Worker needs no login.
   - **Claude Code:** its own sign-in in `~/.claude` needs nothing. An API key or
     OAuth token taken from the environment must be named in the
     `runtime-claude-agent-sdk` row's `forwardEnv`.
   - **ACP agents:** each `runtime-acp` agent entry has its own `forwardEnv`.
+- **Codex Worker home:** Codex Workers run with their own `CODEX_HOME`
+  (`runtime-codex-sdk` config `home`, default `~/.dsh/system/codex-home`),
+  never your `~/.codex`, which `system mcp-config codex` gives the `system` MCP
+  server. Codex starts MCP servers outside its sandbox, so the Worker home must
+  configure none: if it does, the Worker is unavailable and runs fail
+  (`config_error`) until you remove them
+  (`CODEX_HOME=~/.dsh/system/codex-home codex mcp remove <name>`). A Worker that
+  uses an OpenAI or ChatGPT login must be signed in inside that home:
+
+  ```sh
+  CODEX_HOME=~/.dsh/system/codex-home codex login
+  ```
+
+  Codex's sandbox confines writes, not reads: a Codex Worker can read whatever
+  your user can ([threat model](../security/threat-model.md)).
 - **`local-private` work:** refused at egress by default (`egress_denied`,
   nothing sent), because the agent's model is remote. Routing still admits the
   Worker, since it is local. If the agent's model runs on this machine, set the
@@ -67,6 +82,10 @@ A turn that fails with `reauth_required` or `challenge` (disposition
 - **With stored credentials:**
   1. Run `system account relogin <id>`. The TOTP code is computed locally.
   2. If the site emails a code, supply it with `system account code <id> <code>`.
+
+  A relogin never switches accounts: if the stored credentials sign in as a
+  different account than the one saved, it fails with `reauth_required` and
+  stores nothing. Switch accounts only through `system account login <id>`.
 - **Without stored credentials:** run `system account login <id>` and sign in
   through the remote desktop, as at first start.
 - Store credentials once with `system account credentials <id>` (JSON on
@@ -93,7 +112,8 @@ them.
 - **Restore:**
   1. `system shutdown` stops the profile.
   2. `system restore <dir>` previews the backup and verifies every file
-     against the manifest.
+     against the manifest. A manifest naming any file but `system.db`,
+     `vault.enc`, and `vault.key` refuses the whole backup.
   3. `system restore <dir> --yes` restores it. The replaced store is kept as
      `system.db.before-restore-<time>`. A host without the vault key is refused
      until the key is put back.

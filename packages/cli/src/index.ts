@@ -278,6 +278,8 @@ export async function shutdownHost(deadlineMs: number, options: { home?: string;
 }
 
 const BACKUP_MANIFEST = 'system-backup.json'
+/** The only files a backup holds; a manifest naming any other path is refused. */
+const BACKUP_FILES: readonly string[] = ['system.db', 'vault.enc', 'vault.key']
 
 interface BackupManifest {
   schema: 'system-backup@1'
@@ -345,6 +347,9 @@ export function restoreHost(source: string, options: { home?: string; yes?: bool
   const state = join(options.home ?? dshHome(), 'system')
   const manifest = JSON.parse(readFileSync(join(source, BACKUP_MANIFEST), 'utf8')) as BackupManifest
   if (manifest.schema !== 'system-backup@1') throw new Error(`${source} is not a system backup`)
+  for (const file of Object.keys(manifest.files)) {
+    if (!BACKUP_FILES.includes(file)) throw new Error(`${JSON.stringify(file)} is not a file a backup holds; refusing the backup`)
+  }
   for (const [file, hash] of Object.entries(manifest.files)) {
     if (!existsSync(join(source, file)) || fileHash(join(source, file)) !== hash) throw new Error(`${file} does not match the backup manifest`)
   }

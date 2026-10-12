@@ -102,6 +102,22 @@ describe('threads', () => {
     expect(String(workflow.starts[1]!.input)).toMatch(new RegExp(`^TOOL_RESULT Read \\(${call.id}\\):\\n# system\\n\\nContinue the task`))
   })
 
+  it('resumes only the conversation the history came from: another client, or an edited history, opens a fresh one', async () => {
+    const { threads, workflow } = await boot()
+    workflow.answers = ['<call tool="Read">{"file_path": "/repo/README.md"}</call>', 'fresh for the other client', 'fresh after the edit']
+    const one = await threads.exchange({ key: 'k', tier: 'standard', system: 'Be brief.', tools: TOOLS, turns: [ASK], closed: () => false })
+    const call = (one as { calls: Array<{ id: string }> }).calls[0]!
+    // A second client with the same opening (same key) and its own call: never answered in the first one's conversation.
+    const other: Turn[] = [ASK, { role: 'assistant', parts: [{ kind: 'call', id: 'toolu_other', name: 'Read', input: {} }] }, { role: 'user', parts: [{ kind: 'result', id: 'toolu_other', text: 'private file' }] }]
+    expect(await threads.exchange({ key: 'k', tier: 'standard', system: 'Be brief.', tools: TOOLS, turns: other, closed: () => false })).toMatchObject({ kind: 'reply', text: 'fresh for the other client' })
+    expect(workflow.starts[1]).toMatchObject({ persist: true })
+    expect(workflow.starts[1]).not.toHaveProperty('sessionId')
+    // The first client's history, with an earlier turn edited after the fact: not resumed either.
+    const edited: Turn[] = [{ role: 'user', parts: [{ kind: 'text', text: 'Heading of CHANGELOG.md?' }] }, { role: 'assistant', parts: [{ kind: 'call', id: call.id, name: 'Read', input: {} }] }, { role: 'user', parts: [{ kind: 'result', id: call.id, text: '# system' }] }]
+    expect(await threads.exchange({ key: 'k', tier: 'standard', system: 'Be brief.', tools: TOOLS, turns: edited, closed: () => false })).toMatchObject({ kind: 'reply', text: 'fresh after the edit' })
+    expect(workflow.starts[2]).not.toHaveProperty('sessionId')
+  })
+
   it('nudges once, in the same conversation, when a tooled answer claims it cannot reach files', async () => {
     const { threads, workflow } = await boot()
     workflow.answers = ["I can't access README.md from here.", "I still can't access it."]

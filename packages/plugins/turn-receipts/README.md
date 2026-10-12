@@ -10,7 +10,9 @@ It is ported from tsuuanmi/internet's receipt store, and its tests were ported f
   - `bindConversation`: binds once and never rebinds.
   - `complete`: idempotent, and refuses conflicting content.
   - `reconcile`: WAIT, RECOVER, RESUBMIT, or AMBIGUOUS, **recorded as a decision
-    artifact** that the receipt references (INV-13).
+    artifact** that the receipt references (INV-13). Waiting is recorded once:
+    a WAIT right after a WAIT reuses that decision, and any other outcome is
+    recorded (INV-9).
   - `delete(identity)`: removes one turn's receipt when its turn is forgotten
     (the `turns` retention purge, INV-9).
 - **Records:** validated against [`provider-turn-receipt@1.0`](../../../schemas/provider-turn-receipt.v1.json)

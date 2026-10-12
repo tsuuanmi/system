@@ -3,8 +3,8 @@
  * Worker, through the official Claude Agent SDK, running the operator's installed `claude`.
  * The configured policy is enforced exactly or refused (never loosened):
  * - only the listed built-in tools exist in the session (`tools`), and only they are
- *   pre-approved (`allowedTools`); anything else is denied without a prompt (`dontAsk`,
- *   no approval surface);
+ *   pre-approved (`allowedTools`), each for the workspace only, reads included; anything else is
+ *   denied without a prompt (`dontAsk`, no approval surface);
  * - no settings files are loaded (`settingSources: []`) and no MCP server is attached
  *   (`strictMcpConfig` with none given, live check 2026-10-12: the account's claude.ai
  *   connectors were attached otherwise), so nothing outside the policy widens a Worker;
@@ -35,11 +35,13 @@ const WRITE_TOOLS = ['Edit', 'Write']
 const ALLOWED: Record<'read-only' | 'workspace-write', string[]> = { 'read-only': READ_ONLY_TOOLS, 'workspace-write': [...READ_ONLY_TOOLS, ...WRITE_TOOLS] }
 
 /**
- * Pre-approval rule for one tool. A bare `Write` or `Edit` rule let a live session write
- * outside its workspace (2026-10-12); `./**` scopes them to the working directory, which held
- * against `..` traversal, a symlink out of the workspace, and a home path.
+ * Pre-approval rule for one tool, scoped to the working directory (`./**`). Bare rules reach the
+ * whole disk: a bare `Write` wrote outside the workspace, and a bare `Read` or `Grep` read
+ * outside it (live, 2026-10-12 and 2026-10-13), which would expose the daemon's own state
+ * (`vault.key`, `mcp.token`). The scoped rules held against `..` traversal, a symlink out of the
+ * workspace, and a home path; anything else is denied without a prompt (`dontAsk`).
  */
-const rule = (tool: string): string => (WRITE_TOOLS.includes(tool) ? `${tool}(./**)` : tool)
+const rule = (tool: string): string => `${tool}(./**)`
 
 export interface RuntimeOptions {
   /** The `claude` executable; found on PATH when absent. */

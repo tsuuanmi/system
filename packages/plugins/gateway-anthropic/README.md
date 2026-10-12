@@ -34,7 +34,8 @@ printed, exported, or written to Claude Code's settings.
   [`gateway-turns`](../../gateway-turns/README.md), which owns the
   conversation binding, the text tool protocol, and the one nudge.
   - A conversation is keyed by a hash of its tier, system prompt, and first
-    message.
+    message. Two clients with the same opening share a key, but each resumes
+    only the conversation its own history came from.
   - A `tool_use` id (`toolu_…`) labels its `tool_result` in the next turn.
 
 It does not own the tools: the client runs every call under its own sandbox

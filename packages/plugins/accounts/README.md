@@ -15,6 +15,12 @@
 - **`setFeatures(id, names)`:** records which website features a probe proved on
   the account, and when (`account@1.1` `features`, REQ-PRV-7). The view carries
   them, and routing uses only these.
+- **`saveState(id, input, expectedRevision?, { sameIdentity? })`:** stores a
+  verified sign-in; the account becomes `ready`. With `sameIdentity` (an
+  unattended credential relogin), a sign-in as a different account than the one
+  saved is refused with `reauth_required` and nothing is stored: stored
+  credentials may have been changed by a client, and only a manual Save at the
+  remote login may switch accounts.
 - **`refreshState(id, state, expectedRevision)`:** the turn runtime's write-back.
   It applies only to a `ready` account and keeps the identity and verification.
   At any other revision it is refused, so a Save or relogin made while a turn

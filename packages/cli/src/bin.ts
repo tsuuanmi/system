@@ -14,8 +14,9 @@ const USAGE = `Usage: system <command>
                             critique, conclusions (run deep-research for Deep research alone)
   run <template> [--session <id>] [--persist] [--tier <t>] [--classification <c>] (<input...> | -)
                             start any workflow template (e.g. review, on a local agent Worker)
-  approve <runId> [--reject] [note...]
+  approve <runId> [--plan <id>] [--reject] [note...]
                             approve (or reject) the plan a run is waiting on, bound to that exact plan
+                            (name it with --plan when several wait)
   result <runId>            wait for a run and print its answer (also: watch <runId>)
   stop <runId> [reason]     stop a run: running work is cancelled, nothing is resent
   continue <runId> [nodeId] reopen a failed run's failed node as a new attempt
@@ -68,7 +69,7 @@ async function awaitRun(first: ToolOutcome): Promise<number> {
     const now = (run.nodes ?? []).map((n) => `${n.nodeId} ${n.state}`).join(', ')
     if (run.status === 'running' && now !== progress) console.error(`${run.runId}: ${(progress = now)}`)
     if (run.status === 'running' && run.blocked) {
-      console.error(`waiting for approval of plan ${run.blocked.plan}: system approve ${run.runId} [--reject] [note]`)
+      console.error(`waiting for approval of plan ${run.blocked.plan}: system approve ${run.runId} --plan ${run.blocked.plan} [--reject] [note]`)
       return 0
     }
     if (run.status === 'completed') {
@@ -114,11 +115,18 @@ async function main(argv: string[]): Promise<number> {
       return awaitRun(await callTool('run', { template, input: prompt, ...options }))
     }
     case 'approve': {
-      const [runId, ...args] = rest
+      const [runId, ...rawArgs] = rest
       if (!runId) break
+      let args = rawArgs
+      let plan: string | undefined
+      if (args[0] === '--plan') {
+        plan = args[1]
+        if (!plan) break
+        args = args.slice(2)
+      }
       const reject = args[0] === '--reject'
       const note = (reject ? args.slice(1) : args).join(' ').trim()
-      const outcome = await callTool('approve', { runId, verdict: reject ? 'rejected' : 'approved', ...(note ? { note } : {}) })
+      const outcome = await callTool('approve', { runId, verdict: reject ? 'rejected' : 'approved', ...(note ? { note } : {}), ...(plan ? { plan } : {}) })
       if (outcome.isError) throw new Error(outcome.text)
       console.log(`${reject ? 'rejected' : 'approved'}: ${runId}`)
       return reject ? 0 : awaitRun(await callTool('result', { runId, waitSeconds: 55 }))

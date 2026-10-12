@@ -125,7 +125,7 @@ a provider snapshot and decides:
 
 | Observation | Decision |
 |---|---|
-| provider is still generating after the boundary | **WAIT**: resume observing |
+| provider is still generating after the boundary | **WAIT**: resume observing; a cancel or a stop ends the wait, and consecutive WAITs are one decision |
 | a new completed response exists after the boundary | **RECOVER**: adopt it, do not resend |
 | the page shows the prompt as its last user turn, with no answer yet | **AMBIGUOUS**: the provider has it, so resending would duplicate it |
 | no trace of the prompt after the boundary | **RESUBMIT**: at most `maxResubmits` (default 2) per receipt |
@@ -228,6 +228,15 @@ The Worker is local but its model is remote, so the source checks the prompt at 
 for the Worker class `agent`, before the agent starts.
 
 - **Route.** A persistent session stays on its account (session affinity).
+- **Order.** A session's turns run in acceptance order, decided by the store, not by one
+  process's memory: a later turn waits while an earlier turn of its session is queued or
+  running, including one whose lease a crashed process still holds. A turn never answers into a
+  conversation that is not reconciled yet.
+- **Sign-out.** A credentials-mode account signs in again once
+  ([ADR-0017](../decisions/adr/0017-credential-login-and-linux-remote-browser.md)) only while
+  the turn has no receipt. A sign-out seen after the receipt exists fails the turn: the prompt
+  may have been sent, so it is never run again
+  ([INV-4](../architecture/invariants.md#inv-4-restart-is-reconciliation-not-replay)).
 - **Restart.** A submitted turn is reconciled. Persistent conversations are bound as soon as
   their id appears, then reopened and snapshotted. Temporary ones cannot be observed and end as
   AMBIGUOUS. A prompt is resent only on RESUBMIT, within the bound.

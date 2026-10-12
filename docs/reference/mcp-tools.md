@@ -70,6 +70,7 @@ Approve or reject the plan a run is waiting on (an operator decision, bound to t
 | `runId` | string | yes |  |
 | `verdict` | "approved" \| "rejected" | yes |  |
 | `note` | string |  |  |
+| `plan` | string |  | The plan artifact you read; required when several plans wait |
 
 ## `ask`
 
@@ -119,12 +120,11 @@ The decision chain behind a run (egress, tier, route, acceptance per step), or t
 
 ## `research`
 
-Deep research, then a cited compaction on a cheap tier. Returns at once with a runId and sessionId; poll `result` (runs take minutes to tens of minutes).
+Research a question with the research profile: testable hypotheses, a cited literature review (web search), an evidence table, an independent critique, and conclusions per hypothesis. Returns at once with a runId; poll `result` (runs take minutes). Deep research alone, then a compaction: `run` with template deep-research.
 
 | Argument | Type | Required | Description |
 |---|---|---|---|
 | `question` | string | yes |  |
-| `sessionId` | string |  | Research in an existing persistent session |
 | `classification` | "public" \| "operator-shared" \| "local-private" |  | Data classification of the input; local-private content never leaves the machine (INV-12) |
 | `clientRequestId` | string |  | Retry-safe request key |
 
@@ -145,7 +145,7 @@ No arguments.
 
 ## `run`
 
-Start a workflow template by name (built in: ask, investigate, panel, research, review; profiles add more, such as develop); its steps are routed by capability to website or local agent Workers. Waits up to waitSeconds; otherwise returns a runId for `result`.
+Start a workflow template by name (built in: ask, deep-research, investigate, panel, review; profiles add more, such as develop); its steps are routed by capability to website or local agent Workers. Waits up to waitSeconds; otherwise returns a runId for `result`.
 
 | Argument | Type | Required | Description |
 |---|---|---|---|
@@ -179,7 +179,7 @@ Send a message as the operator to a Worker session, or to its group (recorded as
 
 ## `status`
 
-Health of the system harness: stage, store, artifacts, installed providers.
+Health of the system harness: store, artifacts, kernel services, installed providers.
 
 No arguments.
 

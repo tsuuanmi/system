@@ -18,7 +18,7 @@ counterpart of the [gateways](gateways.md), where the same agents act as clients
 | Provider plugin | Kind | Backed by | Policy holder |
 |---|---|---|---|
 | [`runtime-claude-agent-sdk`](../../packages/plugins/runtime-claude-agent-sdk/README.md) | `claude-agent-sdk` | official Claude Agent SDK, on the operator's installed `claude` | exact built-in tools, pre-approved inside the workspace only; no settings files, hooks, or MCP servers |
-| [`runtime-codex-sdk`](../../packages/plugins/runtime-codex-sdk/README.md) | `codex-sdk` | official Codex SDK, on the operator's installed `codex` | Codex's own sandbox (read-only or workspace-write); approvals `never`; network and web search off |
+| [`runtime-codex-sdk`](../../packages/plugins/runtime-codex-sdk/README.md) | `codex-sdk` | official Codex SDK, on the operator's installed `codex` | Codex's own sandbox (read-only or workspace-write); approvals `never`; network and web search off; its own Codex home, with no MCP server |
 | [`runtime-acp`](../../packages/plugins/runtime-acp/README.md) | `acp:<name>` | official ACP SDK, with an agent subprocess | the client side: permission requests refused, reads confined to the workspace, no writes or terminals advertised |
 
 ACP is the generic path for any ACP-speaking agent, not the primary path for Claude or Codex.
@@ -85,6 +85,11 @@ Codex, for example, refuses a tool allow-list or a turn limit, since it cannot e
   kept), then the variables the operator forwards **by name** (`forwardEnv`), then explicit
   values (`env`, never a secret). A credential reaches an agent only when the operator names
   it; its value never sits in configuration.
+- **No MCP servers.** An agent's MCP servers can run outside its sandbox, and the operator's
+  own client configuration holds the `system` MCP server (operator tools such as `approve`).
+  So a Worker attaches none: Claude Code takes no settings files and a strict, empty MCP
+  configuration; Codex runs in its own Codex home and fails closed if that home configures
+  any.
 - **Egress** ([INV-12](../architecture/invariants.md#inv-12-data-egress-is-explicit)). The
   agent runs here, but its model is remote. So the `agents` source checks each prompt with
   `ctx.egress` (Worker class `agent`) before the agent starts, keeps the decision id on the run,
@@ -114,7 +119,8 @@ An agent Worker never offers plain `reason`, so ordinary asks never spend agent-
 - **Idempotency.** Every run is keyed by a logical request id. Target: where the agent writes
   a local session or rollout record, reconciliation reads it before restarting a run. Today a
   run that started before a stop is never run again: it fails as `reconciliation_failed` and
-  names its native session.
+  names its native session. A run whose lease another process holds is looked at again when
+  that lease would expire, so a crashed holder never strands it.
 - **Completion.** The SDK's terminal event means *provider terminal*, not acceptance. The
   Worker's result is accepted only by the routing layer
   ([INV-3](../architecture/invariants.md#inv-3-completion-boundaries-are-distinct)).

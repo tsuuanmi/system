@@ -18,6 +18,14 @@ the neutral turns here and owns nothing else.
   persistent provider conversation, in table `gateway_threads` (scope, key).
   - A later request sends only what follows the last assistant turn, because
     the provider conversation already holds its own replies.
+  - **A thread resumes only its own conversation.** The binding stores a
+    fingerprint of what the provider conversation saw: user text, tool
+    results, and the assistant's text and call ids (call ids are random per
+    reply, so two clients never share one). A request resumes only when its
+    history up to the last assistant turn matches that fingerprint exactly.
+    Otherwise (another client with the same opening, or a rewound or edited
+    history) a fresh conversation opens with the whole history. The
+    fingerprint is column `history` (store migration 2).
   - Each exchange is an `ask` run on the workflow engine, plus at most one
     nudge when the model claims it cannot reach the user's files.
 - **The guard factory** (`guard.ts`): `guard()` reads the MCP token file and

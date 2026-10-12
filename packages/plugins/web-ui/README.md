@@ -33,7 +33,9 @@ the host, or over `ssh -L <port>:127.0.0.1:<port> host` like the login desktop.
 - **Bind:** on plain HTTP on a non-loopback host, `/ui` is not registered
   (`assertSafeBind`).
 - **Actions** take a JSON body only (a form post cannot reach them) and go to
-  the workflow engine as operator decisions.
+  the workflow engine as operator decisions. Approve and Reject send the plan
+  the page shows (`plan`, a `sha256:` id), so the engine decides only that plan
+  (INV-5).
 - **Rendering:** the page is built with DOM methods and `textContent` only.
   Model output is never parsed as HTML.
 - **Token sharing:** the UI uses the MCP endpoint's token. A separate operator

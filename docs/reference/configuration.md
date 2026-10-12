@@ -236,6 +236,7 @@ No options.
 | `config` | Record<string, any> | `{}` | Codex --config overrides, such as model_provider and model_providers (operator configuration) |
 | `env` | Record<string, string> | `{}` | Explicit environment for the codex process (no secrets; use forwardEnv) |
 | `forwardEnv` | string[] | `[]` | Daemon environment variables forwarded by name, such as the one a provider env_key names |
+| `home` | string |  | The Workers' Codex home (CODEX_HOME; default <DSH_HOME>/system/codex-home); it must configure no MCP server |
 
 ## `store`
 

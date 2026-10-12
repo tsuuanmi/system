@@ -82,6 +82,12 @@ A thread binds one client conversation to one persistent provider conversation, 
 - **Responses** binds on `prompt_cache_key` when the client sends one, and otherwise on the
   instructions and the first user turn.
 
+A key alone never resumes a conversation. The binding stores a fingerprint of what the
+provider conversation saw: user text, tool results, and the assistant's text and call ids (call
+ids are random per reply). A request resumes only when its history up to the last assistant
+turn matches it exactly. Otherwise, for another client with the same opening or a rewound or
+edited history, a fresh conversation opens with the whole history.
+
 A model name selects the tier: `system-<tier>`, else the plugin's `models` patterns, else
 `standard`. `GET /v1/models` lists `system-economy`, `system-standard`, and
 `system-frontier`.

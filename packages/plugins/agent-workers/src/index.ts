@@ -100,6 +100,7 @@ export class AgentWorkers extends Service {
   private readonly inflight = new Set<Promise<void>>()
   private readonly cancels = new Map<string, AbortController>()
   private readonly stopped = new AbortController()
+  private readonly retries = new Set<NodeJS.Timeout>()
 
   constructor(ctx: Context, private readonly config: Config = { workers: [] }) {
     super(ctx, 'agentWorkers')
@@ -146,6 +147,7 @@ export class AgentWorkers extends Service {
       return async () => {
         // A stop is not a failure: a started run stays as it is, and the next start reconciles it.
         this.stopped.abort()
+        for (const timer of this.retries) clearTimeout(timer)
         for (const scheduler of this.schedulers.values()) scheduler.close(new ProviderError('aborted', 'agent Workers stopped'))
         await Promise.allSettled(this.inflight)
         for (const set of this.waiters.values()) for (const wake of set) wake()
@@ -258,6 +260,17 @@ export class AgentWorkers extends Service {
     for (const { run_id } of rows) this.schedule(run_id)
   }
 
+  /** Look again later: a lease held elsewhere expires, a lost one is retaken (a started run then fails, INV-4). */
+  private retryLater(runId: string, delayMs: number): void {
+    if (this.stopped.signal.aborted) return
+    const timer = setTimeout(() => {
+      this.retries.delete(timer)
+      this.schedule(runId)
+    }, delayMs)
+    timer.unref()
+    this.retries.add(timer)
+  }
+
   private schedule(runId: string): void {
     if (this.stopped.signal.aborted) return
     const running = this.runOwned(runId).catch(() => undefined)
@@ -268,7 +281,12 @@ export class AgentWorkers extends Service {
   private async runOwned(runId: string): Promise<void> {
     const resource = `agent-run:${runId}`
     let lease = this.ctx.leases.acquire(resource, LEASE_TTL_MS)
-    if (!lease) return // another process holds it; it finishes or reconciles the run
+    if (!lease) {
+      // Another process holds it: it finishes the run, or crashed and its lease expires.
+      const holder = this.ctx.leases.current(resource)
+      this.retryLater(runId, Math.max(1000, (holder?.expiresAt ?? Date.now()) - Date.now() + 1000))
+      return
+    }
     const lost = new AbortController()
     const heartbeat = setInterval(() => {
       try {
@@ -302,7 +320,11 @@ export class AgentWorkers extends Service {
       }
       await this.scheduler(row.worker).runTurn(row.worker, signal, async (slot) => this.execute(row, worker, AbortSignal.any([signal, slot.signal]), current))
     } catch (error) {
-      if (this.stopped.signal.aborted || error instanceof LeaseLost || error instanceof StaleGeneration || lost.signal.aborted) return
+      if (this.stopped.signal.aborted) return
+      if (error instanceof LeaseLost || error instanceof StaleGeneration || lost.signal.aborted) {
+        this.retryLater(runId, LEASE_TTL_MS)
+        return
+      }
       const row = this.row(runId)
       if (cancel.signal.aborted && row && row.status !== 'completed' && row.status !== 'failed') {
         this.fail(row, new ProviderError('aborted', 'cancelled by the operator'), current)

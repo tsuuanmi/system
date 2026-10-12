@@ -1149,14 +1149,27 @@ export class Workflow extends Service {
    * never model text; INV-6): an `approval` artifact bound to the exact plan (INV-5), then a
    * `gate` decision. Approved, the steps run; rejected, the run fails.
    */
-  approve(runId: string, input: { verdict: 'approved' | 'rejected'; note?: string }): RunView {
+  /**
+   * The operator's verdict on a plan (INV-5: bound to that exact plan). `plan` names the plan the
+   * operator read; without it the run must be waiting on exactly one plan, so a plan that arrived
+   * later is never approved unseen.
+   */
+  approve(runId: string, input: { verdict: 'approved' | 'rejected'; note?: string; plan?: string }): RunView {
     const run = this.runRow(runId)
     if (!run) throw new WorkflowFailure('invalid_input', `unknown run ${runId}`)
-    const gate = this.nodeRows(runId).find((n) => n.state === 'BLOCKED')
-    if (!gate || run.status !== 'running') throw new WorkflowFailure('invalid_input', `run ${runId} is not waiting for approval`)
     const lease = this.ctx.leases.acquire(`run:${runId}`, LEASE_TTL_MS)
     if (!lease) throw new WorkflowFailure('overloaded', `run ${runId} is busy; retry in a moment`)
     try {
+      // Read under the run's lease: nothing else decides or adds a gate meanwhile.
+      const waiting = run.status === 'running' ? this.nodeRows(runId).filter((n) => n.state === 'BLOCKED') : []
+      const planOf = (n: NodeRow): string => String((JSON.parse(n.spec) as ResolvedNode).plan)
+      const gate = input.plan ? waiting.find((n) => planOf(n) === input.plan) : waiting.length === 1 ? waiting[0] : undefined
+      if (!gate) {
+        if (!input.plan && waiting.length > 1) {
+          throw new WorkflowFailure('invalid_input', `${waiting.length} plans wait in run ${runId}; name the one you approve: ${waiting.map(planOf).join(', ')}`)
+        }
+        throw new WorkflowFailure('invalid_input', `run ${runId} is not waiting for approval${input.plan ? ` of plan ${input.plan}` : ''}`)
+      }
       this.decideGate(run, gate, { verdict: input.verdict, by: 'operator', ...(input.note ? { note: input.note } : {}) }, () => lease)
     } finally {
       this.ctx.leases.release(lease)
@@ -1679,10 +1692,11 @@ export class Workflow extends Service {
         runId: zod.string().max(200),
         verdict: zod.enum(['approved', 'rejected']),
         note: zod.string().max(2000).optional(),
+        plan: zod.string().max(200).optional().describe('The plan artifact you read; required when several plans wait'),
       },
     }, async (args) => {
       try {
-        return shape(this.approve(String(args.runId), { verdict: args.verdict as 'approved' | 'rejected', ...(args.note ? { note: String(args.note) } : {}) }))
+        return shape(this.approve(String(args.runId), { verdict: args.verdict as 'approved' | 'rejected', ...(args.note ? { note: String(args.note) } : {}), ...(args.plan ? { plan: String(args.plan) } : {}) }))
       } catch (error) {
         return failure(error)
       }

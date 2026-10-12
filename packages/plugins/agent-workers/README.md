@@ -40,6 +40,11 @@ The **`agents` Worker source**: agent runtimes as Workers
 - **Restart:** a queued run starts. A run that had started is never run again:
   the agent may already have acted. It fails as `reconciliation_failed`
   (`USER_ACTION`) and names its native session.
+- **Never stranded:** a run whose `agent-run:<id>` lease another process holds
+  is looked at again once that lease would expire (it finishes the run, or it
+  crashed). A run whose lease was lost is looked at again after the lease
+  period; a run already submitted then fails as `reconciliation_failed`, never
+  run again (INV-4).
 - **Sessions:** a session id is bound to its Worker (`affinity`). Later runs
   resume the agent's native session.
 - **Injects:** `store`, `artifacts`, `leases`, `workers`, `agentRuntimes`, `egress`.

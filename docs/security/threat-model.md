@@ -107,20 +107,39 @@
   reconciliation
   ([INV-4](../architecture/invariants.md#inv-4-restart-is-reconciliation-not-replay)).
 - **Stale evidence approving a newer change.** Exact-subject binding
-  ([INV-5](../architecture/invariants.md#inv-5-exact-subject-binding)).
+  ([INV-5](../architecture/invariants.md#inv-5-exact-subject-binding)). An
+  approval names the plan the operator read (CLI `--plan`, MCP `plan`, the web UI
+  sends the plan it shows); with several plans waiting, a verdict naming none is
+  refused, so a plan that arrived later is never approved unseen.
+- **A tampered backup writes outside the state directory on restore.** Restore
+  accepts only `system.db`, `vault.enc`, and `vault.key` in a backup manifest; any
+  other name (for example `../../.ssh/authorized_keys`) refuses the whole backup
+  before anything is written.
+- **A gateway client's conversation continues another client's.** Two clients with
+  the same opening share a thread key, but a thread resumes only when the request's
+  history matches the fingerprint of what the provider conversation saw (call ids
+  are random per reply); otherwise a fresh conversation opens
+  ([`gateway-turns`](../../packages/gateway-turns/README.md)).
 - **An agent-runtime Worker acts outside its workspace or approvals.** The policy
   comes only from operator configuration (each `agent-workers` row's workspace,
   sandbox, and tools; INV-6). Each runtime enforces it with its own sandbox,
   exactly, or the run is refused before it starts (REQ-WRK-6):
   - Claude Code (`runtime-claude-agent-sdk`): only the listed built-in tools
-    exist and are pre-approved (`Read`, `Grep`, `Glob` for `read-only`;
-    `workspace-write` adds `Edit(./**)` and `Write(./**)`, scoped to the
-    workspace); `permissionMode: dontAsk` denies anything else without a prompt;
-    `settingSources: []` keeps the operator's own settings and hooks out; no MCP
-    server is attached;
+    exist and are pre-approved, each scoped to the workspace, reads included
+    (`Read(./**)`, `Grep(./**)`, `Glob(./**)` for `read-only`; `workspace-write`
+    adds `Edit(./**)` and `Write(./**)`). A bare rule reaches the whole disk,
+    including the daemon's `vault.key` and `mcp.token`. `permissionMode: dontAsk`
+    denies anything else without a prompt; `settingSources: []` keeps the
+    operator's own settings and hooks out; no MCP server is attached;
   - Codex (`runtime-codex-sdk`): its own `sandboxMode` (`read-only`, or
     `workspace-write` confined to the workspace) and working directory,
-    approvals `never`, network access and web search off;
+    approvals `never`, network access and web search off. It runs in its own
+    Codex home (`CODEX_HOME`), never the operator's `~/.codex`, which holds the
+    `system` MCP server: Codex starts MCP servers outside its sandbox, so the
+    probe and every run fail closed if that home configures any, and a `config`
+    holding `mcp_servers` is refused. **Gap:** Codex's sandbox confines writes,
+    not reads, so a Codex Worker, even a `read-only` one, can read anything the
+    operator's user can, the daemon's state under `<DSH_HOME>/system/` included;
   - ACP agents (`runtime-acp`): the client side enforces the policy. Every
     permission request is rejected, file reads are served inside the workspace
     only, and no write or terminal capability or MCP server is offered. Because
@@ -149,9 +168,15 @@
   kind of private data, so classification remains the caller's statement.
 - **An AI client holding the MCP token triggers operator actions.** `account_list`
   returns secret-free views. `account_save` only re-captures the operator's own
-  login profile and returns no secrets. Both share the operator's bearer token in
-  slice 1. A separate operator scope is planned before tools with wider effect are
-  added.
+  login profile and returns no secrets. The credential tools
+  (`account_set_credentials`, `account_relogin`, `account_code`) are reachable by
+  any MCP client holding the shared token, so a password passes through whatever
+  client calls them. The damage is limited by the identity rule: a credential
+  relogin that signs in as a different account than the one saved is refused
+  (`reauth_required`) and stores nothing, so a planted credential cannot redirect
+  the account; only a manual Save at the remote login switches accounts.
+  **Gap:** every tool shares the operator's bearer token; a separate operator
+  scope is target (not built).
 - **Login profiles leak sessions for every site the operator visited during login.**
   Profiles live in `<DSH_HOME>/system/login-profiles/<id>` (`0700`) and are used
   only for interactive login and Save. Only the driver's `stateOrigins` are captured
