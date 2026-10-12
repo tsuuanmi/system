@@ -21,7 +21,7 @@ import type {} from '@tsuuanmi/system-egress'
 import { dispositionOf, type ProviderErrorKind } from '@tsuuanmi/system-provider-core'
 import { AdmissionFailure, type AdmittedWorker, type ArtifactRef, type Classification, type Tier, TIERS, type WorkRequirement, type WorkerExecution } from '@tsuuanmi/system-workers-core'
 import { z as zod } from 'zod'
-import { type Assessment, type CallerOptions, DEFAULT_GROWTH, DEFAULT_TEMPLATES, type NodeTemplate, parseAssessment, parsePlan, type PlannedNode, remediationPrompt, render, type ResolvedNode, resolve, subjectBlock } from './spec.ts'
+import { type Assessment, type CallerOptions, DEFAULT_GROWTH, DEFAULT_TEMPLATES, type NodeTemplate, parseAssessment, parseLead, parsePlan, type PlannedNode, remediationPrompt, render, type ResolvedNode, resolve, subjectBlock } from './spec.ts'
 
 export { DEFAULT_TEMPLATES, preflight, render, resolve } from './spec.ts'
 export type { NodeTemplate, ResolvedNode, ResolvedSpec } from './spec.ts'
@@ -279,6 +279,11 @@ export class Workflow extends Service {
     ctx.inject(['mcp'], (c) => this.registerTools(c))
     ctx.on('worker-sessions/delivered', (sessionIds) => {
       for (const id of sessionIds) this.wakeSafely(id)
+    })
+    // A lead's answer is its decision: converged or not, with a reason.
+    ctx.workers.contract('acceptance.team-lead', ({ body }) => {
+      const lead = parseLead(String((body as { text?: unknown } | undefined)?.text ?? ''))
+      return lead ? { accepted: true, reasons: [`the lead decided: ${lead.converged ? 'converged' : 'another round'}`] } : { accepted: false, reasons: ['the lead gave no {"converged": true|false} decision'] }
     })
     // A team's synthesis must have text and cite the member evidence it relies on (REQ-TEAM-3).
     ctx.workers.contract('acceptance.team-synthesis', ({ body }) => {
@@ -596,6 +601,8 @@ export class Workflow extends Service {
         }
         const current_ = this.nodeRows(runId)
         if (current_.some((n) => n.state === 'FAILED')) continue
+        // A carried node completed without running (a converged team): its dependents may be ready now.
+        if (current_.filter((n) => n.state === 'COMPLETED').length > nodes.filter((n) => n.state === 'COMPLETED').length) continue
         const active = current_.filter((n) => n.state === 'READY' || n.state === 'RUNNING')
         if (!active.length) {
           // Waiting for the operator: park until `approve` schedules the run again.
@@ -808,6 +815,7 @@ export class Workflow extends Service {
   private promote(run: RunRow, node: NodeRow & NodeHelpers, nodes: NodeRow[], lease: () => Lease): void {
     const spec = JSON.parse(node.spec) as ResolvedNode
     if (spec.executor === 'gate') return this.block(run, node, spec, lease)
+    if (this.carry(run, node, spec, nodes, lease)) return
     const deps = spec.dependsOn.map((id) => nodes.find((n) => n.node_id === id)!)
     const results = deps.map((d) => (JSON.parse(d.record) as NodeRecord).outputReceipt!.result)
     const texts = Object.fromEntries(deps.map((d, i) => [d.node_id, this.resultText(results[i]!)]))
@@ -822,6 +830,49 @@ export class Workflow extends Service {
     const inputHash = sha256(canonicalJson({ node: spec, prompt, dependencies: results }))
     this.writeNode(node, { state: 'READY', prompt, ...(bound ? { subject: JSON.stringify({ workspace: bound.workspace, subject: bound.subject }) } : {}) },
       (record) => ({ ...record, inputReceipt: { inputHash, bundle: results } }), lease)
+  }
+
+  /**
+   * After a lead decided the team converged, a later round runs nothing: each member keeps its
+   * last answer, and a later lead keeps the decision. The lead's decision is the cause.
+   */
+  private carry(run: RunRow, node: NodeRow, spec: ResolvedNode, nodes: NodeRow[], lease: () => Lease): boolean {
+    const team = spec.team
+    if (!team?.round || team.round < 2 || (team.role !== 'member' && team.role !== 'lead')) return false
+    const lead = nodes.find((n) => n.node_id === `${team.id}:lead:${team.round! - 1}`)
+    const leadRecord = lead ? JSON.parse(lead.record) as NodeRecord : undefined
+    if (!lead || !leadRecord?.outputReceipt || !parseLead(this.resultText(leadRecord.outputReceipt.result))?.converged) return false
+    const source = team.role === 'lead' ? lead : nodes.find((n) => {
+      const s = JSON.parse(n.spec) as ResolvedNode
+      return s.team?.id === team.id && s.team.role === 'member' && s.team.member === team.member && s.team.round === team.round! - 1
+    })!
+    const result = (JSON.parse(source.record) as NodeRecord).outputReceipt!.result
+    const decision = leadRecord.lastDecision!
+    this.writeNode(node, { state: 'COMPLETED', error: null, decisions: JSON.stringify([decision]) }, (r) => ({
+      ...r, inputReceipt: { inputHash: sha256(canonicalJson({ carried: result, decision })), bundle: [result] }, outputReceipt: { result, acceptance: decision }, lastDecision: decision,
+    }), lease)
+    this.ctx.eventLog.append({ type: 'workflow.node.completed', runId: run.run_id, nodeId: node.node_id, decision, data: { carried: true, from: source.node_id } })
+    return true
+  }
+
+  /** A lead's accepted answer, as the procedure decision it is: another round, or close. */
+  private leadDecision(run: RunRow, node: NodeRow, spec: ResolvedNode, result: ArtifactRef): ArtifactRef {
+    const lead = parseLead(this.resultText(result))!
+    const round = spec.team!.round!
+    return this.ctx.artifacts.recordDecision({
+      decisionType: 'gate',
+      question: `Does team ${spec.team!.id} of run ${run.run_id} need a round after round ${round}?`,
+      inputs: [result],
+      candidates: [
+        { option: 'continue', selected: !lead.converged, reasons: lead.converged ? [] : [lead.reason || 'the members have not converged'] },
+        { option: 'close', selected: lead.converged, reasons: lead.converged ? [lead.reason || 'the members converged'] : [] },
+      ],
+      decider: { type: 'model', id: 'workflow.team-lead', version: '1' },
+      outcome: { option: lead.converged ? 'close' : 'continue' },
+      // The Worker and the tier that served the lead (website models do not report their version).
+      modelAnswers: [{ provider: (node.worker ?? 'unknown').slice(0, 64), modelVersion: node.served_tier ?? 'unknown', questionId: 'team-lead.converged', type: 'yes-no', choice: lead.converged ? 'yes' : 'no' }],
+      deterministic: false,
+    }, { producer: { type: 'system', ref: 'workflow' }, runId: run.run_id, nodeId: node.node_id }).id as ArtifactRef
   }
 
   /** The working tree a dependency's agent worked in, captured as it is now, with its verbatim change. */
@@ -929,6 +980,7 @@ export class Workflow extends Service {
       })
       .join('\n\n')
     if (team.role === 'synthesis') return { members: answers(team.rounds) }
+    if (team.role === 'lead') return { members: answers(team.round!) }
     if (!team.round || team.round === 1 || !spec.session.sessionId) return {}
     // Every member finished round 1 (this node depends on them): the barrier opens.
     const sessions = this.ctx.workerSessions
@@ -1270,7 +1322,9 @@ export class Workflow extends Service {
           decisions.decisions = JSON.stringify([...JSON.parse(decisions.decisions) as string[], gate.decision])
           this.remediate(run, node, spec, gate.assessment, gate.subject, lease)
         }
-        this.writeNode(node, { state: 'COMPLETED', error: null, ...decisions }, (r) => ({ ...r, outputReceipt: { result, acceptance: acceptance.decision }, lastDecision: acceptance.decision }), lease)
+        const lead = spec.team?.role === 'lead' ? this.leadDecision(run, node, spec, result) : undefined
+        if (lead) decisions.decisions = JSON.stringify([...JSON.parse(decisions.decisions) as string[], lead])
+        this.writeNode(node, { state: 'COMPLETED', error: null, ...decisions }, (r) => ({ ...r, outputReceipt: { result, acceptance: acceptance.decision }, lastDecision: lead ?? acceptance.decision }), lease)
         this.ctx.eventLog.append({ type: 'workflow.node.completed', runId: run.run_id, nodeId: node.node_id, decision: acceptance.decision, data })
       } else if (!this.escalate(run, node, spec, result, acceptance.decision, acceptance.reasons, decisions, lease)) {
         const error: WorkflowError = { kind: 'acceptance_rejected', disposition: 'NONE', message: `${spec.acceptance}: ${acceptance.reasons.join('; ')}` }

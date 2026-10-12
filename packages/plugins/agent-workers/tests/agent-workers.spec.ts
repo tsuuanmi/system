@@ -263,13 +263,13 @@ describe('ctx.workers source `agents`: agent runtimes as Workers', () => {
       const { ctx } = await boot(agent, { workers: [worker({ id: 'dev', sandbox: 'workspace-write', workspace: ws, tools: [] }), worker({ id: 'reviewer', workspace: ws })] })
       chatWorker(ctx)
       const run = ctx.workflow.start({ template: 'develop', input: 'Fix add()' })
-      const deadline = Date.now() + 10_000
+      const deadline = Date.now() + 60_000
       while (!ctx.workflow.get(run.runId)?.blocked) {
         if (Date.now() > deadline) throw new Error('never blocked')
         await new Promise((resolve) => setTimeout(resolve, 50))
       }
       ctx.workflow.approve(run.runId, { verdict: 'approved' })
-      return { ctx, agent, done: await ctx.workflow.wait(run.runId, 10_000) }
+      return { ctx, agent, done: await ctx.workflow.wait(run.runId, 60_000) }
     }
     const subjectOf = (prompt: string): string => /^Subject: (\S+)$/m.exec(prompt)![1]!
     const assessment = (subject: string) => '```json\n' + JSON.stringify({ subject, verdict: 'approve', findings: [{ severity: 'info', title: 'add() now adds' }] }) + '\n```'

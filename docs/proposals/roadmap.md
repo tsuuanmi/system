@@ -48,8 +48,9 @@ Next in M3, all of which need the operator: `runtime-codex-sdk` (a Codex CLI log
 - Exact-head review: a review of an agent's change binds to the working tree's git subject, and its `assessment` is stored only if the subject still holds (an exact-subject gate). Only read-only Workers prove `review`. Verified live on 2026-10-12.
 
 - Remediation cycles: a review that requests changes with blocking findings appends a fix and a re-review of the new subject, bounded at three reviews.
+- Team leads: an optional lead after each round decides whether the members have converged, and later rounds then carry each member's last answer without sending anything. This is verified on the fake site.
 
-Next in M4: team leads.
+M4 is complete apart from live checks that need a second account (panels, the lead, wake-on-message), handoff envelopes, and re-planning after a superseded input.
 
 - Wake-on-message: an idle Worker session with unread mail takes one turn on its own Worker, and its reply goes to the peers who wrote, as an answer that wakes nobody. It is verified on the fixture; live verification needs a second account.
 

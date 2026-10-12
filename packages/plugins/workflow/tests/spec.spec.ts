@@ -91,4 +91,17 @@ describe('workflow specs', () => {
     expect(() => preflight([node('t', { team: { members: 2, rounds: 9 } })])).toThrow(/team/)
     expect(preflight(DEFAULT_TEMPLATES.panel!)).toEqual(['panel'])
   })
+
+  it('puts a lead between rounds: the next round waits for its decision; it reads the members and answers nothing', () => {
+    const spec = resolve('t', [node('panel', { prompt: '{{input}}', team: { members: 2, rounds: 2, lead: {} } })], {})
+    expect(spec.nodes.map((n) => [n.nodeId, n.dependsOn])).toEqual([
+      ['panel:m1:r1', []], ['panel:m2:r1', []],
+      ['panel:lead:1', ['panel:m1:r1', 'panel:m2:r1']],
+      ['panel:m1:r2', ['panel:m1:r1', 'panel:m2:r1', 'panel:lead:1']], ['panel:m2:r2', ['panel:m1:r1', 'panel:m2:r1', 'panel:lead:1']],
+      ['panel', ['panel:m1:r2', 'panel:m2:r2']],
+    ])
+    expect(spec.nodes[2]).toMatchObject({ tier: 'economy', capabilities: ['reason'], acceptance: 'acceptance.team-lead', session: {}, team: { role: 'lead', round: 1 } })
+    expect(spec.nodes[2]!.prompt).toContain('{{members}}')
+    expect(() => preflight([node('t', { team: { members: 2, lead: { tier: 'huge' as never } } })])).toThrow(/lead/)
+  })
 })

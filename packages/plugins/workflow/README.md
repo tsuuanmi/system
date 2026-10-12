@@ -154,6 +154,14 @@ second execution path (INV-1).
     session, and bounded by the session's turn budget.
   - It is durable (`workflow_wakes`). On start, unfinished wakes are settled
     and sessions with unread mail are woken.
+  - `lead: { tier }` (default `economy`) adds a lead after each round but the
+    last ([lead](../../../docs/design/teams.md#lead)). It reads the members'
+    current answers and replies `{"converged": …, "reason": …}`
+    (`acceptance.team-lead`). The engine records that as a `gate` decision
+    decided by a model.
+    - Not converged: the next critique round runs.
+    - Converged: later rounds are carried. Each member keeps its last answer,
+      with the lead's decision as the cause, and nothing is sent.
   - With `distinctAccounts`, members route one at a time, each avoiding every
     account another member holds. Too few ready accounts fails closed
     (`config_error`).
@@ -224,7 +232,6 @@ second execution path (INV-1).
   `retainDays`, a finished run's input text and rendered prompts are cleared.
 - **Not yet:**
   - profile growth rules (growth comes only from plans);
-  - team procedures beyond panel critique: a lead;
   - re-planning after a superseded input.
 - **Injects:** `store`, `artifacts`, `eventLog`, `leases`, `egress`, `workers`, `workerSessions`;
   `mcp` is optional.

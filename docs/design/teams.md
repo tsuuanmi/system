@@ -70,4 +70,15 @@ Members talk through `ctx.workerSessions`. Each answer is the member's message
 to the team, held behind the first-round barrier. `To m<k>: …` lines are direct
 messages. Critique rounds read each member's own inbox.
 
-Independent review is built for the `develop` profile: a read-only Worker in a fresh session reviews the exact subject, and its findings are an `assessment` artifact bound to it ([engine](workflow-engine.md#built-so-far)). Not built yet: a lead.
+Independent review is built for the `develop` profile: a read-only Worker in a fresh session reviews the exact subject, and its findings are an `assessment` artifact bound to it ([engine](workflow-engine.md#built-so-far)). A lead is built as an option on a team (`team.lead`).
+- A lead step sits after each round but the last. It is a cheap `reason` step
+  in a temporary conversation.
+- It reads the members' current answers and decides only whether they have
+  converged. It never answers the question and never relays content.
+- Its decision is a `gate` decision decided by a model, with its answer
+  recorded.
+- When the members have converged, the later rounds run nothing: each member
+  keeps its last answer, and the lead's decision is the recorded cause. The
+  synthesis then reads those answers.
+- It is verified on the fake site. Live verification needs the second
+  account that panels require.

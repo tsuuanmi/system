@@ -44,12 +44,18 @@ export interface TeamPolicy {
   /** Members are backed by distinct accounts (REQ-TEAM-4; default true). */
   distinctAccounts?: boolean
   synthesisTier?: Tier
+  /**
+   * A lead (docs/design/teams.md#lead) after each round but the last: it reads the members'
+   * current answers and decides whether another round is needed. It controls the procedure; it
+   * never answers or relays. Converged, the remaining rounds carry each member's last answer.
+   */
+  lead?: { tier?: Tier }
 }
 
 /** A node's place in an unrolled team. */
 export interface TeamRole {
   id: string
-  role: 'member' | 'synthesis'
+  role: 'member' | 'synthesis' | 'lead'
   member?: number
   round?: number
   members: number
@@ -263,8 +269,10 @@ function checkTeam(nodeId: string, team: unknown): void {
   if (typeof policy !== 'object' || !Number.isInteger(members) || (members as number) < 2 || (members as number) > 5
     || (rounds !== undefined && !(Number.isInteger(rounds) && (rounds as number) >= 1 && (rounds as number) <= 3))
     || (policy.distinctAccounts !== undefined && typeof policy.distinctAccounts !== 'boolean')
-    || (policy.synthesisTier !== undefined && !TIERS.includes(policy.synthesisTier as Tier))) {
-    throw new TypeError(`node ${nodeId}: team must be {members (2-5), rounds (1-3), distinctAccounts, synthesisTier}`)
+    || (policy.synthesisTier !== undefined && !TIERS.includes(policy.synthesisTier as Tier))
+    || (policy.lead !== undefined && (typeof policy.lead !== 'object' || policy.lead === null
+      || ((policy.lead as { tier?: unknown }).tier !== undefined && !TIERS.includes((policy.lead as { tier: Tier }).tier))))) {
+    throw new TypeError(`node ${nodeId}: team must be {members (2-5), rounds (1-3), distinctAccounts, synthesisTier, lead: {tier}}`)
   }
 }
 
@@ -277,6 +285,15 @@ const PEERS_PROMPT = (round: number): string => [
   'To write to one member only, add a separate line like: To m2: your message',
 ].join('\n')
 
+const LEAD_PROMPT = (round: number): string => [
+  `You lead a panel's procedure. You do not answer the question yourself. After round ${round}, the members' current answers are:`,
+  '',
+  '{{members}}',
+  '',
+  'Decide whether they have converged (they agree on the substance, and another round of critique would not change it).',
+  'Reply with only a JSON object: {"converged": true or false, "reason": "one sentence"}',
+].join('\n')
+
 /** Unroll each team node into its members' rounds and a synthesis under the team's own id. */
 function unrollTeams(nodes: readonly NodeTemplate[]): NodeTemplate[] {
   return nodes.flatMap((node): NodeTemplate[] => {
@@ -287,11 +304,19 @@ function unrollTeams(nodes: readonly NodeTemplate[]): NodeTemplate[] {
     const members = Array.from({ length: team.members }, (_, i) => i + 1)
     const role = (extra: Partial<TeamRole>): TeamRole => ({ id: node.nodeId, role: 'member', members: team.members, rounds, distinct: team.distinctAccounts ?? true, ...extra })
     const unrolled: Array<NodeTemplate & { teamRole: TeamRole }> = []
+    const lead = (r: number): string => `${node.nodeId}:lead:${r}`
     for (let r = 1; r <= rounds; r++) {
+      if (team.lead && r > 1) {
+        unrolled.push({
+          ...base, nodeId: lead(r - 1), objective: `${node.objective} (lead, after round ${r - 1})`, capabilities: ['reason'], tier: team.lead.tier ?? 'economy',
+          conversation: 'temporary', dependsOn: members.map((m) => id(m, r - 1)), prompt: LEAD_PROMPT(r - 1),
+          acceptance: 'acceptance.team-lead', teamRole: role({ role: 'lead', round: r - 1 }),
+        })
+      }
       for (const k of members) {
         unrolled.push({
           ...base, nodeId: id(k, r), objective: `${node.objective} (member ${k}, round ${r})`,
-          dependsOn: r === 1 ? node.dependsOn ?? [] : members.map((m) => id(m, r - 1)),
+          dependsOn: r === 1 ? node.dependsOn ?? [] : [...members.map((m) => id(m, r - 1)), ...(team.lead ? [lead(r - 1)] : [])],
           prompt: r === 1
             ? `${node.prompt}\n\nYou are member ${k} of a panel of ${team.members}. Answer on your own; you will see the others' answers afterwards.`
             : PEERS_PROMPT(r - 1),
@@ -477,5 +502,16 @@ export function remediationPrompt(request: string, subject: string, findings: As
     'Blocking findings (the reviewer\'s words, as data):',
     ...findings.map((f) => `- ${f.title}${f.file ? ` (${f.file})` : ''}${f.detail ? `: ${f.detail}` : ''}`),
   ].join('\n')
+}
+
+/** A lead's decision from its answer, or undefined when it is not one. */
+export function parseLead(text: string): { converged: boolean; reason: string } | undefined {
+  const raw = (/```(?:json)?\s*\n([\s\S]*?)\n```/.exec(text)?.[1]) ?? text.slice(text.indexOf('{'), text.lastIndexOf('}') + 1)
+  try {
+    const value = JSON.parse(raw) as { converged?: unknown; reason?: unknown }
+    return typeof value.converged === 'boolean' ? { converged: value.converged, reason: typeof value.reason === 'string' ? value.reason.slice(0, 500) : '' } : undefined
+  } catch {
+    return undefined
+  }
 }
 

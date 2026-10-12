@@ -176,5 +176,5 @@ templates from configuration (`ask`, `research` → `compact`, `investigate`,
 - wake-on-message for idle Worker sessions
   ([sessions](sessions-and-messaging.md#built-so-far)).
 
-Other profile growth rules, team leads, handoff envelopes, and re-planning
-after a superseded input are not built yet.
+Other profile growth rules, handoff envelopes, and re-planning after a
+superseded input are not built yet. Team leads are built ([teams](teams.md#built-so-far)).

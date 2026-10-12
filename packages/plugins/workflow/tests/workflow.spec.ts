@@ -264,6 +264,33 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
     expect(sessions).toHaveLength(2)
   }, 180_000)
 
+  it('lets a lead close a converged team early: later rounds carry each member\'s last answer, nothing is sent (teams.md#lead)', async () => {
+    const leadAfter = (closeAt: number) => (prompt: string): string => {
+      if (prompt.includes('final answers')) return 'Both hold [m1] [m2].'
+      const round = /After round (\d)/.exec(prompt)
+      if (round) return JSON.stringify({ converged: Number(round[1]) >= closeAt, reason: `round ${round[1]}` })
+      return prompt.includes('other panel members') ? 'revised answer' : 'first answer'
+    }
+    const templates = { 'led-panel': [{ nodeId: 'panel', objective: 'Answer as a panel', prompt: '{{input}}', capabilities: ['reason'], tier: 'standard', conversation: 'temporary',
+      acceptance: 'acceptance.team-synthesis', team: { members: 2, rounds: 3, distinctAccounts: true, lead: { tier: 'economy' } } }] }
+    // Converged after round 1: rounds 2 and 3 run nothing.
+    const early = await boot({ fake: { answer: leadAfter(1) }, accounts: ['chatgpt-main', 'chatgpt-2'], workflow: { templates } })
+    const one = await early.ctx.workflow.wait(early.ctx.workflow.start({ template: 'led-panel', input: 'Is it safe?' }).runId, 120_000)
+    expect(one).toMatchObject({ status: 'completed', answer: 'Both hold [m1] [m2].' })
+    expect(early.fake.sent).toHaveLength(4) // two first answers, the lead, the synthesis
+    const records = Object.fromEntries(early.ctx.workflow.records(one.runId).map((r) => [r.nodeId, r]))
+    expect(records['panel:m1:r3']!.outputReceipt!.result).toBe(records['panel:m1:r1']!.outputReceipt!.result)
+    const lead = early.ctx.artifacts.get(records['panel:lead:1']!.lastDecision!)!.body as { decisionType: string; decider: { type: string }; outcome: { option: string } }
+    expect(lead).toMatchObject({ decisionType: 'gate', decider: { type: 'model' }, outcome: { option: 'close' } })
+    expect(records['panel:m2:r2']!.lastDecision).toBe(records['panel:lead:1']!.lastDecision)
+    // Not converged after round 1, converged after round 2: round 2 runs, round 3 carries.
+    const later = await boot({ fake: { answer: leadAfter(2) }, accounts: ['chatgpt-main', 'chatgpt-2'], workflow: { templates } })
+    const two = await later.ctx.workflow.wait(later.ctx.workflow.start({ template: 'led-panel', input: 'Is it safe?' }).runId, 120_000)
+    expect(two.status).toBe('completed')
+    expect(later.fake.sent.map((s) => (/After round/.test(s.prompt) ? 'lead' : s.prompt.includes('final answers') ? 'synthesis' : s.prompt.includes('other panel members') ? 'r2' : 'r1')))
+      .toEqual(['r1', 'r1', 'lead', 'r2', 'r2', 'lead', 'synthesis'])
+  }, 240_000)
+
   it('wakes an idle member on a message after its team finished; its reply goes to the peer, and an answer wakes nobody', async () => {
     const answer = (prompt: string): string => {
       if (prompt.includes('final answers')) return 'Both hold [m1] [m2].'
