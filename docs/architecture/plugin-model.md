@@ -53,7 +53,7 @@ can be added without changing consumers.
 | Capabilities | `agentRuntimes` (definition `AgentRuntimes` in `@tsuuanmi/system-agent-runtime-core`; registry `@tsuuanmi/system-agent-runtimes`) | `@tsuuanmi/system-runtime-claude-agent-sdk`, `@tsuuanmi/system-runtime-acp`; `runtime-codex-sdk` (planned) | `@tsuuanmi/system-agent-workers`, the `agents` Worker source ([agent runtimes](../design/agent-runtimes.md)) |
 | Routing | `workers` (Worker sources, fail-closed admission, deterministic router, acceptance contracts; definition `Workers` in `@tsuuanmi/system-workers-core`) | `@tsuuanmi/system-workers` | the turn runtime (route), the workflow engine (accept) |
 | Orchestration | `workflow` (MVP subset: static DAG templates, durable nodes, acceptance, retries, recovery; MCP `ask`, `research`, `result`, `usage`, `explain`) | `@tsuuanmi/system-workflow` | MCP clients, CLI |
-| Orchestration | `workerSessions` (Worker sessions, bindings, mailbox, wake, budgets) | `worker-sessions-store` | team runner, session nodes, MCP session tools ([design](../design/sessions-and-messaging.md)) |
+| Orchestration | `workerSessions` (Worker sessions, groups, mailboxes, peer messages under policy and barriers; MCP `session_send`, `session_inbox`) | `@tsuuanmi/system-worker-sessions` | the workflow engine (panel teams), MCP clients ([design](../design/sessions-and-messaging.md)) |
 | Orchestration | `teams` | `team-runner` | workflow |
 | Orchestration | `profiles` (domain procedures) | `profile-software-development`, `profile-scientific-research` | workflow |
 | Gateways | `clientProtocols` (shared turn broker) | `gateway-responses`, `gateway-anthropic-messages` | — (edge) |
@@ -195,8 +195,9 @@ in the test fake (two Xvfbs for concurrent callers), which was then fixed.
     (`reconciliation_failed`); it is not resumed from its native session yet.
 - **The workflow engine** has templates, plan-based graph growth, plan
   approval gates, panel teams, operator stop, continue, and delete, and lineage
-  invalidation by `supersede`. It does not have profile growth rules, team
-  leads or direct messages, or re-planning yet.
+  invalidation by `supersede`. Panel members talk through
+  `ctx.workerSessions` mailboxes. It does not have profile growth rules, team
+  leads, wake-on-message sessions outside rounds, or re-planning yet.
 - **Capability evidence is declared, not probed.** A website Worker proves what its
   driver declares (`ProviderDriver.capabilities`, covered by the driver's tests).
   Per-account probes, for example whether an account's plan offers Deep research,

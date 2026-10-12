@@ -37,6 +37,7 @@
     "@tsuuanmi/system-agent-runtimes": "workspace:*",
     "@tsuuanmi/system-egress": "workspace:*",
     "@tsuuanmi/system-event-log": "workspace:*",
+    "@tsuuanmi/system-worker-sessions": "workspace:*",
     "@tsuuanmi/system-workers": "workspace:*",
     "@tsuuanmi/system-workflow": "workspace:*"
   }

@@ -27,6 +27,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { canRunBrowser, testChrome } from '../../browser-patchright/tests/support.ts'
 import { FakeChatGpt, type FakeOptions } from '../../provider-chatgpt-web/fixtures/fake-chatgpt.ts'
 import { source } from '../../../workers-core/conformance/workers.ts'
+import WorkerSessions from '@tsuuanmi/system-worker-sessions'
 import Workflow, { DEFAULT_TEMPLATES } from '../src/index.ts'
 
 const cleanups: Array<() => unknown> = []
@@ -62,6 +63,7 @@ async function boot(options: { fake?: FakeOptions; dir?: string; shared?: FakeCh
     ctx.plugin(Login, { profilesDir: join(dir, 'profiles') }),
     ctx.plugin(WorkerRouter, {}),
     ctx.plugin(Turns, { turnTimeoutMs: 90_000, stallTimeoutMs: 80_000, ...options.turns }),
+    ctx.plugin(WorkerSessions, {}),
     ctx.plugin(Workflow, { retryDelayMs: 300, ...options.workflow }),
     ctx.plugin(WebServer, { host: '127.0.0.1', port: 0 }),
     ctx.plugin(McpEndpoint, { tokenFile: join(dir, 'mcp.token'), discoveryFile: join(dir, 'mcp.json') }),
@@ -233,7 +235,7 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
     const answer = (prompt: string): string => {
       if (prompt.includes("final answers")) return 'Both hold [m1] [m2].'
       if (prompt.includes('other panel members')) return `revised after reading: ${prompt.includes('first answer') ? 'peers' : 'nothing'}`
-      return 'first answer'
+      return prompt.includes('member 1 of') ? 'first answer\nTo m2: private note for m2' : 'first answer'
     }
     const { ctx, fake } = await boot({ fake: { answer }, accounts: ['chatgpt-main', 'chatgpt-2'] })
     const done = await ctx.workflow.wait(ctx.workflow.start({ template: 'panel', input: 'Is it safe?' }).runId, 120_000)
@@ -249,6 +251,17 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
     expect(kinds).toEqual(['r1', 'r1', 'r2', 'r2', 'synthesis'])
     expect(fake.sent.filter((s) => !s.prompt.includes('other panel members') && !s.prompt.includes('final answers')).every((s) => !s.prompt.includes('first answer'))).toBe(true)
     expect(ctx.artifacts.get(ctx.workflow.records(done.runId).at(-1)!.outputReceipt!.acceptance)?.body).toMatchObject({ decisionType: 'acceptance', outcome: { option: 'accept' } })
+    // Peers talk through their mailboxes: each answer and critique is that member's message (ADR-0015).
+    const messages = ctx.artifacts.list({ kind: 'message' }).map((a) => a.body as { intent: string; to: { group?: string } })
+    expect(messages.map((m) => m.intent).sort()).toEqual(['answer', 'answer', 'critique', 'critique', 'inform'])
+    expect(messages.filter((m) => m.intent !== 'inform').every((m) => m.to.group === `team:${done.runId}:panel`)).toBe(true)
+    // A direct message reaches its one member only, and stays out of the group message.
+    const critiques = fake.sent.filter((s) => s.prompt.includes('other panel members')).map((s) => s.prompt)
+    expect(critiques.filter((p) => p.includes('private note for m2'))).toHaveLength(1)
+    expect(critiques.every((p) => p.includes('first answer'))).toBe(true)
+    const members = done.nodes.filter((n) => n.nodeId.endsWith(':r1'))
+    const sessions = members.map((n) => ctx.workflow.records(done.runId).find((r) => r.nodeId === n.nodeId)!)
+    expect(sessions).toHaveLength(2)
   }, 180_000)
 
   it('fails closed when a team needs more distinct accounts than are ready (REQ-TEAM-4)', async () => {

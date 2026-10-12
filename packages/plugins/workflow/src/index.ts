@@ -16,6 +16,7 @@ import type {} from '@tsuuanmi/system-gateway-core'
 import { type Lease, LeaseLost, StaleGeneration } from '@tsuuanmi/system-leases'
 import { canonicalJson, type ContentId, SchemaRegistry, sha256 } from '@tsuuanmi/system-libs'
 import type {} from '@tsuuanmi/system-store'
+import type { Runtime } from '@tsuuanmi/system-worker-sessions'
 import type {} from '@tsuuanmi/system-egress'
 import { dispositionOf, type ProviderErrorKind } from '@tsuuanmi/system-provider-core'
 import { AdmissionFailure, type AdmittedWorker, type ArtifactRef, type Classification, type Tier, TIERS, type WorkRequirement, type WorkerExecution } from '@tsuuanmi/system-workers-core'
@@ -177,7 +178,7 @@ const newId = (prefix: string): string => `${prefix}_${randomBytes(8).toString('
 const now = (): string => new Date().toISOString()
 
 export class Workflow extends Service {
-  static inject = ['store', 'artifacts', 'eventLog', 'leases', 'egress', 'workers']
+  static inject = ['store', 'artifacts', 'eventLog', 'leases', 'egress', 'workers', 'workerSessions']
 
   static Config: z<Config> = z.object({
     templates: z.dict(z.array(z.object({
@@ -320,6 +321,10 @@ export class Workflow extends Service {
         db.prepare(`INSERT INTO workflow_nodes (run_id, node_id, ordinal, spec, record, state, updated_at) VALUES (?, ?, ?, ?, ?, 'WAITING', ?)`)
           .run(run.run_id, node.nodeId, ordinal, JSON.stringify(resolved), JSON.stringify(record), now())
       })
+      // One message group per team; its first round runs behind a closed barrier (REQ-TEAM-1).
+      for (const team of new Set(spec.nodes.flatMap((n) => (n.team ? [n.team.id] : [])))) {
+        this.ctx.workerSessions.group(teamGroup(run.run_id, team), { barrier: true })
+      }
       this.ctx.eventLog.append({ type: 'workflow.run.started', runId: run.run_id, ...(sessionId ? { sessionId } : {}), data: { template: input.template, specHash: spec.specHash } })
       this.ctx.store.afterCommit(() => this.schedule(run.run_id))
       return this.view(run)
@@ -719,18 +724,50 @@ export class Workflow extends Service {
    * A member's peers (the other members' previous round) or, for the synthesis, every member's
    * final answer, each under its member label. Round 1 gets nothing: the barrier (REQ-TEAM-1).
    */
-  private teamTexts(spec: ResolvedNode, nodes: NodeRow[]): { peers?: string; members?: string } {
+  private teamTexts(spec: ResolvedNode, nodes: NodeRow[]): { inbox?: string; members?: string } {
     const team = spec.team!
-    const answers = (round: number, except?: number): string => nodes
+    const answers = (round: number): string => nodes
       .map((n) => ({ n, s: JSON.parse(n.spec) as ResolvedNode }))
-      .filter(({ s }) => s.team?.id === team.id && s.team.role === 'member' && s.team.round === round && s.team.member !== except)
+      .filter(({ s }) => s.team?.id === team.id && s.team.role === 'member' && s.team.round === round)
       .map(({ n, s }) => {
         const result = (JSON.parse(n.record) as NodeRecord).outputReceipt?.result
         return `### [m${s.team!.member}]\n${result ? this.resultText(result) : ''}`
       })
       .join('\n\n')
     if (team.role === 'synthesis') return { members: answers(team.rounds) }
-    return team.round && team.round > 1 ? { peers: answers(team.round - 1, team.member) } : {}
+    if (!team.round || team.round === 1 || !spec.session.sessionId) return {}
+    // Every member finished round 1 (this node depends on them): the barrier opens.
+    const sessions = this.ctx.workerSessions
+    sessions.openBarrier(teamGroup(nodes[0]!.run_id, team.id))
+    const inbox = sessions.inbox(spec.session.sessionId)
+    if (inbox.length) sessions.ack(spec.session.sessionId, inbox.at(-1)!.seq)
+    return {
+      inbox: inbox.map((m) => `### From [${sessions.session(m.from)?.role ?? m.from}] (${m.message.intent ?? 'inform'})\n${m.message.body}`).join('\n\n') || '(no messages)',
+    }
+  }
+
+  /**
+   * A member's accepted answer is its message to the team (the engine records it; it never
+   * rewrites it); a `To m<k>: …` line is a direct message to one member instead. A plain line,
+   * not a fenced block: a web model's answer is read from its rendered page.
+   */
+  private post(run: RunRow, node: NodeRow, spec: ResolvedNode, execution: WorkerExecution, result: ArtifactRef): void {
+    const team = spec.team!
+    const from = spec.session.sessionId!
+    const group = teamGroup(run.run_id, team.id)
+    const text = this.resultText(result)
+    const DIRECT = /(?:^|\s)To (m\d+):[ \t]*([^\n]+)/g
+    const direct = [...text.matchAll(DIRECT)]
+    const open = text.replace(DIRECT, '').trim() || text
+    const body = (t: string): string => (t.length > 32_000 ? `${t.slice(0, 31_900)}\n…(truncated; the full answer is the referenced artifact)` : t)
+    const intent = team.round === 1 ? 'answer' : 'critique'
+    this.ctx.workerSessions.send({ from, messageId: `${node.node_id}:${execution.id}`, to: { group }, intent, body: body(open), refs: [result] })
+    direct.forEach(([, role, message], index) => {
+      const target = this.nodeRows(run.run_id)
+        .map((n) => JSON.parse(n.spec) as ResolvedNode)
+        .find((s) => s.team?.id === team.id && s.team.role === 'member' && `m${s.team.member}` === role)?.session.sessionId
+      if (target && message!.trim()) this.ctx.workerSessions.send({ from, messageId: `${node.node_id}:${execution.id}:${index}`, to: { session: target }, intent: 'inform', body: body(message!.trim()) })
+    })
   }
 
   /** The findings of the steps a planner this node depends on added, in order, under their objectives. */
@@ -923,6 +960,13 @@ export class Workflow extends Service {
       }
       try {
         this.ctx.store.transaction(() => {
+          if (spec.team?.role === 'member' && spec.session.sessionId) {
+            // Model A: the member's session is bound to the Worker its first admission chose.
+            this.ctx.workerSessions.join(teamGroup(run.run_id, spec.team.id), {
+              sessionId: spec.session.sessionId, role: `m${spec.team.member}`, runtime: runtimeOf(admitted.source, admitted.worker.provider),
+              worker: admitted.worker.worker, formation: admitted.decisions.route, runId: run.run_id, nodeId: spec.team.id,
+            })
+          }
           const started = source.start({
             key: `workflow:${run.run_id}:${node.node_id}:${attempt}:${node.escalations}:${record.inputReceipt!.inputHash}`,
             worker: admitted.worker.worker, prompt: node.prompt!, sessionId: spec.session.sessionId,
@@ -1016,6 +1060,7 @@ export class Workflow extends Service {
         this.writeNode(node, { state: 'FAILED', error: JSON.stringify(error), ...decisions }, (r) => ({ ...r, lastDecision: acceptance.decision }), lease)
         this.ctx.eventLog.append({ type: 'workflow.node.failed', runId: run.run_id, nodeId: node.node_id, decision: acceptance.decision, data: { ...data, kind: error.kind } })
       } else if (acceptance.accepted) {
+        if (spec.team?.role === 'member') this.post(run, node, spec, execution, result)
         this.writeNode(node, { state: 'COMPLETED', error: null, ...decisions }, (r) => ({ ...r, outputReceipt: { result, acceptance: acceptance.decision }, lastDecision: acceptance.decision }), lease)
         this.ctx.eventLog.append({ type: 'workflow.node.completed', runId: run.run_id, nodeId: node.node_id, decision: acceptance.decision, data })
       } else if (!this.escalate(run, node, spec, result, acceptance.decision, acceptance.reasons, decisions, lease)) {
@@ -1340,6 +1385,16 @@ export class Workflow extends Service {
 
 interface NodeHelpers {
   dependsOnCompleted: (all: NodeRow[]) => boolean
+}
+
+const teamGroup = (runId: string, team: string): string => `team:${runId}:${team}`
+
+/** The session record's runtime, from the Worker's source and provider (metadata, never routing). */
+function runtimeOf(source: string, provider: string): Runtime {
+  if (source === 'website') return 'website'
+  if (provider.startsWith('acp:')) return 'acp'
+  if (provider === 'claude-agent-sdk' || provider === 'codex-sdk') return provider
+  return 'local-tool'
 }
 
 /**

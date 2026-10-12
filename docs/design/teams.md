@@ -64,5 +64,10 @@ template's `team` node:
 
 Each member is a persistent session, so it keeps one identity and one Worker.
 Members can be held to distinct accounts at routing time. The `panel` template
-uses this. Not built yet: a lead, direct messages between members, and
-independent review with `assessment` artifacts.
+uses this.
+
+Members talk through `ctx.workerSessions`. Each answer is the member's message
+to the team, held behind the first-round barrier. `To m<k>: …` lines are direct
+messages. Critique rounds read each member's own inbox.
+
+Not built yet: a lead, and independent review with `assessment` artifacts.

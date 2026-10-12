@@ -97,13 +97,18 @@ second execution path (INV-1).
     distinctAccounts (default true), synthesisTier }` is unrolled at admission:
     - `id:m<k>:r1` per member: no dependency on a peer and no peer text. This
       is the independent-first barrier, made structural;
-    - `id:m<k>:r<n>`: each depends on every member's previous round and reads
-      the peers' answers (`{{peers}}`) to critique and revise;
+    - `id:m<k>:r<n>`: each depends on every member's previous round, and reads
+      its own inbox (`{{inbox}}`) to critique and revise;
     - a synthesis under the team node's own id, which reads every final answer
       (`{{members}}`).
   - Each member is one persistent session that the engine issues, so session
     affinity keeps one identity and one Worker for the team's lifetime
     (Model A).
+  - Members talk through `ctx.workerSessions`. The run forms one group per team
+    with its barrier closed, and each member joins at its first admission. An
+    accepted answer is posted as that member's message, in the same
+    transaction as its completion. A `To m<k>: …` line is a direct message
+    instead. The barrier opens when the first round is done.
   - With `distinctAccounts`, members route one at a time, each avoiding every
     account another member holds. Too few ready accounts fails closed
     (`config_error`).
@@ -174,9 +179,8 @@ second execution path (INV-1).
   `retainDays`, a finished run's input text and rendered prompts are cleared.
 - **Not yet:**
   - profile growth rules (growth comes only from plans);
-  - team procedures beyond panel critique: a lead, and direct messages between
-    members;
+  - team procedures beyond panel critique: a lead;
   - independent review with assessment artifacts;
   - re-planning after a superseded input.
-- **Injects:** `store`, `artifacts`, `eventLog`, `leases`, `egress`, `workers`;
+- **Injects:** `store`, `artifacts`, `eventLog`, `leases`, `egress`, `workers`, `workerSessions`;
   `mcp` is optional.

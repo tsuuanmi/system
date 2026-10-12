@@ -87,6 +87,9 @@
       "@tsuuanmi/system-runtime-claude-agent-sdk": [
         "packages/plugins/runtime-claude-agent-sdk/src/index.ts"
       ],
+      "@tsuuanmi/system-worker-sessions": [
+        "packages/plugins/worker-sessions/src/index.ts"
+      ],
       "@tsuuanmi/system-workflow": [
         "packages/plugins/workflow/src/index.ts"
       ],

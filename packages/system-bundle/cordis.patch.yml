@@ -53,6 +53,8 @@
       name: '@tsuuanmi/system-runtime-acp'            # ACP agents (none until configured)
     - id: agent-workers
       name: '@tsuuanmi/system-agent-workers'          # the `agents` Worker source (no workers until configured)
+    - id: worker-sessions
+      name: '@tsuuanmi/system-worker-sessions'       # sessions, mailboxes, peer messages; MCP session_send/session_inbox
     - id: workflow
       name: '@tsuuanmi/system-workflow'              # the single engine; MCP ask/research/result/usage/explain
     - id: mcp-server

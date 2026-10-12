@@ -80,8 +80,8 @@ describe('workflow specs', () => {
       ['after', ['panel']],
     ])
     // Round 1 never sees a peer; later rounds read the peers; the synthesis reads every member.
-    expect(spec.nodes[0]!.prompt).not.toContain('{{peers}}')
-    expect(spec.nodes[2]!.prompt).toContain('{{peers}}')
+    expect(spec.nodes[0]!.prompt).not.toContain('{{inbox}}')
+    expect(spec.nodes[2]!.prompt).toContain('{{inbox}}')
     expect(spec.nodes[4]!.prompt).toContain('{{members}}')
     expect(spec.nodes[0]!.session).toEqual({ member: 'panel:m1' })
     expect(spec.nodes[2]!.session).toEqual({ member: 'panel:m1' })

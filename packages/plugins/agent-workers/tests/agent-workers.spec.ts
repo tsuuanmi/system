@@ -10,6 +10,7 @@ import Leases from '@tsuuanmi/system-leases'
 import { ProviderError } from '@tsuuanmi/system-provider-core'
 import Store from '@tsuuanmi/system-store'
 import WorkerRouter, { type WorkRequirement } from '@tsuuanmi/system-workers'
+import WorkerSessions from '@tsuuanmi/system-worker-sessions'
 import Workflow from '@tsuuanmi/system-workflow'
 import { afterEach, describe, expect, it } from 'vitest'
 import AgentWorkers, { type Config } from '../src/index.ts'
@@ -53,7 +54,7 @@ async function boot(agent: AgentRuntimeProvider, config: Config = { workers: [wo
   const ctx = new Context()
   const fibers = [
     ctx.plugin(Store, { path: join(dir, 'system.db') }), ctx.plugin(Artifacts, {}), ctx.plugin(EventLog, {}), ctx.plugin(Leases, {}), ctx.plugin(Egress, {}),
-    ctx.plugin(WorkerRouter, {}), ctx.plugin(AgentRuntimeRegistry), ctx.plugin(AgentWorkers, config), ctx.plugin(Workflow, { retryDelayMs: 100 }),
+    ctx.plugin(WorkerRouter, {}), ctx.plugin(AgentRuntimeRegistry), ctx.plugin(AgentWorkers, config), ctx.plugin(WorkerSessions, {}), ctx.plugin(Workflow, { retryDelayMs: 100 }),
   ]
   await Promise.all(fibers)
   ctx.agentRuntimes.register(agent)

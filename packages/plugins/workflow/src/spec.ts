@@ -230,11 +230,12 @@ function checkTeam(nodeId: string, team: unknown): void {
 }
 
 const PEERS_PROMPT = (round: number): string => [
-  `Here are the other panel members' answers from round ${round}:`,
+  `Messages from the other panel members since your answer in round ${round}:`,
   '',
-  '{{peers}}',
+  '{{inbox}}',
   '',
   'Point out where they are wrong, keep what is right, and give your revised answer to the original question.',
+  'To write to one member only, add a separate line like: To m2: your message',
 ].join('\n')
 
 /** Unroll each team node into its members' rounds and a synthesis under the team's own id. */
@@ -311,15 +312,16 @@ export function resolve(template: string, nodes: readonly NodeTemplate[], caller
 /** Engine-computed texts: a planner's steps, a member's peers, a team's members. */
 export interface RenderExtras {
   grown?: string
-  peers?: string
+  /** A member's unread messages, delivered verbatim from its mailbox. */
+  inbox?: string
   members?: string
 }
 
 /** Fill a prompt in one pass, so text from a dependency is never expanded again. */
 export function render(prompt: string, input: string, results: Readonly<Record<string, string>>, extras: RenderExtras = {}): string {
-  return prompt.replace(/\{\{(input|grown|peers|members|node:[^}]+)\}\}/g, (_, key: string) => {
+  return prompt.replace(/\{\{(input|grown|inbox|members|node:[^}]+)\}\}/g, (_, key: string) => {
     if (key === 'input') return input
-    if (key === 'grown' || key === 'peers' || key === 'members') return extras[key] ?? ''
+    if (key === 'grown' || key === 'inbox' || key === 'members') return extras[key] ?? ''
     return results[key.slice(5)] ?? ''
   })
 }

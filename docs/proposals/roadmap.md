@@ -39,7 +39,9 @@ Next in M3, all of which need the operator: `runtime-codex-sdk` (a Codex CLI log
 - Verified live on 2026-10-12: `investigate` planned a step, ran it, and synthesised an answer with its sources. An earlier live plan that named an unknown capability was refused (fail closed).
 - Panel teams: independent first answers behind a barrier, critique rounds, and a cited synthesis. Members are persistent sessions, held to distinct accounts.
 
-Next in M4: sessions with direct messaging (and team leads), the `software-development` profile, lineage invalidation, and a Web UI.
+- Worker sessions with mailboxes and direct peer messaging (`ctx.workerSessions`), used by panel teams. Operator `stop`, `continue`, `delete`, and `supersede` (lineage invalidation).
+
+Next in M4: team leads and wake-on-message sessions, the `software-development` profile, lineage invalidation, and a Web UI.
 
 Later candidates, each needing its own proposal: A2A gateway and runtime
 (cross-runtime peers), an ACP client gateway for editors, sandboxed or SSH `exec`

@@ -99,3 +99,22 @@ conversational work inside a node
 | domain artifacts | `Artifact` |
 | `INPUT_REQUIRED`, `CLOSED`, `FAILED` | `TASK_STATE_INPUT_REQUIRED`, `COMPLETED`, `FAILED` / `CANCELED` |
 | wake-on-message, session events | streaming, `SubscribeToTask`, push notifications |
+
+## Built so far
+
+[`@tsuuanmi/system-worker-sessions`](../../packages/plugins/worker-sessions/README.md):
+
+- sessions formed at a member's first admission (Model A);
+- groups whose barriers are mailbox gates;
+- policy-checked messages, stored as `message@1.0` artifacts in ordered,
+  deduplicated mailboxes with acknowledgement;
+- the operator's `session_send` and `session_inbox`.
+
+Panel teams use it:
+
+- each member's answer is its message to the team;
+- `To m<k>: …` lines are direct messages;
+- critique rounds read the member's inbox after the first-round barrier opens.
+
+Wake-on-message outside workflow rounds, checkpoints, and compaction are not
+built yet.
