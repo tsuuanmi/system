@@ -120,6 +120,23 @@ second execution path (INV-1).
     accepted answer is posted as that member's message, in the same
     transaction as its completion. A `To m<k>: …` line is a direct message
     instead. The barrier opens when the first round is done.
+  - When the run finishes, its members' leftover mail is acknowledged: the
+    rounds consumed it.
+- **Wake-on-message ([design](../../../docs/design/sessions-and-messaging.md)).**
+  - A message to an idle Worker session wakes it once its own run is no
+    longer running. The message must ask for a reply: any intent but `answer`
+    or `close`.
+  - The session takes one turn on its unread messages as an `ask` run on its
+    own session. Session affinity keeps it on its Worker (Model A), and the
+    session is ACTIVE, with its native conversation handle, for that turn.
+  - The reply goes to each peer who wrote, as an `answer`, so it wakes nobody.
+    The operator reads the reply as the run's answer.
+  - The mailbox is then acknowledged, and the session is idle again. Mail that
+    arrived during the turn wakes it again.
+  - It is idempotent per (session, last message), one wake at a time per
+    session, and bounded by the session's turn budget.
+  - It is durable (`workflow_wakes`). On start, unfinished wakes are settled
+    and sessions with unread mail are woken.
   - With `distinctAccounts`, members route one at a time, each avoiding every
     account another member holds. Too few ready accounts fails closed
     (`config_error`).

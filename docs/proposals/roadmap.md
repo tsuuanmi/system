@@ -45,7 +45,9 @@ Next in M3, all of which need the operator: `runtime-codex-sdk` (a Codex CLI log
 
 - The `develop` template, the software-development profile in MVP form: plan, the approval gate, local agents implement, a fresh-session review, and a report.
 
-Next in M4: team leads, wake-on-message sessions, and exact-head review (which needs confined command execution).
+Next in M4: team leads, and exact-head review (which needs confined command execution).
+
+- Wake-on-message: an idle Worker session with unread mail takes one turn on its own Worker, and its reply goes to the peers who wrote, as an answer that wakes nobody. It is verified on the fixture; live verification needs a second account.
 
 M5 gateways have started:
 - The Anthropic Messages gateway (`system claude-env`) lets Claude Code use website Workers as its model. Its tools go through a text protocol ([ADR-0022](../decisions/adr/0022-text-protocol-tool-calls-for-website-models.md)).

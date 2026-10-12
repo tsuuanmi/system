@@ -84,6 +84,14 @@ export class WorkerRouter extends Workers {
     return undefined
   }
 
+  handle(sessionId: string): string | undefined {
+    for (const source of this.sources.values()) {
+      const handle = source.handle?.(sessionId)
+      if (handle) return handle
+    }
+    return undefined
+  }
+
   async list(): Promise<CapabilityDescriptor[]> {
     return (await this.described()).map((d) => d.worker)
   }

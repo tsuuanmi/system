@@ -77,4 +77,24 @@ describe('ctx.workerSessions: sessions, mailboxes, direct messages (ADR-0015)', 
     ctx.workerSessions.send({ from: 'operator', messageId: 'op-1', to: { session: 'ses_b' }, intent: 'request', body: 'please cite' })
     expect(ctx.workerSessions.inbox('ses_b').map((m) => [m.from, m.message.body])).toEqual([['ses_a', 'once'], ['operator', 'please cite']])
   })
+
+  it('announces deliveries that ask for a reply, and activates an idle session once per turn within its budget', async () => {
+    const ctx = await boot()
+    team(ctx, false)
+    const woken: string[][] = []
+    ctx.on('worker-sessions/delivered', (ids) => void woken.push(ids))
+    ctx.workerSessions.send({ from: 'operator', messageId: 'q1', to: { session: 'ses_a' }, body: 'question' })
+    ctx.workerSessions.send({ from: 'ses_b', messageId: 'a1', to: { session: 'ses_a' }, intent: 'answer', body: 'an answer wakes nobody' })
+    expect(woken).toEqual([['ses_a']])
+    expect(ctx.workerSessions.pending()).toEqual(['ses_a'])
+    // ACTIVE needs the native conversation to resume (worker-session@1.0).
+    expect(ctx.workerSessions.activate('ses_a', undefined)).toMatchObject({ activated: false, reason: expect.stringMatching(/no conversation/) })
+    expect(ctx.workerSessions.activate('ses_a', 'https://chatgpt.test/c/1')).toEqual({ activated: true })
+    expect(ctx.workerSessions.session('ses_a')).toMatchObject({ state: 'ACTIVE', binding: { nativeHandle: 'https://chatgpt.test/c/1' }, usage: { turns: 1 } })
+    new SchemaRegistry().assertRecord(ctx.workerSessions.session('ses_a')!)
+    expect(ctx.workerSessions.activate('ses_a', 'https://chatgpt.test/c/1')).toMatchObject({ activated: false, reason: expect.stringMatching(/ACTIVE/) })
+    ctx.workerSessions.settle('ses_a')
+    expect(ctx.workerSessions.session('ses_a')!.state).toBe('IDLE')
+    expect(ctx.workerSessions.ofRun('run_1').map((s) => s.sessionId)).toEqual(['ses_a'])
+  })
 })

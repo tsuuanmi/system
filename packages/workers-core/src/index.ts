@@ -98,6 +98,8 @@ export interface WorkerSource {
   wait(executionId: string, timeoutMs: number): Promise<WorkerExecution>
   /** The Workers a continued session must stay on, when this source owns the session. */
   affinity?(sessionId: string): string[] | undefined
+  /** The session's native conversation handle (conversation URL, SDK session or thread id), once known. */
+  handle?(sessionId: string): string | undefined
   /**
    * Cancel an execution (REQ-WRK-4): a queued one never starts, a running one is aborted and
    * fails as `aborted`. False when it had already finished. Work already sent is not undone.
@@ -177,6 +179,9 @@ export abstract class Workers extends Service {
 
   /** The Workers a continued session must stay on, from the source that owns it. */
   abstract affinity(sessionId: string): string[] | undefined
+
+  /** A session's native conversation handle, from the source that owns it. */
+  abstract handle(sessionId: string): string | undefined
 
   /**
    * Admit and choose exactly one Worker, deterministically for the same configuration,

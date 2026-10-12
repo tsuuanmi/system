@@ -245,6 +245,10 @@ export class Workflow extends Service {
       // Tier escalation after a rejected result (REQ-WRK-9).
       version: 4,
       sql: 'ALTER TABLE workflow_nodes ADD COLUMN escalations INTEGER NOT NULL DEFAULT 0;',
+    }, {
+      // Wake-on-message: an idle session's turn on its unread messages, and where its reply goes.
+      version: 5,
+      sql: 'CREATE TABLE workflow_wakes (run_id TEXT PRIMARY KEY, session_id TEXT NOT NULL, through_seq INTEGER NOT NULL, reply_to TEXT NOT NULL, done INTEGER NOT NULL DEFAULT 0);',
     }])
     ctx.effect(() => {
       queueMicrotask(() => {
@@ -264,6 +268,9 @@ export class Workflow extends Service {
       }
     })
     ctx.inject(['mcp'], (c) => this.registerTools(c))
+    ctx.on('worker-sessions/delivered', (sessionIds) => {
+      for (const id of sessionIds) this.wakeSafely(id)
+    })
     // A team's synthesis must have text and cite the member evidence it relies on (REQ-TEAM-3).
     ctx.workers.contract('acceptance.team-synthesis', ({ body }) => {
       const text = String((body as { text?: unknown } | undefined)?.text ?? '')
@@ -314,7 +321,8 @@ export class Workflow extends Service {
       if (active >= limit) throw new WorkflowFailure('overloaded', `${active} runs are already active (limit ${limit}); retry later`)
       // One persistent session per run, opened now so its id is returned at once (REQ-SES-8).
       // Sessions are the engine's: one per run, issued now so its id is returned at once (REQ-SES-8).
-      if (input.sessionId && !db.prepare('SELECT 1 FROM workflow_runs WHERE session_id = ?').get(input.sessionId)) {
+      // A run continues an engine session, or a Worker session (a team member's, woken by a message).
+      if (input.sessionId && !db.prepare('SELECT 1 FROM workflow_runs WHERE session_id = ?').get(input.sessionId) && !this.ctx.workerSessions.session(input.sessionId)) {
         throw new WorkflowFailure('invalid_input', `unknown session ${input.sessionId}`)
       }
       const sessionId = input.sessionId ?? (spec.nodes.some((n) => n.session.persist) ? newId('ses') : undefined)
@@ -432,6 +440,71 @@ export class Workflow extends Service {
     if (this.stopped.signal.aborted) return
     const rows = this.ctx.store.db.prepare("SELECT run_id FROM workflow_runs WHERE status = 'running' ORDER BY created_at").all() as Array<{ run_id: string }>
     for (const { run_id } of rows) this.schedule(run_id)
+    // A wake whose run finished before the reply was posted (a crash) is settled now; then any
+    // session with unread mail is woken, so a message sent while the host was down is answered.
+    const wakes = this.ctx.store.db.prepare("SELECT w.run_id FROM workflow_wakes w JOIN workflow_runs r ON r.run_id = w.run_id WHERE w.done = 0 AND r.status != 'running'").all() as Array<{ run_id: string }>
+    for (const { run_id } of wakes) this.settleWake(run_id)
+    for (const id of this.ctx.workerSessions.pending()) this.wakeSafely(id)
+  }
+
+  /**
+   * Wake-on-message (docs/design/sessions-and-messaging.md): an idle session with unread messages
+   * takes one turn on them, on its own session and Worker (Model A), as an `ask` run. Its reply
+   * goes back to the peers who wrote; the operator reads it as the run's answer. A session in a
+   * running team is not woken: its rounds read the inbox. One wake per session at a time, and
+   * one per (session, last message), so a repeated delivery starts nothing new.
+   */
+  wake(sessionId: string): RunView | undefined {
+    if (this.draining || this.stopped.signal.aborted) return undefined
+    const sessions = this.ctx.workerSessions
+    return this.ctx.store.transaction((db) => {
+      const session = sessions.session(sessionId)
+      if (!session || session.state !== 'IDLE') return undefined
+      if (session.runId && this.get(session.runId)?.status === 'running') return undefined
+      if (db.prepare('SELECT 1 FROM workflow_wakes WHERE session_id = ? AND done = 0').get(sessionId)) return undefined
+      const inbox = sessions.inbox(sessionId)
+      if (!inbox.length) return undefined
+      if (!sessions.activate(sessionId, this.ctx.workers.handle(sessionId)).activated) return undefined
+      const through = inbox.at(-1)!.seq
+      const replyTo = [...new Set(inbox.map((m) => m.from).filter((from) => from !== 'operator' && from !== sessionId))]
+      const prompt = [
+        `Messages for you (${session.role}), in order:`,
+        ...inbox.map((m) => `### From [${sessions.session(m.from)?.role ?? m.from}] (${m.message.intent ?? 'request'})\n${m.message.body}`),
+        replyTo.length ? 'Reply to them. Your reply is sent to each peer who wrote.' : 'Reply to them.',
+      ].join('\n\n')
+      const run = this.start({ template: 'ask', input: prompt, sessionId, clientRequestId: `wake:${sessionId}:${through}`, classification: 'operator-shared' })
+      db.prepare('INSERT OR IGNORE INTO workflow_wakes (run_id, session_id, through_seq, reply_to) VALUES (?, ?, ?, ?)').run(run.runId, sessionId, through, JSON.stringify(replyTo))
+      return run
+    })
+  }
+
+  private wakeSafely(sessionId: string): void {
+    try {
+      this.wake(sessionId)
+    } catch (error) {
+      this.ctx.logger.warn(`workflow: could not wake session ${sessionId}: ${(error as Error).message}`)
+    }
+  }
+
+  /** A wake run finished: post the reply to the peers (as an answer, which wakes nobody), acknowledge, settle. */
+  private settleWake(runId: string): void {
+    const wake = this.ctx.store.db.prepare('SELECT session_id, through_seq, reply_to FROM workflow_wakes WHERE run_id = ? AND done = 0').get(runId) as { session_id: string; through_seq: number; reply_to: string } | undefined
+    if (!wake) return
+    const sessions = this.ctx.workerSessions
+    const run = this.get(runId)
+    this.ctx.store.transaction((db) => {
+      if (run?.status === 'completed' && run.answer?.trim()) {
+        for (const peer of JSON.parse(wake.reply_to) as string[]) {
+          sessions.send({ from: wake.session_id, messageId: `wake:${runId}`, to: { session: peer }, intent: 'answer', body: run.answer.length > 32_000 ? `${run.answer.slice(0, 31_900)}\n…(truncated)` : run.answer })
+        }
+      }
+      // A failed wake is acknowledged too: the failure is the run's, and the message is not retried in a loop.
+      sessions.ack(wake.session_id, wake.through_seq)
+      sessions.settle(wake.session_id)
+      db.prepare('UPDATE workflow_wakes SET done = 1 WHERE run_id = ?').run(runId)
+    })
+    // Messages that arrived during the turn wake it again.
+    this.ctx.store.afterCommit(() => this.wakeSafely(wake.session_id))
   }
 
   /**
@@ -1188,11 +1261,17 @@ export class Workflow extends Service {
     this.ctx.store.transaction((db) => {
       if (lease) this.ctx.leases.fence(lease())
       db.prepare('UPDATE workflow_runs SET status = ?, result = ?, error = ?, updated_at = ? WHERE run_id = ?').run(status, fields.result ?? null, fields.error ?? null, now(), run.run_id)
+      // The team's rounds consumed its members' mail: what is left over must not wake them later.
+      for (const member of this.ctx.workerSessions.ofRun(run.run_id)) {
+        const left = this.ctx.workerSessions.inbox(member.sessionId)
+        if (left.length) this.ctx.workerSessions.ack(member.sessionId, left.at(-1)!.seq)
+      }
       this.ctx.eventLog.append({ type: `workflow.run.${status}`, runId: run.run_id, data: { template: run.template } })
     })
     this.ctx.store.afterCommit(() => {
       for (const wake of this.waiters.get(run.run_id) ?? []) wake()
       this.waiters.delete(run.run_id)
+      this.settleWake(run.run_id)
     })
   }
 

@@ -6,7 +6,7 @@ Routing **seam definition**
 
 | Seam | Definition | Provider |
 |---|---|---|
-| `ctx.workers` | abstract `Workers` with `register(source)`, `list()`, `route(requirement, options)`, `contract(id, check)`, `contracts()`, `accept(result, contract)`; `source(name)`, `affinity(sessionId)`; `WorkerSource` (describe, start, get, wait, affinity, cancel), `WorkerStart`, `WorkerExecution`, `CapabilityDescriptor`, `WorkRequirement`, `AdmittedWorker`, `AdmissionFailure`, `AcceptanceContract` | `@tsuuanmi/system-workers` |
+| `ctx.workers` | abstract `Workers` with `register(source)`, `list()`, `route(requirement, options)`, `contract(id, check)`, `contracts()`, `accept(result, contract)`; `source(name)`, `affinity(sessionId)`, `handle(sessionId)`; `WorkerSource` (describe, start, get, wait, affinity, handle, cancel), `WorkerStart`, `WorkerExecution`, `CapabilityDescriptor`, `WorkRequirement`, `AdmittedWorker`, `AdmissionFailure`, `AcceptanceContract` | `@tsuuanmi/system-workers` |
 
 - The types mirror `capability-descriptor@1.0` and `work-requirement@1.0`. The
   schemas in `schemas/` are canonical.

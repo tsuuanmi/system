@@ -31,8 +31,16 @@
 - **MCP:**
   - `session_send` (as the operator, to a session or a group);
   - `session_inbox` (a session's record and unread messages, not acknowledged).
+- **Activation (wake-on-message).**
+  - A delivery whose intent asks for a reply (any but `answer` and `close`)
+    announces `worker-sessions/delivered`, and the workflow engine wakes the
+    idle targets.
+  - `activate(session, nativeHandle)` makes an idle session ACTIVE, records
+    its native conversation handle, and counts its turn against `maxTurns`. A
+    refusal is a `gate` decision. `settle` makes it idle again.
+  - `pending()` lists sessions with unread mail, and `ofRun(runId)` lists a
+    run's members.
 - **Not yet:**
-  - wake-on-message for idle sessions outside a workflow round;
   - checkpoints and compaction for long-running sessions;
   - budgets beyond messages.
 - **Injects:** `store`, `artifacts`; `mcp` is optional.

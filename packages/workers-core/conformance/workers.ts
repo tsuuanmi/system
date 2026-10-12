@@ -122,14 +122,18 @@ export function workersConformance(name: string, boot: Boot): void {
       })
     })
 
-    it('names the source of the admitted Worker, and asks the owning source for a session\'s affinity', async () => {
+    it('names the source of the admitted Worker, and asks the owning source for a session\'s affinity and handle', async () => {
       const { ctx, dispose } = await boot()
       try {
         ctx.workers.register(source('one', [worker('w:a')]))
-        ctx.workers.register(source('two', [worker('w:b', { tier: 'economy' })], { affinity: (id) => (id === 'ses_two' ? ['w:b'] : undefined) }))
+        ctx.workers.register(source('two', [worker('w:b', { tier: 'economy' })], {
+          affinity: (id) => (id === 'ses_two' ? ['w:b'] : undefined), handle: (id) => (id === 'ses_two' ? 'https://example.test/c/two' : undefined),
+        }))
         expect((await ctx.workers.route(requirement())).source).toBe('two')
         expect(ctx.workers.affinity('ses_two')).toEqual(['w:b'])
         expect(ctx.workers.affinity('ses_other')).toBeUndefined()
+        expect(ctx.workers.handle('ses_two')).toBe('https://example.test/c/two')
+        expect(ctx.workers.handle('ses_other')).toBeUndefined()
       } finally {
         await dispose()
       }

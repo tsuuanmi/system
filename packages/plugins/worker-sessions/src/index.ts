@@ -19,7 +19,18 @@ declare module '@deepseek-ai/cordis' {
   interface Context {
     workerSessions: WorkerSessions
   }
+  interface Events {
+    /**
+     * Messages were committed to these sessions' mailboxes, with intents that ask for a reply
+     * (not `answer` or `close`). The workflow engine wakes idle sessions on it.
+     * @mode emit
+     */
+    'worker-sessions/delivered'(sessionIds: string[]): void
+  }
 }
+
+/** Intents that wake an idle target; an `answer` is read at its next activation (no reply loops). */
+const WAKING = new Set<Message['intent'] | undefined>([undefined, 'inform', 'request', 'critique', 'handoff', 'input-required'])
 
 export type SessionState = 'FORMING' | 'IDLE' | 'ACTIVE' | 'INPUT_REQUIRED' | 'FAILED' | 'CLOSED'
 export type Runtime = 'website' | 'claude-agent-sdk' | 'codex-sdk' | 'acp' | 'a2a' | 'local-tool' | 'model-api'
@@ -201,6 +212,7 @@ export class WorkerSessions extends Service {
         if (Number(inserted.changes) > 0) delivered.push(id)
       }
       if (sender && delivered.length) this.update(sender.sessionId, (r) => ({ ...r, usage: { turns: r.usage?.turns ?? 0, messagesSent: (r.usage?.messagesSent ?? 0) + 1 } }))
+      if (delivered.length && WAKING.has(message.intent)) this.ctx.store.afterCommit(() => this.ctx.emit('worker-sessions/delivered', delivered))
       return { accepted: true, artifact, delivered }
     })
   }
@@ -225,6 +237,54 @@ export class WorkerSessions extends Service {
   /** Acknowledge delivery up to `seq`; redelivery after a crash resumes after it. */
   ack(sessionId: string, seq: number): void {
     this.update(sessionId, (record) => ({ ...record, mailboxSeq: Math.max(record.mailboxSeq, seq) }))
+  }
+
+  /**
+   * Activate an idle session for one turn (wake-on-message): ACTIVE, and its turn counted.
+   * Refused (a `gate` decision) when the session is not idle or its turn budget is spent.
+   */
+  activate(sessionId: string, nativeHandle: string | undefined): { activated: true } | { activated: false; reason: string } {
+    return this.ctx.store.transaction(() => {
+      const session = this.session(sessionId)
+      const turns = session?.usage?.turns ?? 0
+      const reason = !session ? `no session ${sessionId}`
+        : session.state !== 'IDLE' ? `session ${sessionId} is ${session.state}`
+          : turns >= session.budgets.maxTurns ? `session ${sessionId} has used its ${session.budgets.maxTurns} turns`
+            : !nativeHandle ? `session ${sessionId} has no conversation to resume` : undefined
+      if (reason) {
+        if (session && session.state === 'IDLE') {
+          this.ctx.artifacts.recordDecision({
+            decisionType: 'gate',
+            question: `May session ${sessionId} take another turn?`,
+            inputs: [],
+            candidates: [{ option: 'activate', selected: false, reasons: [] }, { option: 'refuse', selected: true, reasons: [reason] }],
+            decider: { type: 'policy', id: 'sessions.budget', version: '1' },
+            outcome: { option: 'refuse', detail: { turns } },
+            deterministic: true,
+          }, { producer: { type: 'system', ref: 'worker-sessions' } })
+        }
+        return { activated: false, reason }
+      }
+      this.update(sessionId, (r) => ({ ...r, state: 'ACTIVE', binding: { ...r.binding, nativeHandle: nativeHandle! }, usage: { turns: turns + 1, messagesSent: r.usage?.messagesSent ?? 0 } }))
+      return { activated: true }
+    })
+  }
+
+  /** End an activation: the session is idle again. */
+  settle(sessionId: string): void {
+    this.update(sessionId, (r) => (r.state === 'ACTIVE' ? { ...r, state: 'IDLE' } : r))
+  }
+
+  /** The sessions a run formed (its team members). */
+  ofRun(runId: string): WorkerSession[] {
+    return (this.ctx.store.db.prepare("SELECT record FROM worker_sessions WHERE json_extract(record, '$.runId') = ? ORDER BY session_id").all(runId) as Array<{ record: string }>)
+      .map((r) => JSON.parse(r.record) as WorkerSession)
+  }
+
+  /** Sessions with unread messages (after their acknowledged sequence). */
+  pending(): string[] {
+    return (this.ctx.store.db.prepare(`SELECT DISTINCT m.session_id AS id FROM mailbox m JOIN worker_sessions s ON s.session_id = m.session_id
+      WHERE m.seq > json_extract(s.record, '$.mailboxSeq') ORDER BY m.session_id`).all() as Array<{ id: string }>).map((r) => r.id)
   }
 
   /** The group id in a policy allows the group and every member of it. */

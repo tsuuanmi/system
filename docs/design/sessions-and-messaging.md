@@ -116,5 +116,13 @@ Panel teams use it:
 - `To m<k>: …` lines are direct messages;
 - critique rounds read the member's inbox after the first-round barrier opens.
 
-Wake-on-message outside workflow rounds, checkpoints, and compaction are not
-built yet.
+Wake-on-message is built: an idle session with unread mail takes one turn on
+its own Worker, and its reply goes back to the peers who wrote
+([engine](../../packages/plugins/workflow/README.md)).
+- A reply's intent is `answer`, which wakes nobody, so peers cannot loop.
+- The Worker seam gained `handle(sessionId)`, because an ACTIVE session must
+  record its native conversation handle.
+- Live verification needs a second account: panel teams are the only source of
+  member sessions.
+
+Checkpoints and compaction for long-running sessions are not built yet.

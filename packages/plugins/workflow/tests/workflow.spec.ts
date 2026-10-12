@@ -264,6 +264,44 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
     expect(sessions).toHaveLength(2)
   }, 180_000)
 
+  it('wakes an idle member on a message after its team finished; its reply goes to the peer, and an answer wakes nobody', async () => {
+    const answer = (prompt: string): string => {
+      if (prompt.includes('final answers')) return 'Both hold [m1] [m2].'
+      if (prompt.includes('Messages for you (m1)')) return prompt.includes('from m2') ? 'm1 answers m2' : 'm1 answers the operator'
+      return 'an answer'
+    }
+    const { ctx, fake } = await boot({ fake: { answer }, accounts: ['chatgpt-main', 'chatgpt-2'] })
+    const done = await ctx.workflow.wait(ctx.workflow.start({ template: 'panel', input: 'Is it safe?' }).runId, 120_000)
+    expect(done.status).toBe('completed')
+    const members = ctx.workerSessions.ofRun(done.runId)
+    const m1 = members.find((m) => m.role === 'm1')
+    const m2 = members.find((m) => m.role === 'm2')
+    await new Promise((resolve) => setTimeout(resolve, 500))
+    expect(fake.sent).toHaveLength(5) // the rounds' leftover mail wakes nobody
+    expect(ctx.workerSessions.pending()).toEqual([])
+    const wakeRun = async (from: string, body: string, intent?: 'request') => {
+      const before = ctx.workflow.usage(50).map((r) => r.runId)
+      ctx.workerSessions.send({ from, messageId: `t-${body.replace(/\W/g, "-")}`, to: { session: m1!.sessionId }, body, ...(intent ? { intent } : {}) })
+      let id: string | undefined
+      await until(() => !!(id = ctx.workflow.usage(50).map((r) => r.runId).find((r) => !before.includes(r))))
+      return ctx.workflow.wait(id!, 60_000)
+    }
+    // The operator writes to m1: one turn, on m1's own account and session; the answer is the run's.
+    const one = await wakeRun('operator', 'operator question')
+    expect(one).toMatchObject({ status: 'completed', answer: 'm1 answers the operator' })
+    expect(one.nodes[0]!.worker).toBe(done.nodes.find((n) => n.nodeId === 'panel:m1:r1')!.worker)
+    await until(() => ctx.workerSessions.session(m1!.sessionId)!.state === 'IDLE')
+    expect(ctx.workerSessions.inbox(m1!.sessionId)).toEqual([])
+    // m2 asks m1: m1's reply reaches m2 as an answer, which does not wake m2.
+    const two = await wakeRun(m2!.sessionId, 'question from m2', 'request')
+    expect(two).toMatchObject({ status: 'completed', answer: 'm1 answers m2' })
+    await until(() => ctx.workerSessions.inbox(m2!.sessionId).length === 1)
+    expect(ctx.workerSessions.inbox(m2!.sessionId)[0]!.message).toMatchObject({ from: m1!.sessionId, intent: 'answer', body: 'm1 answers m2' })
+    await new Promise((resolve) => setTimeout(resolve, 500))
+    expect(fake.sent).toHaveLength(7)
+    expect(ctx.workerSessions.session(m1!.sessionId)!.usage).toMatchObject({ turns: 2 })
+  }, 240_000)
+
   it('fails closed when a team needs more distinct accounts than are ready (REQ-TEAM-4)', async () => {
     const { ctx } = await boot({ fake: { answer: 'x' } })
     const done = await ctx.workflow.wait(ctx.workflow.start({ template: 'panel', input: 'q' }).runId, 60_000)

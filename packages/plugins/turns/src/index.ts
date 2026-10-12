@@ -214,6 +214,7 @@ export class Turns extends Service {
         const account = this.session(sessionId)?.account
         return account ? TIERS.map((t) => websiteWorker(account, t)) : undefined
       },
+      handle: (sessionId) => this.session(sessionId)?.binding ?? undefined,
       cancel: (id) => this.cancel(id),
     })
     ctx.effect(() => {
