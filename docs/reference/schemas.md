@@ -124,6 +124,17 @@ guesses.
   `{type: git-head, ref: HEAD, version: hash of every change on top}`. A
   review binds to it.
 
+### `hypothesis-set` and `evidence-table`
+
+- These are the scientific-research profile's typed artifacts: `criteria` and
+  `evidence`. Each is derived from the accepted answer of its step
+  (`inputs: [result]`).
+- Ids are stable within one study: hypotheses are `H1`, `H2`, …, and
+  evidence is `E1`, `E2`, …. Conclusions cite evidence by id, and every
+  evidence `source` is a URL.
+- When the step's result changes (superseded, then run again), the new
+  artifact `supersedes` the last one.
+
 ### `assessment`
 
 - An independent review's verdict and findings, each finding with a severity

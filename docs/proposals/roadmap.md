@@ -54,6 +54,10 @@ M4 is complete apart from live checks that need a second account (panels, the le
 
 - Wake-on-message: an idle Worker session with unread mail takes one turn on its own Worker, and its reply goes to the peers who wrote, as an answer that wakes nobody. It is verified on the fixture; live verification needs a second account.
 
+M6 has started:
+- The `profiles` seam: `ctx.workflow.template` lets a profile plugin contribute templates. `develop` moved into `profile-software-development`.
+- `profile-scientific-research` (`study`, `study-deep`): hypotheses, a cited review, an evidence table, an independent critique, and conclusions citing evidence. It has typed artifacts and invalidation, and was added with no engine change, which passes the architecture test (REQ-WF-9). Verified live on 2026-10-12.
+
 M5 gateways have started:
 - The Anthropic Messages gateway (`system claude-env`) lets Claude Code use website Workers as its model. Its tools go through a text protocol ([ADR-0022](../decisions/adr/0022-text-protocol-tool-calls-for-website-models.md)).
 - Verified live on 2026-10-12: Claude Code ran a `Read` → `Edit` → answer loop on ChatGPT.

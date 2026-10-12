@@ -1,0 +1,17 @@
+{
+  "schema": "hypothesis-set@1.0",
+  "question": "Does intermittent fasting lower HbA1c in adults with type 2 diabetes?",
+  "hypotheses": [
+    {
+      "id": "H1",
+      "statement": "Intermittent fasting lowers HbA1c more than usual care over 12 weeks.",
+      "supportIf": "Randomised trials show a larger HbA1c reduction than control.",
+      "refuteIf": "Trials show no difference."
+    },
+    {
+      "id": "H2",
+      "statement": "Any effect is explained by weight loss.",
+      "supportIf": "Adjusting for weight loss removes the effect."
+    }
+  ]
+}
