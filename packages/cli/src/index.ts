@@ -169,6 +169,15 @@ export function mcpToken(home: string = dshHome()): string {
   return readFileSync(tokenFile).toString('base64url')
 }
 
+/**
+ * The web UI's address for the running profile. The token rides in the fragment, which a
+ * browser never sends to a server; the page moves it to session storage and drops it.
+ */
+export function uiUrl(home: string = dshHome()): string {
+  const { url } = JSON.parse(readFileSync(join(home, 'system', 'mcp.json'), 'utf8')) as Discovery
+  return `${new URL(url).origin}/ui/#token=${mcpToken(home)}`
+}
+
 export interface ToolOutcome {
   isError: boolean
   text: string

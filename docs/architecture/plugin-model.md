@@ -58,7 +58,7 @@ can be added without changing consumers.
 | Orchestration | `profiles` (domain procedures) | `profile-software-development`, `profile-scientific-research` | workflow |
 | Gateways | `clientProtocols` (shared turn broker) | `gateway-responses`, `gateway-anthropic-messages` | — (edge) |
 | Gateways | `mcp` (tools contributed by plugins for their lifetime; definition `McpTools` in `@tsuuanmi/system-gateway-core`) | `@tsuuanmi/system-mcp-server` (own; DSH has only an MCP client) | plugins that expose operations: `login` (`account_list`, `account_save`), `workflow` (`ask`, `research`, `result`, `usage`, `explain`) |
-| Gateways | — (consumers only) | `cli` (wrapper around `dsh --profile system`), `web-ui` (on **DSH** web app), later `gateway-a2a` | — (edge) |
+| Gateways | — (consumers only) | `cli` (wrapper around `dsh --profile system`), `@tsuuanmi/system-web-ui` (operator UI at `/ui` on the DSH webserver; the DSH web app is the v1.0 option), later `gateway-a2a` | — (edge) |
 
 Gateways only consume services, so they are plain plugins with no seam of their
 own. The exception is the shared turn broker that the two client-protocol

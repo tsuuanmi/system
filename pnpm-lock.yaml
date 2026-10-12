@@ -764,6 +764,31 @@ importers:
         specifier: 1.63.0
         version: 1.63.0
 
+  packages/plugins/web-ui:
+    dependencies:
+      '@tsuuanmi/system-libs':
+        specifier: workspace:*
+        version: link:../../libs
+      '@tsuuanmi/system-workflow':
+        specifier: workspace:*
+        version: link:../workflow
+    devDependencies:
+      '@deepseek-ai/cordis':
+        specifier: 4.0.5-alpha.1
+        version: 4.0.5-alpha.1(@deepseek-ai/cordis-plugin-include@1.0.10-alpha.1)(@deepseek-ai/cordis-plugin-loader@1.0.6-alpha.1)
+      '@deepseek-ai/dsh-host-webserver':
+        specifier: 0.2.1-alpha.2
+        version: 0.2.1-alpha.2(@deepseek-ai/cordis@4.0.5-alpha.1)
+      '@deepseek-ai/schemastery':
+        specifier: 3.18.5-alpha.1
+        version: 3.18.5-alpha.1
+      '@tsuuanmi/system-browser-patchright':
+        specifier: workspace:*
+        version: link:../browser-patchright
+      patchright-core:
+        specifier: 1.63.0
+        version: 1.63.0
+
   packages/plugins/worker-sessions:
     dependencies:
       '@tsuuanmi/system-artifacts':
@@ -968,6 +993,9 @@ importers:
       '@tsuuanmi/system-turns':
         specifier: workspace:*
         version: link:../plugins/turns
+      '@tsuuanmi/system-web-ui':
+        specifier: workspace:*
+        version: link:../plugins/web-ui
       '@tsuuanmi/system-worker-sessions':
         specifier: workspace:*
         version: link:../plugins/worker-sessions

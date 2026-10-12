@@ -41,7 +41,9 @@ Next in M3, all of which need the operator: `runtime-codex-sdk` (a Codex CLI log
 
 - Worker sessions with mailboxes and direct peer messaging (`ctx.workerSessions`), used by panel teams. Operator `stop`, `continue`, `delete`, and `supersede` (lineage invalidation).
 
-Next in M4: team leads and wake-on-message sessions, the `software-development` profile, lineage invalidation, and a Web UI.
+- An operator web UI at `/ui` (`system ui`): runs, steps, decision chains, approve, stop, continue.
+
+Next in M4: team leads and wake-on-message sessions, and the `software-development` profile.
 
 Later candidates, each needing its own proposal: A2A gateway and runtime
 (cross-runtime peers), an ACP client gateway for editors, sandboxed or SSH `exec`

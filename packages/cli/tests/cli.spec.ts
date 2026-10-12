@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { CHROME_LOCK } from '@tsuuanmi/system-browser-patchright'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { callTool, ensureBrowser, exitCode, formatExplanation, formatUsage, mcpConfig, mcpHeaders, mergeProfileManifest, parseAsk } from '../src/index.ts'
+import { callTool, ensureBrowser, exitCode, formatExplanation, formatUsage, mcpConfig, mcpHeaders, mergeProfileManifest, parseAsk, uiUrl } from '../src/index.ts'
 
 const dirs: string[] = []
 afterEach(() => {
@@ -126,5 +126,7 @@ describe('Claude Code connection (headersHelper)', () => {
     expect(claude).toContain('headersHelper')
     expect(claude).toContain('mcp-headers')
     expect(claude).not.toContain(token)
+    // The web UI link carries the token in its fragment only.
+    expect(uiUrl(home)).toBe(`http://127.0.0.1:47317/ui/#token=${token}`)
   })
 })
