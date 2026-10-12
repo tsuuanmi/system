@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { CHROME_LOCK } from '@tsuuanmi/system-browser-patchright'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { callTool, claudeGatewayCommand, codexGatewayCommand, drainHost, ensureBrowser, exitCode, formatExplanation, formatUsage, mcpConfig, mcpHeaders, mergeProfileManifest, parseAsk, uiUrl } from '../src/index.ts'
+import { callTool, claudeGatewayCommand, codexGatewayCommand, drainHost, formatTools, ensureBrowser, exitCode, formatExplanation, formatUsage, mcpConfig, mcpHeaders, mergeProfileManifest, parseAsk, uiUrl } from '../src/index.ts'
 
 const dirs: string[] = []
 afterEach(() => {
@@ -157,6 +157,19 @@ describe('drain (REQ-HOST-1)', () => {
   it('reports what is still running at the deadline', async () => {
     const { call } = polls([['run_a'], ['run_a'], ['run_a'], ['run_a']])
     expect(await drainHost(0, { call, pollMs: 1 })).toEqual({ drained: false, active: ['run_a'] })
+  })
+})
+
+describe('tool contracts reference', () => {
+  it('renders each tool with its arguments, and escapes table cells', () => {
+    const page = formatTools([
+      { name: 'ask', description: 'Ask a | Worker', inputSchema: { properties: { prompt: { type: 'string', description: 'the prompt' }, tier: { enum: ['economy', 'standard'] } }, required: ['prompt'] } },
+      { name: 'status', inputSchema: {} },
+    ])
+    expect(page).toContain('## `ask`\n\nAsk a \\| Worker')
+    expect(page).toContain('| `prompt` | string | yes | the prompt |')
+    expect(page).toContain('| `tier` | "economy" \\| "standard" |  |  |')
+    expect(page).toContain('## `status`\n\n\n\nNo arguments.')
   })
 })
 

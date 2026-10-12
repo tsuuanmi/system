@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { browserDeps, callTool, claudeGatewayCommand, codexGatewayCommand, drainHost, shutdownHost, ensureBrowser, formatExplanation, formatUsage, init, mcpConfig, mcpHeaders, mcpToken, parseAsk, readAllStdin, serveStdio, start, type ToolOutcome, uiUrl } from './index.ts'
+import { browserDeps, callTool, claudeGatewayCommand, codexGatewayCommand, drainHost, formatTools, listTools, shutdownHost, ensureBrowser, formatExplanation, formatUsage, init, mcpConfig, mcpHeaders, mcpToken, parseAsk, readAllStdin, serveStdio, start, type ToolOutcome, uiUrl } from './index.ts'
 
 const USAGE = `Usage: system <command>
 
@@ -36,6 +36,7 @@ const USAGE = `Usage: system <command>
   mcp-config <claude|codex> print client configuration for the running MCP server
   claude-env                print a command that runs Claude Code with website Workers as its model
   codex-env                 print a command that runs Codex with website Workers as its model
+  tools [--markdown]        list the MCP tools the running profile serves (--markdown: the reference page)
   ui                        print the web UI link (runs, steps, decisions; approve, stop, continue)
   mcp-token                 print the bearer token (for an environment variable)
   mcp-headers               print the Authorization header as JSON (Claude Code headersHelper)
@@ -258,6 +259,11 @@ async function main(argv: string[]): Promise<number> {
       const outcome = command === 'drain' ? await drainHost(seconds * 1000, { onActive }) : await shutdownHost(seconds * 1000, { onActive })
       console.log(outcome.drained ? 'drained' : `deadline reached with ${outcome.active.length} run(s) still running: ${outcome.active.join(', ')} (they resume on the next start)`)
       if (command === 'shutdown') console.log('stopped')
+      return 0
+    }
+    case 'tools': {
+      const tools = await listTools()
+      console.log(rest.includes('--markdown') ? formatTools(tools) : tools.map((t) => `${t.name.padEnd(18)} ${(t.description ?? '').split('. ')[0]}`).join('\n'))
       return 0
     }
     case 'resume': {
