@@ -5,7 +5,7 @@
  */
 
 /** The words of a Markdown text as it renders: fences, emphasis, link targets, and markers dropped. */
-export function renderedWords(markdown: string): string[] {
+function renderedWords(markdown: string): string[] {
   const plain = markdown
     .replace(/^```[^\n]*$/gm, ' ')
     .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')

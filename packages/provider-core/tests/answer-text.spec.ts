@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { renderedWords, sameWords } from '../src/index.ts'
+import { sameWords } from '../src/index.ts'
 
 describe('Markdown from a Copy button is kept only when it is the rendered answer (REQ-PRV-5)', () => {
-  it('reads the words a Markdown text renders to', () => {
-    expect(renderedWords('## Plan\n* **First** item\n\nSee [example.com](https://example.com).\n```python\nx = 1\n```')).toEqual(['Plan', 'First', 'item', 'See', 'example', 'com', 'x', '1'])
+  it('drops heading, list, and fence markers and link targets, and allows a code block\'s label', () => {
+    expect(sameWords('## Plan\n* **First** item\n\nSee [example.com](https://example.com).\n```python\nx = 1\n```', 'Plan\nFirst item\nSee example.com.\nPython\nx = 1')).toBe(true)
   })
 
   it('matches Markdown to its rendering, and refuses another answer', () => {

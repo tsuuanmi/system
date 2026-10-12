@@ -36,7 +36,7 @@ describe('the Gemini Web UI map and driver contract', () => {
     expect(() => new GeminiWebDriver({ modes: PRESETS, defaultMode: 'ultra' })).toThrow(/default mode ultra/)
   })
 
-  it('registers on ctx.providers with the shipped presets', async () => {
+  it('registers itself on ctx.providers', async () => {
     const ctx = new Context()
     await ctx.plugin(Providers)
     await ctx.plugin(GeminiWebPlugin, { origin: 'http://127.0.0.1:9' })
@@ -76,7 +76,6 @@ describe.runIf(canRunBrowser)('GeminiWebDriver against the fake site', { timeout
     expect(result).toEqual({ text: 'Gemini test OK.', binding: undefined, mode: { model: '3.1 Pro', effort: 'High' } })
     expect(fake.sent).toEqual([{ prompt: 'Say OK', tab: 'chat', temporary: true, model: '3.1 Pro', level: 'High' }])
     expect(boundaries).toEqual([{ previousResponse: null, mode: { model: '3.1 Pro', effort: 'High' } }])
-    expect(new URL(page.url()).pathname).toBe('/app')
   })
 
   it('tells Flash from Flash-Lite, and uses the default preset when a turn names none', async () => {
@@ -107,8 +106,8 @@ describe.runIf(canRunBrowser)('GeminiWebDriver against the fake site', { timeout
   it('fails closed on a model or level the account does not offer, before sending', async () => {
     const { page, driver, fake } = await open({ models: ['3.5 Flash-Lite', '3.8 Flash'], levels: ['Low', 'Medium'] })
     await expect(driver.ask(page, 'hi', { conversation: 'temporary', mode: 'pro' })).rejects.toMatchObject({ kind: 'config_error', message: expect.stringMatching(/Pro is not offered/) })
-    const lite = new GeminiWebDriver({ origin: fake.origin, modes: { odd: { model: 'Flash', effort: 'High' } }, timeouts: { readyMs: 5000 } })
-    await expect(lite.ask(page, 'hi', { conversation: 'temporary', mode: 'odd' })).rejects.toMatchObject({ kind: 'config_error', message: expect.stringMatching(/High is not offered/) })
+    const odd = new GeminiWebDriver({ origin: fake.origin, modes: { odd: { model: 'Flash', effort: 'High' } }, timeouts: { readyMs: 5000 } })
+    await expect(odd.ask(page, 'hi', { conversation: 'temporary', mode: 'odd' })).rejects.toMatchObject({ kind: 'config_error', message: expect.stringMatching(/High is not offered/) })
     expect(fake.sent).toEqual([])
   })
 

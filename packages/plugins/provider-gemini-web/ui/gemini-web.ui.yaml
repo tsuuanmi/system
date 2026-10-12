@@ -1,5 +1,6 @@
 # Gemini Web UI map (ui-map@1.1, ADR-0021). Read live on 2026-10-12 from a signed-in account's
-# /app page (read-only, plus Temporary-chat prompts); the fake site in fixtures/ follows it.
+# /app page (read-only, plus Temporary-chat prompts), except where a description says otherwise;
+# the fake site in fixtures/ follows it.
 # When the site changes, edit this file (and the fixture), not the driver code.
 schema: ui-map@1.1
 provider: gemini-web
@@ -83,6 +84,7 @@ elements:
       - { css: '[role="menuitem"]:not([data-test-id^="bard-mode-option-"]).selected' }
 
   turn.user:
+    description: Not yet seen live (the saved answer page held only the model's turn); composer.send is also verified by Stop.
     cardinality: many
     candidates:
       - { css: 'user-query' }

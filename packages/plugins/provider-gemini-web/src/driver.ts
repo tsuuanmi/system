@@ -129,7 +129,12 @@ export class GeminiWebDriver implements ProviderDriver<Page> {
     if (auth === 'unknown') throw new ProviderError('session_broken', 'gemini-web: page did not become ready')
     const engine = this.engine(page)
     await engine.waitFor({ visible: 'composer.input' }, this.timeouts.readyMs)
-    if ((await engine.count('tab.any')) > 0 && (await engine.count('tab.chat-active')) === 0) await engine.act('tab.select-chat').catch(() => undefined)
+    // A Chat tab that does not become active is refused just below, with its reason.
+    if ((await engine.count('tab.any')) > 0 && (await engine.count('tab.chat-active')) === 0) {
+      await engine.act('tab.select-chat').catch((error: unknown) => {
+        if (!(error instanceof ProviderError && error.kind === 'ui_drift')) throw error
+      })
+    }
     await this.requireChat(engine, 'after opening')
     await engine.act('temporary.enable')
   }

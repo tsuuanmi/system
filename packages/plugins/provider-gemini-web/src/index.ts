@@ -7,7 +7,7 @@ import z from '@deepseek-ai/schemastery'
 import type { ProviderMode } from '@tsuuanmi/system-provider-core'
 import { GeminiWebDriver } from './driver.ts'
 
-export { type DriverOptions, type DriverTimeouts, GeminiWebDriver, shippedMap } from './driver.ts'
+export { GeminiWebDriver, shippedMap } from './driver.ts'
 
 export interface Config {
   /** Site origin (default https://gemini.google.com); tests point it at a local fake. */

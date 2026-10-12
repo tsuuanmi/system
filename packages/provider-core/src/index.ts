@@ -1,4 +1,4 @@
-export { renderedWords, sameWords } from './answer-text.ts'
+export { sameWords } from './answer-text.ts'
 export { type CompletedResponse, type CompletionSnapshot, type ProviderProgressEvent, type ProviderProgressKind, type WaitOptions, waitForStableCompletion } from './completion.ts'
 export { type Disposition, ProviderError, type ProviderErrorKind, abortReason, dispositionOf, toProviderError } from './errors.ts'
 export { type Reconciliation, type Tier, type TurnReceipt, type TurnSnapshot, promptShown, reconcileTurn, responseHash } from './reconcile.ts'

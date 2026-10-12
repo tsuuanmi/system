@@ -30,10 +30,8 @@ export interface FakeOptions {
   models?: string[]
   /** Thinking levels in the mode menu. */
   levels?: string[]
-  /** Answer Markdown, or a function of the prompt; streamed word by word. */
-  answer?: string | ((prompt: string, sent: Sent) => string)
-  /** Delay before streaming starts, in ms. */
-  thinkMs?: number
+  /** Answer Markdown, streamed word by word. */
+  answer?: string
 }
 
 export interface Sent {
@@ -123,7 +121,6 @@ async function send() {
   const answer = document.createElement('model-response')
   answer.innerHTML = '<div class="model-response-label-announcer" aria-live="polite"><h6 class="sr-only">Gemini said</h6></div><message-content><div class="markdown"></div></message-content>'
   $('log').append(answer)
-  if (!temporary) history.pushState({}, '', '/app/' + Math.random().toString(16).slice(2, 18).padEnd(16, '0'))
   let raw = ''
   const decoder = new TextDecoder()
   for (;;) {
@@ -153,7 +150,7 @@ render()
 `
 
 function html(options: Required<FakeOptions>): string {
-  const data = JSON.stringify({ ...options, answer: undefined, notes: NOTES }).replace(/</g, '\\u003c')
+  const data = JSON.stringify({ ...options, notes: NOTES }).replace(/</g, '\\u003c')
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Gemini</title>
 <style>.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}[hidden]{display:none}</style></head>
 <body>
@@ -186,7 +183,7 @@ export class FakeGemini {
   constructor(options: FakeOptions = {}) {
     this.options = {
       startOnSpark: true, chatTabBroken: false, temporaryBroken: false, modePicker: true,
-      models: ['3.5 Flash-Lite', '3.8 Flash', '3.1 Pro'], levels: ['Low', 'Medium', 'High'], answer: 'OK', thinkMs: 300, ...options,
+      models: ['3.5 Flash-Lite', '3.8 Flash', '3.1 Pro'], levels: ['Low', 'Medium', 'High'], answer: 'OK', ...options,
     }
   }
 
@@ -209,17 +206,16 @@ export class FakeGemini {
       for await (const chunk of req) body += String(chunk)
       const sent = JSON.parse(body) as Sent
       this.sent.push(sent)
-      const answer = typeof this.options.answer === 'function' ? this.options.answer(sent.prompt, sent) : this.options.answer
       res.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
-      await new Promise((resolve) => setTimeout(resolve, this.options.thinkMs))
-      for (const word of answer.split(/(?<= )/)) {
+      await new Promise((resolve) => setTimeout(resolve, 300))
+      for (const word of this.options.answer.split(/(?<= )/)) {
         res.write(`data: ${JSON.stringify({ delta: word })}\n\n`)
         await new Promise((resolve) => setTimeout(resolve, 40))
       }
       res.end(`data: ${JSON.stringify({ done: true })}\n\n`)
       return
     }
-    if (url.pathname === '/app' || url.pathname.startsWith('/app/')) {
+    if (url.pathname === '/app') {
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }).end(html(this.options))
       return
     }
