@@ -14,7 +14,7 @@ import z from '@deepseek-ai/schemastery'
 import type { RunSpec, RuntimeEvidence, SandboxMode } from '@tsuuanmi/system-agent-runtime-core'
 import type {} from '@tsuuanmi/system-artifacts'
 import { type Lease, LeaseLost, StaleGeneration } from '@tsuuanmi/system-leases'
-import { sha256 } from '@tsuuanmi/system-libs'
+import { captureGitSubject, sha256 } from '@tsuuanmi/system-libs'
 import { ProviderError, ProviderScheduler, dispositionOf, toProviderError } from '@tsuuanmi/system-provider-core'
 import type {} from '@tsuuanmi/system-store'
 import type { ArtifactRef, CapabilityDescriptor, ExecutionStatus, QuotaClass, Tier, WorkerExecution, WorkerStart } from '@tsuuanmi/system-workers-core'
@@ -153,8 +153,9 @@ export class AgentWorkers extends Service {
       const ready = evidence.available && evidence.sandboxes.includes(worker.sandbox)
       const proven = ready
         ? [
-            'review', 'local-data',
-            ...(worker.sandbox === 'workspace-write' ? ['develop', ...(evidence.executes ? ['validate'] : [])] : []),
+            'local-data',
+            // A review is independent of the change, so only a Worker that cannot write proves it (INV-15).
+            ...(worker.sandbox === 'workspace-write' ? ['develop', ...(evidence.executes ? ['validate'] : [])] : ['review']),
             ...(evidence.resume ? ['persistent-conversation'] : []),
           ]
         : []
@@ -329,15 +330,18 @@ export class AgentWorkers extends Service {
       throw error
     })
     const handle = result.nativeHandle ?? this.row(row.run_id)?.native_handle ?? undefined
+    // The workspace's exact subject after the run, so a review can bind to it (REQ-WF-5).
+    const captured = captureGitSubject(worker.workspace)
     this.ctx.store.transaction((db) => {
       this.ctx.leases.fence(lease())
       if (handle && row.session_id) db.prepare('UPDATE agent_sessions SET native_handle = ? WHERE session_id = ?').run(handle, row.session_id)
       const artifact = this.ctx.artifacts.put({
-        kind: 'report', bodySchema: 'agent-result@1.0',
+        kind: 'report', bodySchema: 'agent-result@1.1',
         body: {
-          schema: 'agent-result@1.0', worker: row.worker, runtime: worker.runtime, runId: row.run_id,
+          schema: 'agent-result@1.1', worker: row.worker, runtime: worker.runtime, runId: row.run_id,
           ...(row.session_id ? { sessionId: row.session_id } : {}), ...(handle ? { nativeHandle: handle } : {}),
-          promptHash: sha256(row.prompt), sandbox: worker.sandbox,
+          promptHash: sha256(row.prompt), sandbox: worker.sandbox, workspace: worker.workspace,
+          ...(captured ? { subject: captured.subject } : {}),
           ...(result.turns !== undefined ? { turns: result.turns } : {}), ...(result.costUsd !== undefined ? { costUsd: result.costUsd } : {}),
           text: result.text,
         },

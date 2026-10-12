@@ -163,7 +163,15 @@ templates from configuration (`ask`, `research` → `compact`, `investigate`,
 - teams unrolled into members, rounds, and a synthesis
   ([teams](teams.md#built-so-far));
 - operator `stop`, `continue` (one failed node, as a new attempt), `delete` (on
-  the exact previewed version), and `supersede` (lineage invalidation).
+  the exact previewed version), and `supersede` (lineage invalidation);
+- exact-subject review: a review of an agent's change is bound to the working
+  tree's git subject, `git:<HEAD>:<hash of every change on top>`. Its
+  `assessment` is stored only when it names that subject and the tree is still
+  it, as an exact-subject `gate` decision. Verified live on 2026-10-12: a
+  writable agent fixed a file, a read-only agent reviewed the exact change,
+  and the gate passed.
+- wake-on-message for idle Worker sessions
+  ([sessions](sessions-and-messaging.md#built-so-far)).
 
-Profile growth rules, team leads and messaging, handoff envelopes, and
+Profile growth rules (remediation cycles), team leads, handoff envelopes, and
 re-planning after a superseded input are not built yet.

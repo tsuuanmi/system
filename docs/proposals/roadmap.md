@@ -45,7 +45,9 @@ Next in M3, all of which need the operator: `runtime-codex-sdk` (a Codex CLI log
 
 - The `develop` template, the software-development profile in MVP form: plan, the approval gate, local agents implement, a fresh-session review, and a report.
 
-Next in M4: team leads, and exact-head review (which needs confined command execution).
+- Exact-head review: a review of an agent's change binds to the working tree's git subject, and its `assessment` is stored only if the subject still holds (an exact-subject gate). Only read-only Workers prove `review`. Verified live on 2026-10-12.
+
+Next in M4: team leads, and remediation cycles after a `changes-requested` review.
 
 - Wake-on-message: an idle Worker session with unread mail takes one turn on its own Worker, and its reply goes to the peers who wrote, as an answer that wakes nobody. It is verified on the fixture; live verification needs a second account.
 

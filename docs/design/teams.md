@@ -70,4 +70,4 @@ Members talk through `ctx.workerSessions`. Each answer is the member's message
 to the team, held behind the first-round barrier. `To m<k>: …` lines are direct
 messages. Critique rounds read each member's own inbox.
 
-Not built yet: a lead, and independent review with `assessment` artifacts.
+Independent review is built for the `develop` profile: a read-only Worker in a fresh session reviews the exact subject, and its findings are an `assessment` artifact bound to it ([engine](workflow-engine.md#built-so-far)). Not built yet: a lead.

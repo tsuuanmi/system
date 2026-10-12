@@ -14,14 +14,14 @@ import type { Decision } from '@tsuuanmi/system-artifacts'
 import type {} from '@tsuuanmi/system-event-log'
 import type {} from '@tsuuanmi/system-gateway-core'
 import { type Lease, LeaseLost, StaleGeneration } from '@tsuuanmi/system-leases'
-import { canonicalJson, type ContentId, SchemaRegistry, sha256 } from '@tsuuanmi/system-libs'
+import { canonicalJson, captureGitSubject, type ContentId, type GitSubject, SchemaRegistry, sha256, subjectId } from '@tsuuanmi/system-libs'
 import type {} from '@tsuuanmi/system-store'
 import type { Runtime } from '@tsuuanmi/system-worker-sessions'
 import type {} from '@tsuuanmi/system-egress'
 import { dispositionOf, type ProviderErrorKind } from '@tsuuanmi/system-provider-core'
 import { AdmissionFailure, type AdmittedWorker, type ArtifactRef, type Classification, type Tier, TIERS, type WorkRequirement, type WorkerExecution } from '@tsuuanmi/system-workers-core'
 import { z as zod } from 'zod'
-import { type CallerOptions, DEFAULT_GROWTH, DEFAULT_TEMPLATES, type NodeTemplate, parsePlan, type PlannedNode, render, type ResolvedNode, resolve } from './spec.ts'
+import { type CallerOptions, DEFAULT_GROWTH, DEFAULT_TEMPLATES, type NodeTemplate, parseAssessment, parsePlan, type PlannedNode, render, type ResolvedNode, resolve, subjectBlock } from './spec.ts'
 
 export { DEFAULT_TEMPLATES, preflight, render, resolve } from './spec.ts'
 export type { NodeTemplate, ResolvedNode, ResolvedSpec } from './spec.ts'
@@ -157,6 +157,8 @@ interface NodeRow {
   record: string
   state: NodeState
   prompt: string | null
+  /** JSON `{ workspace, subject }` of a review bound to an exact subject. */
+  subject?: string | null
   execution_id: string | null
   source: string | null
   attempt: number
@@ -249,6 +251,10 @@ export class Workflow extends Service {
       // Wake-on-message: an idle session's turn on its unread messages, and where its reply goes.
       version: 5,
       sql: 'CREATE TABLE workflow_wakes (run_id TEXT PRIMARY KEY, session_id TEXT NOT NULL, through_seq INTEGER NOT NULL, reply_to TEXT NOT NULL, done INTEGER NOT NULL DEFAULT 0);',
+    }, {
+      // A review bound to an exact subject: the working tree it must review (REQ-WF-5).
+      version: 6,
+      sql: 'ALTER TABLE workflow_nodes ADD COLUMN subject TEXT;',
     }])
     ctx.effect(() => {
       queueMicrotask(() => {
@@ -806,9 +812,62 @@ export class Workflow extends Service {
       ...(spec.prompt.includes('{{grown}}') ? { grown: this.grownText(spec, nodes) } : {}),
       ...(spec.team ? this.teamTexts(spec, nodes) : {}),
     }
-    const prompt = spec.literal ? spec.prompt : render(spec.prompt, run.input, texts, extras)
+    let prompt = spec.literal ? spec.prompt : render(spec.prompt, run.input, texts, extras)
+    // A review of an agent's change binds to the workspace's exact subject now (REQ-TEAM-5, REQ-WF-5).
+    const bound = spec.capabilities.includes('review') ? this.reviewSubject(results, run.input) : undefined
+    if (bound) prompt = `${prompt}\n\n${bound.block}`
     const inputHash = sha256(canonicalJson({ node: spec, prompt, dependencies: results }))
-    this.writeNode(node, { state: 'READY', prompt }, (record) => ({ ...record, inputReceipt: { inputHash, bundle: results } }), lease)
+    this.writeNode(node, { state: 'READY', prompt, ...(bound ? { subject: JSON.stringify({ workspace: bound.workspace, subject: bound.subject }) } : {}) },
+      (record) => ({ ...record, inputReceipt: { inputHash, bundle: results } }), lease)
+  }
+
+  /** The working tree a dependency's agent worked in, captured as it is now, with its verbatim change. */
+  private reviewSubject(results: ArtifactRef[], request: string): { workspace: string; subject: GitSubject; block: string } | undefined {
+    const workspace = results
+      .map((r) => this.ctx.artifacts.get(r)?.body as { schema?: string; workspace?: string; subject?: unknown } | undefined)
+      .filter((b) => b?.schema?.startsWith('agent-result@') && b.workspace && b.subject)
+      .at(-1)?.workspace
+    if (!workspace) return undefined
+    const captured = captureGitSubject(workspace)
+    if (!captured) return undefined
+    const id = subjectId(captured.subject)
+    return { workspace, subject: captured.subject, block: subjectBlock(id, workspace, captured.subject.ref, captured.diff, request) }
+  }
+
+  /**
+   * The exact-subject gate of a bound review: its assessment names the subject it was given, and
+   * the working tree is still that subject now. A pass stores the `assessment` artifact, bound to
+   * the subject; either way the outcome is a `gate` decision.
+   */
+  private subjectGate(run: RunRow, node: NodeRow, result: ArtifactRef): { passed: true; decision: ArtifactRef } | { passed: false; decision: ArtifactRef; reason: string } {
+    const bound = JSON.parse(node.subject!) as { workspace: string; subject: GitSubject }
+    const expected = subjectId(bound.subject)
+    const parsed = parseAssessment(this.resultText(result))
+    const now = captureGitSubject(bound.workspace)
+    const reason = !parsed.ok ? parsed.reason
+      : parsed.assessment.subject !== expected ? `the review names ${parsed.assessment.subject}, not the subject it was given (${expected})`
+        : !now ? `${bound.workspace} is no longer a git working tree`
+          : subjectId(now.subject) !== expected ? `the working tree changed during the review (now ${subjectId(now.subject)})` : undefined
+    const assessment = parsed.ok && !reason
+      ? this.ctx.artifacts.put({
+        kind: 'assessment', bodySchema: 'assessment@1.0', subject: bound.subject, inputs: [result],
+        body: { schema: 'assessment@1.0', subject: bound.subject, verdict: parsed.assessment.verdict, findings: parsed.assessment.findings, ...(node.worker ? { reviewer: node.worker } : {}) },
+        classification: run.classification ?? this.ctx.egress.defaultClassification, producer: { type: 'system', ref: 'workflow' }, runId: run.run_id, nodeId: node.node_id,
+      }).id as ArtifactRef
+      : undefined
+    const decision = this.ctx.artifacts.recordDecision({
+      decisionType: 'gate',
+      question: `Does the review at node ${node.node_id} of run ${run.run_id} bind to the current subject ${expected}?`,
+      inputs: [result, ...(assessment ? [assessment] : [])],
+      candidates: [
+        { option: 'pass', selected: !reason, reasons: reason ? [] : [`the assessment names ${expected}, and the working tree is still it (${parsed.ok ? parsed.assessment.verdict : ''})`] },
+        { option: 'fail', selected: !!reason, reasons: reason ? [reason] : [] },
+      ],
+      decider: { type: 'policy', id: 'workflow.exact-subject', version: '1' },
+      outcome: { option: reason ? 'fail' : 'pass', detail: { subject: expected, ...(assessment ? { assessment } : {}) } },
+      deterministic: true,
+    }, { producer: { type: 'system', ref: 'workflow' }, runId: run.run_id, nodeId: node.node_id }).id as ArtifactRef
+    return reason ? { passed: false, decision, reason } : { passed: true, decision }
   }
 
   /**
@@ -1147,14 +1206,20 @@ export class Workflow extends Service {
     const acceptance = this.ctx.workers.accept(result, spec.acceptance, { producer: 'workflow', runId: run.run_id, nodeId: node.node_id })
     const decisions = { decisions: JSON.stringify([...execution.decisions, ...this.routedDecisions(node)]) }
     const data = { executionId: execution.id, source: node.source, worker: node.worker, tier: node.served_tier, quotaClass: node.quota_class, accepted: acceptance.accepted }
+    let gate: ReturnType<typeof this.subjectGate> | undefined
     this.ctx.store.transaction(() => {
       const refused = acceptance.accepted && spec.grows ? this.grow(run, node, spec, result, lease) : undefined
       if (refused) {
         const error: WorkflowError = { kind: 'plan_rejected', disposition: 'NONE', message: refused }
         this.writeNode(node, { state: 'FAILED', error: JSON.stringify(error), ...decisions }, (r) => ({ ...r, lastDecision: acceptance.decision }), lease)
         this.ctx.eventLog.append({ type: 'workflow.node.failed', runId: run.run_id, nodeId: node.node_id, decision: acceptance.decision, data: { ...data, kind: error.kind } })
+      } else if (acceptance.accepted && node.subject && !(gate = this.subjectGate(run, node, result)).passed) {
+        const error: WorkflowError = { kind: 'stale_subject', disposition: 'NONE', message: `exact-subject gate: ${gate.reason}` }
+        this.writeNode(node, { state: 'FAILED', error: JSON.stringify(error), ...decisions }, (r) => ({ ...r, lastDecision: gate!.decision }), lease)
+        this.ctx.eventLog.append({ type: 'workflow.node.failed', runId: run.run_id, nodeId: node.node_id, decision: gate.decision, data: { ...data, kind: error.kind } })
       } else if (acceptance.accepted) {
         if (spec.team?.role === 'member') this.post(run, node, spec, execution, result)
+        if (gate?.passed) decisions.decisions = JSON.stringify([...JSON.parse(decisions.decisions) as string[], gate.decision])
         this.writeNode(node, { state: 'COMPLETED', error: null, ...decisions }, (r) => ({ ...r, outputReceipt: { result, acceptance: acceptance.decision }, lastDecision: acceptance.decision }), lease)
         this.ctx.eventLog.append({ type: 'workflow.node.completed', runId: run.run_id, nodeId: node.node_id, decision: acceptance.decision, data })
       } else if (!this.escalate(run, node, spec, result, acceptance.decision, acceptance.reasons, decisions, lease)) {

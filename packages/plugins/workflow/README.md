@@ -25,12 +25,20 @@ second execution path (INV-1).
        `local-data`) and a review (`review`, `local-data`);
     2. the writing steps wait for the operator's approval of the exact plan,
        then run on a writable local agent Worker;
-    3. the review runs in a fresh session, sharing no context with the
-       producer (REQ-TEAM-5);
+    3. the review runs in a fresh session on a read-only Worker, sharing no
+       context with the producer (REQ-TEAM-5). It is bound to the exact
+       subject (see below);
     4. `report:1` summarises the steps.
-
-    Not yet: binding the review to an exact git head, and keeping the review
-    off writable Workers (any Worker proving `review` may take it).
+  - **Exact-subject review (REQ-WF-5).**
+    - When a step that proves `review` depends on an agent result whose
+      workspace is a git working tree, the engine captures that tree's
+      subject at promotion: `git:<HEAD>:<hash of every change on top>`.
+    - It appends the subject, the verbatim diff, and the request to the
+      review's prompt, and asks for a JSON assessment that names the subject.
+    - On completion, an exact-subject `gate` decision passes only if the
+      assessment names that subject and the working tree is still it. The
+      `assessment@1.0` artifact is then stored, bound to the subject.
+      Otherwise the step fails as `stale_subject`.
   - `investigate` is a planner, `plan:1`, then `synthesis:1`. The planner's plan
     adds the research steps (graph growth), and the synthesis answers from their
     findings (`{{grown}}`).
@@ -208,7 +216,7 @@ second execution path (INV-1).
 - **Not yet:**
   - profile growth rules (growth comes only from plans);
   - team procedures beyond panel critique: a lead;
-  - independent review with assessment artifacts;
+  - remediation cycles after a `changes-requested` assessment;
   - re-planning after a superseded input.
 - **Injects:** `store`, `artifacts`, `eventLog`, `leases`, `egress`, `workers`, `workerSessions`;
   `mcp` is optional.

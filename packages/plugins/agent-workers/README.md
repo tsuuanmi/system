@@ -9,7 +9,9 @@ The **`agents` Worker source**: agent runtimes as Workers
   minimal set), `model`, and `maxTurns`. It also
   has a `tier`, and a `quotaClass` (default `agent-plan`). The Worker is local.
 - **Capabilities are what `probe()` proves now** (cached for `probeTtlMs`):
-  - `review` and `local-data`;
+  - `local-data`;
+  - `review` only for a read-only sandbox: a review is independent of the
+    change (INV-15);
   - `develop` for a writable sandbox, and `validate` only if the runtime can
     also run commands confined to the workspace (`executes`);
   - `persistent-conversation` when the runtime can resume.
@@ -21,8 +23,9 @@ The **`agents` Worker source**: agent runtimes as Workers
   - durable at once, and idempotent by key;
   - one at a time per Worker (one writer per workspace, INV-15);
   - under a lease;
-  - each result is a `report` artifact (`agent-result@1.0`) with the requirement's
-    classification.
+  - each result is a `report` artifact (`agent-result@1.1`) with the requirement's
+    classification. It carries the workspace and, when that is a git working
+    tree, its exact subject after the run, which a review binds to.
 - **Cancel (REQ-WRK-4):** a running agent is stopped, and a queued run never
   starts. Both fail as `aborted`.
 - **Deadline:** a run longer than `runTimeoutMs` (15 min) is stopped and fails

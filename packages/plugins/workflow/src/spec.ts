@@ -411,3 +411,54 @@ export function parsePlan(text: string, planner: string, policy: { maxNodes: num
   }
   return { ok: true, confidence: value.confidence as 'low' | 'medium' | 'high', nodes }
 }
+
+export interface Assessment {
+  subject: string
+  verdict: 'approve' | 'changes-requested'
+  findings: Array<{ severity: 'blocking' | 'warning' | 'info'; title: string; detail?: string; file?: string }>
+}
+
+/** The subject block appended to a review bound to an exact subject (REQ-TEAM-5, REQ-WF-5). */
+export function subjectBlock(id: string, workspace: string, head: string, diff: string, request: string): string {
+  return [
+    '## The exact subject of this review',
+    'Review exactly this change against the request. You see none of the producer\'s conversation.',
+    `Subject: ${id}`,
+    `Workspace: ${workspace}`,
+    `Requested change: ${request}`,
+    `The change relative to commit ${head}, verbatim:`,
+    '```diff',
+    diff || '(no change)',
+    '```',
+    'Reply with only a JSON object in a ```json block, naming the subject exactly:',
+    `{"subject": "${id}", "verdict": "approve" or "changes-requested", "findings": [{"severity": "blocking" | "warning" | "info", "title": "...", "detail": "...", "file": "path"}]}`,
+  ].join('\n')
+}
+
+/** A reviewer's assessment from its answer, or why it is not one. */
+export function parseAssessment(text: string): { ok: true; assessment: Assessment } | { ok: false; reason: string } {
+  const fenced = /```(?:json)?\s*\n([\s\S]*?)\n```/.exec(text)?.[1]
+  const raw = fenced ?? text.slice(text.indexOf('{'), text.lastIndexOf('}') + 1)
+  let value: unknown
+  try {
+    value = JSON.parse(raw)
+  } catch {
+    return { ok: false, reason: 'the review has no JSON assessment' }
+  }
+  const v = value as Partial<Assessment> | null
+  if (!v || typeof v.subject !== 'string') return { ok: false, reason: 'the assessment names no subject' }
+  if (v.verdict !== 'approve' && v.verdict !== 'changes-requested') return { ok: false, reason: 'the assessment has no verdict (approve or changes-requested)' }
+  if (!Array.isArray(v.findings)) return { ok: false, reason: 'the assessment has no findings list' }
+  const findings: Assessment['findings'] = []
+  for (const f of v.findings as Array<Record<string, unknown>>) {
+    if (!f || !['blocking', 'warning', 'info'].includes(f.severity as string) || typeof f.title !== 'string' || !f.title.trim()) {
+      return { ok: false, reason: 'a finding needs a severity (blocking, warning, info) and a title' }
+    }
+    findings.push({
+      severity: f.severity as Assessment['findings'][number]['severity'], title: f.title.slice(0, 500),
+      ...(typeof f.detail === 'string' ? { detail: f.detail.slice(0, 8000) } : {}), ...(typeof f.file === 'string' ? { file: f.file.slice(0, 1024) } : {}),
+    })
+  }
+  return { ok: true, assessment: { subject: v.subject, verdict: v.verdict, findings } }
+}
+

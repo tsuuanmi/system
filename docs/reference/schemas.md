@@ -119,6 +119,19 @@ guesses.
   session id). The session itself is never mirrored (INV-7).
 - `sandbox` is the policy the run was held to, taken from trusted
   configuration.
+- `agent-result@1.1` adds `workspace` (from configuration) and `subject`. The
+  subject is the workspace's exact git subject after the run:
+  `{type: git-head, ref: HEAD, version: hash of every change on top}`. A
+  review binds to it.
+
+### `assessment`
+
+- An independent review's verdict and findings, each finding with a severity
+  (`blocking`, `warning`, `info`).
+- `subject` is the exact subject the reviewer was given. The engine stores an
+  assessment only if the review names that subject, and the working tree is
+  still that subject when the review is accepted. Either way, the outcome is a
+  `gate` decision (REQ-WF-5).
 
 ### `ui-map`
 
