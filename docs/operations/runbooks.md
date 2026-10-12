@@ -9,13 +9,28 @@
    has none, and checks Xvfb.
 2. `system start` boots the profile. MCP listens on `127.0.0.1:47317/mcp`, and
    the gateways serve `/anthropic` and `/openai` on the same port.
-3. Sign in each account: run `system account login <id>`, open the printed
+3. Remote login needs a VNC server, either `x0vncserver` (TigerVNC) or
+   `x11vnc`. Without root, unpack the package into the profile's tools
+   directory and point the `login` row's `vncPath` at it:
+
+   ```sh
+   apt-get download tigervnc-scraping-server
+   dpkg-deb -x tigervnc-scraping-server_*.deb /tmp/tigervnc
+   install -D /tmp/tigervnc/usr/bin/x0vncserver ~/.dsh/system/tools/bin/x0vncserver
+   # cordis.patch.yml: - id: login / config: / vncPath: ~/.dsh/system/tools/bin/x0vncserver
+   ```
+
+   A Codex Worker needs `codex` the same way:
+   `npm i --prefix ~/.dsh/system/tools/codex @openai/codex`, then set the
+   runtime's `executable`.
+4. Sign in each account: run `system account login <id>`, open the printed
    noVNC link through the printed `ssh -L` command, sign in, and press
    **Save account**. Alternatively, run `system account save <id>` after the
    sign-in.
-4. Map the account's tiers to modes in the account catalog (`accounts[].tiers`),
-   then check `system account list`.
-5. Connect the clients: `system mcp-config claude|codex` connects over MCP;
+5. Map the account's tiers to modes in the account catalog (`accounts[].tiers`),
+   then check `system account list`. A ChatGPT account without a model picker
+   (Free) maps its tiers to the empty preset `site`.
+6. Connect the clients: `system mcp-config claude|codex` connects over MCP;
    `system claude-env` and `system codex-env` connect through the gateways.
 
 ## Account re-auth
