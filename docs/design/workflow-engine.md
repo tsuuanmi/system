@@ -170,8 +170,11 @@ templates from configuration (`ask`, `research` → `compact`, `investigate`,
   it, as an exact-subject `gate` decision. Verified live on 2026-10-12: a
   writable agent fixed a file, a read-only agent reviewed the exact change,
   and the gate passed.
+- remediation cycles, the first profile growth rule: a review that requests
+  changes with blocking findings appends a fix and a re-review of the new
+  subject, bounded by `maxReviewCycles` (default 3);
 - wake-on-message for idle Worker sessions
   ([sessions](sessions-and-messaging.md#built-so-far)).
 
-Profile growth rules (remediation cycles), team leads, handoff envelopes, and
-re-planning after a superseded input are not built yet.
+Other profile growth rules, team leads, handoff envelopes, and re-planning
+after a superseded input are not built yet.

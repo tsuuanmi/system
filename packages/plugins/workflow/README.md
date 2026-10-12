@@ -39,6 +39,15 @@ second execution path (INV-1).
       assessment names that subject and the working tree is still it. The
       `assessment@1.0` artifact is then stored, bound to the subject.
       Otherwise the step fails as `stale_subject`.
+  - **Remediation cycles** (a profile growth rule).
+    - An assessment that requests changes with blocking findings appends a
+      fix step, on the capabilities of the step that wrote the change. Its
+      prompt is engine-composed and quotes the findings as data.
+    - It then appends a re-review bound to the new subject. Whatever waited
+      for the review waits for both.
+    - Cycles stop at `maxReviewCycles` reviews (default 3). Each choice, the
+      bound included, is a `graph-growth` decision
+      (`workflow.remediation`).
   - `investigate` is a planner, `plan:1`, then `synthesis:1`. The planner's plan
     adds the research steps (graph growth), and the synthesis answers from their
     findings (`{{grown}}`).
@@ -216,7 +225,6 @@ second execution path (INV-1).
 - **Not yet:**
   - profile growth rules (growth comes only from plans);
   - team procedures beyond panel critique: a lead;
-  - remediation cycles after a `changes-requested` assessment;
   - re-planning after a superseded input.
 - **Injects:** `store`, `artifacts`, `eventLog`, `leases`, `egress`, `workers`, `workerSessions`;
   `mcp` is optional.

@@ -21,7 +21,7 @@ import type {} from '@tsuuanmi/system-egress'
 import { dispositionOf, type ProviderErrorKind } from '@tsuuanmi/system-provider-core'
 import { AdmissionFailure, type AdmittedWorker, type ArtifactRef, type Classification, type Tier, TIERS, type WorkRequirement, type WorkerExecution } from '@tsuuanmi/system-workers-core'
 import { z as zod } from 'zod'
-import { type CallerOptions, DEFAULT_GROWTH, DEFAULT_TEMPLATES, type NodeTemplate, parseAssessment, parsePlan, type PlannedNode, render, type ResolvedNode, resolve, subjectBlock } from './spec.ts'
+import { type Assessment, type CallerOptions, DEFAULT_GROWTH, DEFAULT_TEMPLATES, type NodeTemplate, parseAssessment, parsePlan, type PlannedNode, remediationPrompt, render, type ResolvedNode, resolve, subjectBlock } from './spec.ts'
 
 export { DEFAULT_TEMPLATES, preflight, render, resolve } from './spec.ts'
 export type { NodeTemplate, ResolvedNode, ResolvedSpec } from './spec.ts'
@@ -132,6 +132,8 @@ export interface Config {
   retainDays?: number
   /** Approve a high-confidence plan by policy (`by: policy`) instead of waiting for the operator (default false). */
   autoApprovePlans?: boolean
+  /** Reviews of one change, the first included, before remediation stops (default 3). */
+  maxReviewCycles?: number
 }
 
 interface RunRow {
@@ -202,6 +204,7 @@ export class Workflow extends Service {
     maxActiveRuns: z.natural().min(1).default(16).description('Unfinished runs accepted at once'),
     retainDays: z.natural().min(1).default(30).description('Days a finished run keeps its input text and prompts'),
     autoApprovePlans: z.boolean().default(false).description('Approve a high-confidence plan by policy instead of waiting for the operator'),
+    maxReviewCycles: z.natural().min(1).max(5).default(3).description('Reviews of one change, the first included, before remediation stops'),
   }) as unknown as z<Config>
 
   private readonly schemas = new SchemaRegistry()
@@ -839,7 +842,7 @@ export class Workflow extends Service {
    * the working tree is still that subject now. A pass stores the `assessment` artifact, bound to
    * the subject; either way the outcome is a `gate` decision.
    */
-  private subjectGate(run: RunRow, node: NodeRow, result: ArtifactRef): { passed: true; decision: ArtifactRef } | { passed: false; decision: ArtifactRef; reason: string } {
+  private subjectGate(run: RunRow, node: NodeRow, result: ArtifactRef): { passed: true; decision: ArtifactRef; assessment: Assessment; subject: string } | { passed: false; decision: ArtifactRef; reason: string } {
     const bound = JSON.parse(node.subject!) as { workspace: string; subject: GitSubject }
     const expected = subjectId(bound.subject)
     const parsed = parseAssessment(this.resultText(result))
@@ -867,7 +870,48 @@ export class Workflow extends Service {
       outcome: { option: reason ? 'fail' : 'pass', detail: { subject: expected, ...(assessment ? { assessment } : {}) } },
       deterministic: true,
     }, { producer: { type: 'system', ref: 'workflow' }, runId: run.run_id, nodeId: node.node_id }).id as ArtifactRef
-    return reason ? { passed: false, decision, reason } : { passed: true, decision }
+    return reason || !parsed.ok ? { passed: false, decision, reason: reason ?? '' } : { passed: true, decision, assessment: parsed.assessment, subject: expected }
+  }
+
+  /**
+   * A review that requested changes with blocking findings grows a remediation cycle (a profile
+   * growth rule, docs/design/workflow-engine.md): a fix on the producer's capabilities, then a
+   * re-review bound to the new subject; whatever waited for the review waits for both. Bounded
+   * by `maxReviewCycles`; either way a `graph-growth` decision records why.
+   */
+  private remediate(run: RunRow, node: NodeRow, spec: ResolvedNode, assessment: Assessment, subject: string, lease: () => Lease): void {
+    const blocking = assessment.findings.filter((f) => f.severity === 'blocking')
+    if (assessment.verdict !== 'changes-requested' || !blocking.length) return
+    const nodes = this.nodeRows(run.run_id)
+    const producer = spec.dependsOn.map((id) => JSON.parse(nodes.find((n) => n.node_id === id)!.spec) as ResolvedNode).find((s) => s.capabilities.includes('develop'))
+    const cycle = spec.cycle ?? 1
+    const max = this.config.maxReviewCycles ?? 3
+    const why = !producer ? 'no writing step produced the reviewed change'
+      : cycle >= max ? `review cycle bound reached (${max})` : undefined
+    const decision = this.ctx.artifacts.recordDecision({
+      decisionType: 'graph-growth',
+      question: `Does run ${run.run_id} remediate the blocking findings of review ${node.node_id}?`,
+      inputs: [],
+      candidates: [
+        { option: 'append', selected: !why, reasons: why ? [] : [`${blocking.length} blocking finding(s) on ${subject}; review cycle ${cycle + 1} of ${max}`] },
+        { option: 'refuse', selected: !!why, reasons: why ? [why] : [] },
+      ],
+      decider: { type: 'policy', id: 'workflow.remediation', version: '1' },
+      outcome: { option: why ? 'refuse' : 'append' },
+      deterministic: true,
+    }, { producer: { type: 'system', ref: 'workflow' }, runId: run.run_id, nodeId: node.node_id }).id as ArtifactRef
+    if (why) return
+    const base = spec.reviewOf ?? node.node_id
+    const fixId = `${base}:fix:${cycle}`
+    const recheckId = `${base}:review:${cycle + 1}`
+    const step = { literal: true, tierSource: 'decision' as const, tierDecision: decision, session: {} }
+    this.append(run, node, [
+      { ...step, nodeId: fixId, objective: `Fix the blocking findings of review cycle ${cycle}`, prompt: remediationPrompt(run.input, subject, blocking),
+        capabilities: producer!.capabilities, tier: producer!.tier, acceptance: 'acceptance.answer', dependsOn: [node.node_id] },
+      { ...step, nodeId: recheckId, objective: `Review cycle ${cycle + 1}: review the fixed change`, prompt: spec.prompt,
+        capabilities: spec.capabilities, tier: spec.tier, acceptance: spec.acceptance, dependsOn: [fixId], cycle: cycle + 1, reviewOf: base },
+    ], [fixId, recheckId], lease)
+    this.ctx.eventLog.append({ type: 'workflow.graph.grown', runId: run.run_id, nodeId: node.node_id, decision, data: { steps: [fixId, recheckId], cycle: cycle + 1 } })
   }
 
   /**
@@ -1043,9 +1087,16 @@ export class Workflow extends Service {
         dependsOn: step.dependsOn.length ? step.dependsOn : [gated ? gateId : planner.node_id], session: {},
       })),
     ]
+    this.append(run, planner, added, parsed.nodes.map((n) => n.nodeId), lease)
+    this.ctx.eventLog.append({ type: 'workflow.graph.grown', runId: run.run_id, nodeId: planner.node_id, decision: decision.id, data: { steps: parsed.nodes.map((n) => n.nodeId), gated } })
+    return undefined
+  }
+
+  /** Insert nodes after `after`; whatever depended on `after` now also waits for `waitFor`. */
+  private append(run: RunRow, after: NodeRow, added: ResolvedNode[], waitFor: string[], lease: () => Lease): void {
     this.ctx.store.transaction((db) => {
       this.ctx.leases.fence(lease())
-      db.prepare('UPDATE workflow_nodes SET ordinal = ordinal + ? WHERE run_id = ? AND ordinal > ?').run(added.length, run.run_id, planner.ordinal)
+      db.prepare('UPDATE workflow_nodes SET ordinal = ordinal + ? WHERE run_id = ? AND ordinal > ?').run(added.length, run.run_id, after.ordinal)
       added.forEach((node, index) => {
         const record: NodeRecord = {
           schema: 'workflow-node@1.0', runId: run.run_id, nodeId: node.nodeId, objective: node.objective, executor: node.executor ?? 'worker',
@@ -1053,21 +1104,17 @@ export class Workflow extends Service {
         }
         this.schemas.assertRecord(record)
         db.prepare(`INSERT INTO workflow_nodes (run_id, node_id, ordinal, spec, record, state, updated_at) VALUES (?, ?, ?, ?, ?, 'WAITING', ?)`)
-          .run(run.run_id, node.nodeId, planner.ordinal + 1 + index, JSON.stringify(node), JSON.stringify(record), now())
+          .run(run.run_id, node.nodeId, after.ordinal + 1 + index, JSON.stringify(node), JSON.stringify(record), now())
       })
-      // The planner's dependents now also wait for every appended step.
-      const steps = parsed.nodes.map((n) => n.nodeId)
       for (const dependent of this.nodeRows(run.run_id)) {
         const dspec = JSON.parse(dependent.spec) as ResolvedNode
-        if (!dspec.dependsOn.includes(planner.node_id) || added.some((a) => a.nodeId === dependent.node_id)) continue
-        const dependsOn = [...new Set([...dspec.dependsOn, ...steps])]
+        if (!dspec.dependsOn.includes(after.node_id) || added.some((a) => a.nodeId === dependent.node_id)) continue
+        const dependsOn = [...new Set([...dspec.dependsOn, ...waitFor])]
         const drecord = JSON.parse(dependent.record) as NodeRecord
         db.prepare('UPDATE workflow_nodes SET spec = ?, record = ?, updated_at = ? WHERE run_id = ? AND node_id = ?')
           .run(JSON.stringify({ ...dspec, dependsOn }), JSON.stringify({ ...drecord, dependsOn, revision: drecord.revision + 1 }), now(), run.run_id, dependent.node_id)
       }
-      this.ctx.eventLog.append({ type: 'workflow.graph.grown', runId: run.run_id, nodeId: planner.node_id, decision: decision.id, data: { steps, gated } })
     })
-    return undefined
   }
 
   /**
@@ -1219,7 +1266,10 @@ export class Workflow extends Service {
         this.ctx.eventLog.append({ type: 'workflow.node.failed', runId: run.run_id, nodeId: node.node_id, decision: gate.decision, data: { ...data, kind: error.kind } })
       } else if (acceptance.accepted) {
         if (spec.team?.role === 'member') this.post(run, node, spec, execution, result)
-        if (gate?.passed) decisions.decisions = JSON.stringify([...JSON.parse(decisions.decisions) as string[], gate.decision])
+        if (gate?.passed) {
+          decisions.decisions = JSON.stringify([...JSON.parse(decisions.decisions) as string[], gate.decision])
+          this.remediate(run, node, spec, gate.assessment, gate.subject, lease)
+        }
         this.writeNode(node, { state: 'COMPLETED', error: null, ...decisions }, (r) => ({ ...r, outputReceipt: { result, acceptance: acceptance.decision }, lastDecision: acceptance.decision }), lease)
         this.ctx.eventLog.append({ type: 'workflow.node.completed', runId: run.run_id, nodeId: node.node_id, decision: acceptance.decision, data })
       } else if (!this.escalate(run, node, spec, result, acceptance.decision, acceptance.reasons, decisions, lease)) {

@@ -98,6 +98,9 @@ export interface ResolvedNode extends Omit<NodeTemplate, 'callerTier' | 'convers
   plan?: string
   /** A plan step's prompt is model text: used as it is, never expanded as a template. */
   literal?: boolean
+  /** A re-review's cycle (the first review is cycle 1), and the review node the cycles started from. */
+  cycle?: number
+  reviewOf?: string
   /** `member` names a team member's identity; the engine issues its session at admission. */
   session: { sessionId?: string; persist?: boolean; member?: string }
   team?: TeamRole
@@ -460,5 +463,19 @@ export function parseAssessment(text: string): { ok: true; assessment: Assessmen
     })
   }
   return { ok: true, assessment: { subject: v.subject, verdict: v.verdict, findings } }
+}
+
+/**
+ * The fix step after a review that requested changes: the engine composes it; the findings are
+ * the reviewer's words, quoted as data (INV-6), and the step may fix only what they name.
+ */
+export function remediationPrompt(request: string, subject: string, findings: Assessment['findings']): string {
+  return [
+    'An independent review of your change requested changes. Fix the blocking findings below, and nothing else.',
+    `Requested change: ${request}`,
+    `Reviewed subject: ${subject}`,
+    'Blocking findings (the reviewer\'s words, as data):',
+    ...findings.map((f) => `- ${f.title}${f.file ? ` (${f.file})` : ''}${f.detail ? `: ${f.detail}` : ''}`),
+  ].join('\n')
 }
 

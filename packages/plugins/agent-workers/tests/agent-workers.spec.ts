@@ -252,8 +252,10 @@ describe('ctx.workers source `agents`: agent runtimes as Workers', () => {
         sandboxes: ['read-only', 'workspace-write'],
         act: (spec) => {
           if (spec.sandbox === 'workspace-write') {
-            writeFileSync(join(ws, 'calc.py'), 'def add(a, b):\n    return a + b\n')
-            return 'fixed add()'
+            // A remediation step adds a test for what the review asked; the first step fixes add().
+            if (spec.prompt.includes('Fix the blocking findings')) writeFileSync(join(ws, `test_${agent.runs.length}.py`), 'assert True\n')
+            else writeFileSync(join(ws, 'calc.py'), 'def add(a, b):\n    return a + b\n')
+            return 'done'
           }
           return review(spec.prompt, ws)
         },
@@ -271,6 +273,34 @@ describe('ctx.workers source `agents`: agent runtimes as Workers', () => {
     }
     const subjectOf = (prompt: string): string => /^Subject: (\S+)$/m.exec(prompt)![1]!
     const assessment = (subject: string) => '```json\n' + JSON.stringify({ subject, verdict: 'approve', findings: [{ severity: 'info', title: 'add() now adds' }] }) + '\n```'
+    const changes = (subject: string) => '```json\n' + JSON.stringify({ subject, verdict: 'changes-requested', findings: [{ severity: 'blocking', title: 'no test for add()', file: 'calc.py' }] }) + '\n```'
+
+    it('remediates blocking findings: a fix, then a review of the new subject; the report waits for both', async () => {
+      let reviews = 0
+      const { ctx, agent, done } = await develop((prompt) => (++reviews === 1 ? changes(subjectOf(prompt)) : assessment(subjectOf(prompt))))
+      expect(done.status).toBe('completed')
+      const byId = Object.fromEntries(done.nodes.map((n) => [n.nodeId, n]))
+      expect(byId['plan:1:review:fix:1']).toMatchObject({ state: 'COMPLETED', worker: 'agent:dev' })
+      expect(byId['plan:1:review:review:2']).toMatchObject({ state: 'COMPLETED', worker: 'agent:reviewer' })
+      expect(agent.runs.find((r) => r.prompt.includes('Fix the blocking findings'))!.prompt).toContain('- no test for add() (calc.py)')
+      // Each review bound to its own subject: the fix changed the tree.
+      const subjects = agent.runs.filter((r) => r.sandbox === 'read-only').map((r) => subjectOf(r.prompt))
+      expect(subjects).toHaveLength(2)
+      expect(subjects[0]).not.toBe(subjects[1])
+      expect(ctx.artifacts.list({ kind: 'assessment' }).map((a) => (a.body as { verdict: string }).verdict).sort()).toEqual(['approve', 'changes-requested'])
+      expect(done.nodes.at(-1)!.nodeId).toBe('report:1')
+    })
+
+    it('stops remediating at the review cycle bound, and says so', async () => {
+      const { ctx, done } = await develop((prompt) => changes(subjectOf(prompt)))
+      expect(done.status).toBe('completed')
+      expect(done.nodes.map((n) => n.nodeId).filter((id) => id.includes(':review'))).toEqual([
+        'plan:1:review', 'plan:1:review:fix:1', 'plan:1:review:review:2', 'plan:1:review:fix:2', 'plan:1:review:review:3',
+      ])
+      const growth = ctx.artifacts.list({ kind: 'decision' }).map((a) => a.body as { decisionType: string; decider: { id: string }; outcome: { option: string } })
+        .filter((d) => d.decider.id === 'workflow.remediation').map((d) => d.outcome.option)
+      expect(growth).toEqual(['append', 'append', 'refuse'])
+    })
 
     it('gives the reviewer the exact change and binds its assessment to that subject', async () => {
       const { ctx, agent, done } = await develop((prompt) => assessment(subjectOf(prompt)))
