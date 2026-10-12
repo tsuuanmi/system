@@ -20,3 +20,6 @@ ignoredOptionalDependencies:
   - '@anthropic-ai/claude-agent-sdk-darwin-arm64'
   - '@anthropic-ai/claude-agent-sdk-win32-x64'
   - '@anthropic-ai/claude-agent-sdk-win32-arm64'
+# fflate < 0.8.3 can loop forever on a malformed ZIP64 archive (GHSA, via DSH office packages).
+overrides:
+  fflate: '>=0.8.3'

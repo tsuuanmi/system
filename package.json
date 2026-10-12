@@ -7,7 +7,7 @@
     "node": "^22.19.0 || >=24.0.0"
   },
   "scripts": {
-    "check": "pnpm check:docs && pnpm check:schemas && pnpm check:reference && pnpm lint && pnpm typecheck",
+    "check": "pnpm check:docs && pnpm check:schemas && pnpm check:reference && pnpm check:traceability && pnpm lint && pnpm typecheck",
     "check:docs": "tsx scripts/check-docs.ts",
     "check:schemas": "tsx scripts/check-schemas.ts",
     "lint": "oxlint scripts spikes packages",
@@ -16,7 +16,9 @@
     "build": "pnpm -r --filter \"./packages/**\" run build",
     "test:e2e": "pnpm build && vitest run -c vitest.e2e.config.ts",
     "gen:reference": "tsx scripts/gen-reference.ts",
-    "check:reference": "tsx scripts/gen-reference.ts --check"
+    "check:reference": "tsx scripts/gen-reference.ts --check",
+    "gen:traceability": "tsx scripts/gen-traceability.ts",
+    "check:traceability": "tsx scripts/gen-traceability.ts --check"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
@@ -25,6 +27,6 @@
     "oxlint": "^1.0.0",
     "tsx": "^4.20.0",
     "typescript": "^5.9.0",
-    "vitest": "^3.2.0"
+    "vitest": "^4.1.11"
   }
 }
