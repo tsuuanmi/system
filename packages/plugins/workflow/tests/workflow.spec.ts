@@ -378,6 +378,27 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
     expect(() => ctx.workflow.continue(failed.runId)).toThrow(/not failed/)
   }, 120_000)
 
+  it('keeps a completed step when a later one fails: continuing re-runs only the failed step, on the same input (QA-2, REQ-WF-3)', async () => {
+    const chain = [
+      { nodeId: 'first:1', objective: 'x', prompt: 'first: {{input}}', capabilities: ['reason'], tier: 'economy', conversation: 'temporary', acceptance: 'acceptance.answer' },
+      { nodeId: 'second:1', objective: 'y', dependsOn: ['first:1'], prompt: 'second: {{node:first:1}}', capabilities: ['reason'], tier: 'economy', conversation: 'temporary', acceptance: 'acceptance.cited', maxEscalations: 0 },
+    ]
+    let cite = false
+    const { ctx, fake } = await boot({ fake: { answer: (p: string) => (p.startsWith('first') ? 'the first result' : cite ? 'See https://src.example/a' : 'no source') }, workflow: { templates: { chain } } })
+    const failed = await ctx.workflow.wait(ctx.workflow.start({ template: 'chain', input: 'q' }).runId, 60_000)
+    expect(failed.nodes.map((n) => n.state)).toEqual(['COMPLETED', 'FAILED'])
+    const before = ctx.workflow.records(failed.runId)
+    cite = true
+    ctx.workflow.continue(failed.runId)
+    const done = await ctx.workflow.wait(failed.runId, 60_000)
+    expect(done.status).toBe('completed')
+    // The first step was sent once; the second twice, both times on the same input hash.
+    expect(fake.sent.map((s) => s.prompt.split(':')[0])).toEqual(['first', 'second', 'second'])
+    const after = ctx.workflow.records(done.runId)
+    expect(after[0]!.outputReceipt).toEqual(before[0]!.outputReceipt)
+    expect(after[1]!.inputReceipt!.inputHash).toBe(before[1]!.inputReceipt!.inputHash)
+  }, 120_000)
+
   it('deletes a finished run only on the exact version its preview showed (REQ-WF-7)', async () => {
     const { ctx } = await boot()
     const done = await ctx.workflow.wait(ctx.workflow.start({ template: 'ask', input: 'bye' }).runId, 30_000)

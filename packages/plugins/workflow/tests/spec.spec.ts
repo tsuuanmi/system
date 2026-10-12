@@ -35,6 +35,16 @@ describe('workflow specs', () => {
     expect(research.nodes.map((n) => [n.nodeId, n.tier, n.session])).toEqual([['research:1', 'frontier', { sessionId: 'ses_1' }], ['compact:1', 'economy', {}]])
   })
 
+  it('records where each value came from, and hashes what was admitted (REQ-WF-2)', () => {
+    const nodes = [node('a', { callerTier: true, tier: 'economy' }), node('b', { dependsOn: ['a'] })]
+    const asked = resolve('t', nodes, { tier: 'frontier' })
+    expect(asked.nodes.map((n) => [n.nodeId, n.tier, n.tierSource])).toEqual([['a', 'frontier', 'caller'], ['b', 'standard', 'profile']])
+    const plain = resolve('t', nodes, {})
+    expect(plain.nodes[0]).toMatchObject({ tier: 'economy', tierSource: 'profile' })
+    expect(plain.specHash).not.toBe(asked.specHash)
+    expect(resolve('t', nodes, {}).specHash).toBe(plain.specHash)
+  })
+
   it('renders the caller input and dependency results verbatim', () => {
     expect(render('Q: {{input}}\n<r>{{node:research:1}}</r>', 'why?', { 'research:1': 'a {{input}} b' })).toBe('Q: why?\n<r>a {{input}} b</r>')
   })

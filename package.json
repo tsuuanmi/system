@@ -18,7 +18,8 @@
     "gen:reference": "tsx scripts/gen-reference.ts",
     "check:reference": "tsx scripts/gen-reference.ts --check",
     "gen:traceability": "tsx scripts/gen-traceability.ts",
-    "check:traceability": "tsx scripts/gen-traceability.ts --check"
+    "check:traceability": "tsx scripts/gen-traceability.ts --check",
+    "test:crash": "pnpm build && vitest run -c vitest.crash.config.ts"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

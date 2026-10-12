@@ -22,7 +22,7 @@ describe('the shipped ChatGPT UI map', () => {
   })
 })
 
-describe.runIf(canRunBrowser)('ChatGptWebDriver against the fake site', () => {
+describe.runIf(canRunBrowser)('ChatGptWebDriver against the fake site, with no real account (QA-10)', () => {
   let browser: Browser
   let close: () => Promise<void>
   beforeAll(async () => {

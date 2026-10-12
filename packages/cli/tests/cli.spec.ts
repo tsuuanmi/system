@@ -173,3 +173,35 @@ describe('tool contracts reference', () => {
   })
 })
 
+describe('the command surface (REQ-GW-4)', () => {
+  it('offers turn, workflow, account, and maintenance commands', async () => {
+    const { spawnSync } = await import('node:child_process')
+    const { fileURLToPath } = await import('node:url')
+    const bin = fileURLToPath(new URL('../src/bin.ts', import.meta.url))
+    const tsx = fileURLToPath(new URL('../../../node_modules/.bin/tsx', import.meta.url))
+    const help = spawnSync(tsx, [bin, '--help'], { encoding: 'utf8' })
+    const usage = `${help.stdout}${help.stderr}`
+    const commands = [...usage.matchAll(/^ {2}([a-z][a-z-]*(?: [a-z][a-z-]*)?)/gm)].map((m) => m[1]!.split(' ')[0])
+    for (const family of [['ask', 'research'], ['run', 'approve', 'result', 'stop', 'continue', 'delete', 'supersede', 'usage', 'explain'], ['account'], ['init', 'start', 'drain', 'resume', 'shutdown', 'backup', 'restore', 'tools']]) {
+      for (const command of family) expect(commands, command).toContain(command)
+    }
+  })
+})
+
+describe('client configuration (REQ-HOST-3)', () => {
+  it('connects clients without editing their configuration: the commands only print, so there is nothing to journal', async () => {
+    const { readdirSync } = await import('node:fs')
+    const home = mkdtempSync(join(tmpdir(), 'system-clients-'))
+    dirs.push(home)
+    mkdirSync(join(home, 'system'))
+    writeFileSync(join(home, 'system', 'mcp.json'), JSON.stringify({ url: 'http://127.0.0.1:47317/mcp', tokenFile: join(home, 'system', 'mcp.token'), pid: 1 }))
+    writeFileSync(join(home, 'system', 'mcp.token'), Buffer.alloc(32, 7))
+    const listing = (): string[] => readdirSync(home, { recursive: true }).map(String).sort()
+    const before = listing()
+    for (const command of [() => claudeGatewayCommand(home), () => codexGatewayCommand(home), () => mcpConfig('claude', home), () => mcpConfig('codex', home)]) {
+      expect(command()).toBeTruthy()
+    }
+    expect(listing()).toEqual(before)
+  })
+})
+

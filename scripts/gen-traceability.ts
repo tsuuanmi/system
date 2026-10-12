@@ -49,7 +49,8 @@ function testFiles(dir: string, out: string[] = []): string[] {
     if (entry === 'node_modules' || entry === 'lib' || entry.startsWith('.')) continue
     const path = join(dir, entry)
     if (statSync(path).isDirectory()) testFiles(path, out)
-    else if (/\.(spec|e2e)\.ts$/.test(entry)) out.push(path)
+    // Conformance suites are tests too: every provider of the seam runs them.
+    else if (/\.(spec|e2e|crash)\.ts$/.test(entry) || (entry.endsWith('.ts') && dir.endsWith('conformance'))) out.push(path)
   }
   return out
 }

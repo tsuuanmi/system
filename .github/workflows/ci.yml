@@ -33,3 +33,5 @@ jobs:
         env:
           SYSTEM_REQUIRE_BROWSER: '1'
       - run: pnpm test:e2e
+      - name: crash injection (SIGKILL at each reconcile point of a turn)
+        run: pnpm test:crash

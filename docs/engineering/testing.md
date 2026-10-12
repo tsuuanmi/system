@@ -34,6 +34,22 @@ package's `conformance/` directory. Each provider's tests call the suite with a
   The `system` wrapper boots the shipped profile from built `lib/` through the
   real `dsh` launcher. The test asserts the exact allow-listed row set, calls
   MCP with a token, and checks cleanup on SIGTERM.
+- **Crash injection** (**implemented**:
+  [`packages/system-bundle/tests/crash/`](../../packages/system-bundle/tests/crash/restart.crash.ts),
+  `pnpm test:crash`).
+  - The engine runs as a separate process on the built packages, against the
+    fake site. It is killed with SIGKILL, with its whole process group (Xvfb and
+    Chrome too).
+  - The kill comes at each reconcile point of a website turn: sent but not
+    answered, and answered but not committed, in a persistent and in a
+    temporary chat.
+  - It is then restarted on the same state. The provider must see the prompt
+    exactly once, and the run must recover, or fail closed as AMBIGUOUS.
+- **Architecture rules** (**implemented**:
+  [`scripts/architecture.spec.ts`](../../scripts/architecture.spec.ts)).
+  Capability-routed code names no tools (INV-11). There is one provider per
+  service (INV-1), one bundle row per plugin (REQ-HOST-4), and a conformance
+  suite per seam (QA-9).
 - **HMR safety.** Every registry gets a test that disposes the contributing
   plugin and asserts cleanup (plugin rule 3).
 - **Mock only the expensive boundary.** Keep the real registry, store, and

@@ -93,7 +93,7 @@ export function workersConformance(name: string, boot: Boot): void {
       })
     })
 
-    it('chooses the lowest admissible tier at or above the minimum, within the maximum, and records a tier decision', async () => {
+    it('chooses the lowest admissible tier at or above the minimum, within the maximum, and records a tier decision (QA-12)', async () => {
       const workers = [worker('w:eco', { tier: 'economy' }), worker('w:std', { tier: 'standard' }), worker('w:top', { tier: 'frontier' })]
       await withWorkers(workers, async (ctx) => {
         expect((await ctx.workers.route(requirement())).worker.worker).toBe('w:eco')
@@ -111,7 +111,7 @@ export function workersConformance(name: string, boot: Boot): void {
       })
     })
 
-    it('prefers subscription-chat quota, then a stable id, and is deterministic (REQ-WRK-2, REQ-WRK-8)', async () => {
+    it('prefers subscription-chat quota, then a stable id, and is deterministic (REQ-WRK-2, REQ-WRK-8, QA-12)', async () => {
       const workers = [worker('w:c', { quotaClass: 'metered' }), worker('w:b'), worker('w:a', { quotaClass: 'agent-plan' }), worker('w:d')]
       await withWorkers(workers, async (ctx) => {
         const first = await ctx.workers.route(requirement())

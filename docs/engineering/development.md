@@ -56,6 +56,7 @@ pnpm gen:reference  # regenerate docs/reference/configuration.md after changing 
 pnpm test        # unit and integration tests (bare workspace imports resolve to src/)
 pnpm build       # tsc → lib/ for every package
 pnpm test:e2e    # build, then boot the real profile through dsh (packages/cli/tests)
+pnpm test:crash  # build, then SIGKILL the engine at each reconcile point of a turn and restart it
 ```
 
 Run it locally on Linux:
@@ -69,7 +70,7 @@ node packages/cli/lib/bin.js mcp-config claude # or codex (token via $SYSTEM_MCP
 After changing an MCP tool, regenerate its reference from a running profile:
 `node packages/cli/lib/bin.js tools --markdown > docs/reference/mcp-tools.md`.
 
-CI runs check, test, build, and e2e on Node 22 and 24
+CI runs check, test, build, e2e, and crash injection on Node 22 and 24
 ([`.github/workflows/ci.yml`](../../.github/workflows/ci.yml)).
 
 ## Data directory

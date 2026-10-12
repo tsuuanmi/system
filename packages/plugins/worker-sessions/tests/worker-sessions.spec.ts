@@ -13,13 +13,15 @@ afterEach(async () => {
   while (cleanups.length) await cleanups.pop()!()
 })
 
-async function boot() {
-  const dir = mkdtempSync(join(tmpdir(), 'system-sessions-'))
+async function boot(at?: string) {
+  const dir = at ?? mkdtempSync(join(tmpdir(), 'system-sessions-'))
   const ctx = new Context()
   const fibers = [ctx.plugin(Store, { path: join(dir, 'system.db') }), ctx.plugin(Artifacts, {}), ctx.plugin(WorkerSessions, {})]
   await Promise.all(fibers)
-  cleanups.push(() => rmSync(dir, { recursive: true, force: true }), async () => { for (const f of [...fibers].reverse()) await f.dispose() })
-  return ctx
+  if (!at) cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+  const stop = async () => { for (const f of [...fibers].reverse()) await f.dispose() }
+  cleanups.push(stop)
+  return Object.assign(ctx, { dir, stop })
 }
 
 const H = (c: string) => `sha256:${c.repeat(64)}` as const
@@ -96,5 +98,17 @@ describe('ctx.workerSessions: sessions, mailboxes, direct messages (ADR-0015)', 
     ctx.workerSessions.settle('ses_a')
     expect(ctx.workerSessions.session('ses_a')!.state).toBe('IDLE')
     expect(ctx.workerSessions.ofRun('run_1').map((s) => s.sessionId)).toEqual(['ses_a'])
+  })
+
+  it('keeps a session\'s identity, Worker, and mailbox across a host restart (REQ-SES-1)', async () => {
+    const first = await boot()
+    team(first, false)
+    first.workerSessions.send({ from: 'operator', messageId: 'q1', to: { session: 'ses_a' }, body: 'question' })
+    const before = first.workerSessions.session('ses_a')!
+    await first.stop()
+    const again = await boot(first.dir)
+    expect(again.workerSessions.session('ses_a')).toEqual(before)
+    expect(again.workerSessions.inbox('ses_a').map((m) => m.message.body)).toEqual(['question'])
+    expect(() => again.workerSessions.join('grp-1', { sessionId: 'ses_a', role: 'm1', runtime: 'website', worker: 'worker:other/standard', formation: H('d') })).toThrow(/bound/)
   })
 })

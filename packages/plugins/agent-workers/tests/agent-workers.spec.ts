@@ -162,6 +162,22 @@ describe('ctx.workers source `agents`: agent runtimes as Workers', () => {
     expect(done).toMatchObject({ status: 'failed', submitted: true, error: { kind: 'timeout' } })
   })
 
+  it('runs one thing at a time per Worker: a second run waits for the first (one writer per workspace, INV-15)', async () => {
+    const agent = new ScriptedAgent({ sandboxes: ['read-only', 'workspace-write'], holdMs: 600 })
+    const { ctx } = await boot(agent, { workers: [worker({ id: 'dev', sandbox: 'workspace-write', tools: [] })] })
+    const admitted = await ctx.workers.route(requirement({ capabilities: ['develop'] }))
+    const source = ctx.workers.source('agents')!
+    const start = (key: string) => source.start({ key, worker: 'agent:dev', prompt: key, requirement: requirement({ capabilities: ['develop'] }), decisions: admitted.decisions })
+    const one = start('one')
+    const two = start('two')
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    expect(agent.runs.map((r) => r.prompt)).toEqual(['one'])
+    expect(source.get(two.id)).toMatchObject({ status: 'queued', submitted: false })
+    await source.wait(one.id, 10_000)
+    expect((await source.wait(two.id, 10_000)).status).toBe('completed')
+    expect(agent.runs.map((r) => r.prompt)).toEqual(['one', 'two'])
+  })
+
   it('cancels a running run, and a queued one never starts (REQ-WRK-4)', async () => {
     const agent = new ScriptedAgent({ holdMs: 30_000 })
     const { ctx } = await boot(agent)

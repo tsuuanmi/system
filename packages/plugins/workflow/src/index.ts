@@ -16,7 +16,7 @@ import type {} from '@tsuuanmi/system-gateway-core'
 import { type Lease, LeaseLost, StaleGeneration } from '@tsuuanmi/system-leases'
 import { canonicalJson, captureGitSubject, type ContentId, type GitSubject, SchemaRegistry, sha256, subjectId } from '@tsuuanmi/system-libs'
 import type {} from '@tsuuanmi/system-store'
-import type { Runtime } from '@tsuuanmi/system-worker-sessions'
+import { type Runtime, RUNTIMES } from '@tsuuanmi/system-worker-sessions'
 import type {} from '@tsuuanmi/system-egress'
 import { dispositionOf, type ProviderErrorKind } from '@tsuuanmi/system-provider-core'
 import { AdmissionFailure, type AdmittedWorker, type ArtifactRef, type Classification, type Tier, TIERS, type WorkRequirement, type WorkerExecution } from '@tsuuanmi/system-workers-core'
@@ -1690,9 +1690,9 @@ const teamGroup = (runId: string, team: string): string => `team:${runId}:${team
 /** The session record's runtime, from the Worker's source and provider (metadata, never routing). */
 function runtimeOf(source: string, provider: string): Runtime {
   if (source === 'website') return 'website'
-  if (provider.startsWith('acp:')) return 'acp'
-  if (provider === 'claude-agent-sdk' || provider === 'codex-sdk') return provider
-  return 'local-tool'
+  // The engine never names a runtime (INV-11): a provider kind the session vocabulary knows is kept.
+  const kind = provider.split(':')[0]!
+  return (RUNTIMES as readonly string[]).includes(kind) ? kind as Runtime : 'local-tool'
 }
 
 /**

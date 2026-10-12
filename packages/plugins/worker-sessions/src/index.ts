@@ -33,7 +33,9 @@ declare module '@deepseek-ai/cordis' {
 const WAKING = new Set<Message['intent'] | undefined>([undefined, 'inform', 'request', 'critique', 'handoff', 'input-required'])
 
 export type SessionState = 'FORMING' | 'IDLE' | 'ACTIVE' | 'INPUT_REQUIRED' | 'FAILED' | 'CLOSED'
-export type Runtime = 'website' | 'claude-agent-sdk' | 'codex-sdk' | 'acp' | 'a2a' | 'local-tool' | 'model-api'
+/** The session binding's runtime kinds: the `worker-session@1.0` schema's vocabulary (metadata, never routing). */
+export const RUNTIMES = ['website', 'claude-agent-sdk', 'codex-sdk', 'acp', 'a2a', 'local-tool', 'model-api'] as const
+export type Runtime = typeof RUNTIMES[number]
 
 /** A `worker-session@1.0` record. */
 export interface WorkerSession {
