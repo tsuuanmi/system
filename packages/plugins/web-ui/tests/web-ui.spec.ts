@@ -101,8 +101,9 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     await page.getByRole('link', { name: 'run_abc' }).click()
     await expect.poll(() => page.getByText('worker:a/standard').count()).toBeGreaterThan(0)
     await expect.poll(() => page.getByText('proves reason').count()).toBeGreaterThan(0)
-    // The token leaves the address bar once read.
+    // The token leaves the address bar once read; absent sections leave no stray text.
     expect(new URL(page.url()).hash).toBe('')
+    expect(await page.locator('main').innerText()).not.toContain('null')
     await page.getByRole('button', { name: 'Approve plan' }).click()
     await expect.poll(() => workflow.calls.length).toBe(1)
     expect(workflow.calls[0]![0]).toBe('approve')

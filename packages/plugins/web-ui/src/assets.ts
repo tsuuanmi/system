@@ -68,11 +68,13 @@ export const APP_JS = `'use strict'
     if (!response.ok) throw new Error(value.error || response.statusText)
     return value
   }
+  // replaceChildren turns null into the text "null": absent sections are dropped first.
+  const show = (...parts) => main.replaceChildren(...parts.filter((part) => part !== null && part !== undefined))
   const table = (head, rows) => el('table', {}, el('thead', {}, el('tr', {}, head.map((h) => el('th', {}, h)))), el('tbody', {}, rows))
 
   async function list() {
     const { runs } = await api('runs')
-    main.replaceChildren(el('h2', {}, 'Runs'), table(['Run', 'Template', 'Status', 'Steps', 'Created'], runs.map((run) => el('tr', {},
+    show(el('h2', {}, 'Runs'), table(['Run', 'Template', 'Status', 'Steps', 'Created'], runs.map((run) => el('tr', {},
       el('td', {}, el('a', { href: '?run=' + encodeURIComponent(run.runId), onclick: (e) => { e.preventDefault(); go(run.runId) } }, run.runId)),
       el('td', {}, run.template),
       el('td', { class: 'state ' + run.status }, run.status + (run.blocked ? ' (waiting for approval)' : '')),
@@ -88,7 +90,7 @@ export const APP_JS = `'use strict'
     }
     const note = el('input', { placeholder: 'note (optional)', 'aria-label': 'Note' })
     const decisions = new Map((explain ? explain.nodes : []).map((n) => [n.nodeId, n.decisions]))
-    main.replaceChildren(
+    show(
       el('p', {}, el('a', { href: '/ui/', onclick: (e) => { e.preventDefault(); go() } }, '← all runs')),
       el('h2', {}, run.runId + ' ', el('span', { class: 'state ' + run.status }, run.status)),
       el('p', { class: 'muted' }, run.template + ' · spec ', el('code', {}, run.specHash)),
@@ -119,7 +121,7 @@ export const APP_JS = `'use strict'
   }
   window.addEventListener('popstate', () => { current = new URLSearchParams(location.search).get('run'); refresh() })
   async function refresh() {
-    if (!token) { main.replaceChildren(el('p', {}, 'Open the link that ', el('code', {}, 'system ui'), ' prints.')); return }
+    if (!token) { show(el('p', {}, 'Open the link that ', el('code', {}, 'system ui'), ' prints.')); return }
     try { await (current ? detail(current) : list()); status.textContent = 'updated ' + new Date().toLocaleTimeString() } catch (error) { status.textContent = error.message }
   }
   refresh()
