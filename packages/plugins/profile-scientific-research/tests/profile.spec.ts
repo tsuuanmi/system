@@ -73,6 +73,9 @@ describe('the scientific-research profile, on the unchanged engine (REQ-WF-9)', 
     const done = await ctx.workflow.wait(ctx.workflow.start({ template: 'study', input: 'Does X lower Y?' }).runId, 30_000)
     expect(done).toMatchObject({ status: 'completed', answer: 'H1 is supported with moderate confidence [E1]. H2 is insufficient.' })
     expect(done.nodes.map((n) => n.nodeId)).toEqual(['frame:1', 'literature:1', 'evidence:1', 'critique:1', 'conclusion:1'])
+    // A structured step is given its schema verbatim, and its result is checked against it (REQ-ART-5).
+    expect(prompts[0]).toContain('"$id":"urn:tsuuanmi:system:schema:hypothesis-set:v1"')
+    expect(ctx.artifacts.get(ctx.workflow.records(done.runId)[0]!.outputReceipt!.acceptance)!.body).toMatchObject({ candidates: [{ option: 'accept', reasons: ['a valid hypothesis-set@1.0', expect.any(String)] }, expect.anything()] })
     // The critic sees the hypotheses and the evidence, never the review it came from.
     expect(prompts[3]).toContain('"E1"')
     expect(prompts[3]).not.toContain('n=120')

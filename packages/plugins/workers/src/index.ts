@@ -8,7 +8,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import type {} from '@tsuuanmi/system-artifacts'
-import { SchemaRegistry } from '@tsuuanmi/system-libs'
+import { extractJson, SchemaRegistry } from '@tsuuanmi/system-libs'
 import {
   type Acceptance, type AcceptanceContract, type AdmissionCheck, AdmissionFailure, type AdmittedWorker, type ArtifactRef, type CapabilityDescriptor, type QuotaClass,
   type Rejection, type RouteOptions, TIERS, type Tier, type WorkRequirement, type WorkerSource, Workers,
@@ -181,16 +181,18 @@ export class WorkerRouter extends Workers {
     return [...this.registered.keys()].sort()
   }
 
-  accept(result: ArtifactRef, contract: string, options: { producer?: string; runId?: string; nodeId?: string } = {}): Acceptance {
+  accept(result: ArtifactRef, contract: string, options: { producer?: string; runId?: string; nodeId?: string; resultSchema?: string } = {}): Acceptance {
     const check = this.registered.get(contract)
     if (!check) throw new Error(`unknown acceptance contract ${contract}`)
     const envelope = this.ctx.artifacts.get(result)
     if (!envelope) throw new Error(`unknown result artifact ${result}`)
-    const verdict = check({ id: result, bodySchema: envelope.bodySchema, body: envelope.body })
+    const structured = options.resultSchema ? this.structured(envelope.body, options.resultSchema) : undefined
+    let verdict = structured ?? check({ id: result, bodySchema: envelope.bodySchema, body: envelope.body })
     if (!verdict.reasons.length) throw new TypeError(`acceptance contract ${contract} gave no reason`)
+    if (options.resultSchema && !structured) verdict = { ...verdict, reasons: [`a valid ${options.resultSchema}`, ...verdict.reasons] }
     const decision = this.ctx.artifacts.recordDecision({
       decisionType: 'acceptance',
-      question: `Does result ${result} satisfy ${contract}?`,
+      question: `Does result ${result} satisfy ${contract}${options.resultSchema ? ` and ${options.resultSchema}` : ''}?`,
       inputs: [result],
       candidates: [
         { option: 'accept', selected: verdict.accepted, reasons: verdict.accepted ? verdict.reasons : [] },
@@ -204,6 +206,19 @@ export class WorkerRouter extends Workers {
       ...(options.runId !== undefined ? { runId: options.runId } : {}), ...(options.nodeId !== undefined ? { nodeId: options.nodeId } : {}),
     })
     return { accepted: verdict.accepted, reasons: verdict.reasons, decision: decision.id as ArtifactRef }
+  }
+
+  /** A structured result's check: its JSON, valid against the named schema; undefined when it is (then the contract decides). */
+  private structured(body: unknown, tag: string): { accepted: false; reasons: string[] } | undefined {
+    if (!this.schemas.knows(tag)) throw new Error(`unknown result schema ${tag}`)
+    const value = extractJson(textOf(body))
+    if (!value) return { accepted: false, reasons: [`the result has no JSON object for ${tag}`] }
+    try {
+      this.schemas.assert(tag, { ...value, schema: tag })
+      return undefined
+    } catch (error) {
+      return { accepted: false, reasons: [`the result is not a valid ${tag}: ${(error as Error).message.slice(0, 400)}`] }
+    }
   }
 
   /** Every failed admission check, in the design's order; empty means admitted (REQ-WRK-1, -7, -9). */

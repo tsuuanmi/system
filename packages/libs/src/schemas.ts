@@ -39,6 +39,21 @@ export class SchemaRegistry {
     }
   }
 
+  /** Whether a schema tag names a schema this registry holds (its major version). */
+  knows(tag: string): boolean {
+    try {
+      this.#validator(tag)
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  /** The JSON Schema a tag names, to give a Worker that must produce it (REQ-ART-5). */
+  schemaOf(tag: string): object {
+    return this.#validator(tag).schema as object
+  }
+
   /** Validate a record by the `schema` tag it carries. */
   assertRecord(value: { schema?: unknown }): void {
     if (typeof value.schema !== 'string') throw new SchemaError('unknown', [], 'record has no schema tag')
@@ -61,3 +76,16 @@ function defaultSchemaDir(): string {
   const require = createRequire(import.meta.url)
   return dirname(require.resolve('@tsuuanmi/system-schemas/package.json'))
 }
+
+/** The JSON object an answer carries: in a ```json block, or the outermost braces; undefined if none. */
+export function extractJson(text: string): Record<string, unknown> | undefined {
+  const fenced = /```(?:json)?\s*\n([\s\S]*?)\n```/.exec(text)?.[1]
+  const raw = fenced ?? text.slice(text.indexOf('{'), text.lastIndexOf('}') + 1)
+  try {
+    const value = JSON.parse(raw) as unknown
+    return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined
+  } catch {
+    return undefined
+  }
+}
+

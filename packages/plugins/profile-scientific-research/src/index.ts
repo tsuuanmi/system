@@ -1,8 +1,9 @@
 /**
  * The scientific-research profile (REQ-WF-9): the second domain on the same engine, and the
  * architecture test. It ships with no engine change: its procedure is contributed through the
- * `profiles` seam (`ctx.workflow.template`), its checks through `ctx.workers.contract`, and its
- * typed artifacts through `ctx.artifacts`, from the engine's own event log.
+ * `profiles` seam (`ctx.workflow.template`), its structured steps through the engine's
+ * `resultSchema` (REQ-ART-5), its other checks through `ctx.workers.contract`, and its typed
+ * artifacts through `ctx.artifacts`, from the engine's own event log.
  *
  * `study` frames a question as testable hypotheses, reviews the literature with citations,
  * extracts an evidence table, has it critiqued independently, and concludes per hypothesis,
@@ -12,7 +13,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@tsuuanmi/system-artifacts'
 import type {} from '@tsuuanmi/system-event-log'
-import { type ContentId, SchemaRegistry } from '@tsuuanmi/system-libs'
+import { type ContentId, extractJson, SchemaRegistry } from '@tsuuanmi/system-libs'
 import type { NodeTemplate } from '@tsuuanmi/system-workflow'
 import type {} from '@tsuuanmi/system-workers'
 
@@ -82,7 +83,7 @@ const CONCLUDE = [
 
 function study(deep: boolean): NodeTemplate[] {
   return [
-    { nodeId: 'frame:1', objective: 'Frame the question as testable hypotheses', prompt: FRAME, capabilities: ['reason'], tier: 'standard', conversation: 'temporary', acceptance: 'acceptance.hypothesis-set' },
+    { nodeId: 'frame:1', objective: 'Frame the question as testable hypotheses', prompt: FRAME, capabilities: ['reason'], tier: 'standard', conversation: 'temporary', acceptance: 'acceptance.answer', resultSchema: 'hypothesis-set@1.0' },
     {
       nodeId: 'literature:1', objective: 'Review the published evidence, with citations', dependsOn: ['frame:1'], prompt: LITERATURE,
       ...(deep
@@ -90,7 +91,7 @@ function study(deep: boolean): NodeTemplate[] {
         : { capabilities: ['reason'], tier: 'standard' as const, conversation: 'temporary' as const }),
       acceptance: 'acceptance.cited',
     },
-    { nodeId: 'evidence:1', objective: 'Extract the evidence table', dependsOn: ['frame:1', 'literature:1'], prompt: EVIDENCE, capabilities: ['reason'], tier: 'economy', conversation: 'temporary', acceptance: 'acceptance.evidence-table' },
+    { nodeId: 'evidence:1', objective: 'Extract the evidence table', dependsOn: ['frame:1', 'literature:1'], prompt: EVIDENCE, capabilities: ['reason'], tier: 'economy', conversation: 'temporary', acceptance: 'acceptance.answer', resultSchema: 'evidence-table@1.0' },
     { nodeId: 'critique:1', objective: 'Critique the evidence independently', dependsOn: ['frame:1', 'evidence:1'], prompt: CRITIQUE, capabilities: ['reason'], tier: 'standard', conversation: 'temporary', acceptance: 'acceptance.answer' },
     {
       nodeId: 'conclusion:1', objective: 'Conclude per hypothesis, citing the evidence', dependsOn: ['frame:1', 'evidence:1', 'critique:1'], prompt: CONCLUDE,
@@ -112,13 +113,9 @@ const schemas = new SchemaRegistry()
 
 /** The JSON object an answer carries (in a ```json block, or bare), validated against `schema`. */
 export function typedBody(text: string, schema: string): { ok: true; body: Record<string, unknown> } | { ok: false; reason: string } {
-  const raw = /```(?:json)?\s*\n([\s\S]*?)\n```/.exec(text)?.[1] ?? text.slice(text.indexOf('{'), text.lastIndexOf('}') + 1)
-  let body: Record<string, unknown>
-  try {
-    body = { ...(JSON.parse(raw) as Record<string, unknown>), schema }
-  } catch {
-    return { ok: false, reason: `the answer has no ${schema} JSON object` }
-  }
+  const value = extractJson(text)
+  if (!value) return { ok: false, reason: `the answer has no ${schema} JSON object` }
+  const body = { ...value, schema }
   try {
     schemas.assert(schema, body)
   } catch (error) {
@@ -130,12 +127,6 @@ export function typedBody(text: string, schema: string): { ok: true; body: Recor
 const textOf = (body: unknown): string => String((body as { text?: unknown } | undefined)?.text ?? '')
 
 export function apply(ctx: Context): void {
-  for (const [contract, schema] of [['acceptance.hypothesis-set', 'hypothesis-set@1.0'], ['acceptance.evidence-table', 'evidence-table@1.0']] as const) {
-    ctx.workers.contract(contract, ({ body }) => {
-      const typed = typedBody(textOf(body), schema)
-      return typed.ok ? { accepted: true, reasons: [`a valid ${schema}`] } : { accepted: false, reasons: [typed.reason] }
-    })
-  }
   ctx.workers.contract('acceptance.cited-conclusions', ({ body }) => {
     const text = textOf(body)
     const hypotheses = new Set(text.match(/\bH[1-9][0-9]?\b/g) ?? [])

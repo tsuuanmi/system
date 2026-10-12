@@ -4,8 +4,8 @@
 > invariants, and from the titles of the tests that cite them; do not edit by hand. CI fails
 > when it is stale. A test cites an id in its title, for example `... (REQ-WF-7)`.
 
-**83 of 91** ids have at least one test that cites them.
-Not yet cited by a test: REQ-PRV-5, REQ-PRV-7, REQ-WRK-5, REQ-ART-5, REQ-SES-6, REQ-SES-7, QA-11, INV-7. Some are covered by live or manual checks in the [release checklist](release-checklist.md).
+**84 of 91** ids have at least one test that cites them.
+Not yet cited by a test: REQ-PRV-5, REQ-PRV-7, REQ-WRK-5, REQ-SES-6, REQ-SES-7, QA-11, INV-7. Some are covered by live or manual checks in the [release checklist](release-checklist.md).
 
 ## Requirements
 
@@ -56,7 +56,7 @@ Not yet cited by a test: REQ-PRV-5, REQ-PRV-7, REQ-WRK-5, REQ-ART-5, REQ-SES-6, 
 | REQ-ART-2 | Artifacts are immutable and content-addressed. | [artifacts.spec.ts:40](../../packages/plugins/artifacts/tests/artifacts.spec.ts#L40), [workflow.spec.ts:414](../../packages/plugins/workflow/tests/workflow.spec.ts#L414) |
 | REQ-ART-3 | An operator can ask *why* for any artifact, node, or turn, and get the chain of decisions and inputs that led to it. | [workflow.spec.ts:536](../../packages/plugins/workflow/tests/workflow.spec.ts#L536) |
 | REQ-ART-4 | Every persisted record and wire payload validates against a versioned JSON Schema. | [libs.spec.ts:26](../../packages/libs/tests/libs.spec.ts#L26), [libs.spec.ts:36](../../packages/libs/tests/libs.spec.ts#L36) |
-| REQ-ART-5 | A Worker's structured result is validated against the schema named in its acceptance contract, and the schema is given to the Worker when… | **none yet** |
+| REQ-ART-5 | A Worker's structured result is validated against the schema named in its acceptance contract, and the schema is given to the Worker when… | [startup.spec.ts:47](../../packages/plugins/workflow/tests/startup.spec.ts#L47), [workers.ts:177](../../packages/workers-core/conformance/workers.ts#L177) |
 | REQ-SES-1 | Every continuable Worker participation has a system-owned `SessionId`. | [worker-sessions.spec.ts:103](../../packages/plugins/worker-sessions/tests/worker-sessions.spec.ts#L103) |
 | REQ-SES-2 | Sessions in a group can address each other by `SessionId` and exchange messages directly. | [workflow.spec.ts:294](../../packages/plugins/workflow/tests/workflow.spec.ts#L294) |
 | REQ-SES-3 | Messages are durable `message` artifacts, delivered at least once, in order per mailbox, and deduplicated by `messageId`. | [worker-sessions.spec.ts:47](../../packages/plugins/worker-sessions/tests/worker-sessions.spec.ts#L47), [worker-sessions.spec.ts:74](../../packages/plugins/worker-sessions/tests/worker-sessions.spec.ts#L74) |

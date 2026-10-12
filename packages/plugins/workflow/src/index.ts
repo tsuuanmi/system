@@ -21,7 +21,7 @@ import type {} from '@tsuuanmi/system-egress'
 import { dispositionOf, type ProviderErrorKind } from '@tsuuanmi/system-provider-core'
 import { AdmissionFailure, type AdmittedWorker, type ArtifactRef, type Classification, type Tier, TIERS, type WorkRequirement, type WorkerExecution } from '@tsuuanmi/system-workers-core'
 import { z as zod } from 'zod'
-import { type Assessment, type CallerOptions, DEFAULT_GROWTH, DEFAULT_TEMPLATES, type NodeTemplate, parseAssessment, parseLead, parsePlan, type PlannedNode, remediationPrompt, render, type ResolvedNode, resolve, subjectBlock } from './spec.ts'
+import { type Assessment, type CallerOptions, DEFAULT_GROWTH, DEFAULT_TEMPLATES, type NodeTemplate, parseAssessment, parseLead, parsePlan, type PlannedNode, remediationPrompt, render, type ResolvedNode, resolve, schemaBlock, subjectBlock } from './spec.ts'
 
 export { DEFAULT_TEMPLATES, preflight, render, resolve } from './spec.ts'
 export type { NodeTemplate, ResolvedNode, ResolvedSpec } from './spec.ts'
@@ -198,6 +198,7 @@ export class Workflow extends Service {
       maxEscalations: z.natural().max(3),
       // Not z.object: an omitted object would come back as {} and make every node a planner.
       grows: z.any().description('Planner policy {maxNodes, capabilities, approvalRequired}; checked by preflight'),
+      resultSchema: z.string().description('Schema tag the answer\'s JSON must be valid against (REQ-ART-5)'),
     }))).default({}).description('Workflow templates by name, added to the built-in ask and research'),
     maxAttempts: z.natural().min(1).max(10).default(3).description('Attempts per node for retryable failures'),
     retryDelayMs: z.natural().default(5000).description('First back-off delay, doubled per attempt'),
@@ -223,7 +224,7 @@ export class Workflow extends Service {
     super(ctx, 'workflow')
     this.templates = { ...DEFAULT_TEMPLATES, ...config.templates }
     // Fail at load, not at the first call: every template must pass preflight.
-    for (const [name, nodes] of Object.entries(this.templates)) resolve(name, nodes, {})
+    for (const [name, nodes] of Object.entries(this.templates)) this.check(name, nodes)
     ctx.store.migrate('workflow', [{
       version: 1,
       sql: `CREATE TABLE workflow_runs (
@@ -318,10 +319,18 @@ export class Workflow extends Service {
   template(name: string, nodes: NodeTemplate[]): () => void {
     if (!/^[a-z][a-z0-9-]{0,63}$/.test(name)) throw new TypeError(`template name ${name} must be lowercase letters, digits, and hyphens`)
     if (this.templates[name]) throw new Error(`template ${name} already exists`)
-    resolve(name, nodes, {})
+    this.check(name, nodes)
     this.templates[name] = nodes
     return () => {
       if (this.templates[name] === nodes) delete this.templates[name]
+    }
+  }
+
+  /** Preflight, and every result schema a template names is one the registry holds. */
+  private check(name: string, nodes: NodeTemplate[]): void {
+    resolve(name, nodes, {})
+    for (const node of nodes) {
+      if (node.resultSchema && !this.schemas.knows(node.resultSchema)) throw new TypeError(`template ${name}, node ${node.nodeId}: unknown result schema ${node.resultSchema}`)
     }
   }
 
@@ -461,7 +470,7 @@ export class Workflow extends Service {
       data: { classification: classification ?? this.ctx.egress.defaultClassification, refs: [] },
       egressPolicy: 'egress.classification-and-secrets',
       tier: { min: node.tier, source: node.tierSource, ...(node.tierDecision ? { decision: node.tierDecision as ArtifactRef } : {}) },
-      acceptance: { contract: node.acceptance, maxEscalations: node.maxEscalations ?? 1 },
+      acceptance: { contract: node.acceptance, maxEscalations: node.maxEscalations ?? 1, ...(node.resultSchema ? { resultSchema: node.resultSchema } : {}) },
     }
   }
 
@@ -772,7 +781,7 @@ export class Workflow extends Service {
         producer: { type: 'operator', ref: 'operator' }, inputs: [old.id], lineage: { supersedes: [old.id] }, runId, nodeId,
       })
       const result = artifact.id as ArtifactRef
-      const acceptance = this.ctx.workers.accept(result, spec.acceptance, { producer: 'workflow', runId, nodeId })
+      const acceptance = this.ctx.workers.accept(result, spec.acceptance, { producer: 'workflow', runId, nodeId, ...(spec.resultSchema ? { resultSchema: spec.resultSchema } : {}) })
       if (!acceptance.accepted) throw new WorkflowFailure('invalid_input', `the replacement fails ${spec.acceptance}: ${acceptance.reasons.join('; ')}`)
       const why = `${nodeId}'s result ${old.id} was superseded by ${result}${replacement.note ? `: ${replacement.note}` : ''}`
       this.ctx.store.transaction((db) => {
@@ -845,6 +854,7 @@ export class Workflow extends Service {
       ...(spec.team ? this.teamTexts(spec, nodes) : {}),
     }
     let prompt = spec.literal ? spec.prompt : render(spec.prompt, run.input, texts, extras)
+    if (spec.resultSchema) prompt = `${prompt}\n\n${schemaBlock(spec.resultSchema, this.schemas.schemaOf(spec.resultSchema))}`
     // A review of an agent's change binds to the workspace's exact subject now (REQ-TEAM-5, REQ-WF-5).
     const bound = spec.capabilities.includes('review') ? this.reviewSubject(results, run.input) : undefined
     if (bound) prompt = `${prompt}\n\n${bound.block}`
@@ -1323,7 +1333,7 @@ export class Workflow extends Service {
   /** A finished execution: check its result against the node's contract, then commit the output receipt. */
   private complete(run: RunRow, node: NodeRow, spec: ResolvedNode, execution: WorkerExecution, lease: () => Lease): void {
     const result = execution.result as ArtifactRef
-    const acceptance = this.ctx.workers.accept(result, spec.acceptance, { producer: 'workflow', runId: run.run_id, nodeId: node.node_id })
+    const acceptance = this.ctx.workers.accept(result, spec.acceptance, { producer: 'workflow', runId: run.run_id, nodeId: node.node_id, ...(spec.resultSchema ? { resultSchema: spec.resultSchema } : {}) })
     const decisions = { decisions: JSON.stringify([...execution.decisions, ...this.routedDecisions(node)]) }
     const data = { executionId: execution.id, source: node.source, worker: node.worker, tier: node.served_tier, quotaClass: node.quota_class, accepted: acceptance.accepted }
     let gate: ReturnType<typeof this.subjectGate> | undefined

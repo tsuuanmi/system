@@ -44,6 +44,12 @@ describe('startup validation (REQ-HOST-2)', () => {
     expect(outcome.error?.message).toMatch(/templates\.broken\[0\]\.conversation missing required value/)
   })
 
+  it('refuses a template whose result schema is unknown (REQ-ART-5)', async () => {
+    const outcome = await engine({ broken: [{ ...step, resultSchema: 'nothing@1.0' }] })
+    expect(outcome.served).toBe(false)
+    expect(outcome.error?.message).toMatch(/node a: unknown result schema nothing@1\.0/)
+  })
+
   it('refuses a template that fails preflight, naming the template\'s problem', async () => {
     const outcome = await engine({ broken: [{ ...step, dependsOn: ['missing'] }] })
     expect(outcome.served).toBe(false)

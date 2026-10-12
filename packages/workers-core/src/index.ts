@@ -199,7 +199,8 @@ export abstract class Workers extends Service {
   /**
    * Check a stored result against a contract and record an `acceptance` decision. A
    * provider's terminal state is not acceptance (REQ-WRK-3); an unknown contract or result
-   * fails closed with an error, never a silent accept.
+   * fails closed with an error, never a silent accept. With `resultSchema`, the result's JSON
+   * must first be valid against that schema (REQ-ART-5).
    */
-  abstract accept(result: ArtifactRef, contract: string, options?: { producer?: string; runId?: string; nodeId?: string }): Acceptance
+  abstract accept(result: ArtifactRef, contract: string, options?: { producer?: string; runId?: string; nodeId?: string; resultSchema?: string }): Acceptance
 }

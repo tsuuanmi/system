@@ -174,6 +174,26 @@ export function workersConformance(name: string, boot: Boot): void {
       }
     })
 
+    it('checks a structured result against its schema before the contract, and gives why (REQ-ART-5)', async () => {
+      const { ctx, dispose } = await boot()
+      try {
+        ctx.workers.contract('conformance.any', () => ({ accepted: true, reasons: ['contract passed'] }))
+        const put = (text: string) => ctx.artifacts.put({
+          kind: 'report', bodySchema: 'provider-answer@1.0', classification: 'operator-shared', producer: { type: 'system', ref: 'conformance' },
+          body: { schema: 'provider-answer@1.0', provider: 'p', account: 'a', turnId: 't', conversation: { mode: 'temporary' }, promptHash: `sha256:${'0'.repeat(64)}`, text },
+        }).id as `sha256:${string}`
+        const tag = 'hypothesis-set@1.0'
+        const valid = '```json\n' + JSON.stringify({ question: 'q', hypotheses: [{ id: 'H1', statement: 's' }] }) + '\n```'
+        expect(ctx.workers.accept(put(valid), 'conformance.any', { resultSchema: tag })).toMatchObject({ accepted: true, reasons: [`a valid ${tag}`, 'contract passed'] })
+        const wrong = ctx.workers.accept(put('```json\n{"question": "q", "hypotheses": []}\n```'), 'conformance.any', { resultSchema: tag })
+        expect(wrong).toMatchObject({ accepted: false, reasons: [expect.stringMatching(/not a valid hypothesis-set@1\.0/)] })
+        expect(ctx.workers.accept(put('no json'), 'conformance.any', { resultSchema: tag })).toMatchObject({ accepted: false, reasons: [expect.stringMatching(/no JSON object/)] })
+        expect(() => ctx.workers.accept(put('{}'), 'conformance.any', { resultSchema: 'nothing@1.0' })).toThrow(/unknown result schema/)
+      } finally {
+        await dispose()
+      }
+    })
+
     it('refuses a malformed work requirement', async () => {
       await withWorkers([worker('w:a')], async (ctx) => {
         await expect(ctx.workers.route({ ...requirement(), capabilities: [] })).rejects.toThrow()

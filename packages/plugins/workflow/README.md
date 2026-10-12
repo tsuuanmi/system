@@ -53,6 +53,13 @@ second execution path (INV-1).
   - `investigate` is a planner, `plan:1`, then `synthesis:1`. The planner's plan
     adds the research steps (graph growth), and the synthesis answers from their
     findings (`{{grown}}`).
+  - **Structured results (REQ-ART-5).** A node with `resultSchema: <tag>`:
+    - the engine checks at load that the registry holds the schema;
+    - the schema goes into the work requirement
+      (`acceptance.resultSchema`);
+    - the schema is appended verbatim to the node's prompt;
+    - acceptance checks the answer's JSON against the schema before the
+      contract runs, and the result is rejected, with why, if it fails.
   - **Profiles (REQ-WF-9).** A profile plugin contributes templates with
     `ctx.workflow.template(name, nodes)` for its lifetime. Each is checked like
     a configured one. Admitted runs keep their resolved spec, so withdrawing a

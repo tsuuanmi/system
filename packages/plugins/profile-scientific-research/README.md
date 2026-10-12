@@ -4,7 +4,8 @@ The **scientific-research profile**: the second domain on the same engine, and
 the architecture test (REQ-WF-9, PROP-0001). It was added with **no change to
 any engine package**:
 - its procedures come through the `profiles` seam (`ctx.workflow.template`);
-- its checks come through `ctx.workers.contract`;
+- its structured steps use the engine's `resultSchema` (REQ-ART-5);
+- its other checks come through `ctx.workers.contract`;
 - its typed artifacts come through `ctx.artifacts`, from the engine's own
   event log.
 
@@ -12,9 +13,9 @@ any engine package**:
 
 | Step | Capability, tier | Acceptance | Produces |
 |---|---|---|---|
-| `frame:1` | `reason`, standard | `acceptance.hypothesis-set` | 2 to 4 testable hypotheses, as a `criteria` artifact (`hypothesis-set@1.0`) |
+| `frame:1` | `reason`, standard | `resultSchema: hypothesis-set@1.0` | 2 to 4 testable hypotheses, as a `criteria` artifact (`hypothesis-set@1.0`) |
 | `literature:1` | `reason`, standard (`study`) or `deep-research`, frontier (`study-deep`) | `acceptance.cited` | a cited review of the published evidence |
-| `evidence:1` | `reason`, economy | `acceptance.evidence-table` | claims with source URLs and their bearing on each hypothesis, as an `evidence` artifact (`evidence-table@1.0`) |
+| `evidence:1` | `reason`, economy | `resultSchema: evidence-table@1.0` | claims with source URLs and their bearing on each hypothesis, as an `evidence` artifact (`evidence-table@1.0`) |
 | `critique:1` | `reason`, standard | `acceptance.answer` | an independent critique that sees only the hypotheses and the evidence, never the review |
 | `conclusion:1` | `reason`, standard | `acceptance.cited-conclusions` | a conclusion per hypothesis, citing evidence as `[E1]` |
 

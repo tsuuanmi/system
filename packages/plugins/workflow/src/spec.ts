@@ -34,6 +34,11 @@ export interface NodeTemplate {
    * round 1, critique rounds behind a barrier, and a synthesis that keeps this node's id.
    */
   team?: TeamPolicy
+  /**
+   * A structured result (REQ-ART-5): the schema tag its answer's JSON must be valid against. The
+   * schema is given to the Worker in its prompt, and acceptance checks it before the contract.
+   */
+  resultSchema?: string
 }
 
 export interface TeamPolicy {
@@ -201,6 +206,9 @@ export function preflight(nodes: readonly NodeTemplate[]): string[] {
   for (const node of nodes) {
     if (node.grows !== undefined && node.grows !== null) checkGrowth(node.nodeId, node.grows)
     if (node.team !== undefined && node.team !== null) checkTeam(node.nodeId, node.team)
+    if (node.resultSchema !== undefined && !(typeof node.resultSchema === 'string' && /^[a-z][a-z0-9-]*@\d+\.\d+$/.test(node.resultSchema))) {
+      throw new TypeError(`node ${node.nodeId}: resultSchema must be a schema tag such as plan@1.0`)
+    }
     for (const dep of node.dependsOn ?? []) if (!byId.has(dep)) throw new TypeError(`node ${node.nodeId} depends on unknown node ${dep}`)
     for (const [, used] of node.prompt.matchAll(REFERENCE)) {
       if (!(node.dependsOn ?? []).includes(used!)) throw new TypeError(`node ${node.nodeId} uses ${used}, which it does not depend on`)
@@ -477,5 +485,15 @@ export function parseLead(text: string): { converged: boolean; reason: string } 
   } catch {
     return undefined
   }
+}
+
+/** The structured-result instruction appended to a node's prompt: the schema itself, verbatim (REQ-ART-5). */
+export function schemaBlock(tag: string, schema: object): string {
+  return [
+    `Reply with only a JSON object in a \`\`\`json block, valid against this JSON Schema (${tag}):`,
+    '```json',
+    JSON.stringify(schema),
+    '```',
+  ].join('\n')
 }
 
