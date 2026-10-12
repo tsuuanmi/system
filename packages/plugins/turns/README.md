@@ -86,6 +86,9 @@ invoked by the [workflow engine](../workflow/README.md)
   another mode.
 - **Lost lease:** the turn is looked at again once its lease can be taken, so it
   is never stranded until the next start.
+- **Cancel (REQ-WRK-4):** `cancel(turnId)` aborts a running turn, or fails a
+  queued one before it starts, as `aborted`. An answer the provider was already
+  generating is not taken.
 - **Stop:** a stopped runtime starts nothing. A turn caught before scheduling
   stays queued for the next start.
 - **Injects:** `store`, `artifacts`, `leases`, `egress`, `turnReceipts`, `accounts`,

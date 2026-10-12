@@ -98,6 +98,11 @@ export interface WorkerSource {
   wait(executionId: string, timeoutMs: number): Promise<WorkerExecution>
   /** The Workers a continued session must stay on, when this source owns the session. */
   affinity?(sessionId: string): string[] | undefined
+  /**
+   * Cancel an execution (REQ-WRK-4): a queued one never starts, a running one is aborted and
+   * fails as `aborted`. False when it had already finished. Work already sent is not undone.
+   */
+  cancel?(executionId: string): boolean
 }
 
 /** The admission checks, in the order the router applies them. */

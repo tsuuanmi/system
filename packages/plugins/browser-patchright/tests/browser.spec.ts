@@ -42,6 +42,27 @@ class KillableDisplay extends Display {
   }
 }
 
+/** A display that never becomes ready, like a launch stalled under load. */
+class StalledDisplay extends Display {
+  protected prepareInvisible(): Promise<PreparedDisplay> {
+    return new Promise<PreparedDisplay>(() => undefined)
+  }
+}
+
+describe('ctx.browser: a stalled launch never holds an aborted turn (live 2026-10-12)', () => {
+  it('rejects openTurn as soon as its signal aborts, even while the browser is still launching', async () => {
+    const ctx = new Context()
+    await ctx.plugin(StalledDisplay)
+    await ctx.plugin(BrowserPool, {})
+    const controller = new AbortController()
+    const opening = pool(ctx).openTurn('acct-a', { signal: controller.signal })
+    setTimeout(() => controller.abort(new ProviderError('aborted', 'turn runtime stopped')), 100)
+    const started = Date.now()
+    await expect(opening).rejects.toMatchObject({ kind: 'aborted' })
+    expect(Date.now() - started).toBeLessThan(2000)
+  })
+})
+
 describe.runIf(canRun)('ctx.browser with a real headed Chrome on Xvfb', () => {
   let server: Server
   let origin: string

@@ -205,6 +205,9 @@ export class Workflow extends Service {
   private readonly templates: Record<string, NodeTemplate[]>
   private readonly waiters = new Map<string, Set<() => void>>()
   private readonly running = new Map<string, Promise<void>>()
+  private readonly rescheduled = new Set<string>()
+  /** Operator stops of runs advancing in this process. */
+  private readonly runAborts = new Map<string, AbortController>()
   private readonly retries = new Set<NodeJS.Timeout>()
   private readonly stopped = new AbortController()
 
@@ -421,11 +424,22 @@ export class Workflow extends Service {
     })
   }
 
-  /** At most one advance per run in this process; another process is fenced by the run lease. */
+  /**
+   * At most one advance per run in this process; another process is fenced by the run lease.
+   * A request arriving while an advance is still unwinding (for example an operator's
+   * `continue` right after the run failed) runs once that advance ends: it is never dropped.
+   */
   private schedule(runId: string): void {
-    if (this.stopped.signal.aborted || this.running.has(runId)) return
+    if (this.stopped.signal.aborted) return
+    if (this.running.has(runId)) {
+      this.rescheduled.add(runId)
+      return
+    }
     // advance handles its own failures; a store closing under it must not crash the process.
-    const advancing = this.advance(runId).catch(() => undefined).finally(() => this.running.delete(runId))
+    const advancing = this.advance(runId).catch(() => undefined).finally(() => {
+      this.running.delete(runId)
+      if (this.rescheduled.delete(runId)) this.schedule(runId)
+    })
     this.running.set(runId, advancing)
   }
 
@@ -448,7 +462,9 @@ export class Workflow extends Service {
       return
     }
     const lost = new AbortController()
-    const signal = AbortSignal.any([lost.signal, this.stopped.signal])
+    const operator = new AbortController()
+    this.runAborts.set(runId, operator)
+    const signal = AbortSignal.any([lost.signal, this.stopped.signal, operator.signal])
     const heartbeat = setInterval(() => {
       try {
         lease = this.ctx.leases.renew(lease!, LEASE_TTL_MS)
@@ -484,7 +500,7 @@ export class Workflow extends Service {
         await Promise.all(active.map((node) => this.execute(run, node, current, signal)))
       }
     } catch (error) {
-      if (this.stopped.signal.aborted) return
+      if (this.stopped.signal.aborted || operator.signal.aborted) return
       if (lost.signal.aborted || error instanceof LeaseLost || error instanceof StaleGeneration) {
         // Ownership was lost (a host that slept past the lease, or a takeover): look again
         // once the lease can be taken, so the run is never stranded until the next start.
@@ -495,6 +511,7 @@ export class Workflow extends Service {
       const run = this.runRow(runId)
       if (run?.status === 'running') this.finish(run, 'failed', { error: JSON.stringify({ kind: 'internal', disposition: 'CODE_FIX', message: (error as Error).message }) }, current)
     } finally {
+      if (this.runAborts.get(runId) === operator) this.runAborts.delete(runId)
       clearInterval(heartbeat)
       try {
         this.ctx.leases.release(current())
@@ -502,6 +519,108 @@ export class Workflow extends Service {
         // the store may already be closing; an unreleased lease simply expires
       }
     }
+  }
+
+  /**
+   * The operator stops a run (REQ-WF-7): its advance halts, running executions are cancelled
+   * through their sources, and every unfinished node fails as `stopped`, recorded as the
+   * operator's decision. Nothing is resent, and finished work stays.
+   */
+  async stop(runId: string, reason = 'stopped by the operator'): Promise<RunView> {
+    const run = this.runRow(runId)
+    if (!run || run.status !== 'running') throw new WorkflowFailure('invalid_input', `run ${runId} is not running`)
+    this.runAborts.get(runId)?.abort()
+    await this.running.get(runId)?.catch(() => undefined)
+    return this.asOperator(runId, (lease) => {
+      const decision = this.operatorDecision(run, 'stop', ['stop', 'keep'], reason)
+      const error: WorkflowError = { kind: 'stopped', disposition: 'NONE', message: reason }
+      for (const node of this.nodeRows(runId)) {
+        if (node.state === 'COMPLETED' || node.state === 'FAILED') continue
+        if (node.execution_id && node.source) this.ctx.workers.source(node.source)?.cancel?.(node.execution_id)
+        this.writeNode(node, { state: 'FAILED', error: JSON.stringify(error) }, (r) => ({ ...r, lastDecision: decision }), lease)
+      }
+      this.finish(this.runRow(runId)!, 'failed', { error: JSON.stringify(error) }, lease)
+    })
+  }
+
+  /**
+   * The operator continues a failed run (REQ-WF-7): exactly one failed node (or, for a stopped
+   * run, the nodes the stop failed) is reopened as a new attempt, recorded as the operator's
+   * decision. A node whose work was sent may send again: that is the operator's call.
+   */
+  continue(runId: string, nodeId?: string): RunView {
+    const run = this.runRow(runId)
+    if (!run || run.status !== 'failed') throw new WorkflowFailure('invalid_input', `run ${runId} is not failed`)
+    const failed = this.nodeRows(runId).filter((n) => n.state === 'FAILED')
+    const stopped = (JSON.parse(run.error ?? '{}') as WorkflowError).kind === 'stopped'
+    const reopen = nodeId
+      ? failed.filter((n) => n.node_id === nodeId)
+      : stopped ? failed.filter((n) => (JSON.parse(n.error ?? '{}') as WorkflowError).kind === 'stopped') : failed
+    if (!reopen.length) throw new WorkflowFailure('invalid_input', nodeId ? `node ${nodeId} of run ${runId} has not failed` : `run ${runId} has no failed node`)
+    if (!stopped && reopen.length > 1) throw new WorkflowFailure('invalid_input', `run ${runId} has ${reopen.length} failed nodes; name the one to continue`)
+    const view = this.asOperator(runId, (lease) => {
+      const decision = this.operatorDecision(run, 'continue', ['continue', 'leave'], `reopen ${reopen.map((n) => n.node_id).join(', ')}`)
+      for (const node of reopen) {
+        const record = JSON.parse(node.record) as NodeRecord
+        const spec = JSON.parse(node.spec) as ResolvedNode
+        const ready = spec.executor !== 'gate' && record.inputReceipt !== undefined
+        this.writeNode(node, { state: ready ? 'READY' : 'WAITING', execution_id: null, not_before: null, error: null }, (r) => {
+          const next: NodeRecord = { ...r, lastDecision: decision }
+          delete next.execution
+          return next
+        }, lease)
+      }
+      this.ctx.store.transaction((db) => {
+        this.ctx.leases.fence(lease())
+        db.prepare("UPDATE workflow_runs SET status = 'running', result = NULL, error = NULL, updated_at = ? WHERE run_id = ?").run(now(), runId)
+        this.ctx.eventLog.append({ type: 'workflow.run.continued', runId, decision, data: { nodes: reopen.map((n) => n.node_id) } })
+      })
+    })
+    this.schedule(runId)
+    return view
+  }
+
+  /**
+   * Delete a finished run (REQ-WF-7; workflow-engine.md#retention): without `updatedAt` it only
+   * previews; with it, it deletes when the run is unchanged since that preview. Artifacts stay.
+   */
+  delete(runId: string, updatedAt?: string): { deleted: boolean; runId: string; template: string; status: RunStatus; updatedAt: string; nodes: number } {
+    const run = this.runRow(runId)
+    if (!run) throw new WorkflowFailure('invalid_input', `unknown run ${runId}`)
+    const preview = { runId, template: run.template, status: run.status, updatedAt: run.updated_at, nodes: this.nodeRows(runId).length }
+    if (updatedAt === undefined) return { deleted: false, ...preview }
+    if (run.status === 'running') throw new WorkflowFailure('invalid_input', `run ${runId} is running; stop it first`)
+    if (updatedAt !== run.updated_at) throw new WorkflowFailure('invalid_input', `run ${runId} changed since the preview (now ${run.updated_at}); preview again`)
+    this.ctx.store.transaction((db) => {
+      db.prepare('DELETE FROM workflow_nodes WHERE run_id = ?').run(runId)
+      db.prepare('DELETE FROM workflow_runs WHERE run_id = ? AND updated_at = ?').run(runId, updatedAt)
+      this.ctx.eventLog.append({ type: 'workflow.run.deleted', runId, data: { template: run.template } })
+    })
+    return { deleted: true, ...preview }
+  }
+
+  /** Run `change` under the run's lease, as an operator action; the run must not be advancing elsewhere. */
+  private asOperator(runId: string, change: (lease: () => Lease) => void): RunView {
+    const lease = this.ctx.leases.acquire(`run:${runId}`, LEASE_TTL_MS)
+    if (!lease) throw new WorkflowFailure('overloaded', `run ${runId} is busy in another process; retry in a moment`)
+    try {
+      change(() => lease)
+    } finally {
+      this.ctx.leases.release(lease)
+    }
+    return this.get(runId)!
+  }
+
+  private operatorDecision(run: RunRow, option: string, options: [string, string], reason: string): ArtifactRef {
+    return this.ctx.artifacts.recordDecision({
+      decisionType: 'recovery',
+      question: `Does the operator ${option} run ${run.run_id}?`,
+      inputs: [],
+      candidates: [{ option: options[0], selected: true, reasons: [reason] }, { option: options[1], selected: false, reasons: [] }],
+      decider: { type: 'operator', id: `operator.${option}`, version: '1' },
+      outcome: { option },
+      deterministic: false,
+    }, { producer: { type: 'operator', ref: 'operator' }, runId: run.run_id }).id as ArtifactRef
   }
 
   /** WAITING → READY: render the input from the dependencies' results and bind it by hash. */
@@ -1074,6 +1193,36 @@ export class Workflow extends Service {
     }, async (args) => {
       try {
         return shape(this.approve(String(args.runId), { verdict: args.verdict as 'approved' | 'rejected', ...(args.note ? { note: String(args.note) } : {}) }))
+      } catch (error) {
+        return failure(error)
+      }
+    })
+    c.mcp.tool('stop', {
+      description: 'Stop a run: running work is cancelled, nothing else starts, nothing is resent (an operator decision).',
+      inputSchema: { runId: zod.string().max(200), reason: zod.string().max(500).optional() },
+    }, async (args) => {
+      try {
+        return shape(await this.stop(String(args.runId), args.reason ? String(args.reason) : undefined))
+      } catch (error) {
+        return failure(error)
+      }
+    })
+    c.mcp.tool('continue', {
+      description: 'Continue a failed run: reopen its one failed node (or a stopped run\'s nodes) as a new attempt (an operator decision).',
+      inputSchema: { runId: zod.string().max(200), nodeId: zod.string().max(200).optional() },
+    }, async (args) => {
+      try {
+        return shape(this.continue(String(args.runId), args.nodeId ? String(args.nodeId) : undefined))
+      } catch (error) {
+        return failure(error)
+      }
+    })
+    c.mcp.tool('delete', {
+      description: 'Delete a finished run: without updatedAt, preview; with the preview\'s updatedAt, delete. Artifacts stay.',
+      inputSchema: { runId: zod.string().max(200), updatedAt: zod.string().max(40).optional() },
+    }, async (args) => {
+      try {
+        return json(this.delete(String(args.runId), args.updatedAt ? String(args.updatedAt) : undefined))
       } catch (error) {
         return failure(error)
       }

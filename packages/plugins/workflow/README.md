@@ -144,18 +144,33 @@ second execution path (INV-1).
   - `ask` waits up to `waitSeconds` (≤ 55 s);
   - `run { template, input, … }` starts any template, and waits like `ask`;
   - `approve { runId, verdict, note? }` gives the operator's verdict on a waiting plan;
+  - `stop`, `continue`, and `delete` are the operator controls above;
   - `research` returns at once;
   - `result` takes a `runId` and long-polls it;
   - `usage`;
   - `explain` takes a run id, or any artifact id (its input tree).
-- **Retention:** runs are deleted only by the operator (no command yet). After
+- **Operator control (REQ-WF-7).** Each action is recorded as the operator's
+  `recovery` decision:
+  - `stop(runId, reason)` halts the run's advance and cancels running executions
+    through their sources (`cancel`). Every unfinished node fails as `stopped`.
+    Nothing is resent.
+  - `continue(runId, nodeId?)` reopens exactly one failed node, or a stopped
+    run's stopped nodes, as a new attempt, and the run resumes. Work that was
+    already sent may be sent again: that is the operator's call.
+  - `delete(runId, updatedAt?)` previews without `updatedAt`. With the preview's
+    `updatedAt`, it deletes a finished run's rows; a changed run is refused.
+    Artifacts stay (append-only).
+  - `usage` lists runs, and `result` / `watch` follow one.
+  - A request that arrives while a run's advance is still unwinding (for
+    example `continue` right after the run failed) runs once that advance
+    ends; it is never dropped.
+- **Retention:** runs are deleted only by the operator (`delete`). After
   `retainDays`, a finished run's input text and rendered prompts are cleared.
 - **Not yet:**
   - profile growth rules (growth comes only from plans);
   - team procedures beyond panel critique: a lead, and direct messages between
     members;
   - independent review with assessment artifacts;
-  - lineage invalidation;
-  - the operator commands `stop`, `continue`, and `delete`.
+  - lineage invalidation.
 - **Injects:** `store`, `artifacts`, `eventLog`, `leases`, `egress`, `workers`;
   `mcp` is optional.

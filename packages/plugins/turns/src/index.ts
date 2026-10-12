@@ -155,6 +155,8 @@ export class Turns extends Service {
   private readonly retries = new Set<NodeJS.Timeout>()
   /** Runs in flight; a stop waits for them so their leases are released. */
   private readonly inflight = new Set<Promise<void>>()
+  /** Operator cancellation of turns running in this process. */
+  private readonly cancels = new Map<string, AbortController>()
   private stopping = false
 
   constructor(ctx: Context, private readonly config: Config = {}) {
@@ -212,6 +214,7 @@ export class Turns extends Service {
         const account = this.session(sessionId)?.account
         return account ? TIERS.map((t) => websiteWorker(account, t)) : undefined
       },
+      cancel: (id) => this.cancel(id),
     })
     ctx.effect(() => {
       queueMicrotask(() => {
@@ -325,6 +328,28 @@ export class Turns extends Service {
     for (const row of rows) this.schedule(row)
   }
 
+  /**
+   * Cancel a turn (REQ-WRK-4): a running one is aborted, a queued one never starts. The
+   * provider may still finish an answer it was already generating; it is not taken.
+   */
+  cancel(turnId: string): boolean {
+    const row = this.row(turnId)
+    if (!row || TERMINAL.has(row.status)) return false
+    const running = this.cancels.get(turnId)
+    if (running) {
+      running.abort(new ProviderError('aborted', 'cancelled by the operator'))
+      return true
+    }
+    const lease = this.ctx.leases.acquire(`turn:${turnId}`, LEASE_TTL_MS)
+    if (!lease) return false
+    try {
+      this.fail(turnId, new ProviderError('aborted', 'cancelled by the operator'), () => lease)
+    } finally {
+      this.ctx.leases.release(lease)
+    }
+    return true
+  }
+
   /** Run a turn now, or after the previous turn of its session settles. */
   private schedule(row: Row): void {
     if (!row.session_id) {
@@ -381,6 +406,8 @@ export class Turns extends Service {
     }, LEASE_TTL_MS / 3)
     heartbeat.unref()
     const current = (): Lease => lease!
+    const cancel = new AbortController()
+    this.cancels.set(turnId, cancel)
     try {
       const row = this.row(turnId)
       if (!row || TERMINAL.has(row.status)) return
@@ -399,12 +426,16 @@ export class Turns extends Service {
       const account = row.account
       if (!account || !row.worker) throw new ProviderError('internal', `turn ${turnId} has no admitted Worker`)
       const scheduler = this.scheduler(account)
-      await scheduler.runTurn(row.session_id ?? row.turn_id, lost.signal, async (slot) => {
+      await scheduler.runTurn(row.session_id ?? row.turn_id, AbortSignal.any([lost.signal, cancel.signal]), async (slot) => {
         this.update(turnId, { status: 'running' }, current)
         await this.execute(this.row(turnId)!, account, slot.signal, current)
       })
     } catch (error) {
       if (this.stopping) return
+      if (cancel.signal.aborted && !lost.signal.aborted) {
+        this.fail(turnId, new ProviderError('aborted', 'cancelled by the operator'), current)
+        return
+      }
       if (error instanceof LeaseLost || error instanceof StaleGeneration || lost.signal.aborted) {
         // Lost ownership (for example, the host slept past the lease): look again once the lease
         // can be taken, so the turn is never stranded until the next start.
@@ -413,6 +444,7 @@ export class Turns extends Service {
       }
       this.fail(turnId, error, current)
     } finally {
+      this.cancels.delete(turnId)
       clearInterval(heartbeat)
       try {
         this.ctx.leases.release(current())

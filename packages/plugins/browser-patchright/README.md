@@ -9,6 +9,11 @@
   Background-throttling flags are off.
 - **`openTurn(account, { state, signal })`:** a fresh, isolated context and page
   built from the account's `PortableState`. Aborting `signal` closes the context.
+  An abort while the browser is still launching (display, Chrome, a new context)
+  rejects at once. The turn never waits for a stalled launch: a browser that
+  arrives late stays pooled and is closed when idle, and a late context is
+  closed. Under heavy load on 2026-10-12, a stalled launch made a runtime stop
+  hang.
 - **`capture(turn, { origins, previous })`:** cookies, localStorage, and IndexedDB
   for the driver's origins only. IndexedDB over the size cap keeps `previous`.
 - **Lifecycle:**

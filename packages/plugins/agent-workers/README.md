@@ -23,6 +23,8 @@ The **`agents` Worker source**: agent runtimes as Workers
   - under a lease;
   - each result is a `report` artifact (`agent-result@1.0`) with the requirement's
     classification.
+- **Cancel (REQ-WRK-4):** a running agent is stopped, and a queued run never
+  starts. Both fail as `aborted`.
 - **Deadline:** a run longer than `runTimeoutMs` (15 min) is stopped and fails
   as `timeout`. The run was submitted, so it is not retried automatically.
 - **Restart:** a queued run starts. A run that had started is never run again:

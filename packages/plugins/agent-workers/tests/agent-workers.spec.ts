@@ -127,6 +127,23 @@ describe('ctx.workers source `agents`: agent runtimes as Workers', () => {
     expect(done).toMatchObject({ status: 'failed', submitted: true, error: { kind: 'timeout' } })
   })
 
+  it('cancels a running run, and a queued one never starts (REQ-WRK-4)', async () => {
+    const agent = new ScriptedAgent({ holdMs: 30_000 })
+    const { ctx } = await boot(agent)
+    const admitted = await ctx.workers.route(requirement())
+    const source = ctx.workers.source('agents')!
+    const start = (key: string) => source.start({ key, worker: 'agent:reviewer', prompt: key, requirement: requirement(), decisions: admitted.decisions })
+    const running = start('running')
+    const queued = start('queued')
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    expect(source.cancel!(queued.id)).toBe(true)
+    expect(source.cancel!(running.id)).toBe(true)
+    expect(await source.wait(running.id, 10_000)).toMatchObject({ status: 'failed', error: { kind: 'aborted' } })
+    expect(await source.wait(queued.id, 10_000)).toMatchObject({ status: 'failed', submitted: false, error: { kind: 'aborted' } })
+    expect(agent.runs.map((r) => r.prompt)).toEqual(['running'])
+    expect(source.cancel!(running.id)).toBe(false)
+  })
+
   it('reports a failed run with its kind, after it was submitted', async () => {
     const { ctx } = await boot(new ScriptedAgent({ fail: new ProviderError('timeout', 'max turns') }))
     const admitted = await ctx.workers.route(requirement())

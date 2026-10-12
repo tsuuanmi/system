@@ -95,6 +95,7 @@ export class AgentWorkers extends Service {
   private readonly schedulers = new Map<string, ProviderScheduler>()
   private readonly waiters = new Map<string, Set<() => void>>()
   private readonly inflight = new Set<Promise<void>>()
+  private readonly cancels = new Map<string, AbortController>()
   private readonly stopped = new AbortController()
 
   constructor(ctx: Context, private readonly config: Config = { workers: [] }) {
@@ -124,6 +125,7 @@ export class AgentWorkers extends Service {
         return row && execution(row)
       },
       wait: (id, timeoutMs) => this.wait(id, timeoutMs),
+      cancel: (id) => this.cancel(id),
       affinity: (sessionId) => {
         const session = this.ctx.store.db.prepare('SELECT worker FROM agent_sessions WHERE session_id = ?').get(sessionId) as { worker: string } | undefined
         return session ? [session.worker] : undefined
@@ -220,6 +222,25 @@ export class AgentWorkers extends Service {
     return execution(this.row(runId)!)
   }
 
+  /** Cancel a run (REQ-WRK-4): a running agent is stopped, a queued run never starts. */
+  private cancel(runId: string): boolean {
+    const row = this.row(runId)
+    if (!row || row.status === 'completed' || row.status === 'failed') return false
+    const running = this.cancels.get(runId)
+    if (running) {
+      running.abort(new ProviderError('aborted', 'cancelled by the operator'))
+      return true
+    }
+    const lease = this.ctx.leases.acquire(`agent-run:${runId}`, LEASE_TTL_MS)
+    if (!lease) return false
+    try {
+      this.fail(row, new ProviderError('aborted', 'cancelled by the operator'), () => lease)
+    } finally {
+      this.ctx.leases.release(lease)
+    }
+    return true
+  }
+
   private recover(): void {
     if (this.stopped.signal.aborted) return
     const rows = this.ctx.store.db.prepare("SELECT run_id FROM agent_runs WHERE status IN ('queued', 'running') ORDER BY created_at").all() as Array<{ run_id: string }>
@@ -247,7 +268,9 @@ export class AgentWorkers extends Service {
     }, LEASE_TTL_MS / 3)
     heartbeat.unref()
     const current = (): Lease => lease!
-    const signal = AbortSignal.any([lost.signal, this.stopped.signal])
+    const cancel = new AbortController()
+    this.cancels.set(runId, cancel)
+    const signal = AbortSignal.any([lost.signal, this.stopped.signal, cancel.signal])
     try {
       const row = this.row(runId)
       if (!row || row.status === 'completed' || row.status === 'failed') return
@@ -263,8 +286,13 @@ export class AgentWorkers extends Service {
     } catch (error) {
       if (this.stopped.signal.aborted || error instanceof LeaseLost || error instanceof StaleGeneration || lost.signal.aborted) return
       const row = this.row(runId)
+      if (cancel.signal.aborted && row && row.status !== 'completed' && row.status !== 'failed') {
+        this.fail(row, new ProviderError('aborted', 'cancelled by the operator'), current)
+        return
+      }
       if (row && row.status !== 'completed' && row.status !== 'failed') this.fail(row, error, current)
     } finally {
+      this.cancels.delete(runId)
       clearInterval(heartbeat)
       try {
         this.ctx.leases.release(current())

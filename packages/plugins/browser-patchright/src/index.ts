@@ -11,7 +11,7 @@
  */
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
-import { Browser as BrowserSeam, type PortableState, type PreparedDisplay, ProviderError } from '@tsuuanmi/system-provider-core'
+import { abortReason, Browser as BrowserSeam, type PortableState, type PreparedDisplay, ProviderError } from '@tsuuanmi/system-provider-core'
 import { lstatSync, readlinkSync, rmSync } from 'node:fs'
 import { hostname } from 'node:os'
 import { join } from 'node:path'
@@ -101,40 +101,42 @@ export class BrowserPool extends BrowserSeam<Page, BrowserContext> {
   /** A fresh, isolated context and page for one turn on the account's browser. */
   async openTurn(account: string, options: OpenTurnOptions = {}): Promise<Turn> {
     options.signal?.throwIfAborted()
-    const managed = await this.ensure(account)
-    options.signal?.throwIfAborted()
+    // A launch can stall (display, Chrome, a new context under load); an aborted turn never waits
+    // for it. A browser that arrives late stays pooled (closed when idle); a late context is closed.
+    const managed = await abortable(this.ensure(account), options.signal)
     managed.turns++
     clearTimeout(managed.idle)
     let context: BrowserContext
     try {
-      context = await managed.browser.newContext({
+      context = await abortable(managed.browser.newContext({
         storageState: toStorageState(options.state) as EngineStorageState,
         viewport: managed.display.viewport,
-      })
+      }), options.signal, (late) => void late.close().catch(() => undefined))
     } catch (error) {
       this.release(account, managed)
       throw error
     }
     if (options.signal?.aborted) {
-      await context.close().catch(() => undefined)
+      await closeWithin(context)
       this.release(account, managed)
       options.signal.throwIfAborted()
     }
-    const onAbort = (): void => void context.close().catch(() => undefined)
+    const onAbort = (): void => void closeWithin(context)
     options.signal?.addEventListener('abort', onAbort, { once: true })
     let closed = false
     const close = async (): Promise<void> => {
       if (closed) return
       closed = true
       options.signal?.removeEventListener('abort', onAbort)
-      await context.close().catch(() => undefined)
+      await closeWithin(context)
       this.release(account, managed)
     }
     context.once('close', () => void close())
     try {
       // The engine enables focus emulation on every page, so background windows still
       // behave as focused; tests/browser.spec.ts guards that.
-      const page = await context.newPage()
+      // newPage can hang if the context closes under it (an abort racing it, live 2026-10-12).
+      const page = await abortable(context.newPage(), options.signal)
       return { context, page, close }
     } catch (error) {
       await close()
@@ -297,3 +299,43 @@ function processAlive(pid: number): boolean {
 }
 
 export default BrowserPool
+
+/** Close a context, but never wait more than `ms` for a wedged browser. */
+async function closeWithin(context: BrowserContext, ms = 5000): Promise<void> {
+  let timer: NodeJS.Timeout | undefined
+  await Promise.race([
+    context.close().catch(() => undefined),
+    new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, ms)
+      timer.unref()
+    }),
+  ])
+  clearTimeout(timer)
+}
+
+/** `promise`, unless `signal` aborts first; then it rejects at once, and a late value goes to `onLate`. */
+function abortable<T>(promise: Promise<T>, signal: AbortSignal | undefined, onLate?: (value: T) => void): Promise<T> {
+  if (!signal) return promise
+  if (signal.aborted) {
+    void promise.then((value) => onLate?.(value), () => undefined)
+    return Promise.reject(abortReason(signal, 'browser turn aborted'))
+  }
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = (): void => {
+      void promise.then((value) => onLate?.(value), () => undefined)
+      reject(abortReason(signal, 'browser turn aborted'))
+    }
+    signal.addEventListener('abort', onAbort, { once: true })
+    promise.then(
+      (value) => {
+        signal.removeEventListener('abort', onAbort)
+        if (signal.aborted) onLate?.(value)
+        else resolve(value)
+      },
+      (error: unknown) => {
+        signal.removeEventListener('abort', onAbort)
+        reject(error)
+      },
+    )
+  })
+}

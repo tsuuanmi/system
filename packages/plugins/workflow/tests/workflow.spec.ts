@@ -257,6 +257,49 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
     expect(done).toMatchObject({ status: 'failed', error: { kind: 'config_error', message: expect.stringContaining('distinct accounts') } })
   }, 90_000)
 
+  it('lets the operator stop a run: running work is cancelled, nothing else starts, nothing is resent (REQ-WF-7)', async () => {
+    const { ctx, fake } = await boot({ fake: { thinkMs: 20_000 } })
+    const run = ctx.workflow.start({ template: 'research', input: 'long one' })
+    await until(() => ctx.workflow.get(run.runId)?.nodes[0]?.state === 'RUNNING' && fake.sent.length === 1)
+    const stopped = await ctx.workflow.stop(run.runId, 'not needed any more')
+    expect(stopped).toMatchObject({ status: 'failed', error: { kind: 'stopped', disposition: 'NONE' } })
+    expect(stopped.nodes.map((n) => n.state)).toEqual(['FAILED', 'FAILED'])
+    const turn = await ctx.turns.wait(stopped.nodes[0]!.executionId!, 10_000)
+    expect(turn).toMatchObject({ status: 'failed', error: { kind: 'aborted' } })
+    await new Promise((resolve) => setTimeout(resolve, 1000))
+    expect(fake.sent).toHaveLength(1)
+    await expect(ctx.workflow.stop(run.runId)).rejects.toThrow(/not running/)
+  }, 90_000)
+
+  it('lets the operator continue one failed node as a new attempt, recorded as their decision (REQ-WF-7)', async () => {
+    const strict = [{ nodeId: 'ask:1', objective: 'x', prompt: '{{input}}', capabilities: ['reason'], tier: 'economy', conversation: 'temporary', acceptance: 'acceptance.cited', maxEscalations: 0 }]
+    let cite = false
+    const { ctx, fake } = await boot({ fake: { answer: () => (cite ? 'See https://src.example/a' : 'no source') }, workflow: { templates: { strict } } })
+    const failed = await ctx.workflow.wait(ctx.workflow.start({ template: 'strict', input: 'q' }).runId, 60_000)
+    expect(failed).toMatchObject({ status: 'failed', error: { kind: 'acceptance_rejected' } })
+    cite = true
+    const reopened = ctx.workflow.continue(failed.runId)
+    expect(reopened).toMatchObject({ status: 'running' })
+    const done = await ctx.workflow.wait(failed.runId, 60_000)
+    expect(done).toMatchObject({ status: 'completed', answer: 'See https://src.example/a' })
+    expect(fake.sent).toHaveLength(2)
+    const recovery = ctx.artifacts.list({ kind: 'decision', decisionType: 'recovery', runId: failed.runId }).map((a) => a.body as { decider: { type: string }; outcome: { option: string } })
+    expect(recovery).toContainEqual(expect.objectContaining({ decider: expect.objectContaining({ type: 'operator' }), outcome: expect.objectContaining({ option: 'continue' }) }))
+    expect(() => ctx.workflow.continue(failed.runId)).toThrow(/not failed/)
+  }, 120_000)
+
+  it('deletes a finished run only on the exact version its preview showed (REQ-WF-7)', async () => {
+    const { ctx } = await boot()
+    const done = await ctx.workflow.wait(ctx.workflow.start({ template: 'ask', input: 'bye' }).runId, 30_000)
+    const preview = ctx.workflow.delete(done.runId)
+    expect(preview).toMatchObject({ deleted: false, runId: done.runId, status: 'completed', updatedAt: done.updatedAt, nodes: 1 })
+    expect(() => ctx.workflow.delete(done.runId, '2000-01-01T00:00:00.000Z')).toThrow(/changed/)
+    expect(ctx.workflow.delete(done.runId, preview.updatedAt)).toMatchObject({ deleted: true })
+    expect(ctx.workflow.get(done.runId)).toBeUndefined()
+    // Artifacts are append-only and stay.
+    expect(ctx.artifacts.get(done.result!)).toBeDefined()
+  }, 60_000)
+
   it('retries a node that failed with a back-off disposition, within the bound (REQ-WF-6)', async () => {
     const { ctx, fake } = await boot({ fake: { thinkMs: 1500 }, turns: { maxPendingTurns: 1 }, workflow: { retryDelayMs: 1000, maxAttempts: 6 } })
     const blocker = ctx.workflow.start({ template: 'ask', input: 'hold the only slot' })

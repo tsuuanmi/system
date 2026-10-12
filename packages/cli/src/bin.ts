@@ -15,7 +15,10 @@ const USAGE = `Usage: system <command>
                             start any workflow template (e.g. review, on a local agent Worker)
   approve <runId> [--reject] [note...]
                             approve (or reject) the plan a run is waiting on, bound to that exact plan
-  result <runId>            wait for a run and print its answer
+  result <runId>            wait for a run and print its answer (also: watch <runId>)
+  stop <runId> [reason]     stop a run: running work is cancelled, nothing is resent
+  continue <runId> [nodeId] reopen a failed run's failed node as a new attempt
+  delete <runId> [--yes]    preview, then delete a finished run (artifacts stay)
   usage [<limit>]           recent runs: per step, the Worker, tier, and quota class used
   explain <runId|artifact>  the decision chain behind a run (egress, tier, route, acceptance)
   account list              list provider accounts and their status (profile must be running)
@@ -106,6 +109,33 @@ async function main(argv: string[]): Promise<number> {
       console.log(`${reject ? 'rejected' : 'approved'}: ${runId}`)
       return reject ? 0 : awaitRun(await callTool('result', { runId, waitSeconds: 55 }))
     }
+    case 'stop': {
+      if (!rest[0]) break
+      const outcome = await callTool('stop', { runId: rest[0], ...(rest[1] ? { reason: rest.slice(1).join(' ') } : {}) })
+      if (outcome.isError) throw new Error(outcome.text)
+      console.log(`stopped: ${rest[0]}`)
+      return 0
+    }
+    case 'continue': {
+      if (!rest[0]) break
+      return awaitRun(await callTool('continue', { runId: rest[0], ...(rest[1] ? { nodeId: rest[1] } : {}) }))
+    }
+    case 'delete': {
+      if (!rest[0]) break
+      const preview = await callTool('delete', { runId: rest[0] })
+      if (preview.isError) throw new Error(preview.text)
+      const run = preview.structured as { template: string; status: string; updatedAt: string; nodes: number }
+      if (rest[1] !== '--yes') {
+        console.log(`${rest[0]}  ${run.template}  ${run.status}  ${run.nodes} node(s), updated ${run.updatedAt}`)
+        console.log(`delete it with: system delete ${rest[0]} --yes`)
+        return 0
+      }
+      const done = await callTool('delete', { runId: rest[0], updatedAt: run.updatedAt })
+      if (done.isError) throw new Error(done.text)
+      console.log(`deleted: ${rest[0]} (its artifacts stay)`)
+      return 0
+    }
+    case 'watch':
     case 'result': {
       if (!rest[0]) break
       return awaitRun(await callTool('result', { runId: rest[0], waitSeconds: 55 }))
