@@ -17,8 +17,9 @@
  * - the answer's Copy gives its Markdown, with a blank line before a code block's closing fence;
  * - Deep research is under "Upload & tools" → "More tools" (not offered in a Temporary chat) and
  *   shows a "Deselect Deep research" chip. Its first reply is a plan, already with Copy, and
- *   "Start research"; started, a user turn "Start research" follows, then a reply holds a card (`gem-processing-card`, class
- *   `processing`, then `completed`) while Stop shows, and the report opens in a panel
+ *   "Start research"; started, a user turn "Start research" follows, then a reply holds a card
+ *   (`gem-processing-card`, class `processing`, then `completed`) while Stop shows, and the
+ *   report opens in a panel
  *   (`deep-research-immersive-panel`): its title, the report, then "Sources used in the report".
  * No private data from the live account is included.
  */
