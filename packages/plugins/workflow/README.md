@@ -144,7 +144,7 @@ second execution path (INV-1).
   - `ask` waits up to `waitSeconds` (≤ 55 s);
   - `run { template, input, … }` starts any template, and waits like `ask`;
   - `approve { runId, verdict, note? }` gives the operator's verdict on a waiting plan;
-  - `stop`, `continue`, and `delete` are the operator controls above;
+  - `stop`, `continue`, `delete`, and `supersede` are the operator controls above;
   - `research` returns at once;
   - `result` takes a `runId` and long-polls it;
   - `usage`;
@@ -160,6 +160,12 @@ second execution path (INV-1).
   - `delete(runId, updatedAt?)` previews without `updatedAt`. With the preview's
     `updatedAt`, it deletes a finished run's rows; a changed run is refused.
     Artifacts stay (append-only).
+  - `supersede(runId, nodeId, { text, note })` is lineage invalidation. A
+    completed node's result is replaced by an operator's correction, which
+    supersedes the old artifact and must pass the node's contract. Every node
+    downstream, transitively, is fenced and runs again: new inputs, new hashes,
+    no stale reuse. Each records a `recovery` decision naming both artifacts.
+    It is refused for a running run, and where re-planning would be needed.
   - `usage` lists runs, and `result` / `watch` follow one.
   - A request that arrives while a run's advance is still unwinding (for
     example `continue` right after the run failed) runs once that advance
@@ -171,6 +177,6 @@ second execution path (INV-1).
   - team procedures beyond panel critique: a lead, and direct messages between
     members;
   - independent review with assessment artifacts;
-  - lineage invalidation.
+  - re-planning after a superseded input.
 - **Injects:** `store`, `artifacts`, `eventLog`, `leases`, `egress`, `workers`;
   `mcp` is optional.

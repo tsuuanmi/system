@@ -12,6 +12,7 @@ the supported way to run a DSH harness
 | `system run <template> [flags] (<input> \| -)` | starts any workflow template through MCP `run`, for example `review` on a local agent Worker, and prints the answer |
 | `system approve <runId> [--reject] [note]` | the operator's verdict on the plan a run waits on (MCP `approve`), bound to that exact plan; approving then waits for the run |
 | `system stop <runId> [reason]`, `system continue <runId> [nodeId]`, `system delete <runId> [--yes]` | operator control of runs (REQ-WF-7): stop cancels running work and resends nothing; continue reopens the failed node as a new attempt; delete previews, then deletes on the exact version (artifacts stay) |
+| `system supersede <runId> <nodeId> (<text> \| -)` | replaces a completed step's result with a corrected one (MCP `supersede`); everything downstream runs again |
 | `system result <runId>` | waits for a run and prints its answer |
 | `system usage [<limit>]` | recent runs: per step, the Worker, tier, and quota class that served it (usage report) |
 | `system explain <runId\|artifact>` | a run's decision chain per step (egress, tier, route or admission, acceptance), or any artifact's input tree |

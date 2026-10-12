@@ -19,6 +19,8 @@ const USAGE = `Usage: system <command>
   stop <runId> [reason]     stop a run: running work is cancelled, nothing is resent
   continue <runId> [nodeId] reopen a failed run's failed node as a new attempt
   delete <runId> [--yes]    preview, then delete a finished run (artifacts stay)
+  supersede <runId> <nodeId> (<text...> | -)
+                            replace a completed step's result; everything downstream runs again
   usage [<limit>]           recent runs: per step, the Worker, tier, and quota class used
   explain <runId|artifact>  the decision chain behind a run (egress, tier, route, acceptance)
   account list              list provider accounts and their status (profile must be running)
@@ -134,6 +136,12 @@ async function main(argv: string[]): Promise<number> {
       if (done.isError) throw new Error(done.text)
       console.log(`deleted: ${rest[0]} (its artifacts stay)`)
       return 0
+    }
+    case 'supersede': {
+      const [runId, nodeId, ...words] = rest
+      const text = words.length === 1 && words[0] === '-' ? (await readAllStdin()).trim() : words.join(' ').trim()
+      if (!runId || !nodeId || !text) break
+      return awaitRun(await callTool('supersede', { runId, nodeId, text }))
     }
     case 'watch':
     case 'result': {

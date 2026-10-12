@@ -300,6 +300,30 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
     expect(ctx.artifacts.get(done.result!)).toBeDefined()
   }, 60_000)
 
+  it('re-runs everything downstream of a superseded result, and records why (lineage invalidation)', async () => {
+    const { ctx, fake } = await boot()
+    const done = await ctx.workflow.wait(ctx.workflow.start({ template: 'research', input: 'q' }).runId, 60_000)
+    expect(done.status).toBe('completed')
+    const old = ctx.workflow.records(done.runId)[0]!.outputReceipt!.result
+    const reopened = ctx.workflow.supersede(done.runId, 'research:1', { text: 'Corrected report https://src.example/fixed', note: 'the first report misread the catalog' })
+    expect(reopened).toMatchObject({ status: 'running' })
+    const again = await ctx.workflow.wait(done.runId, 60_000)
+    expect(again.status).toBe('completed')
+    expect(fake.sent).toHaveLength(3)
+    expect(fake.sent[2]!.prompt).toContain('Corrected report https://src.example/fixed')
+    const records = ctx.workflow.records(done.runId)
+    const replacement = ctx.artifacts.get(records[0]!.outputReceipt!.result)!
+    expect(replacement).toMatchObject({ lineage: { supersedes: [old] }, producer: { type: 'operator' } })
+    const recovery = ctx.artifacts.get(records[1]!.inputReceipt!.bundle[0]!)
+    expect(recovery?.id).toBe(replacement.id)
+    const invalidation = ctx.artifacts.list({ kind: 'decision', decisionType: 'recovery', runId: done.runId })
+      .map((a) => a.body as { outcome: { option: string }; inputs: string[] })
+      .find((b) => b.outcome.option === 'rerun')!
+    expect(invalidation.inputs).toEqual([old, replacement.id].sort())
+    expect(() => ctx.workflow.supersede(done.runId, 'compact:1', { text: 'x' })).not.toThrow()
+    await ctx.workflow.wait(done.runId, 60_000)
+  }, 150_000)
+
   it('retries a node that failed with a back-off disposition, within the bound (REQ-WF-6)', async () => {
     const { ctx, fake } = await boot({ fake: { thinkMs: 1500 }, turns: { maxPendingTurns: 1 }, workflow: { retryDelayMs: 1000, maxAttempts: 6 } })
     const blocker = ctx.workflow.start({ template: 'ask', input: 'hold the only slot' })

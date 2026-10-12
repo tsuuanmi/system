@@ -599,6 +599,82 @@ export class Workflow extends Service {
     return { deleted: true, ...preview }
   }
 
+  /**
+   * Lineage invalidation (docs/design/artifacts.md#lineage-and-invalidation): the operator
+   * replaces a completed node's result. The replacement supersedes the old artifact and is
+   * checked against the node's contract; every node downstream, directly or transitively, is
+   * fenced and re-runs, its `recovery` decision pointing at both artifacts. New inputs mean new
+   * input hashes, so nothing stale is reused.
+   */
+  supersede(runId: string, nodeId: string, replacement: { text: string; note?: string }): RunView {
+    const run = this.runRow(runId)
+    if (!run || run.status === 'running') throw new WorkflowFailure('invalid_input', `run ${runId} is ${run ? 'running; stop it or wait' : 'unknown'}`)
+    if (!replacement.text.trim()) throw new WorkflowFailure('invalid_input', 'the replacement text must not be empty')
+    const nodes = this.nodeRows(runId)
+    const node = nodes.find((n) => n.node_id === nodeId)
+    const record = node ? (JSON.parse(node.record) as NodeRecord) : undefined
+    if (!node || node.state !== 'COMPLETED' || !record?.outputReceipt) throw new WorkflowFailure('invalid_input', `node ${nodeId} of run ${runId} has no completed result`)
+    // Everything downstream, transitively.
+    const downstream = new Set<string>()
+    for (let grew = true; grew;) {
+      grew = false
+      for (const n of nodes) {
+        const deps = (JSON.parse(n.spec) as ResolvedNode).dependsOn
+        if (!downstream.has(n.node_id) && deps.some((d) => d === nodeId || downstream.has(d))) {
+          downstream.add(n.node_id)
+          grew = true
+        }
+      }
+    }
+    const affected = nodes.filter((n) => downstream.has(n.node_id))
+    if ([node, ...affected].some((n) => { const sp = JSON.parse(n.spec) as ResolvedNode; return sp.grows || sp.executor === 'gate' })) {
+      throw new WorkflowFailure('invalid_input', `superseding ${nodeId} would re-plan run ${runId}; re-planning is not supported yet`)
+    }
+    const spec = JSON.parse(node.spec) as ResolvedNode
+    const old = this.ctx.artifacts.get(record.outputReceipt.result)!
+    return this.asOperator(runId, (lease) => {
+      const body = { ...(old.body as Record<string, unknown>), text: replacement.text }
+      const artifact = this.ctx.artifacts.put({
+        kind: old.kind, bodySchema: old.bodySchema, body, classification: old.classification,
+        producer: { type: 'operator', ref: 'operator' }, inputs: [old.id], lineage: { supersedes: [old.id] }, runId, nodeId,
+      })
+      const result = artifact.id as ArtifactRef
+      const acceptance = this.ctx.workers.accept(result, spec.acceptance, { producer: 'workflow', runId, nodeId })
+      if (!acceptance.accepted) throw new WorkflowFailure('invalid_input', `the replacement fails ${spec.acceptance}: ${acceptance.reasons.join('; ')}`)
+      const why = `${nodeId}'s result ${old.id} was superseded by ${result}${replacement.note ? `: ${replacement.note}` : ''}`
+      this.ctx.store.transaction((db) => {
+        this.writeNode(node, {}, (r) => ({ ...r, outputReceipt: { result, acceptance: acceptance.decision }, lastDecision: acceptance.decision }), lease)
+        for (const dependent of affected) {
+          const decision = this.ctx.artifacts.recordDecision({
+            decisionType: 'recovery',
+            question: `Does node ${dependent.node_id} of run ${runId} run again on the superseding input?`,
+            inputs: [old.id, result],
+            candidates: [{ option: 'rerun', selected: true, reasons: [why] }, { option: 'keep', selected: false, reasons: [] }],
+            decider: { type: 'policy', id: 'workflow.lineage-invalidation', version: '1' },
+            outcome: { option: 'rerun' },
+            deterministic: true,
+          }, { producer: { type: 'system', ref: 'workflow' }, runId, nodeId: dependent.node_id })
+          this.writeNode(dependent, { state: 'WAITING', execution_id: null, not_before: null, error: null, escalations: 0 }, (r) => {
+            const next: NodeRecord = { ...r, lastDecision: decision.id as ArtifactRef }
+            delete next.execution
+            delete next.inputReceipt
+            delete next.outputReceipt
+            return next
+          }, lease)
+        }
+        this.ctx.leases.fence(lease())
+        if (affected.length) {
+          db.prepare("UPDATE workflow_runs SET status = 'running', result = NULL, error = NULL, updated_at = ? WHERE run_id = ?").run(now(), runId)
+        } else if (run.status === 'completed') {
+          // The final node itself: the run's result is the replacement.
+          db.prepare('UPDATE workflow_runs SET result = ?, updated_at = ? WHERE run_id = ?').run(result, now(), runId)
+        }
+        this.ctx.eventLog.append({ type: 'workflow.node.superseded', runId, nodeId, data: { old: old.id, replacement: result, rerun: affected.map((n) => n.node_id) } })
+      })
+      if (affected.length) this.ctx.store.afterCommit(() => this.schedule(runId))
+    })
+  }
+
   /** Run `change` under the run's lease, as an operator action; the run must not be advancing elsewhere. */
   private asOperator(runId: string, change: (lease: () => Lease) => void): RunView {
     const lease = this.ctx.leases.acquire(`run:${runId}`, LEASE_TTL_MS)
@@ -1223,6 +1299,16 @@ export class Workflow extends Service {
     }, async (args) => {
       try {
         return json(this.delete(String(args.runId), args.updatedAt ? String(args.updatedAt) : undefined))
+      } catch (error) {
+        return failure(error)
+      }
+    })
+    c.mcp.tool('supersede', {
+      description: 'Replace a completed step\'s result with a corrected one; everything downstream runs again (lineage invalidation, an operator action).',
+      inputSchema: { runId: zod.string().max(200), nodeId: zod.string().max(200), text: zod.string().min(1).max(4_000_000), note: zod.string().max(2000).optional() },
+    }, async (args) => {
+      try {
+        return shape(this.supersede(String(args.runId), String(args.nodeId), { text: String(args.text), ...(args.note ? { note: String(args.note) } : {}) }))
       } catch (error) {
         return failure(error)
       }

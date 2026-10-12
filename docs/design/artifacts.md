@@ -103,6 +103,10 @@ superseded, every node whose bundle depends on it, directly or transitively, is
 fenced and becomes re-runnable. Its replacement execution records a `recovery`
 decision that points at the superseding artifact.
 
+Built so far: the operator's `supersede` on a workflow node
+([workflow](../../packages/plugins/workflow/README.md)). Re-planning when a
+planner's input is superseded is not built yet.
+
 ## Explain
 
 Because every effect points at a decision and every decision points at its

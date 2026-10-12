@@ -143,26 +143,27 @@ deletion is keyed on the exact `runId` and `updatedAt`. What expires on its own
 is private text only: after a retention period, a finished run's input and
 rendered prompts are cleared, and the run and its records stay.
 
-## Built so far (MVP subset)
+## Built so far
 
 [`@tsuuanmi/system-workflow`](../../packages/plugins/workflow/README.md) runs
-static templates (`ask`, and `research` → `compact`). It has:
+templates from configuration (`ask`, `research` → `compact`, `investigate`,
+`panel`, `review`). It has:
 
 - preflight and a spec hash;
 - durable node records, and input receipts bound by `inputHash`;
-- `worker` nodes run as turns keyed by run, node, attempt, and input hash;
+- routing of every `worker` node by its capabilities, then execution on the
+  admitted Worker's source, keyed by run, node, attempt, escalation, and input
+  hash;
 - acceptance through `ctx.workers`, with bounded tier escalation after a
-  rejection (a new execution of the same node, recorded as an `escalation`
-  decision);
-- bounded retries by disposition;
-- leases, and recovery on restart.
-
-- graph growth from validated `plan` artifacts (with `graph-growth` decisions);
-- the plan approval gate, with `approval` artifacts bound to the exact plan;
+  rejection (an `escalation` decision);
+- bounded retries by disposition, never resending a submitted prompt;
+- leases, and recovery on restart;
+- graph growth from validated `plan` artifacts (`graph-growth` decisions), with
+  the plan approval gate (`approval` artifacts bound to the exact plan);
 - teams unrolled into members, rounds, and a synthesis
   ([teams](teams.md#built-so-far));
-- operator `stop`, `continue` (one failed node, as a new attempt), and
-  `delete` (on the exact previewed version).
+- operator `stop`, `continue` (one failed node, as a new attempt), `delete` (on
+  the exact previewed version), and `supersede` (lineage invalidation).
 
-Profile growth rules, teams, handoff envelopes, and lineage invalidation are not
-built yet.
+Profile growth rules, team leads and messaging, handoff envelopes, and
+re-planning after a superseded input are not built yet.
