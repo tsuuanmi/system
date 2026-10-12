@@ -55,7 +55,10 @@ M5 gateways have started:
 - The Responses gateway (`system codex-env`) does the same for Codex. Both gateways share `gateway-turns`: the protocol, conversation threads, and the guard.
 - Verified live on 2026-10-12: Codex fixed a bug through the gateway, with its indentation intact. That run found that ChatGPT's renderer collapses spaces outside code blocks, so tool calls now go in a code block (ADR-0022 amendment). Claude Code was rerun on the same protocol.
 
-Next in M5: remote compaction, then drain and admin routes.
+- Codex compacts locally for a custom provider, and the gateway follows it: the summary request continues the conversation, and the compacted history opens a new one.
+- Host drain (REQ-HOST-1): the engine admits no new run while draining. `system drain`, `resume`, and `shutdown` wait for executing runs, then stop. Verified live on 2026-10-12.
+
+M5 is complete apart from the journaled client configuration edits (REQ-HOST-3). `system claude-env` and `system codex-env` print commands rather than edit client files, so there is nothing to journal yet.
 
 Later candidates, each needing its own proposal: A2A gateway and runtime
 (cross-runtime peers), an ACP client gateway for editors, sandboxed or SSH `exec`

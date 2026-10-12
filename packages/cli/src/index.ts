@@ -140,7 +140,7 @@ export function start(args: readonly string[] = [], home: string = dshHome()): P
   return new Promise((resolve) => child.on('exit', (code, signal) => resolve(exitCode(code, signal))))
 }
 
-interface Discovery { url: string; tokenFile: string }
+interface Discovery { url: string; tokenFile: string; pid?: number }
 
 /** Client configuration snippets for Claude Code and Codex, from the running profile's discovery file. */
 export function mcpConfig(client: 'claude' | 'codex', home: string = dshHome()): string {
@@ -231,6 +231,48 @@ export async function callTool(name: string, args: Record<string, unknown>, home
   } finally {
     await client.close()
   }
+}
+
+/**
+ * Drain the host (REQ-HOST-1): no new run is admitted, then poll until nothing is executing or
+ * the deadline passes. Gateway requests end with their runs.
+ */
+export async function drainHost(deadlineMs: number, options: { call?: typeof callTool; pollMs?: number; onActive?: (active: string[]) => void } = {}): Promise<{ drained: boolean; active: string[] }> {
+  const call = options.call ?? callTool
+  const deadline = Date.now() + deadlineMs
+  for (;;) {
+    const outcome = await call('drain', {})
+    if (outcome.isError) throw new Error(outcome.text)
+    const active = (outcome.structured?.active as string[] | undefined) ?? []
+    if (!active.length) return { drained: true, active }
+    if (Date.now() >= deadline) return { drained: false, active }
+    options.onActive?.(active)
+    await new Promise((resolve) => setTimeout(resolve, Math.min(options.pollMs ?? 2000, Math.max(0, deadline - Date.now()))))
+  }
+}
+
+/**
+ * Stop the running profile: drain first (REQ-HOST-1), then SIGTERM its process and wait for it to
+ * exit. Runs still executing at the deadline are not lost: they resume on the next start.
+ */
+export async function shutdownHost(deadlineMs: number, options: { home?: string; call?: typeof callTool; pollMs?: number; onActive?: (active: string[]) => void } = {}): Promise<{ drained: boolean; active: string[]; pid: number }> {
+  const path = join(options.home ?? dshHome(), 'system', 'mcp.json')
+  if (!existsSync(path)) throw new Error(`no discovery file at ${path}; is \`system start\` running?`)
+  const { pid } = JSON.parse(readFileSync(path, 'utf8')) as Discovery
+  if (!pid) throw new Error(`${path} names no process`)
+  const drained = await drainHost(deadlineMs, options)
+  process.kill(pid, 'SIGTERM')
+  const alive = (): boolean => {
+    try {
+      process.kill(pid, 0)
+      return true
+    } catch {
+      return false
+    }
+  }
+  for (const until = Date.now() + 60_000; alive() && Date.now() < until;) await new Promise((resolve) => setTimeout(resolve, 250))
+  if (alive()) throw new Error(`process ${pid} did not exit within 60 s of SIGTERM`)
+  return { ...drained, pid }
 }
 
 export interface AskRequest {

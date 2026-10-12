@@ -132,6 +132,21 @@ describe('Responses gateway over HTTP', () => {
     expect(String(workflow.starts[1]!.input)).toMatch(/^TOOL_RESULT exec_command \(call_[0-9a-f]+\):\ndef add/)
   })
 
+  it('follows Codex\'s local compaction: the summary request continues the conversation, the compacted history opens a new one', async () => {
+    const { base, auth, workflow } = await boot()
+    workflow.answers = ['Done.', 'Summary: fixed calc.py.', 'Next answer.']
+    const done = await (await post(base, auth, CODEX)).json()
+    // Codex asks for a handoff summary in the same thread, with no tools.
+    const summary = { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'You are performing a CONTEXT CHECKPOINT COMPACTION.' }] }
+    await post(base, auth, { ...CODEX, tools: [], input: [...(CODEX.input as []), done.output[0], summary] })
+    expect(workflow.starts[1]).toMatchObject({ sessionId: 'ses_1', input: 'You are performing a CONTEXT CHECKPOINT COMPACTION.' })
+    // Then it continues from the compacted history: no assistant turn, so a new provider conversation.
+    const compacted = { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'Another language model started to solve this problem… Summary: fixed calc.py.' }] }
+    await post(base, auth, { ...CODEX, input: [...(CODEX.input as []), compacted, { type: 'message', role: 'user', content: 'And now?' }] })
+    expect(workflow.starts[2]).toMatchObject({ persist: true })
+    expect(workflow.starts[2]!.sessionId).toBeUndefined()
+  })
+
   it('streams created, the items, and exactly one terminal event; a failed run is response.failed', async () => {
     const { base, auth, workflow } = await boot()
     workflow.answers = ['four', new Error('no Worker can take this work')]

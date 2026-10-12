@@ -48,8 +48,13 @@ SYSTEM_MCP_TOKEN="$(… mcp-token)" codex -c model_provider=system \
     (numeric usage) or `response.failed`.
   - `sequence_number` counts up from 0.
 
+## Compaction
+
+Codex compacts locally for a custom provider. Its summary request continues the
+bound conversation. The compacted history has no assistant turn, so it opens a
+new provider conversation. There is no `/v1/responses/compact` route.
+
 ## Not yet
 
-- `/v1/responses/compact` (remote compaction).
 - Namespace tools (multi-agent).
 - Reasoning summaries, and drain/admin routes.

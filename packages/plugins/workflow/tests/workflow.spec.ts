@@ -284,6 +284,18 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
     await expect(ctx.workflow.stop(run.runId)).rejects.toThrow(/not running/)
   }, 90_000)
 
+  it('drains: refuses new runs, reports what is still executing until it ends, and resumes (REQ-HOST-1)', async () => {
+    const { ctx, fake } = await boot({ fake: { thinkMs: 3000 } })
+    const run = ctx.workflow.start({ template: 'ask', input: 'a slow one' })
+    await until(() => ctx.workflow.get(run.runId)?.nodes[0]?.state === 'RUNNING' && fake.sent.length === 1)
+    expect(ctx.workflow.drain()).toEqual({ draining: true, active: [run.runId] })
+    expect(() => ctx.workflow.start({ template: 'ask', input: 'new work' })).toThrow(/draining/)
+    await until(() => ctx.workflow.drain().active.length === 0)
+    expect(ctx.workflow.get(run.runId)).toMatchObject({ status: 'completed' })
+    expect(ctx.workflow.resume()).toEqual({ draining: false, active: [] })
+    expect(ctx.workflow.start({ template: 'ask', input: 'after resume' }).status).toBe('running')
+  }, 60_000)
+
   it('lets the operator continue one failed node as a new attempt, recorded as their decision (REQ-WF-7)', async () => {
     const strict = [{ nodeId: 'ask:1', objective: 'x', prompt: '{{input}}', capabilities: ['reason'], tier: 'economy', conversation: 'temporary', acceptance: 'acceptance.cited', maxEscalations: 0 }]
     let cite = false

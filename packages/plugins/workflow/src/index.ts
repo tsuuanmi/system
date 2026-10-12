@@ -211,6 +211,8 @@ export class Workflow extends Service {
   private readonly runAborts = new Map<string, AbortController>()
   private readonly retries = new Set<NodeJS.Timeout>()
   private readonly stopped = new AbortController()
+  /** While draining (REQ-HOST-1), no new run is admitted; runs already admitted finish. */
+  private draining = false
 
   constructor(ctx: Context, private readonly config: Config = {}) {
     super(ctx, 'workflow')
@@ -271,8 +273,24 @@ export class Workflow extends Service {
     })
   }
 
+  /**
+   * Drain (REQ-HOST-1): admit no new run from now on, and report the runs still executing in
+   * this process. Idempotent; the caller polls it until nothing is active or its deadline.
+   */
+  drain(): { draining: boolean; active: string[] } {
+    this.draining = true
+    return { draining: true, active: [...this.running.keys()] }
+  }
+
+  /** Admit new runs again after a drain. */
+  resume(): { draining: boolean; active: string[] } {
+    this.draining = false
+    return { draining: false, active: [...this.running.keys()] }
+  }
+
   /** Admit a run: validated, hashed, and durable at once; it runs in the background. */
   start(input: StartInput): RunView {
+    if (this.draining) throw new WorkflowFailure('overloaded', 'the host is draining for a stop or upgrade; retry after it restarts')
     const nodes = this.templates[input.template]
     if (!nodes) throw new WorkflowFailure('invalid_input', `unknown workflow template ${input.template}`)
     if (!input.input.trim()) throw new WorkflowFailure('invalid_input', 'the input must not be empty')
@@ -1331,6 +1349,14 @@ export class Workflow extends Service {
         return failure(error)
       }
     })
+    c.mcp.tool('drain', {
+      description: 'Drain the host before a stop or upgrade: admit no new run, and report the runs still executing. Call again to poll.',
+      inputSchema: {},
+    }, async () => json(this.drain()))
+    c.mcp.tool('resume', {
+      description: 'Admit new runs again after a drain.',
+      inputSchema: {},
+    }, async () => json(this.resume()))
     c.mcp.tool('continue', {
       description: 'Continue a failed run: reopen its one failed node (or a stopped run\'s nodes) as a new attempt (an operator decision).',
       inputSchema: { runId: zod.string().max(200), nodeId: zod.string().max(200).optional() },

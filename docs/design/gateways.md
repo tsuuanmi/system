@@ -69,7 +69,12 @@ They differ from the target in four ways:
   subshell.
 - **Status rows are omitted,** rather than mapped to `thinking` blocks or
   reasoning summaries.
-- **Some routes are missing:** remote compaction, admin, and drain.
+- **There is no remote compaction route.** Codex compacts locally for a custom
+  provider (observed against a fake provider). Its summary request continues the
+  bound conversation, and the compacted history, which has no assistant turn,
+  opens a new one.
+- **Drain is not an `/admin` route.** It is an engine operation that every entry
+  point shares (see [Drain](#drain)).
 
 Each request is an `ask` run, so it is routed, egress-checked, and explainable
 like any other run.
@@ -120,6 +125,24 @@ with the previous bytes, and restored byte for byte on disconnect (REQ-HOST-3).
 `/admin/drain` stops admitting new work, then waits until both the in-flight HTTP
 request count and the active provider-turn count reach zero, or until the drain
 deadline expires. Stop and upgrade always drain first (REQ-HOST-1).
+
+**Built:** every entry point (gateways, MCP, CLI) admits work through
+`workflow.start`, so drain lives in the engine.
+- `drain()` admits no new run, which answers as `overloaded` (a gateway returns
+  529 or `response.failed`), and reports the runs still executing. `resume()`
+  undoes it.
+- Both are MCP tools. `system drain` and `system shutdown` poll `drain` until
+  nothing is executing or the deadline passes. `shutdown` then sends SIGTERM to
+  the profile and waits for it to exit.
+- A gateway request ends with its run, so the HTTP count follows the run count.
+- Runs still executing at the deadline are durable, and resume on the next
+  start (REQ-WF-4).
+
+Verified live on 2026-10-12:
+- a drain waited for a running `ask`;
+- a new `ask` during the drain was refused;
+- `resume` admitted runs again;
+- `shutdown` stopped the profile.
 
 ## MCP server (capabilities)
 

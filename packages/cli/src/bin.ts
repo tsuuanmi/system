@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { browserDeps, callTool, claudeGatewayCommand, codexGatewayCommand, ensureBrowser, formatExplanation, formatUsage, init, mcpConfig, mcpHeaders, mcpToken, parseAsk, readAllStdin, serveStdio, start, type ToolOutcome, uiUrl } from './index.ts'
+import { browserDeps, callTool, claudeGatewayCommand, codexGatewayCommand, drainHost, shutdownHost, ensureBrowser, formatExplanation, formatUsage, init, mcpConfig, mcpHeaders, mcpToken, parseAsk, readAllStdin, serveStdio, start, type ToolOutcome, uiUrl } from './index.ts'
 
 const USAGE = `Usage: system <command>
 
@@ -30,6 +30,9 @@ const USAGE = `Usage: system <command>
   account code <id> <code>  supply a one-time code a running sign-in is waiting for
   account save <id>         after an interactive login: capture, verify, store encrypted
   start [dsh args...]       boot the profile (e.g. --patch ./overlay.yml)
+  drain [--deadline <s>]    admit no new runs and wait for running ones (default 600 s)
+  resume                    admit new runs again after a drain
+  shutdown [--deadline <s>] drain, then stop the running profile (unfinished runs resume on start)
   mcp-config <claude|codex> print client configuration for the running MCP server
   claude-env                print a command that runs Claude Code with website Workers as its model
   codex-env                 print a command that runs Codex with website Workers as its model
@@ -246,6 +249,23 @@ async function main(argv: string[]): Promise<number> {
       // Claude Code with website Workers as its model (the Messages gateway).
       console.log(claudeGatewayCommand())
       return 0
+    case 'drain':
+    case 'shutdown': {
+      const at = rest.indexOf('--deadline')
+      const seconds = at >= 0 ? Number(rest[at + 1]) : 600
+      if (!Number.isFinite(seconds) || seconds < 0) break
+      const onActive = (active: string[]): void => console.error(`waiting for ${active.length} run(s): ${active.join(', ')}`)
+      const outcome = command === 'drain' ? await drainHost(seconds * 1000, { onActive }) : await shutdownHost(seconds * 1000, { onActive })
+      console.log(outcome.drained ? 'drained' : `deadline reached with ${outcome.active.length} run(s) still running: ${outcome.active.join(', ')} (they resume on the next start)`)
+      if (command === 'shutdown') console.log('stopped')
+      return 0
+    }
+    case 'resume': {
+      const outcome = await callTool('resume', {})
+      if (outcome.isError) throw new Error(outcome.text)
+      console.log('admitting new runs')
+      return 0
+    }
     case 'codex-env':
       // Codex with website Workers as its model (the Responses gateway).
       console.log(codexGatewayCommand())

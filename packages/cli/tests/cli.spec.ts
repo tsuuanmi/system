@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { CHROME_LOCK } from '@tsuuanmi/system-browser-patchright'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { callTool, claudeGatewayCommand, codexGatewayCommand, ensureBrowser, exitCode, formatExplanation, formatUsage, mcpConfig, mcpHeaders, mergeProfileManifest, parseAsk, uiUrl } from '../src/index.ts'
+import { callTool, claudeGatewayCommand, codexGatewayCommand, drainHost, ensureBrowser, exitCode, formatExplanation, formatUsage, mcpConfig, mcpHeaders, mergeProfileManifest, parseAsk, uiUrl } from '../src/index.ts'
 
 const dirs: string[] = []
 afterEach(() => {
@@ -137,3 +137,26 @@ describe('Claude Code connection (headersHelper)', () => {
     expect(codex).not.toContain(token)
   })
 })
+
+describe('drain (REQ-HOST-1)', () => {
+  const polls = (answers: string[][]) => {
+    const calls: string[] = []
+    const call = async (name: string) => {
+      calls.push(name)
+      return { isError: false, text: '', structured: { draining: true, active: answers.shift() ?? [] } }
+    }
+    return { calls, call: call as never }
+  }
+
+  it('polls until nothing is executing', async () => {
+    const { calls, call } = polls([['run_a'], ['run_a'], []])
+    expect(await drainHost(10_000, { call, pollMs: 1 })).toEqual({ drained: true, active: [] })
+    expect(calls).toEqual(['drain', 'drain', 'drain'])
+  })
+
+  it('reports what is still running at the deadline', async () => {
+    const { call } = polls([['run_a'], ['run_a'], ['run_a'], ['run_a']])
+    expect(await drainHost(0, { call, pollMs: 1 })).toEqual({ drained: false, active: ['run_a'] })
+  })
+})
+
