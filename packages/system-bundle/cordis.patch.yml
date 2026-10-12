@@ -36,6 +36,8 @@
       name: '@tsuuanmi/system-providers'
     - id: provider-chatgpt-web
       name: '@tsuuanmi/system-provider-chatgpt-web'  # UI map: ui/chatgpt-web.ui.yaml
+    - id: provider-gemini-web
+      name: '@tsuuanmi/system-provider-gemini-web'    # Gemini Web: sign-in only so far (no Worker capabilities)
     - id: login
       name: '@tsuuanmi/system-login'                 # login profiles, Save, account_* MCP tools
     - id: egress
@@ -49,6 +51,8 @@
       name: '@tsuuanmi/system-agent-runtimes'
     - id: runtime-claude-agent-sdk
       name: '@tsuuanmi/system-runtime-claude-agent-sdk'   # runs the installed `claude`
+    - id: runtime-codex-sdk
+      name: '@tsuuanmi/system-runtime-codex-sdk'      # Codex as a Worker (the operator's installed codex)
     - id: runtime-acp
       name: '@tsuuanmi/system-runtime-acp'            # ACP agents (none until configured)
     - id: agent-workers

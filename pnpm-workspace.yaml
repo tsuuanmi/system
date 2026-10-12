@@ -20,6 +20,14 @@ ignoredOptionalDependencies:
   - '@anthropic-ai/claude-agent-sdk-darwin-arm64'
   - '@anthropic-ai/claude-agent-sdk-win32-x64'
   - '@anthropic-ai/claude-agent-sdk-win32-arm64'
+  # The Codex SDK likewise pulls in every platform build of Codex (~430 MB); runtime-codex-sdk runs
+  # the operator's installed `codex`.
+  - '@openai/codex-linux-x64'
+  - '@openai/codex-linux-arm64'
+  - '@openai/codex-darwin-x64'
+  - '@openai/codex-darwin-arm64'
+  - '@openai/codex-win32-x64'
+  - '@openai/codex-win32-arm64'
 # fflate < 0.8.3 can loop forever on a malformed ZIP64 archive (GHSA, via DSH office packages).
 overrides:
   fflate: '>=0.8.3'

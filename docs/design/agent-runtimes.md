@@ -96,4 +96,14 @@ The Worker registry admits an agent-runtime Worker only on evidence from
   with the client side enforcing the policy. Permission requests are rejected,
   reads are confined to the workspace, and nothing is advertised for writes or
   terminals. It offers `read-only` only for agents the operator vouches for.
+- [`runtime-codex-sdk`](../../packages/plugins/runtime-codex-sdk/README.md):
+  Codex as a Worker (REQ-WRK-5), on the operator's installed `codex`.
+  - Codex's own sandbox holds the policy: read-only, or writes confined to the
+    workspace. Approvals are `never`, and network and web search are off.
+  - Commands run inside that sandbox, so a writable Codex Worker proves
+    `validate`.
+  - A tool allow-list or a turn limit is refused, since Codex cannot express
+    either exactly.
+  - Codex's model provider comes from configuration. With the system Responses
+    gateway, Codex runs on website Workers. Verified live on 2026-10-12.
 - The workflow template `review` routes to these Workers by capability.

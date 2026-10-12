@@ -50,12 +50,12 @@ can be added without changing consumers.
 | Capabilities | `website` | `website-core` | Worker providers |
 | Capabilities | `exec` | **DSH** `ctx.shell` / `ctx.fs` / `ctx.sandbox` / `ctx.subprocess` (local, sandbox, SSH) | local-tools Worker |
 | Capabilities | `models` (API and local model providers) | **DSH** `ctx.llm` (`llm-pi-ai`: OpenAI-compatible and others) | Worker providers, especially `economy`-tier jobs ([purpose P4](../requirements/purpose.md#p4-cheap-models-do-low-level-work-strong-models-do-hard-work)) |
-| Capabilities | `agentRuntimes` (definition `AgentRuntimes` in `@tsuuanmi/system-agent-runtime-core`; registry `@tsuuanmi/system-agent-runtimes`) | `@tsuuanmi/system-runtime-claude-agent-sdk`, `@tsuuanmi/system-runtime-acp`; `runtime-codex-sdk` (planned) | `@tsuuanmi/system-agent-workers`, the `agents` Worker source ([agent runtimes](../design/agent-runtimes.md)) |
+| Capabilities | `agentRuntimes` (definition `AgentRuntimes` in `@tsuuanmi/system-agent-runtime-core`; registry `@tsuuanmi/system-agent-runtimes`) | `@tsuuanmi/system-runtime-claude-agent-sdk`, `@tsuuanmi/system-runtime-codex-sdk`, `@tsuuanmi/system-runtime-acp` | `@tsuuanmi/system-agent-workers`, the `agents` Worker source ([agent runtimes](../design/agent-runtimes.md)) |
 | Routing | `workers` (Worker sources, fail-closed admission, deterministic router, acceptance contracts; definition `Workers` in `@tsuuanmi/system-workers-core`) | `@tsuuanmi/system-workers` | the turn runtime (route), the workflow engine (accept) |
 | Orchestration | `workflow` (MVP subset: static DAG templates, durable nodes, acceptance, retries, recovery; drain and resume (REQ-HOST-1); MCP `ask`, `research`, `result`, `usage`, `explain`) | `@tsuuanmi/system-workflow` | MCP clients, CLI |
 | Orchestration | `workerSessions` (Worker sessions, groups, mailboxes, peer messages under policy and barriers; MCP `session_send`, `session_inbox`) | `@tsuuanmi/system-worker-sessions` | the workflow engine (panel teams), MCP clients ([design](../design/sessions-and-messaging.md)) |
 | Orchestration | `teams` | `team-runner` | workflow |
-| Orchestration | `profiles` (domain procedures; definition `ctx.workflow.template(name, nodes)` in `@tsuuanmi/system-workflow`, conformance `conformance/profiles.ts`) | `@tsuuanmi/system-profile-software-development` (`develop`), `@tsuuanmi/system-profile-scientific-research` (`study`, `study-deep`; built with no engine change, REQ-WF-9) | workflow |
+| Orchestration | `profiles` (domain procedures; definition `ctx.workflow.template(name, nodes)` in `@tsuuanmi/system-workflow`, conformance `conformance/profiles.ts`) | `@tsuuanmi/system-profile-software-development` (`develop`), `@tsuuanmi/system-profile-scientific-research` (`research`, `research-deep`; built with no engine change, REQ-WF-9) | workflow |
 | Gateways | `clientProtocols` (shared turn broker) | `@tsuuanmi/system-gateway-anthropic`, `@tsuuanmi/system-gateway-responses` (built without the broker; they share `@tsuuanmi/system-gateway-turns`, the text protocol of [ADR-0022](../decisions/adr/0022-text-protocol-tool-calls-for-website-models.md)) | — (edge) |
 | Gateways | `mcp` (tools contributed by plugins for their lifetime; definition `McpTools` in `@tsuuanmi/system-gateway-core`) | `@tsuuanmi/system-mcp-server` (own; DSH has only an MCP client) | plugins that expose operations: `login` (`account_list`, `account_save`), `workflow` (`ask`, `research`, `result`, `usage`, `explain`) |
 | Gateways | — (consumers only) | `cli` (wrapper around `dsh --profile system`), `@tsuuanmi/system-web-ui` (operator UI at `/ui` on the DSH webserver; the DSH web app is the v1.0 option), later `gateway-a2a` | — (edge) |
@@ -190,7 +190,8 @@ in the test fake (two Xvfbs for concurrent callers), which was then fixed.
   - `runtime-acp` offers `read-only` only to agents the operator vouches for
     (`honoursPermissions`). The client cannot stop an agent's own direct
     effects.
-  - `runtime-codex-sdk` is not built (no Codex CLI on the development host).
+  - `runtime-codex-sdk` holds Codex to its own sandbox. Commands run inside it,
+    so a writable Codex Worker proves `validate`.
   - An agent run interrupted by a stop fails for the operator
     (`reconciliation_failed`); it is not resumed from its native session yet.
 - **The workflow engine** has templates, plan-based graph growth, plan

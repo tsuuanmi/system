@@ -192,8 +192,16 @@ No options.
 |---|---|---|---|
 | `origin` | string |  | Site origin (default https://chatgpt.com) |
 | `overlayPath` | string |  | Local UI overlay file |
-| `modes` | Record<string, object> | `{"instant":{"model":"Latest","effort":"Instant"},"medium":{"model":"Latest","effort":"Medium"},"high":{"model":"Latest","effort":"High"}}` | Named mode presets (model and Power level) |
+| `modes` | Record<string, object> | `{"instant":{"model":"Latest","effort":"Instant"},"medium":{"model":"Latest","effort":"Medium"},"high":{"model":"Latest","effort":"High"},"site":{}}` | Named mode presets (model and Power level); an empty preset selects nothing |
 | `defaultMode` | string | `"instant"` | Preset when a caller names none |
+
+## `provider-gemini-web`
+
+[@tsuuanmi/system-provider-gemini-web](../../packages/plugins/provider-gemini-web/README.md)
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `origin` | string |  | Site origin (default https://gemini.google.com) |
 
 ## `providers`
 
@@ -221,6 +229,16 @@ No options.
 | Option | Type | Default | Description |
 |---|---|---|---|
 | `executable` | string |  | Path to the claude executable (default: found on PATH) |
+
+## `runtime-codex-sdk`
+
+[@tsuuanmi/system-runtime-codex-sdk](../../packages/plugins/runtime-codex-sdk/README.md)
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `executable` | string |  | Path to the codex executable (default: found on PATH) |
+| `config` | Record<string, any> | `{}` | Codex --config overrides, such as model_provider and model_providers (operator configuration) |
+| `env` | Record<string, string> | `{}` | Extra environment for the codex process, such as the variable a provider env_key names |
 
 ## `store`
 

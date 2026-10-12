@@ -57,6 +57,9 @@
       "@tsuuanmi/system-ui-ops": [
         "packages/ui-ops/src/index.ts"
       ],
+      "@tsuuanmi/system-provider-gemini-web": [
+        "packages/plugins/provider-gemini-web/src/index.ts"
+      ],
       "@tsuuanmi/system-provider-chatgpt-web": [
         "packages/plugins/provider-chatgpt-web/src/index.ts"
       ],
@@ -83,6 +86,9 @@
       ],
       "@tsuuanmi/system-runtime-acp": [
         "packages/plugins/runtime-acp/src/index.ts"
+      ],
+      "@tsuuanmi/system-runtime-codex-sdk": [
+        "packages/plugins/runtime-codex-sdk/src/index.ts"
       ],
       "@tsuuanmi/system-runtime-claude-agent-sdk": [
         "packages/plugins/runtime-claude-agent-sdk/src/index.ts"

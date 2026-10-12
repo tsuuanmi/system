@@ -1,0 +1,23 @@
+# Gemini Web UI map (ui-map@1.1, ADR-0021). Sign-in only for now: the conversation elements are
+# added once a signed-in account's page has been read live (read-only).
+# When the site changes, edit this file (and the fixture), not the driver code.
+schema: ui-map@1.1
+provider: gemini-web
+uiRevision: '2026-10-12'
+locales: [en]
+
+elements:
+  auth.login:
+    description: Sign-in entry points shown to a signed-out visitor.
+    candidates:
+      - { role: link, name: { en: '^Sign in$' } }
+      - { role: button, name: { en: '^Sign in$' } }
+  auth.account:
+    description: "The signed-in Google account's button; its name carries the account (Google Account, then the name and email)."
+    candidates:
+      - { role: button, name: { en: '^Google Account:' } }
+      - { role: link, name: { en: '^Google Account:' } }
+
+states:
+  auth.signed-in: { visible: auth.account }
+  auth.signed-out: { anyOf: [{ url: '^https?://accounts\.google\.com/' }, { visible: auth.login }] }

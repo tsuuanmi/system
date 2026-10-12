@@ -715,6 +715,31 @@ importers:
         specifier: 1.63.0
         version: 1.63.0
 
+  packages/plugins/provider-gemini-web:
+    dependencies:
+      '@tsuuanmi/system-provider-core':
+        specifier: workspace:*
+        version: link:../../provider-core
+      '@tsuuanmi/system-ui-ops':
+        specifier: workspace:*
+        version: link:../../ui-ops
+    devDependencies:
+      '@deepseek-ai/cordis':
+        specifier: 4.0.5-alpha.1
+        version: 4.0.5-alpha.1(@deepseek-ai/cordis-plugin-include@1.0.10-alpha.1)(@deepseek-ai/cordis-plugin-loader@1.0.6-alpha.1)
+      '@deepseek-ai/schemastery':
+        specifier: 3.18.5-alpha.1
+        version: 3.18.5-alpha.1
+      '@tsuuanmi/system-browser-patchright':
+        specifier: workspace:*
+        version: link:../browser-patchright
+      '@tsuuanmi/system-display-virtual':
+        specifier: workspace:*
+        version: link:../display-virtual
+      patchright-core:
+        specifier: 1.63.0
+        version: 1.63.0
+
   packages/plugins/providers:
     dependencies:
       '@tsuuanmi/system-provider-core':
@@ -765,6 +790,25 @@ importers:
       '@tsuuanmi/system-agent-runtimes':
         specifier: workspace:*
         version: link:../agent-runtimes
+
+  packages/plugins/runtime-codex-sdk:
+    dependencies:
+      '@openai/codex-sdk':
+        specifier: 0.162.1
+        version: 0.162.1
+      '@tsuuanmi/system-agent-runtime-core':
+        specifier: workspace:*
+        version: link:../../agent-runtime-core
+      '@tsuuanmi/system-provider-core':
+        specifier: workspace:*
+        version: link:../../provider-core
+    devDependencies:
+      '@deepseek-ai/cordis':
+        specifier: 4.0.5-alpha.1
+        version: 4.0.5-alpha.1(@deepseek-ai/cordis-plugin-include@1.0.10-alpha.1)(@deepseek-ai/cordis-plugin-loader@1.0.6-alpha.1)
+      '@deepseek-ai/schemastery':
+        specifier: 3.18.5-alpha.1
+        version: 3.18.5-alpha.1
 
   packages/plugins/store:
     dependencies:
@@ -1094,6 +1138,9 @@ importers:
       '@tsuuanmi/system-provider-chatgpt-web':
         specifier: workspace:*
         version: link:../plugins/provider-chatgpt-web
+      '@tsuuanmi/system-provider-gemini-web':
+        specifier: workspace:*
+        version: link:../plugins/provider-gemini-web
       '@tsuuanmi/system-providers':
         specifier: workspace:*
         version: link:../plugins/providers
@@ -1103,6 +1150,9 @@ importers:
       '@tsuuanmi/system-runtime-claude-agent-sdk':
         specifier: workspace:*
         version: link:../plugins/runtime-claude-agent-sdk
+      '@tsuuanmi/system-runtime-codex-sdk':
+        specifier: workspace:*
+        version: link:../plugins/runtime-codex-sdk
       '@tsuuanmi/system-store':
         specifier: workspace:*
         version: link:../plugins/store
@@ -4239,6 +4289,15 @@ packages:
   '@novnc/novnc@1.7.0':
     resolution: {integrity: sha512-ucEJOx4T2avIRCleodk7YobZj5O2Ga2AeLfQ69A/yjG9HHba2+PDgwSkN3FttrmG+70ZGx21sElNFouK13RzyA==}
 
+  '@openai/codex-sdk@0.162.1':
+    resolution: {integrity: sha512-oG3u4y8Zq9t5QvlABcGo0cby/E2d6nrYZq71F/JBy2VOsOoqhhaMlbA7/35SWsykYGouL+T+3RgRT2X/xE+Y1g==}
+    engines: {node: '>=18'}
+
+  '@openai/codex@0.162.1':
+    resolution: {integrity: sha512-NWZdi/kxyjv/8EUGFupziGU38YyleugZRM4JXgY5XFH7FUmaFA33NZS2Bmq0HPazf7S3jJQQWsZ/jAK9jsrV3Q==}
+    engines: {node: '>=16'}
+    hasBin: true
+
   '@opentelemetry/api-logs@0.222.0':
     resolution: {integrity: sha512-9mb1If+IF6u0ZVXkHQ6ogEae5HwA6ajIVUgpSDQyRASxft6BSXHvBvPooRle3yFN/fKnCdSOnuu0OC3PLcF6+g==}
     engines: {node: '>=8.0.0'}
@@ -6036,6 +6095,12 @@ ignoredOptionalDependencies:
   - '@anthropic-ai/claude-agent-sdk-darwin-arm64'
   - '@anthropic-ai/claude-agent-sdk-win32-x64'
   - '@anthropic-ai/claude-agent-sdk-win32-arm64'
+  - '@openai/codex-linux-x64'
+  - '@openai/codex-linux-arm64'
+  - '@openai/codex-darwin-x64'
+  - '@openai/codex-darwin-arm64'
+  - '@openai/codex-win32-x64'
+  - '@openai/codex-win32-arm64'
 
 snapshots:
 
@@ -9871,6 +9936,12 @@ snapshots:
   '@noble/hashes@2.4.0': {}
 
   '@novnc/novnc@1.7.0': {}
+
+  '@openai/codex-sdk@0.162.1':
+    dependencies:
+      '@openai/codex': 0.162.1
+
+  '@openai/codex@0.162.1': {}
 
   '@opentelemetry/api-logs@0.222.0':
     dependencies:
