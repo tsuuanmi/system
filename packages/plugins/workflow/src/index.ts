@@ -1634,16 +1634,15 @@ export class Workflow extends Service {
       }
     })
     c.mcp.tool('research', {
-      description: 'Deep research, then a cited compaction on a cheap tier. Returns at once with a runId and sessionId; poll `result` (runs take minutes to tens of minutes).',
+      description: 'Research a question with the research profile: testable hypotheses, a cited literature review (web search), an evidence table, an independent critique, and conclusions per hypothesis. Returns at once with a runId; poll `result` (runs take minutes). Deep research alone, then a compaction: `run` with template deep-research.',
       inputSchema: {
         question: zod.string().min(1).max(32_000),
-        sessionId: zod.string().max(200).optional().describe('Research in an existing persistent session'),
         classification, clientRequestId,
       },
     }, async (args) => {
       try {
         return shape(this.start({
-          template: 'research', input: String(args.question), sessionId: args.sessionId as string | undefined,
+          template: 'research', input: String(args.question),
           classification: args.classification as Classification | undefined, clientRequestId: args.clientRequestId as string | undefined,
         }))
       } catch (error) {

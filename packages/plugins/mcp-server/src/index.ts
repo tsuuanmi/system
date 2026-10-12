@@ -168,8 +168,8 @@ export class McpEndpoint extends McpTools {
       inputSchema: { prompt: zod.string().min(1).max(32_000), tier: zod.enum(['economy', 'standard', 'frontier']).optional(), ...session, ...idempotency },
     })
     placeholder('research', {
-      description: 'Run provider-native Deep Research on a website Worker. Returns a runId and sessionId immediately.',
-      inputSchema: { question: zod.string().min(1).max(32_000), ...session, ...idempotency },
+      description: 'Research a question with the research profile (hypotheses, a cited review, evidence, critique, conclusions). Returns a runId immediately.',
+      inputSchema: { question: zod.string().min(1).max(32_000), ...idempotency },
     })
     placeholder('result', {
       description: 'Fetch the result of a run, waiting up to waitSeconds.',

@@ -6,10 +6,10 @@ const node = (nodeId: string, overrides: Partial<NodeTemplate> = {}): NodeTempla
 })
 
 describe('workflow specs', () => {
-  it('ships ask (one node) and research (research:1 on frontier with Deep research → compact:1 on economy)', () => {
+  it('ships ask (one node) and deep-research (research:1 on frontier with Deep research → compact:1 on economy)', () => {
     expect(preflight(DEFAULT_TEMPLATES.ask!)).toEqual(['ask:1'])
-    expect(preflight(DEFAULT_TEMPLATES.research!)).toEqual(['research:1', 'compact:1'])
-    expect(DEFAULT_TEMPLATES.research).toMatchObject([
+    expect(preflight(DEFAULT_TEMPLATES['deep-research']!)).toEqual(['research:1', 'compact:1'])
+    expect(DEFAULT_TEMPLATES['deep-research']).toMatchObject([
       { nodeId: 'research:1', capabilities: ['reason', 'deep-research'], tier: 'frontier', conversation: 'persistent', acceptance: 'acceptance.answer' },
       { nodeId: 'compact:1', dependsOn: ['research:1'], capabilities: ['reason'], tier: 'economy', conversation: 'temporary', acceptance: 'acceptance.answer' },
     ])
@@ -30,7 +30,7 @@ describe('workflow specs', () => {
     expect(one.nodes[0]).toMatchObject({ nodeId: 'ask:1', tier: 'frontier', session: { persist: true } })
     expect(resolve('ask', DEFAULT_TEMPLATES.ask!, { tier: 'frontier', persist: true }).specHash).toBe(one.specHash)
     expect(resolve('ask', DEFAULT_TEMPLATES.ask!, {}).specHash).not.toBe(one.specHash)
-    const research = resolve('research', DEFAULT_TEMPLATES.research!, { tier: 'economy', sessionId: 'ses_1' })
+    const research = resolve('deep-research', DEFAULT_TEMPLATES['deep-research']!, { tier: 'economy', sessionId: 'ses_1' })
     // The research steps keep their own tiers; the caller's session continues the research conversation only.
     expect(research.nodes.map((n) => [n.nodeId, n.tier, n.session])).toEqual([['research:1', 'frontier', { sessionId: 'ses_1' }], ['compact:1', 'economy', {}]])
   })

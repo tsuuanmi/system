@@ -179,7 +179,7 @@ export const DEFAULT_TEMPLATES: Record<string, NodeTemplate[]> = {
       capabilities: ['review', 'local-data'], tier: 'standard', callerTier: true, conversation: 'caller', acceptance: 'acceptance.answer',
     },
   ],
-  research: [
+  'deep-research': [
     {
       nodeId: 'research:1', objective: 'Write a cited Deep research report on the caller\'s question', prompt: '{{input}}',
       capabilities: ['reason', 'deep-research'], tier: 'frontier', conversation: 'persistent', acceptance: 'acceptance.answer',

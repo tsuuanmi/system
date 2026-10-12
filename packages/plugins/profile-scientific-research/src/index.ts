@@ -5,9 +5,9 @@
  * `resultSchema` (REQ-ART-5), its other checks through `ctx.workers.contract`, and its typed
  * artifacts through `ctx.artifacts`, from the engine's own event log.
  *
- * `study` frames a question as testable hypotheses, reviews the literature with citations,
+ * `research` frames a question as testable hypotheses, reviews the literature with citations,
  * extracts an evidence table, has it critiqued independently, and concludes per hypothesis,
- * citing the evidence. `study-deep` reviews with Deep research instead.
+ * citing the evidence. `research-deep` reviews with Deep research instead.
  * @module @tsuuanmi/system-profile-scientific-research
  */
 import type { Context } from '@deepseek-ai/cordis'
@@ -81,7 +81,7 @@ const CONCLUDE = [
   '</critique>',
 ].join('\n')
 
-function study(deep: boolean): NodeTemplate[] {
+function researchProcedure(deep: boolean): NodeTemplate[] {
   return [
     { nodeId: 'frame:1', objective: 'Frame the question as testable hypotheses', prompt: FRAME, capabilities: ['reason'], tier: 'standard', conversation: 'temporary', acceptance: 'acceptance.answer', resultSchema: 'hypothesis-set@1.0' },
     {
@@ -100,8 +100,8 @@ function study(deep: boolean): NodeTemplate[] {
   ]
 }
 
-export const STUDY = study(false)
-export const STUDY_DEEP = study(true)
+export const RESEARCH = researchProcedure(false)
+export const RESEARCH_DEEP = researchProcedure(true)
 
 /** The steps whose results are typed artifacts: their JSON body, schema, and artifact kind. */
 const TYPED: Record<string, { schema: string; kind: 'criteria' | 'evidence' }> = {
@@ -135,8 +135,8 @@ export function apply(ctx: Context): void {
     if (!cited.size) return { accepted: false, reasons: ['the conclusion cites no evidence ([E1], [E2], ...)'] }
     return { accepted: true, reasons: [`concludes on ${[...hypotheses].join(', ')}, citing ${[...cited].join(', ')}`] }
   })
-  ctx.effect(() => ctx.workflow.template('study', STUDY))
-  ctx.effect(() => ctx.workflow.template('study-deep', STUDY_DEEP))
+  ctx.effect(() => ctx.workflow.template('research', RESEARCH))
+  ctx.effect(() => ctx.workflow.template('research-deep', RESEARCH_DEEP))
 
   // A typed step's accepted result becomes a typed artifact derived from it. When the step's
   // result changes (the operator superseded it or an input of it, and it ran again), the new typed
@@ -146,7 +146,7 @@ export function apply(ctx: Context): void {
     const typed = nodeId ? TYPED[nodeId] : undefined
     if ((event.type !== 'workflow.node.completed' && event.type !== 'workflow.node.superseded') || !typed || !runId || !nodeId) return
     const run = ctx.workflow.get(runId)
-    if (!run || (run.template !== 'study' && run.template !== 'study-deep')) return
+    if (!run || (run.template !== 'research' && run.template !== 'research-deep')) return
     const result = ctx.workflow.records(runId).find((r) => r.nodeId === nodeId)?.outputReceipt?.result
     const answer = result ? ctx.artifacts.get(result) : undefined
     if (!answer) return

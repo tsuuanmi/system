@@ -9,8 +9,9 @@ const USAGE = `Usage: system <command>
       [--classification public|operator-shared|local-private] (<prompt...> | -)
                             ask a website model through a saved account; - reads the prompt
                             from stdin (profile must be running)
-  research [--session <id>] [--classification <c>] (<question...> | -)
-                            Deep research, then a cited compaction on a cheap tier; waits
+  research [--classification <c>] (<question...> | -)
+                            the research procedure: hypotheses, a cited review, evidence,
+                            critique, conclusions (run deep-research for Deep research alone)
   run <template> [--session <id>] [--persist] [--tier <t>] [--classification <c>] (<input...> | -)
                             start any workflow template (e.g. review, on a local agent Worker)
   approve <runId> [--reject] [note...]
@@ -101,7 +102,7 @@ async function main(argv: string[]): Promise<number> {
     }
     case 'research': {
       const request = await parseAsk(rest, readAllStdin)
-      if (!request || request.persist || request.tier) break
+      if (!request || request.persist || request.tier || request.sessionId) break
       const { prompt, ...options } = request
       return awaitRun(await callTool('research', { question: prompt, ...options }))
     }

@@ -10,14 +10,14 @@ blocks the release.**
 | Remote login and Save | `system account login <id>`, then Save | 2026-10-11 |
 | Ask in a Temporary chat (Chat mode, never Work) | `system ask "…"` | 2026-10-12 |
 | Continue a persistent conversation | `system ask --persist`, then `--session` | 2026-10-12 |
-| Deep research, then a compaction | `system research "…"`; `system explain` shows both steps | 2026-10-12 |
+| Deep research, then a compaction | `system run deep-research "…"`; `system explain` shows both steps | 2026-10-12 |
 | Graph growth (`investigate`) | `system run investigate "…"` | 2026-10-12 |
 | Claude Code over MCP | `system mcp-config claude`, then `ask` from Claude Code | 2026-10-12 |
 | Claude Code through the Messages gateway: a read and edit loop | `system claude-env`, then a task that reads and edits a file | 2026-10-12 |
 | Codex through the Responses gateway: a read and edit loop, with indentation intact | `system codex-env`, then `codex exec` on a task that edits a file | 2026-10-12 |
 | A local agent review Worker | `system run review "…"` | 2026-10-12 |
 | `develop`: approval, implementation, exact-subject review, report | `system run develop "…"`, `system approve` | 2026-10-12 |
-| `study`: hypotheses, review, evidence, critique, conclusions | `system run study "…"` | 2026-10-12 |
+| `research`: hypotheses, review, evidence, critique, conclusions | `system research "…"` | 2026-10-12 |
 | Drain, refusal, resume, and shutdown | `system drain`, an `ask` during the drain, `system resume`, `system shutdown` | 2026-10-12 |
 | Web UI: approve, stop, continue | `system ui` | 2026-10-12 |
 | Backup while the profile runs, and a verified restore preview | `system backup`, `system restore` | 2026-10-12 |

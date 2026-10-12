@@ -63,14 +63,14 @@ function scholar(ctx: Context): string[] {
 }
 
 const { profileConformance } = await import('../../workflow/conformance/profiles.ts')
-profileConformance('scientific-research', async () => ({ ctx: await boot(), dispose: async () => undefined }), Science, { study: Science.STUDY, 'study-deep': Science.STUDY_DEEP })
+profileConformance('scientific-research', async () => ({ ctx: await boot(), dispose: async () => undefined }), Science, { research: Science.RESEARCH, 'research-deep': Science.RESEARCH_DEEP })
 
 describe('the scientific-research profile, on the unchanged engine (REQ-WF-9)', () => {
-  it('runs a study: hypotheses, a cited review, an evidence table, an independent critique, conclusions citing evidence', async () => {
+  it('runs research: hypotheses, a cited review, an evidence table, an independent critique, conclusions citing evidence', async () => {
     const ctx = await boot()
     await ctx.plugin(Science)
     const prompts = scholar(ctx)
-    const done = await ctx.workflow.wait(ctx.workflow.start({ template: 'study', input: 'Does X lower Y?' }).runId, 30_000)
+    const done = await ctx.workflow.wait(ctx.workflow.start({ template: 'research', input: 'Does X lower Y?' }).runId, 30_000)
     expect(done).toMatchObject({ status: 'completed', answer: 'H1 is supported with moderate confidence [E1]. H2 is insufficient.' })
     expect(done.nodes.map((n) => n.nodeId)).toEqual(['frame:1', 'literature:1', 'evidence:1', 'critique:1', 'conclusion:1'])
     // A structured step is given its schema verbatim, and its result is checked against it (REQ-ART-5).
@@ -96,7 +96,7 @@ describe('the scientific-research profile, on the unchanged engine (REQ-WF-9)', 
     const ctx = await boot()
     await ctx.plugin(Science)
     scholar(ctx)
-    const run = await ctx.workflow.wait(ctx.workflow.start({ template: 'study', input: 'Does X lower Y?' }).runId, 30_000)
+    const run = await ctx.workflow.wait(ctx.workflow.start({ template: 'research', input: 'Does X lower Y?' }).runId, 30_000)
     const corrected = { evidence: [...EVIDENCE.evidence, { id: 'E2', claim: 'A larger trial found no effect.', source: 'https://example.org/big', bears: [{ hypothesis: 'H1', direction: 'refutes' }], strength: 'strong' }] }
     ctx.workflow.supersede(run.runId, 'evidence:1', { text: json(corrected), note: 'a missed trial' })
     const again = await ctx.workflow.wait(run.runId, 30_000)

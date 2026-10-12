@@ -97,8 +97,8 @@ const until = async (check: () => boolean, ms = 30_000): Promise<void> => {
 describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', () => {
   it('runs research as two nodes: Deep research on frontier, then a cited compaction of the verbatim report on economy', async () => {
     const { ctx, fake } = await boot()
-    const started = ctx.workflow.start({ template: 'research', input: 'Survey the plugin catalog' })
-    expect(started).toMatchObject({ template: 'research', status: 'running' })
+    const started = ctx.workflow.start({ template: 'deep-research', input: 'Survey the plugin catalog' })
+    expect(started).toMatchObject({ template: 'deep-research', status: 'running' })
     expect(started.sessionId).toMatch(/^ses_/)
     const done = await ctx.workflow.wait(started.runId, 60_000)
     expect(done).toMatchObject({ status: 'completed', answer: 'Synthesis: plugins matter (https://src.example/catalog).' })
@@ -150,9 +150,9 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
 
   it('fails the run when a result is rejected by its acceptance contract, and never runs the next node (REQ-WRK-3, INV-3)', async () => {
     // A deployment that requires cited reports.
-    const cited = DEFAULT_TEMPLATES.research!.map((node) => ({ ...node, acceptance: 'acceptance.cited' }))
-    const { ctx, fake } = await boot({ fake: { report: 'A report without any source.' }, workflow: { templates: { research: cited } } })
-    const done = await ctx.workflow.wait(ctx.workflow.start({ template: 'research', input: 'q' }).runId, 60_000)
+    const cited = DEFAULT_TEMPLATES['deep-research']!.map((node) => ({ ...node, acceptance: 'acceptance.cited' }))
+    const { ctx, fake } = await boot({ fake: { report: 'A report without any source.' }, workflow: { templates: { 'deep-research': cited } } })
+    const done = await ctx.workflow.wait(ctx.workflow.start({ template: 'deep-research', input: 'q' }).runId, 60_000)
     expect(done).toMatchObject({ status: 'failed', error: { kind: 'acceptance_rejected', disposition: 'NONE' } })
     expect(done.nodes.map((n) => n.state)).toEqual(['FAILED', 'WAITING'])
     expect(fake.sent).toHaveLength(1)
@@ -390,7 +390,7 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
 
   it('lets the operator stop a run: running work is cancelled, nothing else starts, nothing is resent (REQ-WF-7)', async () => {
     const { ctx, fake } = await boot({ fake: { thinkMs: 20_000 } })
-    const run = ctx.workflow.start({ template: 'research', input: 'long one' })
+    const run = ctx.workflow.start({ template: 'deep-research', input: 'long one' })
     await until(() => ctx.workflow.get(run.runId)?.nodes[0]?.state === 'RUNNING' && fake.sent.length === 1)
     const stopped = await ctx.workflow.stop(run.runId, 'not needed any more')
     expect(stopped).toMatchObject({ status: 'failed', error: { kind: 'stopped', disposition: 'NONE' } })
@@ -466,7 +466,7 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
 
   it('re-runs everything downstream of a superseded result, and records why (lineage invalidation, REQ-ART-2)', async () => {
     const { ctx, fake } = await boot()
-    const done = await ctx.workflow.wait(ctx.workflow.start({ template: 'research', input: 'q' }).runId, 60_000)
+    const done = await ctx.workflow.wait(ctx.workflow.start({ template: 'deep-research', input: 'q' }).runId, 60_000)
     expect(done.status).toBe('completed')
     const old = ctx.workflow.records(done.runId)[0]!.outputReceipt!.result
     const reopened = ctx.workflow.supersede(done.runId, 'research:1', { text: 'Corrected report https://src.example/fixed', note: 'the first report misread the catalog' })
@@ -559,7 +559,7 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
     const dir = mkdtempSync(join(tmpdir(), 'system-workflow-'))
     cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
     const first = await boot({ dir, fake: { researchMs: 6000 } })
-    const run = first.ctx.workflow.start({ template: 'research', input: 'survive a crash' })
+    const run = first.ctx.workflow.start({ template: 'deep-research', input: 'survive a crash' })
     await until(() => {
       const id = first.ctx.workflow.get(run.runId)!.nodes[0]!.executionId
       return id !== undefined && first.ctx.turns.get(id)?.binding !== undefined
@@ -588,7 +588,7 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
 
   it('explains a run: egress, tier, route, and acceptance for every node (REQ-ART-3)', async () => {
     const { ctx } = await boot()
-    const done = await ctx.workflow.wait(ctx.workflow.start({ template: 'research', input: 'why' }).runId, 60_000)
+    const done = await ctx.workflow.wait(ctx.workflow.start({ template: 'deep-research', input: 'why' }).runId, 60_000)
     const explained = ctx.workflow.explain(done.runId)!
     expect(explained.nodes.map((n) => [n.nodeId, n.decisions.map((d) => [d.type, d.outcome])])).toEqual([
       ['research:1', [['egress', 'allow'], ['tier', 'frontier'], ['route', 'worker:chatgpt-main/frontier'], ['acceptance', 'accept']]],
@@ -601,7 +601,7 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
   }, 90_000)
 
   it('serves ask, research, run, result, usage, and explain over MCP in place of the placeholders (REQ-GW-3, REQ-SES-8)', async () => {
-    const { dir } = await boot()
+    const { ctx, dir } = await boot()
     const { url, tokenFile } = JSON.parse(readFileSync(join(dir, 'mcp.json'), 'utf8')) as { url: string; tokenFile: string }
     const client = new Client({ name: 'test', version: '0' })
     await client.connect(new StreamableHTTPClientTransport(new URL(url), { requestInit: { headers: { authorization: `Bearer ${readFileSync(tokenFile).toString('base64url')}` } } }) as unknown as Transport)
@@ -610,7 +610,12 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
       expect(asked.content).toEqual([{ type: 'text', text: 'Plain answer.' }])
       const runId = (asked.structuredContent as { runId: string }).runId
       expect(asked.structuredContent).toMatchObject({ runId, status: 'completed', answer: 'Plain answer.' })
-      const research = await client.callTool({ name: 'research', arguments: { question: 'q' } })
+      // `research` runs the research profile's procedure: without that profile it fails closed, naming the template.
+      const noProfile = await client.callTool({ name: 'research', arguments: { question: 'q' } })
+      expect(noProfile).toMatchObject({ isError: true, content: [{ text: expect.stringMatching(/unknown workflow template research/) }] })
+      ctx.workflow.template('research', [{ nodeId: 'study:1', objective: 'answer', prompt: '{{input}}', capabilities: ['reason'], tier: 'standard', conversation: 'temporary', acceptance: 'acceptance.answer' }])
+      expect((await client.callTool({ name: 'research', arguments: { question: 'q' } })).structuredContent).toMatchObject({ template: 'research', nodes: [{ nodeId: 'study:1' }] })
+      const research = await client.callTool({ name: 'run', arguments: { template: 'deep-research', input: 'q', waitSeconds: 0 } })
       const researchRun = research.structuredContent as { runId: string; status: string; sessionId: string }
       expect(researchRun).toMatchObject({ status: 'running', sessionId: expect.stringMatching(/^ses_/) })
       const fetched = await client.callTool({ name: 'result', arguments: { runId: researchRun.runId, waitSeconds: 40 } })

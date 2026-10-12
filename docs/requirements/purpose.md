@@ -121,7 +121,7 @@ kind of broad, read-only research and synthesis that P1 and P3 say should
 
 ```text
 Claude Code / Codex: "which catalog plugins fit our MCP server, vault, and DAG needs?"
-  ─▶ system research (website Workers, Deep Research, separate chat quota)      P1, P2
+  ─▶ system research (website Workers, web search or Deep Research, chat quota) P1, P2
   ─▶ economy tier: compact the findings into a cited shortlist                  P4
   ─▶ local agent: apply the decision to the repository (local data stays local) P3
 ```

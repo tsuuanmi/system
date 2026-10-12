@@ -8,7 +8,8 @@ second execution path (INV-1).
 
 - **Templates are configuration.**
   - `ask` is one node, `ask:1`. It takes the caller's tier and session.
-  - `research` is two nodes:
+  - `deep-research` is two nodes (the `research` procedure comes from the
+    research profile, [`profile-scientific-research`](../profile-scientific-research/README.md)):
     1. `research:1` runs Deep research on `frontier` in a persistent session.
     2. `compact:1` gets the report verbatim and compacts it on `economy` in a
        temporary chat.
