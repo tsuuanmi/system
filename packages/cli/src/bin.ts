@@ -290,12 +290,15 @@ async function main(argv: string[]): Promise<number> {
     case 'backup': {
       if (!rest[0]) break
       const manifest = backupHost(rest[0], { includeKey: rest.includes('--include-key') })
-      console.log(`backed up ${Object.keys(manifest.files).length} file(s) to ${rest[0]}${manifest.includesKey ? ' (with the vault key: keep it as safe as this host)' : '; the vault key is not in it, keep ~/.dsh/system/vault.key safe separately'}`)
+      console.log(`backed up ${Object.keys(manifest.files).length} file(s) to ${rest[0]}${manifest.includesKey ? ' (with the vault key: keep it as safe as this host)' : '; the vault key is not in it: keep it safe separately'}`)
       return 0
     }
     case 'restore': {
       if (!rest[0]) break
-      const outcome = restoreHost(rest[0], { yes: rest.includes('--yes') })
+      const key = rest.indexOf('--key')
+      const keyFile = key >= 0 ? rest[key + 1] : undefined
+      if (key >= 0 && !keyFile) break
+      const outcome = restoreHost(rest[0], { yes: rest.includes('--yes'), ...(keyFile ? { keyFile } : {}) })
       if (!outcome.applied) {
         console.log(`backup of ${outcome.manifest.createdAt}: ${Object.keys(outcome.manifest.files).length} file(s), verified${outcome.manifest.includesKey ? ', with the vault key' : ''}`)
         console.log(`restore it with: system restore ${rest[0]} --yes`)

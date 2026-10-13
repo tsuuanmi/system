@@ -254,7 +254,15 @@
 - **Local-private artifact bodies read from disk by another account or from a
   backup.** The store and everything else under `<DSH_HOME>/system/` are `0600` in
   `0700` directories; only credentials are encrypted at rest (vault). Full-disk or
-  home-directory encryption is recommended for hosts holding private data.
+  home-directory encryption is a **deployment precondition** for hosts holding
+  private data: application-level encryption of the store would not help against
+  the same user, who holds the key, and SQLCipher does not work with
+  `node:sqlite` ([PROP-0003](../proposals/0003-production-readiness.md#m6a-security-hardening)).
+- **The vault key read together with the vault.** By default the key sits beside
+  the vault, so anyone who can read the account reads both. The key can live
+  elsewhere (`keyFile`: another volume or a systemd credential); a key outside the
+  state directory is never put in a backup, and agent Workers cannot read it
+  ([key custody](../operations/runbooks.md#key-custody)).
 - **A malicious or compromised plugin.** Plugins run in-process with full host
   trust, so only operator-installed plugins from the profile are loaded; there is no
   remote plugin installation; plugin packages are pinned in the lockfile.

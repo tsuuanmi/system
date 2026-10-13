@@ -132,7 +132,9 @@ them.
 - **The key travels separately.** A backup holds the vault encrypted, without
   its key. Keep `vault.key` somewhere else, for example an offline copy. With
   `--include-key`, the backup holds the key, and must be kept as safe as the
-  host itself.
+  host itself. A key kept outside the state directory (see
+  [key custody](#key-custody)) is never in a backup: `--include-key` is refused,
+  and you back the key up where it lives.
 - **Restore:**
   1. `system shutdown` stops the profile.
   2. `system restore <dir>` previews the backup and verifies every file
@@ -140,10 +142,40 @@ them.
      `vault.enc`, and `vault.key` refuses the whole backup.
   3. `system restore <dir> --yes` restores it. The replaced store is kept as
      `system.db.before-restore-<time>`. A host without the vault key is refused
-     until the key is put back.
+     until the key is put back; name a key kept outside the state directory with
+     `--key <path>`.
   4. `system start` starts the profile, and `system usage` shows the restored
      runs.
 - Back up before every upgrade.
+
+## Key custody
+
+By default the vault key (`vault.key`) sits beside the vault. That protects
+against copied files, backups, and log leaks, not against someone who can read
+your whole account. On a shared or managed host, keep it apart:
+
+1. Move the key out of the state directory to an owner-only place on another
+   volume, or deliver it as a systemd credential where the host's systemd
+   supports credentials for the service (the file is then
+   `$CREDENTIALS_DIRECTORY/<name>`, mode `0400`, which the vault accepts).
+2. Point the `credentials` row at it in your profile patch:
+
+   ```yaml
+   - id: credentials
+     config:
+       keyFile: /media/keys/system-vault.key
+   ```
+
+3. If it is not under `$CREDENTIALS_DIRECTORY` (always hidden from agents),
+   add its path to the `agent-runtimes` row's `hide`, so agent Workers cannot
+   read it either.
+
+Back the key up where it lives; restore with `--key <path>`.
+
+Data at rest: only credentials are encrypted by `system` (the vault). The store
+(prompts, answers, decisions) and login profiles are owner-only files, so a
+host that holds private data needs full-disk or home-directory encryption
+([threat model](../security/threat-model.md#threats-and-controls)).
 
 ## Upgrade with drain
 

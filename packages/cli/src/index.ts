@@ -329,6 +329,11 @@ export function backupHost(target: string, options: { home?: string; includeKey?
   } finally {
     db.close()
   }
+  if (options.includeKey && existsSync(join(state, 'vault.enc')) && !existsSync(join(state, 'vault.key'))) {
+    // The vault's keyFile points elsewhere (a systemd credential, another volume): never report
+    // a backup "with its key" that has none.
+    throw new Error(`there is no vault key in ${state}: it is kept outside the state directory (the credentials row's keyFile); back it up where it lives, without --include-key`)
+  }
   for (const file of ['vault.enc', ...(options.includeKey ? ['vault.key'] : [])]) {
     if (existsSync(join(state, file))) copyFileSync(join(state, file), join(target, file))
   }
@@ -356,7 +361,12 @@ function profileRunning(state: string): boolean {
  * file matches the manifest. Without `yes` it only reports what it would do. The replaced store
  * is kept beside it (`system.db.before-restore-<time>`).
  */
-export function restoreHost(source: string, options: { home?: string; yes?: boolean } = {}): { manifest: BackupManifest; applied: boolean; keptAside?: string } {
+/**
+ * Restore a verified backup into the state directory. Without its key in the backup, the vault
+ * needs one on this host: `<state>/vault.key`, or `keyFile`, where the credentials row's
+ * `keyFile` keeps it outside the state directory.
+ */
+export function restoreHost(source: string, options: { home?: string; yes?: boolean; keyFile?: string } = {}): { manifest: BackupManifest; applied: boolean; keptAside?: string } {
   const state = join(options.home ?? dshHome(), 'system')
   const manifest = JSON.parse(readFileSync(join(source, BACKUP_MANIFEST), 'utf8')) as BackupManifest
   if (manifest.schema !== 'system-backup@1') throw new Error(`${source} is not a system backup`)
@@ -366,8 +376,9 @@ export function restoreHost(source: string, options: { home?: string; yes?: bool
   for (const [file, hash] of Object.entries(manifest.files)) {
     if (!existsSync(join(source, file)) || fileHash(join(source, file)) !== hash) throw new Error(`${file} does not match the backup manifest`)
   }
-  if (!manifest.includesKey && existsSync(join(source, 'vault.enc')) && !existsSync(join(state, 'vault.key'))) {
-    throw new Error('the backup has no vault key and this host has none: restore vault.key from where you keep it first')
+  const key = options.keyFile ?? join(state, 'vault.key')
+  if (!manifest.includesKey && existsSync(join(source, 'vault.enc')) && !existsSync(key)) {
+    throw new Error(`the backup has no vault key and this host has none at ${key}: restore the key from where you keep it first (or name it with --key <path>)`)
   }
   if (!options.yes) return { manifest, applied: false }
   if (profileRunning(state)) throw new Error('the profile is running: run `system shutdown` first')

@@ -71,6 +71,22 @@ describe('backup and restore (operations runbook, QA-4)', () => {
     expect(readdirSync(join(running, 'system')).sort()).toEqual(['mcp.json', 'vault.key'])
   })
 
+  it('keeps a vault key that lives outside the state directory out of every backup, and restores with it named (key custody)', () => {
+    const source = home()
+    rmSync(join(source.home, 'system', 'vault.key'))
+    // --include-key cannot hold a key the state directory does not have: refused, not silently omitted.
+    expect(() => backupHost(join(temp(), 'b'), { home: source.home, includeKey: true })).toThrow(/kept outside the state directory/)
+    const target = join(temp(), 'b')
+    expect(backupHost(target, { home: source.home }).includesKey).toBe(false)
+    source.db.close()
+    const into = temp()
+    expect(() => restoreHost(target, { home: into, yes: true })).toThrow(/no vault key .* --key <path>/)
+    const keyFile = join(temp(), 'vault.key')
+    writeFileSync(keyFile, 'k'.repeat(32))
+    expect(restoreHost(target, { home: into, yes: true, keyFile })).toMatchObject({ applied: true })
+    expect(existsSync(join(into, 'system', 'vault.key'))).toBe(false)
+  })
+
   it('restores only the files a backup holds: a manifest naming a path outside the state is refused', () => {
     const source = home()
     const target = join(temp(), 'b')
