@@ -47,7 +47,7 @@ export class StaleGeneration extends Error {
 interface Row { resource: string; owner: string | null; token: string | null; generation: number; expires_at: number | null }
 
 /** A stable-per-process owner id: `<host>:<pid>:<random>`. */
-export const processOwner = `${hostname().replace(/[^A-Za-z0-9._-]/g, '-')}:${process.pid}:${randomBytes(3).toString('hex')}`
+const processOwner = `${hostname().replace(/[^A-Za-z0-9._-]/g, '-')}:${process.pid}:${randomBytes(3).toString('hex')}`
 
 export interface Config {
   /** Upper bound for any requested TTL, in milliseconds (default 10 minutes). */

@@ -39,7 +39,7 @@ declare module '@deepseek-ai/cordis' {
 }
 
 /** An integer page size in [1, 1000]; NaN or fractional input never reaches SQL. */
-export function clampLimit(limit: number | undefined): number {
+function clampLimit(limit: number | undefined): number {
   const n = Number.isFinite(limit) ? Math.floor(limit as number) : 100
   return Math.min(Math.max(n, 1), 1000)
 }

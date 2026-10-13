@@ -18,17 +18,17 @@ import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
 import { dshHome } from '@tsuuanmi/system-libs'
 
 const require = createRequire(import.meta.url)
-export const PROFILE = 'system'
+const PROFILE = 'system'
 
 /** The `dsh` launcher entry of the pinned DSH installation. */
-export function dshBin(): string {
+function dshBin(): string {
   const manifest = require.resolve('@deepseek-ai/dsh/package.json')
   const { bin } = JSON.parse(readFileSync(manifest, 'utf8')) as { bin: Record<string, string> }
   return join(dirname(manifest), bin['dsh'] ?? 'lib/bin.js')
 }
 
 /** Environment for every DSH invocation: telemetry off as defense in depth (ADR-0019). */
-export function dshEnv(base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+function dshEnv(base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
   return { ...base, DSH_TELEMETRY_DISABLED: '1' }
 }
 

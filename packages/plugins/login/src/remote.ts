@@ -78,7 +78,7 @@ async function stop(child: ChildProcess | undefined, graceMs: number): Promise<v
 }
 
 /** VNC arguments for a unix-socket-only server on `display`. */
-export function vncArgs(vncPath: string, display: string, socket: string): string[] {
+function vncArgs(vncPath: string, display: string, socket: string): string[] {
   if (basename(vncPath) === 'x11vnc') return ['-display', display, '-unixsockonly', socket, '-forever', '-shared', '-nopw', '-quiet']
   return ['-display', display, '-rfbport', '-1', '-rfbunixpath', socket, '-rfbunixmode', '0600', '-SecurityTypes', 'None']
 }

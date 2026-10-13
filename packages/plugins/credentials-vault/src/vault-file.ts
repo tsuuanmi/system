@@ -24,7 +24,7 @@ interface VaultFile {
 const dictionary = <T>(entries: Record<string, T> = {}): Record<string, T> =>
   Object.assign(Object.create(null) as Record<string, T>, entries)
 
-export const emptyDocument = (): VaultDocument => ({ refs: dictionary(), records: dictionary() })
+const emptyDocument = (): VaultDocument => ({ refs: dictionary(), records: dictionary() })
 
 /** Own-property lookup that ignores the prototype chain. */
 export function own<T>(map: Record<string, T>, key: string): T | undefined {

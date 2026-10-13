@@ -78,7 +78,7 @@ export function claimsNoAccess(text: string): boolean {
 }
 
 /** One turn as text: its words, its calls as tags, and tool results labelled by call. */
-export function renderTurn(turn: Turn, names: ReadonlyMap<string, string>): string {
+function renderTurn(turn: Turn, names: ReadonlyMap<string, string>): string {
   return turn.parts.map((part) => {
     if (part.kind === 'text') return part.text
     if (part.kind === 'call') return `<call tool="${part.name}">${JSON.stringify(part.input ?? {})}</call>`
