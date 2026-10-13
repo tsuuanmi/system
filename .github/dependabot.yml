@@ -1,0 +1,18 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    ignore:
+      # DSH and its vendored Cordis move in lockstep at one exact, manually reviewed pin
+      # (CON-8): a bump passes the conformance and composition suites first.
+      - dependency-name: '@deepseek-ai/*'
+    groups:
+      development:
+        dependency-type: development
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

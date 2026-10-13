@@ -6,9 +6,9 @@
 > Not built yet (target only): turn tokens for MCP tool inversion (the gateways use the
 > text tool protocol of
 > [ADR-0022](../decisions/adr/0022-text-protocol-tool-calls-for-website-models.md)),
-> `/admin/*` routes, and a dependency audit in CI.
+> `/admin/*` routes.
 > [PROP-0003](../proposals/0003-production-readiness.md#m6a-security-hardening)
-> plans the dependency audit and the Codex read gap below.
+> plans the Codex read gap below.
 
 ## Assets
 
@@ -244,9 +244,12 @@
   remote plugin installation; plugin packages are pinned in the lockfile.
 - **A supply-chain change in the browser stack or SDKs.** Committed lockfile
   (installed with `--frozen-lockfile` in CI), one exact pinned DSH version, no
-  vendored binaries. A clean `pnpm audit` is a
-  [production-ready requirement](../requirements/release-scope.md#operational-readiness);
-  as a CI gate it is target only (not built).
+  vendored binaries. CI fails on any high or critical advisory in a production
+  dependency (`pnpm audit:deps`), scans every tracked file for credentials with the
+  rules `egress` uses (`pnpm check:secrets`), and runs CodeQL. Third-party Actions
+  are pinned by commit, and Dependabot proposes dependency and Action updates,
+  except DSH, whose pin is bumped by hand (CON-8)
+  ([CI gates](../engineering/testing.md#ci-gates)).
 - **Provider terms or abuse controls lead to account loss.** Bounded per-account
   concurrency; no evasion features; operator responsibility (CON-3).
 

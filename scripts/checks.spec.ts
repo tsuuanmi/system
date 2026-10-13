@@ -1,9 +1,11 @@
-import { readFileSync } from 'node:fs'
+import { generateKeyPairSync } from 'node:crypto'
+import { readdirSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { checkDocs, slugify } from './check-docs.ts'
 import { checkSchemas, loadSchemas, schemaId } from './check-schemas.ts'
+import { checkSecrets, scanText } from './check-secrets.ts'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const schemas = join(root, 'schemas')
@@ -63,5 +65,31 @@ describe('schema checks', () => {
     const map = example('ui-map.chatgpt-web.json') as { elements: Record<string, Record<string, unknown>> }
     map.elements['composer.send']!['candidates'] = []
     expect(loadSchemas(schemas).getSchema(schemaId('ui-map'))?.(map)).toBe(false)
+  })
+})
+
+describe('secrets audit', () => {
+  it('finds no credential in any tracked file', async () => {
+    expect(await checkSecrets(root)).toEqual([])
+  })
+
+  it('reports the file, line, and rule of a credential, never its value', async () => {
+    // A realistic key, made at test time (scanners ignore documented example keys).
+    const key = String(generateKeyPairSync('rsa', { modulusLength: 1024 }).privateKey.export({ type: 'pkcs1', format: 'pem' }))
+    const findings = await scanText('notes.txt', `first line\n${key}`)
+    expect(findings).toEqual([{ file: 'notes.txt', line: 2, rule: expect.stringContaining('privatekey') }])
+    expect(JSON.stringify(findings)).not.toContain(key.split('\n')[1])
+  })
+})
+
+describe('CI workflows', () => {
+  it('pin every third-party Action by commit SHA', () => {
+    const dir = join(root, '.github', 'workflows')
+    const unpinned = readdirSync(dir).flatMap((file) =>
+      [...readFileSync(join(dir, file), 'utf8').matchAll(/uses:\s*([^\s#]+)/g)]
+        .map((m) => m[1]!)
+        .filter((ref) => !ref.startsWith('./') && !/@[0-9a-f]{40}$/.test(ref))
+        .map((ref) => `${file}: ${ref}`))
+    expect(unpinned).toEqual([])
   })
 })
