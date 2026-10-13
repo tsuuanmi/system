@@ -50,6 +50,9 @@ guesses.
   hash of the effective policy configuration.
 - When `decider.type` is `model`, `deterministic` must be `false`, and
   reproducibility comes from reuse by input hash.
+- Prose can quote model or caller text of any length. The store clamps
+  `question` (500), each reason (300), and `rationale` (1000) to their bounds on
+  whole characters, ending in `…`, so a long reason never fails its decision.
 
 ### `work-requirement`
 

@@ -147,8 +147,15 @@ export class Artifacts extends Service {
    * candidate equals the outcome (docs/reference/schemas.md#decision).
    */
   recordDecision(decision: Omit<Decision, 'schema'>, meta: { producer: Producer; runId?: string; nodeId?: string; classification?: Classification }): Envelope {
-    // Decision inputs are a set (uniqueItems): sort them so order never changes the id.
-    const body: Decision = { schema: 'decision@1.0', ...decision, inputs: [...new Set(decision.inputs)].sort() }
+    // Decision inputs are a set (uniqueItems): sort them so order never changes the id. Prose
+    // (questions, reasons, rationale) can quote model or caller text of any length: it is clamped
+    // to the schema's bounds here, once, so a long reason never fails the decision it explains.
+    const body: Decision = {
+      schema: 'decision@1.0', ...decision, inputs: [...new Set(decision.inputs)].sort(),
+      question: clampProse(decision.question, 500),
+      candidates: decision.candidates.map((c) => ({ ...c, reasons: c.reasons.map((r) => clampProse(r, 300)) })),
+      ...(decision.rationale !== undefined ? { rationale: clampProse(decision.rationale, 1000) } : {}),
+    }
     this.schemas.assert(body.schema, body)
     const selected = body.candidates.filter((candidate) => candidate.selected)
     if (selected.length !== 1 || selected[0]?.option !== body.outcome.option) {
@@ -228,6 +235,12 @@ export class Artifacts extends Service {
     }
     return floor
   }
+}
+
+/** At most `max` characters (code points, as JSON Schema counts them), cut on a whole character and marked with '…'. */
+function clampProse(text: string, max: number): string {
+  const chars = [...text]
+  return chars.length <= max ? text : `${chars.slice(0, max - 1).join('')}…`
 }
 
 export default Artifacts

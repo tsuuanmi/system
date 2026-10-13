@@ -45,6 +45,22 @@ describe('ctx.artifacts', () => {
     expect(ctx.artifacts.list({ decisionType: 'route' })).toHaveLength(1)
   })
 
+  it('clamps a decision\'s prose to its schema bounds on whole characters, marked, so a long reason never fails the decision (INV-13)', async () => {
+    const ctx = await boot()
+    // A reason whose 300th character is a surrogate pair (an emoji) must not be split.
+    const reason = `${'r'.repeat(298)}😀😀 and more`
+    const long = { ...route, question: `q${'?'.repeat(600)}`, rationale: 'x'.repeat(1200), candidates: route.candidates.map((c) => ({ ...c, reasons: [reason, ...c.reasons] })) }
+    const body = ctx.artifacts.recordDecision(long, { producer }).body as { question: string; rationale: string; candidates: Array<{ reasons: string[] }> }
+    const stored = body.candidates[0]!.reasons[0]!
+    expect([...stored]).toHaveLength(300)
+    expect(stored).toBe(`${'r'.repeat(298)}😀…`)
+    expect([...body.question]).toHaveLength(500)
+    expect([...body.rationale]).toHaveLength(1000)
+    expect(body.question.endsWith('…')).toBe(true)
+    // Short prose is untouched.
+    expect(ctx.artifacts.recordDecision(route, { producer }).body).toMatchObject({ candidates: route.candidates })
+  })
+
   it('rejects a decision whose selected candidate differs from the outcome', async () => {
     const ctx = await boot()
     expect(() => ctx.artifacts.recordDecision({ ...route, outcome: { option: 'worker:chatgpt-2/deep-research' } }, { producer })).toThrow(/outcome/)

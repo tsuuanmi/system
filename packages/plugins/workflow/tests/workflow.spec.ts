@@ -201,6 +201,13 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
     expect(ctx.artifacts.get(growth[0]!.inputs[0]!)).toMatchObject({ kind: 'plan', bodySchema: 'plan@1.0' })
   }, 120_000)
 
+  it('refuses a plan whose step id is absurdly long as plan_rejected, never as an internal failure', async () => {
+    const id = 'x'.repeat(400)
+    const { ctx } = await boot({ fake: { answer: () => '```json\n' + JSON.stringify({ confidence: 'high', nodes: [{ id, objective: 'o', prompt: 'p', capabilities: ['reason'], tier: 'economy' }] }) + '\n```' } })
+    const done = await ctx.workflow.wait(ctx.workflow.start({ template: 'investigate', input: 'q' }).runId, 60_000)
+    expect(done).toMatchObject({ status: 'failed', error: { kind: 'plan_rejected', disposition: 'NONE' } })
+  }, 60_000)
+
   it('refuses an invalid plan without appending anything', async () => {
     const { ctx, fake } = await boot({ fake: { answer: () => '```json\n{"confidence":"high","nodes":[{"id":"a","objective":"o","prompt":"p","capabilities":["develop"],"tier":"economy"}]}\n```' } })
     const done = await ctx.workflow.wait(ctx.workflow.start({ template: 'investigate', input: 'q' }).runId, 60_000)
