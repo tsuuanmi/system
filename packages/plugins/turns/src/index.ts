@@ -405,7 +405,12 @@ export class Turns extends Service {
    * re-checked when that lease would expire.
    */
   private run(turnId: string): Promise<void> {
-    const running = this.runOwned(turnId)
+    // A failure the run could not record (its lease was taken meanwhile) is never left unhandled,
+    // and never breaks its session's chain: the turn is looked at again once the lease can be taken.
+    const running = this.runOwned(turnId).catch((error: unknown) => {
+      if (error instanceof LeaseLost || error instanceof StaleGeneration) this.retryLater(turnId, LEASE_TTL_MS)
+      else this.ctx.logger.warn(`turns: turn ${turnId} ended with a failure it could not record: ${(error as Error).message}`)
+    })
     this.inflight.add(running)
     void running.finally(() => this.inflight.delete(running))
     return running
@@ -716,6 +721,8 @@ export class Turns extends Service {
   }
 
   private fail(turnId: string, error: unknown, lease?: () => Lease): void {
+    // A finished turn stays as it finished: a later failure (closing its browser turn) never rewrites it.
+    if (TERMINAL.has(this.row(turnId)?.status ?? 'queued')) return
     const typed = toProviderError(error)
     this.update(turnId, { status: 'failed', error: JSON.stringify({ kind: typed.kind, disposition: dispositionOf(typed.kind), message: typed.message }) }, lease)
   }

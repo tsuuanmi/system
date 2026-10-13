@@ -372,6 +372,41 @@ describe.runIf(canRunBrowser)('ctx.turns: ask through a saved account', () => {
     expect(Date.now() - started).toBeLessThan(5000)
   }, 240_000)
 
+  it('keeps a completed turn completed when a later step fails (closing its browser turn), never rewriting it as failed', async () => {
+    const { ctx } = await boot({ fake: { answer: 'Done' } })
+    const browser = ctx.browser as unknown as { openTurn: (...args: unknown[]) => Promise<{ close: () => Promise<void> }> }
+    const open = browser.openTurn.bind(browser)
+    browser.openTurn = async (...args) => {
+      const turn = await open(...args)
+      const close = turn.close.bind(turn)
+      turn.close = async () => {
+        await close()
+        throw new Error('the browser turn did not close cleanly')
+      }
+      return turn
+    }
+    const started = await ask(ctx, { prompt: 'finish then fail' })
+    await ctx.turns.wait(started.turnId, 60_000)
+    await new Promise((resolve) => setTimeout(resolve, 500))
+    expect(ctx.turns.get(started.turnId)).toMatchObject({ status: 'completed', answer: 'Done' })
+  }, 90_000)
+
+  it('never leaves a failure it cannot record unhandled: with its lease taken, the turn is looked at again, not overwritten (INV-4)', async () => {
+    const unhandled: unknown[] = []
+    const onUnhandled = (reason: unknown): void => void unhandled.push(reason)
+    process.on('unhandledRejection', onUnhandled)
+    cleanups.push(() => process.off('unhandledRejection', onUnhandled))
+    const { ctx } = await boot({ fake: { thinkMs: 30_000, answer: 'late' } })
+    const turn = await ask(ctx, { prompt: 'slow' })
+    for (let t = Date.now(); ctx.turns.get(turn.turnId)?.status !== 'running' && Date.now() - t < 30_000;) await new Promise((resolve) => setTimeout(resolve, 100))
+    // Another process took the turn (its lease moved on): this process may no longer write it.
+    ctx.leases.invalidate(`turn:${turn.turnId}`)
+    expect(ctx.turns.cancel(turn.turnId)).toBe(true)
+    await new Promise((resolve) => setTimeout(resolve, 1500))
+    expect(unhandled).toEqual([])
+    expect(ctx.turns.get(turn.turnId)?.status).toBe('running')
+  }, 90_000)
+
   it('forgets finished turns (their prompts and receipts) after the retention period (INV-9)', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'system-turns-'))
     cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
