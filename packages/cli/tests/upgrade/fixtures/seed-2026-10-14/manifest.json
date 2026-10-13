@@ -1,0 +1,52 @@
+{
+  "label": "seed-2026-10-14",
+  "source": "ae78fc6",
+  "createdAt": "2026-10-13T23:25:43.175Z",
+  "runs": [
+    {
+      "runId": "run_55c764b8c8e9e774",
+      "template": "ask",
+      "status": "completed",
+      "nodes": 1
+    },
+    {
+      "runId": "run_b2fd71d28cb895da",
+      "template": "ask",
+      "status": "completed",
+      "nodes": 1
+    },
+    {
+      "runId": "run_56df675b6c741e90",
+      "template": "ask",
+      "status": "completed",
+      "nodes": 1
+    },
+    {
+      "runId": "run_aaee9b64f298714b",
+      "template": "investigate",
+      "status": "completed",
+      "nodes": 3
+    },
+    {
+      "runId": "run_b313d70de8d2d37e",
+      "template": "fixture-gated",
+      "status": "completed",
+      "nodes": 7
+    },
+    {
+      "runId": "run_428656ae5f88c41a",
+      "template": "panel",
+      "status": "completed",
+      "nodes": 5
+    },
+    {
+      "runId": "run_5c93a8a9a32d6bd7",
+      "template": "fixture-strict",
+      "status": "failed",
+      "nodes": 1
+    }
+  ],
+  "sessions": [
+    "ses_86f2c6b1cf915380"
+  ]
+}

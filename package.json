@@ -21,6 +21,7 @@
     "check:packages": "tsx scripts/gen-packages.ts --check",
     "gen:traceability": "tsx scripts/gen-traceability.ts",
     "check:traceability": "tsx scripts/gen-traceability.ts --check",
+    "gen:upgrade-fixture": "tsx packages/cli/tests/upgrade/generate.ts",
     "test:crash": "pnpm build && vitest run -c vitest.crash.config.ts"
   },
   "devDependencies": {

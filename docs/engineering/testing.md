@@ -33,6 +33,21 @@ package's `conformance/` directory. Each provider's tests call the suite with a
   The `system` wrapper boots the shipped profile from built `lib/` through the
   real `dsh` launcher. The test asserts the exact allow-listed row set, calls
   MCP with a token, and checks cleanup on SIGTERM.
+- **Upgrade suite**
+  ([`packages/cli/tests/upgrade/`](../../packages/cli/tests/upgrade/upgrade.e2e.ts),
+  part of `pnpm test:e2e`; REQ-HOST-2,
+  [INV-14](../architecture/invariants.md#inv-14-every-record-has-a-versioned-schema)).
+  - Each fixture is a store seeded by that release's code and written as SQL
+    text with a manifest of its runs: every kind of run the engine keeps (ask, a
+    persistent session, a plan, an approval gate, a re-plan with retired nodes,
+    a team panel, a rejected result).
+  - The suite boots the shipped profile on each fixture through `dsh`, which
+    migrates it. Every old run must still `explain` and answer `result` as the
+    manifest says, no migration may go backwards, and every node, session, and
+    artifact record must validate against its schema.
+  - A release adds its fixture with `pnpm gen:upgrade-fixture <version>` from
+    its own code; a fixture is never edited afterwards. Until the first release,
+    one is seeded from the current code.
 - **Crash injection**
   ([`packages/system-bundle/tests/crash/`](../../packages/system-bundle/tests/crash/restart.crash.ts),
   `pnpm test:crash`).
@@ -93,7 +108,8 @@ Chrome installed. Each gate is a root [`package.json`](../../package.json) scrip
    - `lint` (oxlint) and `typecheck` (`tsc --noEmit`).
 2. `pnpm test`, with `SYSTEM_REQUIRE_BROWSER=1`: unit, contract, driver,
    concurrency, and architecture tests.
-3. `pnpm test:e2e`: build, then boot the shipped profile through `dsh`.
+3. `pnpm test:e2e`: build, then boot the shipped profile through `dsh`, and
+   upgrade every seeded store fixture.
 4. `pnpm test:crash`: crash injection at each reconcile point of a turn.
 
 CI cannot prove account-bound flows. The
