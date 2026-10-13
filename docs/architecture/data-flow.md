@@ -94,6 +94,22 @@ flowchart TD
 and the page does not show the prompt. A lease held by another live process is re-checked when
 it would expire ([scheduling and leases](../design/scheduling-and-leases.md)).
 
+### Effect register
+
+Every external effect, its [INV-4](invariants.md#inv-4-restart-is-reconciliation-not-replay)
+class, and the crash test that kills the host at it. A new effect gets a row and a crash test;
+the [roadmap](../proposals/roadmap.md) tracks the rows that have none yet.
+
+| Effect | Class | What a restart does | Crash test |
+|---|---|---|---|
+| A prompt sent to a website | reconcile-before-repeat | the turn receipt's conversation is observed: WAIT, RECOVER, bounded RESUBMIT, or AMBIGUOUS (fails, never resent) | [restart.crash.ts](../../packages/system-bundle/tests/crash/restart.crash.ts): sent and bound, answered, sent but unbound, temporary chat |
+| An agent run started on its workspace | block | the run fails as `reconciliation_failed`; the agent never starts again | [agent.crash.ts](../../packages/system-bundle/tests/crash/agent.crash.ts) |
+| A peer message delivered | safe-to-repeat | delivery is idempotent by the sender's `messageId` | — |
+| A workflow node's result committed, graph growth | safe-to-repeat | one store transaction; a node re-attaches to its execution by key | — |
+| A lease taken over | safe-to-repeat | the generation fence rejects a commit by the old holder | — |
+| A gateway request in flight | reconcile-before-repeat | the website turn under it reconciles as above; the client's stream ends | — |
+| A backup written | safe-to-repeat | the manifest is written last, so an interrupted backup has none and restore refuses it | — |
+
 ## Gateway round trip
 
 Claude Code (`/anthropic`) and Codex (`/openai`) use a website model as their model. The web
