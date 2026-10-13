@@ -4,7 +4,7 @@
  * embedded NUL; 24.18.1 and 26.5.1 also carry the fix for CVE-2026-58041. The store checks
  * this before it opens, and the CLI before it starts or initializes a profile.
  */
-import { DatabaseSync } from 'node:sqlite'
+import type { DatabaseSync as Database } from 'node:sqlite'
 
 export const SUPPORTED_NODE = '^24.18.1 || >=26.5.1'
 
@@ -40,6 +40,9 @@ export function sqliteRuntimeProblem(roundTrip: (text: string) => unknown = sele
 }
 
 function selectText(text: string): unknown {
+  // Loaded only after the version check passed: on an old Node the module does not exist, and
+  // the version message must still be what the operator sees.
+  const { DatabaseSync } = process.getBuiltinModule('node:sqlite') as { DatabaseSync: typeof Database }
   const db = new DatabaseSync(':memory:')
   try {
     return (db.prepare('SELECT ? AS v').get(text) as { v: unknown }).v

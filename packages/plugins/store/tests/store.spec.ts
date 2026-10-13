@@ -166,7 +166,7 @@ describe('afterCommit inside a rolled-back savepoint (review)', () => {
 })
 
 describe('stored text (QA-4)', () => {
-  it('stores and reads back text containing a NUL byte for byte (QA-4)', async () => {
+  it('stores and reads back text containing a NUL byte for byte', async () => {
     const { ctx } = await boot()
     ctx.store.migrate('t', [{ version: 1, sql: 'CREATE TABLE t (v TEXT)' }])
     const text = 'prompt\u0000with a NUL\u0000inside'
