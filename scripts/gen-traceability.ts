@@ -22,7 +22,8 @@ const clip = (text: string): string => {
 /** Requirements, quality attributes, and invariants, from their canonical documents. */
 export function items(): Item[] {
   const out: Item[] = []
-  const srs = readFileSync(join(root, 'docs', 'requirements', 'SRS.md'), 'utf8')
+  // A trailing blank line, so the last requirement in the file is read like every other.
+  const srs = `${readFileSync(join(root, 'docs', 'requirements', 'SRS.md'), 'utf8')}\n\n`
   for (const m of srs.matchAll(/^- \*\*(REQ-[A-Z]+-\d+)\*\*\s+([\s\S]*?)(?=\n- \*\*REQ-|\n#|\n\n)/gm)) {
     out.push({ id: m[1]!, area: 'Requirements', statement: clip(m[2]!), source: 'requirements/SRS.md' })
   }
@@ -73,6 +74,12 @@ export function evidence(): Map<string, Evidence[]> {
   return found
 }
 
+/** Ids a test cites that no canonical document defines: a typo, or a requirement not written yet. */
+export function undefinedCitations(): string[] {
+  const known = new Set(items().map((i) => i.id))
+  return [...evidence().entries()].filter(([id]) => !known.has(id)).map(([id, list]) => `${id} (${list[0]!.file}:${list[0]!.line})`)
+}
+
 export function render(): string {
   const all = items()
   const found = evidence()
@@ -100,6 +107,11 @@ export function render(): string {
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
+  const unknown = undefinedCitations()
+  if (unknown.length) {
+    console.error(`tests cite ids no requirement, quality attribute, or invariant defines: ${unknown.join(', ')}`)
+    process.exit(1)
+  }
   const text = render()
   if (process.argv.includes('--check')) {
     if (readFileSync(OUT, 'utf8') !== text) {

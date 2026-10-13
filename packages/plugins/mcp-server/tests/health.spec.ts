@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
@@ -7,7 +7,7 @@ import { type HealthSources, healthReport } from '../src/health.ts'
 const home = mkdtempSync(join(tmpdir(), 'system-health-'))
 afterAll(() => rmSync(home, { recursive: true, force: true }))
 const base = (extra: Partial<HealthSources> = {}): HealthSources => ({
-  dshHome: home, storeCheck: () => 'ok', accounts: async () => [{ id: 'main', status: 'ready' }], workers: async () => [{ worker: 'w1', state: 'ready' }],
+  dshHome: home, storeCheck: () => 'ok', keyCustody: () => ({ keyApart: true }), accounts: async () => [{ id: 'main', status: 'ready' }], workers: async () => [{ worker: 'w1', state: 'ready' }],
   events: () => [], nodeVersion: '24.21.0', minFreeBytes: 1, driftWindowMs: 86_400_000, ...extra,
 })
 const check = async (extra: Partial<HealthSources>, name: string) => (await healthReport(base(extra))).checks.find((c) => c.name === name)
@@ -19,14 +19,20 @@ describe('host health (REQ-HOST-6)', () => {
     expect(report.checks.map((c) => c.name)).toEqual(['runtime', 'store', 'disk', 'vault-key', 'accounts', 'workers', 'ui-drift'])
   })
 
-  it('is degraded by an account to sign in again, an unavailable Worker, low disk, or a vault key beside the vault, saying what to do', async () => {
+  it('is degraded by an account to sign in again, a Worker that cannot take work, or low disk, saying what to do', async () => {
     expect(await check({ accounts: async () => [{ id: 'main', status: 'reauth-required' }] }, 'accounts')).toMatchObject({ state: 'degraded', detail: expect.stringContaining('main (reauth-required)') })
-    expect(await check({ workers: async () => [{ worker: 'w1', state: 'ready' }, { worker: 'w2', state: 'unavailable' }] }, 'workers')).toMatchObject({ state: 'degraded', detail: expect.stringContaining('w2') })
+    expect(await check({ workers: async () => [{ worker: 'w1', state: 'ready' }, { worker: 'w2', state: 'reauth-required' }] }, 'workers')).toMatchObject({ state: 'degraded', detail: expect.stringContaining('w2 (reauth-required)') })
     expect(await check({ minFreeBytes: Number.MAX_SAFE_INTEGER }, 'disk')).toMatchObject({ state: 'degraded' })
-    mkdirSync(join(home, 'system'), { recursive: true })
-    writeFileSync(join(home, 'system', 'vault.key'), 'k')
-    expect(await check({}, 'vault-key')).toMatchObject({ state: 'degraded', detail: expect.stringContaining('key-custody') })
-    rmSync(join(home, 'system', 'vault.key'))
+  })
+
+  it('advises on a vault key beside the vault without alarming: the default must not page every install', async () => {
+    expect(await check({ keyCustody: () => ({ keyApart: false }) }, 'vault-key')).toMatchObject({ state: 'ok', detail: expect.stringContaining('key-custody') })
+  })
+
+  it('reports a check whose source throws as down, and still reports every other check', async () => {
+    const report = await healthReport(base({ accounts: async () => { throw new Error('duplicate account id') } }))
+    expect(report.checks.find((c) => c.name === 'accounts')).toMatchObject({ state: 'down', detail: expect.stringContaining('duplicate account id') })
+    expect(report.checks.map((c) => c.name)).toContain('ui-drift')
   })
 
   it('is degraded by a provider UI change in the window: a drift event, or a step that failed as ui_drift', async () => {
@@ -36,7 +42,7 @@ describe('host health (REQ-HOST-6)', () => {
 
   it('is down when the store fails its integrity check, no Worker is available, or the runtime is outside the supported range', async () => {
     expect((await healthReport(base({ storeCheck: () => 'row 7 missing from index' }))).state).toBe('down')
-    expect((await healthReport(base({ workers: async () => [{ worker: 'w1', state: 'unavailable' }] }))).state).toBe('down')
+    expect((await healthReport(base({ workers: async () => [{ worker: 'w1', state: 'reauth-required' }, { worker: 'w2', state: 'quota-exhausted' }] }))).state).toBe('down')
     expect((await healthReport(base({ nodeVersion: '22.23.3' }))).state).toBe('down')
   })
 })

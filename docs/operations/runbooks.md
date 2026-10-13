@@ -197,6 +197,7 @@ ExecStart=<node> <system> start
 ExecStop=<node> <system> shutdown --deadline 600
 TimeoutStopSec=660
 Restart=on-failure
+UMask=0077
 
 [Install]
 WantedBy=default.target

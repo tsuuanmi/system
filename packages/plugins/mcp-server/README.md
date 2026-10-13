@@ -32,8 +32,12 @@ the `system` CLI
     integrity, free disk, vault key custody, accounts to sign in again, Worker
     availability, provider UI drift within `driftWindowHours`) as `ok`,
     `degraded`, or `down`, and the worst of them. Only an operator-scope caller
-    sees what to do; a client sees the states. It reads the mounted services
-    (`accounts`, `workers`, `eventLog`) and skips those not mounted.
+    sees the details; a client sees each check's name and state. It reads the
+    mounted services (`credentials`, `accounts`, `workers`, `eventLog`), skips
+    those not mounted, and reports a check whose source throws as down. Workers
+    count as available only when `ready` or `busy`. A vault key beside the vault
+    is advice, never degraded (the default must not page). The store integrity
+    check is reused for `storeCheckMinutes`.
 - **`GET /healthz`:** liveness for a supervisor, with no token and no data
   (`ok`).
   - `ask`, `research`, and `result` are placeholders. When `ctx.workflow` is
@@ -42,7 +46,7 @@ the `system` CLI
     work.
 - **Config:** `path`, `tokenDir`, `discoveryFile`, `allowedHosts`,
   `maxBodyBytes`, `minFreeBytes` (default 1 GiB), `driftWindowHours`
-  (default 24).
+  (default 24), `storeCheckMinutes` (default 15).
 - **Injects:** `webServer`. It uses `ctx.get('artifacts')`, `ctx.get('store')`,
   `ctx.get('providers')`, `ctx.get('accounts')`, `ctx.get('workers')`, and
   `ctx.get('eventLog')` optionally.

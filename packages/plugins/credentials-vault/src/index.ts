@@ -43,6 +43,8 @@ export class VaultCredentialProvider extends CredentialProvider {
   })
 
   readonly path: string
+  /** Where the key is kept (`keyFile`, or beside the vault by default). */
+  readonly keyFile: string
   private readonly key: Buffer
   private readonly lockWaitMs: number
   private queue: Promise<unknown> = Promise.resolve()
@@ -54,6 +56,7 @@ export class VaultCredentialProvider extends CredentialProvider {
     this.lockWaitMs = config.lockWaitMs ?? 30_000
     ensurePrivateDir(dirname(this.path))
     const keyFile = config.keyFile ?? join(dshHome(), 'system', 'vault.key')
+    this.keyFile = keyFile
     this.key = readOrCreateSecretFile(keyFile, 32)
     // Agent Workers never read the vault or its key, wherever the operator keeps them (ADR-0024).
     ctx.effect(() => {
@@ -175,6 +178,11 @@ export class VaultCredentialProvider extends CredentialProvider {
     const run = this.queue.then(task, task)
     this.queue = run.catch(() => undefined)
     return run
+  }
+
+  /** Whether the key is kept apart from the vault (key custody, docs/operations/runbooks.md#key-custody). */
+  custody(): { keyApart: boolean; keyFile: string; vault: string } {
+    return { keyApart: dirname(this.keyFile) !== dirname(this.path), keyFile: this.keyFile, vault: this.path }
   }
 }
 

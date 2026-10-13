@@ -161,4 +161,16 @@ describe('disposal during an in-flight mutation (review)', () => {
     const reopened = await boot(dir)
     expect(await reopened.credentials.readRecord(ACCOUNT)).toMatchObject({ grant: { token: 'kept' } })
   })
+
+  it('reports where its key is kept: beside the vault by default, apart when keyFile points elsewhere (key custody)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'system-vault-'))
+    cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+    const beside = await boot(dir)
+    expect((beside.credentials as unknown as VaultCredentialProvider).custody()).toEqual({ keyApart: false, keyFile: join(dir, 'vault.key'), vault: join(dir, 'vault.enc') })
+    const apart = new Context()
+    const fiber = apart.plugin(VaultCredentialProvider, { path: join(dir, 'other', 'vault.enc'), keyFile: join(dir, 'vault.key') })
+    await fiber
+    cleanups.push(() => fiber.dispose())
+    expect((apart.credentials as unknown as VaultCredentialProvider).custody()).toMatchObject({ keyApart: true })
+  })
 })

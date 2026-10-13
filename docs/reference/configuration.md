@@ -170,6 +170,7 @@
 | `maxBodyBytes` | number (0…) | `1048576` | Largest accepted request body |
 | `minFreeBytes` | number (0…) | `1073741824` | Free space under the DSH home below which health is degraded |
 | `driftWindowHours` | number (1…) | `24` | How long a provider UI change keeps health degraded |
+| `storeCheckMinutes` | number (1…) | `15` | Minutes the store integrity check result is reused (it blocks the host while it runs) |
 
 ## `profile-scientific-research`
 

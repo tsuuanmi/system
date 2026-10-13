@@ -269,10 +269,10 @@ export function formatEvents(events: readonly EventLine[]): string[] {
     .filter((part) => part !== '').join(' '))
 }
 
-export interface HealthView { state: 'ok' | 'degraded' | 'down'; checks: Array<{ name: string; state: 'ok' | 'degraded' | 'down'; detail: string }> }
+export interface HealthView { state: 'ok' | 'degraded' | 'down'; checks: Array<{ name: string; state: 'ok' | 'degraded' | 'down'; detail?: string }> }
 
 /** The exit code `system health` ends with: 0 healthy, 1 degraded, 2 down. */
-export const healthExit = (state: HealthView['state']): number => ({ ok: 0, degraded: 1, down: 2 })[state]
+export const healthExit = (state: string): number => ({ ok: 0, degraded: 1, down: 2 } as Record<string, number>)[state] ?? 2
 
 /** The running host's health, or `down` when it does not answer. */
 export async function hostHealth(call: typeof callTool = callTool): Promise<HealthView> {
@@ -288,7 +288,7 @@ export async function hostHealth(call: typeof callTool = callTool): Promise<Heal
 
 /** One line per check: the healthy ones short, the others with what to do. */
 export function formatHealth(health: HealthView): string[] {
-  return [`health: ${health.state}`, ...health.checks.map((c) => `  ${c.state.padEnd(8)} ${c.name.padEnd(10)} ${c.detail}`)]
+  return [`health: ${health.state}`, ...health.checks.map((c) => `  ${c.state.padEnd(8)} ${c.name.padEnd(10)} ${c.detail ?? ''}`.trimEnd())]
 }
 
 /**

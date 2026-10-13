@@ -24,6 +24,8 @@ It replaces `dsh-credentials-local`, which stores plain YAML
   attacker who can read the whole account. To separate them, point `keyFile` at a
   systemd credential (`$CREDENTIALS_DIRECTORY/<name>`) or at another disk
   ([key custody](../../../docs/operations/runbooks.md#key-custody)).
+- **Custody:** `custody()` reports whether the key is kept apart from the
+  vault, which `status` health shows as advice.
 - **Hidden from agents:** the vault file and its key are registered secret
   paths while the plugin runs, wherever they are kept ([ADR-0024](../../../docs/decisions/adr/0024-agent-workers-confined-for-reads.md)).
 - **Account credentials** (email, password, TOTP secret) are stored as a

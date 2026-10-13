@@ -79,10 +79,11 @@ describe('system MCP server on ctx.webServer', () => {
     const health = async (token: string) => ((await (await connect(url, token)).callTool({ name: 'status', arguments: {} })).structuredContent as { health: Health }).health
     const operator = await health(tokens.operator)
     const client = await health(tokens.client)
-    expect(operator.checks.map((c) => c.name)).toEqual(['runtime', 'store', 'disk', 'vault-key'])
+    expect(operator.checks.map((c) => c.name)).toEqual(['runtime', 'store', 'disk'])
     expect(operator.checks.find((c) => c.name === 'store')).toMatchObject({ state: 'ok' })
     expect(client.state).toBe(operator.state)
-    for (const c of client.checks) if (c.state !== 'ok') expect(c.detail).toBe('ask the operator')
+    // A client sees which checks are ok, never versions, paths, sizes, or names.
+    expect(client.checks).toEqual(operator.checks.map(({ name, state }) => ({ name, state })))
   })
 
   it('reads the event log for the operator only, in order, a page at a time (QA-7, ADR-0023)', async () => {

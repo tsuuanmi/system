@@ -50,7 +50,7 @@ describe('system CLI (PR #3 kernel review)', () => {
     const report = { state: 'degraded' as const, checks: [{ name: 'store', state: 'ok' as const, detail: 'integrity check passed' }, { name: 'accounts', state: 'degraded' as const, detail: 'main (reauth-required)' }] }
     expect(await hostHealth(async () => ({ isError: false, text: '', structured: { health: report } }))).toEqual(report)
     expect(formatHealth(report)).toEqual(['health: degraded', '  ok       store      integrity check passed', '  degraded accounts   main (reauth-required)'])
-    expect([healthExit('ok'), healthExit('degraded'), healthExit('down')]).toEqual([0, 1, 2])
+    expect([healthExit('ok'), healthExit('degraded'), healthExit('down'), healthExit('unknown')]).toEqual([0, 1, 2, 2])
     const down = await hostHealth(async () => { throw new Error('connect ECONNREFUSED 127.0.0.1:47317') })
     expect(down).toMatchObject({ state: 'down', checks: [{ name: 'host', detail: expect.stringContaining('ECONNREFUSED') }] })
   })

@@ -34,6 +34,8 @@ export interface Config {
   minFreeBytes?: number
   /** How far back a provider UI change keeps health degraded (default 24 h). */
   driftWindowHours?: number
+  /** How long the store's integrity check result is reused, in minutes (default 15): it blocks while it runs. */
+  storeCheckMinutes?: number
 }
 
 export type { ToolContext, ToolHandler, ToolScope, ToolSpec } from '@tsuuanmi/system-gateway-core'
@@ -77,9 +79,12 @@ export class McpEndpoint extends McpTools {
     maxBodyBytes: z.natural().default(1_048_576).description('Largest accepted request body'),
     minFreeBytes: z.natural().default(2 ** 30).description('Free space under the DSH home below which health is degraded'),
     driftWindowHours: z.natural().min(1).default(24).description('How long a provider UI change keeps health degraded'),
+    storeCheckMinutes: z.natural().min(1).default(15).description('Minutes the store integrity check result is reused (it blocks the host while it runs)'),
   })
 
   private readonly tools = new Map<string, Tool>()
+  /** The store integrity check, run at most once per `storeCheckMinutes`: it is synchronous on the shared connection. */
+  private storeCheck: { at: number; result: string } | undefined
 
   constructor(ctx: Context, private readonly config: Config = {}) {
     super(ctx)
@@ -192,21 +197,30 @@ export class McpEndpoint extends McpTools {
   }
 
   /** The health report; a client caller sees each check's state, the operator also what to do. */
-  private async health(scope: ToolScope): Promise<HealthReport> {
+  private async health(scope: ToolScope): Promise<HealthReport | { state: HealthReport['state']; checks: Array<{ name: string; state: string }> }> {
     const store = this.ctx.get('store')
+    const credentials = this.ctx.get('credentials') as { custody?: () => { keyApart: boolean } } | undefined
     const accounts = this.ctx.get('accounts')
     const workers = this.ctx.get('workers')
     const eventLog = this.ctx.get('eventLog')
     const report = await healthReport({
       dshHome: dshHome(),
-      ...(store ? { storeCheck: () => String(Object.values(store.db.prepare('PRAGMA quick_check(1)').get() ?? {})[0]) } : {}),
+      ...(store ? { storeCheck: () => this.cachedStoreCheck(() => String(Object.values(store.db.prepare('PRAGMA quick_check(1)').get() ?? {})[0])) } : {}),
+      ...(credentials?.custody ? { keyCustody: () => credentials.custody!() } : {}),
       ...(accounts ? { accounts: async () => (await accounts.list()).map((a: { id: string; status: string }) => ({ id: a.id, status: a.status })) } : {}),
       ...(workers ? { workers: async () => (await workers.list()).map((w: { worker: string; state: string }) => ({ worker: w.worker, state: w.state })) } : {}),
       ...(eventLog ? { events: (type: string, since: string) => eventLog.query({ type, since, limit: 1000 }) } : {}),
       minFreeBytes: this.config.minFreeBytes ?? 2 ** 30,
       driftWindowMs: (this.config.driftWindowHours ?? 24) * 60 * 60_000,
     })
-    return scope === 'operator' ? report : { state: report.state, checks: report.checks.map((c) => ({ ...c, detail: c.state === 'ok' ? c.detail : 'ask the operator' })) }
+    // A client learns only what is ok and what is not; versions, paths, sizes, and names stay the operator's.
+    return scope === 'operator' ? report : { state: report.state, checks: report.checks.map(({ name, state }) => ({ name, state })) }
+  }
+
+  private cachedStoreCheck(run: () => string): string {
+    const ttl = (this.config.storeCheckMinutes ?? 15) * 60_000
+    if (!this.storeCheck || Date.now() - this.storeCheck.at > ttl) this.storeCheck = { at: Date.now(), result: run() }
+    return this.storeCheck.result
   }
 
   private builtins(): void {

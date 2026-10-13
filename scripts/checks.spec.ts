@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest'
 import { checkDocs, slugify } from './check-docs.ts'
 import { checkSchemas, loadSchemas, schemaId } from './check-schemas.ts'
 import { scanText } from './check-secrets.ts'
+import { undefinedCitations } from './gen-traceability.ts'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const schemas = join(root, 'schemas')
@@ -93,5 +94,11 @@ describe('CI workflows', () => {
         .filter((ref) => !ref.startsWith('./') && !/@[0-9a-f]{40}$/.test(ref))
         .map((ref) => `${file}: ${ref}`))
     expect(unpinned).toEqual([])
+  })
+})
+
+describe('traceability', () => {
+  it('finds no test citing an id that no requirement, quality attribute, or invariant defines', () => {
+    expect(undefinedCitations()).toEqual([])
   })
 })
