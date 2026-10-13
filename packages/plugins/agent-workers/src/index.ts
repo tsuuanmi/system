@@ -279,67 +279,47 @@ export class AgentWorkers extends Service {
   }
 
   private async runOwned(runId: string): Promise<void> {
-    const resource = `agent-run:${runId}`
-    let lease = this.ctx.leases.acquire(resource, LEASE_TTL_MS)
-    if (!lease) {
-      // Another process holds it: it finishes the run, or crashed and its lease expires.
-      const holder = this.ctx.leases.current(resource)
-      this.retryLater(runId, Math.max(1000, (holder?.expiresAt ?? Date.now()) - Date.now() + 1000))
-      return
-    }
-    const lost = new AbortController()
-    const heartbeat = setInterval(() => {
+    // While another process holds it, it finishes the run, or crashed and its lease expires.
+    const outcome = await this.ctx.leases.hold(`agent-run:${runId}`, LEASE_TTL_MS, async ({ lease: current, lost }) => {
+      const cancel = new AbortController()
+      this.cancels.set(runId, cancel)
+      const signal = AbortSignal.any([lost, this.stopped.signal, cancel.signal])
       try {
-        lease = this.ctx.leases.renew(lease!, LEASE_TTL_MS)
+        const row = this.row(runId)
+        if (!row || row.status === 'completed' || row.status === 'failed') return
+        if (row.submitted_at) {
+          // Started before a stop: the agent may already have acted in its workspace.
+          this.fail(row, new ProviderError('reconciliation_failed',
+            `the host stopped while ${row.worker} was running this task${row.native_handle ? ` (native session ${row.native_handle})` : ''}; it is not run again automatically`), current)
+          return
+        }
+        const worker = this.workers.get(row.worker)
+        if (!worker) throw new ProviderError('config_error', `${row.worker} is no longer configured`)
+        // INV-12: the prompt reaches the agent's remote model, so it is checked before anything starts.
+        const egress = await this.ctx.egress.check({ payload: row.prompt, classification: row.classification as Classification, workerClass: 'agent' })
+        this.ctx.store.db.prepare('UPDATE agent_runs SET egress_decision = ? WHERE run_id = ?').run(egress.decision, row.run_id)
+        if (!egress.allowed) {
+          this.fail(row, new ProviderError('egress_denied', `${egress.reason} (decision ${egress.decision})`), current)
+          return
+        }
+        await this.scheduler(row.worker).runTurn(row.worker, signal, async (slot) => this.execute(row, worker, AbortSignal.any([signal, slot.signal]), current))
       } catch (error) {
-        lost.abort(error)
+        if (this.stopped.signal.aborted) return
+        if (error instanceof LeaseLost || error instanceof StaleGeneration || lost.aborted) {
+          this.retryLater(runId, LEASE_TTL_MS)
+          return
+        }
+        const row = this.row(runId)
+        if (cancel.signal.aborted && row && row.status !== 'completed' && row.status !== 'failed') {
+          this.fail(row, new ProviderError('aborted', 'cancelled by the operator'), current)
+          return
+        }
+        if (row && row.status !== 'completed' && row.status !== 'failed') this.fail(row, error, current)
+      } finally {
+        this.cancels.delete(runId)
       }
-    }, LEASE_TTL_MS / 3)
-    heartbeat.unref()
-    const current = (): Lease => lease!
-    const cancel = new AbortController()
-    this.cancels.set(runId, cancel)
-    const signal = AbortSignal.any([lost.signal, this.stopped.signal, cancel.signal])
-    try {
-      const row = this.row(runId)
-      if (!row || row.status === 'completed' || row.status === 'failed') return
-      if (row.submitted_at) {
-        // Started before a stop: the agent may already have acted in its workspace.
-        this.fail(row, new ProviderError('reconciliation_failed',
-          `the host stopped while ${row.worker} was running this task${row.native_handle ? ` (native session ${row.native_handle})` : ''}; it is not run again automatically`), current)
-        return
-      }
-      const worker = this.workers.get(row.worker)
-      if (!worker) throw new ProviderError('config_error', `${row.worker} is no longer configured`)
-      // INV-12: the prompt reaches the agent's remote model, so it is checked before anything starts.
-      const egress = await this.ctx.egress.check({ payload: row.prompt, classification: row.classification as Classification, workerClass: 'agent' })
-      this.ctx.store.db.prepare('UPDATE agent_runs SET egress_decision = ? WHERE run_id = ?').run(egress.decision, row.run_id)
-      if (!egress.allowed) {
-        this.fail(row, new ProviderError('egress_denied', `${egress.reason} (decision ${egress.decision})`), current)
-        return
-      }
-      await this.scheduler(row.worker).runTurn(row.worker, signal, async (slot) => this.execute(row, worker, AbortSignal.any([signal, slot.signal]), current))
-    } catch (error) {
-      if (this.stopped.signal.aborted) return
-      if (error instanceof LeaseLost || error instanceof StaleGeneration || lost.signal.aborted) {
-        this.retryLater(runId, LEASE_TTL_MS)
-        return
-      }
-      const row = this.row(runId)
-      if (cancel.signal.aborted && row && row.status !== 'completed' && row.status !== 'failed') {
-        this.fail(row, new ProviderError('aborted', 'cancelled by the operator'), current)
-        return
-      }
-      if (row && row.status !== 'completed' && row.status !== 'failed') this.fail(row, error, current)
-    } finally {
-      this.cancels.delete(runId)
-      clearInterval(heartbeat)
-      try {
-        this.ctx.leases.release(current())
-      } catch {
-        // the store may already be closing; an unreleased lease simply expires
-      }
-    }
+    })
+    if (!outcome.held) this.retryLater(runId, outcome.retryInMs)
   }
 
   private async execute(row: RunRow, worker: AgentWorkerConfig, signal: AbortSignal, lease: () => Lease): Promise<void> {

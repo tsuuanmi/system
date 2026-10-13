@@ -203,73 +203,53 @@ export class Engine {
   }
 
   private async advance(runId: string): Promise<void> {
-    const resource = `run:${runId}`
-    let lease = this.ctx.leases.acquire(resource, LEASE_TTL_MS)
-    if (!lease) {
-      const holder = this.ctx.leases.current(resource)
-      this.retryLater(runId, Math.max(1000, (holder?.expiresAt ?? Date.now()) - Date.now() + 1000))
-      return
-    }
-    const lost = new AbortController()
-    const operator = new AbortController()
-    this.runAborts.set(runId, operator)
-    const signal = AbortSignal.any([lost.signal, this.stopped.signal, operator.signal])
-    const heartbeat = setInterval(() => {
+    const outcome = await this.ctx.leases.hold(`run:${runId}`, LEASE_TTL_MS, async ({ lease: current, lost }) => {
+      const operator = new AbortController()
+      this.runAborts.set(runId, operator)
+      const signal = AbortSignal.any([lost, this.stopped.signal, operator.signal])
       try {
-        lease = this.ctx.leases.renew(lease!, LEASE_TTL_MS)
+        for (;;) {
+          if (signal.aborted) return
+          const run = this.runRow(runId)
+          if (!run || run.status !== 'running') return
+          const nodes = this.nodeRows(runId)
+          const failed = nodes.find((n) => n.state === 'FAILED')
+          if (failed) return this.finish(run, 'failed', { error: failed.error }, current)
+          if (nodes.every((n) => n.state === 'COMPLETED')) {
+            const final = nodes[nodes.length - 1]!
+            return this.finish(run, 'completed', { result: (JSON.parse(final.record) as NodeRecord).outputReceipt!.result }, current)
+          }
+          for (const node of nodes) {
+            if (node.state === 'WAITING' && node.dependsOnCompleted(nodes)) this.promote(run, node, nodes, current)
+          }
+          const current_ = this.nodeRows(runId)
+          if (current_.some((n) => n.state === 'FAILED')) continue
+          // A carried node completed without running (a converged team): its dependents may be ready now.
+          if (current_.filter((n) => n.state === 'COMPLETED').length > nodes.filter((n) => n.state === 'COMPLETED').length) continue
+          const active = current_.filter((n) => n.state === 'READY' || n.state === 'RUNNING')
+          if (!active.length) {
+            // Waiting for the operator: park until `approve` schedules the run again.
+            if (current_.some((n) => n.state === 'BLOCKED')) return
+            return this.finish(run, 'failed', { error: JSON.stringify({ kind: 'internal', disposition: 'CODE_FIX', message: 'no node can run' }) }, current)
+          }
+          await Promise.all(active.map((node) => this.execute(run, node, current, signal)))
+        }
       } catch (error) {
-        lost.abort(error)
-      }
-    }, LEASE_TTL_MS / 3)
-    heartbeat.unref()
-    const current = (): Lease => lease!
-    try {
-      for (;;) {
-        if (signal.aborted) return
+        if (this.stopped.signal.aborted || operator.signal.aborted) return
+        if (lost.aborted || error instanceof LeaseLost || error instanceof StaleGeneration) {
+          // Ownership was lost (a host that slept past the lease, or a takeover): look again
+          // once the lease can be taken, so the run is never stranded until the next start.
+          this.retryLater(runId, 1000)
+          return
+        }
+        // A scheduler exception blocks the run for a code fix; it never crash-loops.
         const run = this.runRow(runId)
-        if (!run || run.status !== 'running') return
-        const nodes = this.nodeRows(runId)
-        const failed = nodes.find((n) => n.state === 'FAILED')
-        if (failed) return this.finish(run, 'failed', { error: failed.error }, current)
-        if (nodes.every((n) => n.state === 'COMPLETED')) {
-          const final = nodes[nodes.length - 1]!
-          return this.finish(run, 'completed', { result: (JSON.parse(final.record) as NodeRecord).outputReceipt!.result }, current)
-        }
-        for (const node of nodes) {
-          if (node.state === 'WAITING' && node.dependsOnCompleted(nodes)) this.promote(run, node, nodes, current)
-        }
-        const current_ = this.nodeRows(runId)
-        if (current_.some((n) => n.state === 'FAILED')) continue
-        // A carried node completed without running (a converged team): its dependents may be ready now.
-        if (current_.filter((n) => n.state === 'COMPLETED').length > nodes.filter((n) => n.state === 'COMPLETED').length) continue
-        const active = current_.filter((n) => n.state === 'READY' || n.state === 'RUNNING')
-        if (!active.length) {
-          // Waiting for the operator: park until `approve` schedules the run again.
-          if (current_.some((n) => n.state === 'BLOCKED')) return
-          return this.finish(run, 'failed', { error: JSON.stringify({ kind: 'internal', disposition: 'CODE_FIX', message: 'no node can run' }) }, current)
-        }
-        await Promise.all(active.map((node) => this.execute(run, node, current, signal)))
+        if (run?.status === 'running') this.finish(run, 'failed', { error: JSON.stringify({ kind: 'internal', disposition: 'CODE_FIX', message: (error as Error).message }) }, current)
+      } finally {
+        if (this.runAborts.get(runId) === operator) this.runAborts.delete(runId)
       }
-    } catch (error) {
-      if (this.stopped.signal.aborted || operator.signal.aborted) return
-      if (lost.signal.aborted || error instanceof LeaseLost || error instanceof StaleGeneration) {
-        // Ownership was lost (a host that slept past the lease, or a takeover): look again
-        // once the lease can be taken, so the run is never stranded until the next start.
-        this.retryLater(runId, 1000)
-        return
-      }
-      // A scheduler exception blocks the run for a code fix; it never crash-loops.
-      const run = this.runRow(runId)
-      if (run?.status === 'running') this.finish(run, 'failed', { error: JSON.stringify({ kind: 'internal', disposition: 'CODE_FIX', message: (error as Error).message }) }, current)
-    } finally {
-      if (this.runAborts.get(runId) === operator) this.runAborts.delete(runId)
-      clearInterval(heartbeat)
-      try {
-        this.ctx.leases.release(current())
-      } catch {
-        // the store may already be closing; an unreleased lease simply expires
-      }
-    }
+    })
+    if (!outcome.held) this.retryLater(runId, outcome.retryInMs)
   }
 
   /** WAITING → READY: render the input from the dependencies' results and bind it by hash. */

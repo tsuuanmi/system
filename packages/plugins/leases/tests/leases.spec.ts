@@ -90,3 +90,42 @@ describe('review fixes (PR #3 kernel review)', () => {
     expect(() => ctx.leases.acquire('bad resource with spaces!', 1000, 'a', 0)).toThrow(/lease@1.0/)
   })
 })
+
+/** One lease loop for every durable runner (turns, agent runs, workflow runs). */
+describe('ctx.leases.hold', () => {
+  it('runs the body under a held lease, then releases it, also when the body throws', async () => {
+    const ctx = await boot()
+    const seen = await ctx.leases.hold('run:a', 60_000, async (h) => ({ generation: h.lease().generation, lost: h.lost.aborted, holder: ctx.leases.current('run:a')?.token }))
+    expect(seen).toMatchObject({ held: true, value: { generation: 1, lost: false } })
+    expect((seen as { value: { holder?: string } }).value.holder).toBeTruthy()
+    expect(ctx.leases.current('run:a')).toBeUndefined()
+    await expect(ctx.leases.hold('run:a', 60_000, async () => { throw new Error('boom') })).rejects.toThrow('boom')
+    expect(ctx.leases.current('run:a')).toBeUndefined()
+  })
+
+  it('says when to look again while another holder\'s lease is live: its expiry plus a second, at least a second', async () => {
+    const ctx = await boot()
+    ctx.leases.acquire('run:b', 30_000, 'other-host')
+    let ran = false
+    const outcome = await ctx.leases.hold('run:b', 60_000, async () => { ran = true })
+    expect(ran).toBe(false)
+    expect(outcome.held).toBe(false)
+    const wait = (outcome as { retryInMs: number }).retryInMs
+    expect(wait).toBeGreaterThan(30_000)
+    expect(wait).toBeLessThanOrEqual(31_000)
+  })
+
+  it('renews the lease on a heartbeat, and aborts `lost` when the lease is taken from it', async () => {
+    const ctx = await boot()
+    const outcome = await ctx.leases.hold('run:c', 1500, async (h) => {
+      const first = h.lease().expiresAt
+      await new Promise((resolve) => setTimeout(resolve, 700))
+      const renewed = h.lease().expiresAt > first
+      ctx.leases.invalidate('run:c')
+      await new Promise((resolve) => setTimeout(resolve, 700))
+      return { renewed, lost: h.lost.aborted, reason: h.lost.reason }
+    })
+    expect(outcome).toMatchObject({ held: true, value: { renewed: true, lost: true } })
+    expect((outcome as { value: { reason: unknown } }).value.reason).toBeInstanceOf(LeaseLost)
+  })
+})

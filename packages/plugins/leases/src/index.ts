@@ -44,6 +44,17 @@ export class StaleGeneration extends Error {
   }
 }
 
+/** What a body holding a lease sees: the current lease (renewed by the heartbeat) and whether it was lost. */
+export interface Holding {
+  /** The lease as last renewed; present it to every fenced commit. */
+  lease(): Lease
+  /** Aborted (with the {@link LeaseLost}) when a heartbeat finds the lease expired, taken over, or invalidated. */
+  readonly lost: AbortSignal
+}
+
+/** A hold's outcome: the body's value, or, while another holder's lease is live, when to look again. */
+export type Held<T> = { held: true; value: T } | { held: false; retryInMs: number }
+
 interface Row { resource: string; owner: string | null; token: string | null; generation: number; expires_at: number | null }
 
 /** A stable-per-process owner id: `<host>:<pid>:<random>`. */
@@ -90,6 +101,39 @@ export class Leases extends Service {
         .run(resource, owner, token, generation, expiresAt)
       return lease
     })
+  }
+
+  /**
+   * Run `body` while holding `resource`: acquire, renew on a heartbeat every third of the TTL,
+   * then release (a release that fails, as the store closes, leaves the lease to expire). While
+   * another holder's lease is live, nothing runs and the caller learns when to look again: that
+   * lease's expiry plus a second, at least a second. The body decides what a lost lease means.
+   */
+  async hold<T>(resource: string, ttlMs: number, body: (holding: Holding) => Promise<T>): Promise<Held<T>> {
+    let lease = this.acquire(resource, ttlMs)
+    if (!lease) {
+      const holder = this.current(resource)
+      return { held: false, retryInMs: Math.max(1000, (holder?.expiresAt ?? Date.now()) - Date.now() + 1000) }
+    }
+    const lost = new AbortController()
+    const heartbeat = setInterval(() => {
+      try {
+        lease = this.renew(lease!, ttlMs)
+      } catch (error) {
+        lost.abort(error)
+      }
+    }, ttlMs / 3)
+    heartbeat.unref()
+    try {
+      return { held: true, value: await body({ lease: () => lease!, lost: lost.signal }) }
+    } finally {
+      clearInterval(heartbeat)
+      try {
+        this.release(lease)
+      } catch {
+        // the store may already be closing; an unreleased lease simply expires
+      }
+    }
   }
 
   /** Extend a live lease (heartbeat). Throws {@link LeaseLost} when it was expired, taken over, or invalidated. */

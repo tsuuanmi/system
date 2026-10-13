@@ -14,6 +14,11 @@
     `LeaseLost`.
   - `invalidate`: fences every holder at once.
   - `current`.
+  - `hold(resource, ttlMs, body)`: the one lease loop every durable runner uses
+    (website turns, agent runs, workflow runs). It acquires, renews on a heartbeat
+    every third of the TTL, aborts `lost` when a renewal fails, and releases when
+    the body ends. While another holder's lease is live it runs nothing and returns
+    when to look again: that lease's expiry plus a second, at least a second.
 - **Reuse:** the claim, heartbeat, and release by token follow
   `@gm-hz/agent-dag-workflow`. The generation fence is ours, because that package
   leaves fencing out of scope.

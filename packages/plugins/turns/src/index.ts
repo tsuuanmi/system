@@ -435,69 +435,49 @@ export class Turns extends Service {
       this.retryLater(turnId, 1000)
       return
     }
-    const resource = `turn:${turnId}`
-    let lease = this.ctx.leases.acquire(resource, LEASE_TTL_MS)
-    if (!lease) {
-      const holder = this.ctx.leases.current(resource)
-      this.retryLater(turnId, Math.max(1000, (holder?.expiresAt ?? Date.now()) - Date.now() + 1000))
-      return
-    }
-    const lost = new AbortController()
-    const heartbeat = setInterval(() => {
+    const outcome = await this.ctx.leases.hold(`turn:${turnId}`, LEASE_TTL_MS, async ({ lease: current, lost }) => {
+      const cancel = new AbortController()
+      this.cancels.set(turnId, cancel)
       try {
-        lease = this.ctx.leases.renew(lease!, LEASE_TTL_MS)
+        const row = this.row(turnId)
+        if (!row || TERMINAL.has(row.status)) return
+        const receipt = row.account ? this.ctx.turnReceipts.read(this.identity(row, row.account)) : undefined
+        if (row.status === 'running' && receipt?.status === 'SUBMITTED') {
+          if ((await this.reconcileSubmitted(row, receipt, AbortSignal.any([lost, cancel.signal, this.halted.signal]), current)) === 'done') return
+        }
+        // INV-12: the actual outgoing payload is checked before any Worker is chosen or anything is sent.
+        const egress = await this.ctx.egress.check({ payload: row.prompt, classification: row.classification ?? undefined, workerClass: 'website' })
+        this.update(turnId, { egress_decision: egress.decision }, current)
+        if (!egress.allowed) {
+          this.fail(turnId, new ProviderError('egress_denied', `${egress.reason} (decision ${egress.decision})`), current)
+          return
+        }
+        // The caller admitted the Worker; a turn never routes itself.
+        const account = row.account
+        if (!account || !row.worker) throw new ProviderError('internal', `turn ${turnId} has no admitted Worker`)
+        const scheduler = this.scheduler(account)
+        await scheduler.runTurn(row.session_id ?? row.turn_id, AbortSignal.any([lost, cancel.signal]), async (slot) => {
+          this.update(turnId, { status: 'running' }, current)
+          await this.execute(this.row(turnId)!, account, slot.signal, current)
+        })
       } catch (error) {
-        lost.abort(error)
+        if (this.stopping) return
+        if (cancel.signal.aborted && !lost.aborted) {
+          this.fail(turnId, new ProviderError('aborted', 'cancelled by the operator'), current)
+          return
+        }
+        if (error instanceof LeaseLost || error instanceof StaleGeneration || lost.aborted) {
+          // Lost ownership (for example, the host slept past the lease): look again once the lease
+          // can be taken, so the turn is never stranded until the next start.
+          this.retryLater(turnId, LEASE_TTL_MS)
+          return
+        }
+        this.fail(turnId, error, current)
+      } finally {
+        this.cancels.delete(turnId)
       }
-    }, LEASE_TTL_MS / 3)
-    heartbeat.unref()
-    const current = (): Lease => lease!
-    const cancel = new AbortController()
-    this.cancels.set(turnId, cancel)
-    try {
-      const row = this.row(turnId)
-      if (!row || TERMINAL.has(row.status)) return
-      const receipt = row.account ? this.ctx.turnReceipts.read(this.identity(row, row.account)) : undefined
-      if (row.status === 'running' && receipt?.status === 'SUBMITTED') {
-        if ((await this.reconcileSubmitted(row, receipt, AbortSignal.any([lost.signal, cancel.signal, this.halted.signal]), current)) === 'done') return
-      }
-      // INV-12: the actual outgoing payload is checked before any Worker is chosen or anything is sent.
-      const egress = await this.ctx.egress.check({ payload: row.prompt, classification: row.classification ?? undefined, workerClass: 'website' })
-      this.update(turnId, { egress_decision: egress.decision }, current)
-      if (!egress.allowed) {
-        this.fail(turnId, new ProviderError('egress_denied', `${egress.reason} (decision ${egress.decision})`), current)
-        return
-      }
-      // The caller admitted the Worker; a turn never routes itself.
-      const account = row.account
-      if (!account || !row.worker) throw new ProviderError('internal', `turn ${turnId} has no admitted Worker`)
-      const scheduler = this.scheduler(account)
-      await scheduler.runTurn(row.session_id ?? row.turn_id, AbortSignal.any([lost.signal, cancel.signal]), async (slot) => {
-        this.update(turnId, { status: 'running' }, current)
-        await this.execute(this.row(turnId)!, account, slot.signal, current)
-      })
-    } catch (error) {
-      if (this.stopping) return
-      if (cancel.signal.aborted && !lost.signal.aborted) {
-        this.fail(turnId, new ProviderError('aborted', 'cancelled by the operator'), current)
-        return
-      }
-      if (error instanceof LeaseLost || error instanceof StaleGeneration || lost.signal.aborted) {
-        // Lost ownership (for example, the host slept past the lease): look again once the lease
-        // can be taken, so the turn is never stranded until the next start.
-        this.retryLater(turnId, LEASE_TTL_MS)
-        return
-      }
-      this.fail(turnId, error, current)
-    } finally {
-      this.cancels.delete(turnId)
-      clearInterval(heartbeat)
-      try {
-        this.ctx.leases.release(current())
-      } catch {
-        // the store may already be closing; an unreleased lease simply expires
-      }
-    }
+    })
+    if (!outcome.held) this.retryLater(turnId, outcome.retryInMs)
   }
 
   /**

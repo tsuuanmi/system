@@ -42,6 +42,9 @@ Every scheduled unit holds a lease `{ owner, generation, expiresAt, signal }`.
   fence passes only if that exact lease (token **and** generation) still holds the
   resource and has not expired. Because it runs under the transaction's write lock, no
   successor can take over before the commit lands.
+- Every durable runner holds its lease through one loop, `ctx.leases.hold`:
+  acquire, a heartbeat at a third of the TTL, `lost` when a renewal fails, and
+  release. Each runner decides what a lost lease means and when to look again.
 - Website turns (`ctx.turns`) hold a `turn:<id>` lease with a heartbeat. The
   receipt written before the send, the routing, and the completion are fenced, so
   two processes sharing one home never send the same turn twice. This is covered

@@ -38,8 +38,11 @@ inside the DSH web app.
 
 These change no behavior. Each lands with its tests unchanged:
 
-- one durable-run mechanism for website turns (`turns`) and agent runs
-  (`agent-workers`).
+- one durable-run lifecycle for website turns (`turns`) and agent runs
+  (`agent-workers`): waiters, cancel, retries, and stop. The lease loop is
+  already shared (`ctx.leases.hold`). Run bodies and recovery stay separate on
+  purpose: a website turn is reconciled from its receipt, an agent run fails
+  closed.
 
 ## Later candidates
 
