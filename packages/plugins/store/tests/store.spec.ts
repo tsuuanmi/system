@@ -36,6 +36,16 @@ describe('ctx.store', () => {
     }
   })
 
+  it('refuses a store that newer code migrated further, naming the owner and both versions (REQ-HOST-2)', async () => {
+    const { ctx } = await boot()
+    const v1 = { version: 1, sql: 'CREATE TABLE t (id TEXT PRIMARY KEY)' }
+    const v2 = { version: 2, sql: 'ALTER TABLE t ADD COLUMN v TEXT' }
+    expect(ctx.store.migrate('test', [v1, v2])).toBe(2)
+    expect(() => ctx.store.migrate('test', [v1])).toThrow(/test is at schema version 2, newer than this release knows \(1\)/)
+    expect(ctx.store.migrate('test', [v1, v2])).toBe(0)
+    expect(ctx.store.migrate('other', [])).toBe(0)
+  })
+
   it('applies each migration once, per owner', async () => {
     const { ctx } = await boot()
     const migrations = [{ version: 1, sql: 'CREATE TABLE t (id TEXT PRIMARY KEY, revision INTEGER NOT NULL, v TEXT)' }]

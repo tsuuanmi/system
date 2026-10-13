@@ -9,7 +9,10 @@ the [M0 spike](../../../docs/research/m0-dsh-core-spike.md)).
     owner-only (`0600`, as are its `-wal` and `-shm` files; it holds prompts and
     answers) in an owner-only directory;
   - `transaction()`: `BEGIN IMMEDIATE`, with savepoints when nested;
-  - `migrate(owner, migrations)`: per-owner, recorded in `system_migrations`;
+  - `migrate(owner, migrations)`: per-owner, recorded in `system_migrations`. It
+    refuses a store whose recorded version for the owner is newer than any
+    migration the code knows, so an older release never opens a store a newer
+    one migrated;
   - `updateRevision()`: optimistic revision guard that throws `RevisionConflict`.
     No plugin calls it yet: those with revisioned records (such as `accounts`)
     check and bump the revision in their own write.
