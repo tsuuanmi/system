@@ -136,17 +136,20 @@ No arguments.
 
 ## `events`
 
-Read the event log in order (QA-7): entries after a cursor, optionally for one run, session, or type. Pass the last seq back as afterSeq for the next page.
+Read the event log in order (QA-7): entries after a cursor, optionally for one run, node, session, turn, or type, or since a time. Pass `next` back as afterSeq for the following page.
 
 Scope: `operator`
 
 | Argument | Type | Required | Description |
 |---|---|---|---|
-| `runId` | string |  |  |
-| `sessionId` | string |  |  |
-| `type` | string |  |  |
-| `afterSeq` | integer |  |  |
-| `limit` | integer |  |  |
+| `runId` | string |  | Only this run's entries |
+| `nodeId` | string |  | Only this node's entries |
+| `sessionId` | string |  | Only this session's entries |
+| `turnId` | string |  | Only this provider turn's entries |
+| `type` | string |  | Only entries of this type, e.g. workflow.node.failed |
+| `since` | string |  | Only entries at or after this time (ISO 8601; read as UTC) |
+| `afterSeq` | integer |  | The cursor: entries after this seq (default 0, the start) |
+| `limit` | integer |  | Entries per page (default 100, at most 1000) |
 
 ## `explain`
 

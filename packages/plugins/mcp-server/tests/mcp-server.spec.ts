@@ -146,6 +146,13 @@ describe('scoped tokens', () => {
     method: 'POST', body, headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', authorization: `Bearer ${token}` },
   })
 
+  it('refuses a client token calling the operator\'s events tool (QA-14, QA-7)', async () => {
+    const { url, tokens } = await boot()
+    const refused = await post(url, tokens.client, callBody('events'))
+    expect(refused.status).toBe(403)
+    expect(refused.headers.get('www-authenticate')).toContain('insufficient_scope')
+  })
+
   it('shows a client only the client tools; the operator sees every tool; a tool that declares no scope is operator-only (QA-14)', async () => {
     const { url, tokens, ctx } = await boot()
     ctx.mcp.tool('op_only', { description: 'operator action', inputSchema: {} }, async () => ({ content: [{ type: 'text' as const, text: 'done' }] }))

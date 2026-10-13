@@ -179,8 +179,9 @@ lands. Each item names the requirement it closes and the test that proves it.
    An optional, bounded `account probe` schedule (off by default, sends no prompt,
    CON-3) proves the UI maps between runs. Notification is the operator's: a
    systemd `OnFailure=` unit or a timer around `system health`.
-3. **Event queries.** `system events --run|--node|--turn|--lease [--since]` and an
-   operator-scope `events` tool over the event log (QA-7).
+3. **Event queries.** `system events --run|--node|--session|--turn|--type
+   [--since]` and an operator-scope `events` tool over the event log (QA-7).
+   Entries carry no lease id; a lease's history is read by its run or turn.
 4. **Logs.** Standard error goes to the journal under a per-user systemd unit. A
    test asserts that no credential reaches logger output during a credential login
    (REQ-ACC-9).
@@ -193,8 +194,9 @@ lands. Each item names the requirement it closes and the test that proves it.
 1. **Split the workflow engine first.** The existing refactor of
    `packages/plugins/workflow/src/index.ts`, with tests unchanged, so the retention
    work lands in a reviewable module.
-2. **Bounded retention.** Events are trimmed by age (the `event-log` row's
-   `retainDays`). Runs and artifacts follow the design below, which deletes
+2. **Bounded retention.** Events are trimmed by age when the operator sets the
+   `event-log` row's `retainDays`: opt-in, so an upgrade never deletes history
+   the operator did not choose to drop. Runs and artifacts follow the design below, which deletes
    only what it can prove nothing retained needs:
    - **Runs.** A finished run whose `updatedAt` is older than the workflow row's
      `retainRunsDays` (0, the default, keeps every run) is deleted as `system

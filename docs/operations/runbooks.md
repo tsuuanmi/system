@@ -317,6 +317,6 @@ Rotate a scope's token when it may have leaked
 - **The event log** keeps every entry unless the `event-log` row sets
   `retainDays`; then entries older than that are deleted at start and daily.
   Nothing references an entry, so `system explain` and readers' cursors keep
-  working. `system health` looks back only `driftWindowHours`, so a short
+  working. Freed space is reused by the store, not returned to the disk. `system health` looks back only `driftWindowHours`, so a short
   retention does not hide recent drift.
 - **Backups** are yours to rotate.

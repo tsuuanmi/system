@@ -80,11 +80,30 @@ describe('review fixes (PR #3 kernel review)', () => {
     // Age the first entry by hand: the log assigns `at` itself.
     const old = new Date(Date.now() - 31 * day).toISOString()
     ctx.store.db.prepare("UPDATE events SET at = ? WHERE type = 'old.one'").run(old)
-    expect(ctx.eventLog.trim()).toBe(1)
+    expect(ctx.eventLog.trim(Date.now(), 1)).toBe(1)
     expect(ctx.eventLog.query().map((e) => e.type)).toEqual(['new.one'])
     const kept = await boot()
     kept.eventLog.append({ type: 'any.one' })
     expect(kept.eventLog.trim(Date.now() + 365 * day)).toBe(0)
+  })
+
+  it('trims a large backlog in batches, every old entry included (INV-9)', async () => {
+    const ctx = await boot({ retainDays: 1 })
+    for (let i = 0; i < 5; i++) ctx.eventLog.append({ type: 'old.entry' })
+    ctx.eventLog.append({ type: 'new.entry' })
+    ctx.store.db.prepare("UPDATE events SET at = '2000-01-01T00:00:00.000Z' WHERE type = 'old.entry'").run()
+    expect(ctx.eventLog.trim(Date.now(), 2)).toBe(5)
+    expect(ctx.eventLog.query().map((e) => e.type)).toEqual(['new.entry'])
+  })
+
+  it('filters by node and turn, normalizes since to UTC, and refuses a since that is not a time (QA-7)', async () => {
+    const ctx = await boot()
+    ctx.eventLog.append({ type: 'a.b', runId: 'r', nodeId: 'n1', turnId: 't1' })
+    ctx.eventLog.append({ type: 'a.b', runId: 'r', nodeId: 'n2' })
+    expect(ctx.eventLog.query({ nodeId: 'n2' })).toHaveLength(1)
+    expect(ctx.eventLog.query({ turnId: 't1' })).toHaveLength(1)
+    expect(ctx.eventLog.query({ since: '2000-01-01' })).toHaveLength(2)
+    expect(() => ctx.eventLog.query({ since: 'yesterday' })).toThrow(/not a time/)
   })
 
   it('reads what happened since a time, newest included, whatever came before (QA-7)', async () => {

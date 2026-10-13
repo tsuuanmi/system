@@ -38,7 +38,8 @@ const USAGE = `Usage: system <command>
   restore <dir> [--yes]     preview, then restore a backup (the profile must be stopped)
   drain [--deadline <s>]    admit no new runs and wait for running ones (default 600 s)
   resume                    admit new runs again after a drain
-  events [--run <id>] [--session <id>] [--type <t>] [--after <seq>] [--limit <n>] [--json]
+  events [--run <id>] [--node <id>] [--session <id>] [--turn <id>] [--type <t>] [--since <time>]
+         [--after <seq>] [--limit <n>] [--json]
                             the event log in order (operator); --after the printed next for more
   health [--json]           each check (runtime, store, disk, vault key, accounts, Workers, UI drift)
                             and what to do; exit 0 healthy, 1 degraded, 2 down or not running

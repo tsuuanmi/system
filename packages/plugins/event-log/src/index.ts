@@ -83,18 +83,36 @@ export class EventLog extends Service {
     // Bounded (INV-9): entries older than retainDays go, at start and then daily. Entries carry
     // no content that anything else references (decisions are artifacts), and cursors stay valid.
     ctx.effect(() => {
-      queueMicrotask(() => this.trim())
-      const daily = setInterval(() => this.trim(), 24 * 60 * 60_000)
+      // A failed trim (a busy store) is logged and retried on the next pass; it never stops the host.
+      const trim = (): void => {
+        try {
+          this.trim()
+        } catch (error) {
+          ctx.logger.warn('event-log: trimming old entries failed; the next daily pass retries')
+          ctx.logger.warn(error)
+        }
+      }
+      queueMicrotask(trim)
+      const daily = setInterval(trim, 24 * 60 * 60_000)
       daily.unref()
       return () => clearInterval(daily)
     })
   }
 
-  /** Delete entries older than `retainDays` before `now`; the count deleted. */
-  trim(now: number = Date.now()): number {
+  /**
+   * Delete entries older than `retainDays` before `now`, in batches of `batch` so a first trim of
+   * a large log never holds the store's write lock for long; the count deleted. Freed pages are
+   * reused by SQLite, not returned to the file system.
+   */
+  trim(now: number = Date.now(), batch = 10_000): number {
     if (!this.retainDays) return 0
     const cutoff = new Date(now - this.retainDays * 24 * 60 * 60_000).toISOString()
-    return Number(this.ctx.store.transaction((db) => db.prepare('DELETE FROM events WHERE at < ?').run(cutoff)).changes)
+    let deleted = 0
+    for (;;) {
+      const changes = Number(this.ctx.store.transaction((db) => db.prepare('DELETE FROM events WHERE seq IN (SELECT seq FROM events WHERE at < ? ORDER BY seq LIMIT ?)').run(cutoff, batch)).changes)
+      deleted += changes
+      if (changes < batch) return deleted
+    }
   }
 
   /** Validate and append one entry; the log assigns `seq` and `at`. */
@@ -118,18 +136,21 @@ export class EventLog extends Service {
   }
 
   /** Read entries after `afterSeq` in order, optionally filtered; at most 1000 per call. */
-  query(filter: { afterSeq?: number; type?: string; runId?: string; sessionId?: string; since?: string; limit?: number } = {}): SystemEvent[] {
+  query(filter: { afterSeq?: number; type?: string; runId?: string; nodeId?: string; sessionId?: string; turnId?: string; since?: string; limit?: number } = {}): SystemEvent[] {
     const clauses = ['seq > ?']
     const params: (string | number)[] = [filter.afterSeq ?? 0]
-    for (const [column, value] of [['type', filter.type], ['run_id', filter.runId], ['session_id', filter.sessionId]] as const) {
+    for (const [column, value] of [['type', filter.type], ['run_id', filter.runId], ['node_id', filter.nodeId], ['session_id', filter.sessionId], ['turn_id', filter.turnId]] as const) {
       if (value !== undefined) {
         clauses.push(`${column} = ?`)
         params.push(value)
       }
     }
     if (filter.since !== undefined) {
+      // Entries carry UTC ISO times; any time is normalized to that, and an invalid one refused.
+      const since = new Date(filter.since)
+      if (Number.isNaN(since.getTime())) throw new RangeError(`since is not a time: ${filter.since}`)
       clauses.push('at >= ?')
-      params.push(filter.since)
+      params.push(since.toISOString())
     }
     const limit = clampLimit(filter.limit)
     const rows = this.ctx.store.db.prepare(`SELECT entry FROM events WHERE ${clauses.join(' AND ')} ORDER BY seq LIMIT ${limit}`).all(...params) as { entry: string }[]

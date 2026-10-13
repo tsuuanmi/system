@@ -40,6 +40,7 @@ describe('system CLI (PR #3 kernel review)', () => {
 
   it('reads the event log by run, session, or type, a page after a cursor (QA-7)', () => {
     expect(parseEvents(['--run', 'r1', '--after', '12', '--limit', '50'])).toEqual({ runId: 'r1', afterSeq: 12, limit: 50 })
+    expect(parseEvents(['--node', 'n1', '--turn', 't1', '--since', '2026-10-14'])).toEqual({ nodeId: 'n1', turnId: 't1', since: '2026-10-14' })
     expect(parseEvents(['--bogus', 'x'])).toBeUndefined()
     expect(parseEvents(['--run'])).toBeUndefined()
     expect(formatEvents([{ seq: 3, at: '2026-10-14T00:00:00Z', type: 'workflow.node.failed', runId: 'r1', nodeId: 'n2', data: { kind: 'ui_drift' } }]))

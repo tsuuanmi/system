@@ -229,10 +229,16 @@ export class McpEndpoint extends McpTools {
       placeholder: false,
       spec: {
         scope: 'operator',
-        description: 'Read the event log in order (QA-7): entries after a cursor, optionally for one run, session, or type. Pass the last seq back as afterSeq for the next page.',
+        description: 'Read the event log in order (QA-7): entries after a cursor, optionally for one run, node, session, turn, or type, or since a time. Pass `next` back as afterSeq for the following page.',
         inputSchema: {
-          runId: zod.string().max(200).optional(), sessionId: zod.string().max(200).optional(), type: zod.string().max(200).optional(),
-          afterSeq: zod.number().int().min(0).optional(), limit: zod.number().int().min(1).max(1000).optional(),
+          runId: zod.string().max(200).optional().describe('Only this run\'s entries'),
+          nodeId: zod.string().max(200).optional().describe('Only this node\'s entries'),
+          sessionId: zod.string().max(200).optional().describe('Only this session\'s entries'),
+          turnId: zod.string().max(200).optional().describe('Only this provider turn\'s entries'),
+          type: zod.string().max(200).optional().describe('Only entries of this type, e.g. workflow.node.failed'),
+          since: zod.string().max(64).optional().describe('Only entries at or after this time (ISO 8601; read as UTC)'),
+          afterSeq: zod.number().int().min(0).optional().describe('The cursor: entries after this seq (default 0, the start)'),
+          limit: zod.number().int().min(1).max(1000).optional().describe('Entries per page (default 100, at most 1000)'),
         },
       },
       handler: async (args) => {

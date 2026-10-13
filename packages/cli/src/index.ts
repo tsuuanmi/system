@@ -253,7 +253,7 @@ export interface EventLine { seq: number; at: string; type: string; runId?: stri
 /** `system events` flags to the `events` tool's filter. */
 export function parseEvents(args: readonly string[]): Record<string, string | number> | undefined {
   const filter: Record<string, string | number> = {}
-  const names: Record<string, string> = { '--run': 'runId', '--session': 'sessionId', '--type': 'type', '--after': 'afterSeq', '--limit': 'limit' }
+  const names: Record<string, string> = { '--run': 'runId', '--node': 'nodeId', '--session': 'sessionId', '--turn': 'turnId', '--type': 'type', '--since': 'since', '--after': 'afterSeq', '--limit': 'limit' }
   for (let i = 0; i < args.length; i += 2) {
     const name = names[args[i]!]
     const value = args[i + 1]
