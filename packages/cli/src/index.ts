@@ -142,13 +142,25 @@ export function start(args: readonly string[] = [], home: string = dshHome()): P
   return new Promise((resolve) => child.on('exit', (code, signal) => resolve(exitCode(code, signal))))
 }
 
-interface Discovery { url: string; tokenFile: string; pid?: number }
+/** Control scopes (ADR-0023): the CLI acts as the operator; clients get `client`; model clients get `model`. */
+export type Scope = 'operator' | 'client' | 'model'
+
+interface Discovery { url: string; tokenFiles: Record<Scope, string>; pid?: number }
+
+/** The running profile's discovery file. */
+function discovery(home: string): Discovery {
+  const path = join(home, 'system', 'mcp.json')
+  if (!existsSync(path)) throw new Error(`no discovery file at ${path}; is \`system start\` running?`)
+  const found = JSON.parse(readFileSync(path, 'utf8')) as Partial<Discovery>
+  if (typeof found.tokenFiles !== 'object' || found.tokenFiles === null) {
+    throw new Error(`the running profile predates scoped tokens (${path}); run \`system shutdown\`, then \`system start\` with this version`)
+  }
+  return found as Discovery
+}
 
 /** Client configuration snippets for Claude Code and Codex, from the running profile's discovery file. */
 export function mcpConfig(client: 'claude' | 'codex', home: string = dshHome()): string {
-  const path = join(home, 'system', 'mcp.json')
-  if (!existsSync(path)) throw new Error(`no discovery file at ${path}; is \`system start\` running?`)
-  const { url } = JSON.parse(readFileSync(path, 'utf8')) as Discovery
+  const { url } = discovery(home)
   // The token is never printed here (shell history); clients read it from the environment.
   if (client === 'claude') {
     // Claude Code runs headersHelper on each connection, so the token never sits in its config.
@@ -162,50 +174,44 @@ export function mcpConfig(client: 'claude' | 'codex', home: string = dshHome()):
 
 /**
  * A command that runs Claude Code on the Messages gateway: website Workers become its model
- * (ADR-0022). Its apiKeyHelper runs `system mcp-token` per connection, so the token is never
+ * (ADR-0022). Its apiKeyHelper runs `system mcp-token --scope model` per connection, so the token is never
  * printed, exported, or written to Claude Code's settings.
  */
 export function claudeGatewayCommand(home: string = dshHome()): string {
-  const path = join(home, 'system', 'mcp.json')
-  if (!existsSync(path)) throw new Error(`no discovery file at ${path}; is \`system start\` running?`)
-  const { url } = JSON.parse(readFileSync(path, 'utf8')) as Discovery
-  const helper = `${process.execPath} ${fileURLToPath(new URL('./bin.js', import.meta.url))} mcp-token`
+  const { url } = discovery(home)
+  const helper = `${process.execPath} ${fileURLToPath(new URL('./bin.js', import.meta.url))} mcp-token --scope model`
   return `ANTHROPIC_BASE_URL=${new URL(url).origin}/anthropic claude --settings '${JSON.stringify({ apiKeyHelper: helper })}'`
 }
 
 /**
  * A command that runs Codex on the Responses gateway with a `system` model provider (ADR-0022).
- * The token reaches Codex only through its env_key variable, set from `system mcp-token` in a
+ * The model token reaches Codex only through its env_key variable, set from `system mcp-token --scope model` in a
  * subshell, so it is never printed. Codex's own retries are off: a retried request would send a
  * website turn again.
  */
 export function codexGatewayCommand(home: string = dshHome()): string {
-  const path = join(home, 'system', 'mcp.json')
-  if (!existsSync(path)) throw new Error(`no discovery file at ${path}; is \`system start\` running?`)
-  const { url } = JSON.parse(readFileSync(path, 'utf8')) as Discovery
-  const helper = `${process.execPath} ${fileURLToPath(new URL('./bin.js', import.meta.url))} mcp-token`
+  const { url } = discovery(home)
+  const helper = `${process.execPath} ${fileURLToPath(new URL('./bin.js', import.meta.url))} mcp-token --scope model`
   const provider = `{name="system",base_url="${new URL(url).origin}/openai/v1",env_key="SYSTEM_MCP_TOKEN",wire_api="responses",request_max_retries=0,stream_max_retries=0,stream_idle_timeout_ms=900000}`
   return `SYSTEM_MCP_TOKEN="$(${helper})" codex -c model_provider=system -c 'model_providers.system=${provider}' -m system-standard`
 }
 
-/** `{"Authorization": "Bearer <token>"}` for a client's headersHelper (Claude Code). */
+/** `{"Authorization": "Bearer <client token>"}` for a client's headersHelper (Claude Code). */
 export function mcpHeaders(home: string = dshHome()): string {
-  return JSON.stringify({ Authorization: `Bearer ${mcpToken(home)}` })
+  return JSON.stringify({ Authorization: `Bearer ${mcpToken('client', home)}` })
 }
 
-/** The bearer token alone, for `export SYSTEM_MCP_TOKEN="$(system mcp-token)"`. */
-export function mcpToken(home: string = dshHome()): string {
-  const { tokenFile } = JSON.parse(readFileSync(join(home, 'system', 'mcp.json'), 'utf8')) as Discovery
-  return readFileSync(tokenFile).toString('base64url')
+/** A scope's bearer token alone; the CLI prints only the model scope's (`system mcp-token --scope model`). */
+export function mcpToken(scope: Scope, home: string = dshHome()): string {
+  return readFileSync(discovery(home).tokenFiles[scope]).toString('base64url')
 }
 
 /**
- * The web UI's address for the running profile. The token rides in the fragment, which a
+ * The web UI's address for the running profile. The operator token rides in the fragment, which a
  * browser never sends to a server; the page moves it to session storage and drops it.
  */
 export function uiUrl(home: string = dshHome()): string {
-  const { url } = JSON.parse(readFileSync(join(home, 'system', 'mcp.json'), 'utf8')) as Discovery
-  return `${new URL(url).origin}/ui/#token=${mcpToken(home)}`
+  return `${new URL(discovery(home).url).origin}/ui/#token=${mcpToken('operator', home)}`
 }
 
 export interface ToolOutcome {
@@ -214,12 +220,10 @@ export interface ToolOutcome {
   structured: Record<string, unknown> | undefined
 }
 
-/** Call a tool on the running profile's MCP endpoint, authenticated from the discovery file. */
+/** Call a tool on the running profile's MCP endpoint as the operator (the CLI acts for the operator). */
 export async function callTool(name: string, args: Record<string, unknown>, home: string = dshHome()): Promise<ToolOutcome> {
-  const path = join(home, 'system', 'mcp.json')
-  if (!existsSync(path)) throw new Error(`no discovery file at ${path}; is \`system start\` running?`)
-  const { url, tokenFile } = JSON.parse(readFileSync(path, 'utf8')) as Discovery
-  const token = readFileSync(tokenFile).toString('base64url')
+  const { url } = discovery(home)
+  const token = mcpToken('operator', home)
   const client = new Client({ name: 'system-cli', version: '0.0.0' })
   await client.connect(new StreamableHTTPClientTransport(new URL(url), { requestInit: { headers: { authorization: `Bearer ${token}` } } }) as unknown as Transport)
   try {
@@ -373,15 +377,15 @@ export function restoreHost(source: string, options: { home?: string; yes?: bool
 export interface ToolContract {
   name: string
   description?: string
+  /** `system/scope`: who may call the tool (ADR-0023). */
+  _meta?: Record<string, unknown>
   inputSchema: { properties?: Record<string, { type?: string | string[]; description?: string; enum?: unknown[]; maximum?: number; maxLength?: number }>; required?: string[] }
 }
 
-/** The tools the running profile serves over MCP, as its clients see them (`tools/list`). */
+/** Every tool the running profile serves over MCP, as the operator sees them (`tools/list`), each with its scope. */
 export async function listTools(home: string = dshHome()): Promise<ToolContract[]> {
-  const path = join(home, 'system', 'mcp.json')
-  if (!existsSync(path)) throw new Error(`no discovery file at ${path}; is \`system start\` running?`)
-  const { url, tokenFile } = JSON.parse(readFileSync(path, 'utf8')) as Discovery
-  const token = readFileSync(tokenFile).toString('base64url')
+  const { url } = discovery(home)
+  const token = mcpToken('operator', home)
   const client = new Client({ name: 'system-cli', version: '0.0.0' })
   await client.connect(new StreamableHTTPClientTransport(new URL(url), { requestInit: { headers: { authorization: `Bearer ${token}` } } }) as unknown as Transport)
   try {
@@ -404,6 +408,7 @@ export function formatTools(tools: readonly ToolContract[]): string {
       const props = Object.entries(tool.inputSchema.properties ?? {})
       return [
         `## \`${tool.name}\``, '', cell(tool.description ?? ''), '',
+        ...(tool._meta?.['system/scope'] ? [`Scope: \`${String(tool._meta['system/scope'])}\``, ''] : []),
         ...(props.length
           ? ['| Argument | Type | Required | Description |', '|---|---|---|---|',
             ...props.map(([name, p]) => `| \`${name}\` | ${cell(p.enum ? p.enum.map((v) => JSON.stringify(v)).join(' | ') : Array.isArray(p.type) ? p.type.join(' | ') : p.type ?? 'any')} | ${tool.inputSchema.required?.includes(name) ? 'yes' : ''} | ${cell(p.description ?? '')} |`), '']
@@ -484,11 +489,10 @@ export async function serveStdio(home: string = dshHome()): Promise<void> {
   const { StdioServerTransport } = await import('@modelcontextprotocol/sdk/server/stdio.js')
   const { CallToolRequestSchema, ListToolsRequestSchema } = await import('@modelcontextprotocol/sdk/types.js')
   const remote = async <T>(use: (client: Client) => Promise<T>): Promise<T> => {
-    const path = join(home, 'system', 'mcp.json')
-    if (!existsSync(path)) throw new Error(`no discovery file at ${path}; is \`system start\` running?`)
-    const { url, tokenFile } = JSON.parse(readFileSync(path, 'utf8')) as Discovery
+    // The shim serves MCP clients, so it holds the client scope (ADR-0023).
+    const { url } = discovery(home)
     const client = new Client({ name: 'system-mcp-stdio', version: '0.0.0' })
-    await client.connect(new StreamableHTTPClientTransport(new URL(url), { requestInit: { headers: { authorization: `Bearer ${readFileSync(tokenFile).toString('base64url')}` } } }) as unknown as Transport)
+    await client.connect(new StreamableHTTPClientTransport(new URL(url), { requestInit: { headers: { authorization: `Bearer ${mcpToken('client', home)}` } } }) as unknown as Transport)
     try {
       return await use(client)
     } finally {

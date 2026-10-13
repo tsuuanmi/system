@@ -15,17 +15,19 @@ afterEach(async () => {
 })
 
 describe('system mcp-stdio (a stdio shim for MCP clients without header helpers, e.g. Codex)', () => {
-  it('forwards tools and calls to the running profile, authenticating from the 0600 token file', async () => {
+  it('forwards tools and calls to the running profile, authenticating with the client scope\'s 0600 token file', async () => {
     const home = mkdtempSync(join(tmpdir(), 'system-stdio-'))
     cleanups.push(() => rmSync(home, { recursive: true, force: true }))
     const ctx = new Context()
     const fibers = [
       ctx.plugin(WebServer, { host: '127.0.0.1', port: 0 }),
       ctx.plugin(Store, { path: join(home, 'system', 'system.db') }),
-      ctx.plugin(McpEndpoint, { tokenFile: join(home, 'system', 'mcp.token'), discoveryFile: join(home, 'system', 'mcp.json') }),
+      ctx.plugin(McpEndpoint, { tokenDir: join(home, 'system'), discoveryFile: join(home, 'system', 'mcp.json') }),
     ]
     await Promise.all(fibers)
     cleanups.push(async () => { for (const f of fibers.reverse()) await f.dispose() })
+    // An operator action the shim's client must not see (ADR-0023).
+    ;(ctx as unknown as { mcp: { tool: (...args: unknown[]) => void } }).mcp.tool('op_only', { description: 'x', inputSchema: {} }, async () => ({ content: [] }))
 
     const bin = new URL('../src/bin.ts', import.meta.url).pathname
     const transport = new StdioClientTransport({ command: process.execPath, args: ['--import', 'tsx', bin, 'mcp-stdio'], env: { ...process.env, DSH_HOME: home } as Record<string, string> })
@@ -34,8 +36,9 @@ describe('system mcp-stdio (a stdio shim for MCP clients without header helpers,
     cleanups.push(() => client.close())
     const { tools } = await client.listTools()
     expect(tools.map((t) => t.name)).toEqual(expect.arrayContaining(['ask', 'research', 'result', 'status']))
+    expect(tools.map((t) => t.name)).not.toContain('op_only')
     const status = await client.callTool({ name: 'status', arguments: {} })
     expect(status.structuredContent).toMatchObject({ harness: 'system', store: 'ok' })
-    expect(readFileSync(join(home, 'system', 'mcp.json'), 'utf8')).not.toContain(readFileSync(join(home, 'system', 'mcp.token')).toString('base64url'))
+    expect(readFileSync(join(home, 'system', 'mcp.json'), 'utf8')).not.toContain(readFileSync(join(home, 'system', 'client.token')).toString('base64url'))
   }, 60_000)
 })

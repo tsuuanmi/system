@@ -17,8 +17,8 @@ installed.
     `Read(./**)`, `Grep(./**)`, `Glob(./**)`, `Edit(./**)`, `Write(./**)`. A
     bare rule reaches the whole disk: live sessions wrote (`Write`) and read and
     grepped (`Read`, `Grep`) outside their workspace, which would expose the
-    daemon's own state (`vault.key`, `mcp.token`). The scoped rules held against
-    `..` traversal, a symlink out of the workspace, and a home path; outside
+    daemon's own state (`vault.key`, the token files). The scoped rules held
+    against `..` traversal, a symlink out of the workspace, and a home path; outside
     reads and writes are denied while the workspace stays readable and writable
     ([release checklist](../../../docs/validation/release-checklist.md));
   - `permissionMode: dontAsk` with no approval surface, so anything else is

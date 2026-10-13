@@ -9,6 +9,7 @@ import { canonicalJson, sha256 } from '@tsuuanmi/system-libs'
 import { type Runtime, RUNTIMES } from '@tsuuanmi/system-worker-sessions'
 import type { ArtifactRef, WorkerExecution } from '@tsuuanmi/system-workers-core'
 import type { Engine } from './engine.ts'
+import { messagesText } from './sessions.ts'
 import { parseLead, type ResolvedNode } from './spec.ts'
 import type { NodeRecord, NodeRow, RunRow } from './types.ts'
 
@@ -105,7 +106,7 @@ export function teamTexts(e: Engine, spec: ResolvedNode, nodes: NodeRow[]): { in
   const inbox = sessions.inbox(spec.session.sessionId)
   if (inbox.length) sessions.ack(spec.session.sessionId, inbox.at(-1)!.seq)
   return {
-    inbox: inbox.map((m) => `### From [${sessions.session(m.from)?.role ?? m.from}] (${m.message.intent ?? 'inform'})\n${m.message.body}`).join('\n\n') || '(no messages)',
+    inbox: inbox.length ? messagesText(e, inbox, 'inform') : '(no messages)',
   }
 }
 

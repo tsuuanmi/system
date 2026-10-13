@@ -6,7 +6,16 @@ import Artifacts from '@tsuuanmi/system-artifacts'
 import { SchemaRegistry } from '@tsuuanmi/system-libs'
 import Store from '@tsuuanmi/system-store'
 import { afterEach, describe, expect, it } from 'vitest'
+import { McpTools, type ToolHandler, type ToolSpec } from '@tsuuanmi/system-gateway-core'
 import WorkerSessions from '../src/index.ts'
+
+/** A `ctx.mcp` that keeps contributed tools, so a test calls a handler as a given scope would. */
+class RecordingMcp extends McpTools {
+  readonly tools = new Map<string, { spec: ToolSpec; handler: ToolHandler }>()
+  tool(name: string, spec: ToolSpec, handler: ToolHandler): void {
+    this.tools.set(name, { spec, handler })
+  }
+}
 
 const cleanups: Array<() => unknown> = []
 afterEach(async () => {
@@ -69,6 +78,23 @@ describe('ctx.workerSessions: sessions, mailboxes, direct messages (ADR-0015)', 
     expect(ctx.artifacts.get((refused as { decision: string }).decision)?.body).toMatchObject({ decisionType: 'gate', outcome: { option: 'refuse' } })
     expect(ctx.workerSessions.send({ from: 'ses_x', messageId: 'x', to: { group: 'grp-1' }, body: 'stranger' })).toMatchObject({ accepted: false })
     expect(ctx.workerSessions.inbox('ses_b')).toEqual([])
+  })
+
+  it('records who sent through session_send by the caller\'s scope: a client token is never the operator (QA-14, INV-13)', async () => {
+    const ctx = await boot()
+    team(ctx, false)
+    const fiber = ctx.plugin(RecordingMcp)
+    await fiber
+    cleanups.push(() => fiber.dispose())
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    const mcp = (ctx as unknown as { mcp: RecordingMcp }).mcp
+    const send = mcp.tools.get('session_send')!
+    expect(send.spec.scope).toBe('client')
+    await send.handler({ to: 'ses_b', body: 'from a client', messageId: 'c-1' }, { scope: 'client' })
+    await send.handler({ to: 'ses_b', body: 'from the operator', messageId: 'o-1' }, { scope: 'operator' })
+    const inbox = ctx.workerSessions.inbox('ses_b')
+    expect(inbox.map((m) => [m.from, m.message.body])).toEqual([['client', 'from a client'], ['operator', 'from the operator']])
+    expect(inbox.map((m) => ctx.artifacts.get(m.artifact)?.producer)).toEqual([{ type: 'system', ref: 'mcp-client' }, { type: 'operator', ref: 'operator' }])
   })
 
   it('delivers at most once per sender message id, and lets the operator write to a session (REQ-SES-3)', async () => {

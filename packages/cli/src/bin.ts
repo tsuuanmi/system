@@ -44,7 +44,7 @@ const USAGE = `Usage: system <command>
   codex-env                 print a command that runs Codex with website Workers as its model
   tools [--markdown]        list the MCP tools the running profile serves (--markdown: the reference page)
   ui                        print the web UI link (runs, steps, decisions; approve, stop, continue)
-  mcp-token                 print the bearer token (for an environment variable)
+  mcp-token --scope model   print the model gateways' token (for a model client's environment variable)
   mcp-headers               print the Authorization header as JSON (Claude Code headersHelper)
   mcp-stdio                 serve the running profile's MCP tools on stdio (Codex and other clients)
 `
@@ -316,9 +316,13 @@ async function main(argv: string[]): Promise<number> {
       // Opened over ssh -L like the login desktop; the link carries the token in its fragment.
       console.log(uiUrl())
       return 0
-    case 'mcp-token':
-      console.log(mcpToken())
+    case 'mcp-token': {
+      // Only the model scope is printed, and only when named (ADR-0023): the CLI uses the
+      // operator token itself, and client helpers read the client token on each connection.
+      if (rest[0] !== '--scope' || rest[1] !== 'model') break
+      console.log(mcpToken('model'))
       return 0
+    }
     case '--help':
     case '-h':
     case undefined:

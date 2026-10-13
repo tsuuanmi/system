@@ -6,7 +6,7 @@ and the **request guard** every client endpoint shares.
 
 | Seam | Definition | Provider |
 |---|---|---|
-| `ctx.mcp` | abstract `McpTools` with `tool(name, spec, handler)`, plus `ToolSpec` and `ToolHandler` | `@tsuuanmi/system-mcp-server` |
+| `ctx.mcp` | abstract `McpTools` with `tool(name, spec, handler)`, plus `ToolSpec` (with its `scope`), `ToolScope`, `ToolHandler`, and `ToolContext` (the caller's scope) | `@tsuuanmi/system-mcp-server` |
 
 Plugins that contribute tools depend on this package only, so the
 provider-runtime layer never imports the gateway's implementation:
@@ -19,10 +19,14 @@ provider-runtime layer never imports the gateway's implementation:
 | `worker-sessions` | `session_send`, `session_inbox` |
 | `mcp-server` itself | `status` |
 
-The exact contracts are in [MCP tools](../../docs/reference/mcp-tools.md). The client-protocol
+Each tool declares the scope that may call it; one that declares none is
+operator-only ([scopes](../plugins/mcp-server/README.md#scopes)). The exact
+contracts are in [MCP tools](../../docs/reference/mcp-tools.md). The client-protocol
 gateways are plain plugins and use no seam; they share the
 [`gateway-turns`](../gateway-turns/README.md) library. The
-conformance suite is [`conformance/mcp-tools.ts`](conformance/mcp-tools.ts).
+conformance suite is [`conformance/mcp-tools.ts`](conformance/mcp-tools.ts): a
+tool lives for its plugin's lifetime, and a tool that declares no scope is
+listed to the operator only.
 
 ## The request guard
 
@@ -36,9 +40,17 @@ MCP endpoint, both protocol gateways (through
     `localhost`, `[::1]`), or `421`, against DNS rebinding;
   - no browser `Origin`, or `403`, so no CORS. Only `sameOrigin` (the web UI,
     which serves its own page) accepts the endpoint's own origin;
-  - the bearer token compared in constant time over SHA-256 digests, or `401`.
+  - the bearer token compared in constant time over SHA-256 digests with every
+    token the endpoint accepts (`tokens`, keyed by scope), or `401`. All of
+    them are compared, so the time taken does not tell which one matched. The
+    result names the matched token's scope (`{ ok: true, scope }`).
     `x-api-key` is accepted only with `apiKeyHeader` (Anthropic clients). An
     empty token never matches.
+- **`scopeTokens(dir)`** reads every scope's token, creating a missing one (32
+  random bytes, owner-only), as base64url; **`tokenFile(dir, scope)`** is its
+  path, `<dir>/<scope>.token`. The scopes are `SCOPES`
+  ([ADR-0023](../../docs/decisions/adr/0023-scoped-control-credentials.md),
+  [scopes](../plugins/mcp-server/README.md#scopes)).
 - **`assertSafeBind(bound)`** throws on plain HTTP on a non-loopback host, so
   the token never travels in clear text over a network. Every endpoint calls it
   before it registers its route.
@@ -48,3 +60,8 @@ MCP endpoint, both protocol gateways (through
   `undefined`, invalid is `400`, too large is `413`.
 
 Tests: `tests/guard.spec.ts`.
+
+## Dependency direction
+
+Depends on `system-libs` only, for the secret-file rules. The MCP SDK, Cordis,
+and zod are peer dependencies.

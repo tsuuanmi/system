@@ -10,11 +10,11 @@ as its model ([gateways](../../../docs/design/gateways.md),
 `system claude-env` prints the command:
 
 ```sh
-ANTHROPIC_BASE_URL=http://127.0.0.1:<port>/anthropic claude --settings '{"apiKeyHelper":"… mcp-token"}'
+ANTHROPIC_BASE_URL=http://127.0.0.1:<port>/anthropic claude --settings '{"apiKeyHelper":"… mcp-token --scope model"}'
 ```
 
-The `apiKeyHelper` reads the token for each connection, so the token is never
-printed, exported, or written to Claude Code's settings.
+The `apiKeyHelper` reads the model token for each connection, so the token is
+never printed, exported, or written to Claude Code's settings.
 
 ## What it owns
 
@@ -46,8 +46,9 @@ and approvals (INV-6).
 - **Guard:** the request guard every client endpoint shares
   ([`gateway-core`](../../gateway-core/README.md#the-request-guard), through
   [`gateway-turns`](../../gateway-turns/README.md)): a loopback `Host`, no
-  browser `Origin`, and the MCP token as a bearer token or `x-api-key`, compared
-  in constant time.
+  browser `Origin`, and the model token (`model.token` under `tokenDir`) as a
+  bearer token or `x-api-key`, compared in constant time. An operator or client
+  token gets `401` ([scopes](../mcp-server/README.md#scopes)).
 - **Bind:** on plain HTTP on a non-loopback host, the route is not registered
   (`assertSafeBind`).
 - **Body:** at most 16 MiB of JSON.

@@ -102,7 +102,8 @@ An OpenAI Responses-compatible endpoint on the loopback webserver.
   the client fall back to SSE. While a turn runs, `response.in_progress` keeps the client's idle
   timer from firing.
 - **Authentication:** every other route passes the shared guard: a loopback `Host`, no browser
-  `Origin`, and the bearer token (the MCP token by default). On plain HTTP on a non-loopback
+  `Origin`, and the model scope's token
+  ([scopes](../../packages/plugins/mcp-server/README.md#scopes)). On plain HTTP on a non-loopback
   host the route is not registered, so the token never crosses a network in clear text.
 - **Event mapping:** prose becomes output text, and tool requests become `function_call` (or
   `custom_tool_call` for freeform tools). Status rows are not mapped.
@@ -119,7 +120,7 @@ An Anthropic Messages-compatible endpoint on the same listener.
 - **Routes:** `POST /v1/messages` (SSE or one JSON message), `POST /v1/messages/count_tokens`
   (an estimate), and `GET /v1/models`. The guard is the same as for Responses.
 - **Client setup:** `system claude-env` prints a command that points Claude Code's base URL at
-  the gateway and reads the token through a helper.
+  the gateway and reads the model token through a helper.
 - **Event mapping:** prose becomes `text` blocks and tool requests become `tool_use` blocks. A
   request for thinking is not answered with `thinking` blocks.
 

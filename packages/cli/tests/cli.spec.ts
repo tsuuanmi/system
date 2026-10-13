@@ -3,12 +3,23 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { CHROME_LOCK } from '@tsuuanmi/system-browser-patchright'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { callTool, claudeGatewayCommand, codexGatewayCommand, drainHost, formatTools, ensureBrowser, exitCode, formatExplanation, formatUsage, mcpConfig, mcpHeaders, mergeProfileManifest, parseAsk, uiUrl } from '../src/index.ts'
+import { callTool, claudeGatewayCommand, codexGatewayCommand, drainHost, formatTools, ensureBrowser, exitCode, formatExplanation, formatUsage, mcpConfig, mcpHeaders, mcpToken, mergeProfileManifest, parseAsk, uiUrl } from '../src/index.ts'
 
 const dirs: string[] = []
 afterEach(() => {
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true })
 })
+
+
+/** A running profile's state as the CLI reads it: one token file per scope (ADR-0023) and the discovery file. */
+function seedHome(home: string, extra: Record<string, unknown> = {}): Record<'operator' | 'client' | 'model', string> {
+  mkdirSync(join(home, 'system'), { recursive: true })
+  const fills = { operator: 7, client: 8, model: 9 } as const
+  const tokenFiles = Object.fromEntries(Object.keys(fills).map((scope) => [scope, join(home, 'system', `${scope}.token`)]))
+  for (const [scope, fill] of Object.entries(fills)) writeFileSync(tokenFiles[scope]!, Buffer.alloc(32, fill))
+  writeFileSync(join(home, 'system', 'mcp.json'), JSON.stringify({ url: 'http://127.0.0.1:47317/mcp', tokenFiles, ...extra }))
+  return Object.fromEntries(Object.entries(fills).map(([scope, fill]) => [scope, Buffer.alloc(32, fill).toString('base64url')])) as Record<'operator' | 'client' | 'model', string>
+}
 
 describe('system CLI (PR #3 kernel review)', () => {
   it('merges the bundle into an existing profile manifest without dropping operator plugins', () => {
@@ -30,11 +41,8 @@ describe('system CLI (PR #3 kernel review)', () => {
   it('never prints the bearer token inside the client configuration', () => {
     const home = mkdtempSync(join(tmpdir(), 'system-cli-'))
     dirs.push(home)
-    mkdirSync(join(home, 'system'))
-    writeFileSync(join(home, 'system', 'mcp.token'), Buffer.alloc(32, 9))
-    writeFileSync(join(home, 'system', 'mcp.json'), JSON.stringify({ url: 'http://127.0.0.1:47317/mcp', tokenFile: join(home, 'system', 'mcp.token') }))
-    const token = Buffer.alloc(32, 9).toString('base64url')
-    for (const client of ['claude', 'codex'] as const) expect(mcpConfig(client, home)).not.toContain(token)
+    const tokens = seedHome(home)
+    for (const client of ['claude', 'codex'] as const) for (const token of Object.values(tokens)) expect(mcpConfig(client, home)).not.toContain(token)
     expect(mcpConfig('codex', home)).toMatch(/\[mcp_servers\.system\][\s\S]*mcp-stdio/)
     expect(mcpConfig('claude', home)).toContain('headersHelper')
     expect(readFileSync(join(home, 'system', 'mcp.json'), 'utf8')).toContain('47317')
@@ -117,24 +125,35 @@ describe('Claude Code connection (headersHelper)', () => {
   it('prints the bearer header for headersHelper, and a config that never contains the token', () => {
     const home = mkdtempSync(join(tmpdir(), 'system-cli-'))
     dirs.push(home)
-    mkdirSync(join(home, 'system'))
-    writeFileSync(join(home, 'system', 'mcp.token'), Buffer.alloc(32, 7))
-    writeFileSync(join(home, 'system', 'mcp.json'), JSON.stringify({ url: 'http://127.0.0.1:47317/mcp', tokenFile: join(home, 'system', 'mcp.token') }))
-    const token = Buffer.alloc(32, 7).toString('base64url')
-    expect(JSON.parse(mcpHeaders(home))).toEqual({ Authorization: `Bearer ${token}` })
+    const tokens = seedHome(home)
+    // An MCP client gets the client scope (ADR-0023).
+    expect(JSON.parse(mcpHeaders(home))).toEqual({ Authorization: `Bearer ${tokens.client}` })
     const claude = mcpConfig('claude', home)
     expect(claude).toContain('headersHelper')
     expect(claude).toContain('mcp-headers')
-    expect(claude).not.toContain(token)
-    // The web UI link carries the token in its fragment only.
-    expect(uiUrl(home)).toBe(`http://127.0.0.1:47317/ui/#token=${token}`)
-    // The gateway command never carries the token: Claude Code's apiKeyHelper reads it.
+    for (const token of Object.values(tokens)) expect(claude).not.toContain(token)
+    // The web UI link carries the operator token, in its fragment only.
+    expect(uiUrl(home)).toBe(`http://127.0.0.1:47317/ui/#token=${tokens.operator}`)
+    // Each scope's token alone, by name.
+    expect(mcpToken('model', home)).toBe(tokens.model)
+    expect(mcpToken('client', home)).toBe(tokens.client)
+    // The gateway commands never carry a token: the model scope's is read when the client connects.
     const gateway = claudeGatewayCommand(home)
-    expect(gateway).toMatch(/^ANTHROPIC_BASE_URL=http:\/\/127\.0\.0\.1:47317\/anthropic claude --settings '\{"apiKeyHelper":".* mcp-token"\}'$/)
-    expect(gateway).not.toContain(token)
+    expect(gateway).toMatch(/^ANTHROPIC_BASE_URL=http:\/\/127\.0\.0\.1:47317\/anthropic claude --settings '\{"apiKeyHelper":".* mcp-token --scope model"\}'$/)
+    for (const token of Object.values(tokens)) expect(gateway).not.toContain(token)
     const codex = codexGatewayCommand(home)
-    expect(codex).toMatch(/^SYSTEM_MCP_TOKEN="\$\(.* mcp-token\)" codex -c model_provider=system -c 'model_providers\.system=\{name="system",base_url="http:\/\/127\.0\.0\.1:47317\/openai\/v1",env_key="SYSTEM_MCP_TOKEN",wire_api="responses",request_max_retries=0,stream_max_retries=0,stream_idle_timeout_ms=900000\}' -m system-standard$/)
-    expect(codex).not.toContain(token)
+    expect(codex).toMatch(/^SYSTEM_MCP_TOKEN="\$\(.* mcp-token --scope model\)" codex -c model_provider=system -c 'model_providers\.system=\{name="system",base_url="http:\/\/127\.0\.0\.1:47317\/openai\/v1",env_key="SYSTEM_MCP_TOKEN",wire_api="responses",request_max_retries=0,stream_max_retries=0,stream_idle_timeout_ms=900000\}' -m system-standard$/)
+    for (const token of Object.values(tokens)) expect(codex).not.toContain(token)
+  })
+
+  it('says a running profile predates scoped tokens instead of failing obscurely (ADR-0023)', () => {
+    const home = mkdtempSync(join(tmpdir(), 'system-cli-'))
+    dirs.push(home)
+    mkdirSync(join(home, 'system'))
+    writeFileSync(join(home, 'system', 'mcp.json'), JSON.stringify({ url: 'http://127.0.0.1:47317/mcp', tokenFile: join(home, 'system', 'mcp.token'), pid: 1 }))
+    for (const command of [() => mcpToken('model', home), () => mcpHeaders(home), () => uiUrl(home), () => claudeGatewayCommand(home), () => codexGatewayCommand(home), () => mcpConfig('claude', home)]) {
+      expect(command).toThrow(/predates scoped tokens/)
+    }
   })
 })
 
@@ -163,10 +182,10 @@ describe('drain (REQ-HOST-1)', () => {
 describe('tool contracts reference', () => {
   it('renders each tool with its arguments, and escapes table cells', () => {
     const page = formatTools([
-      { name: 'ask', description: 'Ask a | Worker', inputSchema: { properties: { prompt: { type: 'string', description: 'the prompt' }, tier: { enum: ['economy', 'standard'] } }, required: ['prompt'] } },
+      { name: 'ask', description: 'Ask a | Worker', _meta: { 'system/scope': 'client' }, inputSchema: { properties: { prompt: { type: 'string', description: 'the prompt' }, tier: { enum: ['economy', 'standard'] } }, required: ['prompt'] } },
       { name: 'status', inputSchema: {} },
     ])
-    expect(page).toContain('## `ask`\n\nAsk a \\| Worker')
+    expect(page).toContain('## `ask`\n\nAsk a \\| Worker\n\nScope: `client`')
     expect(page).toContain('| `prompt` | string | yes | the prompt |')
     expect(page).toContain('| `tier` | "economy" \\| "standard" |  |  |')
     expect(page).toContain('## `status`\n\n\n\nNo arguments.')
@@ -186,6 +205,22 @@ describe('the command surface (REQ-GW-4)', () => {
       for (const command of family) expect(commands, command).toContain(command)
     }
   })
+  it('hands out only the model token by name; the operator and client tokens stay with the CLI and its helpers (ADR-0023)', async () => {
+    const { spawnSync } = await import('node:child_process')
+    const { fileURLToPath } = await import('node:url')
+    const bin = fileURLToPath(new URL('../src/bin.ts', import.meta.url))
+    const tsx = fileURLToPath(new URL('../../../node_modules/.bin/tsx', import.meta.url))
+    const home = mkdtempSync(join(tmpdir(), 'system-cli-'))
+    dirs.push(home)
+    const tokens = seedHome(home)
+    const run = (...args: string[]) => spawnSync(tsx, [bin, ...args], { encoding: 'utf8', env: { ...process.env, DSH_HOME: home } })
+    expect(run('mcp-token', '--scope', 'model')).toMatchObject({ status: 0, stdout: `${tokens.model}\n` })
+    for (const args of [['mcp-token'], ['mcp-token', '--scope', 'operator'], ['mcp-token', '--scope', 'client']]) {
+      const refused = run(...args)
+      expect(refused.status, args.join(' ')).toBe(2)
+      for (const token of Object.values(tokens)) expect(`${refused.stdout}${refused.stderr}`).not.toContain(token)
+    }
+   }, 60_000)
 })
 
 describe('client configuration (REQ-HOST-3)', () => {
@@ -193,9 +228,7 @@ describe('client configuration (REQ-HOST-3)', () => {
     const { readdirSync } = await import('node:fs')
     const home = mkdtempSync(join(tmpdir(), 'system-clients-'))
     dirs.push(home)
-    mkdirSync(join(home, 'system'))
-    writeFileSync(join(home, 'system', 'mcp.json'), JSON.stringify({ url: 'http://127.0.0.1:47317/mcp', tokenFile: join(home, 'system', 'mcp.token'), pid: 1 }))
-    writeFileSync(join(home, 'system', 'mcp.token'), Buffer.alloc(32, 7))
+    seedHome(home, { pid: 1 })
     const listing = (): string[] => readdirSync(home, { recursive: true }).map(String).sort()
     const before = listing()
     for (const command of [() => claudeGatewayCommand(home), () => codexGatewayCommand(home), () => mcpConfig('claude', home), () => mcpConfig('codex', home)]) {

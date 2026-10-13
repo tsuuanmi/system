@@ -10,13 +10,13 @@ website Workers as its model ([gateways](../../../docs/design/gateways.md),
 `system codex-env` prints the command:
 
 ```sh
-SYSTEM_MCP_TOKEN="$(… mcp-token)" codex -c model_provider=system \
+SYSTEM_MCP_TOKEN="$(… mcp-token --scope model)" codex -c model_provider=system \
   -c 'model_providers.system={name="system",base_url="http://127.0.0.1:<port>/openai/v1",env_key="SYSTEM_MCP_TOKEN",wire_api="responses",request_max_retries=0,stream_max_retries=0,stream_idle_timeout_ms=900000}' \
   -m system-standard
 ```
 
-- The token reaches Codex only through `env_key`, set in a subshell, so it is
-  never printed.
+- The model token reaches Codex only through `env_key`, set in a subshell, so
+  it is never printed.
 - Codex's retries are off: a retried request would send a website turn again.
 
 ## What it owns
@@ -54,8 +54,9 @@ SYSTEM_MCP_TOKEN="$(… mcp-token)" codex -c model_provider=system \
 - **Guard:** the request guard every client endpoint shares
   ([`gateway-core`](../../gateway-core/README.md#the-request-guard), through
   [`gateway-turns`](../../gateway-turns/README.md)): a loopback `Host`, no
-  browser `Origin`, and the MCP token as a bearer token, compared in constant
-  time.
+  browser `Origin`, and the model token (`model.token` under `tokenDir`) as a
+  bearer token, compared in constant time. An operator or client token gets
+  `401` ([scopes](../mcp-server/README.md#scopes)).
 - **Bind:** on plain HTTP on a non-loopback host, the route is not registered
   (`assertSafeBind`).
 - **Body:** at most 16 MiB of JSON.

@@ -10,7 +10,8 @@ The **operator's web UI**, on the DSH webserver under `/ui` (loopback only):
 
 ## Use
 
-`system ui` prints the link: `http://127.0.0.1:<port>/ui/#token=…`. Open it on
+`system ui` prints the link: `http://127.0.0.1:<port>/ui/#token=…`, with the
+operator token in the fragment. Open it on
 the host, or over `ssh -L <port>:127.0.0.1:<port> host` like the login desktop.
 
 ## Security
@@ -27,7 +28,8 @@ the host, or over `ssh -L <port>:127.0.0.1:<port> host` like the login desktop.
   ([`gateway-core`](../../gateway-core/README.md#the-request-guard)), in order:
   - a loopback `Host` (against DNS rebinding);
   - no `Origin` other than the UI's own (`sameOrigin`);
-  - the bearer token, compared in constant time.
+  - the operator token (`operator.token` under `tokenDir`), compared in
+    constant time. A client or model token gets `401`.
 
   A page on another site cannot read the token and gets no CORS answer.
 - **Bind:** on plain HTTP on a non-loopback host, `/ui` is not registered
@@ -38,7 +40,7 @@ the host, or over `ssh -L <port>:127.0.0.1:<port> host` like the login desktop.
   (INV-5).
 - **Rendering:** the page is built with DOM methods and `textContent` only.
   Model output is never parsed as HTML.
-- **Token sharing:** the UI uses the MCP endpoint's token. A separate operator
-  scope is a known gap ([threat model](../../../docs/security/threat-model.md)).
+- **Scope:** only the operator scope reaches `/ui`
+  ([scopes](../mcp-server/README.md#scopes)).
 
 **Injects:** `webServer`, `workflow`.

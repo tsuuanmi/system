@@ -151,7 +151,7 @@ flowchart TB
       novnc["noVNC page, loopback,<br/>URL token"]
     end
     runtimes["agent runtime children<br/>claude · codex · ACP agents"]
-    home[("~/.dsh/system/<br/>system.db (SQLite WAL), vault.enc + vault.key,<br/>login-profiles/, browsers/, mcp.token, mcp.json")]
+    home[("~/.dsh/system/<br/>system.db (SQLite WAL), vault.enc + vault.key,<br/>login-profiles/, browsers/,<br/>operator.token, client.token, model.token, mcp.json")]
     stdio["system mcp-stdio<br/>(spawned by a client)"]
     clients["Claude Code, Codex,<br/>system CLI"]
   end
@@ -165,15 +165,17 @@ flowchart TB
   plugins --- home
   plugins --> remote
   rx --- vnc --- novnc
-  clients -- "HTTP + bearer token" --> webserver
-  clients --> stdio -- "HTTP + bearer token" --> webserver
+  clients -- "HTTP + scoped bearer token" --> webserver
+  clients --> stdio -- "HTTP + client token" --> webserver
   opbrowser -- "ssh -L" --> webserver
   opbrowser -- "ssh -L" --> novnc
 ```
 
-`DSH_HOME` defaults to `~/.dsh`. The bearer token never sits in a client's configuration:
-Claude Code reads it through a headers helper, and other clients spawn `system mcp-stdio`,
-which forwards to `/mcp` ([gateways](../design/gateways.md),
+`DSH_HOME` defaults to `~/.dsh`. Each client holds only its scope's token: the CLI the
+operator token, MCP clients the client token, and model clients the model token
+([scopes](../../packages/plugins/mcp-server/README.md#scopes)). No token sits in a client's
+configuration: Claude Code reads it through a headers helper, and other clients spawn
+`system mcp-stdio`, which forwards to `/mcp` ([gateways](../design/gateways.md),
 [browser runtime](../design/browser-runtime.md), [operations](../operations/README.md)).
 
 ## Where the ideas come from

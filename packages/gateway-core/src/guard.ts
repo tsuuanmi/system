@@ -1,15 +1,50 @@
 /**
  * The request guard of every client endpoint (MCP, the protocol gateways, the web UI; docs/security/
  * threat-model.md): a loopback `Host` (against DNS rebinding), no browser `Origin` (no CORS),
- * then the bearer token compared in constant time; plus the bind check and bounded JSON bodies.
+ * then the bearer token compared in constant time, which decides the caller's scope (ADR-0023);
+ * plus the scope token files, the bind check, and bounded JSON bodies.
  */
 import { createHash, timingSafeEqual } from 'node:crypto'
 import type { IncomingMessage } from 'node:http'
+import { join } from 'node:path'
+import { readOrCreateSecretFile } from '@tsuuanmi/system-libs'
 
 export const LOOPBACK_HOSTS: readonly string[] = ['127.0.0.1', 'localhost', '[::1]']
 
+/**
+ * Control scopes (ADR-0023): `operator` acts for the operator (every tool, the web UI);
+ * `client` asks for work and reads results; `model` reaches only the model gateways.
+ */
+export const SCOPES = ['operator', 'client', 'model'] as const
+export type Scope = (typeof SCOPES)[number]
+
+/** The owner-only token file of a scope, `<dir>/<scope>.token`. */
+export function tokenFile(dir: string, scope: Scope): string {
+  return join(dir, `${scope}.token`)
+}
+
+/** One scope's token, created on first use (32 random bytes, owner-only), as base64url. */
+export function scopeToken(dir: string, scope: Scope): string {
+  return readOrCreateSecretFile(tokenFile(dir, scope), 32).toString('base64url')
+}
+
+/**
+ * Every scope's token. Two scopes never share a value: a file copied over another (a botched
+ * rotation or restore) would hand one scope another's rights, so it is refused.
+ */
+export function scopeTokens(dir: string): Record<Scope, string> {
+  const tokens = Object.fromEntries(SCOPES.map((scope) => [scope, scopeToken(dir, scope)])) as Record<Scope, string>
+  for (const [i, a] of SCOPES.entries()) {
+    for (const b of SCOPES.slice(i + 1)) {
+      if (tokens[a] === tokens[b]) throw new Error(`token files ${a} and ${b} share one token in ${dir}; delete both and restart to issue new ones`)
+    }
+  }
+  return tokens
+}
+
 export interface GuardOptions {
-  token: string
+  /** The tokens this endpoint accepts, by the scope each one grants. */
+  tokens: Partial<Record<Scope, string>>
   allowedHosts: readonly string[]
   /** Also accept the token from `x-api-key` (Anthropic clients send it there). */
   apiKeyHeader?: boolean
@@ -17,7 +52,7 @@ export interface GuardOptions {
   sameOrigin?: boolean
 }
 
-export type GuardResult = { ok: true } | { ok: false; status: 401 | 403 | 421; reason: string }
+export type GuardResult = { ok: true; scope: Scope } | { ok: false; status: 401 | 403 | 421; reason: string }
 
 const digest = (value: string): Buffer => createHash('sha256').update(value).digest()
 
@@ -33,7 +68,7 @@ export function hostName(host: string | undefined): string {
   return host.split(':')[0] ?? ''
 }
 
-/** Host, then origin, then token. */
+/** Host, then origin, then token; the matching token's scope is the caller's. */
 export function guardRequest(req: IncomingMessage, options: GuardOptions): GuardResult {
   if (!options.allowedHosts.includes(hostName(req.headers.host))) return { ok: false, status: 421, reason: 'host not allowed' }
   const origin = req.headers.origin
@@ -42,8 +77,14 @@ export function guardRequest(req: IncomingMessage, options: GuardOptions): Guard
   // The auth scheme is case-insensitive (RFC 7235); the credential itself is exact.
   const header = req.headers.authorization ?? ''
   const presented = /^bearer /i.test(header) ? header.slice(7) : options.apiKeyHeader ? String(req.headers['x-api-key'] ?? '') : ''
-  if (!tokenMatches(presented, options.token)) return { ok: false, status: 401, reason: 'missing or invalid token' }
-  return { ok: true }
+  // Every accepted token is compared, so the time taken does not tell which one matched.
+  let scope: Scope | undefined
+  for (const candidate of SCOPES) {
+    const token = options.tokens[candidate]
+    if (token !== undefined && tokenMatches(presented, token)) scope ??= candidate
+  }
+  if (!scope) return { ok: false, status: 401, reason: 'missing or invalid token' }
+  return { ok: true, scope }
 }
 
 const LOOPBACK = /^(127(?:\.\d{1,3}){3}|::1|::ffff:127(?:\.\d{1,3}){3}|localhost)$/i

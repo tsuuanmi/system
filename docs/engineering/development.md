@@ -84,6 +84,6 @@ CI runs these on Node 22 and 24 ([testing](testing.md#ci-gates)).
 
 Runtime state lives under `<DSH_HOME>/system/` (default `~/.dsh/system/`), with
 directories `0700` and files `0600`. This includes the store, the vault and its
-key, the MCP discovery file and token, login profiles, the managed Chrome, and
+key, the MCP discovery file and the scope token files, login profiles, the managed Chrome, and
 UI map overlays. For development, set `DSH_HOME` to another directory and use
 separate provider accounts, so development never touches production state.

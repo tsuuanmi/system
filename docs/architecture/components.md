@@ -168,11 +168,14 @@ runs the work the router admitted to them. Callers never reach a source directly
 
 ## Gateways
 
-- **MCP server** (`ctx.mcp`): Streamable HTTP at `/mcp` behind a bearer token. Plugins
-  contribute tools for their lifetime ([MCP tools](../reference/mcp-tools.md)).
+- **MCP server** (`ctx.mcp`): Streamable HTTP at `/mcp` behind the operator and client
+  tokens. Plugins contribute tools for their lifetime, each declaring the scope that may call
+  it ([MCP tools](../reference/mcp-tools.md),
+  [ADR-0023](../decisions/adr/0023-scoped-control-credentials.md)).
 - **Request guard** (in `gateway-core`): one set of transport checks for every client endpoint
   (MCP, both protocol gateways, the web UI): a loopback `Host`, no browser `Origin`, the bearer
-  token in constant time, bounded JSON bodies, and no route on a plain-HTTP non-loopback bind.
+  token in constant time, which decides the caller's scope, bounded JSON bodies, and no route on
+  a plain-HTTP non-loopback bind. It also creates the owner-only scope token files.
 - **Anthropic Messages gateway** (`/anthropic`) and **Responses gateway** (`/openai`): Claude
   Code and Codex use website Workers as their model. Each request is an `ask` run on a thread
   bound to one persistent provider conversation; the client's tools travel through the text

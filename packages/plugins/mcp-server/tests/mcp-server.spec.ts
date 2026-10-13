@@ -17,7 +17,9 @@ afterEach(async () => {
   while (cleanups.length) await cleanups.pop()!()
 })
 
-async function boot(): Promise<{ url: string; token: string; dir: string; ctx: Context }> {
+type Tokens = Record<'operator' | 'client' | 'model', string>
+
+async function boot(): Promise<{ url: string; token: string; tokens: Tokens; dir: string; ctx: Context }> {
   const dir = mkdtempSync(join(tmpdir(), 'system-mcp-'))
   cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
   const ctx = new Context()
@@ -25,14 +27,15 @@ async function boot(): Promise<{ url: string; token: string; dir: string; ctx: C
     ctx.plugin(WebServer, { host: '127.0.0.1', port: 0 }),
     ctx.plugin(Store, { path: join(dir, 'system.db') }),
     ctx.plugin(Artifacts, {}),
-    ctx.plugin(McpEndpoint, { tokenFile: join(dir, 'mcp.token'), discoveryFile: join(dir, 'mcp.json') }),
+    ctx.plugin(McpEndpoint, { tokenDir: dir, discoveryFile: join(dir, 'mcp.json') }),
   ]
   await Promise.all(fibers)
   cleanups.push(async () => {
     for (const fiber of fibers.reverse()) await fiber.dispose()
   })
-  const discovery = JSON.parse(readFileSync(join(dir, 'mcp.json'), 'utf8')) as { url: string; tokenFile: string }
-  return { url: discovery.url, token: readFileSync(discovery.tokenFile).toString('base64url'), dir, ctx }
+  const discovery = JSON.parse(readFileSync(join(dir, 'mcp.json'), 'utf8')) as { url: string; tokenFiles: Tokens }
+  const tokens = Object.fromEntries(Object.entries(discovery.tokenFiles).map(([scope, file]) => [scope, readFileSync(file).toString('base64url')])) as Tokens
+  return { url: discovery.url, token: tokens.operator, tokens, dir, ctx }
 }
 
 async function connect(url: string, token: string): Promise<Client> {
@@ -100,6 +103,61 @@ describe('system MCP server on ctx.webServer', () => {
   })
 })
 
+/** Scoped control credentials (ADR-0023): what each token holder may see and call over /mcp. */
+describe('scoped tokens', () => {
+  const callBody = (name: string) => JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: {} } })
+  const post = (url: string, token: string, body: string) => fetch(url, {
+    method: 'POST', body, headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', authorization: `Bearer ${token}` },
+  })
+
+  it('shows a client only the client tools; the operator sees every tool; a tool that declares no scope is operator-only (QA-14)', async () => {
+    const { url, tokens, ctx } = await boot()
+    ctx.mcp.tool('op_only', { description: 'operator action', inputSchema: {} }, async () => ({ content: [{ type: 'text' as const, text: 'done' }] }))
+    ctx.mcp.tool('cl_tool', { description: 'client tool', inputSchema: {}, scope: 'client' }, async () => ({ content: [{ type: 'text' as const, text: 'ok' }] }))
+    const client = await connect(url, tokens.client)
+    expect((await client.listTools()).tools.map((t) => t.name).sort()).toEqual(['ask', 'cl_tool', 'research', 'result', 'status'])
+    const operator = await connect(url, tokens.operator)
+    const listed = (await operator.listTools()).tools
+    expect(listed.map((t) => t.name).sort()).toEqual(['ask', 'cl_tool', 'op_only', 'research', 'result', 'status'])
+    // The reference page shows each tool's scope from the listing.
+    expect(listed.find((t) => t.name === 'op_only')?._meta).toMatchObject({ 'system/scope': 'operator' })
+    expect(listed.find((t) => t.name === 'cl_tool')?._meta).toMatchObject({ 'system/scope': 'client' })
+    expect((await operator.callTool({ name: 'op_only', arguments: {} })).content).toEqual([{ type: 'text', text: 'done' }])
+  })
+
+  it('refuses a client calling an operator tool with 403 insufficient_scope, in a batch too (QA-14)', async () => {
+    const { url, tokens, ctx } = await boot()
+    ctx.mcp.tool('op_only', { description: 'operator action', inputSchema: {} }, async () => ({ content: [] }))
+    const refused = await post(url, tokens.client, callBody('op_only'))
+    expect(refused.status).toBe(403)
+    expect(refused.headers.get('www-authenticate')).toMatch(/error="insufficient_scope".*scope="operator"/)
+    expect(await refused.json()).toMatchObject({ error: 'insufficient_scope' })
+    expect((await post(url, tokens.client, `[${callBody('status')},${callBody('op_only')}]`)).status).toBe(403)
+    expect((await post(url, tokens.operator, callBody('op_only'))).status).toBe(200)
+  })
+
+  it('tells a tool handler the caller\'s scope, so what it records names who acted (QA-14)', async () => {
+    const { url, tokens, ctx } = await boot()
+    ctx.mcp.tool('whoami', { description: 'scope', inputSchema: {}, scope: 'client' }, async (_args, { scope }) => ({ content: [{ type: 'text' as const, text: scope }] }))
+    for (const scope of ['client', 'operator'] as const) {
+      const client = await connect(url, tokens[scope])
+      expect((await client.callTool({ name: 'whoami', arguments: {} })).content).toEqual([{ type: 'text', text: scope }])
+    }
+  })
+
+  it('accepts no model token on /mcp: a model holder reaches only the model gateways (QA-14)', async () => {
+    const { url, tokens } = await boot()
+    expect((await post(url, tokens.model, callBody('status'))).status).toBe(401)
+  })
+
+  it('keeps one distinct owner-only file per scope and names them in the discovery file', async () => {
+    const { dir, tokens } = await boot()
+    expect(new Set(Object.values(tokens)).size).toBe(3)
+    for (const scope of ['operator', 'client', 'model']) expect(statSync(join(dir, `${scope}.token`)).mode & 0o777).toBe(0o600)
+    expect(() => statSync(join(dir, 'mcp.token'))).toThrow()
+  })
+})
+
 describe('discovery file ownership (PR #3 security review)', () => {
   it("does not delete another instance's discovery file on unload", async () => {
     const { dir } = await boot()
@@ -111,13 +169,13 @@ describe('discovery file ownership (PR #3 security review)', () => {
 })
 
 const { mcpToolsConformance } = await import('../../../gateway-core/conformance/mcp-tools.ts')
-let endpoint: { url: string; token: string } | undefined
+let endpoint: { url: string; tokens: Tokens } | undefined
 mcpToolsConformance('mcp-server', async () => {
   const booted = await boot()
-  endpoint = { url: booted.url, token: booted.token }
+  endpoint = { url: booted.url, tokens: booted.tokens }
   return { ctx: booted.ctx, dispose: async () => { while (cleanups.length) await cleanups.pop()!() } }
-}, async () => {
-  // What a real MCP client sees over the authenticated endpoint.
-  const client = await connect(endpoint!.url, endpoint!.token)
+}, async (_ctx, scope) => {
+  // What a real MCP client holding that scope's token sees over the authenticated endpoint.
+  const client = await connect(endpoint!.url, endpoint!.tokens[scope])
   return (await client.listTools()).tools.map((tool) => tool.name)
 })

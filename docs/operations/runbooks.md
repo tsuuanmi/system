@@ -45,10 +45,18 @@ an `agent-workers` row.
   forwarded **by name** with the runtime's `forwardEnv`; its value stays in the
   daemon's environment, never in a config file or in `env`.
   - **Codex on the Responses gateway:** when a Codex Worker's model provider is
-    the system gateway, keep the token in the daemon's environment as the
-    variable the provider's `env_key` names, and set
+    the system gateway, keep the model token in the daemon's environment as the
+    variable the provider's `env_key` names
+    (`export SYSTEM_MCP_TOKEN="$(system mcp-token --scope model)"`), and set
     `forwardEnv: ['SYSTEM_MCP_TOKEN']` on the `runtime-codex-sdk` row. Without
     it, Codex cannot authenticate to the gateway. Such a Worker needs no login.
+    The model token reaches only the model gateways, so the Worker cannot call
+    the `system` MCP tools or the web UI with it
+    ([scopes](../../packages/plugins/mcp-server/README.md#scopes)). Until agent
+    Workers are confined for reads
+    ([ADR-0024](../decisions/adr/0024-agent-workers-confined-for-reads.md)), a
+    Codex Worker can still read the other token files on disk
+    ([threat model](../security/threat-model.md#threats-and-controls)).
   - **Claude Code:** its own sign-in in `~/.claude` needs nothing. An API key or
     OAuth token taken from the environment must be named in the
     `runtime-claude-agent-sdk` row's `forwardEnv`.
@@ -136,6 +144,40 @@ them.
 
 `system drain` and `system resume` do the same drain without stopping, for
 example to let work finish before maintenance on a provider account.
+
+**Upgrading to scoped control credentials**
+([ADR-0023](../decisions/adr/0023-scoped-control-credentials.md)): the new
+version creates `operator.token`, `client.token`, and `model.token` at start,
+and nothing reads `mcp.token` any more, so delete it. There is no compatibility
+path. Once the profile runs the new version:
+
+- re-run `system claude-env` and `system codex-env`: a command printed before
+  runs `system mcp-token` without a scope, which is refused;
+- set the daemon's `SYSTEM_MCP_TOKEN` from `system mcp-token --scope model`
+  again for a Codex Worker on the Responses gateway, and restart;
+- a client added with `system mcp-config` keeps working, because its helper
+  reads the client token on each connection. Re-running it does no harm.
+
+## Rotate a control token
+
+Rotate a scope's token when it may have leaked
+([scopes](../../packages/plugins/mcp-server/README.md#scopes)):
+
+1. Delete its file, for example `rm ~/.dsh/system/client.token`.
+2. `system shutdown`, then `system start`. A new token is created at start, and
+   the old one is refused everywhere.
+3. Hand it out again where it was copied:
+   - the client helpers (`system mcp-headers`, `system mcp-stdio`) and Claude
+     Code's `apiKeyHelper` read the token on each connection, so they need
+     nothing;
+   - a Codex session started from `system codex-env` holds the old model token:
+     start it again;
+   - a Codex Worker on the Responses gateway reads the model token from the
+     daemon's environment, which was set before the restart: set
+     `SYSTEM_MCP_TOKEN` from `system mcp-token --scope model` and restart once
+     more;
+   - an open web UI tab holds the old operator token: open the new link from
+     `system ui`.
 
 ## Retention
 

@@ -236,6 +236,10 @@ importers:
         version: link:../plugins/store
 
   packages/gateway-core:
+    dependencies:
+      '@tsuuanmi/system-libs':
+        specifier: workspace:*
+        version: link:../libs
     devDependencies:
       '@deepseek-ai/cordis':
         specifier: 4.0.5-alpha.1

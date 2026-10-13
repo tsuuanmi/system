@@ -64,9 +64,9 @@
 | Command | What it does |
 |---|---|
 | `system mcp-config <claude\|codex>` | print client configuration for the running MCP server |
-| `system mcp-stdio` | serve the running profile's MCP tools on stdio (Codex and other clients) |
-| `system mcp-token` | print the bearer token (for an environment variable) |
-| `system mcp-headers` | print the `Authorization` header as JSON (Claude Code `headersHelper`) |
+| `system mcp-stdio` | serve the running profile's client-scope MCP tools on stdio (Codex and other clients) |
+| `system mcp-token --scope model` | print the model gateways' token, for a model client's environment variable. Only the model scope is printed: the CLI uses the operator token itself, and the client helpers read the client token on each connection ([scopes](../../packages/plugins/mcp-server/README.md#scopes)) |
+| `system mcp-headers` | print the `Authorization` header with the client token as JSON (Claude Code `headersHelper`) |
 | `system claude-env` | print a command that runs Claude Code with website Workers as its model ([gateways](../design/gateways.md)) |
 | `system codex-env` | print a command that runs Codex with website Workers as its model |
 | `system tools [--markdown]` | list the MCP tools the running profile serves (`--markdown`: the [MCP tools](mcp-tools.md) page) |

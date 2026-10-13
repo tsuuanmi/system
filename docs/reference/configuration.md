@@ -109,7 +109,7 @@ No options.
 | Option | Type | Default | Description |
 |---|---|---|---|
 | `path` | string | `"/anthropic"` | Route prefix; Claude Code sets ANTHROPIC_BASE_URL to it |
-| `tokenFile` | string |  | Bearer token file (default: the MCP token) |
+| `tokenDir` | string |  | Directory of the scope token files (default <DSH_HOME>/system); the gateway takes model.token |
 | `allowedHosts` | string[] | `["127.0.0.1","localhost","[::1]"]` |  |
 | `models` | Record<string, "economy" \| "standard" \| "frontier"> | `{"haiku":"economy"}` | Model-name patterns → tier |
 | `classification` | "public" \| "operator-shared" \| "local-private" | `"operator-shared"` | Classification of what the client sends |
@@ -123,7 +123,7 @@ No options.
 | Option | Type | Default | Description |
 |---|---|---|---|
 | `path` | string | `"/openai"` | Route prefix; Codex's model provider base_url is <origin><path>/v1 |
-| `tokenFile` | string |  | Bearer token file (default: the MCP token) |
+| `tokenDir` | string |  | Directory of the scope token files (default <DSH_HOME>/system); the gateway takes model.token |
 | `allowedHosts` | string[] | `["127.0.0.1","localhost","[::1]"]` |  |
 | `models` | Record<string, "economy" \| "standard" \| "frontier"> | `{}` | Model-name patterns → tier |
 | `classification` | "public" \| "operator-shared" \| "local-private" | `"operator-shared"` | Classification of what the client sends |
@@ -158,8 +158,8 @@ No options.
 | Option | Type | Default | Description |
 |---|---|---|---|
 | `path` | string | `"/mcp"` | Route on the DSH webserver |
-| `tokenFile` | string |  | Bearer token secret file; defaults to <DSH_HOME>/system/mcp.token |
-| `discoveryFile` | string |  | 0600 discovery file {url, tokenFile, pid}; defaults to <DSH_HOME>/system/mcp.json |
+| `tokenDir` | string |  | Directory of the scope token files operator.token, client.token, model.token; defaults to <DSH_HOME>/system |
+| `discoveryFile` | string |  | 0600 discovery file {url, tokenFiles, pid}; defaults to <DSH_HOME>/system/mcp.json |
 | `allowedHosts` | string[] | `["127.0.0.1","localhost","[::1]"]` | Accepted Host header names |
 | `maxBodyBytes` | number (0…) | `1048576` | Largest accepted request body |
 
@@ -277,7 +277,7 @@ No options.
 
 | Option | Type | Default | Description |
 |---|---|---|---|
-| `tokenFile` | string |  | Bearer token file (default: the MCP token) |
+| `tokenDir` | string |  | Directory of the scope token files (default <DSH_HOME>/system); the UI takes operator.token |
 | `allowedHosts` | string[] | `["127.0.0.1","localhost","[::1]"]` | Host names the UI answers |
 
 ## `worker-sessions`

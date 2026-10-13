@@ -37,11 +37,12 @@ class StubWorkflow extends Service {
 
 async function boot() {
   const dir = mkdtempSync(join(tmpdir(), 'system-ui-'))
-  const tokenFile = join(dir, 'mcp.token')
-  writeFileSync(tokenFile, Buffer.alloc(32, 7), { mode: 0o600 })
+  // The UI takes the operator scope's token only (ADR-0023).
+  writeFileSync(join(dir, 'operator.token'), Buffer.alloc(32, 7), { mode: 0o600 })
+  writeFileSync(join(dir, 'client.token'), Buffer.alloc(32, 8), { mode: 0o600 })
   const token = Buffer.alloc(32, 7).toString('base64url')
   const ctx = new Context()
-  const fibers = [ctx.plugin(StubWorkflow), ctx.plugin(WebServer, { host: '127.0.0.1', port: 0 }), ctx.plugin(WebUi, { tokenFile })]
+  const fibers = [ctx.plugin(StubWorkflow), ctx.plugin(WebServer, { host: '127.0.0.1', port: 0 }), ctx.plugin(WebUi, { tokenDir: dir })]
   await Promise.all(fibers)
   cleanups.push(async () => { for (const f of [...fibers].reverse()) await f.dispose() }, () => rmSync(dir, { recursive: true, force: true }))
   const origin = `http://127.0.0.1:${(ctx as unknown as { webServer: { port: number } }).webServer.port}`
@@ -64,7 +65,7 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     await ctx.plugin(StubWorkflow)
     await ctx.plugin(LanWebServer)
     try {
-      await ctx.plugin(WebUi, { tokenFile: join(dir, 'mcp.token') })
+      await ctx.plugin(WebUi, { tokenDir: dir })
     } catch {
       // the refusal itself is the point
     }
@@ -88,6 +89,7 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     const auth = { authorization: `Bearer ${token}` }
     expect((await fetch(`${origin}/ui/api/runs`)).status).toBe(401)
     expect((await fetch(`${origin}/ui/api/runs`, { headers: { authorization: 'Bearer nope' } })).status).toBe(401)
+    expect((await fetch(`${origin}/ui/api/runs`, { headers: { authorization: `Bearer ${Buffer.alloc(32, 8).toString('base64url')}` } })).status).toBe(401)
     expect((await fetch(`${origin}/ui/api/runs`, { headers: { ...auth, origin: 'https://evil.example' } })).status).toBe(403)
     // fetch cannot set Host; a rebinding attack arrives with a foreign one.
     const rebound = await new Promise<number>((resolve, reject) => {

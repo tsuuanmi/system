@@ -6,9 +6,9 @@
 > Not built yet (target only): turn tokens for MCP tool inversion (the gateways use the
 > text tool protocol of
 > [ADR-0022](../decisions/adr/0022-text-protocol-tool-calls-for-website-models.md)),
-> `/admin/*` routes, a separate operator token scope, and a dependency audit in CI.
+> `/admin/*` routes, and a dependency audit in CI.
 > [PROP-0003](../proposals/0003-production-readiness.md#m6a-security-hardening)
-> plans the operator scope, the dependency audit, and the Codex read gap below.
+> plans the dependency audit and the Codex read gap below.
 
 ## Assets
 
@@ -17,9 +17,11 @@
 - Local and private data: datasets, documents, and repository content that must not
   leave the machine without policy.
 - Workflow state and results.
-- Control credentials: the bearer token every client endpoint accepts (the MCP token), and,
-  in the target, turn tokens for MCP tool inversion.
-- Credentials in the daemon's environment: API keys, the gateway token a Codex Worker's model
+- Control credentials: the scoped bearer tokens the client endpoints accept
+  (`operator.token`, `client.token`, and `model.token` under `<DSH_HOME>/system/`;
+  [scopes](../../packages/plugins/mcp-server/README.md#scopes)), and, in the target,
+  turn tokens for MCP tool inversion.
+- Credentials in the daemon's environment: API keys, the model token a Codex Worker's model
   provider reads, and any other secret the operator exported.
 
 ## Trust boundaries
@@ -38,9 +40,11 @@
   ([`gateway-core`](../../packages/gateway-core/README.md#the-request-guard)): a
   `Host` on the loopback allow-list (`421` otherwise), no browser `Origin` (`403`, no
   CORS; only the web UI accepts its own origin), then the bearer token compared in
-  constant time (`401`). An empty token never matches, and `x-api-key` is accepted
-  only by the Anthropic gateway. What answers without the token carries no data:
-  the gateways' `HEAD`, `GET /` (and `/healthz`), and the web UI's static shell.
+  constant time with each scope's token the endpoint accepts (`401`). An empty
+  token never matches, and `x-api-key` is accepted only by the model gateways
+  (`/anthropic` and `/openai`), for the model token.
+  What answers without the token carries no data: the gateways' `HEAD`, `GET /`
+  (and `/healthz`), and the web UI's static shell.
 - **The bearer token crosses a network in clear text.** Every endpoint refuses to
   register its route on plain HTTP on a non-loopback host (`assertSafeBind`); a
   non-loopback bind needs TLS.
@@ -56,9 +60,11 @@
   What the client sends is egress-checked at the gateway's configured
   classification.
 - **Another local process drives the gateways or the operator's controls.** The
-  bearer token comes from a 0600 credential file, and the same guard protects MCP
-  (whose tools include drain, resume, stop, and delete), both gateways, and the web
-  UI. Target: `/admin/*` routes (not built) behind the same token.
+  scope tokens come from 0600 credential files, and the same guard protects MCP
+  (whose operator tools include drain, resume, stop, and delete), both gateways,
+  and the web UI. A process running as the operator's own user is not stopped by
+  this (see the residual risk below). Target: `/admin/*` routes (not built) behind
+  the operator token.
 - **Another local process drives the logged-in browser through a debug port.** No
   remote-debugging port is exposed. Browser contexts are owned in-process by the
   provider runtime. If a port is ever needed, it is bound to loopback with a random
@@ -130,7 +136,7 @@
     exist and are pre-approved, each scoped to the workspace, reads included
     (`Read(./**)`, `Grep(./**)`, `Glob(./**)` for `read-only`; `workspace-write`
     adds `Edit(./**)` and `Write(./**)`). A bare rule reaches the whole disk,
-    including the daemon's `vault.key` and `mcp.token`. `permissionMode: dontAsk`
+    including the daemon's `vault.key` and token files. `permissionMode: dontAsk`
     denies anything else without a prompt; `settingSources: []` keeps the
     operator's own settings and hooks out; no MCP server is attached;
   - Codex (`runtime-codex-sdk`): its own `sandboxMode` (`read-only`, or
@@ -168,17 +174,28 @@
   and offsets, never the secret. A denial fails the turn or agent run as
   `egress_denied` (USER_ACTION) and nothing is sent. A scan cannot recognize every
   kind of private data, so classification remains the caller's statement.
-- **An AI client holding the MCP token triggers operator actions.** `account_list`
-  returns secret-free views. `account_save` only re-captures the operator's own
-  login profile and returns no secrets. The credential tools
-  (`account_set_credentials`, `account_relogin`, `account_code`) are reachable by
-  any MCP client holding the shared token, so a password passes through whatever
-  client calls them. The damage is limited by the identity rule: a credential
-  relogin that signs in as a different account than the one saved is refused
-  (`reauth_required`) and stores nothing, so a planted credential cannot redirect
-  the account; only a manual Save at the remote login switches accounts.
-  **Gap:** every tool shares the operator's bearer token; a separate operator
-  scope is target (not built).
+- **An AI client holding a control token triggers operator actions.** Each
+  credential grants only its scope
+  ([ADR-0023](../decisions/adr/0023-scoped-control-credentials.md),
+  [scopes](../../packages/plugins/mcp-server/README.md#scopes)).
+  MCP clients get the client token: `tools/list` shows them only the client
+  tools, and a call to an operator tool (`approve`, `delete`, `drain`, the
+  `account_*` tools) is refused with `403 insufficient_scope` before it runs. A
+  tool that declares no scope is operator-only (fail closed). Model clients, and
+  a Codex Worker on the Responses gateway, get the model token, which `/mcp` and
+  `/ui` refuse (`401`). So only the operator token, which the CLI and the web UI
+  use, reaches the credential tools (`account_set_credentials`,
+  `account_relogin`, `account_code`). `account_list` returns secret-free views,
+  and `account_save` only re-captures the operator's own login profile and
+  returns no secrets. A credential relogin that signs in as a different account
+  than the one saved is refused (`reauth_required`) and stores nothing, so a
+  planted credential cannot redirect the account; only a manual Save at the
+  remote login switches accounts.
+  **Residual risk:** the token files are owner-only, so any process running as
+  the operator's OS user can still read `operator.token`. Scopes limit what a
+  handed-out credential can do; they do not isolate processes of the same user.
+  The deployment is a single user on a single machine (CON-6), so that user's
+  account is the boundary.
 - **Login profiles leak sessions for every site the operator visited during login.**
   Profiles live in `<DSH_HOME>/system/login-profiles/<id>` (`0700`) and are used
   only for interactive login and Save. Only the driver's `stateOrigins` are captured
@@ -193,14 +210,17 @@
 - **A web page in the operator's browser reads or drives the operator UI.** The
   `/ui` shell carries no data. The token rides in the URL fragment (never sent to a
   server) and moves to session storage. `/ui/api` passes the shared guard: a
-  loopback `Host`, no `Origin` but the UI's own, and the bearer token (constant
-  time); actions take JSON bodies only. A strict CSP (`self` only, no frames, no
-  forms) applies, and data is rendered with `textContent`, never parsed as HTML
+  loopback `Host`, no `Origin` but the UI's own, and the operator token (constant
+  time; a client or model token gets `401`); actions take JSON bodies only. A
+  strict CSP (`self` only, no frames, no forms) applies, and data is rendered with `textContent`, never parsed as HTML
   ([web UI](../../packages/plugins/web-ui/README.md)).
-- **MCP client configs leaking the bearer token.** Claude Code gets the header from
-  `system mcp-headers` (`headersHelper`) on each connection; Codex runs the stdio
-  shim `system mcp-stdio`, which reads the token file itself. Neither client config
-  holds the token.
+- **Client configs leaking a control token.** Claude Code gets the client token's
+  header from `system mcp-headers` (`headersHelper`) on each connection; Codex runs
+  the stdio shim `system mcp-stdio`, which reads the client token file itself. The
+  model clients get the model token from `system mcp-token --scope model`, through
+  Claude Code's `apiKeyHelper` or a subshell (`system claude-env`, `codex-env`).
+  No client config holds a token, and neither token a client holds reaches an
+  operator tool.
 - **A prompt visible in the process list or shell history.** `system ask -` reads
   the prompt from stdin; MCP calls carry prompts in request bodies, never in
   arguments.

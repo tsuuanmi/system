@@ -18,7 +18,7 @@ Capability **seam definition** for agent runtimes
      `PATH`, `HOME`, locale, and the proxy variables
      (`@deepseek-ai/dsh-http-proxy`) are kept;
   2. then the daemon variables the operator forwards **by name** (`forwardEnv`),
-     such as an API key or the gateway token; a name the daemon does not set is
+     such as an API key or the gateway's model token; a name the daemon does not set is
      absent;
   3. then explicit values (`env`), which win. A secret never belongs there.
 - Conformance:

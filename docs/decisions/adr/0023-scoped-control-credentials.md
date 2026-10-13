@@ -44,7 +44,8 @@ Option 2, with three scopes:
 | `model` | the `/anthropic` and `/openai` gateways, nothing on `/mcp` |
 
 - Each token is a separate owner-only file under `<DSH_HOME>/system/`, read with
-  the existing secret-file rules. `mcp.token` is removed.
+  the existing secret-file rules. `mcp.token` is retired: nothing reads it, and
+  the upgrade runbook deletes it.
 - `guardRequest` returns the matched scope. A tool registration declares its
   scope as part of the `mcp` seam, and the conformance suite checks it.
 - `tools/list` returns only the caller's tools. A call outside the caller's scope
@@ -54,6 +55,9 @@ Option 2, with three scopes:
   the client scope; `system claude-env` and `codex-env` hand out the model scope.
 - A token is rotated by deleting its file and restarting.
 - New tools default to the `operator` scope (fail closed).
+- A handler is told the caller's scope, and what it records names that caller:
+  a `session_send` with a client token is from `client`, never from `operator`
+  (INV-13).
 
 OAuth is deferred until a requirement changes CON-6. The scope names and the
 `insufficient_scope` response are chosen so that OAuth scopes can map onto them
@@ -63,7 +67,9 @@ then.
 
 - A leaked client or model token can no longer approve plans, handle
   credentials, delete runs, or reach the operator page.
-- A Worker given the model token can call only the model gateways.
+- A Worker given the model token can call only the model gateways with it. It
+  can still read the other token files until agent Workers are confined for reads
+  ([ADR-0024](0024-agent-workers-confined-for-reads.md)).
 - Clients configured with the old token must re-run the helpers once; there is no
   compatibility path for `mcp.token`.
 - The threat model's "separate operator token scope" moves from target to

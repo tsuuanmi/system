@@ -28,7 +28,9 @@ the neutral turns here and owns nothing else.
     fingerprint is column `history` (store migration 2).
   - Each exchange is an `ask` run on the workflow engine, plus at most one
     nudge when the model claims it cannot reach the user's files.
-- **The guard factory** (`guard.ts`): `guard()` reads the MCP token file and
+- **The guard factory** (`guard.ts`): `guard()` reads the model scope's token
+  file (`model.token` under `tokenDir`, default `<DSH_HOME>/system`;
+  [ADR-0023](../../docs/decisions/adr/0023-scoped-control-credentials.md)) and
   applies the request guard every client endpoint shares (`guardRequest` from
   [`gateway-core`](../gateway-core/README.md#the-request-guard)), with
   `x-api-key` also accepted (`apiKeyHeader`). `MAX_REQUEST_BYTES` (16 MiB) bounds

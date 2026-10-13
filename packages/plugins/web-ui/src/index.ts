@@ -5,7 +5,7 @@
  * - the page and script carry no data, under a strict content security policy;
  * - the token arrives in the URL fragment (never sent to a server), and the script sends it as
  *   a bearer token to `/ui/api`;
- * - the API accepts a loopback host only, no foreign Origin, and the token in constant time.
+ * - the API accepts a loopback host only, no foreign Origin, and the operator token in constant time.
  * @module @tsuuanmi/system-web-ui
  */
 import type { IncomingMessage, ServerResponse } from 'node:http'
@@ -13,21 +13,21 @@ import { join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import z from '@deepseek-ai/schemastery'
-import { assertSafeBind, guardRequest, LOOPBACK_HOSTS, readJsonBody } from '@tsuuanmi/system-gateway-core'
-import { dshHome, readOrCreateSecretFile } from '@tsuuanmi/system-libs'
+import { assertSafeBind, guardRequest, LOOPBACK_HOSTS, readJsonBody, scopeToken } from '@tsuuanmi/system-gateway-core'
+import { dshHome } from '@tsuuanmi/system-libs'
 import type {} from '@tsuuanmi/system-workflow'
 import { APP_CSS, APP_JS, PAGE } from './assets.ts'
 
 export interface Config {
-  /** The bearer token file shared with the MCP endpoint (default `<DSH_HOME>/system/mcp.token`). */
-  tokenFile?: string
+  /** Directory of the scope token files (default `<DSH_HOME>/system`); the UI takes `operator.token` (ADR-0023). */
+  tokenDir?: string
   allowedHosts?: string[]
 }
 
 export const name = 'web-ui'
 export const inject = ['webServer', 'workflow']
 export const Config: z<Config> = z.object({
-  tokenFile: z.string().description('Bearer token file (default: the MCP token)'),
+  tokenDir: z.string().description('Directory of the scope token files (default <DSH_HOME>/system); the UI takes operator.token'),
   allowedHosts: z.array(z.string()).default([...LOOPBACK_HOSTS]).description('Host names the UI answers'),
 }) as unknown as z<Config>
 
@@ -35,7 +35,7 @@ const CSP = "default-src 'none'; script-src 'self'; style-src 'self'; connect-sr
 const MAX_BODY = 16_384
 
 export function apply(ctx: Context, config: Config = {}): void {
-  const token = readOrCreateSecretFile(config.tokenFile ?? join(dshHome(), 'system', 'mcp.token'), 32).toString('base64url')
+  const operator = scopeToken(config.tokenDir ?? join(dshHome(), 'system'), 'operator')
   const hosts = config.allowedHosts ?? LOOPBACK_HOSTS
 
   const send = (res: ServerResponse, status: number, body: string, type: string): void => {
@@ -48,7 +48,7 @@ export function apply(ctx: Context, config: Config = {}): void {
 
   /** Loopback host, no foreign Origin, the bearer token: or the reason it is refused. */
   const refuse = (req: IncomingMessage): [number, string] | undefined => {
-    const verdict = guardRequest(req, { token, allowedHosts: hosts, sameOrigin: true })
+    const verdict = guardRequest(req, { tokens: { operator }, allowedHosts: hosts, sameOrigin: true })
     return verdict.ok ? undefined : [verdict.status, verdict.reason]
   }
 

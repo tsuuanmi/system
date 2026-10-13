@@ -8,7 +8,7 @@
   "properties": {
     "schema": { "const": "message@1.0" },
     "messageId": { "description": "Sender-unique id; receivers deduplicate on it.", "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
-    "from": { "description": "Sender SessionId, or 'operator'.", "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+    "from": { "description": "Sender SessionId, 'operator', or 'client' (an MCP client holding the client scope, ADR-0023).", "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
     "to": {
       "type": "object",
       "properties": {

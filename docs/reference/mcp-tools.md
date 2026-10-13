@@ -7,6 +7,8 @@
 
 Operator tool: supply the one-time code a running sign-in is waiting for.
 
+Scope: `operator`
+
 | Argument | Type | Required | Description |
 |---|---|---|---|
 | `account` | string | yes |  |
@@ -16,11 +18,15 @@ Operator tool: supply the one-time code a running sign-in is waiting for.
 
 List provider accounts and their status (no secrets).
 
+Scope: `operator`
+
 No arguments.
 
 ## `account_login`
 
 Open a remote login desktop for an account (noVNC over an SSH tunnel). Returns the URL and the ssh -L command; the operator signs in and presses Save account.
+
+Scope: `operator`
 
 | Argument | Type | Required | Description |
 |---|---|---|---|
@@ -30,6 +36,8 @@ Open a remote login desktop for an account (noVNC over an SSH tunnel). Returns t
 
 Prove which website features an account offers now (Deep research, Web search, ...), read from the site without sending anything; routing uses only proven features.
 
+Scope: `operator`
+
 | Argument | Type | Required | Description |
 |---|---|---|---|
 | `account` | string | yes |  |
@@ -37,6 +45,8 @@ Prove which website features an account offers now (Deep research, Web search, .
 ## `account_relogin`
 
 Operator tool: sign an account in again with its stored credentials (local TOTP; an emailed code is supplied with account_code).
+
+Scope: `operator`
 
 | Argument | Type | Required | Description |
 |---|---|---|---|
@@ -46,6 +56,8 @@ Operator tool: sign an account in again with its stored credentials (local TOTP;
 
 Save an account after an interactive login: capture its login profile, verify, and store it encrypted.
 
+Scope: `operator`
+
 | Argument | Type | Required | Description |
 |---|---|---|---|
 | `account` | string | yes |  |
@@ -53,6 +65,8 @@ Save an account after an interactive login: capture its login profile, verify, a
 ## `account_set_credentials`
 
 Operator tool: store an account's login credentials encrypted (email, password, optional Base32 TOTP secret) and switch it to credential login. Nothing is returned or logged.
+
+Scope: `operator`
 
 | Argument | Type | Required | Description |
 |---|---|---|---|
@@ -65,6 +79,8 @@ Operator tool: store an account's login credentials encrypted (email, password, 
 
 Approve or reject the plan a run is waiting on (an operator decision, bound to that exact plan).
 
+Scope: `operator`
+
 | Argument | Type | Required | Description |
 |---|---|---|---|
 | `runId` | string | yes |  |
@@ -75,6 +91,8 @@ Approve or reject the plan a run is waiting on (an operator decision, bound to t
 ## `ask`
 
 Ask a website Worker (separate chat quota). Waits up to waitSeconds; otherwise returns a runId for `result`.
+
+Scope: `client`
 
 | Argument | Type | Required | Description |
 |---|---|---|---|
@@ -90,6 +108,8 @@ Ask a website Worker (separate chat quota). Waits up to waitSeconds; otherwise r
 
 Continue a failed run: reopen its one failed node (or a stopped run's nodes) as a new attempt (an operator decision).
 
+Scope: `operator`
+
 | Argument | Type | Required | Description |
 |---|---|---|---|
 | `runId` | string | yes |  |
@@ -98,6 +118,8 @@ Continue a failed run: reopen its one failed node (or a stopped run's nodes) as 
 ## `delete`
 
 Delete a finished run: without updatedAt, preview; with the preview's updatedAt, delete. Artifacts stay.
+
+Scope: `operator`
 
 | Argument | Type | Required | Description |
 |---|---|---|---|
@@ -108,11 +130,15 @@ Delete a finished run: without updatedAt, preview; with the preview's updatedAt,
 
 Drain the host before a stop or upgrade: admit no new run, and report the runs still executing. Call again to poll.
 
+Scope: `operator`
+
 No arguments.
 
 ## `explain`
 
 The decision chain behind a run (egress, tier, route, acceptance per step), or the inputs of any artifact id.
+
+Scope: `client`
 
 | Argument | Type | Required | Description |
 |---|---|---|---|
@@ -121,6 +147,8 @@ The decision chain behind a run (egress, tier, route, acceptance per step), or t
 ## `research`
 
 Research a question with the research profile: testable hypotheses, a cited literature review (web search), an evidence table, an independent critique, and conclusions per hypothesis. Returns at once with a runId; poll `result` (runs take minutes). Deep research alone, then a compaction: `run` with template deep-research.
+
+Scope: `client`
 
 | Argument | Type | Required | Description |
 |---|---|---|---|
@@ -132,6 +160,8 @@ Research a question with the research profile: testable hypotheses, a cited lite
 
 Fetch a run started by `ask` or `research`; waits up to waitSeconds for it to finish.
 
+Scope: `client`
+
 | Argument | Type | Required | Description |
 |---|---|---|---|
 | `runId` | string | yes |  |
@@ -141,11 +171,15 @@ Fetch a run started by `ask` or `research`; waits up to waitSeconds for it to fi
 
 Admit new runs again after a drain.
 
+Scope: `operator`
+
 No arguments.
 
 ## `run`
 
 Start a workflow template by name (built in: ask, deep-research, investigate, panel, review; profiles add more, such as develop); its steps are routed by capability to website or local agent Workers. Waits up to waitSeconds; otherwise returns a runId for `result`.
+
+Scope: `client`
 
 | Argument | Type | Required | Description |
 |---|---|---|---|
@@ -162,13 +196,17 @@ Start a workflow template by name (built in: ask, deep-research, investigate, pa
 
 Read a Worker session: its record and its unread messages (not acknowledged).
 
+Scope: `client`
+
 | Argument | Type | Required | Description |
 |---|---|---|---|
 | `sessionId` | string | yes |  |
 
 ## `session_send`
 
-Send a message as the operator to a Worker session, or to its group (recorded as a message artifact; delivered at most once).
+Send a message to a Worker session, or to its group, as the caller: the operator, or the client for a client token (recorded as a message artifact; delivered at most once).
+
+Scope: `client`
 
 | Argument | Type | Required | Description |
 |---|---|---|---|
@@ -181,11 +219,15 @@ Send a message as the operator to a Worker session, or to its group (recorded as
 
 Health of the system harness: store, artifacts, kernel services, installed providers.
 
+Scope: `client`
+
 No arguments.
 
 ## `stop`
 
 Stop a run: running work is cancelled, nothing else starts, nothing is resent (an operator decision).
+
+Scope: `operator`
 
 | Argument | Type | Required | Description |
 |---|---|---|---|
@@ -195,6 +237,8 @@ Stop a run: running work is cancelled, nothing else starts, nothing is resent (a
 ## `supersede`
 
 Replace a completed step's result with a corrected one; everything downstream runs again (lineage invalidation, an operator action).
+
+Scope: `operator`
 
 | Argument | Type | Required | Description |
 |---|---|---|---|
@@ -206,6 +250,8 @@ Replace a completed step's result with a corrected one; everything downstream ru
 ## `usage`
 
 Recent runs and, per step, which Worker, tier, and quota class served it.
+
+Scope: `client`
 
 | Argument | Type | Required | Description |
 |---|---|---|---|

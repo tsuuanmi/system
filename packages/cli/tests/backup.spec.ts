@@ -63,7 +63,7 @@ describe('backup and restore (operations runbook, QA-4)', () => {
     const running = temp()
     mkdirSync(join(running, 'system'))
     writeFileSync(join(running, 'system', 'vault.key'), 'k'.repeat(32))
-    writeFileSync(join(running, 'system', 'mcp.json'), JSON.stringify({ url: 'http://127.0.0.1:1/mcp', tokenFile: 'x', pid: process.pid }))
+    writeFileSync(join(running, 'system', 'mcp.json'), JSON.stringify({ url: 'http://127.0.0.1:1/mcp', tokenFiles: {}, pid: process.pid }))
     expect(() => restoreHost(target, { home: running, yes: true })).toThrow(/running/)
     writeFileSync(join(target, 'vault.enc'), 'tampered')
     expect(() => restoreHost(target, { home: running, yes: true })).toThrow(/does not match/)

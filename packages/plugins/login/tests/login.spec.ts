@@ -41,7 +41,7 @@ describe.runIf(canRunBrowser)('ctx.login.save', () => {
       ctx.plugin(ChatGptWeb, { origin: fake.origin, overlayPath: join(dir, 'none.yaml') }),
       ctx.plugin(Login, { profilesDir: join(dir, 'profiles') }),
       ctx.plugin(WebServer, { host: '127.0.0.1', port: 0 }),
-      ctx.plugin(McpEndpoint, { tokenFile: join(dir, 'mcp.token'), discoveryFile: join(dir, 'mcp.json') }),
+      ctx.plugin(McpEndpoint, { tokenDir: dir, discoveryFile: join(dir, 'mcp.json') }),
     ]
     await Promise.all(fibers)
     cleanups.push(async () => {
@@ -80,9 +80,9 @@ describe.runIf(canRunBrowser)('ctx.login.save', () => {
   it('offers account_list and account_save to the operator over the authenticated MCP endpoint (INV-8)', async () => {
     const { ctx, fake, dir } = await boot()
     await operatorSignsIn(ctx.login.profileDir('chatgpt-main'), fake.origin)
-    const { url, tokenFile } = JSON.parse(readFileSync(join(dir, 'mcp.json'), 'utf8')) as { url: string; tokenFile: string }
+    const { url, tokenFiles } = JSON.parse(readFileSync(join(dir, 'mcp.json'), 'utf8')) as { url: string; tokenFiles: { operator: string } }
     const client = new Client({ name: 'cli', version: '0' })
-    await client.connect(new StreamableHTTPClientTransport(new URL(url), { requestInit: { headers: { authorization: `Bearer ${readFileSync(tokenFile).toString('base64url')}` } } }) as unknown as Transport)
+    await client.connect(new StreamableHTTPClientTransport(new URL(url), { requestInit: { headers: { authorization: `Bearer ${readFileSync(tokenFiles.operator).toString('base64url')}` } } }) as unknown as Transport)
     cleanups.push(() => client.close())
     const saved = await client.callTool({ name: 'account_save', arguments: { account: 'chatgpt-main' } })
     expect(saved.isError).toBeFalsy()

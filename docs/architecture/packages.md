@@ -18,7 +18,7 @@ its types is not listed).
 |---|---|---|---|---|---|
 | [cli](../../packages/cli/README.md) | gateways | — | — | — | `browser-patchright`, `libs`, `system-bundle` |
 | [gateway-anthropic](../../packages/plugins/gateway-anthropic/README.md) | gateways | — | `gateway-anthropic` | `webServer`, `workflow`, `store` | `gateway-core`, `gateway-turns`, `libs` |
-| [gateway-core](../../packages/gateway-core/README.md) | gateways | defines `mcp` | — | — | — |
+| [gateway-core](../../packages/gateway-core/README.md) | gateways | defines `mcp` | — | — | `libs` |
 | [gateway-responses](../../packages/plugins/gateway-responses/README.md) | gateways | — | `gateway-responses` | `webServer`, `workflow`, `store` | `gateway-core`, `gateway-turns`, `libs` |
 | [gateway-turns](../../packages/gateway-turns/README.md) | gateways | — | — | — | `gateway-core`, `libs` |
 | [mcp-server](../../packages/plugins/mcp-server/README.md) | gateways | `mcp` | `mcp-server` | `webServer`, `artifacts` (optional), `providers` (optional), `store` (optional) | `gateway-core`, `libs` |

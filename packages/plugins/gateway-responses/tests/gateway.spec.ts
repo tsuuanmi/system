@@ -96,10 +96,12 @@ class StubWorkflow extends Service {
 
 async function boot() {
   const dir = mkdtempSync(join(tmpdir(), 'system-gwr-'))
-  const tokenFile = join(dir, 'mcp.token')
-  writeFileSync(tokenFile, Buffer.alloc(32, 9), { mode: 0o600 })
+  // The gateways take the model scope's token only (ADR-0023); the others are written to be refused.
+  writeFileSync(join(dir, 'model.token'), Buffer.alloc(32, 9), { mode: 0o600 })
+  writeFileSync(join(dir, 'client.token'), Buffer.alloc(32, 8), { mode: 0o600 })
+  writeFileSync(join(dir, 'operator.token'), Buffer.alloc(32, 7), { mode: 0o600 })
   const ctx = new Context()
-  const fibers = [ctx.plugin(Store, { path: join(dir, 'system.db') }), ctx.plugin(StubWorkflow), ctx.plugin(WebServer, { host: '127.0.0.1', port: 0 }), ctx.plugin(Gateway, { tokenFile })]
+  const fibers = [ctx.plugin(Store, { path: join(dir, 'system.db') }), ctx.plugin(StubWorkflow), ctx.plugin(WebServer, { host: '127.0.0.1', port: 0 }), ctx.plugin(Gateway, { tokenDir: dir })]
   await Promise.all(fibers)
   cleanups.push(async () => { for (const f of [...fibers].reverse()) await f.dispose() }, () => rmSync(dir, { recursive: true, force: true }))
   const base = `http://127.0.0.1:${(ctx as unknown as { webServer: { port: number } }).webServer.port}/openai/v1`
@@ -126,7 +128,7 @@ describe('Responses gateway over HTTP', () => {
     await ctx.plugin(StubWorkflow)
     await ctx.plugin(LanWebServer)
     try {
-      await ctx.plugin(Gateway, { tokenFile: join(dir, 'mcp.token') })
+      await ctx.plugin(Gateway, { tokenDir: dir })
     } catch {
       // the refusal itself is the point
     }

@@ -19,8 +19,8 @@ export * from './protocol.ts'
 
 export interface Config {
   path?: string
-  /** Bearer token file (default: the MCP token). */
-  tokenFile?: string
+  /** Directory of the scope token files (default `<DSH_HOME>/system`); this gateway takes `model.token` (ADR-0023). */
+  tokenDir?: string
   allowedHosts?: string[]
   /** Model-name patterns → tier; `system-<tier>` always names a tier; anything else is standard. */
   models?: Record<string, Tier>
@@ -36,7 +36,7 @@ export const name = 'gateway-anthropic'
 export const inject = ['webServer', 'workflow', 'store']
 export const Config: z<Config> = z.object({
   path: z.string().default('/anthropic').description('Route prefix; Claude Code sets ANTHROPIC_BASE_URL to it'),
-  tokenFile: z.string().description('Bearer token file (default: the MCP token)'),
+  tokenDir: z.string().description('Directory of the scope token files (default <DSH_HOME>/system); the gateway takes model.token'),
   allowedHosts: z.array(z.string()).default([...LOOPBACK_HOSTS]),
   models: z.dict(z.union(['economy', 'standard', 'frontier'])).default({ haiku: 'economy' }).description('Model-name patterns → tier'),
   classification: z.union(['public', 'operator-shared', 'local-private']).default('operator-shared').description('Classification of what the client sends'),

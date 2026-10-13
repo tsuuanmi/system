@@ -58,14 +58,14 @@ describe('system profile (e2e through dsh)', () => {
     expect(dump).not.toMatch(/dsh-base|otel/)
   }, 60_000)
 
-  it('boots, serves MCP to an authenticated client, and cleans up on SIGTERM', async () => {
+  it('boots, serves MCP to an authenticated client, authorizes every surface by scope (QA-14), and cleans up on SIGTERM', async () => {
     child = spawn(process.execPath, [bin, 'start', '--patch', join(home, 'port0.yml')], { env, stdio: 'pipe', detached: true })
     const discoveryPath = join(home, 'system', 'mcp.json')
     await waitFor(discoveryPath, 60_000)
-    const { url, tokenFile } = JSON.parse(readFileSync(discoveryPath, 'utf8')) as { url: string; tokenFile: string }
+    const { url, tokenFiles } = JSON.parse(readFileSync(discoveryPath, 'utf8')) as { url: string; tokenFiles: Record<'operator' | 'client' | 'model', string> }
 
     const client = new Client({ name: 'e2e', version: '0' })
-    const token = readFileSync(tokenFile).toString('base64url')
+    const token = readFileSync(tokenFiles.operator).toString('base64url')
     await client.connect(new StreamableHTTPClientTransport(new URL(url), { requestInit: { headers: { authorization: `Bearer ${token}` } } }) as unknown as Transport)
     const status = await client.callTool({ name: 'status', arguments: {} })
     expect(status.structuredContent).toMatchObject({ harness: 'system', store: 'ok', artifacts: 0, kernel: ['store', 'eventLog', 'leases', 'artifacts', 'credentials'], providers: ['chatgpt-web', 'gemini-web'] })
@@ -77,6 +77,32 @@ describe('system profile (e2e through dsh)', () => {
     const second = await client2(url, token)
     const asked = await second.callTool({ name: 'ask', arguments: { prompt: 'hi', waitSeconds: 10 } }).finally(() => second.close())
     expect(asked.structuredContent).toMatchObject({ status: 'failed', error: { kind: 'reauth_required', disposition: 'USER_ACTION' } })
+
+    // Every surface of the shipped composition authorizes by scope (ADR-0023, QA-14).
+    const tokenOf = (scope: 'operator' | 'client' | 'model'): string => readFileSync(tokenFiles[scope]).toString('base64url')
+    const toolsOf = async (scope: 'operator' | 'client'): Promise<string[]> => {
+      const scoped = await client2(url, tokenOf(scope))
+      return (await scoped.listTools().finally(() => scoped.close())).tools.map((t) => t.name).sort()
+    }
+    const clientTools = await toolsOf('client')
+    expect(clientTools).toEqual(['ask', 'explain', 'research', 'result', 'run', 'session_inbox', 'session_send', 'status', 'usage'])
+    expect(await toolsOf('operator')).toEqual(expect.arrayContaining([...clientTools, 'approve', 'stop', 'delete', 'drain', 'account_set_credentials', 'account_relogin', 'account_code']))
+    const origin = new URL(url).origin
+    const send = (path: string, scope: 'operator' | 'client' | 'model', body?: object) => fetch(`${origin}${path}`, {
+      method: body ? 'POST' : 'GET', ...(body ? { body: JSON.stringify(body) } : {}),
+      headers: { authorization: `Bearer ${tokenOf(scope)}`, 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
+    })
+    const call = (name: string) => ({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: {} } })
+    for (const tool of ['approve', 'account_set_credentials']) expect((await send('/mcp', 'client', call(tool))).status).toBe(403)
+    expect((await send('/mcp', 'model', call('status'))).status).toBe(401)
+    for (const gateway of ['/anthropic/v1/models', '/openai/v1/models']) {
+      expect((await send(gateway, 'model')).status).toBe(200)
+      expect((await send(gateway, 'client')).status).toBe(401)
+      expect((await send(gateway, 'operator')).status).toBe(401)
+    }
+    expect((await send('/ui/api/runs', 'operator')).status).toBe(200)
+    expect((await send('/ui/api/runs', 'client')).status).toBe(401)
+    expect(existsSync(join(home, 'system', 'mcp.token'))).toBe(false)
 
     expect(existsSync(join(home, 'system', 'system.db'))).toBe(true)
     expect(existsSync(join(home, 'system', 'vault.key'))).toBe(true)

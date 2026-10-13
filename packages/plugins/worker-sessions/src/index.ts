@@ -76,6 +76,9 @@ export interface Message {
   refs?: ContentId[]
 }
 
+/** Senders that are not sessions: the operator, and an MCP client holding the client scope (ADR-0023). */
+export const EXTERNAL_SENDERS: readonly string[] = ['operator', 'client']
+
 export interface Delivered {
   seq: number
   from: string
@@ -134,22 +137,25 @@ export class WorkerSessions extends Service {
     ctx.inject(['mcp'], (c) => {
       const json = (value: object) => ({ content: [{ type: 'text' as const, text: JSON.stringify(value) }], structuredContent: { ...value } })
       c.mcp.tool('session_send', {
-        description: 'Send a message as the operator to a Worker session, or to its group (recorded as a message artifact; delivered at most once).',
+        scope: 'client',
+        description: 'Send a message to a Worker session, or to its group, as the caller: the operator, or the client for a client token (recorded as a message artifact; delivered at most once).',
         inputSchema: {
           to: zod.string().max(200).describe('A SessionId, or a group id'),
           body: zod.string().min(1).max(32_000),
           intent: zod.enum(['inform', 'request', 'critique', 'answer', 'handoff', 'input-required', 'close']).optional(),
           messageId: zod.string().max(200).optional().describe('Retry-safe id; the same id is delivered once'),
         },
-      }, async (args) => {
+      }, async (args, { scope }) => {
         const to = String(args.to)
         const isGroup = !!this.ctx.store.db.prepare('SELECT 1 FROM session_groups WHERE group_id = ?').get(to)
         return json(this.send({
-          from: 'operator', messageId: args.messageId ? String(args.messageId) : `op-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+          // The audit trail names who wrote it (INV-13): a client token never writes as the operator.
+          from: scope === 'operator' ? 'operator' : 'client', messageId: args.messageId ? String(args.messageId) : `${scope === 'operator' ? 'op' : 'cl'}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
           to: isGroup ? { group: to } : { session: to }, body: String(args.body), ...(args.intent ? { intent: args.intent as Message['intent'] & string } : {}),
         }))
       })
       c.mcp.tool('session_inbox', {
+        scope: 'client',
         description: 'Read a Worker session: its record and its unread messages (not acknowledged).',
         inputSchema: { sessionId: zod.string().max(200) },
       }, async (args) => {
@@ -207,27 +213,29 @@ export class WorkerSessions extends Service {
   }
 
   /**
-   * Send a message (`operator` may write to any session). The group policy decides; a refusal
+   * Send a message (`operator` and `client`, the senders that are not sessions, may write to any
+   * session). The group policy decides; a refusal
    * is a `gate` decision. Accepted, it becomes a `message@1.0` artifact appended to each
    * target's mailbox; a repeated sender message id is delivered once.
    */
   send(input: Omit<Message, 'schema'>): SendResult {
     const message: Message = { schema: 'message@1.0', ...input }
     return this.ctx.store.transaction((db) => {
-      const sender = message.from === 'operator' ? undefined : this.session(message.from)
+      const external = EXTERNAL_SENDERS.includes(message.from)
+      const sender = external ? undefined : this.session(message.from)
       const targets = 'group' in message.to
         ? (db.prepare('SELECT session_id FROM worker_sessions WHERE group_id = ? ORDER BY session_id').all(message.to.group) as Array<{ session_id: string }>).map((r) => r.session_id).filter((id) => id !== message.from)
         : [message.to.session]
       const target = 'group' in message.to ? message.to.group : message.to.session
       let reason: string | undefined
-      if (message.from !== 'operator' && !sender) reason = `${message.from} is not a session`
+      if (!external && !sender) reason = `${message.from} is not a session`
       else if (sender && !this.allowed(sender, target)) reason = `${message.from} may not message ${target}`
       else if (sender && (sender.usage?.messagesSent ?? 0) >= sender.budgets.maxMessages) reason = `${message.from} has used its ${sender.budgets.maxMessages} messages`
       else if (!targets.length || targets.some((id) => !this.session(id))) reason = `no session ${target}`
       if (reason) return { accepted: false, reason, decision: this.refusal(message, reason) }
       const artifact = this.ctx.artifacts.put({
         kind: 'message', bodySchema: 'message@1.0', body: message, classification: 'operator-shared',
-        producer: message.from === 'operator' ? { type: 'operator', ref: 'operator' } : { type: 'worker', ref: message.from },
+        producer: message.from === 'operator' ? { type: 'operator', ref: 'operator' } : message.from === 'client' ? { type: 'system', ref: 'mcp-client' } : { type: 'worker', ref: message.from },
         inputs: message.refs ?? [], ...(sender?.runId ? { runId: sender.runId } : {}), ...(sender?.nodeId ? { nodeId: sender.nodeId } : {}),
       }).id
       const delivered: string[] = []

@@ -38,8 +38,8 @@ const ALLOWED: Record<'read-only' | 'workspace-write', string[]> = { 'read-only'
  * Pre-approval rule for one tool, scoped to the working directory (`./**`). Bare rules reach the
  * whole disk: a bare `Write` wrote outside the workspace, and a bare `Read` or `Grep` read
  * outside it (live, 2026-10-12 and 2026-10-13), which would expose the daemon's own state
- * (`vault.key`, `mcp.token`). The scoped rules held against `..` traversal, a symlink out of the
- * workspace, and a home path; anything else is denied without a prompt (`dontAsk`).
+ * (`vault.key`, the token files). The scoped rules held against `..` traversal, a symlink out of
+ * the workspace, and a home path; anything else is denied without a prompt (`dontAsk`).
  */
 const rule = (tool: string): string => `${tool}(./**)`
 

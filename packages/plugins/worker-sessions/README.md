@@ -12,7 +12,8 @@
     formation decision. A rejoin with another Worker is refused.
 - **Messages.**
   - `send(message)` is checked against the policy first:
-    - the sender is a member, or the operator;
+    - the sender is a member, or a sender that is not a session (`EXTERNAL_SENDERS`:
+      `operator`, or `client` for an MCP client holding the client scope);
     - the target is in its `mayMessage` (the group id allows the group and
       every member);
     - its message budget has room.
@@ -29,7 +30,10 @@
   member's accepted answer as that member's message. A `To m<k>: …` line in an
   answer is a direct message to that member only.
 - **MCP:**
-  - `session_send` (as the operator, to a session or a group);
+  - `session_send` (to a session or a group, client scope). It records the caller
+    as the sender: `operator` for the operator token, `client` (producer
+    `system`/`mcp-client`) for a client token, so the audit trail never credits
+    the operator with what a client wrote;
   - `session_inbox` (a session's record and unread messages, not acknowledged).
 - **Activation (wake-on-message).**
   - A delivery whose intent asks for a reply (any but `answer` and `close`)

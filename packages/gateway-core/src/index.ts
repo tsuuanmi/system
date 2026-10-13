@@ -9,7 +9,7 @@ import { type Context, Service } from '@deepseek-ai/cordis'
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
 import type { ZodRawShape } from 'zod'
 
-export { assertSafeBind, endpointUrl, type GuardOptions, type GuardResult, guardRequest, hostName, LOOPBACK_HOSTS, readJsonBody, tokenMatches } from './guard.ts'
+export { assertSafeBind, endpointUrl, type GuardOptions, type GuardResult, guardRequest, hostName, LOOPBACK_HOSTS, readJsonBody, type Scope, SCOPES, scopeToken, scopeTokens, tokenFile, tokenMatches } from './guard.ts'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -17,12 +17,22 @@ declare module '@deepseek-ai/cordis' {
   }
 }
 
+/** Who may call a tool (ADR-0023): `operator` holders call every tool; `client` holders only client tools. */
+export type ToolScope = 'operator' | 'client'
+
 export interface ToolSpec {
   description: string
   inputSchema: ZodRawShape
+  /** Default `operator`: a tool that declares nothing is the operator's (fail closed). */
+  scope?: ToolScope
 }
 
-export type ToolHandler = (args: Record<string, unknown>) => Promise<CallToolResult>
+/** What a handler knows of its caller: the scope of the token presented (ADR-0023). */
+export interface ToolContext {
+  scope: ToolScope
+}
+
+export type ToolHandler = (args: Record<string, unknown>, context: ToolContext) => Promise<CallToolResult>
 
 export abstract class McpTools extends Service {
   constructor(ctx: Context) {
@@ -31,7 +41,7 @@ export abstract class McpTools extends Service {
 
   /**
    * Contribute a tool for the calling plugin's lifetime. A name is unique, except that a
-   * provider's built-in placeholder may be replaced.
+   * provider's built-in placeholder may be replaced. `spec.scope` says who may call it.
    */
   abstract tool(name: string, spec: ToolSpec, handler: ToolHandler): void
 }

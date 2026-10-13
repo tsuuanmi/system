@@ -1,4 +1,7 @@
-/** The engine's MCP tools (`ctx.mcp`): starting runs, fetching results, and the operator's actions. */
+/**
+ * The engine's MCP tools (`ctx.mcp`): starting runs and reading them (the `client` scope), and the
+ * operator's actions, which declare no scope and so are the operator's alone (ADR-0023).
+ */
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@tsuuanmi/system-gateway-core'
 import type { Classification, Tier } from '@tsuuanmi/system-workers-core'
@@ -17,6 +20,7 @@ export function registerTools(c: Context, w: Workflow, ctx: Context): void {
     .describe('Data classification of the input; local-private content never leaves the machine (INV-12)')
   const clientRequestId = zod.string().max(200).optional().describe('Retry-safe request key')
   c.mcp.tool('ask', {
+    scope: 'client',
     description: 'Ask a website Worker (separate chat quota). Waits up to waitSeconds; otherwise returns a runId for `result`.',
     inputSchema: {
       prompt: zod.string().min(1).max(32_000),
@@ -37,6 +41,7 @@ export function registerTools(c: Context, w: Workflow, ctx: Context): void {
     }
   })
   c.mcp.tool('research', {
+    scope: 'client',
     description: 'Research a question with the research profile: testable hypotheses, a cited literature review (web search), an evidence table, an independent critique, and conclusions per hypothesis. Returns at once with a runId; poll `result` (runs take minutes). Deep research alone, then a compaction: `run` with template deep-research.',
     inputSchema: {
       question: zod.string().min(1).max(32_000),
@@ -53,6 +58,7 @@ export function registerTools(c: Context, w: Workflow, ctx: Context): void {
     }
   })
   c.mcp.tool('run', {
+    scope: 'client',
     description: `Start a workflow template by name (built in: ${Object.keys(DEFAULT_TEMPLATES).sort().join(', ')}; profiles add more, such as develop); its steps are routed by capability to website or local agent Workers. Waits up to waitSeconds; otherwise returns a runId for \`result\`.`,
     inputSchema: {
       template: zod.string().max(100),
@@ -137,6 +143,7 @@ export function registerTools(c: Context, w: Workflow, ctx: Context): void {
     }
   })
   c.mcp.tool('result', {
+    scope: 'client',
     description: 'Fetch a run started by `ask` or `research`; waits up to waitSeconds for it to finish.',
     inputSchema: { runId: zod.string().max(200), waitSeconds },
   }, async (args) => {
@@ -147,10 +154,12 @@ export function registerTools(c: Context, w: Workflow, ctx: Context): void {
     }
   })
   c.mcp.tool('usage', {
+    scope: 'client',
     description: 'Recent runs and, per step, which Worker, tier, and quota class served it.',
     inputSchema: { limit: zod.number().int().min(1).max(500).optional() },
   }, async (args) => json({ runs: w.usage((args.limit as number | undefined) ?? 50) }))
   c.mcp.tool('explain', {
+    scope: 'client',
     description: 'The decision chain behind a run (egress, tier, route, acceptance per step), or the inputs of any artifact id.',
     inputSchema: { id: zod.string().max(200) },
   }, async (args) => {

@@ -110,7 +110,7 @@ sequenceDiagram
   participant TH as gateway-turns threads
   participant W as ctx.workflow (ask run)
   participant M as web model
-  CL->>G: request: system, tools, history (bearer token)
+  CL->>G: request: system, tools, history (model token)
   G->>G: guard, then native envelope to turns and tool specs
   G->>TH: exchange(thread key, tools, turns, tier)
   alt new thread

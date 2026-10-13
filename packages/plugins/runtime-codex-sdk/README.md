@@ -43,11 +43,12 @@ operator's installed `codex` through the official Codex TypeScript SDK.
   - `home`: the Workers' Codex home; it must configure no MCP server.
 
   To run Codex on website Workers, point its model provider at the system
-  Responses gateway. Put the gateway token into the daemon's environment as the
-  variable the provider's `env_key` names (for example `SYSTEM_MCP_TOKEN`), never
-  into a config file, and name that variable in `forwardEnv`: without it, the
-  scrub removes the token and Codex cannot reach the gateway. Such a Worker needs
-  no login. A Worker on an OpenAI or ChatGPT login must be signed in inside its
+  Responses gateway. Put the model token (`system mcp-token --scope model`) into
+  the daemon's environment as the variable the provider's `env_key` names (for
+  example `SYSTEM_MCP_TOKEN`), never into a config file, and name that variable
+  in `forwardEnv`: without it, the scrub removes the token and Codex cannot reach
+  the gateway. Such a Worker needs no login, and its token reaches only the model
+  gateways. A Worker on an OpenAI or ChatGPT login must be signed in inside its
   own home (`CODEX_HOME=<home> codex login`); the operator's `~/.codex` login is
   not used.
 - **Dependencies:** `@openai/codex-sdk`, whose per-platform Codex builds are

@@ -52,7 +52,7 @@ from the code in [packages](packages.md); this table names the roles.
 | Routing | `egress` | built | `system-egress`: classification policy and credential scan (INV-12) | turns, agent-workers, workflow |
 | Orchestration | `workflow` | built | `system-workflow`; templates through `ctx.workflow.template` | gateways, web-ui, profiles |
 | Orchestration | `workerSessions` | built | `system-worker-sessions` ([design](../design/sessions-and-messaging.md)) | workflow |
-| Gateways | `mcp` | built | `McpTools` in `system-gateway-core`; `system-mcp-server` (own: DSH has only an MCP client) | tool contributors: login, turns, workflow, worker-sessions; mcp-server adds `status` |
+| Gateways | `mcp` | built | `McpTools` in `system-gateway-core`; `system-mcp-server` (own: DSH has only an MCP client) | tool contributors: login, turns, workflow, worker-sessions; mcp-server adds `status`. Each tool declares its scope, `operator` by default ([ADR-0023](../decisions/adr/0023-scoped-control-credentials.md)) |
 | Host | `webServer` | built | **DSH** `dsh-host-webserver` (loopback) | mcp-server, gateway-anthropic, gateway-responses, web-ui |
 | — | `website` (Website Core) | not planned | replaced by `ctx.turns` and the engine's request keys and result reuse | — |
 | — | `exec` (local tools) | not planned | agent runtimes run commands inside their own sandbox | — |
@@ -169,7 +169,7 @@ definitions only.
 | `display` | `Display` in `@tsuuanmi/system-provider-core` | `provider-core/conformance/display.ts` | `display-virtual` (real Xvfb), the test fake `KillableDisplay` |
 | `browser` | `Browser<Page, Context>` in `@tsuuanmi/system-provider-core` (engine-neutral) | `provider-core/conformance/browser.ts` | `browser-patchright` |
 | `providers` | `ProviderRegistry` in `@tsuuanmi/system-provider-core` | `provider-core/conformance/providers.ts` | `providers` |
-| `mcp` | `McpTools` in `@tsuuanmi/system-gateway-core` | `gateway-core/conformance/mcp-tools.ts` | `mcp-server` (listed through a real MCP client) |
+| `mcp` | `McpTools` in `@tsuuanmi/system-gateway-core` | `gateway-core/conformance/mcp-tools.ts`, which also checks that a tool declaring no scope is listed to the operator only | `mcp-server` (listed through a real MCP client, per scope) |
 | `workers` | `Workers` in `@tsuuanmi/system-workers-core` | `workers-core/conformance/workers.ts` | `workers` |
 | `agentRuntimes` | `AgentRuntimes` in `@tsuuanmi/system-agent-runtime-core`, plus a provider suite | `agent-runtime-core/conformance/agent-runtimes.ts` | `agent-runtimes` (registry); `runtime-claude-agent-sdk`, `runtime-codex-sdk`, `runtime-acp` (against scripted streams and agents) |
 | workflow templates | `ctx.workflow.template(name, nodes)` | `workflow/conformance/profiles.ts` | `profile-software-development`, `profile-scientific-research` |

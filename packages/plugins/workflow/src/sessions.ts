@@ -3,8 +3,20 @@
  * an idle session takes one turn on its unread mail, its reply goes to the peers who wrote, and
  * past its budget it writes a handoff summary and continues in a fresh conversation.
  */
+import { sha256 } from '@tsuuanmi/system-libs'
+import { type Delivered, EXTERNAL_SENDERS } from '@tsuuanmi/system-worker-sessions'
 import type { Engine } from './engine.ts'
 import type { RunView } from './types.ts'
+
+/**
+ * Messages as prompt text, each under its sender's label and between fence lines derived from all
+ * the bodies. A body cannot close its fence or pass as another sender's message (a client writing
+ * a forged `### From [operator]` header), because the fence depends on that very body.
+ */
+export function messagesText(e: Engine, inbox: Delivered[], intent: string): string {
+  const fence = sha256(inbox.map((m) => m.message.body).join('\0')).slice(-16)
+  return inbox.map((m) => `### From [${e.ctx.workerSessions.session(m.from)?.role ?? m.from}] (${m.message.intent ?? intent}), between the lines ${fence}:\n${fence}\n${m.message.body}\n${fence}`).join('\n\n')
+}
 
 /** A rough token count of session context (no tokenizer for website models). */
 const estimateTokens = (text: string): number => Math.ceil(text.length / 4)
@@ -29,13 +41,13 @@ export function wake(e: Engine, sessionId: string): RunView | undefined {
     // After a compaction the next turn opens a fresh conversation; until it binds, the last handle stands.
     if (!sessions.activate(sessionId, e.ctx.workers.handle(sessionId) ?? session.binding.nativeHandle).activated) return undefined
     const through = inbox.at(-1)!.seq
-    const replyTo = [...new Set(inbox.map((m) => m.from).filter((from) => from !== 'operator' && from !== sessionId))]
+    const replyTo = [...new Set(inbox.map((m) => m.from).filter((from) => !EXTERNAL_SENDERS.includes(from) && from !== sessionId))]
     const handoff = db.prepare('SELECT artifact FROM session_handoffs WHERE session_id = ?').get(sessionId) as { artifact: string } | undefined
     const summary = handoff ? (e.ctx.artifacts.get(handoff.artifact)?.body as { summary?: string } | undefined)?.summary : undefined
     const prompt = [
       ...(summary ? [`You continue a long-running session. Your earlier conversation was compacted into this handoff summary:\n<handoff>\n${summary}\n</handoff>`] : []),
       `Messages for you (${session.role}), in order:`,
-      ...inbox.map((m) => `### From [${sessions.session(m.from)?.role ?? m.from}] (${m.message.intent ?? 'request'})\n${m.message.body}`),
+      messagesText(e, inbox, 'request'),
       replyTo.length ? 'Reply to them. Your reply is sent to each peer who wrote.' : 'Reply to them.',
       'If you cannot go on without input from the operator or a peer, start your reply with a line `INPUT_REQUIRED: <your question>`.',
     ].join('\n\n')
