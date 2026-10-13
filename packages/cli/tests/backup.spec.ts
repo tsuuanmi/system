@@ -87,6 +87,17 @@ describe('backup and restore (operations runbook, QA-4)', () => {
     expect(existsSync(join(into, 'system', 'vault.key'))).toBe(false)
   })
 
+  it('refuses a backup a crash interrupted: the manifest is written last, so it has none (INV-4)', () => {
+    const source = home()
+    const target = join(temp(), 'b')
+    backupHost(target, { home: source.home })
+    source.db.close()
+    rmSync(join(target, 'system-backup.json'))
+    const into = temp()
+    expect(() => restoreHost(target, { home: into, yes: true })).toThrow(/no system-backup\.json: it is not a complete system backup/)
+    expect(existsSync(join(into, 'system'))).toBe(false)
+  })
+
   it('restores only the files a backup holds: a manifest naming a path outside the state is refused', () => {
     const source = home()
     const target = join(temp(), 'b')

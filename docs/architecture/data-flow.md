@@ -108,7 +108,7 @@ the [roadmap](../proposals/roadmap.md) tracks the rows that have none yet.
 | A workflow node's result committed, graph growth | safe-to-repeat | one store transaction; a node re-attaches to its execution by key | — |
 | A lease taken over | safe-to-repeat | the generation fence rejects a commit by the old holder | — |
 | A gateway request in flight | reconcile-before-repeat | the website turn under it reconciles as above; the client's stream ends | — |
-| A backup written | safe-to-repeat | the manifest is written last, so an interrupted backup has none and restore refuses it | — |
+| A backup written | safe-to-repeat | the manifest is written last, so an interrupted backup has none and restore refuses it | [backup.spec.ts](../../packages/cli/tests/backup.spec.ts): a backup without its manifest is refused |
 
 ## Gateway round trip
 

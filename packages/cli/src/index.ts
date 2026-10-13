@@ -368,6 +368,8 @@ function profileRunning(state: string): boolean {
  */
 export function restoreHost(source: string, options: { home?: string; yes?: boolean; keyFile?: string } = {}): { manifest: BackupManifest; applied: boolean; keptAside?: string } {
   const state = join(options.home ?? dshHome(), 'system')
+  // The manifest is written last, so a backup a crash interrupted has none and is refused.
+  if (!existsSync(join(source, BACKUP_MANIFEST))) throw new Error(`${source} has no ${BACKUP_MANIFEST}: it is not a complete system backup`)
   const manifest = JSON.parse(readFileSync(join(source, BACKUP_MANIFEST), 'utf8')) as BackupManifest
   if (manifest.schema !== 'system-backup@1') throw new Error(`${source} is not a system backup`)
   for (const file of Object.keys(manifest.files)) {
