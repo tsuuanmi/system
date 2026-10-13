@@ -38,8 +38,6 @@ inside the DSH web app.
 
 These change no behavior. Each lands with its tests unchanged:
 
-- split `packages/plugins/workflow/src/index.ts` into modules by mechanism
-  (before the M6c retention work, which changes the same code);
 - a shared driver kit for `provider-chatgpt-web` and `provider-gemini-web`;
 - one durable-run mechanism for website turns (`turns`) and agent runs
   (`agent-workers`);

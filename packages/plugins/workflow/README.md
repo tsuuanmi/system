@@ -273,3 +273,25 @@ second execution path (INV-1).
 - **Not yet:** re-planning after a superseded input.
 - **Injects:** `store`, `artifacts`, `eventLog`, `leases`, `egress`, `workers`, `workerSessions`;
   `mcp` is optional.
+
+## Source layout
+
+`src/index.ts` is the `ctx.workflow` service: its config, startup, and public
+methods. Each mechanism lives in its own module and works on the engine state
+in `engine.ts`:
+
+| Module | Owns |
+|---|---|
+| `engine.ts` | engine state; admission (`start`); the run loop under the run lease; a node's path from `WAITING` to `COMPLETED` or `FAILED`; node writes |
+| `spec.ts` | templates, preflight, resolution, prompt rendering, and parsing of plans, assessments, and lead decisions |
+| `types.ts` | records, views, config, row shapes, `WorkflowFailure` |
+| `migrations.ts` | the engine's tables |
+| `recovery.ts` | retries after a failed attempt, escalation after a rejected result, admission failure kinds |
+| `growth.ts` | graph growth and approval gates |
+| `review.ts` | exact-subject review and remediation cycles |
+| `teams.ts` | team messages, barrier, lead and carried rounds, distinct accounts, team contracts |
+| `sessions.ts` | wake-on-message, checkpoints, compaction |
+| `operator.ts` | `stop`, `continue`, `supersede`, `approve` |
+| `retention.ts` | `delete` and the expiry of private text |
+| `views.ts` | run views, `usage`, `explain` |
+| `tools.ts` | the MCP tools |
