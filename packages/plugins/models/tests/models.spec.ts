@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -21,6 +22,9 @@ import { CATALOG, FakeModels, type FakeScript, modelsConformance } from '../../.
 import * as Models from '../src/index.ts'
 import { type CatalogEntry, LlmModels, ModelWorkers } from '../src/index.ts'
 import { type FakeOpenAi, fakeOpenAi } from './fake-openai.ts'
+
+// A credential-shaped value made at run time: no key-shaped literal sits in the repository.
+const awsKeyId = (): string => `AKIA${Array.from(randomBytes(16), (b) => 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'[b % 32]).join('')}`
 
 const cleanups: Array<() => unknown> = []
 afterEach(async () => {
@@ -230,7 +234,7 @@ describe('ctx.workers source `models`: API and local models as Workers (REQ-WRK-
     expect(local).toMatchObject({ status: 'completed' })
     expect((ctx.artifacts.get(local.decisions[0]!)!.body as { outcome: { detail: { workerClass: string } } }).outcome.detail.workerClass).toBe('model-local')
     // ...but a credential in the payload is refused whatever the class.
-    const secret = await settle(ctx, source.start({ key: 'p-3', worker: 'model:private', prompt: 'key AKIAIOSFODNN7EXAMPLE here', requirement: requirement(), decisions: DECISIONS }))
+    const secret = await settle(ctx, source.start({ key: 'p-3', worker: 'model:private', prompt: `key ${awsKeyId()} here`, requirement: requirement(), decisions: DECISIONS }))
     expect(secret).toMatchObject({ status: 'failed', error: { kind: 'egress_denied' } })
     expect(fake.calls.map((c) => c.prompt)).toEqual(['my diary'])
     // Routing keeps local-private work off remote models in the first place.
