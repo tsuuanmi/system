@@ -4,8 +4,8 @@
 > invariants, and from the titles of the tests that cite them; do not edit by hand. CI fails
 > when it is stale. A test cites an id in its title, for example `... (REQ-WF-7)`.
 
-**91 of 92** ids have at least one test that cites them.
-Not yet cited by a test: QA-11. Some are covered by live or manual checks in the [release checklist](release-checklist.md).
+**91 of 93** ids have at least one test that cites them.
+Not yet cited by a test: REQ-HOST-5, QA-11. Some are covered by live or manual checks in the [release checklist](release-checklist.md).
 
 ## Requirements
 
@@ -68,12 +68,13 @@ Not yet cited by a test: QA-11. Some are covered by live or manual checks in the
 | REQ-GW-1 | The host exposes an OpenAI Responses-compatible endpoint with SSE streaming. | [gateway.spec.ts:175](../../packages/plugins/gateway-responses/tests/gateway.spec.ts#L175) |
 | REQ-GW-2 | Tool calls requested by a remote Worker are executed by the client under the client's own sandbox and approvals, and returned to the same… | [gateway.spec.ts:112](../../packages/plugins/gateway-anthropic/tests/gateway.spec.ts#L112), [gateway.spec.ts:146](../../packages/plugins/gateway-responses/tests/gateway.spec.ts#L146) |
 | REQ-GW-3 | The host exposes its capabilities as an MCP server. | [mcp-server.spec.ts:49](../../packages/plugins/mcp-server/tests/mcp-server.spec.ts#L49), [workflow.spec.ts:793](../../packages/plugins/workflow/tests/workflow.spec.ts#L793) |
-| REQ-GW-4 | A CLI offers turn, workflow, account, and maintenance commands. | [cli.spec.ts:201](../../packages/cli/tests/cli.spec.ts#L201) |
+| REQ-GW-4 | A CLI offers turn, workflow, account, and maintenance commands. | [cli.spec.ts:210](../../packages/cli/tests/cli.spec.ts#L210) |
 | REQ-GW-5 | The host exposes an Anthropic Messages-compatible endpoint with SSE streaming, so that a Messages client such as Claude Code can select `… | [gateway.spec.ts:126](../../packages/plugins/gateway-anthropic/tests/gateway.spec.ts#L126) |
-| REQ-HOST-1 | The host drains before stop or upgrade. | [cli.spec.ts:166](../../packages/cli/tests/cli.spec.ts#L166), [workflow.spec.ts:468](../../packages/plugins/workflow/tests/workflow.spec.ts#L468) |
+| REQ-HOST-1 | The host drains before stop or upgrade. | [cli.spec.ts:175](../../packages/cli/tests/cli.spec.ts#L175), [workflow.spec.ts:468](../../packages/plugins/workflow/tests/workflow.spec.ts#L468) |
 | REQ-HOST-2 | Startup validates configuration, profiles, and stores, and fails with a precise error when any of them is invalid. | [cli.spec.ts:35](../../packages/cli/tests/cli.spec.ts#L35), [runtime.spec.ts:4](../../packages/libs/tests/runtime.spec.ts#L4), [store.spec.ts:39](../../packages/plugins/store/tests/store.spec.ts#L39), [startup.spec.ts:39](../../packages/plugins/workflow/tests/startup.spec.ts#L39) |
-| REQ-HOST-3 | Any change the host makes to a client's configuration is journaled and can be reversed byte for byte. | [cli.spec.ts:232](../../packages/cli/tests/cli.spec.ts#L232) |
+| REQ-HOST-3 | Any change the host makes to a client's configuration is journaled and can be reversed byte for byte. | [cli.spec.ts:241](../../packages/cli/tests/cli.spec.ts#L241) |
 | REQ-HOST-4 | Every feature is composed from configuration (profiles and patches). | [architecture.spec.ts:78](../../scripts/architecture.spec.ts#L78) |
+| REQ-HOST-5 | No deployment-varying value is hardcoded. | **none yet** |
 
 ## Quality attributes
 
@@ -83,7 +84,7 @@ Not yet cited by a test: QA-11. Some are covered by live or manual checks in the
 | QA-2 | Reliability: A completed node, turn, or handoff is never re-executed because a sibling failed. | [workflow.spec.ts:497](../../packages/plugins/workflow/tests/workflow.spec.ts#L497) |
 | QA-3 | Correctness: No silent fallback across providers, models, accounts, or transports. | [display-virtual.spec.ts:142](../../packages/plugins/display-virtual/tests/display-virtual.spec.ts#L142), [turns.spec.ts:436](../../packages/plugins/turns/tests/turns.spec.ts#L436) |
 | QA-4 | Durability: Committed state survives process crash. | [backup.spec.ts:31](../../packages/cli/tests/backup.spec.ts#L31), [store.spec.ts:57](../../packages/plugins/store/tests/store.spec.ts#L57), [store.spec.ts:134](../../packages/plugins/store/tests/store.spec.ts#L134), [store.spec.ts:178](../../packages/plugins/store/tests/store.spec.ts#L178) |
-| QA-5 | Security: Every listener binds to loopback by default. | [guard.spec.ts:109](../../packages/gateway-core/tests/guard.spec.ts#L109), [gateway.spec.ts:75](../../packages/plugins/gateway-anthropic/tests/gateway.spec.ts#L75), [gateway.spec.ts:115](../../packages/plugins/gateway-responses/tests/gateway.spec.ts#L115), [mcp-server.spec.ts:83](../../packages/plugins/mcp-server/tests/mcp-server.spec.ts#L83), [web-ui.spec.ts:53](../../packages/plugins/web-ui/tests/web-ui.spec.ts#L53) |
+| QA-5 | Security: Every listener binds to loopback by default. | [guard.spec.ts:109](../../packages/gateway-core/tests/guard.spec.ts#L109), [gateway.spec.ts:75](../../packages/plugins/gateway-anthropic/tests/gateway.spec.ts#L75), [gateway.spec.ts:115](../../packages/plugins/gateway-responses/tests/gateway.spec.ts#L115), [mcp-server.spec.ts:101](../../packages/plugins/mcp-server/tests/mcp-server.spec.ts#L101), [web-ui.spec.ts:53](../../packages/plugins/web-ui/tests/web-ui.spec.ts#L53) |
 | QA-6 | Security: Credentials and authenticated browser state never leave the provider runtime. | [libs.spec.ts:70](../../packages/libs/tests/libs.spec.ts#L70), [accounts.spec.ts:45](../../packages/plugins/accounts/tests/accounts.spec.ts#L45) |
 | QA-7 | Observability: Every turn, node execution, and lease has a stable id and an append-only event trail an operator can query. | [event-log.spec.ts:25](../../packages/plugins/event-log/tests/event-log.spec.ts#L25), [event-log.spec.ts:35](../../packages/plugins/event-log/tests/event-log.spec.ts#L35) |
 | QA-8 | Boundedness: Concurrency per account, retries, review cycles, resubmissions, caches, and payload sizes all have configured upper bounds. | [agent-workers.spec.ts:398](../../packages/plugins/agent-workers/tests/agent-workers.spec.ts#L398), [turn-receipts.spec.ts:55](../../packages/plugins/turn-receipts/tests/turn-receipts.spec.ts#L55) |
@@ -92,7 +93,7 @@ Not yet cited by a test: QA-11. Some are covered by live or manual checks in the
 | QA-11 | Portability: The MVP runs on Linux x64 (Xvfb virtual display, remote login over noVNC through an SSH tunnel). | **none yet** |
 | QA-12 | Token economy: Routing places work on the lowest intelligence tier (P4) and the cheapest quota class (P1) that prove the required capabilities. | [workers.ts:96](../../packages/workers-core/conformance/workers.ts#L96), [workers.ts:114](../../packages/workers-core/conformance/workers.ts#L114) |
 | QA-13 | Tool agnosticism: No model, vendor, agent, client, browser engine, or store is required. | [architecture.spec.ts:28](../../scripts/architecture.spec.ts#L28) |
-| QA-14 | Security: Every control surface authorizes by scope: a credential grants only its scope's actions (ADR-0023). | [profile.e2e.ts:61](../../packages/cli/tests/profile.e2e.ts#L61), [guard.spec.ts:52](../../packages/gateway-core/tests/guard.spec.ts#L52), [guard.spec.ts:76](../../packages/gateway-core/tests/guard.spec.ts#L76), [mcp-server.spec.ts:113](../../packages/plugins/mcp-server/tests/mcp-server.spec.ts#L113), [mcp-server.spec.ts:128](../../packages/plugins/mcp-server/tests/mcp-server.spec.ts#L128), [mcp-server.spec.ts:139](../../packages/plugins/mcp-server/tests/mcp-server.spec.ts#L139), [mcp-server.spec.ts:148](../../packages/plugins/mcp-server/tests/mcp-server.spec.ts#L148), [worker-sessions.spec.ts:83](../../packages/plugins/worker-sessions/tests/worker-sessions.spec.ts#L83) |
+| QA-14 | Security: Every control surface authorizes by scope: a credential grants only its scope's actions (ADR-0023). | [profile.e2e.ts:61](../../packages/cli/tests/profile.e2e.ts#L61), [guard.spec.ts:52](../../packages/gateway-core/tests/guard.spec.ts#L52), [guard.spec.ts:76](../../packages/gateway-core/tests/guard.spec.ts#L76), [mcp-server.spec.ts:131](../../packages/plugins/mcp-server/tests/mcp-server.spec.ts#L131), [mcp-server.spec.ts:146](../../packages/plugins/mcp-server/tests/mcp-server.spec.ts#L146), [mcp-server.spec.ts:157](../../packages/plugins/mcp-server/tests/mcp-server.spec.ts#L157), [mcp-server.spec.ts:166](../../packages/plugins/mcp-server/tests/mcp-server.spec.ts#L166), [worker-sessions.spec.ts:83](../../packages/plugins/worker-sessions/tests/worker-sessions.spec.ts#L83) |
 
 ## Invariants
 

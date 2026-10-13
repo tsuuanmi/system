@@ -177,6 +177,77 @@ Data at rest: only credentials are encrypted by `system` (the vault). The store
 host that holds private data needs full-disk or home-directory encryption
 ([threat model](../security/threat-model.md#threats-and-controls)).
 
+## Run as a service
+
+Run the host as a systemd user service, so it starts with the machine and a
+failure is noticed. Below, `<node>` is a supported Node (`node --version`, see
+[CON-2](../requirements/constraints.md)) and `<system>` is the checkout's
+`packages/cli/lib/bin.js`. Allow the user's services to run without a login
+session: `loginctl enable-linger`.
+
+`~/.config/systemd/user/system.service`:
+
+```ini
+[Unit]
+Description=system harness
+
+[Service]
+ExecStart=<node> <system> start
+# Drain first: no new run is admitted, running ones finish or resume on the next start.
+ExecStop=<node> <system> shutdown --deadline 600
+TimeoutStopSec=660
+Restart=on-failure
+
+[Install]
+WantedBy=default.target
+```
+
+Logs go to the journal: `journalctl --user -u system`.
+
+**Health.** `system health` exits 0 healthy, 1 degraded, 2 down (or not
+answering), and prints what to do for each check that is not ok. Run it on a
+timer and let the operator's own notification run on failure:
+
+```ini
+# ~/.config/systemd/user/system-health.service
+[Unit]
+OnFailure=<your notifier>.service
+
+[Service]
+Type=oneshot
+ExecStart=<node> <system> health
+
+# ~/.config/systemd/user/system-health.timer
+[Timer]
+OnCalendar=*:0/15
+
+[Install]
+WantedBy=timers.target
+```
+
+`/healthz` on the MCP port answers `ok` with no token, for a supervisor that
+only needs liveness.
+
+**Backups.** A daily timer around [backup](#backup-and-restore):
+
+```ini
+# ~/.config/systemd/user/system-backup.service
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c '<node> <system> backup "$HOME/backups/system-$(date +%%F)"'
+
+# ~/.config/systemd/user/system-backup.timer
+[Timer]
+OnCalendar=daily
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+```
+
+Enable them: `systemctl --user enable --now system.service system-health.timer system-backup.timer`.
+Prune old backup directories yourself; each one is a full snapshot.
+
 ## Upgrade with drain
 
 1. `system backup <dir>`.

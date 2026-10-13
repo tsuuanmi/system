@@ -217,7 +217,7 @@ Scope: `client`
 
 ## `status`
 
-Health of the system harness: store, artifacts, kernel services, installed providers.
+Health of the system harness: each check (runtime, store, disk, vault key, accounts, Workers, provider UI drift) and the worst of them, with what to do for operator callers; plus the kernel services and installed providers.
 
 Scope: `client`
 

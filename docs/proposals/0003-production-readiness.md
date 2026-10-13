@@ -170,7 +170,8 @@ lands. Each item names the requirement it closes and the test that proves it.
    Worker's availability, plugin state, a store integrity check, free space under
    `DSH_HOME`, vault key placement, the Node version, and the DSH pin. `system
    health [--json]` exits 0 (healthy), 1 (degraded), or 2 (down). A liveness-only
-   `/healthz` with no data moves from `gateway-responses` to `mcp-server`. `/ui`
+   `/healthz` with no data joins `mcp-server` (the Responses gateway keeps its
+   own for Codex). `/ui`
    shows a degraded banner. A host whose required service refuses to start
    exits non-zero: today DSH stays up with the dependent plugins pending, which a
    supervisor sees as a live process (found reviewing the store's runtime check).

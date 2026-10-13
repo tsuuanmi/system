@@ -42,7 +42,8 @@
   token never matches, and `x-api-key` is accepted only by the model gateways
   (`/anthropic` and `/openai`), for the model token.
   What answers without the token carries no data: the gateways' `HEAD`, `GET /`
-  (and `/healthz`), and the web UI's static shell.
+  (and `/healthz`), the MCP endpoint's `GET /healthz` (`ok`), and the web UI's
+  static shell. Health details reach only the operator scope.
 - **The bearer token crosses a network in clear text.** Every endpoint refuses to
   register its route on plain HTTP on a non-loopback host (`assertSafeBind`); a
   non-loopback bind needs TLS.

@@ -21,7 +21,7 @@ its types is not listed).
 | [gateway-core](../../packages/gateway-core/README.md) | gateways | defines `mcp` | — | — | `libs` |
 | [gateway-responses](../../packages/plugins/gateway-responses/README.md) | gateways | — | `gateway-responses` | `webServer`, `workflow`, `store` | `gateway-core`, `gateway-turns`, `libs` |
 | [gateway-turns](../../packages/gateway-turns/README.md) | gateways | — | — | — | `gateway-core`, `libs` |
-| [mcp-server](../../packages/plugins/mcp-server/README.md) | gateways | `mcp` | `mcp-server` | `webServer`, `artifacts` (optional), `providers` (optional), `store` (optional) | `gateway-core`, `libs` |
+| [mcp-server](../../packages/plugins/mcp-server/README.md) | gateways | `mcp` | `mcp-server` | `webServer`, `accounts` (optional), `artifacts` (optional), `eventLog` (optional), `providers` (optional), `store` (optional), `workers` (optional) | `gateway-core`, `libs` |
 | [web-ui](../../packages/plugins/web-ui/README.md) | gateways | — | `web-ui` | `webServer`, `workflow` | `gateway-core`, `libs` |
 | [profile-scientific-research](../../packages/plugins/profile-scientific-research/README.md) | orchestration | — | `profile-scientific-research` | `workflow`, `workers`, `artifacts`, `eventLog` | `libs` |
 | [profile-software-development](../../packages/plugins/profile-software-development/README.md) | orchestration | — | `profile-software-development` | `workflow` | — |
@@ -131,9 +131,12 @@ flowchart TB
   login --> providers
   login -.-> mcp_server
   mcp_server --> webserver
+  mcp_server -.-> accounts
   mcp_server -.-> artifacts
+  mcp_server -.-> event_log
   mcp_server -.-> providers
   mcp_server -.-> store
+  mcp_server -.-> workers
   profile_scientific_research --> workflow
   profile_scientific_research --> workers
   profile_scientific_research --> artifacts

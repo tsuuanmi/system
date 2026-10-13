@@ -72,6 +72,24 @@ describe('system MCP server on ctx.webServer', () => {
     expect(status.structuredContent).not.toHaveProperty('stage')
   })
 
+  it('reports health in status: every check for both scopes, what to do only for the operator (REQ-HOST-6, ADR-0023)', async () => {
+    const { url, tokens } = await boot()
+    type Health = { state: string; checks: Array<{ name: string; state: string; detail: string }> }
+    const health = async (token: string) => ((await (await connect(url, token)).callTool({ name: 'status', arguments: {} })).structuredContent as { health: Health }).health
+    const operator = await health(tokens.operator)
+    const client = await health(tokens.client)
+    expect(operator.checks.map((c) => c.name)).toEqual(['runtime', 'store', 'disk', 'vault-key'])
+    expect(operator.checks.find((c) => c.name === 'store')).toMatchObject({ state: 'ok' })
+    expect(client.state).toBe(operator.state)
+    for (const c of client.checks) if (c.state !== 'ok') expect(c.detail).toBe('ask the operator')
+  })
+
+  it('answers liveness at /healthz with no token and no data', async () => {
+    const { url } = await boot()
+    const live = await fetch(new URL('/healthz', url))
+    expect([live.status, await live.text()]).toEqual([200, 'ok'])
+  })
+
   it('reports ask as not installed rather than pretending to work', async () => {
     const { url, token } = await boot()
     const client = await connect(url, token)

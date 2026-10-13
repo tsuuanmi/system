@@ -23,14 +23,25 @@ the `system` CLI
   built-in placeholder may be replaced. For example, `login` contributes
   `account_list` and `account_save`.
 - **Built-in tools (slice 1 surface), all `client` scope:**
-  - `status` reports the stage, store, artifacts, kernel seams, and registered
-    providers.
+  - `status` reports the store, artifacts, kernel seams, registered providers,
+    and **health** (REQ-HOST-6, `src/health.ts`): each check (runtime, store
+    integrity, free disk, vault key custody, accounts to sign in again, Worker
+    availability, provider UI drift within `driftWindowHours`) as `ok`,
+    `degraded`, or `down`, and the worst of them. Only an operator-scope caller
+    sees what to do; a client sees the states. It reads the mounted services
+    (`accounts`, `workers`, `eventLog`) and skips those not mounted.
+- **`GET /healthz`:** liveness for a supervisor, with no token and no data
+  (`ok`).
   - `ask`, `research`, and `result` are placeholders. When `ctx.workflow` is
     mounted (it is in the `system` bundle), the engine's tools replace them.
     Otherwise they return an explicit "not installed" error and never pretend to
     work.
+- **Config:** `path`, `tokenDir`, `discoveryFile`, `allowedHosts`,
+  `maxBodyBytes`, `minFreeBytes` (default 1 GiB), `driftWindowHours`
+  (default 24).
 - **Injects:** `webServer`. It uses `ctx.get('artifacts')`, `ctx.get('store')`,
-  and `ctx.get('providers')` optionally.
+  `ctx.get('providers')`, `ctx.get('accounts')`, `ctx.get('workers')`, and
+  `ctx.get('eventLog')` optionally.
 
 ## Scopes
 

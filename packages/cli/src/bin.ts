@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { assertRuntime, backupHost, browserDeps, callTool, claudeGatewayCommand, codexGatewayCommand, drainHost, formatTools, listTools, restoreHost, shutdownHost, ensureBrowser, formatExplanation, formatUsage, init, mcpConfig, mcpHeaders, mcpToken, parseAsk, readAllStdin, serveStdio, start, type ToolOutcome, uiUrl } from './index.ts'
+import { formatHealth, healthExit, hostHealth, assertRuntime, backupHost, browserDeps, callTool, claudeGatewayCommand, codexGatewayCommand, drainHost, formatTools, listTools, restoreHost, shutdownHost, ensureBrowser, formatExplanation, formatUsage, init, mcpConfig, mcpHeaders, mcpToken, parseAsk, readAllStdin, serveStdio, start, type ToolOutcome, uiUrl } from './index.ts'
 
 const USAGE = `Usage: system <command>
 
@@ -38,6 +38,8 @@ const USAGE = `Usage: system <command>
   restore <dir> [--yes]     preview, then restore a backup (the profile must be stopped)
   drain [--deadline <s>]    admit no new runs and wait for running ones (default 600 s)
   resume                    admit new runs again after a drain
+  health [--json]           each check (runtime, store, disk, vault key, accounts, Workers, UI drift)
+                            and what to do; exit 0 healthy, 1 degraded, 2 down or not running
   shutdown [--deadline <s>] drain, then stop the running profile (unfinished runs resume on start)
   mcp-config <claude|codex> print client configuration for the running MCP server
   claude-env                print a command that runs Claude Code with website Workers as its model
@@ -306,6 +308,11 @@ async function main(argv: string[]): Promise<number> {
       }
       console.log(`restored${outcome.keptAside ? `; the previous store is kept at ${outcome.keptAside}` : ''}`)
       return 0
+    }
+    case 'health': {
+      const health = await hostHealth()
+      console.log(rest.includes('--json') ? JSON.stringify(health, null, 2) : formatHealth(health).join('\n'))
+      return healthExit(health.state)
     }
     case 'resume': {
       const outcome = await callTool('resume', {})

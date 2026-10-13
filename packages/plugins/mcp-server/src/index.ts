@@ -19,6 +19,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
 import { dshHome, ensurePrivateDir, registerSecretPath, writeFileDurable } from '@tsuuanmi/system-libs'
+import { type HealthReport, healthReport } from './health.ts'
 import { z as zod } from 'zod'
 
 
@@ -29,6 +30,10 @@ export interface Config {
   discoveryFile?: string
   allowedHosts?: string[]
   maxBodyBytes?: number
+  /** Free space under the DSH home below which health is degraded (default 1 GiB). */
+  minFreeBytes?: number
+  /** How far back a provider UI change keeps health degraded (default 24 h). */
+  driftWindowHours?: number
 }
 
 export type { ToolContext, ToolHandler, ToolScope, ToolSpec } from '@tsuuanmi/system-gateway-core'
@@ -70,11 +75,13 @@ export class McpEndpoint extends McpTools {
     discoveryFile: z.string().description('0600 discovery file {url, tokenFiles, pid}; defaults to <DSH_HOME>/system/mcp.json'),
     allowedHosts: z.array(z.string()).default([...LOOPBACK_HOSTS]).description('Accepted Host header names'),
     maxBodyBytes: z.natural().default(1_048_576).description('Largest accepted request body'),
+    minFreeBytes: z.natural().default(2 ** 30).description('Free space under the DSH home below which health is degraded'),
+    driftWindowHours: z.natural().min(1).default(24).description('How long a provider UI change keeps health degraded'),
   })
 
   private readonly tools = new Map<string, Tool>()
 
-  constructor(ctx: Context, config: Config = {}) {
+  constructor(ctx: Context, private readonly config: Config = {}) {
     super(ctx)
     this.builtins()
     const path = config.path ?? '/mcp'
@@ -130,9 +137,14 @@ export class McpEndpoint extends McpTools {
       const bound = { protocol: ctx.webServer.protocol, host: ctx.webServer.host, port: ctx.webServer.port }
       assertSafeBind(bound)
       const unregister = ctx.webServer.register({ kind: 'exact', path, handler })
+      // Liveness for a supervisor: no token, no data, just that the host answers.
+      const unregisterLive = ctx.webServer.register({ kind: 'exact', path: '/healthz', handler: (req, res) => {
+        res.writeHead(req.method === 'GET' || req.method === 'HEAD' ? 200 : 405, { 'content-type': 'text/plain', 'cache-control': 'no-store' }).end(req.method === 'GET' ? 'ok' : undefined)
+      } })
       writeDiscovery(discoveryFile, { url: endpointUrl(bound, path), tokenFiles, pid: process.pid })
       return () => {
         unregister()
+        unregisterLive()
         removeOwnDiscovery(discoveryFile)
       }
     })
@@ -179,6 +191,24 @@ export class McpEndpoint extends McpTools {
     return undefined
   }
 
+  /** The health report; a client caller sees each check's state, the operator also what to do. */
+  private async health(scope: ToolScope): Promise<HealthReport> {
+    const store = this.ctx.get('store')
+    const accounts = this.ctx.get('accounts')
+    const workers = this.ctx.get('workers')
+    const eventLog = this.ctx.get('eventLog')
+    const report = await healthReport({
+      dshHome: dshHome(),
+      ...(store ? { storeCheck: () => String(Object.values(store.db.prepare('PRAGMA quick_check(1)').get() ?? {})[0]) } : {}),
+      ...(accounts ? { accounts: async () => (await accounts.list()).map((a: { id: string; status: string }) => ({ id: a.id, status: a.status })) } : {}),
+      ...(workers ? { workers: async () => (await workers.list()).map((w: { worker: string; state: string }) => ({ worker: w.worker, state: w.state })) } : {}),
+      ...(eventLog ? { events: (type: string, since: string) => eventLog.query({ type, limit: 1000 }).filter((e: { at: string }) => e.at >= since) } : {}),
+      minFreeBytes: this.config.minFreeBytes ?? 2 ** 30,
+      driftWindowMs: (this.config.driftWindowHours ?? 24) * 60 * 60_000,
+    })
+    return scope === 'operator' ? report : { state: report.state, checks: report.checks.map((c) => ({ ...c, detail: c.state === 'ok' ? c.detail : 'ask the operator' })) }
+  }
+
   private builtins(): void {
     const notInstalled: ToolHandler = async () => ({ isError: true, content: [{ type: 'text', text: NOT_INSTALLED }] })
     const session = { sessionId: zod.string().max(200).optional().describe('Continue an existing system session') }
@@ -203,8 +233,8 @@ export class McpEndpoint extends McpTools {
     })
     this.tools.set('status', {
       placeholder: false,
-      spec: { scope: 'client', description: 'Health of the system harness: store, artifacts, kernel services, installed providers.', inputSchema: {} },
-      handler: async () => {
+      spec: { scope: 'client', description: 'Health of the system harness: each check (runtime, store, disk, vault key, accounts, Workers, provider UI drift) and the worst of them, with what to do for operator callers; plus the kernel services and installed providers.', inputSchema: {} },
+      handler: async (_args, { scope }) => {
         const artifacts = this.ctx.get('artifacts')
         const providers = this.ctx.get('providers')
         const status = {
@@ -213,6 +243,7 @@ export class McpEndpoint extends McpTools {
           artifacts: artifacts ? artifacts.list({ limit: 1000 }).length : null,
           kernel: ['store', 'eventLog', 'leases', 'artifacts', 'credentials'].filter((key) => this.ctx.get(key) !== undefined),
           providers: providers ? providers.list() : [],
+          health: await this.health(scope),
         }
         return { content: [{ type: 'text', text: JSON.stringify(status) }], structuredContent: status }
       },

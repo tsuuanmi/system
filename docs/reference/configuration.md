@@ -166,6 +166,8 @@
 | `discoveryFile` | string |  | 0600 discovery file {url, tokenFiles, pid}; defaults to <DSH_HOME>/system/mcp.json |
 | `allowedHosts` | string[] | `["127.0.0.1","localhost","[::1]"]` | Accepted Host header names |
 | `maxBodyBytes` | number (0…) | `1048576` | Largest accepted request body |
+| `minFreeBytes` | number (0…) | `1073741824` | Free space under the DSH home below which health is degraded |
+| `driftWindowHours` | number (1…) | `24` | How long a provider UI change keeps health degraded |
 
 ## `profile-scientific-research`
 

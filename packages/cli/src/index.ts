@@ -248,6 +248,28 @@ export async function callTool(name: string, args: Record<string, unknown>, home
   }
 }
 
+export interface HealthView { state: 'ok' | 'degraded' | 'down'; checks: Array<{ name: string; state: 'ok' | 'degraded' | 'down'; detail: string }> }
+
+/** The exit code `system health` ends with: 0 healthy, 1 degraded, 2 down. */
+export const healthExit = (state: HealthView['state']): number => ({ ok: 0, degraded: 1, down: 2 })[state]
+
+/** The running host's health, or `down` when it does not answer. */
+export async function hostHealth(call: typeof callTool = callTool): Promise<HealthView> {
+  try {
+    const outcome = await call('status', {})
+    const health = outcome.structured?.health as HealthView | undefined
+    if (outcome.isError || !health) return { state: 'down', checks: [{ name: 'host', state: 'down', detail: outcome.text || 'no health report' }] }
+    return health
+  } catch (error) {
+    return { state: 'down', checks: [{ name: 'host', state: 'down', detail: `the host does not answer: ${(error as Error).message.split('\n')[0]} (system start)` }] }
+  }
+}
+
+/** One line per check: the healthy ones short, the others with what to do. */
+export function formatHealth(health: HealthView): string[] {
+  return [`health: ${health.state}`, ...health.checks.map((c) => `  ${c.state.padEnd(8)} ${c.name.padEnd(10)} ${c.detail}`)]
+}
+
 /**
  * Drain the host (REQ-HOST-1): no new run is admitted, then poll until nothing is executing or
  * the deadline passes. Gateway requests end with their runs.

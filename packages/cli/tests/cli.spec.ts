@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { CHROME_LOCK } from '@tsuuanmi/system-browser-patchright'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { assertRuntime, callTool, claudeGatewayCommand, codexGatewayCommand, drainHost, formatTools, ensureBrowser, exitCode, formatExplanation, formatUsage, mcpConfig, mcpHeaders, mcpToken, mergeProfileManifest, parseAsk, uiUrl } from '../src/index.ts'
+import { assertRuntime, callTool, formatHealth, healthExit, hostHealth, claudeGatewayCommand, codexGatewayCommand, drainHost, formatTools, ensureBrowser, exitCode, formatExplanation, formatUsage, mcpConfig, mcpHeaders, mcpToken, mergeProfileManifest, parseAsk, uiUrl } from '../src/index.ts'
 
 const dirs: string[] = []
 afterEach(() => {
@@ -36,6 +36,15 @@ describe('system CLI (PR #3 kernel review)', () => {
     expect(() => assertRuntime('Node 22.23.3 is not supported; system needs Node ^24.18.1 || >=26.5.1')).toThrow(/^Node 22\.23\.3 is not supported/)
     expect(() => assertRuntime(undefined)).not.toThrow()
     expect(() => assertRuntime()).not.toThrow()
+  })
+
+  it('reports health with exit 0, 1, or 2, and a host that does not answer as down (REQ-HOST-6)', async () => {
+    const report = { state: 'degraded' as const, checks: [{ name: 'store', state: 'ok' as const, detail: 'integrity check passed' }, { name: 'accounts', state: 'degraded' as const, detail: 'main (reauth-required)' }] }
+    expect(await hostHealth(async () => ({ isError: false, text: '', structured: { health: report } }))).toEqual(report)
+    expect(formatHealth(report)).toEqual(['health: degraded', '  ok       store      integrity check passed', '  degraded accounts   main (reauth-required)'])
+    expect([healthExit('ok'), healthExit('degraded'), healthExit('down')]).toEqual([0, 1, 2])
+    const down = await hostHealth(async () => { throw new Error('connect ECONNREFUSED 127.0.0.1:47317') })
+    expect(down).toMatchObject({ state: 'down', checks: [{ name: 'host', detail: expect.stringContaining('ECONNREFUSED') }] })
   })
 
   it('maps a signal death to 128 + signal number', () => {
