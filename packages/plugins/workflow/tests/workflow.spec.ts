@@ -776,6 +776,33 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
     expect(second.ctx.workflow.get(done.runId)).toMatchObject({ status: 'completed', answer: 'Plain answer.' })
   }, 90_000)
 
+  it('expires finished runs past retainRunsDays, keeps a session\'s latest run, then collects what only they needed (INV-9)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'system-workflow-'))
+    cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+    const first = await boot({ dir })
+    const one = await first.ctx.workflow.wait(first.ctx.workflow.start({ template: 'ask', input: 'standalone' }).runId, 30_000)
+    const s1 = await first.ctx.workflow.wait(first.ctx.workflow.start({ template: 'ask', input: 'session one', persist: true }).runId, 30_000)
+    const s2 = await first.ctx.workflow.wait(first.ctx.workflow.start({ template: 'ask', input: 'session two', sessionId: s1.sessionId }).runId, 30_000)
+    const onlyOf = (ctx: typeof first.ctx, runId: string) => (ctx.store.db.prepare(`SELECT COUNT(*) AS n FROM artifact_runs r WHERE r.run_id = ?
+      AND NOT EXISTS (SELECT 1 FROM artifact_runs o WHERE o.id = r.id AND o.run_id != r.run_id)`).get(runId) as { n: number }).n
+    expect(onlyOf(first.ctx, one.runId)).toBeGreaterThan(0)
+    // Everything is old: runs, turns, artifacts (past the grace period).
+    const old = '2000-01-01T00:00:00.000Z'
+    for (const sql of ['UPDATE workflow_runs SET updated_at = ?', 'UPDATE turns SET updated_at = ?', 'UPDATE artifacts SET created_at = ?']) first.ctx.store.db.prepare(sql).run(old)
+    await first.stop()
+    cleanups.splice(cleanups.indexOf(first.stop), 1)
+    const second = await boot({ dir, shared: first.fake, workflow: { retainRunsDays: 1 }, turns: { retainDays: 1 } })
+    await until(() => !second.ctx.workflow.get(one.runId) && !second.ctx.workflow.get(s1.runId))
+    await until(() => (second.ctx.store.db.prepare('SELECT COUNT(*) AS n FROM turns').get() as { n: number }).n === 0)
+    // The session's latest run stays, so the session can continue.
+    expect(second.ctx.workflow.get(s2.runId)).toMatchObject({ status: 'completed', sessionId: s1.sessionId })
+    second.ctx.artifacts.collect()
+    expect(onlyOf(second.ctx, one.runId)).toBe(0)
+    expect(second.ctx.artifacts.get(s2.result!)).toBeDefined()
+    const events = second.ctx.eventLog.query({ type: 'workflow.run.expired' }).map((e) => e.runId).sort()
+    expect(events).toEqual([one.runId, s1.runId].sort())
+  }, 120_000)
+
   it('explains a run: egress, tier, route, and acceptance for every node (REQ-ART-3)', async () => {
     const { ctx } = await boot()
     const done = await ctx.workflow.wait(ctx.workflow.start({ template: 'deep-research', input: 'why' }).runId, 60_000)

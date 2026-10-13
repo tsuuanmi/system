@@ -1,6 +1,7 @@
 /**
- * Retention (docs/design/workflow-engine.md#retention): runs are deleted only by the operator;
- * what expires on its own is a finished run's private text.
+ * Retention (docs/design/workflow-engine.md#retention): a finished run's private text expires
+ * after `retainDays`; with `retainRunsDays` set, the finished run itself expires, and then the
+ * artifacts that only it needed are collected (INV-9). An operator deletes a run at any time.
  */
 import type { Engine } from './engine.ts'
 import { type RunStatus, WorkflowFailure } from './types.ts'
@@ -13,6 +14,29 @@ export function purge(e: Engine): void {
     db.prepare("UPDATE workflow_nodes SET prompt = NULL WHERE prompt IS NOT NULL AND run_id IN (SELECT run_id FROM workflow_runs WHERE status != 'running' AND updated_at < ?)").run(cutoff)
     db.prepare("UPDATE workflow_runs SET input = '' WHERE input != '' AND status != 'running' AND updated_at < ?").run(cutoff)
   })
+  expireRuns(e)
+}
+
+/**
+ * Delete finished runs older than `retainRunsDays`, as the operator's delete does, then collect
+ * the artifacts nothing retained references any more. A session's latest run always stays: a
+ * persistent session has no closed state, and continuing it needs one of its runs.
+ */
+export function expireRuns(e: Engine, now: number = Date.now()): { deleted: number } {
+  const days = e.config.retainRunsDays ?? 0
+  if (!days || e.stopped.signal.aborted) return { deleted: 0 }
+  const cutoff = new Date(now - days * 24 * 60 * 60_000).toISOString()
+  const expired = e.ctx.store.db.prepare(`SELECT run_id, template FROM workflow_runs r WHERE status != 'running' AND updated_at < ?
+    AND (session_id IS NULL OR created_at < (SELECT MAX(created_at) FROM workflow_runs s WHERE s.session_id = r.session_id))`).all(cutoff) as Array<{ run_id: string; template: string }>
+  for (const run of expired) {
+    e.ctx.store.transaction((db) => {
+      db.prepare('DELETE FROM workflow_nodes WHERE run_id = ?').run(run.run_id)
+      db.prepare("DELETE FROM workflow_runs WHERE run_id = ? AND status != 'running'").run(run.run_id)
+      e.ctx.eventLog.append({ type: 'workflow.run.expired', runId: run.run_id, data: { template: run.template } })
+    })
+  }
+  if (expired.length) e.ctx.artifacts.collect(now)
+  return { deleted: expired.length }
 }
 
 /**

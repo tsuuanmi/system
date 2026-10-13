@@ -147,4 +147,36 @@ describe('review fixes (PR #3 kernel review)', () => {
     const ctx = await boot()
     expect(() => ctx.artifacts.recordDecision({ ...route, decider: { type: 'model', id: 'm', version: '1' } }, { producer })).toThrow()
   })
+
+  it('collects only what nothing retained needs: unreferenced, past the grace period, of no run that still exists (INV-9)', async () => {
+    const ctx = await boot()
+    const day = 24 * 60 * 60_000
+    const note = (text: string, extra: { inputs?: string[]; runId?: string } = {}) => ctx.artifacts.put({
+      kind: 'finding', bodySchema: 'decision@1.0', body: { ...route, question: text, schema: 'decision@1.0' }, classification: 'public', producer,
+      ...(extra.inputs ? { inputs: extra.inputs as never } : {}), ...(extra.runId ? { runId: extra.runId } : {}),
+    }).id
+    const parent = note('a parent, reached only through an input')
+    const kept = note('referenced by a retained row', { inputs: [parent] })
+    const live = note('of a run that still exists', { runId: 'run-live' })
+    const gone = note('of a deleted run', { runId: 'run-gone' })
+    const orphan = note('referenced by nothing')
+    const onlyEvents = note('referenced by an event only')
+    // A plugin's own table holding ids, as workflow or turns do; and the event log, which is no root.
+    ctx.store.db.exec("CREATE TABLE owner_rows (id TEXT, record TEXT); CREATE TABLE events (seq INTEGER, decision TEXT)")
+    ctx.store.db.prepare('INSERT INTO owner_rows VALUES (?, ?)').run('run-live', JSON.stringify({ result: kept }))
+    ctx.store.db.prepare('INSERT INTO events VALUES (1, ?)').run(onlyEvents)
+    // Inside the grace period nothing goes, referenced or not.
+    expect(ctx.artifacts.collect()).toEqual({ removed: 0, kept: 6 })
+    expect(ctx.artifacts.collect(Date.now() + 2 * day)).toEqual({ removed: 3, kept: 3 })
+    expect([parent, kept, live].every((id) => ctx.artifacts.get(id))).toBe(true)
+    expect([gone, orphan, onlyEvents].some((id) => ctx.artifacts.get(id))).toBe(false)
+  })
+
+  it('explains a collected input as expired, keeping its id (REQ-ART-3)', async () => {
+    const ctx = await boot()
+    const input = ctx.artifacts.recordDecision(route, { producer })
+    const child = ctx.artifacts.recordDecision({ ...route, question: 'Which Worker runs research:2?', inputs: [input.id] }, { producer })
+    ctx.store.db.prepare('DELETE FROM artifacts WHERE id = ?').run(input.id)
+    expect(ctx.artifacts.explain(child.id)!.inputs).toEqual([{ id: input.id, kind: 'expired', summary: 'expired: collected by retention', inputs: [] }])
+  })
 })

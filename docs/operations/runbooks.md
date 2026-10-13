@@ -300,8 +300,13 @@ Rotate a scope's token when it may have leaked
 
 ## Retention
 
-- **Workflow runs** are deleted only by the operator: `system delete <runId>`
-  previews, and `--yes` deletes that exact version. Artifacts stay.
+- **Workflow runs** are deleted by the operator (`system delete <runId>`
+  previews, `--yes` deletes that exact version), and, when the `workflow` row
+  sets `retainRunsDays`, a finished run older than that is deleted daily, except
+  each session's latest run. Then the artifacts nothing retained references are
+  collected (older than the `artifacts` row's `collectGraceHours`, default 24);
+  `system explain` shows a collected input as expired. Back up before you first
+  turn this on.
 - **Private text:** after `retainDays` (default 30), a finished run's input
   text and rendered prompts are cleared, daily. Decision chains stay, so
   `system explain` still works.

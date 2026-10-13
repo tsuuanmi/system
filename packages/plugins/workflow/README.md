@@ -221,7 +221,7 @@ second execution path (INV-1).
   - On start, unfinished runs resume. The turn runtime reconciles their turns.
   - A scheduler exception fails the run as `internal` (`CODE_FIX`) and never
     loops.
-- **Events:** `workflow.run.started|completed|failed|continued|deleted`,
+- **Events:** `workflow.run.started|completed|failed|continued|deleted|expired`,
   `workflow.node.started|retry|completed|failed|blocked|escalated|superseded`,
   `workflow.graph.grown|retired`, and `workflow.gate.opened|closed`. A completed node's
   event carries the Worker, tier, and quota class that served it.
@@ -279,8 +279,11 @@ second execution path (INV-1).
   - A request that arrives while a run's advance is still unwinding (for
     example `continue` right after the run failed) runs once that advance
     ends; it is never dropped.
-- **Retention:** runs are deleted only by the operator (`delete`). After
-  `retainDays`, a finished run's input text and rendered prompts are cleared.
+- **Retention:** the operator deletes runs (`delete`). After `retainDays`, a
+  finished run's input text and rendered prompts are cleared. With
+  `retainRunsDays` (default 0, off), a finished run older than that is deleted
+  daily, except a session's latest run, and then `ctx.artifacts.collect()` takes
+  what only expired runs needed.
 - **Injects:** `store`, `artifacts`, `eventLog`, `leases`, `egress`, `workers`, `workerSessions`;
   `mcp` is optional.
 

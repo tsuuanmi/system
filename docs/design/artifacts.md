@@ -137,3 +137,13 @@ Envelopes and their bodies are stored in `ctx.store`, indexed by id, kind,
 by the envelope's `blob` ref, is planned. Retention follows the workflow retention
 rules. A decision artifact is kept for as long as any artifact or state that
 references it.
+
+**Collection** (`collect`, after the workflow expires runs). The roots are every
+content id written in any store table except the artifacts' own and the event log
+(so events and artifacts never keep each other alive): a plugin that keeps an
+artifact id in its rows keeps the artifact, without registering anything.
+Marking follows each kept envelope's `inputs` and lineage. An artifact is deleted
+only when it is unmarked, older than `collectGraceHours` (so one recorded but not
+yet referenced is never taken), and linked to no run whose id still appears in
+any table. It runs in one store transaction. `explain` shows a collected input as
+`expired` with its id.

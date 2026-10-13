@@ -106,6 +106,8 @@ export interface Config {
   maxActiveRuns?: number
   /** A finished run's input text and prompts are cleared after this many days (default 30); the run stays. */
   retainDays?: number
+  /** Days a finished run is kept, then deleted with what only it needed; 0 keeps every run (default 0). */
+  retainRunsDays?: number
   /** Approve a high-confidence plan by policy (`by: policy`) instead of waiting for the operator (default false). */
   autoApprovePlans?: boolean
   /** Reviews of one change, the first included, before remediation stops (default 3). */

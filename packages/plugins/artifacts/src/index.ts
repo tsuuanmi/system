@@ -61,16 +61,31 @@ const CLASSIFICATION_RANK: Record<Classification, number> = { public: 0, 'operat
 
 export interface ExplainNode {
   id: ContentId
-  kind: ArtifactKind
+  /** `expired`: the artifact was collected by retention; only its id remains (REQ-ART-3). */
+  kind: ArtifactKind | 'expired'
   summary: string
   inputs: ExplainNode[]
 }
+
+/** What one collection did. */
+export interface Collected {
+  /** Artifacts deleted. */
+  removed: number
+  /** Artifacts kept: referenced, inside the grace period, or of a run that still exists. */
+  kept: number
+}
+
+/** Tables a collection never reads references from: this plugin's own, and the event log (else events and artifacts would keep each other). */
+const NOT_ROOTS = new Set(['artifacts', 'artifact_runs', 'events', 'system_migrations', 'sqlite_sequence'])
+const CONTENT_ID = /sha256:[0-9a-f]{64}/g
 
 export interface Config {
   /** Maximum depth `explain` walks before truncating (default 16). */
   explainDepth?: number
   /** Maximum distinct artifacts one `explain` visits (default 1000; INV-9). */
   explainBudget?: number
+  /** How long a new artifact is kept even when nothing references it yet, in hours (default 24). */
+  collectGraceHours?: number
 }
 
 export class Artifacts extends Service {
@@ -78,6 +93,7 @@ export class Artifacts extends Service {
   static Config: z<Config> = z.object({
     explainDepth: z.natural().min(1).max(64).default(16).description('Maximum depth explain walks'),
     explainBudget: z.natural().min(1).default(1000).description('Maximum distinct artifacts one explain visits'),
+    collectGraceHours: z.natural().min(1).default(24).description('Hours a new artifact is kept before collection may take it, referenced or not'),
   })
 
   private readonly schemas = new SchemaRegistry()
@@ -203,7 +219,8 @@ export class Artifacts extends Service {
       if (cached) return cached
       if (memo.size >= budget) return undefined
       const envelope = this.get(current)
-      if (!envelope) return undefined
+      // Collected by retention (or never stored): the reference stays, the content is gone.
+      if (!envelope) return depth === 0 ? undefined : { id: current as ContentId, kind: 'expired', summary: 'expired: collected by retention', inputs: [] }
       const summary = envelope.kind === 'decision'
         ? `${(envelope.body as Decision).decisionType}: ${(envelope.body as Decision).outcome.option}`
         : `${envelope.kind} (${envelope.bodySchema})`
@@ -218,6 +235,64 @@ export class Artifacts extends Service {
       return node
     }
     return walk(id, 0)
+  }
+
+  /**
+   * Retention (docs/design/artifacts.md#storage): delete the artifacts nothing retained needs.
+   * The roots are every content id written in any store table except this plugin's own and the
+   * event log, so a plugin that keeps an artifact id in its rows keeps the artifact, with no
+   * listener to forget. Marking follows each kept envelope's inputs and lineage. An artifact is
+   * collected only when it is unmarked, older than the grace period, and linked to no run whose
+   * id still appears in any table. One transaction, so nothing is written while it decides.
+   */
+  collect(now: number = Date.now()): Collected {
+    const cutoff = new Date(now - (this.config.collectGraceHours ?? 24) * 60 * 60_000).toISOString()
+    return this.ctx.store.transaction((db): Collected => {
+      const referenced = new Set<string>()
+      const values = new Set<string>()
+      const tables = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as Array<{ name: string }>
+      for (const { name } of tables) {
+        if (NOT_ROOTS.has(name) || name.startsWith('sqlite_')) continue
+        for (const row of db.prepare(`SELECT * FROM "${name.replaceAll('"', '""')}"`).iterate() as Iterable<Record<string, unknown>>) {
+          for (const value of Object.values(row)) {
+            if (typeof value !== 'string') continue
+            if (value.length <= 200) values.add(value)
+            for (const match of value.matchAll(CONTENT_ID)) referenced.add(match[0])
+          }
+        }
+      }
+      // Mark: everything reachable from the roots through inputs and lineage.
+      const edges = new Map<string, string[]>()
+      for (const row of db.prepare('SELECT id, envelope FROM artifacts').iterate() as Iterable<{ id: string; envelope: string }>) {
+        const envelope = JSON.parse(row.envelope) as Envelope
+        edges.set(row.id, [...envelope.inputs, ...(envelope.lineage.supersedes ?? []), ...(envelope.lineage.invalidates ?? [])])
+      }
+      const marked = new Set<string>()
+      const stack = [...referenced].filter((id) => edges.has(id))
+      while (stack.length) {
+        const id = stack.pop()!
+        if (marked.has(id)) continue
+        marked.add(id)
+        for (const next of edges.get(id) ?? []) if (!marked.has(next)) stack.push(next)
+      }
+      const runsOf = new Map<string, string[]>()
+      for (const row of db.prepare('SELECT id, run_id FROM artifact_runs').iterate() as Iterable<{ id: string; run_id: string }>) {
+        runsOf.set(row.id, [...(runsOf.get(row.id) ?? []), row.run_id])
+      }
+      const doomed: string[] = []
+      for (const row of db.prepare('SELECT id FROM artifacts WHERE created_at < ?').iterate(cutoff) as Iterable<{ id: string }>) {
+        if (marked.has(row.id)) continue
+        if ((runsOf.get(row.id) ?? []).some((run) => values.has(run))) continue
+        doomed.push(row.id)
+      }
+      const removeArtifact = db.prepare('DELETE FROM artifacts WHERE id = ?')
+      const removeRuns = db.prepare('DELETE FROM artifact_runs WHERE id = ?')
+      for (const id of doomed) {
+        removeArtifact.run(id)
+        removeRuns.run(id)
+      }
+      return { removed: doomed.length, kept: edges.size - doomed.length }
+    })
   }
 
   private linkRun(id: string, runId: string | undefined, nodeId: string | undefined): void {

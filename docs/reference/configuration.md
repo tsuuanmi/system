@@ -54,6 +54,7 @@
 |---|---|---|---|
 | `explainDepth` | number (1…64) | `16` | Maximum depth explain walks |
 | `explainBudget` | number (1…) | `1000` | Maximum distinct artifacts one explain visits |
+| `collectGraceHours` | number (1…) | `24` | Hours a new artifact is kept before collection may take it, referenced or not |
 
 ## `browser-patchright`
 
@@ -320,5 +321,6 @@ No options.
 | `retryDelayMs` | number (0…) | `5000` | First back-off delay, doubled per attempt |
 | `maxActiveRuns` | number (1…) | `16` | Unfinished runs accepted at once |
 | `retainDays` | number (1…) | `30` | Days a finished run keeps its input text and prompts |
+| `retainRunsDays` | number (0…) | `0` | Days a finished run is kept, then deleted with the artifacts only it needed (0: every run is kept); a session's latest run always stays |
 | `autoApprovePlans` | boolean | `false` | Approve a high-confidence plan by policy instead of waiting for the operator |
 | `maxReviewCycles` | number (1…5) | `3` | Reviews of one change, the first included, before remediation stops |

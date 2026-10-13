@@ -150,7 +150,8 @@
 - **REQ-ART-2** Artifacts are immutable and content-addressed. Corrections are
   new artifacts that supersede old ones.
 - **REQ-ART-3** An operator can ask *why* for any artifact, node, or turn, and
-  get the chain of decisions and inputs that led to it.
+  get the chain of decisions and inputs that led to it, within retention; past
+  it, an input that was collected is reported as expired, by its id.
 - **REQ-ART-4** Every persisted record and wire payload validates against a
   versioned JSON Schema. Invalid records and unknown major versions are rejected.
 - **REQ-ART-5** A Worker's structured result is validated against the schema

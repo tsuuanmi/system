@@ -205,9 +205,11 @@ lands. Each item names the requirement it closes and the test that proves it.
      its state is neither FAILED nor CLOSED and it is within `maxLifetimeMinutes`
      and `maxIdleMinutes` of its last activity (REQ-SES-7).
    - **Artifacts, mark and sweep.** The roots are the artifact ids that retained
-     rows reference. Each plugin that keeps artifact ids in its own tables
-     answers an event, `artifacts/roots` (mode `parallel`; the listener adds
-     its ids to the set it is given):
+     rows reference. As built, the artifacts plugin reads them from every store
+     table except its own and the event log (any `sha256:` content id in any
+     column), rather than each owner answering an `artifacts/roots` event: a
+     plugin cannot forget to report a table, so a missing listener cannot cause
+     a deletion. The tables that hold ids today, for reference:
      - `workflow`: `workflow_runs.result`; in `workflow_nodes.record` the input
        bundle, the output's result and acceptance, the last decision, and the
        route; `workflow_nodes.decisions`; a gate's `plan` and a grown step's
@@ -222,13 +224,11 @@ lands. Each item names the requirement it closes and the test that proves it.
      bindings, leases, and accounts hold no artifact ids. Marking follows each
      envelope's references (`inputs`, `supersedes`) transitively. A replanned
      run's retired results stay while the run exists: they carry its `runId`.
-   - **Sweep, fail closed.** Only artifacts that are unmarked, carry the `runId`
-     of a run that no longer exists, and are older than a grace period (so a
-     record made but not yet referenced is never taken) are deleted. An artifact
-     without a `runId` is never collected. Every plugin that records artifacts
-     declares itself an owner when it loads; a sweep where a mounted owner did
-     not answer is abandoned, so a missing listener cannot delete what it
-     references.
+   - **Sweep, fail closed.** Only artifacts that are unmarked, older than a grace
+     period (so a record made but not yet referenced is never taken), and linked
+     to no run whose id still appears in any table are deleted, in one store
+     transaction. A run id still named by any row (a turn, a wake, a session)
+     keeps its artifacts until that row expires under its owner's retention.
    - **Explain.** A reference to a collected artifact is reported as `expired`
      with its hash. REQ-ART-3 reads "within retention".
    - **Effect class.** A deletion is safe-to-repeat (each step is one
