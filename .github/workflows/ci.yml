@@ -11,7 +11,7 @@ permissions:
 jobs:
   check:
     name: node ${{ matrix.node }} / check + test + e2e
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned: a new image can change the user-namespace policy bubblewrap needs
     strategy:
       fail-fast: false
       matrix:

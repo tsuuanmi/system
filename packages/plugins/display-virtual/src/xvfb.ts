@@ -8,6 +8,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Readable } from 'node:stream'
+import { registerSecretPath } from '@tsuuanmi/system-libs'
 import { ProviderError } from '@tsuuanmi/system-provider-core'
 
 export const XVFB_SCREEN = '1920x1080x24'
@@ -56,11 +57,14 @@ const unavailable = (detail: string): ProviderError => new ProviderError(
  */
 function writeAuthority(): { path: string; remove(): void } {
   const dir = mkdtempSync(join(tmpdir(), 'system-xauth-'))
+  // With the cookie, a process can screenshot and drive the accounts' browsers: agent Workers
+  // never read it (ADR-0024).
+  const unregister = registerSecretPath(dir)
   const path = join(dir, 'Xauthority')
   const field = (b: Buffer): Buffer => Buffer.concat([Buffer.from([b.length >> 8, b.length & 0xff]), b])
   const record = Buffer.concat([Buffer.from([0xff, 0xff]), field(Buffer.alloc(0)), field(Buffer.alloc(0)), field(Buffer.from('MIT-MAGIC-COOKIE-1')), field(randomBytes(16))])
   writeFileSync(path, record, { mode: 0o600 })
-  return { path, remove: () => rmSync(dir, { recursive: true, force: true }) }
+  return { path, remove: () => (rmSync(dir, { recursive: true, force: true }), unregister()) }
 }
 
 const running = (child: ChildProcess): boolean => child.pid !== undefined && child.exitCode === null && child.signalCode === null

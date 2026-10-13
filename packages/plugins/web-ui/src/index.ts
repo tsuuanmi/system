@@ -13,8 +13,8 @@ import { join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import z from '@deepseek-ai/schemastery'
-import { assertSafeBind, guardRequest, LOOPBACK_HOSTS, readJsonBody, scopeToken } from '@tsuuanmi/system-gateway-core'
-import { dshHome } from '@tsuuanmi/system-libs'
+import { assertSafeBind, guardRequest, LOOPBACK_HOSTS, readJsonBody, scopeToken, tokenFile } from '@tsuuanmi/system-gateway-core'
+import { dshHome, registerSecretPath } from '@tsuuanmi/system-libs'
 import type {} from '@tsuuanmi/system-workflow'
 import { APP_CSS, APP_JS, PAGE } from './assets.ts'
 
@@ -36,6 +36,8 @@ const MAX_BODY = 16_384
 
 export function apply(ctx: Context, config: Config = {}): void {
   const operator = scopeToken(config.tokenDir ?? join(dshHome(), 'system'), 'operator')
+  // Agent Workers never read the operator token, wherever tokenDir puts it (ADR-0024).
+  ctx.effect(() => registerSecretPath(tokenFile(config.tokenDir ?? join(dshHome(), 'system'), 'operator')))
   const hosts = config.allowedHosts ?? LOOPBACK_HOSTS
 
   const send = (res: ServerResponse, status: number, body: string, type: string): void => {

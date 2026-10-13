@@ -23,5 +23,7 @@ It replaces `dsh-credentials-local`, which stores plain YAML
   protects against copied files, backups, and log leaks, but not against an
   attacker who can read the whole account. To separate them, point `keyFile` at a
   systemd credential (`$CREDENTIALS_DIRECTORY/<name>`) or at another disk.
+- **Hidden from agents:** the vault file and its key are registered secret
+  paths while the plugin runs, wherever they are kept ([ADR-0024](../../../docs/decisions/adr/0024-agent-workers-confined-for-reads.md)).
 - **Account credentials** (email, password, TOTP secret) are stored as a
   `grant` record under `system-accounts/<accountId>`.

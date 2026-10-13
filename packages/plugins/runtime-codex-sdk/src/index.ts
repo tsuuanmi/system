@@ -65,9 +65,14 @@ export interface RuntimeOptions {
    * The read confinement for a Codex child, given the paths it must still write (its home);
    * `ctx.agentRuntimes.confinement` (ADR-0024). Without it, the runtime offers no Worker.
    */
-  confine?: ((writable: readonly string[]) => Confinement) | undefined
+  confine?: ((bind: { readOnly?: readonly string[]; writable?: readonly string[] }) => Confinement) | undefined
   /** Proves the confinement on this host (default `proveConfinement`). */
   prove?: (confinement: Confinement) => Promise<{ confined: boolean; detail: string }>
+  /**
+   * Proves Codex's own sandbox still starts inside the confinement (default: `codex sandbox --
+   * true`, confined): a host policy can let bubblewrap run yet refuse Codex's nested one.
+   */
+  nested?: (command: { command: string; args: string[] }, env: Record<string, string>) => Promise<void>
   /** The program the SDK starts for a confined Codex (default: an owner-only launcher script). */
   launcher?: (command: { command: string; args: string[] }) => string
 }
@@ -93,7 +98,7 @@ export class CodexRuntime implements AgentRuntimeProvider {
       const version = await (this.options.version ?? codexVersion)(executable)
       // Codex's own sandbox confines writes only; reads are confined around it (ADR-0024).
       const reads = this.options.confine
-        ? await (this.options.prove ?? proveConfinement)(this.options.confine([this.home]))
+        ? await this.proveReads(executable, this.options.confine({ writable: [this.home] }))
         : { confined: false, detail: 'no read confinement is configured' }
       // Codex confines commands in the same OS sandbox as its file writes, so it can validate.
       return {
@@ -115,7 +120,9 @@ export class CodexRuntime implements AgentRuntimeProvider {
     const servers = await this.mcpServers(executable)
     if (servers.length) throw new ProviderError('config_error', noMcp(this.home, servers))
     if (!this.options.confine) throw new ProviderError('config_error', 'codex-sdk: no read confinement is configured; refusing to run Codex with the host state readable (ADR-0024)')
-    const confined = confinedCommand(executable, [], this.options.confine([this.home]))
+    // The workspace is bound back as the sandbox allows; Codex's own sandbox still confines writes.
+    const workspace = spec.sandbox === 'workspace-write' ? { writable: [this.home, spec.workspace] } : { writable: [this.home], readOnly: [spec.workspace] }
+    const confined = confinedCommand(executable, [], this.options.confine(workspace))
     const client = (this.options.client ?? ((options) => new Codex(options)))({
       codexPathOverride: (this.options.launcher ?? defaultLauncher)(confined),
       ...(this.options.config ? { config: this.options.config as NonNullable<CodexOptions['config']> } : {}),
@@ -141,6 +148,17 @@ export class CodexRuntime implements AgentRuntimeProvider {
     // A failed turn breaks the thread's work (as for Claude): the engine's recovery decides what follows.
     if (failure) throw new ProviderError(/usage limit|quota|rate limit/i.test(failure) ? 'quota_exhausted' : 'session_broken', `codex-sdk: ${failure.slice(0, 500)}`)
     return { text, ...(handle.id ? { nativeHandle: handle.id } : {}), turns }
+  }
+
+  private async proveReads(executable: string, confinement: Confinement): Promise<{ confined: boolean; detail: string }> {
+    const reads = await (this.options.prove ?? proveConfinement)(confinement)
+    if (!reads.confined) return reads
+    try {
+      await (this.options.nested ?? nestedSandbox)(confinedCommand(executable, ['sandbox', '--', 'true'], confinement), childEnvironment([], { CODEX_HOME: this.home }))
+      return reads
+    } catch (error) {
+      return { confined: false, detail: `Codex's own sandbox does not start inside the confinement: ${(error as Error).message.split('\n')[0]!.slice(0, 160)}` }
+    }
   }
 
   private async mcpServers(executable: string): Promise<string[]> {
@@ -187,6 +205,10 @@ async function codexMcpServers(home: string, executable: string): Promise<string
   return servers.filter((s) => s.enabled !== false).map((s) => s.name)
 }
 
+async function nestedSandbox(command: { command: string; args: string[] }, env: Record<string, string>): Promise<void> {
+  await promisify(execFile)(command.command, command.args, { timeout: 15_000, env })
+}
+
 async function codexVersion(executable: string): Promise<string> {
   const { stdout } = await promisify(execFile)(executable, ['--version'], { timeout: 15_000 })
   return stdout.trim().replace(/^codex-cli\s+/, '')
@@ -213,6 +235,6 @@ export const Config: z<Config> = z.object({
 export function apply(ctx: Context, config: Config = {}): void {
   ctx.agentRuntimes.register(new CodexRuntime({
     executable: config.executable, config: config.config, env: config.env, forwardEnv: config.forwardEnv, home: config.home,
-    confine: (writable) => ctx.agentRuntimes.confinement(writable),
+    confine: (bind) => ctx.agentRuntimes.confinement(bind),
   }))
 }

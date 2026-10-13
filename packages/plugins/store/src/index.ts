@@ -8,7 +8,7 @@ import { dirname, join } from 'node:path'
 import { type Context, Service } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { chmodSync, closeSync, existsSync, openSync } from 'node:fs'
-import { dshHome, ensurePrivateDir, sqliteRuntimeProblem } from '@tsuuanmi/system-libs'
+import { dshHome, ensurePrivateDir, registerSecretPath, sqliteRuntimeProblem } from '@tsuuanmi/system-libs'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -70,11 +70,14 @@ export class Store extends Service {
       for (const file of [this.path, `${this.path}-wal`, `${this.path}-shm`]) {
         if (existsSync(file)) chmodSync(file, 0o600)
       }
+      // Prompts and answers: agent Workers never read the store, wherever it lives (ADR-0024).
+      const unregister = [this.path, `${this.path}-wal`, `${this.path}-shm`].map(registerSecretPath)
       const db = new DatabaseSync(this.path)
       db.exec(`PRAGMA journal_mode=WAL; PRAGMA busy_timeout=${config.busyTimeoutMs ?? 5000}; PRAGMA foreign_keys=ON; PRAGMA synchronous=${config.synchronous === 'NORMAL' ? 'NORMAL' : 'FULL'}`)
       db.exec('CREATE TABLE IF NOT EXISTS system_migrations (owner TEXT NOT NULL, version INTEGER NOT NULL, applied_at TEXT NOT NULL, PRIMARY KEY (owner, version))')
       this._db = db
       return () => {
+        unregister.forEach((u) => u())
         // Close after the current dispose pass, so dependents that write from their own
         // disposers (release a lease, flush an event) still reach an open database.
         setImmediate(() => {

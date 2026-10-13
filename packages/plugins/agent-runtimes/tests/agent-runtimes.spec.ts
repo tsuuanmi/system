@@ -1,17 +1,22 @@
-import { join } from 'node:path'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { isAbsolute, join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
-import { dshHome } from '@tsuuanmi/system-libs'
+import { dshHome, registerSecretPath } from '@tsuuanmi/system-libs'
 import { afterEach, describe, expect, it } from 'vitest'
 import { agentRuntimesConformance } from '../../../agent-runtime-core/conformance/agent-runtimes.ts'
-import AgentRuntimeRegistry, { type Config } from '../src/index.ts'
+import AgentRuntimeRegistry, { type Config, confinedCommand, proveConfinement } from '../src/index.ts'
 
 agentRuntimesConformance('@tsuuanmi/system-agent-runtimes', AgentRuntimeRegistry)
 
 describe('the read confinement of agent children (ADR-0024, INV-8)', () => {
-  const credentials = process.env.CREDENTIALS_DIRECTORY
+  const saved = { credentials: process.env.CREDENTIALS_DIRECTORY, runtime: process.env.XDG_RUNTIME_DIR }
+  const dir = mkdtempSync(join(tmpdir(), 'system-confinement-'))
   afterEach(() => {
-    if (credentials === undefined) delete process.env.CREDENTIALS_DIRECTORY
-    else process.env.CREDENTIALS_DIRECTORY = credentials
+    for (const [name, value] of [['CREDENTIALS_DIRECTORY', saved.credentials], ['XDG_RUNTIME_DIR', saved.runtime]] as const) {
+      if (value === undefined) delete process.env[name]
+      else process.env[name] = value
+    }
   })
   const boot = async (config?: Config) => {
     const ctx = new Context()
@@ -19,22 +24,40 @@ describe('the read confinement of agent children (ADR-0024, INV-8)', () => {
     return ctx
   }
 
-  it('always hides the DSH home and the service\'s credentials directory, and keeps operator tools readable', async () => {
-    process.env.CREDENTIALS_DIRECTORY = '/run/credentials/system.service'
+  it('hides the session\'s runtime directory, the service\'s credentials, and the temporary directories; binds back tools and what the caller names', async () => {
+    process.env.CREDENTIALS_DIRECTORY = dir
+    process.env.XDG_RUNTIME_DIR = dir
     const ctx = await boot()
-    expect(ctx.agentRuntimes.confinement(['/home/op/.dsh/system/codex-home'])).toEqual({
-      bwrap: 'bwrap',
-      hide: [dshHome(), '/run/credentials/system.service'],
-      readOnly: [join(dshHome(), 'system', 'tools')],
-      writable: ['/home/op/.dsh/system/codex-home'],
-    })
+    const c = ctx.agentRuntimes.confinement({ writable: ['/work/home'], readOnly: ['/work/space'] })
+    expect(c.hide).toEqual(expect.arrayContaining([dir, tmpdir(), '/tmp']))
+    expect(c.readOnly).toEqual([join(dshHome(), 'system', 'tools'), '/work/space'])
+    expect(c.writable).toEqual(['/work/home'])
+    // Resolved once, to an absolute path, when bubblewrap is installed.
+    expect(c.bwrap === 'bwrap' || isAbsolute(c.bwrap)).toBe(true)
   })
 
-  it('adds operator paths to hide, and never drops the DSH home', async () => {
-    delete process.env.CREDENTIALS_DIRECTORY
-    const ctx = await boot({ bwrap: '/usr/bin/bwrap', hide: ['/keys/vault.key'], readOnly: ['$DSH_HOME/tools', '/opt/agents'] })
-    expect(ctx.agentRuntimes.confinement()).toEqual({
-      bwrap: '/usr/bin/bwrap', hide: [dshHome(), '/keys/vault.key'], readOnly: [join(dshHome(), 'tools'), '/opt/agents'], writable: [],
-    })
+  it('hides every registered secret path while it is registered, and keeps operator entries as given', async () => {
+    const secret = join(dir, 'vault.key')
+    rmSync(secret, { force: true })
+    const ctx = await boot({ bwrap: '/usr/bin/bwrap', hide: ['/keys/typo.key'], readOnly: ['$DSH_HOME/tools', '/opt/agents'] })
+    const unregister = registerSecretPath(dir)
+    expect(ctx.agentRuntimes.confinement().hide).toEqual(expect.arrayContaining([dir, '/keys/typo.key']))
+    unregister()
+    expect(ctx.agentRuntimes.confinement()).toMatchObject({ bwrap: '/usr/bin/bwrap', readOnly: [join(dshHome(), 'tools'), '/opt/agents'], writable: [] })
+  })
+
+  it('refuses to bind back a directory that holds a registered secret, wherever it lives', async () => {
+    const tools = join(dir, 'tools')
+    mkdirSync(tools, { recursive: true })
+    writeFileSync(join(tools, 'vault.key'), 'k')
+    const ctx = await boot({ readOnly: [tools] })
+    const unregister = registerSecretPath(join(tools, 'vault.key'))
+    try {
+      const c = ctx.agentRuntimes.confinement()
+      expect(() => confinedCommand('true', [], c)).toThrow(`binding back ${tools} would expose ${join(tools, 'vault.key')}`)
+      expect(await proveConfinement(c)).toMatchObject({ confined: false, detail: expect.stringContaining('would expose') })
+    } finally {
+      unregister()
+    }
   })
 })

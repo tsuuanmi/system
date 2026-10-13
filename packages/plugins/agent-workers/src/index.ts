@@ -327,6 +327,12 @@ export class AgentWorkers extends Service {
   private async execute(row: RunRow, worker: AgentWorkerConfig, signal: AbortSignal, lease: () => Lease): Promise<void> {
     const provider = this.ctx.agentRuntimes.get(worker.runtime)
     if (!provider) throw new ProviderError('config_error', `no ${worker.runtime} runtime is registered`)
+    // Admission proved it once; a queued run, or one taken up after a restart, runs only on
+    // proof that still holds (ADR-0024). Nothing has reached the agent yet.
+    const evidence = await this.evidence(worker)
+    if (!evidence.available || !evidence.readsConfined || !evidence.sandboxes.includes(worker.sandbox)) {
+      throw new ProviderError('config_error', `${worker.runtime} cannot run this Worker now: ${evidence.detail}`)
+    }
     const session = row.session_id
       ? this.ctx.store.db.prepare('SELECT native_handle FROM agent_sessions WHERE session_id = ?').get(row.session_id) as { native_handle: string | null } | undefined
       : undefined

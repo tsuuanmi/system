@@ -18,7 +18,7 @@ import z from '@deepseek-ai/schemastery'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
-import { dshHome, ensurePrivateDir, writeFileDurable } from '@tsuuanmi/system-libs'
+import { dshHome, ensurePrivateDir, registerSecretPath, writeFileDurable } from '@tsuuanmi/system-libs'
 import { z as zod } from 'zod'
 
 
@@ -85,6 +85,11 @@ export class McpEndpoint extends McpTools {
     // Every scope's token exists once the endpoint runs, so the CLI can hand each one out.
     const tokens = scopeTokens(tokenDir)
     const tokenFiles = Object.fromEntries(SCOPES.map((scope) => [scope, tokenFile(tokenDir, scope)]))
+    // Agent Workers never read a control token, wherever tokenDir puts them (ADR-0024).
+    ctx.effect(() => {
+      const unregister = Object.values(tokenFiles).map(registerSecretPath)
+      return () => unregister.forEach((u) => u())
+    })
 
     const handler = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
       // The model token reaches only the model gateways, never /mcp.

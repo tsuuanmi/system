@@ -13,7 +13,8 @@ import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import z from '@deepseek-ai/schemastery'
 import { assertSafeBind, LOOPBACK_HOSTS, readJsonBody } from '@tsuuanmi/system-gateway-core'
-import { guard, MAX_REQUEST_BYTES, type Tier, Threads, tierOf } from '@tsuuanmi/system-gateway-turns'
+import { guard, MAX_REQUEST_BYTES, modelTokenPath, type Tier, Threads, tierOf } from '@tsuuanmi/system-gateway-turns'
+import { registerSecretPath } from '@tsuuanmi/system-libs'
 import { conversationKey, type ResponseObject, type ResponsesRequest, responseOf, streamEvents, toolsOf, turnsOf } from './protocol.ts'
 
 export * from './protocol.ts'
@@ -48,6 +49,8 @@ export const Config: z<Config> = z.object({
 export function apply(ctx: Context, config: Config = {}): void {
   const prefix = config.path ?? '/openai'
   const refuse = guard(config)
+  // Agent Workers never read the model token, wherever tokenDir puts it (ADR-0024).
+  ctx.effect(() => registerSecretPath(modelTokenPath(config)))
   const models = config.models ?? {}
   const threads = new Threads(ctx, { scope: 'responses', ...(config.classification ? { classification: config.classification } : {}), ...(config.timeoutMs ? { timeoutMs: config.timeoutMs } : {}) })
 

@@ -30,5 +30,7 @@ the [M0 spike](../../../docs/research/m0-dsh-core-spike.md)).
   [CON-2](../../../docs/requirements/constraints.md)), so stored prompts and
   answers are never silently truncated. `system init` and `start` check the same
   first, so a refused runtime never boots a host.
+- **Hidden from agents:** the database and its `-wal` and `-shm` files are
+  registered secret paths while open, wherever `path` puts them ([ADR-0024](../../../docs/decisions/adr/0024-agent-workers-confined-for-reads.md)).
 - **Lifecycle:** the database opens in a `ctx.effect`. On unload it closes after
   the current dispose pass, so dependents can still write from their own disposers.

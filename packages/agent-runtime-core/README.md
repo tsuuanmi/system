@@ -25,14 +25,21 @@ Capability **seam definition** for agent runtimes
   `RuntimeEvidence.readsConfined`; the `Confinement` type (`bwrap`, `hide`,
   `readOnly`, `writable`) that `ctx.agentRuntimes.confinement()` returns;
   - `confinedCommand(command, args, confinement)`: the bubblewrap command line
-    (`--die-with-parent --dev-bind / /`, a tmpfs over each hidden directory, an
-    unreadable node over each hidden file, then the binds back; missing paths
-    skipped, symlinks resolved);
-  - `proveConfinement(confinement)`: on this host, the command runs, every hidden
-    directory lists only the way down to what is bound back, and no hidden file
-    reads. Anything else is `confined: false`;
+    (`--die-with-parent --unshare-pid --new-session --dev-bind / / --proc /proc`,
+    then, shallowest first, a tmpfs over each hidden directory, the null device
+    over each hidden file, and the binds back; missing paths skipped, symlinks
+    resolved). A bind that is, or holds, a hidden path is refused;
+  - `proveConfinement(confinement)`: on this host, positively: the command runs;
+    each masked directory is not the host's (device and inode) and lists only the
+    way down to what is bound back; each hidden file is the null device. Anything
+    else is `confined: false`, and an absent operator entry is named;
   - `writeLauncher(dir, name, command)`: an owner-only script, named by its
-    content, for SDKs that start a program path without arguments;
+    content and written whole (temporary file, rename), for SDKs that start a
+    program path without arguments; an existing file is reused only when it is
+    exactly that content;
+  - `childEnvironment` also drops the variables that lead to the operator's
+    session: `DBUS_SESSION_BUS_ADDRESS`, `SSH_AUTH_SOCK`, `GPG_AGENT_INFO`,
+    `DISPLAY`, `WAYLAND_DISPLAY`, `XAUTHORITY`;
   - `conformance/passthrough-bwrap.sh`: a test double that drops the options and
     execs the command.
 - Conformance:

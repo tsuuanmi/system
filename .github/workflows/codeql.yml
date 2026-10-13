@@ -13,7 +13,7 @@ permissions:
 jobs:
   analyze:
     name: codeql / javascript-typescript
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned: a new image can change the user-namespace policy bubblewrap needs
     permissions:
       contents: read
       security-events: write

@@ -41,8 +41,15 @@ function scripted(script: (prompt: string) => ThreadEvent[] = (prompt) => [
   return { calls, client, lastClient }
 }
 
-const confinement = (writable: readonly string[]): Confinement => ({ bwrap: '/usr/bin/bwrap', hide: ['/dsh'], readOnly: ['/dsh/system/tools'], writable })
-const confined = { confine: confinement, prove: async () => ({ confined: true, detail: 'host state hidden by /usr/bin/bwrap' }), launcher: (c: { command: string; args: string[] }) => `launcher:${[c.command, ...c.args].join(' ')}` }
+const binds: Array<{ readOnly?: readonly string[]; writable?: readonly string[] }> = []
+const confinement = (bind: { readOnly?: readonly string[]; writable?: readonly string[] }): Confinement => {
+  binds.push(bind)
+  return { bwrap: '/usr/bin/bwrap', hide: ['/dsh'], readOnly: ['/dsh/system/tools', ...(bind.readOnly ?? [])], writable: [...(bind.writable ?? [])] }
+}
+const confined = {
+  confine: confinement, prove: async () => ({ confined: true, detail: 'host state hidden by /usr/bin/bwrap' }), nested: async () => undefined,
+  launcher: (c: { command: string; args: string[] }) => `launcher:${[c.command, ...c.args].join(' ')}`,
+}
 const runtime = (s = scripted(), extra: Partial<ConstructorParameters<typeof CodexRuntime>[0]> = {}) =>
   new CodexRuntime({ executable: '/usr/bin/codex', home: '/codex-home', client: s.client, version: async () => '0.162.1', mcpServers: async () => [], ...confined, ...extra })
 
@@ -92,12 +99,19 @@ describe('codex-sdk runtime (REQ-WRK-5, REQ-WRK-6)', () => {
     const s = scripted()
     await runtime(s).run({ prompt: 'x', workspace: '/w', sandbox: 'read-only' }, new AbortController().signal)
     // Paths that do not exist on this host are skipped, so only the options and the command remain.
-    expect(s.lastClient.program).toBe('launcher:/usr/bin/bwrap --die-with-parent --dev-bind / / -- /usr/bin/codex')
+    expect(s.lastClient.program).toBe('launcher:/usr/bin/bwrap --die-with-parent --unshare-pid --new-session --dev-bind / / --proc /proc -- /usr/bin/codex')
+    // Its home is bound back writable; a read-only Worker's workspace read-only.
+    expect(binds.at(-1)).toEqual({ writable: ['/codex-home'], readOnly: ['/w'] })
+    await runtime(s).run({ prompt: 'x', workspace: '/w', sandbox: 'workspace-write' }, new AbortController().signal)
+    expect(binds.at(-1)).toEqual({ writable: ['/codex-home', '/w'] })
   })
 
   it('offers no Worker, and runs nothing, when reads cannot be confined (ADR-0024, REQ-WRK-6)', async () => {
     const failed = runtime(scripted(), { prove: async () => ({ confined: false, detail: 'reads cannot be confined: bwrap missing' }) })
     expect(await failed.probe()).toMatchObject({ readsConfined: false, detail: expect.stringContaining('reads cannot be confined') })
+    // A host policy can let bubblewrap run, yet refuse Codex's own sandbox inside it.
+    const nested = runtime(scripted(), { nested: async () => { throw new Error('bwrap: setting up uid map: Permission denied') } })
+    expect(await nested.probe()).toMatchObject({ readsConfined: false, detail: expect.stringContaining('Codex\'s own sandbox does not start inside the confinement') })
     const s = scripted()
     const none = runtime(s, { confine: undefined })
     expect(await none.probe()).toMatchObject({ readsConfined: false, detail: expect.stringContaining('no read confinement') })

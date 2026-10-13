@@ -62,5 +62,9 @@ one scope another's rights).
   also inside a JSON-RPC batch, is refused before the MCP server runs: `403`,
   `WWW-Authenticate: Bearer error="insufficient_scope", scope="operator"`, and
   the JSON body `{ "error": "insufficient_scope", "error_description": … }`.
+- **Hidden from agents:** the three token files are registered secret paths
+  while the endpoint runs, wherever `tokenDir` puts them
+  ([ADR-0024](../../../docs/decisions/adr/0024-agent-workers-confined-for-reads.md));
+  web-ui and the gateways register the token they read.
 - **Rotation:** delete the scope's token file and restart
   ([runbook](../../../docs/operations/runbooks.md#rotate-a-control-token)).

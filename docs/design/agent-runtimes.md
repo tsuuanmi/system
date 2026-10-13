@@ -92,13 +92,16 @@ Codex, for example, refuses a tool allow-list or a turn limit, since it cannot e
   any.
 - **Reads** ([ADR-0024](../decisions/adr/0024-agent-workers-confined-for-reads.md)). The host
   state is never readable to an agent. `ctx.agentRuntimes.confinement()` names what to hide
-  (always the DSH home, plus `$CREDENTIALS_DIRECTORY` and operator paths) and what to bind back
-  (the operator's tools read-only, the Worker's own home writable). A runtime whose own
-  sandbox does not confine reads starts its agent under bubblewrap with that confinement
-  (`confinedCommand`; `--die-with-parent`, so stopping the run ends the agent): Codex through
-  an owner-only launcher (`writeLauncher`), ACP agents directly. Claude Code's pre-approved
-  tools are scoped to the workspace, reads included, so it needs no wrapper. Each probe
-  reports `readsConfined`, proven on the host by `proveConfinement`.
+  (the DSH home, the session's runtime directory, the temporary directories, credential
+  stores, every path registered with `registerSecretPath`, and operator paths) and what to
+  bind back (the operator's tools read-only; the Worker's own home and its workspace as its
+  sandbox allows; never a bind that holds a hidden path). A runtime whose own sandbox does not
+  confine reads starts its agent under bubblewrap with that confinement (`confinedCommand`:
+  its own PID namespace and session, `--die-with-parent`): Codex through an owner-only
+  launcher (`writeLauncher`), ACP agents directly. Claude Code's pre-approved tools are scoped
+  to the workspace, reads included, so it needs no wrapper. Each probe reports
+  `readsConfined`, proven positively on the host by `proveConfinement`, and the `agents`
+  source checks it again before each run starts.
 - **Egress** ([INV-12](../architecture/invariants.md#inv-12-data-egress-is-explicit)). The
   agent runs here, but its model is remote. So the `agents` source checks each prompt with
   `ctx.egress` (Worker class `agent`) before the agent starts, keeps the decision id on the run,

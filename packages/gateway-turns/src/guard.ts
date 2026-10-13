@@ -5,7 +5,7 @@
  */
 import type { IncomingMessage } from 'node:http'
 import { join } from 'node:path'
-import { guardRequest, LOOPBACK_HOSTS, scopeToken } from '@tsuuanmi/system-gateway-core'
+import { guardRequest, LOOPBACK_HOSTS, scopeToken, tokenFile } from '@tsuuanmi/system-gateway-core'
 import { dshHome } from '@tsuuanmi/system-libs'
 
 /** Largest request body a gateway reads (a long conversation with tool results). */
@@ -15,6 +15,11 @@ export interface GuardOptions {
   /** Directory of the scope token files (default `<DSH_HOME>/system`); the gateways read `model.token`. */
   tokenDir?: string
   allowedHosts?: string[]
+}
+
+/** The model token's file the gateways read, which they register as secret (ADR-0024). */
+export function modelTokenPath(options: GuardOptions = {}): string {
+  return tokenFile(options.tokenDir ?? join(dshHome(), 'system'), 'model')
 }
 
 /** A function that returns why a request is refused (`[status, reason]`), or undefined. */

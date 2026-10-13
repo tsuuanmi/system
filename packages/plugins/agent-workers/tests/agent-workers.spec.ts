@@ -127,6 +127,19 @@ describe('ctx.workers source `agents`: agent runtimes as Workers', () => {
     expect((await ctx.workers.list())[0]).toMatchObject({ state: 'unavailable', capabilities: [] })
   })
 
+  it('checks the proof again before the agent starts: a run admitted while confined never starts once it is not (ADR-0024)', async () => {
+    const options = { readsConfined: true }
+    const agent = new ScriptedAgent(options)
+    const { ctx } = await boot(agent, { workers: [worker()], probeTtlMs: 0 })
+    const admitted = await ctx.workers.route(requirement())
+    options.readsConfined = false
+    const source = ctx.workers.source('agents')!
+    const started = source.start({ key: 'k', worker: 'agent:reviewer', prompt: 'review', requirement: requirement(), decisions: admitted.decisions })
+    const done = await source.wait(started.id, 10_000)
+    expect(done).toMatchObject({ status: 'failed', error: { kind: 'config_error' } })
+    expect(agent.runs).toEqual([])
+  })
+
   it('proves develop (never review) for a confined writable Worker, and validate only when the runtime can run commands', async () => {
     const config = { workers: [worker({ id: 'writer', sandbox: 'workspace-write' as const })] }
     const without = await boot(new ScriptedAgent({ sandboxes: ['read-only', 'workspace-write'] }), config)

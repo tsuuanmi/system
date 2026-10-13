@@ -15,7 +15,7 @@ import { type Context, Service } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { z as zod } from 'zod'
 import type { AccountView } from '@tsuuanmi/system-accounts'
-import { contentId, dshHome, ensurePrivateDir } from '@tsuuanmi/system-libs'
+import { contentId, dshHome, ensurePrivateDir, registerSecretPath } from '@tsuuanmi/system-libs'
 import type {} from '@tsuuanmi/system-gateway-core'
 import { ProviderError } from '@tsuuanmi/system-provider-core'
 
@@ -62,6 +62,8 @@ export class Login extends Service {
   constructor(ctx: Context, private readonly config: Config = {}) {
     super(ctx, 'login')
     this.profilesDir = config.profilesDir ?? join(dshHome(), 'system', 'login-profiles')
+    // Login profiles hold every session signed in through them: agent Workers never read them (ADR-0024).
+    ctx.effect(() => registerSecretPath(this.profilesDir))
     ctx.effect(() => async () => {
       await Promise.allSettled([...this.remotes.values()].map((r) => r.end()))
     })

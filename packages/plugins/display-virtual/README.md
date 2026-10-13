@@ -11,6 +11,9 @@ The seam itself, the abstract `Display`, lives in `@tsuuanmi/system-provider-cor
 - **X access control:** Xvfb runs with `-auth` over a fresh owner-only
   Xauthority cookie (`XAUTHORITY` in `env`), so other local users cannot connect.
   The cookie file is removed when Xvfb exits.
+- **Hidden from agents:** the cookie's directory is a registered secret path
+  while the display runs: with it, a process could screenshot and drive the
+  accounts' browsers ([ADR-0024](../../../docs/decisions/adr/0024-agent-workers-confined-for-reads.md)).
 - **Health:** when Xvfb exits, `lost` aborts with `session_broken`, and the next
   `prepare` starts a new generation. A startup failure is not cached.
 - **Fails closed:** no headless mode and no fallback to the operator's `DISPLAY`

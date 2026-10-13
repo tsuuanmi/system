@@ -90,7 +90,8 @@ runs the work the router admitted to them. Callers never reach a source directly
   The agent runs here but its model is remote, so each prompt passes the egress check first.
 - **Agent runtimes** (`ctx.agentRuntimes`): providers for Claude Code (Claude Agent SDK), Codex
   (Codex SDK), and ACP agents ([agent runtimes](../design/agent-runtimes.md)). Each agent
-  process starts without the daemon's credentials, and cannot read the DSH home: the
+  process starts without the daemon's credentials, and cannot read host state (the DSH home,
+  the session's runtime and temporary directories, registered secret paths): the
   registry owns the read confinement, applied with bubblewrap where a runtime's own sandbox
   does not confine reads ([ADR-0024](../decisions/adr/0024-agent-workers-confined-for-reads.md)).
 - **Models** (`ctx.models`, planned): API and local models for `economy`-tier jobs

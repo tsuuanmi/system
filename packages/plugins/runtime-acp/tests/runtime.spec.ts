@@ -56,7 +56,7 @@ describe('acp: the client side enforces the policy', () => {
   })
 
   it.skipIf(!BWRAP && process.env.SYSTEM_REQUIRE_BWRAP !== '1')('hides host state from the agent\'s own reads, not only from the reads it asks for (ADR-0024, REQ-WRK-6)', async () => {
-    const reads: AcpConfinement = { confine: (writable) => ({ bwrap: BWRAP ?? 'bwrap', hide: [base], readOnly: [workspace], writable }) }
+    const reads: AcpConfinement = { confine: (bind) => ({ bwrap: BWRAP ?? 'bwrap', hide: [base], readOnly: [...(bind.readOnly ?? [])], writable: [...(bind.writable ?? [])] }) }
     const look = async (path: string, r: AcpConfinement) => (await runtime(true, {}, undefined, r).run({ prompt: `look:${path}`, workspace, sandbox: 'read-only' }, signal())).text
     expect(await look(join(base, 'secret.txt'), passthrough)).toBe('look: present')
     expect(await look(join(base, 'secret.txt'), reads)).toBe('look: absent')

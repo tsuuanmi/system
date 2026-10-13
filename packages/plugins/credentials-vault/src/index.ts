@@ -14,7 +14,7 @@ import {
   type CredentialRecordInfo, type CredentialRef, type ResolvedCredential,
 } from '@deepseek-ai/dsh-credentials'
 import z from '@deepseek-ai/schemastery'
-import { dshHome, ensurePrivateDir, readOrCreateSecretFile } from '@tsuuanmi/system-libs'
+import { dshHome, ensurePrivateDir, readOrCreateSecretFile, registerSecretPath } from '@tsuuanmi/system-libs'
 import { withFileLock } from '@deepseek-ai/dsh-atomic-write'
 import { type VaultDocument, own, readVault, writeVault } from './vault-file.ts'
 
@@ -53,7 +53,13 @@ export class VaultCredentialProvider extends CredentialProvider {
     this.path = config.path ?? join(dshHome(), 'system', 'vault.enc')
     this.lockWaitMs = config.lockWaitMs ?? 30_000
     ensurePrivateDir(dirname(this.path))
-    this.key = readOrCreateSecretFile(config.keyFile ?? join(dshHome(), 'system', 'vault.key'), 32)
+    const keyFile = config.keyFile ?? join(dshHome(), 'system', 'vault.key')
+    this.key = readOrCreateSecretFile(keyFile, 32)
+    // Agent Workers never read the vault or its key, wherever the operator keeps them (ADR-0024).
+    ctx.effect(() => {
+      const unregister = [this.path, keyFile].map(registerSecretPath)
+      return () => unregister.forEach((u) => u())
+    })
     ctx.effect(() => async () => {
       // Let in-flight mutations finish with the real key before it is wiped; a write
       // sealed under a zeroed key would make the whole vault unreadable.

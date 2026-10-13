@@ -9,7 +9,9 @@
  * - what ACP cannot express exactly (a tool list, a model, a turn limit) is refused;
  * - the agent starts without the daemon's credentials: only the variables the operator forwards
  *   by name (`forwardEnv`) or sets (`env`) reach it (INV-8);
- * - an aborted run cancels the prompt, then ends the agent: SIGTERM, then SIGKILL;
+ * - an aborted run cancels the prompt, then ends the agent: SIGTERM, then SIGKILL. Under the
+ *   confinement the signal ends bubblewrap, and everything in the agent's PID namespace dies
+ *   with it, children included;
  * - the agent runs under the read confinement (ADR-0024): it can act on the disk without asking,
  *   so host state is hidden from its process, not only from the reads it asks the client for.
  * An agent can still act on its own without asking, so `read-only` is offered only for an
@@ -52,7 +54,7 @@ export interface AcpTiming {
 
 export interface AcpConfinement {
   /** The read confinement for the agent (`ctx.agentRuntimes.confinement`). Without it, no Worker. */
-  confine?: ((writable: readonly string[]) => Confinement) | undefined
+  confine?: ((bind: { readOnly?: readonly string[]; writable?: readonly string[] }) => Confinement) | undefined
   /** Proves the confinement on this host (default `proveConfinement`). */
   prove?: (confinement: Confinement) => Promise<{ confined: boolean; detail: string }>
 }
@@ -68,7 +70,7 @@ export class AcpAgentRuntime implements AgentRuntimeProvider {
 
   async probe(): Promise<RuntimeEvidence> {
     // The handshake only: nothing is asked of the agent, and anything it asks is refused.
-    const session = this.spawn(process.cwd(), (): Client => ({
+    const session = this.spawn('/', [], (): Client => ({
       requestPermission: async () => ({ outcome: { outcome: 'cancelled' } }),
       sessionUpdate: async () => undefined,
     }))
@@ -78,7 +80,7 @@ export class AcpAgentRuntime implements AgentRuntimeProvider {
       }), PROBE_MS)
       const info = init.agentInfo as { name?: string; version?: string } | undefined
       const reads = this.reads.confine
-        ? await (this.reads.prove ?? proveConfinement)(this.reads.confine([]))
+        ? await (this.reads.prove ?? proveConfinement)(this.reads.confine({}))
         : { confined: false, detail: 'no read confinement is configured' }
       return {
         available: true,
@@ -110,7 +112,7 @@ export class AcpAgentRuntime implements AgentRuntimeProvider {
     if (signal.aborted) throw new ProviderError('aborted', `${this.kind}: aborted before starting`)
     const root = await realpath(spec.workspace)
     let text = ''
-    const session = this.spawn(spec.workspace, (): Client => ({
+    const session = this.spawn(spec.workspace, [spec.workspace], (): Client => ({
       requestPermission: async (params) => {
         const reject = params.options.find((o) => o.kind === 'reject_once') ?? params.options.find((o) => o.kind === 'reject_always')
         return { outcome: reject ? { outcome: 'selected', optionId: reject.optionId } : { outcome: 'cancelled' } }
@@ -161,10 +163,10 @@ export class AcpAgentRuntime implements AgentRuntimeProvider {
     }
   }
 
-  private spawn(cwd: string, client: () => Client): { connection: ClientSideConnection; close: () => void; stderr: () => string } {
+  private spawn(cwd: string, readOnly: string[], client: () => Client): { connection: ClientSideConnection; close: () => void; stderr: () => string } {
     // The probe's handshake runs confined too when it can, so it proves the agent starts that way.
     const { command, args } = this.reads.confine
-      ? confinedCommand(this.agent.command, this.agent.args ?? [], this.reads.confine([]))
+      ? confinedCommand(this.agent.command, this.agent.args ?? [], this.reads.confine({ readOnly }))
       : { command: this.agent.command, args: this.agent.args ?? [] }
     const child: ChildProcess = spawn(command, args, { cwd, env: childEnvironment(this.agent.forwardEnv, this.agent.env), stdio: ['pipe', 'pipe', 'pipe'] })
     let stderr = ''
@@ -247,5 +249,5 @@ export const Config: z<Config> = z.object({
 }) as unknown as z<Config>
 
 export function apply(ctx: Context, config: Config = { agents: [] }): void {
-  for (const agent of config.agents ?? []) ctx.agentRuntimes.register(new AcpAgentRuntime(agent, {}, { confine: (writable) => ctx.agentRuntimes.confinement(writable) }))
+  for (const agent of config.agents ?? []) ctx.agentRuntimes.register(new AcpAgentRuntime(agent, {}, { confine: (bind) => ctx.agentRuntimes.confinement(bind) }))
 }

@@ -6,8 +6,8 @@
  * @module @tsuuanmi/system-agent-runtime-core
  */
 import { execFile } from 'node:child_process'
-import { chmodSync, realpathSync, statSync, writeFileSync } from 'node:fs'
-import { createHash } from 'node:crypto'
+import { chmodSync, closeSync, constants, fstatSync, fsyncSync, openSync, readFileSync, realpathSync, renameSync, statSync, writeFileSync } from 'node:fs'
+import { createHash, randomBytes } from 'node:crypto'
 import { join, relative, sep } from 'node:path'
 import { promisify } from 'node:util'
 import { type Context, Service } from '@deepseek-ai/cordis'
@@ -89,25 +89,30 @@ export abstract class AgentRuntimes extends Service {
   abstract list(): string[]
 
   /**
-   * The read confinement for an agent child (ADR-0024), from operator configuration, with
-   * `writable` (the child's own home, if it lives under a hidden directory) bound back.
+   * The read confinement for an agent child (ADR-0024): what is always hidden, the operator's
+   * configuration, and every registered secret path; with `bind` (the child's own home and its
+   * workspace, when they live under a hidden directory) bound back.
    */
-  abstract confinement(writable?: readonly string[]): Confinement
+  abstract confinement(bind?: { readOnly?: readonly string[]; writable?: readonly string[] }): Confinement
 }
 
 /**
  * What an agent child must not read, and what it still needs from inside those paths
  * (ADR-0024). Applied with bubblewrap: the child sees the host as it is, except that each
- * hidden directory is an empty tmpfs and each hidden file reads as empty.
+ * hidden directory is an empty tmpfs and each hidden file an unreadable device node. It runs in
+ * its own PID namespace and session, and dies with its launcher.
  */
 export interface Confinement {
-  /** The bubblewrap executable. */
+  /** The bubblewrap executable (an absolute path). */
   bwrap: string
-  /** Directories and files hidden from the child: always the DSH home, plus operator paths. */
+  /**
+   * Directories and files hidden from the child: the DSH home, the runtime and temporary
+   * directories, credential stores, and every secret path a plugin registered.
+   */
   hide: readonly string[]
-  /** Paths under a hidden directory bound back read-only (operator-installed tools). */
+  /** Paths under a hidden directory bound back read-only (operator-installed tools, a read-only workspace). */
   readOnly: readonly string[]
-  /** Paths under a hidden directory bound back writable (the child's own home). */
+  /** Paths under a hidden directory bound back writable (the child's own home, a writable workspace). */
   writable: readonly string[]
 }
 
@@ -119,19 +124,53 @@ const real = (path: string): string | undefined => {
   }
 }
 
+const under = (path: string, root: string): boolean => path.startsWith(root.endsWith(sep) ? root : root + sep)
+const depth = (path: string): number => path.split(sep).filter(Boolean).length
+
+interface Plan {
+  /** Hidden roots that exist: no other hidden path contains them. */
+  hidden: Array<{ path: string; dir: boolean }>
+  binds: Array<{ path: string; writable: boolean }>
+  /** Hide entries that do not exist on this host (a typo, or nothing to hide yet). */
+  absent: string[]
+  /** Binds that would re-expose a hidden path. */
+  conflicts: string[]
+}
+
+function plan(confinement: Confinement): Plan {
+  const absent: string[] = []
+  const hides = new Map<string, boolean>()
+  for (const entry of confinement.hide) {
+    const path = real(entry)
+    if (!path) absent.push(entry)
+    else hides.set(path, statSync(path).isDirectory())
+  }
+  const binds = new Map<string, boolean>()
+  for (const [list, writable] of [[confinement.readOnly, false], [confinement.writable, true]] as const) {
+    for (const entry of list) {
+      const path = real(entry)
+      if (path) binds.set(path, writable || (binds.get(path) ?? false))
+    }
+  }
+  const conflicts = [...binds.keys()].flatMap((bind) => [...hides.keys()].filter((h) => h === bind || under(h, bind)).map((h) => `binding back ${bind} would expose ${h}`))
+  const hidden = [...hides].filter(([path]) => ![...hides.keys()].some((other) => other !== path && under(path, other))).map(([path, dir]) => ({ path, dir }))
+  return { hidden, binds: [...binds].map(([path, writable]) => ({ path, writable })), absent, conflicts }
+}
+
 /**
- * The command line that runs `command args` under `confinement`. Paths that do not exist are
- * skipped (there is nothing to hide or bind); symlinks are resolved first.
+ * The command line that runs `command args` under `confinement`: its own PID namespace (with
+ * its own /proc) and session, so nothing it starts outlives it and it cannot reach the
+ * daemon's terminal; then the mounts, shallowest first, so a path bound back lies over the
+ * tmpfs that hides its parent. Throws when a bind would re-expose a hidden path.
  */
 export function confinedCommand(command: string, args: readonly string[], confinement: Confinement): { command: string; args: string[] } {
-  // --die-with-parent: stopping the run signals bubblewrap, and the agent must end with it.
-  const argv = ['--die-with-parent', '--dev-bind', '/', '/']
-  for (const path of confinement.hide.map(real)) {
-    if (!path) continue
-    argv.push(...(statSync(path).isDirectory() ? ['--tmpfs', path] : ['--ro-bind', '/dev/null', path]))
-  }
-  for (const path of confinement.readOnly.map(real)) if (path) argv.push('--ro-bind', path, path)
-  for (const path of confinement.writable.map(real)) if (path) argv.push('--bind', path, path)
+  const { hidden, binds, conflicts } = plan(confinement)
+  if (conflicts.length) throw new Error(`read confinement refused: ${conflicts[0]}`)
+  const mounts = [
+    ...hidden.map((h) => ({ path: h.path, args: h.dir ? ['--tmpfs', h.path] : ['--ro-bind', '/dev/null', h.path] })),
+    ...binds.map((b) => ({ path: b.path, args: [b.writable ? '--bind' : '--ro-bind', b.path, b.path] })),
+  ].sort((a, b) => depth(a.path) - depth(b.path))
+  const argv = ['--die-with-parent', '--unshare-pid', '--new-session', '--dev-bind', '/', '/', '--proc', '/proc', ...mounts.flatMap((m) => m.args)]
   return { command: confinement.bwrap, args: [...argv, '--', command, ...args] }
 }
 
@@ -140,19 +179,38 @@ const quote = (arg: string): string => `'${arg.replaceAll("'", "'\\''")}'`
 /**
  * An executable launcher for an SDK that takes only a program path (no arguments): an
  * owner-only shell script in `dir` that execs `command` with its arguments, then the SDK's
- * own. Named by its content, so a changed confinement gets a new file and a running one is
- * never rewritten. `dir` must exist and be owner-only. Returns the script's path.
+ * own. Named by its content and written whole (a temporary file, then a rename), so a crash
+ * never leaves a short launcher; an existing file is used only when it is a regular, single-link,
+ * owner-only file of this user with exactly that content, and replaced otherwise. `dir` must be
+ * owner-only. Returns the script's path.
  */
 export function writeLauncher(dir: string, name: string, command: { command: string; args: readonly string[] }): string {
   const script = `#!/bin/sh\nexec ${[command.command, ...command.args].map(quote).join(' ')} "$@"\n`
   const path = join(dir, `${name}-${createHash('sha256').update(script).digest('hex').slice(0, 16)}.sh`)
   try {
-    writeFileSync(path, script, { mode: 0o700, flag: 'wx' })
-    chmodSync(path, 0o700)
+    const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW)
+    try {
+      const stat = fstatSync(fd)
+      const own = typeof process.getuid !== 'function' || stat.uid === process.getuid()
+      if (stat.isFile() && own && stat.nlink === 1 && (stat.mode & 0o777) === 0o700 && readFileSync(fd, 'utf8') === script) return path
+    } finally {
+      closeSync(fd)
+    }
   } catch (error) {
-    // Same name, same content: another run wrote it first.
-    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+    const code = (error as NodeJS.ErrnoException).code
+    // ELOOP: a symlink planted at the name; it is replaced below.
+    if (code !== 'ENOENT' && code !== 'ELOOP') throw error
   }
+  const temp = join(dir, `.${name}-${randomBytes(8).toString('hex')}.tmp`)
+  const fd = openSync(temp, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o700)
+  try {
+    writeFileSync(fd, script)
+    fsyncSync(fd)
+  } finally {
+    closeSync(fd)
+  }
+  chmodSync(temp, 0o700)
+  renameSync(temp, path)
   return path
 }
 
@@ -162,47 +220,82 @@ export type RunCommand = (command: string, args: string[]) => Promise<string>
 const runCommand: RunCommand = async (command, args) => (await promisify(execFile)(command, args, { timeout: 15_000 })).stdout
 
 /**
- * Prove on this host that `confinement` hides what it should: the confined command runs at
- * all, every hidden directory lists only the way down to the paths bound back, and no hidden
- * file can be read. Fails closed: a missing bubblewrap, or user namespaces the host refuses,
- * is `confined: false`.
+ * Prove on this host, positively, that `confinement` hides what it should. Fails closed: a
+ * missing bubblewrap, user namespaces the host refuses, or any check below is `confined: false`.
+ * 1. No bind re-exposes a hidden path, and the confined command runs at all.
+ * 2. Inside, every hidden directory, and every directory on the way down to a path bound back,
+ *    is a different directory from the host's (the tmpfs, by device and inode), and lists only
+ *    the next component of a path bound back.
+ * 3. Inside, every hidden file is the null device (character device 1:3), never the file.
  */
 export async function proveConfinement(confinement: Confinement, run: RunCommand = runCommand): Promise<{ confined: boolean; detail: string }> {
-  const kept = [...confinement.readOnly, ...confinement.writable].map(real).filter((p): p is string => !!p)
+  const { hidden, binds, absent, conflicts } = plan(confinement)
+  if (conflicts.length) return { confined: false, detail: `read confinement refused: ${conflicts[0]}` }
   const confined = (command: string, args: string[]) => {
     const c = confinedCommand(command, args, confinement)
     return run(c.command, c.args)
   }
+  const fail = (detail: string) => ({ confined: false, detail })
   try {
     await confined('true', [])
   } catch (error) {
-    return { confined: false, detail: `reads cannot be confined: ${(error as Error).message.split('\n')[0]!.slice(0, 160)}` }
+    return fail(`reads cannot be confined: ${(error as Error).message.split('\n')[0]!.slice(0, 160)}`)
   }
-  for (const path of confinement.hide.map(real)) {
-    if (!path) continue
-    if (!statSync(path).isDirectory()) {
-      // A hidden file is masked by an unreadable device node: reading it fails, or yields nothing.
-      const read = await confined('cat', [path]).catch(() => '')
-      if (read.length) return { confined: false, detail: `${path} is readable under ${confinement.bwrap}` }
-      continue
+  // The directories a child sees masked: each hidden directory, and each on the way to a bind.
+  const masked = new Map<string, Set<string>>()
+  for (const h of hidden.filter((h) => h.dir)) masked.set(h.path, new Set())
+  for (const b of binds) {
+    const root = hidden.find((h) => h.dir && under(b.path, h.path))
+    if (!root) continue
+    const parts = relative(root.path, b.path).split(sep)
+    let dir = root.path
+    for (const part of parts) {
+      masked.get(dir)!.add(part)
+      dir = join(dir, part)
+      if (dir !== b.path && !masked.has(dir)) masked.set(dir, new Set())
     }
-    const allowed = new Set(kept.filter((k) => k.startsWith(path + sep)).map((k) => relative(path, k).split(sep)[0]))
-    const listing = await confined('ls', ['-A', path]).catch((error: Error) => error)
-    if (listing instanceof Error) return { confined: false, detail: `${path} cannot be listed under ${confinement.bwrap}: ${listing.message.split('\n')[0]!.slice(0, 120)}` }
-    const visible = listing.split('\n').filter(Boolean).filter((name) => !allowed.has(name))
-    if (visible.length) return { confined: false, detail: `${path} still shows ${visible.length} entr${visible.length === 1 ? 'y' : 'ies'} under ${confinement.bwrap}` }
   }
-  return { confined: true, detail: `host state hidden by ${confinement.bwrap}` }
+  const files = hidden.filter((h) => !h.dir).map((h) => h.path)
+  try {
+    const lines = (await confined('stat', ['-c', '%n|%d:%i|%F|%t:%T', '--', ...masked.keys(), ...files])).split('\n').filter(Boolean)
+    const inside = new Map(lines.map((line) => {
+      const [name, id, type, device] = line.split('|')
+      return [name!, { id: id!, type: type!, device: device! }]
+    }))
+    for (const dir of masked.keys()) {
+      const host = statSync(dir)
+      if (inside.get(dir)?.id === `${host.dev}:${host.ino}`) return fail(`${dir} is the host directory under ${confinement.bwrap}, not masked`)
+    }
+    for (const file of files) {
+      const seen = inside.get(file)
+      if (seen?.type !== 'character special file' || seen.device !== '1:3') return fail(`${file} is not masked by the null device under ${confinement.bwrap}`)
+    }
+    for (const [dir, allowed] of masked) {
+      const visible = (await confined('ls', ['-A', dir])).split('\n').filter(Boolean).filter((name) => !allowed.has(name))
+      if (visible.length) return fail(`${dir} still shows ${visible.length} entr${visible.length === 1 ? 'y' : 'ies'} under ${confinement.bwrap}`)
+    }
+  } catch (error) {
+    return fail(`the confinement could not be inspected: ${(error as Error).message.split('\n')[0]!.slice(0, 160)}`)
+  }
+  return { confined: true, detail: `host state hidden by ${confinement.bwrap}${absent.length ? ` (not present, nothing to hide: ${absent.join(', ')})` : ''}` }
 }
+
+/**
+ * Variables that lead to the operator's session rather than hold a secret: its message bus,
+ * key agents, and displays. An agent never gets them unless the operator forwards one by name.
+ */
+const SESSION_ACCESS = ['DBUS_SESSION_BUS_ADDRESS', 'SSH_AUTH_SOCK', 'GPG_AGENT_INFO', 'DISPLAY', 'WAYLAND_DISPLAY', 'XAUTHORITY']
 
 /**
  * The environment an agent runtime's child process starts with (INV-8): DSH's own scrub of the
  * daemon environment (credential-shaped and `DSH_*` names removed; PATH, HOME, locale, proxy
- * kept), then the variables the operator forwards by name (never by value in configuration,
- * e.g. the gateway token a Codex Worker's model provider reads), then explicit values.
+ * kept) without the session-access variables, then the variables the operator forwards by
+ * name (never by value in configuration, e.g. the gateway token a Codex Worker's model
+ * provider reads), then explicit values.
  */
 export function childEnvironment(forward: readonly string[] = [], explicit: Record<string, string> = {}): Record<string, string> {
   const env = scrubbedParentEnv()
+  for (const name of SESSION_ACCESS) delete env[name]
   for (const name of forward) {
     const value = process.env[name]
     if (value !== undefined) env[name] = value

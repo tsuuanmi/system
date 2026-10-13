@@ -17,6 +17,7 @@ import { connect } from 'node:net'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join, resolve, sep } from 'node:path'
 import { type XvfbHandle, startXvfb } from '@tsuuanmi/system-display-virtual'
+import { registerSecretPath } from '@tsuuanmi/system-libs'
 import { ProviderError } from '@tsuuanmi/system-provider-core'
 import { WebSocketServer } from 'ws'
 
@@ -95,11 +96,14 @@ export class RemoteLogin {
   private timer: NodeJS.Timeout | undefined
   private origin = ''
   readonly socketDir: string
+  private readonly unregisterSocketDir: () => void
   private readonly socket: string
   private readonly expiresAt: string
 
   private constructor(private readonly options: RemoteOptions) {
     this.socketDir = mkdtempSync(join(tmpdir(), 'system-remote-login-'))
+    // The VNC socket shows and drives the login browser: agent Workers never reach it (ADR-0024).
+    this.unregisterSocketDir = registerSecretPath(this.socketDir)
     this.socket = join(this.socketDir, 'vnc.sock')
     this.expiresAt = new Date(Date.now() + options.ttlMs).toISOString()
   }
@@ -136,6 +140,7 @@ export class RemoteLogin {
     await stop(this.vnc, 2000)
     await this.xvfb?.stop().catch(() => undefined)
     rmSync(this.socketDir, { recursive: true, force: true })
+    this.unregisterSocketDir()
     this.state = this.state === 'complete' || this.state === 'failed' ? this.state : 'ended'
     this.options.onEnded()
   }

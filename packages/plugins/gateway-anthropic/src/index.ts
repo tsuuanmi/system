@@ -12,7 +12,8 @@ import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import z from '@deepseek-ai/schemastery'
 import { assertSafeBind, LOOPBACK_HOSTS, readJsonBody } from '@tsuuanmi/system-gateway-core'
-import { estimateTokens, guard, MAX_REQUEST_BYTES, renderOpening, type Tier, Threads, tierOf } from '@tsuuanmi/system-gateway-turns'
+import { estimateTokens, guard, MAX_REQUEST_BYTES, modelTokenPath, renderOpening, type Tier, Threads, tierOf } from '@tsuuanmi/system-gateway-turns'
+import { registerSecretPath } from '@tsuuanmi/system-libs'
 import { conversationKey, type MessagesRequest, messageOf, streamEvents, systemText, toolsOf, turnsOf } from './protocol.ts'
 
 export * from './protocol.ts'
@@ -47,6 +48,8 @@ export const Config: z<Config> = z.object({
 export function apply(ctx: Context, config: Config = {}): void {
   const prefix = config.path ?? '/anthropic'
   const refuse = guard(config)
+  // Agent Workers never read the model token, wherever tokenDir puts it (ADR-0024).
+  ctx.effect(() => registerSecretPath(modelTokenPath(config)))
   const models = config.models ?? { haiku: 'economy' }
   const threads = new Threads(ctx, { scope: 'anthropic', ...(config.classification ? { classification: config.classification } : {}), ...(config.timeoutMs ? { timeoutMs: config.timeoutMs } : {}) })
 

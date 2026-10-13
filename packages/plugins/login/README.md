@@ -57,5 +57,7 @@
 - **Live-verified on 2026-10-11:** `system account save chatgpt-main` against the
   running profile stored a real account (`ready`, revision 1). The vault holds only
   ciphertext.
+- **Hidden from agents:** `profilesDir`, and each remote login's socket
+  directory while it lives, are registered secret paths ([ADR-0024](../../../docs/decisions/adr/0024-agent-workers-confined-for-reads.md)).
 - **Config:** `profilesDir`, `vncPath`, `chromePath`, `remoteTtlMs`, `remotePort`.
 - **Injects:** `accounts`, `browser`, `providers`; `mcp` is optional.

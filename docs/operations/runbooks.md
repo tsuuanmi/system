@@ -75,18 +75,23 @@ an `agent-workers` row.
   ```
 
 - **Read confinement:** Codex and ACP agents start under
-  [bubblewrap](https://github.com/containers/bubblewrap), which hides the whole
-  `~/.dsh` (and `$CREDENTIALS_DIRECTORY` under systemd) from the agent
-  ([ADR-0024](../decisions/adr/0024-agent-workers-confined-for-reads.md)). Only
-  `~/.dsh/system/tools` (read-only) and the Worker's own home come back. Install
-  it (`sudo apt-get install bubblewrap`). If `system explain` or `/ui` shows a
+  [bubblewrap](https://github.com/containers/bubblewrap)
+  ([ADR-0024](../decisions/adr/0024-agent-workers-confined-for-reads.md)). It
+  hides `~/.dsh`, your session's runtime directory (`/run/user/<uid>`), `/tmp`,
+  `/var/tmp`, `/dev/shm`, `~/.ssh`, `~/.gnupg`, `~/.aws`, `~/.codex`,
+  `~/.Xauthority`, `~/.config/gh`, `~/.docker/config.json`,
+  `$CREDENTIALS_DIRECTORY`, and wherever you keep the vault, its key, the store,
+  or login profiles. The agent gets an empty private `/tmp`. Only
+  `~/.dsh/system/tools` (read-only), the Worker's own home, and its workspace come
+  back; a workspace that holds one of those paths (your home directory, say) is
+  refused. Install a root-owned bubblewrap (`sudo apt-get install bubblewrap`):
+  it is preferred over any copy in your own directories. If `system explain` or `/ui` shows a
   Worker unavailable with "reads cannot be confined", the host refuses
   unprivileged user namespaces: on Ubuntu 23.10 and later, allow them for bwrap
   (an AppArmor profile for `/usr/bin/bwrap` with `userns`, or
   `sysctl kernel.apparmor_restrict_unprivileged_userns=0`). Keep the agent CLI
   outside `~/.dsh` or under `~/.dsh/system/tools`; add other paths to the
-  `agent-runtimes` row's `readOnly`, and a vault `keyFile` kept elsewhere to its
-  `hide`.
+  `agent-runtimes` row's `readOnly`, and other secrets to its `hide`.
 - **`local-private` work:** refused at egress by default (`egress_denied`,
   nothing sent), because the agent's model is remote. Routing still admits the
   Worker, since it is local. If the agent's model runs on this machine, set the

@@ -144,20 +144,32 @@
     `system` MCP server: Codex starts MCP servers outside its sandbox, so the
     probe and every run fail closed if that home configures any, and a `config`
     holding `mcp_servers` is refused. Codex's own sandbox confines writes, not
-    reads, so Codex starts under bubblewrap, which hides the whole DSH home (the
-    vault, its key, the tokens, the store, the login profiles, DSH's own
-    credentials) and the service's credentials directory, binding back only the
-    operator's tools read-only and the Worker's own home
-    ([ADR-0024](../decisions/adr/0024-agent-workers-confined-for-reads.md));
+    reads, so Codex starts under the read confinement below;
   - ACP agents (`runtime-acp`): the client side enforces the policy. Every
     permission request is rejected, file reads are served inside the workspace
     only, and no write or terminal capability or MCP server is offered. Because
     an ACP agent can still act on the disk without asking, `read-only` is
     offered only for an agent the operator vouches for (`honoursPermissions`),
-    and the agent process runs under the same bubblewrap confinement as Codex,
-    so what it reads on its own cannot reach host state either.
-    An aborted ACP agent that ignores the cancel gets SIGTERM, then SIGKILL, so
-    it cannot hang a run.
+    and the agent process runs under the read confinement below, so what it
+    reads on its own cannot reach host state either. An aborted ACP agent that
+    ignores the cancel gets SIGTERM, then SIGKILL; under the confinement the
+    signal ends its whole PID namespace, children included, so it cannot hang a
+    run or keep writing after it.
+
+  **Read confinement** ([ADR-0024](../decisions/adr/0024-agent-workers-confined-for-reads.md)):
+  Codex and ACP agents start under bubblewrap, in their own PID namespace and
+  session. It hides the DSH home (vault, key, tokens, store, login profiles,
+  DSH's own credentials); the session's runtime directory, so the user's message
+  bus (which can start commands outside any sandbox) and key agents are out of
+  reach; the temporary directories, which hold the browsers' live profiles, the
+  display cookie, and the remote-login socket; the service's credentials; the
+  usual credential stores in the home directory; and every secret path a plugin
+  registered, wherever the operator keeps it. Only the operator's tools
+  (read-only), the Worker's own home, and its workspace come back. The probe
+  proves it positively on the host and the source checks it again before each
+  run. Not covered: abstract Unix sockets (an X server's still needs the hidden
+  cookie), and other files in the home directory, which an operator adds to the
+  `agent-runtimes` row's `hide`.
 
   A Worker whose runtime cannot enforce its configured sandbox, or cannot prove
   on this host that the host state is unreadable (`readsConfined`), is
