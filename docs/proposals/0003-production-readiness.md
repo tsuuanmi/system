@@ -193,11 +193,31 @@ lands. Each item names the requirement it closes and the test that proves it.
 1. **Split the workflow engine first.** The existing refactor of
    `packages/plugins/workflow/src/index.ts`, with tests unchanged, so the retention
    work lands in a reviewable module.
-2. **Bounded retention.** Finished runs expire after a configured `retainRunsDays`.
-   Artifacts that no retained record references are collected, using the
-   reachability rule already in [artifact storage](../design/artifacts.md#storage).
-   Events are trimmed by age. `explain` reports a collected input as `expired`
-   with its hash.
+2. **Bounded retention.** Events are trimmed by age (the `event-log` row's
+   `retainDays`). Runs and artifacts follow the design below, which deletes
+   only what it can prove nothing retained needs:
+   - **Runs.** A finished run whose `updatedAt` is older than the workflow row's
+     `retainRunsDays` (0, the default, keeps every run) is deleted as `system
+     delete` deletes it, through the same `deleteRun`, unless its session is
+     still open: a persistent session's runs are kept while the session is.
+   - **Artifacts, mark and sweep.** The roots are the artifact ids that retained
+     rows reference. Each plugin that keeps artifact ids in its own tables
+     answers an event, `artifacts/roots` (mode `parallel`; the listener adds
+     its ids to the set it is given): `workflow` (runs, nodes, wakes, session
+     handoffs), `turns` and `agent-workers` (answers, results, egress
+     decisions), `worker-sessions` (messages, summaries). Marking follows each
+     envelope's references (`inputs`, `supersedes`) transitively.
+   - **Sweep, fail closed.** Only artifacts that are unmarked, carry the `runId`
+     of a run that no longer exists, and are older than a grace period (so a
+     record made but not yet referenced is never taken) are deleted. An artifact
+     without a `runId` is never collected. Every plugin that records artifacts
+     declares itself an owner when it loads; a sweep where a mounted owner did
+     not answer is abandoned, so a missing listener cannot delete what it
+     references.
+   - **Explain.** A reference to a collected artifact is reported as `expired`
+     with its hash. REQ-ART-3 reads "within retention".
+   - **Effect class.** A deletion is safe-to-repeat (each step is one
+     transaction); the effect register gains its row and a crash test.
 3. **Downgrade guard.** `Store.migrate()` refuses a store whose recorded migration
    version is newer than the code knows, and names the plugin and both versions
    (REQ-HOST-2).
