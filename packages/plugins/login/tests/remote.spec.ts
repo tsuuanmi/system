@@ -41,7 +41,7 @@ describe.runIf(canRunBrowser && vnc)('ctx.login.remote: the noVNC login desktop'
       ctx.plugin(Login, { profilesDir: join(dir, 'profiles'), vncPath: vnc!, chromePath: testChrome! }),
     ]
     await Promise.all(fibers)
-    cleanups.push(() => rmSync(dir, { recursive: true, force: true }), () => fake.stop(), async () => { for (const f of fibers.reverse()) await f.dispose() })
+    cleanups.push(() => rmSync(dir, { recursive: true, force: true, maxRetries: 5 }), () => fake.stop(), async () => { for (const f of fibers.reverse()) await f.dispose() })
     return { ctx, fake }
   }
 
