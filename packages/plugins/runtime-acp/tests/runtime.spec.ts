@@ -1,14 +1,32 @@
+import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterAll, describe, expect, it } from 'vitest'
 import { agentRuntimeProviderConformance } from '../../../agent-runtime-core/conformance/agent-runtimes.ts'
-import { AcpAgentRuntime } from '../src/index.ts'
+import type { Confinement } from '@tsuuanmi/system-agent-runtime-core'
+import { AcpAgentRuntime, type AcpConfinement } from '../src/index.ts'
 
 const SCRIPTED = fileURLToPath(new URL('./fixtures/scripted-agent.mjs', import.meta.url))
-const runtime = (honoursPermissions = true, extra: Partial<ConstructorParameters<typeof AcpAgentRuntime>[0]> = {}, timing?: ConstructorParameters<typeof AcpAgentRuntime>[1]) =>
-  new AcpAgentRuntime({ name: 'scripted', command: process.execPath, args: [SCRIPTED], honoursPermissions, ...extra }, timing)
+// The scripted agent runs through the confined command line; a pass-through stands in for
+// bubblewrap here, and the real one is used where the hiding itself is under test.
+const PASSTHROUGH = fileURLToPath(new URL('../../../agent-runtime-core/conformance/passthrough-bwrap.sh', import.meta.url))
+const passthrough: AcpConfinement = {
+  confine: (): Confinement => ({ bwrap: PASSTHROUGH, hide: [], readOnly: [], writable: [] }),
+  prove: async () => ({ confined: true, detail: 'host state hidden' }),
+}
+const runtime = (honoursPermissions = true, extra: Partial<ConstructorParameters<typeof AcpAgentRuntime>[0]> = {}, timing?: ConstructorParameters<typeof AcpAgentRuntime>[1], reads: AcpConfinement = passthrough) =>
+  new AcpAgentRuntime({ name: 'scripted', command: process.execPath, args: [SCRIPTED], honoursPermissions, ...extra }, timing, reads)
+
+function findBwrap(): string | undefined {
+  try {
+    return execFileSync('sh', ['-c', 'command -v bwrap'], { encoding: 'utf8' }).trim() || undefined
+  } catch {
+    return undefined
+  }
+}
+const BWRAP = findBwrap()
 
 agentRuntimeProviderConformance('acp:scripted', () => runtime())
 
@@ -24,11 +42,26 @@ describe('acp: the client side enforces the policy', () => {
 
   it('probes by the protocol handshake, and offers read-only only to an agent the operator vouches for', async () => {
     expect(await runtime().probe()).toEqual({
-      available: true, detail: 'ACP agent scripted 1.0.0 (protocol 1)', version: '1.0.0', sandboxes: ['read-only'], resume: true, executes: false,
+      available: true, detail: 'ACP agent scripted 1.0.0 (protocol 1); host state hidden', version: '1.0.0', sandboxes: ['read-only'], resume: true, executes: false, readsConfined: true,
     })
     // An agent can act on its own without asking; unvouched, it is never trusted with a policy.
     expect(await runtime(false).probe()).toMatchObject({ available: true, sandboxes: [] })
     await expect(runtime(false).run({ prompt: 'x', workspace, sandbox: 'read-only' }, signal())).rejects.toMatchObject({ kind: 'config_error' })
+  })
+
+  it('runs nothing, and proves no confinement, without a read confinement (ADR-0024)', async () => {
+    const none = runtime(true, {}, undefined, {})
+    expect(await none.probe()).toMatchObject({ readsConfined: false, detail: expect.stringContaining('no read confinement') })
+    await expect(none.run({ prompt: 'x', workspace, sandbox: 'read-only' }, signal())).rejects.toMatchObject({ kind: 'config_error' })
+  })
+
+  it.skipIf(!BWRAP && process.env.SYSTEM_REQUIRE_BWRAP !== '1')('hides host state from the agent\'s own reads, not only from the reads it asks for (ADR-0024, REQ-WRK-6)', async () => {
+    const reads: AcpConfinement = { confine: (writable) => ({ bwrap: BWRAP ?? 'bwrap', hide: [base], readOnly: [workspace], writable }) }
+    const look = async (path: string, r: AcpConfinement) => (await runtime(true, {}, undefined, r).run({ prompt: `look:${path}`, workspace, sandbox: 'read-only' }, signal())).text
+    expect(await look(join(base, 'secret.txt'), passthrough)).toBe('look: present')
+    expect(await look(join(base, 'secret.txt'), reads)).toBe('look: absent')
+    expect(await look(join(workspace, 'inside.txt'), reads)).toBe('look: present')
+    expect(await runtime(true, {}, undefined, reads).probe()).toMatchObject({ readsConfined: true })
   })
 
   it('rejects every permission request', async () => {

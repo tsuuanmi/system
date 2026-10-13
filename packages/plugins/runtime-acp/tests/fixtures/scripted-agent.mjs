@@ -1,6 +1,8 @@
 // A scripted ACP agent over stdio, for tests. It answers `echo: <prompt>`; "permission" asks for
 // permission first, "read:<path>" asks the client to read a file, "hang" waits for a cancel,
-// "stubborn" ignores both a cancel and SIGTERM, "env:<NAME>" answers with that variable.
+// "stubborn" ignores both a cancel and SIGTERM, "env:<NAME>" answers with that variable,
+// "look:<path>" reads the disk on its own (as any agent can), without asking the client.
+import { existsSync } from 'node:fs'
 import { Readable, Writable } from 'node:stream'
 import { AgentSideConnection, ndJsonStream, PROTOCOL_VERSION } from '@agentclientprotocol/sdk'
 
@@ -31,6 +33,11 @@ new AgentSideConnection((conn) => ({
     const env = /env:(\S+)/.exec(text)
     if (env) {
       await say(`env: ${process.env[env[1]] ?? 'unset'}`)
+      return { stopReason: 'end_turn' }
+    }
+    const look = /look:(\S+)/.exec(text)
+    if (look) {
+      await say(`look: ${existsSync(look[1]) ? 'present' : 'absent'}`)
       return { stopReason: 'end_turn' }
     }
     if (text.includes('hang')) {

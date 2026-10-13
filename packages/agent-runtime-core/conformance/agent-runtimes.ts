@@ -12,7 +12,7 @@ import type { AgentRuntimeProvider } from '../src/index.ts'
 
 const provider = (kind: string): AgentRuntimeProvider => ({
   kind,
-  probe: async () => ({ available: true, detail: 'test', sandboxes: ['read-only'], resume: false, executes: false }),
+  probe: async () => ({ available: true, detail: 'test', sandboxes: ['read-only'], resume: false, executes: false, readsConfined: true }),
   run: async () => ({ text: '' }),
 })
 
@@ -46,6 +46,8 @@ export function agentRuntimeProviderConformance(name: string, make: () => AgentR
       expect(typeof evidence.available).toBe('boolean')
       expect(evidence.detail.length).toBeGreaterThan(0)
       expect(evidence.sandboxes.every((s) => s === 'read-only' || s === 'workspace-write')).toBe(true)
+      // The scripted agent's test wires a working confinement, so a ready provider proves it (ADR-0024).
+      expect(evidence.readsConfined).toBe(evidence.available)
     })
 
     it('runs a task to its terminal event and reports the native handle as soon as it exists', async () => {

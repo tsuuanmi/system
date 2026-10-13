@@ -31,7 +31,7 @@ its types is not listed).
 | [workers](../../packages/plugins/workers/README.md) | routing | `workers` | `workers` | `artifacts` | `libs`, `workers-core` |
 | [workers-core](../../packages/workers-core/README.md) | routing | defines `workers` | — | — | — |
 | [agent-runtime-core](../../packages/agent-runtime-core/README.md) | capabilities | defines `agentRuntimes` | — | — | — |
-| [agent-runtimes](../../packages/plugins/agent-runtimes/README.md) | capabilities | `agentRuntimes` | `agent-runtimes` | — | `agent-runtime-core` |
+| [agent-runtimes](../../packages/plugins/agent-runtimes/README.md) | capabilities | `agentRuntimes` | `agent-runtimes` | — | `agent-runtime-core`, `libs` |
 | [agent-workers](../../packages/plugins/agent-workers/README.md) | capabilities | `agentWorkers` | `agent-workers` | `store`, `artifacts`, `leases`, `workers`, `agentRuntimes`, `egress` | `agent-runtime-core`, `leases`, `libs`, `provider-core`, `workers-core` |
 | [runtime-acp](../../packages/plugins/runtime-acp/README.md) | capabilities | — | `runtime-acp` | `agentRuntimes` | `agent-runtime-core`, `provider-core` |
 | [runtime-claude-agent-sdk](../../packages/plugins/runtime-claude-agent-sdk/README.md) | capabilities | — | `runtime-claude-agent-sdk` | `agentRuntimes` | `agent-runtime-core`, `provider-core` |

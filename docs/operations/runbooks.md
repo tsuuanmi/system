@@ -74,8 +74,19 @@ an `agent-workers` row.
   CODEX_HOME=~/.dsh/system/codex-home codex login
   ```
 
-  Codex's sandbox confines writes, not reads: a Codex Worker can read whatever
-  your user can ([threat model](../security/threat-model.md)).
+- **Read confinement:** Codex and ACP agents start under
+  [bubblewrap](https://github.com/containers/bubblewrap), which hides the whole
+  `~/.dsh` (and `$CREDENTIALS_DIRECTORY` under systemd) from the agent
+  ([ADR-0024](../decisions/adr/0024-agent-workers-confined-for-reads.md)). Only
+  `~/.dsh/system/tools` (read-only) and the Worker's own home come back. Install
+  it (`sudo apt-get install bubblewrap`). If `system explain` or `/ui` shows a
+  Worker unavailable with "reads cannot be confined", the host refuses
+  unprivileged user namespaces: on Ubuntu 23.10 and later, allow them for bwrap
+  (an AppArmor profile for `/usr/bin/bwrap` with `userns`, or
+  `sysctl kernel.apparmor_restrict_unprivileged_userns=0`). Keep the agent CLI
+  outside `~/.dsh` or under `~/.dsh/system/tools`; add other paths to the
+  `agent-runtimes` row's `readOnly`, and a vault `keyFile` kept elsewhere to its
+  `hide`.
 - **`local-private` work:** refused at egress by default (`egress_denied`,
   nothing sent), because the agent's model is remote. Routing still admits the
   Worker, since it is local. If the agent's model runs on this machine, set the

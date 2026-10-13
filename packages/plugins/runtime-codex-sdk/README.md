@@ -24,10 +24,14 @@ operator's installed `codex` through the official Codex TypeScript SDK.
     merges its configuration, hence the separate home;
   - Codex has no tool allow-list and no turn limit, so a configured `tools` or
     `maxTurns` is refused, not ignored.
-- **Reads are not confined.** Codex's `read-only` sandbox (and `workspace-write`)
-  confines writes only: the agent can still read the whole disk the operator's
-  user can read. Claude Code Workers are confined for reads too
-  ([threat model](../../../docs/security/threat-model.md)).
+- **Reads are confined** ([ADR-0024](../../../docs/decisions/adr/0024-agent-workers-confined-for-reads.md)). Codex's own
+  sandbox confines writes only, so Codex starts under bubblewrap with the
+  `ctx.agentRuntimes` confinement: the DSH home is hidden, the Worker home is
+  bound back writable, and the tools directory read-only. The SDK takes a
+  program path only, so an owner-only launcher script under
+  `<DSH_HOME>/system/run` holds the command line (named by its content). The
+  probe proves the confinement on this host (`readsConfined`); without a
+  confinement, a run is refused (`config_error`).
 - **Probe:** `codex mcp list --json` on the Worker home (any server: unavailable),
   then `codex --version`. Both sandboxes are supported, threads resume, and
   commands run inside the sandbox (`executes`), so a writable Codex Worker

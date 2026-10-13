@@ -161,7 +161,8 @@ export class AgentWorkers extends Service {
     const observedAt = now()
     return Promise.all([...this.workers].map(async ([id, worker]): Promise<CapabilityDescriptor> => {
       const evidence = await this.evidence(worker)
-      const ready = evidence.available && evidence.sandboxes.includes(worker.sandbox)
+      // A Worker whose runtime cannot keep the host state unreadable is never admitted (ADR-0024).
+      const ready = evidence.available && evidence.readsConfined && evidence.sandboxes.includes(worker.sandbox)
       const proven = ready
         ? [
             'local-data',
@@ -180,10 +181,10 @@ export class AgentWorkers extends Service {
 
   private async evidence(worker: AgentWorkerConfig): Promise<RuntimeEvidence> {
     const provider = this.ctx.agentRuntimes.get(worker.runtime)
-    if (!provider) return { available: false, detail: `no ${worker.runtime} runtime is registered`, sandboxes: [], resume: false, executes: false }
+    if (!provider) return { available: false, detail: `no ${worker.runtime} runtime is registered`, sandboxes: [], resume: false, executes: false, readsConfined: false }
     const cached = this.probes.get(worker.runtime)
     if (cached && Date.now() - cached.at < (this.config.probeTtlMs ?? 5 * 60_000)) return cached.evidence
-    const evidence = await provider.probe().catch((error: unknown): RuntimeEvidence => ({ available: false, detail: (error as Error).message.slice(0, 200), sandboxes: [], resume: false, executes: false }))
+    const evidence = await provider.probe().catch((error: unknown): RuntimeEvidence => ({ available: false, detail: (error as Error).message.slice(0, 200), sandboxes: [], resume: false, executes: false, readsConfined: false }))
     this.probes.set(worker.runtime, { at: Date.now(), evidence })
     return evidence
   }

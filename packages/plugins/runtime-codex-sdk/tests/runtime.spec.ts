@@ -1,6 +1,7 @@
 import type { ThreadEvent, ThreadOptions } from '@openai/codex-sdk'
 import { describe, expect, it } from 'vitest'
 import { agentRuntimeProviderConformance } from '../../../agent-runtime-core/conformance/agent-runtimes.ts'
+import type { Confinement } from '@tsuuanmi/system-agent-runtime-core'
 import { type CodexClient, CodexRuntime } from '../src/index.ts'
 
 /** A Codex stand-in: records what it was asked, and streams the events a real thread would. */
@@ -30,23 +31,28 @@ function scripted(script: (prompt: string) => ThreadEvent[] = (prompt) => [
       },
     }
   }
-  const client = (options: { config?: unknown; env?: Record<string, string> }): CodexClient => {
+  const client = (options: { codexPathOverride?: string; config?: unknown; env?: Record<string, string> }): CodexClient => {
+    lastClient.program = options.codexPathOverride
     lastClient.config = options.config
     lastClient.env = options.env
     return { startThread: (o) => thread(undefined, o), resumeThread: (id, o) => thread(id, o) }
   }
-  const lastClient: { config?: unknown; env?: Record<string, string> | undefined } = {}
+  const lastClient: { program?: string | undefined; config?: unknown; env?: Record<string, string> | undefined } = {}
   return { calls, client, lastClient }
 }
 
+const confinement = (writable: readonly string[]): Confinement => ({ bwrap: '/usr/bin/bwrap', hide: ['/dsh'], readOnly: ['/dsh/system/tools'], writable })
+const confined = { confine: confinement, prove: async () => ({ confined: true, detail: 'host state hidden by /usr/bin/bwrap' }), launcher: (c: { command: string; args: string[] }) => `launcher:${[c.command, ...c.args].join(' ')}` }
 const runtime = (s = scripted(), extra: Partial<ConstructorParameters<typeof CodexRuntime>[0]> = {}) =>
-  new CodexRuntime({ executable: '/usr/bin/codex', home: '/codex-home', client: s.client, version: async () => '0.162.1', mcpServers: async () => [], ...extra })
+  new CodexRuntime({ executable: '/usr/bin/codex', home: '/codex-home', client: s.client, version: async () => '0.162.1', mcpServers: async () => [], ...confined, ...extra })
 
 agentRuntimeProviderConformance('codex-sdk', () => runtime())
 
 describe('codex-sdk runtime (REQ-WRK-5, REQ-WRK-6)', () => {
   it('probes the installed codex: both sandboxes, resumable, and able to run confined commands', async () => {
-    expect(await runtime().probe()).toMatchObject({ available: true, detail: 'Codex 0.162.1', sandboxes: ['read-only', 'workspace-write'], resume: true, executes: true })
+    expect(await runtime().probe()).toMatchObject({
+      available: true, detail: 'Codex 0.162.1; host state hidden by /usr/bin/bwrap', sandboxes: ['read-only', 'workspace-write'], resume: true, executes: true, readsConfined: true,
+    })
     expect(await new CodexRuntime({ findExecutable: () => undefined }).probe()).toMatchObject({ available: false, sandboxes: [] })
   })
 
@@ -80,6 +86,23 @@ describe('codex-sdk runtime (REQ-WRK-5, REQ-WRK-6)', () => {
     const s = scripted()
     await runtime(s).run({ prompt: 'x', workspace: '/w', sandbox: 'read-only' }, new AbortController().signal)
     expect(s.lastClient.env).toMatchObject({ CODEX_HOME: '/codex-home' })
+  })
+
+  it('starts Codex through bubblewrap with the host state hidden and only its own home writable (ADR-0024)', async () => {
+    const s = scripted()
+    await runtime(s).run({ prompt: 'x', workspace: '/w', sandbox: 'read-only' }, new AbortController().signal)
+    // Paths that do not exist on this host are skipped, so only the options and the command remain.
+    expect(s.lastClient.program).toBe('launcher:/usr/bin/bwrap --die-with-parent --dev-bind / / -- /usr/bin/codex')
+  })
+
+  it('offers no Worker, and runs nothing, when reads cannot be confined (ADR-0024, REQ-WRK-6)', async () => {
+    const failed = runtime(scripted(), { prove: async () => ({ confined: false, detail: 'reads cannot be confined: bwrap missing' }) })
+    expect(await failed.probe()).toMatchObject({ readsConfined: false, detail: expect.stringContaining('reads cannot be confined') })
+    const s = scripted()
+    const none = runtime(s, { confine: undefined })
+    expect(await none.probe()).toMatchObject({ readsConfined: false, detail: expect.stringContaining('no read confinement') })
+    await expect(none.run({ prompt: 'x', workspace: '/w', sandbox: 'read-only' }, new AbortController().signal)).rejects.toMatchObject({ kind: 'config_error' })
+    expect(s.calls).toEqual([])
   })
 
   it('fails closed when its Codex home has an MCP server: the Worker would reach tools outside its sandbox', async () => {

@@ -7,7 +7,10 @@ installed.
 
 - **Probe:** `claude --version`; it never runs a task. It offers `read-only`,
   `workspace-write`, and `resume`. It reports `executes: false` (no Bash), so its
-  Workers never prove `validate`.
+  Workers never prove `validate`. It reports `readsConfined: true` without a
+  wrapper: every pre-approved tool is scoped to the workspace, reads included,
+  and nothing else is allowed
+  ([ADR-0024](../../../docs/decisions/adr/0024-agent-workers-confined-for-reads.md)).
 - **Policy, exactly or refused:**
   - only the listed built-in tools exist (`tools`) and are pre-approved
     (`allowedTools`). The defaults are `Read`, `Grep`, `Glob` for `read-only`;

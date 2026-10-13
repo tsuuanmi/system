@@ -65,13 +65,17 @@ export class ClaudeAgentRuntime implements AgentRuntimeProvider {
 
   async probe(): Promise<RuntimeEvidence> {
     const executable = this.executable()
-    if (!executable) return { available: false, detail: 'Claude Code is not installed (no claude executable on PATH)', sandboxes: [], resume: false, executes: false }
+    if (!executable) return { available: false, detail: 'Claude Code is not installed (no claude executable on PATH)', sandboxes: [], resume: false, executes: false, readsConfined: false }
     try {
       const version = await (this.options.version ?? claudeVersion)(executable)
-      // No Bash: commands cannot be confined to the workspace yet, so it cannot validate.
-      return { available: true, detail: `Claude Code ${version}`, version, sandboxes: ['read-only', 'workspace-write'], resume: true, executes: false }
+      // No Bash: commands cannot be confined to the workspace yet, so it cannot validate. Every
+      // pre-approved tool is scoped to the workspace, reads included, and nothing else is
+      // allowed, so the host state stays unreadable (ADR-0024; verified live 2026-10-13).
+      return {
+        available: true, detail: `Claude Code ${version}; reads scoped to the workspace`, version, sandboxes: ['read-only', 'workspace-write'], resume: true, executes: false, readsConfined: true,
+      }
     } catch (error) {
-      return { available: false, detail: `claude --version failed: ${(error as Error).message.slice(0, 160)}`, sandboxes: [], resume: false, executes: false }
+      return { available: false, detail: `claude --version failed: ${(error as Error).message.slice(0, 160)}`, sandboxes: [], resume: false, executes: false, readsConfined: false }
     }
   }
 

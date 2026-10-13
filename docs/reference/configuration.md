@@ -21,7 +21,11 @@
 
 [@tsuuanmi/system-agent-runtimes](../../packages/plugins/agent-runtimes/README.md)
 
-No options.
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `bwrap` | string | `"bwrap"` | The bubblewrap executable that confines agent Workers' reads |
+| `hide` | string[] | `[]` | Paths agent Workers must not read, besides the DSH home and $CREDENTIALS_DIRECTORY (always hidden); $DSH_HOME expands |
+| `readOnly` | string[] | `["$DSH_HOME/system/tools"]` | Paths under a hidden directory agent Workers may read (the operator-installed agent CLIs); $DSH_HOME expands |
 
 ## `agent-workers`
 

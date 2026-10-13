@@ -21,6 +21,20 @@ Capability **seam definition** for agent runtimes
      such as an API key or the gateway's model token; a name the daemon does not set is
      absent;
   3. then explicit values (`env`), which win. A secret never belongs there.
+- **Read confinement** ([ADR-0024](../../docs/decisions/adr/0024-agent-workers-confined-for-reads.md)):
+  `RuntimeEvidence.readsConfined`; the `Confinement` type (`bwrap`, `hide`,
+  `readOnly`, `writable`) that `ctx.agentRuntimes.confinement()` returns;
+  - `confinedCommand(command, args, confinement)`: the bubblewrap command line
+    (`--die-with-parent --dev-bind / /`, a tmpfs over each hidden directory, an
+    unreadable node over each hidden file, then the binds back; missing paths
+    skipped, symlinks resolved);
+  - `proveConfinement(confinement)`: on this host, the command runs, every hidden
+    directory lists only the way down to what is bound back, and no hidden file
+    reads. Anything else is `confined: false`;
+  - `writeLauncher(dir, name, command)`: an owner-only script, named by its
+    content, for SDKs that start a program path without arguments;
+  - `conformance/passthrough-bwrap.sh`: a test double that drops the options and
+    execs the command.
 - Conformance:
   - `conformance/agent-runtimes.ts` has `agentRuntimesConformance` for the
     registry;

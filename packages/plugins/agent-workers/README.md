@@ -17,8 +17,9 @@ The **`agents` Worker source**: agent runtimes as Workers
   - `persistent-conversation` when the runtime can resume.
 
   A Worker never offers plain `reason`, so ordinary asks never spend agent-plan
-  quota (P1). If the runtime is missing, or cannot enforce the configured
-  sandbox, the Worker is `unavailable`: its policy is never loosened.
+  quota (P1). If the runtime is missing, cannot enforce the configured sandbox,
+  or does not prove `readsConfined` (ADR-0024), the Worker is `unavailable`:
+  its policy is never loosened.
 - **Runs** (`start`, `get`, `wait`):
   - durable at once, and idempotent by key;
   - one at a time per Worker (one writer per workspace, INV-15);

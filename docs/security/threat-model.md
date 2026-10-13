@@ -5,10 +5,8 @@
 >
 > Not built yet (target only): turn tokens for MCP tool inversion (the gateways use the
 > text tool protocol of
-> [ADR-0022](../decisions/adr/0022-text-protocol-tool-calls-for-website-models.md)),
-> `/admin/*` routes.
-> [PROP-0003](../proposals/0003-production-readiness.md#m6a-security-hardening)
-> plans the Codex read gap below.
+> [ADR-0022](../decisions/adr/0022-text-protocol-tool-calls-for-website-models.md))
+> and `/admin/*` routes.
 
 ## Assets
 
@@ -145,20 +143,26 @@
     Codex home (`CODEX_HOME`), never the operator's `~/.codex`, which holds the
     `system` MCP server: Codex starts MCP servers outside its sandbox, so the
     probe and every run fail closed if that home configures any, and a `config`
-    holding `mcp_servers` is refused. **Gap:** Codex's sandbox confines writes,
-    not reads, so a Codex Worker, even a `read-only` one, can read anything the
-    operator's user can, the daemon's state under `<DSH_HOME>/system/` included;
+    holding `mcp_servers` is refused. Codex's own sandbox confines writes, not
+    reads, so Codex starts under bubblewrap, which hides the whole DSH home (the
+    vault, its key, the tokens, the store, the login profiles, DSH's own
+    credentials) and the service's credentials directory, binding back only the
+    operator's tools read-only and the Worker's own home
+    ([ADR-0024](../decisions/adr/0024-agent-workers-confined-for-reads.md));
   - ACP agents (`runtime-acp`): the client side enforces the policy. Every
     permission request is rejected, file reads are served inside the workspace
     only, and no write or terminal capability or MCP server is offered. Because
     an ACP agent can still act on the disk without asking, `read-only` is
-    offered only for an agent the operator vouches for (`honoursPermissions`).
+    offered only for an agent the operator vouches for (`honoursPermissions`),
+    and the agent process runs under the same bubblewrap confinement as Codex,
+    so what it reads on its own cannot reach host state either.
     An aborted ACP agent that ignores the cancel gets SIGTERM, then SIGKILL, so
     it cannot hang a run.
 
-  A Worker whose runtime cannot enforce its configured sandbox is unavailable,
-  and only read-only Workers prove `review`. The confinement is only as strong as
-  each runtime's sandbox.
+  A Worker whose runtime cannot enforce its configured sandbox, or cannot prove
+  on this host that the host state is unreadable (`readsConfined`), is
+  unavailable, and only read-only Workers prove `review`. The confinement is only
+  as strong as each runtime's sandbox and bubblewrap.
 - **Local or private data leaks to a provider website or API through a prompt or
   attachment.** `ctx.egress` checks the **actual outgoing payload** inside the
   Worker source, after routing chose the Worker and before anything is sent

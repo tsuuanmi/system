@@ -90,6 +90,15 @@ Codex, for example, refuses a tool allow-list or a turn limit, since it cannot e
   So a Worker attaches none: Claude Code takes no settings files and a strict, empty MCP
   configuration; Codex runs in its own Codex home and fails closed if that home configures
   any.
+- **Reads** ([ADR-0024](../decisions/adr/0024-agent-workers-confined-for-reads.md)). The host
+  state is never readable to an agent. `ctx.agentRuntimes.confinement()` names what to hide
+  (always the DSH home, plus `$CREDENTIALS_DIRECTORY` and operator paths) and what to bind back
+  (the operator's tools read-only, the Worker's own home writable). A runtime whose own
+  sandbox does not confine reads starts its agent under bubblewrap with that confinement
+  (`confinedCommand`; `--die-with-parent`, so stopping the run ends the agent): Codex through
+  an owner-only launcher (`writeLauncher`), ACP agents directly. Claude Code's pre-approved
+  tools are scoped to the workspace, reads included, so it needs no wrapper. Each probe
+  reports `readsConfined`, proven on the host by `proveConfinement`.
 - **Egress** ([INV-12](../architecture/invariants.md#inv-12-data-egress-is-explicit)). The
   agent runs here, but its model is remote. So the `agents` source checks each prompt with
   `ctx.egress` (Worker class `agent`) before the agent starts, keeps the decision id on the run,
@@ -100,8 +109,8 @@ Codex, for example, refuses a tool allow-list or a turn limit, since it cannot e
 ## Admission evidence
 
 The Worker registry admits an agent-runtime Worker only on evidence from `probe()`, never
-because of its name. A Worker whose runtime is missing, or cannot enforce the configured
-sandbox, is `unavailable`.
+because of its name. A Worker whose runtime is missing, cannot enforce the configured
+sandbox, or does not report `readsConfined`, is `unavailable`.
 
 | Capability | Offered when |
 |---|---|

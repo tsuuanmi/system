@@ -28,11 +28,11 @@ afterEach(async () => {
 class ScriptedAgent implements AgentRuntimeProvider {
   readonly kind = 'scripted'
   readonly runs: RunSpec[] = []
-  constructor(private readonly options: { sandboxes?: SandboxMode[]; resume?: boolean; available?: boolean; holdMs?: number; fail?: Error; executes?: boolean; act?: (spec: RunSpec) => string | undefined } = {}) {}
+  constructor(private readonly options: { sandboxes?: SandboxMode[]; resume?: boolean; available?: boolean; holdMs?: number; fail?: Error; executes?: boolean; readsConfined?: boolean; act?: (spec: RunSpec) => string | undefined } = {}) {}
   async probe() {
     return {
       available: this.options.available ?? true, detail: 'scripted 1.0', version: '1.0', sandboxes: this.options.sandboxes ?? ['read-only'],
-      resume: this.options.resume ?? true, executes: this.options.executes ?? false,
+      resume: this.options.resume ?? true, executes: this.options.executes ?? false, readsConfined: this.options.readsConfined ?? true,
     }
   }
   async run(spec: RunSpec, signal: AbortSignal, onHandle?: (handle: string) => void) {
@@ -120,6 +120,11 @@ describe('ctx.workers source `agents`: agent runtimes as Workers', () => {
     // The runtime cannot enforce workspace-write: that Worker is unavailable, never loosened.
     expect(workers['agent:writer']).toMatchObject({ state: 'unavailable', capabilities: [] })
     expect(workers['agent:ghost']).toMatchObject({ state: 'unavailable', capabilities: [] })
+  })
+
+  it('never admits a Worker whose runtime cannot keep the host state unreadable (ADR-0024, REQ-WRK-6)', async () => {
+    const { ctx } = await boot(new ScriptedAgent({ readsConfined: false }), { workers: [worker()] })
+    expect((await ctx.workers.list())[0]).toMatchObject({ state: 'unavailable', capabilities: [] })
   })
 
   it('proves develop (never review) for a confined writable Worker, and validate only when the runtime can run commands', async () => {

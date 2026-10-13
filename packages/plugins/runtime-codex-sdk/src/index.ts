@@ -13,7 +13,11 @@
  *   no MCP server: Codex starts those outside its sandbox, so a Worker would reach their tools
  *   (the system MCP server among them). Probe and every run check, and fail closed;
  * - Codex has no per-tool allow-list and no turn limit: a configured `tools` or `maxTurns` is
- *   refused, not ignored.
+ *   refused, not ignored;
+ * - Codex's sandbox confines writes only, so Codex starts under the read confinement of
+ *   `ctx.agentRuntimes` (ADR-0024): bubblewrap hides the DSH home, its own home bound back,
+ *   through an owner-only launcher (the SDK takes a program path, not arguments). The probe
+ *   proves the confinement on this host; without it, a run is refused.
  * Codex's own configuration (its model provider and model) is the operator's, passed as
  * `config`, for example the system Responses gateway. The thread stays native; only its id
  * crosses as the run's handle (INV-7).
@@ -26,7 +30,7 @@ import { promisify } from 'node:util'
 import { Codex, type CodexOptions, type ThreadEvent, type ThreadOptions } from '@openai/codex-sdk'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
-import { type AgentRuntimeProvider, type RunResult, type RunSpec, type RuntimeEvidence, childEnvironment } from '@tsuuanmi/system-agent-runtime-core'
+import { type AgentRuntimeProvider, type Confinement, type RunResult, type RunSpec, type RuntimeEvidence, childEnvironment, confinedCommand, proveConfinement, writeLauncher } from '@tsuuanmi/system-agent-runtime-core'
 import { dshHome, ensurePrivateDir } from '@tsuuanmi/system-libs'
 import { ProviderError } from '@tsuuanmi/system-provider-core'
 
@@ -57,6 +61,15 @@ export interface RuntimeOptions {
   mcpServers?: (home: string, executable: string) => Promise<string[]>
   findExecutable?: () => string | undefined
   version?: (executable: string) => Promise<string>
+  /**
+   * The read confinement for a Codex child, given the paths it must still write (its home);
+   * `ctx.agentRuntimes.confinement` (ADR-0024). Without it, the runtime offers no Worker.
+   */
+  confine?: ((writable: readonly string[]) => Confinement) | undefined
+  /** Proves the confinement on this host (default `proveConfinement`). */
+  prove?: (confinement: Confinement) => Promise<{ confined: boolean; detail: string }>
+  /** The program the SDK starts for a confined Codex (default: an owner-only launcher script). */
+  launcher?: (command: { command: string; args: string[] }) => string
 }
 
 export class CodexRuntime implements AgentRuntimeProvider {
@@ -73,15 +86,21 @@ export class CodexRuntime implements AgentRuntimeProvider {
 
   async probe(): Promise<RuntimeEvidence> {
     const executable = this.executable()
-    if (!executable) return { available: false, detail: 'Codex is not installed (no codex executable on PATH)', sandboxes: [], resume: false, executes: false }
+    if (!executable) return unavailable('Codex is not installed (no codex executable on PATH)')
     try {
       const servers = await this.mcpServers(executable)
-      if (servers.length) return { available: false, detail: noMcp(this.home, servers), sandboxes: [], resume: false, executes: false }
+      if (servers.length) return unavailable(noMcp(this.home, servers))
       const version = await (this.options.version ?? codexVersion)(executable)
+      // Codex's own sandbox confines writes only; reads are confined around it (ADR-0024).
+      const reads = this.options.confine
+        ? await (this.options.prove ?? proveConfinement)(this.options.confine([this.home]))
+        : { confined: false, detail: 'no read confinement is configured' }
       // Codex confines commands in the same OS sandbox as its file writes, so it can validate.
-      return { available: true, detail: `Codex ${version}`, version, sandboxes: ['read-only', 'workspace-write'], resume: true, executes: true }
+      return {
+        available: true, detail: `Codex ${version}; ${reads.detail}`, version, sandboxes: ['read-only', 'workspace-write'], resume: true, executes: true, readsConfined: reads.confined,
+      }
     } catch (error) {
-      return { available: false, detail: `codex --version failed: ${(error as Error).message.slice(0, 160)}`, sandboxes: [], resume: false, executes: false }
+      return unavailable(`codex --version failed: ${(error as Error).message.slice(0, 160)}`)
     }
   }
 
@@ -95,8 +114,10 @@ export class CodexRuntime implements AgentRuntimeProvider {
     if (!executable) throw new ProviderError('config_error', 'codex-sdk: Codex is not installed (no codex executable on PATH)')
     const servers = await this.mcpServers(executable)
     if (servers.length) throw new ProviderError('config_error', noMcp(this.home, servers))
+    if (!this.options.confine) throw new ProviderError('config_error', 'codex-sdk: no read confinement is configured; refusing to run Codex with the host state readable (ADR-0024)')
+    const confined = confinedCommand(executable, [], this.options.confine([this.home]))
     const client = (this.options.client ?? ((options) => new Codex(options)))({
-      codexPathOverride: executable,
+      codexPathOverride: (this.options.launcher ?? defaultLauncher)(confined),
       ...(this.options.config ? { config: this.options.config as NonNullable<CodexOptions['config']> } : {}),
       env: childEnvironment(this.options.forwardEnv, { ...this.options.env, CODEX_HOME: this.home }),
     })
@@ -131,6 +152,15 @@ export class CodexRuntime implements AgentRuntimeProvider {
   private executable(): string | undefined {
     return this.options.executable ?? (this.options.findExecutable ?? (() => findOnPath('codex')))()
   }
+}
+
+const unavailable = (detail: string): RuntimeEvidence => ({ available: false, detail, sandboxes: [], resume: false, executes: false, readsConfined: false })
+
+/** An owner-only launcher under `<DSH_HOME>/system/run`, which the confinement then hides from Codex. */
+function defaultLauncher(command: { command: string; args: string[] }): string {
+  const dir = join(dshHome(), 'system', 'run')
+  ensurePrivateDir(dir)
+  return writeLauncher(dir, 'codex-sdk', command)
 }
 
 function findOnPath(command: string): string | undefined {
@@ -181,5 +211,8 @@ export const Config: z<Config> = z.object({
 })
 
 export function apply(ctx: Context, config: Config = {}): void {
-  ctx.agentRuntimes.register(new CodexRuntime({ executable: config.executable, config: config.config, env: config.env, forwardEnv: config.forwardEnv, home: config.home }))
+  ctx.agentRuntimes.register(new CodexRuntime({
+    executable: config.executable, config: config.config, env: config.env, forwardEnv: config.forwardEnv, home: config.home,
+    confine: (writable) => ctx.agentRuntimes.confinement(writable),
+  }))
 }

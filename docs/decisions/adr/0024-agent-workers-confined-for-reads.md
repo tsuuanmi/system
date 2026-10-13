@@ -1,6 +1,6 @@
 # ADR-0024: Agent Workers are confined for reads; host state is never readable
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-10-14
 - **Related:** [PROP-0003](../../proposals/0003-production-readiness.md#m6a-security-hardening),
   REQ-WRK-6, QA-6,
@@ -37,29 +37,42 @@ need.
 
 Option 3.
 
-- Runtime evidence gains `readsConfined`. The policy for every agent Worker
-  denies reads of `<DSH_HOME>/system/**` and of the configured vault key path,
-  whatever the Worker's sandbox mode.
-- A runtime proves `readsConfined` in its probe. A runtime that cannot is
-  unavailable, and routing reports why (INV-2).
-- Mechanism per runtime:
-  - Codex: its bubblewrap backend with restricted readable roots, if its
-    configuration can express the policy; otherwise `agent-runtime-core` starts
-    the child under `bwrap` with the state directory hidden. The implementation
-    spike chooses and records the reason in the
-    [dependency register](../../engineering/dependencies.md).
-  - Claude Code and ACP agents: their existing workspace-scoped reads already
-    satisfy the policy; they assert it in conformance.
-- The seam's conformance suite gains a case: a read outside the workspace is
-  denied. A real-`bwrap` test runs in CI, which fails rather than skips when
-  `bwrap` is missing, as it already does for Xvfb.
+- Runtime evidence gains `readsConfined`. Every agent Worker is denied reads of
+  the **whole DSH home** (the vault and its key, the control tokens, the store,
+  the login profiles, and DSH's own credentials), of `$CREDENTIALS_DIRECTORY`
+  when the host runs under systemd, and of operator-named paths such as a vault
+  `keyFile` kept elsewhere, whatever the Worker's sandbox mode.
+- `ctx.agentRuntimes` owns the confinement (`agent-runtimes` configuration:
+  `bwrap`, `hide`, `readOnly`). The DSH home is always hidden. Operator tools
+  (`$DSH_HOME/system/tools`) come back read-only, and a Worker's own home
+  writable.
+- A runtime proves `readsConfined` in its probe, on this host. A runtime that
+  cannot is unavailable, and routing reports why (INV-2).
+- Mechanism: `agent-runtime-core` starts the agent under bubblewrap
+  (`--dev-bind / /`, an empty tmpfs over each hidden directory, an unreadable
+  node over each hidden file, the binds back, and `--die-with-parent` so that
+  stopping the run ends the agent). Per runtime:
+  - Codex: through an owner-only launcher script, since its SDK takes a program
+    path only. Codex's own sandbox still runs inside and still confines writes
+    (verified live 2026-10-14). Codex's newer permission profiles were not used:
+    their configuration schema changes between releases.
+  - ACP agents: spawned under bubblewrap directly. Serving file reads inside the
+    workspace was not enough: an agent can read the disk on its own.
+  - Claude Code: its pre-approved tools are scoped to the workspace, reads
+    included, and nothing else is allowed (verified live 2026-10-13), so it
+    reports `readsConfined` without a wrapper.
+- Tests: the confinement against the real bubblewrap (CI requires it, as it
+  requires Xvfb), its proof failing closed, each runtime's evidence, and an ACP
+  agent that looks at a hidden file on its own.
 
 ## Consequences
 
 - An agent Worker can no longer read credentials or control tokens, so INV-8
   holds against Workers as well as clients.
-- A host where user namespaces are unavailable cannot run Codex Workers until the
-  operator enables them; the probe says so.
+- A host without bubblewrap, or where unprivileged user namespaces are refused
+  (Ubuntu 23.10 and later restrict them through AppArmor), cannot run Codex or ACP
+  Workers until the operator allows them; the probe says so
+  ([runbook](../../operations/runbooks.md#agent-workers)).
 - Option 2 is not needed for this threat, which keeps the store unencrypted
   (the threat model's precondition of disk encryption still applies).
 - macOS needs its own mechanism (the platform sandbox) in M7.

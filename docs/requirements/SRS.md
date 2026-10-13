@@ -80,7 +80,9 @@
   ACP-speaking agent can be added through configuration.
 - **REQ-WRK-6** An agent-runtime Worker runs under a workspace, sandbox, and
   approval policy taken from trusted envelopes. A policy the runtime cannot
-  express exactly fails the run.
+  express exactly fails the run. The host's own state (credentials, keys, control
+  tokens, the store) is never readable to the agent, and a runtime that cannot
+  prove this on the host offers no Worker.
 - **REQ-WRK-7** Work over `local-private` data runs only on local Workers. Content
   reaches a remote Worker only when an explicit egress policy permits that exact
   content for that Worker class (purpose P3).

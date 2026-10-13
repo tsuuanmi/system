@@ -26,6 +26,10 @@ first-class provider.
 - **Trust:** an agent can still act on the disk without asking. So `read-only`
   is offered only for an agent the operator vouches for (`honoursPermissions`,
   INV-6). Any other agent offers no sandbox, and its Workers stay unavailable.
+- **Read confinement** ([ADR-0024](../../../docs/decisions/adr/0024-agent-workers-confined-for-reads.md)): the agent process
+  starts under bubblewrap with the `ctx.agentRuntimes` confinement, so what it
+  reads on its own cannot reach the DSH home either. The probe proves it
+  (`readsConfined`); without a confinement, a run is refused.
 - **Run:**
   - a new session or `loadSession` (`resume`), then one prompt; the answer is the
     agent's message chunks;

@@ -92,7 +92,7 @@ absence of automation leaks are properties of the real browser.
 ## CI gates
 
 [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) runs on every push to
-`main` and every pull request, on Node 24.18.1 (the floor), the latest 24, and the latest 26, with a real Xvfb, TigerVNC, and
+`main` and every pull request, on Node 24.18.1 (the floor), the latest 24, and the latest 26, with a real Xvfb, TigerVNC, bubblewrap, and
 Chrome installed. Each gate is a root [`package.json`](../../package.json) script:
 
 1. `pnpm check`:
@@ -111,8 +111,10 @@ Chrome installed. Each gate is a root [`package.json`](../../package.json) scrip
      [configuration catalog](../reference/configuration.md) and
      [traceability](../validation/traceability.md) are current;
    - `lint` (oxlint) and `typecheck` (`tsc --noEmit`).
-2. `pnpm test`, with `SYSTEM_REQUIRE_BROWSER=1`: unit, contract, driver,
-   concurrency, and architecture tests.
+2. `pnpm test`, with `SYSTEM_REQUIRE_BROWSER=1` and `SYSTEM_REQUIRE_BWRAP=1`:
+   unit, contract, driver, concurrency, and architecture tests. The agent read
+   confinement tests run against the real bubblewrap; locally they are skipped
+   when `bwrap` is missing, and in CI a missing one fails the run.
 3. `pnpm test:e2e`: build, then boot the shipped profile through `dsh`, and
    upgrade every seeded store fixture.
 4. `pnpm test:crash`: crash injection at each reconcile point of a turn.

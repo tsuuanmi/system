@@ -25,14 +25,18 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: real display and browser for provider-runtime tests
+      - name: real display, browser, and bubblewrap for provider-runtime and agent tests
         run: |
-          sudo apt-get update && sudo apt-get install -y xvfb tigervnc-scraping-server
+          sudo apt-get update && sudo apt-get install -y xvfb tigervnc-scraping-server bubblewrap
+          # Ubuntu 23.10+ restricts unprivileged user namespaces, which bubblewrap needs.
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
           google-chrome --version
+          bwrap --dev-bind / / -- true
       - run: pnpm check
       - run: pnpm test
         env:
           SYSTEM_REQUIRE_BROWSER: '1'
+          SYSTEM_REQUIRE_BWRAP: '1'
       - run: pnpm test:e2e
       - name: crash injection (SIGKILL at each reconcile point of a turn)
         run: pnpm test:crash
