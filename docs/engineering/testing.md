@@ -95,15 +95,15 @@ absence of automation leaks are properties of the real browser.
 `main` and every pull request, on Node 22 and 24, with a real Xvfb, TigerVNC, and
 Chrome installed. Each gate is a root [`package.json`](../../package.json) script:
 
-1. `pnpm audit:deps`: no high or critical advisory in a production dependency.
-2. `pnpm check`:
+1. `pnpm check`:
    - `check:docs` ([`scripts/check-docs.ts`](../../scripts/check-docs.ts)):
      every `docs/**` directory has exactly one `README.md`, no `topic.md` sits
      beside `topic/`, and every relative Markdown link and anchor resolves;
    - `check:secrets` ([`scripts/check-secrets.ts`](../../scripts/check-secrets.ts)):
-     no tracked text file holds a credential, by secretlint's recommended rules
-     (the rules `egress` applies to outgoing payloads). Tests make credential-shaped
-     values at run time instead of committing them;
+     no tracked text file holds a credential, by the scan `egress` applies to
+     outgoing payloads (secretlint's recommended rules plus the shapes they miss,
+     in `packages/plugins/egress/src/scan.ts`). Tests make credential-shaped values
+     at run time instead of committing them; there is no opt-out;
    - `check:schemas` ([`scripts/check-schemas.ts`](../../scripts/check-schemas.ts)):
      every file in `schemas/` compiles under Ajv draft 2020-12 with
      `strict: true`, and every file in `schemas/examples/` validates;
@@ -111,12 +111,17 @@ Chrome installed. Each gate is a root [`package.json`](../../package.json) scrip
      [configuration catalog](../reference/configuration.md) and
      [traceability](../validation/traceability.md) are current;
    - `lint` (oxlint) and `typecheck` (`tsc --noEmit`).
-3. `pnpm test`, with `SYSTEM_REQUIRE_BROWSER=1`: unit, contract, driver,
+2. `pnpm test`, with `SYSTEM_REQUIRE_BROWSER=1`: unit, contract, driver,
    concurrency, and architecture tests.
-4. `pnpm test:e2e`: build, then boot the shipped profile through `dsh`, and
+3. `pnpm test:e2e`: build, then boot the shipped profile through `dsh`, and
    upgrade every seeded store fixture.
-5. `pnpm test:crash`: crash injection at each reconcile point of a turn.
+4. `pnpm test:crash`: crash injection at each reconcile point of a turn.
 
+[`.github/workflows/audit.yml`](../../.github/workflows/audit.yml) runs
+`pnpm audit:deps` (no high or critical advisory in a production dependency) once,
+outside the Node matrix, on the same triggers and daily. It fails closed: a
+registry error fails it like an advisory does, so it is never run with
+`--ignore-registry-errors`. The release checklist adds a full audit.
 [`.github/workflows/codeql.yml`](../../.github/workflows/codeql.yml) runs CodeQL's
 `security-extended` queries on the same triggers and weekly.
 [`.github/dependabot.yml`](../../.github/dependabot.yml) proposes npm and Action

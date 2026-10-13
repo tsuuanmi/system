@@ -4,6 +4,10 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    # A freshly published version waits a week, so a compromised release is usually
+    # caught and yanked before it is proposed.
+    cooldown:
+      default-days: 7
     open-pull-requests-limit: 5
     ignore:
       # DSH and its vendored Cordis move in lockstep at one exact, manually reviewed pin
@@ -16,3 +20,5 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7

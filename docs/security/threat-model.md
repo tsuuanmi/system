@@ -245,8 +245,11 @@
 - **A supply-chain change in the browser stack or SDKs.** Committed lockfile
   (installed with `--frozen-lockfile` in CI), one exact pinned DSH version, no
   vendored binaries. CI fails on any high or critical advisory in a production
-  dependency (`pnpm audit:deps`), scans every tracked file for credentials with the
-  rules `egress` uses (`pnpm check:secrets`), and runs CodeQL. Third-party Actions
+  dependency (`pnpm audit:deps`, daily as well), scans every tracked file for
+  credentials with the scan `egress` uses (`pnpm check:secrets`), and runs CodeQL.
+  The clean `pnpm audit` that
+  [production readiness](../requirements/release-scope.md#operational-readiness)
+  requires is a [release check](../validation/release-checklist.md). Third-party Actions
   are pinned by commit, and Dependabot proposes dependency and Action updates,
   except DSH, whose pin is bumped by hand (CON-8)
   ([CI gates](../engineering/testing.md#ci-gates)).

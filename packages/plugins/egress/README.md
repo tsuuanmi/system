@@ -13,6 +13,9 @@
     and SaaS tokens, and others; in process, with secrets masked), a built-in
     `aws-access-key-id` pattern for the AWS keys those rules miss (a secret
     ending in `+` or `/`), and operator `denyPatterns`.
+- **Scan:** `src/scan.ts` (`scanCredentials`) holds the secretlint rules and the
+  built-in patterns. The repository secrets audit (`pnpm check:secrets`) runs the
+  same scan over every tracked file.
 - **Decisions:** every check is an `egress` decision artifact. Findings record
   rule ids and offsets plus a payload hash, **never the matched text**.
 - **Config:** `workerClasses`, `defaultClassification` (`operator-shared`),

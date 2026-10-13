@@ -169,12 +169,6 @@ importers:
 
   .:
     devDependencies:
-      '@secretlint/core':
-        specifier: 13.0.5
-        version: 13.0.5
-      '@secretlint/secretlint-rule-preset-recommend':
-        specifier: 13.0.5
-        version: 13.0.5
       '@types/node':
         specifier: ^24.0.0
         version: 24.19.2

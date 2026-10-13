@@ -8,10 +8,11 @@
  */
 import { type Context, Service } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
-import { lintSource } from '@secretlint/core'
-import { creator as recommended } from '@secretlint/secretlint-rule-preset-recommend'
 import type {} from '@tsuuanmi/system-artifacts'
 import { type ContentId, sha256 } from '@tsuuanmi/system-libs'
+import { type Finding, type NamedPattern, scanCredentials } from './scan.ts'
+
+export type { Finding } from './scan.ts'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -50,25 +51,12 @@ export interface EgressRequest {
   workerClass: string
 }
 
-export interface Finding {
-  rule: string
-  /** Character offset of the match in the payload; the matched text is never kept. */
-  at: number
-}
-
 export interface EgressVerdict {
   allowed: boolean
   decision: ContentId
   findings: Finding[]
   reason: string
 }
-
-/**
- * Credential shapes the recommended rules miss. secretlint's AWS rule needs a word boundary
- * after the secret key, so a secret ending in `+` or `/` (about 2% of real keys) slips past
- * it; an access key id is a credential signal on its own.
- */
-const BUILT_IN_PATTERNS = [{ name: 'aws-access-key-id', regex: /\b(?:AKIA|ASIA)[A-Z2-7]{16}\b/g }]
 
 export class Egress extends Service {
   static inject = ['artifacts']
@@ -81,14 +69,11 @@ export class Egress extends Service {
     denyPatterns: z.array(z.object({ name: z.string().required(), pattern: z.string().required() })).default([]).description('Operator patterns that must never leave the machine'),
   })
 
-  private readonly patterns: Array<{ name: string; regex: RegExp }>
+  private readonly denyPatterns: NamedPattern[]
 
   constructor(ctx: Context, private readonly config: Config = {}) {
     super(ctx, 'egress')
-    this.patterns = [
-      ...(config.scanSecrets !== false ? BUILT_IN_PATTERNS : []),
-      ...(config.denyPatterns ?? []).map((p) => ({ name: p.name, regex: new RegExp(p.pattern, 'g') })),
-    ]
+    this.denyPatterns = (config.denyPatterns ?? []).map((p) => ({ name: p.name, regex: new RegExp(p.pattern, 'g') }))
   }
 
   get defaultClassification(): Classification {
@@ -124,15 +109,9 @@ export class Egress extends Service {
   }
 
   private async scan(payload: string): Promise<Finding[]> {
+    if (this.config.scanSecrets !== false) return scanCredentials(payload, this.denyPatterns)
     const findings: Finding[] = []
-    if (this.config.scanSecrets !== false) {
-      const result = await lintSource({
-        source: { filePath: 'payload.txt', content: payload, contentType: 'text' },
-        options: { config: { rules: [{ id: '@secretlint/secretlint-rule-preset-recommend', rule: recommended }] }, maskSecrets: true, noPhysicFilePath: true },
-      })
-      for (const message of result.messages) findings.push({ rule: message.ruleId, at: message.range[0] })
-    }
-    for (const { name, regex } of this.patterns) {
+    for (const { name, regex } of this.denyPatterns) {
       for (const match of payload.matchAll(regex)) findings.push({ rule: name, at: match.index ?? 0 })
     }
     return findings

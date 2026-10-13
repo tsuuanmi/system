@@ -31,3 +31,4 @@ blocks the release.**
 | Gemini: Deep research proven by the probe; a run's report and sources read back by the driver from its reopened conversation | `system account probe <id>`; `snapshot` of a finished run's conversation | 2026-10-12 (the run itself was driven by a recording script with the map's steps; a run through `ask` is not yet verified) |
 | Credential re-login past the email page (local TOTP) | `system account relogin <id>` | **not yet** (needs the operator) |
 | An economy-tier API provider | | **not built** (needs an API key) |
+| A full dependency audit: every severity, development dependencies included (CI gates only high and critical in production dependencies) | `pnpm audit` on the release commit | 2026-10-14: no known vulnerabilities |

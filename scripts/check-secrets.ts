@@ -1,30 +1,24 @@
 /**
- * Secrets audit of the repository: every tracked text file is scanned with secretlint's
- * recommended rules, the same rules `egress` applies to outgoing payloads. A finding names the
- * file, line, and rule, never the secret. Test fixtures that need a credential-shaped value
- * opt out per line with secretlint's own `secretlint-disable-line` comment.
+ * Secrets audit of the repository: every tracked text file is scanned with the credential scan
+ * `egress` applies to outgoing payloads (secretlint's recommended rules plus the shapes they
+ * miss). A finding names the file, line, and rule, never the secret. Tests make
+ * credential-shaped values at run time instead of committing them; there is no opt-out.
  */
 import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { lintSource } from '@secretlint/core'
-import { creator as recommended } from '@secretlint/secretlint-rule-preset-recommend'
+import { scanCredentials } from '../packages/plugins/egress/src/scan.ts'
 
 export interface SecretFinding { file: string; line: number; rule: string }
 
-const MAX_BYTES = 1024 * 1024
-
 /** Scan one text; findings carry the line and rule only. */
 export async function scanText(file: string, content: string): Promise<SecretFinding[]> {
-  const result = await lintSource({
-    source: { filePath: file, content, contentType: 'text' },
-    options: { config: { rules: [{ id: '@secretlint/secretlint-rule-preset-recommend', rule: recommended }] }, maskSecrets: true },
-  })
-  return result.messages.map((m) => ({ file, line: m.loc.start.line, rule: m.ruleId }))
+  const findings = await scanCredentials(content)
+  return findings.map((f) => ({ file, line: content.slice(0, f.at).split('\n').length, rule: f.rule }))
 }
 
-/** Scan every tracked file that is text and at most 1 MiB. */
+/** Scan every tracked text file; a file holding a NUL byte is binary and skipped. */
 export async function checkSecrets(root: string): Promise<SecretFinding[]> {
   const files = execFileSync('git', ['ls-files', '-z'], { cwd: root, encoding: 'utf8' }).split('\0').filter(Boolean)
   const findings: SecretFinding[] = []
@@ -32,10 +26,11 @@ export async function checkSecrets(root: string): Promise<SecretFinding[]> {
     let buffer: Buffer
     try {
       buffer = readFileSync(join(root, file))
-    } catch {
-      continue // deleted in the working tree
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue // deleted in the working tree
+      throw error
     }
-    if (buffer.length > MAX_BYTES || buffer.includes(0)) continue
+    if (buffer.includes(0)) continue
     findings.push(...(await scanText(file, buffer.toString('utf8'))))
   }
   return findings

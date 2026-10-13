@@ -28,8 +28,8 @@ needs more still. A review of the source on 2026-10-13 found these gaps:
   reads. A Codex Worker can read `vault.key`, the token, the store, and the login
   profiles ([threat model](../security/threat-model.md#threats-and-controls)).
 - **The vault key sits beside the vault** by default.
-- **No supply-chain gates.** CI has no dependency audit, code scanning, or update
-  automation. Nothing is versioned or published. There is no license, security
+- **No supply-chain gates.** CI had no dependency audit, code scanning, or update
+  automation (M6a item 5 adds them). Nothing is versioned or published. There is no license, security
   policy, changelog, SBOM, or provenance.
 - **The runtime floor carries a known defect.** `node:sqlite` truncates text at an
   embedded NUL and has CVE-2026-58041. Both are fixed in Node 24.18.1 and 26.5.1;

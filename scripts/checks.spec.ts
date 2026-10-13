@@ -1,11 +1,11 @@
-import { generateKeyPairSync } from 'node:crypto'
+import { generateKeyPairSync, randomBytes } from 'node:crypto'
 import { readdirSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { checkDocs, slugify } from './check-docs.ts'
 import { checkSchemas, loadSchemas, schemaId } from './check-schemas.ts'
-import { checkSecrets, scanText } from './check-secrets.ts'
+import { scanText } from './check-secrets.ts'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const schemas = join(root, 'schemas')
@@ -68,17 +68,19 @@ describe('schema checks', () => {
   })
 })
 
+// `pnpm check:secrets` scans the repository itself; these tests pin what the scan reports.
 describe('secrets audit', () => {
-  it('finds no credential in any tracked file', async () => {
-    expect(await checkSecrets(root)).toEqual([])
-  })
-
   it('reports the file, line, and rule of a credential, never its value', async () => {
     // A realistic key, made at test time (scanners ignore documented example keys).
     const key = String(generateKeyPairSync('rsa', { modulusLength: 1024 }).privateKey.export({ type: 'pkcs1', format: 'pem' }))
     const findings = await scanText('notes.txt', `first line\n${key}`)
     expect(findings).toEqual([{ file: 'notes.txt', line: 2, rule: expect.stringContaining('privatekey') }])
     expect(JSON.stringify(findings)).not.toContain(key.split('\n')[1])
+  })
+
+  it('applies the egress built-in patterns too: an AWS access key id on its own', async () => {
+    const id = `AKIA${Array.from(randomBytes(16), (b) => 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'[b % 32]).join('')}`
+    expect(await scanText('config.ini', `[default]\nkey = ${id}\n`)).toContainEqual({ file: 'config.ini', line: 2, rule: 'aws-access-key-id' })
   })
 })
 
