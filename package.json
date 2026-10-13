@@ -4,7 +4,7 @@
   "type": "module",
   "packageManager": "pnpm@12.9.1",
   "engines": {
-    "node": "^22.19.0 || >=24.0.0"
+    "node": "^24.18.1 || >=26.5.1"
   },
   "scripts": {
     "check": "pnpm check:docs && pnpm check:secrets && pnpm check:schemas && pnpm check:reference && pnpm check:packages && pnpm check:traceability && pnpm lint && pnpm typecheck",

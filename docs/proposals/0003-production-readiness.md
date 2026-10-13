@@ -32,8 +32,8 @@ needs more still. A review of the source on 2026-10-13 found these gaps:
   automation (M6a item 5 adds them). Nothing is versioned or published. There is no license, security
   policy, changelog, SBOM, or provenance.
 - **The runtime floor carries a known defect.** `node:sqlite` truncates text at an
-  embedded NUL and has CVE-2026-58041. Both are fixed in Node 24.18.1 and 26.5.1;
-  the state of the Node 22 line is not yet confirmed.
+  embedded NUL and has CVE-2026-58041. Both are fixed in Node 24.18.1 and 26.5.1.
+  Node 22.23.2, the latest 22 release, still truncates (verified 2026-10-14).
 - **Little operability.** There are a handful of log calls, `/healthz` exists only
   on the Responses gateway, and nothing reports per-account or per-Worker health or
   alerts on provider UI drift.
@@ -158,10 +158,10 @@ lands. Each item names the requirement it closes and the test that proves it.
    secret scan with the secretlint rules `egress` already uses; CodeQL; Dependabot
    for npm and Actions, ignoring `@deepseek-ai/*` because DSH bumps stay manual
    (CON-8); third-party Actions pinned by commit SHA.
-6. **Runtime floor.** Confirm which Node 22 release, if any, carries the
-   `node:sqlite` fixes; then narrow `engines`, the CI matrix, and the start-up
-   check (REQ-HOST-2) to fixed releases. A store test round-trips text containing
-   `\0`.
+6. **Runtime floor.** No Node 22 release carries the NUL fix, so `engines`, the
+   CI matrix, and CON-2 move to `^24.18.1 || >=26.5.1`, and the store refuses a
+   runtime that fails a NUL round trip at start-up (REQ-HOST-2). A store test
+   round-trips text containing a NUL.
 
 ### M6b Operability
 
@@ -276,7 +276,6 @@ traceability page is regenerated then.
 | REQ-WRK-6 | Adds: the sandbox confines reads as well as writes; host state is never readable. |
 | REQ-WRK-8 | The quota order is configuration; the default composition prefers subscription-chat. |
 | REQ-ART-3 | "why" holds within retention; past it, `explain` reports the expired hash. |
-| CON-2 | The Node range is narrowed to releases with the `node:sqlite` fixes. |
 | QA-11, release scope | v1.0 is Linux x64; macOS and Windows move to 1.x. |
 | [Purpose](../requirements/purpose.md) | A note: the `api-first` preset serves P3 and P4; P1 and P2 need website Workers. |
 

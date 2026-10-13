@@ -128,3 +128,14 @@ Option 3.
 
 Telemetry is disabled by bundle patch. The decision stands.
 
+## Amendment (2026-10-14): supported Node range
+
+The decision stands: `system` runs on Node, beside DSH. The supported range is
+narrowed within DSH's own range to **`^24.18.1 || >=26.5.1`**
+([CON-2](../../requirements/constraints.md)). The `node:sqlite` of Node 22 (22.23.2
+included, verified) and of 24 and 26 releases before 24.16.0 and 26.1.0 reads text
+back cut at an embedded NUL, which would silently change stored prompts, answers,
+and content-addressed records. CVE-2026-58041 (`node:sqlite`) is fixed in 24.18.1
+and 26.5.1. The store checks the behavior at start-up and refuses a runtime that
+fails it. The release policy for this range is proposed in
+[ADR-0026](0026-versioned-releases-with-provenance.md).

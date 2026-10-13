@@ -39,6 +39,31 @@ export interface Config {
   synchronous?: 'FULL' | 'NORMAL'
 }
 
+/** Text with an embedded NUL: some `node:sqlite` releases read it back cut at the NUL. */
+const NUL_PROBE = 'before\u0000after'
+
+/**
+ * Why this runtime's `node:sqlite` cannot hold `system` records, or `undefined` when it can.
+ * Prompts, answers, and content-addressed records must read back byte for byte (QA-4), and
+ * the `node:sqlite` of Node 22 and of early 24 and 26 releases cuts text at an embedded NUL.
+ * Checked by behavior, not by version number.
+ */
+export function sqliteRuntimeProblem(roundTrip: (text: string) => unknown = selectText): string | undefined {
+  const read = roundTrip(NUL_PROBE)
+  if (read === NUL_PROBE) return undefined
+  return `node:sqlite in Node ${process.versions.node} does not read back text containing a NUL character intact; `
+    + 'system needs Node ^24.18.1 or >=26.5.1 (docs/requirements/constraints.md, CON-2)'
+}
+
+function selectText(text: string): unknown {
+  const db = new DatabaseSync(':memory:')
+  try {
+    return (db.prepare('SELECT ? AS v').get(text) as { v: unknown }).v
+  } finally {
+    db.close()
+  }
+}
+
 /** A transaction callback must be synchronous; a Promise-returning callback does not compile. */
 export type TransactionCallback<T> = (db: DatabaseSync) => T extends PromiseLike<unknown> ? never : T
 
@@ -59,6 +84,9 @@ export class Store extends Service {
     super(ctx, 'store')
     this.path = config.path ?? join(dshHome(), 'system', 'system.db')
     ctx.effect(() => {
+      // Fail closed on a runtime that would silently corrupt stored text (REQ-HOST-2).
+      const problem = sqliteRuntimeProblem()
+      if (problem) throw new Error(problem)
       ensurePrivateDir(dirname(this.path))
       // The database holds prompts and answers: owner-only. SQLite gives the -wal and -shm
       // files the database file's mode, so create it 0600 first and tighten older files.

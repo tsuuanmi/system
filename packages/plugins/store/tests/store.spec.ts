@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import { afterEach, describe, expect, it } from 'vitest'
-import Store, { RevisionConflict } from '../src/index.ts'
+import Store, { RevisionConflict, sqliteRuntimeProblem } from '../src/index.ts'
 
 const cleanups: Array<() => unknown> = []
 afterEach(async () => {
@@ -162,5 +162,25 @@ describe('afterCommit inside a rolled-back savepoint (review)', () => {
       } catch { /* the outer transaction recovers and commits */ }
     })
     expect(ran).toEqual(['outer'])
+  })
+})
+
+describe('runtime check (REQ-HOST-2, CON-2)', () => {
+  it('accepts this runtime, whose node:sqlite reads back text with a NUL intact', () => {
+    expect(sqliteRuntimeProblem()).toBeUndefined()
+  })
+
+  it('refuses a runtime that cuts text at a NUL, naming the supported Node range', () => {
+    const problem = sqliteRuntimeProblem((text) => text.slice(0, text.indexOf('\u0000')))
+    expect(problem).toContain(`Node ${process.versions.node}`)
+    expect(problem).toContain('^24.18.1 or >=26.5.1')
+  })
+
+  it('stores and reads back text containing a NUL byte for byte (QA-4)', async () => {
+    const { ctx } = await boot()
+    ctx.store.migrate('t', [{ version: 1, sql: 'CREATE TABLE t (v TEXT)' }])
+    const text = 'prompt\u0000with a NUL\u0000inside'
+    ctx.store.transaction((db) => void db.prepare('INSERT INTO t VALUES (?)').run(text))
+    expect((ctx.store.db.prepare('SELECT v FROM t').get() as { v: string }).v).toBe(text)
   })
 })

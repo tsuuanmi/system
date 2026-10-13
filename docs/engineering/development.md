@@ -9,7 +9,7 @@ are canonical.
 
 | Concern | Tool |
 |---|---|
-| runtime | Node `^22.19.0 \|\| >=24.0.0` (CI on 22 and 24) |
+| runtime | Node `^24.18.1 \|\| >=26.5.1` (CI on 24 and 26; [CON-2](../requirements/constraints.md)) |
 | package manager | pnpm workspaces (version pinned in `packageManager`) |
 | host | DSH core and `@deepseek-ai/cordis`, one exact pinned version; the `system` bundle and profile |
 | language | TypeScript, `strict`, `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes` |
@@ -78,7 +78,7 @@ node packages/cli/lib/bin.js mcp-config claude # or codex
 After changing an MCP tool, regenerate its reference from a running profile:
 `node packages/cli/lib/bin.js tools --markdown > docs/reference/mcp-tools.md`.
 
-CI runs these on Node 22 and 24 ([testing](testing.md#ci-gates)).
+CI runs these on Node 24 and 26 ([testing](testing.md#ci-gates)).
 
 ## Data directory
 
