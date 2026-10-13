@@ -240,6 +240,26 @@ describe('ctx.workers source `agents`: agent runtimes as Workers', () => {
     expect(ctx.workers.affinity('ses_agent')).toEqual(['agent:reviewer'])
   })
 
+  it('writes nothing for a run whose lease was taken during its egress check, and starts nothing (INV-4)', async () => {
+    const agent = new ScriptedAgent()
+    const { ctx } = await boot(agent)
+    const admitted = await ctx.workers.route(requirement())
+    const source = ctx.workers.source('agents')!
+    let id: string | undefined
+    const egress = ctx.egress as unknown as { check: (input: unknown) => Promise<unknown> }
+    const check = egress.check.bind(egress)
+    egress.check = async (input) => {
+      await new Promise((resolve) => setTimeout(resolve, 50))
+      // Another process took the run meanwhile.
+      if (id) ctx.leases.invalidate(`agent-run:${id}`)
+      return check(input)
+    }
+    id = source.start({ key: 'k-taken', worker: 'agent:reviewer', prompt: 'x', requirement: requirement(), decisions: admitted.decisions }).id
+    await new Promise((resolve) => setTimeout(resolve, 500))
+    expect(ctx.store.db.prepare('SELECT egress_decision, status FROM agent_runs WHERE run_id = ?').get(id)).toEqual({ egress_decision: null, status: 'queued' })
+    expect(agent.runs).toEqual([])
+  })
+
   it('runs a queued run once a crashed process\'s lease on it expires, instead of stranding it until the next start', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'system-agents-'))
     const first = await boot(new ScriptedAgent({ holdMs: 30_000 }), undefined, dir)

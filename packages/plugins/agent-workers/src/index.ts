@@ -297,7 +297,8 @@ export class AgentWorkers extends Service {
         if (!worker) throw new ProviderError('config_error', `${row.worker} is no longer configured`)
         // INV-12: the prompt reaches the agent's remote model, so it is checked before anything starts.
         const egress = await this.ctx.egress.check({ payload: row.prompt, classification: row.classification as Classification, workerClass: 'agent' })
-        this.ctx.store.db.prepare('UPDATE agent_runs SET egress_decision = ? WHERE run_id = ?').run(egress.decision, row.run_id)
+        // Fenced like every write of a run: a holder that lost the run writes nothing.
+        this.update(row.run_id, { egress_decision: egress.decision }, current)
         if (!egress.allowed) {
           this.fail(row, new ProviderError('egress_denied', `${egress.reason} (decision ${egress.decision})`), current)
           return
