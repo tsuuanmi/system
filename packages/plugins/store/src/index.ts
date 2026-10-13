@@ -154,7 +154,9 @@ export class Store extends Service {
    * Apply `owner`'s migrations newer than its recorded version, each in one transaction.
    * A store that newer code already migrated past the versions this code knows is refused
    * (REQ-HOST-2): older code would misread a schema it has never seen. Recover by running
-   * the newer release, or restoring the backup taken before the upgrade.
+   * the newer release, or with `system restore` of a backup made before the upgrade. The
+   * store's own `system_migrations` table is not versioned this way; the first change to it
+   * must version it (a `store` owner, or `PRAGMA user_version`).
    */
   migrate(owner: string, migrations: readonly Migration[]): number {
     const sorted = [...migrations].sort((a, b) => a.version - b.version)
@@ -162,7 +164,7 @@ export class Store extends Service {
     const recorded = (this.db.prepare('SELECT MAX(version) AS version FROM system_migrations WHERE owner = ?').get(owner) as { version: number | null }).version ?? 0
     if (recorded > known) {
       throw new Error(`store ${this.path}: ${owner} is at schema version ${recorded}, newer than this release knows (${known}); `
-        + 'run the release that migrated it, or restore the backup taken before the upgrade')
+        + 'run the release that migrated it, or `system restore` a backup made before the upgrade')
     }
     let applied = 0
     for (const migration of sorted) {
