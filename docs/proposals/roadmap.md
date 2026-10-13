@@ -41,8 +41,6 @@ These change no behavior. Each lands with its tests unchanged:
 - a shared driver kit for `provider-chatgpt-web` and `provider-gemini-web`;
 - one durable-run mechanism for website turns (`turns`) and agent runs
   (`agent-workers`);
-- replace `dshHome()` in `libs` with `resolveDshHome()` from
-  `@deepseek-ai/dsh-home-paths`;
 - remove dead exports.
 
 ## Later candidates

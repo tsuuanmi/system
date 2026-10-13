@@ -1,11 +1,31 @@
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { homedir, tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
-import { SchemaError, SchemaRegistry, canonicalJson, contentId, readOrCreateSecretFile } from '../src/index.ts'
+import { SchemaError, SchemaRegistry, canonicalJson, contentId, dshHome, readOrCreateSecretFile } from '../src/index.ts'
 
 const dir = mkdtempSync(join(tmpdir(), 'system-libs-'))
 afterAll(() => rmSync(dir, { recursive: true, force: true }))
+
+describe('dshHome', () => {
+  /** The CLI and the daemon must agree on the home, so system resolves it exactly as DSH does. */
+  it('resolves the harness home by DSH\'s rule: $DSH_HOME made absolute, a blank one ignored, else ~/.dsh', () => {
+    const saved = process.env['DSH_HOME']
+    try {
+      process.env['DSH_HOME'] = '/srv/dsh'
+      expect(dshHome()).toBe('/srv/dsh')
+      process.env['DSH_HOME'] = 'relative/home'
+      expect(dshHome()).toBe(resolve('relative/home'))
+      process.env['DSH_HOME'] = '   '
+      expect(dshHome()).toBe(join(homedir(), '.dsh'))
+      delete process.env['DSH_HOME']
+      expect(dshHome()).toBe(join(homedir(), '.dsh'))
+    } finally {
+      if (saved === undefined) delete process.env['DSH_HOME']
+      else process.env['DSH_HOME'] = saved
+    }
+  })
+})
 
 describe('canonicalJson', () => {
   it('sorts keys, drops undefined members, and is stable', () => {

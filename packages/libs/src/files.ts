@@ -1,11 +1,14 @@
 import { randomBytes } from 'node:crypto'
 import { closeSync, constants, fstatSync, fsyncSync, linkSync, mkdirSync, openSync, readFileSync, renameSync, statSync, unlinkSync, writeSync } from 'node:fs'
-import { homedir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
+import { resolveDshHome } from '@deepseek-ai/dsh-home-paths'
 
-/** The harness home: `$DSH_HOME`, else `~/.dsh` (same rule as DSH). */
+/**
+ * The harness home, resolved by DSH's own rule (`resolveDshHome`: `$DSH_HOME` made absolute, a
+ * blank one ignored, else `~/.dsh`), so the CLI and the daemon always agree on it.
+ */
 export function dshHome(): string {
-  return process.env['DSH_HOME'] || join(homedir(), '.dsh')
+  return resolveDshHome()
 }
 
 /** Create `dir` (and parents) owner-only, and refuse a group/world-accessible existing directory. */
