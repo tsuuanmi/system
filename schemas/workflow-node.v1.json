@@ -17,7 +17,11 @@
   ],
   "properties": {
     "schema": {
-      "const": "workflow-node@1.0"
+      "enum": [
+        "workflow-node@1.0",
+        "workflow-node@1.1"
+      ],
+      "description": "1.1 adds the state RETIRED."
     },
     "runId": {
       "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
@@ -57,7 +61,8 @@
         "RECOVERING",
         "COMPLETED",
         "FAILED",
-        "BLOCKED"
+        "BLOCKED",
+        "RETIRED"
       ]
     },
     "inputReceipt": {
@@ -182,6 +187,26 @@
         "properties": {
           "inputReceipt": true,
           "execution": true,
+          "lastDecision": true
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "state": {
+            "const": "RETIRED"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "lastDecision"
+        ],
+        "properties": {
+          "schema": {
+            "const": "workflow-node@1.1"
+          },
           "lastDecision": true
         }
       }

@@ -236,7 +236,7 @@ Scope: `operator`
 
 ## `supersede`
 
-Replace a completed step's result with a corrected one; everything downstream runs again (lineage invalidation, an operator action).
+Replace a completed step's result with a corrected one; everything downstream runs again, and a planner downstream plans again, retiring its old plan (a planner's replacement must be a valid plan). Lineage invalidation, an operator action.
 
 Scope: `operator`
 

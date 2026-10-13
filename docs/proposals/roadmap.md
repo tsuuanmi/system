@@ -19,7 +19,7 @@ verified on live accounts, and when, is in the
 | **M1.5** First usable: `ask` and `research` (MVP slice 1) | done | — | [checklist](../validation/release-checklist.md) |
 | **M2** Routing, DAG core, MCP, CLI (MVP release) | done | — | [traceability](../validation/traceability.md) |
 | **M3** Workers (Beta) | mostly done | connectors as capabilities (`connector:<name>`); Gemini Deep research through `ask`, and a new persistent Gemini chat (both verified on the fake site only, by operator choice) | [agent Workers](../../packages/plugins/agent-workers/README.md), [Gemini Web](../../packages/plugins/provider-gemini-web/README.md) |
-| **M4** Orchestration (Beta release) | mostly done | handoff envelopes; re-planning after a superseded input | [workflow](../../packages/plugins/workflow/README.md), [checklist](../validation/release-checklist.md) |
+| **M4** Orchestration (Beta release) | mostly done | handoff envelopes | [workflow](../../packages/plugins/workflow/README.md), [checklist](../validation/release-checklist.md) |
 | **M5** Gateways (v1.0) | done, one item open | journaled client configuration edits (REQ-HOST-3), once `system` edits a client file; today `system claude-env` and `codex-env` only print commands | [gateway turns](../../packages/gateway-turns/README.md), [checklist](../validation/release-checklist.md) |
 | **M6** Second domain | done | — | [scientific research](../../packages/plugins/profile-scientific-research/README.md), [operations](../operations/README.md) |
 | **M6a** Security hardening (v1.0) | not started | scoped control credentials; agent Workers confined for reads; vault key custody; CI audit, secret scan, code scanning, dependency updates; Node floor | [PROP-0003](0003-production-readiness.md#m6a-security-hardening) |

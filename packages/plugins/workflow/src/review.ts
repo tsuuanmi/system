@@ -8,7 +8,7 @@ import { captureGitSubject, type GitSubject, subjectId } from '@tsuuanmi/system-
 import type { ArtifactRef } from '@tsuuanmi/system-workers-core'
 import type { Engine } from './engine.ts'
 import { append } from './growth.ts'
-import { type Assessment, parseAssessment, remediationPrompt, type ResolvedNode, subjectBlock } from './spec.ts'
+import { type Assessment, growthPrefix, parseAssessment, remediationPrompt, type ResolvedNode, subjectBlock } from './spec.ts'
 import type { NodeRow, RunRow } from './types.ts'
 
 export type SubjectGate = { passed: true; decision: ArtifactRef; assessment: Assessment; subject: string } | { passed: false; decision: ArtifactRef; reason: string }
@@ -91,9 +91,12 @@ export function remediate(e: Engine, run: RunRow, node: NodeRow, spec: ResolvedN
   }, { producer: { type: 'system', ref: 'workflow' }, runId: run.run_id, nodeId: node.node_id }).id as ArtifactRef
   if (why) return
   const base = spec.reviewOf ?? node.node_id
-  const fixId = `${base}:fix:${cycle}`
-  const recheckId = `${base}:review:${cycle + 1}`
-  const step = { literal: true, tierSource: 'decision' as const, tierDecision: decision, session: {} }
+  // After a re-plan retired this review's earlier cycles, the new ones get new ids.
+  const generation = (JSON.parse(nodes.find((n) => n.node_id === base)?.spec ?? '{}') as ResolvedNode).generation ?? 1
+  const prefix = growthPrefix(base, generation)
+  const fixId = `${prefix}:fix:${cycle}`
+  const recheckId = `${prefix}:review:${cycle + 1}`
+  const step = { literal: true, tierSource: 'decision' as const, tierDecision: decision, session: {}, grownBy: { node: base, generation } }
   append(e, run, node, [
     { ...step, nodeId: fixId, objective: `Fix the blocking findings of review cycle ${cycle}`, prompt: remediationPrompt(run.input, subject, blocking),
       capabilities: producer!.capabilities, tier: producer!.tier, acceptance: 'acceptance.answer', dependsOn: [node.node_id] },

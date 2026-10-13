@@ -109,6 +109,18 @@ export interface ResolvedNode extends Omit<NodeTemplate, 'callerTier' | 'convers
   plan?: string
   /** A plan step's prompt is model text: used as it is, never expanded as a template. */
   literal?: boolean
+  /**
+   * On a planner: its next plan's gate needs the operator, never `autoApprovePlans`, because a
+   * step of its retired plan that needed approval already started. On a gate: it needs the operator.
+   */
+  operatorApproval?: true
+  /**
+   * The node that grew this one (a planner's plan step or gate, a review's remediation step), and
+   * that node's generation then: what a re-plan retires, by origin, never by id.
+   */
+  grownBy?: { node: string; generation: number }
+  /** How many times this node's growth was retired and grown again (default 1); later growth gets `:g<n>` ids. */
+  generation?: number
   /** A re-review's cycle (the first review is cycle 1), and the review node the cycles started from. */
   cycle?: number
   reviewOf?: string
@@ -369,6 +381,9 @@ const STEP_ID = /^[a-z0-9][a-z0-9-]{0,40}$/
  * here (REQ-WF-10). Steps get ids under the planner's prefix and may depend only on each
  * other; the plan must be acyclic, within `maxNodes`, and use allowed capabilities only.
  */
+/** The id prefix of what a node grows: its own id, then `<id>:g<n>` once its growth was retired and grown again. */
+export const growthPrefix = (nodeId: string, generation = 1): string => (generation > 1 ? `${nodeId}:g${generation}` : nodeId)
+
 export function parsePlan(text: string, planner: string, policy: { maxNodes: number; capabilities: string[] }): ParsedPlan {
   const fenced = /```(?:json)?\s*([\s\S]*?)```/.exec(text)?.[1]
   const raw = fenced ?? text.slice(text.indexOf('{'), text.lastIndexOf('}') + 1)

@@ -133,7 +133,7 @@ export function registerTools(c: Context, w: Workflow, ctx: Context): void {
     }
   })
   c.mcp.tool('supersede', {
-    description: 'Replace a completed step\'s result with a corrected one; everything downstream runs again (lineage invalidation, an operator action).',
+    description: 'Replace a completed step\'s result with a corrected one; everything downstream runs again, and a planner downstream plans again, retiring its old plan (a planner\'s replacement must be a valid plan). Lineage invalidation, an operator action.',
     inputSchema: { runId: zod.string().max(200), nodeId: zod.string().max(200), text: zod.string().min(1).max(4_000_000), note: zod.string().max(2000).optional() },
   }, async (args) => {
     try {

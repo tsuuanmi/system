@@ -29,7 +29,7 @@
 | `system stop <runId> [reason]` | stop a run: running work is cancelled, nothing is resent |
 | `system continue <runId> [nodeId]` | reopen a failed run's failed node as a new attempt |
 | `system delete <runId> [--yes]` | preview, then delete a finished run (artifacts stay) |
-| `system supersede <runId> <nodeId> (<text…> \| -)` | replace a completed step's result; everything downstream runs again |
+| `system supersede <runId> <nodeId> (<text…> \| -)` | replace a completed step's result; everything downstream runs again, and a planner downstream plans again (a planner's replacement must be a valid plan; what an old plan grew is retired) |
 | `system usage [<limit>]` | recent runs: per step, the Worker, tier, and quota class used |
 | `system explain <runId\|artifact>` | the decision chain behind a run (egress, tier, route, acceptance) |
 

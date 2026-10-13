@@ -8,8 +8,8 @@
 > admission has preflight and a spec hash but no provenance or confirmation step; only `worker`
 > and `gate` nodes run (teams are unrolled into `worker` nodes); `RECOVERING` is not used;
 > a scheduler exception fails the run as `internal` (`CODE_FIX`) instead of blocking it;
-> handoff envelopes, the plan's side-effect classes, convergence blocker reports, and
-> re-planning after a superseded input are planned.
+> handoff envelopes, the plan's side-effect classes, and convergence blocker reports are
+> planned.
 
 There is one engine, and every multi-step job runs on it as an append-only DAG
 ([ADR-0012](../decisions/adr/0012-dag-execution-model.md)). It combines three
@@ -39,7 +39,7 @@ WorkflowNode {
   objective; executor: "team" | "worker" | "effect" | "gate";
   requires: CapabilityRequirement[];
   dependsOn: NodeId[];
-  state: WAITING | READY | RUNNING | RECOVERING | COMPLETED | FAILED | BLOCKED;
+  state: WAITING | READY | RUNNING | RECOVERING | COMPLETED | FAILED | BLOCKED | RETIRED;
   inputReceipt?:  { inputHash, dependencyOutputHashes };
   outputReceipt?: { resultId, outputHash };
   execution?:     { executionId, attempt, owner, lease, generation };
@@ -80,7 +80,11 @@ stateDiagram-v2
   RUNNING --> FAILED: not retryable, bound reached, or stopped
   FAILED --> READY: operator continue
   COMPLETED --> WAITING: an input was superseded
+  COMPLETED --> RETIRED: a re-plan retired its plan
+  BLOCKED --> RETIRED: a re-plan retired its plan
+  FAILED --> RETIRED: a re-plan retired its plan
   COMPLETED --> [*]
+  RETIRED --> [*]
 ```
 
 A scheduler exception moves the run to `BLOCKED` with `CODE_FIX_REQUIRED`. It
@@ -127,6 +131,32 @@ flowchart LR
 - A verdict names the plan the operator read. With several plans waiting, a
   verdict that names none is refused and lists them, so a plan that arrived later
   is never approved unseen. The gate is read and decided under the run's lease.
+
+### Re-planning
+
+A superseded input upstream of a planner, or a superseded plan itself (the
+operator's edit), makes the planner plan again
+([lineage](artifacts.md#lineage-and-invalidation)):
+
+- What the superseded node, or a node that runs again, grew is **retired**,
+  transitively: a planner's plan steps and gate, a review's remediation cycles,
+  and what those grew. Origin decides, never the id: each grown node records the
+  node that grew it (`grownBy`). A retired node stays in the graph as `RETIRED`
+  (append-only, [INV-13](../architecture/invariants.md#inv-13-every-decision-is-an-artifact)),
+  never runs again, and no longer counts toward the run's outcome; a
+  `graph-growth` decision (`retire`) records each node's state and result, and
+  whatever waited for it no longer does. Its results are never reused.
+- The grower's next growth is a new generation with new ids (`plan:1:g2:…`).
+- The planner reruns on its new input, or its replacement is its new plan, which
+  must pass validation before anything changes. The new plan is a new artifact
+  that supersedes the old one, behind a new gate, so the old approval never opens
+  it ([INV-5](../architecture/invariants.md#inv-5-exact-subject-binding)).
+- When a retired step that needed approval had started (it may have written),
+  the new plan waits for the operator even where policy would approve it.
+- A verdict on a plan that replaces another must name it, so the operator never
+  approves a re-plan unseen.
+- A plan's gate is never superseded: it is approved or rejected. A plan waiting
+  at its gate is edited by rejecting it, then superseding the planner's result.
 
 ## Handoffs
 

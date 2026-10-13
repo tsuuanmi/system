@@ -6,8 +6,8 @@
 import type { Lease } from '@tsuuanmi/system-leases'
 import type { ArtifactRef } from '@tsuuanmi/system-workers-core'
 import type { Engine } from './engine.ts'
-import { decideGate } from './growth.ts'
-import type { ResolvedNode } from './spec.ts'
+import { decideGate, grewFrom, grow } from './growth.ts'
+import { DEFAULT_GROWTH, parsePlan, type ResolvedNode } from './spec.ts'
 import { LEASE_TTL_MS, type NodeRecord, type NodeRow, now, type RunRow, type RunView, type WorkflowError, WorkflowFailure } from './types.ts'
 
 /**
@@ -24,7 +24,7 @@ export async function stop(e: Engine, runId: string, reason = 'stopped by the op
     const decision = operatorDecision(e, run, 'stop', ['stop', 'keep'], reason)
     const error: WorkflowError = { kind: 'stopped', disposition: 'NONE', message: reason }
     for (const node of e.nodeRows(runId)) {
-      if (node.state === 'COMPLETED' || node.state === 'FAILED') continue
+      if (node.state === 'COMPLETED' || node.state === 'FAILED' || node.state === 'RETIRED') continue
       if (node.execution_id && node.source) e.ctx.workers.source(node.source)?.cancel?.(node.execution_id)
       e.writeNode(node, { state: 'FAILED', error: JSON.stringify(error) }, (r) => ({ ...r, lastDecision: decision }), lease)
     }
@@ -75,34 +75,59 @@ export function continueRun(e: Engine, runId: string, nodeId?: string): RunView 
  * checked against the node's contract; every node downstream, directly or transitively, is
  * fenced and re-runs, its `recovery` decision pointing at both artifacts. New inputs mean new
  * input hashes, so nothing stale is reused.
+ *
+ * Re-planning (docs/design/workflow-engine.md#re-planning): what the replaced node, or a node that
+ * runs again, grew (a planner's plan steps and gate, a review's remediation cycles, and what those
+ * grew) is retired: it stays in the graph as `RETIRED`, recorded in a `graph-growth` decision with
+ * each node's state and result, and whatever waited for it no longer does. A planner then plans
+ * again, or a replaced planner's result is its new plan (validated before anything changes); new
+ * growth gets new ids. The new plan supersedes the old one behind a new gate, so the old approval
+ * never opens it (INV-5). Everything is read and changed under the run's lease.
  */
 export function supersede(e: Engine, runId: string, nodeId: string, replacement: { text: string; note?: string }): RunView {
-  const run = e.runRow(runId)
-  if (!run || run.status === 'running') throw new WorkflowFailure('invalid_input', `run ${runId} is ${run ? 'running; stop it or wait' : 'unknown'}`)
   if (!replacement.text.trim()) throw new WorkflowFailure('invalid_input', 'the replacement text must not be empty')
-  const nodes = e.nodeRows(runId)
-  const node = nodes.find((n) => n.node_id === nodeId)
-  const record = node ? (JSON.parse(node.record) as NodeRecord) : undefined
-  if (!node || node.state !== 'COMPLETED' || !record?.outputReceipt) throw new WorkflowFailure('invalid_input', `node ${nodeId} of run ${runId} has no completed result`)
-  // Everything downstream, transitively.
-  const downstream = new Set<string>()
-  for (let grew = true; grew;) {
-    grew = false
-    for (const n of nodes) {
-      const deps = (JSON.parse(n.spec) as ResolvedNode).dependsOn
-      if (!downstream.has(n.node_id) && deps.some((d) => d === nodeId || downstream.has(d))) {
-        downstream.add(n.node_id)
-        grew = true
+  let schedule = false
+  const view = asOperator(e, runId, (lease) => {
+    const run = e.runRow(runId)
+    if (!run || run.status === 'running') throw new WorkflowFailure('invalid_input', `run ${runId} is ${run ? 'running; stop it or wait' : 'unknown'}`)
+    const nodes = e.nodeRows(runId).filter((n) => n.state !== 'RETIRED')
+    const node = nodes.find((n) => n.node_id === nodeId)
+    const record = node ? (JSON.parse(node.record) as NodeRecord) : undefined
+    if (!node || node.state !== 'COMPLETED' || !record?.outputReceipt) throw new WorkflowFailure('invalid_input', `node ${nodeId} of run ${runId} has no completed result`)
+    const spec = specOf(node)
+    if (spec.executor === 'gate') throw new WorkflowFailure('invalid_input', `node ${nodeId} is a plan's gate: approve or reject the plan instead`)
+    // Everything downstream, transitively.
+    const downstream = new Set<string>()
+    for (let grew = true; grew;) {
+      grew = false
+      for (const n of nodes) {
+        if (!downstream.has(n.node_id) && specOf(n).dependsOn.some((d) => d === nodeId || downstream.has(d))) {
+          downstream.add(n.node_id)
+          grew = true
+        }
       }
     }
-  }
-  const affected = nodes.filter((n) => downstream.has(n.node_id))
-  if ([node, ...affected].some((n) => { const sp = JSON.parse(n.spec) as ResolvedNode; return sp.grows || sp.executor === 'gate' })) {
-    throw new WorkflowFailure('invalid_input', `superseding ${nodeId} would re-plan run ${runId}; re-planning is not supported yet`)
-  }
-  const spec = JSON.parse(node.spec) as ResolvedNode
-  const old = e.ctx.artifacts.get(record.outputReceipt.result)!
-  return asOperator(e, runId, (lease) => {
+    const affected = nodes.filter((n) => downstream.has(n.node_id))
+    // What is retired: everything the replaced node or a node that runs again grew, transitively.
+    const growers = new Set([nodeId, ...downstream])
+    const retired = new Set<string>()
+    for (let grew = true; grew;) {
+      grew = false
+      for (const n of nodes) {
+        if (retired.has(n.node_id) || n.node_id === nodeId) continue
+        if ([...growers, ...retired].some((g) => grewFrom(n, g))) {
+          retired.add(n.node_id)
+          grew = true
+        }
+      }
+    }
+    const rerun = affected.filter((n) => !retired.has(n.node_id))
+    if (spec.grows) {
+      // A replaced planner's result is its new plan: an invalid one changes nothing.
+      const parsed = parsePlan(replacement.text, nodeId, { ...DEFAULT_GROWTH, ...spec.grows })
+      if (!parsed.ok) throw new WorkflowFailure('invalid_input', `the replacement plan is refused: ${parsed.reason}`)
+    }
+    const old = e.ctx.artifacts.get(record.outputReceipt.result)!
     const body = { ...(old.body as Record<string, unknown>), text: replacement.text }
     const artifact = e.ctx.artifacts.put({
       kind: old.kind, bodySchema: old.bodySchema, body, classification: old.classification,
@@ -112,9 +137,14 @@ export function supersede(e: Engine, runId: string, nodeId: string, replacement:
     const acceptance = e.ctx.workers.accept(result, spec.acceptance, { producer: 'workflow', runId, nodeId, ...(spec.resultSchema ? { resultSchema: spec.resultSchema } : {}) })
     if (!acceptance.accepted) throw new WorkflowFailure('invalid_input', `the replacement fails ${spec.acceptance}: ${acceptance.reasons.join('; ')}`)
     const why = `${nodeId}'s result ${old.id} was superseded by ${result}${replacement.note ? `: ${replacement.note}` : ''}`
+    schedule = !!spec.grows || rerun.length > 0
     e.ctx.store.transaction((db) => {
       e.writeNode(node, {}, (r) => ({ ...r, outputReceipt: { result, acceptance: acceptance.decision }, lastDecision: acceptance.decision }), lease)
-      for (const dependent of affected) {
+      for (const grower of [node, ...affected]) {
+        const grown = nodes.filter((n) => retired.has(n.node_id) && grewFrom(n, grower.node_id))
+        if (grown.length) retireGrowth(e, run, grower.node_id, grown, [old.id, result], why, lease)
+      }
+      for (const dependent of rerun) {
         const decision = e.ctx.artifacts.recordDecision({
           decisionType: 'recovery',
           question: `Does node ${dependent.node_id} of run ${runId} run again on the superseding input?`,
@@ -124,7 +154,7 @@ export function supersede(e: Engine, runId: string, nodeId: string, replacement:
           outcome: { option: 'rerun' },
           deterministic: true,
         }, { producer: { type: 'system', ref: 'workflow' }, runId, nodeId: dependent.node_id })
-        e.writeNode(dependent, { state: 'WAITING', execution_id: null, not_before: null, error: null, escalations: 0 }, (r) => {
+        e.writeNode(e.nodeRow(runId, dependent.node_id)!, { state: 'WAITING', execution_id: null, not_before: null, error: null, escalations: 0 }, (r) => {
           const next: NodeRecord = { ...r, lastDecision: decision.id as ArtifactRef }
           delete next.execution
           delete next.inputReceipt
@@ -132,16 +162,74 @@ export function supersede(e: Engine, runId: string, nodeId: string, replacement:
           return next
         }, lease)
       }
+      if (spec.grows) {
+        const planner = e.nodeRow(runId, nodeId)!
+        const refused = grow(e, run, planner, specOf(planner), result, lease)
+        if (refused) throw new WorkflowFailure('invalid_input', `the replacement plan is refused: ${refused}`)
+      }
       e.ctx.leases.fence(lease())
-      if (affected.length) {
+      if (schedule) {
         db.prepare("UPDATE workflow_runs SET status = 'running', result = NULL, error = NULL, updated_at = ? WHERE run_id = ?").run(now(), runId)
       } else if (run.status === 'completed') {
         // The final node itself: the run's result is the replacement.
         db.prepare('UPDATE workflow_runs SET result = ?, updated_at = ? WHERE run_id = ?').run(result, now(), runId)
       }
-      e.ctx.eventLog.append({ type: 'workflow.node.superseded', runId, nodeId, data: { old: old.id, replacement: result, rerun: affected.map((n) => n.node_id) } })
+      e.ctx.eventLog.append({ type: 'workflow.node.superseded', runId, nodeId, data: { old: old.id, replacement: result, rerun: rerun.map((n) => n.node_id), retired: [...retired] } })
     })
-    if (affected.length) e.ctx.store.afterCommit(() => e.schedule(runId))
+  })
+  // Once the run's lease is free again, so the run advances at once.
+  if (schedule) e.schedule(runId)
+  return schedule ? e.get(runId)! : view
+}
+
+const specOf = (n: NodeRow): ResolvedNode => JSON.parse(n.spec) as ResolvedNode
+
+/**
+ * Retire what `grower` grew (re-planning): each node becomes `RETIRED`, kept as history, with a
+ * `graph-growth` decision recording its state and result; whatever waited for it no longer does;
+ * the grower's next growth is a new generation. A retired plan step that needed approval and had
+ * started (it may have written) makes the planner's next plan the operator's to approve.
+ */
+function retireGrowth(e: Engine, run: RunRow, grower: string, grown: NodeRow[], inputs: ArtifactRef[], why: string, lease: () => Lease): void {
+  const growerSpec = specOf(e.nodeRow(run.run_id, grower)!)
+  const approvalRequired = growerSpec.grows ? { ...DEFAULT_GROWTH, ...growerSpec.grows }.approvalRequired : []
+  const listed = grown.map((n) => {
+    const result = (JSON.parse(n.record) as NodeRecord).outputReceipt?.result
+    return { nodeId: n.node_id, state: n.state, ...(result ? { result } : {}) }
+  })
+  const started = (n: NodeRow): boolean => n.attempt > 0 || n.execution_id !== null || (JSON.parse(n.record) as NodeRecord).execution !== undefined
+  const wrote = grown.filter((n) => specOf(n).executor !== 'gate' && started(n) && specOf(n).capabilities.some((c) => approvalRequired.includes(c))).map((n) => n.node_id)
+  const plans = grown.map((n) => specOf(n)).filter((sp) => sp.executor === 'gate' && sp.plan).map((sp) => sp.plan as ArtifactRef)
+  const decision = e.ctx.artifacts.recordDecision({
+    decisionType: 'graph-growth',
+    question: `Does run ${run.run_id} retire what ${grower} grew, to grow it again?`,
+    inputs: [...new Set([...inputs, ...plans])],
+    candidates: [
+      { option: 'retire', selected: true, reasons: [`${why}; ${grower} runs again`, ...(wrote.length ? [`${wrote.join(', ')} had started: the next plan needs the operator's approval`] : [])] },
+      { option: 'keep', selected: false, reasons: [] },
+    ],
+    decider: { type: 'policy', id: 'workflow.re-plan', version: '1' },
+    outcome: { option: 'retire', detail: { retired: listed, wrote } },
+    deterministic: true,
+  }, { producer: { type: 'system', ref: 'workflow' }, runId: run.run_id, nodeId: grower }).id as ArtifactRef
+  const gone = new Set(grown.map((n) => n.node_id))
+  e.ctx.store.transaction((db) => {
+    for (const n of grown) {
+      e.writeNode(e.nodeRow(run.run_id, n.node_id)!, { state: 'RETIRED' }, (r) => ({ ...r, schema: 'workflow-node@1.1', lastDecision: decision }), lease)
+    }
+    for (const dependent of e.nodeRows(run.run_id)) {
+      const dspec = specOf(dependent)
+      if (dependent.state === 'RETIRED' || !dspec.dependsOn.some((d) => gone.has(d))) continue
+      const dependsOn = dspec.dependsOn.filter((d) => !gone.has(d))
+      const drecord = JSON.parse(dependent.record) as NodeRecord
+      db.prepare('UPDATE workflow_nodes SET spec = ?, record = ?, updated_at = ? WHERE run_id = ? AND node_id = ?')
+        .run(JSON.stringify({ ...dspec, dependsOn }), JSON.stringify({ ...drecord, dependsOn, revision: drecord.revision + 1 }), now(), run.run_id, dependent.node_id)
+    }
+    // Re-read: an earlier retirement in this re-plan may have rewired the grower.
+    const current = specOf(e.nodeRow(run.run_id, grower)!)
+    db.prepare('UPDATE workflow_nodes SET spec = ?, updated_at = ? WHERE run_id = ? AND node_id = ?')
+      .run(JSON.stringify({ ...current, generation: (current.generation ?? 1) + 1, ...(wrote.length ? { operatorApproval: true } : {}) }), now(), run.run_id, grower)
+    e.ctx.eventLog.append({ type: 'workflow.graph.retired', runId: run.run_id, nodeId: grower, decision, data: { retired: [...gone], wrote } })
   })
 }
 
@@ -167,6 +255,11 @@ export function approve(e: Engine, runId: string, input: { verdict: 'approved' |
         throw new WorkflowFailure('invalid_input', `${waiting.length} plans wait in run ${runId}; name the one you approve: ${waiting.map(planOf).join(', ')}`)
       }
       throw new WorkflowFailure('invalid_input', `run ${runId} is not waiting for approval${input.plan ? ` of plan ${input.plan}` : ''}`)
+    }
+    // A re-plan replaced the plan the operator may have read: the verdict must name the new one.
+    const replaced = e.ctx.artifacts.get(planOf(gate))?.lineage.supersedes ?? []
+    if (!input.plan && replaced.length) {
+      throw new WorkflowFailure('invalid_input', `plan ${planOf(gate)} of run ${runId} replaces plan ${replaced.join(', ')}; name the plan you approve`)
     }
     decideGate(e, run, gate, { verdict: input.verdict, by: 'operator', ...(input.note ? { note: input.note } : {}) }, () => lease)
   } finally {

@@ -7,8 +7,7 @@
 >
 > Implemented in [`artifacts`](../../packages/plugins/artifacts/README.md); differs from target:
 > bodies are inline only (no large-body store); no `spec-admission` decision is recorded; the
-> store does not itself reject a transition without a decision id; re-planning when a
-> planner's input is superseded is planned.
+> store does not itself reject a transition without a decision id.
 
 An **artifact** is an immutable, typed, content-addressed record. The work that
 `system` produces is artifacts, and so is the record of how `system` decided.

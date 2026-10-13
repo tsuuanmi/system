@@ -64,6 +64,10 @@ guesses.
   `review:cycle:2` ([ADR-0012](../decisions/adr/0012-dag-execution-model.md)).
 - Every state transition updates `lastDecision` to the decision artifact that
   caused it ([INV-13](../architecture/invariants.md#inv-13-every-decision-is-an-artifact)).
+- `workflow-node@1.1` adds the state `RETIRED`: a node a re-plan took out of the
+  graph. It stays as history, never runs again, and its `lastDecision` is the
+  `graph-growth` decision that retired it. Only a retired node is written as
+  1.1; readers accept 1.0 and 1.1.
 
 ### `provider-turn-receipt`
 

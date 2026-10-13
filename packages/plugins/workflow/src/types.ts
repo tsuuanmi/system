@@ -8,7 +8,8 @@ import type { ArtifactRef, Classification, Tier, WorkRequirement } from '@tsuuan
 import type { CallerOptions, NodeTemplate } from './spec.ts'
 
 export type RunStatus = 'running' | 'completed' | 'failed'
-export type NodeState = 'WAITING' | 'READY' | 'RUNNING' | 'BLOCKED' | 'COMPLETED' | 'FAILED'
+/** `RETIRED` (workflow-node@1.1): a node a re-plan took out of the graph; it stays as history and never runs. */
+export type NodeState = 'WAITING' | 'READY' | 'RUNNING' | 'BLOCKED' | 'COMPLETED' | 'FAILED' | 'RETIRED'
 
 export interface WorkflowError {
   kind: string
@@ -16,9 +17,9 @@ export interface WorkflowError {
   message: string
 }
 
-/** A durable node record (`workflow-node@1.0`). */
+/** A durable node record (`workflow-node@1.0`; `@1.1` once it is `RETIRED`). */
 export interface NodeRecord {
-  schema: 'workflow-node@1.0'
+  schema: 'workflow-node@1.0' | 'workflow-node@1.1'
   runId: string
   nodeId: string
   objective: string

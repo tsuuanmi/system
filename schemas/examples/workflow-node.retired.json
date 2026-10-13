@@ -1,0 +1,58 @@
+{
+  "schema": "workflow-node@1.1",
+  "runId": "run_8c1f2a9d0b3e4f56",
+  "nodeId": "plan:1:old-step",
+  "objective": "Look it up",
+  "executor": "worker",
+  "requirement": {
+    "schema": "work-requirement@1.0",
+    "objective": "Survey current approaches to mtDNA heteroplasmy calling and summarize trade-offs with citations.",
+    "capabilities": [
+      "reason",
+      "deep-research"
+    ],
+    "data": {
+      "classification": "public",
+      "refs": []
+    },
+    "egressPolicy": "egress.public-only",
+    "boundaries": [
+      "read-only: do not modify any repository or external system",
+      "cite every claim"
+    ],
+    "effort": {
+      "maxSubWorkers": 0,
+      "maxMinutes": 45
+    },
+    "tier": {
+      "min": "frontier",
+      "source": "profile"
+    },
+    "budget": {
+      "preferQuota": [
+        "subscription-chat"
+      ]
+    },
+    "acceptance": {
+      "contract": "acceptance.cited-report",
+      "resultSchema": "report@1.0",
+      "maxEscalations": 0
+    }
+  },
+  "dependsOn": [
+    "plan:1:gate"
+  ],
+  "state": "RETIRED",
+  "inputReceipt": {
+    "inputHash": "sha256:a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+    "bundle": [
+      "sha256:b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2"
+    ]
+  },
+  "outputReceipt": {
+    "result": "sha256:c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3",
+    "acceptance": "sha256:d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4"
+  },
+  "lastDecision": "sha256:e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5",
+  "revision": 6
+}

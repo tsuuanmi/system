@@ -7,7 +7,7 @@ import type { Lease } from '@tsuuanmi/system-leases'
 import { canonicalJson, sha256 } from '@tsuuanmi/system-libs'
 import type { ArtifactRef, Tier } from '@tsuuanmi/system-workers-core'
 import type { Engine } from './engine.ts'
-import { DEFAULT_GROWTH, parsePlan, type PlannedNode, type ResolvedNode } from './spec.ts'
+import { DEFAULT_GROWTH, growthPrefix, parsePlan, type PlannedNode, type ResolvedNode } from './spec.ts'
 import { type NodeRecord, type NodeRow, now, type RunRow, type WorkflowError } from './types.ts'
 
 /**
@@ -18,13 +18,20 @@ import { type NodeRecord, type NodeRow, now, type RunRow, type WorkflowError } f
  */
 export function grow(e: Engine, run: RunRow, planner: NodeRow, spec: ResolvedNode, result: ArtifactRef, lease: () => Lease): string | undefined {
   const policy = { ...DEFAULT_GROWTH, ...spec.grows }
-  const parsed = parsePlan(e.resultText(result), planner.node_id, policy)
+  const generation = spec.generation ?? 1
+  const prefix = growthPrefix(planner.node_id, generation)
+  const grownBy = { node: planner.node_id, generation }
+  const parsed = parsePlan(e.resultText(result), prefix, policy)
   const classification = run.classification ?? e.ctx.egress.defaultClassification
+  // A planner that plans again (re-planning) supersedes its previous plan (REQ-ART-2): the new plan
+  // is a new artifact, so an approval of the old one can never open the new gate (INV-5).
+  const previous = e.ctx.artifacts.list({ kind: 'plan', runId: run.run_id, nodeId: planner.node_id, limit: 1000 }).at(-1)?.id
   const plan = parsed.ok
     ? e.ctx.artifacts.put({
       kind: 'plan', bodySchema: 'plan@1.0',
       body: { schema: 'plan@1.0', runId: run.run_id, planner: planner.node_id, nodes: parsed.nodes, confidence: parsed.confidence },
       classification, producer: { type: 'node', ref: planner.node_id }, inputs: [result], runId: run.run_id, nodeId: planner.node_id,
+      ...(previous ? { lineage: { supersedes: [previous] } } : {}),
     })
     : undefined
   const gated = parsed.ok && parsed.nodes.some((n) => n.capabilities.some((c) => policy.approvalRequired.includes(c)))
@@ -41,16 +48,17 @@ export function grow(e: Engine, run: RunRow, planner: NodeRow, spec: ResolvedNod
     deterministic: true,
   }, { producer: { type: 'system', ref: 'workflow' }, runId: run.run_id, nodeId: planner.node_id })
   if (!parsed.ok || !plan) return `${reason} (decision ${decision.id})`
-  const gateId = `${planner.node_id}:gate`
+  const gateId = `${prefix}:gate`
   const added: ResolvedNode[] = [
     ...(gated ? [{
       nodeId: gateId, objective: `Approve the plan of ${planner.node_id}`, executor: 'gate' as const, plan: plan.id, prompt: '', capabilities: ['review'],
-      tier: 'economy' as Tier, tierSource: 'profile' as const, acceptance: 'acceptance.answer', dependsOn: [planner.node_id], session: {},
+      tier: 'economy' as Tier, tierSource: 'profile' as const, acceptance: 'acceptance.answer', dependsOn: [planner.node_id], session: {}, grownBy,
+      ...(spec.operatorApproval ? { operatorApproval: true as const } : {}),
     }] : []),
     ...parsed.nodes.map((step: PlannedNode): ResolvedNode => ({
       nodeId: step.nodeId, objective: step.objective, prompt: step.prompt, literal: true, capabilities: step.capabilities, tier: step.tier,
       tierSource: 'decision', tierDecision: decision.id, acceptance: 'acceptance.answer',
-      dependsOn: step.dependsOn.length ? step.dependsOn : [gated ? gateId : planner.node_id], session: {},
+      dependsOn: step.dependsOn.length ? step.dependsOn : [gated ? gateId : planner.node_id], session: {}, grownBy,
     })),
   ]
   append(e, run, planner, added, parsed.nodes.map((n) => n.nodeId), lease)
@@ -74,7 +82,7 @@ export function append(e: Engine, run: RunRow, after: NodeRow, added: ResolvedNo
     })
     for (const dependent of e.nodeRows(run.run_id)) {
       const dspec = JSON.parse(dependent.spec) as ResolvedNode
-      if (!dspec.dependsOn.includes(after.node_id) || added.some((a) => a.nodeId === dependent.node_id)) continue
+      if (dependent.state === 'RETIRED' || !dspec.dependsOn.includes(after.node_id) || added.some((a) => a.nodeId === dependent.node_id)) continue
       const dependsOn = [...new Set([...dspec.dependsOn, ...waitFor])]
       const drecord = JSON.parse(dependent.record) as NodeRecord
       db.prepare('UPDATE workflow_nodes SET spec = ?, record = ?, updated_at = ? WHERE run_id = ? AND node_id = ?')
@@ -83,17 +91,29 @@ export function append(e: Engine, run: RunRow, after: NodeRow, added: ResolvedNo
   })
 }
 
-/** The findings of the steps a planner this node depends on added, in order, under their objectives. */
+/** The findings of the steps a planner this node depends on added (never retired ones), in order, under their objectives. */
 export function grownText(e: Engine, spec: ResolvedNode, nodes: NodeRow[]): string {
   const planners = spec.dependsOn.filter((id) => (JSON.parse(nodes.find((n) => n.node_id === id)!.spec) as ResolvedNode).grows)
   return nodes
-    .filter((n) => planners.some((p) => n.node_id.startsWith(`${p}:`)) && (JSON.parse(n.spec) as ResolvedNode).executor !== 'gate')
+    .filter((n) => n.state !== 'RETIRED' && planners.some((p) => grewFrom(n, p)) && (JSON.parse(n.spec) as ResolvedNode).executor !== 'gate')
     .map((n) => {
       const step = JSON.parse(n.spec) as ResolvedNode
       const result = (JSON.parse(n.record) as NodeRecord).outputReceipt?.result
       return `### ${step.objective}\n${result ? e.resultText(result) : ''}`
     })
     .join('\n\n')
+}
+
+/**
+ * Whether `grower` grew this node: by its recorded origin, or, for a node grown before origins
+ * were recorded, by its id under the grower's and the marks only growth leaves (a plan step's tier
+ * comes from a decision; a gate approves a plan), so a template node that merely shares the
+ * prefix is never taken for grown.
+ */
+export function grewFrom(node: NodeRow, grower: string): boolean {
+  const spec = JSON.parse(node.spec) as ResolvedNode
+  if (spec.grownBy) return spec.grownBy.node === grower
+  return node.node_id.startsWith(`${grower}:`) && (spec.tierSource === 'decision' || spec.executor === 'gate')
 }
 
 /** A gate whose planner finished waits for an approval of the exact plan (REQ-WF-11). */
@@ -105,7 +125,7 @@ export function block(e: Engine, run: RunRow, node: NodeRow, spec: ResolvedNode,
     e.ctx.eventLog.append({ type: 'workflow.node.blocked', runId: run.run_id, nodeId: node.node_id, data: { plan } })
   })
   const body = e.ctx.artifacts.get(plan)?.body as { confidence?: string } | undefined
-  if (e.config.autoApprovePlans && body?.confidence === 'high') {
+  if (e.config.autoApprovePlans && body?.confidence === 'high' && !spec.operatorApproval) {
     decideGate(e, run, e.nodeRow(run.run_id, node.node_id)!, { verdict: 'approved', by: 'policy', note: 'high-confidence plan approved by policy (autoApprovePlans)' }, lease)
   }
 }

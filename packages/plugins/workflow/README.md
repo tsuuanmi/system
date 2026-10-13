@@ -223,7 +223,7 @@ second execution path (INV-1).
     loops.
 - **Events:** `workflow.run.started|completed|failed|continued|deleted`,
   `workflow.node.started|retry|completed|failed|blocked|escalated|superseded`,
-  `workflow.graph.grown`, and `workflow.gate.opened|closed`. A completed node's
+  `workflow.graph.grown|retired`, and `workflow.gate.opened|closed`. A completed node's
   event carries the Worker, tier, and quota class that served it.
 - **Read side:**
   - `get`, `wait`, and `records` read a run and its node records.
@@ -263,14 +263,24 @@ second execution path (INV-1).
     supersedes the old artifact and must pass the node's contract. Every node
     downstream, transitively, is fenced and runs again: new inputs, new hashes,
     no stale reuse. Each records a `recovery` decision naming both artifacts.
-    It is refused for a running run, and where re-planning would be needed.
+    It is refused for a running run.
+  - **Re-planning** ([design](../../../docs/design/workflow-engine.md#re-planning)):
+    a planner downstream of the replacement plans again, and a replaced planner's
+    result is its new plan (an invalid one is refused, and nothing changes).
+    What the replaced node or a rerun node grew (plan steps, gates, remediation
+    cycles), by its recorded origin `grownBy`, becomes `RETIRED`: kept as
+    history in `workflow-node@1.1`, recorded in a `graph-growth` decision
+    (`workflow.re-plan`, `retire`) with states and results. New growth gets
+    `:g<n>:` ids. The new plan supersedes the old one behind a new gate; a
+    verdict on it must name it; after a retired step that needed approval
+    started, it is the operator's even under `autoApprovePlans`. A gate is never
+    superseded.
   - `usage` lists runs, and `result` / `watch` follow one.
   - A request that arrives while a run's advance is still unwinding (for
     example `continue` right after the run failed) runs once that advance
     ends; it is never dropped.
 - **Retention:** runs are deleted only by the operator (`delete`). After
   `retainDays`, a finished run's input text and rendered prompts are cleared.
-- **Not yet:** re-planning after a superseded input.
 - **Injects:** `store`, `artifacts`, `eventLog`, `leases`, `egress`, `workers`, `workerSessions`;
   `mcp` is optional.
 

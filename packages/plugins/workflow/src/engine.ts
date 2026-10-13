@@ -212,7 +212,8 @@ export class Engine {
           if (signal.aborted) return
           const run = this.runRow(runId)
           if (!run || run.status !== 'running') return
-          const nodes = this.nodeRows(runId)
+          // Retired nodes (a re-plan's history) never run and never decide the run's outcome.
+          const nodes = this.nodeRows(runId).filter((n) => n.state !== 'RETIRED')
           const failed = nodes.find((n) => n.state === 'FAILED')
           if (failed) return this.finish(run, 'failed', { error: failed.error }, current)
           if (nodes.every((n) => n.state === 'COMPLETED')) {
@@ -222,7 +223,7 @@ export class Engine {
           for (const node of nodes) {
             if (node.state === 'WAITING' && node.dependsOnCompleted(nodes)) this.promote(run, node, nodes, current)
           }
-          const current_ = this.nodeRows(runId)
+          const current_ = this.nodeRows(runId).filter((n) => n.state !== 'RETIRED')
           if (current_.some((n) => n.state === 'FAILED')) continue
           // A carried node completed without running (a converged team): its dependents may be ready now.
           if (current_.filter((n) => n.state === 'COMPLETED').length > nodes.filter((n) => n.state === 'COMPLETED').length) continue
