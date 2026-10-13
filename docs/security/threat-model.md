@@ -188,10 +188,10 @@
   `model-local` for a model on this machine, from the operator's catalog entry). The
   check combines two rules. First, the caller's classification must be permitted for
   the Worker class (by default `website`, `agent`, and `model` receive only `public`
-  and `operator-shared`, so `local-private` is denied; `model-local` also receives
-  `local-private`; an operator whose agent model runs locally widens `agent`). A
-  catalog entry wrongly marked `local` would send local-private data to a remote
-  endpoint, so `locality` is a trusted operator statement, like a classification. Second, a
+  and `operator-shared`, so `local-private` is denied, `model-local` included; an
+  operator whose agent model runs locally widens `agent`, and one whose model server
+  runs here widens `model-local`). A catalog entry wrongly marked `local` alone sends
+  no private data: widening the class is a second, explicit act. Second, a
   credential scan must find nothing (secretlint's recommended rules plus operator
   deny patterns). Every check is an `egress` decision, and findings keep rule ids
   and offsets, never the secret. A denial fails the turn, agent run, or model call as

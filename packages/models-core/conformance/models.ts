@@ -47,6 +47,7 @@ export function modelsConformance(name: string, boot: Boot): void {
     it('completes a prompt with its text, token usage, and finish (REQ-WRK-10)', () => withModels(async (ctx) => {
       const completion: ModelCompletion = await ctx.models.complete({ model: 'echo', prompt: 'hello' })
       expect(completion).toMatchObject({ model: 'echo', text: 'echo: hello', finish: 'stop', maxTokens: 64 })
+      expect(Number.isInteger(completion.attempts) && completion.attempts >= 1).toBe(true)
       for (const n of [completion.usage.inputTokens, completion.usage.outputTokens]) expect(Number.isInteger(n) && n >= 0).toBe(true)
     }))
 
@@ -112,6 +113,6 @@ export class FakeModels extends Models {
     const failure = this.script.fail?.shift()
     if (failure) throw new ModelError(failure, `scripted ${failure}`)
     const maxTokens = Math.min(request.maxTokens ?? entry.maxTokens, entry.maxTokens)
-    return { model: entry.id, text: this.script.answer?.(request.prompt) ?? `echo: ${request.prompt}`, usage: { inputTokens: 7, outputTokens: 3 }, finish: 'stop', maxTokens }
+    return { model: entry.id, text: this.script.answer?.(request.prompt) ?? `echo: ${request.prompt}`, usage: { inputTokens: 7, outputTokens: 3 }, finish: 'stop', maxTokens, attempts: 1 }
   }
 }

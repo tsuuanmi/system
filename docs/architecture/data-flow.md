@@ -109,7 +109,7 @@ the [roadmap](../proposals/roadmap.md) tracks the rows that have none yet.
 |---|---|---|---|
 | A prompt sent to a website | reconcile-before-repeat | the turn receipt's conversation is observed: WAIT, RECOVER, bounded RESUBMIT, or AMBIGUOUS (fails, never resent) | [restart.crash.ts](../../packages/system-bundle/tests/crash/restart.crash.ts): sent and bound, answered, sent but unbound, temporary chat |
 | An agent run started on its workspace | block | the run fails as `reconciliation_failed`; the agent never starts again | [agent.crash.ts](../../packages/system-bundle/tests/crash/agent.crash.ts) |
-| A prompt sent to an API or local model | safe-to-repeat, bounded cost | the call is sent once more (it has no effect beyond its cost); a call already sent twice fails as `reconciliation_failed` | [model.crash.ts](../../packages/system-bundle/tests/crash/model.crash.ts): sent, killed before the answer, sent once more |
+| A prompt sent to an API or local model | safe-to-repeat, bounded cost | a recorded `reconciliation` decision sends the call once more (egress checked again), or, sent twice already, fails it as `reconciliation_failed`; at most `sends × attempts` billed requests | [model.crash.ts](../../packages/system-bundle/tests/crash/model.crash.ts): sent, killed before the answer, sent once more |
 | A peer message delivered | safe-to-repeat | delivery is idempotent by the sender's `messageId` | — |
 | A workflow node's result committed, graph growth | safe-to-repeat | one store transaction; a node re-attaches to its execution by key | — |
 | A lease taken over | safe-to-repeat | the generation fence rejects a commit by the old holder | — |

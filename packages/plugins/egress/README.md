@@ -7,9 +7,10 @@
 - **`check({ payload, classification?, workerClass })`** runs on the **actual
   outgoing payload**. The payload is allowed only when both checks pass:
   - the classification is permitted for the Worker class (`workerClasses`,
-    default `website`, `agent`, and `model`: `[public, operator-shared]`;
-    `model-local`: `[public, operator-shared, local-private]`). An unknown
-    class is denied.
+    default `website`, `agent`, `model`, and `model-local`:
+    `[public, operator-shared]`; an operator widens `model-local` for
+    `local-private` once its route's address is loopback). An unknown class is
+    denied.
   - no credential is found: secretlint's recommended rules (private keys, cloud
     and SaaS tokens, and others; in process, with secrets masked), a built-in
     `aws-access-key-id` pattern for the AWS keys those rules miss (a secret

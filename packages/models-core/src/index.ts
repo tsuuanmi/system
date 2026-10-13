@@ -55,6 +55,8 @@ export interface ModelCompletion {
   finish: 'stop' | 'max-tokens'
   /** The output bound the call ran under. */
   maxTokens: number
+  /** Provider requests this completion took, its re-attempts included; each may be billed. */
+  attempts: number
 }
 
 /**

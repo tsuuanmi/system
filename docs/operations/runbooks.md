@@ -153,14 +153,21 @@ on this machine ([models](../design/models.md)). Two rows of the profile's
    the key, then `system continue <runId>`.
 
 - **A local model** (a model server on this machine): set `locality: local` and
-  `quotaClass: local`. Routing may then give it `local-private` work, and egress
-  checks it as Worker class `model-local`. A server that needs no key still
+  `quotaClass: local`. Egress checks it as Worker class `model-local`, which by
+  default receives what a remote model does. To give it `local-private` work,
+  first make sure the route's `baseURL` is loopback (`127.0.0.1` or `localhost`):
+  nothing checks it for you. Then add `local-private` to the egress row's
+  `workerClasses['model-local']` (list every class: the setting replaces the
+  default). A server that needs no key still
   needs a placeholder reference: the OpenAI-compatible protocol sends one.
 - **Egress:** a remote model receives `public` and `operator-shared` content by
   default (Worker class `model`); a credential in a prompt is always refused.
-- **Cost:** each call may be billed. A transiently failed call is sent again at
-  most `maxRetries` times (default 2), and a call interrupted by a restart once
-  more ([effect register](../architecture/data-flow.md#effect-register)).
+- **Cost:** each provider request may be billed. A transiently failed request is
+  re-attempted at most `maxRetries` times (default 2), and a call interrupted by
+  a stop or restart is sent once more, so one call is billed at most six times
+  with the defaults. `system explain` shows each resend as a `reconciliation`
+  decision; the answer records its sends and attempts
+  ([effect register](../architecture/data-flow.md#effect-register)).
 
 ## API-first preset
 

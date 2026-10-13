@@ -35,7 +35,11 @@ REQ-WRK-10). One row, `models`, mounts two parts from one configuration:
   - **Cancel (REQ-WRK-4):** a running call is aborted, a queued one never sent.
   - **Restart (INV-4):** a model call is safe to repeat with a bounded cost. A
     call that was running is sent once more; a call already sent twice fails as
-    `reconciliation_failed`. A call whose lease another process holds is looked
+    `reconciliation_failed`. Each is a recorded `reconciliation` decision and a
+    `models.call.resent` or `models.call.abandoned` event; egress is checked
+    before every send.
+  - **Retention:** finished calls and their prompts go after `retainDays`
+    (default 30). A call whose lease another process holds is looked
     at again when that lease would expire.
 - **`model_key`** (MCP tool, operator scope; `system model key <NAME>`): stores a
   route's API key, encrypted, under the credential reference its `apiKeyEnv`

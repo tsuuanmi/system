@@ -72,10 +72,10 @@ describe('the DSH llm rows (spike, ADR-0025): they mount without dsh-base and st
     for (const absent of ['attachments', 'settings', 'authorization', 'agents', 'sessionProjections']) expect(ctx.get(absent as never)).toBeUndefined()
     await ctx.plugin(LlmModels, { models: routed(CATALOG) })
     const completion = await ctx.models.complete({ model: 'echo', prompt: 'hello' })
-    expect(completion).toEqual({ model: 'echo', text: 'echo: hello', usage: { inputTokens: 7, outputTokens: 3 }, finish: 'stop', maxTokens: 64 })
+    expect(completion).toEqual({ model: 'echo', text: 'echo: hello', usage: { inputTokens: 7, outputTokens: 3 }, finish: 'stop', maxTokens: 64, attempts: 1 })
     // The key never sits in configuration: the route names a reference, the vault holds the value.
     expect(server.requests[0]).toMatchObject({ authorization: 'Bearer sk-test-0123456789', body: { model: 'm1', max_completion_tokens: 64, messages: [{ role: 'user', content: 'hello' }] } })
-    // A missing key fails closed as a credential failure, before anything is sent.
+    // A missing key fails closed as a credential failure, before anything reaches the provider.
     await ctx.credentials.unset(credentialRef(KEY))
     await expect(ctx.models.complete({ model: 'echo', prompt: 'again' })).rejects.toMatchObject({ failure: 'credential' })
     expect(server.requests).toHaveLength(1)
@@ -125,13 +125,19 @@ describe('LlmModels: bounded re-attempts by the route\'s retry policy (INV-9)', 
     expect(server.requests).toHaveLength(1)
   })
 
-  it('stays bounded under an unbounded route policy', async () => {
+  it('stays bounded under an unbounded route policy, and never re-attempts what cannot succeed', async () => {
     const { ctx, server } = await boot(2, { mode: 'always', backoff: { initialDelayMs: 1, maxDelayMs: 5 } })
-    server.script.push({ status: 401 }, { status: 401 }, { status: 401 }, { status: 401 })
+    server.script.push({ status: 500 }, { status: 500 }, { status: 500 })
     const failure = await ctx.models.complete({ model: 'echo', prompt: 'z' }).catch((error: unknown) => error)
     expect(failure).toBeInstanceOf(ModelError)
-    // Always mode retries everything; the plugin's bound still stops it after 1 + 2 sends.
+    // Always mode retries transient failures; the plugin's bound still stops it after 1 + 2 sends.
     expect(server.requests).toHaveLength(3)
+    // A refused key, a spent quota, or an invalid request only bills again: one request, and the
+    // provider's own text (which can echo part of a key) is not repeated.
+    server.script.push({ status: 401 })
+    const refused = await ctx.models.complete({ model: 'echo', prompt: 'z' }).catch((error: unknown) => error) as ModelError
+    expect(server.requests).toHaveLength(4)
+    expect(refused.message).toMatch(/refused the credential, or none is stored/)
   })
 
   it('reports an answer cut at the bound as max-tokens', async () => {
@@ -149,11 +155,11 @@ const CATALOG_W: ModelEntry[] = [
   { id: 'private', tier: 'standard', quotaClass: 'local', locality: 'local', maxTokens: 32 },
 ]
 
-async function boot(options: { script?: FakeScript; workers?: Record<string, unknown>; dir?: string; research?: boolean } = {}) {
+async function boot(options: { script?: FakeScript; workers?: Record<string, unknown>; egress?: Record<string, unknown>; dir?: string; research?: boolean } = {}) {
   const dir = options.dir ?? temp('system-model-workers-')
   const ctx = new Context()
   const fibers = [
-    ctx.plugin(Store, { path: join(dir, 'system.db') }), ctx.plugin(Artifacts, {}), ctx.plugin(EventLog, {}), ctx.plugin(Leases, {}), ctx.plugin(Egress, {}),
+    ctx.plugin(Store, { path: join(dir, 'system.db') }), ctx.plugin(Artifacts, {}), ctx.plugin(EventLog, {}), ctx.plugin(Leases, {}), ctx.plugin(Egress, options.egress ?? {}),
     ctx.plugin(WorkerRouter, {}), ctx.plugin(FakeModels, { catalog: CATALOG_W, script: options.script ?? {} }),
     ctx.plugin(ModelWorkers, { callTimeoutMs: 5_000, ...options.workers }), ctx.plugin(WorkerSessions, {}), ctx.plugin(Workflow, { retryDelayMs: 100 }),
   ]
@@ -229,14 +235,20 @@ describe('ctx.workers source `models`: API and local models as Workers (REQ-WRK-
     expect(denied).toMatchObject({ status: 'failed', submitted: false, error: { kind: 'egress_denied' } })
     const egress = ctx.artifacts.get(denied.decisions[0]!)!.body as { outcome: { option: string; detail: { workerClass: string } } }
     expect(egress.outcome).toMatchObject({ option: 'deny', detail: { workerClass: 'model' } })
-    // A model on this machine may read local-private data (Worker class model-local)...
-    const local = await settle(ctx, source.start({ key: 'p-2', worker: 'model:private', prompt: 'my diary', requirement: requirement({ data: { classification: 'local-private', refs: [] } }), decisions: DECISIONS }))
+    // A model the catalog calls local gets local-private data only once the operator also widens its
+    // class: `locality` alone is one unchecked field (INV-12).
+    const unwidened = await settle(ctx, source.start({ key: 'p-0', worker: 'model:private', prompt: 'my diary', requirement: requirement({ data: { classification: 'local-private', refs: [] } }), decisions: DECISIONS }))
+    expect(unwidened).toMatchObject({ status: 'failed', error: { kind: 'egress_denied' } })
+    const widened = await boot({ egress: { workerClasses: { model: ['public', 'operator-shared'], 'model-local': ['public', 'operator-shared', 'local-private'] } } })
+    const local = await settle(widened.ctx, widened.ctx.workers.source('models')!.start({ key: 'p-2', worker: 'model:private', prompt: 'my diary', requirement: requirement({ data: { classification: 'local-private', refs: [] } }), decisions: DECISIONS }))
     expect(local).toMatchObject({ status: 'completed' })
-    expect((ctx.artifacts.get(local.decisions[0]!)!.body as { outcome: { detail: { workerClass: string } } }).outcome.detail.workerClass).toBe('model-local')
+    expect((widened.ctx.artifacts.get(local.decisions[0]!)!.body as { outcome: { detail: { workerClass: string } } }).outcome.detail.workerClass).toBe('model-local')
     // ...but a credential in the payload is refused whatever the class.
     const secret = await settle(ctx, source.start({ key: 'p-3', worker: 'model:private', prompt: `key ${awsKeyId()} here`, requirement: requirement(), decisions: DECISIONS }))
     expect(secret).toMatchObject({ status: 'failed', error: { kind: 'egress_denied' } })
-    expect(fake.calls.map((c) => c.prompt)).toEqual(['my diary'])
+    // Nothing reached the model where the class was not widened; the widened one got the diary once.
+    expect(fake.calls).toEqual([])
+    expect(widened.fake.calls.map((c) => c.prompt)).toEqual(['my diary'])
     // Routing keeps local-private work off remote models in the first place.
     expect((await ctx.workers.route(requirement({ data: { classification: 'local-private', refs: [] } }))).worker.worker).toBe('model:private')
   })
@@ -283,8 +295,14 @@ describe('ctx.workers source `models`: API and local models as Workers (REQ-WRK-
     expect(second.ctx.workers.source('models')!.get(call.id)).toMatchObject({ status: 'running', submitted: true })
     await second.stop()
     const third = await boot({ dir: first.dir })
-    expect(await third.ctx.workers.source('models')!.wait(call.id, 10_000)).toMatchObject({ status: 'failed', error: { kind: 'reconciliation_failed' } })
+    const failed = await third.ctx.workers.source('models')!.wait(call.id, 10_000)
+    expect(failed).toMatchObject({ status: 'failed', error: { kind: 'reconciliation_failed' } })
     expect(third.fake.calls).toHaveLength(0)
+    // Each decision is recorded (INV-13): resend after the first stop, fail after the second.
+    const outcomes = failed.decisions.map((id) => third.ctx.artifacts.get(id)!.body as { decisionType: string; outcome: { option: string } })
+      .filter((d) => d.decisionType === 'reconciliation').map((d) => d.outcome.option)
+    expect(outcomes).toEqual(['resend', 'fail'])
+    expect(third.ctx.eventLog.query({ type: 'models.call.abandoned' })).toHaveLength(1)
   })
 
   it('a restart re-sends an interrupted call once and completes it', async () => {
@@ -293,8 +311,15 @@ describe('ctx.workers source `models`: API and local models as Workers (REQ-WRK-
     await expect.poll(() => first.fake.calls.length).toBe(1)
     await first.stop()
     const second = await boot({ dir: first.dir })
-    expect(await second.ctx.workers.source('models')!.wait(call.id, 10_000)).toMatchObject({ status: 'completed' })
+    const done = await second.ctx.workers.source('models')!.wait(call.id, 10_000)
+    expect(done).toMatchObject({ status: 'completed' })
     expect(second.fake.calls.map((c) => c.prompt)).toEqual(['again'])
+    // The resend is a recorded decision and an event, egress is checked again, and the answer
+    // says it was the second send (INV-4, INV-12, INV-13).
+    const kinds = done.decisions.map((id) => (second.ctx.artifacts.get(id)!.body as { decisionType: string }).decisionType)
+    expect(kinds).toEqual(['egress', 'reconciliation', 'egress'])
+    expect(second.ctx.eventLog.query({ type: 'models.call.resent' })).toHaveLength(1)
+    expect(second.ctx.artifacts.get(done.result!)!.body).toMatchObject({ sends: 2, attempts: 1 })
   })
 
   it('with only model Workers, templates that need website capabilities fail admission with the reason (ADR-0025, INV-2)', async () => {

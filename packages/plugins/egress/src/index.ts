@@ -28,7 +28,9 @@ export const WORKER_CLASSES: Readonly<Record<string, Classification[]>> = {
   website: ['public', 'operator-shared'],
   agent: ['public', 'operator-shared'],
   model: ['public', 'operator-shared'],
-  'model-local': ['public', 'operator-shared', 'local-private'],
+  // Not local-private by default: `locality: local` is one catalog field nothing checks against
+  // the route's address, so private data needs a second, explicit act (INV-12).
+  'model-local': ['public', 'operator-shared'],
 }
 
 export interface DenyPattern {
@@ -41,8 +43,9 @@ export interface Config {
   /**
    * Classifications each Worker class may receive (default {@link WORKER_CLASSES}). `agent` is
    * an agent runtime Worker: it runs here, but its model is remote; widen it only for an agent
-   * whose model runs on this machine. `model` is an API model; `model-local` is a model that
-   * runs on this machine, so it may also receive local-private data.
+   * whose model runs on this machine. `model` is an API model; `model-local` is a model the
+   * catalog says runs on this machine: widen it for local-private only once its route's address
+   * is this machine's (nothing checks that for you).
    */
   workerClasses?: Record<string, Classification[]>
   /** Classification of content whose caller states none (default operator-shared). */

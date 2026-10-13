@@ -96,7 +96,7 @@ async function main(argv: string[]): Promise<number> {
   switch (command) {
     case 'init': {
       const preset = rest[0] === '--preset' ? rest[1] : undefined
-      if ((rest.length && !preset) || (preset !== undefined && preset !== 'default' && !Object.hasOwn(PRESETS, preset))) break
+      if ((rest.length && !preset) || rest.length > 2 || (preset !== undefined && preset !== 'default' && !Object.hasOwn(PRESETS, preset))) break
       assertRuntime()
       console.log(`profile ready: ${init(undefined, preset as Preset | undefined)}`)
       // Chrome and Xvfb serve the browser row only; a composition without it never needs them (ADR-0025).
@@ -204,6 +204,8 @@ async function main(argv: string[]): Promise<number> {
     case 'model': {
       if (rest[0] !== 'key' || !rest[1]) break
       // Read from stdin, never from arguments: a key must not reach the process list or history.
+      // Nor from a terminal, which would echo it: pipe it in (system model key NAME < file).
+      if (process.stdin.isTTY) throw new Error('pipe the key on stdin (system model key <NAME> < file); a terminal would echo it')
       const value = (await readAllStdin()).trim()
       if (!value) throw new Error('no key on stdin')
       const outcome = await callTool('model_key', { name: rest[1], value })

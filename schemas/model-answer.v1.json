@@ -4,7 +4,7 @@
   "title": "Model answer",
   "description": "Body of a `report` artifact holding one API or local model Worker's answer (design/models.md). The prompt is referenced by hash only; the model is named by its catalog id.",
   "type": "object",
-  "required": ["schema", "worker", "model", "callId", "promptHash", "quotaClass", "locality", "finish", "maxTokens", "usage", "text"],
+  "required": ["schema", "worker", "model", "callId", "promptHash", "quotaClass", "locality", "finish", "maxTokens", "sends", "attempts", "usage", "text"],
   "properties": {
     "schema": { "const": "model-answer@1.0" },
     "worker": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
@@ -15,6 +15,8 @@
     "locality": { "enum": ["remote", "local"] },
     "finish": { "enum": ["stop", "max-tokens"] },
     "maxTokens": { "type": "integer", "minimum": 1, "maximum": 200000 },
+    "sends": { "description": "How many times the call was sent: 1, or 2 when a restart sent it once more.", "type": "integer", "minimum": 1, "maximum": 2 },
+    "attempts": { "description": "Provider requests the last send took, its transient re-attempts included. Each may be billed; usage counts only the one that answered.", "type": "integer", "minimum": 1, "maximum": 10 },
     "usage": {
       "type": "object",
       "required": ["inputTokens", "outputTokens"],

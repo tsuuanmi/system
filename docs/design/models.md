@@ -71,8 +71,10 @@ routing, profiles, or presets names a model ([INV-11](../architecture/invariants
 `system-credentials-vault` provides. The vault reads the process environment first, then its
 encrypted references. The documented path is the vault: the operator tool `model_key` (`system
 model key <NAME>`, value from stdin) stores the key under that reference. A key exported in the
-daemon's environment also works and shadows the vault. A missing or refused key fails the call as
-`credential` before anything is sent.
+daemon's environment also works and shadows the vault. A missing key fails the call as
+`credential` before anything reaches the provider; the call still counts as sent (one of its two
+sends), since the send is counted before the adapter resolves the key. A refused key fails with a
+fixed message: a provider can echo part of a key in its error text.
 
 ## Worker
 
@@ -93,16 +95,21 @@ locality is what admits `local-private` work to it
    reused with another prompt is refused. A session is refused: a model keeps no conversation.
 2. **Egress** ([INV-12](../architecture/invariants.md#inv-12-data-egress-is-explicit)): the exact
    prompt is checked by `ctx.egress` before it is sent, for Worker class `model` (remote, default
-   `public` and `operator-shared`) or `model-local` (local, default also `local-private`). The
+   `public` and `operator-shared`) or `model-local` (local, the same default: `local-private`
+   needs the operator to widen the class too, since nothing checks that a `local` route's address
+   is this machine's). The
    decision joins the call's decision chain. A denial fails the call as `egress_denied`, never sent.
 3. **Bounds** ([INV-9](../architecture/invariants.md#inv-9-everything-is-bounded)): at most
    `maxConcurrentCalls` calls in flight; output tokens at most the entry's `maxTokens` and the
    requirement's `budget.maxTokens`; a hard deadline `callTimeoutMs` (failure `timeout`).
 4. **Re-attempts:** a failure the route's retry policy calls transient (DSH codes such as
    `RATE_LIMIT`, `SERVER`, `TIMEOUT`) is sent again with its backoff, at most `maxRetries` times
-   (default 2), whatever the route policy allows. Each send may be billed.
+   (default 2), whatever the route policy allows; a refused credential, a spent quota, or an invalid
+   request is never re-attempted, whatever the policy. Each request may be billed.
 5. **Result:** a `report` artifact `model-answer@1.0` with the catalog id, the prompt's hash, the
-   finish (`max-tokens` when cut at the bound), the bound, and the token usage. The usage report
+   finish (`max-tokens` when cut at the bound), the bound, the sends and attempts, and the token
+   usage of the request that answered. At worst a call is billed `sends × attempts` times: six
+   with the defaults (two sends of up to three requests each). The usage report
    (`system usage`) shows the step's tokens beside its quota class.
 
 | Seam failure | Engine failure class | Disposition |
@@ -122,8 +129,12 @@ locality is what admits `local-private` work to it
   sent; both fail as `aborted`.
 - **Restart** ([INV-4](../architecture/invariants.md#inv-4-restart-is-reconciliation-not-replay)):
   a model call has no effect beyond its cost, so it is **safe to repeat with a bounded cost**. A
-  queued call starts. A call that was running is sent once more; a call already sent twice fails
-  as `reconciliation_failed` and is never sent a third time. The
+  queued call starts. A call that was running is sent once more, or, already sent twice, fails as
+  `reconciliation_failed` and is never sent a third time; either way a `reconciliation` decision
+  and a `models.call.resent` or `models.call.abandoned` event record it. Egress is checked before
+  every send, since the route may have changed. A stop counts too: it aborts a call in flight, so
+  the next start sends it again. Finished calls and their prompts go after `retainDays`
+  (default 30). The
   [effect register](../architecture/data-flow.md#effect-register) has the row and its crash test.
 
 ## The `api-first` preset

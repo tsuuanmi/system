@@ -28,9 +28,12 @@ export interface Config {
   maxConcurrentCalls?: number
   /** Hard deadline per call (default 5 min). */
   callTimeoutMs?: number
+  /** Days a finished call and its prompt are kept (default 30). */
+  retainDays?: number
 }
 
-const ID = /^[a-z][a-z0-9-]*$/
+/** The schema bounds a model id to 64 characters, so the catalog does too: a longer one would fail after the call was billed. */
+const ID = /^[a-z][a-z0-9-]{0,63}$/
 
 export const Config: z<Config> = z.object({
   models: z.array(z.object({
@@ -45,6 +48,7 @@ export const Config: z<Config> = z.object({
   maxRetries: z.natural().max(5).default(2).description('Re-attempts of a transiently failed call'),
   maxConcurrentCalls: z.natural().min(1).max(64).default(4).description('Model calls in flight at once'),
   callTimeoutMs: z.natural().min(1).default(5 * 60_000).description('Hard deadline per call'),
+  retainDays: z.natural().min(1).default(30).description('Days a finished call and its prompt are kept'),
 }) as unknown as z<Config>
 
 export function apply(ctx: Context, config: Config): void {
@@ -58,6 +62,7 @@ export function apply(ctx: Context, config: Config): void {
   ctx.plugin(ModelWorkers, {
     ...(config.maxConcurrentCalls !== undefined ? { maxConcurrentCalls: config.maxConcurrentCalls } : {}),
     ...(config.callTimeoutMs !== undefined ? { callTimeoutMs: config.callTimeoutMs } : {}),
+    ...(config.retainDays !== undefined ? { retainDays: config.retainDays } : {}),
   })
   ctx.inject(['mcp', 'credentials'], (c) => {
     c.mcp.tool('model_key', {

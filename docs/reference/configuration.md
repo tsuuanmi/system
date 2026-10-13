@@ -92,7 +92,7 @@
 
 | Option | Type | Default | Description |
 |---|---|---|---|
-| `workerClasses` | Record<string, ("public" \| "operator-shared" \| "local-private")[]> | `{"website":["public","operator-shared"],"agent":["public","operator-shared"],"model":["public","operator-shared"],"model-local":["public","operator-shared","local-private"]}` | Classifications each Worker class may receive |
+| `workerClasses` | Record<string, ("public" \| "operator-shared" \| "local-private")[]> | `{"website":["public","operator-shared"],"agent":["public","operator-shared"],"model":["public","operator-shared"],"model-local":["public","operator-shared"]}` | Classifications each Worker class may receive |
 | `defaultClassification` | "public" \| "operator-shared" \| "local-private" | `"operator-shared"` | Classification when the caller states none |
 | `scanSecrets` | boolean | `true` | Scan payloads for credentials (secretlint recommended rules) |
 | `denyPatterns` | object[] | `[]` | Operator patterns that must never leave the machine |
@@ -189,6 +189,7 @@
 | `maxRetries` | number (0…5) | `2` | Re-attempts of a transiently failed call |
 | `maxConcurrentCalls` | number (1…64) | `4` | Model calls in flight at once |
 | `callTimeoutMs` | number (1…) | `300000` | Hard deadline per call |
+| `retainDays` | number (1…) | `30` | Days a finished call and its prompt are kept |
 
 ## `profile-scientific-research`
 

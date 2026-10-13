@@ -139,8 +139,12 @@ guesses.
 - `finish` is `max-tokens` when the answer was cut at `maxTokens`, the bound the
   call ran under (the smaller of the catalog entry's and the requirement's
   budget).
-- `usage` is the provider's own token count. The usage report shows it per step;
-  it is not priced.
+- `usage` is the provider's own token count of the request that answered. The
+  usage report shows it per step; it is not priced.
+- `sends` is how many times the call was sent (2 when a restart sent it once
+  more, a recorded `reconciliation` decision), and `attempts` how many provider
+  requests the last send took. Each request may be billed: at worst
+  `sends × attempts`, six with the defaults.
 
 ### `account`
 

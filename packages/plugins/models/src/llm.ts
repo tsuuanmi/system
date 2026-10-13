@@ -31,7 +31,10 @@ const FAILURES: Record<string, ModelFailure> = {
   ABORTED: 'aborted',
 }
 
-type Attempt = { ok: true; completion: Omit<ModelCompletion, 'model' | 'maxTokens'> } | { ok: false; failure: LlmFailure }
+type Attempt = { ok: true; completion: Omit<ModelCompletion, 'model' | 'maxTokens' | 'attempts'> } | { ok: false; failure: LlmFailure }
+
+/** Failures no re-attempt can fix, whatever a route's retry policy says: trying again only bills again. */
+const NEVER_RETRIED = new Set(['ABORTED', 'MISSING_CREDENTIAL', 'INVALID_CREDENTIAL', 'AUTH', 'QUOTA', 'ACCOUNT_QUOTA', 'INVALID_REQUEST', 'NO_ADAPTER', 'UNKNOWN_MODEL'])
 
 export class LlmModels extends Models {
   static inject = ['llm']
@@ -70,9 +73,9 @@ export class LlmModels extends Models {
     const limit = Math.min(this.config.maxRetries ?? 2, policy.mode === 'normal' ? policy.maxRetries : Number.POSITIVE_INFINITY)
     for (let attempt = 0; ; attempt++) {
       const outcome = await this.attempt(entry, request.prompt, maxTokens, signal)
-      if (outcome.ok) return { model: entry.id, ...outcome.completion, maxTokens }
+      if (outcome.ok) return { model: entry.id, ...outcome.completion, maxTokens, attempts: attempt + 1 }
       const { failure } = outcome
-      const transient = policy.mode === 'always' ? failure.code !== 'ABORTED' : policy.retryableCodes.includes(failure.code)
+      const transient = !NEVER_RETRIED.has(failure.code) && (policy.mode === 'always' || policy.retryableCodes.includes(failure.code))
       if (!transient || attempt >= limit || signal?.aborted) throw modelError(entry.id, failure, signal)
       const backoff = Math.min(policy.maxDelayMs, failure.providerRetryAfterMs ?? policy.initialDelayMs * 2 ** attempt)
       await sleep(backoff, signal)
@@ -103,6 +106,8 @@ export class LlmModels extends Models {
 
 function modelError(model: string, failure: LlmFailure, signal: AbortSignal | undefined): ModelError {
   const kind: ModelFailure = signal?.aborted ? 'aborted' : FAILURES[failure.code] ?? 'invalid-request'
+  // A provider can echo part of a refused key: a credential failure says only what failed.
+  if (kind === 'credential') return new ModelError(kind, `${model}: ${failure.code}: the provider refused the credential, or none is stored (system model key)`)
   return new ModelError(kind, `${model}: ${failure.code}: ${failure.message.slice(0, 500)}`)
 }
 

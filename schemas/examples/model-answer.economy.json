@@ -8,6 +8,8 @@
   "locality": "remote",
   "finish": "stop",
   "maxTokens": 4096,
+  "sends": 1,
+  "attempts": 1,
   "usage": { "inputTokens": 412, "outputTokens": 96 },
   "text": "Three items match the filter; the second is a duplicate of the first."
 }

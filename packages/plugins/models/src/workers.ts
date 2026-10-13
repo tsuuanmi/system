@@ -21,6 +21,8 @@ export interface ModelWorkersConfig {
   maxConcurrentCalls?: number
   /** Hard deadline per call; the call is stopped and fails as `timeout` (default 5 min). */
   callTimeoutMs?: number
+  /** Days a finished call (with its prompt) is kept, as turns are (default 30; INV-9). */
+  retainDays?: number
 }
 
 interface CallRow {
@@ -36,7 +38,8 @@ interface CallRow {
   submitted_at: string | null
   result: string | null
   error: string | null
-  egress_decision: string | null
+  /** Every decision the call's sends were made under: each egress check, each reconciliation (JSON array). */
+  decisions: string
   created_at: string
   updated_at: string
 }
@@ -70,7 +73,7 @@ export class ModelWorkers {
       version: 1,
       sql: `CREATE TABLE model_calls (
         call_id TEXT PRIMARY KEY, request_key TEXT UNIQUE NOT NULL, worker TEXT NOT NULL, prompt TEXT NOT NULL, classification TEXT NOT NULL,
-        max_tokens INTEGER, status TEXT NOT NULL, sends INTEGER NOT NULL DEFAULT 0, submitted_at TEXT, result TEXT, error TEXT, egress_decision TEXT,
+        max_tokens INTEGER, status TEXT NOT NULL, sends INTEGER NOT NULL DEFAULT 0, submitted_at TEXT, result TEXT, error TEXT, decisions TEXT NOT NULL DEFAULT '[]',
         created_at TEXT NOT NULL, updated_at TEXT NOT NULL
       );
       CREATE INDEX model_calls_status ON model_calls (status);`,
@@ -87,8 +90,14 @@ export class ModelWorkers {
       cancel: (id) => this.cancel(id),
     })
     ctx.effect(() => {
-      queueMicrotask(() => this.recover())
+      queueMicrotask(() => {
+        this.purge()
+        this.recover()
+      })
+      const daily = setInterval(() => this.purge(), 24 * 60 * 60_000)
+      daily.unref()
       return async () => {
+        clearInterval(daily)
         // A stop is not a failure: a running call stays as it is, and the next start sends it again once.
         this.stopped.abort()
         for (const timer of this.retries) clearTimeout(timer)
@@ -98,6 +107,21 @@ export class ModelWorkers {
         this.waiters.clear()
       }
     })
+  }
+
+  /**
+   * Finished calls and their prompts go after `retainDays` (INV-9); the answer stays an artifact
+   * while anything retained references it. A failed pass is logged and retried the next day.
+   */
+  purge(now: number = Date.now()): number {
+    const cutoff = new Date(now - (this.config.retainDays ?? 30) * 24 * 60 * 60_000).toISOString()
+    try {
+      return Number(this.ctx.store.transaction((db) => db.prepare("DELETE FROM model_calls WHERE status IN ('completed', 'failed') AND updated_at < ?").run(cutoff)).changes)
+    } catch (error) {
+      this.ctx.logger.warn('models: removing finished calls failed; the next daily pass retries')
+      this.ctx.logger.warn(error)
+      return 0
+    }
   }
 
   /** Each catalog entry: `reason` while its route serves the model, unavailable otherwise. */
@@ -125,7 +149,7 @@ export class ModelWorkers {
       }
       const row: CallRow = {
         call_id: newId(), request_key: key, worker: request.worker, prompt: request.prompt, classification: request.requirement.data.classification,
-        max_tokens: request.requirement.budget?.maxTokens ?? null, status: 'queued', sends: 0, submitted_at: null, result: null, error: null, egress_decision: null,
+        max_tokens: request.requirement.budget?.maxTokens ?? null, status: 'queued', sends: 0, submitted_at: null, result: null, error: null, decisions: '[]',
         created_at: now(), updated_at: now(),
       }
       db.prepare(`INSERT INTO model_calls (call_id, request_key, worker, prompt, classification, max_tokens, status, created_at, updated_at)
@@ -220,14 +244,13 @@ export class ModelWorkers {
     try {
       const row = this.row(callId)
       if (!row || row.status === 'completed' || row.status === 'failed') return
-      if (row.sends >= MAX_SENDS) {
-        this.fail(row, new ProviderError('reconciliation_failed', `the host stopped while ${row.worker} was answering, ${row.sends} times; it is not sent again`), current)
-        return
-      }
+      // A call already sent was interrupted by a stop or a crash: whether it is sent again is a
+      // recorded decision (INV-4, INV-13), as a website turn's reconciliation is.
+      if (row.sends > 0 && !this.reconcile(row, current)) return
       const model = (await this.ctx.models.list()).find((m) => PREFIX + m.id === row.worker)
       if (!model) throw new ProviderError('config_error', `${row.worker} is no longer in the model catalog`)
-      // Checked until the prompt is first sent; a call sent before a restart was allowed then.
-      if (row.sends === 0 && !(await this.egress(row, model, current))) return
+      // Before every send: the route may have changed since an earlier one (INV-12).
+      if (!(await this.egress(row, model, current))) return
       await this.scheduler.runTurn(row.call_id, signal, async (slot) => this.execute(row, model, AbortSignal.any([signal, slot.signal]), current))
     } catch (error) {
       if (this.stopped.signal.aborted) return
@@ -257,13 +280,38 @@ export class ModelWorkers {
     const verdict = await this.ctx.egress.check({
       payload: row.prompt, classification: row.classification as Classification, workerClass: model.locality === 'local' ? 'model-local' : 'model',
     })
-    this.ctx.store.transaction((db) => {
-      this.ctx.leases.fence(lease())
-      db.prepare('UPDATE model_calls SET egress_decision = ? WHERE call_id = ?').run(verdict.decision, row.call_id)
-    })
-    row.egress_decision = verdict.decision
+    this.addDecision(row, verdict.decision, lease)
     if (!verdict.allowed) this.fail(row, new ProviderError('egress_denied', `${verdict.reason} (decision ${verdict.decision})`), lease)
     return verdict.allowed
+  }
+
+  private addDecision(row: CallRow, decision: string, lease: () => Lease): void {
+    row.decisions = JSON.stringify([...(JSON.parse(row.decisions) as string[]), decision])
+    this.ctx.store.transaction((db) => {
+      this.ctx.leases.fence(lease())
+      db.prepare('UPDATE model_calls SET decisions = ? WHERE call_id = ?').run(row.decisions, row.call_id)
+    })
+  }
+
+  /**
+   * Send a started call once more, or fail it, and record which (a `reconciliation` decision and a
+   * `models.call.resent` event). A model call is safe to repeat at a bounded cost: at most
+   * `MAX_SENDS` sends, each of which may take re-attempts and be billed.
+   */
+  private reconcile(row: CallRow, lease: () => Lease): boolean {
+    const resend = row.sends < MAX_SENDS
+    const reason = resend
+      ? `the host stopped after ${row.sends} send(s) of this call; a model call is safe to repeat, so it is sent again (at most ${MAX_SENDS})`
+      : `the host stopped after ${row.sends} sends of this call; it is not sent again`
+    const decision = this.ctx.artifacts.recordDecision({
+      decisionType: 'reconciliation', question: `Is model call ${row.call_id} sent again after the host stopped?`, inputs: [],
+      candidates: [{ option: 'resend', selected: resend, reasons: resend ? [reason] : [] }, { option: 'fail', selected: !resend, reasons: resend ? [] : [reason] }],
+      decider: { type: 'rule', id: 'models.reconcile', version: '1' }, outcome: { option: resend ? 'resend' : 'fail', detail: { callId: row.call_id, sends: row.sends } }, deterministic: true,
+    }, { producer: { type: 'worker', ref: row.worker } }).id
+    this.addDecision(row, decision, lease)
+    this.ctx.get('eventLog')?.append({ type: resend ? 'models.call.resent' : 'models.call.abandoned', data: { callId: row.call_id, worker: row.worker, sends: row.sends, decision } })
+    if (!resend) this.fail(row, new ProviderError('reconciliation_failed', `${reason} (decision ${decision})`), lease)
+    return resend
   }
 
   private async execute(row: CallRow, model: ModelStatus, signal: AbortSignal, lease: () => Lease): Promise<void> {
@@ -284,7 +332,8 @@ export class ModelWorkers {
         body: {
           schema: 'model-answer@1.0', worker: row.worker, model: model.id, callId: row.call_id, promptHash: sha256(row.prompt),
           quotaClass: model.quotaClass, locality: model.locality, finish: completion.finish, maxTokens: completion.maxTokens,
-          usage: completion.usage, text: completion.text,
+          // Every provider request this call made may be billed: sends of the call, re-attempts of the last one.
+          sends: row.sends + 1, attempts: completion.attempts, usage: completion.usage, text: completion.text,
         },
         classification: row.classification as Classification,
         producer: { type: 'worker', ref: row.worker },
@@ -322,6 +371,6 @@ function execution(row: CallRow): WorkerExecution {
     id: row.call_id, status: row.status, submitted: row.submitted_at !== null,
     ...(row.result ? { result: row.result as ArtifactRef } : {}),
     ...(row.error ? { error: JSON.parse(row.error) as WorkerExecution['error'] & object } : {}),
-    decisions: row.egress_decision ? [row.egress_decision as ContentId] : [],
+    decisions: JSON.parse(row.decisions) as ContentId[],
   }
 }
