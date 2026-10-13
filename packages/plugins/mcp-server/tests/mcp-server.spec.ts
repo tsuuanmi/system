@@ -7,6 +7,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
 import Artifacts from '@tsuuanmi/system-artifacts'
+import EventLog from '@tsuuanmi/system-event-log'
 import Store from '@tsuuanmi/system-store'
 import { afterEach, describe, expect, it } from 'vitest'
 import { z as zod } from 'zod'
@@ -65,7 +66,7 @@ describe('system MCP server on ctx.webServer', () => {
     expect(statSync(join(dir, 'mcp.json')).mode & 0o777).toBe(0o600)
     const client = await connect(url, token)
     const { tools } = await client.listTools()
-    expect(tools.map((tool) => tool.name).sort()).toEqual(['ask', 'research', 'result', 'status'])
+    expect(tools.map((tool) => tool.name).sort()).toEqual(['ask', 'events', 'research', 'result', 'status'])
     const status = await client.callTool({ name: 'status', arguments: {} })
     expect(status.structuredContent).toMatchObject({ harness: 'system', store: 'ok', artifacts: 0, kernel: ['store', 'artifacts'] })
     // No milestone baked into the code: status reports what is mounted, not a roadmap stage.
@@ -82,6 +83,22 @@ describe('system MCP server on ctx.webServer', () => {
     expect(operator.checks.find((c) => c.name === 'store')).toMatchObject({ state: 'ok' })
     expect(client.state).toBe(operator.state)
     for (const c of client.checks) if (c.state !== 'ok') expect(c.detail).toBe('ask the operator')
+  })
+
+  it('reads the event log for the operator only, in order, a page at a time (QA-7, ADR-0023)', async () => {
+    const { url, tokens, ctx } = await boot()
+    const fiber = ctx.plugin(EventLog, {})
+    await fiber
+    cleanups.push(() => fiber.dispose())
+    for (const type of ['a.one', 'b.two', 'a.three']) ctx.eventLog.append({ type, runId: 'r1' })
+    const operator = await connect(url, tokens.operator)
+    const read = async (args: Record<string, unknown>) => (await operator.callTool({ name: 'events', arguments: args })).structuredContent as { events: Array<{ seq: number; type: string }>; next: number }
+    const first = await read({ runId: 'r1', limit: 2 })
+    expect(first.events.map((e) => e.type)).toEqual(['a.one', 'b.two'])
+    expect((await read({ runId: 'r1', afterSeq: first.next })).events.map((e) => e.type)).toEqual(['a.three'])
+    expect((await read({ type: 'a.three' })).events).toHaveLength(1)
+    const client = await connect(url, tokens.client)
+    expect((await client.listTools()).tools.map((t) => t.name)).not.toContain('events')
   })
 
   it('answers liveness at /healthz with no token and no data', async () => {
@@ -136,7 +153,7 @@ describe('scoped tokens', () => {
     expect((await client.listTools()).tools.map((t) => t.name).sort()).toEqual(['ask', 'cl_tool', 'research', 'result', 'status'])
     const operator = await connect(url, tokens.operator)
     const listed = (await operator.listTools()).tools
-    expect(listed.map((t) => t.name).sort()).toEqual(['ask', 'cl_tool', 'op_only', 'research', 'result', 'status'])
+    expect(listed.map((t) => t.name).sort()).toEqual(['ask', 'cl_tool', 'events', 'op_only', 'research', 'result', 'status'])
     // The reference page shows each tool's scope from the listing.
     expect(listed.find((t) => t.name === 'op_only')?._meta).toMatchObject({ 'system/scope': 'operator' })
     expect(listed.find((t) => t.name === 'cl_tool')?._meta).toMatchObject({ 'system/scope': 'client' })

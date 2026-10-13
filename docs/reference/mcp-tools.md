@@ -134,6 +134,20 @@ Scope: `operator`
 
 No arguments.
 
+## `events`
+
+Read the event log in order (QA-7): entries after a cursor, optionally for one run, session, or type. Pass the last seq back as afterSeq for the next page.
+
+Scope: `operator`
+
+| Argument | Type | Required | Description |
+|---|---|---|---|
+| `runId` | string |  |  |
+| `sessionId` | string |  |  |
+| `type` | string |  |  |
+| `afterSeq` | integer |  |  |
+| `limit` | integer |  |  |
+
 ## `explain`
 
 The decision chain behind a run (egress, tier, route, acceptance per step), or the inputs of any artifact id.

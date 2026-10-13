@@ -248,6 +248,27 @@ export async function callTool(name: string, args: Record<string, unknown>, home
   }
 }
 
+export interface EventLine { seq: number; at: string; type: string; runId?: string; nodeId?: string; sessionId?: string; data?: Record<string, unknown> }
+
+/** `system events` flags to the `events` tool's filter. */
+export function parseEvents(args: readonly string[]): Record<string, string | number> | undefined {
+  const filter: Record<string, string | number> = {}
+  const names: Record<string, string> = { '--run': 'runId', '--session': 'sessionId', '--type': 'type', '--after': 'afterSeq', '--limit': 'limit' }
+  for (let i = 0; i < args.length; i += 2) {
+    const name = names[args[i]!]
+    const value = args[i + 1]
+    if (!name || value === undefined) return undefined
+    filter[name] = name === 'afterSeq' || name === 'limit' ? Number(value) : value
+  }
+  return filter
+}
+
+/** One line per event: sequence, time, type, where, and its data. */
+export function formatEvents(events: readonly EventLine[]): string[] {
+  return events.map((e) => [e.seq, e.at, e.type, e.runId ? `run=${e.runId}${e.nodeId ? `/${e.nodeId}` : ''}` : '', e.sessionId ? `session=${e.sessionId}` : '', e.data ? JSON.stringify(e.data) : '']
+    .filter((part) => part !== '').join(' '))
+}
+
 export interface HealthView { state: 'ok' | 'degraded' | 'down'; checks: Array<{ name: string; state: 'ok' | 'degraded' | 'down'; detail: string }> }
 
 /** The exit code `system health` ends with: 0 healthy, 1 degraded, 2 down. */

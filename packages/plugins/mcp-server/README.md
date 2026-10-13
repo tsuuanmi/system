@@ -22,7 +22,11 @@ the `system` CLI
   lifetime, so unloading the plugin removes it. A name is unique, except that a
   built-in placeholder may be replaced. For example, `login` contributes
   `account_list` and `account_save`.
-- **Built-in tools (slice 1 surface), all `client` scope:**
+- **Built-in tools:** `status`, `ask`, `research`, `result` (`client` scope),
+  and `events` (`operator` scope):
+  - `events` reads the event log in order (QA-7), optionally for one run,
+    session, or type, a page of at most 1000 after `afterSeq`; it returns the
+    page and `next`, the cursor for the following one.
   - `status` reports the store, artifacts, kernel seams, registered providers,
     and **health** (REQ-HOST-6, `src/health.ts`): each check (runtime, store
     integrity, free disk, vault key custody, accounts to sign in again, Worker
@@ -63,8 +67,9 @@ one scope another's rights).
 
 - **Tool scope:** a tool declares `scope: 'client' | 'operator'` in its
   `ToolSpec`. A tool that declares none is the operator's (fail closed), so
-  `approve`, `stop`, `continue`, `delete`, `supersede`, `drain`, `resume`, and
-  every `account_*` tool, `account_probe` included, are operator-only.
+  `approve`, `stop`, `continue`, `delete`, `supersede`, `drain`, `resume`,
+  `events`, and every `account_*` tool, `account_probe` included, are
+  operator-only.
 - **Listing:** `tools/list` returns only the tools the caller's scope may use,
   each with `_meta: { "system/scope": … }`. The operator sees every tool.
 - **Handlers** are told the caller's scope (`ToolContext`), so what a tool

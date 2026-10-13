@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { CHROME_LOCK } from '@tsuuanmi/system-browser-patchright'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { assertRuntime, callTool, formatHealth, healthExit, hostHealth, claudeGatewayCommand, codexGatewayCommand, drainHost, formatTools, ensureBrowser, exitCode, formatExplanation, formatUsage, mcpConfig, mcpHeaders, mcpToken, mergeProfileManifest, parseAsk, uiUrl } from '../src/index.ts'
+import { assertRuntime, callTool, formatEvents, formatHealth, parseEvents, healthExit, hostHealth, claudeGatewayCommand, codexGatewayCommand, drainHost, formatTools, ensureBrowser, exitCode, formatExplanation, formatUsage, mcpConfig, mcpHeaders, mcpToken, mergeProfileManifest, parseAsk, uiUrl } from '../src/index.ts'
 
 const dirs: string[] = []
 afterEach(() => {
@@ -36,6 +36,14 @@ describe('system CLI (PR #3 kernel review)', () => {
     expect(() => assertRuntime('Node 22.23.3 is not supported; system needs Node ^24.18.1 || >=26.5.1')).toThrow(/^Node 22\.23\.3 is not supported/)
     expect(() => assertRuntime(undefined)).not.toThrow()
     expect(() => assertRuntime()).not.toThrow()
+  })
+
+  it('reads the event log by run, session, or type, a page after a cursor (QA-7)', () => {
+    expect(parseEvents(['--run', 'r1', '--after', '12', '--limit', '50'])).toEqual({ runId: 'r1', afterSeq: 12, limit: 50 })
+    expect(parseEvents(['--bogus', 'x'])).toBeUndefined()
+    expect(parseEvents(['--run'])).toBeUndefined()
+    expect(formatEvents([{ seq: 3, at: '2026-10-14T00:00:00Z', type: 'workflow.node.failed', runId: 'r1', nodeId: 'n2', data: { kind: 'ui_drift' } }]))
+      .toEqual(['3 2026-10-14T00:00:00Z workflow.node.failed run=r1/n2 {"kind":"ui_drift"}'])
   })
 
   it('reports health with exit 0, 1, or 2, and a host that does not answer as down (REQ-HOST-6)', async () => {

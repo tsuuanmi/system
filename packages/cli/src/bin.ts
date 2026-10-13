@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { formatHealth, healthExit, hostHealth, assertRuntime, backupHost, browserDeps, callTool, claudeGatewayCommand, codexGatewayCommand, drainHost, formatTools, listTools, restoreHost, shutdownHost, ensureBrowser, formatExplanation, formatUsage, init, mcpConfig, mcpHeaders, mcpToken, parseAsk, readAllStdin, serveStdio, start, type ToolOutcome, uiUrl } from './index.ts'
+import { type EventLine, formatEvents, formatHealth, healthExit, hostHealth, parseEvents, assertRuntime, backupHost, browserDeps, callTool, claudeGatewayCommand, codexGatewayCommand, drainHost, formatTools, listTools, restoreHost, shutdownHost, ensureBrowser, formatExplanation, formatUsage, init, mcpConfig, mcpHeaders, mcpToken, parseAsk, readAllStdin, serveStdio, start, type ToolOutcome, uiUrl } from './index.ts'
 
 const USAGE = `Usage: system <command>
 
@@ -38,6 +38,8 @@ const USAGE = `Usage: system <command>
   restore <dir> [--yes]     preview, then restore a backup (the profile must be stopped)
   drain [--deadline <s>]    admit no new runs and wait for running ones (default 600 s)
   resume                    admit new runs again after a drain
+  events [--run <id>] [--session <id>] [--type <t>] [--after <seq>] [--limit <n>] [--json]
+                            the event log in order (operator); --after the printed next for more
   health [--json]           each check (runtime, store, disk, vault key, accounts, Workers, UI drift)
                             and what to do; exit 0 healthy, 1 degraded, 2 down or not running
   shutdown [--deadline <s>] drain, then stop the running profile (unfinished runs resume on start)
@@ -307,6 +309,15 @@ async function main(argv: string[]): Promise<number> {
         return 0
       }
       console.log(`restored${outcome.keptAside ? `; the previous store is kept at ${outcome.keptAside}` : ''}`)
+      return 0
+    }
+    case 'events': {
+      const filter = parseEvents(rest.filter((a) => a !== '--json'))
+      if (!filter) break
+      const outcome = await callTool('events', filter)
+      if (outcome.isError) throw new Error(outcome.text)
+      const page = outcome.structured as { events: EventLine[]; next: number }
+      console.log(rest.includes('--json') ? JSON.stringify(page, null, 2) : [...formatEvents(page.events), `next: --after ${page.next}`].join('\n'))
       return 0
     }
     case 'health': {

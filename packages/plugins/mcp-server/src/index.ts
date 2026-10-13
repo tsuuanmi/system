@@ -210,6 +210,26 @@ export class McpEndpoint extends McpTools {
   }
 
   private builtins(): void {
+    // The event log, for the operator (QA-7): by run, session, or type, in order, after a cursor.
+    this.tools.set('events', {
+      placeholder: false,
+      spec: {
+        scope: 'operator',
+        description: 'Read the event log in order (QA-7): entries after a cursor, optionally for one run, session, or type. Pass the last seq back as afterSeq for the next page.',
+        inputSchema: {
+          runId: zod.string().max(200).optional(), sessionId: zod.string().max(200).optional(), type: zod.string().max(200).optional(),
+          afterSeq: zod.number().int().min(0).optional(), limit: zod.number().int().min(1).max(1000).optional(),
+        },
+      },
+      handler: async (args) => {
+        const eventLog = this.ctx.get('eventLog')
+        if (!eventLog) return { isError: true, content: [{ type: 'text', text: 'the event log is not mounted in this composition' }] }
+        const filter = Object.fromEntries(Object.entries(args).filter(([, v]) => v !== undefined))
+        const events = eventLog.query(filter) as Array<{ seq: number }>
+        const page = { events, next: events.at(-1)?.seq ?? (args.afterSeq as number | undefined) ?? 0 }
+        return { content: [{ type: 'text', text: JSON.stringify(page) }], structuredContent: page }
+      },
+    })
     const notInstalled: ToolHandler = async () => ({ isError: true, content: [{ type: 'text', text: NOT_INSTALLED }] })
     const session = { sessionId: zod.string().max(200).optional().describe('Continue an existing system session') }
     const idempotency = { clientRequestId: zod.string().max(200).optional().describe('Retry-safe request key') }
