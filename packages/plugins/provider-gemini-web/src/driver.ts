@@ -8,8 +8,8 @@
  *   report is read from the report panel, with the sources it used.
  */
 import { readFileSync } from 'node:fs'
-import { type AskOptions, type AskResult, type AuthState, ProviderError, type ProviderDriver, type ProviderFeature, type ProviderMode, type TurnSnapshot, sameWords, waitForStableCompletion } from '@tsuuanmi/system-provider-core'
-import { UiEngine, type UiMap, loadUiMap } from '@tsuuanmi/system-ui-ops'
+import { type AskOptions, type AskResult, type AuthState, bindingReporter, completionOptions, modePresets, ProviderError, type ProviderDriver, type ProviderFeature, type ProviderMode, type ResearchState, type TurnSnapshot, waitForReport, waitForStableCompletion, withSources } from '@tsuuanmi/system-provider-core'
+import { copiedMarkdown, preWrapText, UiEngine, type UiMap, loadUiMap } from '@tsuuanmi/system-ui-ops'
 import type { Locator, Page } from 'patchright-core'
 
 const MAP_URL = new URL('../ui/gemini-web.ui.yaml', import.meta.url)
@@ -55,12 +55,6 @@ const itemName = (text: string): string => text.split('\n')[0]!.trim()
 /** Whether a model as the site shows it is the wanted one, with or without its version. */
 const sameModel = (shown: string, wanted: string): boolean => shown === wanted || shown.replace(/^\d[\d.]*\s+/, '') === wanted
 
-interface ResearchState {
-  running: boolean
-  done: boolean
-  text: string
-}
-
 export class GeminiWebDriver implements ProviderDriver<Page> {
   readonly provider = 'gemini-web'
   readonly capabilities = ['reason', 'persistent-conversation'] as const
@@ -72,8 +66,7 @@ export class GeminiWebDriver implements ProviderDriver<Page> {
   readonly map: UiMap
   private readonly origin: string
   private readonly timeouts: Required<DriverTimeouts>
-  private readonly modes: Record<string, ProviderMode>
-  private readonly defaultMode: string | undefined
+  private readonly preset: (name: string | undefined) => ProviderMode | undefined
   private readonly engines = new WeakMap<Page, UiEngine>()
 
   constructor(options: DriverOptions = {}) {
@@ -81,11 +74,7 @@ export class GeminiWebDriver implements ProviderDriver<Page> {
     this.origin = (options.origin ?? 'https://gemini.google.com').replace(/\/$/, '')
     this.loginUrl = `${this.origin}/app`
     this.stateOrigins = options.origin ? [this.origin] : ['https://gemini.google.com', 'https://accounts.google.com', 'https://www.google.com', 'https://google.com']
-    this.modes = options.modes ?? {}
-    this.defaultMode = options.defaultMode
-    if (this.defaultMode !== undefined && !this.modes[this.defaultMode]) {
-      throw new ProviderError('config_error', `gemini-web: default mode ${this.defaultMode} is not a configured mode`)
-    }
+    this.preset = modePresets(this.provider, options.modes, options.defaultMode)
     this.timeouts = { turnMs: 15 * 60_000, stallMs: 3 * 60_000, stableMs: 1500, pollMs: 250, readyMs: 60_000, snapshotMs: 20_000, reportReadMs: 30_000, ...options.timeouts }
   }
 
@@ -306,27 +295,15 @@ export class GeminiWebDriver implements ProviderDriver<Page> {
   }
 
   private async waitForAnswer(page: Page, engine: UiEngine, before: number, signal: AbortSignal | undefined, deadlines: AskOptions['deadlines'], onBinding?: (binding: string) => void): Promise<string> {
-    let bound = false
+    const reportBinding = bindingReporter(() => this.bindingOf(page), onBinding)
     const completed = await waitForStableCompletion(async () => {
-      if (onBinding && !bound) {
-        const id = this.bindingOf(page)
-        if (id) {
-          bound = true
-          onBinding(id)
-        }
-      }
+      reportBinding()
       if ((await engine.count('turn.assistant')) <= before) return { responsePresent: false, text: '', html: '', running: true }
       const text = await this.answerText(engine)
       const answer = (await engine.resolve('turn.assistant', 1000)).locator.last()
       const finished = (await engine.findIn('turn.assistant.done', answer)) !== undefined
       return { responsePresent: text !== '', text, html: '', running: (await engine.state('turn.running')) || !finished }
-    }, {
-      timeoutMs: deadlines?.timeoutMs ?? this.timeouts.turnMs,
-      stallTimeoutMs: deadlines?.stallTimeoutMs ?? this.timeouts.stallMs,
-      stableMs: this.timeouts.stableMs,
-      pollMs: this.timeouts.pollMs,
-      ...(signal ? { signal } : {}),
-    })
+    }, completionOptions(this.timeouts, deadlines, signal))
     return completed.text
   }
 
@@ -339,25 +316,7 @@ export class GeminiWebDriver implements ProviderDriver<Page> {
     if ((await engine.count('research.start')) === 0) return this.markdownOf(engine, reply)
     signal?.throwIfAborted()
     await engine.act('research.start')
-    let unreadableSince: number | undefined
-    const completed = await waitForStableCompletion(async () => {
-      const state = await this.researchState(engine)
-      // Completed but unreadable is drift: fail fast instead of waiting out the stall deadline.
-      if (state.done && !state.text) {
-        unreadableSince ??= Date.now()
-        if (Date.now() - unreadableSince > this.timeouts.reportReadMs) {
-          throw new ProviderError('ui_drift', 'gemini-web: Deep research completed, but its report cannot be read; update research.report in the UI map')
-        }
-      } else unreadableSince = undefined
-      return { responsePresent: state.done && state.text !== '', text: state.text, html: '', running: !state.done }
-    }, {
-      timeoutMs: deadlines?.timeoutMs ?? this.timeouts.turnMs,
-      stallTimeoutMs: deadlines?.stallTimeoutMs ?? this.timeouts.stallMs,
-      stableMs: this.timeouts.stableMs,
-      pollMs: Math.max(this.timeouts.pollMs, 1000),
-      ...(signal ? { signal } : {}),
-    })
-    return completed.text
+    return waitForReport(() => this.researchState(engine), this.timeouts, { provider: this.provider, element: 'research.report', deadlines, signal })
   }
 
   /** The research card in the answer after the last prompt: working, or done with its report. */
@@ -389,7 +348,7 @@ export class GeminiWebDriver implements ProviderDriver<Page> {
       const title = await engine.findIn('research.source-title', link)
       if (href && !sources.has(href)) sources.set(href, title ? (await title.locator.innerText()).trim() : '')
     }
-    return `${text}\n\nSources:\n${[...sources].map(([href, title]) => `- ${title ? `${title} ` : ''}${href}`).join('\n')}`
+    return withSources(text, sources)
   }
 
   /**
@@ -398,27 +357,14 @@ export class GeminiWebDriver implements ProviderDriver<Page> {
    * Copy ends each code block with a blank line before the closing fence, which is dropped.
    */
   private async markdownOf(engine: UiEngine, rendered: string): Promise<string> {
-    try {
+    return copiedMarkdown(engine, rendered, async () => {
       const answer = (await engine.resolve('turn.assistant', 1000)).locator.last()
-      const copy = await engine.findIn('turn.assistant.done', answer)
-      const markdown = copy ? await engine.copied(copy.locator.last()) : ''
-      if (!markdown || !sameWords(markdown, rendered)) return rendered
-      return markdown.replace(/^(```[^\n]*\n[\s\S]*?)\n+(```[ \t]*)$/gm, '$1\n$2').trim()
-    } catch {
-      return rendered
-    }
+      return (await engine.findIn('turn.assistant.done', answer))?.locator.last()
+    }, (markdown) => markdown.replace(/^(```[^\n]*\n[\s\S]*?)\n+(```[ \t]*)$/gm, '$1\n$2').trim())
   }
 
   private bindingOf(page: Page): string | undefined {
     return CONVERSATION.exec(new URL(page.url()).pathname)?.[1]
-  }
-
-  private preset(name: string | undefined): ProviderMode | undefined {
-    const key = name ?? this.defaultMode
-    if (key === undefined) return undefined
-    const preset = this.modes[key]
-    if (!preset) throw new ProviderError('config_error', `gemini-web: unknown mode ${key} (configured: ${Object.keys(this.modes).join(', ') || 'none'})`)
-    return preset
   }
 
   private engine(page: Page): UiEngine {
@@ -435,11 +381,4 @@ export class GeminiWebDriver implements ProviderDriver<Page> {
 /** Rethrow anything but UI drift, which the caller then refuses with its own reason. */
 function driftOnly(error: unknown): void {
   if (!(error instanceof ProviderError && error.kind === 'ui_drift')) throw error
-}
-
-async function preWrapText(locator: Locator): Promise<string> {
-  return (await locator.evaluate((el) => {
-    ;(el as HTMLElement).style.whiteSpace = 'pre-wrap'
-    return (el as HTMLElement).innerText
-  }).catch(() => '')).trim()
 }

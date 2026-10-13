@@ -44,8 +44,9 @@ the layers above. Each contract is published as one or more Cordis seams
   - provider turn receipts (`ctx.turnReceipts`) and the reconciliation decision;
   - the driver registry (`ctx.providers`) and one **driver** per website: `chatgpt-web` and
     `gemini-web`;
-  - the libraries: the per-account scheduler, two-clock completion, the failure taxonomy
-    (`provider-core`), and the UI engine: UI maps as data, verification, and bounded self-heal
+  - the libraries: the per-account scheduler, two-clock completion, the failure taxonomy,
+    the turn mechanics every driver shares (`provider-core`), and the UI engine with the
+    shared answer reading: UI maps as data, verification, and bounded self-heal
     ([UI operations](../design/ui-operations.md), `ui-ops`).
 - **Does not own:** Worker admission ([routing](#routing)), workflow semantics, or when a turn
   runs ([capabilities](#capabilities)).

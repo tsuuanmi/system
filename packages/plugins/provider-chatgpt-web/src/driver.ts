@@ -8,8 +8,8 @@
  *   marker and stable text (the event stream stays open, so it is never consulted).
  */
 import { readFileSync } from 'node:fs'
-import { type AskOptions, type AskResult, type AuthState, type ConversationMode, ProviderError, type ProviderDriver, type ProviderFeature, type ProviderMode, type TurnSnapshot, sameWords, waitForStableCompletion } from '@tsuuanmi/system-provider-core'
-import { type DriftEvent, type HealEvent, UiEngine, type UiMap, loadUiMap } from '@tsuuanmi/system-ui-ops'
+import { type AskOptions, type AskResult, type AuthState, bindingReporter, completionOptions, type ConversationMode, modePresets, ProviderError, type ProviderDriver, type ProviderFeature, type ProviderMode, type ResearchState, type TurnSnapshot, waitForReport, waitForStableCompletion, withSources } from '@tsuuanmi/system-provider-core'
+import { copiedMarkdown, type DriftEvent, type HealEvent, preWrapText, UiEngine, type UiMap, loadUiMap } from '@tsuuanmi/system-ui-ops'
 import type { Frame, Page } from 'patchright-core'
 
 export type { AskOptions, AskResult, AuthState, ConversationMode, ProviderMode }
@@ -77,17 +77,12 @@ export class ChatGptWebDriver implements ProviderDriver<Page> {
   private readonly origin: string
   private readonly timeouts: Required<DriverTimeouts>
   private readonly engines = new WeakMap<Page, UiEngine>()
-  private readonly modes: Record<string, ProviderMode>
-  private readonly defaultMode: string | undefined
+  private readonly preset: (name: string | undefined) => ProviderMode | undefined
 
   constructor(options: DriverOptions = {}) {
     this.map = shippedMap(options.overlay)
     this.origin = (options.origin ?? 'https://chatgpt.com').replace(/\/$/, '')
-    this.modes = options.modes ?? {}
-    this.defaultMode = options.defaultMode
-    if (this.defaultMode !== undefined && !this.modes[this.defaultMode]) {
-      throw new ProviderError('config_error', `chatgpt-web: default mode ${this.defaultMode} is not a configured mode`)
-    }
+    this.preset = modePresets(this.provider, options.modes, options.defaultMode)
     this.loginUrl = `${this.origin}/auth/login`
     this.stateOrigins = [this.origin]
     this.timeouts = { turnMs: 15 * 60_000, stallMs: 3 * 60_000, stableMs: 1500, pollMs: 250, readyMs: 30_000, researchStartMs: 60_000, snapshotMs: 20_000, reportReadMs: 30_000, ...options.timeouts }
@@ -305,7 +300,7 @@ export class ChatGptWebDriver implements ProviderDriver<Page> {
     return frames
   }
 
-  private async researchState(engine: UiEngine): Promise<{ running: boolean; done: boolean; text: string }> {
+  private async researchState(engine: UiEngine): Promise<ResearchState> {
     for (const frame of await this.researchFrames(engine)) {
       if (await engine.findIn('research.completed', frame)) return { running: false, done: true, text: await this.reportText(engine, frame) }
       if (await engine.findIn('research.running', frame)) return { running: true, done: false, text: '' }
@@ -371,14 +366,6 @@ export class ChatGptWebDriver implements ProviderDriver<Page> {
       if (Date.now() >= deadline) throw new ProviderError('session_broken', 'chatgpt-web: no conversation id after the answer')
       await new Promise((resolve) => setTimeout(resolve, 100))
     }
-  }
-
-  private preset(name: string | undefined): ProviderMode | undefined {
-    const key = name ?? this.defaultMode
-    if (key === undefined) return undefined
-    const preset = this.modes[key]
-    if (!preset) throw new ProviderError('config_error', `chatgpt-web: unknown mode ${key} (configured: ${Object.keys(this.modes).join(', ') || 'none'})`)
-    return preset
   }
 
   private optionName(text: string): string {
@@ -458,25 +445,7 @@ export class ChatGptWebDriver implements ProviderDriver<Page> {
       signal?.throwIfAborted()
       await page.waitForTimeout(500)
     }
-    let unreadableSince: number | undefined
-    const completed = await waitForStableCompletion(async () => {
-      const state = await this.researchState(engine)
-      // Completed but unreadable is drift: fail fast instead of waiting out the stall deadline.
-      if (state.done && !state.text) {
-        unreadableSince ??= Date.now()
-        if (Date.now() - unreadableSince > this.timeouts.reportReadMs) {
-          throw new ProviderError('ui_drift', 'chatgpt-web: Deep research completed, but its report cannot be read; update research.report-title in the UI map')
-        }
-      } else unreadableSince = undefined
-      return { responsePresent: state.done && state.text !== '', text: state.text, html: '', running: !state.done }
-    }, {
-      timeoutMs: deadlines?.timeoutMs ?? this.timeouts.turnMs,
-      stallTimeoutMs: deadlines?.stallTimeoutMs ?? this.timeouts.stallMs,
-      stableMs: this.timeouts.stableMs,
-      pollMs: Math.max(this.timeouts.pollMs, 1000),
-      ...(signal ? { signal } : {}),
-    })
-    return completed.text
+    return waitForReport(() => this.researchState(engine), this.timeouts, { provider: this.provider, element: 'research.report-title', deadlines, signal })
   }
 
   /**
@@ -493,7 +462,7 @@ export class ChatGptWebDriver implements ProviderDriver<Page> {
     const sources = new Map<string, string>()
     for (const [label, href] of anchors) if (href && !sources.has(href)) sources.set(href, label ?? '')
     if (!text || !sources.size) return text
-    return `${text}\n\nSources:\n${[...sources].map(([href, label]) => `- ${label ? `${label} ` : ''}${href}`).join('\n')}`
+    return withSources(text, sources)
   }
 
   /**
@@ -503,11 +472,7 @@ export class ChatGptWebDriver implements ProviderDriver<Page> {
    */
   private async answerText(engine: UiEngine): Promise<string> {
     const heading = (await engine.resolve('turn.assistant', 1000)).locator.last()
-    const raw = await heading.locator('xpath=..').evaluate((el) => {
-      ;(el as HTMLElement).style.whiteSpace = 'pre-wrap'
-      return (el as HTMLElement).innerText
-    }).catch(() => '')
-    return raw.replace(/^\s*ChatGPT said:?\s*/i, '').trim()
+    return (await preWrapText(heading.locator('xpath=..'))).replace(/^\s*ChatGPT said:?\s*/i, '').trim()
   }
 
   /**
@@ -516,10 +481,8 @@ export class ChatGptWebDriver implements ProviderDriver<Page> {
    * may be shared). Otherwise the rendered text stands.
    */
   private async markdownOf(page: Page, rendered: string): Promise<string> {
-    try {
-      const engine = this.engine(page)
-      const markdown = await engine.copied((await engine.resolve('turn.assistant.done', 1000)).locator.last())
-      if (!markdown || !sameWords(markdown, rendered)) return rendered
+    const engine = this.engine(page)
+    return copiedMarkdown(engine, rendered, async () => (await engine.resolve('turn.assistant.done', 1000)).locator.last(), async (markdown) => {
       // Copy rebuilds code blocks from the page and loses their line breaks: take each block's
       // text from its rendered element instead, or keep the rendered answer if they do not pair.
       const fences = [...markdown.matchAll(/^(```[^\n]*)\n([\s\S]*?)\n```[ \t]*$/gm)]
@@ -533,22 +496,14 @@ export class ChatGptWebDriver implements ProviderDriver<Page> {
       if (blocks.length !== fences.length) return rendered
       let index = 0
       return markdown.replace(/^(```[^\n]*)\n([\s\S]*?)\n```[ \t]*$/gm, (_, open: string) => `${open}\n${blocks[index++]}\n\`\`\``).trim()
-    } catch {
-      return rendered
-    }
+    })
   }
 
   private async waitForAnswer(page: Page, before: number, signal: AbortSignal | undefined, deadlines: AskOptions['deadlines'], onBinding?: (binding: string) => void): Promise<string> {
     const engine = this.engine(page)
-    let bound = false
+    const reportBinding = bindingReporter(() => this.bindingOf(page), onBinding)
     const read = async () => {
-      if (onBinding && !bound) {
-        const id = this.bindingOf(page)
-        if (id) {
-          bound = true
-          onBinding(id)
-        }
-      }
+      reportBinding()
       const count = await engine.count('turn.assistant')
       if (count <= before) return { responsePresent: false, text: '', html: '', running: true }
       const text = await this.answerText(engine)
@@ -556,13 +511,7 @@ export class ChatGptWebDriver implements ProviderDriver<Page> {
       const running = (await engine.state('turn.running')) || !finished
       return { responsePresent: true, text, html: '', running }
     }
-    const completed = await waitForStableCompletion(read, {
-      timeoutMs: deadlines?.timeoutMs ?? this.timeouts.turnMs,
-      stallTimeoutMs: deadlines?.stallTimeoutMs ?? this.timeouts.stallMs,
-      stableMs: this.timeouts.stableMs,
-      pollMs: this.timeouts.pollMs,
-      ...(signal ? { signal } : {}),
-    })
+    const completed = await waitForStableCompletion(read, completionOptions(this.timeouts, deadlines, signal))
     return completed.text
   }
 }

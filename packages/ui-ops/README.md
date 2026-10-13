@@ -20,6 +20,11 @@ not a plugin: provider drivers create one `UiEngine` per turn page.
   - `copied`: what a copy control puts on the clipboard (cleared first, so an
     earlier copy never counts);
   - `network`: a passive `NetworkObserver`.
+- **Reading answers** (shared by every website driver, REQ-PRV-5):
+  `preWrapText` reads an element under `white-space: pre-wrap`, so code
+  indentation survives; `copiedMarkdown` takes the answer's Markdown from its
+  Copy control and keeps it only when `sameWords` matches the rendered text,
+  then applies the site's own clean-up (the rendered text otherwise).
 - **Events:**
   - `onDrift` fires when a non-primary candidate wins.
   - `onHeal` fires with `healed`, `rejected`, or `failed`, the scores, the
