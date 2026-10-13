@@ -4,15 +4,15 @@
 > invariants, and from the titles of the tests that cite them; do not edit by hand. CI fails
 > when it is stale. A test cites an id in its title, for example `... (REQ-WF-7)`.
 
-**90 of 92** ids have at least one test that cites them.
-Not yet cited by a test: QA-11, INV-7. Some are covered by live or manual checks in the [release checklist](release-checklist.md).
+**91 of 92** ids have at least one test that cites them.
+Not yet cited by a test: QA-11. Some are covered by live or manual checks in the [release checklist](release-checklist.md).
 
 ## Requirements
 
 | Id | Statement | Tests that cite it |
 |---|---|---|
 | REQ-ACC-1 | Accounts are named semantic identities, for example `chatgpt-thinker` and `chatgpt-writer`. | [accounts.spec.ts:37](../../packages/plugins/accounts/tests/accounts.spec.ts#L37) |
-| REQ-ACC-2 | A caller always names an account, or a capability that admission resolves to an account. | [architecture.spec.ts:69](../../scripts/architecture.spec.ts#L69) |
+| REQ-ACC-2 | A caller always names an account, or a capability that admission resolves to an account. | [architecture.spec.ts:97](../../scripts/architecture.spec.ts#L97) |
 | REQ-ACC-3 | An operator can sign in an account interactively from a remote machine without installing client software. | [remote.spec.ts:59](../../packages/plugins/login/tests/remote.spec.ts#L59), [remote.spec.ts:77](../../packages/plugins/login/tests/remote.spec.ts#L77) |
 | REQ-ACC-4 | Automated turns use only the account's portable authenticated state, never the interactive login profile. | [browser.spec.ts:113](../../packages/plugins/browser-patchright/tests/browser.spec.ts#L113) |
 | REQ-ACC-5 | When an account loses authentication, it is marked `reauth-required`, and its queued and running work fails closed with a user-action error. | [accounts.spec.ts:54](../../packages/plugins/accounts/tests/accounts.spec.ts#L54), [turns.spec.ts:183](../../packages/plugins/turns/tests/turns.spec.ts#L183) |
@@ -73,7 +73,7 @@ Not yet cited by a test: QA-11, INV-7. Some are covered by live or manual checks
 | REQ-HOST-1 | The host drains before stop or upgrade. | [cli.spec.ts:166](../../packages/cli/tests/cli.spec.ts#L166), [workflow.spec.ts:468](../../packages/plugins/workflow/tests/workflow.spec.ts#L468) |
 | REQ-HOST-2 | Startup validates configuration, profiles, and stores, and fails with a precise error when any of them is invalid. | [cli.spec.ts:35](../../packages/cli/tests/cli.spec.ts#L35), [runtime.spec.ts:4](../../packages/libs/tests/runtime.spec.ts#L4), [store.spec.ts:39](../../packages/plugins/store/tests/store.spec.ts#L39), [startup.spec.ts:39](../../packages/plugins/workflow/tests/startup.spec.ts#L39) |
 | REQ-HOST-3 | Any change the host makes to a client's configuration is journaled and can be reversed byte for byte. | [cli.spec.ts:232](../../packages/cli/tests/cli.spec.ts#L232) |
-| REQ-HOST-4 | Every feature is composed from configuration (profiles and patches). | [architecture.spec.ts:50](../../scripts/architecture.spec.ts#L50) |
+| REQ-HOST-4 | Every feature is composed from configuration (profiles and patches). | [architecture.spec.ts:78](../../scripts/architecture.spec.ts#L78) |
 
 ## Quality attributes
 
@@ -87,7 +87,7 @@ Not yet cited by a test: QA-11, INV-7. Some are covered by live or manual checks
 | QA-6 | Security: Credentials and authenticated browser state never leave the provider runtime. | [libs.spec.ts:70](../../packages/libs/tests/libs.spec.ts#L70), [accounts.spec.ts:45](../../packages/plugins/accounts/tests/accounts.spec.ts#L45) |
 | QA-7 | Observability: Every turn, node execution, and lease has a stable id and an append-only event trail an operator can query. | [event-log.spec.ts:25](../../packages/plugins/event-log/tests/event-log.spec.ts#L25), [event-log.spec.ts:35](../../packages/plugins/event-log/tests/event-log.spec.ts#L35) |
 | QA-8 | Boundedness: Concurrency per account, retries, review cycles, resubmissions, caches, and payload sizes all have configured upper bounds. | [agent-workers.spec.ts:398](../../packages/plugins/agent-workers/tests/agent-workers.spec.ts#L398), [turn-receipts.spec.ts:55](../../packages/plugins/turn-receipts/tests/turn-receipts.spec.ts#L55) |
-| QA-9 | Replaceability: A provider, browser engine, store, or protocol adapter can be replaced behind its seam without changing the layers above it. | [architecture.spec.ts:60](../../scripts/architecture.spec.ts#L60) |
+| QA-9 | Replaceability: A provider, browser engine, store, or protocol adapter can be replaced behind its seam without changing the layers above it. | [architecture.spec.ts:88](../../scripts/architecture.spec.ts#L88) |
 | QA-10 | Testability: Each layer is testable without real provider accounts, using fakes at its seam. | [driver.spec.ts:25](../../packages/plugins/provider-chatgpt-web/tests/driver.spec.ts#L25) |
 | QA-11 | Portability: The MVP runs on Linux x64 (Xvfb virtual display, remote login over noVNC through an SSH tunnel). | **none yet** |
 | QA-12 | Token economy: Routing places work on the lowest intelligence tier (P4) and the cheapest quota class (P1) that prove the required capabilities. | [workers.ts:96](../../packages/workers-core/conformance/workers.ts#L96), [workers.ts:114](../../packages/workers-core/conformance/workers.ts#L114) |
@@ -98,13 +98,13 @@ Not yet cited by a test: QA-11, INV-7. Some are covered by live or manual checks
 
 | Id | Statement | Tests that cite it |
 |---|---|---|
-| INV-1 | One authoritative runtime | [architecture.spec.ts:39](../../scripts/architecture.spec.ts#L39) |
+| INV-1 | One authoritative runtime | [architecture.spec.ts:67](../../scripts/architecture.spec.ts#L67) |
 | INV-2 | Fail closed | [turns.spec.ts:436](../../packages/plugins/turns/tests/turns.spec.ts#L436) |
 | INV-3 | Completion boundaries are distinct | [workflow.spec.ts:151](../../packages/plugins/workflow/tests/workflow.spec.ts#L151) |
 | INV-4 | Restart is reconciliation, not replay | [agent-workers.spec.ts:261](../../packages/plugins/agent-workers/tests/agent-workers.spec.ts#L261), [agent-workers.spec.ts:301](../../packages/plugins/agent-workers/tests/agent-workers.spec.ts#L301), [turns.spec.ts:162](../../packages/plugins/turns/tests/turns.spec.ts#L162), [turns.spec.ts:324](../../packages/plugins/turns/tests/turns.spec.ts#L324), [turns.spec.ts:394](../../packages/plugins/turns/tests/turns.spec.ts#L394), [workflow.spec.ts:697](../../packages/plugins/workflow/tests/workflow.spec.ts#L697), [restart.crash.ts:102](../../packages/system-bundle/tests/crash/restart.crash.ts#L102) |
 | INV-5 | Exact-subject binding | [agent-workers.spec.ts:422](../../packages/plugins/agent-workers/tests/agent-workers.spec.ts#L422), [agent-workers.spec.ts:428](../../packages/plugins/agent-workers/tests/agent-workers.spec.ts#L428), [workflow.spec.ts:219](../../packages/plugins/workflow/tests/workflow.spec.ts#L219), [workflow.spec.ts:588](../../packages/plugins/workflow/tests/workflow.spec.ts#L588) |
 | INV-6 | Authority comes from trusted envelopes | [agent-workers.spec.ts:151](../../packages/plugins/agent-workers/tests/agent-workers.spec.ts#L151), [spec.spec.ts:59](../../packages/plugins/workflow/tests/spec.spec.ts#L59) |
-| INV-7 | No mirrored protocol objects | **none yet** |
+| INV-7 | No mirrored protocol objects | [architecture.spec.ts:39](../../scripts/architecture.spec.ts#L39) |
 | INV-8 | Credentials never cross upward | [confinement.spec.ts:70](../../packages/agent-runtime-core/tests/confinement.spec.ts#L70), [environment.spec.ts:4](../../packages/agent-runtime-core/tests/environment.spec.ts#L4), [accounts.spec.ts:45](../../packages/plugins/accounts/tests/accounts.spec.ts#L45), [agent-runtimes.spec.ts:12](../../packages/plugins/agent-runtimes/tests/agent-runtimes.spec.ts#L12), [login.spec.ts:80](../../packages/plugins/login/tests/login.spec.ts#L80), [runtime.spec.ts:90](../../packages/plugins/runtime-acp/tests/runtime.spec.ts#L90), [runtime.spec.ts:39](../../packages/plugins/runtime-claude-agent-sdk/tests/runtime.spec.ts#L39), [runtime.spec.ts:74](../../packages/plugins/runtime-codex-sdk/tests/runtime.spec.ts#L74) |
 | INV-9 | Everything is bounded | [turn-receipts.spec.ts:96](../../packages/plugins/turn-receipts/tests/turn-receipts.spec.ts#L96), [turn-receipts.spec.ts:109](../../packages/plugins/turn-receipts/tests/turn-receipts.spec.ts#L109), [turns.spec.ts:316](../../packages/plugins/turns/tests/turns.spec.ts#L316), [turns.spec.ts:410](../../packages/plugins/turns/tests/turns.spec.ts#L410) |
 | INV-10 | Everything is a plugin | [mcp-server.spec.ts:49](../../packages/plugins/mcp-server/tests/mcp-server.spec.ts#L49), [providers.spec.ts:12](../../packages/plugins/providers/tests/providers.spec.ts#L12) |

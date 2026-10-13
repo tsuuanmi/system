@@ -36,6 +36,34 @@ describe('architecture rules', () => {
     expect(offenders).toEqual([])
   })
 
+  it('keeps native protocol objects inside their own adapters: each protocol SDK is imported only where that protocol is spoken, and no gateway imports another (INV-7)', () => {
+    // Each SDK's native types cross only their own boundary; everything else sees behavior.
+    const speakers: Record<string, string[]> = {
+      '@modelcontextprotocol/sdk': ['packages/gateway-core', 'packages/plugins/mcp-server', 'packages/cli'],
+      '@agentclientprotocol/sdk': ['packages/plugins/runtime-acp'],
+      '@openai/codex-sdk': ['packages/plugins/runtime-codex-sdk'],
+      '@anthropic-ai/claude-agent-sdk': ['packages/plugins/runtime-claude-agent-sdk'],
+    }
+    const gateways = readdirSync(plugins).filter((d) => d.startsWith('gateway-'))
+    const offenders: string[] = []
+    const srcDirs = [
+      ...readdirSync(packages).filter((d) => d !== 'plugins').map((d) => join(packages, d, 'src')),
+      ...readdirSync(plugins).map((d) => join(plugins, d, 'src')),
+    ]
+    for (const file of srcDirs.flatMap((dir) => sources(dir))) {
+      const where = relative(root, file)
+      const text = code(readFileSync(file, 'utf8'))
+      for (const [sdk, allowed] of Object.entries(speakers)) {
+        if (new RegExp(`from '${sdk}[/']`).test(text) && !allowed.some((dir) => where.startsWith(`${dir}/`))) offenders.push(`${where}: ${sdk}`)
+      }
+      const own = gateways.find((g) => where.startsWith(`packages/plugins/${g}/`))
+      for (const other of gateways.filter((g) => g !== own)) {
+        if (own && text.includes(`@tsuuanmi/system-${other}'`)) offenders.push(`${where}: ${other}`)
+      }
+    }
+    expect(offenders).toEqual([])
+  })
+
   it('has one authoritative runtime per concern: each service is provided by exactly one package (INV-1)', () => {
     const providers = new Map<string, string[]>()
     for (const dir of readdirSync(plugins)) {
