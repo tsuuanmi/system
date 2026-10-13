@@ -7,6 +7,8 @@
 > text tool protocol of
 > [ADR-0022](../decisions/adr/0022-text-protocol-tool-calls-for-website-models.md)),
 > `/admin/*` routes, a separate operator token scope, and a dependency audit in CI.
+> [PROP-0003](../proposals/0003-production-readiness.md#m6a-security-hardening)
+> plans the operator scope, the dependency audit, and the Codex read gap below.
 
 ## Assets
 

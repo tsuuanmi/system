@@ -30,6 +30,10 @@ accepted/implemented -> superseded
   **draft**. A `ctx.decisions` seam, with the Jev decision model as a first
   provider, infers the tier and capability need for undeclared work. It runs in
   shadow mode first.
+- [PROP-0003: Production readiness](0003-production-readiness.md), **draft**.
+  Hardening for a per-user deployment: scoped control credentials, agent Workers
+  confined for reads, health and drift alerts, bounded retention and tested
+  upgrades, versioned releases with provenance, and an `api-first` preset.
 
 Use [0000-template.md](0000-template.md) for new proposals. The
 [roadmap](roadmap.md) is a non-normative queue of milestones, not a substitute for
