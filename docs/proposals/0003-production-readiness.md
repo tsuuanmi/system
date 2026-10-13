@@ -198,15 +198,30 @@ lands. Each item names the requirement it closes and the test that proves it.
    only what it can prove nothing retained needs:
    - **Runs.** A finished run whose `updatedAt` is older than the workflow row's
      `retainRunsDays` (0, the default, keeps every run) is deleted as `system
-     delete` deletes it, through the same `deleteRun`, unless its session is
-     still open: a persistent session's runs are kept while the session is.
+     delete` deletes it, through the same `deleteRun`, except the **latest run of
+     an engine session** (`ask --persist`): that session has no closed state, and
+     a continuation is admitted only while one of its runs exists, so older runs
+     may go but the latest stays. A Worker session (a team member) is open while
+     its state is neither FAILED nor CLOSED and it is within `maxLifetimeMinutes`
+     and `maxIdleMinutes` of its last activity (REQ-SES-7).
    - **Artifacts, mark and sweep.** The roots are the artifact ids that retained
      rows reference. Each plugin that keeps artifact ids in its own tables
      answers an event, `artifacts/roots` (mode `parallel`; the listener adds
-     its ids to the set it is given): `workflow` (runs, nodes, wakes, session
-     handoffs), `turns` and `agent-workers` (answers, results, egress
-     decisions), `worker-sessions` (messages, summaries). Marking follows each
-     envelope's references (`inputs`, `supersedes`) transitively.
+     its ids to the set it is given):
+     - `workflow`: `workflow_runs.result`; in `workflow_nodes.record` the input
+       bundle, the output's result and acceptance, the last decision, and the
+       route; `workflow_nodes.decisions`; a gate's `plan` and a grown step's
+       `tierDecision` in `workflow_nodes.spec`; `session_handoffs.artifact`;
+     - `turns`: the answer and the route, tier, and egress decisions;
+     - `agent-workers`: `agent_runs.result` and its egress decision;
+     - `worker-sessions`: `mailbox.artifact` and a member's `formation`.
+
+     Not roots: `artifact_runs` (the index) and `events.decision` (else event
+     and artifact retention would keep each other alive; `explain` reports a
+     missing id as expired). Gateway threads, receipts, turn and agent session
+     bindings, leases, and accounts hold no artifact ids. Marking follows each
+     envelope's references (`inputs`, `supersedes`) transitively. A replanned
+     run's retired results stay while the run exists: they carry its `runId`.
    - **Sweep, fail closed.** Only artifacts that are unmarked, carry the `runId`
      of a run that no longer exists, and are older than a grace period (so a
      record made but not yet referenced is never taken) are deleted. An artifact
