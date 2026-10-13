@@ -308,4 +308,9 @@ Rotate a scope's token when it may have leaked
 - **Turns:** finished turns, their prompts, their receipts, and sessions with no
   turns left are deleted after the turn runtime's `retainDays` (default 30).
   Answers stay as artifacts.
+- **The event log** keeps every entry unless the `event-log` row sets
+  `retainDays`; then entries older than that are deleted at start and daily.
+  Nothing references an entry, so `system explain` and readers' cursors keep
+  working. `system health` looks back only `driftWindowHours`, so a short
+  retention does not hide recent drift.
 - **Backups** are yours to rotate.

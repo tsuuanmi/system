@@ -105,6 +105,7 @@
 | Option | Type | Default | Description |
 |---|---|---|---|
 | `maxDataBytes` | number (256…) | `16384` | Largest serialized data accepted |
+| `retainDays` | number (0…) | `0` | Days an entry is kept (0: every entry is kept); trimmed at start and daily |
 
 ## `gateway-anthropic`
 

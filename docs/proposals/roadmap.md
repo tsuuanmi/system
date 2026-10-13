@@ -24,7 +24,7 @@ verified on live accounts, and when, is in the
 | **M6** Second domain | done | — | [scientific research](../../packages/plugins/profile-scientific-research/README.md), [operations](../operations/README.md) |
 | **M6a** Security hardening (v1.0) | started | scoped control credentials | [PROP-0003](0003-production-readiness.md#m6a-security-hardening) |
 | **M6b** Operability (v1.0) | started | `/ui` health banner; scheduled account probes | [PROP-0003](0003-production-readiness.md#m6b-operability) |
-| **M6c** Data lifecycle, upgrades, reliability (v1.0) | started | bounded retention of runs, artifacts, and events; upgrade suite; crash suite at every reconcile point | [PROP-0003](0003-production-readiness.md#m6c-data-lifecycle-upgrades-reliability) |
+| **M6c** Data lifecycle, upgrades, reliability (v1.0) | started | bounded retention of runs and artifacts; upgrade suite; crash suite at every reconcile point | [PROP-0003](0003-production-readiness.md#m6c-data-lifecycle-upgrades-reliability) |
 | **M6d** Supply chain and release (v1.0) | not started | lockstep versions, changelog, license, security policy; provenance-attested publication with SBOM and checksums; bundle publication | [PROP-0003](0003-production-readiness.md#m6d-supply-chain-and-release) |
 | **M6e** API-first composition (v1.0) | not started | the economy-tier API or local-model provider (`ctx.models`); the `api-first` preset | [PROP-0003](0003-production-readiness.md#m6e-api-first-composition) |
 | **v1.0** Production-ready release | not started | M6a to M6e, M7 unless PROP-0003 is accepted, and the open live items of the release checklist | [release scope](../requirements/release-scope.md#production-ready-exit-criteria), [checklist](../validation/release-checklist.md) |

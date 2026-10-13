@@ -47,20 +47,25 @@ function clampLimit(limit: number | undefined): number {
 export interface Config {
   /** Largest serialized `data` accepted, in bytes (default 16 KiB). */
   maxDataBytes?: number
+  /** Days an entry is kept; 0 keeps every entry (default 0). */
+  retainDays?: number
 }
 
 export class EventLog extends Service {
   static inject = ['store']
   static Config: z<Config> = z.object({
     maxDataBytes: z.natural().min(256).default(16_384).description('Largest serialized data accepted'),
+    retainDays: z.natural().default(0).description('Days an entry is kept (0: every entry is kept); trimmed at start and daily'),
   })
 
   private readonly schemas = new SchemaRegistry()
   private readonly maxDataBytes: number
+  private readonly retainDays: number
 
   constructor(ctx: Context, config: Config) {
     super(ctx, 'eventLog')
     this.maxDataBytes = config.maxDataBytes ?? 16_384
+    this.retainDays = config.retainDays ?? 0
     ctx.store.migrate('event-log', [{
       version: 1,
       sql: `CREATE TABLE events (
@@ -70,7 +75,26 @@ export class EventLog extends Service {
       CREATE INDEX events_run ON events (run_id, seq);
       CREATE INDEX events_session ON events (session_id, seq);
       CREATE INDEX events_type ON events (type, seq);`,
+    }, {
+      // Trimming by age, and reading what happened since a time.
+      version: 2,
+      sql: 'CREATE INDEX events_at ON events (at);',
     }])
+    // Bounded (INV-9): entries older than retainDays go, at start and then daily. Entries carry
+    // no content that anything else references (decisions are artifacts), and cursors stay valid.
+    ctx.effect(() => {
+      queueMicrotask(() => this.trim())
+      const daily = setInterval(() => this.trim(), 24 * 60 * 60_000)
+      daily.unref()
+      return () => clearInterval(daily)
+    })
+  }
+
+  /** Delete entries older than `retainDays` before `now`; the count deleted. */
+  trim(now: number = Date.now()): number {
+    if (!this.retainDays) return 0
+    const cutoff = new Date(now - this.retainDays * 24 * 60 * 60_000).toISOString()
+    return Number(this.ctx.store.transaction((db) => db.prepare('DELETE FROM events WHERE at < ?').run(cutoff)).changes)
   }
 
   /** Validate and append one entry; the log assigns `seq` and `at`. */
@@ -94,7 +118,7 @@ export class EventLog extends Service {
   }
 
   /** Read entries after `afterSeq` in order, optionally filtered; at most 1000 per call. */
-  query(filter: { afterSeq?: number; type?: string; runId?: string; sessionId?: string; limit?: number } = {}): SystemEvent[] {
+  query(filter: { afterSeq?: number; type?: string; runId?: string; sessionId?: string; since?: string; limit?: number } = {}): SystemEvent[] {
     const clauses = ['seq > ?']
     const params: (string | number)[] = [filter.afterSeq ?? 0]
     for (const [column, value] of [['type', filter.type], ['run_id', filter.runId], ['session_id', filter.sessionId]] as const) {
@@ -102,6 +126,10 @@ export class EventLog extends Service {
         clauses.push(`${column} = ?`)
         params.push(value)
       }
+    }
+    if (filter.since !== undefined) {
+      clauses.push('at >= ?')
+      params.push(filter.since)
     }
     const limit = clampLimit(filter.limit)
     const rows = this.ctx.store.db.prepare(`SELECT entry FROM events WHERE ${clauses.join(' AND ')} ORDER BY seq LIMIT ${limit}`).all(...params) as { entry: string }[]

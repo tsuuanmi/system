@@ -11,11 +11,11 @@ afterEach(async () => {
   while (cleanups.length) await cleanups.pop()!()
 })
 
-async function boot(): Promise<Context> {
+async function boot(config: { retainDays?: number } = {}): Promise<Context> {
   const dir = mkdtempSync(join(tmpdir(), 'system-events-'))
   cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
   const ctx = new Context()
-  const fibers = [ctx.plugin(Store, { path: join(dir, 'system.db') }), ctx.plugin(EventLog, {})]
+  const fibers = [ctx.plugin(Store, { path: join(dir, 'system.db') }), ctx.plugin(EventLog, config)]
   await Promise.all(fibers)
   cleanups.push(() => fibers[0]!.dispose())
   return ctx
@@ -71,5 +71,26 @@ describe('review fixes (PR #3 kernel review)', () => {
     ctx.eventLog.append({ type: 'a.b' })
     expect(ctx.eventLog.query({ limit: Number.NaN })).toHaveLength(1)
     expect(ctx.eventLog.query({ limit: 2.5 })).toHaveLength(1)
+  })
+
+  it('keeps every entry by default, and trims those older than retainDays when configured (INV-9)', async () => {
+    const day = 24 * 60 * 60_000
+    const ctx = await boot({ retainDays: 30 })
+    for (const type of ['old.one', 'new.one']) ctx.eventLog.append({ type })
+    // Age the first entry by hand: the log assigns `at` itself.
+    const old = new Date(Date.now() - 31 * day).toISOString()
+    ctx.store.db.prepare("UPDATE events SET at = ? WHERE type = 'old.one'").run(old)
+    expect(ctx.eventLog.trim()).toBe(1)
+    expect(ctx.eventLog.query().map((e) => e.type)).toEqual(['new.one'])
+    const kept = await boot()
+    kept.eventLog.append({ type: 'any.one' })
+    expect(kept.eventLog.trim(Date.now() + 365 * day)).toBe(0)
+  })
+
+  it('reads what happened since a time, newest included, whatever came before (QA-7)', async () => {
+    const ctx = await boot()
+    for (let i = 0; i < 3; i++) ctx.eventLog.append({ type: 'ui.drift', data: { i } })
+    ctx.store.db.prepare("UPDATE events SET at = '2026-01-01T00:00:00.000Z' WHERE seq < 3").run()
+    expect(ctx.eventLog.query({ type: 'ui.drift', since: '2026-06-01T00:00:00.000Z' }).map((e) => e.data)).toEqual([{ i: 2 }])
   })
 })
