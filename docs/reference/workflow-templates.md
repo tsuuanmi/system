@@ -98,6 +98,21 @@ Provided by
 | `critique:1` | `reason` | standard | temporary | `acceptance.answer` |
 | `conclusion:1` | `reason` | standard | temporary | `acceptance.cited-conclusions` |
 
+## Presets
+
+Under the `api-first` preset ([ADR-0025](../decisions/adr/0025-api-first-composition.md)) no
+Worker drives a website, so no Worker proves `web-search` or `deep-research`. A node that needs
+one fails admission, fail closed, with the capability named:
+`no Worker can take this work: no Worker proves deep-research (…)`. Nothing is sent.
+
+| Template | Under `api-first` |
+|---|---|
+| `ask`, `investigate` | run on model Workers; an `ask` in a session (`--persist`, `--session`) fails: no model Worker proves `persistent-conversation` |
+| `panel` | fails: its members keep sessions, and no model Worker proves `persistent-conversation` |
+| `review`, `develop` | run on agent Workers (planning and reports on model Workers) |
+| `deep-research`, `research-deep` | fail at `research:1` / `literature:1`: no Worker proves `deep-research` |
+| `research` | `frame:1` runs; `literature:1` fails: no Worker proves `web-search` |
+
 ## Acceptance contracts
 
 | Contract | Registered by | Accepts when |

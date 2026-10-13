@@ -11,13 +11,14 @@ Routing **seam definition**
 - The types mirror `capability-descriptor@1.0` and `work-requirement@1.0`. The
   schemas in `schemas/` are canonical.
 - Worker sources (website Workers from `turns`, agent Workers from
-  `agent-workers`) and callers depend on this package only. It depends on
-  nothing but Cordis.
+  `agent-workers`, model Workers from `models`) and callers depend on this
+  package only. It depends on nothing but Cordis.
 - Tier escalation after a rejected result is the workflow engine's, not the
   router's: it routes a new execution with `tier.source: decision`.
 - The conformance suite is [`conformance/workers.ts`](conformance/workers.ts):
   - source lifetime and duplicate names;
-  - capability admission, data locality, state, and tier bounds;
+  - capability admission, data locality, state, and tier bounds; a failure names
+    each required capability no Worker proves;
   - the order: lowest tier, then quota class, then id;
   - restriction, determinism, and the decision artifacts;
   - acceptance contracts and the `acceptance` decision.

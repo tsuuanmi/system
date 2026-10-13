@@ -1,14 +1,16 @@
 #!/usr/bin/env node
-import { type EventLine, formatEvents, formatHealth, healthExit, hostHealth, parseEvents, assertRuntime, backupHost, browserDeps, callTool, claudeGatewayCommand, codexGatewayCommand, drainHost, formatTools, listTools, restoreHost, shutdownHost, ensureBrowser, formatExplanation, formatUsage, init, mcpConfig, mcpHeaders, mcpToken, parseAsk, readAllStdin, serveStdio, start, type ToolOutcome, uiUrl } from './index.ts'
+import { type EventLine, formatEvents, formatHealth, healthExit, hostHealth, parseEvents, assertRuntime, backupHost, browserDeps, callTool, claudeGatewayCommand, codexGatewayCommand, drainHost, formatTools, listTools, restoreHost, shutdownHost, ensureBrowser, formatExplanation, formatUsage, init, mcpConfig, mcpHeaders, mcpToken, parseAsk, readAllStdin, serveStdio, start, type ToolOutcome, uiUrl, composedRows, PRESETS, type Preset } from './index.ts'
 
 const USAGE = `Usage: system <command>
 
-  init                      create or refresh the system DSH profile; ensure Chrome and Xvfb
+  init [--preset default|api-first]
+                            create or refresh the system DSH profile (a preset is kept until changed);
+                            ensure Chrome and Xvfb when the browser row is mounted
   browser install           install the managed Chrome pinned in chrome.lock.json
   ask [--persist] [--session <id>] [--tier economy|standard|frontier]
       [--classification public|operator-shared|local-private] (<prompt...> | -)
-                            ask a website model through a saved account; - reads the prompt
-                            from stdin (profile must be running)
+                            ask the Worker the router admits (a website account, an API or
+                            local model, ...); - reads the prompt from stdin (profile must be running)
   research [--classification <c>] (<question...> | -)
                             the research procedure: hypotheses, a cited review, evidence,
                             critique, conclusions (run deep-research for Deep research alone)
@@ -25,6 +27,8 @@ const USAGE = `Usage: system <command>
                             replace a completed step's result; everything downstream runs again
   usage [<limit>]           recent runs: per step, the Worker, tier, and quota class used
   explain <runId|artifact>  the decision chain behind a run (egress, tier, route, acceptance)
+  model key <NAME>          store a model route's API key from stdin, encrypted, under the
+                            credential reference its apiKeyEnv names
   account list              list provider accounts and their status (profile must be running)
   account login <id>        open a remote login desktop (noVNC over ssh -L); Save stores the account
   account credentials <id>  store login credentials from stdin as JSON {"email","password","totpSecret"?}
@@ -90,11 +94,19 @@ async function awaitRun(first: ToolOutcome): Promise<number> {
 async function main(argv: string[]): Promise<number> {
   const [command, ...rest] = argv
   switch (command) {
-    case 'init':
+    case 'init': {
+      const preset = rest[0] === '--preset' ? rest[1] : undefined
+      if ((rest.length && !preset) || (preset !== undefined && preset !== 'default' && !Object.hasOwn(PRESETS, preset))) break
       assertRuntime()
-      console.log(`profile ready: ${init()}`)
+      console.log(`profile ready: ${init(undefined, preset as Preset | undefined)}`)
+      // Chrome and Xvfb serve the browser row only; a composition without it never needs them (ADR-0025).
+      if (!composedRows().some((row) => row.id === 'browser' && row.mounted)) {
+        console.log('browser: not mounted in this composition; Chrome and Xvfb are not needed')
+        return 0
+      }
       for (const line of await ensureBrowser()) console.log(line)
       return 0
+    }
     case 'browser': {
       if (rest[0] !== 'install') break
       const deps = browserDeps()
@@ -187,6 +199,16 @@ async function main(argv: string[]): Promise<number> {
       const explained = outcome.structured as unknown as Parameters<typeof formatExplanation>[0]
       // A run prints as its decision chain; any other artifact as its input tree.
       console.log(Array.isArray(explained.nodes) ? formatExplanation(explained).join('\n') : JSON.stringify(outcome.structured, null, 2))
+      return 0
+    }
+    case 'model': {
+      if (rest[0] !== 'key' || !rest[1]) break
+      // Read from stdin, never from arguments: a key must not reach the process list or history.
+      const value = (await readAllStdin()).trim()
+      if (!value) throw new Error('no key on stdin')
+      const outcome = await callTool('model_key', { name: rest[1], value })
+      if (outcome.isError) throw new Error(outcome.text)
+      console.log(outcome.text)
       return 0
     }
     case 'account': {

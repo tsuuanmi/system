@@ -1,9 +1,9 @@
 # ADR-0025: An `api-first` preset; website Workers and model gateways are opt-in there
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-10-14
 - **Related:** [PROP-0003](../../proposals/0003-production-readiness.md#m6e-api-first-composition),
-  REQ-WRK-8, REQ-HOST-4, CON-3, [purpose](../../requirements/purpose.md),
+  REQ-WRK-8, REQ-WRK-10, REQ-HOST-4, CON-3, [purpose](../../requirements/purpose.md), [models](../../design/models.md),
   [INV-11](../../architecture/invariants.md#inv-11-no-tool-lock-in),
   [INV-12](../../architecture/invariants.md#inv-12-data-egress-is-explicit)
 
@@ -20,8 +20,8 @@ API models, local models, and agent Workers, with nothing that drives a website.
 
 The pieces exist or are planned:
 
-- `ctx.models`, the planned seam for API and local models over the DSH `llm`,
-  `llm-pi-ai`, and `llm-retry` rows ([seam catalog](../../architecture/plugin-model.md#seam-catalog));
+- `ctx.models`, the seam planned for API and local models over the DSH `llm` rows
+  ([seam catalog](../../architecture/plugin-model.md#seam-catalog));
 - the `workers` row's `quotaPreference`, which orders quota classes;
 - the `egress` row's `workerClasses`, which maps Worker classes to permitted
   classifications;
@@ -40,13 +40,22 @@ Option 3.
 - `packages/system-bundle` ships an `api-first` overlay. It disables the website
   rows (display, browser, providers, website drivers, login, accounts, turns, turn
   receipts) and both model gateways, and sets
-  `quotaPreference: [local, metered, agent-plan, subscription-chat]`.
-- `system init --preset api-first` writes the overlay into the operator's profile
-  and skips the Chrome and display checks when no browser row is mounted.
+  `quotaPreference: [local, metered, agent-plan, subscription-chat]`. The overlay is a
+  DSH bundle layer (`@tsuuanmi/system-preset-api-first`, in the bundle's
+  `presets/api-first/`), because a profile has one operator patch file and any number
+  of bundle layers.
+- `system init --preset api-first` adds that layer to the operator's profile, right
+  after the system bundle, without touching the operator's `cordis.patch.yml`, and
+  skips the Chrome and display checks when no browser row is mounted.
 - Models reach routing as a `models` Worker source through `ctx.models`. A new
-  egress Worker class, `model`, receives `public` and `operator-shared` by default.
-- The overlay names no vendor, model, or tool. Model references live only in the
-  operator's model catalog (INV-11).
+  egress Worker class, `model`, receives `public` and `operator-shared` by default;
+  `model-local`, for a model on this machine, also receives `local-private`.
+- The DSH rows are `llm` and `llm-pi-ai`. `llm-retry` is not mounted: it needs the
+  agent loop and session log, which `system` never inserts, and it retries only
+  agent-loop steps; the `models` row bounds its own re-attempts. API keys are
+  credential references resolved through the vault, never configuration values.
+- The overlay names no vendor, model, or tool in configuration; it turns rows off by
+  their bundle ids. Model references live only in the operator's model catalog (INV-11).
 - Work that needs a website-only capability (`web-search`, `deep-research`) fails
   admission under this preset with an explicit reason. There is no silent
   fallback (INV-2).

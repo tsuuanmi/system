@@ -71,6 +71,7 @@ Each kind of Worker does what it is strongest at:
 |---|---|---|
 | **Website Workers** (ChatGPT Web, Gemini Web) | searching, reading many sources, Deep Research, independent multi-account reasoning, synthesis | research, literature review, option analysis, critique, review of a provided diff |
 | **Local Workers** (Claude Code, Codex, local tools) | access to local files, private data, the repository, the shell, and tests | implementation, data processing, running analyses on local datasets, validation |
+| **Model Workers** (API and local models, from the operator's catalog) | one answer to one prompt; a local model keeps local-private data on this machine | economy-tier extraction and summarizing, reasoning without website quota, private-text processing on a local model |
 
 Local and private data are processed by local Workers. Website Workers receive
 only what an explicit egress policy allows, typically a question, a public
@@ -86,7 +87,7 @@ question ─▶ website team: Deep Research + search + synthesis   (P1 quota, P2
          ─▶ website reviewers: review the exact result          (P1, exact-subject binding)
 ```
 
-*Requirements:* REQ-WRK-7. *Design:* [routing](../design/routing.md#data-locality-policy).
+*Requirements:* REQ-WRK-7, REQ-WRK-10. *Design:* [routing](../design/routing.md#data-locality-policy), [models](../design/models.md).
 
 ### P4: Cheap models do low-level work; strong models do hard work
 
@@ -109,7 +110,14 @@ and capabilities, never models
 P4 and P1 compound. Cheap tiers absorb the high-volume work, and the separate
 website quota absorbs the expensive reasoning.
 
-*Requirements:* REQ-WRK-9. *Design:* [routing](../design/routing.md#intelligence-tiers).
+*Requirements:* REQ-WRK-9, REQ-WRK-10. *Design:* [routing](../design/routing.md#intelligence-tiers).
+
+### Purposes per preset
+
+The default composition serves all four purposes. The `api-first` preset
+([ADR-0025](../decisions/adr/0025-api-first-composition.md)), for organizations that cannot
+accept automated use of consumer websites (CON-3), serves P3 and P4 with API, local, and agent
+Workers only. P1 and P2 need website Workers, so they are unavailable there.
 
 ## A motivating example from building `system` itself
 

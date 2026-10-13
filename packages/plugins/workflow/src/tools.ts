@@ -21,7 +21,7 @@ export function registerTools(c: Context, w: Workflow, ctx: Context): void {
   const clientRequestId = zod.string().max(200).optional().describe('Retry-safe request key')
   c.mcp.tool('ask', {
     scope: 'client',
-    description: 'Ask a website Worker (separate chat quota). Waits up to waitSeconds; otherwise returns a runId for `result`.',
+    description: 'Ask one Worker, chosen by the router for the work (capability, tier, quota order). Waits up to waitSeconds; otherwise returns a runId for `result`.',
     inputSchema: {
       prompt: zod.string().min(1).max(32_000),
       sessionId: zod.string().max(200).optional().describe('Continue an existing persistent session'),
@@ -59,7 +59,7 @@ export function registerTools(c: Context, w: Workflow, ctx: Context): void {
   })
   c.mcp.tool('run', {
     scope: 'client',
-    description: `Start a workflow template by name (built in: ${Object.keys(DEFAULT_TEMPLATES).sort().join(', ')}; profiles add more, such as develop); its steps are routed by capability to website or local agent Workers. Waits up to waitSeconds; otherwise returns a runId for \`result\`.`,
+    description: `Start a workflow template by name (built in: ${Object.keys(DEFAULT_TEMPLATES).sort().join(', ')}; profiles add more, such as develop); its steps are routed by capability to website, model, or agent Workers. Waits up to waitSeconds; otherwise returns a runId for \`result\`.`,
     inputSchema: {
       template: zod.string().max(100),
       input: zod.string().min(1).max(32_000),

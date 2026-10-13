@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { CHROME_LOCK } from '@tsuuanmi/system-browser-patchright'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { assertRuntime, callTool, formatEvents, formatHealth, parseEvents, healthExit, hostHealth, claudeGatewayCommand, codexGatewayCommand, drainHost, formatTools, ensureBrowser, exitCode, formatExplanation, formatUsage, mcpConfig, mcpHeaders, mcpToken, mergeProfileManifest, parseAsk, uiUrl } from '../src/index.ts'
+import { assertRuntime, callTool, formatEvents, formatHealth, parseEvents, healthExit, hostHealth, claudeGatewayCommand, codexGatewayCommand, drainHost, formatTools, ensureBrowser, exitCode, formatExplanation, formatUsage, mcpConfig, mcpHeaders, mcpToken, mergeProfileManifest, parseAsk, uiUrl, parseComposedRows, presetOf } from '../src/index.ts'
 
 const dirs: string[] = []
 afterEach(() => {
@@ -30,6 +30,24 @@ describe('system CLI (PR #3 kernel review)', () => {
     expect(merged.dependencies).toEqual({ 'operator-plugin': '^1.0.0', '@tsuuanmi/system-bundle': 'link:/opt/bundle' })
     expect(merged.dsh.profile.bundles).toEqual(['@tsuuanmi/system-bundle', 'operator-plugin'])
     expect(mergeProfileManifest(undefined, '/b').dsh.profile.bundles).toEqual(['@tsuuanmi/system-bundle'])
+  })
+
+  it('composes a preset as a bundle layer right after the system bundle, kept until changed, never in the operator patch (ADR-0025)', () => {
+    const operator = { name: 'dsh-profile-system', dependencies: { 'operator-plugin': '^1.0.0' }, dsh: { profile: { bundles: ['@tsuuanmi/system-bundle', 'operator-plugin'] } } }
+    const apiFirst = mergeProfileManifest(operator, '/opt/bundle', 'api-first')
+    expect(apiFirst.dsh.profile.bundles).toEqual(['@tsuuanmi/system-bundle', '@tsuuanmi/system-preset-api-first', 'operator-plugin'])
+    expect(apiFirst.dependencies).toEqual({ 'operator-plugin': '^1.0.0', '@tsuuanmi/system-bundle': 'link:/opt/bundle', '@tsuuanmi/system-preset-api-first': 'link:/opt/bundle/presets/api-first' })
+    expect(presetOf(apiFirst)).toBe('api-first')
+    // A plain refresh keeps the preset; `default` removes it.
+    expect(mergeProfileManifest(apiFirst, '/opt/bundle').dsh.profile.bundles).toEqual(apiFirst.dsh.profile.bundles)
+    const back = mergeProfileManifest(apiFirst, '/opt/bundle', 'default')
+    expect(back.dsh.profile.bundles).toEqual(['@tsuuanmi/system-bundle', 'operator-plugin'])
+    expect(back.dependencies).toEqual({ 'operator-plugin': '^1.0.0', '@tsuuanmi/system-bundle': 'link:/opt/bundle' })
+  })
+
+  it('reads which composed rows are mounted from the launcher\'s config dump', () => {
+    const dump = '# from bundle\n- id: timer\n  name: \'@deepseek-ai/cordis-plugin-timer\'\n- id: browser\n  name: x\n  disabled: true\n- id: workers\n  name: y\n  config:\n    disabled: true\n'
+    expect(parseComposedRows(dump)).toEqual([{ id: 'timer', mounted: true }, { id: 'browser', mounted: false }, { id: 'workers', mounted: true }])
   })
 
   it('refuses to init or start on a runtime the store would refuse, before anything is written (REQ-HOST-2, CON-2)', () => {
@@ -111,20 +129,22 @@ describe('system ask arguments', () => {
 })
 
 describe('system usage and explain output', () => {
-  it('shows, per request and step, the Worker, tier, and quota class that served it', () => {
+  it('shows, per request and step, the Worker, tier, and quota class that served it, and a model Worker\'s tokens (REQ-WRK-10)', () => {
     const lines = formatUsage({
       runs: [{
         runId: 'run_1', template: 'research', status: 'completed', createdAt: '2026-10-12T01:02:03.000Z',
         nodes: [
           { nodeId: 'research:1', state: 'COMPLETED', minTier: 'frontier', tier: 'frontier', worker: 'worker:chatgpt-main/frontier', quotaClass: 'subscription-chat' },
-          { nodeId: 'compact:1', state: 'WAITING', minTier: 'economy' },
+          { nodeId: 'compact:1', state: 'COMPLETED', minTier: 'economy', tier: 'economy', worker: 'model:fast', quotaClass: 'metered', usage: { inputTokens: 412, outputTokens: 96 } },
+          { nodeId: 'compact:2', state: 'WAITING', minTier: 'economy' },
         ],
       }],
     })
     expect(lines).toEqual([
       'run_1  research  completed  2026-10-12T01:02:03.000Z',
       '  research:1  COMPLETED  frontier  subscription-chat  worker:chatgpt-main/frontier',
-      '  compact:1  WAITING  -  -  -',
+      '  compact:1  COMPLETED  economy  metered  model:fast  412 in / 96 out tokens',
+      '  compact:2  WAITING  -  -  -',
     ])
   })
 

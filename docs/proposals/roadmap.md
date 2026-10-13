@@ -26,7 +26,7 @@ verified on live accounts, and when, is in the
 | **M6b** Operability (v1.0) | started | `/ui` health banner; scheduled account probes; health of each plugin and the DSH pin; a host whose required service refuses to start exits non-zero | [PROP-0003](0003-production-readiness.md#m6b-operability) |
 | **M6c** Data lifecycle, upgrades, reliability (v1.0) | started | upgrade suite; crash suite at every reconcile point | [PROP-0003](0003-production-readiness.md#m6c-data-lifecycle-upgrades-reliability) |
 | **M6d** Supply chain and release (v1.0) | not started | lockstep versions, changelog, license, security policy; provenance-attested publication with SBOM and checksums; bundle publication | [PROP-0003](0003-production-readiness.md#m6d-supply-chain-and-release) |
-| **M6e** API-first composition (v1.0) | not started | the economy-tier API or local-model provider (`ctx.models`); the `api-first` preset | [PROP-0003](0003-production-readiness.md#m6e-api-first-composition) |
+| **M6e** API-first composition (v1.0) | done, live checks open | an API model Worker and a local model Worker, each verified live | [models](../design/models.md), [ADR-0025](../decisions/adr/0025-api-first-composition.md), [api-first e2e](../../packages/cli/tests/api-first.e2e.ts), [checklist](../validation/release-checklist.md) |
 | **v1.0** Production-ready release | not started | M6a to M6e, M7 unless PROP-0003 is accepted, and the open live items of the release checklist | [release scope](../requirements/release-scope.md#production-ready-exit-criteria), [checklist](../validation/release-checklist.md) |
 | **M7** macOS | not started | `offscreen` display, visible login, read confinement through the platform sandbox; release scope lists it for v1.0, and PROP-0003 proposes moving it to 1.x | [PROP-0003](0003-production-readiness.md#release-gate-and-later-work) |
 
@@ -38,11 +38,11 @@ inside the DSH web app.
 
 These change no behavior. Each lands with its tests unchanged:
 
-- one durable-run lifecycle for website turns (`turns`) and agent runs
-  (`agent-workers`): waiters, cancel, retries, and stop. The lease loop is
-  already shared (`ctx.leases.hold`). Run bodies and recovery stay separate on
-  purpose: a website turn is reconciled from its receipt, an agent run fails
-  closed.
+- one durable-run lifecycle for website turns (`turns`), agent runs
+  (`agent-workers`), and model calls (`models`): waiters, cancel, retries, and
+  stop. The lease loop is already shared (`ctx.leases.hold`). Run bodies and
+  recovery stay separate on purpose: a website turn is reconciled from its
+  receipt, an agent run fails closed, a model call is sent once more.
 
 ## Later candidates
 

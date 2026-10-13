@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:tsuuanmi:system:schema:model-answer:v1",
+  "title": "Model answer",
+  "description": "Body of a `report` artifact holding one API or local model Worker's answer (design/models.md). The prompt is referenced by hash only; the model is named by its catalog id.",
+  "type": "object",
+  "required": ["schema", "worker", "model", "callId", "promptHash", "quotaClass", "locality", "finish", "maxTokens", "usage", "text"],
+  "properties": {
+    "schema": { "const": "model-answer@1.0" },
+    "worker": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+    "model": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$", "maxLength": 64 },
+    "callId": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+    "promptHash": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/sha256" },
+    "quotaClass": { "enum": ["metered", "local"] },
+    "locality": { "enum": ["remote", "local"] },
+    "finish": { "enum": ["stop", "max-tokens"] },
+    "maxTokens": { "type": "integer", "minimum": 1, "maximum": 200000 },
+    "usage": {
+      "type": "object",
+      "required": ["inputTokens", "outputTokens"],
+      "properties": {
+        "inputTokens": { "type": "integer", "minimum": 0 },
+        "outputTokens": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "text": { "type": "string", "maxLength": 4000000 }
+  },
+  "additionalProperties": false
+}

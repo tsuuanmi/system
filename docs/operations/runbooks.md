@@ -6,7 +6,9 @@
 ## First start
 
 1. `system init` creates the profile, installs the pinned Chrome if the host
-   has none, and checks Xvfb.
+   has none, and checks Xvfb. For a composition with no website Worker, run
+   `system init --preset api-first` instead ([API-first](#api-first-preset)); it
+   skips Chrome and Xvfb.
 2. `system start` boots the profile. MCP listens on `127.0.0.1:47317/mcp`, and
    the gateways serve `/anthropic` and `/openai` on the same port.
 3. Remote login needs a VNC server, either `x0vncserver` (TigerVNC) or
@@ -96,7 +98,90 @@ an `agent-workers` row.
   nothing sent), because the agent's model is remote. Routing still admits the
   Worker, since it is local. If the agent's model runs on this machine, set the
   egress row's `workerClasses` with `local-private` added to `agent`. List
-  `website` too: the setting replaces the whole default.
+  `website`, `model`, and `model-local` too: the setting replaces the whole
+  default.
+
+## API and local models
+
+A model Worker is one entry of the model catalog: an API model, or a model served
+on this machine ([models](../design/models.md)). Two rows of the profile's
+`cordis.patch.yml` configure it; the key is never in either.
+
+1. **A route** on the `llm-pi-ai` row: an endpoint, its wire protocol, and the
+   name of the credential reference that holds its key (`apiKeyEnv`). A route
+   the installed catalog already knows needs only `apiKeyEnv`; a hand-declared
+   one needs `api`, `baseURL`, and `models` (the `@deepseek-ai/dsh-llm-pi-ai`
+   package README lists every route field, including `retryPolicy`):
+
+   ```yaml
+   - id: llm-pi-ai
+     config:
+       providers:
+         my-gateway:
+           api: openai-completions
+           baseURL: https://gateway.example/v1
+           apiKeyEnv: MY_GATEWAY_KEY
+           models:
+             - id: small-model
+   ```
+
+2. **A catalog entry** on the `models` row: the Worker `model:<id>`, the route
+   and the model on it, and what routing sees. `quotaClass` is `metered` (paid
+   per token, the default) or `local`; `locality` is `remote` (the default) or
+   `local`; `maxTokens` bounds every answer (default 4096):
+
+   ```yaml
+   - id: models
+     config:
+       models:
+         - id: fast
+           route: my-gateway
+           model: small-model
+           tier: economy
+   ```
+
+   Both are targeted patches: each replaces the row's whole config.
+3. **The key:** `system model key MY_GATEWAY_KEY` reads it from stdin and
+   stores it encrypted in the vault under that reference (operator scope; not
+   echoed or logged). Send it again to rotate. A variable of the same name in
+   the daemon's environment shadows the vault, and the vault then refuses the
+   write. Agent Workers never inherit such a variable (its name contains `KEY`).
+4. **Check:** `system start`, then `system ask --tier economy "…"`;
+   `system usage` shows the step on `model:fast` with its tokens, and
+   `system explain <runId>` shows its egress decision. A missing or refused key
+   fails the step as `reauth_required` (`USER_ACTION`) with nothing sent: store
+   the key, then `system continue <runId>`.
+
+- **A local model** (a model server on this machine): set `locality: local` and
+  `quotaClass: local`. Routing may then give it `local-private` work, and egress
+  checks it as Worker class `model-local`. A server that needs no key still
+  needs a placeholder reference: the OpenAI-compatible protocol sends one.
+- **Egress:** a remote model receives `public` and `operator-shared` content by
+  default (Worker class `model`); a credential in a prompt is always refused.
+- **Cost:** each call may be billed. A transiently failed call is sent again at
+  most `maxRetries` times (default 2), and a call interrupted by a restart once
+  more ([effect register](../architecture/data-flow.md#effect-register)).
+
+## API-first preset
+
+For an organization that cannot accept automated use of consumer websites
+([ADR-0025](../decisions/adr/0025-api-first-composition.md)):
+
+1. `system init --preset api-first` adds the preset's bundle layer to the
+   profile, right after the system bundle. It turns off the display, browser,
+   provider registry, website drivers, login, accounts, website turns, turn
+   receipts, and both model gateways, and orders quota `local`, `metered`,
+   `agent-plan`, `subscription-chat`. Your `cordis.patch.yml` is not touched,
+   and a later `system init` keeps the preset.
+2. Configure model Workers ([above](#api-and-local-models)) and agent Workers
+   ([agent Workers](#agent-workers)).
+3. `system start --dump-config` lists the composition: the turned-off rows
+   carry `disabled: true`.
+
+Work that needs a website capability fails at admission with the reason, for
+example `no Worker can take this work: no Worker proves deep-research`; nothing
+is sent anywhere ([templates](../reference/workflow-templates.md#presets)).
+`system init --preset default` returns to the default composition.
 
 ## Account re-auth
 

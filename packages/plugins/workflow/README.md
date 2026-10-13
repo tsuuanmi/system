@@ -227,8 +227,9 @@ second execution path (INV-1).
   event carries the Worker, tier, and quota class that served it.
 - **Read side:**
   - `get`, `wait`, and `records` read a run and its node records.
-  - `usage` lists recent runs with each step's Worker, tier, and quota class
-    (the usage report).
+  - `usage` lists recent runs with each step's Worker, tier, and quota class,
+    and the tokens its result reports, when its Worker counts them (a model
+    Worker's `model-answer`) (the usage report).
   - `explain` gives each step's egress, tier, route (or admission), and
     acceptance or recovery decisions with their reasons (REQ-ART-3). A node keeps
     its turn's decision ids, so the chain outlives the turn runtime's retention.

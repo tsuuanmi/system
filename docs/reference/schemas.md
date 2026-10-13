@@ -131,6 +131,17 @@ guesses.
   `{type: git-head, ref: HEAD, version: hash of every change on top}`. A
   review binds to it.
 
+### `model-answer`
+
+- Written once per completed model call, as the body of a `report` artifact
+  ([models](../design/models.md)). The prompt is kept by hash only, and the
+  model is named by its catalog id, never by the route's model id.
+- `finish` is `max-tokens` when the answer was cut at `maxTokens`, the bound the
+  call ran under (the smaller of the catalog entry's and the requirement's
+  budget).
+- `usage` is the provider's own token count. The usage report shows it per step;
+  it is not priced.
+
 ### `account`
 
 - `account@1.1` adds `features`: the website features a probe proved on the

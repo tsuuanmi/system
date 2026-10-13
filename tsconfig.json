@@ -117,6 +117,12 @@
       "@tsuuanmi/system-workers-core": [
         "packages/workers-core/src/index.ts"
       ],
+      "@tsuuanmi/system-models-core": [
+        "packages/models-core/src/index.ts"
+      ],
+      "@tsuuanmi/system-models": [
+        "packages/plugins/models/src/index.ts"
+      ],
       "@tsuuanmi/system-workers": [
         "packages/plugins/workers/src/index.ts"
       ],

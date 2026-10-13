@@ -49,6 +49,8 @@ export interface NodeView {
   tier?: Tier
   quotaClass?: string
   result?: ArtifactRef
+  /** Tokens the result reports spending, when its Worker counts them (model Workers). */
+  usage?: { inputTokens: number; outputTokens: number }
   error?: WorkflowError
 }
 

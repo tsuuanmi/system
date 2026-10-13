@@ -28,6 +28,7 @@ each field, which a schema cannot fully express, is documented in
 | [provider-answer.v1.json](provider-answer.v1.json) | body of a `report` artifact holding one website Worker answer (the prompt by hash only) |
 | [plan.v1.json](plan.v1.json) | body of a `plan` artifact: nodes a planner proposes to append to its run's DAG |
 | [approval.v1.json](approval.v1.json) | body of an `approval` artifact: an operator's verdict bound to one exact subject |
+| [model-answer.v1.json](model-answer.v1.json) | body of a `report` artifact holding one API or local model Worker's answer (the prompt by hash only), with its finish, output bound, and token usage |
 | [agent-result.v1.json](agent-result.v1.json) | body of a `report` artifact holding one agent-runtime Worker run's final message (the prompt by hash only); 1.1 adds its workspace and exact subject |
 | [hypothesis-set.v1.json](hypothesis-set.v1.json) | body of a `criteria` artifact: a research question framed as testable hypotheses (scientific-research profile) |
 | [evidence-table.v1.json](evidence-table.v1.json) | body of an `evidence` artifact: cited claims and how each bears on each hypothesis (scientific-research profile) |

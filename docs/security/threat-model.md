@@ -21,6 +21,8 @@
   turn tokens for MCP tool inversion.
 - Credentials in the daemon's environment: API keys, the model token a Codex Worker's model
   provider reads, and any other secret the operator exported.
+- API keys of model routes, stored encrypted in the vault under the credential reference the
+  route names (`system model key`); the configuration names only the reference.
 
 ## Trust boundaries
 
@@ -180,15 +182,19 @@
   attachment.** `ctx.egress` checks the **actual outgoing payload** inside the
   Worker source, after routing chose the Worker and before anything is sent
   ([INV-12](../architecture/invariants.md#inv-12-data-egress-is-explicit)). This
-  holds for both Worker sources: a website turn (class `website`) and an agent run
+  holds for every Worker source: a website turn (class `website`), an agent run
   (class `agent`: the agent runs here, but its model is remote, so routing admitting
-  a local Worker is not enough). The check combines two rules. First, the caller's
-  classification must be permitted for the Worker class (by default `website` and
-  `agent` receive only `public` and `operator-shared`, so `local-private` is
-  denied; an operator whose agent model runs locally widens `agent`). Second, a
+  a local Worker is not enough), and a model call (class `model` for an API model,
+  `model-local` for a model on this machine, from the operator's catalog entry). The
+  check combines two rules. First, the caller's classification must be permitted for
+  the Worker class (by default `website`, `agent`, and `model` receive only `public`
+  and `operator-shared`, so `local-private` is denied; `model-local` also receives
+  `local-private`; an operator whose agent model runs locally widens `agent`). A
+  catalog entry wrongly marked `local` would send local-private data to a remote
+  endpoint, so `locality` is a trusted operator statement, like a classification. Second, a
   credential scan must find nothing (secretlint's recommended rules plus operator
   deny patterns). Every check is an `egress` decision, and findings keep rule ids
-  and offsets, never the secret. A denial fails the turn or agent run as
+  and offsets, never the secret. A denial fails the turn, agent run, or model call as
   `egress_denied` (USER_ACTION) and nothing is sent. A scan cannot recognize every
   kind of private data, so classification remains the caller's statement.
 - **An AI client holding a control token triggers operator actions.** Each

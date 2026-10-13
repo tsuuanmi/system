@@ -93,6 +93,14 @@ export function workersConformance(name: string, boot: Boot): void {
       })
     })
 
+    it('names a required capability that no Worker proves, in the failure and the admission decision (INV-2)', async () => {
+      await withWorkers([worker('w:a'), worker('w:b', { state: 'unavailable', capabilities: [] })], async (ctx) => {
+        const failure = await ctx.workers.route(requirement({ capabilities: ['reason', 'web-search'] })).catch((e: unknown) => e) as AdmissionFailure
+        expect(failure.message).toMatch(/no Worker proves web-search\b/)
+        expect(body(ctx, failure.decision).candidates.find((c) => c.selected)!.reasons).toEqual(['no Worker proves web-search'])
+      })
+    })
+
     it('chooses the lowest admissible tier at or above the minimum, within the maximum, and records a tier decision (QA-12)', async () => {
       const workers = [worker('w:eco', { tier: 'economy' }), worker('w:std', { tier: 'standard' }), worker('w:top', { tier: 'frontier' })]
       await withWorkers(workers, async (ctx) => {

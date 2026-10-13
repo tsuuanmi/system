@@ -33,6 +33,8 @@ its types is not listed).
 | [agent-runtime-core](../../packages/agent-runtime-core/README.md) | capabilities | defines `agentRuntimes` | — | — | — |
 | [agent-runtimes](../../packages/plugins/agent-runtimes/README.md) | capabilities | `agentRuntimes` | `agent-runtimes` | — | `agent-runtime-core`, `libs` |
 | [agent-workers](../../packages/plugins/agent-workers/README.md) | capabilities | `agentWorkers` | `agent-workers` | `store`, `artifacts`, `leases`, `workers`, `agentRuntimes`, `egress` | `agent-runtime-core`, `leases`, `libs`, `provider-core`, `workers-core` |
+| [models](../../packages/plugins/models/README.md) | capabilities | `models` | `models` | `llm`, `store`, `artifacts`, `leases`, `workers`, `egress`, `models`, `credentials` (optional), `mcp` (optional) | `gateway-core`, `leases`, `libs`, `models-core`, `provider-core`, `workers-core` |
+| [models-core](../../packages/models-core/README.md) | capabilities | defines `models` | — | — | `workers-core` |
 | [runtime-acp](../../packages/plugins/runtime-acp/README.md) | capabilities | — | `runtime-acp` | `agentRuntimes` | `agent-runtime-core`, `provider-core` |
 | [runtime-claude-agent-sdk](../../packages/plugins/runtime-claude-agent-sdk/README.md) | capabilities | — | `runtime-claude-agent-sdk` | `agentRuntimes` | `agent-runtime-core`, `provider-core` |
 | [runtime-codex-sdk](../../packages/plugins/runtime-codex-sdk/README.md) | capabilities | — | `runtime-codex-sdk` | `agentRuntimes` | `agent-runtime-core`, `libs`, `provider-core` |
@@ -56,6 +58,8 @@ its types is not listed).
 | [system-bundle](../../packages/system-bundle/README.md) | host and libraries | — | — | — | — |
 | `@deepseek-ai/cordis-plugin-timer` (DSH row) | host and libraries | `timer` | `timer` | — | — |
 | `@deepseek-ai/dsh-host-webserver` (DSH row) | host and libraries | `webServer` | `webserver` | — | — |
+| `@deepseek-ai/dsh-llm` (DSH row) | host and libraries | `llm` | `llm` | — | — |
+| `@deepseek-ai/dsh-llm-pi-ai` (DSH row) | host and libraries | — | `llm-pi-ai` | — | — |
 
 ## Seam graph
 
@@ -83,6 +87,7 @@ flowchart TB
   subgraph capabilities ["capabilities"]
     agent_runtimes["agent-runtimes<br/>ctx.agentRuntimes"]
     agent_workers["agent-workers<br/>ctx.agentWorkers"]
+    models["models<br/>ctx.models"]
     runtime_acp["runtime-acp"]
     runtime_claude_agent_sdk["runtime-claude-agent-sdk"]
     runtime_codex_sdk["runtime-codex-sdk"]
@@ -107,6 +112,7 @@ flowchart TB
   end
   subgraph host_and_libraries ["host and libraries"]
     webserver["webserver<br/>ctx.webServer"]
+    llm["llm<br/>ctx.llm"]
   end
   accounts --> credentials_vault
   agent_workers --> store
@@ -138,6 +144,15 @@ flowchart TB
   mcp_server -.-> providers
   mcp_server -.-> store
   mcp_server -.-> workers
+  models --> llm
+  models --> store
+  models --> artifacts
+  models --> leases
+  models --> workers
+  models --> egress
+  models --> models
+  models -.-> credentials_vault
+  models -.-> mcp_server
   profile_scientific_research --> workflow
   profile_scientific_research --> workers
   profile_scientific_research --> artifacts
@@ -190,6 +205,9 @@ policy above it. Each such edge is listed here so a new one is a visible change.
 | `agent-workers` (capabilities) | `egress` | `egress` (routing) | required |
 | `agent-workers` (capabilities) | `workers` | `workers` (routing) | required |
 | `login` (provider runtime) | `mcp` | `mcp-server` (gateways) | optional |
+| `models` (capabilities) | `egress` | `egress` (routing) | required |
+| `models` (capabilities) | `mcp` | `mcp-server` (gateways) | optional |
+| `models` (capabilities) | `workers` | `workers` (routing) | required |
 | `turns` (capabilities) | `egress` | `egress` (routing) | required |
 | `turns` (capabilities) | `mcp` | `mcp-server` (gateways) | optional |
 | `turns` (capabilities) | `workers` | `workers` (routing) | required |
@@ -225,6 +243,8 @@ flowchart TB
     agent_runtime_core["agent-runtime-core<br/>defines agentRuntimes"]
     agent_runtimes["agent-runtimes<br/>ctx.agentRuntimes"]
     agent_workers["agent-workers<br/>ctx.agentWorkers"]
+    models["models<br/>ctx.models"]
+    models_core["models-core<br/>defines models"]
     runtime_acp["runtime-acp"]
     runtime_claude_agent_sdk["runtime-claude-agent-sdk"]
     runtime_codex_sdk["runtime-codex-sdk"]
@@ -268,6 +288,12 @@ flowchart TB
   login --> gateway_core
   login --> provider_core
   mcp_server --> gateway_core
+  models --> gateway_core
+  models --> leases
+  models --> models_core
+  models --> provider_core
+  models --> workers_core
+  models_core --> workers_core
   provider_chatgpt_web --> provider_core
   provider_chatgpt_web --> ui_ops
   provider_gemini_web --> provider_core

@@ -7,8 +7,8 @@
 >
 > Implemented in [`ui-ops`](../../packages/ui-ops/README.md), with the heal audit in
 > [`provider-chatgpt-web`](../../packages/plugins/provider-chatgpt-web/README.md); differs from
-> target: every heal is deterministic (`heal: model` is parsed but acts as `deterministic`, since
-> there is no `ctx.models` seam); `sideEffect` is parsed but caps neither healing nor failure
+> target: every heal is deterministic (`heal: model` is parsed but acts as `deterministic`: the
+> `ctx.models` seam exists, but the heal engine does not use it yet); `sideEffect` is parsed but caps neither healing nor failure
 > handling; `system ui doctor`, `system ui overlay export`, and the diagnostic bundle are planned;
 > the Gemini driver runs with healing off.
 

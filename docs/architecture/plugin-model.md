@@ -37,7 +37,7 @@ from the code in [packages](packages.md); this table names the roles.
 | Kernel | `artifacts` | built | `system-artifacts`: envelope, ids, lineage, schema validation, decisions | every producer of results or decisions |
 | Kernel | `eventLog` | built | `system-event-log` (named so because Cordis owns `ctx.events`) | append: workflow, turns, provider-chatgpt-web; listen: profile-scientific-research |
 | Kernel | `leases` | built | `system-leases` (generations, fencing) | workflow, turns, agent-workers |
-| Kernel | `credentials` | built | definition: **DSH** `dsh-credentials`; provider: `system-credentials-vault` (encrypted at rest) | accounts |
+| Kernel | `credentials` | built | definition: **DSH** `dsh-credentials`; provider: `system-credentials-vault` (encrypted at rest) | accounts, `llm-pi-ai` (route keys by reference), models (`model_key`) |
 | Provider runtime | `display` | built | `Display` in `system-provider-core`; `system-display-virtual` (Xvfb) | browser |
 | Provider runtime | `browser` | built | `Browser` in `system-provider-core`; `system-browser-patchright` | turns, login |
 | Provider runtime | `providers` | built | `ProviderRegistry` in `system-provider-core`; registry `system-providers`; drivers `provider-chatgpt-web`, `provider-gemini-web` register into it | turns, login |
@@ -47,12 +47,12 @@ from the code in [packages](packages.md); this table names the roles.
 | Capabilities | `turns` | built | `system-turns`: the `website` Worker source | `ctx.workers`, through the source it registers |
 | Capabilities | `agentRuntimes` | built | `AgentRuntimes` in `system-agent-runtime-core`; registry `system-agent-runtimes`; providers `runtime-claude-agent-sdk`, `runtime-codex-sdk`, `runtime-acp` | agent-workers |
 | Capabilities | `agentWorkers` | built | `system-agent-workers`: the `agents` Worker source | `ctx.workers`, through the source it registers |
-| Capabilities | `models` | planned | **DSH** `ctx.llm` (`llm-pi-ai`) behind a `system` seam | economy-tier Workers ([purpose P4](../requirements/purpose.md#p4-cheap-models-do-low-level-work-strong-models-do-hard-work)) |
+| Capabilities | `models` | built | `Models` in `system-models-core`; provider `system-models` over **DSH** `ctx.llm` (`llm`, `llm-pi-ai`) ([models](../design/models.md)) | the `models` Worker source in `system-models` |
 | Routing | `workers` | built | `Workers` in `system-workers-core`; `system-workers` | workflow; profile-scientific-research adds acceptance contracts |
-| Routing | `egress` | built | `system-egress`: classification policy and credential scan (INV-12) | turns, agent-workers, workflow |
+| Routing | `egress` | built | `system-egress`: classification policy and credential scan (INV-12) | turns, agent-workers, models, workflow |
 | Orchestration | `workflow` | built | `system-workflow`; templates through `ctx.workflow.template` | gateways, web-ui, profiles |
 | Orchestration | `workerSessions` | built | `system-worker-sessions` ([design](../design/sessions-and-messaging.md)) | workflow |
-| Gateways | `mcp` | built | `McpTools` in `system-gateway-core`; `system-mcp-server` (own: DSH has only an MCP client) | tool contributors: login, turns, workflow, worker-sessions; mcp-server adds `status`. Each tool declares its scope, `operator` by default ([ADR-0023](../decisions/adr/0023-scoped-control-credentials.md)) |
+| Gateways | `mcp` | built | `McpTools` in `system-gateway-core`; `system-mcp-server` (own: DSH has only an MCP client) | tool contributors: login, turns, workflow, worker-sessions, models; mcp-server adds `status`. Each tool declares its scope, `operator` by default ([ADR-0023](../decisions/adr/0023-scoped-control-credentials.md)) |
 | Host | `webServer` | built | **DSH** `dsh-host-webserver` (loopback) | mcp-server, gateway-anthropic, gateway-responses, web-ui |
 | — | `website` (Website Core) | not planned | replaced by `ctx.turns` and the engine's request keys and result reuse | — |
 | — | `exec` (local tools) | not planned | agent runtimes run commands inside their own sandbox | — |
@@ -93,7 +93,8 @@ and the composition test that asserts the exact row set.
 | **mounted** | `webserver` (`dsh-host-webserver`) | `/mcp`, `/anthropic`, `/openai`, `/ui` | loopback `127.0.0.1:47317` |
 | not mounted | `approval`, `user-questions` | — | plan approval is the engine's own `approval@1.0` artifact bound to the exact plan |
 | not mounted | `attachments` (`dsh-attachment-local`) | — | depends on the native `sharp`, requires a display name, and is not an allow-listed row |
-| planned | `llm`, `llm-pi-ai`, `llm-retry` | `ctx.models`, the economy tier (P4) | — |
+| **mounted** | `llm` (`dsh-llm`), `llm-pi-ai` (`dsh-llm-pi-ai`) | `ctx.llm` under `ctx.models` ([models](../design/models.md)) | need only `ctx.credentials`; no route until the operator configures one; a route's key is a credential reference resolved through the vault |
+| not mounted | `llm-retry` | — | injects the agent loop and session log (`agents`, `sessionProjections`), never inserted, and retries agent-loop steps only; `models` bounds its own re-attempts by the route's retry policy |
 | planned (optional) | `dsh-acp` | ACP editor client gateway | — |
 | optional | `hmr` | development reloads | — |
 | not mounted | `subprocess`, `sandbox`, `sandbox-policy`, `shell`/`fs` providers | — | no `exec` seam; agent runtimes run commands in their own sandbox. `agent-runtime-core` imports only the `dsh-subprocess` library function `scrubbedParentEnv` for agent child environments |
@@ -113,7 +114,8 @@ One exact DSH version is pinned for every row.
 ```mermaid
 flowchart LR
   e["empty entry list"] --> b["@tsuuanmi/system-bundle<br/>allow-listed DSH rows + system plugins<br/>(no dsh-base)"]
-  b --> o["bundles the operator added<br/>(kept by system init)"]
+  b --> r["a preset's bundle layer, if any<br/>(system init --preset)"]
+  r --> o["bundles the operator added<br/>(kept by system init)"]
   o --> p["the profile's cordis.patch.yml<br/>(operator overrides)"]
   p --> c["--patch overlays<br/>from the command line"]
 ```
@@ -125,6 +127,10 @@ not deep-merge. Removing a capability means disabling its row. Deleting code is 
 Examples:
 
 - To drop a website, disable its driver row (`provider-gemini-web`).
+- To run with no Worker that drives a website, `system init --preset api-first` adds the preset's
+  bundle layer right after the system bundle; it disables those rows and both model gateways
+  ([ADR-0025](../decisions/adr/0025-api-first-composition.md)). The operator's own patch stays
+  as it is.
 - To swap the browser engine, disable the `browser` row and insert another provider of
   `ctx.browser`.
 - To give part of the tree its own provider of a seam, mount it in an `isolate` scope. The
@@ -172,4 +178,5 @@ definitions only.
 | `mcp` | `McpTools` in `@tsuuanmi/system-gateway-core` | `gateway-core/conformance/mcp-tools.ts`, which also checks that a tool declaring no scope is listed to the operator only | `mcp-server` (listed through a real MCP client, per scope) |
 | `workers` | `Workers` in `@tsuuanmi/system-workers-core` | `workers-core/conformance/workers.ts` | `workers` |
 | `agentRuntimes` | `AgentRuntimes` in `@tsuuanmi/system-agent-runtime-core`, plus a provider suite | `agent-runtime-core/conformance/agent-runtimes.ts` | `agent-runtimes` (registry); `runtime-claude-agent-sdk`, `runtime-codex-sdk`, `runtime-acp` (against scripted streams and agents) |
+| `models` | `Models` in `@tsuuanmi/system-models-core` | `models-core/conformance/models.ts` | the fake `FakeModels`; `models` (`LlmModels` over `llm` and `llm-pi-ai`, against a fake OpenAI-compatible server) |
 | workflow templates | `ctx.workflow.template(name, nodes)` | `workflow/conformance/profiles.ts` | `profile-software-development`, `profile-scientific-research` |

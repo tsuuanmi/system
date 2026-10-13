@@ -40,6 +40,8 @@ export default defineConfig({
       '@tsuuanmi/system-worker-sessions': src('./packages/plugins/worker-sessions/src/index.ts'),
       '@tsuuanmi/system-workflow': src('./packages/plugins/workflow/src/index.ts'),
       '@tsuuanmi/system-workers-core': src('./packages/workers-core/src/index.ts'),
+      '@tsuuanmi/system-models-core': src('./packages/models-core/src/index.ts'),
+      '@tsuuanmi/system-models': src('./packages/plugins/models/src/index.ts'),
       '@tsuuanmi/system-workers': src('./packages/plugins/workers/src/index.ts'),
       '@tsuuanmi/system-gateway-core': src('./packages/gateway-core/src/index.ts'),
       '@tsuuanmi/system-provider-core': src('./packages/provider-core/src/index.ts'),

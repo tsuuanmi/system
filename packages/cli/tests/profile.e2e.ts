@@ -16,7 +16,7 @@ const home = mkdtempSync(join(tmpdir(), 'system-e2e-'))
 const env = { ...process.env, DSH_HOME: home }
 let child: ChildProcess | undefined
 
-const ALLOWED_ROWS = ['timer', 'credentials', 'webserver', 'store', 'event-log', 'leases', 'artifacts', 'accounts', 'turn-receipts', 'display', 'browser', 'providers', 'provider-chatgpt-web', 'provider-gemini-web', 'login', 'egress', 'workers', 'turns', 'agent-runtimes', 'runtime-claude-agent-sdk', 'runtime-codex-sdk', 'runtime-acp', 'agent-workers', 'worker-sessions', 'workflow', 'profile-software-development', 'profile-scientific-research', 'gateway-anthropic', 'gateway-responses', 'web-ui', 'mcp-server']
+const ALLOWED_ROWS = ['timer', 'credentials', 'webserver', 'store', 'event-log', 'leases', 'artifacts', 'accounts', 'turn-receipts', 'display', 'browser', 'providers', 'provider-chatgpt-web', 'provider-gemini-web', 'login', 'egress', 'workers', 'turns', 'agent-runtimes', 'runtime-claude-agent-sdk', 'runtime-codex-sdk', 'runtime-acp', 'agent-workers', 'llm', 'llm-pi-ai', 'models', 'worker-sessions', 'workflow', 'profile-software-development', 'profile-scientific-research', 'gateway-anthropic', 'gateway-responses', 'web-ui', 'mcp-server']
 
 async function client2(url: string, token: string): Promise<Client> {
   const client = new Client({ name: 'e2e-2', version: '0' })
@@ -86,14 +86,14 @@ describe('system profile (e2e through dsh)', () => {
     }
     const clientTools = await toolsOf('client')
     expect(clientTools).toEqual(['ask', 'explain', 'research', 'result', 'run', 'session_inbox', 'session_send', 'status', 'usage'])
-    expect(await toolsOf('operator')).toEqual(expect.arrayContaining([...clientTools, 'approve', 'stop', 'delete', 'drain', 'account_set_credentials', 'account_relogin', 'account_code']))
+    expect(await toolsOf('operator')).toEqual(expect.arrayContaining([...clientTools, 'approve', 'stop', 'delete', 'drain', 'account_set_credentials', 'account_relogin', 'account_code', 'model_key']))
     const origin = new URL(url).origin
     const send = (path: string, scope: 'operator' | 'client' | 'model', body?: object) => fetch(`${origin}${path}`, {
       method: body ? 'POST' : 'GET', ...(body ? { body: JSON.stringify(body) } : {}),
       headers: { authorization: `Bearer ${tokenOf(scope)}`, 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
     })
     const call = (name: string) => ({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: {} } })
-    for (const tool of ['approve', 'account_set_credentials']) expect((await send('/mcp', 'client', call(tool))).status).toBe(403)
+    for (const tool of ['approve', 'account_set_credentials', 'model_key']) expect((await send('/mcp', 'client', call(tool))).status).toBe(403)
     expect((await send('/mcp', 'model', call('status'))).status).toBe(401)
     for (const gateway of ['/anthropic/v1/models', '/openai/v1/models']) {
       expect((await send(gateway, 'model')).status).toBe(200)

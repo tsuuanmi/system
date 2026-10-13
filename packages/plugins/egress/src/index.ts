@@ -23,6 +23,14 @@ declare module '@deepseek-ai/cordis' {
 export type Classification = 'public' | 'operator-shared' | 'local-private'
 const CLASSIFICATIONS: readonly Classification[] = ['public', 'operator-shared', 'local-private']
 
+/** The default egress policy per Worker class (INV-12). */
+export const WORKER_CLASSES: Readonly<Record<string, Classification[]>> = {
+  website: ['public', 'operator-shared'],
+  agent: ['public', 'operator-shared'],
+  model: ['public', 'operator-shared'],
+  'model-local': ['public', 'operator-shared', 'local-private'],
+}
+
 export interface DenyPattern {
   name: string
   /** A regular expression (JavaScript syntax). */
@@ -31,9 +39,10 @@ export interface DenyPattern {
 
 export interface Config {
   /**
-   * Classifications each remote Worker class may receive (default: `website` and `agent` ←
-   * public, operator-shared). `agent` is an agent runtime Worker: it runs here, but its model is
-   * remote; widen it only for an agent whose model runs on this machine.
+   * Classifications each Worker class may receive (default {@link WORKER_CLASSES}). `agent` is
+   * an agent runtime Worker: it runs here, but its model is remote; widen it only for an agent
+   * whose model runs on this machine. `model` is an API model; `model-local` is a model that
+   * runs on this machine, so it may also receive local-private data.
    */
   workerClasses?: Record<string, Classification[]>
   /** Classification of content whose caller states none (default operator-shared). */
@@ -62,8 +71,8 @@ export class Egress extends Service {
   static inject = ['artifacts']
 
   static Config: z<Config> = z.object({
-    workerClasses: z.dict(z.array(z.union(['public', 'operator-shared', 'local-private']))).default({ website: ['public', 'operator-shared'], agent: ['public', 'operator-shared'] })
-      .description('Classifications each remote Worker class may receive'),
+    workerClasses: z.dict(z.array(z.union(['public', 'operator-shared', 'local-private']))).default({ ...WORKER_CLASSES })
+      .description('Classifications each Worker class may receive'),
     defaultClassification: z.union(['public', 'operator-shared', 'local-private']).default('operator-shared').description('Classification when the caller states none'),
     scanSecrets: z.boolean().default(true).description('Scan payloads for credentials (secretlint recommended rules)'),
     denyPatterns: z.array(z.object({ name: z.string().required(), pattern: z.string().required() })).default([]).description('Operator patterns that must never leave the machine'),
@@ -83,7 +92,7 @@ export class Egress extends Service {
   /** Decide whether `payload` may go to `workerClass`, and record why (INV-13). */
   async check(request: EgressRequest): Promise<EgressVerdict> {
     const classification = request.classification ?? this.defaultClassification
-    const classes = this.config.workerClasses ?? { website: ['public', 'operator-shared'], agent: ['public', 'operator-shared'] }
+    const classes = this.config.workerClasses ?? WORKER_CLASSES
     const permitted = classes[request.workerClass]
     const findings = await this.scan(request.payload)
     let reason: string

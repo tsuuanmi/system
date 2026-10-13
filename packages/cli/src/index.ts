@@ -49,17 +49,34 @@ interface ProfileManifest {
 }
 
 /**
- * Merge the system bundle into a profile manifest without dropping anything the operator
- * added with `dsh plugin --profile system add …`; the system bundle stays first.
+ * Presets (ADR-0025): a named bundle layer shipped in the system bundle's `presets/<name>`,
+ * composed right after it. `default` is the system bundle alone.
  */
-export function mergeProfileManifest(current: Partial<ProfileManifest> | undefined, bundleDir: string): ProfileManifest {
-  const bundles = (current?.dsh?.profile?.bundles ?? []).filter((name) => name !== '@tsuuanmi/system-bundle' && name !== '@deepseek-ai/dsh-base')
+export const PRESETS = { 'api-first': '@tsuuanmi/system-preset-api-first' } as const
+export type Preset = 'default' | keyof typeof PRESETS
+const PRESET_BUNDLES: readonly string[] = Object.values(PRESETS)
+
+/** The preset a profile manifest composes now. */
+export function presetOf(current: Partial<ProfileManifest> | undefined): Preset {
+  const bundle = current?.dsh?.profile?.bundles?.find((name) => PRESET_BUNDLES.includes(name))
+  return (Object.entries(PRESETS).find(([, name]) => name === bundle)?.[0] as Preset | undefined) ?? 'default'
+}
+
+/**
+ * Merge the system bundle into a profile manifest without dropping anything the operator
+ * added with `dsh plugin --profile system add …`; the system bundle stays first, then the
+ * preset's layer. Without `preset`, the profile keeps the preset it has.
+ */
+export function mergeProfileManifest(current: Partial<ProfileManifest> | undefined, bundleDir: string, preset: Preset = presetOf(current)): ProfileManifest {
+  const bundles = (current?.dsh?.profile?.bundles ?? []).filter((name) => name !== '@tsuuanmi/system-bundle' && name !== '@deepseek-ai/dsh-base' && !PRESET_BUNDLES.includes(name))
+  const dependencies = Object.fromEntries(Object.entries(current?.dependencies ?? {}).filter(([name]) => !PRESET_BUNDLES.includes(name)))
+  const layer = preset === 'default' ? undefined : PRESETS[preset]
   return {
     ...current,
     name: current?.name ?? 'dsh-profile-system',
     private: true,
-    dependencies: { ...current?.dependencies, '@tsuuanmi/system-bundle': `link:${bundleDir}` },
-    dsh: { ...current?.dsh, profile: { ...current?.dsh?.profile, bundles: ['@tsuuanmi/system-bundle', ...bundles] } },
+    dependencies: { ...dependencies, '@tsuuanmi/system-bundle': `link:${bundleDir}`, ...(layer ? { [layer]: `link:${join(bundleDir, 'presets', preset)}` } : {}) },
+    dsh: { ...current?.dsh, profile: { ...current?.dsh?.profile, bundles: ['@tsuuanmi/system-bundle', ...(layer ? [layer] : []), ...bundles] } },
   }
 }
 
@@ -78,13 +95,17 @@ export function assertRuntime(problem: string | undefined = sqliteRuntimeProblem
   if (problem) throw new Error(problem)
 }
 
-export function init(home: string = dshHome()): string {
+/**
+ * Create or refresh the profile, with `preset` when given (otherwise the profile keeps its
+ * preset). The operator's own `cordis.patch.yml` is never rewritten: a preset is a bundle layer.
+ */
+export function init(home: string = dshHome(), preset?: Preset): string {
   const dir = profileDir(home)
   mkdirSync(dir, { recursive: true, mode: 0o700 })
   const bundleDir = dirname(require.resolve('@tsuuanmi/system-bundle/package.json'))
   const path = join(dir, 'package.json')
   const current = existsSync(path) ? (JSON.parse(readFileSync(path, 'utf8')) as Partial<ProfileManifest>) : undefined
-  writeFileSync(path, `${JSON.stringify(mergeProfileManifest(current, bundleDir), null, 2)}\n`)
+  writeFileSync(path, `${JSON.stringify(mergeProfileManifest(current, bundleDir, preset), null, 2)}\n`)
   if (!existsSync(join(dir, 'cordis.patch.yml'))) writeFileSync(join(dir, 'cordis.patch.yml'), '# Operator overrides for the system profile.\n[]\n')
   const install = spawnSync(process.execPath, [dshBin(), 'plugin', '--profile', PROFILE, 'install'], {
     env: dshEnv({ ...process.env, DSH_HOME: home }), stdio: 'inherit',
@@ -92,6 +113,28 @@ export function init(home: string = dshHome()): string {
   if (install.error) throw install.error
   if (install.status !== 0) throw new Error(`dsh plugin install failed (${install.signal ?? `status ${install.status}`})`)
   return dir
+}
+
+/** A composed row: its id and whether it is mounted. */
+export interface ComposedRow { id: string; mounted: boolean }
+
+/** Parse `dsh --dump-config`: every top-level row in order, and whether a patch disabled it. */
+export function parseComposedRows(dump: string): ComposedRow[] {
+  const rows: ComposedRow[] = []
+  for (const line of dump.split('\n')) {
+    const row = /^- id: (\S+)/.exec(line)
+    if (row) rows.push({ id: row[1]!, mounted: true })
+    else if (/^ {2}disabled: true\b/.test(line) && rows.length) rows.at(-1)!.mounted = false
+  }
+  return rows
+}
+
+/** The profile's composed rows, as the launcher would mount them now. */
+export function composedRows(home: string = dshHome()): ComposedRow[] {
+  const dump = spawnSync(process.execPath, [dshBin(), '--profile', PROFILE, '--dump-config'], { env: dshEnv({ ...process.env, DSH_HOME: home }), encoding: 'utf8' })
+  if (dump.error) throw dump.error
+  if (dump.status !== 0) throw new Error(`dsh --dump-config failed: ${dump.stderr.trim().slice(0, 500)}`)
+  return parseComposedRows(dump.stdout)
 }
 
 export interface BrowserDeps {
@@ -507,14 +550,14 @@ export async function parseAsk(args: readonly string[], readStdin: () => Promise
   return prompt ? { prompt, ...request } : undefined
 }
 
-interface UsageNode { nodeId: string; state: string; minTier: string; tier?: string; worker?: string; quotaClass?: string }
+interface UsageNode { nodeId: string; state: string; minTier: string; tier?: string; worker?: string; quotaClass?: string; usage?: { inputTokens: number; outputTokens: number } }
 interface UsageRun { runId: string; template: string; status: string; createdAt: string; nodes: UsageNode[] }
 
-/** `system usage`: per request and step, the Worker, tier, and quota class that served it. */
+/** `system usage`: per request and step, the Worker, tier, and quota class that served it, and the tokens a model Worker spent. */
 export function formatUsage(usage: { runs: UsageRun[] }): string[] {
   return usage.runs.flatMap((run) => [
     `${run.runId}  ${run.template}  ${run.status}  ${run.createdAt}`,
-    ...run.nodes.map((n) => `  ${n.nodeId}  ${n.state}  ${n.tier ?? '-'}  ${n.quotaClass ?? '-'}  ${n.worker ?? '-'}`),
+    ...run.nodes.map((n) => `  ${n.nodeId}  ${n.state}  ${n.tier ?? '-'}  ${n.quotaClass ?? '-'}  ${n.worker ?? '-'}${n.usage ? `  ${n.usage.inputTokens} in / ${n.usage.outputTokens} out tokens` : ''}`),
   ])
 }
 

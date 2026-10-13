@@ -55,6 +55,13 @@
       name: '@tsuuanmi/system-runtime-acp'            # ACP agents (none until configured)
     - id: agent-workers
       name: '@tsuuanmi/system-agent-workers'          # the `agents` Worker source (no workers until configured)
+    # --- API and local models (M6e): routes on llm-pi-ai and the model catalog in the operator patch ---
+    - id: llm
+      name: '@deepseek-ai/dsh-llm'                    # ctx.llm: provider-neutral model calls
+    - id: llm-pi-ai
+      name: '@deepseek-ai/dsh-llm-pi-ai'              # provider routes (none until configured); keys by credential reference
+    - id: models
+      name: '@tsuuanmi/system-models'                 # ctx.models and the `models` Worker source (no models until configured)
     - id: worker-sessions
       name: '@tsuuanmi/system-worker-sessions'       # sessions, mailboxes, peer messages; MCP session_send/session_inbox
     - id: workflow

@@ -67,7 +67,7 @@ durable rows under its own lease.
 
 ```mermaid
 flowchart TD
-  start["host start: plugins apply, migrations run"] --> turns & agents & wf
+  start["host start: plugins apply, migrations run"] --> turns & agents & models & wf
   subgraph turns["ctx.turns: each queued or running turn"]
     tl["take turn lease"] --> sub{"running with a<br/>SUBMITTED receipt?"}
     sub -- no: never sent --> run1["run normally<br/>(egress, scheduler, receipt)"]
@@ -82,6 +82,11 @@ flowchart TD
     al["take run lease"] --> started{"started<br/>before the stop?"}
     started -- no --> run2["run"]
     started -- yes --> fail2["fail: reconciliation_failed<br/>the agent may have acted"]
+  end
+  subgraph models["the models source: each queued or running call"]
+    ml["take call lease"] --> sends{"sent twice<br/>already?"}
+    sends -- no --> run3["send (again):<br/>no effect beyond its cost"]
+    sends -- yes --> fail3["fail: reconciliation_failed<br/>never a third send"]
   end
   subgraph wf["ctx.workflow"]
     runs["each running run: take run lease"] --> attach["RUNNING nodes re-attach to<br/>their execution (source.get / wait)"]
@@ -104,6 +109,7 @@ the [roadmap](../proposals/roadmap.md) tracks the rows that have none yet.
 |---|---|---|---|
 | A prompt sent to a website | reconcile-before-repeat | the turn receipt's conversation is observed: WAIT, RECOVER, bounded RESUBMIT, or AMBIGUOUS (fails, never resent) | [restart.crash.ts](../../packages/system-bundle/tests/crash/restart.crash.ts): sent and bound, answered, sent but unbound, temporary chat |
 | An agent run started on its workspace | block | the run fails as `reconciliation_failed`; the agent never starts again | [agent.crash.ts](../../packages/system-bundle/tests/crash/agent.crash.ts) |
+| A prompt sent to an API or local model | safe-to-repeat, bounded cost | the call is sent once more (it has no effect beyond its cost); a call already sent twice fails as `reconciliation_failed` | [model.crash.ts](../../packages/system-bundle/tests/crash/model.crash.ts): sent, killed before the answer, sent once more |
 | A peer message delivered | safe-to-repeat | delivery is idempotent by the sender's `messageId` | — |
 | A workflow node's result committed, graph growth | safe-to-repeat | one store transaction; a node re-attaches to its execution by key | — |
 | A lease taken over | safe-to-repeat | the generation fence rejects a commit by the old holder | — |

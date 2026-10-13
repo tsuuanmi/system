@@ -29,10 +29,12 @@ package's `conformance/` directory. Each provider's tests call the suite with a
   with `ctx.plugin(...)` and mock only external boundaries (provider websites,
   agents, models).
 - **Built-artifact smoke test**
-  ([`packages/cli/tests/profile.e2e.ts`](../../packages/cli/tests/profile.e2e.ts)).
+  ([`packages/cli/tests/profile.e2e.ts`](../../packages/cli/tests/profile.e2e.ts),
+  [`api-first.e2e.ts`](../../packages/cli/tests/api-first.e2e.ts)).
   The `system` wrapper boots the shipped profile from built `lib/` through the
-  real `dsh` launcher. The test asserts the exact allow-listed row set, calls
-  MCP with a token, and checks cleanup on SIGTERM.
+  real `dsh` launcher, once per preset. Each test asserts the exact row set, calls
+  MCP with a token, and checks cleanup on SIGTERM; the `api-first` one also
+  answers through a model Worker against a fake API server.
 - **Upgrade suite**
   ([`packages/cli/tests/upgrade/`](../../packages/cli/tests/upgrade/upgrade.e2e.ts),
   part of `pnpm test:e2e`; REQ-HOST-2,
@@ -59,6 +61,10 @@ package's `conformance/` directory. Each provider's tests call the suite with a
     temporary chat.
   - It is then restarted on the same state. The provider must see the prompt
     exactly once, and the run must recover, or fail closed as AMBIGUOUS.
+  - The same holds for every other row of the
+    [effect register](../architecture/data-flow.md#effect-register) that names a
+    crash test: an agent run never starts again; a model call is sent exactly once
+    more.
 - **Architecture rules**
   ([`scripts/architecture.spec.ts`](../../scripts/architecture.spec.ts)).
   Capability-routed code names no tools (INV-11). There is one provider per

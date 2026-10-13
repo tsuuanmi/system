@@ -1,0 +1,33 @@
+# The api-first preset (ADR-0025): a bundle layer applied after @tsuuanmi/system-bundle.
+# No Worker drives a website: the display, browser, provider registry, website drivers, login,
+# accounts, website turns, and turn receipts are off, and so are both model gateways (their
+# model is a website Worker). Work runs on API and local models (the `models` row) and on agent
+# Workers. Website-only capabilities (web-search, deep-research) then fail admission with the
+# reason; nothing falls back silently (INV-2). Its configuration names no vendor, model, or tool (INV-11):
+# the model catalog and its routes live in the operator's own cordis.patch.yml.
+- id: display
+  disabled: true
+- id: browser
+  disabled: true
+- id: providers
+  disabled: true
+- id: provider-chatgpt-web
+  disabled: true
+- id: provider-gemini-web
+  disabled: true
+- id: login
+  disabled: true
+- id: accounts
+  disabled: true
+- id: turns
+  disabled: true
+- id: turn-receipts
+  disabled: true
+- id: gateway-anthropic
+  disabled: true
+- id: gateway-responses
+  disabled: true
+# Quota order: local models first, then metered APIs, then agent plans (REQ-WRK-8 is configuration).
+- id: workers
+  config:
+    quotaPreference: [local, metered, agent-plan, subscription-chat]

@@ -258,7 +258,7 @@ export class McpEndpoint extends McpTools {
     }
     placeholder('ask', {
       scope: 'client',
-      description: 'Ask a website Worker (separate chat quota). Returns a runId to poll with result.',
+      description: 'Ask one Worker, chosen by the router for the work (capability, tier, quota order). Returns a runId to poll with result.',
       inputSchema: { prompt: zod.string().min(1).max(32_000), tier: zod.enum(['economy', 'standard', 'frontier']).optional(), ...session, ...idempotency },
     })
     placeholder('research', {

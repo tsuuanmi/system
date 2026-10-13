@@ -6,7 +6,7 @@ the supported way to run a DSH harness
 
 | Command | Does |
 |---|---|
-| `system init` | writes `<DSH_HOME>/profiles/system` with **only** `@tsuuanmi/system-bundle` (no `dsh-base`, [ADR-0019](../../docs/decisions/adr/0019-explicit-minimal-dsh-core.md)), then runs `dsh plugin install`, keeps a usable Chrome (installing the pinned managed build when none exists, [ADR-0020](../../docs/decisions/adr/0020-pinned-managed-chrome.md)), and reports a missing Xvfb |
+| `system init [--preset default\|api-first]` | writes `<DSH_HOME>/profiles/system` with **only** `@tsuuanmi/system-bundle` (no `dsh-base`, [ADR-0019](../../docs/decisions/adr/0019-explicit-minimal-dsh-core.md)), and a preset's bundle layer right after it when one is chosen ([ADR-0025](../../docs/decisions/adr/0025-api-first-composition.md); without `--preset` the profile keeps its preset; the operator's `cordis.patch.yml` is never rewritten), then runs `dsh plugin install`. When the composed profile mounts the `browser` row (read from `dsh --dump-config`), it keeps a usable Chrome (installing the pinned managed build when none exists, [ADR-0020](../../docs/decisions/adr/0020-pinned-managed-chrome.md)) and reports a missing Xvfb; otherwise it skips both |
 | `system ask [--persist] [--session <id>] [--tier <t>] [--classification <c>] (<prompt> \| -)` | asks through the running profile's MCP `ask`, then polls `result` with the `runId` until the answer arrives; prints the answer (and the session id for persistent asks) |
 | `system research [--classification <c>] (<question> \| -)` | starts the `research` run (the research profile: hypotheses, a cited literature review, an evidence table, an independent critique, conclusions per hypothesis), prints step progress to stderr, and prints the conclusions. `system run deep-research` runs Deep research, then a cited compaction |
 | `system run <template> [flags] (<input> \| -)` | starts any workflow template through MCP `run`, for example `review` on a local agent Worker, and prints the answer |
@@ -16,7 +16,8 @@ the supported way to run a DSH harness
 | `system supersede <runId> <nodeId> (<text> \| -)` | replaces a completed step's result with a corrected one (MCP `supersede`); everything downstream runs again |
 | `system ui` | prints the operator web UI link (`/ui/#token=…`, the operator token in the fragment only): runs, steps, decision chains, approve, stop, continue |
 | `system result <runId>` | waits for a run and prints its answer |
-| `system usage [<limit>]` | recent runs: per step, the Worker, tier, and quota class that served it (usage report) |
+| `system usage [<limit>]` | recent runs: per step, the Worker, tier, and quota class that served it, and the tokens a model Worker reported (usage report) |
+| `system model key <NAME>` | stores a model route's API key, read from stdin (never from arguments), encrypted in the vault under the credential reference `<NAME>` the route's `apiKeyEnv` names (MCP `model_key`, operator scope) |
 | `system explain <runId\|artifact>` | a run's decision chain per step (egress, tier, route or admission, acceptance), or any artifact's input tree |
 | `system account login <id>` | opens the remote login desktop through the running profile (`account_login`). Prints the `ssh -L` command and URL, then waits until Save has stored the account (its revision increases) |
 | `system account list` / `system account save <id>` | call the running profile's `account_list` / `account_save` MCP tools, authenticated from the discovery file. Save runs after an interactive login |
@@ -39,5 +40,7 @@ the others) act for the operator, so they authenticate with the operator token. 
 client helpers hand out narrower scopes
 ([scopes](../plugins/mcp-server/README.md#scopes)).
 
-The e2e test [`tests/profile.e2e.ts`](tests/profile.e2e.ts) boots the real
-profile, asserts the exact row set, and calls MCP.
+The e2e tests boot the real profile and assert its exact row set:
+[`tests/profile.e2e.ts`](tests/profile.e2e.ts) the default composition, with the
+scope matrix, and [`tests/api-first.e2e.ts`](tests/api-first.e2e.ts) the
+`api-first` preset, with a model Worker answering through a fake API server.

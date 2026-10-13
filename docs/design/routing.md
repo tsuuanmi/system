@@ -1,7 +1,7 @@
 # Routing
 
 > Target state. Boundary: [routing](../architecture/components.md#routing).
-> Purpose: [P1–P4](../requirements/purpose.md). Requirements: REQ-WRK-1..9.
+> Purpose: [P1–P4](../requirements/purpose.md). Requirements: REQ-WRK-1..10.
 >
 > Implemented in [`workers`](../../packages/plugins/workers/README.md) (admission, order,
 > decisions, acceptance) and [`workflow`](../../packages/plugins/workflow/README.md) (tier
@@ -46,7 +46,7 @@ each one with evidence from the sources shown below.
 
 | Capability | Meaning | Typical evidence |
 |---|---|---|
-| `reason` | general reasoning and synthesis | provider driver conformance (website Workers) |
+| `reason` | general reasoning and synthesis | provider driver conformance (website Workers); a route probe (model Workers, [models](models.md)) |
 | `web-search` | search the live web with citations | feature probe on the account |
 | `deep-research` | provider-native multi-step research report | plan + feature probe (P2) |
 | `connector:<name>` | a website connector or app enabled on the account, e.g. `connector:github` | connector probe on the account (P2) |
@@ -98,6 +98,10 @@ failure (`USER_ACTION` or `BACKOFF`), not a silent switch to a different provide
   but its model is remote. Its source therefore checks egress too, for the Worker
   class `agent`, which by default receives `public` and `operator-shared` only.
   An operator whose agent model runs on this machine widens that class.
+- A **model Worker** ([models](models.md)) checks egress for the Worker class `model` (an API
+  model: `public` and `operator-shared` by default) or `model-local` (a model on this machine,
+  which may also receive `local-private`). Its catalog entry's `locality` decides both the
+  class and the locality routing sees.
 - **Phase separation.** A Worker that browses the web or calls remote connectors
   never holds local-private content in the same execution. Untrusted web content
   can carry prompt-injection payloads. Research and private-data processing are
@@ -131,11 +135,18 @@ design.
 ## Quota and cost policy
 
 - Each account and runtime declares a **quota class**: `subscription-chat` for
-  website accounts, `agent-plan` for Claude Code and Codex plans, and `metered`
-  for APIs. The routing order prefers `subscription-chat`, then `local`,
-  `agent-plan`, and `metered` (`quotaPreference`). Agent Workers never offer plain
-  `reason`, so `agent-plan` and `metered` are spent only on capabilities only they
-  prove, such as `develop`, `review`, and `local-data` (P1).
+  website accounts, `agent-plan` for Claude Code and Codex plans, `metered` for
+  API models, and `local` for models on this machine. The order is configuration
+  (`quotaPreference`, REQ-WRK-8). The default composition prefers
+  `subscription-chat`, then `local`, `agent-plan`, and `metered`. Agent Workers never
+  offer plain `reason`, so `agent-plan` quota is spent only on capabilities only
+  they prove, such as `develop`, `review`, and `local-data` (P1). Tier comes before
+  quota, so a model Worker the operator declares at a lower tier than every website
+  Worker serves the `economy` work (P4).
+- The `api-first` preset ([ADR-0025](../decisions/adr/0025-api-first-composition.md)) orders
+  `local`, `metered`, `agent-plan`, `subscription-chat`, and mounts no website Worker. Work that
+  needs a capability only website Workers prove (`web-search`, `deep-research`) then fails
+  admission: the failure names each required capability no Worker proves.
 - Usage is recorded per account from observable signals (turn counts and
   estimated tokens) and treated as an estimate (CON-4). A provider "limit
   reached" state marks the account temporarily not ready, and routing excludes

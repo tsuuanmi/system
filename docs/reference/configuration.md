@@ -92,7 +92,7 @@
 
 | Option | Type | Default | Description |
 |---|---|---|---|
-| `workerClasses` | Record<string, ("public" \| "operator-shared" \| "local-private")[]> | `{"website":["public","operator-shared"],"agent":["public","operator-shared"]}` | Classifications each remote Worker class may receive |
+| `workerClasses` | Record<string, ("public" \| "operator-shared" \| "local-private")[]> | `{"website":["public","operator-shared"],"agent":["public","operator-shared"],"model":["public","operator-shared"],"model-local":["public","operator-shared","local-private"]}` | Classifications each Worker class may receive |
 | `defaultClassification` | "public" \| "operator-shared" \| "local-private" | `"operator-shared"` | Classification when the caller states none |
 | `scanSecrets` | boolean | `true` | Scan payloads for credentials (secretlint recommended rules) |
 | `denyPatterns` | object[] | `[]` | Operator patterns that must never leave the machine |
@@ -171,6 +171,24 @@
 | `minFreeBytes` | number (0…) | `1073741824` | Free space under the DSH home below which health is degraded |
 | `driftWindowHours` | number (1…) | `24` | How long a provider UI change keeps health degraded |
 | `storeCheckMinutes` | number (1…) | `15` | Minutes the store integrity check result is reused (it blocks the host while it runs) |
+
+## `models`
+
+[@tsuuanmi/system-models](../../packages/plugins/models/README.md)
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `models` | object[] | `[]` | The model catalog (REQ-WRK-10); names no key: a key is stored with the operator tool model_key |
+| `models[].id` (required) | string |  | Catalog id; the Worker is model:<id> |
+| `models[].route` (required) | string |  | The llm provider route that reaches the model (an llm-pi-ai providers key) |
+| `models[].model` (required) | string |  | The model id on that route |
+| `models[].tier` (required) | "economy" \| "standard" \| "frontier" |  |  |
+| `models[].quotaClass` | "metered" \| "local" | `"metered"` | metered: paid per token; local: no quota |
+| `models[].locality` | "remote" \| "local" | `"remote"` | local: the model runs on this machine (egress class model-local) |
+| `models[].maxTokens` | number (1…200000) | `4096` | Output bound of every call (INV-9) |
+| `maxRetries` | number (0…5) | `2` | Re-attempts of a transiently failed call |
+| `maxConcurrentCalls` | number (1…64) | `4` | Model calls in flight at once |
+| `callTimeoutMs` | number (1…) | `300000` | Hard deadline per call |
 
 ## `profile-scientific-research`
 

@@ -33,7 +33,7 @@ flowchart LR
   subgraph workers["Workers"]
     web["ChatGPT Web, Gemini Web<br/>(headed browser per account)"]
     agents["Claude Code (Claude Agent SDK)<br/>Codex (Codex SDK)<br/>ACP agents"]
-    models["API and local models<br/>(planned)"]
+    models["API and local models<br/>(a route per endpoint)"]
   end
   state[("DSH_HOME/system/<br/>SQLite store, encrypted vault")]
   codex -- "Responses /openai<br/>MCP (system mcp-stdio)" --> host
@@ -42,7 +42,7 @@ flowchart LR
   op -- "MCP tools, /ui" --> host
   host --> web
   host --> agents
-  host -.-> models
+  host --> models
   host --- state
 ```
 
@@ -91,7 +91,7 @@ flowchart TB
     turns["ctx.turns<br/>website Workers"]
     aw["ctx.agentWorkers<br/>agent Workers"]
     ar["ctx.agentRuntimes<br/>claude-agent-sdk, codex-sdk, acp"]
-    mod["ctx.models<br/>economy tier (planned)"]
+    mod["ctx.models<br/>model Workers"]
   end
   subgraph PR["Provider runtime"]
     direction LR
@@ -114,7 +114,7 @@ flowchart TB
   end
   subgraph H["Host"]
     direction LR
-    dsh["DSH core rows: timer, webserver"]
+    dsh["DSH core rows: timer, webserver, llm, llm-pi-ai"]
     bundle["system bundle + profile"]
   end
   GW --> OR --> RT --> CAP --> PR --> K --> H

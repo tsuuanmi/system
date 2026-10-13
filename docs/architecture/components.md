@@ -94,20 +94,27 @@ runs the work the router admitted to them. Callers never reach a source directly
   the session's runtime and temporary directories, registered secret paths): the
   registry owns the read confinement, applied with bubblewrap where a runtime's own sandbox
   does not confine reads ([ADR-0024](../decisions/adr/0024-agent-workers-confined-for-reads.md)).
-- **Models** (`ctx.models`, planned): API and local models for `economy`-tier jobs
-  ([purpose P4](../requirements/purpose.md#p4-cheap-models-do-low-level-work-strong-models-do-hard-work)).
+- **Model Workers** (`ctx.models` and the `models` source): one Worker per entry of the
+  operator's model catalog, an API model or a local one, over the DSH `llm` service
+  ([models](../design/models.md)). Calls are durable and idempotent by key, the exact prompt
+  passes the egress check (Worker class `model` or `model-local`), output tokens, concurrency,
+  re-attempts, and time are bounded, and a call interrupted by a restart is sent once more at
+  most ([purpose P4](../requirements/purpose.md#p4-cheap-models-do-low-level-work-strong-models-do-hard-work)).
 - **Does not own:** routing decisions, acceptance, or the steps of a workflow.
 - **Contracts:** the `WorkerSource` interface in `@tsuuanmi/system-workers-core`:
   `describe` (capability descriptors with evidence), `start` (durable at once, idempotent by
   `key`), `get`, `wait`, and optional `affinity`, `handle`, `reset`, `cancel`. An agent runtime
-  provides `kind`, `probe()` (`RuntimeEvidence`), and `run(spec, signal, onHandle)`.
+  provides `kind`, `probe()` (`RuntimeEvidence`), and `run(spec, signal, onHandle)`. `ctx.models`
+  provides `list()` (catalog entries with availability) and `complete(request, signal)`.
 - **Packages:** [turns](../../packages/plugins/turns/README.md),
   [agent-workers](../../packages/plugins/agent-workers/README.md),
   [agent-runtime-core](../../packages/agent-runtime-core/README.md),
   [agent-runtimes](../../packages/plugins/agent-runtimes/README.md),
   [runtime-claude-agent-sdk](../../packages/plugins/runtime-claude-agent-sdk/README.md),
   [runtime-codex-sdk](../../packages/plugins/runtime-codex-sdk/README.md),
-  [runtime-acp](../../packages/plugins/runtime-acp/README.md).
+  [runtime-acp](../../packages/plugins/runtime-acp/README.md),
+  [models-core](../../packages/models-core/README.md),
+  [models](../../packages/plugins/models/README.md).
 
 ## Routing
 

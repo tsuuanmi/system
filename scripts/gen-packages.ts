@@ -51,6 +51,8 @@ export const LAYER_OF: Record<string, Layer> = {
   'runtime-codex-sdk': 'capabilities',
   'runtime-acp': 'capabilities',
   'agent-workers': 'capabilities',
+  'models-core': 'capabilities',
+  'models': 'capabilities',
   // routing
   'workers-core': 'routing',
   'workers': 'routing',

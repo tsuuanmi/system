@@ -14,7 +14,7 @@ export function view(e: Engine, run: RunRow): RunView {
       nodeId: n.node_id, state: n.state, minTier: spec.tier, attempt: n.attempt,
       ...(n.execution_id ? { executionId: n.execution_id } : {}), ...(n.source ? { source: n.source } : {}), ...(n.worker ? { worker: n.worker } : {}),
       ...(n.served_tier ? { tier: n.served_tier } : {}), ...(n.quota_class ? { quotaClass: n.quota_class } : {}),
-      ...(record.outputReceipt ? { result: record.outputReceipt.result } : {}),
+      ...(record.outputReceipt ? { result: record.outputReceipt.result, ...usageOf(e, record.outputReceipt.result) } : {}),
       ...(n.error && n.state !== 'COMPLETED' ? { error: JSON.parse(n.error) as WorkflowError } : {}),
     }
   })
@@ -27,6 +27,12 @@ export function view(e: Engine, run: RunRow): RunView {
     ...(run.error ? { error: JSON.parse(run.error) as WorkflowError } : {}),
     createdAt: run.created_at, updatedAt: run.updated_at,
   }
+}
+
+/** The token usage a result reports (`model-answer`), for the usage report. */
+function usageOf(e: Engine, result: ArtifactRef): Pick<NodeView, 'usage'> {
+  const usage = (e.ctx.artifacts.get(result)?.body as { usage?: { inputTokens?: unknown; outputTokens?: unknown } } | undefined)?.usage
+  return typeof usage?.inputTokens === 'number' && typeof usage.outputTokens === 'number' ? { usage: { inputTokens: usage.inputTokens, outputTokens: usage.outputTokens } } : {}
 }
 
 function blockedOf(e: Engine, runId: string): { blocked?: { nodeId: string; plan: ArtifactRef } } {

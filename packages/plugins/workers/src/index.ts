@@ -132,20 +132,23 @@ export class WorkerRouter extends Workers {
     const chosen = admitted[0]
     if (!chosen) {
       const rejections: Rejection[] = workers.map((w) => ({ worker: w.worker, state: w.state, failed: failures.get(w.worker)! }))
+      // A capability no Worker proves now is the plainest reason, for example website-only work in a composition without website Workers.
+      const unproven = requirement.capabilities.filter((c) => !workers.some((w) => w.capabilities.some((p) => p.capability === c)))
+      const why = (unproven.length ? `no Worker proves ${unproven.join(', ')}` : workers.length ? 'no Worker passes admission' : 'no Worker is registered').slice(0, 300)
       const decision = this.ctx.artifacts.recordDecision({
         decisionType: 'admission',
         question: `Which Worker may take work needing ${requirement.capabilities.join(', ')} at tier ${requirement.tier.min} or above?`,
         inputs: [requirementRef],
         candidates: [
           ...rejections.map((r) => ({ option: r.worker, selected: false, reasons: r.failed.map((f) => f.reason) })),
-          { option: 'none', selected: true, reasons: [workers.length ? 'no Worker passes admission' : 'no Worker is registered'] },
+          { option: 'none', selected: true, reasons: [why] },
         ],
         decider: DECIDER,
         outcome: { option: 'none' },
         deterministic: true,
       }, { producer, classification: requirement.data.classification })
-      const summary = rejections.map((r) => `${r.worker}: ${r.failed.map((f) => f.reason).join(', ')}`).join('; ') || 'no Worker is registered'
-      throw new AdmissionFailure(rejections, decision.id as ArtifactRef, `no Worker can take this work (${summary}; decision ${decision.id})`)
+      const summary = rejections.map((r) => `${r.worker}: ${r.failed.map((f) => f.reason).join(', ')}`).join('; ')
+      throw new AdmissionFailure(rejections, decision.id as ArtifactRef, `no Worker can take this work: ${why} (${summary ? `${summary}; ` : ''}decision ${decision.id})`)
     }
     const tier = this.ctx.artifacts.recordDecision({
       decisionType: 'tier',
@@ -222,7 +225,8 @@ export class WorkerRouter extends Workers {
       this.schemas.assert(tag, { ...value, schema: tag })
       return undefined
     } catch (error) {
-      return { accepted: false, reasons: [`the result is not a valid ${tag}: ${(error as Error).message.slice(0, 400)}`] }
+      // A decision reason is at most 300 characters (decision@1.0).
+      return { accepted: false, reasons: [`the result is not a valid ${tag}: ${(error as Error).message}`.slice(0, 300)] }
     }
   }
 

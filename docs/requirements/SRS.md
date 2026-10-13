@@ -86,14 +86,17 @@
 - **REQ-WRK-7** Work over `local-private` data runs only on local Workers. Content
   reaches a remote Worker only when an explicit egress policy permits that exact
   content for that Worker class (purpose P3).
-- **REQ-WRK-8** Routing prefers subscription-chat quota (website accounts) for
-  reasoning, search, research, and review. It keeps agent-plan and metered quota
-  for work only those Workers can do, and excludes accounts whose quota is
-  exhausted before admission (purpose P1).
+- **REQ-WRK-8** The order in which routing prefers quota classes is
+  configuration. The default composition prefers subscription-chat quota (website
+  accounts) for reasoning, search, research, and review, and keeps agent-plan and
+  metered quota for work only those Workers can do. Accounts whose quota is
+  exhausted are excluded before admission (purpose P1).
 - **REQ-WRK-9** Every work requirement declares a minimum intelligence tier
   (`economy`, `standard`, or `frontier`). Routing selects the lowest tier whose
   Workers prove the required capabilities. Escalation to a higher tier after an
   acceptance failure is bounded, configured, and recorded (purpose P4).
+- **REQ-WRK-10** API and local models are Workers behind `ctx.models`, routed,
+  egress-checked, and bounded like other Workers (purposes P3, P4).
 
 ## Teams (`REQ-TEAM`)
 

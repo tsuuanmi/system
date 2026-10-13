@@ -5,7 +5,8 @@
   "description": "The system profile's only bundle: allow-listed DSH core rows + system plugins, no dsh-base (ADR-0019)",
   "type": "module",
   "files": [
-    "cordis.patch.yml"
+    "cordis.patch.yml",
+    "presets"
   ],
   "dsh": {
     "bundle": {
@@ -41,18 +42,23 @@
     "@tsuuanmi/system-providers": "workspace:*",
     "@tsuuanmi/system-store": "workspace:*",
     "@tsuuanmi/system-turn-receipts": "workspace:*",
-    "@tsuuanmi/system-turns": "workspace:*"
+    "@tsuuanmi/system-turns": "workspace:*",
+    "@tsuuanmi/system-models": "workspace:*"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "4.0.5-alpha.1",
     "@deepseek-ai/cordis-plugin-timer": "1.1.7-alpha.1",
     "@deepseek-ai/dsh-credentials": "0.2.1-alpha.2",
-    "@deepseek-ai/dsh-host-webserver": "0.2.1-alpha.2"
+    "@deepseek-ai/dsh-host-webserver": "0.2.1-alpha.2",
+    "@deepseek-ai/dsh-llm": "0.2.1-alpha.2",
+    "@deepseek-ai/dsh-llm-pi-ai": "0.2.1-alpha.2"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "4.0.5-alpha.1",
     "@deepseek-ai/cordis-plugin-timer": "1.1.7-alpha.1",
     "@deepseek-ai/dsh-credentials": "0.2.1-alpha.2",
-    "@deepseek-ai/dsh-host-webserver": "0.2.1-alpha.2"
+    "@deepseek-ai/dsh-host-webserver": "0.2.1-alpha.2",
+    "@deepseek-ai/dsh-llm": "0.2.1-alpha.2",
+    "@deepseek-ai/dsh-llm-pi-ai": "0.2.1-alpha.2"
   }
 }

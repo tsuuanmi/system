@@ -90,7 +90,7 @@ Scope: `operator`
 
 ## `ask`
 
-Ask a website Worker (separate chat quota). Waits up to waitSeconds; otherwise returns a runId for `result`.
+Ask one Worker, chosen by the router for the work (capability, tier, quota order). Waits up to waitSeconds; otherwise returns a runId for `result`.
 
 Scope: `client`
 
@@ -161,6 +161,17 @@ Scope: `client`
 |---|---|---|---|
 | `id` | string | yes |  |
 
+## `model_key`
+
+Operator tool: store a model route's API key, encrypted, under the credential reference its apiKeyEnv names. Nothing is returned or logged.
+
+Scope: `operator`
+
+| Argument | Type | Required | Description |
+|---|---|---|---|
+| `name` | string | yes | The credential reference (an UPPER_SNAKE name), as the route's apiKeyEnv names it |
+| `value` | string | yes |  |
+
 ## `research`
 
 Research a question with the research profile: testable hypotheses, a cited literature review (web search), an evidence table, an independent critique, and conclusions per hypothesis. Returns at once with a runId; poll `result` (runs take minutes). Deep research alone, then a compaction: `run` with template deep-research.
@@ -194,7 +205,7 @@ No arguments.
 
 ## `run`
 
-Start a workflow template by name (built in: ask, deep-research, investigate, panel, review; profiles add more, such as develop); its steps are routed by capability to website or local agent Workers. Waits up to waitSeconds; otherwise returns a runId for `result`.
+Start a workflow template by name (built in: ask, deep-research, investigate, panel, review; profiles add more, such as develop); its steps are routed by capability to website, model, or agent Workers. Waits up to waitSeconds; otherwise returns a runId for `result`.
 
 Scope: `client`
 

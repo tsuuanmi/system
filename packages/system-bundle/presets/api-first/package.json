@@ -1,0 +1,15 @@
+{
+  "name": "@tsuuanmi/system-preset-api-first",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The api-first preset: a bundle layer over the system bundle that turns website Workers and model gateways off (ADR-0025)",
+  "type": "module",
+  "files": [
+    "cordis.patch.yml"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

@@ -9,7 +9,7 @@
 
 | Command | What it does |
 |---|---|
-| `system init` | create or refresh the `system` DSH profile; ensure Chrome and Xvfb |
+| `system init [--preset default\|api-first]` | create or refresh the `system` DSH profile (a preset is kept until changed, [ADR-0025](../decisions/adr/0025-api-first-composition.md)); ensure Chrome and Xvfb when the browser row is mounted |
 | `system browser install` | install the managed Chrome pinned in `chrome.lock.json` |
 | `system start [dsh args…]` | boot the profile (for example `--patch ./overlay.yml`) |
 
@@ -20,7 +20,7 @@
 
 | Command | What it does |
 |---|---|
-| `system ask [--persist] [--session <id>] [--tier <t>] [--classification <c>] (<prompt…> \| -)` | ask a website model through a saved account (template `ask`) |
+| `system ask [--persist] [--session <id>] [--tier <t>] [--classification <c>] (<prompt…> \| -)` | ask the Worker the router admits: a website account, an API or local model, … (template `ask`) |
 | `system research [--classification <c>] (<question…> \| -)` | the research procedure: hypotheses, a cited review, evidence, critique, conclusions (template `research`) |
 | `system run <template> [--session <id>] [--persist] [--tier <t>] [--classification <c>] (<input…> \| -)` | start any [workflow template](workflow-templates.md) |
 | `system approve <runId> [--plan <id>] [--reject] [note…]` | approve (or reject) the plan a run is waiting on, bound to that exact plan (name it with `--plan` when several wait) |
@@ -30,8 +30,14 @@
 | `system continue <runId> [nodeId]` | reopen a failed run's failed node as a new attempt |
 | `system delete <runId> [--yes]` | preview, then delete a finished run (artifacts stay) |
 | `system supersede <runId> <nodeId> (<text…> \| -)` | replace a completed step's result; everything downstream runs again, and a planner downstream plans again (a planner's replacement must be a valid plan; what an old plan grew is retired) |
-| `system usage [<limit>]` | recent runs: per step, the Worker, tier, and quota class used |
+| `system usage [<limit>]` | recent runs: per step, the Worker, tier, and quota class used, and a model Worker's tokens |
 | `system explain <runId\|artifact>` | the decision chain behind a run (egress, tier, route, acceptance) |
+
+## Models
+
+| Command | What it does |
+|---|---|
+| `system model key <NAME>` | store a model route's API key from stdin, encrypted, under the credential reference its `apiKeyEnv` names ([runbook](../operations/runbooks.md#api-and-local-models)) |
 
 ## Accounts
 

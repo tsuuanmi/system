@@ -1,0 +1,52 @@
+{
+  "name": "@tsuuanmi/system-models",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The `models` Worker source: API and local models from an operator catalog, over the DSH llm service, as routed, egress-checked, bounded Workers",
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    }
+  },
+  "files": [
+    "lib"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json"
+  },
+  "dependencies": {
+    "@tsuuanmi/system-artifacts": "workspace:*",
+    "@tsuuanmi/system-egress": "workspace:*",
+    "@tsuuanmi/system-gateway-core": "workspace:*",
+    "@tsuuanmi/system-leases": "workspace:*",
+    "@tsuuanmi/system-libs": "workspace:*",
+    "@tsuuanmi/system-models-core": "workspace:*",
+    "@tsuuanmi/system-provider-core": "workspace:*",
+    "@tsuuanmi/system-store": "workspace:*",
+    "@tsuuanmi/system-workers-core": "workspace:*",
+    "zod": "^4.1.0"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "4.0.5-alpha.1",
+    "@deepseek-ai/dsh-credentials": "0.2.1-alpha.2",
+    "@deepseek-ai/dsh-llm": "0.2.1-alpha.2",
+    "@deepseek-ai/schemastery": "3.18.5-alpha.1"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "4.0.5-alpha.1",
+    "@deepseek-ai/dsh-credentials": "0.2.1-alpha.2",
+    "@deepseek-ai/dsh-llm": "0.2.1-alpha.2",
+    "@deepseek-ai/dsh-llm-pi-ai": "0.2.1-alpha.2",
+    "@deepseek-ai/schemastery": "3.18.5-alpha.1",
+    "@tsuuanmi/system-credentials-vault": "workspace:*",
+    "@tsuuanmi/system-event-log": "workspace:*",
+    "@tsuuanmi/system-profile-scientific-research": "workspace:*",
+    "@tsuuanmi/system-worker-sessions": "workspace:*",
+    "@tsuuanmi/system-workers": "workspace:*",
+    "@tsuuanmi/system-workflow": "workspace:*"
+  }
+}
