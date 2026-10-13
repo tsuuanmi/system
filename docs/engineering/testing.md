@@ -92,7 +92,7 @@ absence of automation leaks are properties of the real browser.
 ## CI gates
 
 [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) runs on every push to
-`main` and every pull request, on Node 24 and 26, with a real Xvfb, TigerVNC, and
+`main` and every pull request, on Node 24.18.1 (the floor), the latest 24, and the latest 26, with a real Xvfb, TigerVNC, and
 Chrome installed. Each gate is a root [`package.json`](../../package.json) script:
 
 1. `pnpm check`:

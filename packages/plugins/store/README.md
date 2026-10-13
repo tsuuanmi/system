@@ -21,10 +21,11 @@ the [M0 spike](../../../docs/research/m0-dsh-core-spike.md)).
 - **Does not own:** domain tables. Each plugin migrates its own, as `artifacts`
   does.
 - **Config:** `path`, `busyTimeoutMs`, `synchronous`.
-- **Runtime check:** before opening, `sqliteRuntimeProblem()` round-trips text
-  with an embedded NUL through `node:sqlite`. A runtime that cuts it (Node 22, and
-  24 or 26 before the fix) fails the plugin's start with the supported range
-  (REQ-HOST-2, [CON-2](../../../docs/requirements/constraints.md)), so stored
-  prompts and answers are never silently truncated.
+- **Runtime check:** before opening, the store refuses to start on a runtime
+  outside the supported range or whose `node:sqlite` cuts text at an embedded NUL
+  (`sqliteRuntimeProblem` in `system-libs`; REQ-HOST-2,
+  [CON-2](../../../docs/requirements/constraints.md)), so stored prompts and
+  answers are never silently truncated. `system init` and `start` check the same
+  first, so a refused runtime never boots a host.
 - **Lifecycle:** the database opens in a `ctx.effect`. On unload it closes after
   the current dispose pass, so dependents can still write from their own disposers.

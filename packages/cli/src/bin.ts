@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { backupHost, browserDeps, callTool, claudeGatewayCommand, codexGatewayCommand, drainHost, formatTools, listTools, restoreHost, shutdownHost, ensureBrowser, formatExplanation, formatUsage, init, mcpConfig, mcpHeaders, mcpToken, parseAsk, readAllStdin, serveStdio, start, type ToolOutcome, uiUrl } from './index.ts'
+import { assertRuntime, backupHost, browserDeps, callTool, claudeGatewayCommand, codexGatewayCommand, drainHost, formatTools, listTools, restoreHost, shutdownHost, ensureBrowser, formatExplanation, formatUsage, init, mcpConfig, mcpHeaders, mcpToken, parseAsk, readAllStdin, serveStdio, start, type ToolOutcome, uiUrl } from './index.ts'
 
 const USAGE = `Usage: system <command>
 
@@ -86,6 +86,7 @@ async function main(argv: string[]): Promise<number> {
   const [command, ...rest] = argv
   switch (command) {
     case 'init':
+      assertRuntime()
       console.log(`profile ready: ${init()}`)
       for (const line of await ensureBrowser()) console.log(line)
       return 0
@@ -250,6 +251,7 @@ async function main(argv: string[]): Promise<number> {
       break
     }
     case 'start':
+      assertRuntime()
       return start(rest)
     case 'mcp-config': {
       const client = rest[0]

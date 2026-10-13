@@ -15,7 +15,7 @@ import { CHROME_LOCK, type ChromeChoice, discoverChrome, installManagedChrome } 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
-import { dshHome } from '@tsuuanmi/system-libs'
+import { dshHome, sqliteRuntimeProblem } from '@tsuuanmi/system-libs'
 
 const require = createRequire(import.meta.url)
 const PROFILE = 'system'
@@ -67,6 +67,15 @@ export function mergeProfileManifest(current: Partial<ProfileManifest> | undefin
 export function exitCode(code: number | null, signal: NodeJS.Signals | null): number {
   if (code !== null) return code
   return 128 + (signal ? (osConstants.signals[signal] ?? 0) : 1)
+}
+
+/**
+ * Refuse to initialize or start a profile on a runtime the store would refuse (REQ-HOST-2,
+ * CON-2): before anything is written or spawned, with the precise reason. Without it the host
+ * would boot with every store-backed plugin waiting, a live process doing nothing.
+ */
+export function assertRuntime(problem: string | undefined = sqliteRuntimeProblem()): void {
+  if (problem) throw new Error(problem)
 }
 
 export function init(home: string = dshHome()): string {

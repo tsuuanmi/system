@@ -1,6 +1,6 @@
 # ADR-0018: Build `system` as our own harness on DSH core
 
-- **Status:** Accepted; superseded in part by [ADR-0019](0019-explicit-minimal-dsh-core.md) (no `dsh-base`; explicit core rows)
+- **Status:** Accepted; superseded in part by [ADR-0019](0019-explicit-minimal-dsh-core.md) (no `dsh-base`; explicit core rows); amended 2026-10-14 (Node range)
 - **Date:** 2026-10-11
 - **Supersedes in part:** [ADR-0001](0001-standalone-host.md) (no DSH packages),
   [ADR-0002](0002-typescript-on-bun.md) (Bun runtime)
@@ -132,10 +132,10 @@ Telemetry is disabled by bundle patch. The decision stands.
 
 The decision stands: `system` runs on Node, beside DSH. The supported range is
 narrowed within DSH's own range to **`^24.18.1 || >=26.5.1`**
-([CON-2](../../requirements/constraints.md)). The `node:sqlite` of Node 22 (22.23.2
-included, verified) and of 24 and 26 releases before 24.16.0 and 26.1.0 reads text
-back cut at an embedded NUL, which would silently change stored prompts, answers,
-and content-addressed records. CVE-2026-58041 (`node:sqlite`) is fixed in 24.18.1
-and 26.5.1. The store checks the behavior at start-up and refuses a runtime that
-fails it. The release policy for this range is proposed in
+([CON-2](../../requirements/constraints.md)). The `node:sqlite` of every Node 22
+release (through 22.23.3, the latest) and of 24 and 26 releases before 24.16.0 and
+26.1.0 reads text back cut at an embedded NUL, which would silently change stored
+prompts, answers, and content-addressed records. CVE-2026-58041 (`node:sqlite`) is
+fixed in 24.18.1 and 26.5.1. `system init`, `system start`, and the store refuse a
+runtime outside the range, or one that fails a NUL round trip. The release policy for this range is proposed in
 [ADR-0026](0026-versioned-releases-with-provenance.md).

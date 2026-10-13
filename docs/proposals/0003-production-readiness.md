@@ -33,7 +33,7 @@ needs more still. A review of the source on 2026-10-13 found these gaps:
   policy, changelog, SBOM, or provenance.
 - **The runtime floor carries a known defect.** `node:sqlite` truncates text at an
   embedded NUL and has CVE-2026-58041. Both are fixed in Node 24.18.1 and 26.5.1.
-  Node 22.23.2, the latest 22 release, still truncates (verified 2026-10-14).
+  Node 22.23.3, the latest 22 release, still truncates (verified 2026-10-14).
 - **Little operability.** There are a handful of log calls, `/healthz` exists only
   on the Responses gateway, and nothing reports per-account or per-Worker health or
   alerts on provider UI drift.
@@ -160,8 +160,9 @@ lands. Each item names the requirement it closes and the test that proves it.
    (CON-8); third-party Actions pinned by commit SHA.
 6. **Runtime floor.** No Node 22 release carries the NUL fix, so `engines`, the
    CI matrix, and CON-2 move to `^24.18.1 || >=26.5.1`, and the store refuses a
-   runtime that fails a NUL round trip at start-up (REQ-HOST-2). A store test
-   round-trips text containing a NUL.
+   runtime outside the range or failing a NUL round trip; `system init` and
+   `start` check first, so a refused runtime never boots a host (REQ-HOST-2). A
+   store test round-trips text containing a NUL.
 
 ### M6b Operability
 
@@ -170,7 +171,9 @@ lands. Each item names the requirement it closes and the test that proves it.
    `DSH_HOME`, vault key placement, the Node version, and the DSH pin. `system
    health [--json]` exits 0 (healthy), 1 (degraded), or 2 (down). A liveness-only
    `/healthz` with no data moves from `gateway-responses` to `mcp-server`. `/ui`
-   shows a degraded banner.
+   shows a degraded banner. A host whose required service refuses to start
+   exits non-zero: today DSH stays up with the dependent plugins pending, which a
+   supervisor sees as a live process (found reviewing the store's runtime check).
 2. **Drift alerts.** Health turns degraded on a `ui.drift` event or a failed probe.
    An optional, bounded `account probe` schedule (off by default, sends no prompt,
    CON-3) proves the UI maps between runs. Notification is the operator's: a

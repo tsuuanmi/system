@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import { afterEach, describe, expect, it } from 'vitest'
-import Store, { RevisionConflict, sqliteRuntimeProblem } from '../src/index.ts'
+import Store, { RevisionConflict } from '../src/index.ts'
 
 const cleanups: Array<() => unknown> = []
 afterEach(async () => {
@@ -165,17 +165,7 @@ describe('afterCommit inside a rolled-back savepoint (review)', () => {
   })
 })
 
-describe('runtime check (REQ-HOST-2, CON-2)', () => {
-  it('accepts this runtime, whose node:sqlite reads back text with a NUL intact', () => {
-    expect(sqliteRuntimeProblem()).toBeUndefined()
-  })
-
-  it('refuses a runtime that cuts text at a NUL, naming the supported Node range', () => {
-    const problem = sqliteRuntimeProblem((text) => text.slice(0, text.indexOf('\u0000')))
-    expect(problem).toContain(`Node ${process.versions.node}`)
-    expect(problem).toContain('^24.18.1 or >=26.5.1')
-  })
-
+describe('stored text (QA-4)', () => {
   it('stores and reads back text containing a NUL byte for byte (QA-4)', async () => {
     const { ctx } = await boot()
     ctx.store.migrate('t', [{ version: 1, sql: 'CREATE TABLE t (v TEXT)' }])
