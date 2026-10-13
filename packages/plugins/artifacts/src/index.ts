@@ -4,6 +4,7 @@
  * against its schema before it is stored (INV-14).
  * @module @tsuuanmi/system-artifacts
  */
+import type { DatabaseSync } from 'node:sqlite'
 import { type Context, Service } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { type ContentId, SchemaRegistry, contentId } from '@tsuuanmi/system-libs'
@@ -78,6 +79,37 @@ export interface Collected {
 /** Tables a collection never reads references from: this plugin's own, and the event log (else events and artifacts would keep each other). */
 const NOT_ROOTS = new Set(['artifacts', 'artifact_runs', 'events', 'system_migrations', 'sqlite_sequence'])
 const CONTENT_ID = /sha256:[0-9a-f]{64}/g
+const PAGE = 1000
+
+const refsOf = (envelope: Envelope): string[] => [...envelope.inputs, ...(envelope.lineage.supersedes ?? []), ...(envelope.lineage.invalidates ?? [])]
+
+/** Everything reachable from `roots` through `edges` (inputs and lineage). */
+function mark(roots: Iterable<string>, edges: ReadonlyMap<string, readonly string[]>): Set<string> {
+  const marked = new Set<string>()
+  const stack = [...roots].filter((id) => edges.has(id))
+  while (stack.length) {
+    const id = stack.pop()!
+    if (marked.has(id)) continue
+    marked.add(id)
+    for (const next of edges.get(id) ?? []) if (!marked.has(next)) stack.push(next)
+  }
+  return marked
+}
+
+/**
+ * A table's rows a page at a time, by rowid, each page its own statement (a consistent snapshot in
+ * WAL), yielding to the event loop between pages: no read holds the connection for long.
+ */
+async function* pages(db: DatabaseSync, table: string, columns: string): AsyncGenerator<Record<string, unknown>> {
+  let after = -Infinity
+  for (;;) {
+    const rows = db.prepare(`SELECT rowid AS rowid_, ${columns} FROM ${table} WHERE rowid > ? ORDER BY rowid LIMIT ${PAGE}`).all(after === -Infinity ? -9007199254740991 : after) as Array<Record<string, unknown>>
+    for (const row of rows) yield row
+    if (rows.length < PAGE) return
+    after = Number(rows.at(-1)!.rowid_)
+    await new Promise((resolve) => setImmediate(resolve))
+  }
+}
 
 export interface Config {
   /** Maximum depth `explain` walks before truncating (default 16). */
@@ -86,6 +118,8 @@ export interface Config {
   explainBudget?: number
   /** How long a new artifact is kept even when nothing references it yet, in hours (default 24). */
   collectGraceHours?: number
+  /** Artifacts deleted per write transaction, so none holds the store's lock for long (default 1000). */
+  collectBatch?: number
 }
 
 export class Artifacts extends Service {
@@ -94,6 +128,7 @@ export class Artifacts extends Service {
     explainDepth: z.natural().min(1).max(64).default(16).description('Maximum depth explain walks'),
     explainBudget: z.natural().min(1).default(1000).description('Maximum distinct artifacts one explain visits'),
     collectGraceHours: z.natural().min(1).default(24).description('Hours a new artifact is kept before collection may take it, referenced or not'),
+    collectBatch: z.natural().min(1).default(1000).description('Artifacts deleted per write transaction (the pass continues in further ones)'),
   })
 
   private readonly schemas = new SchemaRegistry()
@@ -116,6 +151,11 @@ export class Artifacts extends Service {
         version: 2,
         sql: `CREATE TABLE artifact_runs (id TEXT NOT NULL, run_id TEXT NOT NULL, node_id TEXT NOT NULL DEFAULT '', PRIMARY KEY (id, run_id, node_id));
         INSERT OR IGNORE INTO artifact_runs (id, run_id, node_id) SELECT id, run_id, COALESCE(node_id, '') FROM artifacts WHERE run_id IS NOT NULL;`,
+      },
+      {
+        // Retention re-checks what was written since its scan began.
+        version: 3,
+        sql: 'CREATE INDEX artifacts_created ON artifacts (created_at);',
       },
     ])
   }
@@ -243,56 +283,80 @@ export class Artifacts extends Service {
    * event log, so a plugin that keeps an artifact id in its rows keeps the artifact, with no
    * listener to forget. Marking follows each kept envelope's inputs and lineage. An artifact is
    * collected only when it is unmarked, older than the grace period, and linked to no run whose
-   * id still appears in any table. One transaction, so nothing is written while it decides.
+   * id still appears in any table.
+   *
+   * The scan reads the store in pages outside any transaction, yielding between pages, so writers
+   * and the event loop keep running. Short write transactions of `collectBatch` then re-check
+   * what the scan could have missed and delete. Something written meanwhile can name a
+   * candidate only through a new artifact's inputs or lineage, or a new run link (a writer gets an
+   * old id from a row the scan marked, or from a put, which refuses a missing input), so those are
+   * re-checked; a writer that copied a raw id from a row the scan had not yet read, while that
+   * row was deleted, is the one case left, and no writer does that today.
    */
-  collect(now: number = Date.now()): Collected {
+  async collect(now: number = Date.now(), hooks: { afterScan?: () => void } = {}): Promise<Collected> {
+    const db = this.ctx.store.db
     const cutoff = new Date(now - (this.config.collectGraceHours ?? 24) * 60 * 60_000).toISOString()
-    return this.ctx.store.transaction((db): Collected => {
-      const referenced = new Set<string>()
-      const values = new Set<string>()
-      const tables = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as Array<{ name: string }>
-      for (const { name } of tables) {
-        if (NOT_ROOTS.has(name) || name.startsWith('sqlite_')) continue
-        for (const row of db.prepare(`SELECT * FROM "${name.replaceAll('"', '""')}"`).iterate() as Iterable<Record<string, unknown>>) {
-          for (const value of Object.values(row)) {
-            if (typeof value !== 'string') continue
-            if (value.length <= 200) values.add(value)
-            for (const match of value.matchAll(CONTENT_ID)) referenced.add(match[0])
-          }
+    const scanStart = new Date().toISOString()
+    const referenced = new Set<string>()
+    const values = new Set<string>()
+    const tables = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as Array<{ name: string }>
+    for (const { name } of tables) {
+      if (NOT_ROOTS.has(name) || name.startsWith('sqlite_')) continue
+      for await (const row of pages(db, `"${name.replaceAll('"', '""')}"`, '*')) {
+        for (const value of Object.values(row)) {
+          if (typeof value !== 'string') continue
+          if (value.length <= 200) values.add(value)
+          for (const match of value.matchAll(CONTENT_ID)) referenced.add(match[0])
         }
       }
-      // Mark: everything reachable from the roots through inputs and lineage.
-      const edges = new Map<string, string[]>()
-      for (const row of db.prepare('SELECT id, envelope FROM artifacts').iterate() as Iterable<{ id: string; envelope: string }>) {
-        const envelope = JSON.parse(row.envelope) as Envelope
-        edges.set(row.id, [...envelope.inputs, ...(envelope.lineage.supersedes ?? []), ...(envelope.lineage.invalidates ?? [])])
-      }
-      const marked = new Set<string>()
-      const stack = [...referenced].filter((id) => edges.has(id))
-      while (stack.length) {
-        const id = stack.pop()!
-        if (marked.has(id)) continue
-        marked.add(id)
-        for (const next of edges.get(id) ?? []) if (!marked.has(next)) stack.push(next)
-      }
-      const runsOf = new Map<string, string[]>()
-      for (const row of db.prepare('SELECT id, run_id FROM artifact_runs').iterate() as Iterable<{ id: string; run_id: string }>) {
-        runsOf.set(row.id, [...(runsOf.get(row.id) ?? []), row.run_id])
-      }
-      const doomed: string[] = []
-      for (const row of db.prepare('SELECT id FROM artifacts WHERE created_at < ?').iterate(cutoff) as Iterable<{ id: string }>) {
-        if (marked.has(row.id)) continue
-        if ((runsOf.get(row.id) ?? []).some((run) => values.has(run))) continue
-        doomed.push(row.id)
-      }
-      const removeArtifact = db.prepare('DELETE FROM artifacts WHERE id = ?')
-      const removeRuns = db.prepare('DELETE FROM artifact_runs WHERE id = ?')
-      for (const id of doomed) {
-        removeArtifact.run(id)
-        removeRuns.run(id)
-      }
-      return { removed: doomed.length, kept: edges.size - doomed.length }
-    })
+    }
+    const edges = new Map<string, string[]>()
+    const created = new Map<string, string>()
+    for await (const row of pages(db, 'artifacts', 'id, envelope, created_at')) {
+      const envelope = JSON.parse(row.envelope as string) as Envelope
+      edges.set(row.id as string, refsOf(envelope))
+      created.set(row.id as string, row.created_at as string)
+    }
+    const marked = mark(referenced, edges)
+    const runsOf = new Map<string, string[]>()
+    for await (const row of pages(db, 'artifact_runs', 'id, run_id')) runsOf.set(row.id as string, [...(runsOf.get(row.id as string) ?? []), row.run_id as string])
+    const candidates = new Set([...created].filter(([id, at]) => at < cutoff && !marked.has(id) && !(runsOf.get(id) ?? []).some((run) => values.has(run))).map(([id]) => id))
+    if (!candidates.size) return { removed: 0, kept: edges.size }
+    // Between the scan and the deletion other work writes; tests use this to write there.
+    hooks.afterScan?.()
+    // Deleted in short transactions of `collectBatch`, yielding between them, each re-checking
+    // what was written since the scan began: no write lock is held for long.
+    const batch = this.config.collectBatch ?? 1000
+    const queue = [...candidates]
+    let removed = 0
+    while (queue.length) {
+      const chunk = queue.splice(0, batch)
+      removed += this.ctx.store.transaction((tx): number => {
+        const fresh = new Set<string>()
+        for (const row of tx.prepare('SELECT id, envelope FROM artifacts WHERE created_at >= ?').iterate(scanStart) as Iterable<{ id: string; envelope: string }>) {
+          const refs = refsOf(JSON.parse(row.envelope) as Envelope)
+          edges.set(row.id, refs)
+          for (const ref of refs) fresh.add(ref)
+        }
+        const kept = mark(fresh, edges)
+        const linksOf = tx.prepare('SELECT run_id FROM artifact_runs WHERE id = ?')
+        const removeArtifact = tx.prepare('DELETE FROM artifacts WHERE id = ?')
+        const removeRuns = tx.prepare('DELETE FROM artifact_runs WHERE id = ?')
+        let count = 0
+        for (const id of chunk) {
+          if (kept.has(id)) continue
+          // A new link since the scan (the same content put again for another run) keeps it.
+          const known = new Set(runsOf.get(id) ?? [])
+          if ((linksOf.all(id) as Array<{ run_id: string }>).some((link) => !known.has(link.run_id))) continue
+          removeArtifact.run(id)
+          removeRuns.run(id)
+          count++
+        }
+        return count
+      })
+      if (queue.length) await new Promise((resolve) => setImmediate(resolve))
+    }
+    return { removed, kept: edges.size - removed }
   }
 
   private linkRun(id: string, runId: string | undefined, nodeId: string | undefined): void {

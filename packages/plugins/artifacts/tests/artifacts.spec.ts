@@ -166,8 +166,8 @@ describe('review fixes (PR #3 kernel review)', () => {
     ctx.store.db.prepare('INSERT INTO owner_rows VALUES (?, ?)').run('run-live', JSON.stringify({ result: kept }))
     ctx.store.db.prepare('INSERT INTO events VALUES (1, ?)').run(onlyEvents)
     // Inside the grace period nothing goes, referenced or not.
-    expect(ctx.artifacts.collect()).toEqual({ removed: 0, kept: 6 })
-    expect(ctx.artifacts.collect(Date.now() + 2 * day)).toEqual({ removed: 3, kept: 3 })
+    expect(await ctx.artifacts.collect()).toEqual({ removed: 0, kept: 6 })
+    expect(await ctx.artifacts.collect(Date.now() + 2 * day)).toEqual({ removed: 3, kept: 3 })
     expect([parent, kept, live].every((id) => ctx.artifacts.get(id))).toBe(true)
     expect([gone, orphan, onlyEvents].some((id) => ctx.artifacts.get(id))).toBe(false)
   })
@@ -178,5 +178,36 @@ describe('review fixes (PR #3 kernel review)', () => {
     const child = ctx.artifacts.recordDecision({ ...route, question: 'Which Worker runs research:2?', inputs: [input.id] }, { producer })
     ctx.store.db.prepare('DELETE FROM artifacts WHERE id = ?').run(input.id)
     expect(ctx.artifacts.explain(child.id)!.inputs).toEqual([{ id: input.id, kind: 'expired', summary: 'expired: collected by retention', inputs: [] }])
+  })
+
+  it('keeps a candidate that something written after the scan names, deletes in short batches, and reads every page (INV-9)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'system-artifacts-'))
+    cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+    const ctx = new Context()
+    const store = ctx.plugin(Store, { path: join(dir, 'system.db') })
+    const artifacts = ctx.plugin(Artifacts, { collectBatch: 2 })
+    await Promise.all([store, artifacts])
+    cleanups.push(() => store.dispose())
+    const day = 24 * 60 * 60_000
+    const note = (text: string) => ctx.artifacts.recordDecision({ ...route, question: text }, { producer }).id
+    const orphans = Array.from({ length: 5 }, (_, i) => note(`orphan ${i}`))
+    // More rows than one page of the scan, all holding no artifact id.
+    ctx.store.db.exec('CREATE TABLE filler (v TEXT)')
+    const fill = ctx.store.db.prepare('INSERT INTO filler VALUES (?)')
+    for (let i = 0; i < 2500; i++) fill.run(`row ${i}`)
+    ctx.store.db.prepare("UPDATE artifacts SET created_at = '2000-01-01T00:00:00.000Z'").run()
+    // After the scan, a writer records a decision naming orphan 0 and keeps its id in a row, as an
+    // owning plugin does: orphan 0 must stay, now and later.
+    ctx.store.db.exec('CREATE TABLE owner_rows (decision TEXT)')
+    const late = () => {
+      const id = ctx.artifacts.recordDecision({ ...route, question: 'late', inputs: [orphans[0]!] }, { producer }).id
+      ctx.store.db.prepare('INSERT INTO owner_rows VALUES (?)').run(id)
+    }
+    const first = await ctx.artifacts.collect(Date.now() + 2 * day, { afterScan: late })
+    // Every other orphan goes, two per transaction; the one named after the scan stays, then and later.
+    expect(first.removed).toBe(4)
+    expect(orphans.filter((id) => ctx.artifacts.get(id))).toEqual([orphans[0]])
+    expect((await ctx.artifacts.collect(Date.now() + 2 * day)).removed).toBe(0)
+    expect(ctx.artifacts.get(orphans[0]!)).toBeDefined()
   })
 })

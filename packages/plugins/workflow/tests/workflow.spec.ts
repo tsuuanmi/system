@@ -796,7 +796,7 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
     await until(() => (second.ctx.store.db.prepare('SELECT COUNT(*) AS n FROM turns').get() as { n: number }).n === 0)
     // The session's latest run stays, so the session can continue.
     expect(second.ctx.workflow.get(s2.runId)).toMatchObject({ status: 'completed', sessionId: s1.sessionId })
-    second.ctx.artifacts.collect()
+    await second.ctx.artifacts.collect()
     expect(onlyOf(second.ctx, one.runId)).toBe(0)
     expect(second.ctx.artifacts.get(s2.result!)).toBeDefined()
     const events = second.ctx.eventLog.query({ type: 'workflow.run.expired' }).map((e) => e.runId).sort()

@@ -55,6 +55,7 @@
 | `explainDepth` | number (1…64) | `16` | Maximum depth explain walks |
 | `explainBudget` | number (1…) | `1000` | Maximum distinct artifacts one explain visits |
 | `collectGraceHours` | number (1…) | `24` | Hours a new artifact is kept before collection may take it, referenced or not |
+| `collectBatch` | number (1…) | `1000` | Artifacts deleted per write transaction (the pass continues in further ones) |
 
 ## `browser-patchright`
 

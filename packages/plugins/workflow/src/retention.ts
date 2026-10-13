@@ -35,7 +35,14 @@ export function expireRuns(e: Engine, now: number = Date.now()): { deleted: numb
       e.ctx.eventLog.append({ type: 'workflow.run.expired', runId: run.run_id, data: { template: run.template } })
     })
   }
-  if (expired.length) e.ctx.artifacts.collect(now)
+  // Collection reads the whole store in pages and yields between them: it runs on its own, and a
+  // failure is logged; the next daily pass collects what this one did not.
+  if (expired.length) {
+    e.ctx.artifacts.collect(now).catch((error: unknown) => {
+      e.ctx.logger.warn('workflow: collecting artifacts after expiring runs failed; the next daily pass retries')
+      e.ctx.logger.warn(error)
+    })
+  }
   return { deleted: expired.length }
 }
 

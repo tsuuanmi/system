@@ -145,5 +145,16 @@ artifact id in its rows keeps the artifact, without registering anything.
 Marking follows each kept envelope's `inputs` and lineage. An artifact is deleted
 only when it is unmarked, older than `collectGraceHours` (so one recorded but not
 yet referenced is never taken), and linked to no run whose id still appears in
-any table. It runs in one store transaction. `explain` shows a collected input as
-`expired` with its id.
+any table. `explain` shows a collected input as `expired` with its id.
+
+The scan reads the store a page at a time (1000 rows), outside any transaction,
+yielding between pages, so writers and the event loop keep running; deletion
+then runs in short transactions of `collectBatch` (default 1000), each first
+re-checking what was written since the scan began: a new artifact's inputs and
+lineage, and a new run link. That covers every way a writer reaches an old id
+today (from a row the scan marked, or through a `put`, which refuses a missing
+input); a writer that copied a raw id from a row the scan had not yet read while
+that row was deleted is the case left, and no writer does that. On a synthetic
+267 MB store with 200,000 artifacts, a pass that removed 100,000 took 12 s; the
+longest write transaction was 112 ms and the longest stall of the event loop
+317 ms (marking).

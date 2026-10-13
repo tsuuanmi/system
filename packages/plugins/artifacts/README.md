@@ -18,4 +18,5 @@ records ([design](../../../docs/design/artifacts.md),
   ([storage](../../../docs/design/artifacts.md#storage)).
 - **Injects:** `store`.
 - **Config:** `explainDepth` (default 16), `explainBudget` (default 1000),
-  `collectGraceHours` (default 24).
+  `collectGraceHours` (default 24), `collectBatch` (default 1000: artifacts
+  deleted per write transaction; the scan itself runs outside any).
