@@ -62,6 +62,11 @@ export interface ProviderDriver<Page = unknown> {
    * `probeFeatures` proved it on that account, e.g. `deep-research`, `web-search`.
    */
   readonly features?: readonly string[]
+  /**
+   * The names of the configured mode presets. An account tier mapped to another name could never
+   * run, so its Worker is unavailable rather than failing each turn (`config_error`).
+   */
+  readonly modes?: readonly string[]
   /** Which of `features` this signed-in account offers now, read from the site without sending anything. */
   probeFeatures?(page: Page): Promise<string[]>
   /** Where an interactive login starts. */

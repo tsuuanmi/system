@@ -22,6 +22,7 @@ interface ProviderDriver<Page> {                   // provider-core
   readonly capabilities: readonly string[];        // proven by its tests, e.g. reason
   readonly features?: readonly string[];           // per account, e.g. deep-research
   probeFeatures?(page): Promise<string[]>;         // read from the site; sends nothing
+  readonly modes?: readonly string[];              // configured preset names; a tier mapped elsewhere is unavailable
   readonly loginUrl: string;
   readonly stateOrigins: readonly string[];
   checkAuth(page): Promise<AuthState>;             // signed-in | signed-out | unknown

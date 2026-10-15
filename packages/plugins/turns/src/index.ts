@@ -487,7 +487,8 @@ export class Turns extends Service {
 
   /**
    * The website Workers: one per account and tier its catalog maps to a mode preset. They
-   * prove what the account's driver declares; a missing driver makes them unavailable.
+   * prove what the account's driver declares; a missing driver, or a tier mapped to a preset the
+   * driver does not have (an account left on a removed preset), makes them unavailable.
    */
   private async describeWorkers(): Promise<CapabilityDescriptor[]> {
     const providers = new Set(this.ctx.providers.list())
@@ -502,7 +503,7 @@ export class Turns extends Service {
           // An account feature counts only once a probe on this account proved it (REQ-PRV-7).
           ...(account.features?.names ?? []).filter((f) => driver?.features?.includes(f)).map((capability) => ({ capability, evidence: { kind: 'probe' as const, at: account.features!.provedAt } })),
         ],
-        state: driver ? WORKER_STATE[account.status] : 'unavailable',
+        state: driver && (!driver.modes || driver.modes.includes(account.tiers[tier]!)) ? WORKER_STATE[account.status] : 'unavailable',
         observedAt,
       }))
     })

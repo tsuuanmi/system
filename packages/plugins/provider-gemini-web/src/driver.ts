@@ -68,6 +68,7 @@ export class GeminiWebDriver implements ProviderDriver<Page> {
   private readonly timeouts: Required<DriverTimeouts>
   private readonly preset: (name: string | undefined) => ProviderMode | undefined
   private readonly engines = new WeakMap<Page, UiEngine>()
+  readonly modes: readonly string[]
 
   constructor(options: DriverOptions = {}) {
     this.map = shippedMap(options.overlay)
@@ -75,6 +76,7 @@ export class GeminiWebDriver implements ProviderDriver<Page> {
     this.loginUrl = `${this.origin}/app`
     this.stateOrigins = options.origin ? [this.origin] : ['https://gemini.google.com', 'https://accounts.google.com', 'https://www.google.com', 'https://google.com']
     this.preset = modePresets(this.provider, options.modes, options.defaultMode)
+    this.modes = Object.keys(options.modes ?? {})
     this.timeouts = { turnMs: 15 * 60_000, stallMs: 3 * 60_000, stableMs: 1500, pollMs: 250, readyMs: 60_000, snapshotMs: 20_000, reportReadMs: 30_000, ...options.timeouts }
   }
 

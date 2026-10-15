@@ -7,7 +7,8 @@ invoked by the [workflow engine](../workflow/README.md)
 - **The `website` Worker source.**
   - **Describe:** one Worker `worker:<account>/<tier>` per account and per tier
     its catalog maps to a mode preset. It proves what the account's driver
-    declares, in a state taken from the account's status.
+    declares, in a state taken from the account's status. A tier mapped to a
+    preset the driver does not have (the driver's `modes`) is `unavailable`.
   - **Run:** `start`, `get`, and `wait` run turns. The engine routes; a turn
     never routes itself.
   - **Affinity:** a session stays on the account it is bound to.
