@@ -142,7 +142,10 @@ and restart. The `api-first` preset turns the agent rows on for you
 
 The ChatGPT driver cannot use an account without a model picker (ChatGPT Free,
 PROP-0004; [modes](../../packages/plugins/provider-chatgpt-web/README.md)).
-Remove it from the operator configuration:
+Until it is removed, its Workers are `unavailable` (their tiers map to the
+removed `site` preset), so routing never picks them and `system health` reports
+them under `workers`. Remove it from the operator configuration before, or
+together with, the update that removes the preset:
 
 1. **Profile patch:** delete its entry from the `accounts` row's `accounts`
    list in `~/.dsh/profiles/system/cordis.patch.yml`, and any tier that maps to

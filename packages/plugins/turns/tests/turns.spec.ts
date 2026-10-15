@@ -103,6 +103,14 @@ describe.runIf(canRunBrowser)('ctx.turns: ask through a saved account', () => {
     expect(ctx.turnReceipts.read({ account: 'chatgpt-main', sessionId: turn.turnId, requestId: turn.turnId })).toMatchObject({ status: 'COMPLETED' })
   }, 90_000)
 
+  it('makes a tier mapped to a preset the driver does not have unavailable, so routing never picks it (PROP-0004: the removed site preset)', async () => {
+    const { ctx } = await boot({ accounts: [account('chatgpt-free', { economy: 'site', standard: 'site' }), account('chatgpt-main')] })
+    const states = Object.fromEntries((await ctx.workers.list()).map((w) => [w.worker, w.state]))
+    expect(states).toMatchObject({ 'worker:chatgpt-free/economy': 'unavailable', 'worker:chatgpt-free/standard': 'unavailable', 'worker:chatgpt-main/standard': 'ready' })
+    const admitted = await ctx.workers.route({ schema: 'work-requirement@1.0', objective: 'x', capabilities: ['reason'], data: { classification: 'public', refs: [] }, egressPolicy: 'default', tier: { min: 'economy', source: 'default' }, acceptance: { contract: 'acceptance.answer' } })
+    expect(admitted.worker.worker).toBe('worker:chatgpt-main/economy')
+  }, 60_000)
+
   it('proves an account\'s website features by a probe that sends nothing, and routes only on proven ones (REQ-PRV-7)', async () => {
     const { ctx, fake } = await boot({ fake: { answer: 'Found it', features: ['web-search'] } })
     expect(await ctx.turns.probe('chatgpt-main')).toEqual(['web-search'])

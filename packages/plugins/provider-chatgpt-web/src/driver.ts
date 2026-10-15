@@ -77,12 +77,14 @@ export class ChatGptWebDriver implements ProviderDriver<Page> {
   private readonly origin: string
   private readonly timeouts: Required<DriverTimeouts>
   private readonly engines = new WeakMap<Page, UiEngine>()
+  readonly modes: readonly string[]
   private readonly preset: (name: string | undefined) => ProviderMode | undefined
 
   constructor(options: DriverOptions = {}) {
     this.map = shippedMap(options.overlay)
     this.origin = (options.origin ?? 'https://chatgpt.com').replace(/\/$/, '')
     this.preset = modePresets(this.provider, options.modes, options.defaultMode)
+    this.modes = Object.keys(options.modes ?? {})
     this.loginUrl = `${this.origin}/auth/login`
     this.stateOrigins = [this.origin]
     this.timeouts = { turnMs: 15 * 60_000, stallMs: 3 * 60_000, stableMs: 1500, pollMs: 250, readyMs: 30_000, researchStartMs: 60_000, snapshotMs: 20_000, reportReadMs: 30_000, ...options.timeouts }
