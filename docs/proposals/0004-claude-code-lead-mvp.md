@@ -5,7 +5,7 @@ status: draft
 owners: [tsuuanmi]
 created: 2026-10-16
 related-requirements: [QA-14]
-related-decisions: [ADR-0009, ADR-0025, ADR-0026]
+related-decisions: [ADR-0009, ADR-0023, ADR-0025, ADR-0026, ADR-0027]
 implementation: []
 ---
 
@@ -255,7 +255,9 @@ member use it. Today a Worker's provider is informational only, and routing neve
 branches on it ([INV-11](../architecture/invariants.md)). The predicate is an
 opaque inequality: routing may require "a different provider family than node
 X", and it never names a family, provider, account, or model. Because INV-11 is
-binding, this needs an ADR (ADR-0027) that amends it in exactly that way. The
+binding, this is recorded in
+[ADR-0027](../decisions/adr/0027-provider-diversity-in-routing.md), which adds an
+opaque `family` to a Worker's descriptor and allows only inequality on it. The
 existing distinct-account rule for teams stays.
 
 ### Accounts and routing
