@@ -326,14 +326,14 @@ describe('ctx.workers source `models`: API and local models as Workers (REQ-WRK-
     // The model frames the question (a valid hypothesis set); the cited review needs the web.
     const framed = '```json\n' + JSON.stringify({ question: 'Does caffeine improve recall?', hypotheses: [{ id: 'H1', statement: 'Caffeine improves recall.' }] }) + '\n```'
     const { ctx, fake } = await boot({ research: true, script: { answer: () => framed } })
-    for (const [template, capability, step] of [['deep-research', 'deep-research', 'research:1'], ['research', 'web-search', 'literature:1']] as const) {
-      const run = ctx.workflow.start({ template, input: 'Does caffeine improve recall?', classification: 'public' })
+    for (const [variant, capability] of [['deep', 'deep-research'], [undefined, 'web-search']] as const) {
+      const run = ctx.workflow.start({ template: 'research', variant, input: 'Does caffeine improve recall?', classification: 'public' })
       const done = await ctx.workflow.wait(run.runId, 10_000)
       expect(done.status).toBe('failed')
-      expect(done.nodes.find((n) => n.nodeId === step)!.error!.message).toMatch(new RegExp(`^no Worker can take this work: no Worker proves ${capability}\\b`))
+      expect(done.nodes.find((n) => n.nodeId === 'literature:1')!.error!.message).toMatch(new RegExp(`^no Worker can take this work: no Worker proves ${capability}\\b`))
     }
-    // Only the framing step ran on a model; nothing was sent for the website-only steps.
-    expect(fake.calls).toHaveLength(1)
+    // Only the framing steps ran on a model; nothing was sent for the website-only steps.
+    expect(fake.calls).toHaveLength(2)
   })
 })
 

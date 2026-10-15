@@ -7,7 +7,7 @@
  *
  * `research` frames a question as testable hypotheses, reviews the literature with citations,
  * extracts an evidence table, has it critiqued independently, and concludes per hypothesis,
- * citing the evidence. `research-deep` reviews with Deep research instead.
+ * citing the evidence. Its `deep` variant reviews with the provider's Deep research instead.
  * @module @tsuuanmi/system-profile-scientific-research
  */
 import type { Context } from '@deepseek-ai/cordis'
@@ -81,15 +81,13 @@ const CONCLUDE = [
   '</critique>',
 ].join('\n')
 
-function researchProcedure(deep: boolean): NodeTemplate[] {
-  return [
+/** The research procedure; its `deep` variant reviews the literature with the provider's Deep research. */
+export const RESEARCH: NodeTemplate[] = [
     { nodeId: 'frame:1', objective: 'Frame the question as testable hypotheses', prompt: FRAME, capabilities: ['reason'], tier: 'standard', conversation: 'temporary', acceptance: 'acceptance.answer', resultSchema: 'hypothesis-set@1.0' },
     {
       nodeId: 'literature:1', objective: 'Review the published evidence, with citations', dependsOn: ['frame:1'], prompt: LITERATURE,
-      ...(deep
-        ? { capabilities: ['reason', 'deep-research'], tier: 'frontier' as const, conversation: 'persistent' as const }
-        : { capabilities: ['reason', 'web-search'], tier: 'standard' as const, conversation: 'temporary' as const }),
-      acceptance: 'acceptance.cited',
+      capabilities: ['reason', 'web-search'], tier: 'standard', conversation: 'temporary', acceptance: 'acceptance.cited',
+      variants: { deep: { capabilities: ['reason', 'deep-research'], tier: 'frontier', conversation: 'persistent' } },
     },
     { nodeId: 'evidence:1', objective: 'Extract the evidence table', dependsOn: ['frame:1', 'literature:1'], prompt: EVIDENCE, capabilities: ['reason'], tier: 'economy', conversation: 'temporary', acceptance: 'acceptance.answer', resultSchema: 'evidence-table@1.0' },
     { nodeId: 'critique:1', objective: 'Critique the evidence independently', dependsOn: ['frame:1', 'evidence:1'], prompt: CRITIQUE, capabilities: ['reason'], tier: 'standard', conversation: 'temporary', acceptance: 'acceptance.answer' },
@@ -97,11 +95,7 @@ function researchProcedure(deep: boolean): NodeTemplate[] {
       nodeId: 'conclusion:1', objective: 'Conclude per hypothesis, citing the evidence', dependsOn: ['frame:1', 'evidence:1', 'critique:1'], prompt: CONCLUDE,
       capabilities: ['reason'], tier: 'standard', conversation: 'temporary', acceptance: 'acceptance.cited-conclusions',
     },
-  ]
-}
-
-export const RESEARCH = researchProcedure(false)
-export const RESEARCH_DEEP = researchProcedure(true)
+]
 
 /** The steps whose results are typed artifacts: their JSON body, schema, and artifact kind. */
 const TYPED: Record<string, { schema: string; kind: 'criteria' | 'evidence' }> = {
@@ -136,7 +130,6 @@ export function apply(ctx: Context): void {
     return { accepted: true, reasons: [`concludes on ${[...hypotheses].join(', ')}, citing ${[...cited].join(', ')}`] }
   })
   ctx.effect(() => ctx.workflow.template('research', RESEARCH))
-  ctx.effect(() => ctx.workflow.template('research-deep', RESEARCH_DEEP))
 
   // A typed step's accepted result becomes a typed artifact derived from it. When the step's
   // result changes (the operator superseded it or an input of it, and it ran again), the new typed
@@ -146,6 +139,7 @@ export function apply(ctx: Context): void {
     const typed = nodeId ? TYPED[nodeId] : undefined
     if ((event.type !== 'workflow.node.completed' && event.type !== 'workflow.node.superseded') || !typed || !runId || !nodeId) return
     const run = ctx.workflow.get(runId)
+    // `research-deep` was the deep variant's template before PROP-0004; its runs can still be superseded.
     if (!run || (run.template !== 'research' && run.template !== 'research-deep')) return
     const result = ctx.workflow.records(runId).find((r) => r.nodeId === nodeId)?.outputReceipt?.result
     const answer = result ? ctx.artifacts.get(result) : undefined

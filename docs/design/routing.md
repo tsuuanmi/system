@@ -56,8 +56,10 @@ each one with evidence from the sources shown below.
 | `review` | assess a provided subject against criteria | a read-only agent Worker (runtime probe + read-only sandbox) |
 
 Profiles express each node as capabilities, not Worker kinds. A research node
-requires `deep-research` or `web-search` together with `reason`. An implementation
-node requires `develop` and `local-data`.
+requires `deep-research` or `web-search` together with `reason`. An agent review
+node requires `review` and `local-data`. Only agent Workers prove `local-data`,
+`develop`, `validate`, and `review`, and their rows are off in the default composition
+([turn them on](../operations/runbooks.md#turn-an-off-row-back-on)).
 
 ## Algorithm
 

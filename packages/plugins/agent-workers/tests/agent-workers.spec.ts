@@ -16,6 +16,7 @@ import WorkerRouter, { type WorkerExecution, type WorkRequirement } from '@tsuua
 import WorkerSessions from '@tsuuanmi/system-worker-sessions'
 import Workflow from '@tsuuanmi/system-workflow'
 import * as SoftwareDevelopment from '@tsuuanmi/system-profile-software-development'
+import { DEVELOP } from './develop.ts'
 import { afterEach, describe, expect, it } from 'vitest'
 import AgentWorkers, { type Config } from '../src/index.ts'
 
@@ -58,7 +59,7 @@ async function boot(agent: AgentRuntimeProvider, config: Config = { workers: [wo
   const ctx = new Context()
   const fibers = [
     ctx.plugin(Store, { path: join(dir, 'system.db') }), ctx.plugin(Artifacts, {}), ctx.plugin(EventLog, {}), ctx.plugin(Leases, {}), ctx.plugin(Egress, {}),
-    ctx.plugin(WorkerRouter, {}), ctx.plugin(AgentRuntimeRegistry), ctx.plugin(AgentWorkers, config), ctx.plugin(WorkerSessions, {}), ctx.plugin(Workflow, { retryDelayMs: 100 }),
+    ctx.plugin(WorkerRouter, {}), ctx.plugin(AgentRuntimeRegistry), ctx.plugin(AgentWorkers, config), ctx.plugin(WorkerSessions, {}), ctx.plugin(Workflow, { retryDelayMs: 100, templates: { develop: DEVELOP } }),
   ]
   await Promise.all(fibers)
   // The profile contributes its template once the engine is up.
@@ -435,10 +436,10 @@ describe('ctx.workers source `agents`: agent runtimes as Workers', () => {
     })
   })
 
-  it('routes a review run to the local agent by capability, end to end through the engine', async () => {
+  it('routes an agent-review run to the local agent by capability, end to end through the engine', async () => {
     const agent = new ScriptedAgent()
     const { ctx } = await boot(agent)
-    const run = await ctx.workflow.wait(ctx.workflow.start({ template: 'review', input: 'Check the diff', classification: 'operator-shared' }).runId, 10_000)
+    const run = await ctx.workflow.wait(ctx.workflow.start({ template: 'agent-review', input: 'Check the diff', classification: 'operator-shared' }).runId, 10_000)
     expect(run).toMatchObject({ status: 'completed', answer: 'echo: Check the diff', nodes: [{ nodeId: 'review:1', source: 'agents', worker: 'agent:reviewer', quotaClass: 'agent-plan' }] })
   })
 })

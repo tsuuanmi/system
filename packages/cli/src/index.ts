@@ -115,6 +115,15 @@ export function init(home: string = dshHome(), preset?: Preset): string {
   return dir
 }
 
+/**
+ * Why a client helper for `row` cannot work in this composition, or `undefined` when the row is
+ * mounted. The model gateways and agent Workers are off by default (PROP-0004).
+ */
+export function rowOffProblem(row: string, rows: readonly ComposedRow[]): string | undefined {
+  if (rows.some((r) => r.id === row && r.mounted)) return undefined
+  return `the ${row} row is off in this composition; turn it on in your profile patch (- id: ${row}, disabled: false), then restart`
+}
+
 /** A composed row: its id and whether it is mounted. */
 export interface ComposedRow { id: string; mounted: boolean }
 
@@ -532,9 +541,13 @@ export interface AskRequest {
   sessionId?: string
   tier?: string
   classification?: string
+  /** `research --deep`: the research procedure's deep variant. */
+  deep?: true
+  /** `run --variant <v>`: a variant the template defines. */
+  variant?: string
 }
 
-/** `system ask [--persist] [--session <id>] [--tier <tier>] (<prompt...> | -)`; `-` reads stdin. */
+/** `system ask [--persist] [--session <id>] [--tier <tier>] (<prompt...> | -)`; `-` reads stdin. Each command refuses the flags it does not take. */
 export async function parseAsk(args: readonly string[], readStdin: () => Promise<string>): Promise<AskRequest | undefined> {
   const rest = [...args]
   const request: Partial<AskRequest> = {}
@@ -544,6 +557,8 @@ export async function parseAsk(args: readonly string[], readStdin: () => Promise
     else if (flag === '--session' && rest[0]) request.sessionId = rest.shift()!
     else if (flag === '--tier' && rest[0]) request.tier = rest.shift()!
     else if (flag === '--classification' && rest[0]) request.classification = rest.shift()!
+    else if (flag === '--deep') request.deep = true
+    else if (flag === '--variant' && rest[0]) request.variant = rest.shift()!
     else return undefined
   }
   const prompt = (rest.length === 1 && rest[0] === '-' ? await readStdin() : rest.join(' ')).trim()

@@ -2,6 +2,8 @@
 
 > Current state, verified against Claude Code and Codex CLI 0.162.1 on 2026-10-12.
 > Design: [gateways](../design/gateways.md). Decision: [ADR-0022](../decisions/adr/0022-text-protocol-tool-calls-for-website-models.md).
+> Both gateway rows are off in the default composition; this applies once one is
+> [turned on](../operations/runbooks.md#turn-an-off-row-back-on).
 
 ## Anthropic Messages (`/anthropic`, Claude Code)
 

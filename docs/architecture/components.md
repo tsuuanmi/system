@@ -84,7 +84,9 @@ runs the work the router admitted to them. Callers never reach a source directly
   scheduler, the receipt before send, the write-back of refreshed state, the answer artifact,
   and reconciliation after a restart. Persistent sessions stay on their account.
 - **Agent Workers** (`ctx.agentWorkers`): one Worker per configured agent, held to a policy from
-  configuration (workspace, sandbox, tool allow-list). A Worker's capabilities are what its
+  configuration (workspace, sandbox, tool allow-list). Its rows and the agent runtimes' are off
+  in the default composition
+  ([turn a row on](../operations/runbooks.md#turn-an-off-row-back-on)). A Worker's capabilities are what its
   runtime's `probe()` proves now; a policy the runtime cannot enforce leaves it unavailable.
   Runs are durable, one at a time per Worker, and a run that started is never rerun by itself.
   The agent runs here but its model is remote, so each prompt passes the egress check first.
@@ -152,9 +154,10 @@ runs the work the router admitted to them. Callers never reach a source directly
 - **Worker sessions** (`ctx.workerSessions`): durable sessions, each with its own `SessionId`,
   a binding to the native handle, groups, and a mailbox for direct peer messages under
   barriers ([sessions and messaging](../design/sessions-and-messaging.md)).
-- **Profiles:** plugins that contribute templates through `ctx.workflow.template` (`develop`;
-  `research`, `research-deep`) and acceptance contracts through `ctx.workers`. A profile never
-  names a provider, browser, or account, and holds no engine code.
+- **Profiles:** plugins that contribute templates through `ctx.workflow.template` (`research`,
+  with its `deep` variant; `agent-review`, mounted with the agent Workers) and acceptance
+  contracts through `ctx.workers`. A profile never names a provider, browser, or account, and
+  holds no engine code.
 - **Does not own:** provider mechanics, Worker admission, or protocol framing.
 - **Contracts:** `workflow.start / wait / get / approve / stop / continue / supersede / delete /
   drain / resume / explain / usage`, `workflow.template(name, nodes)`;
@@ -188,7 +191,8 @@ runs the work the router admitted to them. Callers never reach a source directly
   token in constant time, which decides the caller's scope, bounded JSON bodies, and no route on
   a plain-HTTP non-loopback bind. It also creates the owner-only scope token files.
 - **Anthropic Messages gateway** (`/anthropic`) and **Responses gateway** (`/openai`): Claude
-  Code and Codex use website Workers as their model. Each request is an `ask` run on a thread
+  Code and Codex use website Workers as their model. Both rows are off in the default
+  composition, where Claude Code reaches `system` over MCP. Each request is an `ask` run on a thread
   bound to one persistent provider conversation; the client's tools travel through the text
   tool protocol and the client runs every call
   ([ADR-0022](../decisions/adr/0022-text-protocol-tool-calls-for-website-models.md)).

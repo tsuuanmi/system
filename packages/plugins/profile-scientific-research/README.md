@@ -9,12 +9,12 @@ any engine package**:
 - its typed artifacts come through `ctx.artifacts`, from the engine's own
   event log.
 
-## `research` and `research-deep`
+## `research`
 
 | Step | Capability, tier | Acceptance | Produces |
 |---|---|---|---|
 | `frame:1` | `reason`, standard | `resultSchema: hypothesis-set@1.0` | 2 to 4 testable hypotheses, as a `criteria` artifact (`hypothesis-set@1.0`) |
-| `literature:1` | `reason` + `web-search`, standard, temporary (`research`); or `reason` + `deep-research`, frontier, persistent (`research-deep`) | `acceptance.cited` | a cited review of the published evidence |
+| `literature:1` | `reason` + `web-search`, standard, temporary; variant `deep`: `reason` + `deep-research`, frontier, persistent | `acceptance.cited` | a cited review of the published evidence |
 | `evidence:1` | `reason`, economy | `resultSchema: evidence-table@1.0` | claims with source URLs and their bearing on each hypothesis, as an `evidence` artifact (`evidence-table@1.0`) |
 | `critique:1` | `reason`, standard | `acceptance.answer` | an independent critique that sees only the hypotheses and the evidence, never the review |
 | `conclusion:1` | `reason`, standard | `acceptance.cited-conclusions` | a conclusion per hypothesis, citing evidence as `[E1]` |
@@ -28,6 +28,10 @@ any engine package**:
   supersedes the last one (`lineage.supersedes`).
 - **Live checks:** see the
   [release checklist](../../../docs/validation/release-checklist.md).
-- `system research` and the MCP tool `research` run `research`.
+- `system research` and the MCP tool `research` run `research`; `--deep` (MCP
+  `deep: true`) runs its `deep` variant
+  ([variants](../../../docs/design/workflow-engine.md#variants)). The
+  `research-deep` template is gone (PROP-0004); its earlier runs still produce
+  typed artifacts when the operator supersedes a step.
 - **Injects:** `workflow`, `workers`, `artifacts`, `eventLog`.
 - **Conformance:** [`profiles`](../workflow/conformance/profiles.ts).

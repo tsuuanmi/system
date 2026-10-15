@@ -19,7 +19,8 @@ every template at load (preflight) and refuses a run whose contracts are not reg
 
 ## Built-in templates
 
-Provided by [`workflow`](../../packages/plugins/workflow/README.md).
+Provided by [`workflow`](../../packages/plugins/workflow/README.md): `ask`, and `panel` until a
+team `brainstorm` replaces it (PROP-0004).
 
 ### `ask`
 
@@ -28,15 +29,6 @@ One answer from one Worker. `system ask` and the MCP tool `ask` run it.
 | Node | Capabilities | Tier | Conversation | Acceptance |
 |---|---|---|---|---|
 | `ask:1` | `reason` | standard (caller) | caller | `acceptance.answer` |
-
-### `investigate`
-
-A planner adds research steps (graph growth), then a synthesis answers from their findings.
-
-| Node | Capabilities | Tier | Conversation | Acceptance |
-|---|---|---|---|---|
-| `plan:1` | `reason` | standard | temporary | `acceptance.answer`; its JSON plan may add at most 4 steps, each `reason` only, at the tier the plan names |
-| `synthesis:1` (after `plan:1` and its steps) | `reason` | standard | temporary | `acceptance.answer` |
 
 ### `panel`
 
@@ -52,51 +44,43 @@ synthesis that cites the members.
 A template with `team.lead` adds `panel:lead:<round>` nodes (`reason`, economy by default,
 temporary, `acceptance.team-lead`) after each round but the last.
 
-### `review`
+## Profile templates
 
-A review on this machine, by a read-only local agent Worker; never a website account.
+### `research`
+
+Provided by
+[`profile-scientific-research`](../../packages/plugins/profile-scientific-research/README.md).
+`system research` and the MCP tool `research` run it. Its `deep` variant
+([variants](../design/workflow-engine.md#variants)) changes only `literature:1`; start it with
+`system research --deep`, MCP `research` with `deep: true`, or `run` with `variant: deep`.
+
+| Node | Capabilities | Tier | Conversation | Acceptance |
+|---|---|---|---|---|
+| `frame:1` | `reason` | standard | temporary | `resultSchema: hypothesis-set@1.0`, then `acceptance.answer` |
+| `literature:1` | `reason`, `web-search` | standard | temporary | `acceptance.cited` |
+| `literature:1` (variant `deep`) | `reason`, `deep-research` | frontier | persistent | `acceptance.cited` |
+| `evidence:1` | `reason` | economy | temporary | `resultSchema: evidence-table@1.0`, then `acceptance.answer` |
+| `critique:1` | `reason` | standard | temporary | `acceptance.answer` |
+| `conclusion:1` | `reason` | standard | temporary | `acceptance.cited-conclusions` |
+
+### `agent-review`
+
+Provided by
+[`profile-software-development`](../../packages/plugins/profile-software-development/README.md),
+which is mounted only with the agent Worker rows, off in the default composition
+([turn them on](../operations/runbooks.md#turn-an-off-row-back-on)). A review on this machine,
+by a read-only local agent Worker; never a website account.
 
 | Node | Capabilities | Tier | Conversation | Acceptance |
 |---|---|---|---|---|
 | `review:1` | `review`, `local-data` | standard (caller) | caller | `acceptance.answer` |
 
-### `deep-research`
+## Removed templates
 
-Deep research alone, then a compaction for a downstream agent.
-
-| Node | Capabilities | Tier | Conversation | Acceptance |
-|---|---|---|---|---|
-| `research:1` | `reason`, `deep-research` | frontier | persistent | `acceptance.answer` |
-| `compact:1` (after `research:1`) | `reason` | economy | temporary | `acceptance.answer` |
-
-## Profile templates
-
-### `develop`
-
-Provided by [`profile-software-development`](../../packages/plugins/profile-software-development/README.md).
-
-| Node | Capabilities | Tier | Conversation | Acceptance |
-|---|---|---|---|---|
-| `plan:1` | `reason` | standard | temporary | `acceptance.answer`; its plan may add at most 4 steps using `develop`, `review`, `local-data`; `develop` steps wait for the operator's approval of the exact plan |
-| `report:1` (after `plan:1` and its steps) | `reason` | standard | temporary | `acceptance.answer` |
-
-The engine binds a `review` step to the exact subject of the change and, on blocking findings,
-appends a fix and a re-review, up to `maxReviewCycles` reviews (engine config, default 3).
-
-### `research` and `research-deep`
-
-Provided by
-[`profile-scientific-research`](../../packages/plugins/profile-scientific-research/README.md).
-`system research` and the MCP tool `research` run `research`.
-
-| Node | Capabilities | Tier | Conversation | Acceptance |
-|---|---|---|---|---|
-| `frame:1` | `reason` | standard | temporary | `resultSchema: hypothesis-set@1.0`, then `acceptance.answer` |
-| `literature:1` (`research`) | `reason`, `web-search` | standard | temporary | `acceptance.cited` |
-| `literature:1` (`research-deep`) | `reason`, `deep-research` | frontier | persistent | `acceptance.cited` |
-| `evidence:1` | `reason` | economy | temporary | `resultSchema: evidence-table@1.0`, then `acceptance.answer` |
-| `critique:1` | `reason` | standard | temporary | `acceptance.answer` |
-| `conclusion:1` | `reason` | standard | temporary | `acceptance.cited-conclusions` |
+PROP-0004 removed `investigate`, `deep-research`, and `develop`, and replaced `research-deep`
+with the `deep` variant of `research` and the built-in `review` with `agent-review`. A new run of
+a removed template is refused (`unknown workflow template`). Runs started before keep their
+resolved spec and records, so `explain` and `result` still answer for them.
 
 ## Presets
 
@@ -107,11 +91,10 @@ one fails admission, fail closed, with the capability named:
 
 | Template | Under `api-first` |
 |---|---|
-| `ask`, `investigate` | run on model Workers; an `ask` in a session (`--persist`, `--session`) fails: no model Worker proves `persistent-conversation` |
+| `ask` | runs on model Workers; an `ask` in a session (`--persist`, `--session`) fails: no model Worker proves `persistent-conversation` |
 | `panel` | fails: its members keep sessions, and no model Worker proves `persistent-conversation` |
-| `review`, `develop` | run on agent Workers (planning and reports on model Workers) |
-| `deep-research`, `research-deep` | fail at `research:1` / `literature:1`: no Worker proves `deep-research` |
-| `research` | `frame:1` runs; `literature:1` fails: no Worker proves `web-search` |
+| `agent-review` | runs on agent Workers (the preset turns their rows and the software-development profile on) |
+| `research` | `frame:1` runs; `literature:1` fails: no Worker proves `web-search` (variant `deep`: `deep-research`) |
 
 ## Acceptance contracts
 

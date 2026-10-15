@@ -1,15 +1,16 @@
 import { describe, expect, it } from 'vitest'
 import { DEFAULT_TEMPLATES, type NodeTemplate, parsePlan, preflight, render, resolve } from '../src/spec.ts'
+import { TEST_TEMPLATES } from './templates.ts'
 
 const node = (nodeId: string, overrides: Partial<NodeTemplate> = {}): NodeTemplate => ({
   nodeId, objective: 'x', prompt: '{{input}}', capabilities: ['reason'], tier: 'standard', conversation: 'temporary', acceptance: 'acceptance.answer', ...overrides,
 })
 
 describe('workflow specs', () => {
-  it('ships ask (one node) and deep-research (research:1 on frontier with Deep research → compact:1 on economy)', () => {
+  it('ships ask (one node); the deep-research test fixture runs research:1 on frontier with Deep research, then compact:1 on economy', () => {
     expect(preflight(DEFAULT_TEMPLATES.ask!)).toEqual(['ask:1'])
-    expect(preflight(DEFAULT_TEMPLATES['deep-research']!)).toEqual(['research:1', 'compact:1'])
-    expect(DEFAULT_TEMPLATES['deep-research']).toMatchObject([
+    expect(preflight(TEST_TEMPLATES['deep-research']!)).toEqual(['research:1', 'compact:1'])
+    expect(TEST_TEMPLATES['deep-research']).toMatchObject([
       { nodeId: 'research:1', capabilities: ['reason', 'deep-research'], tier: 'frontier', conversation: 'persistent', acceptance: 'acceptance.answer' },
       { nodeId: 'compact:1', dependsOn: ['research:1'], capabilities: ['reason'], tier: 'economy', conversation: 'temporary', acceptance: 'acceptance.answer' },
     ])
@@ -30,9 +31,25 @@ describe('workflow specs', () => {
     expect(one.nodes[0]).toMatchObject({ nodeId: 'ask:1', tier: 'frontier', session: { persist: true } })
     expect(resolve('ask', DEFAULT_TEMPLATES.ask!, { tier: 'frontier', persist: true }).specHash).toBe(one.specHash)
     expect(resolve('ask', DEFAULT_TEMPLATES.ask!, {}).specHash).not.toBe(one.specHash)
-    const research = resolve('deep-research', DEFAULT_TEMPLATES['deep-research']!, { tier: 'economy', sessionId: 'ses_1' })
+    const research = resolve('deep-research', TEST_TEMPLATES['deep-research']!, { tier: 'economy', sessionId: 'ses_1' })
     // The research steps keep their own tiers; the caller's session continues the research conversation only.
     expect(research.nodes.map((n) => [n.nodeId, n.tier, n.session])).toEqual([['research:1', 'frontier', { sessionId: 'ses_1' }], ['compact:1', 'economy', {}]])
+  })
+
+  it('applies a named variant\'s fields to its node, hashes the choice, and refuses a variant the template lacks (PROP-0004)', () => {
+    const nodes = [node('a', { variants: { deep: { capabilities: ['reason', 'deep-research'], tier: 'frontier', conversation: 'persistent' } } }), node('b', { dependsOn: ['a'] })]
+    const plain = resolve('t', nodes, {})
+    const deep = resolve('t', nodes, { variant: 'deep' })
+    expect(plain.nodes[0]).toMatchObject({ capabilities: ['reason'], tier: 'standard', session: {} })
+    expect(deep.nodes[0]).toMatchObject({ capabilities: ['reason', 'deep-research'], tier: 'frontier', session: { persist: true } })
+    expect(deep.nodes[1]).toEqual(plain.nodes[1])
+    expect(deep.specHash).not.toBe(plain.specHash)
+    expect(JSON.stringify(deep)).not.toContain('variants')
+    expect(() => resolve('t', nodes, { variant: 'fast' })).toThrow('template t has no variant fast (it has: deep)')
+    expect(() => resolve('ask', DEFAULT_TEMPLATES.ask!, { variant: 'deep' })).toThrow('template ask has no variant deep (it has: none)')
+    expect(() => preflight([node('team', { team: { members: 2 }, variants: { deep: { tier: 'frontier' } } })])).toThrow('node team: a team or a planner has no variants')
+    expect(() => preflight([node('a', { variants: { deep: { dependsOn: ['b'] } as never } })])).toThrow('node a, variant deep: dependsOn cannot vary')
+    expect(() => preflight([node('a', { variants: { Deep: {} } })])).toThrow(/variant name "Deep"/)
   })
 
   it('records where each value came from, and hashes what was admitted (REQ-WF-2)', () => {
@@ -52,7 +69,7 @@ describe('workflow specs', () => {
   it('lets {{grown}} appear only in nodes that depend on a planner', () => {
     expect(preflight([node('p', { grows: {} }), node('s', { dependsOn: ['p'], prompt: '{{grown}}' })])).toEqual(['p', 's'])
     expect(() => preflight([node('p'), node('s', { dependsOn: ['p'], prompt: '{{grown}}' })])).toThrow(/grown/)
-    expect(preflight(DEFAULT_TEMPLATES.investigate!)).toEqual(['plan:1', 'synthesis:1'])
+    expect(preflight(TEST_TEMPLATES.investigate!)).toEqual(['plan:1', 'synthesis:1'])
     expect(() => preflight([node('p', { grows: { maxNodes: 99 } })])).toThrow(/grows must be/)
   })
 

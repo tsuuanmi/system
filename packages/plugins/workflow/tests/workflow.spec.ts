@@ -28,7 +28,8 @@ import { canRunBrowser, testChrome } from '../../browser-patchright/tests/suppor
 import { FakeChatGpt, type FakeOptions } from '../../provider-chatgpt-web/fixtures/fake-chatgpt.ts'
 import { source } from '../../../workers-core/conformance/workers.ts'
 import WorkerSessions from '@tsuuanmi/system-worker-sessions'
-import Workflow, { DEFAULT_TEMPLATES } from '../src/index.ts'
+import Workflow from '../src/index.ts'
+import { TEST_TEMPLATES } from './templates.ts'
 
 const cleanups: Array<() => unknown> = []
 afterEach(async () => {
@@ -64,7 +65,7 @@ async function boot(options: { fake?: FakeOptions; dir?: string; shared?: FakeCh
     ctx.plugin(WorkerRouter, {}),
     ctx.plugin(Turns, { turnTimeoutMs: 90_000, stallTimeoutMs: 80_000, ...options.turns }),
     ctx.plugin(WorkerSessions, options.sessions ?? {}),
-    ctx.plugin(Workflow, { retryDelayMs: 300, ...options.workflow }),
+    ctx.plugin(Workflow, { retryDelayMs: 300, ...options.workflow, templates: { ...TEST_TEMPLATES, ...(options.workflow?.templates as object | undefined) } }),
     ctx.plugin(WebServer, { host: '127.0.0.1', port: 0 }),
     ctx.plugin(McpEndpoint, { tokenDir: dir, discoveryFile: join(dir, 'mcp.json') }),
   ]
@@ -150,7 +151,7 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
 
   it('fails the run when a result is rejected by its acceptance contract, and never runs the next node (REQ-WRK-3, INV-3)', async () => {
     // A deployment that requires cited reports.
-    const cited = DEFAULT_TEMPLATES['deep-research']!.map((node) => ({ ...node, acceptance: 'acceptance.cited' }))
+    const cited = TEST_TEMPLATES['deep-research']!.map((node) => ({ ...node, acceptance: 'acceptance.cited' }))
     const { ctx, fake } = await boot({ fake: { report: 'A report without any source.' }, workflow: { templates: { 'deep-research': cited } } })
     const done = await ctx.workflow.wait(ctx.workflow.start({ template: 'deep-research', input: 'q' }).runId, 60_000)
     expect(done).toMatchObject({ status: 'failed', error: { kind: 'acceptance_rejected', disposition: 'NONE' } })
@@ -217,7 +218,7 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
   }, 60_000)
 
   it('approves only the plan the operator names when two plans wait, never whichever came first (INV-5)', async () => {
-    const [planner, synthesis] = DEFAULT_TEMPLATES.investigate!
+    const [planner, synthesis] = TEST_TEMPLATES.investigate!
     const gated = { ...planner!, grows: { maxNodes: 2, approvalRequired: ['reason'] } }
     const twoPlans = [{ ...gated, nodeId: 'plan:a' }, { ...gated, nodeId: 'plan:b' }, { ...synthesis!, dependsOn: ['plan:a', 'plan:b'] }]
     const answer = (prompt: string): string => (prompt.includes('Plan how to answer')
@@ -251,7 +252,7 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
   }, 240_000)
 
   it('holds steps that need approval until the operator approves the exact plan (REQ-WF-11)', async () => {
-    const gated = DEFAULT_TEMPLATES.investigate!.map((n) => (n.grows ? { ...n, grows: { maxNodes: 2, approvalRequired: ['reason'] } } : n))
+    const gated = TEST_TEMPLATES.investigate!.map((n) => (n.grows ? { ...n, grows: { maxNodes: 2, approvalRequired: ['reason'] } } : n))
     const answer = (prompt: string): string => (prompt.includes('Plan how to answer')
       ? '```json\n{"confidence":"high","nodes":[{"id":"only","objective":"o","prompt":"the step","capabilities":["reason"],"tier":"economy"}]}\n```'
       : prompt.includes('<findings>') ? 'final' : 'step done')
@@ -557,7 +558,7 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
    * REQ-WF-11). `plan:1:extra` is a template node that only shares the planner's id prefix.
    */
   const replanTemplate = (approvalRequired = ['reason']) => {
-    const [planner, synthesis] = DEFAULT_TEMPLATES.investigate!
+    const [planner, synthesis] = TEST_TEMPLATES.investigate!
     const step = (nodeId: string, prompt: string, dependsOn: string[] = []) => ({ nodeId, objective: nodeId, prompt, dependsOn, capabilities: ['reason'], tier: 'economy' as const, conversation: 'temporary' as const, acceptance: 'acceptance.answer' })
     return [
       step('context:1', 'context for: {{input}}'),

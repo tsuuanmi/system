@@ -7,6 +7,9 @@ as its model ([gateways](../../../docs/design/gateways.md),
 
 ## Use
 
+The `gateway-anthropic` row is off in the default composition (PROP-0004); turn it on
+first ([runbook](../../../docs/operations/runbooks.md#turn-an-off-row-back-on)).
+While it is off, `system claude-env` refuses and names the row. Once it is on,
 `system claude-env` prints the command:
 
 ```sh

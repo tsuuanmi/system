@@ -174,13 +174,14 @@ Scope: `operator`
 
 ## `research`
 
-Research a question with the research profile: testable hypotheses, a cited literature review (web search), an evidence table, an independent critique, and conclusions per hypothesis. Returns at once with a runId; poll `result` (runs take minutes). Deep research alone, then a compaction: `run` with template deep-research.
+Research a question with the research profile: testable hypotheses, a cited literature review (web search, or the provider's Deep research with `deep`), an evidence table, an independent critique, and conclusions per hypothesis. Returns at once with a runId; poll `result` (runs take minutes; with `deep`, up to an hour).
 
 Scope: `client`
 
 | Argument | Type | Required | Description |
 |---|---|---|---|
 | `question` | string | yes |  |
+| `deep` | boolean |  | Review the literature with the provider's Deep research |
 | `classification` | "public" \| "operator-shared" \| "local-private" |  | Data classification of the input; local-private content never leaves the machine (INV-12) |
 | `clientRequestId` | string |  | Retry-safe request key |
 
@@ -205,7 +206,7 @@ No arguments.
 
 ## `run`
 
-Start a workflow template by name (built in: ask, deep-research, investigate, panel, review; profiles add more, such as develop); its steps are routed by capability to website, model, or agent Workers. Waits up to waitSeconds; otherwise returns a runId for `result`.
+Start a workflow template by name (built in: ask, panel; profiles add more, such as research); its steps are routed by capability to the Workers that can do them. Waits up to waitSeconds; otherwise returns a runId for `result`.
 
 Scope: `client`
 
@@ -213,6 +214,7 @@ Scope: `client`
 |---|---|---|---|
 | `template` | string | yes |  |
 | `input` | string | yes |  |
+| `variant` | string |  | A variant the template defines (research: deep) |
 | `sessionId` | string |  | Continue an existing session |
 | `persist` | boolean |  | Start a persistent session |
 | `tier` | "economy" \| "standard" \| "frontier" |  | Minimum tier for the steps that take the caller's tier |

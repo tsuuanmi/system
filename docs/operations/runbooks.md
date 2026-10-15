@@ -9,8 +9,9 @@
    has none, and checks Xvfb. For a composition with no website Worker, run
    `system init --preset api-first` instead ([API-first](#api-first-preset)); it
    skips Chrome and Xvfb.
-2. `system start` boots the profile. MCP listens on `127.0.0.1:47317/mcp`, and
-   the gateways serve `/anthropic` and `/openai` on the same port.
+2. `system start` boots the profile. MCP listens on `127.0.0.1:47317/mcp`.
+   The model gateways (`/anthropic`, `/openai` on the same port) and the agent
+   Workers are off by default ([turn a row on](#turn-an-off-row-back-on)).
 3. Remote login needs a VNC server, either `x0vncserver` (TigerVNC) or
    `x11vnc`. Without root, unpack the package into the profile's tools
    directory and point the `login` row's `vncPath` at it:
@@ -30,16 +31,20 @@
    **Save account**. Alternatively, run `system account save <id>` after the
    sign-in.
 5. Map the account's tiers to modes in the account catalog (`accounts[].tiers`),
-   then check `system account list`. A ChatGPT account without a model picker
-   (Free) maps its tiers to the empty preset `site`. A Gemini account maps
-   them to `flash-lite`, `flash`, and `pro` (model and thinking level).
-6. Connect the clients: `system mcp-config claude|codex` connects over MCP;
-   `system claude-env` and `system codex-env` connect through the gateways.
+   then check `system account list`. A ChatGPT account maps its tiers to
+   `instant`, `medium`, and `high`; one without a model picker cannot be used
+   ([remove it](#remove-the-free-chatgpt-account)). A Gemini account maps them to
+   `flash-lite`, `flash`, and `pro` (model and thinking level).
+6. Connect the clients: `system mcp-config claude|codex` connects over MCP.
+   With a gateway row turned on, `system claude-env` and `system codex-env`
+   connect through the gateways; while it is off, they refuse and say how to
+   turn it on.
 
 ## Agent Workers
 
 An agent Worker (Claude Code, Codex, an ACP agent) runs on this machine, under
-an `agent-workers` row.
+an `agent-workers` row. The agent rows are off by default; turn them on first
+([below](#turn-an-off-row-back-on)).
 
 - **Credentials:** the agent process starts without the daemon's credentials.
   Every variable whose name contains `KEY`, `PASSWORD`, `SECRET`, or `TOKEN`,
@@ -100,6 +105,60 @@ an `agent-workers` row.
   egress row's `workerClasses` with `local-private` added to `agent`. List
   `website`, `model`, and `model-local` too: the setting replaces the whole
   default.
+
+## Turn an off row back on
+
+The default composition (PROP-0004) keeps these rows in the system bundle but
+off (`disabled: true`):
+
+| Rows | What they serve |
+|---|---|
+| `agent-runtimes`, `runtime-claude-agent-sdk`, `runtime-codex-sdk`, `runtime-acp`, `agent-workers` | agent Workers ([agent runtimes](../design/agent-runtimes.md)) |
+| `profile-software-development` | the `agent-review` template, for agent Workers ([templates](../reference/workflow-templates.md#agent-review)) |
+| `gateway-anthropic`, `gateway-responses` | the model gateways behind `system claude-env`, `system codex-env`, and `system mcp-token --scope model` ([gateways](../design/gateways.md)) |
+
+1. Add the row to your profile patch, `~/.dsh/profiles/system/cordis.patch.yml`,
+   with `disabled: false`. Agent Workers need every agent row they use:
+
+   ```yaml
+   - id: agent-runtimes
+     disabled: false
+   - id: runtime-claude-agent-sdk
+     disabled: false
+   - id: agent-workers
+     disabled: false
+   ```
+
+2. Configure the row ([configuration](../reference/configuration.md)), for
+   example an `agent-workers` Worker ([agent Workers](#agent-workers)).
+3. Restart: `system shutdown`, then `system start`.
+4. `system start --dump-config` shows the row without `disabled: true`.
+
+To turn it off again, remove the row from your patch, or set `disabled: true`,
+and restart. The `api-first` preset turns the agent rows on for you
+([API-first](#api-first-preset)).
+
+## Remove the free ChatGPT account
+
+The ChatGPT driver cannot use an account without a model picker (ChatGPT Free,
+PROP-0004; [modes](../../packages/plugins/provider-chatgpt-web/README.md)).
+Remove it from the operator configuration:
+
+1. **Profile patch:** delete its entry from the `accounts` row's `accounts`
+   list in `~/.dsh/profiles/system/cordis.patch.yml`, and any tier that maps to
+   the old `site` preset. Restart. `system account list` no longer shows it, and
+   routing has no Worker for it.
+2. **Vault entry:** its saved browser state (`system-accounts/<id>`) and login
+   credentials (`system-credentials/<id>`) stay encrypted in the vault. An
+   account outside the catalog is never listed or routed, and `system` has no
+   command that deletes them yet (`system account remove` is planned,
+   [CLI](../reference/cli.md#accounts)).
+3. **Browser profile:** delete its login profile,
+   `~/.dsh/system/login-profiles/<id>`, while no remote login for it is open
+   ([login](../../packages/plugins/login/README.md)).
+
+A panel holds its members to distinct accounts, so with one ChatGPT account left
+it needs another one, such as a Gemini account.
 
 ## API and local models
 
@@ -177,7 +236,8 @@ For an organization that cannot accept automated use of consumer websites
 1. `system init --preset api-first` adds the preset's bundle layer to the
    profile, right after the system bundle. It turns off the display, browser,
    provider registry, website drivers, login, accounts, website turns, turn
-   receipts, and both model gateways, and orders quota `local`, `metered`,
+   receipts, and both model gateways, turns the agent Worker rows and the
+   software-development profile on, and orders quota `local`, `metered`,
    `agent-plan`, `subscription-chat`. Your `cordis.patch.yml` is not touched,
    and a later `system init` keeps the preset.
 2. Configure model Workers ([above](#api-and-local-models)) and agent Workers

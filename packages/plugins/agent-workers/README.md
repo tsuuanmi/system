@@ -3,6 +3,11 @@
 The **`agents` Worker source**: agent runtimes as Workers
 ([design](../../../docs/design/agent-runtimes.md)).
 
+- **Off by default:** this row, the agent runtime rows, and the
+  software-development profile, whose `agent-review` template only these
+  Workers can run, are off in the default composition (PROP-0004)
+  ([turn them on](../../../docs/operations/runbooks.md#turn-an-off-row-back-on)).
+
 - **Workers come from configuration only** (INV-6). Each entry is `agent:<id>`
   with a `runtime` kind, an absolute `workspace`, a `sandbox` (`read-only` or
   `workspace-write`), and optional `tools` (omitted or empty: the runtime's

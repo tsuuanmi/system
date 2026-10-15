@@ -14,7 +14,7 @@ import { block, grow, grownText } from './growth.ts'
 import { admissionKind, escalate, failAttempt, routedDecisions } from './recovery.ts'
 import { remediate, reviewSubject, subjectGate } from './review.ts'
 import { recoverWakes, settleWake } from './sessions.ts'
-import { DEFAULT_TEMPLATES, type NodeTemplate, render, type ResolvedNode, resolve, schemaBlock } from './spec.ts'
+import { DEFAULT_TEMPLATES, type NodeTemplate, render, type ResolvedNode, resolve, schemaBlock, variantProblem } from './spec.ts'
 import { carry, leadDecision, post, restriction, runtimeOf, teamGroup, teamTexts } from './teams.ts'
 import { type Config, errorOf, LEASE_TTL_MS, newId, type NodeHelpers, type NodeRecord, type NodeRow, now, type RunRow, type RunView, type StartInput, type WorkflowError, WorkflowFailure } from './types.ts'
 import { view } from './views.ts'
@@ -71,6 +71,8 @@ export class Engine {
     if (!nodes) throw new WorkflowFailure('invalid_input', `unknown workflow template ${input.template}`)
     if (!input.input.trim()) throw new WorkflowFailure('invalid_input', 'the input must not be empty')
     const requestKey = input.clientRequestId ? sha256(`workflow\0${input.clientRequestId}`) : null
+    const unknown = variantProblem(input.template, nodes, input.variant)
+    if (unknown) throw new WorkflowFailure('invalid_input', unknown)
     const spec = resolve(input.template, nodes, input)
     // Contracts can come from other plugins, so they are checked per run, before anything is sent.
     const known = new Set(this.ctx.workers.contracts())

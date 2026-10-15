@@ -27,6 +27,20 @@
   disabled: true
 - id: gateway-responses
   disabled: true
+# Agent Workers, off in the base composition (PROP-0004), are on here: with the models row,
+# they are where the work runs.
+- id: agent-runtimes
+  disabled: false
+- id: runtime-claude-agent-sdk
+  disabled: false
+- id: runtime-codex-sdk
+  disabled: false
+- id: runtime-acp
+  disabled: false
+- id: agent-workers
+  disabled: false
+- id: profile-software-development
+  disabled: false
 # Quota order: local models first, then metered APIs, then agent plans (REQ-WRK-8 is configuration).
 - id: workers
   config:

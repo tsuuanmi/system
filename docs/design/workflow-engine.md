@@ -27,7 +27,23 @@ Lifecycle: `draft → preflight → confirm → accepted → active`.
 - Preflight validates the spec: acyclic, unique node ids, known executors,
   admissible capability requirements, and bounds within limits.
 - The accepted spec is canonicalized and hashed. The run binds to that hash and
-  to the profile version.
+  to the profile version. A run keeps its resolved spec, so a template removed
+  later still answers `explain` and `result` for the runs it started; a new run
+  of it is refused as an unknown template.
+
+### Variants
+
+A template node may declare named variants:
+`variants: { <name>: { objective?, prompt?, capabilities?, tier?, conversation?, acceptance? } }`.
+
+- The caller names at most one variant at start (MCP `run` `variant`, CLI
+  `system run --variant`; `research` also takes `deep`). Its fields replace the node's own before the spec is
+  checked and hashed, so the chosen fields are part of the `specHash`.
+- A variant the template does not define is refused with `invalid_input`:
+  `template <t> has no variant <v> (it has: …)`. Nothing is sent.
+- A variant changes only those six fields: it never adds a team or a planner's
+  growth policy. The one variant today is `research`'s `deep`
+  ([templates](../reference/workflow-templates.md#research)).
 
 ## Graph model
 

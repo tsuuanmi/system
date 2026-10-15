@@ -54,7 +54,7 @@ for free. The Responses and Messages gateways, which make `system` look like a
 
 | Area | Requirements |
 |---|---|
-| Platform | Linux x64 only; macOS and Windows in v1.0 |
+| Platform | Linux x64 only; macOS and Windows are out of scope (PROP-0004) |
 | Accounts | REQ-ACC-1..9 (ChatGPT Web accounts; multiple accounts; opt-in credential login with local TOTP) |
 | Provider turns | REQ-PRV-1..6 (`reason`, `web-search`, `deep-research`) |
 | Routing | REQ-WRK-1..4, REQ-WRK-7 (egress), REQ-WRK-8 (quota exclusion), REQ-WRK-9 (tiers: website modes as `economy`, `standard`, and `frontier`) |
@@ -67,8 +67,9 @@ for free. The Responses and Messages gateways, which make `system` look like a
 The MVP research flow is a **static two-node DAG** that runs on the real engine.
 It is a subset of the engine, not separate code
 ([ADR-0012](../decisions/adr/0012-dag-execution-model.md), INV-1). It is now the
-built-in `deep-research` template; the name `research` later went to the
-scientific-research procedure (production-ready):
+built-in `deep-research` template, which PROP-0004 removed; the name `research` went to the
+scientific-research procedure (production-ready), whose `deep` variant reviews with Deep
+research:
 
 ```mermaid
 flowchart LR
@@ -207,7 +208,7 @@ operational readiness.
 | Validation | `docs/validation/` with acceptance criteria per requirement, traceability from requirement to test, and the recorded manual release checklist |
 | Reference | `docs/reference/` with the MCP tool contracts, gateway compatibility notes, configuration catalog generated from plugin `Config` schemas, and the seam definitions |
 | Reliability | crash-injection suite across every reconcile point passes repeatedly with zero duplicate effects; every bound in INV-9 configured and tested |
-| Platforms | Linux and macOS supported (Windows best-effort): `offscreen` display and visible login join Linux's `virtual` display and noVNC remote login; packaged distribution with checksum-verified artifacts |
+| Platforms | Linux supported, with the `virtual` display and noVNC remote login; macOS and Windows are out of scope (PROP-0004); packaged distribution with checksum-verified artifacts |
 
 ### Production-ready exit criteria
 

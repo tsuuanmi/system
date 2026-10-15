@@ -42,15 +42,16 @@ export function registerTools(c: Context, w: Workflow, ctx: Context): void {
   })
   c.mcp.tool('research', {
     scope: 'client',
-    description: 'Research a question with the research profile: testable hypotheses, a cited literature review (web search), an evidence table, an independent critique, and conclusions per hypothesis. Returns at once with a runId; poll `result` (runs take minutes). Deep research alone, then a compaction: `run` with template deep-research.',
+    description: 'Research a question with the research profile: testable hypotheses, a cited literature review (web search, or the provider\'s Deep research with `deep`), an evidence table, an independent critique, and conclusions per hypothesis. Returns at once with a runId; poll `result` (runs take minutes; with `deep`, up to an hour).',
     inputSchema: {
       question: zod.string().min(1).max(32_000),
+      deep: zod.boolean().optional().describe('Review the literature with the provider\'s Deep research'),
       classification, clientRequestId,
     },
   }, async (args) => {
     try {
       return shape(w.start({
-        template: 'research', input: String(args.question),
+        template: 'research', input: String(args.question), ...(args.deep ? { variant: 'deep' } : {}),
         classification: args.classification as Classification | undefined, clientRequestId: args.clientRequestId as string | undefined,
       }))
     } catch (error) {
@@ -59,10 +60,11 @@ export function registerTools(c: Context, w: Workflow, ctx: Context): void {
   })
   c.mcp.tool('run', {
     scope: 'client',
-    description: `Start a workflow template by name (built in: ${Object.keys(DEFAULT_TEMPLATES).sort().join(', ')}; profiles add more, such as develop); its steps are routed by capability to website, model, or agent Workers. Waits up to waitSeconds; otherwise returns a runId for \`result\`.`,
+    description: `Start a workflow template by name (built in: ${Object.keys(DEFAULT_TEMPLATES).sort().join(', ')}; profiles add more, such as research); its steps are routed by capability to the Workers that can do them. Waits up to waitSeconds; otherwise returns a runId for \`result\`.`,
     inputSchema: {
       template: zod.string().max(100),
       input: zod.string().min(1).max(32_000),
+      variant: zod.string().max(100).optional().describe('A variant the template defines (research: deep)'),
       sessionId: zod.string().max(200).optional().describe('Continue an existing session'),
       persist: zod.boolean().optional().describe('Start a persistent session'),
       tier: zod.enum(['economy', 'standard', 'frontier']).optional().describe('Minimum tier for the steps that take the caller\'s tier'),
@@ -71,7 +73,7 @@ export function registerTools(c: Context, w: Workflow, ctx: Context): void {
   }, async (args) => {
     try {
       const run = w.start({
-        template: String(args.template), input: String(args.input), sessionId: args.sessionId as string | undefined, persist: args.persist as boolean | undefined,
+        template: String(args.template), input: String(args.input), variant: args.variant as string | undefined, sessionId: args.sessionId as string | undefined, persist: args.persist as boolean | undefined,
         tier: args.tier as Tier | undefined, classification: args.classification as Classification | undefined, clientRequestId: args.clientRequestId as string | undefined,
       })
       return shape(await w.wait(run.runId, ((args.waitSeconds as number | undefined) ?? 45) * 1000))

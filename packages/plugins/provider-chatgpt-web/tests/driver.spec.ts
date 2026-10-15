@@ -90,11 +90,11 @@ describe.runIf(canRunBrowser)('ChatGptWebDriver against the fake site, with no r
       'Pin actions by SHA (GitHub Docs) and attest the tarballs (GitHub).\n\nSources:\n- GitHub Docs https://docs.github.com/a\n- GitHub https://github.com/actions/attest')
   }, 40_000)
 
-  it('asks on an account without a model picker (ChatGPT Free) with an empty preset, assuming no mode', async () => {
-    const { fake, page } = await site({ answer: 'free answer', modelPicker: false })
-    const sitePreset = new ChatGptWebDriver({ origin: fake.origin, modes: { site: {} }, defaultMode: 'site', timeouts: { stableMs: 200 } })
-    expect(await sitePreset.ask(page, 'hello', { conversation: 'temporary' })).toMatchObject({ text: 'free answer', mode: {} })
-    expect(fake.sent).toEqual([expect.objectContaining({ prompt: 'hello', mode: 'chat', temporary: true })])
+  it('refuses to send on an account without a model picker, assuming no mode (PROP-0004: no ChatGPT Free)', async () => {
+    const { fake, page, driver } = await site({ answer: 'free answer', modelPicker: false })
+    const error = await driver.ask(page, 'hello', { conversation: 'temporary' }).catch((e: unknown) => e)
+    expect(error).toMatchObject({ kind: 'ui_drift' })
+    expect(fake.sent).toEqual([])
   }, 60_000)
 
   it('probes the account\'s features from the tools popover, sending nothing (REQ-PRV-7)', async () => {

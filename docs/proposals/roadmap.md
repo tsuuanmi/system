@@ -27,8 +27,9 @@ verified on live accounts, and when, is in the
 | **M6c** Data lifecycle, upgrades, reliability (v1.0) | started | crash suite at every reconcile point | [PROP-0003](0003-production-readiness.md#m6c-data-lifecycle-upgrades-reliability) |
 | **M6d** Supply chain and release (v1.0) | done | the first tagged release; npm publication and a license are deferred by the owner ([ADR-0026](../decisions/adr/0026-versioned-releases-with-provenance.md)) | [releasing](../engineering/releasing.md) |
 | **M6e** API-first composition (v1.0) | done, live checks open | an API model Worker and a local model Worker, each verified live | [models](../design/models.md), [ADR-0025](../decisions/adr/0025-api-first-composition.md), [api-first e2e](../../packages/cli/tests/api-first.e2e.ts), [checklist](../validation/release-checklist.md) |
-| **v1.0** Production-ready release | not started | M6a to M6e, M7 unless PROP-0003 is accepted, and the open live items of the release checklist | [release scope](../requirements/release-scope.md#production-ready-exit-criteria), [checklist](../validation/release-checklist.md) |
-| **M7** macOS | not started | `offscreen` display, visible login, read confinement through the platform sandbox; release scope lists it for v1.0, and PROP-0003 proposes moving it to 1.x | [PROP-0003](0003-production-readiness.md#release-gate-and-later-work) |
+| **PROP-0004** Phase 1: removals and switch-offs | in progress | Phase 1's checks: the composition's row set, old runs of removed templates still explained after an upgrade, the crash suite | [templates](../reference/workflow-templates.md), [turn a row on](../operations/runbooks.md#turn-an-off-row-back-on) |
+| **v1.0** Production-ready release | not started | M6a to M6e and the open live items of the release checklist | [release scope](../requirements/release-scope.md#production-ready-exit-criteria), [checklist](../validation/release-checklist.md) |
+| **M7** macOS | out of scope (PROP-0004: Linux only) | — (was: `offscreen` display, visible login, read confinement through the platform sandbox) | [PROP-0003](0003-production-readiness.md#release-gate-and-later-work) |
 
 The operator web page stays the small `/ui` page in
 [`web-ui`](../../packages/plugins/web-ui/README.md); `system` does not build a UI

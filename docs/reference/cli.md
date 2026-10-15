@@ -17,12 +17,14 @@
 
 `-` in place of the text reads it from stdin. `--classification` is `public`,
 `operator-shared`, or `local-private`; `--tier` is `economy`, `standard`, or `frontier`.
+Each command refuses a flag it does not take: `--deep` only on `research`, `--variant` only
+on `run`.
 
 | Command | What it does |
 |---|---|
 | `system ask [--persist] [--session <id>] [--tier <t>] [--classification <c>] (<prompt…> \| -)` | ask the Worker the router admits: a website account, an API or local model, … (template `ask`) |
-| `system research [--classification <c>] (<question…> \| -)` | the research procedure: hypotheses, a cited review, evidence, critique, conclusions (template `research`) |
-| `system run <template> [--session <id>] [--persist] [--tier <t>] [--classification <c>] (<input…> \| -)` | start any [workflow template](workflow-templates.md) |
+| `system research [--deep] [--classification <c>] (<question…> \| -)` | the research procedure: hypotheses, a cited review, evidence, critique, conclusions (template `research`; `--deep`: its `deep` variant, whose review uses Deep research) |
+| `system run <template> [--variant <v>] [--session <id>] [--persist] [--tier <t>] [--classification <c>] (<input…> \| -)` | start any [workflow template](workflow-templates.md), or one of its variants |
 | `system approve <runId> [--plan <id>] [--reject] [note…]` | approve (or reject) the plan a run is waiting on, bound to that exact plan (name it with `--plan` when several wait) |
 | `system result <runId>` | wait for a run and print its answer |
 | `system watch <runId>` | the same as `result` |
@@ -71,8 +73,12 @@
 |---|---|
 | `system mcp-config <claude\|codex>` | print client configuration for the running MCP server |
 | `system mcp-stdio` | serve the running profile's client-scope MCP tools on stdio (Codex and other clients) |
-| `system mcp-token --scope model` | print the model gateways' token, for a model client's environment variable. Only the model scope is printed: the CLI uses the operator token itself, and the client helpers read the client token on each connection ([scopes](../../packages/plugins/mcp-server/README.md#scopes)) |
+| `system mcp-token --scope model` | print the model gateways' token, for a model client's environment variable. Only the model scope is printed: the CLI uses the operator token itself, and the client helpers read the client token on each connection ([scopes](../../packages/plugins/mcp-server/README.md#scopes)). Refused while both gateway rows are off |
 | `system mcp-headers` | print the `Authorization` header with the client token as JSON (Claude Code `headersHelper`) |
-| `system claude-env` | print a command that runs Claude Code with website Workers as its model ([gateways](../design/gateways.md)) |
-| `system codex-env` | print a command that runs Codex with website Workers as its model |
+| `system claude-env` | print a command that runs Claude Code with website Workers as its model ([gateways](../design/gateways.md)). Refused while the `gateway-anthropic` row is off |
+| `system codex-env` | print a command that runs Codex with website Workers as its model. Refused while the `gateway-responses` row is off |
 | `system tools [--markdown]` | list the MCP tools the running profile serves (`--markdown`: the [MCP tools](mcp-tools.md) page) |
+
+Both gateway rows are off in the default composition (PROP-0004); Claude Code reaches `system`
+over MCP (`mcp-config`). A refused helper names the row and how to
+[turn it back on](../operations/runbooks.md#turn-an-off-row-back-on).

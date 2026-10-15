@@ -11,7 +11,10 @@
 > and the workspace's git subject is not stored.
 
 An **agent runtime** is an external coding agent that `system` drives as a Worker. It is the
-counterpart of the [gateways](gateways.md), where the same agents act as clients.
+counterpart of the [gateways](gateways.md), where the same agents act as clients. The agent
+runtime and agent Worker rows are off in the default composition (PROP-0004); an operator turns
+them on ([runbook](../operations/runbooks.md#turn-an-off-row-back-on)), and the `api-first`
+preset does.
 
 ## Providers
 

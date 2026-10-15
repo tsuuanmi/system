@@ -96,7 +96,9 @@ default. Live observations are in the
 - **Verification.** The driver selects the model radio and steps the Power
   slider, then **reads both back**. An unknown preset, an unknown or locked
   model, or an unreachable level fails with `config_error` before anything is
-  sent (INV-2). The receipt records the verified model and effort.
+  sent (INV-2). An account without a model picker (ChatGPT Free) has no mode to
+  verify, so its turn fails as `ui_drift` and nothing is sent. The receipt
+  records the verified model and effort.
 - **Deep research** (the `deep-research` capability) runs only in persistent
   conversations: Temporary chat does not offer it. Its first reply is an
   acknowledgement, and the report arrives later in a nested frame. The driver
@@ -256,8 +258,9 @@ exact shapes in [MCP tools](../reference/mcp-tools.md)):
 `ask { prompt, sessionId?, persist?, tier?, classification?, clientRequestId?, waitSeconds? }`
 returns the run view with `answer` once it is complete. Otherwise it returns `status: running`
 and a `runId`, which `result { runId, waitSeconds? }` long-polls.
-`research { question, sessionId?, classification?, clientRequestId? }` returns at once with a
-`runId` and a `sessionId`. The wait stays under common MCP client timeouts (at most 55 s).
+`research { question, deep?, classification?, clientRequestId? }` returns at once with a
+`runId` and a `sessionId`; `deep` runs the `deep` variant, whose literature review is Deep
+research. The wait stays under common MCP client timeouts (at most 55 s).
 
 ## Large inputs
 

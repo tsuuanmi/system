@@ -141,7 +141,8 @@ locality is what admits `local-private` work to it
 
 [ADR-0025](../decisions/adr/0025-api-first-composition.md): a bundle layer
 (`@tsuuanmi/system-preset-api-first`, shipped in the system bundle's `presets/api-first/`) that
-turns off every row that drives a website and both model gateways, and sets
+turns off every row that drives a website and both model gateways, turns on the agent Worker
+rows and the software-development profile (off in the base composition), and sets
 `quotaPreference: [local, metered, agent-plan, subscription-chat]`. `system init --preset
 api-first` adds it to the profile's bundle list after the system bundle; the operator's own
 `cordis.patch.yml` is never rewritten. Templates that need `web-search` or `deep-research` then

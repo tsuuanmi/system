@@ -55,7 +55,7 @@ export interface FakeOptions {
   researchMs?: number
   /** Deep research report text. */
   report?: string
-  /** Whether the account has a model picker (ChatGPT Free has none; default true). */
+  /** Whether the account has a model picker (default true); without one the driver refuses to send. */
   modelPicker?: boolean
   /** Features this account's tools popover offers (default all). */
   features?: string[]
@@ -133,7 +133,7 @@ function html(options: Required<FakeOptions>, conversation: Conversation | undef
     <form data-chatgpt-composer data-composer-placement="home" id="composer">
       <button type="button" aria-label="Add files and more">+</button>
       <div contenteditable="true" role="textbox" aria-multiline="true" aria-label="Ask ChatGPT" data-composer-markdown id="input"></div>
-      <button type="button" aria-label="Select ChatGPT model" aria-haspopup="menu" aria-expanded="false" id="picker"\${options.modelPicker === false ? ' hidden' : ''}>Instant</button>
+      <button type="button" aria-label="Select ChatGPT model" aria-haspopup="menu" aria-expanded="false" id="picker"${options.modelPicker === false ? ' hidden' : ''}>Instant</button>
       <button type="button" aria-label="Dictate">d</button>
       <span id="slot"></span>
     </form>

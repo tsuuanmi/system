@@ -9,8 +9,9 @@ it is a plugin.
   Web), and agent Workers (Claude Code, Codex, ACP agents). API and local-model
   providers are planned.
 - **Workflows:** durable and reconcilable, built from Workers and teams.
-- **Clients:** Claude Code (Anthropic Messages gateway), Codex (Responses
-  gateway), any MCP client, and the `system` CLI.
+- **Clients:** Claude Code, Codex, or any MCP client over MCP, and the `system`
+  CLI. The Anthropic Messages and Responses gateways, which make a website
+  Worker a client's model, are off by default.
 
 > Right Worker, right job. Every effect reconciled, never blindly replayed.
 
@@ -32,8 +33,11 @@ Full statement: [docs/requirements/purpose.md](docs/requirements/purpose.md).
 ## Status
 
 Milestones M0 to M5 are done apart from a few listed items, and M6 (second
-domain and readiness) has started. The [roadmap](docs/proposals/roadmap.md) has
-the milestone table and what remains. What each package does today is in its own
+domain and readiness) has started. PROP-0004 (the Claude Code-lead MVP) Phase 1
+is in progress: the default composition leaves the agent Worker and model gateway
+rows off until an operator
+[turns one on](docs/operations/runbooks.md#turn-an-off-row-back-on). The
+[roadmap](docs/proposals/roadmap.md) has the milestone table and what remains. What each package does today is in its own
 `README.md`; what was verified on live accounts, and when, is in the
 [release checklist](docs/validation/release-checklist.md).
 
@@ -46,8 +50,8 @@ Built today:
 - the workflow engine: capability routing with decision artifacts, acceptance
   contracts, graph growth with plan approval, panels with team leads, Worker
   sessions with peer messages, and exact-subject review;
-- profiles for software development (`develop`) and scientific research
-  (`research`, `research-deep`);
+- profiles for scientific research (`research`, with a `deep` variant) and
+  software development (`agent-review`, for agent Workers);
 - the MCP server, the Anthropic Messages and Responses gateways, the `system`
   CLI, and an operator web page at `/ui`.
 
@@ -56,7 +60,7 @@ Built today:
 Declare accounts in the operator's profile patch,
 `~/.dsh/profiles/system/cordis.patch.yml`. Each tier maps to a mode preset of
 the account's driver, and each mapped tier is one Worker. A tier left unmapped is
-never served. A common pattern is three accounts:
+never served. A common pattern is two accounts:
 
 ```yaml
 - id: accounts
@@ -66,18 +70,15 @@ never served. A common pattern is three accounts:
         provider: chatgpt-web
         quotaClass: subscription-chat
         tiers: { economy: instant, standard: medium, frontier: high }
-      - id: chatgpt-second               # panels hold members to distinct accounts
-        provider: chatgpt-web
-        quotaClass: subscription-chat
-        tiers: { economy: site, standard: site }
-      - id: gemini-main
+      - id: gemini-main                  # panels hold members to distinct accounts
         provider: gemini-web
         quotaClass: subscription-chat
         tiers: { economy: flash-lite, standard: flash, frontier: pro }
 ```
 
 Agent Workers (Claude Code, Codex, ACP agents) are rows of the `agent-workers`
-plugin ([configuration](docs/reference/configuration.md#agent-workers)).
+plugin ([configuration](docs/reference/configuration.md#agent-workers)), off by
+default ([runbook](docs/operations/runbooks.md#agent-workers)).
 
 ```bash
 alias system="node $PWD/packages/cli/lib/bin.js"
@@ -97,16 +98,14 @@ system mcp-config codex >> ~/.codex/config.toml   # Codex: runs the stdio shim (
   `resume`), accounts (`account_*`), and sessions (`session_send`,
   `session_inbox`). The full contracts are generated in
   [docs/reference/mcp-tools.md](docs/reference/mcp-tools.md).
-- **`research` vs `deep-research`:** `research` is the scientific-research
-  procedure: testable hypotheses, a cited literature review with web search, an
-  evidence table, an independent critique, and a conclusion per hypothesis
-  (`research-deep` reviews with Deep research instead). `deep-research` is the
-  built-in template that runs one Deep research report on `frontier`, then
-  compacts it into a cited synthesis on `economy`
-  (`system run deep-research "…"`).
-- **Website Workers as the model:** `system claude-env` and `system codex-env`
-  print commands that run Claude Code or Codex on the gateways, with a website
-  Worker as their model.
+- **`research`:** the scientific-research procedure: testable hypotheses, a
+  cited literature review with web search, an evidence table, an independent
+  critique, and a conclusion per hypothesis. `system research --deep` (MCP
+  `deep: true`) reviews with Deep research instead
+  ([templates](docs/reference/workflow-templates.md)).
+- **Website Workers as the model:** with a gateway row turned on,
+  `system claude-env` and `system codex-env` print commands that run Claude Code
+  or Codex on the gateways, with a website Worker as their model.
 - **Inspection:** `system explain <runId>` shows why each step ran where it did,
   and `system usage` which quota class and tier served each step. `system ui`
   prints the link to the operator page.
@@ -153,7 +152,7 @@ flowchart LR
    website Worker its model. Through a gateway, the model proposes the client's
    tool calls in text, and the client runs them locally
    ([ADR-0022](docs/decisions/adr/0022-text-protocol-tool-calls-for-website-models.md)).
-3. Run a single turn, or a durable workflow such as plan → implement → review.
+3. Run a single turn, or a durable workflow such as `research` or a panel.
 
 ## Build / run / test
 
