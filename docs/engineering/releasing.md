@@ -80,18 +80,14 @@ sha256sum -c SHA256SUMS
 gh attestation verify tsuuanmi-system-cli-<version>.tgz --repo tsuuanmi/system   # and any SBOM
 ```
 
-## Not yet decided
+## Not done
 
-These wait on the owner. The first two are parts of ADR-0026, which stays
-Proposed until they are settled:
-
-- **npm publication.** The packages stay `private`, and no workflow publishes to
-  npm. Publishing would add npm trusted publishing (OIDC, no stored token), a
-  `publishConfig.provenance` on each package, and `npm audit signatures` in the
-  release checklist.
-- **A license.** There is no `LICENSE` file yet, so no rights are granted.
+- **npm publication** and **a license**, deferred by the owner
+  ([ADR-0026](../decisions/adr/0026-versioned-releases-with-provenance.md)). The
+  packages stay `private`, no workflow publishes to npm, and with no `LICENSE`
+  file no rights are granted.
 - **Prereleases.** A prerelease version (for example `1.0.0-rc.0` from
   Changesets' pre mode) is refused, so it can never become the latest release.
-- **Repository settings.** A tag ruleset so that only maintainers create `v*`
-  tags, and required reviewers on the `release` environment, which the release
-  job already names.
+- **Repository settings,** the owner's to make: a tag ruleset so that only
+  maintainers create `v*` tags, and required reviewers on the `release`
+  environment, which the release job already names.

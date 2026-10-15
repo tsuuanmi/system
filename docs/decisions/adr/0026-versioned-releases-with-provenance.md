@@ -1,7 +1,7 @@
 # ADR-0026: Lockstep versioned releases with provenance; supported runtime policy
 
-- **Status:** Proposed
-- **Date:** 2026-10-14
+- **Status:** Accepted
+- **Date:** 2026-10-14 (accepted 2026-10-15)
 - **Related:** [PROP-0003](../../proposals/0003-production-readiness.md#m6d-supply-chain-and-release),
   CON-2, CON-8, [release scope](../../requirements/release-scope.md#operational-readiness),
   [ADR-0018](0018-build-on-dsh-core.md)
@@ -25,37 +25,44 @@ Two outside facts constrain any version promise:
 
 1. Keep running from a checkout; tag commits only.
 2. Independent versions per package.
-3. **One lockstep version for every package**, published from CI with provenance.
+3. **One lockstep version for every package**, released from CI with provenance.
 
 ## Decision
 
-Option 3.
+Option 3, released on GitHub. The owner deferred publication to the npm registry
+and the choice of a license.
 
 - **Versioning.** Changesets manages one fixed version group for all packages and
-  writes `CHANGELOG.md`. Packages leave `private` and declare `files`. The bundle
-  carries the `dsh-plugin` keyword.
+  writes `CHANGELOG.md`. Packages declare `files` and stay `private`.
 - **What SemVer covers.** The contracts `system` owns: MCP tools, gateway
   behavior, the CLI, plugin configuration, and the schemas in `schemas/`. DSH's
   own APIs are not covered. A DSH pin bump ships only in a minor or major release,
   after the conformance and composition suites pass.
-- **Publication.** A tag-triggered workflow runs every CI gate, then publishes
-  through npm trusted publishing (OIDC, no stored token) with provenance. It
-  generates a CycloneDX SBOM, attests the build, and attaches the SBOM and
-  checksums to the GitHub release. The seeded store fixture that the upgrade suite
-  uses is committed when the release is versioned, from that release's code, so the
-  tag carries it and it is never edited afterwards.
+- **Release.** A `v<version>` tag on the default branch runs every CI gate and the
+  dependency audit, then creates a GitHub release. The release carries a tarball
+  and a CycloneDX SBOM for each package, and `SHA256SUMS`. One build provenance
+  attestation covers the tarballs and SBOMs. The seeded store fixture that the
+  upgrade suite uses is committed when the release is versioned, from that
+  release's code, so the tag carries it and it is never edited afterwards.
+- **No registry publication.** Nothing is published to npm. Taking it up later
+  is a new decision, in an ADR that supersedes this one: it would publish through
+  npm trusted publishing (OIDC, no stored token) with provenance, take packages
+  out of `private`, add the `dsh-plugin` keyword to the bundle, and add
+  `npm audit signatures` to the release checklist.
 - **Supported runtime.** `engines`, the CI matrix, and the start-up check name
   the same Node range. That range includes only releases with the `node:sqlite`
   fixes. A release that narrows it says so in the changelog.
-- **Repository policy files.** A license chosen by the owner, and `SECURITY.md`
-  with a private reporting channel.
+- **Repository policy files.** `SECURITY.md` with a private reporting channel.
+  The license is the owner's choice and is deferred; until one is added, no
+  `LICENSE` file grants rights.
 
 ## Consequences
 
-- Operators can pin, verify (`npm audit signatures`, attestations, checksums), and
-  roll back a release.
+- Operators can pin a release, verify it (checksums, `gh attestation verify`),
+  install it from its tarballs, and roll it back.
 - Every release must keep the upgrade suite green for all earlier releases.
-- Publishing gives CI an identity that can publish packages; it is limited to tag
-  builds on the default branch.
+- The release job holds an identity that can attest builds and create releases.
+  It runs only for a tag whose commit is on the default branch, and its
+  `release` environment can require a reviewer.
 - Revisit the SemVer boundary if DSH reaches a stable release with its own
   compatibility promise.

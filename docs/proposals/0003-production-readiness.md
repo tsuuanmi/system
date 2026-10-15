@@ -255,7 +255,11 @@ lands. Each item names the requirement it closes and the test that proves it.
 
 ### M6d Supply chain and release
 
-[ADR-0026](../decisions/adr/0026-versioned-releases-with-provenance.md).
+[ADR-0026](../decisions/adr/0026-versioned-releases-with-provenance.md). The owner
+deferred npm publication and the license, so the registry items below
+(`publishConfig.provenance`, the `dsh-plugin` keyword, trusted publishing,
+`npm audit signatures`) are not built; releases are GitHub releases
+([releasing](../engineering/releasing.md)).
 
 - A license (the owner chooses), `SECURITY.md`, and Changesets with one lockstep
   version group, which also writes `CHANGELOG.md`.
@@ -403,7 +407,9 @@ the first published release, upgrades from every earlier release are tested.
 
 ## Decision
 
-Pending review. ADR-0023 to ADR-0026 are proposed alongside this proposal.
+Pending review of the proposal as a whole. Its decisions, ADR-0023 to ADR-0026,
+are accepted. Under ADR-0026 the owner deferred npm publication and the license
+(2026-10-15), so M6d below ships GitHub releases only.
 
 ## Implementation
 

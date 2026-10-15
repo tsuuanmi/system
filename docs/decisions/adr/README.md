@@ -30,7 +30,7 @@ Status values: `Proposed`, `Accepted`, `Rejected`, `Superseded by ADR-NNNN`,
 | [0020](0020-pinned-managed-chrome.md) | A pinned Chrome for Testing, installed by `system init`, when the host has no recent Chrome | Accepted |
 | [0021](0021-ui-operations-as-data.md) | Website UI operations are data (UI maps) resolved by a deterministic engine with bounded, verified self-healing | Accepted |
 | [0022](0022-text-protocol-tool-calls-for-website-models.md) | Website models reach a client's tools through a text protocol in the turn (MCP tool inversion stays the target) | Accepted |
-| [0023](0023-scoped-control-credentials.md) | Scoped static control credentials (`operator`, `client`, `model`) on loopback; OAuth deferred until CON-6 changes | Proposed |
+| [0023](0023-scoped-control-credentials.md) | Scoped static control credentials (`operator`, `client`, `model`) on loopback; OAuth deferred until CON-6 changes | Accepted |
 | [0024](0024-agent-workers-confined-for-reads.md) | Agent Workers are confined for reads; the DSH home is never readable (bubblewrap where a runtime's own sandbox does not confine reads) | Accepted |
 | [0025](0025-api-first-composition.md) | An `api-first` preset in one bundle; website Workers and model gateways are opt-in there | Accepted |
-| [0026](0026-versioned-releases-with-provenance.md) | Lockstep versioned releases with provenance and SBOM; SemVer covers `system`'s own contracts; supported Node range | Proposed |
+| [0026](0026-versioned-releases-with-provenance.md) | Lockstep versioned releases with provenance and SBOM; SemVer covers `system`'s own contracts; supported Node range | Accepted |

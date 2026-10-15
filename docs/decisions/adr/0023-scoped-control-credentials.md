@@ -1,7 +1,7 @@
 # ADR-0023: Scoped static control credentials on loopback; OAuth deferred
 
-- **Status:** Proposed
-- **Date:** 2026-10-14
+- **Status:** Accepted
+- **Date:** 2026-10-14 (accepted 2026-10-15)
 - **Related:** [PROP-0003](../../proposals/0003-production-readiness.md#m6a-security-hardening),
   [threat model](../../security/threat-model.md#threats-and-controls), QA-5,
   [INV-6](../../architecture/invariants.md#inv-6-authority-comes-from-trusted-envelopes)
@@ -72,6 +72,6 @@ then.
   ([ADR-0024](0024-agent-workers-confined-for-reads.md)).
 - Clients configured with the old token must re-run the helpers once; there is no
   compatibility path for `mcp.token`.
-- The threat model's "separate operator token scope" moves from target to
-  control when this is built, with QA-14 (proposed) as its requirement.
+- The threat model's "separate operator token scope" is a control, with QA-14
+  as its requirement.
 - Revisit if `system` is ever exposed beyond loopback or to more than one user.
