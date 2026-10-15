@@ -212,7 +212,7 @@ No options.
 |---|---|---|---|
 | `origin` | string |  | Site origin (default https://chatgpt.com) |
 | `overlayPath` | string |  | Local UI overlay file |
-| `modes` | Record<string, object> | `{"instant":{"model":"Latest","effort":"Instant"},"medium":{"model":"Latest","effort":"Medium"},"high":{"model":"Latest","effort":"High"}}` | Named mode presets (model and Power level); an empty preset selects nothing |
+| `modes` | Record<string, object> | `{"instant":{"model":"Latest","effort":"Instant"},"medium":{"model":"Latest","effort":"Medium"},"high":{"model":"Latest","effort":"High"}}` | Named mode presets (model and Power level), read back before sending; an account without a model picker fails ui_drift |
 | `defaultMode` | string | `"instant"` | Preset when a caller names none |
 
 ## `provider-gemini-web`

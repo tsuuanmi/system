@@ -63,7 +63,12 @@ const USAGE = `Usage: system <command>
 
 /** Refuse a helper whose rows are all off in this composition (PROP-0004), saying how to turn one on. */
 function requireRow(...rows: string[]): void {
-  const composed = composedRows()
+  let composed
+  try {
+    composed = composedRows()
+  } catch (error) {
+    throw new Error(`cannot read the system profile's composition (run \`system init\` first): ${(error as Error).message}`)
+  }
   const problems = rows.map((row) => rowOffProblem(row, composed))
   if (problems.every((p) => p !== undefined)) throw new Error(problems[0])
 }
