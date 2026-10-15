@@ -7,7 +7,8 @@ import type { ResolvedNode } from './spec.ts'
 import type { ExplainedDecision, Explanation, NodeRecord, NodeView, RunRow, RunView, WorkflowError } from './types.ts'
 
 export function view(e: Engine, run: RunRow): RunView {
-  const nodes = e.nodeRows(run.run_id).map((n): NodeView => {
+  const rows = e.nodeRows(run.run_id)
+  const nodes = rows.map((n): NodeView => {
     const spec = JSON.parse(n.spec) as ResolvedNode
     const record = JSON.parse(n.record) as NodeRecord
     return {
@@ -25,7 +26,7 @@ export function view(e: Engine, run: RunRow): RunView {
     nodes,
     ...blockedOf(e, run.run_id),
     ...(run.error ? { error: JSON.parse(run.error) as WorkflowError } : {}),
-    createdAt: run.created_at, updatedAt: run.updated_at,
+    createdAt: run.created_at, updatedAt: rows.reduce((latest, n) => (n.updated_at > latest ? n.updated_at : latest), run.updated_at),
   }
 }
 

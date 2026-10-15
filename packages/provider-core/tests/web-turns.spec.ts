@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { bindingReporter, completionOptions, modePresets, type ResearchState, waitForReport, withSources } from '../src/index.ts'
+import { bindingReporter, completionOptions, modePresets, type ResearchState, waitForReport, withMissingSources, withoutTracking, withSources } from '../src/index.ts'
 
 const TIMEOUTS = { turnMs: 5000, stallMs: 2000, stableMs: 10, pollMs: 5, reportReadMs: 50 }
 
@@ -42,5 +42,13 @@ describe('website turn mechanics', () => {
 
   it('lists a report\'s sources under it', () => {
     expect(withSources('Report.', new Map([['https://a.example', 'A'], ['https://b.example', '']]))).toBe('Report.\n\nSources:\n- A https://a.example\n- https://b.example')
+  })
+
+  it('adds only the sources an answer does not carry, without tracking parameters', () => {
+    const sources = new Map([['https://a.example/x?utm_source=chat.example', 'A'], ['https://b.example/y?id=1&utm_medium=x', 'B'], ['https://a.example/x', 'A again']])
+    expect(withMissingSources('See https://a.example/x?utm_source=chat.example.', sources)).toBe('See https://a.example/x?utm_source=chat.example.\n\nSources:\n- B https://b.example/y?id=1')
+    expect(withMissingSources('See https://a.example/x and https://b.example/y?id=1.', sources)).toBe('See https://a.example/x and https://b.example/y?id=1.')
+    expect(withMissingSources('See [example.com](https://example.com).', new Map([['https://example.com/', 'example.com']]))).toBe('See [example.com](https://example.com).')
+    expect(withoutTracking('not a url')).toBe('not a url')
   })
 })

@@ -260,6 +260,7 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
     await until(() => ctx.workflow.get(run.runId)?.blocked !== undefined, 60_000)
     const blocked = ctx.workflow.get(run.runId)!
     expect(blocked).toMatchObject({ status: 'running', blocked: { nodeId: 'plan:1:gate' } })
+    expect(blocked.updatedAt > blocked.createdAt).toBe(true) // the plan's progress shows while the run is still running
     expect(fake.sent).toHaveLength(1)
     ctx.workflow.approve(run.runId, { verdict: 'approved', note: 'fine' })
     const done = await ctx.workflow.wait(run.runId, 60_000)

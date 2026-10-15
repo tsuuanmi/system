@@ -2,7 +2,7 @@
  * The UI engine for website drivers (ADR-0021, docs/design/ui-operations.md).
  * @module @tsuuanmi/system-ui-ops
  */
-export { copiedMarkdown, preWrapText } from './answers.ts'
+export { copiedMarkdown, linksIn, preWrapText } from './answers.ts'
 export { type ActArgs, type ActOptions, type DriftEvent, type EngineOptions, type HealEvent, type Resolved, UiEngine } from './engine.ts'
 export { type HealThresholds, type Scored, type SnapshotNode, choose, parseAiSnapshot, scoreNodes } from './heal.ts'
 export { candidateFromLocator, localizedRegex, toLocator } from './locate.ts'

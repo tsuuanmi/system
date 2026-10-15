@@ -353,14 +353,14 @@ export class GeminiWebDriver implements ProviderDriver<Page> {
 
   /**
    * The answer as Markdown (REQ-PRV-5), from its own Copy, kept only when its words are the
-   * rendered answer's (the clipboard may be shared); otherwise the rendered text stands.
-   * Copy ends each code block with a blank line before the closing fence, which is dropped.
+   * rendered answer's (the clipboard may be shared); otherwise the rendered text stands. Either
+   * way the answer's cited links follow it when the text lacks them. Copy ends each code block
+   * with a blank line before the closing fence, which is dropped.
    */
   private async markdownOf(engine: UiEngine, rendered: string): Promise<string> {
-    return copiedMarkdown(engine, rendered, async () => {
-      const answer = (await engine.resolve('turn.assistant', 1000)).locator.last()
-      return (await engine.findIn('turn.assistant.done', answer))?.locator.last()
-    }, (markdown) => markdown.replace(/^(```[^\n]*\n[\s\S]*?)\n+(```[ \t]*)$/gm, '$1\n$2').trim())
+    const answer = async () => (await engine.resolve('turn.assistant', 1000)).locator.last()
+    return copiedMarkdown(engine, rendered, async () => (await engine.findIn('turn.assistant.done', await answer()))?.locator.last(),
+      (markdown) => markdown.replace(/^(```[^\n]*\n[\s\S]*?)\n+(```[ \t]*)$/gm, '$1\n$2').trim(), answer)
   }
 
   private bindingOf(page: Page): string | undefined {

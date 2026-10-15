@@ -74,6 +74,22 @@ describe.runIf(canRunBrowser)('ChatGptWebDriver against the fake site, with no r
     expect((await driver.ask(page, 'Answer in Markdown', { conversation: 'temporary' })).text).toBe(answer)
   }, 40_000)
 
+  // A web-cited answer: the page renders each citation as a link chip, and Copy yields
+  // reference-style links whose URLs carry tracking parameters (2026-10-15).
+  const cited = 'Pin actions by SHA ([GitHub Docs](https://docs.github.com/a)) and attest the tarballs ([GitHub](https://github.com/actions/attest)).'
+  const referenced = 'Pin actions by SHA ([GitHub Docs][1]) and attest the tarballs ([GitHub][2]).\n\n[1]: https://docs.github.com/a?utm_source=chatgpt.com "Security hardening"\n[2]: https://github.com/actions/attest?utm_source=chatgpt.com "attest"'
+
+  it('keeps a cited answer\'s reference-style Copy, URLs and all (REQ-PRV-5)', async () => {
+    const { page, driver } = await site({ answer: cited, copied: () => referenced })
+    expect((await driver.ask(page, 'Cite your sources', { conversation: 'temporary' })).text).toBe(referenced)
+  }, 40_000)
+
+  it('keeps a cited answer\'s URLs from its links when its Copy is refused', async () => {
+    const { page, driver } = await site({ answer: cited, copied: () => 'Something else on the clipboard.' })
+    expect((await driver.ask(page, 'Cite your sources', { conversation: 'temporary' })).text).toBe(
+      'Pin actions by SHA (GitHub Docs) and attest the tarballs (GitHub).\n\nSources:\n- GitHub Docs https://docs.github.com/a\n- GitHub https://github.com/actions/attest')
+  }, 40_000)
+
   it('asks on an account without a model picker (ChatGPT Free) with an empty preset, assuming no mode', async () => {
     const { fake, page } = await site({ answer: 'free answer', modelPicker: false })
     const sitePreset = new ChatGptWebDriver({ origin: fake.origin, modes: { site: {} }, defaultMode: 'site', timeouts: { stableMs: 200 } })

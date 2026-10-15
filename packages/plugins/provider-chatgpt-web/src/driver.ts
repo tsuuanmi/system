@@ -8,8 +8,8 @@
  *   marker and stable text (the event stream stays open, so it is never consulted).
  */
 import { readFileSync } from 'node:fs'
-import { type AskOptions, type AskResult, type AuthState, bindingReporter, completionOptions, type ConversationMode, modePresets, ProviderError, type ProviderDriver, type ProviderFeature, type ProviderMode, type ResearchState, type TurnSnapshot, waitForReport, waitForStableCompletion, withSources } from '@tsuuanmi/system-provider-core'
-import { copiedMarkdown, type DriftEvent, type HealEvent, preWrapText, UiEngine, type UiMap, loadUiMap } from '@tsuuanmi/system-ui-ops'
+import { type AskOptions, type AskResult, type AuthState, bindingReporter, completionOptions, type ConversationMode, modePresets, ProviderError, type ProviderDriver, type ProviderFeature, type ProviderMode, type ResearchState, type TurnSnapshot, waitForReport, waitForStableCompletion, withMissingSources } from '@tsuuanmi/system-provider-core'
+import { copiedMarkdown, type DriftEvent, type HealEvent, linksIn, preWrapText, UiEngine, type UiMap, loadUiMap } from '@tsuuanmi/system-ui-ops'
 import type { Frame, Page } from 'patchright-core'
 
 export type { AskOptions, AskResult, AuthState, ConversationMode, ProviderMode }
@@ -457,12 +457,7 @@ export class ChatGptWebDriver implements ProviderDriver<Page> {
     if (!title) return ''
     const report = title.locator.locator('xpath=..')
     const text = (await report.innerText().catch(() => '')).trim()
-    const anchors = await report.locator('a[href^="http"]').evaluateAll((links) => links.map((a) => [(a.textContent ?? '').trim(), (a as HTMLAnchorElement).href]))
-      .catch(() => [] as string[][])
-    const sources = new Map<string, string>()
-    for (const [label, href] of anchors) if (href && !sources.has(href)) sources.set(href, label ?? '')
-    if (!text || !sources.size) return text
-    return withSources(text, sources)
+    return text ? withMissingSources(text, await linksIn(report)) : text
   }
 
   /**
@@ -478,7 +473,7 @@ export class ChatGptWebDriver implements ProviderDriver<Page> {
   /**
    * The answer as the Markdown that was streamed (REQ-PRV-5), from its own Copy button: read from
    * the clipboard, and kept only when its words are the rendered answer's words (the clipboard
-   * may be shared). Otherwise the rendered text stands.
+   * may be shared). Otherwise the rendered text stands, followed by the answer's cited links.
    */
   private async markdownOf(page: Page, rendered: string): Promise<string> {
     const engine = this.engine(page)
@@ -496,7 +491,7 @@ export class ChatGptWebDriver implements ProviderDriver<Page> {
       if (blocks.length !== fences.length) return rendered
       let index = 0
       return markdown.replace(/^(```[^\n]*)\n([\s\S]*?)\n```[ \t]*$/gm, (_, open: string) => `${open}\n${blocks[index++]}\n\`\`\``).trim()
-    })
+    }, async () => (await engine.resolve('turn.assistant', 1000)).locator.last().locator('xpath=..'))
   }
 
   private async waitForAnswer(page: Page, before: number, signal: AbortSignal | undefined, deadlines: AskOptions['deadlines'], onBinding?: (binding: string) => void): Promise<string> {

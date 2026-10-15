@@ -39,6 +39,12 @@ export interface FakeOptions {
   sendLabel?: string
   /** Answer text, or a function of the prompt; streamed word by word. */
   answer?: string | ((prompt: string, sent: Sent) => string)
+  /**
+   * What the answer's Copy puts on the clipboard, from the answer's Markdown. By default, like the
+   * live site, the Markdown with each code block rebuilt from the page: its language and line
+   * breaks lost.
+   */
+  copied?: (markdown: string) => string
   /** Delay before streaming starts, in ms. */
   thinkMs?: number
   /** Model radios in the model menu. */
@@ -271,8 +277,8 @@ async function send() {
         answer.querySelector('p').innerHTML = renderMarkdown(markdown)
         const actions = document.createElement('div')
         actions.innerHTML = '<button aria-label="Copy">c</button><button aria-label="Regenerate response">r</button>'
-        // Like the live site, Copy rebuilds code blocks from the page and loses their line breaks.
-        actions.firstChild.addEventListener('click', () => navigator.clipboard.writeText(markdown.replace(/(\x60\x60\x60)[^\\n]*\\n([\\s\\S]*?)\\n\x60\x60\x60/g, (_, f, code) => f + '\\n' + code.split('\\n').join('') + '\\n' + f)))
+        const copy = event.copy
+        actions.firstChild.addEventListener('click', () => navigator.clipboard.writeText(copy))
         answer.append(actions)
         running = false
         history.pushState({}, '', '/c/' + convId + (temporary ? '?temporary-chat=true' : ''))
@@ -316,7 +322,8 @@ export class FakeChatGpt {
       startOnWork: true, chatToggleBroken: false, signedIn: true, requireCookie: false, userId: 'user-fake123', sendLabel: 'Send',
       answer: 'OK', thinkMs: 300, models: ['Latest', 'GPT-6', 'GPT-5.6 Sol', 'GPT-5.5'], lockedModels: [],
       researchMs: 1500, report: 'Deep research report body.', clarify: false, features: ['deep-research', 'web-search', 'image-generation'], modelPicker: true,
-      mfa: 'totp', email: 'operator@example.test', password: 'correct horse', totpSecret: 'JBSWY3DPEHPK3PXP', ...options,
+      mfa: 'totp', email: 'operator@example.test', password: 'correct horse', totpSecret: 'JBSWY3DPEHPK3PXP',
+      copied: (markdown) => markdown.replace(/(```)[^\n]*\n([\s\S]*?)\n```/g, (_, fence: string, code: string) => `${fence}\n${code.split('\n').join('')}\n${fence}`), ...options,
     }
   }
 
@@ -406,7 +413,7 @@ export class FakeChatGpt {
         await new Promise((resolve) => setTimeout(resolve, 60))
       }
       conversation.turns.push({ role: 'assistant', text: answer })
-      res.write(`data: ${JSON.stringify({ done: true, research: user.research ?? false })}\n\n`)
+      res.write(`data: ${JSON.stringify({ done: true, research: user.research ?? false, copy: this.options.copied(answer) })}\n\n`)
       // Like the live site, the stream is left open after the answer is complete.
       return
     }

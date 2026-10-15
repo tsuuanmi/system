@@ -69,6 +69,7 @@ export interface RunView {
   blocked?: { nodeId: string; plan: ArtifactRef }
   error?: WorkflowError
   createdAt: string
+  /** The run's last progress: its own last change or any node's, whichever is later. */
   updatedAt: string
 }
 

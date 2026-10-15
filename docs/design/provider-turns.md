@@ -39,6 +39,15 @@ Markdown. `beforeSend` runs after the mode is verified and immediately before th
 runtime writes the turn receipt there, and a throw sends nothing. `onBinding` reports a new
 persistent conversation's id as soon as it appears.
 
+The answer's Markdown comes from the site's own Copy control. It is kept only
+when its prose words are the rendered answer's words in order, since the
+clipboard may be shared. Link texts, reference definitions, and citation chips
+may differ, because one chip can stand for several sources ("Name +2"). A
+refused Copy leaves the rendered text. Either way, the answer's off-site links
+that the text lacks follow it as a `Sources:` list, without tracking
+parameters, so a cited answer keeps its URLs
+([`copiedMarkdown`](../../packages/ui-ops/src/answers.ts)).
+
 Shared mechanics, which are the same for every driver, live in the runtime:
 receipts, completion, scheduling, auth-state write-back, and error
 classification.

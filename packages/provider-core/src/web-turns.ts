@@ -90,3 +90,29 @@ export async function waitForReport(state: () => Promise<ResearchState>, timeout
 export function withSources(text: string, sources: ReadonlyMap<string, string>): string {
   return `${text}\n\nSources:\n${[...sources].map(([href, title]) => `- ${title ? `${title} ` : ''}${href}`).join('\n')}`
 }
+
+/** A URL without its `utm_*` tracking parameters, which sites add to the links they cite. */
+export function withoutTracking(href: string): string {
+  try {
+    const url = new URL(href)
+    const tracking = Array.from(url.searchParams.keys()).filter((key) => key.startsWith('utm_'))
+    for (const key of tracking) url.searchParams.delete(key)
+    return url.href
+  } catch {
+    return href
+  }
+}
+
+/**
+ * An answer followed by the sources (href → title) its text does not already carry, without
+ * tracking parameters; the text alone when it carries them all. A page reports an href in its
+ * normal form (`https://a.example/`), which the text may write without the final slash.
+ */
+export function withMissingSources(text: string, sources: ReadonlyMap<string, string>): string {
+  const missing = new Map<string, string>()
+  for (const [href, title] of sources) {
+    const clean = withoutTracking(href)
+    if (!text.includes(clean.replace(/\/$/, '')) && !missing.has(clean)) missing.set(clean, title)
+  }
+  return missing.size ? withSources(text, missing) : text
+}
