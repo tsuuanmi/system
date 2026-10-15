@@ -113,9 +113,14 @@ export async function healthReport(sources: HealthSources): Promise<HealthReport
   if (events) {
     checks.push(await guarded('ui-drift', () => {
       const since = new Date((sources.now ?? Date.now)() - sources.driftWindowMs).toISOString()
-      const drift = events('ui.drift', since).length + events('workflow.node.failed', since).filter((e) => e.data?.kind === 'ui_drift').length
-      return drift
-        ? { name: 'ui-drift', state: 'degraded', detail: `${drift} provider UI change(s) seen recently: update the UI map (docs/operations/playbooks.md)` }
+      // One stale element of one map is one change, however many turns resolve it on a fallback.
+      const drifted = new Map<string, string>()
+      for (const { data } of events('ui.drift', since)) drifted.set(`${data?.provider}\0${data?.element}\0${data?.mapHash}`, `${data?.provider} ${data?.element}`)
+      const failed = new Set(events('workflow.node.failed', since).filter((e) => e.data?.kind === 'ui_drift').map((e) => String(e.data?.message ?? '')))
+      const count = drifted.size + failed.size
+      const named = [...new Set(drifted.values())].sort()
+      return count
+        ? { name: 'ui-drift', state: 'degraded', detail: `${count} provider UI change(s) seen recently${named.length ? ` (${named.join(', ')})` : ''}: update the UI map (docs/operations/playbooks.md)` }
         : ok('ui-drift', 'no provider UI change seen recently')
     }))
   }

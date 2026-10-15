@@ -60,6 +60,14 @@ drift and does not silently break.
   - a step that fails with `ui_drift` when nothing resolves;
   - the driver's fixture test fails when the shipped map no longer matches the
     recorded structure.
+  - `system health` reports `ui-drift` while any of these happened within
+    `driftWindowHours`. It counts each stale element of a map once, however
+    many turns resolve it on a fallback, and names it (`chatgpt-web
+    composer.form`). `system events --type ui.drift` lists every occurrence.
+- **A fallback that wins every turn** means the primary candidate is stale,
+  even though nothing fails. Promote the fallback to primary in the shipped map,
+  keep the old one as a fallback, and change the fake site to match the
+  structure the drift events show.
 - **Self-heal:**
   - each heal is bounded, and verified before it is used;
   - each is recorded as a `recovery` decision before the click;

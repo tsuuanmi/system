@@ -114,8 +114,11 @@ describe.runIf(canRunBrowser)('ChatGptWebDriver against the fake site, with no r
   it('keeps a code block\'s lines, which the answer\'s Copy loses, from the rendered block (REQ-PRV-5)', async () => {
     const answer = 'Here it is:\n```python\ndef add(a, b):\n    return a + b\n```\nDone.'
     const { page, driver } = await site({ answer })
+    const drift: unknown[] = []
+    driver.onDrift = (event) => drift.push(event)
     // The live Copy drops the fence's language too; the lines are what matter.
     expect((await driver.ask(page, 'Write add', { conversation: 'temporary' })).text).toBe('Here it is:\n```\ndef add(a, b):\n    return a + b\n```\nDone.')
+    expect(drift).toEqual([]) // the code block resolves on its primary candidate, as live
   }, 40_000)
 
   it('keeps runs of spaces in the answer (indentation in a tool call\'s arguments)', async () => {

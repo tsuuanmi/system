@@ -40,6 +40,17 @@ describe('host health (REQ-HOST-6)', () => {
     expect(await check({ events }, 'ui-drift')).toMatchObject({ state: 'degraded', detail: expect.stringMatching(/^1 provider UI change/) })
   })
 
+  it('counts each stale element of a map once, however often it recurs, and names it', async () => {
+    const drift = (element: string, mapHash = 'sha256:aa') => ({ data: { provider: 'chatgpt-web', element, candidate: 1, source: 'shipped', mapHash } })
+    const events = (type: string) => (type === 'ui.drift'
+      ? [drift('composer.form'), drift('composer.form'), drift('answer.code'), drift('composer.form'), drift('composer.form', 'sha256:bb')]
+      : [])
+    expect(await check({ events }, 'ui-drift')).toMatchObject({
+      state: 'degraded',
+      detail: '3 provider UI change(s) seen recently (chatgpt-web answer.code, chatgpt-web composer.form): update the UI map (docs/operations/playbooks.md)',
+    })
+  })
+
   it('is down when the store fails its integrity check, no Worker is available, or the runtime is outside the supported range', async () => {
     expect((await healthReport(base({ storeCheck: () => 'row 7 missing from index' }))).state).toBe('down')
     expect((await healthReport(base({ workers: async () => [{ worker: 'w1', state: 'reauth-required' }, { worker: 'w2', state: 'quota-exhausted' }] }))).state).toBe('down')
