@@ -191,7 +191,7 @@ the same for `brainstorm` and `review`:
    - exactly one choice among the options;
    - its ranking of all of them, which is advisory only;
    - the rationale and evidence;
-   - the strongest counterargument to its choice;
+   - the strongest point of each option it did not choose;
    - its unresolved objections;
    - a confidence.
 
@@ -208,8 +208,8 @@ the same for `brainstorm` and `review`:
 5. **Decide.** A strict majority (more than half the ballots) decides,
    deterministically. An invalid or missing ballot never lowers the threshold:
    it makes the outcome inconclusive. The record names the method:
-   `team-majority`, `caller-tiebreak`, or `inconclusive`. The decision is a decision artifact
-   ([INV-13](../architecture/invariants.md)) that holds:
+   `team-majority`, `caller-tiebreak`, or `inconclusive`. The decision is a
+   decision artifact ([INV-13](../architecture/invariants.md)) that holds:
    - the members (by opaque identity), the original proposals, and any
      revisions;
    - the rounds and why they ended;
@@ -229,8 +229,8 @@ the same for `brainstorm` and `review`:
    - A tied review never defaults to `pass`: blocking findings stay visible
      whatever the caller decides.
 
-The orchestrator enforces the protocol in deterministic code: it extracts and
-freezes the options, validates and seals the ballots, tallies the votes,
+The orchestrator enforces the protocol in deterministic code: it freezes the
+extracted options, validates and seals the ballots, tallies the votes,
 handles a tie, and ends the rounds. The models supply reasoning and evidence
 only.
 
@@ -243,9 +243,11 @@ reported for debate, and more rounds can move a correct member to a wrong
 answer (research run `run_9e5216c10548d44b`; Choi et al., *Debate or Vote*,
 NeurIPS 2025; Wynn et al., *Talk Isn't Always Cheap*, 2025). Agreement costs no
 extra turns. A disagreement gets one targeted exchange: the operator asked for
-debate, and its value there can be measured from the recorded ballots. A member may vote for its own proposal, because
-forbidding that would force a tie. Instead, each ballot must name the strongest
-point of the option it rejects, so the dissent is in the record.
+debate, and its value there can be measured from the recorded ballots.
+
+A member may vote for its own proposal, because forbidding that would force a
+tie. Instead, its ballot names the strongest point of each option it did not
+choose, so the dissent is in the record.
 
 Routing gets a **diversity predicate**: a node may require a provider family
 other than the one of a named node. The critique in `research` and every team
