@@ -96,8 +96,18 @@ showed gaps between what it ships and what the loop needs:
       established.
     - This run's answer also confirmed the citation fix live: real tables and
       source links.
-  - multi-agent debate and voting (rounds, heterogeneous teams, conformity,
-    ties): run `run_9e5216c10548d44b`, results to be added.
+  - multi-agent debate and voting: `research` run `run_9e5216c10548d44b`.
+    - Debate does not reliably beat independent answers plus a vote
+      ([Debate or Vote](https://proceedings.neurips.cc/paper_files/paper/2025/hash/934252acd87f254d5d4672fbde283bd2-Abstract-Conference.html),
+      [Should We Be Going MAD?](https://proceedings.mlr.press/v235/smit24a.html)).
+    - Extra rounds can propagate errors and conformity
+      ([Talk Isn't Always Cheap](https://arxiv.org/abs/2509.05396),
+      [CONSENSAGENT](https://aclanthology.org/2025.findings-acl.1141/)).
+    - Teams of different vendors are not shown to beat teams of one vendor once
+      capability and cost are matched.
+    - No tie-break method for two voters is shown best.
+    - The answer kept its sources, but its Copy was refused (its math rendered
+      twice), so tables came back flattened: a residual fidelity gap.
 - Brainstorm through `system` (dogfooding), `panel` run `run_25b3d23277258af7`
   on diversity, ballots, early stop, and failure modes. Its two members agreed on
   the ballot fields, early stop on readiness, self-votes allowed with a
@@ -161,14 +171,10 @@ two. A team that cannot find two distinct providers able to do the work fails
 admission and says why ([INV-2](../architecture/invariants.md)). The protocol is
 the same for `brainstorm` and `review`:
 
-1. **Propose.** Each member answers alone, without seeing the others.
-2. **Debate.** Each member sees the other members' answers without their
-   provider names, and may revise. The number of rounds is bounded
-   (default 1).
-   The debate stops early once every member, independently, reports no
-   unresolved material objection. An objection still open at the round limit
-   does not block the vote: it is recorded as dissent.
-3. **Vote.** Each member casts one sealed ballot. A ballot holds:
+1. **Propose.** Each member answers alone, without seeing the others. The
+   proposals are kept unchanged: what a member said before any exchange stays
+   on record.
+2. **Vote.** Each member casts one sealed ballot. A ballot holds:
    - its first choice among the anonymized proposals (or `pass` / `changes` for a
      review);
    - its ranking of all of them;
@@ -178,11 +184,21 @@ the same for `brainstorm` and `review`:
    - a confidence.
 
    Other members' ballots stay hidden until every ballot is in.
+3. **Debate, only on disagreement.** If the ballots already give a strict
+   majority, there is no debate. Otherwise each member sees the other proposals
+   and ballots, without provider names, and answers only the crux of the
+   disagreement: it may revise its proposal and vote again.
+   - The number of debate rounds is bounded: default 1, at most 2.
+   - The debate ends early once every member reports no unresolved material
+     objection.
+   - An objection still open at the end does not block the vote: it is recorded
+     as dissent.
 4. **Decide.** A strict majority (more than half the ballots) decides,
    deterministically. The decision is a decision artifact
    ([INV-13](../architecture/invariants.md)) that holds:
-   - the members (by opaque identity), proposals, critiques, and revisions;
-   - the rounds and why the debate ended;
+   - the members (by opaque identity), the original proposals, and any
+     revisions;
+   - the rounds and why they ended;
    - every ballot, the tally, and the winner;
    - the dissent, and any deciding vote with its rationale.
 
@@ -196,10 +212,16 @@ the same for `brainstorm` and `review`:
    ([ADR-0023](../decisions/adr/0023-scoped-control-credentials.md)). The
    operator can still override with an operator tool.
 
-With two members, a strict majority means both agree, so every disagreement is a
-tie and the caller decides often. The useful output of the debate is therefore
-convergence: the debate round asks each member to revise toward agreement where
-the other's argument holds. A member may vote for its own proposal, because
+With two members, a strict majority means both agree, so every remaining
+disagreement is a tie and the caller decides often.
+
+Debate runs only on disagreement because the evidence does not show it beats
+independent answers plus a vote. Independent voting explains most of the gains
+reported for debate, and more rounds can move a correct member to a wrong
+answer (research run `run_9e5216c10548d44b`; Choi et al., *Debate or Vote*,
+NeurIPS 2025; Wynn et al., *Talk Isn't Always Cheap*, 2025). Agreement costs no
+extra turns. A disagreement gets one targeted exchange: the operator asked for
+debate, and its value there can be measured from the recorded ballots. A member may vote for its own proposal, because
 forbidding that would force a tie. Instead, each ballot must name the strongest
 point of the option it rejects, so the dissent is in the record.
 
