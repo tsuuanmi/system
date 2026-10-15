@@ -39,7 +39,7 @@ export const inject = ['providers']
 export const Config: z<Config> = z.object({
   origin: z.string().description('Site origin (default https://chatgpt.com)'),
   overlayPath: z.string().description('Local UI overlay file'),
-  modes: z.dict(z.object({ model: z.string(), effort: z.string() })).default(DEFAULT_MODES).description('Named mode presets (model and Power level); an empty preset selects nothing'),
+  modes: z.dict(z.object({ model: z.string(), effort: z.string() })).default(DEFAULT_MODES).description('Named mode presets (model and Power level), read back before sending; an account without a model picker fails ui_drift'),
   defaultMode: z.string().default('instant').description('Preset when a caller names none'),
 })
 
