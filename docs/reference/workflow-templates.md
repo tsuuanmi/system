@@ -51,16 +51,27 @@ temporary, `acceptance.team-lead`) after each round but the last.
 Provided by
 [`profile-scientific-research`](../../packages/plugins/profile-scientific-research/README.md).
 `system research` and the MCP tool `research` run it. Its `deep` variant
-([variants](../design/workflow-engine.md#variants)) changes only `literature:1`; start it with
-`system research --deep`, MCP `research` with `deep: true`, or `run` with `variant: deep`.
+([variants](../design/workflow-engine.md#variants)) changes only the two literature reviews;
+start it with `system research --deep`, MCP `research` with `deep: true`, or `run` with
+`variant: deep`.
+
+The two reviews run in parallel, on two provider families
+([different provider families](../design/workflow-engine.md#different-provider-families)):
+review A (`literature:1`) proves web search; review B (`literature:2`) runs on another family,
+whose provider need not prove a search, so its citations gate it. `evidence:1` reads both,
+labelled A and B, and records which review states each claim (`reviews`). `conclusion:1` says
+where the reviews agree and differ. `research` therefore needs Workers of two provider
+families: with one, `literature:2` fails admission (`same provider family (differs from node
+literature:1)`), fail closed.
 
 | Node | Capabilities | Tier | Conversation | Acceptance |
 |---|---|---|---|---|
 | `frame:1` | `reason` | standard | temporary | `resultSchema: hypothesis-set@1.0`, then `acceptance.answer` |
-| `literature:1` | `reason`, `web-search` | standard | temporary | `acceptance.cited` |
-| `literature:1` (variant `deep`) | `reason`, `deep-research` | frontier | persistent | `acceptance.cited` |
-| `evidence:1` | `reason` | economy | temporary | `resultSchema: evidence-table@1.0`, then `acceptance.answer` |
-| `critique:1` | `reason` | standard | temporary | `acceptance.answer` |
+| `literature:1` (review A) | `reason`, `web-search` | standard | temporary | `acceptance.cited` |
+| `literature:2` (review B; differs from `literature:1`) | `reason` | standard | temporary | `acceptance.cited` |
+| `literature:1`, `literature:2` (variant `deep`) | `reason`, `deep-research` | frontier | persistent | `acceptance.cited` |
+| `evidence:1` | `reason` | economy | temporary | `resultSchema: evidence-table@1.1`, then `acceptance.answer` |
+| `critique:1` (differs from `evidence:1`) | `reason` | standard | temporary | `acceptance.answer` |
 | `conclusion:1` | `reason` | standard | temporary | `acceptance.cited-conclusions` |
 
 ### `agent-review`
@@ -94,7 +105,7 @@ one fails admission, fail closed, with the capability named:
 | `ask` | runs on model Workers; an `ask` in a session (`--persist`, `--session`) fails: no model Worker proves `persistent-conversation` |
 | `panel` | fails: its members keep sessions, and no model Worker proves `persistent-conversation` |
 | `agent-review` | runs on agent Workers (the preset turns their rows and the software-development profile on) |
-| `research` | `frame:1` runs; `literature:1` fails: no Worker proves `web-search` (variant `deep`: `deep-research`) |
+| `research` | `frame:1` runs; `literature:1` fails: no Worker proves `web-search` (variant `deep`: `deep-research`), and `literature:2` sends nothing |
 
 ## Acceptance contracts
 

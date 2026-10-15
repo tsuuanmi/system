@@ -23,12 +23,17 @@ export type QuotaClass = 'subscription-chat' | 'agent-plan' | 'metered' | 'local
 export type Classification = 'public' | 'operator-shared' | 'local-private'
 export type WorkerState = 'ready' | 'busy' | 'quota-exhausted' | 'reauth-required' | 'unavailable'
 
-/** What a Worker has proven right now (`capability-descriptor@1.0`). */
+/** What a Worker has proven right now (`capability-descriptor@1.0`; `@1.1` adds `family`). */
 export interface CapabilityDescriptor {
-  schema: 'capability-descriptor@1.0'
+  schema: 'capability-descriptor@1.0' | 'capability-descriptor@1.1'
   worker: string
   /** Informational only; routing never branches on it (INV-11). */
   provider: string
+  /**
+   * Who ultimately serves the work, as an opaque string its Worker source sets (ADR-0027).
+   * Routing only compares it for inequality (`RouteOptions.exclude`), and never names or ranks one.
+   */
+  family?: string
   tier: Tier
   quotaClass: QuotaClass
   locality: 'local' | 'remote'
@@ -110,7 +115,7 @@ export interface WorkerSource {
 }
 
 /** The admission checks, in the order the router applies them. */
-export type AdmissionCheck = 'restricted' | 'capability' | 'locality' | 'state' | 'tier'
+export type AdmissionCheck = 'restricted' | 'diversity' | 'capability' | 'locality' | 'state' | 'tier'
 
 export interface Rejection {
   worker: string
@@ -123,6 +128,12 @@ export interface Rejection {
 export interface RouteOptions {
   /** Only these Workers may take the work, e.g. a persistent session's own account. */
   restrict?: { workers: readonly string[]; reason: string }
+  /**
+   * No Worker of these provider families may take the work (ADR-0027): the families of the Workers
+   * that served the nodes this one must differ from. A Worker with no family cannot prove it differs.
+   * `reason` names those nodes, never a family.
+   */
+  exclude?: { families: readonly string[]; reason: string }
   /** Who asked, recorded as the producer of the decisions. */
   producer?: string
 }

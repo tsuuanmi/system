@@ -41,9 +41,27 @@ A template node may declare named variants:
   checked and hashed, so the chosen fields are part of the `specHash`.
 - A variant the template does not define is refused with `invalid_input`:
   `template <t> has no variant <v> (it has: …)`. Nothing is sent.
-- A variant changes only those six fields: it never adds a team or a planner's
-  growth policy. The one variant today is `research`'s `deep`
+- A variant changes only those six fields: it never adds a team, a planner's
+  growth policy, or `differentFrom`. The one variant today is `research`'s `deep`
   ([templates](../reference/workflow-templates.md#research)).
+
+### Different provider families
+
+A template node may declare `differentFrom: [nodeId, …]`: its Worker must be of another
+provider family than the Workers that served those nodes
+([provider diversity](routing.md#provider-diversity), ADR-0027 (proposed)).
+
+- Preflight refuses a node that names itself, an unknown node, or a team node (a team has
+  several Workers).
+- The node is promoted together with or after the nodes it names, never before. It then waits
+  until each of them has a Worker, so parallel branches still start together, one routing turn
+  apart. The engine reads those Workers' families from their current descriptors and routes
+  the node with them as `exclude`, the reason naming the nodes (`differs from node
+  literature:1`).
+- If a named node failed, the node sends nothing and the run fails on that node. If a named
+  node's Worker declares no family or is no longer listed, no Worker can be shown to differ:
+  the node fails as `config_error`, with nothing sent (fail closed). With only Workers of the
+  excluded families, it fails admission with the `diversity` reasons.
 
 ## Graph model
 

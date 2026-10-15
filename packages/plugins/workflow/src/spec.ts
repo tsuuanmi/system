@@ -44,6 +44,11 @@ export interface NodeTemplate {
    * caller starts the run with that variant. The chosen fields are part of the run's spec hash.
    */
   variants?: Record<string, NodeVariant>
+  /**
+   * Nodes whose Workers this node's Worker must differ from in provider family (ADR-0027): routing
+   * excludes their families, and the node routes only once those nodes have a Worker.
+   */
+  differentFrom?: string[]
 }
 
 /** What a variant may change of a node: what it needs, where it runs, and how it is judged. */
@@ -204,6 +209,10 @@ export function preflight(nodes: readonly NodeTemplate[]): string[] {
       throw new TypeError(`node ${node.nodeId}: resultSchema must be a schema tag such as plan@1.0`)
     }
     for (const dep of node.dependsOn ?? []) if (!byId.has(dep)) throw new TypeError(`node ${node.nodeId} depends on unknown node ${dep}`)
+    for (const other of node.differentFrom ?? []) {
+      if (other === node.nodeId || !byId.has(other)) throw new TypeError(`node ${node.nodeId} differs from ${other === node.nodeId ? 'itself' : `unknown node ${other}`}`)
+      if (byId.get(other)!.team) throw new TypeError(`node ${node.nodeId} differs from team ${other}, which has several Workers`)
+    }
     for (const [, used] of node.prompt.matchAll(REFERENCE)) {
       if (!(node.dependsOn ?? []).includes(used!)) throw new TypeError(`node ${node.nodeId} uses ${used}, which it does not depend on`)
     }

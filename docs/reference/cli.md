@@ -23,7 +23,7 @@ on `run`.
 | Command | What it does |
 |---|---|
 | `system ask [--persist] [--session <id>] [--tier <t>] [--classification <c>] (<prompt…> \| -)` | ask the Worker the router admits: a website account, an API or local model, … (template `ask`) |
-| `system research [--deep] [--classification <c>] (<question…> \| -)` | the research procedure: hypotheses, a cited review, evidence, critique, conclusions (template `research`; `--deep`: its `deep` variant, whose review uses Deep research) |
+| `system research [--deep] [--classification <c>] (<question…> \| -)` | the research procedure: hypotheses, two cited reviews on two provider families, one evidence table, a critique on another family, conclusions (template `research`; `--deep`: its `deep` variant, whose reviews use Deep research) |
 | `system run <template> [--variant <v>] [--session <id>] [--persist] [--tier <t>] [--classification <c>] (<input…> \| -)` | start any [workflow template](workflow-templates.md), or one of its variants |
 | `system approve <runId> [--plan <id>] [--reject] [note…]` | approve (or reject) the plan a run is waiting on, bound to that exact plan (name it with `--plan` when several wait) |
 | `system result <runId>` | wait for a run and print its answer |

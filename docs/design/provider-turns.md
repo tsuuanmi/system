@@ -260,7 +260,7 @@ exact shapes in [MCP tools](../reference/mcp-tools.md)):
 returns the run view with `answer` once it is complete. Otherwise it returns `status: running`
 and a `runId`, which `result { runId, waitSeconds? }` long-polls.
 `research { question, deep?, classification?, clientRequestId? }` returns at once with a
-`runId` and a `sessionId`; `deep` runs the `deep` variant, whose literature review is Deep
+`runId` and a `sessionId`; `deep` runs the `deep` variant, whose literature reviews are Deep
 research. The wait stays under common MCP client timeouts (at most 55 s).
 
 ## Large inputs

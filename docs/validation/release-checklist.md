@@ -15,14 +15,14 @@ is not run.
 | Ask in a Temporary chat (Chat mode, never Work) | `system ask "…"` | 2026-10-12 |
 | Continue a persistent conversation | `system ask --persist`, then `--session` | 2026-10-12 |
 | Deep research, then a compaction (*retired*: `deep-research` removed) | `system run deep-research "…"`; `system explain` shows both steps | 2026-10-12 |
-| `research` with Deep research: the `deep` variant's literature review | `system research --deep "…"`; `system explain` shows `literature:1` on a Deep research Worker | **not yet verified** |
+| `research` with Deep research: the `deep` variant's two literature reviews, on accounts of two providers | `system research --deep "…"`; `system explain` shows `literature:1` and `literature:2` on Deep research Workers of different providers | **not yet verified** |
 | Graph growth (`investigate`) (*retired*: `investigate` removed) | `system run investigate "…"` | 2026-10-12 |
 | Claude Code over MCP | `system mcp-config claude`, then `ask` from Claude Code | 2026-10-12 |
 | Claude Code through the Messages gateway: a read and edit loop (*only with `gateway-anthropic` on*) | `system claude-env`, then a task that reads and edits a file | 2026-10-12 |
 | Codex through the Responses gateway: a read and edit loop, with indentation intact (*only with `gateway-responses` on*) | `system codex-env`, then `codex exec` on a task that edits a file | 2026-10-12 |
 | A local agent review Worker (*only with the agent rows on*) | `system run agent-review "…"` | 2026-10-12, as the built-in `review` |
 | `develop`: approval, implementation, exact-subject review, report (*retired*: `develop` removed) | `system run develop "…"`, `system approve` | 2026-10-12 |
-| `research`: hypotheses, review, evidence, critique, conclusions | `system research "…"` | 2026-10-12 |
+| `research`: hypotheses, two reviews on accounts of two providers (one proving Web search), evidence from both, a critique on another provider, conclusions | `system research "…"`; `system explain` shows `literature:2` and `critique:1` on another provider than `literature:1` and `evidence:1` | 2026-10-12, with one review on one provider |
 | Drain, refusal, resume, and shutdown | `system drain`, an `ask` during the drain, `system resume`, `system shutdown` | 2026-10-12 |
 | Web UI: approve, stop, continue | `system ui` | 2026-10-12 |
 | Backup while the profile runs, and a verified restore preview | `system backup`, `system restore` | 2026-10-12 |

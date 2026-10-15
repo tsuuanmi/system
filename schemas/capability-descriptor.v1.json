@@ -6,9 +6,10 @@
   "type": "object",
   "required": ["schema", "worker", "provider", "tier", "quotaClass", "locality", "capabilities", "state", "observedAt"],
   "properties": {
-    "schema": { "const": "capability-descriptor@1.0" },
+    "schema": { "enum": ["capability-descriptor@1.0", "capability-descriptor@1.1"] },
     "worker": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
     "provider": { "description": "Provider plugin kind; never used for routing semantics (INV-11).", "type": "string", "maxLength": 64 },
+    "family": { "description": "@1.1: opaque provider family its Worker source sets; routing only compares it for inequality (ADR-0027).", "type": "string", "minLength": 1, "maxLength": 128 },
     "tier": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/tier" },
     "quotaClass": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/quotaClass" },
     "locality": { "enum": ["local", "remote"] },
@@ -38,5 +39,7 @@
     "state": { "enum": ["ready", "busy", "quota-exhausted", "reauth-required", "unavailable"] },
     "observedAt": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp" }
   },
-  "additionalProperties": false
+  "additionalProperties": false,
+  "if": { "properties": { "family": { "type": "string" } }, "required": ["family"] },
+  "then": { "properties": { "schema": { "const": "capability-descriptor@1.1" } } }
 }

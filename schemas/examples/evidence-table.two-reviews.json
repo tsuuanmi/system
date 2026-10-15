@@ -1,0 +1,40 @@
+{
+  "schema": "evidence-table@1.1",
+  "evidence": [
+    {
+      "id": "E1",
+      "claim": "A 12-week randomised trial found a 0.9 point larger HbA1c reduction with time-restricted eating.",
+      "source": "https://example.org/trial-2023",
+      "bears": [
+        {
+          "hypothesis": "H1",
+          "direction": "supports"
+        }
+      ],
+      "strength": "moderate",
+      "reviews": [
+        "A",
+        "B"
+      ]
+    },
+    {
+      "id": "E2",
+      "claim": "The difference disappeared after adjusting for weight change.",
+      "source": "https://example.org/trial-2023",
+      "bears": [
+        {
+          "hypothesis": "H2",
+          "direction": "supports"
+        },
+        {
+          "hypothesis": "H1",
+          "direction": "neutral"
+        }
+      ],
+      "strength": "weak",
+      "reviews": [
+        "B"
+      ]
+    }
+  ]
+}

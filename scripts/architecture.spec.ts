@@ -25,7 +25,7 @@ function sources(dir: string, out: string[] = []): string[] {
 const code = (text: string): string => text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:'"`])\/\/.*$/gm, '$1')
 
 describe('architecture rules', () => {
-  it('routing, workflows, profiles, presets, the models seam, and the gateways\' shared turns name capabilities, never a model, vendor, client, or browser (INV-11, QA-13)', () => {
+  it('routing, workflows, profiles, presets, the models seam, and the gateways\' shared turns name capabilities, never a model, vendor, client, or browser, and set no provider family (INV-11, QA-13, ADR-0027)', () => {
     const governed = [
       join(packages, 'workers-core', 'src'), join(plugins, 'workers', 'src'), join(plugins, 'workflow', 'src'), join(packages, 'gateway-turns', 'src'),
       join(packages, 'models-core', 'src'), join(plugins, 'models', 'src'),
@@ -40,6 +40,11 @@ describe('architecture rules', () => {
     const offenders = [...governed.flatMap((dir) => sources(dir)), ...patches].flatMap((file) => (file.endsWith('.yml') ? yaml(readFileSync(file, 'utf8')) : code(readFileSync(file, 'utf8'))).split('\n')
       .map((line, i) => (named.test(line) ? `${relative(root, file)}:${i + 1}: ${line.trim()}` : '')).filter(Boolean))
     expect(offenders).toEqual([])
+    // ADR-0027: routing may compare provider families, but nothing it governs sets or names one.
+    const familyLiteral = /\bfamil(?:y|ies)\s*:\s*\[?\s*['"`]/
+    const families = governed.flatMap((dir) => sources(dir)).flatMap((file) => code(readFileSync(file, 'utf8')).split('\n')
+      .map((line, i) => (familyLiteral.test(line) ? `${relative(root, file)}:${i + 1}: ${line.trim()}` : '')).filter(Boolean))
+    expect(families).toEqual([])
   })
 
   it('keeps native protocol objects inside their own adapters: each protocol SDK is imported only where that protocol is spoken, and no gateway imports another (INV-7)', () => {

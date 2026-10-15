@@ -52,6 +52,13 @@ describe('workflow specs', () => {
     expect(() => preflight([node('a', { variants: { Deep: {} } })])).toThrow(/variant name "Deep"/)
   })
 
+  it('checks that a node differs only from other single-Worker nodes of its template (ADR-0027)', () => {
+    expect(() => preflight([node('a'), node('b', { differentFrom: ['a'] }), node('c', { dependsOn: ['a', 'b'] })])).not.toThrow()
+    expect(() => preflight([node('a', { differentFrom: ['a'] })])).toThrow('node a differs from itself')
+    expect(() => preflight([node('a', { differentFrom: ['zz'] })])).toThrow('node a differs from unknown node zz')
+    expect(() => preflight([node('t', { team: { members: 2 } }), node('b', { dependsOn: ['t'], prompt: '{{node:t}}', differentFrom: ['t'] })])).toThrow('node b differs from team t, which has several Workers')
+  })
+
   it('records where each value came from, and hashes what was admitted (REQ-WF-2)', () => {
     const nodes = [node('a', { callerTier: true, tier: 'economy' }), node('b', { dependsOn: ['a'] })]
     const asked = resolve('t', nodes, { tier: 'frontier' })

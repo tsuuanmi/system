@@ -39,7 +39,7 @@ abstract class Models extends Service {             // ctx.models
   abstract complete(request: ModelRequest, signal?: AbortSignal): Promise<ModelCompletion>;
 }
 
-interface ModelEntry { id; tier; quotaClass: "metered" | "local"; locality: "remote" | "local"; maxTokens }
+interface ModelEntry { id; tier; quotaClass: "metered" | "local"; locality: "remote" | "local"; maxTokens; family? }
 interface ModelStatus extends ModelEntry { available: boolean; detail: string }
 interface ModelRequest { model: string; prompt: string; maxTokens?: number }   // cut to the entry's bound
 interface ModelCompletion { model; text; usage: { inputTokens; outputTokens }; finish: "stop" | "max-tokens"; maxTokens }
@@ -60,7 +60,10 @@ The operator configures two rows in the profile's `cordis.patch.yml`
 - `llm-pi-ai` `providers`: one route per endpoint. A route names its key by **reference**
   (`apiKeyEnv`), never by value.
 - `models` `models`: one entry per Worker, `{ id, route, model, tier, quotaClass, locality,
-  maxTokens }`. `route` and `model` say how to reach it; the rest is what routing sees.
+  maxTokens, family }`. `route` and `model` say how to reach it; the rest is what routing sees.
+  `family` is the Worker's opaque provider family
+  ([provider diversity](routing.md#provider-diversity)); it defaults to the route, so an
+  operator gives two routes to one vendor the same family, and `list()` always reports one.
 
 The entry's `tier` is the operator's claim, as for website modes and agent Workers. Nothing in
 routing, profiles, or presets names a model ([INV-11](../architecture/invariants.md#inv-11-no-tool-lock-in)).
@@ -83,7 +86,7 @@ fixed message: a provider can echo part of a key in its error text.
 | id | `model:<id>` |
 | capabilities | `reason` with evidence kind `probe`: the route is mounted and resolves the model, without a model call; none when it does not |
 | state | `ready`, or `unavailable` (route missing or model unknown on it) |
-| tier, quotaClass, locality | from the catalog entry |
+| tier, quotaClass, locality, family | from the catalog entry (`family`: by default its route) |
 
 A model on this machine does not prove `local-data`: it reads nothing in place. Its `local`
 locality is what admits `local-private` work to it

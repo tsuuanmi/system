@@ -39,9 +39,11 @@ export function modelsConformance(name: string, boot: Boot): void {
 
     it('lists every catalog entry by id, with its routing attributes and what is available now (REQ-WRK-10)', () => withModels(async (ctx) => {
       const listed = await ctx.models.list()
-      expect(listed.map(({ available: _a, detail: _d, ...entry }) => entry)).toEqual(CATALOG)
+      expect(listed.map(({ available: _a, detail: _d, family: _f, ...entry }) => entry)).toEqual(CATALOG.map(({ family: _f, ...entry }) => entry))
       expect(listed.map((m) => [m.id, m.available])).toEqual([['echo', true], ['gone', false], ['local', true]])
       for (const m of listed) expect(m.detail.length).toBeGreaterThan(0)
+      // Every entry names who serves it, so routing can tell provider families apart (ADR-0027).
+      for (const m of listed) expect(typeof m.family === 'string' && m.family.length > 0, `${m.id} has a family`).toBe(true)
     }))
 
     it('completes a prompt with its text, token usage, and finish (REQ-WRK-10)', () => withModels(async (ctx) => {
@@ -94,7 +96,7 @@ export class FakeModels extends Models {
   async list(): Promise<ModelStatus[]> {
     const unavailable = this.config.unavailable ?? ['gone']
     return [...(this.config.catalog ?? CATALOG)].sort((a, b) => (a.id < b.id ? -1 : 1))
-      .map((m) => ({ ...m, available: !unavailable.includes(m.id), detail: unavailable.includes(m.id) ? 'route not mounted' : 'fake route' }))
+      .map((m) => ({ family: 'fake-route', ...m, available: !unavailable.includes(m.id), detail: unavailable.includes(m.id) ? 'route not mounted' : 'fake route' }))
   }
 
   async complete(request: ModelRequest, signal?: AbortSignal): Promise<ModelCompletion> {

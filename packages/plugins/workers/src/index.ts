@@ -237,6 +237,11 @@ export class WorkerRouter extends Workers {
       failed.push({ check, reason })
     }
     if (options.restrict && !options.restrict.workers.includes(worker.worker)) fail('restricted', options.restrict.reason)
+    // ADR-0027: an opaque inequality. The reason names the nodes, never a family.
+    if (options.exclude) {
+      if (worker.family === undefined) fail('diversity', `declares no provider family, so it cannot differ (${options.exclude.reason})`)
+      else if (options.exclude.families.includes(worker.family)) fail('diversity', `same provider family (${options.exclude.reason})`)
+    }
     const proven = new Set(worker.capabilities.map((c) => c.capability))
     const missing = requirement.capabilities.filter((c) => !proven.has(c))
     if (missing.length) fail('capability', `does not prove ${missing.join(', ')}`)

@@ -100,8 +100,13 @@ guesses.
 ### `capability-descriptor`
 
 - `provider` is informational. Routing must not branch on it (INV-11). Only
-  `capabilities`, `tier`, `quotaClass`, `locality`, and `state` are routing
-  inputs.
+  `capabilities`, `tier`, `quotaClass`, `locality`, `state`, and `family` are
+  routing inputs.
+- `capability-descriptor@1.1` adds the optional `family`: an opaque provider
+  family the Worker source sets, which routing only compares for inequality
+  ([provider diversity](../design/routing.md#provider-diversity), ADR-0027
+  (proposed)). A `@1.0` record carrying `family` is refused. Readers accept 1.0
+  and 1.1.
 
 ### `plan`
 
@@ -171,6 +176,10 @@ guesses.
   evidence `source` is a URL.
 - When the step's result changes (superseded, then run again), the new
   artifact `supersedes` the last one.
+- `evidence-table@1.1` adds the optional per-claim `reviews`: which of the
+  run's two literature reviews state the claim (`["A"]`, `["B"]`, or
+  `["A", "B"]`), so a conclusion can say where they agree and differ. A `@1.0`
+  record carrying `reviews` is refused. Readers accept 1.0 and 1.1.
 
 ### `assessment`
 

@@ -44,6 +44,7 @@ export const Config: z<Config> = z.object({
     quotaClass: z.union(['metered', 'local']).default('metered').description('metered: paid per token; local: no quota'),
     locality: z.union(['remote', 'local']).default('remote').description('local: the model runs on this machine (egress class model-local)'),
     maxTokens: z.natural().min(1).max(200_000).default(4096).description('Output bound of every call (INV-9)'),
+    family: z.string().description('Opaque provider family (ADR-0027; default: the route). Give two routes to one vendor the same family, so diversity treats them as one'),
   })).default([]).description('The model catalog (REQ-WRK-10); names no key: a key is stored with the operator tool model_key'),
   maxRetries: z.natural().max(5).default(2).description('Re-attempts of a transiently failed call'),
   maxConcurrentCalls: z.natural().min(1).max(64).default(4).description('Model calls in flight at once'),

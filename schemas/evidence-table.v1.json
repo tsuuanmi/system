@@ -10,7 +10,10 @@
   ],
   "properties": {
     "schema": {
-      "const": "evidence-table@1.0"
+      "enum": [
+        "evidence-table@1.0",
+        "evidence-table@1.1"
+      ]
     },
     "evidence": {
       "type": "array",
@@ -72,11 +75,58 @@
               "moderate",
               "weak"
             ]
+          },
+          "reviews": {
+            "description": "@1.1: which of the run's literature reviews state the claim (A, B), so a conclusion can say where they agree and differ.",
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 2,
+            "uniqueItems": true,
+            "items": {
+              "enum": [
+                "A",
+                "B"
+              ]
+            }
           }
         },
         "additionalProperties": false
       }
     }
   },
-  "additionalProperties": false
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "schema": {
+            "const": "evidence-table@1.0"
+          }
+        },
+        "required": [
+          "schema"
+        ]
+      },
+      "then": {
+        "properties": {
+          "evidence": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "not": {
+                "properties": {
+                  "reviews": {
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "reviews"
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
 }

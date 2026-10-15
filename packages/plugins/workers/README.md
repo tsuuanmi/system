@@ -13,10 +13,14 @@ router ([routing](../../../docs/design/routing.md#algorithm)). Definition:
   ([`agent-workers`](../agent-workers/README.md)), and model Workers
   ([`models`](../models/README.md)).
   `describe()` runs on every route, so admission sees current states. Each
-  descriptor is validated against `capability-descriptor@1.0`. A Worker id that
+  descriptor is validated against `capability-descriptor@1.0` or `@1.1` (with
+  `family`). A Worker id that
   two sources describe is refused.
 - **Admission (REQ-WRK-1, -7, -9).** A Worker passes only if all of these hold:
   - it is inside the caller's restriction, if one is given;
+  - it is of none of the provider families the caller excludes, if any
+    (`diversity`); a Worker that declares no family cannot differ, so it fails
+    too ([provider diversity](../../../docs/design/routing.md#provider-diversity));
   - it proves every required capability;
   - it is local when the data is `local-private`;
   - it is `ready`;
