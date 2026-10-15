@@ -146,23 +146,19 @@ showed gaps between what it ships and what the loop needs:
 | `ask` | one turn; `persist` keeps a conversation for later turns | — |
 | `research` | frame → literature on **each of two providers in parallel** → one evidence table from both → critique on a provider other than the evidence's → conclusion, which names agreement and disagreement between providers. Option `deep`: each literature step uses the provider's deep research. | — |
 
-A literature step needs `web-search`. Today only one provider's driver proves it:
-the other proves `deep-research` alone and refuses any other feature, so both
-literature steps would land on the same provider. Phase 2 therefore starts with
-one of two choices:
-- **(a) Prove web search on the second provider.** This is preferred, if its chat
-  answers show readable per-answer evidence of grounding (source chips, citation
-  links), which a probe and the driver can check. Research run
-  `run_9615e6f7f6044c6b` answers that.
-- **(c) Otherwise,** a literature step needs only `reason`, and its gate is the
-  existing citation acceptance (`acceptance.cited`): each provider searches its
-  own way, and an answer without an http(s) source is rejected. This proves less
-  than a capability.
-
-Using deep research for the second provider's literature (b) is rejected for the
-default: it is slow and spends the scarcest quota.
-| `brainstorm` | the team protocol below over a question and its context | majority vote |
-| `review` | the team protocol below over material (text) or a public repository URL; each ballot is `pass` or `changes`, with findings. Capabilities `reason`, plus `web-search` for a URL; no `local-data`. A repository is reviewed at one pinned commit: members read the README and manifests, then entry points, the relevant code, and tests. Findings are merged by root cause, keep who reported them, and are classed `confirmed`, `needs-verification`, or `suggestion`. A file a member could not read is recorded, and `pass` means no blocking finding within what was read. | majority vote |
+A literature step needs `web-search`, and today only one provider's driver
+proves it. The other provider's chat answers show sources (links and a Sources
+panel), but nothing on its page proves an answer was grounded in a search or
+lets a user force one (research run `run_9615e6f7f6044c6b`,
+[Google](https://support.google.com/gemini/answer/14143489)). So the two
+literature branches differ:
+- **Branch A** requires `web-search`, which a probe proves.
+- **Branch B** requires a provider family other than branch A's, and only
+  `reason`. Its gate is the citation acceptance (`acceptance.cited`): an answer
+  without an http(s) source is rejected. The driver reads the answer's source
+  links from the page, as every cited answer now does.
+- Deep research for branch B is not the default: it is slow and spends the
+  scarcest quota. It is what the `deep` option uses.
 
 The `review` template that exists today needs `review` and `local-data`, which only
 agent Workers prove. It moves to the agent Workers' own template list, under
@@ -320,8 +316,8 @@ existing distinct-account rule for teams stays.
 |---|---|---|
 | 0 | Stabilize: citation fix on `main`, the live install, the MCP client reconnected | done 2026-10-16 |
 | 1 | Removals and switch-offs: the templates except `panel`, which serves the dogfood brainstorm until `brainstorm` replaces it in Phase 3; the `deep` option of `research` (CLI and MCP); agent Worker and gateway rows disabled by default (their helpers refuse while off); the agent `review` moved into the agent Workers' template list; the `site` preset; the free account removed by the operator; Linux-only docs. Until Phase 3 there is no `review` in the default composition, which is accepted. | composition e2e row set; upgrade suite still explains old runs; crash suite |
-| 2 | `research` on two providers in parallel, with the diversity predicate | a live run uses both providers |
-| 3 | ADR-0027 (diversity predicate); `panel` removed; teams: `brainstorm` and `review` with debate and vote, tie to the caller | live brainstorm of a real design question for `system` |
+| 2 | `research` on two providers in parallel (branch A proves `web-search`, branch B is cited and on another provider family), with the diversity predicate. The diversity predicate needs ADR-0027, so the ADR moves here from Phase 3. | a live run uses both providers |
+| 3 | `panel` removed; teams: `brainstorm` and `review` with debate and vote, tie to the caller | live brainstorm of a real design question for `system` |
 | 4 | `review` of a public repository by URL | live review of this repository |
 | 5 | The conversation ledger; retention deletes website chats | fake-site tests per driver; one live deletion |
 | 6 | The whole loop from Claude Code on a real `system` change | the change ships with its research, brainstorm, and review runs linked |
