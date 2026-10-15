@@ -65,6 +65,9 @@ pnpm gen:traceability   # regenerate docs/validation/traceability.md from test t
 pnpm test               # unit, contract, driver, and integration tests
 pnpm test:e2e           # build, then boot the real profile through dsh (packages/cli/tests)
 pnpm test:crash         # build, then SIGKILL the engine at each reconcile point of a turn and restart it
+pnpm changeset          # record a user-visible change for the next release (releasing.md)
+pnpm version-packages   # apply the changesets and seed the release's upgrade fixture
+pnpm release:artifacts  # tarballs, SBOMs, SHA256SUMS, and notes in dist/release/
 ```
 
 Run it locally on Linux:

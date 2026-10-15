@@ -35,6 +35,9 @@ package's `package.json`. **Status** is one of **in use**, **planned**, or
 | Agent child environment | DSH `@deepseek-ai/dsh-subprocess` `scrubbedParentEnv()`, with its peer `@deepseek-ai/dsh-http-proxy` (proxy variables) | library (DSH) | `agent-runtime-core` (`childEnvironment`) | in use | DSH's own scrub of credential-shaped and `DSH_*` names (INV-8); operator variables are forwarded by name on top. Hand-filtering `process.env` would duplicate it |
 | Local exec (shell, fs, sandbox) | DSH `dsh-shell`, `dsh-fs`, `dsh-sandbox`, `dsh-subprocess` | library (DSH) | `ctx.exec` | planned | no seam is mounted |
 | API and local models | DSH `dsh-llm` (`ctx.llm`) and `dsh-llm-pi-ai` (provider routes over `@earendil-works/pi-ai`, whose `pi-telemetry` dependency is contracts only, with no exporter) | library (DSH) | `models` (rows `llm`, `llm-pi-ai`) | in use | the allow-listed DSH rows; they need only `ctx.credentials` and resolve a route's key by reference through the vault. `dsh-llm-retry` is not mounted (it needs the agent loop and session log); `models` bounds its own re-attempts. A minimal own OpenAI-compatible client was the fallback, not needed ([models](../design/models.md)) |
+| Versions and changelogs | Changesets (`@changesets/cli`), one `fixed` group | dev tool | repository root | in use | release-please and semantic-release derive versions from commit messages; Changesets records the bump with the change ([releasing](releasing.md)) |
+| SBOM | `pnpm sbom` (CycloneDX), built into the package manager | dev tool | `scripts/release-artifacts.ts` | in use | `@cyclonedx/cdxgen` and `@cyclonedx/cyclonedx-npm` add a dependency; the package manager already resolves the exact production tree |
+| Build provenance | `actions/attest-build-provenance`, pinned by SHA | CI action | `release` workflow | in use | SLSA provenance stored by GitHub, verified with `gh attestation verify`; no signing key to keep |
 
 ## Built, with what was compared
 

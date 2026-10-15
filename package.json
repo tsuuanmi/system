@@ -24,9 +24,13 @@
     "gen:traceability": "tsx scripts/gen-traceability.ts",
     "check:traceability": "tsx scripts/gen-traceability.ts --check",
     "gen:upgrade-fixture": "tsx packages/cli/tests/upgrade/generate.ts",
-    "test:crash": "pnpm build && vitest run -c vitest.crash.config.ts"
+    "test:crash": "pnpm build && vitest run -c vitest.crash.config.ts",
+    "changeset": "changeset",
+    "version-packages": "tsx scripts/version-packages.ts",
+    "release:artifacts": "tsx scripts/release-artifacts.ts"
   },
   "devDependencies": {
+    "@changesets/cli": "^3.0.3",
     "@types/node": "^24.0.0",
     "ajv": "^8.17.1",
     "ajv-formats": "^3.0.1",

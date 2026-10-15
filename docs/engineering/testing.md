@@ -47,9 +47,9 @@ package's `conformance/` directory. Each provider's tests call the suite with a
     migrates it. Every old run must still `explain` and answer `result` as the
     manifest says, no migration may go backwards, and every node, session, and
     artifact record must validate against its schema.
-  - A release adds its fixture with `pnpm gen:upgrade-fixture <version>` from
-    its own code; a fixture is never edited afterwards. Until the first release,
-    one is seeded from the current code.
+  - A release adds its fixture from its own code when it is versioned
+    ([releasing](releasing.md#cutting-a-release)); a fixture is never edited
+    afterwards. Until the first release, one is seeded from the current code.
 - **Crash injection**
   ([`packages/system-bundle/tests/crash/`](../../packages/system-bundle/tests/crash/restart.crash.ts),
   `pnpm test:crash`).
