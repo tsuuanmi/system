@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { SUPPORTED_NODE } from '@tsuuanmi/system-libs'
 import { afterEach, describe, expect, it } from 'vitest'
 import { changelogSection, checkDshPins, checksums, dshPins, lockstepVersion, MANIFEST, onlyDependencyBumps, previousRelease, releaseNotes, unresolvedWorkspaceDependencies, workspacePackages } from './release-artifacts.ts'
 
@@ -105,5 +106,14 @@ describe('release artifacts (ADR-0026)', () => {
     expect(() => checkDshPins(before, { version: '1.3.0', pins: bumped })).not.toThrow()
     expect(() => checkDshPins(before, { version: '1.2.4', pins: before.pins })).not.toThrow()
     expect(() => checkDshPins(before, { version: '1.2.4', pins: [...before.pins, ...bumped] })).toThrow(/: \+@deepseek-ai\/cordis@4.0.6-alpha.1$/)
+  })
+
+  it('names one supported Node range in engines, the start-up check, and the CI matrix (ADR-0026, CON-2)', () => {
+    const engines = (JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) as { engines: { node: string } }).engines.node
+    expect(engines).toBe(SUPPORTED_NODE)
+    const matrix = /^\s*node: \[([^\]]*)\]/m.exec(readFileSync(join(root, '.github', 'workflows', 'ci.yml'), 'utf8'))![1]!.split(',').map((v) => v.trim().replace(/'/g, ''))
+    const floors = SUPPORTED_NODE.match(/\d+\.\d+\.\d+/g)!
+    expect(matrix).toContain(floors[0]) // the floor itself
+    for (const floor of floors) expect(matrix.some((v) => v.split('.')[0] === floor.split('.')[0]), `a CI entry on Node ${floor.split('.')[0]}`).toBe(true)
   })
 })

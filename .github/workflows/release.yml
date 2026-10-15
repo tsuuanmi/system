@@ -1,8 +1,8 @@
 name: release
 
 # A `v<version>` tag on main cuts a GitHub release (ADR-0026,
-# docs/engineering/releasing.md). Cheap checks run first, then every CI gate on the
-# tagged commit. The release carries the package tarballs, one CycloneDX SBOM per
+# docs/engineering/releasing.md). Cheap checks run first, then every CI gate and the
+# dependency audit on the tagged commit. The release carries the package tarballs, one CycloneDX SBOM per
 # package, and SHA256SUMS; the tarballs and SBOMs get one build provenance
 # attestation. Nothing is published to npm.
 on:
@@ -41,8 +41,14 @@ jobs:
     permissions:
       contents: read
 
+  audit:
+    needs: verify
+    uses: ./.github/workflows/audit.yml
+    permissions:
+      contents: read
+
   release:
-    needs: gates
+    needs: [gates, audit]
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     # The owner can require a reviewer for this environment in the repository settings.

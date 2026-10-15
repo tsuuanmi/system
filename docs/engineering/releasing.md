@@ -25,8 +25,9 @@ pnpm changeset          # pick the bump; the summary becomes the changelog line
 
 1. On a branch from `main`, run `pnpm version-packages`
    ([`scripts/version-packages.ts`](../../scripts/version-packages.ts)). It:
-   - applies the pending changesets: the new version in every `package.json` and
-     a section in each `CHANGELOG.md`;
+   - applies the pending changesets: the new version in every `package.json`
+     (the bundle's presets too, which are layers inside it rather than workspace
+     packages) and a section in each `CHANGELOG.md`;
    - seeds this release's store fixture for the
      [upgrade suite](testing.md) with `pnpm gen:upgrade-fixture v<version>`.
      Fixtures are never edited afterwards.
@@ -45,7 +46,8 @@ pnpm changeset          # pick the bump; the summary becomes the changelog line
      - a DSH pin that is not one exact version, and a patch release whose DSH
        pins (any declared, dev included) differ from the previous release
        tag's;
-   - runs every CI gate on the tagged commit (it calls the `ci` workflow);
+   - runs every CI gate and the dependency audit on the tagged commit (it calls
+     the `ci` and `audit` workflows);
    - builds the assets below with `pnpm release:artifacts`. It refuses a
      tarball whose `@tsuuanmi/*` dependency is not another tarball at exactly
      that version;
