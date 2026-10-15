@@ -71,15 +71,18 @@ elements:
       - { role: button, name: { en: '^Turn off temporary chat$' } }
 
   composer.form:
-    description: The composer. Live, two visible forms carry data-chatgpt-composer; only one holds the textbox.
+    description: >-
+      The composer: the form that holds the textbox. Live since 2026-10-11 it no longer matches
+      data-chatgpt-composer (every turn resolved on the plain form), so that candidate is the fallback.
     candidates:
-      - { css: 'form[data-chatgpt-composer]:has([role="textbox"][contenteditable="true"])' }
       - { css: 'form:has([role="textbox"][contenteditable="true"])' }
+      - { css: 'form[data-chatgpt-composer]:has([role="textbox"][contenteditable="true"])' }
   composer.input:
     scope: composer.form
+    description: Live since 2026-10-11 the textbox's name no longer reads "Ask ChatGPT"; the markdown editor attribute matched every turn.
     candidates:
-      - { role: textbox, name: { en: '^Ask ChatGPT$' } }
       - { css: '[contenteditable="true"][data-composer-markdown]' }
+      - { role: textbox, name: { en: '^Ask ChatGPT$' } }
       - { testId: prompt-textarea }
     fingerprint: { role: textbox }
   composer.send:
@@ -205,11 +208,13 @@ elements:
     candidates:
       - { role: button, name: { en: '^Copy$' }, exact: true }
   answer.code:
-    description: A code block's text in an answer, one line per row (the answer's Copy loses those rows).
+    description: >-
+      A code block's text in an answer, its rows kept (the answer's Copy loses them). Live since
+      2026-10-11 code blocks are pre > code; the editable "Edit code" block is the fallback.
     cardinality: many
     candidates:
-      - { role: textbox, name: { en: '^Edit code$' } }
       - { css: 'pre code' }
+      - { role: textbox, name: { en: '^Edit code$' } }
 
 actions:
   mode.select-chat:

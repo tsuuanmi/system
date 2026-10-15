@@ -7,7 +7,9 @@
  * - the action slot shows Send (disabled when empty), Stop while running, and voice on an empty home page;
  * - turns are marked only by headings "You said:" / "ChatGPT said:"; a finished answer gets "Copy" and "Regenerate response";
  * - the send is `POST /backend-api/f/conversation` answered with an event stream that **stays open**;
- * - a second visible form also carries `data-chatgpt-composer`, without the textbox;
+ * - the composer form no longer carries `data-chatgpt-composer` (since 2026-10-11, from live drift);
+ *   another visible form still does, without the textbox;
+ * - the textbox's accessible name is no longer "Ask ChatGPT" (since 2026-10-11; the new text is a stand-in);
  * - the model menu (`menu "Select ChatGPT model"`) has two views, as checked live on 2026-10-12: view A shows
  *   the Power slider (arrow keys; `status` "Instant, 1 of 3."; levels Instant, Medium, High) and a view toggle
  *   (`[data-model-picker-view-toggle]`) labelled with the level; view B, after the toggle, shows only the model
@@ -130,9 +132,9 @@ function html(options: Required<FakeOptions>, conversation: Conversation | undef
     <h1 id="title">Where should we begin?</h1>
     <section role="region" aria-label="Conversation" id="log">${turns}</section>
     <form data-chatgpt-composer data-thread-find-composer><input aria-label="Find in chat" type="search"></form>
-    <form data-chatgpt-composer data-composer-placement="home" id="composer">
+    <form data-composer-placement="home" id="composer">
       <button type="button" aria-label="Add files and more">+</button>
-      <div contenteditable="true" role="textbox" aria-multiline="true" aria-label="Ask ChatGPT" data-composer-markdown id="input"></div>
+      <div contenteditable="true" role="textbox" aria-multiline="true" aria-label="Chat with ChatGPT" data-composer-markdown id="input"></div>
       <button type="button" aria-label="Select ChatGPT model" aria-haspopup="menu" aria-expanded="false" id="picker"${options.modelPicker === false ? ' hidden' : ''}>Instant</button>
       <button type="button" aria-label="Dictate">d</button>
       <span id="slot"></span>
@@ -289,8 +291,7 @@ async function send() {
 }
 function renderMarkdown(text) {
   const escaped = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-    .replace(/\x60\x60\x60([^\\n]*)\\n([\\s\\S]*?)\\n\x60\x60\x60/g, (_, lang, code) => '<div>' + (lang || 'Code') + '</div><div role="textbox" aria-label="Edit code">'
-      + code.split('\\n').map((line) => '<div style="white-space:pre">' + line + '</div>').join('') + '</div>')
+    .replace(/\x60\x60\x60([^\\n]*)\\n([\\s\\S]*?)\\n\x60\x60\x60/g, (_, lang, code) => '<div>' + (lang || 'Code') + '</div><pre><code>' + code + '</code></pre>')
   return escaped.replace(/\\*\\*([^*]+)\\*\\*/g, '<strong>$1</strong>').replace(/\x60([^\x60]+)\x60/g, '<code>$1</code>')
     .replace(/\\[([^\\]]+)\\]\\(([^)]+)\\)/g, '<a href="$2">$1</a>')
 }
