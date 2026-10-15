@@ -194,7 +194,10 @@ describe('review fixes (PR #3 kernel review)', () => {
     // More rows than one page of the scan, all holding no artifact id.
     ctx.store.db.exec('CREATE TABLE filler (v TEXT)')
     const fill = ctx.store.db.prepare('INSERT INTO filler VALUES (?)')
+    // One transaction: 2500 separate commits each sync, which alone can outlast the test's timeout.
+    ctx.store.db.exec('BEGIN')
     for (let i = 0; i < 2500; i++) fill.run(`row ${i}`)
+    ctx.store.db.exec('COMMIT')
     ctx.store.db.prepare("UPDATE artifacts SET created_at = '2000-01-01T00:00:00.000Z'").run()
     // After the scan, a writer records a decision naming orphan 0 and keeps its id in a row, as an
     // owning plugin does: orphan 0 must stay, now and later.
