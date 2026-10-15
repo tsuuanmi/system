@@ -114,8 +114,18 @@ showed gaps between what it ships and what the loop needs:
   comparative justification, and the decision contents above. It also showed
   the problem this proposal fixes: both members were ChatGPT accounts.
   Provider diversity is not proof of independent models, only a better default.
-  A second `panel` run, `run_d05389582ae031f9` (round count, ballot
-  options, tie path, repository review), is still running.
+- A second `panel`, `run_d05389582ae031f9`, covered ballot options, the tie path,
+  and repository review. Its recommendations are adopted:
+  - neutral option extraction with provenance;
+  - single-choice ballots;
+  - an `inconclusive` outcome;
+  - no default `pass` on a tied review;
+  - a pinned commit, and findings merged by root cause;
+  - the protocol enforced in code.
+
+  It also recommended a debate round before every vote. The debate research
+  above outweighs that: it was evidence-based, while both panel members were
+  ChatGPT accounts.
 - Implementation impact map, 2026-10-16:
   - Old runs are safe: the template registry is read only when a run starts, and
     `explain` and `result` read the stored spec. The upgrade fixture already
@@ -152,7 +162,7 @@ one of two choices:
 Using deep research for the second provider's literature (b) is rejected for the
 default: it is slow and spends the scarcest quota.
 | `brainstorm` | the team protocol below over a question and its context | majority vote |
-| `review` | the team protocol below over material (text) or a public repository URL; each ballot is `pass` or `changes`, with findings. Capabilities `reason`, plus `web-search` for a URL; no `local-data`. | majority vote |
+| `review` | the team protocol below over material (text) or a public repository URL; each ballot is `pass` or `changes`, with findings. Capabilities `reason`, plus `web-search` for a URL; no `local-data`. A repository is reviewed at one pinned commit: members read the README and manifests, then entry points, the relevant code, and tests. Findings are merged by root cause, keep who reported them, and are classed `confirmed`, `needs-verification`, or `suggestion`. A file a member could not read is recorded, and `pass` means no blocking finding within what was read. | majority vote |
 
 The `review` template that exists today needs `review` and `local-data`, which only
 agent Workers prove. It moves to the agent Workers' own template list, under
@@ -174,17 +184,23 @@ the same for `brainstorm` and `review`:
 1. **Propose.** Each member answers alone, without seeing the others. The
    proposals are kept unchanged: what a member said before any exchange stays
    on record.
-2. **Vote.** Each member casts one sealed ballot. A ballot holds:
-   - its first choice among the anonymized proposals (or `pass` / `changes` for a
-     review);
-   - its ranking of all of them;
+2. **Options.** For a brainstorm, a synthesis step extracts a neutral list of
+   distinct options (O1…On) from the proposals, following a fixed rubric. Each
+   option records which proposals it came from. The step may not invent a hybrid
+   that no proposal holds. A member that finds an option missing or misstated
+   says so on its ballot, and a material change to the options voids the
+   ballots cast on them. For a review, the options are `pass` and `changes`,
+   over one merged list of findings.
+3. **Vote.** Each member casts one sealed ballot. A ballot holds:
+   - exactly one choice among the options;
+   - its ranking of all of them, which is advisory only;
    - the rationale and evidence;
    - the strongest counterargument to its choice;
    - its unresolved objections;
    - a confidence.
 
    Other members' ballots stay hidden until every ballot is in.
-3. **Debate, only on disagreement.** If the ballots already give a strict
+4. **Debate, only on disagreement.** If the ballots already give a strict
    majority, there is no debate. Otherwise each member sees the other proposals
    and ballots, without provider names, and answers only the crux of the
    disagreement: it may revise its proposal and vote again.
@@ -193,8 +209,10 @@ the same for `brainstorm` and `review`:
      objection.
    - An objection still open at the end does not block the vote: it is recorded
      as dissent.
-4. **Decide.** A strict majority (more than half the ballots) decides,
-   deterministically. The decision is a decision artifact
+5. **Decide.** A strict majority (more than half the ballots) decides,
+   deterministically. An invalid or missing ballot never lowers the threshold:
+   it makes the outcome inconclusive. The record names the method:
+   `team-majority`, `caller-tiebreak`, or `inconclusive`. The decision is a decision artifact
    ([INV-13](../architecture/invariants.md)) that holds:
    - the members (by opaque identity), the original proposals, and any
      revisions;
@@ -204,13 +222,21 @@ the same for `brainstorm` and `review`:
 
    It is stored before the result returns. A team that fails, for example
    without enough distinct providers, records a failure artifact instead.
-5. **Tie.** The run blocks with a `tie`, holding both positions in short. The
+6. **Tie.** The run blocks with a `tie`, holding both positions in short. The
    caller casts the deciding vote with a new **client-scope** tool, `vote(runId,
    decision, option)`. The tool is bound to that exact tie decision, as
    `approve` is bound to an exact plan, and is recorded with the client as the
    decider. `approve` cannot serve, because it is operator scope
    ([ADR-0023](../decisions/adr/0023-scoped-control-credentials.md)). The
    operator can still override with an operator tool.
+   - The caller may also answer `inconclusive` instead of forcing a choice.
+   - A tied review never defaults to `pass`: blocking findings stay visible
+     whatever the caller decides.
+
+The orchestrator enforces the protocol in deterministic code: it extracts and
+freezes the options, validates and seals the ballots, tallies the votes,
+handles a tie, and ends the rounds. The models supply reasoning and evidence
+only.
 
 With two members, a strict majority means both agree, so every remaining
 disagreement is a tie and the caller decides often.
