@@ -41,6 +41,18 @@ describe('schema checks', () => {
     expect(loadSchemas(schemas).getSchema(schemaId('decision'))?.(decision)).toBe(false)
   })
 
+  it('keeps @1.1 fields out of @1.0 records: a descriptor\'s family, an evidence claim\'s reviews', () => {
+    const descriptor = example('capability-descriptor.family.json')
+    const valid = (name: string, value: unknown) => loadSchemas(schemas).getSchema(schemaId(name))?.(value)
+    expect(valid('capability-descriptor', descriptor)).toBe(true)
+    expect(valid('capability-descriptor', { ...descriptor, schema: 'capability-descriptor@1.0' })).toBe(false)
+    const { family: _family, ...without } = descriptor
+    expect(valid('capability-descriptor', { ...without, schema: 'capability-descriptor@1.0' })).toBe(true)
+    const table = example('evidence-table.two-reviews.json')
+    expect(valid('evidence-table', table)).toBe(true)
+    expect(valid('evidence-table', { ...table, schema: 'evidence-table@1.0' })).toBe(false)
+  })
+
   it('rejects an envelope carrying both an inline body and a blob', () => {
     const envelope = example('artifact-envelope.decision.json') as Record<string, unknown>
     envelope['blob'] = { ref: envelope['id'], bytes: 1, mediaType: 'application/json' }

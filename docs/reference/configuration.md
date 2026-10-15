@@ -187,6 +187,7 @@
 | `models[].quotaClass` | "metered" \| "local" | `"metered"` | metered: paid per token; local: no quota |
 | `models[].locality` | "remote" \| "local" | `"remote"` | local: the model runs on this machine (egress class model-local) |
 | `models[].maxTokens` | number (1…200000) | `4096` | Output bound of every call (INV-9) |
+| `models[].family` | string |  | Opaque provider family (ADR-0027; default: the route). Give two routes to one vendor the same family, so diversity treats them as one |
 | `maxRetries` | number (0…5) | `2` | Re-attempts of a transiently failed call |
 | `maxConcurrentCalls` | number (1…64) | `4` | Model calls in flight at once |
 | `callTimeoutMs` | number (1…) | `300000` | Hard deadline per call |

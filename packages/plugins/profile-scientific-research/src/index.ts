@@ -5,9 +5,11 @@
  * `resultSchema` (REQ-ART-5), its other checks through `ctx.workers.contract`, and its typed
  * artifacts through `ctx.artifacts`, from the engine's own event log.
  *
- * `research` frames a question as testable hypotheses, reviews the literature with citations,
- * extracts an evidence table, has it critiqued independently, and concludes per hypothesis,
- * citing the evidence. Its `deep` variant reviews with the provider's Deep research instead.
+ * `research` frames a question as testable hypotheses, reviews the literature twice in parallel
+ * with citations on two provider families (PROP-0004, ADR-0027), extracts one evidence table that
+ * keeps which review stated each claim, has it critiqued on another family, and concludes per
+ * hypothesis, citing the evidence and saying where the reviews agree and differ. Its `deep`
+ * variant reviews with the providers' Deep research instead.
  * @module @tsuuanmi/system-profile-scientific-research
  */
 import type { Context } from '@deepseek-ai/cordis'
@@ -36,16 +38,21 @@ const LITERATURE = [
 ].join('\n')
 
 const EVIDENCE = [
-  'Extract an evidence table from the literature review below, for the hypotheses below. Use only claims the review states, each with its source URL from the review.',
+  'Extract one evidence table from the two independent literature reviews below, A and B, for the hypotheses below. Use only claims a review states, each with its source URL from that review.',
+  'For each claim, list the reviews that state it in "reviews": ["A"], ["B"], or ["A", "B"]. Keep a claim the reviews contradict as two entries, one per review.',
   'Reply with only a JSON object in a ```json block, shaped like:',
-  '{"schema": "evidence-table@1.0", "evidence": [{"id": "E1", "claim": "...", "source": "https://...", "bears": [{"hypothesis": "H1", "direction": "supports" | "refutes" | "neutral"}], "strength": "strong" | "moderate" | "weak"}]}',
+  '{"schema": "evidence-table@1.1", "evidence": [{"id": "E1", "claim": "...", "source": "https://...", "reviews": ["A"], "bears": [{"hypothesis": "H1", "direction": "supports" | "refutes" | "neutral"}], "strength": "strong" | "moderate" | "weak"}]}',
   '',
   '<hypotheses>',
   '{{node:frame:1}}',
   '</hypotheses>',
   '',
-  '<review>',
+  '<review id="A">',
   '{{node:literature:1}}',
+  '</review>',
+  '',
+  '<review id="B">',
+  '{{node:literature:2}}',
   '</review>',
 ].join('\n')
 
@@ -65,6 +72,7 @@ const CRITIQUE = [
 const CONCLUDE = [
   'Conclude the study: for each hypothesis (H1, H2, ...), state whether the evidence supports it, refutes it, or is insufficient, with a confidence (high, moderate, low).',
   'Cite the evidence each conclusion rests on as [E1], [E2], and so on, and take the critique into account. Say what evidence would change the conclusion.',
+  'The evidence comes from two independent reviews (its "reviews" field): say where they agree, and where they disagree or only one of them found the evidence.',
   '',
   'Question: {{input}}',
   '',
@@ -84,13 +92,26 @@ const CONCLUDE = [
 /** The research procedure; its `deep` variant reviews the literature with the provider's Deep research. */
 export const RESEARCH: NodeTemplate[] = [
     { nodeId: 'frame:1', objective: 'Frame the question as testable hypotheses', prompt: FRAME, capabilities: ['reason'], tier: 'standard', conversation: 'temporary', acceptance: 'acceptance.answer', resultSchema: 'hypothesis-set@1.0' },
+    // Two reviews in parallel on different provider families (PROP-0004, ADR-0027). Review A must
+    // prove web search; review B is held to its citations, since its provider cannot prove a search.
     {
-      nodeId: 'literature:1', objective: 'Review the published evidence, with citations', dependsOn: ['frame:1'], prompt: LITERATURE,
+      nodeId: 'literature:1', objective: 'Review the published evidence, with citations (review A)', dependsOn: ['frame:1'], prompt: LITERATURE,
       capabilities: ['reason', 'web-search'], tier: 'standard', conversation: 'temporary', acceptance: 'acceptance.cited',
       variants: { deep: { capabilities: ['reason', 'deep-research'], tier: 'frontier', conversation: 'persistent' } },
     },
-    { nodeId: 'evidence:1', objective: 'Extract the evidence table', dependsOn: ['frame:1', 'literature:1'], prompt: EVIDENCE, capabilities: ['reason'], tier: 'economy', conversation: 'temporary', acceptance: 'acceptance.answer', resultSchema: 'evidence-table@1.0' },
-    { nodeId: 'critique:1', objective: 'Critique the evidence independently', dependsOn: ['frame:1', 'evidence:1'], prompt: CRITIQUE, capabilities: ['reason'], tier: 'standard', conversation: 'temporary', acceptance: 'acceptance.answer' },
+    {
+      nodeId: 'literature:2', objective: 'Review the published evidence, with citations (review B)', dependsOn: ['frame:1'], prompt: LITERATURE,
+      capabilities: ['reason'], tier: 'standard', conversation: 'temporary', acceptance: 'acceptance.cited', differentFrom: ['literature:1'],
+      variants: { deep: { capabilities: ['reason', 'deep-research'], tier: 'frontier', conversation: 'persistent' } },
+    },
+    {
+      nodeId: 'evidence:1', objective: 'Extract one evidence table from both reviews', dependsOn: ['frame:1', 'literature:1', 'literature:2'], prompt: EVIDENCE,
+      capabilities: ['reason'], tier: 'economy', conversation: 'temporary', acceptance: 'acceptance.answer', resultSchema: 'evidence-table@1.1',
+    },
+    {
+      nodeId: 'critique:1', objective: 'Critique the evidence independently', dependsOn: ['frame:1', 'evidence:1'], prompt: CRITIQUE, capabilities: ['reason'],
+      tier: 'standard', conversation: 'temporary', acceptance: 'acceptance.answer', differentFrom: ['evidence:1'],
+    },
     {
       nodeId: 'conclusion:1', objective: 'Conclude per hypothesis, citing the evidence', dependsOn: ['frame:1', 'evidence:1', 'critique:1'], prompt: CONCLUDE,
       capabilities: ['reason'], tier: 'standard', conversation: 'temporary', acceptance: 'acceptance.cited-conclusions',
@@ -100,7 +121,7 @@ export const RESEARCH: NodeTemplate[] = [
 /** The steps whose results are typed artifacts: their JSON body, schema, and artifact kind. */
 const TYPED: Record<string, { schema: string; kind: 'criteria' | 'evidence' }> = {
   'frame:1': { schema: 'hypothesis-set@1.0', kind: 'criteria' },
-  'evidence:1': { schema: 'evidence-table@1.0', kind: 'evidence' },
+  'evidence:1': { schema: 'evidence-table@1.1', kind: 'evidence' },
 }
 
 const schemas = new SchemaRegistry()

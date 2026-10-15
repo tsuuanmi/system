@@ -13,6 +13,7 @@ The **`agents` Worker source**: agent runtimes as Workers
   `workspace-write`), and optional `tools` (omitted or empty: the runtime's
   minimal set), `model`, and `maxTurns`. It also
   has a `tier`, and a `quotaClass` (default `agent-plan`). The Worker is local.
+  Its provider family (`capability-descriptor@1.1`) is its runtime.
 - **Capabilities are what `probe()` proves now** (cached for `probeTtlMs`):
   - `local-data`;
   - `review` only for a read-only sandbox: a review is independent of the

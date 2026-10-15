@@ -130,13 +130,13 @@ runs the work the router admitted to them. Callers never reach a source directly
   3. What result and evidence did it produce?
 - **Does not own:** the internals of a Worker. Model, runtime, tools, and state are not
   normalized into a universal interface.
-- **Contracts:** `workers.route(requirement, { restrict }) → AdmittedWorker` (with `tier` and
+- **Contracts:** `workers.route(requirement, { restrict, exclude }) → AdmittedWorker` (with `tier` and
   `route` decisions) or `AdmissionFailure` (with an `admission` decision);
   `workers.accept(result, contract) → Acceptance` (with an `acceptance` decision);
   `workers.register(source)`, `workers.contract(id, check)`, `workers.source(name)`;
   `egress.check({ payload, classification, workerClass }) → allowed + egress decision`.
-- **Policy inputs:** proven capabilities, data locality, Worker state, tier, and session
-  affinity. This is where the three [purposes](../requirements/purpose.md) become mechanics.
+- **Policy inputs:** proven capabilities, data locality, Worker state, tier, session
+  affinity, and provider family, compared only for inequality. This is where the three [purposes](../requirements/purpose.md) become mechanics.
 - **Design:** [routing](../design/routing.md).
 - **Packages:** [workers-core](../../packages/workers-core/README.md),
   [workers](../../packages/plugins/workers/README.md),

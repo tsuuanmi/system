@@ -222,8 +222,15 @@ export class Engine {
             const final = nodes[nodes.length - 1]!
             return this.finish(run, 'completed', { result: (JSON.parse(final.record) as NodeRecord).outputReceipt!.result }, current)
           }
+          // A node that must differ from others is promoted with or after them, never before: it then
+          // waits for their Workers while they run beside it (ADR-0027).
+          const promoted = new Set(nodes.filter((n) => n.state !== 'WAITING').map((n) => n.node_id))
           for (const node of nodes) {
-            if (node.state === 'WAITING' && node.dependsOnCompleted(nodes)) this.promote(run, node, nodes, current)
+            const differs = (JSON.parse(node.spec) as ResolvedNode).differentFrom ?? []
+            if (node.state === 'WAITING' && node.dependsOnCompleted(nodes) && differs.every((id) => promoted.has(id))) {
+              this.promote(run, node, nodes, current)
+              promoted.add(node.node_id)
+            }
           }
           const current_ = this.nodeRows(runId).filter((n) => n.state !== 'RETIRED')
           if (current_.some((n) => n.state === 'FAILED')) continue
@@ -278,6 +285,36 @@ export class Engine {
   }
 
   /**
+   * The provider families this node's Worker must differ from (ADR-0027): those of the Workers that
+   * served its `differentFrom` nodes, read from their descriptors. It waits while one of those nodes
+   * has no Worker yet, so the branches of a run still start together, one routing turn apart. When
+   * one of those nodes failed, the run fails on it: this node sends nothing and stays as it is. When
+   * a served Worker's family cannot be read, no Worker can be shown to differ: that fails closed.
+   */
+  private async diversity(run: RunRow, spec: ResolvedNode, signal: AbortSignal): Promise<{ families: string[]; reason: string } | { problem: string } | undefined | 'stopped'> {
+    const others = spec.differentFrom ?? []
+    if (!others.length) return undefined
+    for (;;) {
+      const rows = this.nodeRows(run.run_id).filter((n) => others.includes(n.node_id))
+      if (rows.some((n) => n.state === 'FAILED')) return 'stopped'
+      if (rows.every((n) => n.worker)) {
+        const listed = new Map((await this.ctx.workers.list()).map((w) => [w.worker, w.family]))
+        const families = new Set<string>()
+        for (const row of rows) {
+          if (!row.worker) continue
+          const family = listed.get(row.worker)
+          if (family === undefined) {
+            return { problem: `node ${row.node_id}'s Worker ${row.worker} ${listed.has(row.worker) ? 'declares no provider family' : 'is no longer listed'}, so no Worker can be shown to differ from it (ADR-0027)` }
+          }
+          families.add(family)
+        }
+        return { families: [...families], reason: `differs from node${others.length > 1 ? 's' : ''} ${others.join(', ')}` }
+      }
+      if (!(await sleep(250, signal))) return 'stopped'
+    }
+  }
+
+  /**
    * Run one node to a terminal state, or until the engine stops: route it by its requirement
    * (`ctx.workers`), start it on the admitted Worker's own runtime, then wait and accept.
    */
@@ -289,11 +326,17 @@ export class Engine {
       if (delay > 0 && !(await sleep(delay, signal))) return
       const record = JSON.parse(node.record) as NodeRecord
       const attempt = node.attempt + 1
+      // A node that must differ from others routes once they have Workers (ADR-0027).
+      const exclude = await this.diversity(run, spec, signal)
+      if (exclude === 'stopped') return
+      if (exclude && 'problem' in exclude) {
+        return failAttempt(this, run, { ...node, attempt }, { kind: 'config_error', disposition: dispositionOf('config_error'), message: exclude.problem }, { sent: false, decisions: [] }, lease)
+      }
       // Members of one team route one at a time, so each sees which accounts the others hold.
       const release = await this.routingTurn(run.run_id)
       let admitted: AdmittedWorker
       try {
-        admitted = await this.ctx.workers.route(record.requirement, { producer: 'workflow', ...(await restriction(this, run, spec)) })
+        admitted = await this.ctx.workers.route(record.requirement, { producer: 'workflow', ...(await restriction(this, run, spec)), ...(exclude ? { exclude } : {}) })
       } catch (error) {
         release()
         if (!(error instanceof AdmissionFailure)) throw error

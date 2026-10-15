@@ -159,6 +159,20 @@ export function workersConformance(name: string, boot: Boot): void {
       })
     })
 
+    it('admits only a Worker of another provider family, says why without naming one, and fails closed (ADR-0027)', async () => {
+      const fam = (family: string) => ({ schema: 'capability-descriptor@1.1' as const, family })
+      await withWorkers([worker('w:a', fam('fam-1')), worker('w:b', fam('fam-1')), worker('w:c', fam('fam-2')), worker('w:none')], async (ctx) => {
+        const exclude = { families: ['fam-1'], reason: 'differs from node lit:a' }
+        const admitted = await ctx.workers.route(requirement(), { exclude })
+        expect(admitted.worker.worker).toBe('w:c')
+        const route = body(ctx, admitted.decisions.route)
+        expect(route.candidates.find((c) => c.option === 'w:a')!.reasons).toEqual(['same provider family (differs from node lit:a)'])
+        expect(route.candidates.find((c) => c.option === 'w:none')!.reasons).toEqual(['declares no provider family, so it cannot differ (differs from node lit:a)'])
+        expect(JSON.stringify(route)).not.toMatch(/fam-[12]/)
+        await expect(ctx.workers.route(requirement(), { exclude: { families: ['fam-1', 'fam-2'], reason: 'differs from nodes x, y' } })).rejects.toThrow(/same provider family/)
+      })
+    })
+
     it('accepts or rejects a stored result by contract, records the decision, and fails closed on unknowns (REQ-WRK-3)', async () => {
       const { ctx, dispose } = await boot()
       try {

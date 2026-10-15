@@ -55,6 +55,7 @@ export class Workflow extends Service {
       // Not z.object: an omitted object would come back as {} and make every node a planner.
       grows: z.any().description('Planner policy {maxNodes, capabilities, approvalRequired}; checked by preflight'),
       resultSchema: z.string().description('Schema tag the answer\'s JSON must be valid against (REQ-ART-5)'),
+      differentFrom: z.array(z.string()).description('Nodes whose Workers this node\'s Worker must differ from in provider family (ADR-0027)'),
       // Not z.object, for the same reason as grows.
       team: z.any().description('Team policy {members, rounds, distinctAccounts, synthesisTier, lead: {tier}}; checked by preflight'),
     }))).default({}).description('Workflow templates by name, added to the built-in ones (a same-named one replaces it)'),

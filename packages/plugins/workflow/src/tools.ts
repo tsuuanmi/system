@@ -42,7 +42,7 @@ export function registerTools(c: Context, w: Workflow, ctx: Context): void {
   })
   c.mcp.tool('research', {
     scope: 'client',
-    description: 'Research a question with the research profile: testable hypotheses, a cited literature review (web search, or the provider\'s Deep research with `deep`), an evidence table, an independent critique, and conclusions per hypothesis. Returns at once with a runId; poll `result` (runs take minutes; with `deep`, up to an hour).',
+    description: 'Research a question with the research profile: testable hypotheses, two cited literature reviews on two provider families (web search, or the providers\' Deep research with `deep`), one evidence table from both, a critique on another family, and conclusions per hypothesis that say where the reviews agree and differ. Returns at once with a runId; poll `result` (runs take minutes; with `deep`, up to an hour).',
     inputSchema: {
       question: zod.string().min(1).max(32_000),
       deep: zod.boolean().optional().describe('Review the literature with the provider\'s Deep research'),

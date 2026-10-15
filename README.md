@@ -98,9 +98,10 @@ system mcp-config codex >> ~/.codex/config.toml   # Codex: runs the stdio shim (
   `resume`), accounts (`account_*`), and sessions (`session_send`,
   `session_inbox`). The full contracts are generated in
   [docs/reference/mcp-tools.md](docs/reference/mcp-tools.md).
-- **`research`:** the scientific-research procedure: testable hypotheses, a
-  cited literature review with web search, an evidence table, an independent
-  critique, and a conclusion per hypothesis. `system research --deep` (MCP
+- **`research`:** the scientific-research procedure: testable hypotheses, two
+  cited literature reviews on two provider families (one with web search), an
+  evidence table from both, an independent critique, and a conclusion per
+  hypothesis. `system research --deep` (MCP
   `deep: true`) reviews with Deep research instead
   ([templates](docs/reference/workflow-templates.md)).
 - **Website Workers as the model:** with a gateway row turned on,

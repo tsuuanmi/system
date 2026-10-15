@@ -12,8 +12,8 @@ const USAGE = `Usage: system <command>
                             ask the Worker the router admits (a website account, an API or
                             local model, ...); - reads the prompt from stdin (profile must be running)
   research [--deep] [--classification <c>] (<question...> | -)
-                            the research procedure: hypotheses, a cited review, evidence,
-                            critique, conclusions (--deep: the review uses Deep research)
+                            the research procedure: hypotheses, two cited reviews on two
+                            providers, evidence, critique, conclusions (--deep: Deep research)
   run <template> [--variant <v>] [--session <id>] [--persist] [--tier <t>] [--classification <c>] (<input...> | -)
                             start any workflow template (ask, panel, research, ...)
   approve <runId> [--plan <id>] [--reject] [note...]

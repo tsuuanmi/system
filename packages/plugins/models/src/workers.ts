@@ -128,8 +128,8 @@ export class ModelWorkers {
   private async describe(): Promise<CapabilityDescriptor[]> {
     const observedAt = now()
     return (await this.ctx.models.list()).map((model): CapabilityDescriptor => ({
-      schema: 'capability-descriptor@1.0', worker: PREFIX + model.id, provider: 'models', tier: model.tier, quotaClass: model.quotaClass,
-      locality: model.locality,
+      schema: model.family ? 'capability-descriptor@1.1' : 'capability-descriptor@1.0', worker: PREFIX + model.id, provider: 'models',
+      ...(model.family ? { family: model.family } : {}), tier: model.tier, quotaClass: model.quotaClass, locality: model.locality,
       capabilities: model.available ? [{ capability: 'reason', evidence: { kind: 'probe', at: observedAt } }] : [],
       state: model.available ? 'ready' : 'unavailable', observedAt,
     }))

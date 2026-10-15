@@ -66,12 +66,14 @@ node requires `review` and `local-data`. Only agent Workers prove `local-data`,
 ```mermaid
 flowchart TD
   A[every Worker every source describes now] --> B{inside the caller's restriction?}
-  B -->|yes| C{proves every required capability?}
+  B -->|yes| X{"of no excluded provider family, when the caller excludes some?"}
+  X -->|yes| C{proves every required capability?}
   C -->|yes| D{local, when the data is local-private?}
   D -->|yes| E{state ready?}
   E -->|yes| F{tier within min and max?}
   F -->|yes| G[admitted]
   B -->|no| R[rejected, with the failed check]
+  X -->|no| R
   C -->|no| R
   D -->|no| R
   E -->|no| R
@@ -81,9 +83,36 @@ flowchart TD
   R --> J[none admitted: an admission decision and AdmissionFailure with every rejection]
 ```
 
+The checks, in order, are `restricted`, `diversity`, `capability`, `locality`, `state`, and
+`tier`; a rejected Worker carries each check it failed, with its reason.
+
 Quota and health are inputs **before** admission. Once a turn starts on a Worker,
 it is never moved to another one. Running out of quota mid-turn is a classified
 failure (`USER_ACTION` or `BACKOFF`), not a silent switch to a different provider.
+
+## Provider diversity
+
+A step can be required to run on a different provider from other steps of its run, such as
+`research`'s second literature review
+([templates](../reference/workflow-templates.md#research)). ADR-0027 (proposed) decides how,
+without naming a provider ([INV-11](../architecture/invariants.md#inv-11-no-tool-lock-in)).
+
+- **Provider family.** A capability descriptor may carry `family`
+  (`capability-descriptor@1.1`): an opaque string for who ultimately serves the work, set by
+  the Worker source. A website Worker's family is its account's provider, an agent Worker's is
+  its runtime, and a model Worker's is its catalog entry's `family`, by default its route
+  ([models](models.md#the-catalog-and-the-routes)).
+- **Exclusion.** A caller passes `exclude: { families, reason }` in the route options. The
+  `diversity` check then rejects a Worker of an excluded family (`same provider family
+  (<reason>)`), and a Worker that declares no family, which cannot be shown to differ
+  (`declares no provider family, so it cannot differ (<reason>)`). With no Worker left, the
+  admission fails closed ([INV-2](../architecture/invariants.md#inv-2-fail-closed)).
+- **Inequality only.** Routing compares families only for inequality. It never names, ranks,
+  or prefers one, and the `reason` names the steps to differ from (`differs from node
+  literature:1`), never a family, so route and admission decisions carry no family value. An
+  architecture test refuses a family literal in routing, workflow, profile, and models code.
+- The workflow engine builds the exclusion from a node's `differentFrom`
+  ([workflow engine](workflow-engine.md#different-provider-families)).
 
 ## Data locality policy
 

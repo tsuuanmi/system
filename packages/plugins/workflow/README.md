@@ -18,6 +18,11 @@ second execution path (INV-1).
     (`variant`), and its fields replace the node's own before the spec is hashed.
     An unknown variant is refused as `invalid_input`
     ([design](../../../docs/design/workflow-engine.md#variants)).
+  - **Different provider families.** A node with `differentFrom: [nodeId…]`
+    waits until those nodes have Workers, then routes excluding their provider
+    families; a named node that failed stops it, and a Worker whose family
+    cannot be read fails it as `config_error`
+    ([design](../../../docs/design/workflow-engine.md#different-provider-families)).
   - **Exact-subject review (REQ-WF-5).**
     - When a step that proves `review` depends on an agent result whose
       workspace is a git working tree, the engine captures that tree's
@@ -59,7 +64,8 @@ second execution path (INV-1).
     - known dependencies, and no cycles;
     - a prompt may use only `{{input}}` and its own dependencies
       (`{{node:<id>}}`);
-    - exactly one final node, whose result is the run's.
+    - exactly one final node, whose result is the run's;
+    - `differentFrom` names only other, non-team nodes.
   - At `start`, every node's acceptance contract must be registered with
     `ctx.workers`; otherwise the run is refused before anything is sent.
 - **Start (admission).**

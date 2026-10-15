@@ -161,7 +161,10 @@ together with, the update that removes the preset:
    ([login](../../packages/plugins/login/README.md)).
 
 A panel holds its members to distinct accounts, so with one ChatGPT account left
-it needs another one, such as a Gemini account.
+it needs another one, such as a Gemini account. `research` needs Workers of two
+provider families, such as accounts of two providers, one of them proving Web
+search: its two literature reviews run on different families
+([templates](../reference/workflow-templates.md#research)).
 
 ## API and local models
 
@@ -190,7 +193,10 @@ on this machine ([models](../design/models.md)). Two rows of the profile's
 2. **A catalog entry** on the `models` row: the Worker `model:<id>`, the route
    and the model on it, and what routing sees. `quotaClass` is `metered` (paid
    per token, the default) or `local`; `locality` is `remote` (the default) or
-   `local`; `maxTokens` bounds every answer (default 4096):
+   `local`; `maxTokens` bounds every answer (default 4096); `family` is the
+   Worker's provider family, by default its route: give two routes to one
+   vendor the same `family`, so steps that must differ in provider never take
+   both ([provider diversity](../design/routing.md#provider-diversity)):
 
    ```yaml
    - id: models

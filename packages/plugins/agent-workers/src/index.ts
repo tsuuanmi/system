@@ -172,7 +172,8 @@ export class AgentWorkers extends Service {
           ]
         : []
       return {
-        schema: 'capability-descriptor@1.0', worker: id, provider: worker.runtime, tier: worker.tier, quotaClass: worker.quotaClass ?? 'agent-plan',
+        // The runtime is who serves the work, so it is the Worker's family (ADR-0027).
+        schema: 'capability-descriptor@1.1', worker: id, provider: worker.runtime, family: worker.runtime, tier: worker.tier, quotaClass: worker.quotaClass ?? 'agent-plan',
         locality: 'local', capabilities: proven.map((capability) => ({ capability, evidence: { kind: 'probe', at: observedAt } })),
         state: ready ? 'ready' : 'unavailable', observedAt,
       }

@@ -8,8 +8,10 @@ Routing **seam definition**
 |---|---|---|
 | `ctx.workers` | abstract `Workers` with `register(source)`, `list()`, `route(requirement, options)`, `contract(id, check)`, `contracts()`, `accept(result, contract, { resultSchema })` (the result's JSON checked against the schema first, REQ-ART-5); `source(name)`, `affinity(sessionId)`, `handle(sessionId)`, `reset(sessionId)`; `WorkerSource` (describe, start, get, wait, affinity, handle, reset, cancel), `WorkerStart`, `WorkerExecution`, `CapabilityDescriptor`, `WorkRequirement`, `AdmittedWorker`, `AdmissionFailure`, `AcceptanceContract` | `@tsuuanmi/system-workers` |
 
-- The types mirror `capability-descriptor@1.0` and `work-requirement@1.0`. The
-  schemas in `schemas/` are canonical.
+- The types mirror `capability-descriptor@1.1` (its optional `family`, an opaque
+  provider family) and `work-requirement@1.0`. The schemas in `schemas/` are
+  canonical. `RouteOptions` takes `restrict` and `exclude` (provider families no
+  Worker may be of, [provider diversity](../../docs/design/routing.md#provider-diversity)).
 - Worker sources (website Workers from `turns`, agent Workers from
   `agent-workers`, model Workers from `models`) and callers depend on this
   package only. It depends on nothing but Cordis.
@@ -21,4 +23,6 @@ Routing **seam definition**
     each required capability no Worker proves;
   - the order: lowest tier, then quota class, then id;
   - restriction, determinism, and the decision artifacts;
+  - provider-family exclusion: only another family is admitted, a Worker with no
+    family is rejected, and the reasons name no family;
   - acceptance contracts and the `acceptance` decision.

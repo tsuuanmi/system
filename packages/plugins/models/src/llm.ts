@@ -47,7 +47,7 @@ export class LlmModels extends Models {
   }
 
   async list(): Promise<ModelStatus[]> {
-    return Promise.all(this.catalog.map(async ({ route, model, ...entry }) => ({ ...entry, ...(await this.probe(route, model)) })))
+    return Promise.all(this.catalog.map(async ({ route, model, ...entry }) => ({ ...entry, family: entry.family || route, ...(await this.probe(route, model)) })))
   }
 
   /** The route is mounted and resolves the model, without a model call. */

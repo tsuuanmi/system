@@ -20,7 +20,9 @@ REQ-WRK-10). One row, `models`, mounts two parts from one configuration:
   reaches models only through `ctx.models`.
   - **Workers:** `model:<id>` per entry. It proves `reason` (evidence `probe`)
     while available; otherwise it is `unavailable`. Tier, quota class, and
-    locality come from the entry. It never proves `local-data` or
+    locality come from the entry, and so does its provider family
+    (`family`, by default the route; give two routes to one vendor the same
+    family). It never proves `local-data` or
     `persistent-conversation`.
   - **Calls** (`start`, `get`, `wait`, `cancel`): durable at once in
     `model_calls`, idempotent by key; a session is refused.

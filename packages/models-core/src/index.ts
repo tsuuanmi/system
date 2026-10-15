@@ -25,6 +25,8 @@ export interface ModelEntry {
   locality: 'remote' | 'local'
   /** The output bound of every call (INV-9). */
   maxTokens: number
+  /** Who serves the model, as an opaque provider family (ADR-0027); the Worker's family. */
+  family?: string
 }
 
 /** An entry with what the provider can prove about it now. */
