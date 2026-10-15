@@ -14,7 +14,7 @@ import { block, grow, grownText } from './growth.ts'
 import { admissionKind, escalate, failAttempt, routedDecisions } from './recovery.ts'
 import { remediate, reviewSubject, subjectGate } from './review.ts'
 import { recoverWakes, settleWake } from './sessions.ts'
-import { DEFAULT_TEMPLATES, type NodeTemplate, render, type ResolvedNode, resolve, schemaBlock, variantProblem } from './spec.ts'
+import { DEFAULT_TEMPLATES, type NodeTemplate, render, type ResolvedNode, resolve, schemaBlock, variantProblem, variantsOf } from './spec.ts'
 import { carry, leadDecision, post, restriction, runtimeOf, teamGroup, teamTexts } from './teams.ts'
 import { type Config, errorOf, LEASE_TTL_MS, newId, type NodeHelpers, type NodeRecord, type NodeRow, now, type RunRow, type RunView, type StartInput, type WorkflowError, WorkflowFailure } from './types.ts'
 import { view } from './views.ts'
@@ -32,6 +32,8 @@ export class Engine {
   /** While draining (REQ-HOST-1), no new run is admitted; runs already admitted finish. */
   draining = false
   private readonly routing = new Map<string, Promise<void>>()
+  /** Nodes whose `execute` is in flight (`runId\0nodeId`): a node that must differ waits only on these. */
+  private readonly executing = new Set<string>()
 
   constructor(readonly ctx: Context, readonly config: Config) {
     this.templates = { ...DEFAULT_TEMPLATES, ...config.templates }
@@ -59,6 +61,8 @@ export class Engine {
   /** Preflight, and every result schema a template names is one the registry holds. */
   check(name: string, nodes: NodeTemplate[]): void {
     resolve(name, nodes, {})
+    // Each variant is a template of its own: check it when the template is added, not at a run's start.
+    for (const variant of variantsOf(nodes)) resolve(name, nodes, { variant })
     for (const node of nodes) {
       if (node.resultSchema && !this.schemas.knows(node.resultSchema)) throw new TypeError(`template ${name}, node ${node.nodeId}: unknown result schema ${node.resultSchema}`)
     }
@@ -225,24 +229,46 @@ export class Engine {
           // A node that must differ from others is promoted with or after them, never before: it then
           // waits for their Workers while they run beside it (ADR-0027).
           const promoted = new Set(nodes.filter((n) => n.state !== 'WAITING').map((n) => n.node_id))
-          for (const node of nodes) {
-            const differs = (JSON.parse(node.spec) as ResolvedNode).differentFrom ?? []
-            if (node.state === 'WAITING' && node.dependsOnCompleted(nodes) && differs.every((id) => promoted.has(id))) {
-              this.promote(run, node, nodes, current)
-              promoted.add(node.node_id)
+          // Until nothing more can be promoted, so the order nodes are listed in never serializes branches.
+          for (let more = true; more;) {
+            more = false
+            for (const node of nodes) {
+              const differs = (JSON.parse(node.spec) as ResolvedNode).differentFrom ?? []
+              if (node.state === 'WAITING' && !promoted.has(node.node_id) && node.dependsOnCompleted(nodes) && differs.every((id) => promoted.has(id))) {
+                this.promote(run, node, nodes, current)
+                promoted.add(node.node_id)
+                more = true
+              }
             }
           }
           const current_ = this.nodeRows(runId).filter((n) => n.state !== 'RETIRED')
           if (current_.some((n) => n.state === 'FAILED')) continue
           // A carried node completed without running (a converged team): its dependents may be ready now.
           if (current_.filter((n) => n.state === 'COMPLETED').length > nodes.filter((n) => n.state === 'COMPLETED').length) continue
-          const active = current_.filter((n) => n.state === 'READY' || n.state === 'RUNNING')
+          const runnable = current_.filter((n) => n.state === 'READY' || n.state === 'RUNNING')
+          // A node that must differ from a peer with no Worker yet runs only beside that peer, so
+          // it can wait for the peer's routing; otherwise it is parked until the peer is routed.
+          const ids = new Set(runnable.map((n) => n.node_id))
+          const active = runnable.filter((n) => !((JSON.parse(n.spec) as ResolvedNode).differentFrom ?? []).some((peer) => {
+            const row = current_.find((r) => r.node_id === peer)
+            return !row?.worker && row?.state !== 'FAILED' && !ids.has(peer)
+          }))
           if (!active.length) {
             // Waiting for the operator: park until `approve` schedules the run again.
             if (current_.some((n) => n.state === 'BLOCKED')) return
             return this.finish(run, 'failed', { error: JSON.stringify({ kind: 'internal', disposition: 'CODE_FIX', message: 'no node can run' }) }, current)
           }
-          await Promise.all(active.map((node) => this.execute(run, node, current, signal)))
+          const outcomes = await Promise.all(active.map(async (node) => {
+            const key = `${run.run_id}\0${node.node_id}`
+            this.executing.add(key)
+            try {
+              return await this.execute(run, node, current, signal)
+            } finally {
+              this.executing.delete(key)
+            }
+          }))
+          // Every node deferred to a peer that is not running (it backs off): look again shortly.
+          if (outcomes.every((o) => o === 'deferred') && !(await sleep(250, signal))) return
         }
       } catch (error) {
         if (this.stopped.signal.aborted || operator.signal.aborted) return
@@ -291,16 +317,19 @@ export class Engine {
    * one of those nodes failed, the run fails on it: this node sends nothing and stays as it is. When
    * a served Worker's family cannot be read, no Worker can be shown to differ: that fails closed.
    */
-  private async diversity(run: RunRow, spec: ResolvedNode, signal: AbortSignal): Promise<{ families: string[]; reason: string } | { problem: string } | undefined | 'stopped'> {
+  private async diversity(run: RunRow, spec: ResolvedNode, signal: AbortSignal): Promise<{ families: string[]; reason: string } | { problem: string } | undefined | 'stopped' | 'deferred'> {
     const others = spec.differentFrom ?? []
-    if (!others.length) return undefined
+    // The relation holds both ways: a node routing again (a retry, an escalation, a continue) also
+    // differs from the routed nodes that name it, though it never waits for them.
+    const named = this.nodeRows(run.run_id).filter((n) => n.worker && ((JSON.parse(n.spec) as ResolvedNode).differentFrom ?? []).includes(spec.nodeId))
+    if (!others.length && !named.length) return undefined
     for (;;) {
       const rows = this.nodeRows(run.run_id).filter((n) => others.includes(n.node_id))
       if (rows.some((n) => n.state === 'FAILED')) return 'stopped'
       if (rows.every((n) => n.worker)) {
         const listed = new Map((await this.ctx.workers.list()).map((w) => [w.worker, w.family]))
         const families = new Set<string>()
-        for (const row of rows) {
+        for (const row of [...rows, ...named]) {
           if (!row.worker) continue
           const family = listed.get(row.worker)
           if (family === undefined) {
@@ -308,8 +337,12 @@ export class Engine {
           }
           families.add(family)
         }
-        return { families: [...families], reason: `differs from node${others.length > 1 ? 's' : ''} ${others.join(', ')}` }
+        const all = [...others, ...named.map((n) => n.node_id)]
+        return { families: [...families], reason: `differs from node${all.length > 1 ? 's' : ''} ${all.join(', ')}` }
       }
+      // A peer that is not running now (backing off before a retry) will not be routed while this
+      // waits: give the turn back to the run loop, which runs both again.
+      if (rows.some((n) => !n.worker && !this.executing.has(`${run.run_id}\0${n.node_id}`))) return 'deferred'
       if (!(await sleep(250, signal))) return 'stopped'
     }
   }
@@ -318,7 +351,7 @@ export class Engine {
    * Run one node to a terminal state, or until the engine stops: route it by its requirement
    * (`ctx.workers`), start it on the admitted Worker's own runtime, then wait and accept.
    */
-  private async execute(run: RunRow, initial: NodeRow, lease: () => Lease, signal: AbortSignal): Promise<void> {
+  private async execute(run: RunRow, initial: NodeRow, lease: () => Lease, signal: AbortSignal): Promise<void | 'deferred'> {
     let node = initial
     const spec = JSON.parse(node.spec) as ResolvedNode
     if (!node.execution_id) {
@@ -329,6 +362,7 @@ export class Engine {
       // A node that must differ from others routes once they have Workers (ADR-0027).
       const exclude = await this.diversity(run, spec, signal)
       if (exclude === 'stopped') return
+      if (exclude === 'deferred') return 'deferred'
       if (exclude && 'problem' in exclude) {
         return failAttempt(this, run, { ...node, attempt }, { kind: 'config_error', disposition: dispositionOf('config_error'), message: exclude.problem }, { sent: false, decisions: [] }, lease)
       }

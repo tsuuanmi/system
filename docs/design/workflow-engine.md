@@ -42,8 +42,19 @@ A template node may declare named variants:
 - A variant the template does not define is refused with `invalid_input`:
   `template <t> has no variant <v> (it has: …)`. Nothing is sent.
 - A variant changes only those six fields: it never adds a team, a planner's
-  growth policy, or `differentFrom`. The one variant today is `research`'s `deep`
-  ([templates](../reference/workflow-templates.md#research)).
+  growth policy, or `differentFrom`. Each value is checked: a tier, a conversation,
+  non-empty capabilities, non-empty text. Every variant is resolved when the template
+  is added, so a broken variant is refused then, not at a run's start. The one variant
+  today is `research`'s `deep` ([templates](../reference/workflow-templates.md#research)).
+
+### Conversations
+
+A node's `conversation` is `temporary` (one-shot), `persistent` or `caller` (the run's
+one session, or the caller's), or `own`: a new persistent conversation of that node
+alone. Nodes on the run's one session take turns. Preflight refuses two that could run
+at once (`give one of them conversation: own`), since they would interleave in one
+conversation and bind it to one Worker. Parallel steps that each need a persistent
+conversation, such as Deep research reviews, use `own`.
 
 ### Different provider families
 
@@ -53,11 +64,19 @@ provider family than the Workers that served those nodes
 
 - Preflight refuses a node that names itself, an unknown node, or a team node (a team has
   several Workers).
-- The node is promoted together with or after the nodes it names, never before. It then waits
-  until each of them has a Worker, so parallel branches still start together, one routing turn
-  apart. The engine reads those Workers' families from their current descriptors and routes
-  the node with them as `exclude`, the reason naming the nodes (`differs from node
-  literature:1`).
+- Preflight also refuses a `differentFrom` that would make a node wait for itself: a
+  mutual pair, or a named node that depends on this one.
+- The node is promoted together with or after the nodes it names, never before (promotion
+  repeats until nothing more is ready, so listing order never serializes branches). It runs
+  only beside those nodes and waits until each has a Worker, so parallel branches still
+  start together, one routing turn apart. A named node that is not running (it backs off
+  before a retry) never holds it: the node gives its turn back to the run loop, and both
+  run again.
+- The engine reads those Workers' families from their current descriptors and routes the
+  node with them as `exclude`, the reason naming the nodes (`differs from node
+  literature:1`). The relation holds both ways: a node routing again (a retry, an
+  escalation, a `continue`) also excludes the families of the routed nodes that name it.
+  A node that routes again forgets its old Worker, so no peer differs from a stale one.
 - If a named node failed, the node sends nothing and the run fails on that node. If a named
   node's Worker declares no family or is no longer listed, no Worker can be shown to differ:
   the node fails as `config_error`, with nothing sent (fail closed). With only Workers of the

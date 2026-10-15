@@ -52,6 +52,22 @@ describe('workflow specs', () => {
     expect(() => preflight([node('a', { variants: { Deep: {} } })])).toThrow(/variant name "Deep"/)
   })
 
+  it('gives an own-conversation node a persistent conversation of its own, and refuses two parallel nodes on the run\'s one conversation', () => {
+    const fork = (conversation: NodeTemplate['conversation']) => [node('a'), node('b', { dependsOn: ['a'], conversation }), node('c', { dependsOn: ['a'], conversation }), node('d', { dependsOn: ['b', 'c'] })]
+    const own = resolve('t', fork('own'), {})
+    expect(own.nodes.filter((n) => n.nodeId === 'b' || n.nodeId === 'c').map((n) => n.session)).toEqual([{ member: 'b:own' }, { member: 'c:own' }])
+    expect(() => resolve('t', fork('persistent'), {})).toThrow('nodes b and c could run at once on the run\'s one conversation; give one of them conversation: own')
+    // In sequence, nodes share the run's conversation as before.
+    expect(() => resolve('t', [node('a', { conversation: 'persistent' }), node('b', { dependsOn: ['a'], conversation: 'persistent' })], {})).not.toThrow()
+  })
+
+  it('refuses differentFrom that would make a node wait for itself, and variant values that are not valid', () => {
+    expect(() => preflight([node('a', { differentFrom: ['b'] }), node('b', { differentFrom: ['a'] }), node('c', { dependsOn: ['a', 'b'] })])).toThrow(/would wait for itself through differentFrom/)
+    expect(() => preflight([node('a', { differentFrom: ['b'] }), node('b', { dependsOn: ['a'] })])).toThrow(/would wait for itself through differentFrom/)
+    expect(() => preflight([node('a', { variants: { deep: { tier: 'huge' as never } } })])).toThrow('node a, variant deep: invalid tier')
+    expect(() => preflight([node('a', { variants: { deep: { conversation: 'bogus' as never, capabilities: [] } } })])).toThrow('node a, variant deep: invalid conversation, capabilities')
+  })
+
   it('checks that a node differs only from other single-Worker nodes of its template (ADR-0027)', () => {
     expect(() => preflight([node('a'), node('b', { differentFrom: ['a'] }), node('c', { dependsOn: ['a', 'b'] })])).not.toThrow()
     expect(() => preflight([node('a', { differentFrom: ['a'] })])).toThrow('node a differs from itself')
