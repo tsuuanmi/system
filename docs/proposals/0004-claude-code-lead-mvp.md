@@ -86,7 +86,7 @@ showed gaps between what it ships and what the loop needs:
   comparative justification, and the decision contents above. It also showed
   the problem this proposal fixes: both members were ChatGPT accounts.
   Provider diversity is not proof of independent models, only a better default.
-  Its own second `panel` run, `run_d05389582ae031f9` (round count, ballot
+  A second `panel` run, `run_d05389582ae031f9` (round count, ballot
   options, tie path, repository review), is still running.
 - Implementation impact map, 2026-10-16:
   - Old runs are safe: the template registry is read only when a run starts, and
@@ -245,9 +245,9 @@ existing distinct-account rule for teams stays.
 | Phase | Content | Proof |
 |---|---|---|
 | 0 | Stabilize: citation fix on `main`, the live install, the MCP client reconnected | done 2026-10-16 |
-| 1 | Removals and switch-offs: the five templates; the `deep` option of `research` (CLI and MCP); agent Worker and gateway rows disabled by default (their helpers refuse while off); the agent `review` moved into the agent Workers' template list; the `site` preset; the free account removed by the operator; Linux-only docs. Until Phase 3 there is no `review` in the default composition, which is accepted. | composition e2e row set; upgrade suite still explains old runs; crash suite |
+| 1 | Removals and switch-offs: the templates except `panel`, which serves the dogfood brainstorm until `brainstorm` replaces it in Phase 3; the `deep` option of `research` (CLI and MCP); agent Worker and gateway rows disabled by default (their helpers refuse while off); the agent `review` moved into the agent Workers' template list; the `site` preset; the free account removed by the operator; Linux-only docs. Until Phase 3 there is no `review` in the default composition, which is accepted. | composition e2e row set; upgrade suite still explains old runs; crash suite |
 | 2 | `research` on two providers in parallel, with the diversity predicate | a live run uses both providers |
-| 3 | ADR-0027 (diversity predicate); teams: `brainstorm` and `review` with debate and vote, tie to the caller | live brainstorm of a real design question for `system` |
+| 3 | ADR-0027 (diversity predicate); `panel` removed; teams: `brainstorm` and `review` with debate and vote, tie to the caller | live brainstorm of a real design question for `system` |
 | 4 | `review` of a public repository by URL | live review of this repository |
 | 5 | The conversation ledger; retention deletes website chats | fake-site tests per driver; one live deletion |
 | 6 | The whole loop from Claude Code on a real `system` change | the change ships with its research, brainstorm, and review runs linked |
