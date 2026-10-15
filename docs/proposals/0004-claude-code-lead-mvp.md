@@ -80,6 +80,14 @@ showed gaps between what it ships and what the loop needs:
     afterwards: run `run_d0dbb417e79b384f`, results to be added;
   - multi-agent debate and voting (rounds, heterogeneous teams, conformity,
     ties): run `run_9e5216c10548d44b`, results to be added.
+- Brainstorm through `system` (dogfooding), `panel` run `run_25b3d23277258af7`
+  on diversity, ballots, early stop, and failure modes. Its two members agreed on
+  the ballot fields, early stop on readiness, self-votes allowed with a
+  comparative justification, and the decision contents above. It also showed
+  the problem this proposal fixes: both members were ChatGPT accounts.
+  Provider diversity is not proof of independent models, only a better default.
+  Its own second `panel` run, `run_d05389582ae031f9` (round count, ballot
+  options, tie path, repository review), is still running.
 - Implementation impact map, 2026-10-16:
   - Old runs are safe: the template registry is read only when a run starts, and
     `explain` and `result` read the stored spec. The upgrade fixture already
@@ -139,12 +147,29 @@ the same for `brainstorm` and `review`:
 2. **Debate.** Each member sees the other members' answers without their
    provider names, and may revise. The number of rounds is bounded
    (default 1).
-3. **Vote.** Each member casts a structured ballot: one option from the set the
-   proposals produced (or `pass` / `changes` for a review), a rationale, and a
-   confidence.
-4. **Decide.** A strict majority decides. The decision is a decision artifact
-   that holds the ballots, the rationales, and the dissent
-   ([INV-13](../architecture/invariants.md)).
+   The debate stops early once every member, independently, reports no
+   unresolved material objection. An objection still open at the round limit
+   does not block the vote: it is recorded as dissent.
+3. **Vote.** Each member casts one sealed ballot. A ballot holds:
+   - its first choice among the anonymized proposals (or `pass` / `changes` for a
+     review);
+   - its ranking of all of them;
+   - the rationale and evidence;
+   - the strongest counterargument to its choice;
+   - its unresolved objections;
+   - a confidence.
+
+   Other members' ballots stay hidden until every ballot is in.
+4. **Decide.** A strict majority (more than half the ballots) decides,
+   deterministically. The decision is a decision artifact
+   ([INV-13](../architecture/invariants.md)) that holds:
+   - the members (by opaque identity), proposals, critiques, and revisions;
+   - the rounds and why the debate ended;
+   - every ballot, the tally, and the winner;
+   - the dissent, and any deciding vote with its rationale.
+
+   It is stored before the result returns. A team that fails, for example
+   without enough distinct providers, records a failure artifact instead.
 5. **Tie.** The run blocks with a `tie`, holding both positions in short. The
    caller casts the deciding vote with a new **client-scope** tool, `vote(runId,
    decision, option)`. The tool is bound to that exact tie decision, as
