@@ -39,4 +39,4 @@ are accepted risks of the design, not vulnerabilities in `system`.
 ## Verifying a release
 
 Each release lists SHA-256 checksums and carries a build provenance attestation
-for every package tarball. See [releasing](docs/engineering/releasing.md#verifying-a-release).
+for every package tarball and SBOM. See [releasing](docs/engineering/releasing.md#verifying-a-release).

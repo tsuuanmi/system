@@ -11,7 +11,8 @@ All `@tsuuanmi/*` packages share one version: Changesets keeps them in one
 version follows SemVer over the contracts `system` owns: the MCP tools, the
 gateway behavior, the CLI, the plugin configuration, and the schemas in
 [`schemas/`](../../schemas/). DSH's own APIs are not covered. A DSH pin bump ships
-only in a minor or major release.
+only in a minor or major release. A release that narrows the supported Node
+range says so in its changeset.
 
 A change that a user or operator can notice adds a changeset in the same pull
 request:
@@ -32,14 +33,26 @@ pnpm changeset          # pick the bump; the summary becomes the changelog line
 2. Run every gate, merge the pull request, then tag the merge commit on `main`
    with `v<version>` and push the tag.
 3. The [`release` workflow](../../.github/workflows/release.yml) then:
+   - checks first, in seconds, without an install
+     (`node scripts/release-artifacts.ts --verify`,
+     [`scripts/release-artifacts.ts`](../../scripts/release-artifacts.ts)). It
+     refuses:
+     - a tag whose commit is not on `main`;
+     - packages that disagree on the version;
+     - a prerelease version (no prerelease is cut yet);
+     - a tag that names another version;
+     - a version with no changelog entry;
+     - a DSH pin that is not one exact version, and a patch release whose DSH
+       pins (any declared, dev included) differ from the previous release
+       tag's;
    - runs every CI gate on the tagged commit (it calls the `ci` workflow);
-   - refuses a tag whose commit is not on `main`;
-   - builds the files with `pnpm release:artifacts --tag v<version>`
-     ([`scripts/release-artifacts.ts`](../../scripts/release-artifacts.ts)). This
-     refuses packages that disagree on the version, a tag that names another
-     version, and a version with no changelog entry;
-   - attests build provenance for every package tarball;
-   - creates the GitHub release with the notes and the assets below.
+   - builds the assets below with `pnpm release:artifacts`. It refuses a
+     tarball whose `@tsuuanmi/*` dependency is not another tarball at exactly
+     that version;
+   - attests build provenance for every tarball and SBOM, in one attestation;
+   - creates the GitHub release with the notes and the assets.
+   Re-running a release whose GitHub release was already created fails at that
+   step; delete that release first.
 4. Run the [release checklist](../validation/release-checklist.md). A skipped
    item blocks the release.
 
@@ -49,7 +62,7 @@ pnpm changeset          # pick the bump; the summary becomes the changelog line
 
 | Asset | What |
 |---|---|
-| `*.tgz` | one `pnpm pack` tarball per package, with `workspace:*` replaced by the exact version |
+| `*.tgz` | one `pnpm pack` tarball per package, with `workspace:*` replaced by the exact version; still `private`, so for installing from the file (`npm install ./<file>.tgz`) and for verification, not for a registry |
 | `*.cdx.json` | a CycloneDX SBOM of each package's production dependencies (`pnpm sbom`) |
 | `SHA256SUMS` | the SHA-256 of every other asset |
 
@@ -62,16 +75,21 @@ In a directory holding the release's assets:
 
 ```sh
 sha256sum -c SHA256SUMS
-gh attestation verify tsuuanmi-system-cli-<version>.tgz --repo tsuuanmi/system
+gh attestation verify tsuuanmi-system-cli-<version>.tgz --repo tsuuanmi/system   # and any SBOM
 ```
 
 ## Not yet decided
 
-These parts of ADR-0026 wait on the owner, and the ADR stays Proposed until they
-are settled:
+These wait on the owner. The first two are parts of ADR-0026, which stays
+Proposed until they are settled:
 
 - **npm publication.** The packages stay `private`, and no workflow publishes to
   npm. Publishing would add npm trusted publishing (OIDC, no stored token), a
   `publishConfig.provenance` on each package, and `npm audit signatures` in the
   release checklist.
 - **A license.** There is no `LICENSE` file yet, so no rights are granted.
+- **Prereleases.** A prerelease version (for example `1.0.0-rc.0` from
+  Changesets' pre mode) is refused, so it can never become the latest release.
+- **Repository settings.** A tag ruleset so that only maintainers create `v*`
+  tags, and required reviewers on the `release` environment, which the release
+  job already names.

@@ -41,8 +41,9 @@ Option 3.
 - **Publication.** A tag-triggered workflow runs every CI gate, then publishes
   through npm trusted publishing (OIDC, no stored token) with provenance. It
   generates a CycloneDX SBOM, attests the build, and attaches the SBOM and
-  checksums to the GitHub release. It also emits the seeded store fixture that the
-  upgrade suite uses.
+  checksums to the GitHub release. The seeded store fixture that the upgrade suite
+  uses is committed when the release is versioned, from that release's code, so the
+  tag carries it and it is never edited afterwards.
 - **Supported runtime.** `engines`, the CI matrix, and the start-up check name
   the same Node range. That range includes only releases with the `node:sqlite`
   fixes. A release that narrows it says so in the changelog.
