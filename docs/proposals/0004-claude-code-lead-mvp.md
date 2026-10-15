@@ -77,7 +77,25 @@ showed gaps between what it ships and what the loop needs:
   `reconciliation_failed`. A drained `system shutdown` would not have.
 - Research through `system` for this proposal (dogfooding):
   - deleting a single chat on each website, and what each provider keeps
-    afterwards: run `run_d0dbb417e79b384f`, results to be added;
+    afterwards: `research` run `run_d0dbb417e79b384f`. Both sites delete one
+    saved chat from the history sidebar's menu: ChatGPT with a confirmation
+    ([OpenAI](https://help.openai.com/en/articles/8809935-how-to-delete-and-archive-chats-in-chatgpt)),
+    Gemini with no confirmation documented
+    ([Google](https://support.google.com/gemini/answer/13666746?hl=en)).
+    - Temporary chats leave the history on their own. ChatGPT keeps them up to
+      30 days
+      ([OpenAI](https://help.openai.com/en/articles/8914046-temporary-chat-faq));
+      Gemini keeps them 72 hours
+      ([Google](https://support.google.com/gemini/answer/13275745?hl=en)).
+    - ChatGPT erases a deleted chat within 30 days, with exceptions
+      ([OpenAI](https://help.openai.com/en/articles/8983778-chat-and-file-retention-in-chatgpt)).
+      Gemini follows the account's activity settings.
+    - Both sites also offer bulk deletion, which reaches every chat of the
+      account.
+    - How a Deep Research chat, a project chat, or a Gem chat is deleted is not
+      established.
+    - This run's answer also confirmed the citation fix live: real tables and
+      source links.
   - multi-agent debate and voting (rounds, heterogeneous teams, conformity,
     ties): run `run_9e5216c10548d44b`, results to be added.
 - Brainstorm through `system` (dogfooding), `panel` run `run_25b3d23277258af7`
@@ -228,9 +246,17 @@ existing distinct-account rule for teams stays.
   never touched.
 - Each deletion is recorded. A failure is retried a bounded number of times and
   then reported in health.
-- A temporary chat, and what a provider keeps after deletion, follow the
-  research results above. The runbook states that deletion on the site does not
-  bind the provider's own retention.
+- A temporary chat has no binding and is never deleted by `system`: the site
+  removes it from history itself, and the provider keeps it on its own clock
+  (up to 30 days or 72 hours, above).
+- The operation deletes exactly one recorded conversation from the history
+  menu, and handles a confirmation dialog when the site shows one. A
+  site's bulk deletion is never used: it would reach the operator's own chats.
+- Deep research conversations are deleted only after a live check shows the
+  same operation works for them. Until then they are recorded and reported as
+  not deleted.
+- The runbook states that deletion on the site does not bind the provider's own
+  retention.
 
 ### The live install
 
