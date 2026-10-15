@@ -21,9 +21,8 @@ export function escalate(e: Engine, run: RunRow, node: NodeRow, spec: ResolvedNo
   const served = node.served_tier ?? spec.tier
   const next = TIERS[TIERS.indexOf(served) + 1]
   const escalate = node.escalations < max && next !== undefined
-  // A decision reason is at most 300 characters (decision@1.0); the acceptance decision keeps the full reasons.
   const why = escalate
-    ? [`escalation ${node.escalations + 1} of ${max} to ${next}: ${spec.acceptance} rejected the ${served} result (${reasons.join('; ')})`.slice(0, 300)]
+    ? [`escalation ${node.escalations + 1} of ${max} to ${next}: ${spec.acceptance} rejected the ${served} result (${reasons.join('; ')})`]
     : [next === undefined ? `no tier above ${served}` : `escalation bound reached (${max})`]
   const decision = e.ctx.artifacts.recordDecision({
     decisionType: 'escalation',

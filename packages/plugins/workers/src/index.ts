@@ -134,7 +134,7 @@ export class WorkerRouter extends Workers {
       const rejections: Rejection[] = workers.map((w) => ({ worker: w.worker, state: w.state, failed: failures.get(w.worker)! }))
       // A capability no Worker proves now is the plainest reason, for example website-only work in a composition without website Workers.
       const unproven = requirement.capabilities.filter((c) => !workers.some((w) => w.capabilities.some((p) => p.capability === c)))
-      const why = (unproven.length ? `no Worker proves ${unproven.join(', ')}` : workers.length ? 'no Worker passes admission' : 'no Worker is registered').slice(0, 300)
+      const why = unproven.length ? `no Worker proves ${unproven.join(', ')}` : workers.length ? 'no Worker passes admission' : 'no Worker is registered'
       const decision = this.ctx.artifacts.recordDecision({
         decisionType: 'admission',
         question: `Which Worker may take work needing ${requirement.capabilities.join(', ')} at tier ${requirement.tier.min} or above?`,
@@ -225,7 +225,7 @@ export class WorkerRouter extends Workers {
       this.schemas.assert(tag, { ...value, schema: tag })
       return undefined
     } catch (error) {
-      // A decision reason is at most 300 characters (decision@1.0).
+      // A validation report can be any length; the verdict's reason stays short.
       return { accepted: false, reasons: [`the result is not a valid ${tag}: ${(error as Error).message}`.slice(0, 300)] }
     }
   }
