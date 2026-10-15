@@ -7,6 +7,12 @@
 > text tool protocol of
 > [ADR-0022](../decisions/adr/0022-text-protocol-tool-calls-for-website-models.md))
 > and `/admin/*` routes.
+>
+> The default composition (PROP-0004) mounts neither the agent Worker rows nor the model
+> gateways, so the threats that need them (an agent process reading host state, a gateway
+> client, the model token in use) arise only once an operator
+> [turns a row on](../operations/runbooks.md#turn-an-off-row-back-on). Their controls are
+> unchanged.
 
 ## Assets
 

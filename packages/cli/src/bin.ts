@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { type EventLine, formatEvents, formatHealth, healthExit, hostHealth, parseEvents, assertRuntime, backupHost, browserDeps, callTool, claudeGatewayCommand, codexGatewayCommand, drainHost, formatTools, listTools, restoreHost, shutdownHost, ensureBrowser, formatExplanation, formatUsage, init, mcpConfig, mcpHeaders, mcpToken, parseAsk, readAllStdin, serveStdio, start, type ToolOutcome, uiUrl, composedRows, PRESETS, type Preset } from './index.ts'
+import { type EventLine, formatEvents, formatHealth, healthExit, hostHealth, parseEvents, assertRuntime, backupHost, browserDeps, callTool, claudeGatewayCommand, codexGatewayCommand, drainHost, formatTools, listTools, restoreHost, shutdownHost, ensureBrowser, formatExplanation, formatUsage, init, mcpConfig, mcpHeaders, mcpToken, parseAsk, readAllStdin, serveStdio, start, type ToolOutcome, uiUrl, composedRows, PRESETS, type Preset, rowOffProblem } from './index.ts'
 
 const USAGE = `Usage: system <command>
 
@@ -11,11 +11,11 @@ const USAGE = `Usage: system <command>
       [--classification public|operator-shared|local-private] (<prompt...> | -)
                             ask the Worker the router admits (a website account, an API or
                             local model, ...); - reads the prompt from stdin (profile must be running)
-  research [--classification <c>] (<question...> | -)
+  research [--deep] [--classification <c>] (<question...> | -)
                             the research procedure: hypotheses, a cited review, evidence,
-                            critique, conclusions (run deep-research for Deep research alone)
-  run <template> [--session <id>] [--persist] [--tier <t>] [--classification <c>] (<input...> | -)
-                            start any workflow template (e.g. review, on a local agent Worker)
+                            critique, conclusions (--deep: the review uses Deep research)
+  run <template> [--variant <v>] [--session <id>] [--persist] [--tier <t>] [--classification <c>] (<input...> | -)
+                            start any workflow template (ask, panel, research, ...)
   approve <runId> [--plan <id>] [--reject] [note...]
                             approve (or reject) the plan a run is waiting on, bound to that exact plan
                             (name it with --plan when several wait)
@@ -50,13 +50,23 @@ const USAGE = `Usage: system <command>
   shutdown [--deadline <s>] drain, then stop the running profile (unfinished runs resume on start)
   mcp-config <claude|codex> print client configuration for the running MCP server
   claude-env                print a command that runs Claude Code with website Workers as its model
+                            (needs the gateway-anthropic row, off by default)
   codex-env                 print a command that runs Codex with website Workers as its model
+                            (needs the gateway-responses row, off by default)
   tools [--markdown]        list the MCP tools the running profile serves (--markdown: the reference page)
   ui                        print the web UI link (runs, steps, decisions; approve, stop, continue)
-  mcp-token --scope model   print the model gateways' token (for a model client's environment variable)
+  mcp-token --scope model   print the model gateways' token (for a model client's environment variable;
+                            needs a gateway row)
   mcp-headers               print the Authorization header as JSON (Claude Code headersHelper)
   mcp-stdio                 serve the running profile's MCP tools on stdio (Codex and other clients)
 `
+
+/** Refuse a helper whose rows are all off in this composition (PROP-0004), saying how to turn one on. */
+function requireRow(...rows: string[]): void {
+  const composed = composedRows()
+  const problems = rows.map((row) => rowOffProblem(row, composed))
+  if (problems.every((p) => p !== undefined)) throw new Error(problems[0])
+}
 
 interface RunOutcome {
   runId: string
@@ -116,19 +126,19 @@ async function main(argv: string[]): Promise<number> {
     }
     case 'ask': {
       const request = await parseAsk(rest, readAllStdin)
-      if (!request) break
+      if (!request || request.deep || request.variant) break
       return awaitRun(await callTool('ask', { ...request }))
     }
     case 'research': {
       const request = await parseAsk(rest, readAllStdin)
-      if (!request || request.persist || request.tier || request.sessionId) break
+      if (!request || request.persist || request.tier || request.sessionId || request.variant) break
       const { prompt, ...options } = request
       return awaitRun(await callTool('research', { question: prompt, ...options }))
     }
     case 'run': {
       const [template, ...args] = rest
       const request = template ? await parseAsk(args, readAllStdin) : undefined
-      if (!template || !request) break
+      if (!template || !request || request.deep) break
       const { prompt, ...options } = request
       return awaitRun(await callTool('run', { template, input: prompt, ...options }))
     }
@@ -298,6 +308,7 @@ async function main(argv: string[]): Promise<number> {
       return 0
     case 'claude-env':
       // Claude Code with website Workers as its model (the Messages gateway).
+      requireRow('gateway-anthropic')
       console.log(claudeGatewayCommand())
       return 0
     case 'drain':
@@ -358,6 +369,7 @@ async function main(argv: string[]): Promise<number> {
     }
     case 'codex-env':
       // Codex with website Workers as its model (the Responses gateway).
+      requireRow('gateway-responses')
       console.log(codexGatewayCommand())
       return 0
     case 'ui':
@@ -368,6 +380,7 @@ async function main(argv: string[]): Promise<number> {
       // Only the model scope is printed, and only when named (ADR-0023): the CLI uses the
       // operator token itself, and client helpers read the client token on each connection.
       if (rest[0] !== '--scope' || rest[1] !== 'model') break
+      requireRow('gateway-anthropic', 'gateway-responses')
       console.log(mcpToken('model'))
       return 0
     }

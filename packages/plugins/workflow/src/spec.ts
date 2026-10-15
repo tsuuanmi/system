@@ -39,7 +39,15 @@ export interface NodeTemplate {
    * schema is given to the Worker in its prompt, and acceptance checks it before the contract.
    */
   resultSchema?: string
+  /**
+   * Named variants of this node (`research`'s `deep`): fields that replace the node's own when the
+   * caller starts the run with that variant. The chosen fields are part of the run's spec hash.
+   */
+  variants?: Record<string, NodeVariant>
 }
+
+/** What a variant may change of a node: what it needs, where it runs, and how it is judged. */
+export type NodeVariant = Partial<Pick<NodeTemplate, 'objective' | 'prompt' | 'capabilities' | 'tier' | 'conversation' | 'acceptance'>>
 
 export interface TeamPolicy {
   /** 2 to 5 members. */
@@ -95,9 +103,34 @@ export interface CallerOptions {
   tier?: Tier | undefined
   sessionId?: string | undefined
   persist?: boolean | undefined
+  /** A variant some node of the template defines (NodeTemplate.variants). */
+  variant?: string | undefined
 }
 
-export interface ResolvedNode extends Omit<NodeTemplate, 'callerTier' | 'conversation' | 'team'> {
+const VARIANT_FIELDS = new Set(['objective', 'prompt', 'capabilities', 'tier', 'conversation', 'acceptance'])
+
+/** Variants stay narrow: plain Worker nodes only, and only the fields a NodeVariant names. */
+function checkVariants(node: NodeTemplate): void {
+  if (node.team || node.grows) throw new TypeError(`node ${node.nodeId}: a team or a planner has no variants`)
+  for (const [name, variant] of Object.entries(node.variants!)) {
+    if (!/^[a-z][a-z0-9-]{0,39}$/.test(name)) throw new TypeError(`node ${node.nodeId}: variant name ${JSON.stringify(name)} is not lowercase letters, digits, and hyphens`)
+    const extra = Object.keys(variant ?? {}).filter((key) => !VARIANT_FIELDS.has(key))
+    if (extra.length) throw new TypeError(`node ${node.nodeId}, variant ${name}: ${extra.join(', ')} cannot vary`)
+  }
+}
+
+/** The variants a template defines, sorted. */
+export function variantsOf(nodes: readonly NodeTemplate[]): string[] {
+  return [...new Set(nodes.flatMap((n) => Object.keys(n.variants ?? {})))].sort()
+}
+
+/** Why `variant` cannot be used with this template, or `undefined` when it can (or none is asked). */
+export function variantProblem(template: string, nodes: readonly NodeTemplate[], variant: string | undefined): string | undefined {
+  if (variant === undefined || variantsOf(nodes).includes(variant)) return undefined
+  return `template ${template} has no variant ${variant} (it has: ${variantsOf(nodes).join(', ') || 'none'})`
+}
+
+export interface ResolvedNode extends Omit<NodeTemplate, 'callerTier' | 'conversation' | 'team' | 'variants'> {
   dependsOn: string[]
   /** `caller` when the caller's tier replaced the template's; `decision` for a step a plan added. */
   tierSource: 'caller' | 'profile' | 'decision'
@@ -135,70 +168,18 @@ export interface ResolvedSpec {
   specHash: ContentId
 }
 
-const PLAN_PROMPT = [
-  'Plan how to answer the question below in at most 4 independent or chained research steps for another assistant.',
-  'Reply with only a JSON object in a ```json block, shaped like:',
-  '{"confidence": "high", "nodes": [{"id": "step-1", "objective": "...", "prompt": "the full question for this step", "capabilities": ["reason"], "tier": "economy", "dependsOn": []}]}',
-  'Every step uses "capabilities": ["reason"] exactly; no other capability is available.',
-  'Use tier "economy" for lookups and "standard" for analysis. Each prompt must stand on its own.',
-  '',
-  'Question: {{input}}',
-].join('\n')
-
-const SYNTHESIS_PROMPT = [
-  'Answer the question below from the findings of the research steps. Keep their sources. Be concise.',
-  '',
-  'Question: {{input}}',
-  '',
-  '<findings>',
-  '{{grown}}',
-  '</findings>',
-].join('\n')
-
-const COMPACT_PROMPT = [
-  'Compact the research report below into a synthesis for another AI agent that will act on it.',
-  'Keep every key finding, number, recommendation, and caveat. Keep each claim\'s source link inline as a full URL.',
-  'Use short sections and bullets. Add nothing that the report does not say.',
-  '',
-  '<report>',
-  '{{node:research:1}}',
-  '</report>',
-].join('\n')
-
+/**
+ * Built-in templates (PROP-0004): `ask`, and `panel` until a team `brainstorm` replaces it.
+ * Profiles add domain procedures (`research`; `agent-review`, for agent Workers).
+ */
 export const DEFAULT_TEMPLATES: Record<string, NodeTemplate[]> = {
   ask: [
     { nodeId: 'ask:1', objective: 'Answer the caller\'s prompt', prompt: '{{input}}', capabilities: ['reason'], tier: 'standard', callerTier: true, conversation: 'caller', acceptance: 'acceptance.answer' },
-  ],
-  investigate: [
-    {
-      nodeId: 'plan:1', objective: 'Plan research steps for the caller\'s question', prompt: PLAN_PROMPT, capabilities: ['reason'],
-      tier: 'standard', conversation: 'temporary', acceptance: 'acceptance.answer', grows: { maxNodes: 4, capabilities: ['reason'] },
-    },
-    {
-      nodeId: 'synthesis:1', objective: 'Answer from the steps\' findings', dependsOn: ['plan:1'], prompt: SYNTHESIS_PROMPT, capabilities: ['reason'],
-      tier: 'standard', conversation: 'temporary', acceptance: 'acceptance.answer',
-    },
   ],
   panel: [
     {
       nodeId: 'panel', objective: 'Answer the caller\'s question as a panel', prompt: '{{input}}', capabilities: ['reason'], tier: 'standard',
       conversation: 'temporary', acceptance: 'acceptance.team-synthesis', team: { members: 2, rounds: 2, distinctAccounts: true },
-    },
-  ],
-  review: [
-    {
-      nodeId: 'review:1', objective: 'Review the caller\'s subject on this machine and report findings', prompt: '{{input}}',
-      capabilities: ['review', 'local-data'], tier: 'standard', callerTier: true, conversation: 'caller', acceptance: 'acceptance.answer',
-    },
-  ],
-  'deep-research': [
-    {
-      nodeId: 'research:1', objective: 'Write a cited Deep research report on the caller\'s question', prompt: '{{input}}',
-      capabilities: ['reason', 'deep-research'], tier: 'frontier', conversation: 'persistent', acceptance: 'acceptance.answer',
-    },
-    {
-      nodeId: 'compact:1', objective: 'Compact the report into a cited synthesis', dependsOn: ['research:1'], prompt: COMPACT_PROMPT,
-      capabilities: ['reason'], tier: 'economy', conversation: 'temporary', acceptance: 'acceptance.answer',
     },
   ],
 }
@@ -218,6 +199,7 @@ export function preflight(nodes: readonly NodeTemplate[]): string[] {
   for (const node of nodes) {
     if (node.grows !== undefined && node.grows !== null) checkGrowth(node.nodeId, node.grows)
     if (node.team !== undefined && node.team !== null) checkTeam(node.nodeId, node.team)
+    if (node.variants !== undefined && node.variants !== null) checkVariants(node)
     if (node.resultSchema !== undefined && !(typeof node.resultSchema === 'string' && /^[a-z][a-z0-9-]*@\d+\.\d+$/.test(node.resultSchema))) {
       throw new TypeError(`node ${node.nodeId}: resultSchema must be a schema tag such as plan@1.0`)
     }
@@ -335,7 +317,11 @@ function checkGrowth(nodeId: string, grows: unknown): void {
 /** Apply the caller's options to a validated template, in dependency order, and hash the result. */
 export function resolve(template: string, nodes: readonly NodeTemplate[], caller: CallerOptions): ResolvedSpec {
   preflight(nodes)
-  const expanded = unrollTeams(nodes)
+  const { variant } = caller
+  const unknown = variantProblem(template, nodes, variant)
+  if (unknown) throw new TypeError(unknown)
+  const chosen = nodes.map(({ variants, ...node }) => ({ ...node, ...(variant ? variants?.[variant] : undefined) }))
+  const expanded = unrollTeams(chosen)
   const order = preflight(expanded)
   const byId = new Map(expanded.map((n) => [n.nodeId, n as NodeTemplate & { teamRole?: TeamRole }]))
   const resolved = order.map((id): ResolvedNode => {

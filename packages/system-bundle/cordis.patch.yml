@@ -44,17 +44,23 @@
       name: '@tsuuanmi/system-workers'               # Worker registry, admission, deterministic router
     - id: turns
       name: '@tsuuanmi/system-turns'                 # the website Worker runtime (durable turns)
-    # --- agent runtimes (M3): Claude Code and others as Workers; configure workers in the operator patch ---
+    # --- agent runtimes (M3): Claude Code and others as Workers; off in the MVP composition (PROP-0004).
+    # An operator patch turns a row on with `- id: <row>` and `disabled: false`, then configures workers. ---
     - id: agent-runtimes
       name: '@tsuuanmi/system-agent-runtimes'
+      disabled: true
     - id: runtime-claude-agent-sdk
       name: '@tsuuanmi/system-runtime-claude-agent-sdk'   # runs the installed `claude`
+      disabled: true
     - id: runtime-codex-sdk
       name: '@tsuuanmi/system-runtime-codex-sdk'      # Codex as a Worker (the operator's installed codex)
+      disabled: true
     - id: runtime-acp
       name: '@tsuuanmi/system-runtime-acp'            # ACP agents (none until configured)
+      disabled: true
     - id: agent-workers
       name: '@tsuuanmi/system-agent-workers'          # the `agents` Worker source (no workers until configured)
+      disabled: true
     # --- API and local models (M6e): routes on llm-pi-ai and the model catalog in the operator patch ---
     - id: llm
       name: '@deepseek-ai/dsh-llm'                    # ctx.llm: provider-neutral model calls
@@ -67,13 +73,17 @@
     - id: workflow
       name: '@tsuuanmi/system-workflow'              # the single engine; MCP ask/research/result/usage/explain
     - id: profile-software-development
-      name: '@tsuuanmi/system-profile-software-development'  # the develop procedure (a template contributed to the engine)
+      name: '@tsuuanmi/system-profile-software-development'  # agent-review, for agent Workers (off with them)
+      disabled: true
     - id: profile-scientific-research
-      name: '@tsuuanmi/system-profile-scientific-research'  # the research procedures (templates, contracts, typed artifacts)
+      name: '@tsuuanmi/system-profile-scientific-research'  # the research procedure (template with a deep variant, contracts, typed artifacts)
+    # --- model gateways: off in the MVP composition (PROP-0004); Claude Code reaches system over MCP ---
     - id: gateway-anthropic
       name: '@tsuuanmi/system-gateway-anthropic'     # Claude Code → website Workers as its model (system claude-env)
+      disabled: true
     - id: gateway-responses
       name: '@tsuuanmi/system-gateway-responses'     # Codex → website Workers as its model (system codex-env)
+      disabled: true
     - id: web-ui
       name: '@tsuuanmi/system-web-ui'                # operator UI at /ui (system ui prints the link)
     - id: mcp-server

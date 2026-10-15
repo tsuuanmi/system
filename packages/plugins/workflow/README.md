@@ -6,35 +6,18 @@
 MVP subset. Every MCP `ask` and `research` call is a run on it; there is no
 second execution path (INV-1).
 
-- **Templates are data.** The built-in ones are `ask`, `investigate`, `panel`,
-  `review`, and `deep-research`; profiles add theirs; config `templates` adds or
-  replaces any. Each one's nodes are listed in the
+- **Templates are data.** The built-in ones are `ask` and `panel` (until a team
+  `brainstorm` replaces it, PROP-0004); profiles add theirs, such as `research`
+  and `agent-review`; config `templates` adds or replaces any. Each one's nodes,
+  and the templates PROP-0004 removed, are listed in the
   [workflow templates](../../../docs/reference/workflow-templates.md) reference.
   - `ask` is one node, `ask:1`. It takes the caller's tier and session.
-  - `deep-research` is two nodes (the `research` procedure comes from the
-    research profile, [`profile-scientific-research`](../profile-scientific-research/README.md)):
-    1. `research:1` runs Deep research on `frontier` in a persistent session.
-    2. `compact:1` gets the report verbatim and compacts it on `economy` in a
-       temporary chat.
-
-    Both nodes use `acceptance.answer`. A live report can have no citation
-    links, so a deployment that requires them configures `acceptance.cited`.
-  - `review` is one node, `review:1`, requiring `review` and `local-data`. It
-    routes to a local agent Worker (`agents` source), never to a website
-    account.
   - `panel` is a team of two members over two rounds, on distinct accounts,
     and a cited synthesis (see Teams).
-  - `develop` comes from the software-development profile
-    ([`profile-software-development`](../profile-software-development/README.md)),
-    contributed through `template()` (see Profiles):
-    1. a planner, `plan:1`, proposes implementation steps (`develop`,
-       `local-data`) and a review (`review`, `local-data`);
-    2. the writing steps wait for the operator's approval of the exact plan,
-       then run on a writable local agent Worker;
-    3. the review runs in a fresh session on a read-only Worker, sharing no
-       context with the producer (REQ-TEAM-5). It is bound to the exact
-       subject (see below);
-    4. `report:1` summarises the steps.
+  - **Variants.** A node may declare `variants`; the caller picks one at start
+    (`variant`), and its fields replace the node's own before the spec is hashed.
+    An unknown variant is refused as `invalid_input`
+    ([design](../../../docs/design/workflow-engine.md#variants)).
   - **Exact-subject review (REQ-WF-5).**
     - When a step that proves `review` depends on an agent result whose
       workspace is a git working tree, the engine captures that tree's
@@ -56,9 +39,6 @@ second execution path (INV-1).
     - Cycles stop at the engine config `maxReviewCycles` reviews (default 3,
       the first included). Each choice, the bound included, is a
       `graph-growth` decision (`workflow.remediation`).
-  - `investigate` is a planner, `plan:1`, then `synthesis:1`. The planner's plan
-    adds the research steps (graph growth), and the synthesis answers from their
-    findings (`{{grown}}`).
   - **Structured results (REQ-ART-5).** A node with `resultSchema: <tag>`:
     - the engine checks at load that the registry holds the schema;
     - the schema goes into the work requirement
@@ -69,8 +49,10 @@ second execution path (INV-1).
   - **Profiles (REQ-WF-9).** A profile plugin contributes templates with
     `ctx.workflow.template(name, nodes)` for its lifetime. Each is checked like
     a configured one. Admitted runs keep their resolved spec, so withdrawing a
-    template never touches them. `templateNames()` lists what is served. The
-    seam's conformance suite is [`conformance/profiles.ts`](conformance/profiles.ts).
+    template never touches them: they still answer `explain` and `result`, and
+    a new run of it is refused (`unknown workflow template`). `templateNames()`
+    lists what is served. The seam's conformance suite is
+    [`conformance/profiles.ts`](conformance/profiles.ts).
   - Config `templates` adds or replaces templates. A template is checked at
     load (preflight):
     - valid, unique node ids;
@@ -237,14 +219,14 @@ second execution path (INV-1).
     `profile` for template tiers, `caller` when the caller's tier replaced one.
 - **MCP tools** (they replace the built-in placeholders):
   - `ask` waits up to `waitSeconds` (≤ 55 s);
-  - `run { template, input, … }` starts any template, and waits like `ask`;
+  - `run { template, input, variant?, … }` starts any template, and waits like `ask`;
   - `approve { runId, verdict, note?, plan? }` gives the operator's verdict on a
     waiting plan (`plan` is required when several plans wait);
   - `stop`, `continue`, `delete`, and `supersede` are the operator controls above;
   - `drain` admits no new run (a new one is refused as `overloaded`) and
     reports the runs still executing; call it again to poll. `resume` admits
     runs again;
-  - `research` returns at once;
+  - `research` returns at once; `deep: true` runs its `deep` variant;
   - `result` takes a `runId` and long-polls it;
   - `usage`;
   - `explain` takes a run id, or any artifact id (its input tree).

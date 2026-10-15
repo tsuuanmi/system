@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { CHROME_LOCK } from '@tsuuanmi/system-browser-patchright'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { assertRuntime, callTool, formatEvents, formatHealth, parseEvents, healthExit, hostHealth, claudeGatewayCommand, codexGatewayCommand, drainHost, formatTools, ensureBrowser, exitCode, formatExplanation, formatUsage, mcpConfig, mcpHeaders, mcpToken, mergeProfileManifest, parseAsk, uiUrl, parseComposedRows, presetOf } from '../src/index.ts'
+import { assertRuntime, callTool, formatEvents, formatHealth, parseEvents, healthExit, hostHealth, claudeGatewayCommand, codexGatewayCommand, drainHost, formatTools, ensureBrowser, exitCode, formatExplanation, formatUsage, mcpConfig, mcpHeaders, mcpToken, mergeProfileManifest, parseAsk, uiUrl, parseComposedRows, presetOf, rowOffProblem } from '../src/index.ts'
 
 const dirs: string[] = []
 afterEach(() => {
@@ -48,6 +48,10 @@ describe('system CLI (PR #3 kernel review)', () => {
   it('reads which composed rows are mounted from the launcher\'s config dump', () => {
     const dump = '# from bundle\n- id: timer\n  name: \'@deepseek-ai/cordis-plugin-timer\'\n- id: browser\n  name: x\n  disabled: true\n- id: workers\n  name: y\n  config:\n    disabled: true\n'
     expect(parseComposedRows(dump)).toEqual([{ id: 'timer', mounted: true }, { id: 'browser', mounted: false }, { id: 'workers', mounted: true }])
+    // A client helper names the row it needs and how to turn it on (PROP-0004: gateways are off by default).
+    expect(rowOffProblem('workers', parseComposedRows(dump))).toBeUndefined()
+    expect(rowOffProblem('browser', parseComposedRows(dump))).toBe('the browser row is off in this composition; turn it on in your profile patch (- id: browser, disabled: false), then restart')
+    expect(rowOffProblem('gateway-anthropic', parseComposedRows(dump))).toMatch(/gateway-anthropic row is off/)
   })
 
   it('refuses to init or start on a runtime the store would refuse, before anything is written (REQ-HOST-2, CON-2)', () => {
@@ -125,6 +129,9 @@ describe('system ask arguments', () => {
     expect(await parseAsk(['--session', 'ses_1', 'hello', 'world'], async () => '')).toEqual({ prompt: 'hello world', sessionId: 'ses_1' })
     expect(await parseAsk(['--tier', 'frontier', 'q'], async () => '')).toEqual({ prompt: 'q', tier: 'frontier' })
     expect(await parseAsk([], async () => '')).toBeUndefined()
+    expect(await parseAsk(['--deep', 'q'], async () => '')).toEqual({ prompt: 'q', deep: true })
+    expect(await parseAsk(['--variant', 'deep', 'q'], async () => '')).toEqual({ prompt: 'q', variant: 'deep' })
+    expect(await parseAsk(['--variant'], async () => '')).toBeUndefined()
   })
 })
 
@@ -249,7 +256,7 @@ describe('the command surface (REQ-GW-4)', () => {
       for (const command of family) expect(commands, command).toContain(command)
     }
   })
-  it('hands out only the model token by name; the operator and client tokens stay with the CLI and its helpers (ADR-0023)', async () => {
+  it('hands out only the model token by name, and only with a gateway row on; the operator and client tokens stay with the CLI and its helpers (ADR-0023)', async () => {
     const { spawnSync } = await import('node:child_process')
     const { fileURLToPath } = await import('node:url')
     const bin = fileURLToPath(new URL('../src/bin.ts', import.meta.url))
@@ -258,7 +265,10 @@ describe('the command surface (REQ-GW-4)', () => {
     dirs.push(home)
     const tokens = seedHome(home)
     const run = (...args: string[]) => spawnSync(tsx, [bin, ...args], { encoding: 'utf8', env: { ...process.env, DSH_HOME: home } })
-    expect(run('mcp-token', '--scope', 'model')).toMatchObject({ status: 0, stdout: `${tokens.model}\n` })
+    // No gateway row is mounted here (the model gateways are off by default, PROP-0004): even the model token is withheld.
+    const model = run('mcp-token', '--scope', 'model')
+    expect(model.status).not.toBe(0)
+    for (const token of Object.values(tokens)) expect(`${model.stdout}${model.stderr}`).not.toContain(token)
     for (const args of [['mcp-token'], ['mcp-token', '--scope', 'operator'], ['mcp-token', '--scope', 'client']]) {
       const refused = run(...args)
       expect(refused.status, args.join(' ')).toBe(2)

@@ -16,7 +16,8 @@ const home = mkdtempSync(join(tmpdir(), 'system-e2e-'))
 const env = { ...process.env, DSH_HOME: home }
 let child: ChildProcess | undefined
 
-const ALLOWED_ROWS = ['timer', 'credentials', 'webserver', 'store', 'event-log', 'leases', 'artifacts', 'accounts', 'turn-receipts', 'display', 'browser', 'providers', 'provider-chatgpt-web', 'provider-gemini-web', 'login', 'egress', 'workers', 'turns', 'agent-runtimes', 'runtime-claude-agent-sdk', 'runtime-codex-sdk', 'runtime-acp', 'agent-workers', 'llm', 'llm-pi-ai', 'models', 'worker-sessions', 'workflow', 'profile-software-development', 'profile-scientific-research', 'gateway-anthropic', 'gateway-responses', 'web-ui', 'mcp-server']
+// The MVP composition (PROP-0004): agent Worker and model gateway rows are off.
+const ALLOWED_ROWS = ['timer', 'credentials', 'webserver', 'store', 'event-log', 'leases', 'artifacts', 'accounts', 'turn-receipts', 'display', 'browser', 'providers', 'provider-chatgpt-web', 'provider-gemini-web', 'login', 'egress', 'workers', 'turns', 'llm', 'llm-pi-ai', 'models', 'worker-sessions', 'workflow', 'profile-scientific-research', 'web-ui', 'mcp-server']
 
 async function client2(url: string, token: string): Promise<Client> {
   const client = new Client({ name: 'e2e-2', version: '0' })
@@ -51,11 +52,20 @@ afterAll(async () => {
 })
 
 describe('system profile (e2e through dsh)', () => {
-  it('mounts exactly the allow-listed rows and no dsh-base', () => {
+  it('mounts exactly the allow-listed rows (agent Worker and gateway rows off) and no dsh-base', () => {
     const dump = execFileSync(process.execPath, [bin, 'start', '--dump-config'], { env, encoding: 'utf8' })
-    const rows = [...dump.matchAll(/^- id: (\S+)/gm)].map((m) => m[1])
-    expect(rows).toEqual(ALLOWED_ROWS)
+    const mounted = dump.split(/^(?=- id: )/m).filter((block) => block.startsWith('- id: ') && !/^ {2}disabled: true$/m.test(block)).map((block) => /^- id: (\S+)/.exec(block)![1])
+    expect(mounted).toEqual(ALLOWED_ROWS)
     expect(dump).not.toMatch(/dsh-base|otel/)
+  }, 60_000)
+
+  it('turns an off row back on from an operator patch (off, not deleted)', () => {
+    const patch = join(home, 'rows-on.yml')
+    writeFileSync(patch, '- id: gateway-anthropic\n  disabled: false\n- id: agent-workers\n  disabled: false\n')
+    const dump = execFileSync(process.execPath, [bin, 'start', '--patch', patch, '--dump-config'], { env, encoding: 'utf8' })
+    const mounted = dump.split(/^(?=- id: )/m).filter((block) => block.startsWith('- id: ') && !/^ {2}disabled: true$/m.test(block)).map((block) => /^- id: (\S+)/.exec(block)![1])
+    expect(mounted).toEqual(expect.arrayContaining(['gateway-anthropic', 'agent-workers']))
+    expect(mounted).not.toContain('gateway-responses')
   }, 60_000)
 
   it('boots, serves MCP to an authenticated client, authorizes every surface by scope (QA-14), and cleans up on SIGTERM', async () => {
@@ -95,11 +105,8 @@ describe('system profile (e2e through dsh)', () => {
     const call = (name: string) => ({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: {} } })
     for (const tool of ['approve', 'account_set_credentials', 'model_key']) expect((await send('/mcp', 'client', call(tool))).status).toBe(403)
     expect((await send('/mcp', 'model', call('status'))).status).toBe(401)
-    for (const gateway of ['/anthropic/v1/models', '/openai/v1/models']) {
-      expect((await send(gateway, 'model')).status).toBe(200)
-      expect((await send(gateway, 'client')).status).toBe(401)
-      expect((await send(gateway, 'operator')).status).toBe(401)
-    }
+    // The model gateways are off in this composition (PROP-0004): no route answers, whatever the token.
+    for (const gateway of ['/anthropic/v1/models', '/openai/v1/models']) expect((await send(gateway, 'model')).status).toBe(404)
     expect((await send('/ui/api/runs', 'operator')).status).toBe(200)
     expect((await send('/ui/api/runs', 'client')).status).toBe(401)
     expect(existsSync(join(home, 'system', 'mcp.token'))).toBe(false)

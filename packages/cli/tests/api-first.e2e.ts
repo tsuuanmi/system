@@ -39,7 +39,10 @@ beforeAll(async () => {
   // The operator's own patch: one route (keyed by reference, never by value) and one catalog entry.
   writeFileSync(join(home, 'profiles', 'system', 'cordis.patch.yml'), [
     '- id: llm-pi-ai', '  config:', '    providers:', '      local-fake:', '        api: openai-completions', `        baseURL: ${server.baseURL}`, `        apiKeyEnv: ${KEY}`, '        models:', '          - id: m1',
-    '- id: models', '  config:', '    models:', '      - id: fast', '        route: local-fake', '        model: m1', '        tier: standard', '',
+    '- id: models', '  config:', '    models:', '      - id: fast', '        route: local-fake', '        model: m1', '        tier: standard',
+    // A one-step template needing a website-only capability, to show its refusal.
+    '- id: workflow', '  config:', '    templates:', '      deep-only:', '        - nodeId: research:1', '          objective: Deep research', "          prompt: '{{input}}'",
+    '          capabilities: [reason, deep-research]', '          tier: frontier', '          conversation: persistent', '          acceptance: acceptance.answer', '',
   ].join('\n'))
 }, 180_000)
 
@@ -101,7 +104,7 @@ describe('the api-first preset (e2e through dsh, ADR-0025)', () => {
     expect(server.requests.at(-1)).toMatchObject({ authorization: 'Bearer sk-e2e-0123456789', body: { model: 'm1', max_completion_tokens: 4096 } })
     expect(readFileSync(join(home, 'profiles', 'system', 'cordis.patch.yml'), 'utf8')).not.toContain('sk-e2e')
 
-    const research = await call('run', { template: 'deep-research', input: 'Does caffeine improve recall?', waitSeconds: 20 }) as { status: string; nodes: Array<{ nodeId: string; error?: { message: string } }> }
+    const research = await call('run', { template: 'deep-only', input: 'Does caffeine improve recall?', waitSeconds: 20 }) as { status: string; nodes: Array<{ nodeId: string; error?: { message: string } }> }
     expect(research.status).toBe('failed')
     expect(research.nodes[0]!.error!.message).toMatch(/^no Worker can take this work: no Worker proves deep-research/)
 

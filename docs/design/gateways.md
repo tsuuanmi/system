@@ -18,6 +18,11 @@ consumer plugins at the edge, not providers of a seam:
 - `gateway-anthropic` serves the Anthropic Messages API under `/anthropic`, for Claude Code;
 - `gateway-responses` serves the OpenAI Responses API under `/openai`, for Codex.
 
+Both rows are off in the default composition (PROP-0004): Claude Code reaches `system` over
+MCP. An operator turns one on ([runbook](../operations/runbooks.md#turn-an-off-row-back-on));
+until then its client helper (`system claude-env`, `system codex-env`) refuses and names the
+row.
+
 Each plugin owns only its wire format. Everything else is the shared library
 [`gateway-turns`](../../packages/gateway-turns/README.md): the text tool protocol and the
 threads that bind a client conversation to a provider conversation. The request guard is the

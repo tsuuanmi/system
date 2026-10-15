@@ -63,9 +63,21 @@ function scholar(ctx: Context): string[] {
 }
 
 const { profileConformance } = await import('../../workflow/conformance/profiles.ts')
-profileConformance('scientific-research', async () => ({ ctx: await boot(), dispose: async () => undefined }), Science, { research: Science.RESEARCH, 'research-deep': Science.RESEARCH_DEEP })
+profileConformance('scientific-research', async () => ({ ctx: await boot(), dispose: async () => undefined }), Science, { research: Science.RESEARCH })
 
 describe('the scientific-research profile, on the unchanged engine (REQ-WF-9)', () => {
+  it('runs the deep variant\'s literature review with Deep research, and refuses a variant it does not have (PROP-0004)', async () => {
+    const ctx = await boot()
+    await ctx.plugin(Science)
+    const deep = ctx.workflow.start({ template: 'research', input: 'Does X lower Y?', variant: 'deep' })
+    const plain = ctx.workflow.start({ template: 'research', input: 'Does X lower Y?' })
+    expect(deep.nodes.find((n) => n.nodeId === 'literature:1')).toMatchObject({ minTier: 'frontier' })
+    expect(plain.nodes.find((n) => n.nodeId === 'literature:1')).toMatchObject({ minTier: 'standard' })
+    expect(deep.specHash).not.toBe(plain.specHash)
+    expect(() => ctx.workflow.start({ template: 'research', input: 'q', variant: 'fast' })).toThrow('template research has no variant fast (it has: deep)')
+    expect(() => ctx.workflow.start({ template: 'research-deep', input: 'q' })).toThrow('unknown workflow template research-deep')
+  })
+
   it('runs research: hypotheses, a cited review, an evidence table, an independent critique, conclusions citing evidence', async () => {
     const ctx = await boot()
     await ctx.plugin(Science)

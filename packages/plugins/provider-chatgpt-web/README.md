@@ -60,8 +60,10 @@ The **ChatGPT Web provider driver**
     view toggle. The driver steps the Power slider, switches to the model list,
     picks the radio, and reads both back. It fails before sending if a preset,
     model or level is unknown, or if a model is locked.
-  - The empty preset `site` selects nothing, for an account without a model
-    picker (such as ChatGPT Free).
+  - An account without a model picker (such as ChatGPT Free) has no preset:
+    the driver fails the turn as `ui_drift` and sends nothing. PROP-0004
+    removed the empty `site` preset; such an account is
+    [removed](../../../docs/operations/runbooks.md#remove-the-free-chatgpt-account).
 - **Deep research** (`feature: 'deep-research'`, persistent only):
   - "+" → "Deep research" → the mention chip is checked → the prompt goes after
     the chip;

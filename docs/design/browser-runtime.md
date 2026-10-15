@@ -47,7 +47,7 @@ operator's screen. `headless` is never offered for provider turns.
 | Mode | How | Default on | Use |
 |---|---|---|---|
 | `virtual` | headed Chrome on a plugin-owned **Xvfb** (`-screen 0 1920x1080x24 -nolisten tcp`, `-displayfd`, `-auth` with a private cookie); window `--window-size=1920,1080` | **Linux** (including servers without a display) | provider turns |
-| `offscreen` | headed window at `--window-position=-10000,-10000` with an explicit size (≥ 1280×900) | **macOS, Windows** (v1.0; the MVP is Linux-only) | provider turns |
+| `offscreen` | headed window at `--window-position=-10000,-10000` with an explicit size (≥ 1280×900) | **macOS, Windows** (out of scope: PROP-0004 is Linux only) | provider turns |
 | `visible` | a normal on-screen window | — | interactive login, debugging, resolving a challenge |
 | `headless` | Chrome headless | **never** | not offered |
 

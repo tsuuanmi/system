@@ -67,7 +67,7 @@ one scope another's rights).
 |---|---|---|---|
 | `operator` | `operator.token` | every MCP tool, and `/ui` | the `system` CLI's own tool calls, `system ui` |
 | `client` | `client.token` | the client tools on `/mcp`: `ask`, `research`, `run`, `result`, `status`, `explain`, `usage`, `session_send`, `session_inbox` | `system mcp-headers` (Claude Code), `system mcp-stdio` (Codex) |
-| `model` | `model.token` | `/anthropic` and `/openai` only; `/mcp` and `/ui` answer `401` | `system claude-env`, `system codex-env`, `system mcp-token --scope model` (a Codex Worker on the Responses gateway) |
+| `model` | `model.token` | `/anthropic` and `/openai` only; `/mcp` and `/ui` answer `401` | `system claude-env`, `system codex-env`, `system mcp-token --scope model` (a Codex Worker on the Responses gateway); each refuses while its gateway row is off ([runbook](../../../docs/operations/runbooks.md#turn-an-off-row-back-on)) |
 
 - **Tool scope:** a tool declares `scope: 'client' | 'operator'` in its
   `ToolSpec`. A tool that declares none is the operator's (fail closed), so

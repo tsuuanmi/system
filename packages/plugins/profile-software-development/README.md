@@ -1,20 +1,18 @@
 # @tsuuanmi/system-profile-software-development
 
-The **software-development profile**: the `develop` template, contributed to
-the workflow engine with `ctx.workflow.template` (REQ-WF-9). It holds no engine
-code and no rules of its own. Everything after the plan is engine behaviour for
-any template: graph growth, the plan approval gate, exact-subject review, and
-remediation cycles ([workflow engine](../workflow/README.md)).
+The **software-development profile**: the `agent-review` template, contributed
+to the workflow engine with `ctx.workflow.template` (REQ-WF-9). It holds no
+engine code and no rules of its own.
 
-1. A planner (`plan:1`, `reason`) proposes implementation steps (`develop`,
-   `local-data`) and one review (`review`, `local-data`) as a `plan` artifact.
-2. Writing steps wait for the operator's approval of the exact plan, then run
-   on a writable local agent Worker.
-3. The review runs in a fresh session on a read-only Worker, bound to the
-   exact subject of the change: `git:<HEAD>:<hash of every change on top>`.
-   Blocking findings make the engine append a fix and a re-review, up to the
-   engine config `maxReviewCycles` reviews (default 3).
-4. `report:1` reports the change and what the reviews found.
-
+- **`agent-review`** is one node, `review:1`, requiring `review` and
+  `local-data`, at the caller's tier and in the caller's session. Only a
+  read-only local agent Worker proves both, so it never routes to a website
+  account ([nodes](../../../docs/reference/workflow-templates.md#agent-review)).
+  Exact-subject review and remediation cycles are engine behaviour for any
+  template ([workflow engine](../workflow/README.md)).
+- **Off by default:** the row is off in the default composition, with the agent
+  Worker rows it needs (PROP-0004); the `api-first` preset turns them on
+  ([turn a row on](../../../docs/operations/runbooks.md#turn-an-off-row-back-on)).
+  PROP-0004 removed the `develop` template; its earlier runs keep their records.
 - **Injects:** `workflow`.
 - **Conformance:** [`profiles`](../workflow/conformance/profiles.ts).

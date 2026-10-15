@@ -31,17 +31,18 @@ async function boot() {
 }
 
 const { profileConformance } = await import('../../workflow/conformance/profiles.ts')
-profileConformance('software-development', async () => ({ ctx: await boot(), dispose: async () => undefined }), SoftwareDevelopment, { develop: SoftwareDevelopment.DEVELOP })
+profileConformance('software-development', async () => ({ ctx: await boot(), dispose: async () => undefined }), SoftwareDevelopment, { 'agent-review': SoftwareDevelopment.AGENT_REVIEW })
 
 describe('the profiles seam (REQ-WF-9)', () => {
   it('checks a contributed template like a configured one, and refuses a second one by the same name', async () => {
     const ctx = await boot()
-    expect(() => ctx.workflow.template('Bad Name', SoftwareDevelopment.DEVELOP)).toThrow(/template name/)
-    expect(() => ctx.workflow.template('broken', [{ ...SoftwareDevelopment.DEVELOP[1]!, dependsOn: ['missing'] }])).toThrow(/unknown node missing/)
-    expect(() => ctx.workflow.template('ask', SoftwareDevelopment.DEVELOP)).toThrow(/already exists/)
-    const withdraw = ctx.workflow.template('develop', SoftwareDevelopment.DEVELOP)
-    expect(() => ctx.workflow.template('develop', SoftwareDevelopment.DEVELOP)).toThrow(/already exists/)
+    const review = SoftwareDevelopment.AGENT_REVIEW
+    expect(() => ctx.workflow.template('Bad Name', review)).toThrow(/template name/)
+    expect(() => ctx.workflow.template('broken', [{ ...review[0]!, dependsOn: ['missing'] }])).toThrow(/unknown node missing/)
+    expect(() => ctx.workflow.template('ask', review)).toThrow(/already exists/)
+    const withdraw = ctx.workflow.template('agent-review', review)
+    expect(() => ctx.workflow.template('agent-review', review)).toThrow(/already exists/)
     withdraw()
-    expect(ctx.workflow.templateNames()).not.toContain('develop')
+    expect(ctx.workflow.templateNames()).not.toContain('agent-review')
   })
 })

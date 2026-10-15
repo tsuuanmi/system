@@ -25,7 +25,8 @@ import Leases from '../../../plugins/leases/src/index.ts'
 import Store from '../../../plugins/store/src/index.ts'
 import WorkerSessions from '../../../plugins/worker-sessions/src/index.ts'
 import WorkerRouter, { type WorkerExecution } from '../../../plugins/workers/src/index.ts'
-import Workflow, { DEFAULT_TEMPLATES, type RunView } from '../../../plugins/workflow/src/index.ts'
+import Workflow, { type RunView } from '../../../plugins/workflow/src/index.ts'
+import { TEST_TEMPLATES } from '../../../plugins/workflow/tests/templates.ts'
 
 const root = fileURLToPath(new URL('../../../..', import.meta.url))
 const FIXTURES = fileURLToPath(new URL('./fixtures', import.meta.url))
@@ -143,8 +144,9 @@ async function main(): Promise<void> {
   const label = process.argv[2]
   if (!label || !/^[a-z0-9][a-z0-9.-]{0,40}$/.test(label)) throw new Error('usage: gen-upgrade-fixture <label> (lowercase letters, digits, dots, hyphens)')
   const dir = mkdtempSync(join(tmpdir(), 'system-upgrade-fixture-'))
-  const [planner, synthesis] = DEFAULT_TEMPLATES.investigate!
+  const [planner, synthesis] = TEST_TEMPLATES.investigate!
   const templates = {
+    investigate: TEST_TEMPLATES.investigate!,
     'fixture-gated': [
       { nodeId: 'context:1', objective: 'Gather context', prompt: 'context for: {{input}}', capabilities: ['reason'], tier: 'economy' as const, conversation: 'temporary' as const, acceptance: 'acceptance.answer' },
       { ...planner!, dependsOn: ['context:1'], prompt: `${planner!.prompt}\n\nContext: {{node:context:1}}`, grows: { maxNodes: 2, approvalRequired: ['reason'] } },

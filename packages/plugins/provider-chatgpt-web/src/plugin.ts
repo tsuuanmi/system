@@ -32,8 +32,6 @@ const DEFAULT_MODES: Record<string, ProviderMode> = {
   instant: { model: 'Latest', effort: 'Instant' },
   medium: { model: 'Latest', effort: 'Medium' },
   high: { model: 'Latest', effort: 'High' },
-  // An account without a model picker (ChatGPT Free): nothing is selected, and nothing is assumed.
-  site: {},
 }
 
 export const name = 'provider-chatgpt-web'

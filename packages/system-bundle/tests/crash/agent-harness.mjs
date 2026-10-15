@@ -1,7 +1,7 @@
 /**
  * One engine process for the agent-run crash case (plain JavaScript on the built packages):
  * boots the store, routing, the agent Worker source with one scripted read-only runtime, and the
- * workflow engine; starts or resumes a `review` run; reports on stdout as `@@ {json}` lines. The
+ * workflow engine; starts or resumes an `agent-review` run; reports on stdout as `@@ {json}` lines. The
  * scripted runtime appends one line to `<dir>/agent-started` each time a run starts, then works
  * slowly, so the suite can kill the process with SIGKILL while the agent is running.
  * Usage: agent-harness.mjs <dir> <workspace> start <input> | resume <runId>
@@ -15,6 +15,7 @@ import Artifacts from '@tsuuanmi/system-artifacts'
 import Egress from '@tsuuanmi/system-egress'
 import EventLog from '@tsuuanmi/system-event-log'
 import Leases from '@tsuuanmi/system-leases'
+import { AGENT_REVIEW } from '@tsuuanmi/system-profile-software-development'
 import Store from '@tsuuanmi/system-store'
 import WorkerSessions from '@tsuuanmi/system-worker-sessions'
 import WorkerRouter from '@tsuuanmi/system-workers'
@@ -42,12 +43,12 @@ const fibers = [
   ctx.plugin(Store, { path: join(dir, 'system.db') }), ctx.plugin(Artifacts, {}), ctx.plugin(EventLog, {}), ctx.plugin(Leases, {}), ctx.plugin(Egress, {}),
   ctx.plugin(WorkerRouter, {}), ctx.plugin(AgentRuntimeRegistry, {}),
   ctx.plugin(AgentWorkers, { workers: [{ id: 'reviewer', runtime: 'scripted', workspace, sandbox: 'read-only', tier: 'standard' }] }),
-  ctx.plugin(WorkerSessions, {}), ctx.plugin(Workflow, { retryDelayMs: 300 }),
+  ctx.plugin(WorkerSessions, {}), ctx.plugin(Workflow, { retryDelayMs: 300, templates: { 'agent-review': AGENT_REVIEW } }),
 ]
 await Promise.all(fibers)
 await new Promise((resolve) => ctx.inject(['workflow', 'agentRuntimes'], () => resolve(undefined)))
 ctx.agentRuntimes.register(scripted)
-const runId = mode === 'start' ? ctx.workflow.start({ template: 'review', input: arg, classification: 'operator-shared' }).runId : arg
+const runId = mode === 'start' ? ctx.workflow.start({ template: 'agent-review', input: arg, classification: 'operator-shared' }).runId : arg
 report({ runId })
 const done = await ctx.workflow.wait(runId, 240_000)
 report({ done })
