@@ -79,9 +79,9 @@ describe.runIf(canRunBrowser)('ChatGptWebDriver against the fake site, with no r
   const cited = 'Pin actions by SHA ([GitHub Docs](https://docs.github.com/a)) and attest the tarballs ([GitHub](https://github.com/actions/attest)).'
   const referenced = 'Pin actions by SHA ([GitHub Docs][1]) and attest the tarballs ([GitHub][2]).\n\n[1]: https://docs.github.com/a?utm_source=chatgpt.com "Security hardening"\n[2]: https://github.com/actions/attest?utm_source=chatgpt.com "attest"'
 
-  it('keeps a cited answer\'s reference-style Copy, URLs and all (REQ-PRV-5)', async () => {
+  it('keeps a cited answer\'s reference-style Copy, URLs and all, without tracking parameters (REQ-PRV-5)', async () => {
     const { page, driver } = await site({ answer: cited, copied: () => referenced })
-    expect((await driver.ask(page, 'Cite your sources', { conversation: 'temporary' })).text).toBe(referenced)
+    expect((await driver.ask(page, 'Cite your sources', { conversation: 'temporary' })).text).toBe(referenced.replaceAll('?utm_source=chatgpt.com', ''))
   }, 40_000)
 
   it('keeps a cited answer\'s URLs from its links when its Copy is refused', async () => {

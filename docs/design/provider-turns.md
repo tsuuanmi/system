@@ -42,10 +42,11 @@ persistent conversation's id as soon as it appears.
 The answer's Markdown comes from the site's own Copy control. It is kept only
 when its prose words are the rendered answer's words in order, since the
 clipboard may be shared. Link texts, reference definitions, and citation chips
-may differ, because one chip can stand for several sources ("Name +2"). A
-refused Copy leaves the rendered text. Either way, the answer's off-site links
-that the text lacks follow it as a `Sources:` list, without tracking
-parameters, so a cited answer keeps its URLs
+may differ, because one chip can stand for several sources ("Name +2"); a
+footnote renders, so it is prose. A refused Copy leaves the rendered text. Either
+way, the answer's off-site links that the text lacks follow it as a `Sources:`
+list, so a cited answer keeps its URLs. No URL the answer keeps carries `utm_*`
+tracking parameters
 ([`copiedMarkdown`](../../packages/ui-ops/src/answers.ts)).
 
 Shared mechanics, which are the same for every driver, live in the runtime:

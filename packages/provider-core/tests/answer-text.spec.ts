@@ -36,4 +36,8 @@ describe('Markdown from a Copy button is kept only when it is the rendered answe
     expect(sameWords(markdown, 'Attest the tarballs\nGitHub\nand the SBOMs\npnpm\n+1.')).toBe(true)
     expect(sameWords('See [2] and [3].', 'See and.')).toBe(false)
   })
+
+  it('counts a footnote, which renders, as prose', () => {
+    expect(sameWords('Claim.[^1]\n\n[^1]: A footnote text here.', 'Claim.1\n\n1. A footnote text here. ↩')).toBe(true)
+  })
 })

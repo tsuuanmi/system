@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { bindingReporter, completionOptions, modePresets, type ResearchState, waitForReport, withMissingSources, withoutTracking, withSources } from '../src/index.ts'
+import { bindingReporter, completionOptions, modePresets, type ResearchState, waitForReport, withMissingSources, withoutTracking, withoutTrackingLinks, withSources } from '../src/index.ts'
 
 const TIMEOUTS = { turnMs: 5000, stallMs: 2000, stableMs: 10, pollMs: 5, reportReadMs: 50 }
 
@@ -50,5 +50,18 @@ describe('website turn mechanics', () => {
     expect(withMissingSources('See https://a.example/x and https://b.example/y?id=1.', sources)).toBe('See https://a.example/x and https://b.example/y?id=1.')
     expect(withMissingSources('See [example.com](https://example.com).', new Map([['https://example.com/', 'example.com']]))).toBe('See [example.com](https://example.com).')
     expect(withoutTracking('not a url')).toBe('not a url')
+  })
+
+  it('counts a source as carried only by that exact URL, not by a longer one it begins', () => {
+    const sources = new Map([['https://a.example/x', 'X']])
+    expect(withMissingSources('See https://a.example/xyz.', sources)).toBe('See https://a.example/xyz.\n\nSources:\n- X https://a.example/x')
+    expect(withMissingSources('See https://a.example/x.', sources)).toBe('See https://a.example/x.')
+    expect(withMissingSources('See [x](https://a.example/x/?utm_source=s).', sources)).toBe('See [x](https://a.example/x/?utm_source=s).')
+  })
+
+  it('drops tracking parameters from link and reference targets, and leaves other text alone', () => {
+    expect(withoutTrackingLinks('Pin by SHA ([GitHub Docs][1]) and [attest](https://github.com/actions/attest?utm_source=chatgpt.com "attest").\n\n[1]: https://docs.github.com/a?id=2&utm_source=chatgpt.com#pin "Security"'))
+      .toBe('Pin by SHA ([GitHub Docs][1]) and [attest](https://github.com/actions/attest "attest").\n\n[1]: https://docs.github.com/a?id=2#pin "Security"')
+    expect(withoutTrackingLinks('Text that says ?utm_source=x stays, and [plain](https://a.example/b) too.')).toBe('Text that says ?utm_source=x stays, and [plain](https://a.example/b) too.')
   })
 })

@@ -11,6 +11,7 @@ const words = (text: string): string[] => text.match(/[\p{L}\p{N}]+/gu) ?? []
  * its links apart: a site may render a link's text, or show it as a citation chip that stands for
  * several sources ("Name +2"), so a link's words may or may not appear. Reference definitions
  * (`[1]: url "title"`) never render, and a bare marker of a defined reference (`[1]`) is a link.
+ * Footnotes (`[^1]: text`) do render, so they stay prose.
  */
 function renderedWords(markdown: string): { prose: string[]; linkWords: number; links: number } {
   let links = 0
@@ -20,7 +21,7 @@ function renderedWords(markdown: string): { prose: string[]; linkWords: number; 
     linkWords += words(text).length
     return ' '
   }
-  const definition = /^ {0,3}\[([^\]\n]+)\]:[ \t]*\S+.*$/gm
+  const definition = /^ {0,3}\[([^\]\n^][^\]\n]*)\]:[ \t]*\S+.*$/gm
   const defined = new Set([...markdown.matchAll(definition)].map((m) => m[1]!.toLowerCase()))
   const plain = markdown
     .replace(/^```[^\n]*$/gm, ' ')

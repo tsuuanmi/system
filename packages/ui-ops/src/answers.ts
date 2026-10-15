@@ -4,7 +4,7 @@
  * the rendered answer's (the clipboard may be shared), and the targets of its links, which
  * rendered text drops.
  */
-import { sameWords, withMissingSources } from '@tsuuanmi/system-provider-core'
+import { sameWords, withMissingSources, withoutTrackingLinks } from '@tsuuanmi/system-provider-core'
 import type { Locator } from 'patchright-core'
 import type { UiEngine } from './engine.ts'
 
@@ -29,7 +29,8 @@ export async function linksIn(locator: Locator): Promise<Map<string, string>> {
 
 /**
  * The answer's Markdown from its Copy control, tidied by the site's own rule; the rendered text
- * when there is no control, nothing was copied, the words differ, or anything fails. Either way,
+ * when there is no control, nothing was copied, the words differ, or anything fails. Kept
+ * Markdown loses the tracking parameters of its link targets. Either way,
  * the links of the answer element that the text does not carry follow it as its sources, so a
  * cited answer keeps its URLs.
  */
@@ -39,7 +40,7 @@ export async function copiedMarkdown(engine: UiEngine, rendered: string, control
       const copy = await control()
       const markdown = copy ? await engine.copied(copy) : ''
       if (!markdown || !sameWords(markdown, rendered)) return rendered
-      return await tidy(markdown)
+      return withoutTrackingLinks(await tidy(markdown))
     } catch {
       return rendered
     }

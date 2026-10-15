@@ -24,8 +24,8 @@ not a plugin: provider drivers create one `UiEngine` per turn page.
   `preWrapText` reads an element under `white-space: pre-wrap`, so code
   indentation survives; `copiedMarkdown` takes the answer's Markdown from its
   Copy control and keeps it only when `sameWords` matches the rendered text,
-  then applies the site's own clean-up (the rendered text otherwise). Either
-  way, the answer's off-site links (`linksIn`) that the text lacks follow it as
+  then applies the site's own clean-up and drops tracking parameters from its
+  link targets (the rendered text otherwise). Either way, the answer's off-site links (`linksIn`) that the text lacks follow it as
   a `Sources:` list, so a cited answer keeps its URLs.
 - **Events:**
   - `onDrift` fires when a non-primary candidate wins.

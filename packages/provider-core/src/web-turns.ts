@@ -103,16 +103,27 @@ export function withoutTracking(href: string): string {
   }
 }
 
+/** Markdown with tracking parameters dropped from its link and reference targets (`](url`, `]: url`). */
+export function withoutTrackingLinks(markdown: string): string {
+  return markdown.replace(/(\]\(<?|^ {0,3}\[[^\]\n]+\]:[ \t]*<?)(https?:\/\/[^\s)>"]+)/gm,
+    (_, lead: string, url: string) => lead + (/[?&]utm_/.test(url) ? withoutTracking(url) : url))
+}
+
+/** A URL as compared for presence: no tracking parameters, no final slash or trailing punctuation. */
+const comparable = (url: string): string => withoutTracking(url.replace(/[.,;:!?]+$/, '')).replace(/\/$/, '')
+
 /**
  * An answer followed by the sources (href → title) its text does not already carry, without
- * tracking parameters; the text alone when it carries them all. A page reports an href in its
- * normal form (`https://a.example/`), which the text may write without the final slash.
+ * tracking parameters; the text alone when it carries them all. A source is carried only by a URL
+ * in the text that is the same once tracking parameters, a final slash (a page reports
+ * `https://a.example/` for the text's `https://a.example`), and trailing punctuation are set aside.
  */
 export function withMissingSources(text: string, sources: ReadonlyMap<string, string>): string {
+  const carried = new Set((text.match(/https?:\/\/[^\s)>"\]]+/g) ?? []).map(comparable))
   const missing = new Map<string, string>()
   for (const [href, title] of sources) {
     const clean = withoutTracking(href)
-    if (!text.includes(clean.replace(/\/$/, '')) && !missing.has(clean)) missing.set(clean, title)
+    if (!carried.has(comparable(clean)) && !missing.has(clean)) missing.set(clean, title)
   }
   return missing.size ? withSources(text, missing) : text
 }
