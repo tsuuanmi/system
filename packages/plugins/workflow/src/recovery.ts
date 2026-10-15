@@ -34,7 +34,8 @@ export function escalate(e: Engine, run: RunRow, node: NodeRow, spec: ResolvedNo
     deterministic: true,
   }, { producer: { type: 'system', ref: 'workflow' }, runId: run.run_id, nodeId: node.node_id })
   if (!escalate) return false
-  e.writeNode(node, { state: 'READY', execution_id: null, escalations: node.escalations + 1, error: null, ...decisions }, (r) => {
+  // The node routes again, so its old Worker no longer speaks for it (a peer's diversity reads it, ADR-0027).
+  e.writeNode(node, { state: 'READY', execution_id: null, worker: null, escalations: node.escalations + 1, error: null, ...decisions }, (r) => {
     const next_: NodeRecord = {
       ...r, requirement: { ...r.requirement, tier: { min: next!, source: 'decision', decision: decision.id as ArtifactRef } }, lastDecision: decision.id as ArtifactRef,
     }
@@ -82,7 +83,7 @@ export function failAttempt(e: Engine, run: RunRow, node: NodeRow, error: Workfl
   if (retry) {
     const delay = error.disposition === 'IMMEDIATE' ? 0 : (e.config.retryDelayMs ?? 5000) * 2 ** Math.max(0, node.attempt - 1)
     e.ctx.store.transaction(() => {
-      e.writeNode(node, { state: 'READY', execution_id: null, attempt: node.attempt, not_before: new Date(Date.now() + delay).toISOString(), error: JSON.stringify(error), ...decisions },
+      e.writeNode(node, { state: 'READY', execution_id: null, worker: null, attempt: node.attempt, not_before: new Date(Date.now() + delay).toISOString(), error: JSON.stringify(error), ...decisions },
         (r) => {
           // The next attempt gets its own execution; the failed one no longer explains the node.
           const next: NodeRecord = { ...r, lastDecision: decision.id as ArtifactRef }

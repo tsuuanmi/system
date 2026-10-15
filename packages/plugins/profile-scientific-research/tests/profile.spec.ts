@@ -40,20 +40,26 @@ const AT = '2026-10-12T00:00:00Z'
  * Scripted chat Workers that answer each study step and record the prompts: `chat:a` proves web
  * search, `chat:b` only reasons, each of its own provider family unless `families` says otherwise.
  */
-function scholar(ctx: Context, families: [string, string] = ['fam-a', 'fam-b']): string[] {
+function scholar(ctx: Context, families: [string, string] = ['fam-a', 'fam-b'], options: { busyAfterFramingMs?: number; deep?: boolean } = {}): string[] {
   const prompts: string[] = []
   const executions = new Map<string, WorkerExecution>()
+  const sessions = new Map<string, string>()
+  let busyUntil = 0
   const descriptor = (id: string, family: string, web: boolean) => ({
-    schema: 'capability-descriptor@1.1' as const, worker: id, provider: 'test', family, tier: 'standard' as const, quotaClass: 'subscription-chat' as const, locality: 'remote' as const,
-    capabilities: [{ capability: 'reason', evidence: { kind: 'conformance' as const, at: AT } }, ...(web ? [{ capability: 'web-search', evidence: { kind: 'probe' as const, at: AT } }] : [])],
-    state: 'ready' as const, observedAt: AT,
+    schema: 'capability-descriptor@1.1' as const, worker: id, provider: 'test', family, tier: (options.deep ? 'frontier' : 'standard') as 'frontier' | 'standard', quotaClass: 'subscription-chat' as const, locality: 'remote' as const,
+    capabilities: ['reason', ...(web ? ['web-search'] : []), ...(options.deep ? ['deep-research', 'persistent-conversation'] : [])].map((capability) => ({ capability, evidence: { kind: 'probe' as const, at: AT } })),
+    // chat:a is busy for a while after framing, so review A backs off at admission and is routed again.
+    state: (id === 'chat:a' && Date.now() < busyUntil ? 'busy' : 'ready') as 'busy' | 'ready', observedAt: AT,
   })
   ctx.workers.register({
     name: 'chat',
     describe: async () => [descriptor('chat:a', families[0], true), descriptor('chat:b', families[1], false)],
+    affinity: (sessionId) => (sessions.has(sessionId) ? [sessions.get(sessionId)!] : undefined),
     start: (request) => {
       prompts.push(request.prompt)
+      if (request.sessionId && !sessions.has(request.sessionId)) sessions.set(request.sessionId, request.worker)
       const p = request.prompt
+      if (p.includes('Frame the research question') && options.busyAfterFramingMs) busyUntil = Date.now() + options.busyAfterFramingMs
       const text = p.includes('Frame the research question') ? json(HYPOTHESES)
         : p.includes('Review the published evidence') ? `One trial (n=120) found X lowered Y: https://example.org/trial (${request.worker})`
           : p.includes('Extract one evidence table') ? json(EVIDENCE)
@@ -118,6 +124,24 @@ describe('the scientific-research profile, on the unchanged engine (REQ-WF-9)', 
     expect(ctx.artifacts.list({ kind: 'evidence', runId: done.runId })[0]).toMatchObject({ bodySchema: 'evidence-table@1.1', inputs: [ctx.workflow.records(done.runId)[3]!.outputReceipt!.result] })
   })
 
+  it('routes review B after review A backs off at admission and is routed again: no deadlock (ADR-0027)', async () => {
+    const ctx = await boot()
+    await ctx.plugin(Science)
+    scholar(ctx, ['fam-a', 'fam-b'], { busyAfterFramingMs: 250 })
+    const done = await ctx.workflow.wait(ctx.workflow.start({ template: 'research', input: 'Does X lower Y?' }).runId, 20_000)
+    expect(done.status).toBe('completed')
+    expect(done.nodes.filter((n) => n.nodeId.startsWith('literature')).map((n) => [n.nodeId, n.worker])).toEqual([['literature:1', 'chat:a'], ['literature:2', 'chat:b']])
+  }, 30_000)
+
+  it('runs the deep variant\'s two reviews in conversations of their own, on two families', async () => {
+    const ctx = await boot()
+    await ctx.plugin(Science)
+    scholar(ctx, ['fam-a', 'fam-b'], { deep: true })
+    const done = await ctx.workflow.wait(ctx.workflow.start({ template: 'research', input: 'Does X lower Y?', variant: 'deep' }).runId, 20_000)
+    expect(done.status).toBe('completed')
+    expect(done.nodes.filter((n) => n.nodeId.startsWith('literature')).map((n) => [n.nodeId, n.worker])).toEqual([['literature:1', 'chat:a'], ['literature:2', 'chat:b']])
+  }, 30_000)
+
   it('fails the second review closed, with the reason, when every Worker is of one provider family (ADR-0027, INV-2)', async () => {
     const ctx = await boot()
     await ctx.plugin(Science)
@@ -126,6 +150,20 @@ describe('the scientific-research profile, on the unchanged engine (REQ-WF-9)', 
     expect(done.status).toBe('failed')
     expect(done.nodes.find((n) => n.nodeId === 'literature:2')!.error!.message).toMatch(/^no Worker can take this work: .*same provider family \(differs from node literature:1\)/)
   })
+
+  it('keeps an old run\'s typed evidence on the version its step asked for, and supersedes it when the step reruns', async () => {
+    const ctx = await boot()
+    await ctx.plugin(Science)
+    scholar(ctx)
+    // A run started before PROP-0004: its evidence step asked for evidence-table@1.0.
+    ctx.workflow.template('research-deep', Science.RESEARCH.map((n) => (n.nodeId === 'evidence:1' ? { ...n, resultSchema: 'evidence-table@1.0' } : n)))
+    const run = await ctx.workflow.wait(ctx.workflow.start({ template: 'research-deep', input: 'Does X lower Y?' }).runId, 30_000)
+    ctx.workflow.supersede(run.runId, 'evidence:1', { text: json(EVIDENCE), note: 'rerun' })
+    await ctx.workflow.wait(run.runId, 30_000)
+    const tables = ctx.artifacts.list({ kind: 'evidence', runId: run.runId })
+    expect(tables.map((t) => t.bodySchema)).toEqual(['evidence-table@1.0', 'evidence-table@1.0'])
+    expect(tables[1]!.lineage).toEqual({ supersedes: [tables[0]!.id] })
+  }, 60_000)
 
   it('refuses a step result that is not its typed body, before anything downstream runs', () => {
     expect(Science.typedBody(json({ question: 'q', hypotheses: [{ id: 'X1', statement: 's' }] }), 'hypothesis-set@1.0')).toMatchObject({ ok: false })

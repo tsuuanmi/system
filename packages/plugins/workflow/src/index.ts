@@ -49,7 +49,7 @@ export class Workflow extends Service {
       capabilities: z.array(z.string()).required(),
       tier: z.union(['economy', 'standard', 'frontier']).required(),
       callerTier: z.boolean(),
-      conversation: z.union(['temporary', 'persistent', 'caller']).required(),
+      conversation: z.union(['temporary', 'persistent', 'caller', 'own']).required(),
       acceptance: z.string().required(),
       maxEscalations: z.natural().max(3),
       // Not z.object: an omitted object would come back as {} and make every node a planner.

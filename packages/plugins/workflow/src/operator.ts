@@ -53,7 +53,7 @@ export function continueRun(e: Engine, runId: string, nodeId?: string): RunView 
       const record = JSON.parse(node.record) as NodeRecord
       const spec = JSON.parse(node.spec) as ResolvedNode
       const ready = spec.executor !== 'gate' && record.inputReceipt !== undefined
-      e.writeNode(node, { state: ready ? 'READY' : 'WAITING', execution_id: null, not_before: null, error: null }, (r) => {
+      e.writeNode(node, { state: ready ? 'READY' : 'WAITING', execution_id: null, worker: null, not_before: null, error: null }, (r) => {
         const next: NodeRecord = { ...r, lastDecision: decision }
         delete next.execution
         return next

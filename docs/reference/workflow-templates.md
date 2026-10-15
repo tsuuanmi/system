@@ -14,7 +14,7 @@ every template at load (preflight) and refuses a run whose contracts are not reg
 |---|---|
 | Capabilities | what routing admits Workers by ([capability vocabulary](../design/routing.md#capability-vocabulary)); a node in a session also requires `persistent-conversation` |
 | Tier | the minimum tier; *caller* means the caller's `tier` replaces it |
-| Conversation | `temporary`: a new one-shot conversation; `persistent`: the caller's session or a new one; `caller`: the caller's session, or a new one with `persist` |
+| Conversation | `temporary`: a new one-shot conversation; `persistent`: the caller's session or a new one; `caller`: the caller's session, or a new one with `persist`; `own`: a new persistent conversation of this node alone ([conversations](../design/workflow-engine.md#conversations)) |
 | Acceptance | the contract the result must pass; a rejected result may escalate one tier (`maxEscalations`, default 1) |
 
 ## Built-in templates
@@ -69,7 +69,7 @@ literature:1)`), fail closed.
 | `frame:1` | `reason` | standard | temporary | `resultSchema: hypothesis-set@1.0`, then `acceptance.answer` |
 | `literature:1` (review A) | `reason`, `web-search` | standard | temporary | `acceptance.cited` |
 | `literature:2` (review B; differs from `literature:1`) | `reason` | standard | temporary | `acceptance.cited` |
-| `literature:1`, `literature:2` (variant `deep`) | `reason`, `deep-research` | frontier | persistent | `acceptance.cited` |
+| `literature:1`, `literature:2` (variant `deep`) | `reason`, `deep-research` | frontier | own (each review its own conversation) | `acceptance.cited` |
 | `evidence:1` | `reason` | economy | temporary | `resultSchema: evidence-table@1.1`, then `acceptance.answer` |
 | `critique:1` (differs from `evidence:1`) | `reason` | standard | temporary | `acceptance.answer` |
 | `conclusion:1` | `reason` | standard | temporary | `acceptance.cited-conclusions` |

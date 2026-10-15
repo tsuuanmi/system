@@ -94,15 +94,16 @@ export const RESEARCH: NodeTemplate[] = [
     { nodeId: 'frame:1', objective: 'Frame the question as testable hypotheses', prompt: FRAME, capabilities: ['reason'], tier: 'standard', conversation: 'temporary', acceptance: 'acceptance.answer', resultSchema: 'hypothesis-set@1.0' },
     // Two reviews in parallel on different provider families (PROP-0004, ADR-0027). Review A must
     // prove web search; review B is held to its citations, since its provider cannot prove a search.
+    // Deep research needs a persistent conversation: each review has its own (`own`), never a shared one.
     {
       nodeId: 'literature:1', objective: 'Review the published evidence, with citations (review A)', dependsOn: ['frame:1'], prompt: LITERATURE,
       capabilities: ['reason', 'web-search'], tier: 'standard', conversation: 'temporary', acceptance: 'acceptance.cited',
-      variants: { deep: { capabilities: ['reason', 'deep-research'], tier: 'frontier', conversation: 'persistent' } },
+      variants: { deep: { capabilities: ['reason', 'deep-research'], tier: 'frontier', conversation: 'own' } },
     },
     {
       nodeId: 'literature:2', objective: 'Review the published evidence, with citations (review B)', dependsOn: ['frame:1'], prompt: LITERATURE,
       capabilities: ['reason'], tier: 'standard', conversation: 'temporary', acceptance: 'acceptance.cited', differentFrom: ['literature:1'],
-      variants: { deep: { capabilities: ['reason', 'deep-research'], tier: 'frontier', conversation: 'persistent' } },
+      variants: { deep: { capabilities: ['reason', 'deep-research'], tier: 'frontier', conversation: 'own' } },
     },
     {
       nodeId: 'evidence:1', objective: 'Extract one evidence table from both reviews', dependsOn: ['frame:1', 'literature:1', 'literature:2'], prompt: EVIDENCE,
@@ -162,15 +163,19 @@ export function apply(ctx: Context): void {
     const run = ctx.workflow.get(runId)
     // `research-deep` was the deep variant's template before PROP-0004; its runs can still be superseded.
     if (!run || (run.template !== 'research' && run.template !== 'research-deep')) return
-    const result = ctx.workflow.records(runId).find((r) => r.nodeId === nodeId)?.outputReceipt?.result
+    const record = ctx.workflow.records(runId).find((r) => r.nodeId === nodeId)
+    const result = record?.outputReceipt?.result
     const answer = result ? ctx.artifacts.get(result) : undefined
     if (!answer) return
-    const parsed = typedBody(textOf(answer.body), typed.schema)
+    // The schema the run's own step asked for: an old run's step keeps its old version.
+    const schema = record?.requirement.acceptance.resultSchema ?? typed.schema
+    const parsed = typedBody(textOf(answer.body), schema)
     if (!parsed.ok) return
-    const previous = ctx.artifacts.list({ kind: typed.kind, runId, nodeId }).filter((a) => a.bodySchema === typed.schema).at(-1)
+    const schemaName = schema.slice(0, schema.indexOf('@') + 1)
+    const previous = ctx.artifacts.list({ kind: typed.kind, runId, nodeId }).filter((a) => a.bodySchema.startsWith(schemaName)).at(-1)
     if (previous?.inputs.includes(result!)) return
     ctx.artifacts.put({
-      kind: typed.kind, bodySchema: typed.schema, body: parsed.body, inputs: [result!],
+      kind: typed.kind, bodySchema: schema, body: parsed.body, inputs: [result!],
       ...(previous ? { lineage: { supersedes: [previous.id as ContentId] } } : {}),
       classification: answer.classification, producer: { type: 'system', ref: name }, runId, nodeId,
     })

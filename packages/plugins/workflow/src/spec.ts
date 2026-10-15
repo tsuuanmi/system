@@ -18,8 +18,11 @@ export interface NodeTemplate {
   tier: Tier
   /** The caller's `tier` replaces this node's (an `ask` asks for a tier; a pipeline's steps keep theirs). */
   callerTier?: boolean
-  /** `caller`: the caller's session or `persist`; `persistent`: the caller's session or a new one. */
-  conversation: 'temporary' | 'persistent' | 'caller'
+  /**
+   * `caller`: the caller's session or `persist`; `persistent`: the caller's session or a new one;
+   * `own`: a new persistent conversation of this node alone, for steps that run in parallel.
+   */
+  conversation: 'temporary' | 'persistent' | 'caller' | 'own'
   /** Acceptance contract the node's result must pass (REQ-WRK-3). */
   acceptance: string
   /** Times a rejected result is retried at the next tier up (REQ-WRK-9; default 1, at most 3). */
@@ -113,14 +116,22 @@ export interface CallerOptions {
 }
 
 const VARIANT_FIELDS = new Set(['objective', 'prompt', 'capabilities', 'tier', 'conversation', 'acceptance'])
+const TEXT = (v: unknown): boolean => typeof v === 'string' && v.length > 0
 
-/** Variants stay narrow: plain Worker nodes only, and only the fields a NodeVariant names. */
+/** Variants stay narrow: plain Worker nodes only, only the fields a NodeVariant names, and valid values. */
 function checkVariants(node: NodeTemplate): void {
   if (node.team || node.grows) throw new TypeError(`node ${node.nodeId}: a team or a planner has no variants`)
   for (const [name, variant] of Object.entries(node.variants!)) {
     if (!/^[a-z][a-z0-9-]{0,39}$/.test(name)) throw new TypeError(`node ${node.nodeId}: variant name ${JSON.stringify(name)} is not lowercase letters, digits, and hyphens`)
-    const extra = Object.keys(variant ?? {}).filter((key) => !VARIANT_FIELDS.has(key))
+    const fields = (variant ?? {}) as Record<string, unknown>
+    const extra = Object.keys(fields).filter((key) => !VARIANT_FIELDS.has(key))
     if (extra.length) throw new TypeError(`node ${node.nodeId}, variant ${name}: ${extra.join(', ')} cannot vary`)
+    const bad = Object.entries(fields).filter(([key, value]) => !(
+      key === 'tier' ? ['economy', 'standard', 'frontier'].includes(value as string)
+        : key === 'conversation' ? ['temporary', 'persistent', 'caller', 'own'].includes(value as string)
+          : key === 'capabilities' ? Array.isArray(value) && value.length > 0 && value.every(TEXT)
+            : TEXT(value)))
+    if (bad.length) throw new TypeError(`node ${node.nodeId}, variant ${name}: invalid ${bad.map(([key]) => key).join(', ')}`)
   }
 }
 
@@ -231,10 +242,64 @@ export function preflight(nodes: readonly NodeTemplate[]): string[] {
     order.push(id)
   }
   for (const node of nodes) visit(node.nodeId)
+  checkDifferentFrom(nodes)
   const used = new Set(nodes.flatMap((n) => n.dependsOn ?? []))
   const finals = nodes.filter((n) => !used.has(n.nodeId))
   if (finals.length !== 1) throw new TypeError(`a workflow needs exactly one final node, whose result is the run's; found ${finals.map((n) => n.nodeId).join(', ')}`)
   return order
+}
+
+/** Every node a node waits for, directly or through others. */
+function ancestors(nodes: readonly { nodeId: string; dependsOn?: string[] }[]): Map<string, Set<string>> {
+  const byId = new Map(nodes.map((n) => [n.nodeId, n]))
+  const memo = new Map<string, Set<string>>()
+  const of = (id: string): Set<string> => {
+    const known = memo.get(id)
+    if (known) return known
+    const all = new Set<string>()
+    memo.set(id, all)
+    for (const dep of byId.get(id)?.dependsOn ?? []) {
+      all.add(dep)
+      for (const a of of(dep)) all.add(a)
+    }
+    return all
+  }
+  for (const n of nodes) of(n.nodeId)
+  return memo
+}
+
+/** Nodes on the run's one shared conversation must take turns: two that can run at once would interleave in it. */
+function sharedSessionsInSequence(nodes: readonly ResolvedNode[]): void {
+  const shared = nodes.filter((n) => n.session.persist || n.session.sessionId)
+  const before = ancestors(nodes)
+  for (const [i, a] of shared.entries()) {
+    for (const b of shared.slice(i + 1)) {
+      if (!before.get(a.nodeId)!.has(b.nodeId) && !before.get(b.nodeId)!.has(a.nodeId)) {
+        throw new TypeError(`nodes ${a.nodeId} and ${b.nodeId} could run at once on the run's one conversation; give one of them conversation: own`)
+      }
+    }
+  }
+}
+
+/**
+ * A node waits for the nodes it must differ from to be promoted: none of them may wait for it, by
+ * dependency or by its own differentFrom, or neither could ever start (ADR-0027).
+ */
+function checkDifferentFrom(nodes: readonly NodeTemplate[]): void {
+  const after = new Map<string, string[]>(nodes.map((n) => [n.nodeId, []]))
+  for (const n of nodes) {
+    for (const dep of n.dependsOn ?? []) after.get(dep)?.push(n.nodeId)
+    for (const peer of n.differentFrom ?? []) after.get(peer)?.push(n.nodeId)
+  }
+  const state = new Map<string, 'visiting' | 'done'>()
+  const visit = (id: string): void => {
+    if (state.get(id) === 'done') return
+    if (state.get(id) === 'visiting') throw new TypeError(`node ${id} would wait for itself through differentFrom: a node cannot differ from one that waits for it`)
+    state.set(id, 'visiting')
+    for (const next of after.get(id) ?? []) visit(next)
+    state.set(id, 'done')
+  }
+  for (const n of nodes) visit(n.nodeId)
 }
 
 function checkTeam(nodeId: string, team: unknown): void {
@@ -343,12 +408,15 @@ export function resolve(template: string, nodes: readonly NodeTemplate[], caller
     }
     const session = conversation === 'temporary'
       ? {}
-      : caller.sessionId
+      : conversation === 'own'
+        ? { member: `${id}:own` }
+        : caller.sessionId
         ? { sessionId: caller.sessionId }
         : conversation === 'persistent' || caller.persist ? { persist: true } : {}
     const fromCaller = !!(callerTier && caller.tier)
     return { ...node, dependsOn: node.dependsOn ?? [], tier: fromCaller ? caller.tier! : node.tier, tierSource: fromCaller ? 'caller' : 'profile', session }
   })
+  sharedSessionsInSequence(resolved)
   return { template, nodes: resolved, specHash: contentId({ template, nodes: resolved }) }
 }
 
