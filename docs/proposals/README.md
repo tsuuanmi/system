@@ -35,7 +35,7 @@ accepted/implemented -> superseded
   confined for reads, health and drift alerts, bounded retention and tested
   upgrades, versioned releases with provenance, and an `api-first` preset.
 - [PROP-0004: Claude Code as the lead (MVP)](0004-claude-code-lead-mvp.md),
-  **draft**. Claude Code delegates research, brainstorm, and review to teams of
+  **accepted**. Claude Code delegates research, brainstorm, and review to teams of
   website Workers on two providers that debate and decide by majority vote. Only
   the core templates remain, and retention also deletes the website chats
   `system` created.

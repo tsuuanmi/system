@@ -1,7 +1,7 @@
 ---
 id: PROP-0004
 type: proposal
-status: draft
+status: accepted
 owners: [tsuuanmi]
 created: 2026-10-16
 related-requirements: [QA-14]
@@ -180,13 +180,14 @@ the same for `brainstorm` and `review`:
 1. **Propose.** Each member answers alone, without seeing the others. The
    proposals are kept unchanged: what a member said before any exchange stays
    on record.
-2. **Options.** For a brainstorm, a synthesis step extracts a neutral list of
-   distinct options (O1…On) from the proposals, following a fixed rubric. Each
-   option records which proposals it came from. The step may not invent a hybrid
-   that no proposal holds. A member that finds an option missing or misstated
-   says so on its ballot, and a material change to the options voids the
-   ballots cast on them. For a review, the options are `pass` and `changes`,
-   over one merged list of findings.
+2. **Options.** For a brainstorm, each member's proposal is one option: O*k* is
+   member *k*'s structured recommendation, verbatim, with its provenance. This
+   is neutral by construction, invents no hybrid, and needs no extractor, which
+   would be one member's family judging both proposals. Agreement shows as both
+   ballots naming the same option. A ballot may also say that an option
+   misstates its author's position. Merging options is not part of the MVP. For
+   a review, the options are `pass` and `changes`, over one merged list of
+   findings.
 3. **Vote.** Each member casts one sealed ballot. A ballot holds:
    - exactly one choice among the options;
    - its ranking of all of them, which is advisory only;
@@ -196,8 +197,11 @@ the same for `brainstorm` and `review`:
    - a confidence.
 
    Other members' ballots stay hidden until every ballot is in.
-4. **Debate, only on disagreement.** If the ballots already give a strict
-   majority, there is no debate. Otherwise each member sees the other proposals
+4. **Debate, only on disagreement.** A tally step reads the sealed ballots and
+   records the vote decision. If they already give a strict majority, there is
+   no debate. Otherwise the tally appends the debate, a re-vote, and a second
+   tally to the run, the way re-planning appends steps; the tally decision
+   justifies them. Otherwise each member sees the other proposals
    and ballots, without provider names, and answers only the crux of the
    disagreement: it may revise its proposal and vote again.
    - The number of debate rounds is bounded: default 1, at most 2.
@@ -229,8 +233,8 @@ the same for `brainstorm` and `review`:
    - A tied review never defaults to `pass`: blocking findings stay visible
      whatever the caller decides.
 
-The orchestrator enforces the protocol in deterministic code: it freezes the
-extracted options, validates and seals the ballots, tallies the votes,
+The orchestrator enforces the protocol in deterministic code: it fixes the
+options, validates and seals the ballots, tallies the votes,
 handles a tie, and ends the rounds. The models supply reasoning and evidence
 only.
 
@@ -319,7 +323,7 @@ existing distinct-account rule for teams stays.
 | Phase | Content | Proof |
 |---|---|---|
 | 0 | Stabilize: citation fix on `main`, the live install, the MCP client reconnected | done 2026-10-16 |
-| 1 | Removals and switch-offs: the templates except `panel`, which serves the dogfood brainstorm until `brainstorm` replaces it in Phase 3; the `deep` option of `research` (CLI and MCP); agent Worker and gateway rows disabled by default (their helpers refuse while off); the agent `review` moved into the agent Workers' template list; the `site` preset; the free account removed by the operator; Linux-only docs. Until Phase 3 there is no `review` in the default composition, which is accepted. | composition e2e row set; upgrade suite still explains old runs; crash suite |
+| 1 | Removals and switch-offs (the operator removes the free account before or together with this update; a Worker whose tier names an unknown mode is unavailable, never routed): the templates except `panel`, which serves the dogfood brainstorm until `brainstorm` replaces it in Phase 3; the `deep` option of `research` (CLI and MCP); agent Worker and gateway rows disabled by default (their helpers refuse while off); the agent `review` moved into the agent Workers' template list; the `site` preset; the free account removed by the operator; Linux-only docs. Until Phase 3 there is no `review` in the default composition, which is accepted. | composition e2e row set; upgrade suite still explains old runs; crash suite |
 | 2 | `research` on two providers in parallel (branch A proves `web-search`, branch B is cited and on another provider family), with the diversity predicate. The diversity predicate needs ADR-0027, so the ADR moves here from Phase 3. | a live run uses both providers |
 | 3 | `panel` removed; teams: `brainstorm` and `review` with debate and vote, tie to the caller | live brainstorm of a real design question for `system` |
 | 4 | `review` of a public repository by URL | live review of this repository |
@@ -399,7 +403,11 @@ On acceptance, with the code of each phase:
 
 ## Decision
 
-Pending review.
+Accepted by the owner on 2026-10-16, together with
+[ADR-0027](../decisions/adr/0027-provider-diversity-in-routing.md). Two choices
+followed the dogfood research:
+- teams vote first and debate only on disagreement;
+- the second research branch is gated by citations, not by proven web search.
 
 ## Implementation
 
