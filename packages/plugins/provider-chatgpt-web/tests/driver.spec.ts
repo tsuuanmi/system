@@ -214,6 +214,8 @@ describe.runIf(canRunBrowser)('ChatGptWebDriver against the fake site, with no r
     const { page, driver, context, fake } = await site({ researchMs: 4000, report: 'Final report.' })
     let binding = ''
     const asking = driver.ask(page, 'long research', { conversation: 'persistent', feature: 'deep-research', onBinding: (id) => { binding = id } })
+    // Awaited below; a failed assertion before that must not leave its rejection unhandled when the page closes.
+    asking.catch(() => undefined)
     await expect.poll(() => fake.conversations.size, { timeout: 15_000 }).toBe(1)
     await expect.poll(() => [...fake.conversations.values()][0]?.researches.length, { timeout: 15_000 }).toBe(1)
     const other = await context.newPage()

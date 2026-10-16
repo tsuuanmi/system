@@ -362,6 +362,8 @@ describe.runIf(canRunBrowser)('GeminiWebDriver against the fake site', { timeout
     const { page, driver, fake } = await open({ researchMs: 12_000 })
     let binding: string | undefined
     const asked = driver.ask(page, 'Compare HTTP/2 and HTTP/3', { conversation: 'persistent', feature: 'deep-research', onBinding: (b) => { binding = b } })
+    // Awaited below; a failed assertion before that must not leave its rejection unhandled when the page closes.
+    asked.catch(() => undefined)
     for (let i = 0; i < 100 && !fake.started.length; i++) await new Promise((resolve) => setTimeout(resolve, 100))
     expect(fake.started).toEqual([binding])
     const other = await context!.newPage()

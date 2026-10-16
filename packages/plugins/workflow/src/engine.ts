@@ -550,7 +550,6 @@ export class Engine {
     this.complete(run, node, spec, current, lease)
   }
 
-  /** A team's need for provider families against those ready now, as the start of a member's admission failure. */
   /**
    * The operator allows a node to run on the same provider family when no Worker of another
    * family (or another account, for a team member) is admitted (ADR-0029, `allowSameFamily`): the
@@ -572,6 +571,7 @@ export class Engine {
     }, { producer: { type: 'system', ref: 'workflow' }, runId: run.run_id, nodeId: node.node_id }).id as ArtifactRef
   }
 
+  /** A team's need for provider families against those ready now, as the start of a member's admission failure. */
   private async familyShortage(spec: ResolvedNode): Promise<string> {
     const ready = new Set((await this.ctx.workers.list()).filter((w) => (w.state === 'ready' || w.state === 'busy') && w.family !== undefined).map((w) => w.family))
     return `team ${spec.team!.id} needs ${spec.team!.members} provider families, one per member; ${ready.size} ${ready.size === 1 ? 'is' : 'are'} ready (ADR-0027). `
