@@ -269,6 +269,13 @@ describe.runIf(canRunBrowser)('ChatGptWebDriver against the fake site, with no r
     expect(JSON.stringify(drift[0]!.outline)).not.toContain('private question')
   }, 40_000)
 
+  it('is signed in with a "Log in" offer beside a working composer', async () => {
+    const { fake, page, driver } = await site({ loginOffer: true, answer: 'still here' })
+    expect(await driver.checkAuth(page)).toBe('signed-in')
+    expect((await driver.ask(page, 'hi', { conversation: 'temporary' })).text).toBe('still here')
+    expect(fake.sent).toHaveLength(1)
+  }, 40_000)
+
   it('fails closed as reauth_required when signed out', async () => {
     const { fake, page, driver } = await site({ signedIn: false })
     await expect(driver.ask(page, 'x', { conversation: 'temporary' })).rejects.toMatchObject({ kind: 'reauth_required' })

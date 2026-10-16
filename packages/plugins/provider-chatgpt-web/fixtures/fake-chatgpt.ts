@@ -33,6 +33,8 @@ export interface FakeOptions {
   /** Clicking Chat does nothing (the driver must refuse to send). */
   chatToggleBroken?: boolean
   signedIn?: boolean
+  /** A "Log in" control shows beside the signed-in app (an offer to switch accounts): still signed in. */
+  loginOffer?: boolean
   /** Signed in only with the `session=valid` cookie (Save-flow tests). */
   requireCookie?: boolean
   /** Account id returned by `GET /backend-api/me`. */
@@ -123,7 +125,7 @@ function html(options: Required<FakeOptions>, conversation: Conversation | undef
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>ChatGPT</title>
 <style>.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}[hidden]{display:none}</style></head>
 <body>
-<nav aria-label="App navigation"><button aria-label="Open profile menu">me</button></nav>
+<nav aria-label="App navigation"><button aria-label="Open profile menu">me</button>${options.loginOffer ? '<button>Log in</button>' : ''}</nav>
 <main>
   <button id="temp" aria-label="Temporary chat">t</button>
   <button id="temp-off" aria-label="Turn off temporary chat" hidden>x</button>
@@ -322,7 +324,7 @@ export class FakeChatGpt {
 
   constructor(options: FakeOptions = {}) {
     this.options = {
-      startOnWork: true, chatToggleBroken: false, signedIn: true, requireCookie: false, userId: 'user-fake123', sendLabel: 'Send', sendTestId: '',
+      startOnWork: true, chatToggleBroken: false, signedIn: true, loginOffer: false, requireCookie: false, userId: 'user-fake123', sendLabel: 'Send', sendTestId: '',
       answer: 'OK', thinkMs: 300, models: ['Latest', 'GPT-6', 'GPT-5.6 Sol', 'GPT-5.5'], lockedModels: [],
       researchMs: 1500, report: 'Deep research report body.', clarify: false, features: ['deep-research', 'web-search', 'image-generation'], modelPicker: true,
       mfa: 'totp', email: 'operator@example.test', password: 'correct horse', totpSecret: 'JBSWY3DPEHPK3PXP',

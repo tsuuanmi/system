@@ -141,6 +141,13 @@ describe.runIf(canRunBrowser)('GeminiWebDriver against the fake site', { timeout
     expect((await driver.ask(page, 'Markdown please', { conversation: 'temporary' })).text).toBe(markdown)
   })
 
+  it('is signed in with a "Sign in" offer beside the account\'s own button, and signed out only without it', async () => {
+    const { page, driver, fake } = await open({ signInOffer: true, answer: 'still here' })
+    expect(await driver.checkAuth(page)).toBe('signed-in')
+    expect((await driver.ask(page, 'hi', { conversation: 'temporary' })).text).toBe('still here')
+    expect(fake.sent).toHaveLength(1)
+  })
+
   it('refuses to send when Spark cannot be left', async () => {
     const { page, driver, fake } = await open({ chatTabBroken: true })
     await expect(driver.ask(page, 'hi', { conversation: 'temporary' })).rejects.toMatchObject({ kind: 'ui_drift', message: expect.stringMatching(/Chat tab/) })

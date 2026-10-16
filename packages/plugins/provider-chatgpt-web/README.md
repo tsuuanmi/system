@@ -42,7 +42,8 @@ The **ChatGPT Web provider driver**
   password, code, and method-choice steps follow the reference repositories and
   are **not yet verified live**. A challenge stops it, and so does a third code.
 - **`checkAuth`:** `signed-in` (composer present), `signed-out` (positive
-  evidence: login URL or surface), or `unknown`.
+  evidence: the login URL, or a login control with no composer; a "Log in"
+  control beside a working composer is not), or `unknown`.
 - **Heal audit:**
   - every chosen heal is a `recovery` decision recorded before the click;
   - verified heals are appended to the overlay (0600, with the decision id in a

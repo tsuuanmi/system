@@ -237,7 +237,9 @@ actions:
 
 states:
   auth.signed-in: { visible: auth.account }
-  auth.signed-out: { anyOf: [{ url: '^https?://accounts\.google\.com/' }, { visible: auth.login }] }
+  # A "Sign in" control beside the account's own button is not a signed-out page (an offer to add an
+  # account, say): only the sign-in host, or a sign-in control with no account shown, is.
+  auth.signed-out: { anyOf: [{ url: '^https?://accounts\.google\.com/' }, { allOf: [{ visible: auth.login }, { not: { visible: auth.account } }] }] }
   turn.running: { visible: composer.stop }
 
 errors:

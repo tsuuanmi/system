@@ -336,7 +336,9 @@ network:
 
 states:
   auth.signed-in: { visible: composer.input }
-  auth.signed-out: { anyOf: [{ url: '^https?://auth\.openai\.com/|/auth/login' }, { visible: auth.login }] }
+  # A "Log in" control beside a working composer is not a signed-out page: only the login host, or a
+  # login control with no composer, is.
+  auth.signed-out: { anyOf: [{ url: '^https?://auth\.openai\.com/|/auth/login' }, { allOf: [{ visible: auth.login }, { not: { visible: composer.input } }] }] }
   turn.running: { visible: composer.stop }
   turn.idle: { allOf: [{ hidden: composer.stop }, { anyOf: [{ visible: composer.send }, { visible: composer.voice }] }] }
 

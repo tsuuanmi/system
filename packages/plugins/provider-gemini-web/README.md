@@ -59,7 +59,8 @@ driver, its operations are data: a UI map,
   and more tools, reports Deep research if offered, and sends nothing.
 - **Sign-in:**
   - `checkAuth` is `signed-in` when the Google Account control is visible, and
-    `signed-out` on Google's sign-in page or a visible "Sign in" entry.
+    `signed-out` on Google's sign-in page, or with a visible "Sign in" entry and
+    no account control (a "Sign in" offer beside the account is still signed in).
   - `identity` reads the account from that control's name; only its hash is
     stored.
   - Accounts are signed in with `system account login <id>` (remote desktop),

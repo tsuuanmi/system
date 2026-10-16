@@ -34,6 +34,8 @@ export interface FakeOptions {
   chatTabBroken?: boolean
   /** Clicking Temporary chat does nothing (the driver must refuse to send). */
   temporaryBroken?: boolean
+  /** A "Sign in" control shows beside the account's button (an offer to add an account): still signed in. */
+  signInOffer?: boolean
   /** Whether the account has a mode picker (default true). */
   modePicker?: boolean
   /** Whether prompts render their text in paragraphs (default true; false is drift). */
@@ -279,7 +281,7 @@ function html(options: Required<FakeOptions>): string {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Gemini</title>
 <style>.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}[hidden]{display:none}</style></head>
 <body>
-<header><a href="#" aria-label="Google Account: Test User (test@example.test)">T</a></header>
+<header><a href="#" aria-label="Google Account: Test User (test@example.test)">T</a>${options.signInOffer ? '<button>Sign in</button>' : ''}</header>
 <nav><button aria-label="Temporary chat" id="temp">t</button></nav>
 <div><button data-test-id="app-tab-chat" class="app-tab" id="tab-chat">Chat</button><button data-test-id="app-tab-agent" class="app-tab" id="tab-spark">Spark<br>BETA</button></div>
 <main>
@@ -319,7 +321,7 @@ export class FakeGemini {
 
   constructor(options: FakeOptions = {}) {
     this.options = {
-      startOnSpark: true, chatTabBroken: false, temporaryBroken: false, modePicker: true, promptParagraphs: true, deepResearch: true,
+      startOnSpark: true, signInOffer: false, chatTabBroken: false, temporaryBroken: false, modePicker: true, promptParagraphs: true, deepResearch: true,
       models: ['3.5 Flash-Lite', '3.8 Flash', '3.1 Pro'], levels: ['Low', 'Medium', 'High'], levelsInline: true, levelsSubmenu: true, submenuBroken: false, answer: 'OK', clarify: '',
       researchMs: 1500, report: 'HTTP/3 runs over QUIC, not TCP.', sources: [{ title: 'RFC 9114: HTTP/3', url: 'https://www.rfc-editor.org/rfc/rfc9114' }], ...options,
     }
