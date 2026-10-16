@@ -71,6 +71,10 @@ describe('snapshotRepository: a public repository read at one commit (PROP-0004 
     const tight = await snapshotRepository({ url: repo.url }, { maxBytes: 40 }, undefined, local)
     expect(tight.files.map((f) => f.path)).toEqual(['README.md', 'src/server.ts'])
     expect(tight.unread).toEqual(expect.arrayContaining([{ path: 'package.json', why: 'bounds' }]))
+    // The per-file bound is inclusive: a file of exactly that size is read, a larger one never comes down.
+    const manifest = JSON.stringify({ name: 'demo', main: './src/server.ts' }).length
+    expect((await snapshotRepository({ url: repo.url }, { maxFileBytes: manifest }, undefined, local)).files.map((f) => f.path)).toContain('package.json')
+    expect((await snapshotRepository({ url: repo.url }, { maxFileBytes: manifest - 1 }, undefined, local)).unread).toEqual(expect.arrayContaining([{ path: 'package.json', why: 'too-large' }]))
   })
 
   it('records a commit named by its SHA as pinned by SHA (on GitHub it may come from a fork)', async () => {
@@ -99,7 +103,11 @@ describe('snapshotRepository: a public repository read at one commit (PROP-0004 
     expect(await refused('https://github.com/a/b?x=1')).toMatchObject({ kind: 'invalid_input', message: expect.stringMatching(/query or fragment/) })
     expect(await refused('https://github.com/a')).toMatchObject({ kind: 'invalid_input', message: expect.stringMatching(/<owner>\/<repo>/) })
     expect(await refused('https://github.com/a/../b')).toMatchObject({ kind: 'invalid_input' })
-    expect(await refused('https://GitHub.com/a/b')).toMatchObject({ kind: 'invalid_input', message: expect.stringMatching(/canonical form/) })
+    expect(await refused('https://github.com/./a/b')).toMatchObject({ kind: 'invalid_input', message: expect.stringMatching(/canonical form/) })
+    // Only the scheme's and host's case and the default port may differ: these reach the address check.
+    for (const url of ['HTTPS://Forge.Example/a/b', 'https://forge.example:443/a/b']) {
+      expect(await refused(url, { hosts: ['forge.example'] }, { resolve: async () => ['10.0.0.1'] }), url).toMatchObject({ kind: 'invalid_input', message: expect.stringMatching(/non-public address/) })
+    }
     expect(await refused('https://github.com/a/b c')).toMatchObject({ kind: 'invalid_input' })
     // Built, not written, so the repository's own secret scan does not take it for a credential.
     const withUser = Object.assign(new URL('https://github.com/a/b'), { username: 'user', password: 'pass' }).href
@@ -117,10 +125,11 @@ describe('snapshotRepository: a public repository read at one commit (PROP-0004 
 
   it('knows every non-public address range, v4 and v6', () => {
     for (const a of ['10.1.2.3', '127.0.0.1', '169.254.1.1', '172.16.0.1', '192.168.1.1', '100.64.0.1', '0.0.0.0', '192.0.0.8', '198.18.0.1', '224.0.0.1', '240.0.0.1', '203.0.113.7',
-      '::', '::1', 'fc00::1', 'fd12::1', 'fe80::1', 'fe81::1', 'febf::1', 'ff02::1', '::ffff:10.0.0.1', '64:ff9b::a00:1', '2002:a00:1::1', '2001:db8::7', 'not-an-address']) {
+      '::', '::1', 'fc00::1', 'fd12::1', 'fe80::1', 'fe81::1', 'febf::1', 'ff02::1', '::ffff:10.0.0.1', '64:ff9b::a00:1', '2002:a00:1::1', '2001:db8::7',
+      '::127.0.0.1', '::7f00:1', '::ffff:0:a00:1', '2001::1', '2001:0:4136:e378::1', 'fec0::1', 'not-an-address']) {
       expect(isPrivateAddress(a), a).toBe(true)
     }
-    for (const a of ['140.82.112.3', '8.8.8.8', '2606:4700::1111', '::ffff:140.82.112.3']) expect(isPrivateAddress(a), a).toBe(false)
+    for (const a of ['140.82.112.3', '8.8.8.8', '2606:4700::1111', '::ffff:140.82.112.3', '2001:4860:4860::8888']) expect(isPrivateAddress(a), a).toBe(false)
   })
 
   it('pins git to every address it checked, so a second lookup cannot send it elsewhere (DNS rebinding)', () => {
@@ -148,7 +157,13 @@ describe('snapshotRepository: a public repository read at one commit (PROP-0004 
     selectFiles(many, { terms: Array.from({ length: 20_000 }, (_, i) => `word${i}`) })
     selectFiles(many, { focus: Array.from({ length: 20 }, () => `**/*${'a*'.repeat(3)}zz/**`) })
     expect(Date.now() - started).toBeLessThan(10_000)
+    // A pattern deep enough to cost pattern × path steps on every deep path runs out of its budget, quickly.
+    const deep = Array.from({ length: 5000 }, (_, i) => ({ path: `${'a/'.repeat(495)}c${i}`, sha: '0'.repeat(40), bytes: 10 }))
+    const costly = Date.now()
+    expect(() => selectFiles(deep, { focus: [`**/${'a/'.repeat(14)}b`] })).toThrow(/too costly/)
+    expect(Date.now() - costly).toBeLessThan(10_000)
+    expect(await snapshotRepository({ url: repo.url, focus: [`**/${'a/'.repeat(240)}b`] }, {}, undefined, local).catch((e: unknown) => e)).toMatchObject({ kind: 'invalid_input', message: expect.stringMatching(/16 segments/) })
     expect(await snapshotRepository({ url: repo.url, focus: Array.from({ length: 21 }, () => 'a') }, {}, undefined, local).catch((e: unknown) => e)).toMatchObject({ kind: 'invalid_input', message: expect.stringMatching(/at most 20 focus/) })
     expect(await snapshotRepository({ url: repo.url, focus: ['*'.repeat(9)] }, {}, undefined, local).catch((e: unknown) => e)).toMatchObject({ kind: 'invalid_input', message: expect.stringMatching(/8 wildcards/) })
-  })
+  }, 60_000)
 })

@@ -130,8 +130,9 @@
   rebinding).** A repository read is an inbound read of public data: `system` fetches only what
   a public URL makes public, and sends only git's own requests
   ([sources](../design/teams.md#sources)).
-  - **One reading of the URL.** It must be exactly its own parse, `https://<host>/<owner>/<repo>`,
-    with no credentials, port, query, fragment, whitespace, control characters, or backslash:
+  - **One reading of the URL.** It must be exactly its own parse, `https://<host>/<owner>/<repo>`
+    (only the case of the scheme and host and the default port `:443` may differ), with no
+    credentials, other port, query, fragment, whitespace, control characters, or backslash:
     a form that one parser reads as github.com and git as another host
     (`https://github.com\:x@127.0.0.1/…`), or as ssh (`https:github.com/…`), is refused. Git is
     given only the canonical URL rebuilt from the checked parts.
@@ -139,7 +140,8 @@
     `repositories.hosts`, default `github.com`), named rather than an address, and resolve to
     public addresses only: every non-public IPv4 range (private, loopback, link-local, shared,
     protocol, documentation, benchmarking, multicast, reserved) and IPv6 (unique-local,
-    link-local, multicast, mapped, NAT64, 6to4, documentation) is refused. Git is pinned to every
+    IPv4-compatible, site-local, link-local, multicast, mapped, translated, NAT64, 6to4, Teredo,
+    documentation) is refused. Git is pinned to every
     address checked (`http.curloptResolve`), so it cannot resolve the host again to another. A git
     older than 2.37 cannot be pinned, and the read fails closed.
   - **A confined git.** Fixed arguments and no shell; `https` is the only protocol it may use
@@ -148,8 +150,9 @@
     own, `GIT_CONFIG_GLOBAL=/dev/null`, `GIT_CEILING_DIRECTORIES`); a ref is a plain branch, tag,
     or commit name. Local repositories are a test seam that no configuration reaches.
   - **Bounds.** A blob over the per-file bound is never downloaded; files, bytes, tree entries,
-    every git call, and the whole read are bounded, and a stopped call kills its process group.
-    Focus globs are matched without backtracking, and request words are capped.
+    git output, every git call, and the whole read are bounded, and a stopped call kills its
+    process group (its input pipe closing then is expected, never a crash). Focus globs are
+    matched without backtracking within a step budget, and request words are capped.
 - **Repository content injects instructions into a review.** Each file, its path included,
   reaches members marked as another party's data, between fence lines derived from a hash of
   its content, which its own text cannot close; so does the list of unread paths. Members only
@@ -157,7 +160,8 @@
   model never confirms a finding
   ([INV-6](../architecture/invariants.md#inv-6-authority-comes-from-trusted-envelopes)). A
   quote too short to identify one line confirms nothing, and a merged finding keeps each
-  member's own claim, so one member's quote never confirms another's blocking claim.
+  member's own report and shows its class and severity per report, so one member's quote never
+  confirms, or appears to confirm, another's blocking claim.
 - **A tampered backup writes outside the state directory on restore.** Restore
   accepts only `system.db`, `vault.enc`, and `vault.key` in a backup manifest; any
   other name (for example `../../.ssh/authorized_keys`) refuses the whole backup

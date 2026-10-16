@@ -55,14 +55,16 @@ export interface ReviewFinding extends Finding {
   member: string
   /** Every member who reported it, in member order. */
   members: string[]
-  /** Confirmed when any report's quote is; the class of the first report otherwise. */
+  /** The lead report's class: never aggregated across reports, so one report's quote never confirms another's claim. */
   class?: 'confirmed' | 'needs-verification' | 'suggestion'
   /** Why it is not confirmed. */
   why?: string
   /**
-   * Each member's own report on this line, with its own claim, severity, and class: merging never
-   * lends one member's quote to another's claim, and only a report that is both confirmed and
-   * blocking counts for the blocking-finding rule.
+   * Each member's own report on this line, one per member, with its own claim, severity, and
+   * class: merging never lends one member's quote to another's claim, and only a report that is
+   * both confirmed and blocking counts for the blocking-finding rule. The finding's own severity,
+   * class, and claim are its lead report's: the one that decides by rule if any, else the most
+   * severe (confirmed first).
    */
   reports?: FindingReport[]
 }
@@ -283,6 +285,8 @@ export function findingsOf(e: Engine, team: TeamRole, nodes: NodeRow[]): ReviewF
   const source = sourceOf(e, nodes, proposals.flatMap(({ row }) => specOf(row).dependsOn))
   const merged: ReviewFinding[] = []
   const byLine = new Map<string, ReviewFinding>()
+  // Where each report's quote and evidence came from: a finding shows its lead report's.
+  const placed = new Map<FindingReport, { quote: ReviewFinding['quote'] | undefined; evidence: string; location: string | undefined }>()
   for (const { row, role } of proposals) {
     for (const f of parseFindings(e.resultText(resultOf(row)!)) as Finding[]) {
       const member = `m${role.member}`
@@ -293,11 +297,18 @@ export function findingsOf(e: Engine, team: TeamRole, nodes: NodeRow[]): ReviewF
       const same = key ? byLine.get(key) : undefined
       const { line, ...cls } = checked
       const report: FindingReport = { member, severity: f.severity, claim: f.claim, ...(cls.class ? { class: cls.class } : {}), ...(cls.why ? { why: cls.why } : {}) }
+      placed.set(report, { quote: f.quote && line ? { ...f.quote, matched: line } : f.quote, evidence: f.evidence, location: f.location })
       if (same) {
         if (!same.members.includes(member)) same.members.push(member)
-        same.reports!.push(report)
-        if (SEVERITY[f.severity] > SEVERITY[same.severity]) same.severity = f.severity
-        if (same.class !== 'confirmed' && checked.class === 'confirmed') Object.assign(same, { class: 'confirmed', why: undefined })
+        const own = same.reports!.findIndex((r) => r.member === member)
+        if (own < 0) same.reports!.push(report)
+        else {
+          const folded = fold(same.reports![own]!, report)
+          placed.set(folded, placed.get(leading([same.reports![own]!, report]))!)
+          same.reports![own] = folded
+        }
+        const lead = leading(same.reports!)
+        Object.assign(same, { member: lead.member, severity: lead.severity, claim: lead.claim, class: lead.class, why: lead.why }, placed.get(lead))
         continue
       }
       const finding: ReviewFinding = {
@@ -308,7 +319,22 @@ export function findingsOf(e: Engine, team: TeamRole, nodes: NodeRow[]): ReviewF
       if (key) byLine.set(key, finding)
     }
   }
-  return merged.map((f) => (f.why === undefined ? (({ why: _why, ...rest }) => rest)(f) as ReviewFinding : f))
+  // A finding's own fields are its lead report's, never a mix of several; nothing is left undefined.
+  return merged.map((f) => Object.fromEntries(Object.entries(f).filter(([, v]) => v !== undefined)) as unknown as ReviewFinding)
+}
+
+/** Deciding first, then the most severe, confirmed before not, then member order. */
+const reportRank = (r: FindingReport): number => (r.class === 'confirmed' && r.severity === 'blocking' ? 0 : 1) * 10 + (2 - SEVERITY[r.severity]) * 2 + (r.class === 'confirmed' ? 0 : 1)
+const leading = (reports: FindingReport[]): FindingReport => reports.reduce((best, r) => (reportRank(r) < reportRank(best) ? r : best))
+
+/**
+ * One member's two reports on one line, as one: the lead one keeps its severity and class, and
+ * the other's claim follows, labelled with its own severity and class.
+ */
+function fold(a: FindingReport, b: FindingReport): FindingReport {
+  const [lead, other] = leading([a, b]) === a ? [a, b] : [b, a]
+  const label = `${other.severity}${other.class ? ` ${other.class}` : ''}`
+  return { ...lead, claim: clip(`${lead.claim}; also ${label}: ${other.claim}`) }
 }
 
 /** The reports that decide a review by rule: confirmed and blocking, each in its own member's words. */
@@ -484,13 +510,12 @@ function proposalsOf(team: TeamRole, nodes: NodeRow[]): ArtifactRef[] {
   return ofTeam(nodes, team.id).filter(({ role }) => role.role === 'propose').flatMap(({ row }) => (resultOf(row) ? [resultOf(row)!] : []))
 }
 
-/** One finding as a line: its id, reporters, class, severity, claim, and quoted place. */
+/** One finding as a line: its id, quoted place, and each member's own report (severity, class, claim): never a class or severity one report lends another. */
 function findingLine(f: ReviewFinding): string {
   const place = f.quote ? ` at ${f.quote.path}:${f.quote.matched ?? f.quote.line}${f.quote.matched && f.quote.matched !== f.quote.line ? ` (cited ${f.quote.line})` : ''}` : f.location ? ` at ${f.location}` : ''
-  const head = `${f.id} [${f.members.join(', ')}]${f.class ? ` ${f.class}` : ''} ${f.severity}: ${f.claim}${place}${f.evidence ? ` (evidence: ${f.evidence})` : ''}${f.why ? ` (${f.why})` : ''}`
-  // Merged reports keep their own words, severity, and class.
-  const others = (f.reports ?? []).slice(1)
-  return others.length ? `${head}; also ${others.map((r) => `${r.member} ${r.class ?? ''} ${r.severity}: ${r.claim}${r.why ? ` (${r.why})` : ''}`.replace(/ +/g, ' ')).join('; ')}` : head
+  const reports = f.reports?.length ? f.reports : [{ member: f.member, severity: f.severity, claim: f.claim, class: f.class, why: f.why }]
+  const each = reports.map((r) => `${r.member} ${r.severity}${r.class ? ` ${r.class}` : ''}: ${r.claim}${r.why ? ` (${r.why})` : ''}`)
+  return `${f.id}${place}${f.evidence ? ` (evidence: ${f.evidence})` : ''} [${each.join('; ')}]`
 }
 
 /** Members by opaque identity (their sessions), never by provider. */

@@ -81,12 +81,21 @@ export class SnapshotError extends Error {
 /** git 2.37 added `http.curloptResolve`, which pins a connection to the addresses that were checked. */
 export const GIT_FLOOR = [2, 37] as const
 const CALL_MS = 20_000
+/** The fetch brings every blob within the per-file bound in one call: it may take longer. */
+const FETCH_MS = 60_000
+/** A call with less than this left before the deadline is not started. */
+const MIN_CALL_MS = 1_000
 const DEADLINE_MS = 120_000
+/** What one git call may print (a listing larger than this is too large to review). */
+const MAX_OUTPUT = 64 * 1024 * 1024
 const MAX_ENTRIES = 50_000
 const MAX_PATH = 1000
 const MAX_TERMS = 50
 const MAX_FOCUS = 20
 const MAX_WILDCARDS = 8
+const MAX_SEGMENTS = 16
+/** Steps the focus globs may take over the whole tree, so a pathological pattern cannot stall the daemon. */
+const GLOB_BUDGET = 50_000_000
 
 /**
  * The git options that pin every connection to `host` to the addresses checked before it, so git
@@ -97,7 +106,7 @@ export function pinnedTo(host: string, addresses: readonly string[]): string[] {
 }
 
 interface Git {
-  run(args: string[], options?: { input?: string; noLazyFetch?: boolean }): Promise<Buffer>
+  run(args: string[], options?: { input?: string; noLazyFetch?: boolean; callMs?: number }): Promise<Buffer>
 }
 
 /** A git failure that carries its exit code and the start of what it said. */
@@ -125,7 +134,8 @@ function confinedGit(dir: string, pin: string[], allowFile: boolean, deadline: n
   return {
     run: (args, options = {}) => new Promise((resolve, reject) => {
       const left = deadline - Date.now()
-      if (left <= 0) return reject(new SnapshotError('unavailable', 'the repository read ran past its deadline'))
+      if (left < MIN_CALL_MS) return reject(new SnapshotError('unavailable', 'the repository read ran past its deadline'))
+      const limit = Math.min(options.callMs ?? CALL_MS, left)
       if (signal?.aborted) return reject(new SnapshotError('unavailable', 'the repository read was stopped'))
       const child = spawn('git', [...safe, ...pin, ...args], { cwd: dir, env: { ...env, ...(options.noLazyFetch ? { GIT_NO_LAZY_FETCH: '1' } : {}) }, detached: true, stdio: ['pipe', 'pipe', 'pipe'] })
       const out: Buffer[] = []
@@ -140,8 +150,8 @@ function confinedGit(dir: string, pin: string[], allowFile: boolean, deadline: n
       }
       const timer = setTimeout(() => {
         stop()
-        reject(new SnapshotError('unavailable', `git ${args[0]} took longer than ${Math.round(Math.min(CALL_MS, left) / 1000)} s`))
-      }, Math.min(CALL_MS, left))
+        reject(new SnapshotError('unavailable', `git ${args[0]} took longer than ${Math.round(limit / 1000)} s`))
+      }, limit)
       const onAbort = (): void => {
         stop()
         reject(new SnapshotError('unavailable', 'the repository read was stopped'))
@@ -153,8 +163,9 @@ function confinedGit(dir: string, pin: string[], allowFile: boolean, deadline: n
       }
       child.stdout.on('data', (chunk: Buffer) => {
         size += chunk.length
-        if (size > 64 * 1024 * 1024) {
+        if (size > MAX_OUTPUT) {
           stop()
+          reject(new SnapshotError('overloaded', `git ${args[0]} printed more than ${MAX_OUTPUT / 1024 / 1024} MB: the repository is too large to review`))
           return
         }
         out.push(chunk)
@@ -171,6 +182,8 @@ function confinedGit(dir: string, pin: string[], allowFile: boolean, deadline: n
         if (code === 0) resolve(Buffer.concat(out))
         else reject(new GitFailed(code, err))
       })
+      // A stopped git closes its input while it is still written: the close above has rejected already.
+      child.stdin.on('error', () => undefined)
       child.stdin.end(options.input ?? '')
     }),
   }
@@ -212,9 +225,11 @@ export function isPrivateAddress(address: string): boolean {
   if (n !== undefined) return V4_RANGES.some(([base, bits]) => (n >>> (32 - bits)) === (v4(base)! >>> (32 - bits)))
   const g = v6(address)
   if (!g) return true
-  if (g.slice(0, 7).every((x) => x === 0)) return true // :: and ::1 (and the deprecated compatible block)
+  if (g.slice(0, 6).every((x) => x === 0)) return true // ::, ::1, and the deprecated IPv4-compatible block (::/96)
   if (g.slice(0, 5).every((x) => x === 0) && g[5] === 0xffff) return isPrivateAddress(`${g[6]! >> 8}.${g[6]! & 255}.${g[7]! >> 8}.${g[7]! & 255}`) // mapped v4
-  if ((g[0]! & 0xfe00) === 0xfc00 || (g[0]! & 0xffc0) === 0xfe80 || (g[0]! & 0xff00) === 0xff00) return true // unique local, link-local, multicast
+  if (g.slice(0, 4).every((x) => x === 0) && g[4] === 0xffff && g[5] === 0) return true // SIIT translated v4 (::ffff:0:0/96)
+  if ((g[0]! & 0xfe00) === 0xfc00 || (g[0]! & 0xffc0) === 0xfe80 || (g[0]! & 0xffc0) === 0xfec0 || (g[0]! & 0xff00) === 0xff00) return true // unique local, link-local, site-local, multicast
+  if (g[0] === 0x2001 && g[1] === 0) return true // Teredo: it embeds any v4
   if (g[0] === 0x64 && g[1] === 0xff9b) return true // NAT64: it embeds any v4
   if (g[0] === 0x2002) return true // 6to4: it embeds any v4
   if (g[0] === 0x2001 && g[1] === 0x0db8) return true // documentation
@@ -246,7 +261,9 @@ async function canonicalUrl(url: string, bounds: SnapshotBounds, testing: Snapsh
   if (!/^\/[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+?(\.git)?\/?$/.test(parsed.pathname) || /(^|\/)\.\.?(\/|$)/.test(parsed.pathname)) {
     throw new SnapshotError('invalid_input', 'a repository URL is https://<host>/<owner>/<repo>')
   }
-  if (url !== parsed.href) throw new SnapshotError('invalid_input', `${url} is not in its canonical form (${parsed.href})`)
+  // Only the scheme's and host's case and the default port may differ from the parse.
+  const plain = /^https:\/\/([A-Za-z0-9.-]+)(?::443)?(\/.*)$/i.exec(url)
+  if (!plain || `https://${plain[1]!.toLowerCase()}${plain[2]}` !== parsed.href) throw new SnapshotError('invalid_input', `${url} is not in its canonical form (${parsed.href})`)
   const host = parsed.hostname.toLowerCase()
   const hosts = (bounds.hosts ?? ['github.com']).map((h) => h.toLowerCase())
   if (!hosts.includes(host)) throw new SnapshotError('invalid_input', `${host} is not an allowed repository host (allowed: ${hosts.join(', ')})`)
@@ -265,13 +282,23 @@ const ENTRY = /^(src\/)?(index|main|lib|app|__main__|cli)\.[a-z]+$|^cmd\/[^/]+\/
 const TEST = /(^|\/)(tests?|__tests__|spec)\/|\.(test|spec)\.[a-z]+$|(^|\/)test_[^/]+\.py$|_test\.go$/
 const stem = (path: string): string => path.split('/').pop()!.replace(/\.(test|spec)(?=\.)/, '').replace(/^test_/, '').replace(/_test(?=\.go$)/, '').replace(/\.[^.]+$/, '').toLowerCase()
 
-/** One path segment against one pattern segment: `*` is any run of characters (linear, no backtracking blow-up). */
-function segmentMatches(pattern: string, text: string): boolean {
+/** Steps a glob match may still take; past them the focus is too costly for the tree. */
+export interface GlobBudget {
+  left: number
+}
+
+const spend = (budget: GlobBudget | undefined, steps: number): void => {
+  if (budget && (budget.left -= steps) < 0) throw new SnapshotError('overloaded', 'the focus patterns are too costly to match against this tree: narrow them')
+}
+
+/** One path segment against one pattern segment: `*` is any run of characters (no exponential backtracking). */
+function segmentMatches(pattern: string, text: string, budget?: GlobBudget): boolean {
   let p = 0
   let t = 0
   let star = -1
   let mark = 0
   while (t < text.length) {
+    spend(budget, 1)
     if (p < pattern.length && pattern[p] === text[t]) {
       p++
       t++
@@ -289,9 +316,10 @@ function segmentMatches(pattern: string, text: string): boolean {
 
 /**
  * Whether `path` is under `pattern`: `*` within a segment, `**` across any segments, a path or a
- * directory prefix otherwise. Segment by segment, so it is O(pattern × path) and never backtracks.
+ * directory prefix otherwise. Segment by segment, so it is O(pattern × path) and never backtracks;
+ * a `budget` bounds the steps over many calls.
  */
-export function globMatches(pattern: string, path: string): boolean {
+export function globMatches(pattern: string, path: string, budget?: GlobBudget): boolean {
   const parts = pattern.replace(/^\.?\//, '').split('/').filter((s, i, all) => s !== '' || i === all.length - 1)
     .map((s) => (/^\*{2,}$/.test(s) ? '**' : s.replace(/\*+/g, '*')))
     .filter((s, i, all) => !(s === '**' && all[i - 1] === '**'))
@@ -304,21 +332,24 @@ export function globMatches(pattern: string, path: string): boolean {
     const key = i * (segs.length + 1) + j
     const known = memo.get(key)
     if (known !== undefined) return known
+    spend(budget, 1)
     let ok: boolean
     if (i === parts.length) ok = j === segs.length
     else if (parts[i] === '**') ok = at(i + 1, j) || (j < segs.length && at(i, j + 1))
-    else ok = j < segs.length && segmentMatches(parts[i]!, segs[j]!) && at(i + 1, j + 1)
+    else ok = j < segs.length && segmentMatches(parts[i]!, segs[j]!, budget) && at(i + 1, j + 1)
     memo.set(key, ok)
     return ok
   }
   return at(0, 0)
 }
 
-/** A focus pattern within its bounds: at most 500 characters and 8 wildcards. */
+/** A focus pattern within its bounds: at most 500 characters, 8 wildcards, and 16 segments. */
 function checkFocus(focus: readonly string[]): void {
   if (focus.length > MAX_FOCUS) throw new SnapshotError('invalid_input', `at most ${MAX_FOCUS} focus patterns`)
   for (const f of focus) {
-    if (f.length > 500 || (f.match(/\*/g)?.length ?? 0) > MAX_WILDCARDS) throw new SnapshotError('invalid_input', `a focus pattern has at most 500 characters and ${MAX_WILDCARDS} wildcards`)
+    if (f.length > 500 || (f.match(/\*/g)?.length ?? 0) > MAX_WILDCARDS || f.split('/').length > MAX_SEGMENTS) {
+      throw new SnapshotError('invalid_input', `a focus pattern has at most 500 characters, ${MAX_WILDCARDS} wildcards, and ${MAX_SEGMENTS} segments`)
+    }
   }
 }
 
@@ -342,11 +373,12 @@ export function selectFiles(entries: Entry[], request: Pick<SnapshotRequest, 'fo
   const focus = request.focus ?? []
   const terms = [...new Set((request.terms ?? []).map((t) => t.toLowerCase()).filter((t) => t.length >= 4))].slice(0, MAX_TERMS)
   const named = new Set(entryPoints.map((p) => p.replace(/^\.\//, '')))
+  const budget: GlobBudget = { left: GLOB_BUDGET }
   const classes = [
     candidates.filter((e) => /^readme(\.[a-z]+)?$/i.test(e.path)),
     candidates.filter((e) => MANIFESTS.test(e.path) || (e.path.split('/').length === 2 && /\/(package\.json|pyproject\.toml|Cargo\.toml|go\.mod)$/.test(e.path))),
     candidates.filter((e) => named.has(e.path) || ENTRY.test(e.path)),
-    candidates.filter((e) => !TEST.test(e.path) && (focus.length ? focus.some((f) => globMatches(f, e.path)) : terms.some((t) => lower.get(e)!.includes(t)))),
+    candidates.filter((e) => !TEST.test(e.path) && (focus.length ? focus.some((f) => globMatches(f, e.path, budget)) : terms.some((t) => lower.get(e)!.includes(t)))),
   ]
   const chosen = new Set<Entry>()
   for (const list of classes) for (const e of order(list)) chosen.add(e)
@@ -402,7 +434,8 @@ export async function snapshotRepository(request: SnapshotRequest, bounds: Snaps
     }
     await git.run(['remote', 'add', 'origin', href])
     // Only blobs within the per-file bound come down; a larger one is never downloaded.
-    await git.run(['fetch', '-q', '--no-tags', '--depth', '1', `--filter=blob:limit=${limits.maxFileBytes}`, 'origin', commit]).catch((error: unknown) => {
+    // `blob:limit=n` leaves out blobs of n bytes or more: a file of exactly the bound is still read.
+    await git.run(['fetch', '-q', '--no-tags', '--depth', '1', `--filter=blob:limit=${limits.maxFileBytes + 1}`, 'origin', commit], { callMs: FETCH_MS }).catch((error: unknown) => {
       throw error instanceof SnapshotError ? error : new SnapshotError('unavailable', `commit ${commit} of ${href} cannot be fetched`)
     })
     const listing = (await git.run(['ls-tree', '-r', '-z', '--full-tree', commit], { noLazyFetch: true })).toString('utf8').split('\0').filter(Boolean)

@@ -63,7 +63,8 @@ guesses.
   - per finding: its reporters `members`, `kind` (`defect`, `suggestion`),
     `quote {path, line, text, matched}` (`matched`: the line the quote was found
     on), `class` (`confirmed`, `needs-verification`, `suggestion`), `why` it
-    is not confirmed, and each member's own `reports` (claim, severity, class);
+    is not confirmed, and each member's own `reports` (claim, severity, class; one
+    per member), of which the finding's own fields are the lead one's;
   - on the vote: the `repository {url, ref?, commit}` read, the number of files
     `unread`, and, for `blocking-finding`, the deciding findings `blocking`.
 
