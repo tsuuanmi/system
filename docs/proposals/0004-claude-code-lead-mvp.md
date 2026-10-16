@@ -381,7 +381,16 @@ existing distinct-account rule for teams stays.
   back means restoring the backup and starting the previous commit; the
   downgrade guard refuses a store a newer version migrated.
 - Each phase ends with the operator's update of the live install: backup,
-  `system shutdown --deadline`, advance, build, start. The implementers prepare the
+  `system check` (the operator's patch against the new code), `system shutdown
+  --deadline`, advance, build, start.
+- Phase 3 removes the old team procedure (rounds, a lead, a synthesis). A
+  template in the operator's patch that still uses it must be removed or
+  rewritten as a `brainstorm` or `review` team before the update. On 2026-10-16
+  one such template (`panel-led`) stopped the whole workflow service at the live
+  update, and health did not report it. Since then, an invalid template is
+  refused alone and shown in health, a plugin that fails to start is reported
+  down, and `system shutdown` works without the workflow service
+  (`m6/upgrade-safety`). The implementers prepare the
   exact commands; stopping the operator's daemon is the operator's action.
 
 ## Observability and operations
