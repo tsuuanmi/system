@@ -135,6 +135,19 @@ describe.runIf(canRunBrowser)('ctx.turns: ask through a saved account', () => {
     expect((await ctx.accounts.get('chatgpt-main')).status).toBe('reauth-required')
   }, 90_000)
 
+  it('checks a ready account\'s sign-in, sending nothing, and marks it signed out only on positive evidence (health sees it before a turn)', async () => {
+    const { ctx, fake } = await boot({ fake: { loginOffer: true } })
+    expect(await ctx.turns.checkSignIn('chatgpt-main')).toBe('signed-in')
+    expect((await ctx.accounts.get('chatgpt-main')).status).toBe('ready')
+    fake.options.signedIn = false
+    expect(await ctx.turns.checkSignIn('chatgpt-main')).toBe('signed-out')
+    expect((await ctx.accounts.get('chatgpt-main')).status).toBe('reauth-required')
+    expect(ctx.eventLog.query({ type: 'account.signed-out' })).toEqual([expect.objectContaining({ data: { account: 'chatgpt-main', by: 'sign-in check' } })])
+    // An account that is not ready is not checked again.
+    expect(await ctx.turns.checkSignIn('chatgpt-main')).toBe('unknown')
+    expect(fake.sent).toEqual([])
+  }, 90_000)
+
   it('proves an account\'s website features by a probe that sends nothing, and routes only on proven ones (REQ-PRV-7)', async () => {
     const { ctx, fake } = await boot({ fake: { answer: 'Found it', features: ['web-search'] } })
     expect(await ctx.turns.probe('chatgpt-main')).toEqual(['web-search'])

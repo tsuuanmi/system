@@ -77,6 +77,8 @@ export interface Config {
   retainDays?: number
   /** A ready account's feature probe is refreshed after this long (default 24 h, REQ-PRV-7). */
   probeTtlMs?: number
+  /** A ready account's sign-in is checked after this long, sending nothing (default 6 h; 0: never). */
+  authCheckMs?: number
 }
 
 interface Row {
@@ -151,8 +153,12 @@ export class Turns extends Service {
     maxPendingTurns: z.natural().min(1).default(32).description('Accepted but unfinished turns; more are refused'),
     retainDays: z.natural().min(1).default(30).description('Days a finished turn (and its prompt) is kept'),
     probeTtlMs: z.natural().min(60_000).default(24 * 60 * 60_000).description('How long a ready account\'s feature probe stands before it is refreshed'),
+    authCheckMs: z.natural().default(6 * 60 * 60_000).description('How often a ready account\'s sign-in is checked, sending nothing, so health shows a signed-out account before a turn finds it (0: never)'),
   })
 
+  /** When each account's sign-in was last checked (sign-in checks), in this process. */
+  private readonly authChecked = new Map<string, number>()
+  private readonly startedAt = Date.now()
   private readonly schedulers = new Map<string, ProviderScheduler>()
   private readonly waiters = new Map<string, Set<() => void>>()
   /** Turns of one session run in acceptance order, each after the previous one settles. */
@@ -573,12 +579,42 @@ export class Turns extends Service {
   private async refreshProbes(): Promise<void> {
     if (this.stopping) return
     const ttl = this.config.probeTtlMs ?? 24 * 60 * 60_000
+    const every = this.config.authCheckMs ?? 6 * 60 * 60_000
     for (const account of await this.ctx.accounts.list().catch(() => [])) {
       if (this.stopping) return
+      if (account.status !== 'ready' || !this.ctx.providers.list().includes(account.provider)) continue
       const fresh = account.features && Date.now() - Date.parse(account.features.provedAt) < ttl
-      if (account.status !== 'ready' || fresh || !this.ctx.providers.list().includes(account.provider)) continue
-      await this.probe(account.id).catch((error: unknown) => this.ctx.logger.warn(`turns: feature probe of ${account.id} failed: ${(error as Error).message}`))
+      if (!fresh) await this.probe(account.id).catch((error: unknown) => this.ctx.logger.warn(`turns: feature probe of ${account.id} failed: ${(error as Error).message}`))
+      // The first check comes one interval after start: a turn at start checks the sign-in anyway.
+      else if (every > 0 && Date.now() - (this.authChecked.get(account.id) ?? this.startedAt) >= every) {
+        await this.checkSignIn(account.id).catch((error: unknown) => this.ctx.logger.warn(`turns: sign-in check of ${account.id} failed: ${(error as Error).message}`))
+      }
     }
+  }
+
+  /**
+   * Check a ready account's sign-in with its saved state, sending nothing: a page that shows it
+   * signed out (positive evidence only, ADR-0017) marks it reauth-required now, so health shows it
+   * before a turn finds it (event `account.signed-out`). Anything else changes nothing.
+   */
+  async checkSignIn(accountId: string, signal?: AbortSignal): Promise<'signed-in' | 'signed-out' | 'unknown'> {
+    const view = await this.ctx.accounts.get(accountId)
+    if (view.status !== 'ready') return 'unknown'
+    const driver = this.ctx.providers.get(view.provider)
+    const auth = await this.scheduler(accountId).runTurn(`auth:${accountId}`, signal, async () => {
+      const turn = await this.ctx.browser.openTurn(accountId, { state: await this.ctx.accounts.portableState(accountId), ...(signal ? { signal } : {}) })
+      try {
+        return await driver.checkAuth(turn.page)
+      } finally {
+        await turn.close()
+      }
+    })
+    this.authChecked.set(accountId, Date.now())
+    if (auth === 'signed-out') {
+      await this.ctx.accounts.markSignedOut(accountId, 'login-surface', view.revision)
+      this.ctx.get('eventLog')?.append({ type: 'account.signed-out', data: { account: accountId, by: 'sign-in check' } })
+    }
+    return auth
   }
 
   private async execute(row: Row, accountId: string, signal: AbortSignal, lease: () => Lease, relogged = false): Promise<void> {
