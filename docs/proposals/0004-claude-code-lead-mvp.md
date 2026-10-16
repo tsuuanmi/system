@@ -235,8 +235,10 @@ the same for `brainstorm` and `review`:
    - every ballot, the tally, and the winner;
    - the dissent, and any deciding vote with its rationale.
 
-   It is stored before the result returns. A team that fails, for example
-   without enough distinct providers, records a failure artifact instead.
+   It is stored before the result returns. A team that cannot form, for example
+   without enough provider families, records no team decision: its failure
+   record is the admission decision that names the `diversity` refusal, and the
+   run's error.
 6. **Tie.** The run blocks with a `tie`, holding both positions in short. The
    caller casts the deciding vote with a new **client-scope** tool, `vote(runId,
    decision, option)`. The tool is bound to that exact tie decision, as
@@ -350,8 +352,8 @@ existing distinct-account rule for teams stays.
 | 0 | Stabilize: citation fix on `main`, the live install, the MCP client reconnected | done 2026-10-16 |
 | 1 | Removals and switch-offs (the operator removes the free account before or together with this update; a Worker whose tier names an unknown mode is unavailable, never routed): the templates except `panel`, which serves the dogfood brainstorm until `brainstorm` replaces it in Phase 3; the `deep` option of `research` (CLI and MCP); agent Worker and gateway rows disabled by default (their helpers refuse while off); the agent `review` moved into the agent Workers' template list; the `site` preset; the free account removed by the operator; Linux-only docs. Until Phase 3 there is no `review` in the default composition, which is accepted. | composition e2e row set; upgrade suite still explains old runs; crash suite |
 | 2 | `research` on two providers in parallel (branch A proves `web-search`, branch B is cited and on another provider family), with the diversity predicate. The diversity predicate needs ADR-0027, so the ADR moves here from Phase 3. | a live run uses both providers |
-| 3 | `panel` removed; teams: `brainstorm` and `review` with debate and vote, tie to the caller | live brainstorm of a real design question for `system` |
-| 4 | `review` of a public repository by URL | live review of this repository |
+| 3 | `panel` removed; teams (`review` of text lists every member's findings with provenance; the blocking-finding rule waits for Phase 4's quote verification, since only a quoted finding can be confirmed): `brainstorm` and `review` with debate and vote, tie to the caller | live brainstorm of a real design question for `system` |
+| 4 | `review` of a public repository by URL: fetched files, quote verification, merging by quoted line, and the blocking-finding rule for every review | live review of this repository |
 | 5 | The conversation ledger; retention deletes website chats | fake-site tests per driver; one live deletion |
 | 6 | The whole loop from Claude Code on a real `system` change | the change ships with its research, brainstorm, and review runs linked |
 
