@@ -132,8 +132,9 @@ showed gaps between what it ships and what the loop needs:
     Single files at a commit (blob or raw URLs) were read in a live test.
   - Gemini's code import reads public repositories without a linked account,
     but it is a separate UI feature.
-  - Hence the review design above: `system` supplies the manifest and raw URLs,
-    and verifies quotes itself.
+  - Hence the review design above: `system` fetches the files at the commit and
+    puts their text in the prompt, so members need neither web search nor
+    browsing, and it verifies quotes against exactly what they saw.
   - The Phase 2 dogfood review (`panel` run `run_d890b6adc3e2cd65`, diff only)
     made 9 claims about the code, and none held against the full code. That is
     what quote verification guards against.
@@ -157,7 +158,7 @@ showed gaps between what it ships and what the loop needs:
 | `ask` | one turn; `persist` keeps a conversation for later turns | — |
 | `research` | frame → literature on **each of two providers in parallel** → one evidence table from both → critique on a provider other than the evidence's → conclusion, which names agreement and disagreement between providers. Option `deep`: each literature step uses the provider's deep research. | — |
 | `brainstorm` | the team protocol below over a question and its context | majority vote |
-| `review` | the team protocol below over material (text) or a public repository URL; each ballot is `pass` or `changes`, with findings. Capabilities `reason`, plus `web-search` for a URL; no `local-data`. A repository is reviewed at one pinned commit, which `system` resolves itself. It lists the files and gives members a bounded manifest with each file's raw URL at that commit: README and manifests first, then entry points, the relevant code, and tests. Members are not asked to browse the repository's tree pages. Every finding quotes `path:line` with the exact line text, and the orchestrator checks each quote against the file at that commit. A finding whose quote matches is `confirmed`; one that does not, or has no quote, is `needs-verification`; advice without a defect is a `suggestion`. Findings are merged by root cause and keep who reported them. A file no member quoted counts as unread, and `pass` means no confirmed blocking finding within what was read. | majority vote |
+| `review` | the team protocol below over material (text) or a public repository URL; each ballot is `pass` or `changes`, with findings. Members need only `reason`. A repository is reviewed at one pinned commit, which `system` resolves and fetches itself, bounded by file count and bytes ([INV-9](../architecture/invariants.md)): README and manifests first, then entry points, the relevant code, and tests. The files' line-numbered text goes into the prompt, and raw URLs are kept only as provenance, so no member browses the repository. Every finding quotes `path:line` with the exact line text, and the orchestrator checks the quote against the bytes the members saw. A finding whose quote matches is `confirmed`; one that does not, or has no quote, is `needs-verification`; advice without a defect is a `suggestion`. Findings are merged only when they quote the same `path:line`; all others stay separate, with who reported them. No model merges findings. A file left out by the bounds, or not quoted by any member, is listed as unread. A confirmed blocking finding makes the outcome `changes` whatever the ballots say; only when none is confirmed does the vote decide between `pass` and `changes`. `pass` therefore means no confirmed blocking finding within what was read. | majority vote, after the blocking-finding rule |
 
 A literature step needs `web-search`, and today only one provider's driver
 proves it. The other provider's chat answers show sources (links and a Sources
