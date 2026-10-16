@@ -3,7 +3,8 @@
   "repository": {
     "url": "https://github.com/example/demo",
     "ref": "main",
-    "commit": "3b17b2e84b97624a683aafaa38184bf2746fab22"
+    "commit": "3b17b2e84b97624a683aafaa38184bf2746fab22",
+    "pinnedBy": "ref"
   },
   "files": [
     {

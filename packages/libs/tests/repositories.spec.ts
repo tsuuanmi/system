@@ -1,9 +1,10 @@
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { createServer, type Server } from 'node:net'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { pinnedTo, selectFiles, SnapshotError, snapshotRepository } from '../src/index.ts'
+import { globMatches, isPrivateAddress, pinnedTo, selectFiles, SnapshotError, snapshotRepository } from '../src/index.ts'
 
 /** A repository served over file://, allowing the partial fetch a public host allows. */
 function repository(files: Record<string, string | Buffer>): { url: string; head: string; dir: string } {
@@ -22,6 +23,9 @@ function repository(files: Record<string, string | Buffer>): { url: string; head
   return { url: `file://${dir}`, head: git('rev-parse', 'HEAD'), dir }
 }
 
+const local = { allowLocal: true }
+const leftovers = (): string[] => readdirSync(tmpdir()).filter((n) => n.startsWith('system-repo-') && !n.startsWith('system-repo-src-'))
+
 describe('snapshotRepository: a public repository read at one commit (PROP-0004 Phase 4, INV-9)', () => {
   let repo: ReturnType<typeof repository>
   beforeAll(() => {
@@ -36,63 +40,115 @@ describe('snapshotRepository: a public repository read at one commit (PROP-0004 
       'docs/big.md': 'x'.repeat(60_000),
       'assets/logo.png': Buffer.from([0x89, 0x50, 0x4e, 0x47, 0, 1, 2, 3]),
       'node_modules/dep/index.js': 'module.exports = 1\n',
+      'notes/ünïcode name.md': 'unicode path\n',
     })
   })
   afterAll(() => rmSync(repo.dir, { recursive: true, force: true }))
 
   it('pins the commit, reads the chosen files in order, and lists every other file with why', async () => {
-    const snapshot = await snapshotRepository({ url: repo.url, terms: ['session', 'auth'] }, { allowLocal: true, maxFileBytes: 48_000 })
-    expect(snapshot.commit).toBe(repo.head)
+    const before = leftovers()
+    const snapshot = await snapshotRepository({ url: repo.url, terms: ['session', 'auth', 'session'] }, {}, undefined, local)
+    expect(snapshot).toMatchObject({ commit: repo.head, pinnedBy: 'ref' })
     expect(snapshot.files.map((f) => f.path)).toEqual(['README.md', 'package.json', 'src/server.ts', 'src/auth/session.ts', 'src/auth/session.test.ts'])
     expect(snapshot.files[2]).toMatchObject({ text: 'export const port = 8080\n', bytes: 25, sha: expect.stringMatching(/^[0-9a-f]{40}$/) })
     expect(Object.fromEntries(snapshot.unread.map((u) => [u.path, u.why]))).toEqual({
       'pnpm-lock.yaml': 'lockfile', 'src/util.ts': 'not-selected', 'docs/big.md': 'not-selected', 'assets/logo.png': 'not-selected', 'node_modules/dep/index.js': 'not-selected',
+      // ls-tree -z: a non-ASCII path stays as it is, never C-quoted.
+      'notes/ünïcode name.md': 'not-selected',
     })
+    // Nothing is left behind.
+    expect(leftovers()).toEqual(before)
   })
 
-  it('reads a tag at its commit, and keeps within the file, byte, and size bounds', async () => {
-    const tagged = await snapshotRepository({ url: repo.url, ref: 'v1', focus: ['docs/**', 'assets/*'] }, { allowLocal: true, maxFiles: 3 })
+  it('reads a tag at its commit, and keeps within the file, byte, and size bounds; a blob over the per-file bound is not downloaded', async () => {
+    const tagged = await snapshotRepository({ url: repo.url, ref: 'v1', focus: ['docs/**', 'assets/*'] }, { maxFiles: 3 }, undefined, local)
     expect(tagged.commit).toBe(repo.head)
     // README, the manifest, the entry point: the bound is reached before the focus.
     expect(tagged.files.map((f) => f.path)).toEqual(['README.md', 'package.json', 'src/server.ts'])
-    // What the file bound left out is unread for the bound, not unselected.
     expect(tagged.unread).toEqual(expect.arrayContaining([{ path: 'docs/big.md', why: 'bounds' }, { path: 'assets/logo.png', why: 'bounds' }]))
-    const focused = await snapshotRepository({ url: repo.url, focus: ['docs/**', 'assets/*'] }, { allowLocal: true })
+    const focused = await snapshotRepository({ url: repo.url, focus: ['docs/**', 'assets/*'] }, {}, undefined, local)
     expect(focused.unread).toEqual(expect.arrayContaining([{ path: 'docs/big.md', why: 'too-large' }, { path: 'assets/logo.png', why: 'binary' }]))
-    const tight = await snapshotRepository({ url: repo.url }, { allowLocal: true, maxBytes: 40 })
+    const tight = await snapshotRepository({ url: repo.url }, { maxBytes: 40 }, undefined, local)
     expect(tight.files.map((f) => f.path)).toEqual(['README.md', 'src/server.ts'])
     expect(tight.unread).toEqual(expect.arrayContaining([{ path: 'package.json', why: 'bounds' }]))
   })
 
-  it('refuses anything but a public https repository, before fetching', async () => {
-    const refused = async (url: string, bounds = {}) => snapshotRepository({ url }, bounds).catch((e: unknown) => e)
+  it('records a commit named by its SHA as pinned by SHA (on GitHub it may come from a fork)', async () => {
+    expect(await snapshotRepository({ url: repo.url, ref: repo.head }, {}, undefined, local)).toMatchObject({ commit: repo.head, pinnedBy: 'sha' })
+  })
+
+  it('refuses any URL git could read differently than its check, before git runs (SSRF)', async () => {
+    const refused = async (url: string, bounds = {}, testing = {}) => snapshotRepository({ url }, bounds, undefined, testing).catch((e: unknown) => e)
+    const listener: Server = createServer((socket) => socket.destroy())
+    let hit = false
+    listener.on('connection', () => { hit = true })
+    await new Promise<void>((resolve) => listener.listen(0, '127.0.0.1', resolve))
+    const port = (listener.address() as { port: number }).port
+    try {
+      // The WHATWG parser reads host github.com; git would connect to 127.0.0.1.
+      expect(await refused(`https://github.com\\:x@127.0.0.1:${port}/a/b`)).toMatchObject({ kind: 'invalid_input', message: expect.stringMatching(/backslashes/) })
+      // git reads these as scp-style ssh to host "https".
+      for (const url of ['https:github.com/a/b', 'https:/github.com/a/b', 'https:\\\\github.com/a/b']) expect(await refused(url), url).toMatchObject({ kind: 'invalid_input' })
+      expect(hit).toBe(false)
+    } finally {
+      await new Promise<void>((resolve) => listener.close(() => resolve()))
+    }
     expect(await refused(repo.url)).toMatchObject({ kind: 'invalid_input', message: expect.stringMatching(/https only/) })
     expect(await refused('https://gitlab.com/a/b')).toMatchObject({ kind: 'invalid_input', message: expect.stringMatching(/not an allowed repository host \(allowed: github\.com\)/) })
     expect(await refused('https://github.com:8443/a/b')).toMatchObject({ kind: 'invalid_input', message: expect.stringMatching(/https port/) })
-    // A host that resolves to a private address is refused before git runs.
-    expect(await refused('https://forge.example/a/b', { hosts: ['forge.example'], resolve: async () => ['203.0.113.7', '192.168.1.5'] }))
-      .toMatchObject({ kind: 'invalid_input', message: expect.stringMatching(/private address/) })
-    expect(await refused('http://example.com/a.git')).toMatchObject({ kind: 'invalid_input' })
+    expect(await refused('https://github.com/a/b?x=1')).toMatchObject({ kind: 'invalid_input', message: expect.stringMatching(/query or fragment/) })
+    expect(await refused('https://github.com/a')).toMatchObject({ kind: 'invalid_input', message: expect.stringMatching(/<owner>\/<repo>/) })
+    expect(await refused('https://github.com/a/../b')).toMatchObject({ kind: 'invalid_input' })
+    expect(await refused('https://GitHub.com/a/b')).toMatchObject({ kind: 'invalid_input', message: expect.stringMatching(/canonical form/) })
+    expect(await refused('https://github.com/a/b c')).toMatchObject({ kind: 'invalid_input' })
     // Built, not written, so the repository's own secret scan does not take it for a credential.
     const withUser = Object.assign(new URL('https://github.com/a/b'), { username: 'user', password: 'pass' }).href
     expect(await refused(withUser)).toMatchObject({ kind: 'invalid_input', message: expect.stringMatching(/no credentials/) })
-    const any = { hosts: ['localhost', '127.0.0.1', '::1', '10.1.2.3'] }
-    expect(await refused('https://localhost/a.git', any)).toMatchObject({ kind: 'invalid_input' })
-    expect(await refused('https://127.0.0.1/a.git', any)).toMatchObject({ kind: 'invalid_input', message: expect.stringMatching(/private address/) })
-    expect(await refused('https://[::1]/a.git', any)).toMatchObject({ kind: 'invalid_input' })
-    expect(await refused('https://10.1.2.3/a.git', any)).toBeInstanceOf(SnapshotError)
-    expect(await snapshotRepository({ url: repo.url, ref: '--upload-pack=touch' }, { allowLocal: true }).catch((e: unknown) => e)).toMatchObject({ kind: 'invalid_input' })
-    expect(await snapshotRepository({ url: repo.url, ref: 'nope' }, { allowLocal: true }).catch((e: unknown) => e)).toMatchObject({ kind: 'invalid_input', message: expect.stringMatching(/no ref nope/) })
+    // A host that resolves to any non-public address is refused before git runs.
+    expect(await refused('https://forge.example/a/b', { hosts: ['forge.example'] }, { resolve: async () => ['203.0.113.7'] }))
+      .toMatchObject({ kind: 'invalid_input', message: expect.stringMatching(/non-public address/) })
+    expect(await refused('https://forge.example/a/b', { hosts: ['forge.example'] }, { resolve: async () => ['140.82.112.3', '192.168.1.5'] }))
+      .toMatchObject({ kind: 'invalid_input', message: expect.stringMatching(/non-public address/) })
+    expect(await refused('https://127.0.0.1/a/b', { hosts: ['127.0.0.1'] })).toMatchObject({ kind: 'invalid_input' })
+    expect(await snapshotRepository({ url: repo.url, ref: '--upload-pack=touch' }, {}, undefined, local).catch((e: unknown) => e)).toMatchObject({ kind: 'invalid_input' })
+    expect(await snapshotRepository({ url: repo.url, ref: 'nope' }, {}, undefined, local).catch((e: unknown) => e)).toMatchObject({ kind: 'invalid_input', message: expect.stringMatching(/no ref nope/) })
+    expect(await snapshotRepository({ url: `file://${join(repo.dir, 'missing')}` }, {}, undefined, local).catch((e: unknown) => e)).toBeInstanceOf(SnapshotError)
   })
 
-  it('pins git to the address it checked, so a second lookup cannot send it elsewhere (DNS rebinding)', () => {
-    expect(pinnedTo('github.com', '140.82.112.3')).toEqual(['-c', 'http.curloptResolve=github.com:443:140.82.112.3'])
-    expect(pinnedTo('forge.example', '2001:db8::7')).toEqual(['-c', 'http.curloptResolve=forge.example:443:[2001:db8::7]'])
+  it('knows every non-public address range, v4 and v6', () => {
+    for (const a of ['10.1.2.3', '127.0.0.1', '169.254.1.1', '172.16.0.1', '192.168.1.1', '100.64.0.1', '0.0.0.0', '192.0.0.8', '198.18.0.1', '224.0.0.1', '240.0.0.1', '203.0.113.7',
+      '::', '::1', 'fc00::1', 'fd12::1', 'fe80::1', 'fe81::1', 'febf::1', 'ff02::1', '::ffff:10.0.0.1', '64:ff9b::a00:1', '2002:a00:1::1', '2001:db8::7', 'not-an-address']) {
+      expect(isPrivateAddress(a), a).toBe(true)
+    }
+    for (const a of ['140.82.112.3', '8.8.8.8', '2606:4700::1111', '::ffff:140.82.112.3']) expect(isPrivateAddress(a), a).toBe(false)
+  })
+
+  it('pins git to every address it checked, so a second lookup cannot send it elsewhere (DNS rebinding)', () => {
+    expect(pinnedTo('github.com', ['140.82.112.3'])).toEqual(['-c', 'http.curloptResolve=github.com:443:140.82.112.3'])
+    expect(pinnedTo('forge.example', ['140.82.112.3', '2606:4700::1111'])).toEqual(['-c', 'http.curloptResolve=forge.example:443:140.82.112.3,[2606:4700::1111]'])
   })
 
   it('orders files by class, then by shorter path, then by size', () => {
     const e = (path: string, bytes = 10) => ({ path, sha: '0'.repeat(40), bytes })
     const chosen = selectFiles([e('lib/b.ts'), e('cmd/tool/main.go'), e('Cargo.toml'), e('readme.rst'), e('pkg/api/handler.go', 5), e('pkg/api/handler_test.go'), e('vendor/x/y.go')], { focus: ['pkg/**'] })
     expect(chosen.map((c) => c.path)).toEqual(['readme.rst', 'Cargo.toml', 'cmd/tool/main.go', 'pkg/api/handler.go', 'pkg/api/handler_test.go'])
+  })
+
+  it('matches globs in linear time, and bounds focus patterns and request words (DoS)', async () => {
+    expect(globMatches('src/**', 'src/a/b.ts')).toBe(true)
+    expect(globMatches('src/*.ts', 'src/a.ts')).toBe(true)
+    expect(globMatches('src/*.ts', 'src/a/b.ts')).toBe(false)
+    expect(globMatches('**/*.test.ts', 'a/b/c.test.ts')).toBe(true)
+    expect(globMatches('docs', 'docs/x.md')).toBe(true)
+    expect(globMatches('docs/', 'docs/x.md')).toBe(true)
+    const started = Date.now()
+    expect(globMatches(`${'**'.repeat(10)}zz`, `${'a/'.repeat(15)}b`)).toBe(false)
+    expect(globMatches('*a*a*a*a*a*a*a*b', 'a'.repeat(5000))).toBe(false)
+    const many = Array.from({ length: 50_000 }, (_, i) => ({ path: `src/m${i}/file${i}.ts`, sha: '0'.repeat(40), bytes: 10 }))
+    selectFiles(many, { terms: Array.from({ length: 20_000 }, (_, i) => `word${i}`) })
+    selectFiles(many, { focus: Array.from({ length: 20 }, () => `**/*${'a*'.repeat(3)}zz/**`) })
+    expect(Date.now() - started).toBeLessThan(10_000)
+    expect(await snapshotRepository({ url: repo.url, focus: Array.from({ length: 21 }, () => 'a') }, {}, undefined, local).catch((e: unknown) => e)).toMatchObject({ kind: 'invalid_input', message: expect.stringMatching(/at most 20 focus/) })
+    expect(await snapshotRepository({ url: repo.url, focus: ['*'.repeat(9)] }, {}, undefined, local).catch((e: unknown) => e)).toMatchObject({ kind: 'invalid_input', message: expect.stringMatching(/8 wildcards/) })
   })
 })

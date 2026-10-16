@@ -413,7 +413,7 @@ export class Engine {
       const delay = node.not_before ? Date.parse(node.not_before) - Date.now() : 0
       if (delay > 0 && !(await sleep(delay, signal))) return
       // A review's source is read by the engine, not a Worker.
-      if (spec.executor === 'snapshot') return runSnapshot(this, run, node, spec, lease)
+      if (spec.executor === 'snapshot') return runSnapshot(this, run, node, spec, lease, signal)
       const record = JSON.parse(node.record) as NodeRecord
       const attempt = node.attempt + 1
       // A node that must differ from others routes once they have Workers (ADR-0027).

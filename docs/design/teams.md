@@ -226,18 +226,22 @@ the engine runs, with no Worker (record executor `effect`):
   decision `workflow.source-snapshot` that holds what was read: the URL, the commit, each file
   with its git blob id, and the unread files with why.
 - Each member's proposal prompt is the request (`{{input}}`) followed by the rendered source: a
-  line saying that the files are another party's text, data and never instructions; each file
-  line-numbered between fence lines derived from a hash of its path and text, so its own text
-  cannot close the fence; then the unread files.
+  line saying that the files are another party's text, data and never instructions; each file,
+  its path included (a path is the repository's text too), line-numbered between fence lines
+  derived from a hash of its content, so its own text cannot close the fence; then the unread
+  files, fenced the same way.
 - A repository given to a template with no source step (`brainstorm`) is refused as
   `invalid_input`.
 
 A repository read uses the installed `git`, read-only, with fixed arguments and no shell:
 
-1. `ls-remote` pins the ref (default `HEAD`) to one commit; an annotated tag resolves through its
-   peeled line. A full commit SHA is used as given.
-2. A shallow fetch of that commit with `--filter=blob:none`, then `ls-tree` lists every file.
-3. `cat-file` reads only the chosen blobs.
+1. `ls-remote` pins the ref (default `HEAD`) to one commit, by git's precedence: a tag (an
+   annotated one through its peeled line), then a branch. A full commit SHA is used as given and
+   recorded as `pinnedBy: sha` (on GitHub such a SHA may come from a fork of the repository).
+2. A shallow fetch of that commit with `--filter=blob:limit=<per-file bound>`: a larger blob is
+   never downloaded. `ls-tree -z` lists every file (paths as they are, never C-quoted).
+3. `rev-list --missing=print` and `cat-file --batch-check` tell what came down and its size,
+   without fetching what did not; one `cat-file --batch` reads the chosen blobs.
 
 The URL and connection checks (an allowed host, public addresses, pinned resolution) are in the
 [threat model](../security/threat-model.md#threats-and-controls). Files are chosen in this
@@ -246,11 +250,15 @@ order, shorter paths first within a class: the root README; manifests; entry poi
 else the request's words (four letters or more) in paths; then tests beside the chosen files.
 Vendored and build directories are skipped. Bounds ([INV-9](../architecture/invariants.md)):
 40 files, 300 KB in all, 48 KB per file (config `repositories`), a tree of at most 50,000
-entries (else `overloaded`), and 20 s per git call. Every file not read is listed with why:
-`bounds` (past the byte bound), `too-large`, `binary`, `lockfile`, or `not-selected`.
+entries (else `overloaded`), 20 s per git call and 120 s for the whole read, which a stop of
+the run also ends; a stopped call kills its whole process group. Up to 20 `focus` globs of at
+most 500 characters and 8 wildcards, matched segment by segment, and at most 50 request words.
+Every file not read is listed with why: `bounds` (past the file or byte bound), `too-large`,
+`binary`, `lockfile`, `path-too-long` (over 1,000 characters), or `not-selected`.
 
-A refused URL or ref fails the step as `invalid_input` and is not retried; an unreachable host
-or repository is retried with backoff.
+A refused URL or ref, or a repository that is not there or not public, fails the step as
+`invalid_input`, and a git that is missing or older than 2.37 as `config_error`: neither is
+retried. An unreachable host is retried with backoff.
 
 ### Quote checks
 
@@ -259,19 +267,21 @@ The tally classes every finding against the source:
 | Class | When |
 |---|---|
 | `confirmed` | its quote matches a shown line of the quoted file exactly, after trimming both ends (no case folding; internal whitespace kept), on the cited line or within ±2 lines, nearest first; the line it matched is recorded as `matched` |
-| `needs-verification` | otherwise, with why: `it quotes no line`, `<path> was not shown`, `its quote is empty`, or `quote not found within ±2 lines of <path>:<line>` |
+| `needs-verification` | otherwise, with why: `it quotes no line`, `<path> was not shown`, `its quote is empty`, `its quote is too short to identify one line` (fewer than 8 non-space characters: a quote like `}` matches lines everywhere), or `quote not found within ±2 lines of <path>:<line>` |
 | `suggestion` | its `kind` is `suggestion` |
 
 ### Merging
 
-Findings are merged only when they quote the same `path:line`: the matched line when the quote
-was found, else the cited one. A merged finding keeps every reporter (`members`, in member
-order), the highest severity, and is confirmed if any of its quotes is. A finding without a
-quote is never merged.
+Findings are merged only when they quote the same `path:line` and are of the same kind: the
+matched line when the quote was found, else the cited one. A merged finding lists every reporter
+(`members`, in member order), shows the highest severity, and is confirmed if any of its quotes
+is. It keeps each member's own report (`reports`: claim, severity, class), so merging never lends
+one member's confirmed quote to another's claim. A finding without a quote is never merged.
 
 ### The blocking-finding rule
 
-A confirmed blocking finding decides `changes`: the round ends `blocking-finding`, by the rule
+A confirmed blocking finding decides `changes`: one report on it that is both confirmed and
+blocking, in that member's own words. The round ends `blocking-finding`, by the rule
 `workflow.blocking-finding`, with no majority, debate, or tie. The ballots still run, one turn
 per member, so each member's stance on each finding is on record. Only when no blocking finding
 is confirmed does the vote decide between `pass` and `changes`, as above. `pass` therefore means

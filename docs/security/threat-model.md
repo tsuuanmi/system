@@ -129,21 +129,35 @@
 - **A review's repository read reaches an internal host, or is rebound to one (SSRF, DNS
   rebinding).** A repository read is an inbound read of public data: `system` fetches only what
   a public URL makes public, and sends only git's own requests
-  ([sources](../design/teams.md#sources)). The URL must be `https` on port 443, with no
-  credentials, on a host the allow-list names (workflow config `repositories.hosts`, default
-  `github.com`); `localhost`, `.local`, and `.internal` are refused. The host must resolve to
-  public addresses only: loopback, private, link-local, shared (100.64/10), unique-local, and
-  IPv4-mapped private addresses are refused. Git is then pinned to the address checked
-  (`http.curloptResolve`), so it cannot resolve the host again to another. A git older than
-  2.37 cannot be pinned, and the read fails closed. Git runs with fixed arguments and no shell,
-  no redirects, no hooks, no credential helper or prompt, no system configuration, and a home
-  that does not exist; a ref must be a plain branch, tag, or commit name. Time, tree entries,
-  files, and bytes are bounded.
-- **Repository content injects instructions into a review.** Each file reaches members marked
-  as another party's data, between fence lines derived from a hash of the file, which its own
-  text cannot close. Members only report findings; every quote is checked against the bytes
-  they were shown, by code, and a model never confirms a finding
-  ([INV-6](../architecture/invariants.md#inv-6-authority-comes-from-trusted-envelopes)).
+  ([sources](../design/teams.md#sources)).
+  - **One reading of the URL.** It must be exactly its own parse, `https://<host>/<owner>/<repo>`,
+    with no credentials, port, query, fragment, whitespace, control characters, or backslash:
+    a form that one parser reads as github.com and git as another host
+    (`https://github.com\:x@127.0.0.1/…`), or as ssh (`https:github.com/…`), is refused. Git is
+    given only the canonical URL rebuilt from the checked parts.
+  - **An allowed, public host.** The host must be on the allow-list (workflow config
+    `repositories.hosts`, default `github.com`), named rather than an address, and resolve to
+    public addresses only: every non-public IPv4 range (private, loopback, link-local, shared,
+    protocol, documentation, benchmarking, multicast, reserved) and IPv6 (unique-local,
+    link-local, multicast, mapped, NAT64, 6to4, documentation) is refused. Git is pinned to every
+    address checked (`http.curloptResolve`), so it cannot resolve the host again to another. A git
+    older than 2.37 cannot be pinned, and the read fails closed.
+  - **A confined git.** Fixed arguments and no shell; `https` is the only protocol it may use
+    (`protocol.allow=never`), with no redirects, hooks, credential helper, prompt, or ssh; no
+    system, global, or ambient repository configuration (it runs in an empty repository of its
+    own, `GIT_CONFIG_GLOBAL=/dev/null`, `GIT_CEILING_DIRECTORIES`); a ref is a plain branch, tag,
+    or commit name. Local repositories are a test seam that no configuration reaches.
+  - **Bounds.** A blob over the per-file bound is never downloaded; files, bytes, tree entries,
+    every git call, and the whole read are bounded, and a stopped call kills its process group.
+    Focus globs are matched without backtracking, and request words are capped.
+- **Repository content injects instructions into a review.** Each file, its path included,
+  reaches members marked as another party's data, between fence lines derived from a hash of
+  its content, which its own text cannot close; so does the list of unread paths. Members only
+  report findings; every quote is checked against the bytes they were shown, by code, and a
+  model never confirms a finding
+  ([INV-6](../architecture/invariants.md#inv-6-authority-comes-from-trusted-envelopes)). A
+  quote too short to identify one line confirms nothing, and a merged finding keeps each
+  member's own claim, so one member's quote never confirms another's blocking claim.
 - **A tampered backup writes outside the state directory on restore.** Restore
   accepts only `system.db`, `vault.enc`, and `vault.key` in a backup manifest; any
   other name (for example `../../.ssh/authorized_keys`) refuses the whole backup

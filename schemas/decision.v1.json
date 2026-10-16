@@ -485,6 +485,49 @@
               "why": {
                 "type": "string",
                 "maxLength": 300
+              },
+              "reports": {
+                "description": "Each member's own report on the finding's line: its claim, severity, and class. Only a report that is both confirmed and blocking decides a review by rule.",
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 5,
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "member",
+                    "severity",
+                    "claim"
+                  ],
+                  "properties": {
+                    "member": {
+                      "type": "string",
+                      "pattern": "^m[1-5]$"
+                    },
+                    "severity": {
+                      "enum": [
+                        "blocking",
+                        "warning",
+                        "info"
+                      ]
+                    },
+                    "claim": {
+                      "type": "string",
+                      "maxLength": 4000
+                    },
+                    "class": {
+                      "enum": [
+                        "confirmed",
+                        "needs-verification",
+                        "suggestion"
+                      ]
+                    },
+                    "why": {
+                      "type": "string",
+                      "maxLength": 300
+                    }
+                  },
+                  "additionalProperties": false
+                }
               }
             },
             "additionalProperties": false
@@ -700,6 +743,46 @@
                           },
                           "required": [
                             "class"
+                          ]
+                        },
+                        {
+                          "properties": {
+                            "why": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "why"
+                          ]
+                        },
+                        {
+                          "properties": {
+                            "kind": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind"
+                          ]
+                        },
+                        {
+                          "properties": {
+                            "quote": {
+                              "type": "object"
+                            }
+                          },
+                          "required": [
+                            "quote"
+                          ]
+                        },
+                        {
+                          "properties": {
+                            "reports": {
+                              "type": "array"
+                            }
+                          },
+                          "required": [
+                            "reports"
                           ]
                         }
                       ]
