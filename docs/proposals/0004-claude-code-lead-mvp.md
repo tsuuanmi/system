@@ -126,6 +126,17 @@ showed gaps between what it ships and what the loop needs:
   It also recommended a debate round before every vote. The debate research
   above outweighs that: it was evidence-based, while both panel members were
   ChatGPT accounts.
+- Reading a public repository, `ask` run `run_fd80ff72a3a5cee1`, 2026-10-16:
+  - A link alone is not a reliable way for either website to read a repository.
+  - GitHub's `robots.txt` disallows `tree` pages for the crawlers ChatGPT uses.
+    Single files at a commit (blob or raw URLs) were read in a live test.
+  - Gemini's code import reads public repositories without a linked account,
+    but it is a separate UI feature.
+  - Hence the review design above: `system` supplies the manifest and raw URLs,
+    and verifies quotes itself.
+  - The Phase 2 dogfood review (`panel` run `run_d890b6adc3e2cd65`, diff only)
+    made 9 claims about the code, and none held against the full code. That is
+    what quote verification guards against.
 - Implementation impact map, 2026-10-16:
   - Old runs are safe: the template registry is read only when a run starts, and
     `explain` and `result` read the stored spec. The upgrade fixture already
@@ -145,6 +156,8 @@ showed gaps between what it ships and what the loop needs:
 |---|---|---|
 | `ask` | one turn; `persist` keeps a conversation for later turns | — |
 | `research` | frame → literature on **each of two providers in parallel** → one evidence table from both → critique on a provider other than the evidence's → conclusion, which names agreement and disagreement between providers. Option `deep`: each literature step uses the provider's deep research. | — |
+| `brainstorm` | the team protocol below over a question and its context | majority vote |
+| `review` | the team protocol below over material (text) or a public repository URL; each ballot is `pass` or `changes`, with findings. Capabilities `reason`, plus `web-search` for a URL; no `local-data`. A repository is reviewed at one pinned commit, which `system` resolves itself. It lists the files and gives members a bounded manifest with each file's raw URL at that commit: README and manifests first, then entry points, the relevant code, and tests. Members are not asked to browse the repository's tree pages. Every finding quotes `path:line` with the exact line text, and the orchestrator checks each quote against the file at that commit. A finding whose quote matches is `confirmed`; one that does not, or has no quote, is `needs-verification`; advice without a defect is a `suggestion`. Findings are merged by root cause and keep who reported them. A file no member quoted counts as unread, and `pass` means no confirmed blocking finding within what was read. | majority vote |
 
 A literature step needs `web-search`, and today only one provider's driver
 proves it. The other provider's chat answers show sources (links and a Sources
