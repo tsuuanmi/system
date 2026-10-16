@@ -659,7 +659,7 @@ function conclude(e: Engine, run: RunRow, node: NodeRow, spec: ResolvedNode, nod
       vote: {
         kind: team.kind, method: how.method, threshold: Math.floor(team.members / 2) + 1, members: memberIdentities(e, team, nodes), options: options.map(optionRecord),
         rounds: rounds.map((t) => t.round), dissent, ...(revisions.length ? { revisions } : {}), ...(tiebreak ? { tiebreak } : {}), ...(findings.length ? { findings } : {}),
-        ...(source?.repository ? { repository: source.repository } : {}), ...(source ? { unread: source.unread.length } : {}),
+        ...(source?.repository ? { repository: voteRepository(source.repository) } : {}), ...(source ? { unread: source.unread.length } : {}),
         ...(how.method === 'blocking-finding' ? { blocking: blockingConfirmed(findings).map((f) => f.id) } : {}),
       },
     }, { producer: { type: 'system', ref: 'workflow' }, runId: run.run_id, nodeId: node.node_id, classification: run.classification ?? e.ctx.egress.defaultClassification }).id as ArtifactRef
@@ -675,6 +675,14 @@ function conclude(e: Engine, run: RunRow, node: NodeRow, spec: ResolvedNode, nod
     }), lease)
     e.ctx.eventLog.append({ type: 'workflow.team.decided', runId: run.run_id, nodeId: node.node_id, decision, data: { method: how.method, winner: how.winner, by: how.by } })
   })
+}
+
+/**
+ * The repository a review's vote names (`decision@1.2`: url, ref, commit). How the commit was
+ * pinned stays on the source snapshot it came from, which the vote's inputs reach.
+ */
+export function voteRepository(repository: NonNullable<SourceSnapshot['repository']>): { url: string; ref?: string; commit: string } {
+  return { url: repository.url, ...(repository.ref ? { ref: repository.ref } : {}), commit: repository.commit }
 }
 
 /** The team's answer: one machine-readable line, then the decision for a reader. A review's blocking findings always show. */
