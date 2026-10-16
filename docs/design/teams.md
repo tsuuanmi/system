@@ -261,7 +261,11 @@ order, shorter paths first within a class: the `focus` globs first, tests includ
 review is asked about are read before anything else uses the bounds); the root README; manifests;
 entry points (from `package.json` `main`, `module`, `bin`, and `exports`, and by convention); with
 no `focus`, the request's words (four letters or more) in paths; then tests beside the chosen
-files.
+files. A review never gives a verdict on a focus file it did not show: a file the `focus` names
+exactly that does not fit (`bounds`, `too-large`, `path-too-long`) fails the step as
+`invalid_input` before anything is sent, with what to narrow or raise. A glob or directory whose
+readable matches did not all fit is reviewed on what was shown, and the answer says so first
+(`Focus not shown: N of M file(s) matching <glob>`).
 Vendored and build directories are skipped. Bounds ([INV-9](../architecture/invariants.md)):
 40 files, 300 KB in all, 48 KB per file (config `repositories`), then, as members read it
 (line-numbered, with the list of files not shown), at most `maxSourceChars` characters

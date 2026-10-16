@@ -13,7 +13,7 @@ import type { ArtifactRef, Tier } from '@tsuuanmi/system-workers-core'
 import type { Engine } from './engine.ts'
 import { append } from './growth.ts'
 import { isSameFamily } from './recovery.ts'
-import { type SourceSnapshot, sourceOf } from './sources.ts'
+import { focusShortfall, type SourceSnapshot, sourceOf } from './sources.ts'
 import { ballotContract, type ResolvedNode, TEAM_STEPS, type TeamKind, type TeamRole } from './spec.ts'
 import { LEASE_TTL_MS, type NodeRecord, type NodeRow, type RunRow, type RunView, WorkflowFailure } from './types.ts'
 
@@ -663,7 +663,10 @@ function conclude(e: Engine, run: RunRow, node: NodeRow, spec: ResolvedNode, nod
         ...(how.method === 'blocking-finding' ? { blocking: blockingConfirmed(findings).map((f) => f.id) } : {}),
       },
     }, { producer: { type: 'system', ref: 'workflow' }, runId: run.run_id, nodeId: node.node_id, classification: run.classification ?? e.ctx.egress.defaultClassification }).id as ArtifactRef
-    const text = resultText(team.kind, how, options, rounds.map((t) => t.round), dissent, findings, decision, source, sameFamily)
+    // What the review's focus did not get shown, said first in its answer.
+    const focus = nodes.map(specOf).find((s) => s.executor === 'snapshot')?.repository?.focus ?? []
+    const unshown = source ? focusShortfall(focus, source).notes : []
+    const text = resultText(team.kind, how, options, rounds.map((t) => t.round), dissent, findings, decision, source, sameFamily, unshown)
     const result = e.ctx.artifacts.put({
       kind: 'report', bodySchema: how.method === 'blocking-finding' ? 'team-result@1.1' : 'team-result@1.0',
       body: { schema: how.method === 'blocking-finding' ? 'team-result@1.1' : 'team-result@1.0', runId: run.run_id, team: team.id, kind: team.kind, method: how.method, winner: how.winner, decision, text },
@@ -686,11 +689,12 @@ export function voteRepository(repository: NonNullable<SourceSnapshot['repositor
 }
 
 /** The team's answer: one machine-readable line, then the decision for a reader. A review's blocking findings always show. */
-function resultText(kind: TeamKind, how: Conclusion, options: TeamOption[], rounds: TeamRound[], dissent: Array<{ member: string; choice: string; objections: string[] }>, findings: ReviewFinding[], decision: ArtifactRef, source?: SourceSnapshot, sameFamily = false): string {
+function resultText(kind: TeamKind, how: Conclusion, options: TeamOption[], rounds: TeamRound[], dissent: Array<{ member: string; choice: string; objections: string[] }>, findings: ReviewFinding[], decision: ArtifactRef, source?: SourceSnapshot, sameFamily = false, unshown: string[] = []): string {
   const winner = options.find((o) => o.option === how.winner)
   const last = rounds.at(-1)!
   const lines = [`outcome: ${how.winner ?? 'inconclusive'}; method: ${how.method}; winner: ${how.winner ?? 'none'}; decision: ${decision}`, '']
   if (sameFamily) lines.push('Members: same provider family (allowSameFamily): no other provider judged this.', '')
+  if (unshown.length) lines.push(...unshown.map((n) => `${n[0]!.toUpperCase()}${n.slice(1)}.`), '')
   if (winner && kind === 'brainstorm') lines.push(`## Decision: ${winner.option} (${winner.member}'s proposal)`, '', winner.text, '')
   else if (winner) lines.push(`## Decision: ${winner.option}${how.method === 'blocking-finding' ? ' (a confirmed blocking finding decides it)' : ''}`, '')
   else lines.push('## No decision', '', how.by === 'rule' ? 'The vote tied and no deciding vote arrived in time.' : `The ${how.by} left it inconclusive.`, '')

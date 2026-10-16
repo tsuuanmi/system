@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { fitSource, renderSource } from '../src/sources.ts'
+import { fitSource, focusShortfall, renderSource } from '../src/sources.ts'
 
 const repository = { url: 'https://github.com/o/r', commit: 'a'.repeat(40), pinnedBy: 'ref' as const }
 const file = (path: string, lines: number, width = 40) => ({ path, sha: 'b'.repeat(40), text: Array.from({ length: lines }, (_, i) => `${i}`.padEnd(width, 'x')).join('\n') })
@@ -28,5 +28,27 @@ describe('fitSource: what a member reads fits the smallest member input (INV-9)'
     const fitted = fitSource([file('data.txt', 5000, 1)], [], repository, 24_000)
     expect(fitted.files).toEqual([])
     expect(fitted.unread).toEqual([{ path: 'data.txt', why: 'bounds' }])
+  })
+})
+
+describe('focusShortfall: a review never gives a verdict on a focus file it did not show', () => {
+  const snapshot = {
+    files: [{ path: 'src/index.ts', sha: 'b'.repeat(40), text: 'x' }],
+    unread: [
+      { path: 'src/repositories.ts', why: 'bounds' as const }, { path: 'src/big.ts', why: 'too-large' as const },
+      { path: 'src/logo.png', why: 'binary' as const }, { path: 'pnpm-lock.yaml', why: 'lockfile' as const }, { path: 'src/other.ts', why: 'not-selected' as const },
+    ],
+  }
+
+  it('refuses an exactly named file that was not shown, for any bound, and never a shown or unreadable one', () => {
+    expect(focusShortfall(['src/repositories.ts', 'src/big.ts', 'src/index.ts', 'src/logo.png', 'pnpm-lock.yaml'], snapshot).missing).toEqual(['src/repositories.ts (bounds)', 'src/big.ts (too-large)'])
+  })
+
+  it('notes a glob or directory whose readable matches were not all shown, and one that matches nothing', () => {
+    expect(focusShortfall(['src/*.ts', 'src', 'docs/**'], snapshot)).toEqual({
+      missing: [],
+      notes: ['focus not shown: 3 of 4 file(s) matching src/*.ts', 'focus not shown: 3 of 4 file(s) matching src', 'focus matches no readable file: docs/**'],
+    })
+    expect(focusShortfall(['src/index.ts'], snapshot)).toEqual({ missing: [], notes: [] })
   })
 })

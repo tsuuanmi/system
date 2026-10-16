@@ -5,7 +5,7 @@
  * by the bytes the members saw, never by a model.
  */
 import type { Lease } from '@tsuuanmi/system-leases'
-import { canonicalJson, sha256, SnapshotError, snapshotRepository } from '@tsuuanmi/system-libs'
+import { canonicalJson, globMatches, sha256, SnapshotError, snapshotRepository } from '@tsuuanmi/system-libs'
 import type { ArtifactRef } from '@tsuuanmi/system-workers-core'
 import type { Engine } from './engine.ts'
 import { failAttempt } from './recovery.ts'
@@ -54,6 +54,32 @@ export function renderSource(files: SourceFile[], unread: SourceSnapshot['unread
 }
 
 /**
+ * What a review's focus did not get shown: an exactly named file that is not shown (`missing`:
+ * the review must not run without it), and a glob or directory whose readable matches were not
+ * all shown (`notes`, said first in the answer). Binary and lockfile matches are never shown, so
+ * they are never missing.
+ */
+export function focusShortfall(focus: readonly string[], snapshot: Pick<SourceSnapshot, 'files' | 'unread'>): { missing: string[]; notes: string[] } {
+  const shown = new Set(snapshot.files.map((f) => f.path))
+  const unread = new Map(snapshot.unread.map((u) => [u.path, u.why]))
+  const tree = [...shown, ...unread.keys()]
+  const missing: string[] = []
+  const notes: string[] = []
+  for (const pattern of focus) {
+    if (!pattern.includes('*') && (shown.has(pattern) || unread.has(pattern))) {
+      const why = unread.get(pattern)
+      if (why === 'bounds' || why === 'too-large' || why === 'path-too-long') missing.push(`${pattern} (${why})`)
+      continue
+    }
+    const readable = tree.filter((p) => globMatches(pattern, p) && unread.get(p) !== 'binary' && unread.get(p) !== 'lockfile')
+    const notShown = readable.filter((p) => !shown.has(p))
+    if (!readable.length) notes.push(`focus matches no readable file: ${pattern}`)
+    else if (notShown.length) notes.push(`focus not shown: ${notShown.length} of ${readable.length} file(s) matching ${pattern}`)
+  }
+  return { missing, notes }
+}
+
+/**
  * Fit a snapshot to what a member can read (`budget` characters, as shown): files in their order
  * while they fit, the rest listed as not shown (`bounds`), and as much of that list as fits.
  * What members see is exactly the snapshot's files, so every quote is checked against them.
@@ -94,6 +120,14 @@ export async function runSnapshot(e: Engine, run: RunRow, node: NodeRow, spec: R
       // As members will read it: within what the smallest member input takes.
       const fitted = fitSource(read, snap.unread, repository, maxSourceChars ?? 24_000)
       body = { schema: 'source-snapshot@1.0', repository, files: fitted.files, unread: fitted.unread, text: fitted.text }
+      // A review never gives a verdict on a file it was asked about and could not show: refused before anything is sent.
+      const { missing } = focusShortfall(spec.repository.focus ?? [], body)
+      if (missing.length) {
+        return failAttempt(e, run, { ...node, attempt: node.attempt + 1 }, {
+          kind: 'invalid_input', disposition: 'NONE',
+          message: `focus not shown: ${missing.join(', ')}; members would review without it. Narrow the focus, or raise the bound (repositories.maxSourceChars ${maxSourceChars ?? 24_000}, maxFileBytes)`,
+        }, { sent: false, decisions: [] }, lease)
+      }
     } else {
       const files = [{ path: MATERIAL, sha: sha256(run.input), text: run.input }]
       body = { schema: 'source-snapshot@1.0', files, unread: [], text: renderSource(files, []) }
