@@ -141,9 +141,12 @@ describe('workflow specs', () => {
     // The tally and the decision run no Worker.
     expect(spec.nodes[6]).toMatchObject({ executor: 'tally', session: {}, team: { role: 'tally', round: 1 } })
     expect(spec.nodes[7]).toMatchObject({ executor: 'decide', session: {}, team: { role: 'decide' } })
-    const review = resolve('t', DEFAULT_TEMPLATES.review!, {})
-    expect(review.nodes[0]).toMatchObject({ acceptance: 'acceptance.team-findings' })
-    expect(review.nodes[2]).toMatchObject({ acceptance: 'acceptance.team-ballot-review' })
+    // A review reads its source first (PROP-0004 Phase 4): the caller's repository, or its text.
+    const review = resolve('t', DEFAULT_TEMPLATES.review!, { repository: { url: 'https://github.com/a/b' } })
+    expect(review.nodes[0]).toMatchObject({ nodeId: 'source', executor: 'snapshot', session: {}, repository: { url: 'https://github.com/a/b' } })
+    expect(review.nodes[1]).toMatchObject({ acceptance: 'acceptance.team-findings', dependsOn: ['source'] })
+    expect(review.nodes[3]).toMatchObject({ acceptance: 'acceptance.team-ballot-review' })
+    expect(review.specHash).not.toBe(resolve('t', DEFAULT_TEMPLATES.review!, {}).specHash)
     expect(preflight(DEFAULT_TEMPLATES.brainstorm!)).toEqual(['brainstorm'])
     expect(DEFAULT_TEMPLATES.panel).toBeUndefined()
   })

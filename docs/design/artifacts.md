@@ -40,9 +40,9 @@ Every artifact shares one envelope
 |---|---|---|---|
 | domain | `objective`, `criteria` | admission | the accepted goal and acceptance criteria |
 | domain | `plan` | planner node | proposed nodes for graph growth ([ADR-0012](../decisions/adr/0012-dag-execution-model.md)) |
-| domain | `finding`, `evidence` | research Workers | a cited claim, a source excerpt, a test log |
+| domain | `finding`, `evidence` | research Workers, engine | a cited claim, a source excerpt, a test log; what a review's members read (`source-snapshot@1.0`) |
 | domain | `assessment` | review Workers | a verdict against criteria on an exact subject |
-| domain | `report`, `handoff` | synthesis, team decision, compaction | a compact, cited synthesis passed downstream; a team's result (`team-result@1.0`) |
+| domain | `report`, `handoff` | synthesis, team decision, compaction | a compact, cited synthesis passed downstream; a team's result (`team-result`) |
 | domain | `delivery` | implementation Workers | a PR, a patch, or a dataset output, with its subject |
 | control | `decision` | routing, engine, policies, operator | see below |
 | control | `receipt` | provider runtime, engine | provider turn receipt, node input and output receipts |
@@ -80,13 +80,13 @@ A decision artifact records **one decision**
 | `tier` | routing or decision model | `economy`, `standard`, or `frontier` |
 | `escalation` | routing policy | the next tier after an acceptance rejection |
 | `egress` | egress policy | payload permitted or blocked, with the artifact refs checked |
-| `acceptance` | routing | accepted or rejected against the acceptance contract |
+| `acceptance` | routing, engine | accepted or rejected against the acceptance contract; what a review's source step read (`workflow.source-snapshot`) |
 | `gate` | engine | exact-subject gate passed or failed |
 | `reconciliation` | provider runtime | WAIT, RECOVER, RESUBMIT, or AMBIGUOUS, with snapshot hashes |
 | `graph-growth` | engine | `plan` artifact accepted (nodes appended) or rejected; a team's debate appended |
 | `recovery` | engine | failure class and retry disposition |
 | `spec-admission` | engine | the workflow spec accepted, with the provenance of each value |
-| `vote` | engine, caller, or operator | a team's tally of one round, or its decision: an option or `inconclusive` ([teams](teams.md#the-record); `decision@1.1`) |
+| `vote` | engine, caller, or operator | a team's tally of one round, or its decision: an option or `inconclusive` ([teams](teams.md#the-record); `decision@1.1`, `@1.2` with a review's checked findings) |
 
 Rules:
 

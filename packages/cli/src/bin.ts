@@ -14,6 +14,10 @@ const USAGE = `Usage: system <command>
   research [--deep] [--classification <c>] (<question...> | -)
                             the research procedure: hypotheses, two cited reviews on two
                             providers, evidence, critique, conclusions (--deep: Deep research)
+  brainstorm [--classification <c>] (<question...> | -)
+                            decide a question as a team: proposals, sealed ballots, a debate on a split, a tie to you
+  review [--repo <url> [--ref <r>] [--focus <glob>]...] [--classification <c>] (<criteria...> | -)
+                            review as a team: text, or a public repository at one pinned commit; quotes are checked
   run <template> [--variant <v>] [--session <id>] [--persist] [--tier <t>] [--classification <c>] (<input...> | -)
                             start any workflow template (ask, brainstorm, review, research, ...)
   approve <runId> [--plan <id>] [--reject] [note...]
@@ -152,6 +156,26 @@ async function main(argv: string[]): Promise<number> {
       if (!request || request.persist || request.tier || request.sessionId || request.variant) break
       const { prompt, ...options } = request
       return awaitRun(await callTool('research', { question: prompt, ...options }))
+    }
+    case 'brainstorm':
+    case 'review': {
+      // A repository and its focus first; the rest is the question or the criteria.
+      const args = [...rest]
+      const take = (flag: string): string[] => {
+        const values: string[] = []
+        for (let at = args.indexOf(flag); at >= 0; at = args.indexOf(flag)) values.push(...args.splice(at, 2).slice(1))
+        return values
+      }
+      const [url] = take('--repo')
+      const [ref] = take('--ref')
+      const focus = take('--focus')
+      if (command === 'brainstorm' && (url || ref || focus.length)) break
+      if (!url && (ref || focus.length)) break
+      const request = await parseAsk(args, readAllStdin)
+      if (!request || request.persist || request.tier || request.sessionId || request.variant || request.deep) break
+      const { prompt, ...options } = request
+      const repository = url ? { repository: { url, ...(ref ? { ref } : {}) }, ...(focus.length ? { focus } : {}) } : {}
+      return awaitRun(await callTool(command, { [command === 'review' ? 'material' : 'question']: prompt, ...options, ...repository }))
     }
     case 'run': {
       const [template, ...args] = rest

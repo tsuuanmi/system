@@ -12,6 +12,7 @@ import { type Runtime, RUNTIMES } from '@tsuuanmi/system-worker-sessions'
 import type { ArtifactRef, Tier } from '@tsuuanmi/system-workers-core'
 import type { Engine } from './engine.ts'
 import { append } from './growth.ts'
+import { type SourceSnapshot, sourceOf } from './sources.ts'
 import { ballotContract, type ResolvedNode, TEAM_STEPS, type TeamKind, type TeamRole } from './spec.ts'
 import { LEASE_TTL_MS, type NodeRecord, type NodeRow, type RunRow, type RunView, WorkflowFailure } from './types.ts'
 
@@ -33,9 +34,30 @@ export interface Proposal {
 
 export interface Finding {
   severity: 'blocking' | 'warning' | 'info'
+  /** A defect, or advice without one (default defect). */
+  kind?: 'defect' | 'suggestion' | undefined
   claim: string
   evidence: string
   location?: string
+  /** The line the finding is about, as the member read it: the file, the number shown, and its text; `matched` is the line it was found on. */
+  quote?: { path: string; line: number; text: string; matched?: number }
+}
+
+/**
+ * A finding as the team votes on it: merged with every other that quotes the same `path:line`,
+ * and classed against the source the members read (PROP-0004 Phase 4): `confirmed` when its quote
+ * matches (within two lines, which models miscount), `needs-verification` otherwise, and
+ * `suggestion` for advice without a defect. A review without a source step is not classed.
+ */
+export interface ReviewFinding extends Finding {
+  id: string
+  /** The first member who reported it. */
+  member: string
+  /** Every member who reported it, in member order. */
+  members: string[]
+  class?: 'confirmed' | 'needs-verification' | 'suggestion'
+  /** Why it is not confirmed. */
+  why?: string
 }
 
 export type Confidence = 'low' | 'medium' | 'high'
@@ -80,10 +102,10 @@ export interface TeamRound {
   counts: Record<string, number>
   winner: string | null
   /** Why voting stopped here, or `debate` when a debate and another vote follow. */
-  ended: 'majority' | 'no-objections' | 'rounds-exhausted' | 'debate'
+  ended: 'majority' | 'no-objections' | 'rounds-exhausted' | 'debate' | 'blocking-finding'
 }
 
-export type TeamMethod = 'team-majority' | 'caller-tiebreak' | 'inconclusive'
+export type TeamMethod = 'team-majority' | 'caller-tiebreak' | 'inconclusive' | 'blocking-finding'
 
 const TEXT_MAX = 4000
 const clip = (value: unknown, max = TEXT_MAX): string => String(value ?? '').slice(0, max)
@@ -121,7 +143,16 @@ export function parseFindings(text: string): Finding[] | string {
     if (typeof f !== 'object' || f === null || !['blocking', 'warning', 'info'].includes(f.severity as string) || typeof f.claim !== 'string' || !f.claim.trim()) {
       return `finding ${i + 1} needs a severity (blocking, warning, or info) and a claim`
     }
-    findings.push({ severity: f.severity as Finding['severity'], claim: clip(f.claim), evidence: clip(f.evidence), ...(typeof f.location === 'string' && f.location ? { location: clip(f.location, 300) } : {}) })
+    const quote = f.quote as Record<string, unknown> | undefined
+    if (quote !== undefined && (typeof quote !== 'object' || quote === null || typeof quote.path !== 'string' || !Number.isInteger(quote.line) || (quote.line as number) < 1 || typeof quote.text !== 'string')) {
+      return `finding ${i + 1}: a quote is {"path", "line" (a number from 1), "text"}`
+    }
+    if (f.kind !== undefined && f.kind !== 'defect' && f.kind !== 'suggestion') return `finding ${i + 1}: kind is defect or suggestion`
+    findings.push({
+      severity: f.severity as Finding['severity'], ...(f.kind ? { kind: f.kind as Finding['kind'] } : {}), claim: clip(f.claim), evidence: clip(f.evidence),
+      ...(typeof f.location === 'string' && f.location ? { location: clip(f.location, 300) } : {}),
+      ...(quote ? { quote: { path: clip(quote.path, 1000), line: quote.line as number, text: clip(quote.text, 2000) } } : {}),
+    })
   }
   return findings
 }
@@ -199,12 +230,73 @@ export function optionsOf(e: Engine, team: TeamRole, nodes: NodeRow[]): TeamOpti
   })
 }
 
-/** Every member's findings, in member order, as one list F1..Fn that every review ballot is over. */
-export function findingsOf(e: Engine, team: TeamRole, nodes: NodeRow[]): Array<Finding & { id: string; member: string }> {
-  return ofTeam(nodes, team.id).filter(({ role }) => role.role === 'propose').sort((a, b) => a.role.member! - b.role.member!)
-    .flatMap(({ row, role }) => (parseFindings(e.resultText(resultOf(row)!)) as Finding[]).map((f) => ({ ...f, member: `m${role.member}` })))
-    .map((f, i) => ({ id: `F${i + 1}`, ...f }))
+const SEVERITY = { info: 0, warning: 1, blocking: 2 } as const
+/**
+ * A quoted line, as compared: exact, but for trailing whitespace and the line's indentation, which
+ * a quote in JSON tends to drop and which never changes what the line says.
+ */
+const norm = (line: string): string => line.trim()
+
+/**
+ * Class one finding against the source: its quote must match a shown line exactly (see `norm`),
+ * on the cited line or within two of it, nearest first, since models miscount.
+ */
+export function classify(f: Finding, source: SourceSnapshot): Pick<ReviewFinding, 'class' | 'why'> & { line?: number } {
+  if (f.kind === 'suggestion') return { class: 'suggestion' }
+  if (!f.quote) return { class: 'needs-verification', why: 'it quotes no line' }
+  const file = source.files.find((x) => x.path === f.quote!.path)
+  if (!file) return { class: 'needs-verification', why: `${f.quote.path} was not shown` }
+  const wanted = norm(f.quote.text)
+  if (!wanted) return { class: 'needs-verification', why: 'its quote is empty' }
+  const lines = file.text.split('\n')
+  for (const d of [0, -1, 1, -2, 2]) {
+    const at = f.quote.line + d
+    if (at >= 1 && at <= lines.length && norm(lines[at - 1]!) === wanted) return { class: 'confirmed', line: at }
+  }
+  return { class: 'needs-verification', why: `quote not found within ±2 lines of ${f.quote.path}:${f.quote.line}` }
 }
+
+/**
+ * Every member's findings as one list F1..Fn that every review ballot is over: in member order,
+ * merged only when they quote the same `path:line`, and classed against the team's source. No
+ * model merges or judges a finding (PROP-0004).
+ */
+export function findingsOf(e: Engine, team: TeamRole, nodes: NodeRow[]): ReviewFinding[] {
+  const proposals = ofTeam(nodes, team.id).filter(({ role }) => role.role === 'propose').sort((a, b) => a.role.member! - b.role.member!)
+  const source = sourceOf(e, nodes, proposals.flatMap(({ row }) => specOf(row).dependsOn))
+  const merged: ReviewFinding[] = []
+  const byLine = new Map<string, ReviewFinding>()
+  for (const { row, role } of proposals) {
+    for (const f of parseFindings(e.resultText(resultOf(row)!)) as Finding[]) {
+      const member = `m${role.member}`
+      const checked = source ? classify(f, source) : {}
+      // Merged only on the same quoted line: the matched one when the quote was found.
+      // A suggestion never merges with a defect on the same line: it would lend the defect its words.
+      const key = f.quote ? `${f.kind ?? 'defect'}:${f.quote.path}:${checked.line ?? f.quote.line}` : undefined
+      const same = key ? byLine.get(key) : undefined
+      if (same) {
+        if (!same.members.includes(member)) same.members.push(member)
+        if (SEVERITY[f.severity] > SEVERITY[same.severity]) same.severity = f.severity
+        if (same.class !== 'confirmed' && checked.class === 'confirmed') Object.assign(same, { class: 'confirmed', why: undefined })
+        continue
+      }
+      const { line, ...cls } = checked
+      const finding: ReviewFinding = {
+        id: `F${merged.length + 1}`, ...f, member, members: [member], ...(cls.class ? { class: cls.class } : {}), ...(cls.why ? { why: cls.why } : {}),
+        ...(f.quote && line ? { quote: { ...f.quote, matched: line } } : {}),
+      }
+      merged.push(finding)
+      if (key) byLine.set(key, finding)
+    }
+  }
+  return merged.map((f) => (f.why === undefined ? (({ why: _why, ...rest }) => rest)(f) as ReviewFinding : f))
+}
+
+/** Whether findings carry a review's quote checks (decision@1.2). */
+const hasChecks = (findings: ReviewFinding[]): boolean => findings.length > 0
+
+/** A confirmed blocking defect decides a review `changes`, whatever the ballots say (PROP-0004). */
+export const blockingConfirmed = (findings: ReviewFinding[]): ReviewFinding[] => findings.filter((f) => f.class === 'confirmed' && f.severity === 'blocking')
 
 /** The ballots of voting round `round`: round 1's ballot steps, then each debate's re-vote. */
 function ballotsOf(e: Engine, team: TeamRole, nodes: NodeRow[], round: number, options: readonly string[]): CastBallot[] {
@@ -262,9 +354,10 @@ export function teamPrompt(e: Engine, spec: ResolvedNode, nodes: NodeRow[]): str
       lines.push('You may vote for your own proposal. Then name the strongest point of each option you did not choose.')
     } else {
       const findings = findingsOf(e, team, nodes)
-      lines.push('Every member\'s findings, merged into one list with who reported each:', '',
-        quoted('Findings', findings.length ? findings.map((f) => `${f.id} [${f.member}] ${f.severity}: ${f.claim}${f.evidence ? ` (evidence: ${f.evidence})` : ''}${f.location ? ` at ${f.location}` : ''}`).join('\n') : '(no member reported a finding)'), '',
-        'Vote "changes" when at least one blocking defect must be fixed, otherwise "pass". Say for each finding whether you agree that it holds.')
+      lines.push('Every member\'s findings, merged by quoted line, with who reported each, and whether its quote was found in the material:', '',
+        quoted('Findings', findings.length ? findings.map(findingLine).join('\n') : '(no member reported a finding)'), '',
+        'Vote "changes" when at least one blocking defect must be fixed, otherwise "pass". A confirmed blocking defect decides "changes" whatever the votes.',
+        'Say for each finding whether you agree that it holds.')
     }
     lines.push('Your ballot is sealed: no member sees another\'s ballot until every ballot is in.', '', ballotShape(team, ids, false))
   } else {
@@ -299,12 +392,16 @@ export function tally(e: Engine, run: RunRow, node: NodeRow, spec: ResolvedNode,
   const ballots = ballotsOf(e, team, nodes, round, ids)
   const threshold = Math.floor(team.members / 2) + 1
   const counts = Object.fromEntries(ids.map((o) => [o, ballots.filter((b) => b.choice === o).length]))
-  const winner = ids.find((o) => counts[o]! >= threshold) ?? null
+  // A confirmed blocking defect decides a review: no majority, debate, or tie is needed (PROP-0004).
+  const blocking = team.kind === 'review' ? blockingConfirmed(findingsOf(e, team, nodes)) : []
+  const winner = blocking.length ? 'changes' : ids.find((o) => counts[o]! >= threshold) ?? null
   const open = ballots.some((b) => b.objections.length > 0)
   const debate = !winner && open && round - 1 < team.debateRounds
-  const ended: TeamRound['ended'] = winner ? 'majority' : debate ? 'debate' : open ? 'rounds-exhausted' : 'no-objections'
+  const ended: TeamRound['ended'] = blocking.length ? 'blocking-finding' : winner ? 'majority' : debate ? 'debate' : open ? 'rounds-exhausted' : 'no-objections'
   const record: TeamRound = { round, ballots, counts, winner, ended }
-  const why = winner
+  const why = blocking.length
+    ? `confirmed blocking finding(s) ${blocking.map((f) => f.id).join(', ')} decide changes, whatever the ballots`
+    : winner
     ? `${winner} has ${counts[winner]} of ${team.members} ballots (a strict majority needs ${threshold})`
     : `no option has ${threshold} of ${team.members} ballots${debate ? '; objections remain, so the members debate once more' : ended === 'no-objections' ? '; no member holds an objection, so the debate ends' : '; the debate rounds are spent'}`
   e.ctx.store.transaction(() => {
@@ -316,7 +413,8 @@ export function tally(e: Engine, run: RunRow, node: NodeRow, spec: ResolvedNode,
         ...options.map((o) => ({ option: o.option, selected: o.option === winner, reasons: ballots.filter((b) => b.choice === o.option).map((b) => `${b.member} (${b.confidence}): ${b.rationale}`) })),
         { option: debate ? 'debate' : 'tie', selected: !winner, reasons: winner ? [] : [why] },
       ],
-      decider: { type: 'rule', id: 'workflow.team-majority', version: '1' },
+      ...(team.kind === 'review' && (blocking.length || hasChecks(findingsOf(e, team, nodes))) ? { schema: 'decision@1.2' as const } : {}),
+      decider: { type: 'rule', id: blocking.length ? 'workflow.blocking-finding' : 'workflow.team-majority', version: '1' },
       outcome: { option: winner ?? (debate ? 'debate' : 'tie'), detail: { round, counts, threshold, ended, reason: why } },
       deterministic: true,
       vote: { kind: team.kind, threshold, members: memberIdentities(e, team, nodes), options: options.map(optionRecord), rounds: [record] },
@@ -366,6 +464,12 @@ function proposalsOf(team: TeamRole, nodes: NodeRow[]): ArtifactRef[] {
   return ofTeam(nodes, team.id).filter(({ role }) => role.role === 'propose').flatMap(({ row }) => (resultOf(row) ? [resultOf(row)!] : []))
 }
 
+/** One finding as a line: its id, reporters, class, severity, claim, and quoted place. */
+function findingLine(f: ReviewFinding): string {
+  const place = f.quote ? ` at ${f.quote.path}:${f.quote.matched ?? f.quote.line}${f.quote.matched && f.quote.matched !== f.quote.line ? ` (cited ${f.quote.line})` : ''}` : f.location ? ` at ${f.location}` : ''
+  return `${f.id} [${f.members.join(', ')}]${f.class ? ` ${f.class}` : ''} ${f.severity}: ${f.claim}${place}${f.evidence ? ` (evidence: ${f.evidence})` : ''}${f.why ? ` (${f.why})` : ''}`
+}
+
 /** Members by opaque identity (their sessions), never by provider. */
 function memberIdentities(e: Engine, team: TeamRole, nodes: NodeRow[]): Array<{ member: string; identity: string }> {
   return ofTeam(nodes, team.id).filter(({ role }) => role.role === 'propose').sort((a, b) => a.role.member! - b.role.member!)
@@ -390,6 +494,7 @@ function roundsOf(e: Engine, team: TeamRole, nodes: NodeRow[]): Array<{ row: Nod
 export function decide(e: Engine, run: RunRow, node: NodeRow, spec: ResolvedNode, nodes: NodeRow[], lease: () => Lease): void {
   const rounds = roundsOf(e, spec.team!, nodes)
   const last = rounds.at(-1)!
+  if (last.round.ended === 'blocking-finding') return conclude(e, run, node, spec, nodes, { method: 'blocking-finding', winner: 'changes', by: 'rule', id: 'workflow.blocking-finding' }, lease)
   if (last.round.winner) return conclude(e, run, node, spec, nodes, { method: 'team-majority', winner: last.round.winner, by: 'rule', id: 'workflow.team-majority' }, lease)
   const until = new Date(Date.now() + (e.config.tieTimeoutHours ?? 24) * 3_600_000).toISOString()
   e.ctx.store.transaction(() => {
@@ -480,8 +585,11 @@ function conclude(e: Engine, run: RunRow, node: NodeRow, spec: ResolvedNode, nod
   const findings = team.kind === 'review' ? findingsOf(e, team, nodes) : []
   const dissent = last.ballots.filter((b) => b.choice !== how.winner).map((b) => ({ member: b.member, choice: b.choice, objections: b.objections, strongest: b.strongest }))
   const revisions = rounds.flatMap(({ round }) => round.ballots.filter((b) => b.revision).map((b) => ({ member: b.member, round: round.round, revision: b.revision! })))
-  const tiebreak = how.by === 'rule' && how.method === 'team-majority' ? undefined : { by: how.by, option: how.winner ?? 'inconclusive', rationale: how.rationale ?? '' }
-  const why = how.method === 'team-majority'
+  const tiebreak = how.by === 'rule' && (how.method === 'team-majority' || how.method === 'blocking-finding') ? undefined : { by: how.by, option: how.winner ?? 'inconclusive', rationale: how.rationale ?? '' }
+  const source = team.kind === 'review' ? sourceOf(e, nodes, nodes.filter((n) => specOf(n).team?.id === team.id && specOf(n).team?.role === 'propose').flatMap((n) => specOf(n).dependsOn)) : undefined
+  const why = how.method === 'blocking-finding'
+    ? `confirmed blocking finding(s) ${blockingConfirmed(findings).map((f) => f.id).join(', ')} decide changes`
+    : how.method === 'team-majority'
     ? `${how.winner} won round ${last.round} by strict majority`
     : how.method === 'caller-tiebreak' ? `the ${how.by} broke the tie for ${how.winner}: ${how.rationale}` : `inconclusive (${how.by === 'rule' ? 'no deciding vote in time' : `the ${how.by} decided so: ${how.rationale}`})`
   e.ctx.store.transaction(() => {
@@ -491,18 +599,21 @@ function conclude(e: Engine, run: RunRow, node: NodeRow, spec: ResolvedNode, nod
       inputs: rounds.map((t) => t.decision),
       candidates: [...options.map((o) => ({ option: o.option, selected: o.option === how.winner, reasons: o.option === how.winner ? [why.slice(0, 300)] : [] })),
         { option: 'inconclusive', selected: how.winner === null, reasons: how.winner === null ? [why.slice(0, 300)] : [] }],
+      ...(how.method === 'blocking-finding' || source || hasChecks(findings) ? { schema: 'decision@1.2' as const } : {}),
       decider: { type: how.by, id: how.id, version: '1' },
       outcome: { option: how.winner ?? 'inconclusive', detail: { method: how.method } },
       deterministic: how.by === 'rule',
       vote: {
         kind: team.kind, method: how.method, threshold: Math.floor(team.members / 2) + 1, members: memberIdentities(e, team, nodes), options: options.map(optionRecord),
         rounds: rounds.map((t) => t.round), dissent, ...(revisions.length ? { revisions } : {}), ...(tiebreak ? { tiebreak } : {}), ...(findings.length ? { findings } : {}),
+        ...(source?.repository ? { repository: source.repository } : {}), ...(source ? { unread: source.unread.length } : {}),
+        ...(how.method === 'blocking-finding' ? { blocking: blockingConfirmed(findings).map((f) => f.id) } : {}),
       },
     }, { producer: { type: 'system', ref: 'workflow' }, runId: run.run_id, nodeId: node.node_id, classification: run.classification ?? e.ctx.egress.defaultClassification }).id as ArtifactRef
-    const text = resultText(team.kind, how, options, rounds.map((t) => t.round), dissent, findings, decision)
+    const text = resultText(team.kind, how, options, rounds.map((t) => t.round), dissent, findings, decision, source)
     const result = e.ctx.artifacts.put({
-      kind: 'report', bodySchema: 'team-result@1.0',
-      body: { schema: 'team-result@1.0', runId: run.run_id, team: team.id, kind: team.kind, method: how.method, winner: how.winner, decision, text },
+      kind: 'report', bodySchema: how.method === 'blocking-finding' ? 'team-result@1.1' : 'team-result@1.0',
+      body: { schema: how.method === 'blocking-finding' ? 'team-result@1.1' : 'team-result@1.0', runId: run.run_id, team: team.id, kind: team.kind, method: how.method, winner: how.winner, decision, text },
       classification: run.classification ?? e.ctx.egress.defaultClassification, producer: { type: 'system', ref: 'workflow' }, inputs: [decision], runId: run.run_id, nodeId: node.node_id,
     }).id as ArtifactRef
     e.writeNode(node, { state: 'COMPLETED', error: null, not_before: null, decisions: JSON.stringify([decision]) }, (r) => ({
@@ -514,14 +625,22 @@ function conclude(e: Engine, run: RunRow, node: NodeRow, spec: ResolvedNode, nod
 }
 
 /** The team's answer: one machine-readable line, then the decision for a reader. A review's blocking findings always show. */
-function resultText(kind: TeamKind, how: Conclusion, options: TeamOption[], rounds: TeamRound[], dissent: Array<{ member: string; choice: string; objections: string[] }>, findings: Array<Finding & { id: string; member: string }>, decision: ArtifactRef): string {
+function resultText(kind: TeamKind, how: Conclusion, options: TeamOption[], rounds: TeamRound[], dissent: Array<{ member: string; choice: string; objections: string[] }>, findings: ReviewFinding[], decision: ArtifactRef, source?: SourceSnapshot): string {
   const winner = options.find((o) => o.option === how.winner)
   const last = rounds.at(-1)!
   const lines = [`outcome: ${how.winner ?? 'inconclusive'}; method: ${how.method}; winner: ${how.winner ?? 'none'}; decision: ${decision}`, '']
   if (winner && kind === 'brainstorm') lines.push(`## Decision: ${winner.option} (${winner.member}'s proposal)`, '', winner.text, '')
-  else if (winner) lines.push(`## Decision: ${winner.option}`, '')
+  else if (winner) lines.push(`## Decision: ${winner.option}${how.method === 'blocking-finding' ? ' (a confirmed blocking finding decides it)' : ''}`, '')
   else lines.push('## No decision', '', how.by === 'rule' ? 'The vote tied and no deciding vote arrived in time.' : `The ${how.by} left it inconclusive.`, '')
   if (how.rationale && how.method !== 'team-majority') lines.push(`Deciding vote (${how.by}): ${how.rationale}`, '')
+  if (how.method === 'blocking-finding') {
+    // What decided it, and where the members stand on each: the caller judges a disputed blocker here.
+    for (const f of blockingConfirmed(findings)) {
+      const stances = last.ballots.map((b) => `${b.member} ${b.findings?.[f.id] === 'agree' ? 'agrees' : b.findings?.[f.id] === 'disagree' ? 'disagrees' : 'is unsure'}`)
+      lines.push(`- ${f.id} blocking (confirmed) at ${f.quote!.path}:${f.quote!.matched ?? f.quote!.line}: ${f.claim}; ${stances.join(', ')}`)
+    }
+    lines.push('')
+  }
   lines.push(`## Votes (round ${last.round} of ${rounds.length})`, '')
   for (const b of last.ballots) lines.push(`- ${b.member}: ${b.choice} (confidence ${b.confidence}). ${b.rationale}`)
   if (kind === 'brainstorm') {
@@ -534,9 +653,15 @@ function resultText(kind: TeamKind, how: Conclusion, options: TeamOption[], roun
   }
   if (kind === 'review') {
     const blocking = findings.filter((f) => f.severity === 'blocking')
-    lines.push('', `## Findings (${blocking.length} blocking)`, '')
-    for (const f of findings) lines.push(`- ${f.id} [${f.member}] ${f.severity}: ${f.claim}${f.location ? ` (${f.location})` : ''}`)
+    lines.push('', `## Findings (${blocking.length} blocking, ${blockingConfirmed(findings).length} of them confirmed)`, '')
+    // Confirmed first, blocking first within a class; a blocking finding always shows.
+    const rank = (f: ReviewFinding): number => ({ confirmed: 0, 'needs-verification': 1, suggestion: 2 } as const)[f.class ?? 'needs-verification'] * 3 + (2 - SEVERITY[f.severity])
+    for (const f of [...findings].sort((a, b) => rank(a) - rank(b))) lines.push(`- ${findingLine(f)}`)
     if (!findings.length) lines.push('- none reported')
+    if (source?.repository) {
+      lines.push('', `Read: ${source.repository.url} at ${source.repository.commit}, ${source.files.length} file(s): ${source.files.map((x) => x.path).join(', ')}.`)
+      if (source.unread.length) lines.push(`Not read (${source.unread.length}): ${source.unread.slice(0, 50).map((u) => `${u.path} (${u.why})`).join(', ')}${source.unread.length > 50 ? ', …' : ''}.`)
+    }
   }
   return lines.join('\n')
 }

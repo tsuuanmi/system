@@ -33,7 +33,8 @@ One answer from one Worker. `system ask` and the MCP tool `ask` run it.
 ### `brainstorm`
 
 A [team](../design/teams.md) of 2 members, one per provider family, that decides a question by
-vote. Each member's recommendation is one option (`O<k>`). The MCP tool `brainstorm` runs it.
+vote. Each member's recommendation is one option (`O<k>`). The MCP tool `brainstorm` and
+`system brainstorm` run it.
 
 | Node | Capabilities | Tier | Conversation | Acceptance |
 |---|---|---|---|---|
@@ -48,11 +49,16 @@ On a split vote with an objection open, `brainstorm:tally:<r>` appends
 
 ### `review`
 
-The same team procedure over material the caller gives as text. The options are `pass` and
-`changes`, over the members' merged findings. The MCP tool `review` runs it.
+A source step, then the same team procedure over what it read: the caller's public repository
+at one pinned commit, or else the caller's text as the one file `material`
+([sources](../design/teams.md#sources)). Each member's proposal prompt is the caller's input
+followed by the source. The options are `pass` and `changes`, over the members' findings merged
+by quoted line; a confirmed blocking finding decides `changes`. The MCP tool `review` and
+`system review` run it.
 
 | Node | Capabilities | Tier | Conversation | Acceptance |
 |---|---|---|---|---|
+| `source` (a repository at one commit, or the caller's text) | none (`effect` executor: the engine reads it) | — | — | — (records an `acceptance` decision `workflow.source-snapshot`) |
 | `review:m<k>:propose` (independent findings; member k differs from members 1..k-1) | `reason` | standard | the member's own session | `acceptance.team-findings` |
 | `review:m<k>:ballot:1` (sealed) | `reason` | standard | the member's own session | `acceptance.team-ballot-review` |
 | `review:tally:1` | none (`team` executor) | — | — | — |
@@ -132,7 +138,7 @@ one fails admission, fail closed, with the capability named:
 | `acceptance.answer` | `workers` | the answer has text |
 | `acceptance.cited` | `workers` | the answer has text and cites at least one http(s) source link |
 | `acceptance.team-proposal` | `workflow` | the answer ends with a JSON proposal: a `recommendation` (at most 2000 characters), a `rationale`, and optional `risks` |
-| `acceptance.team-findings` | `workflow` | the answer ends with JSON `findings` (at most 50, possibly none), each with a `severity` (`blocking`, `warning`, `info`) and a `claim`, plus `evidence` and an optional `location` |
+| `acceptance.team-findings` | `workflow` | the answer ends with JSON `findings` (at most 50, possibly none), each with a `severity` (`blocking`, `warning`, `info`) and a `claim`, plus `evidence`, an optional `kind` (`defect`, `suggestion`), an optional `location`, and an optional `quote` (`path`, `line` from 1, `text`) |
 | `acceptance.team-ballot-<n>` (n = 2..5) | `workflow` | the answer ends with a JSON ballot over `O1`..`O<n>`: one `choice`, a `ranking` of all, a `rationale`, the `strongest` point of each option not chosen, its `objections` (possibly none), and a `confidence` |
 | `acceptance.team-ballot-review` | `workflow` | the same ballot over `pass` and `changes` |
 | `acceptance.cited-conclusions` | `profile-scientific-research` | the conclusion names a hypothesis (`H1`, …) and cites evidence (`[E1]`, …) |

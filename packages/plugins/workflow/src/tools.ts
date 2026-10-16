@@ -58,21 +58,31 @@ export function registerTools(c: Context, w: Workflow, ctx: Context): void {
       return failure(error)
     }
   })
-  const team = (template: 'brainstorm' | 'review', description: string, field: string, about: string): void => {
+  const team = (template: 'brainstorm' | 'review', description: string, field: string, about: string, extra: Record<string, zod.ZodType> = {}): void => {
     c.mcp.tool(template, {
       scope: 'client',
       description,
-      inputSchema: { [field]: zod.string().min(1).max(200_000).describe(about), classification, clientRequestId },
+      inputSchema: { [field]: zod.string().min(1).max(200_000).describe(about), ...extra, classification, clientRequestId },
     }, async (args) => {
       try {
-        return shape(w.start({ template, input: String(args[field]), classification: args.classification as Classification | undefined, clientRequestId: args.clientRequestId as string | undefined }))
+        const repository = args.repository as { url: string; ref?: string } | undefined
+        const focus = args.focus as string[] | undefined
+        return shape(w.start({
+          template, input: String(args[field]), classification: args.classification as Classification | undefined, clientRequestId: args.clientRequestId as string | undefined,
+          ...(repository ? { repository: { url: repository.url, ...(repository.ref ? { ref: repository.ref } : {}), ...(focus?.length ? { focus } : {}) } } : {}),
+        }))
       } catch (error) {
         return failure(error)
       }
     })
   }
   team('brainstorm', 'Decide a question as a team, one member per provider family: each proposes on its own, then all vote by sealed ballot; a split vote gets one debate and a re-vote, and a tie comes back to you (`vote`). Returns at once with a runId; poll `result`. The answer starts with a line `outcome: …; method: …; winner: …; decision: …`.', 'question', 'The question and its context: options, constraints, what has been decided')
-  team('review', 'Review material as a team (an approach, a design, or a diff, as text), one member per provider family: each lists findings on its own, then all vote pass or changes by sealed ballot over the merged findings; a split vote gets one debate, and a tie comes back to you (`vote`). Returns at once with a runId; poll `result`.', 'material', 'What to review, with the criteria it must meet')
+  team('review', 'Review as a team, one member per provider family: text you give (an approach, a design, a diff), or a public repository read at one pinned commit. Each member lists findings that quote `path:line` and the line\'s text; system checks every quote against what the members read. A confirmed blocking finding decides changes; otherwise all vote pass or changes by sealed ballot, a split gets one debate, and a tie comes back to you (`vote`). Returns at once with a runId; poll `result`. The answer starts with a line `outcome: …; method: …; winner: …; decision: …`.', 'material',
+    'What to review and the criteria it must meet; with `repository`, what to look for in it', {
+      repository: zod.object({ url: zod.string().max(2000).describe('https URL of a public repository on an allowed host (default github.com)'), ref: zod.string().max(200).optional().describe('Branch, tag, or commit SHA (default: its HEAD)') })
+        .optional().describe('Review this public repository, read by system at one pinned commit'),
+      focus: zod.array(zod.string().max(500)).max(20).optional().describe('Paths or globs of the repository to read first'),
+    })
   c.mcp.tool('vote', {
     scope: 'client',
     description: 'Break a team\'s tie: the deciding vote, bound to the exact tie decision the run shows in `blocked` (an option, or inconclusive), with your rationale.',

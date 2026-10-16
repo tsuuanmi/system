@@ -15,6 +15,7 @@ import { admissionKind, escalate, failAttempt, routedDecisions } from './recover
 import { remediate, reviewSubject, subjectGate } from './review.ts'
 import { recoverWakes, settleWake } from './sessions.ts'
 import { DEFAULT_TEMPLATES, type NodeTemplate, recordExecutor, render, type ResolvedNode, resolve, schemaBlock, variantProblem, variantsOf } from './spec.ts'
+import { runSnapshot } from './sources.ts'
 import { decide, expireTie, restriction, runtimeOf, tally, teamGroup, teamPrompt } from './teams.ts'
 import { type Config, errorOf, LEASE_TTL_MS, newId, type NodeHelpers, type NodeRecord, type NodeRow, now, type RunRow, type RunView, type StartInput, type WorkflowError, WorkflowFailure } from './types.ts'
 import { view } from './views.ts'
@@ -98,6 +99,7 @@ export class Engine {
     const unknown = variantProblem(input.template, nodes, input.variant)
     if (unknown) throw new WorkflowFailure('invalid_input', unknown)
     const spec = resolve(input.template, nodes, input)
+    if (input.repository && !spec.nodes.some((n) => n.executor === 'snapshot')) throw new WorkflowFailure('invalid_input', `template ${input.template} reads no repository`)
     // Contracts can come from other plugins, so they are checked per run, before anything is sent.
     const known = new Set(this.ctx.workers.contracts())
     for (const node of spec.nodes) {
@@ -410,6 +412,8 @@ export class Engine {
     if (!node.execution_id) {
       const delay = node.not_before ? Date.parse(node.not_before) - Date.now() : 0
       if (delay > 0 && !(await sleep(delay, signal))) return
+      // A review's source is read by the engine, not a Worker.
+      if (spec.executor === 'snapshot') return runSnapshot(this, run, node, spec, lease)
       const record = JSON.parse(node.record) as NodeRecord
       const attempt = node.attempt + 1
       // A node that must differ from others routes once they have Workers (ADR-0027).

@@ -4,21 +4,21 @@
 > Requirements: REQ-TEAM-1, 2, 4..7.
 >
 > Implemented in [`workflow`](../../packages/plugins/workflow/README.md) (the `team` option on a
-> template node, unrolled by the engine; the `vote` tool) and
+> template node, unrolled by the engine; a review's source step; the `vote` tool),
 > [`worker-sessions`](../../packages/plugins/worker-sessions/README.md) (members' sessions and
-> their group); differs from target: auxiliary Workers are not built; `review` takes material
-> as text only (a pinned repository with checked quotes is Phase 4 of
-> [PROP-0004](../proposals/0004-claude-code-lead-mvp.md)).
+> their group), and [`libs`](../../packages/libs/README.md) (repository snapshots); differs
+> from target: auxiliary Workers are not built.
 
 There is no team seam or team runner. A team is the `team` option on a workflow template node:
 `{kind: brainstorm | review, members (2..5, default 2), debateRounds (0..2, default 1)}`. A team
 node has no `differentFrom`, `grows`, or `resultSchema`. The engine unrolls it into steps per
 member, a deterministic tally, and a deterministic decision that keeps the team node's id. The
-built-in templates `brainstorm` and `review` are such nodes
-([workflow templates](../reference/workflow-templates.md#brainstorm)).
+built-in template `brainstorm` is such a node; `review` is a [source step](#sources) and such a
+node ([workflow templates](../reference/workflow-templates.md#brainstorm)).
 
 The models supply reasoning and evidence only. Deterministic code fixes the options, checks and
-seals the ballots, counts them, ends the rounds, and handles a tie.
+seals the ballots, checks a review's quotes, counts the ballots, ends the rounds, and handles a
+tie.
 
 ## Membership: Model A
 
@@ -49,8 +49,10 @@ holds. A member that finds no other family fails with `config_error`. Its messag
 
 ```mermaid
 flowchart LR
+  S[review: source step] -.-> P
   P[propose: each member alone] --> B[sealed ballots, round 1]
   B --> T{tally}
+  T -->|review: a confirmed blocking finding| BF[decide: blocking-finding]
   T -->|strict majority| D[decide: team-majority]
   T -->|split, objection open, rounds left| DB[debate: crux and the next sealed ballot]
   DB --> T
@@ -62,6 +64,7 @@ flowchart LR
 
 | Step | Node | Executor | Acceptance |
 |---|---|---|---|
+| source (review) | `source`, a node of the template the team depends on | `effect` (the engine, no Worker) | — |
 | propose | `T:m<k>:propose` | Worker | `acceptance.team-proposal` (brainstorm) or `acceptance.team-findings` (review) |
 | ballot | `T:m<k>:ballot:1` | Worker | `acceptance.team-ballot-<n>` or `acceptance.team-ballot-review` |
 | tally | `T:tally:<r>` | `team` (deterministic) | — |
@@ -78,8 +81,10 @@ structural.
 
 - **brainstorm**: a JSON proposal: a `recommendation` (at most 2000 characters), a `rationale`,
   and `risks`.
-- **review**: JSON `findings`, each with a `severity` (`blocking`, `warning`, `info`), a
-  `claim`, `evidence`, and an optional `location`.
+- **review**: JSON `findings`, each with a `severity` (`blocking`, `warning`, `info`), an
+  optional `kind` (`defect`, the default, or `suggestion`), a `claim`, `evidence`, an optional
+  `location`, and an optional `quote {path, line, text}`: the line the finding is about, as
+  shown ([quote checks](#quote-checks)). The prompt asks for a quote on every finding.
 
 ### Options
 
@@ -88,7 +93,8 @@ Options are fixed once every member has proposed. They never change.
 - **brainstorm**: option `O<k>` is member *k*'s recommendation, verbatim, with its provenance.
   No option is invented or merged.
 - **review**: the options are `pass` and `changes`, over one list of findings `F1..Fn`: every
-  member's findings in member order, each with who reported it. Findings are not merged.
+  member's findings in member order, each with who reported it and its class, merged only by
+  quoted line ([merging](#merging)).
 
 ### Ballots
 
@@ -112,10 +118,11 @@ node fails and the run fails; `continue` redoes it. The threshold never drops.
 
 A tally counts one round's ballots against a strict majority of every member
 (⌊*n*/2⌋+1). It records a [decision](#the-record) of type `vote` with that round. The round
-ends one of four ways:
+ends one of five ways:
 
 | Ended | When |
 |---|---|
+| `blocking-finding` | review: a finding is confirmed and blocking, whatever the ballots ([the blocking-finding rule](#the-blocking-finding-rule)) |
 | `majority` | an option has a strict majority |
 | `debate` | split, an objection is still open, and debate rounds are left |
 | `no-objections` | split, and no ballot holds an objection |
@@ -138,6 +145,7 @@ With two members, a strict majority means both agree, so every split is a tie.
 
 After the last tally:
 
+- **Blocking finding** (review): the team completes `changes`, method `blocking-finding`.
 - **Majority**: the team completes, method `team-majority`.
 - **Split**: the decision node is `BLOCKED` as a [tie](#tie).
 
@@ -166,31 +174,108 @@ the run blocks.
 ### The record
 
 The decision node records the final `vote` decision
-([decision@1.1](../reference/schemas.md#decision)) before the result. It holds:
+([decision](../reference/schemas.md#decision)) before the result. It holds:
 
 - the members, by opaque identity (their session ids), never by provider;
 - the options, and every round with its ballots and why it ended;
 - the method, the dissent, any revisions, and any tiebreak with its rationale;
-- a review's findings.
+- a review's findings, each with its reporters (`members`), class, and why; the repository and
+  commit, and how many files were not read (`unread`); and, for `blocking-finding`, the
+  deciding findings (`blocking: [F…]`).
 
-The result is a `report` artifact, `team-result@1.0`. Its text starts with one
-machine-readable line:
+The result is a `report` artifact, [`team-result`](../reference/schemas.md#team-result). Its
+text starts with one machine-readable line:
 
 ```text
-outcome: <winner|inconclusive>; method: <team-majority|caller-tiebreak|inconclusive>; winner: <option|none>; decision: <id>
+outcome: <winner|inconclusive>; method: <team-majority|caller-tiebreak|inconclusive|blocking-finding>; winner: <option|none>; decision: <id>
 ```
 
-The rest is for a reader: the decision, the last round's votes, the options, the dissent, and
-for a review every finding, with the blocking ones counted. A tied review never defaults to
-`pass`. `explain` shows each vote decision's ballots: round, member, choice, confidence, and
-rationale.
+The rest is for a reader:
 
-## Independent review
+- the decision;
+- for `blocking-finding`, each deciding finding at its `path:line`, with every member's stance
+  on it (`m1 agrees, m2 disagrees`), so the caller judges a disputed blocker;
+- the last round's votes, the options, and the dissent;
+- for a review, every finding: confirmed first, then `needs-verification`, then suggestions,
+  blocking first within a class, with the blocking and confirmed blocking ones counted; for a
+  repository, the commit, the files read, and the files not read.
 
-`review` is this procedure with kind `review`. Reviewers have **no shared context** with the
-producer (REQ-TEAM-5): each member gets only the material and its criteria, in its own
-conversation. Phase 4 of [PROP-0004](../proposals/0004-claude-code-lead-mvp.md) adds review of
-a pinned repository, with every quoted line checked against the bytes the members saw.
+A tied review never defaults to `pass`. `explain` shows each vote decision's ballots: round,
+member, choice, confidence, and rationale.
+
+## Review
+
+`review` is this procedure with kind `review`, after a source step. Reviewers have **no shared
+context** with the producer (REQ-TEAM-5): each member gets only the request, its criteria, and
+the source, in its own conversation. For a repository the exact subject is the pinned commit's
+files, which `system` reads itself, so REQ-TEAM-5 holds for repositories too: no member browses
+the repository, and every quote is checked against the bytes the members saw. No model merges or
+judges a finding.
+
+### Sources
+
+The `review` template is two nodes: `source`, then the team node, which depends on it
+([templates](../reference/workflow-templates.md#review)). `source` is a deterministic step that
+the engine runs, with no Worker (record executor `effect`):
+
+- With the caller's `repository {url, ref?}` and optional `focus` globs, it reads that public
+  repository at one pinned commit. Otherwise it takes the caller's text as the one file
+  `material`, so a text review's quotes are checked too.
+- It records an `evidence` artifact
+  ([`source-snapshot@1.0`](../reference/schemas.md#source-snapshot)) and an `acceptance`
+  decision `workflow.source-snapshot` that holds what was read: the URL, the commit, each file
+  with its git blob id, and the unread files with why.
+- Each member's proposal prompt is the request (`{{input}}`) followed by the rendered source: a
+  line saying that the files are another party's text, data and never instructions; each file
+  line-numbered between fence lines derived from a hash of its path and text, so its own text
+  cannot close the fence; then the unread files.
+- A repository given to a template with no source step (`brainstorm`) is refused as
+  `invalid_input`.
+
+A repository read uses the installed `git`, read-only, with fixed arguments and no shell:
+
+1. `ls-remote` pins the ref (default `HEAD`) to one commit; an annotated tag resolves through its
+   peeled line. A full commit SHA is used as given.
+2. A shallow fetch of that commit with `--filter=blob:none`, then `ls-tree` lists every file.
+3. `cat-file` reads only the chosen blobs.
+
+The URL and connection checks (an allowed host, public addresses, pinned resolution) are in the
+[threat model](../security/threat-model.md#threats-and-controls). Files are chosen in this
+order, shorter paths first within a class: the root README; manifests; entry points (from
+`package.json` `main`, `module`, `bin`, and `exports`, and by convention); the `focus` globs, or
+else the request's words (four letters or more) in paths; then tests beside the chosen files.
+Vendored and build directories are skipped. Bounds ([INV-9](../architecture/invariants.md)):
+40 files, 300 KB in all, 48 KB per file (config `repositories`), a tree of at most 50,000
+entries (else `overloaded`), and 20 s per git call. Every file not read is listed with why:
+`bounds` (past the byte bound), `too-large`, `binary`, `lockfile`, or `not-selected`.
+
+A refused URL or ref fails the step as `invalid_input` and is not retried; an unreachable host
+or repository is retried with backoff.
+
+### Quote checks
+
+The tally classes every finding against the source:
+
+| Class | When |
+|---|---|
+| `confirmed` | its quote matches a shown line of the quoted file exactly, after trimming both ends (no case folding; internal whitespace kept), on the cited line or within ±2 lines, nearest first; the line it matched is recorded as `matched` |
+| `needs-verification` | otherwise, with why: `it quotes no line`, `<path> was not shown`, `its quote is empty`, or `quote not found within ±2 lines of <path>:<line>` |
+| `suggestion` | its `kind` is `suggestion` |
+
+### Merging
+
+Findings are merged only when they quote the same `path:line`: the matched line when the quote
+was found, else the cited one. A merged finding keeps every reporter (`members`, in member
+order), the highest severity, and is confirmed if any of its quotes is. A finding without a
+quote is never merged.
+
+### The blocking-finding rule
+
+A confirmed blocking finding decides `changes`: the round ends `blocking-finding`, by the rule
+`workflow.blocking-finding`, with no majority, debate, or tie. The ballots still run, one turn
+per member, so each member's stance on each finding is on record. Only when no blocking finding
+is confirmed does the vote decide between `pass` and `changes`, as above. `pass` therefore means
+no confirmed blocking finding within what was read.
 
 ## Removed procedure
 

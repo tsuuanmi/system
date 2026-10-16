@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:tsuuanmi:system:schema:decision:v1",
   "title": "Decision record",
-  "description": "Body of a 'decision' artifact: one decision with its inputs, candidates, decider and outcome (INV-13). @1.1 adds team votes: the decision type 'vote' with its `vote` record, and the 'client' decider (a caller's deciding vote).",
+  "description": "Body of a 'decision' artifact: one decision with its inputs, candidates, decider and outcome (INV-13). @1.1 adds team votes: the decision type 'vote' with its `vote` record, and the 'client' decider (a caller's deciding vote). @1.2 adds a review's quote checks: the `blocking-finding` method and round end, findings' reporters, kind, quote, class and why, and the vote's repository and unread count.",
   "type": "object",
   "required": [
     "schema",
@@ -18,7 +18,8 @@
     "schema": {
       "enum": [
         "decision@1.0",
-        "decision@1.1"
+        "decision@1.1",
+        "decision@1.2"
       ]
     },
     "decisionType": {
@@ -223,7 +224,8 @@
           "enum": [
             "team-majority",
             "caller-tiebreak",
-            "inconclusive"
+            "inconclusive",
+            "blocking-finding"
           ]
         },
         "threshold": {
@@ -429,9 +431,99 @@
               "location": {
                 "type": "string",
                 "maxLength": 300
+              },
+              "members": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 5,
+                "items": {
+                  "type": "string",
+                  "pattern": "^m[1-5]$"
+                }
+              },
+              "kind": {
+                "enum": [
+                  "defect",
+                  "suggestion"
+                ]
+              },
+              "quote": {
+                "type": "object",
+                "required": [
+                  "path",
+                  "line",
+                  "text"
+                ],
+                "properties": {
+                  "path": {
+                    "type": "string",
+                    "maxLength": 1000
+                  },
+                  "line": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "text": {
+                    "type": "string",
+                    "maxLength": 2000
+                  },
+                  "matched": {
+                    "description": "The line the quote was found on, when it was.",
+                    "type": "integer",
+                    "minimum": 1
+                  }
+                },
+                "additionalProperties": false
+              },
+              "class": {
+                "enum": [
+                  "confirmed",
+                  "needs-verification",
+                  "suggestion"
+                ]
+              },
+              "why": {
+                "type": "string",
+                "maxLength": 300
               }
             },
             "additionalProperties": false
+          }
+        },
+        "repository": {
+          "type": "object",
+          "required": [
+            "url",
+            "commit"
+          ],
+          "properties": {
+            "url": {
+              "type": "string",
+              "maxLength": 2000
+            },
+            "ref": {
+              "type": "string",
+              "maxLength": 200
+            },
+            "commit": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{40}$"
+            }
+          },
+          "additionalProperties": false
+        },
+        "unread": {
+          "description": "Files of the repository the members were not shown.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "blocking": {
+          "description": "The confirmed blocking findings that decided a review `changes` (method blocking-finding).",
+          "type": "array",
+          "maxItems": 250,
+          "items": {
+            "type": "string",
+            "pattern": "^F[0-9]+$"
           }
         }
       },
@@ -532,7 +624,10 @@
       "then": {
         "properties": {
           "schema": {
-            "const": "decision@1.1"
+            "enum": [
+              "decision@1.1",
+              "decision@1.2"
+            ]
           },
           "vote": {
             "type": "object"
@@ -541,6 +636,124 @@
         "required": [
           "vote"
         ]
+      }
+    },
+    {
+      "description": "@1.2 fields (a review's quote checks) are refused on @1.0 and @1.1.",
+      "if": {
+        "properties": {
+          "vote": {
+            "type": "object",
+            "anyOf": [
+              {
+                "properties": {
+                  "method": {
+                    "const": "blocking-finding"
+                  }
+                },
+                "required": [
+                  "method"
+                ]
+              },
+              {
+                "properties": {
+                  "repository": {
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "repository"
+                ]
+              },
+              {
+                "properties": {
+                  "unread": {
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "unread"
+                ]
+              },
+              {
+                "properties": {
+                  "findings": {
+                    "type": "array",
+                    "contains": {
+                      "type": "object",
+                      "anyOf": [
+                        {
+                          "properties": {
+                            "members": {
+                              "type": "array"
+                            }
+                          },
+                          "required": [
+                            "members"
+                          ]
+                        },
+                        {
+                          "properties": {
+                            "class": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "class"
+                          ]
+                        }
+                      ]
+                    }
+                  }
+                },
+                "required": [
+                  "findings"
+                ]
+              },
+              {
+                "properties": {
+                  "rounds": {
+                    "type": "array",
+                    "contains": {
+                      "type": "object",
+                      "properties": {
+                        "ended": {
+                          "const": "blocking-finding"
+                        }
+                      },
+                      "required": [
+                        "ended"
+                      ]
+                    }
+                  }
+                },
+                "required": [
+                  "rounds"
+                ]
+              },
+              {
+                "properties": {
+                  "blocking": {
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "blocking"
+                ]
+              }
+            ]
+          }
+        },
+        "required": [
+          "vote"
+        ]
+      },
+      "then": {
+        "properties": {
+          "schema": {
+            "const": "decision@1.2"
+          }
+        }
       }
     }
   ],
@@ -683,7 +896,8 @@
             "majority",
             "no-objections",
             "rounds-exhausted",
-            "debate"
+            "debate",
+            "blocking-finding"
           ]
         }
       },

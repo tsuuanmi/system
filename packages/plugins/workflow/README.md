@@ -12,8 +12,8 @@ second execution path (INV-1).
   and the templates PROP-0004 removed, are listed in the
   [workflow templates](../../../docs/reference/workflow-templates.md) reference.
   - `ask` is one node, `ask:1`. It takes the caller's tier and session.
-  - `brainstorm` and `review` are each one team node of two members, one per
-    provider family (see Teams).
+  - `brainstorm` is one team node of two members, one per provider family;
+    `review` is a source step, then such a team node (see Teams).
   - **Variants.** A node may declare `variants`; the caller picks one at start
     (`variant`), and its fields replace the node's own before the spec is hashed.
     An unknown variant is refused as `invalid_input`
@@ -66,7 +66,9 @@ second execution path (INV-1).
       (`{{node:<id>}}`);
     - exactly one final node, whose result is the run's;
     - `differentFrom` names only other, non-team nodes;
-    - a team node has no `differentFrom`, `grows`, or `resultSchema`.
+    - a team node has no `differentFrom`, `grows`, or `resultSchema`;
+    - a source step (`snapshot: true`) has no `team`, `grows`, `variants`,
+      `differentFrom`, or `resultSchema`.
   - A configured template that fails its check is refused alone, with why: it
     is not served, `refusedTemplates()` lists it (health shows it as
     `templates`), and starting it says why. The engine and every other template
@@ -76,7 +78,8 @@ second execution path (INV-1).
     `ctx.workers`; otherwise the run is refused before anything is sent.
 - **Start (admission).**
   - The caller's options are applied, and the resolved spec is hashed. The run
-    binds to that `specHash`.
+    binds to that `specHash`. A caller's `repository` is part of it; a template
+    with no source step refuses one as `invalid_input`.
   - Runs and nodes are written in one transaction. The engine issues the run's
     session id, so `research` returns its `runId` and `sessionId` at once
     (REQ-SES-8). A caller's `sessionId` must be one the engine issued.
@@ -139,7 +142,7 @@ second execution path (INV-1).
     exactly one plan; with several waiting, the call is refused and lists them,
     so a plan that arrived later is never approved unseen.
   - `autoApprovePlans` (default off) approves a high-confidence plan by policy.
-- **Teams (REQ-TEAM-1, 2, 4, 6, 7, [design](../../../docs/design/teams.md)).**
+- **Teams (REQ-TEAM-1, 2, 4..7, [design](../../../docs/design/teams.md)).**
   - A template node with `team: { kind: brainstorm | review, members (2-5,
     default 2), debateRounds (0-2, default 1) }` is unrolled at admission:
     - `id:m<k>:propose` per member, with no peer text (the independent-first
@@ -151,16 +154,37 @@ second execution path (INV-1).
       (`acceptance.team-ballot-<n>` or `acceptance.team-ballot-review`);
     - `id:tally:1` and the decision under the team node's own id: deterministic
       `team` steps that run no Worker.
+  - **A review's source** ([design](../../../docs/design/teams.md#sources)): the
+    `source` node is run by the engine, with no Worker (record executor
+    `effect`). It reads the caller's public repository at one pinned commit
+    through `libs`' `snapshotRepository`, or else takes the caller's text as
+    the one file `material`. It stores a `source-snapshot@1.0` `evidence`
+    artifact and an `acceptance` decision `workflow.source-snapshot` (the URL,
+    commit, files with their blob ids, and the unread files). The members'
+    proposal prompt is the request, then the files line-numbered between
+    content-derived fences, then the unread list. Config `repositories`: the
+    allowed `hosts` (default `github.com`), `maxFiles` (40), `maxBytes`
+    (300 KB), and `maxFileBytes` (48 KB). A refused URL fails the step as
+    `invalid_input`; an unreachable one is retried with backoff.
   - Options are fixed at propose time: brainstorm `O<k>` is member k's
     recommendation, verbatim; review options are `pass` and `changes`, over one
-    list `F1..Fn` of every member's findings, in member order, unmerged.
-  - A tally records a `vote` decision (decision@1.1) with the round's ballots,
-    against a strict majority of every member. On a split, with an objection
-    open and debate rounds left, it appends `id:m<k>:debate:<r>` and
-    `id:tally:<r+1>` (a `graph-growth` decision `workflow.team-debate`). A
-    debate turn answers the crux and casts the next sealed ballot.
-  - The decision completes as `team-majority`, or blocks as a `tie`: the view
-    shows `blocked { kind: 'tie', nodeId, decision, options, until }`, and a
+    list `F1..Fn` of every member's findings, in member order, merged only when
+    they quote the same `path:line`, with every reporter and the highest
+    severity. Each finding is classed against the source: `confirmed` (its
+    quote matches a shown line within ±2 lines), `needs-verification` (with
+    why), or `suggestion`
+    ([quote checks](../../../docs/design/teams.md#quote-checks)).
+  - A tally records a `vote` decision (decision@1.1; @1.2 with a review's
+    checked findings) with the round's ballots, against a strict majority of
+    every member. A confirmed blocking finding decides a review `changes`
+    first: the round ends `blocking-finding`, by the rule
+    `workflow.blocking-finding`, with no majority, debate, or tie. On a split,
+    with an objection open and debate rounds left, it appends
+    `id:m<k>:debate:<r>` and `id:tally:<r+1>` (a `graph-growth` decision
+    `workflow.team-debate`). A debate turn answers the crux and casts the next
+    sealed ballot.
+  - The decision completes as `blocking-finding` or `team-majority`, or blocks
+    as a `tie`: the view shows `blocked { kind: 'tie', nodeId, decision, options, until }`, and a
     waiter on `result` or `wait` returns at once. `vote(runId, { decision,
     option | inconclusive, rationale, by })` decides it, bound to that exact
     tie decision; `by` is `client` or `operator`, from the token's scope. After
@@ -172,9 +196,12 @@ second execution path (INV-1).
     decision; superseding a member's step re-runs the tally, whose new debate
     gets `:g<n>` ids.
   - The final `vote` decision holds the members by session id, the options,
-    every round, the dissent, revisions, any tiebreak, and a review's findings.
-    The result is a `team-result@1.0` report whose text starts with
-    `outcome: …; method: …; winner: …; decision: …`.
+    every round, the dissent, revisions, any tiebreak, and a review's findings,
+    repository, unread count, and deciding findings (`blocking`).
+    The result is a `team-result@1.0` report (`@1.1` for `blocking-finding`)
+    whose text starts with `outcome: …; method: …; winner: …; decision: …`; for
+    `blocking-finding`, each deciding finding with every member's stance
+    follows.
   - An invalid ballot is rejected, then escalated or retried; if it still fails,
     the run fails (`continue` redoes it). The threshold never drops.
   - Each member is one persistent session that the engine issues, so session
@@ -265,8 +292,8 @@ second execution path (INV-1).
     reports the runs still executing; call it again to poll. `resume` admits
     runs again;
   - `research` returns at once; `deep: true` runs its `deep` variant;
-  - `brainstorm { question }` and `review { material }` start those templates and
-    return at once;
+  - `brainstorm { question }` and `review { material, repository?: { url, ref? },
+    focus? }` start those templates and return at once;
   - `vote { runId, decision, option, rationale }` (client scope; an operator
     token may call it too) breaks a team's tie;
   - `result` takes a `runId` and long-polls it, returning early when the run
@@ -328,7 +355,8 @@ in `engine.ts`:
 | `recovery.ts` | retries after a failed attempt, escalation after a rejected result, admission failure kinds |
 | `growth.ts` | graph growth and approval gates |
 | `review.ts` | exact-subject review and remediation cycles |
-| `teams.ts` | team contracts and parsing, options, ballot and debate prompts, tally, decision, tie and `vote`, distinct accounts |
+| `sources.ts` | a review's source step: the repository snapshot or the caller's text, rendered for members |
+| `teams.ts` | team contracts and parsing, quote checks and merging of findings, options, ballot and debate prompts, tally and the blocking-finding rule, decision, tie and `vote`, distinct accounts |
 | `sessions.ts` | wake-on-message, checkpoints, compaction |
 | `operator.ts` | `stop`, `continue`, `supersede`, `approve` |
 | `retention.ts` | `delete` and the expiry of private text |

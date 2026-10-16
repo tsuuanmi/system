@@ -46,8 +46,11 @@ export type NewArtifact = Omit<Envelope, 'schema' | 'id' | 'createdAt' | 'inputs
 
 /** Body of a decision artifact (schemas/decision.v1.json). */
 export interface Decision {
-  /** `@1.1` once it records a team vote or a client's decision; otherwise `@1.0`, so earlier decisions keep their ids. */
-  schema: 'decision@1.0' | 'decision@1.1'
+  /**
+   * `@1.1` once it records a team vote or a client's decision; otherwise `@1.0`, so earlier decisions
+   * keep their ids. A recorder that uses a later minor's fields names it (`@1.2`: a review's quote checks).
+   */
+  schema: 'decision@1.0' | 'decision@1.1' | 'decision@1.2'
   decisionType: string
   question: string
   inputs: ContentId[]
@@ -205,13 +208,13 @@ export class Artifacts extends Service {
    * Record one decision (INV-13). Enforces what the schema cannot: the single selected
    * candidate equals the outcome (docs/reference/schemas.md#decision).
    */
-  recordDecision(decision: Omit<Decision, 'schema'>, meta: { producer: Producer; runId?: string; nodeId?: string; classification?: Classification }): Envelope {
+  recordDecision(decision: Omit<Decision, 'schema'> & { schema?: Decision['schema'] }, meta: { producer: Producer; runId?: string; nodeId?: string; classification?: Classification }): Envelope {
     // Decision inputs are a set (uniqueItems): sort them so order never changes the id. Prose
     // (questions, reasons, rationale) can quote model or caller text of any length: it is clamped
     // to the schema's bounds here, once, so a long reason never fails the decision it explains.
     const v11 = decision.decisionType === 'vote' || decision.vote !== undefined || decision.decider.type === 'client'
     const body: Decision = {
-      schema: v11 ? 'decision@1.1' : 'decision@1.0', ...decision, inputs: [...new Set(decision.inputs)].sort(),
+      ...decision, schema: decision.schema ?? (v11 ? 'decision@1.1' : 'decision@1.0'), inputs: [...new Set(decision.inputs)].sort(),
       question: clampProse(decision.question, 500),
       candidates: decision.candidates.map((c) => ({ ...c, reasons: c.reasons.map((r) => clampProse(r, 300)) })),
       ...(decision.rationale !== undefined ? { rationale: clampProse(decision.rationale, 1000) } : {}),

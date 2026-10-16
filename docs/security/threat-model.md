@@ -126,6 +126,24 @@
   approval names the plan the operator read (CLI `--plan`, MCP `plan`, the web UI
   sends the plan it shows); with several plans waiting, a verdict naming none is
   refused, so a plan that arrived later is never approved unseen.
+- **A review's repository read reaches an internal host, or is rebound to one (SSRF, DNS
+  rebinding).** A repository read is an inbound read of public data: `system` fetches only what
+  a public URL makes public, and sends only git's own requests
+  ([sources](../design/teams.md#sources)). The URL must be `https` on port 443, with no
+  credentials, on a host the allow-list names (workflow config `repositories.hosts`, default
+  `github.com`); `localhost`, `.local`, and `.internal` are refused. The host must resolve to
+  public addresses only: loopback, private, link-local, shared (100.64/10), unique-local, and
+  IPv4-mapped private addresses are refused. Git is then pinned to the address checked
+  (`http.curloptResolve`), so it cannot resolve the host again to another. A git older than
+  2.37 cannot be pinned, and the read fails closed. Git runs with fixed arguments and no shell,
+  no redirects, no hooks, no credential helper or prompt, no system configuration, and a home
+  that does not exist; a ref must be a plain branch, tag, or commit name. Time, tree entries,
+  files, and bytes are bounded.
+- **Repository content injects instructions into a review.** Each file reaches members marked
+  as another party's data, between fence lines derived from a hash of the file, which its own
+  text cannot close. Members only report findings; every quote is checked against the bytes
+  they were shown, by code, and a model never confirms a finding
+  ([INV-6](../architecture/invariants.md#inv-6-authority-comes-from-trusted-envelopes)).
 - **A tampered backup writes outside the state directory on restore.** Restore
   accepts only `system.db`, `vault.enc`, and `vault.key` in a backup manifest; any
   other name (for example `../../.ssh/authorized_keys`) refuses the whole backup

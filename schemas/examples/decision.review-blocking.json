@@ -1,0 +1,166 @@
+{
+  "schema": "decision@1.2",
+  "decisionType": "vote",
+  "question": "What does team review of run run_0123456789abcdef decide?",
+  "inputs": [
+    "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+  ],
+  "candidates": [
+    {
+      "option": "pass",
+      "selected": false,
+      "reasons": []
+    },
+    {
+      "option": "changes",
+      "selected": true,
+      "reasons": [
+        "confirmed blocking finding(s) F1 decide changes"
+      ]
+    },
+    {
+      "option": "inconclusive",
+      "selected": false,
+      "reasons": []
+    }
+  ],
+  "decider": {
+    "type": "rule",
+    "id": "workflow.blocking-finding",
+    "version": "1"
+  },
+  "outcome": {
+    "option": "changes",
+    "detail": {
+      "method": "blocking-finding"
+    }
+  },
+  "deterministic": true,
+  "vote": {
+    "kind": "review",
+    "method": "blocking-finding",
+    "threshold": 2,
+    "members": [
+      {
+        "member": "m1",
+        "identity": "ses_1111111111111111"
+      },
+      {
+        "member": "m2",
+        "identity": "ses_2222222222222222"
+      }
+    ],
+    "options": [
+      {
+        "option": "pass",
+        "text": "no blocking defect"
+      },
+      {
+        "option": "changes",
+        "text": "a blocking defect must be fixed"
+      }
+    ],
+    "rounds": [
+      {
+        "round": 1,
+        "ballots": [
+          {
+            "member": "m1",
+            "ref": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+            "choice": "changes",
+            "ranking": [
+              "changes",
+              "pass"
+            ],
+            "rationale": "see F1",
+            "evidence": [],
+            "strongest": {
+              "pass": "it is small"
+            },
+            "objections": [],
+            "confidence": "high",
+            "findings": {
+              "F1": "agree"
+            }
+          },
+          {
+            "member": "m2",
+            "ref": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+            "choice": "pass",
+            "ranking": [
+              "pass",
+              "changes"
+            ],
+            "rationale": "see F1",
+            "evidence": [],
+            "strongest": {
+              "changes": "it is small"
+            },
+            "objections": [],
+            "confidence": "high",
+            "findings": {
+              "F1": "disagree"
+            }
+          }
+        ],
+        "counts": {
+          "pass": 1,
+          "changes": 1
+        },
+        "winner": "changes",
+        "ended": "blocking-finding"
+      }
+    ],
+    "dissent": [
+      {
+        "member": "m2",
+        "choice": "pass",
+        "objections": [],
+        "strongest": {
+          "changes": "it is small"
+        }
+      }
+    ],
+    "findings": [
+      {
+        "id": "F1",
+        "member": "m1",
+        "members": [
+          "m1"
+        ],
+        "severity": "blocking",
+        "kind": "defect",
+        "claim": "The lease is never released on error",
+        "evidence": "no finally",
+        "quote": {
+          "path": "src/lock.ts",
+          "line": 12,
+          "text": "const lease = acquire()",
+          "matched": 13
+        },
+        "class": "confirmed"
+      },
+      {
+        "id": "F2",
+        "member": "m2",
+        "members": [
+          "m2"
+        ],
+        "severity": "warning",
+        "kind": "defect",
+        "claim": "A magic number",
+        "evidence": "8080",
+        "class": "needs-verification",
+        "why": "it quotes no line"
+      }
+    ],
+    "repository": {
+      "url": "https://github.com/example/demo",
+      "commit": "3b17b2e84b97624a683aafaa38184bf2746fab22"
+    },
+    "unread": 9,
+    "blocking": [
+      "F1"
+    ]
+  }
+}

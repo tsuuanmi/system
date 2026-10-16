@@ -53,6 +53,12 @@ export interface NodeTemplate {
    * excludes their families, and the node routes only once those nodes have a Worker.
    */
   differentFrom?: string[]
+  /**
+   * A source step (PROP-0004 Phase 4), run by the engine and no Worker: the caller's repository at
+   * one pinned commit, or else the caller's text, as line-numbered files a review quotes. Its
+   * result renders as `{{node:<id>}}`.
+   */
+  snapshot?: true
 }
 
 /** What a variant may change of a node: what it needs, where it runs, and how it is judged. */
@@ -115,6 +121,15 @@ export interface CallerOptions {
   persist?: boolean | undefined
   /** A variant some node of the template defines (NodeTemplate.variants). */
   variant?: string | undefined
+  /** A public repository a source step reads at one commit; part of the spec hash. */
+  repository?: RepositoryRequest | undefined
+}
+
+/** What a source step reads: a public repository, at a ref (default its HEAD), with the paths to read first. */
+export interface RepositoryRequest {
+  url: string
+  ref?: string
+  focus?: string[]
 }
 
 const VARIANT_FIELDS = new Set(['objective', 'prompt', 'capabilities', 'tier', 'conversation', 'acceptance'])
@@ -156,9 +171,11 @@ export interface ResolvedNode extends Omit<NodeTemplate, 'callerTier' | 'convers
   tierDecision?: string
   /**
    * `gate` waits for an operator's approval of `plan`; `tally` and `decide` are a team's
-   * deterministic steps (docs/design/teams.md); default `worker`.
+   * deterministic steps (docs/design/teams.md); `snapshot` reads a review's source; default `worker`.
    */
-  executor?: 'worker' | 'gate' | 'tally' | 'decide'
+  executor?: 'worker' | 'gate' | 'tally' | 'decide' | 'snapshot'
+  /** A source step's repository, from the caller. */
+  repository?: RepositoryRequest
   /** The plan artifact a gate approves. */
   plan?: string
   /** A plan step's prompt is model text: used as it is, never expanded as a template. */
@@ -205,8 +222,12 @@ export const DEFAULT_TEMPLATES: Record<string, NodeTemplate[]> = {
   ],
   review: [
     {
-      nodeId: 'review', objective: 'Review the caller\'s material as a team', prompt: '{{input}}', capabilities: ['reason'], tier: 'standard',
-      conversation: 'temporary', acceptance: 'acceptance.team-findings', team: { kind: 'review' },
+      nodeId: 'source', objective: 'Read the material under review: the caller\'s repository at one commit, or the caller\'s text', prompt: '',
+      capabilities: ['reason'], tier: 'economy', conversation: 'temporary', acceptance: 'acceptance.answer', snapshot: true,
+    },
+    {
+      nodeId: 'review', objective: 'Review the caller\'s material as a team', prompt: '{{input}}\n\n{{node:source}}', capabilities: ['reason'], tier: 'standard',
+      conversation: 'temporary', acceptance: 'acceptance.team-findings', team: { kind: 'review' }, dependsOn: ['source'],
     },
   ],
 }
@@ -231,6 +252,9 @@ export function preflight(nodes: readonly NodeTemplate[]): string[] {
       if (node.differentFrom?.length || node.grows || node.resultSchema) throw new TypeError(`node ${node.nodeId}: a team has no differentFrom, grows, or resultSchema`)
     }
     if (node.variants !== undefined && node.variants !== null) checkVariants(node)
+    if (node.snapshot && (node.team || node.grows || node.variants || node.differentFrom?.length || node.resultSchema)) {
+      throw new TypeError(`node ${node.nodeId}: a source step has no team, grows, variants, differentFrom, or resultSchema`)
+    }
     if (node.resultSchema !== undefined && !(typeof node.resultSchema === 'string' && /^[a-z][a-z0-9-]*@\d+\.\d+$/.test(node.resultSchema))) {
       throw new TypeError(`node ${node.nodeId}: resultSchema must be a schema tag such as plan@1.0`)
     }
@@ -337,8 +361,11 @@ const PROPOSE: Record<TeamKind, string> = {
     'The recommendation is quoted verbatim to the other members as your option.',
   ].join('\n'),
   review: [
-    'Review the material above. End your answer with one JSON object listing your findings (an empty list when you find no defect):',
-    '{"findings": [{"severity": "blocking" | "warning" | "info", "claim": "the defect", "evidence": "what shows it", "location": "where, if it has one"}]}',
+    'Review the material above against the request. Quote every finding: the file\'s path, the line number shown, and that line\'s text exactly as shown;',
+    'a finding whose quote does not match the material is not confirmed. A suggestion without a defect is kind "suggestion".',
+    'End your answer with one JSON object listing your findings (an empty list when you find no defect):',
+    '{"findings": [{"severity": "blocking" | "warning" | "info", "kind": "defect" | "suggestion", "claim": "the defect", "evidence": "what shows it",',
+    ' "quote": {"path": "src/a.ts", "line": 12, "text": "the exact text of that line"}}]}',
   ].join('\n'),
 }
 
@@ -378,7 +405,8 @@ function unrollTeams(nodes: readonly NodeTemplate[]): NodeTemplate[] {
 }
 
 /** A node's executor as its record names it: a team's tally and decision are the `team` executor. */
-export function recordExecutor(node: ResolvedNode): 'worker' | 'gate' | 'team' {
+export function recordExecutor(node: ResolvedNode): 'worker' | 'gate' | 'team' | 'effect' {
+  if (node.executor === 'snapshot') return 'effect'
   return node.executor === 'tally' || node.executor === 'decide' ? 'team' : node.executor ?? 'worker'
 }
 
@@ -425,6 +453,11 @@ export function resolve(template: string, nodes: readonly NodeTemplate[], caller
         ? { sessionId: caller.sessionId }
         : conversation === 'persistent' || caller.persist ? { persist: true } : {}
     const fromCaller = !!(callerTier && caller.tier)
+    if (node.snapshot) {
+      // A source step reads; it runs no Worker and holds no conversation.
+      const { snapshot: _snapshot, ...rest } = node
+      return { ...rest, dependsOn: node.dependsOn ?? [], tier: node.tier, tierSource: 'profile', session: {}, executor: 'snapshot', ...(caller.repository ? { repository: caller.repository } : {}) }
+    }
     return { ...node, dependsOn: node.dependsOn ?? [], tier: fromCaller ? caller.tier! : node.tier, tierSource: fromCaller ? 'caller' : 'profile', session }
   })
   sharedSessionsInSequence(resolved)
