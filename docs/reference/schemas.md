@@ -236,7 +236,9 @@ guesses.
 - The body of a local-private `evidence` artifact that a `ui.drift` event names
   ([drift evidence](../design/ui-operations.md#drift-evidence)). Only the operator
   reads it (`system evidence`).
-- Structure only: per node, the tag, role, `aria-label` (never a link's),
+- Structure only: per node, the tag, role, `aria-label` (never a link's; at
+  most 40 characters; `[redacted]` when it holds an email address or the
+  account's name),
   `aria-*` states, test id, names of other `data-*` attributes, id, up to five
   classes, `editable`, and the visible text **length**. Never text, input values,
   or URLs.

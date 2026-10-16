@@ -141,6 +141,8 @@ describe.runIf(canRunBrowser)('GeminiWebDriver against the fake site', { timeout
     expect(drift).toEqual([expect.objectContaining({ provider: 'gemini-web', element: 'temporary.enable', kind: 'postcondition', candidate: -1 })])
     expect(drift[0]!.outline).toMatchObject({ root: 'body', nodes: expect.arrayContaining([expect.objectContaining({ tag: 'button', label: 'Temporary chat' })]) })
     expect(JSON.stringify(drift[0]!.outline)).not.toContain('private question')
+    // The account's own name and address never appear, wherever the page shows them.
+    expect(JSON.stringify(drift[0]!.outline)).not.toMatch(/Test User|test@example\.test/)
   })
 
   it('fails closed on a model or level the account does not offer, before sending', async () => {

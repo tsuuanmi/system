@@ -11,7 +11,7 @@ export interface OutlineNode {
   depth: number
   tag: string
   role?: string
-  /** `aria-label` (not on links, whose labels are often content such as chat titles), at most 80 characters. */
+  /** `aria-label` (not on links, whose labels are often content such as chat titles), at most 40 characters. */
   label?: string
   /** aria-pressed, -checked, -expanded, -selected, -disabled, -current, as set. */
   states?: Record<string, string>
@@ -38,8 +38,15 @@ export interface UiOutline {
 
 export const OUTLINE_LIMITS = { nodes: 200, depth: 12 }
 
-/** Outline `root` (a resolved element, or the page body). */
-export async function outlineOf(root: Page | Locator, name: string, limits = OUTLINE_LIMITS): Promise<UiOutline> {
+const EMAIL = /[^\s@()<>,;:"']+@[^\s@()<>,;:"']+\.[A-Za-z]{2,}/
+const REDACTED = '[redacted]'
+
+/**
+ * Outline `root` (a resolved element, or the page body). Any value that holds an email address,
+ * or one of `redact` (the account's own name and address, as its driver reads them), is masked
+ * whole, so an outline pasted elsewhere carries no identity by construction.
+ */
+export async function outlineOf(root: Page | Locator, name: string, limits = OUTLINE_LIMITS, redact: readonly string[] = []): Promise<UiOutline> {
   const handle = 'mainFrame' in root ? root.locator('body') : root
   const walked = await handle.first().evaluate((el, max) => {
     const INTERESTING = new Set(['button', 'a', 'input', 'textarea', 'select', 'form', 'main', 'nav', 'header', 'footer', 'aside', 'dialog', 'menu', 'h1', 'h2', 'h3', 'label', 'pre', 'code', 'img', 'svg'])
@@ -59,7 +66,7 @@ export async function outlineOf(root: Page | Locator, name: string, limits = OUT
       const role = e.getAttribute('role')
       if (role) node.role = role
       const label = e.getAttribute('aria-label')
-      if (label && tag !== 'a') node.label = label.slice(0, 80)
+      if (label && tag !== 'a') node.label = label.slice(0, 40)
       const states = Object.fromEntries(STATES.filter((s) => e.hasAttribute(s)).map((s) => [s.slice(5), (e.getAttribute(s) ?? '').slice(0, 20)]))
       if (Object.keys(states).length) node.states = states
       const testid = e.getAttribute('data-testid') ?? e.getAttribute('data-test-id')
@@ -107,7 +114,17 @@ export async function outlineOf(root: Page | Locator, name: string, limits = OUT
     walk(el, 0)
     return { nodes: out, truncated }
   }, limits)
-  return { schema: 'ui-outline@1.0', root: name, nodes: walked.nodes as unknown as OutlineNode[], truncated: walked.truncated }
+  const terms = redact.map((t) => t.trim().toLowerCase()).filter((t) => t.length >= 3)
+  const mask = (value: string): string => (EMAIL.test(value) || terms.some((t) => value.toLowerCase().includes(t)) ? REDACTED : value)
+  const nodes = (walked.nodes as unknown as OutlineNode[]).map((n) => ({
+    ...n,
+    ...(n.label ? { label: mask(n.label) } : {}),
+    ...(n.testid ? { testid: mask(n.testid) } : {}),
+    ...(n.id ? { id: mask(n.id) } : {}),
+    ...(n.classes ? { classes: n.classes.map(mask) } : {}),
+    ...(n.states ? { states: Object.fromEntries(Object.entries(n.states).map(([k, v]) => [k, mask(v)])) } : {}),
+  }))
+  return { schema: 'ui-outline@1.0', root: name, nodes, truncated: walked.truncated }
 }
 
 /** What a drift report needs of the artifact store: a local-private `evidence` artifact with an id. */

@@ -62,6 +62,11 @@ export interface EngineOptions {
   defaultResolveMs?: number
   /** Default verify timeout when an action does not set one (default 15 s). */
   defaultVerifyMs?: number
+  /**
+   * Values a drift outline masks: the account's own name and address, as the driver reads them
+   * from the page. Email addresses are masked anyway.
+   */
+  redact?: () => Promise<readonly string[]>
 }
 
 export interface ActArgs {
@@ -270,7 +275,8 @@ export class UiEngine {
     const spec = this.map.elements[element]
     const scope = kind === 'unresolved' && spec?.scope ? await this.tryResolve(spec.scope).catch(() => undefined) : undefined
     const root = found ? found.first().locator('xpath=..') : scope?.locator
-    const outline = await outlineOf(root ?? this.page, found ? `parent of ${element}` : scope ? spec!.scope! : 'body').catch(() => undefined)
+    const redact = await this.options.redact?.().catch(() => []) ?? []
+    const outline = await outlineOf(root ?? this.page, found ? `parent of ${element}` : scope ? spec!.scope! : 'body', undefined, redact).catch(() => undefined)
     this.options.onDrift({ provider: this.map.provider, element, kind, candidate, ...(source ? { source } : {}), mapHash: this.map.hash, ...(outline ? { outline } : {}) })
   }
 

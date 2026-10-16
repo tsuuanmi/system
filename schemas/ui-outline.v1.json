@@ -19,7 +19,7 @@
           "depth": { "type": "integer", "minimum": 0, "maximum": 12 },
           "tag": { "type": "string", "maxLength": 100 },
           "role": { "type": "string", "maxLength": 100 },
-          "label": { "type": "string", "maxLength": 80 },
+          "label": { "type": "string", "maxLength": 40 },
           "states": { "type": "object", "maxProperties": 7, "additionalProperties": { "type": "string", "maxLength": 20 } },
           "testid": { "type": "string", "maxLength": 80 },
           "data": { "type": "array", "maxItems": 8, "items": { "type": "string", "maxLength": 100 } },

@@ -146,9 +146,13 @@ so a stale element can be mapped again without opening the operator's browser:
 - **Region:** the found element's parent on a fallback; an unresolved element's
   scope; otherwise the page body.
 - **Content:** per node, the tag, role, `aria-label` (not on links, whose labels
-  are often content such as chat titles), the `aria-*` states, the test id, the
-  names of other `data-*` attributes, the id, up to five classes, whether it is
-  editable, and its visible text length. Never text, input values, or URLs.
+  are often content such as chat titles; at most 40 characters), the `aria-*`
+  states, the test id, the names of other `data-*` attributes, the id, up to five
+  classes, whether it is editable, and its visible text length. Never text,
+  input values, or URLs.
+- **Redaction:** any value that holds an email address, or the account's own
+  name or address as its driver reads them from the page, is masked whole as
+  `[redacted]`. An outline carries no identity by construction.
 - **Bounds:** only nodes that carry one of those marks (wrappers are skipped),
   like siblings folded into one node with a count, at most 200 nodes and 12
   levels.

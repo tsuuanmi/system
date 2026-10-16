@@ -107,6 +107,13 @@ export class GeminiWebDriver implements ProviderDriver<Page> {
     return label.replace(/^Google Account:\s*/, '').trim()
   }
 
+  /** The account's name and address as the page shows them ("Name (address)"), for a drift outline to mask. */
+  private async accountNames(page: Page): Promise<string[]> {
+    const label = await (await this.engine(page).resolve('auth.account', 1000)).locator.first().getAttribute('aria-label')
+    const shown = (label ?? '').replace(/^Google Account:\s*/, '').trim()
+    return [shown, ...shown.split(/[()]/).map((part) => part.trim())].filter(Boolean)
+  }
+
   /**
    * One turn on the Chat tab: the prompt is typed, the preset chosen and read back, Chat (and
    * Temporary chat, for a temporary turn) checked again, then the receipt is written and the
@@ -384,7 +391,7 @@ export class GeminiWebDriver implements ProviderDriver<Page> {
     let engine = this.engines.get(page)
     if (!engine) {
       // No self-heal here: a drifted element fails closed until the map is updated, and is reported.
-      engine = new UiEngine(page, this.map, { heal: false, onDrift: (event) => this.onDrift?.(event) })
+      engine = new UiEngine(page, this.map, { heal: false, onDrift: (event) => this.onDrift?.(event), redact: () => this.accountNames(page) })
       this.engines.set(page, engine)
     }
     return engine

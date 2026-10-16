@@ -198,6 +198,17 @@ describe.runIf(canRunBrowser)('UiEngine on a real page', { timeout: 15_000 }, ()
     expect(gone.drift.filter((d) => d.kind === 'unresolved')).toEqual([expect.objectContaining({ element: 'composer.send', outline: expect.objectContaining({ root: 'composer.form' }) })])
   })
 
+  it('masks any value that holds an email address or the account\'s own name, and keeps labels short', async () => {
+    const stuck = loadUiMap(MAP.replace("verify: { attr: { of: composer.input, name: data-filled, present: true } }", "verify: { attr: { of: composer.input, name: data-never, present: true } }\n    timeouts: { verifyMs: 300 }"))
+    const extra = '<button data-testid="who" aria-label="Signed in as ann.lee@example.org">A</button><button data-testid="profile" aria-label="Profile of Ann Lee">P</button>'
+      + '<button data-testid="long" aria-label="A label that is far longer than forty characters, by design">L</button>'
+    const { engine, drift } = await open(page('<form data-type="composer"><div contenteditable role="textbox"></div></form>', extra), stuck, { redact: async () => ['Ann Lee'] })
+    await expect(engine.act('composer.insert', { text: 'hello' })).rejects.toMatchObject({ kind: 'ui_drift' })
+    const outline = drift.find((d) => d.kind === 'postcondition')!.outline!
+    expect(outline.nodes.filter((n) => n.tag === 'button').map((b) => b.label)).toEqual(['[redacted]', '[redacted]', 'A label that is far longer than forty ch'])
+    expect(JSON.stringify(outline)).not.toMatch(/ann\.lee@|Ann Lee/)
+  })
+
   it('folds a run of like siblings into one node, and bounds the outline', async () => {
     const chats = Array.from({ length: 300 }, (_, i) => `<li role="option" aria-label="Chat ${i}"><a href="/c/${i}" aria-label="secret title ${i}">t</a></li>`).join('')
     const buttons = Array.from({ length: 300 }, (_, i) => `<button data-testid="b${i}">x</button>`).join('')
