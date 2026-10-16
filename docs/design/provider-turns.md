@@ -32,7 +32,7 @@ interface ProviderDriver<Page> {                   // provider-core
   signIn?(page, credentials, code): Promise<void>; // credential login (ADR-0017)
   snapshot(page, binding, { feature? }): Promise<TurnSnapshot>;     // for reconciliation
   readonly deletes?: readonly ProviderFeature[];   // features whose conversations it is proven to delete
-  deleteConversation?(page, binding): Promise<'deleted' | 'gone'>;  // one conversation, from its own menu
+  deleteConversation?(page, binding, { beforeConfirm?, confirmed? }): Promise<'deleted' | 'gone'>;  // one conversation, from its own menu
   inspectConversation?(page, binding): Promise<PageOutline[]>;      // read-only: outlines, nothing chosen
 }
 ```
@@ -229,10 +229,22 @@ the session that owns it, the turn that opened it, its feature and mode, and its
   scheduler with its page held exclusively, so never beside a turn. The driver opens exactly
   that conversation (its own path, its turns shown) before anything is clicked, deletes it from
   its own menu (never a bulk deletion), confirms the dialog, and reopens it to see that it is
-  gone. Before every click the page must still be on the conversation's own path.
+  gone. Its own menu means the button in the conversation's pane (UI map `conversation.pane`),
+  never a history row's, whose rows carry other chats' menus. Before every click the page must
+  still be on the conversation's own path, and while it runs, the page lets no deletion request
+  leave that does not name this conversation (ChatGPT: only `PATCH
+  /backend-api/conversation/<binding>` hiding it; Gemini: only RPC calls that name it), so a click
+  that reached another chat's dialog deletes nothing. "Gone" must hold on two loads in a row.
 - **Never on a guessed flow.** While any of the delete flow's UI map entries is still
   `unverified` (not yet checked on the live site), its conversations wait, due, with the reason
   `unverified-map`, and nothing is clicked. The live check lifts the flag entry by entry.
+- **One confirm, ever.** Immediately before the irreversible confirm, the ledger records it,
+  fenced. A conversation with a recorded confirm is never clicked again: a later pass only checks
+  that it is gone (then deleted) and otherwise marks it failed.
+- **Never under a turn.** The pass reads the row again once it holds the account's slot and
+  skips it unless it is still due. Releasing a session clears its binding, so its next turn opens
+  a new conversation; a turn that binds a due conversation anyway (a stale handle) makes it live
+  again.
 - **Reconcile before repeat** (INV-4). A deletion that may have happened (a crash between the
   click and the record) is checked on the site first: a conversation already gone is recorded
   as deleted, and nothing is clicked again.

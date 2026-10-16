@@ -48,6 +48,8 @@ interface LedgerRow {
   reason: string | null
   attempts: number
   decision: string | null
+  /** When a deletion's irreversible confirm was about to be clicked: from then on it is only checked, never clicked again. */
+  confirmed_at: string | null
   created_at: string
   released_at: string | null
   deleted_at: string | null
@@ -67,7 +69,7 @@ export const LEDGER_MIGRATION = {
   sql: `CREATE TABLE turn_conversations (
     account TEXT NOT NULL, binding TEXT NOT NULL, session_id TEXT, turn_id TEXT NOT NULL,
     feature TEXT NOT NULL, mode TEXT NOT NULL, state TEXT NOT NULL, reason TEXT,
-    attempts INTEGER NOT NULL DEFAULT 0, decision TEXT,
+    attempts INTEGER NOT NULL DEFAULT 0, decision TEXT, confirmed_at TEXT,
     created_at TEXT NOT NULL, released_at TEXT, deleted_at TEXT, updated_at TEXT NOT NULL,
     PRIMARY KEY (account, binding)
   );
@@ -94,8 +96,13 @@ export interface LedgerHost {
  */
 export function recordConversation(db: DatabaseSync, row: { account: string; binding: string; sessionId: string | null; turnId: string; feature: string; mode: string }): void {
   const temporary = row.mode === 'temporary'
-  db.prepare(`INSERT OR IGNORE INTO turn_conversations (account, binding, session_id, turn_id, feature, mode, state, reason, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(row.account, row.binding, row.sessionId, row.turnId, row.feature, row.mode, temporary ? 'kept' : 'live', temporary ? 'temporary' : null, now(), now())
+  // A due conversation that a turn uses again is live again: never deleted under it (unless its
+  // deletion was already confirmed, which nothing can take back).
+  db.prepare(`INSERT INTO turn_conversations (account, binding, session_id, turn_id, feature, mode, state, reason, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT (account, binding) DO UPDATE SET state = 'live', released_at = NULL, decision = NULL, reason = NULL, updated_at = excluded.updated_at
+    WHERE turn_conversations.state = 'due' AND turn_conversations.confirmed_at IS NULL`)
+    .run(row.account, row.binding, row.sessionId, row.turnId, row.feature, row.mode, temporary ? 'kept' : 'live', temporary ? 'temporary' : null, now(), now())
 }
 
 const view = (r: LedgerRow): ConversationView => ({
@@ -134,6 +141,8 @@ export function releaseSessions(host: LedgerHost, sessionIds: readonly string[],
     for (const r of rows) {
       db.prepare("UPDATE turn_conversations SET state = 'due', released_at = ?, decision = ?, updated_at = ? WHERE account = ? AND binding = ? AND state = 'live'").run(at, decision, at, r.account, r.binding)
     }
+    // A later turn of a released session opens a new conversation, never the one being deleted.
+    db.prepare(`UPDATE turn_sessions SET binding = NULL WHERE session_id IN (${marks})`).run(...sessions)
     host.ctx.get('eventLog')?.append({ type: 'conversation.released', data: { reason, sessions: sessions.length, conversations: rows.length, decision } })
     return { due: rows.length, decision }
   })
@@ -172,7 +181,7 @@ async function deleteOne(host: LedgerHost, row: LedgerRow, lease: () => Lease, l
   const current = ctx.store.db.prepare('SELECT * FROM turn_conversations WHERE account = ? AND binding = ?').get(row.account, row.binding) as unknown as LedgerRow | undefined
   if (current?.state !== 'due') return 'waiting'
   const attempts = current.attempts + 1
-  const set = (fields: Partial<Pick<LedgerRow, 'state' | 'reason' | 'attempts' | 'deleted_at'>>): void => {
+  const set = (fields: Partial<Pick<LedgerRow, 'state' | 'reason' | 'attempts' | 'deleted_at' | 'confirmed_at'>>): void => {
     ctx.store.transaction((db) => {
       ctx.leases.fence(lease())
       const entries = Object.entries(fields)
@@ -196,7 +205,8 @@ async function deleteOne(host: LedgerHost, row: LedgerRow, lease: () => Lease, l
   }
   // A delete flow guessed from documentation is never clicked: the conversation waits, due, until
   // the live check marks every entry it uses verified.
-  const unverified = driver.deletionUnverified?.() ?? []
+  // A driver that does not say its flow is checked is taken as unchecked: fail closed.
+  const unverified = driver.deletionUnverified ? driver.deletionUnverified() : ['(the driver does not report its delete flow as checked)']
   if (unverified.length) {
     if (current.reason !== `unverified-map: ${unverified.join(', ')}`) set({ reason: `unverified-map: ${unverified.join(', ')}` })
     return 'waiting'
@@ -206,13 +216,21 @@ async function deleteOne(host: LedgerHost, row: LedgerRow, lease: () => Lease, l
   try {
     // The page is the account's alone while the deletion runs: never beside a turn.
     const result = await host.scheduler(row.account).runExclusive(async () => {
+      // Read again in the slot: a turn that used it meanwhile made it live again.
+      const now_ = ctx.store.db.prepare('SELECT * FROM turn_conversations WHERE account = ? AND binding = ?').get(row.account, row.binding) as unknown as LedgerRow | undefined
+      if (now_?.state !== 'due') return 'skipped' as const
       const turn = await ctx.browser.openTurn(row.account, { state: await ctx.accounts.portableState(row.account), signal: lost })
       try {
-        return await driver.deleteConversation!(turn.page, row.binding)
+        return await driver.deleteConversation!(turn.page, row.binding, {
+          // Recorded before the irreversible click: from then on it is only ever checked.
+          beforeConfirm: () => set({ confirmed_at: now() }),
+          confirmed: now_.confirmed_at !== null,
+        })
       } finally {
         await turn.close()
       }
     }, lost)
+    if (result === 'skipped') return 'waiting'
     set({ state: 'deleted', deleted_at: now(), reason: result === 'gone' ? 'already gone from the site' : null, attempts })
     ctx.get('eventLog')?.append({ type: 'conversation.deleted', data: { account: row.account, binding: row.binding, found: result } })
     return 'deleted'
@@ -222,7 +240,9 @@ async function deleteOne(host: LedgerHost, row: LedgerRow, lease: () => Lease, l
     // shows it too), or the runtime is stopping.
     if (failure.kind === 'reauth_required') await ctx.accounts.markSignedOut(row.account, 'login-surface', account.revision).catch(() => undefined)
     if (failure.kind === 'reauth_required' || failure.kind === 'aborted' || lost.aborted) return 'waiting'
-    const exhausted = attempts >= MAX_DELETE_ATTEMPTS
+    // Once a confirm was clicked, a failure is never retried: another click could reach another chat.
+    const confirmed = (ctx.store.db.prepare('SELECT confirmed_at FROM turn_conversations WHERE account = ? AND binding = ?').get(row.account, row.binding) as { confirmed_at: string | null } | undefined)?.confirmed_at
+    const exhausted = attempts >= MAX_DELETE_ATTEMPTS || !!confirmed
     set({ state: exhausted ? 'failed' : 'due', reason: `${failure.kind}: ${failure.message.slice(0, 300)}`, attempts })
     ctx.get('eventLog')?.append({ type: exhausted ? 'conversation.delete-failed' : 'conversation.delete-retried', data: { account: row.account, binding: row.binding, attempts, kind: failure.kind } })
     return exhausted ? 'failed' : 'retry'

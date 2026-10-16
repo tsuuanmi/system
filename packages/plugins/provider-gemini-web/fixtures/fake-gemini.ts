@@ -33,6 +33,10 @@ import { randomBytes } from 'node:crypto'
 import { type IncomingMessage, type Server, type ServerResponse, createServer } from 'node:http'
 
 export interface FakeOptions {
+  /** The open chat's pane has its own menu button (default true); the history rows always have theirs. */
+  paneMenu?: boolean
+  /** The delete dialog deletes this chat instead of the one whose menu opened it (a wrong-chat test). */
+  dialogTarget?: string
   /** Start on the Spark tab (the trap the driver must avoid). Default true. */
   startOnSpark?: boolean
   /** The app shows only an interstitial dialog: neither signed in nor signed out can be told. */
@@ -122,7 +126,9 @@ function render() {
   $('picker').setAttribute('aria-label', 'Open mode picker, currently ' + short(model))
   $('picker').textContent = short(model)
   $('chip').hidden = !deepResearch
-  $('conv-options').hidden = !conversationId || !!$('missing')
+  if ($('conv-options')) $('conv-options').hidden = !conversationId || !!$('missing')
+  // The history lists the other chats, as the live side navigation does.
+  for (const row of document.querySelectorAll('.row-options')) row.parentElement.hidden = row.dataset.id === conversationId
 }
 function renderMenu() {
   const item = (name, kind, i) => '<div role="menuitem" tabindex="0" data-kind="' + kind + '" data-name="' + name + '"'
@@ -149,12 +155,15 @@ $('more-tools').onclick = () => { $('more').hidden = false; $('dr').hidden = tem
 $('dr').onclick = () => { deepResearch = !deepResearch; $('tools-menu').hidden = true; render() }
 $('chip').onclick = () => { deepResearch = false; render() }
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { $('menu').hidden = true; $('tools-menu').hidden = true; $('conv-menu').hidden = true; levelsOpen = false } })
-$('conv-options').onclick = () => { $('conv-menu').hidden = !$('conv-menu').hidden }
+// The menu acts on the chat whose button opened it: the open one's, or a history row's.
+let menuFor = null
+if ($('conv-options')) $('conv-options').onclick = () => { menuFor = conversationId; $('conv-menu').hidden = !$('conv-menu').hidden }
+for (const row of document.querySelectorAll('.row-options')) row.onclick = () => { menuFor = row.dataset.id; $('conv-menu').hidden = false }
 $('conv-delete').onclick = () => { $('conv-menu').hidden = true; $('conv-dialog').hidden = false }
 $('conv-cancel').onclick = () => { $('conv-dialog').hidden = true }
 $('conv-confirm').onclick = async () => {
   // Like the app's own calls: one batchexecute RPC naming the chat, then the app goes to a new chat.
-  const req = JSON.stringify([[['GzXR5e', JSON.stringify(['c_' + conversationId]), null, 'generic']]])
+  const req = JSON.stringify([[['GzXR5e', JSON.stringify(['c_' + (options.dialogTarget || menuFor)]), null, 'generic']]])
   const res = await fetch('/_/BardChatUi/data/batchexecute?rpcids=GzXR5e', { method: 'POST',
     headers: { 'content-type': 'application/x-www-form-urlencoded;charset=UTF-8' }, body: 'f.req=' + encodeURIComponent(req) })
   $('conv-dialog').hidden = true
@@ -298,13 +307,15 @@ if (conversationId && !$('missing')) refresh()
 render()
 `
 
-function html(options: Required<FakeOptions>, missing = false): string {
+function html(options: Required<FakeOptions>, missing = false, history: string[] = []): string {
   const data = JSON.stringify({ ...options, notes: NOTES }).replace(/</g, '\\u003c')
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Gemini</title>
 <style>.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}[hidden]{display:none}</style></head>
 <body>
 <header><a href="#" aria-label="Google Account: Test User (test@example.test)">T</a>${options.signInOffer ? '<button>Sign in</button>' : ''}</header>
-<nav><button aria-label="Temporary chat" id="temp">t</button><button aria-label="Open menu for conversation actions" aria-haspopup="menu" id="conv-options" hidden>⋮</button></nav>
+<bard-sidenav><ol aria-label="Recent chats">${history.map((id) => `<li><a href="/app/${id}">chat</a><button class="row-options" data-id="${id}" aria-label="Open menu for conversation actions" aria-haspopup="menu">⋮</button></li>`).join('')}</ol></bard-sidenav>
+<bard-sidenav-content>
+<nav><button aria-label="Temporary chat" id="temp">t</button>${options.paneMenu ? '<button aria-label="Open menu for conversation actions" aria-haspopup="menu" id="conv-options" hidden>⋮</button>' : ''}</nav>
 ${missing ? '<div role="alert" id="missing">Unable to load this conversation</div>' : ''}
 <div role="menu" id="conv-menu" hidden><div role="menuitem" tabindex="0">Share conversation</div><div role="menuitem" tabindex="0">Pin</div><div role="menuitem" tabindex="0" id="conv-delete">Delete</div></div>
 <div role="dialog" aria-label="Delete chat?" id="conv-dialog" hidden><p>You'll no longer see this chat here.</p><button id="conv-cancel">Cancel</button><button id="conv-confirm">Delete</button></div>
@@ -330,7 +341,8 @@ ${missing ? '<div role="alert" id="missing">Unable to load this conversation</di
   <div id="more" hidden><div role="menuitemcheckbox" aria-checked="false" id="dr">Deep research</div><div role="menuitemcheckbox" aria-checked="false">Guided learning</div></div>
 </div>
 <script type="application/json" id="options">${data}</script>
-<script>${CLIENT}</script></body></html>`
+<script>${CLIENT}</script></bard-sidenav-content>
+</body></html>`
 }
 
 /** Serves the fake site; `sent` records every prompt the page sent, `started` every Start research. */
@@ -340,6 +352,8 @@ export class FakeGemini {
   readonly conversations = new Map<string, Turn[]>()
   /** Conversations deleted from the history by their own menu: they no longer open. */
   readonly deleted = new Set<string>()
+  /** Every deletion RPC the page made, by the chat it named (a repeated click shows twice). */
+  readonly deleteRequests: string[] = []
   /** Whether each conversation's last prompt was sent with Deep research chosen. */
   private readonly chips = new Map<string, boolean>()
   private server: Server | undefined
@@ -348,7 +362,7 @@ export class FakeGemini {
 
   constructor(options: FakeOptions = {}) {
     this.options = {
-      startOnSpark: true, interstitial: false, dropOver: 0, signInOffer: false, chatTabBroken: false, temporaryBroken: false, modePicker: true, promptParagraphs: true, deepResearch: true,
+      paneMenu: true, dialogTarget: '', startOnSpark: true, interstitial: false, dropOver: 0, signInOffer: false, chatTabBroken: false, temporaryBroken: false, modePicker: true, promptParagraphs: true, deepResearch: true,
       models: ['3.5 Flash-Lite', '3.8 Flash', '3.1 Pro'], levels: ['Low', 'Medium', 'High'], levelsInline: true, levelsSubmenu: true, submenuBroken: false, answer: 'OK', clarify: '',
       researchMs: 1500, report: 'HTTP/3 runs over QUIC, not TCP.', sources: [{ title: 'RFC 9114: HTTP/3', url: 'https://www.rfc-editor.org/rfc/rfc9114' }], ...options,
     }
@@ -422,6 +436,7 @@ export class FakeGemini {
       for await (const chunk of req) body += String(chunk)
       const rpc = JSON.parse(new URLSearchParams(body).get('f.req') ?? '[]') as Array<Array<[string, string]>>
       const id = /^c_([0-9a-f]{16})$/.exec((JSON.parse(rpc[0]?.[0]?.[1] ?? '[]') as string[])[0] ?? '')?.[1]
+      this.deleteRequests.push(id ?? '')
       const known = id !== undefined && this.conversations.delete(id)
       if (known) this.deleted.add(id)
       return json(known ? 200 : 400, {})
@@ -431,7 +446,7 @@ export class FakeGemini {
     const page = /^\/app(?:\/([0-9a-f]{16}))?$/.exec(url.pathname)
     if (page) {
       if (page[1] && this.deleted.has(page[1])) {
-        res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }).end(html(this.options, true))
+        res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }).end(html(this.options, true, [...this.conversations.keys()]))
         return
       }
       if (page[1] && !this.conversations.has(page[1])) {
@@ -440,7 +455,7 @@ export class FakeGemini {
       }
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }).end(this.options.interstitial
         ? '<!doctype html><html><body><div role="dialog" aria-label="Before you continue"><h2>Before you continue</h2><button>Continue</button></div></body></html>'
-        : html(this.options))
+        : html(this.options, false, [...this.conversations.keys()]))
       return
     }
     res.writeHead(404).end()

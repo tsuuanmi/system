@@ -9,9 +9,9 @@
  * A bound chat is deleted from its own menu, only once it opens as itself (PROP-0004 Phase 5).
  */
 import { readFileSync } from 'node:fs'
-import { type AskOptions, type AskResult, type AuthState, bindingReporter, completionOptions, modePresets, ProviderError, type ProviderDriver, type ProviderFeature, type ProviderMode, type ResearchState, type TurnSnapshot, waitForReport, waitForStableCompletion, withSources } from '@tsuuanmi/system-provider-core'
+import { type AskOptions, type AskResult, type AuthState, bindingReporter, completionOptions, type DeleteOptions, modePresets, ProviderError, type ProviderDriver, type ProviderFeature, type ProviderMode, type ResearchState, type TurnSnapshot, waitForReport, waitForStableCompletion, withSources } from '@tsuuanmi/system-provider-core'
 import { copiedMarkdown, type DriftEvent, outlineOf, preWrapText, UiEngine, type UiMap, type UiOutline, loadUiMap, unverifiedEntries } from '@tsuuanmi/system-ui-ops'
-import type { Locator, Page } from 'patchright-core'
+import type { Locator, Page, Route } from 'patchright-core'
 
 const MAP_URL = new URL('../ui/gemini-web.ui.yaml', import.meta.url)
 const CONVERSATION = /^\/app\/([0-9a-f]{16})$/
@@ -36,6 +36,11 @@ export interface DriverTimeouts {
   /** How long a completed Deep research report may stay unreadable before it is UI drift (default 30 s). */
   reportReadMs?: number
 }
+
+/** The map entries the deletion depends on: each must be checked on the live site before anything is deleted. */
+const DELETION_ENTRIES = ['conversation.pane', 'conversation.options', 'conversation.delete', 'conversation.delete-dialog', 'conversation.delete-confirm', 'conversation.missing', 'conversation.open-options', 'conversation.choose-delete', 'conversation.confirm-delete']
+/** The site's RPC endpoint, which a deletion goes through. */
+const RPC_REQUEST = /\/_\/BardChatUi\/data\/batchexecute/
 
 export interface DriverOptions {
   /** Site origin (default https://gemini.google.com); tests point it at a local fake. */
@@ -217,7 +222,7 @@ export class GeminiWebDriver implements ProviderDriver<Page> {
    * (its `/app/<id>` path, a prompt shown) before anything is clicked, and the page must still be
    * at that path before each click. Reopening it must then show that it no longer exists.
    */
-  async deleteConversation(page: Page, binding: string): Promise<'deleted' | 'gone'> {
+  async deleteConversation(page: Page, binding: string, options: DeleteOptions = {}): Promise<'deleted' | 'gone'> {
     const path = `/app/${binding}`
     // Never click on a page that has moved off this conversation.
     const click = async (action: string): Promise<void> => {
@@ -226,10 +231,25 @@ export class GeminiWebDriver implements ProviderDriver<Page> {
     }
     const before = await this.openConversation(page, binding)
     if (before === 'missing') return 'gone'
+    if (options.confirmed) throw new ProviderError('session_broken', `gemini-web: conversation ${binding} still opens after a deletion was confirmed; it is not clicked again`)
     if (before === 'unknown') throw new ProviderError('ui_drift', `gemini-web: conversation ${binding} did not open as itself; nothing was deleted`)
     await click('conversation.open-options')
     await click('conversation.choose-delete')
-    await click('conversation.confirm-delete')
+    // While the deletion is confirmed, no call of the site's RPC endpoint leaves the page unless it
+    // names this conversation: a click that reached another chat's dialog deletes nothing.
+    const block = async (route: Route): Promise<void> => {
+      const request = route.request()
+      const named = decodeURIComponent(request.postData() ?? '').includes(binding)
+      if (request.method() !== 'POST' || named) await route.continue()
+      else await route.abort('blockedbyclient')
+    }
+    await page.route(RPC_REQUEST, block)
+    try {
+      await options.beforeConfirm?.()
+      await click('conversation.confirm-delete')
+    } finally {
+      await page.unroute(RPC_REQUEST, block).catch(() => undefined)
+    }
     // The site leaves the deleted conversation on its own; reopening it before then is aborted.
     await page.waitForURL((url) => url.pathname !== path, { timeout: this.timeouts.snapshotMs, waitUntil: 'domcontentloaded' }).catch(() => undefined)
     if ((await this.openConversation(page, binding)) === 'missing') return 'deleted'
@@ -238,7 +258,7 @@ export class GeminiWebDriver implements ProviderDriver<Page> {
 
   /** The deletion's map entries not yet checked on the live site: while any is, nothing is deleted. */
   deletionUnverified(): string[] {
-    return unverifiedEntries(this.map, 'conversation.')
+    return unverifiedEntries(this.map, DELETION_ENTRIES)
   }
 
   /**
@@ -265,7 +285,12 @@ export class GeminiWebDriver implements ProviderDriver<Page> {
     if (auth === 'unknown') return 'unknown'
     const engine = this.engine(page)
     await engine.waitFor({ anyOf: [{ visible: 'turn.user' }, { visible: 'conversation.missing' }] }, this.timeouts.snapshotMs).catch(() => undefined)
-    if (await engine.count('conversation.missing')) return 'missing'
+    if (await engine.count('conversation.missing')) {
+      // Positive only when it holds again after a reload: a load that failed once is not a deletion.
+      await page.reload({ waitUntil: 'domcontentloaded' })
+      await engine.waitFor({ anyOf: [{ visible: 'turn.user' }, { visible: 'conversation.missing' }] }, this.timeouts.snapshotMs).catch(() => undefined)
+      return (await engine.count('conversation.missing')) && !(await engine.count('turn.user')) ? 'missing' : 'unknown'
+    }
     return new URL(page.url()).pathname === path && (await engine.count('turn.user')) > 0 ? 'shown' : 'unknown'
   }
 

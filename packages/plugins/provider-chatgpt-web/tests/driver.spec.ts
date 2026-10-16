@@ -255,6 +255,32 @@ describe.runIf(canRunBrowser)('ChatGptWebDriver against the fake site, with no r
     expect(fake.conversations.has(turn.binding!)).toBe(true)
   }, 60_000)
 
+  it('never deletes another chat through a history row: with no menu button in its own pane, nothing is clicked', async () => {
+    const { page, driver, context, fake } = await site({ answer: 'x', paneMenu: false, timeouts: { snapshotMs: 3000 } })
+    const other = await driver.ask(page, 'the operator\'s chat', { conversation: 'persistent' })
+    const doomed = await driver.ask(await context.newPage(), 'delete me', { conversation: 'persistent' })
+    await expect(driver.deleteConversation(await context.newPage(), doomed.binding!)).rejects.toMatchObject({ kind: 'ui_drift' })
+    expect(fake.deleteRequests).toEqual([])
+    expect(fake.conversations.has(other.binding!)).toBe(true)
+    expect(fake.conversations.has(doomed.binding!)).toBe(true)
+  }, 60_000)
+
+  it('stops a deletion that names another chat at the network, after its confirm is marked, and never clicks again once confirmed', async () => {
+    const { page, driver, context, fake } = await site({ answer: 'x', timeouts: { snapshotMs: 3000 } })
+    const other = await driver.ask(page, 'the operator\'s chat', { conversation: 'persistent' })
+    const doomed = await driver.ask(await context.newPage(), 'delete me', { conversation: 'persistent' })
+    fake.options.dialogTarget = other.binding!
+    let marked = 0
+    await expect(driver.deleteConversation(await context.newPage(), doomed.binding!, { beforeConfirm: () => void marked++ })).rejects.toBeInstanceOf(ProviderError)
+    expect(marked).toBe(1)
+    expect(fake.deleteRequests).toEqual([])
+    expect(fake.conversations.has(other.binding!)).toBe(true)
+    // After a recorded confirm, only a check: it still opens, so it fails, and nothing is clicked.
+    fake.options.dialogTarget = ''
+    await expect(driver.deleteConversation(await context.newPage(), doomed.binding!, { confirmed: true })).rejects.toMatchObject({ kind: 'session_broken', message: expect.stringMatching(/not clicked again/) })
+    expect(fake.deleteRequests).toEqual([])
+  }, 90_000)
+
   it('deletes nothing when the conversation does not open as itself', async () => {
     const { page, driver, fake } = await site({ timeouts: { snapshotMs: 1500 } })
     await expect(driver.deleteConversation(page, '00000000-0000-4000-8000-000000000000')).rejects.toMatchObject({ kind: 'ui_drift', message: expect.stringMatching(/nothing was deleted/) })

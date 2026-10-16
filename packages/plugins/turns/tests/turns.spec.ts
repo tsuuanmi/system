@@ -609,6 +609,25 @@ describe.runIf(canRunBrowser)('ctx.turns: the conversation ledger (PROP-0004 Pha
     expect(ctx.turns.release([persistent.sessionId!], 'again')).toEqual({ due: 0 })
   }, 150_000)
 
+  it('never deletes a released conversation a turn uses again: the session continues in a new one, and a reused one is live again', async () => {
+    const { ctx, fake } = await boot({ fake: { answer: 'again' } })
+    const first = await ctx.turns.wait((await ask(ctx, { prompt: 'one', persist: true })).turnId, 30_000)
+    // Released while its map entries were still unchecked, so it waits, due.
+    ctx.turns.release([first.sessionId!], 'run run_c deleted')
+    // The session continues: a released session's next turn opens a new conversation.
+    const next = await ctx.turns.wait((await ask(ctx, { prompt: 'two', sessionId: first.sessionId! })).turnId, 30_000)
+    expect(next.binding).not.toBe(first.binding)
+    // A stale handle that reopens the due conversation makes it live again.
+    ctx.store.db.prepare('UPDATE turn_sessions SET binding = ? WHERE session_id = ?').run(first.binding!, first.sessionId!)
+    const third = await ctx.turns.wait((await ask(ctx, { prompt: 'three', sessionId: first.sessionId! })).turnId, 30_000)
+    expect(third.binding).toBe(first.binding)
+    liveChecked(ctx)
+    await ctx.turns.deleteConversations()
+    const rows = Object.fromEntries(ctx.turns.conversations({ sessionId: first.sessionId! }).map((c) => [c.binding, c.state]))
+    expect(rows).toEqual({ [first.binding!]: 'live', [next.binding!]: 'live' })
+    expect(fake.deleteRequests).toEqual([])
+  }, 150_000)
+
   it('checks the site before deleting again: a deletion a crash interrupted counts as gone, and nothing is clicked', async () => {
     const { ctx, fake } = await boot()
     liveChecked(ctx)

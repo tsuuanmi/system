@@ -5,7 +5,7 @@ export { type Reconciliation, type Tier, type TurnReceipt, type TurnSnapshot, pr
 export { type ProviderLease, ProviderScheduler } from './scheduler.ts'
 export { Display, type DisplayMode, type PreparedDisplay } from './display.ts'
 export type { PortableState } from './state.ts'
-export type { AskOptions, AskResult, AuthState, ConversationMode, PageOutline, ProviderDriver, ProviderFeature, ProviderMode } from './driver.ts'
+export type { AskOptions, AskResult, AuthState, ConversationMode, DeleteOptions, PageOutline, ProviderDriver, ProviderFeature, ProviderMode } from './driver.ts'
 export { Browser, type BrowserTurn, type CaptureProfileOptions, type OpenTurnOptions } from './browser.ts'
 export { ProviderRegistry } from './registry.ts'
 export { bindingReporter, completionOptions, modePresets, type ResearchState, type TurnTimeouts, waitForReport, withMissingSources, withoutTracking, withoutTrackingLinks, withSources } from './web-turns.ts'

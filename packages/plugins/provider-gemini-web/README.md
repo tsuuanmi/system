@@ -67,10 +67,10 @@ driver, its operations are data: a UI map,
   `chat`, Deep research waits for its live check): opens `/app/<id>` and
   clicks nothing unless the page is at exactly that path and shows a prompt
   (otherwise `ui_drift`, nothing deleted). The path is checked again before each
-  click: the chat's own menu → **Delete** → **Delete chat?** → **Delete**. After
+  click: the chat's own menu (in its pane, `conversation.pane`, never a history row) → **Delete** → **Delete chat?** → **Delete**. After
   the site leaves the URL, the chat is reopened and counts as `deleted` only
   when it shows that it no longer exists (map element `conversation.missing`);
-  one that already shows it is `gone`, with nothing clicked. The map entries
+  one that already shows it, on two loads in a row, is `gone`, with nothing clicked. While it runs, no deletion request leaves the page unless it names this chat, `beforeConfirm` lets the ledger record the confirm first, and `confirmed` only checks a chat whose confirm was recorded. The map entries
   are not yet verified live: they are marked `unverified`, and `deletionUnverified()` names them, so the turn runtime deletes nothing until the live check lifts them.
 - **`inspectConversation(page, binding)`:** read-only evidence for those
   entries: the chat's page and its own menu outlined (structure, never text),

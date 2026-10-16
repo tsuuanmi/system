@@ -10,7 +10,7 @@ import Providers from '@tsuuanmi/system-providers'
 import Store from '@tsuuanmi/system-store'
 import type { DriftEvent } from '@tsuuanmi/system-ui-ops'
 import { SchemaRegistry } from '@tsuuanmi/system-libs'
-import type { ProviderDriver } from '@tsuuanmi/system-provider-core'
+import { ProviderError, type ProviderDriver } from '@tsuuanmi/system-provider-core'
 import type { Browser, BrowserContext, Page } from 'patchright-core'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { canRunBrowser, launchTestBrowser } from '../../browser-patchright/tests/support.ts'
@@ -251,6 +251,30 @@ describe.runIf(canRunBrowser)('GeminiWebDriver against the fake site', { timeout
     expect(JSON.stringify(outlines)).not.toMatch(/secret answer text|inspect me/)
     expect(JSON.stringify(outlines[1])).toMatch(/"role":"menuitem"/)
     expect(fake.deleted.size).toBe(0)
+  })
+
+  it('never deletes another chat through a history row: with no menu button in its own pane, nothing is clicked', async () => {
+    const { page, driver, fake } = await open({ answer: 'x', paneMenu: false })
+    const other = await driver.ask(page, 'the operator\'s chat', { conversation: 'persistent' })
+    const doomed = await driver.ask(await context!.newPage(), 'delete me', { conversation: 'persistent' })
+    await expect(driver.deleteConversation(await context!.newPage(), doomed.binding!)).rejects.toMatchObject({ kind: 'ui_drift' })
+    expect(fake.deleteRequests).toEqual([])
+    expect(fake.conversations.has(other.binding!)).toBe(true)
+  })
+
+  it('stops a deletion that names another chat at the network, after its confirm is marked, and never clicks again once confirmed', async () => {
+    const { page, driver, fake } = await open({ answer: 'x' })
+    const other = await driver.ask(page, 'the operator\'s chat', { conversation: 'persistent' })
+    const doomed = await driver.ask(await context!.newPage(), 'delete me', { conversation: 'persistent' })
+    fake.options.dialogTarget = other.binding!
+    let marked = 0
+    await expect(driver.deleteConversation(await context!.newPage(), doomed.binding!, { beforeConfirm: () => void marked++ })).rejects.toBeInstanceOf(ProviderError)
+    expect(marked).toBe(1)
+    expect(fake.deleteRequests).toEqual([])
+    expect(fake.conversations.has(other.binding!)).toBe(true)
+    fake.options.dialogTarget = ''
+    await expect(driver.deleteConversation(await context!.newPage(), doomed.binding!, { confirmed: true })).rejects.toMatchObject({ kind: 'session_broken', message: expect.stringMatching(/not clicked again/) })
+    expect(fake.deleteRequests).toEqual([])
   })
 
   it('deletes nothing when the conversation does not open as itself', async () => {

@@ -41,6 +41,10 @@ export interface FakeOptions {
   rotateOnLoad?: boolean
   /** The conversation menu offers Delete (default true): without it a deletion fails, and nothing is deleted. */
   deleteMenu?: boolean
+  /** The open conversation's pane has its own menu button (default true); the history rows always have theirs. */
+  paneMenu?: boolean
+  /** The delete dialog deletes this conversation instead of the one whose menu opened it (a wrong-chat test). */
+  dialogTarget?: string
   /** Account id returned by `GET /backend-api/me`. */
   userId?: string
   /** Accessible name of the send button (drift tests). */
@@ -120,7 +124,7 @@ export function researchDocument(research: { done: boolean; report: string }): s
     + `<body><iframe srcdoc="${escape(inner)}" style="width:940px;height:620px;border:0"></iframe></body></html>`
 }
 
-function html(options: Required<FakeOptions>, conversation: Conversation | undefined, missing?: string): string {
+function html(options: Required<FakeOptions>, conversation: Conversation | undefined, missing?: string, history: string[] = []): string {
   const turns = (conversation?.turns ?? []).map((t) => t.role === 'user'
     ? `<div class="turn"><h4 class="sr-only">You said:</h4><div>${t.text}</div><button aria-label="Copy message">c</button><button aria-label="Edit message">e</button></div>`
       + (t.research !== undefined ? researchHost(conversation!.id, t.research) : '')
@@ -129,12 +133,14 @@ function html(options: Required<FakeOptions>, conversation: Conversation | undef
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>ChatGPT</title>
 <style>.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}[hidden]{display:none}</style></head>
 <body>
-<nav aria-label="App navigation"><button aria-label="Open profile menu">me</button>${options.loginOffer ? '<button>Log in</button>' : ''}</nav>
+<nav aria-label="App navigation"><button aria-label="Open profile menu">me</button>${options.loginOffer ? '<button>Log in</button>' : ''}
+  <ol aria-label="Chat history">${history.filter((id) => id !== conversation?.id).map((id) => `<li><a href="/c/${id}">chat</a><button class="row-options" data-id="${id}" aria-label="Open conversation options" aria-haspopup="menu">…</button></li>`).join('')}</ol>
+</nav>
 ${missing ? `<div role="alert">Unable to load conversation ${missing}</div>` : ''}
-<header>${conversation ? '<button id="conv-options" aria-label="Open conversation options" aria-haspopup="menu">…</button>' : ''}</header>
 <div role="menu" aria-label="Conversation options" id="conv-menu" hidden><div role="menuitem" tabindex="0">Share</div><div role="menuitem" id="conv-delete" tabindex="0"${options.deleteMenu ? '' : ' hidden'}>Delete</div></div>
 <div role="dialog" aria-label="Delete chat?" id="conv-dialog" hidden><p>This will delete the chat.</p><button id="conv-cancel">Cancel</button><button id="conv-confirm">Delete</button></div>
 <main>
+  <header>${conversation && options.paneMenu ? '<button id="conv-options" aria-label="Open conversation options" aria-haspopup="menu">…</button>' : ''}</header>
   <button id="temp" aria-label="Temporary chat">t</button>
   <button id="temp-off" aria-label="Turn off temporary chat" hidden>x</button>
   <div role="group" aria-label="Composer mode" id="modes">
@@ -232,12 +238,15 @@ $('tool-dr').onclick = () => {
   $('tools').hidden = true
   render()
 }
-if ($('conv-options')) $('conv-options').onclick = () => { $('conv-menu').hidden = false }
+// The menu acts on the chat whose button opened it: the open one's, or a history row's.
+let menuFor = convId
+if ($('conv-options')) $('conv-options').onclick = () => { menuFor = convId; $('conv-menu').hidden = false }
+for (const row of document.querySelectorAll('.row-options')) row.onclick = () => { menuFor = row.dataset.id; $('conv-menu').hidden = false }
 $('conv-delete').onclick = () => { $('conv-menu').hidden = true; $('conv-dialog').hidden = false }
 $('conv-cancel').onclick = () => { $('conv-dialog').hidden = true }
 $('conv-confirm').onclick = async () => {
   // Like the live site: the chat is hidden from the history, then the app goes home.
-  const res = await fetch('/backend-api/conversation/' + convId, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ is_visible: false }) })
+  const res = await fetch('/backend-api/conversation/' + (options.dialogTarget || menuFor), { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ is_visible: false }) })
   $('conv-dialog').hidden = true
   if (res.ok) location.assign('/')
 }
@@ -345,7 +354,7 @@ export class FakeChatGpt {
 
   constructor(options: FakeOptions = {}) {
     this.options = {
-      startOnWork: true, chatToggleBroken: false, signedIn: true, loginOffer: false, requireCookie: false, rotateOnLoad: false, deleteMenu: true, userId: 'user-fake123', sendLabel: 'Send', sendTestId: '',
+      startOnWork: true, chatToggleBroken: false, signedIn: true, loginOffer: false, requireCookie: false, rotateOnLoad: false, deleteMenu: true, paneMenu: true, dialogTarget: '', userId: 'user-fake123', sendLabel: 'Send', sendTestId: '',
       answer: 'OK', thinkMs: 300, models: ['Latest', 'GPT-6', 'GPT-5.6 Sol', 'GPT-5.5'], lockedModels: [],
       researchMs: 1500, report: 'Deep research report body.', clarify: false, features: ['deep-research', 'web-search', 'image-generation'], modelPicker: true,
       mfa: 'totp', email: 'operator@example.test', password: 'correct horse', totpSecret: 'JBSWY3DPEHPK3PXP',
@@ -473,6 +482,6 @@ export class FakeChatGpt {
     if (url.pathname.startsWith('/auth')) return this.auth(url, req, res)
     if (this.options.rotateOnLoad) res.setHeader('set-cookie', `session_seen=${Date.now()}; Path=/; Max-Age=3600`)
     const match = /^\/c\/([0-9a-f-]+)$/.exec(url.pathname)
-    res.end(html(this.options, match ? this.conversations.get(match[1]!) : undefined, match && this.deleted.has(match[1]!) ? match[1] : undefined))
+    res.end(html(this.options, match ? this.conversations.get(match[1]!) : undefined, match && this.deleted.has(match[1]!) ? match[1] : undefined, [...this.conversations.keys()]))
   }
 }

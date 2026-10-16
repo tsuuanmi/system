@@ -8,9 +8,9 @@
  *   marker and stable text (the event stream stays open, so it is never consulted).
  */
 import { readFileSync } from 'node:fs'
-import { type AskOptions, type AskResult, type AuthState, bindingReporter, completionOptions, type ConversationMode, modePresets, ProviderError, type ProviderDriver, type ProviderFeature, type ProviderMode, type ResearchState, type TurnSnapshot, waitForReport, waitForStableCompletion, withMissingSources } from '@tsuuanmi/system-provider-core'
+import { type AskOptions, type AskResult, type AuthState, bindingReporter, completionOptions, type ConversationMode, type DeleteOptions, modePresets, ProviderError, type ProviderDriver, type ProviderFeature, type ProviderMode, type ResearchState, type TurnSnapshot, waitForReport, waitForStableCompletion, withMissingSources } from '@tsuuanmi/system-provider-core'
 import { copiedMarkdown, type DriftEvent, type HealEvent, linksIn, outlineOf, preWrapText, UiEngine, type UiMap, type UiOutline, loadUiMap, unverifiedEntries } from '@tsuuanmi/system-ui-ops'
-import type { Frame, Page } from 'patchright-core'
+import type { Frame, Page, Route } from 'patchright-core'
 
 export type { AskOptions, AskResult, AuthState, ConversationMode, ProviderMode }
 
@@ -50,7 +50,11 @@ const escapeRegex = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$
 const NO_GUARDS = { guards: false } as const
 
 const MAP_URL = new URL('../ui/chatgpt-web.ui.yaml', import.meta.url)
-const CONVERSATION = /\/c\/([0-9a-f-]{36})(?:[/?#]|$)/
+const CONVERSATION = /^\/c\/([0-9a-f-]{36})(?:[/?#]|$)/
+/** The map entries the deletion depends on: each must be checked on the live site before anything is deleted. */
+const DELETION_ENTRIES = ['conversation.pane', 'conversation.options', 'conversation.delete', 'conversation.delete-dialog', 'conversation.delete-confirm', 'conversation.missing', 'conversation.open-options', 'conversation.choose-delete', 'conversation.confirm-delete']
+/** Every request that could delete or change a conversation: during a deletion only the bound one's deletion passes. */
+const DELETE_REQUEST = /\/backend-api\/conversations?(?:\/[^?#]*)?(?:[?#]|$)/
 
 /** The shipped map, with an optional local overlay merged after it. */
 export function shippedMap(overlay?: string): UiMap {
@@ -279,21 +283,43 @@ export class ChatGptWebDriver implements ProviderDriver<Page> {
    * (its id in the URL, its turns shown) before anything is clicked, and the page must still be on
    * it when the deletion is confirmed. Reopening it must then show that it no longer exists.
    */
-  async deleteConversation(page: Page, binding: string): Promise<'deleted' | 'gone'> {
+  async deleteConversation(page: Page, binding: string, options: DeleteOptions = {}): Promise<'deleted' | 'gone'> {
     const before = await this.openConversation(page, binding)
     if (before === 'missing') return 'gone'
+    if (options.confirmed) throw new ProviderError('session_broken', `chatgpt-web: conversation ${binding} still opens after a deletion was confirmed; it is not clicked again`)
     if (before === 'unknown') throw new ProviderError('ui_drift', `chatgpt-web: conversation ${binding} did not open as itself; nothing was deleted`)
     const engine = this.engine(page)
     // Exactly the conversation's own path before every click: a redirect or a dialog never points a click at another chat.
     const guard = (): void => {
       if (new URL(page.url()).pathname !== `/c/${binding}`) throw new ProviderError('ui_drift', `chatgpt-web: the page left conversation ${binding} before the deletion was confirmed; nothing was deleted`)
     }
-    guard()
-    await engine.act('conversation.open-options')
-    guard()
-    await engine.act('conversation.choose-delete')
-    guard()
-    await engine.act('conversation.confirm-delete')
+    // At the network too: a deletion that names any other conversation, or that is not a deletion, never leaves the page.
+    const own = `/backend-api/conversation/${binding}`
+    const block = async (route: Route): Promise<void> => {
+      const request = route.request()
+      const body = (() => {
+        try {
+          return JSON.parse(request.postData() ?? '{}') as { is_visible?: unknown }
+        } catch {
+          return {}
+        }
+      })()
+      const reads = request.method() === 'GET' || request.method() === 'HEAD'
+      if (reads || (request.method() === 'PATCH' && new URL(request.url()).pathname === own && body.is_visible === false)) await route.continue()
+      else await route.abort('blockedbyclient')
+    }
+    await page.route(DELETE_REQUEST, block)
+    try {
+      guard()
+      await engine.act('conversation.open-options')
+      guard()
+      await engine.act('conversation.choose-delete')
+      guard()
+      await options.beforeConfirm?.()
+      await engine.act('conversation.confirm-delete')
+    } finally {
+      await page.unroute(DELETE_REQUEST, block).catch(() => undefined)
+    }
     // The site leaves the deleted conversation on its own; reopening it before then is aborted.
     await page.waitForURL((url) => CONVERSATION.exec(url.pathname)?.[1] !== binding, { timeout: this.timeouts.snapshotMs, waitUntil: 'domcontentloaded' }).catch(() => undefined)
     if ((await this.openConversation(page, binding)) === 'missing') return 'deleted'
@@ -302,7 +328,7 @@ export class ChatGptWebDriver implements ProviderDriver<Page> {
 
   /** The deletion's map entries not yet checked on the live site: while any is, nothing is deleted. */
   deletionUnverified(): string[] {
-    return unverifiedEntries(this.map, 'conversation.')
+    return unverifiedEntries(this.map, DELETION_ENTRIES)
   }
 
   /**
@@ -328,7 +354,12 @@ export class ChatGptWebDriver implements ProviderDriver<Page> {
     if (auth === 'unknown') return 'unknown'
     const engine = this.engine(page)
     await engine.waitFor({ anyOf: [{ visible: 'turn.user' }, { visible: 'conversation.missing' }] }, this.timeouts.snapshotMs).catch(() => undefined)
-    if (await engine.count('conversation.missing')) return 'missing'
+    if (await engine.count('conversation.missing')) {
+      // Positive only when it holds again after a reload: a load that failed once is not a deletion.
+      await page.reload({ waitUntil: 'domcontentloaded' })
+      await engine.waitFor({ anyOf: [{ visible: 'turn.user' }, { visible: 'conversation.missing' }] }, this.timeouts.snapshotMs).catch(() => undefined)
+      return (await engine.count('conversation.missing')) && !(await engine.count('turn.user')) ? 'missing' : 'unknown'
+    }
     return new URL(page.url()).pathname === `/c/${binding}` && (await engine.count('turn.user')) > 0 ? 'shown' : 'unknown'
   }
 

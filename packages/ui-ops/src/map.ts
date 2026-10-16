@@ -91,9 +91,12 @@ export interface UiMap {
   hash: ContentId
 }
 
-/** The map's elements and actions under `prefix` that are not yet checked on the live site. */
-export function unverifiedEntries(map: Pick<UiMap, 'elements' | 'actions'>, prefix: string): string[] {
-  return [...Object.entries(map.elements), ...Object.entries(map.actions)].filter(([id, spec]) => id.startsWith(prefix) && spec.unverified).map(([id]) => id).sort()
+/**
+ * Which of `ids` (elements or actions) are not yet checked on the live site; one the map does not
+ * define counts as unchecked, so a flow that depends on it fails closed.
+ */
+export function unverifiedEntries(map: Pick<UiMap, 'elements' | 'actions'>, ids: readonly string[]): string[] {
+  return ids.filter((id) => (map.elements[id] ?? map.actions[id])?.unverified !== undefined || !(map.elements[id] ?? map.actions[id])).sort()
 }
 
 let registry: SchemaRegistry | undefined

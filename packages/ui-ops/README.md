@@ -10,9 +10,9 @@ not a plugin: provider drivers create one `UiEngine` per turn page.
     and checks that every reference resolves;
   - appends the local overlay's candidates after the shipped ones;
   - returns the merged map with its content `hash`.
-- **`unverifiedEntries(map, prefix)`:** the elements and actions under `prefix`
-  marked `unverified: true` (`ui-map@1.2`): not yet checked on the live site, so
-  no irreversible job may depend on them.
+- **`unverifiedEntries(map, ids)`:** which of the named elements and actions are
+  marked `unverified: true` (`ui-map@1.2`) or missing: not yet checked on the live
+  site, so no irreversible job may depend on them.
 - **Frames:** an element with `frames: any` (`ui-map@1.1`) is searched in every
   frame, for content rendered in iframes such as a research report.
 - **`UiEngine`:**

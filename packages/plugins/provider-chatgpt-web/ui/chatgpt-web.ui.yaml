@@ -219,9 +219,17 @@ elements:
 
   # Deleting one conversation (PROP-0004 Phase 5). NOT yet verified live: the names follow the
   # site's conversation menu as documented by OpenAI; the live check replaces them.
+  conversation.pane:
+    unverified: true
+    description: >-
+      The open conversation's own pane: the outermost main, never the history sidebar (nav),
+      whose rows carry menu buttons of other chats.
+    candidates:
+      - { css: 'main:not(main main)' }
   conversation.options:
     unverified: true
-    description: The open conversation's own menu button (never the history's bulk actions).
+    scope: conversation.pane
+    description: The open conversation's own menu button, inside its pane (never a history row's).
     candidates:
       - { role: button, name: { en: '^Open conversation options$' } }
       - { testId: conversation-options-button }

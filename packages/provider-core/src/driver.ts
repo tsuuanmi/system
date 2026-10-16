@@ -97,7 +97,7 @@ export interface ProviderDriver<Page = unknown> {
    * longer exists, before anything is clicked. Anything else throws a ProviderError: a deletion
    * is never assumed.
    */
-  deleteConversation?(page: Page, binding: string): Promise<'deleted' | 'gone'>
+  deleteConversation?(page: Page, binding: string, options?: DeleteOptions): Promise<'deleted' | 'gone'>
   /**
    * The deletion's UI map entries not yet checked on the live site. While any is, the runtime
    * deletes nothing (an irreversible click on a guessed entry could reach another chat).
@@ -109,6 +109,14 @@ export interface ProviderDriver<Page = unknown> {
    * Outlines hold structure only, never text (`ui-outline@1.0`).
    */
   inspectConversation?(page: Page, binding: string): Promise<PageOutline[]>
+}
+
+/** How one deletion runs (PROP-0004 Phase 5). */
+export interface DeleteOptions {
+  /** Called once, immediately before the irreversible confirm; a throw confirms nothing. */
+  beforeConfirm?: () => void | Promise<void>
+  /** A confirm was already recorded for it: only check that it is gone, and never click again. */
+  confirmed?: boolean
 }
 
 /** A structural page outline (`ui-outline@1.0`, docs/design/ui-operations.md#drift-evidence): never text. */
