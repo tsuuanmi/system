@@ -334,7 +334,7 @@ export class Engine {
           retake = true
           return
         }
-        // A scheduler exception blocks the run for a code fix; it never crash-loops.
+        // Outside a node's execution (promotion, growth), a scheduler exception fails the run for a code fix; it never crash-loops.
         const run = this.runRow(runId)
         if (run?.status === 'running') this.finish(run, 'failed', { error: JSON.stringify({ kind: 'internal', disposition: 'CODE_FIX', message: (error as Error).message }) }, current)
       } finally {
@@ -508,10 +508,10 @@ export class Engine {
     }
     const source = node.source ? this.ctx.workers.source(node.source) : undefined
     if (!source) {
-      // The Worker's runtime is not loaded now (its row was turned off): the node fails for the
-      // operator, who turns the row back on and continues it. Its execution is never guessed at.
+      // The Worker's runtime is not loaded now (its row is off): the node fails for the operator.
+      // Its execution is never guessed at; `continue` runs the node again as a new attempt.
       return failAttempt(this, run, node, { kind: 'config_error', disposition: dispositionOf('config_error'),
-        message: `Worker source ${node.source ?? '(none)'} of node ${node.node_id} is not registered; turn its row back on, then continue the run` }, { sent: true }, lease)
+        message: `Worker source ${node.source ?? '(none)'} of node ${node.node_id} is not registered (its row is off); turn it back on, then continue the run to run the node again as a new attempt` }, { sent: true }, lease)
     }
     let current = source.get(node.execution_id!)
     const stop = aborted(signal)

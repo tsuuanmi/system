@@ -152,8 +152,9 @@ stateDiagram-v2
 A scheduler exception while a node executes fails that node as `internal` with
 disposition `CODE_FIX`, and the run fails on it. Once the code is fixed, the operator's
 `continue` reopens the node. It never crash-loops. A node whose Worker source is no longer
-registered (its row was turned off) fails as `config_error`. It is continued once the row is
-back on. Its execution is never guessed at.
+registered (its row is off) fails as `config_error`. Its execution is never guessed at. Once
+the row is back on, `continue` runs the node again as a new attempt, recorded as the operator's
+decision.
 
 ## Graph growth
 
