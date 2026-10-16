@@ -93,7 +93,9 @@ invoked by the [workflow engine](../workflow/README.md)
   - `checkSignIn(account)` checks a ready account's sign-in on its scheduler,
     with its saved state, sending nothing. Positive signed-out evidence marks
     it reauth-required (event `account.signed-out`), so health shows it before
-    a turn finds it; anything else changes nothing. It runs in the background
+    a turn finds it. Signed in, the state the site refreshed is written back as
+    after a turn (revision and scheduler slot current), so an idle account's
+    session does not age out; unknown changes nothing. It runs in the background
     every `authCheckMs` (default 6 h, the first one interval after start; 0:
     never) for ready accounts whose feature probe is still fresh.
   - `verify(account)` re-verifies a reauth-required account on its scheduler:

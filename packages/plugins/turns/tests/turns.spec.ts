@@ -148,6 +148,22 @@ describe.runIf(canRunBrowser)('ctx.turns: ask through a saved account', () => {
     expect(fake.sent).toEqual([])
   }, 90_000)
 
+  it('writes back the state a signed-in check refreshed, and never one from a check that found it signed out', async () => {
+    const { ctx, fake } = await boot({ fake: { rotateOnLoad: true } })
+    const before = await ctx.accounts.get('chatgpt-main')
+    expect(await ctx.turns.checkSignIn('chatgpt-main')).toBe('signed-in')
+    const after = await ctx.accounts.get('chatgpt-main')
+    expect(after.revision).toBe(before.revision + 1)
+    expect((await ctx.accounts.portableState('chatgpt-main'))?.cookies.map((c) => c.name)).toContain('session_seen')
+    // Signed out: marked, and the page's state is never kept.
+    fake.options.signedIn = false
+    const kept = await ctx.accounts.portableState('chatgpt-main')
+    expect(await ctx.turns.checkSignIn('chatgpt-main')).toBe('signed-out')
+    expect(await ctx.accounts.portableState('chatgpt-main')).toEqual(kept)
+    expect(ctx.eventLog.query({ type: 'account.write-back-skipped' })).toEqual([])
+    expect(fake.sent).toEqual([])
+  }, 90_000)
+
   it('proves an account\'s website features by a probe that sends nothing, and routes only on proven ones (REQ-PRV-7)', async () => {
     const { ctx, fake } = await boot({ fake: { answer: 'Found it', features: ['web-search'] } })
     expect(await ctx.turns.probe('chatgpt-main')).toEqual(['web-search'])

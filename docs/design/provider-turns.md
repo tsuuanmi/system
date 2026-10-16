@@ -200,7 +200,7 @@ stall timeout are reported as distinct errors.
 ## Write-back
 
 After completion, the receipt is marked `COMPLETED`, auth state is recaptured, and
-it is written back **only if** both the account revision and the scheduler lease
+it is written back (a background sign-in check that finds the account signed in does the same) **only if** both the account revision and the scheduler lease
 generation are still current. Otherwise the write is dropped
 ([scheduling-and-leases](scheduling-and-leases.md)).
 

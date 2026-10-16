@@ -153,7 +153,7 @@ export class Turns extends Service {
     maxPendingTurns: z.natural().min(1).default(32).description('Accepted but unfinished turns; more are refused'),
     retainDays: z.natural().min(1).default(30).description('Days a finished turn (and its prompt) is kept'),
     probeTtlMs: z.natural().min(60_000).default(24 * 60 * 60_000).description('How long a ready account\'s feature probe stands before it is refreshed'),
-    authCheckMs: z.natural().default(6 * 60 * 60_000).description('How often a ready account\'s sign-in is checked, sending nothing, so health shows a signed-out account before a turn finds it (0: never)'),
+    authCheckMs: z.natural().default(6 * 60 * 60_000).description('How often a ready account\'s sign-in is checked, sending nothing, so health shows a signed-out account before a turn finds it and an idle account keeps its refreshed session (0: never)'),
   })
 
   /** When each account's sign-in was last checked (sign-in checks), in this process. */
@@ -595,16 +595,21 @@ export class Turns extends Service {
   /**
    * Check a ready account's sign-in with its saved state, sending nothing: a page that shows it
    * signed out (positive evidence only, ADR-0017) marks it reauth-required now, so health shows it
-   * before a turn finds it (event `account.signed-out`). Anything else changes nothing.
+   * before a turn finds it (event `account.signed-out`). Signed in, the state the site refreshed
+   * is written back as a turn's is, so an idle account's session does not age out. Unknown
+   * changes nothing.
    */
   async checkSignIn(accountId: string, signal?: AbortSignal): Promise<'signed-in' | 'signed-out' | 'unknown'> {
     const view = await this.ctx.accounts.get(accountId)
     if (view.status !== 'ready') return 'unknown'
     const driver = this.ctx.providers.get(view.provider)
-    const auth = await this.scheduler(accountId).runTurn(`auth:${accountId}`, signal, async () => {
-      const turn = await this.ctx.browser.openTurn(accountId, { state: await this.ctx.accounts.portableState(accountId), ...(signal ? { signal } : {}) })
+    const auth = await this.scheduler(accountId).runTurn(`auth:${accountId}`, signal, async (slot) => {
+      const state = await this.ctx.accounts.portableState(accountId)
+      const turn = await this.ctx.browser.openTurn(accountId, { state, ...(signal ? { signal } : {}) })
       try {
-        return await driver.checkAuth(turn.page)
+        const seen = await driver.checkAuth(turn.page)
+        if (seen === 'signed-in') await this.writeBack(accountId, turn, driver.stateOrigins, state, view.revision, () => slot.signal.throwIfAborted())
+        return seen
       } finally {
         await turn.close()
       }
@@ -675,7 +680,7 @@ export class Turns extends Service {
     }
     try {
       // Before completion is visible: callers that see `completed` see the refreshed account.
-      await this.writeBack(accountId, turn, driver.stateOrigins, state, view.revision, lease)
+      await this.writeBack(accountId, turn, driver.stateOrigins, state, view.revision, () => this.ctx.store.transaction(() => this.ctx.leases.fence(lease())))
       this.commit(row, accountId, view.provider, result.text, result.binding, lease)
     } finally {
       await turn.close()
@@ -684,13 +689,14 @@ export class Turns extends Service {
 
   /**
    * Store the browser state refreshed during the turn (rotated session cookies), only if
-   * the turn still holds its lease and the account is still at the revision the turn
-   * started from (docs/design/browser-runtime.md). A failure never fails the answered turn.
+   * the turn still holds its lease (`fence` throws otherwise) and the account is still at the
+   * revision the turn started from (docs/design/browser-runtime.md). A failure never fails the
+   * answered turn.
    */
-  private async writeBack(accountId: string, turn: BrowserTurn, origins: readonly string[], previous: PortableState | undefined, revision: number, lease: () => Lease): Promise<void> {
+  private async writeBack(accountId: string, turn: BrowserTurn, origins: readonly string[], previous: PortableState | undefined, revision: number, fence: () => void): Promise<void> {
     try {
       const state = await this.ctx.browser.capture(turn, { origins: [...origins], previous })
-      this.ctx.store.transaction(() => this.ctx.leases.fence(lease()))
+      fence()
       await this.ctx.accounts.refreshState(accountId, state, revision)
     } catch (error) {
       this.ctx.get('eventLog')?.append({ type: 'account.write-back-skipped', data: { account: accountId, reason: (error as Error).message.slice(0, 200) } })

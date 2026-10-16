@@ -300,7 +300,7 @@ No options.
 | `maxPendingTurns` | number (1…) | `32` | Accepted but unfinished turns; more are refused |
 | `retainDays` | number (1…) | `30` | Days a finished turn (and its prompt) is kept |
 | `probeTtlMs` | number (60000…) | `86400000` | How long a ready account's feature probe stands before it is refreshed |
-| `authCheckMs` | number (0…) | `21600000` | How often a ready account's sign-in is checked, sending nothing, so health shows a signed-out account before a turn finds it (0: never) |
+| `authCheckMs` | number (0…) | `21600000` | How often a ready account's sign-in is checked, sending nothing, so health shows a signed-out account before a turn finds it and an idle account keeps its refreshed session (0: never) |
 
 ## `web-ui`
 
