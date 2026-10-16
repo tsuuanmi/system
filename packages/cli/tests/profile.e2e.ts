@@ -1,6 +1,6 @@
 // Composition e2e (docs/engineering/testing.md): the shipped system profile, booted through
 // the real dsh launcher from built lib/, with only the external port overridden.
-import { type ChildProcess, execFileSync, spawn } from 'node:child_process'
+import { type ChildProcess, execFileSync, spawn, spawnSync } from 'node:child_process'
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -67,6 +67,33 @@ describe('system profile (e2e through dsh)', () => {
     expect(mounted).toEqual(expect.arrayContaining(['gateway-anthropic', 'agent-workers']))
     expect(mounted).not.toContain('gateway-responses')
   }, 60_000)
+
+  it('checks the profile against this code before a start: a removed team procedure and a bad config value are named, with exit 1', () => {
+    const patchFile = join(home, 'profiles', 'system', 'cordis.patch.yml')
+    const original = readFileSync(patchFile, 'utf8')
+    const run = () => spawnSync(process.execPath, [bin, 'check'], { env, encoding: 'utf8' })
+    try {
+      expect(run()).toMatchObject({ status: 0, stdout: expect.stringMatching(/^ok: \d+ row\(s\) of the profile pass this code's checks/) })
+      writeFileSync(patchFile, [
+        '- id: workflow',
+        '  config:',
+        '    templates:',
+        '      panel-led:',
+        '        - { nodeId: panel, objective: o, prompt: "{{input}}", capabilities: [reason], tier: standard, conversation: temporary, acceptance: acceptance.answer, team: { members: 2, rounds: 2 } }',
+        '- id: mcp-server',
+        '  config:',
+        '    minFreeBytes: lots',
+        '',
+      ].join('\n'))
+      const failed = run()
+      expect(failed.status).toBe(1)
+      expect(failed.stderr).toMatch(/row workflow \(@tsuuanmi\/system-workflow\): template panel-led: node panel: team must be \{kind: brainstorm \| review/)
+      expect(failed.stderr).toMatch(/row mcp-server \(@tsuuanmi\/system-mcp-server\): .*minFreeBytes/)
+      expect(failed.stderr).toMatch(/2 problem\(s\): fix the profile patch before starting this code/)
+    } finally {
+      writeFileSync(patchFile, original)
+    }
+  })
 
   it('boots, serves MCP to an authenticated client, authorizes every surface by scope (QA-14), and cleans up on SIGTERM', async () => {
     child = spawn(process.execPath, [bin, 'start', '--patch', join(home, 'port0.yml')], { env, stdio: 'pipe', detached: true })

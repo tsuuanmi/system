@@ -31,6 +31,10 @@ export interface HealthSources {
   workers?: () => Promise<Array<{ worker: string; state: string }>>
   /** Events of `type` committed since `sinceIso`. */
   events?: (type: string, sinceIso: string) => Array<{ data?: Record<string, unknown> | undefined }>
+  /** Plugins of the composition that failed to activate or wait for a service no one supplies. */
+  plugins?: () => Array<{ name: string; state: 'failed' | 'pending'; detail: string }>
+  /** Configured workflow templates refused at load, with why. */
+  templates?: () => Array<{ name: string; reason: string }>
   nodeVersion?: string
   minFreeBytes: number
   driftWindowMs: number
@@ -55,6 +59,23 @@ const AVAILABLE = new Set(['ready', 'busy'])
 
 export async function healthReport(sources: HealthSources): Promise<HealthReport> {
   const checks: HealthCheck[] = []
+  // A plugin that is not running takes its tools and its dependents with it: work cannot run as composed.
+  if (sources.plugins) {
+    checks.push(await guarded('plugins', () => {
+      const broken = sources.plugins!()
+      return broken.length
+        ? { name: 'plugins', state: 'down', detail: `${broken.map((p) => `${p.name} ${p.state}: ${p.detail}`).join('; ')}. See the daemon's log, fix the configuration, and restart (docs/operations/runbooks.md)` }
+        : ok('plugins', 'every plugin of the composition is active')
+    }))
+  }
+  if (sources.templates) {
+    checks.push(await guarded('templates', () => {
+      const refused = sources.templates!()
+      return refused.length
+        ? { name: 'templates', state: 'degraded', detail: `${refused.length} configured template(s) refused, every other one works: ${refused.map((t) => `${t.name} (${t.reason})`).join('; ')}` }
+        : ok('templates', 'every configured template passed its check')
+    }))
+  }
   const runtime = nodeVersionProblem(sources.nodeVersion ?? process.versions.node)
   checks.push(runtime ? { name: 'runtime', state: 'down', detail: runtime } : ok('runtime', `Node ${sources.nodeVersion ?? process.versions.node}`))
 

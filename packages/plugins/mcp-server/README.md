@@ -28,9 +28,10 @@ the `system` CLI
     session, or type, a page of at most 1000 after `afterSeq`; it returns the
     page and `next`, the cursor for the following one.
   - `status` reports the store, artifacts, kernel seams, registered providers,
-    and **health** (REQ-HOST-6, `src/health.ts`): each check (runtime, store
-    integrity, free disk, vault key custody, accounts to sign in again, Worker
-    availability, provider UI drift within `driftWindowHours`) as `ok`,
+    and **health** (REQ-HOST-6, `src/health.ts`): each check (plugins of the
+    composition, refused workflow templates, runtime, store integrity, free
+    disk, vault key custody, accounts to sign in again, Worker availability,
+    provider UI drift within `driftWindowHours`) as `ok`,
     `degraded`, or `down`, and the worst of them. Only an operator-scope caller
     sees the details; a client sees each check's name and state. It reads the
     mounted services (`credentials`, `accounts`, `workers`, `eventLog`), skips
@@ -38,6 +39,11 @@ the `system` CLI
     count as available only when `ready` or `busy`. A vault key beside the vault
     is advice, never degraded (the default must not page). The store integrity
     check is reused for `storeCheckMinutes`.
+  - `plugins` is down when a plugin failed to activate (with its error) or is
+    still pending on a required service no plugin supplies, read from the
+    Cordis registry's own fiber states. `templates` is degraded when the
+    workflow engine refused a configured template at load (with why); every
+    other template still works.
 - **`GET /healthz`:** liveness for a supervisor, with no token and no data
   (`ok`).
   - `ask`, `research`, and `result` are placeholders. When `ctx.workflow` is

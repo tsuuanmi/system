@@ -17,7 +17,7 @@ afterEach(async () => {
   while (cleanups.length) await cleanups.pop()!()
 })
 
-async function engine(templates: Record<string, unknown>): Promise<{ error: Error | undefined; served: boolean }> {
+async function engine(templates: Record<string, unknown>): Promise<{ error: Error | undefined; served: boolean; refused: Array<{ name: string; reason: string }> }> {
   const dir = mkdtempSync(join(tmpdir(), 'system-startup-'))
   cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
   const ctx = new Context()
@@ -31,7 +31,8 @@ async function engine(templates: Record<string, unknown>): Promise<{ error: Erro
   } catch (e) {
     error = e as Error
   }
-  return { error, served: !!(ctx as unknown as { workflow?: unknown }).workflow }
+  const served = (ctx as unknown as { workflow?: Workflow }).workflow
+  return { error, served: !!served, refused: served?.refusedTemplates() ?? [] }
 }
 
 const step = { nodeId: 'a', objective: 'x', prompt: 'p', capabilities: ['reason'], tier: 'standard', conversation: 'temporary', acceptance: 'acceptance.answer' }
@@ -44,15 +45,15 @@ describe('startup validation (REQ-HOST-2)', () => {
     expect(outcome.error?.message).toMatch(/templates\.broken\[0\]\.conversation missing required value/)
   })
 
-  it('refuses a template whose result schema is unknown (REQ-ART-5)', async () => {
-    const outcome = await engine({ broken: [{ ...step, resultSchema: 'nothing@1.0' }] })
-    expect(outcome.served).toBe(false)
-    expect(outcome.error?.message).toMatch(/node a: unknown result schema nothing@1\.0/)
+  // A template that passes the schema but fails its own check is refused alone (INV-2): the engine
+  // serves every other template, and health names the refused one.
+  it('refuses a template whose result schema is unknown, alone (REQ-ART-5)', async () => {
+    const outcome = await engine({ broken: [{ ...step, resultSchema: 'nothing@1.0' }], fine: [step] })
+    expect(outcome).toMatchObject({ error: undefined, served: true, refused: [{ name: 'broken', reason: expect.stringMatching(/node a: unknown result schema nothing@1\.0/) }] })
   })
 
-  it('refuses a template that fails preflight, naming the template\'s problem', async () => {
+  it('refuses a template that fails preflight, alone, naming the template\'s problem', async () => {
     const outcome = await engine({ broken: [{ ...step, dependsOn: ['missing'] }] })
-    expect(outcome.served).toBe(false)
-    expect(outcome.error?.message).toMatch(/unknown node missing/)
+    expect(outcome).toMatchObject({ error: undefined, served: true, refused: [{ name: 'broken', reason: expect.stringMatching(/unknown node missing/) }] })
   })
 })

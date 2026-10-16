@@ -66,7 +66,8 @@ on `run`.
 | `system restore <dir> [--yes]` | preview, then restore a backup (the profile must be stopped; a manifest naming any file but the store and the vault is refused) |
 | `system drain [--deadline <s>]` | admit no new runs and wait for running ones (default 600 s) |
 | `system resume` | admit new runs again after a drain |
-| `system shutdown [--deadline <s>]` | drain, then stop the running profile (unfinished runs resume on start) |
+| `system shutdown [--deadline <s>]` | drain, then stop the running profile (unfinished runs resume on start); with no workflow engine running, stop it directly once `/proc` proves it is this home's host |
+| `system check` | check the profile (its operator patch included) against this install's code before starting it; exit 1 names each problem |
 | `system ui` | print the web UI link (runs, steps, decisions; approve, stop, continue) |
 
 ## Clients

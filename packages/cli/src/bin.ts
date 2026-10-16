@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { type EventLine, formatEvents, formatHealth, healthExit, hostHealth, parseEvents, assertRuntime, backupHost, browserDeps, callTool, claudeGatewayCommand, codexGatewayCommand, drainHost, formatTools, listTools, restoreHost, shutdownHost, ensureBrowser, formatExplanation, formatUsage, init, mcpConfig, mcpHeaders, mcpToken, parseAsk, readAllStdin, serveStdio, start, type ToolOutcome, uiUrl, composedRows, PRESETS, type Preset, rowOffProblem } from './index.ts'
+import { checkProfile, type EventLine, formatEvents, formatHealth, healthExit, hostHealth, parseEvents, assertRuntime, backupHost, browserDeps, callTool, claudeGatewayCommand, codexGatewayCommand, drainHost, formatTools, listTools, restoreHost, shutdownHost, ensureBrowser, formatExplanation, formatUsage, init, mcpConfig, mcpHeaders, mcpToken, parseAsk, readAllStdin, serveStdio, start, type ToolOutcome, uiUrl, composedRows, PRESETS, type Preset, rowOffProblem } from './index.ts'
 
 const USAGE = `Usage: system <command>
 
@@ -51,6 +51,7 @@ const USAGE = `Usage: system <command>
   health [--json]           each check (runtime, store, disk, vault key, accounts, Workers, UI drift)
                             and what to do; exit 0 healthy, 1 degraded, 2 down or not running
   shutdown [--deadline <s>] drain, then stop the running profile (unfinished runs resume on start)
+  check                     check the profile against this install's code before starting it (an update's preflight)
   mcp-config <claude|codex> print client configuration for the running MCP server
   claude-env                print a command that runs Claude Code with website Workers as its model
                             (needs the gateway-anthropic row, off by default)
@@ -342,9 +343,23 @@ async function main(argv: string[]): Promise<number> {
       if (!Number.isFinite(seconds) || seconds < 0) break
       const onActive = (active: string[]): void => console.error(`waiting for ${active.length} run(s): ${active.join(', ')}`)
       const outcome = command === 'drain' ? await drainHost(seconds * 1000, { onActive }) : await shutdownHost(seconds * 1000, { onActive })
-      console.log(outcome.drained ? 'drained' : `deadline reached with ${outcome.active.length} run(s) still running: ${outcome.active.join(', ')} (they resume on the next start)`)
+      const undrained = 'undrained' in outcome ? outcome.undrained : undefined
+      console.log(undrained
+        ? `not drained: ${undrained} (the workflow engine is not running, so no run can be); stopping the host directly`
+        : outcome.drained ? 'drained' : `deadline reached with ${outcome.active.length} run(s) still running: ${outcome.active.join(', ')} (they resume on the next start)`)
       if (command === 'shutdown') console.log('stopped')
       return 0
+    }
+    case 'check': {
+      // Before an update's restart: the operator's profile against this install's code.
+      const outcome = await checkProfile()
+      if (!outcome.problems.length) {
+        console.log(`ok: ${outcome.rows} row(s) of the profile pass this code's checks`)
+        return 0
+      }
+      for (const problem of outcome.problems) console.error(problem)
+      console.error(`${outcome.problems.length} problem(s): fix the profile patch before starting this code (docs/operations/runbooks.md)`)
+      return 1
     }
     case 'tools': {
       const tools = await listTools()

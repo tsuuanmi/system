@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { CHROME_LOCK } from '@tsuuanmi/system-browser-patchright'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { assertRuntime, callTool, formatEvents, formatHealth, parseEvents, healthExit, hostHealth, claudeGatewayCommand, codexGatewayCommand, drainHost, formatTools, ensureBrowser, exitCode, formatExplanation, formatUsage, mcpConfig, mcpHeaders, mcpToken, mergeProfileManifest, parseAsk, uiUrl, parseComposedRows, presetOf, rowOffProblem } from '../src/index.ts'
+import { assertRuntime, callTool, formatEvents, formatHealth, parseEvents, healthExit, hostHealth, claudeGatewayCommand, codexGatewayCommand, drainHost, formatTools, ensureBrowser, hostProcessProblem, shutdownHost, exitCode, formatExplanation, formatUsage, mcpConfig, mcpHeaders, mcpToken, mergeProfileManifest, parseAsk, uiUrl, parseComposedRows, presetOf, rowOffProblem } from '../src/index.ts'
 
 const dirs: string[] = []
 afterEach(() => {
@@ -227,6 +227,38 @@ describe('drain (REQ-HOST-1)', () => {
   it('reports what is still running at the deadline', async () => {
     const { call } = polls([['run_a'], ['run_a'], ['run_a'], ['run_a']])
     expect(await drainHost(0, { call, pollMs: 1 })).toEqual({ drained: false, active: ['run_a'] })
+  })
+
+  it('stops a host whose engine is not running, once its process is proven to be this home\'s host', async () => {
+    const { spawn } = await import('node:child_process')
+    const home = mkdtempSync(join(tmpdir(), 'system-shutdown-'))
+    const bin = join(home, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js')
+    mkdirSync(join(home, 'node_modules', '@deepseek-ai', 'dsh', 'lib'), { recursive: true })
+    writeFileSync(bin, 'process.on("SIGTERM", () => process.exit(0)); setInterval(() => {}, 1000)')
+    const host = spawn(process.execPath, [bin, '--profile', 'system'], { env: { ...process.env, DSH_HOME: home }, stdio: 'ignore' })
+    const other = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' })
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 300))
+      mkdirSync(join(home, 'system'))
+      const discovery = (pid: number) => writeFileSync(join(home, 'system', 'mcp.json'), JSON.stringify({ url: 'http://127.0.0.1:1/mcp', pid }))
+      const missing = (async () => ({ isError: true, text: 'MCP error -32602: Tool drain not found', structured: undefined })) as never
+      // Not a DSH profile, or another home's: refused, and nothing is signalled.
+      expect(hostProcessProblem(other.pid!, home)).toBe('it does not run a DSH profile')
+      expect(hostProcessProblem(host.pid!, join(home, 'elsewhere'))).toMatch(/its DSH_HOME is .*, not .*elsewhere/)
+      discovery(other.pid!)
+      await expect(shutdownHost(1000, { home, call: missing })).rejects.toThrow(/drain is not available .*Tool drain not found.*, and process \d+ is not stopped: it does not run a DSH profile/)
+      expect(other.exitCode).toBeNull()
+      // This home's host: stopped without a drain, and said so.
+      discovery(host.pid!)
+      expect(await shutdownHost(1000, { home, call: missing })).toMatchObject({ drained: false, active: [], pid: host.pid, undrained: expect.stringMatching(/Tool drain not found/) })
+      // Any other drain failure is not taken for a missing engine.
+      const failing = (async () => ({ isError: true, text: 'run run_a is busy', structured: undefined })) as never
+      await expect(shutdownHost(1000, { home, call: failing })).rejects.toThrow('run run_a is busy')
+    } finally {
+      host.kill()
+      other.kill()
+      rmSync(home, { recursive: true, force: true })
+    }
   })
 })
 

@@ -210,7 +210,10 @@
 - **REQ-HOST-1** The host drains before stop or upgrade. It accepts no new work
   and waits for in-flight requests and provider turns, or for a drain deadline.
 - **REQ-HOST-2** Startup validates configuration, profiles, and stores, and fails
-  with a precise error when any of them is invalid.
+  with a precise error when any of them is invalid. A configured workflow
+  template that fails its own check is refused alone, with its precise reason
+  reported in health, and the rest starts. `system check` runs the same
+  validation before a start.
 - **REQ-HOST-3** Any change the host makes to a client's configuration is
   journaled and can be reversed byte for byte.
 - **REQ-HOST-4** Every feature is composed from configuration (profiles and

@@ -7,15 +7,16 @@ import { spawn, spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { chmodSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
-import { constants as osConstants } from 'node:os'
-import { dirname, join } from 'node:path'
+import { homedir, constants as osConstants } from 'node:os'
+import { dirname, join, resolve } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { CHROME_LOCK, type ChromeChoice, discoverChrome, installManagedChrome } from '@tsuuanmi/system-browser-patchright'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
 import { dshHome, sqliteRuntimeProblem } from '@tsuuanmi/system-libs'
+import { parse as parseYaml } from 'yaml'
 
 const require = createRequire(import.meta.url)
 const PROFILE = 'system'
@@ -136,6 +137,43 @@ export function parseComposedRows(dump: string): ComposedRow[] {
     else if (/^ {2}disabled: true\b/.test(line) && rows.length) rows.at(-1)!.mounted = false
   }
   return rows
+}
+
+/**
+ * Check the operator's profile against this code before a host starts on it (the update's
+ * preflight): every mounted row's config must pass its plugin's `Config` schema, and a plugin that
+ * exports `checkConfig` (workflow: its configured templates) must find nothing to refuse. The rows
+ * and their config come from the profile as composed now; the plugins from this install's bundle.
+ */
+export async function checkProfile(home: string = dshHome()): Promise<{ rows: number; problems: string[] }> {
+  const dump = spawnSync(process.execPath, [dshBin(), '--profile', PROFILE, '--dump-config'], { env: dshEnv({ ...process.env, DSH_HOME: home }), encoding: 'utf8' })
+  if (dump.error) throw dump.error
+  if (dump.status !== 0) return { rows: 0, problems: [`the profile does not compose: ${dump.stderr.trim().slice(0, 500)}`] }
+  const rows = (parseYaml(dump.stdout) ?? []) as Array<{ id: string; name?: string; config?: unknown; disabled?: boolean }>
+  const fromBundle = createRequire(require.resolve('@tsuuanmi/system-bundle/package.json'))
+  const problems: string[] = []
+  let checked = 0
+  for (const row of rows) {
+    if (row.disabled || !row.name) continue
+    let mod: Record<string, unknown>
+    try {
+      mod = (await import(pathToFileURL(fromBundle.resolve(row.name)).href)) as Record<string, unknown>
+    } catch {
+      continue // a plugin this install does not ship (DSH's own, or a third party's): not ours to check
+    }
+    checked++
+    const plugin = (mod.default ?? mod) as Record<string, unknown>
+    const schema = (plugin.Config ?? mod.Config) as ((value: unknown) => unknown) | undefined
+    try {
+      if (typeof schema === 'function') schema(row.config ?? {})
+    } catch (error) {
+      problems.push(`row ${row.id} (${row.name}): ${(error as Error).message}`)
+      continue
+    }
+    const check = (mod.checkConfig ?? plugin.checkConfig) as ((config: unknown) => string[]) | undefined
+    if (typeof check === 'function') for (const problem of check(row.config ?? {})) problems.push(`row ${row.id} (${row.name}): ${problem}`)
+  }
+  return { rows: checked, problems }
 }
 
 /** The profile's composed rows, as the launcher would mount them now. */
@@ -362,15 +400,47 @@ export async function drainHost(deadlineMs: number, options: { call?: typeof cal
 }
 
 /**
+ * Why `pid` is not this home's running host, or undefined when it is: its command line must run the
+ * DSH binary with a profile, and its DSH_HOME must be `home` (or unset, for the default home). Read
+ * from `/proc` (Linux); elsewhere nothing is proven, so nothing is stopped.
+ */
+export function hostProcessProblem(pid: number, home: string, proc = '/proc'): string | undefined {
+  let argv: string[]
+  let env: string[]
+  try {
+    argv = readFileSync(join(proc, String(pid), 'cmdline'), 'utf8').split('\0').filter(Boolean)
+    env = readFileSync(join(proc, String(pid), 'environ'), 'utf8').split('\0')
+  } catch {
+    return `it is not running, or not readable under ${proc}`
+  }
+  if (!argv.some((a) => a.endsWith('/@deepseek-ai/dsh/lib/bin.js')) || !argv.includes('--profile')) return 'it does not run a DSH profile'
+  const own = env.find((v) => v.startsWith('DSH_HOME='))?.slice('DSH_HOME='.length)
+  const resolved = (p: string): string => resolve(p).replace(/\/$/, '')
+  if (own ? resolved(own) !== resolved(home) : resolved(home) !== resolved(join(homedir(), '.dsh'))) return `its DSH_HOME is ${own ?? 'the default'}, not ${home}`
+  return undefined
+}
+
+/**
  * Stop the running profile: drain first (REQ-HOST-1), then SIGTERM its process and wait for it to
  * exit. Runs still executing at the deadline are not lost: they resume on the next start.
  */
-export async function shutdownHost(deadlineMs: number, options: { home?: string; call?: typeof callTool; pollMs?: number; onActive?: (active: string[]) => void } = {}): Promise<{ drained: boolean; active: string[]; pid: number }> {
-  const path = join(options.home ?? dshHome(), 'system', 'mcp.json')
+export async function shutdownHost(deadlineMs: number, options: { home?: string; call?: typeof callTool; pollMs?: number; onActive?: (active: string[]) => void; proc?: string } = {}): Promise<{ drained: boolean; active: string[]; pid: number; undrained?: string }> {
+  const home = options.home ?? dshHome()
+  const path = join(home, 'system', 'mcp.json')
   if (!existsSync(path)) throw new Error(`no discovery file at ${path}; is \`system start\` running?`)
   const { pid } = JSON.parse(readFileSync(path, 'utf8')) as Discovery
   if (!pid) throw new Error(`${path} names no process`)
-  const drained = await drainHost(deadlineMs, options)
+  let drained: { drained: boolean; active: string[]; undrained?: string }
+  try {
+    drained = await drainHost(deadlineMs, options)
+  } catch (error) {
+    // The engine that drains is not running (a plugin failed): nothing of it can be running either,
+    // so the host is stopped without a drain, once its process is proven to be this home's host.
+    if (!/not found|not installed/i.test((error as Error).message)) throw error
+    const problem = hostProcessProblem(pid, home, options.proc)
+    if (problem) throw new Error(`drain is not available (${(error as Error).message}), and process ${pid} is not stopped: ${problem}`)
+    drained = { drained: false, active: [], undrained: (error as Error).message }
+  }
   process.kill(pid, 'SIGTERM')
   const alive = (): boolean => {
     try {

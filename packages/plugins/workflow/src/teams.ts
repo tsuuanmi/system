@@ -13,7 +13,7 @@ import type { ArtifactRef, Tier } from '@tsuuanmi/system-workers-core'
 import type { Engine } from './engine.ts'
 import { append } from './growth.ts'
 import { ballotContract, type ResolvedNode, TEAM_STEPS, type TeamKind, type TeamRole } from './spec.ts'
-import { LEASE_TTL_MS, type NodeRecord, type NodeRow, now, type RunRow, type RunView, WorkflowFailure } from './types.ts'
+import { LEASE_TTL_MS, type NodeRecord, type NodeRow, type RunRow, type RunView, WorkflowFailure } from './types.ts'
 
 export const teamGroup = (runId: string, team: string): string => `team:${runId}:${team}`
 

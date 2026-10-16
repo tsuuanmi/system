@@ -19,9 +19,21 @@ import { decide, expireTie, restriction, runtimeOf, tally, teamGroup, teamPrompt
 import { type Config, errorOf, LEASE_TTL_MS, newId, type NodeHelpers, type NodeRecord, type NodeRow, now, type RunRow, type RunView, type StartInput, type WorkflowError, WorkflowFailure } from './types.ts'
 import { view } from './views.ts'
 
+/** Preflight a template and each of its variants, and check that every result schema it names is known. Throws why. */
+export function checkTemplate(name: string, nodes: NodeTemplate[], schemas: SchemaRegistry): void {
+  resolve(name, nodes, {})
+  // Each variant is a template of its own: check it when the template is added, not at a run's start.
+  for (const variant of variantsOf(nodes)) resolve(name, nodes, { variant })
+  for (const node of nodes) {
+    if (node.resultSchema && !schemas.knows(node.resultSchema)) throw new TypeError(`template ${name}, node ${node.nodeId}: unknown result schema ${node.resultSchema}`)
+  }
+}
+
 export class Engine {
   readonly schemas = new SchemaRegistry()
   readonly templates: Record<string, NodeTemplate[]>
+  /** Configured templates refused at load, with why (health reports them). */
+  readonly refused = new Map<string, string>()
   readonly waiters = new Map<string, Set<() => void>>()
   readonly running = new Map<string, Promise<void>>()
   private readonly rescheduled = new Set<string>()
@@ -37,8 +49,18 @@ export class Engine {
 
   constructor(readonly ctx: Context, readonly config: Config) {
     this.templates = { ...DEFAULT_TEMPLATES, ...config.templates }
-    // Fail at load, not at the first call: every template must pass preflight.
-    for (const [name, nodes] of Object.entries(this.templates)) this.check(name, nodes)
+    // Checked at load, not at the first call. A configured template that fails preflight is refused
+    // alone, with why (INV-2): the engine and every other template keep working, and health names it.
+    for (const [name, nodes] of Object.entries(this.templates)) {
+      try {
+        this.check(name, nodes)
+      } catch (error) {
+        if (!config.templates?.[name]) throw error
+        delete this.templates[name]
+        this.refused.set(name, (error as Error).message)
+        ctx.logger.warn(`workflow: template ${name} is refused: ${(error as Error).message}`)
+      }
+    }
   }
 
   /** The engine stops: runs stay as they are and resume on the next start (a stop is not a failure). */
@@ -60,19 +82,17 @@ export class Engine {
 
   /** Preflight, and every result schema a template names is one the registry holds. */
   check(name: string, nodes: NodeTemplate[]): void {
-    resolve(name, nodes, {})
-    // Each variant is a template of its own: check it when the template is added, not at a run's start.
-    for (const variant of variantsOf(nodes)) resolve(name, nodes, { variant })
-    for (const node of nodes) {
-      if (node.resultSchema && !this.schemas.knows(node.resultSchema)) throw new TypeError(`template ${name}, node ${node.nodeId}: unknown result schema ${node.resultSchema}`)
-    }
+    checkTemplate(name, nodes, this.schemas)
   }
 
   /** Admit a run: validated, hashed, and durable at once; it runs in the background. */
   start(input: StartInput): RunView {
     if (this.draining) throw new WorkflowFailure('overloaded', 'the host is draining for a stop or upgrade; retry after it restarts')
     const nodes = this.templates[input.template]
-    if (!nodes) throw new WorkflowFailure('invalid_input', `unknown workflow template ${input.template}`)
+    if (!nodes) {
+      const refused = this.refused.get(input.template)
+      throw new WorkflowFailure('invalid_input', refused ? `workflow template ${input.template} was refused at load: ${refused}` : `unknown workflow template ${input.template}`)
+    }
     if (!input.input.trim()) throw new WorkflowFailure('invalid_input', 'the input must not be empty')
     const requestKey = input.clientRequestId ? sha256(`workflow\0${input.clientRequestId}`) : null
     const unknown = variantProblem(input.template, nodes, input.variant)

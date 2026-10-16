@@ -224,6 +224,9 @@ importers:
       '@tsuuanmi/system-libs':
         specifier: workspace:*
         version: link:../libs
+      yaml:
+        specifier: 2.9.1
+        version: 2.9.1
     devDependencies:
       '@deepseek-ai/cordis':
         specifier: 4.0.5-alpha.1

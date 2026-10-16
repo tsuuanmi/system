@@ -415,13 +415,23 @@ Prune old backup directories yourself; each one is a full snapshot.
 ## Upgrade with drain
 
 1. `system backup <dir>`.
-2. `system shutdown --deadline 600`. This drains first: no new run is admitted
+2. **Check the profile against the new code** before stopping anything: build
+   the new version in its own checkout, then run its CLI against this home,
+   `node <new checkout>/packages/cli/lib/bin.js check`. It loads every row of
+   the profile as composed now (the operator's patch included) against the new
+   plugins' config schemas and checks, such as a configured workflow template
+   that uses a removed team procedure. It exits 1 and names each problem; fix
+   the patch, and check again until it says `ok`.
+3. `system shutdown --deadline 600`. This drains first: no new run is admitted
    (gateways answer 529 or `response.failed`), and the command waits for runs
    that are executing. Runs still executing at the deadline are durable and
-   resume after the restart.
-3. Update the code, then `pnpm install && pnpm build`, or install the new
+   resume after the restart. When the workflow engine is not running (a plugin
+   failed), there is nothing to drain: the command says so and stops the host
+   directly, once `/proc` shows the discovery file's process is this home's DSH
+   profile; otherwise it stops nothing.
+4. Update the code, then `pnpm install && pnpm build`, or install the new
    packages.
-4. `system start`. Store migrations run forward at start, per owner, each in
+5. `system start`. Store migrations run forward at start, per owner, each in
    one transaction. A run resumes from its durable node records; a submitted
    turn is reconciled, never blindly resent.
 

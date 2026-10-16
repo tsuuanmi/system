@@ -51,6 +51,14 @@ describe('host health (REQ-HOST-6)', () => {
     })
   })
 
+  it('is down when a plugin is not running, and degraded by a refused template, naming each', async () => {
+    expect(await check({ plugins: () => [{ name: 'workflow', state: 'failed', detail: 'node panel: team must be …' }] }, 'plugins'))
+      .toMatchObject({ state: 'down', detail: expect.stringMatching(/^workflow failed: node panel: team must be …/) })
+    expect((await healthReport(base({ plugins: () => [] }))).checks.find((c) => c.name === 'plugins')).toMatchObject({ state: 'ok' })
+    expect(await check({ templates: () => [{ name: 'panel-led', reason: 'node panel: team must be {kind: …}' }] }, 'templates'))
+      .toMatchObject({ state: 'degraded', detail: '1 configured template(s) refused, every other one works: panel-led (node panel: team must be {kind: …})' })
+  })
+
   it('counts a reported drift and the turn it failed as one change', async () => {
     const events = (type: string) => (type === 'ui.drift'
       ? [{ data: { provider: 'gemini-web', element: 'temporary.enable', kind: 'postcondition', candidate: -1, mapHash: 'sha256:aa' } }]

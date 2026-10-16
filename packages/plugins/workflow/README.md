@@ -67,6 +67,11 @@ second execution path (INV-1).
     - exactly one final node, whose result is the run's;
     - `differentFrom` names only other, non-team nodes;
     - a team node has no `differentFrom`, `grows`, or `resultSchema`.
+  - A configured template that fails its check is refused alone, with why: it
+    is not served, `refusedTemplates()` lists it (health shows it as
+    `templates`), and starting it says why. The engine and every other template
+    keep working (INV-2). `checkConfig(config)` runs the same checks without a
+    host, for `system check` before an update's restart.
   - At `start`, every node's acceptance contract must be registered with
     `ctx.workers`; otherwise the run is refused before anything is sent.
 - **Start (admission).**

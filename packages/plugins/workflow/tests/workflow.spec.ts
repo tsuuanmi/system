@@ -173,6 +173,17 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
     expect(fake.sent[1]!.conversationId).toBe(fake.sent[0]!.conversationId ?? [...fake.conversations.keys()][0])
   }, 90_000)
 
+  it('refuses a configured template that fails its check, alone: the engine and every other template keep working (INV-2)', async () => {
+    const old = [{ nodeId: 'panel', objective: 'Answer as a panel', prompt: '{{input}}', capabilities: ['reason'], tier: 'standard', conversation: 'temporary',
+      acceptance: 'acceptance.team-synthesis', team: { members: 2, rounds: 2, distinctAccounts: true, lead: {} } }]
+    const { ctx } = await boot({ workflow: { templates: { 'panel-led': old } } })
+    expect(ctx.workflow.refusedTemplates()).toEqual([{ name: 'panel-led', reason: expect.stringMatching(/^node panel: team must be \{kind: brainstorm \| review/) }])
+    expect(ctx.workflow.templateNames()).toEqual(expect.arrayContaining(['ask', 'brainstorm', 'review']))
+    expect(ctx.workflow.templateNames()).not.toContain('panel-led')
+    expect(() => ctx.workflow.start({ template: 'panel-led', input: 'q' })).toThrow(/workflow template panel-led was refused at load: node panel: team must be/)
+    expect((await ctx.workflow.wait(ctx.workflow.start({ template: 'ask', input: 'hi' }).runId, 60_000)).status).toBe('completed')
+  }, 90_000)
+
   it('is idempotent on clientRequestId and refuses an unknown template', async () => {
     const { ctx, fake } = await boot()
     const a = ctx.workflow.start({ template: 'ask', input: 'once', clientRequestId: 'req-1' })

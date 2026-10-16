@@ -15,7 +15,8 @@ import type {} from '@tsuuanmi/system-egress'
 import type {} from '@tsuuanmi/system-event-log'
 import type {} from '@tsuuanmi/system-gateway-core'
 import type {} from '@tsuuanmi/system-store'
-import { Engine } from './engine.ts'
+import { SchemaRegistry } from '@tsuuanmi/system-libs'
+import { checkTemplate, Engine } from './engine.ts'
 import { MIGRATIONS } from './migrations.ts'
 import { approve, continueRun, stop, supersede } from './operator.ts'
 import { deleteRun, purge } from './retention.ts'
@@ -35,6 +36,22 @@ declare module '@deepseek-ai/cordis' {
   interface Context {
     workflow: Workflow
   }
+}
+
+/**
+ * What this code would refuse in a configuration, before a host starts on it (`system check`): each
+ * configured template that fails its check, with why. Empty when the configuration is fine.
+ */
+export function checkConfig(config: Config = {}): string[] {
+  const schemas = new SchemaRegistry()
+  return Object.entries(config.templates ?? {}).flatMap(([name, nodes]) => {
+    try {
+      checkTemplate(name, nodes, schemas)
+      return []
+    } catch (error) {
+      return [`template ${name}: ${(error as Error).message}`]
+    }
+  })
 }
 
 export class Workflow extends Service {
@@ -125,6 +142,11 @@ export class Workflow extends Service {
     return () => {
       if (templates[name] === nodes) delete templates[name]
     }
+  }
+
+  /** Configured templates refused at load, with why: health reports them, and starting one says why. */
+  refusedTemplates(): Array<{ name: string; reason: string }> {
+    return [...this.engine.refused].map(([name, reason]) => ({ name, reason }))
   }
 
   /** The templates served now: built-in, configured, and contributed by profiles. */

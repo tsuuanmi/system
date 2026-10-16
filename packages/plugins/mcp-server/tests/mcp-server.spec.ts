@@ -79,7 +79,8 @@ describe('system MCP server on ctx.webServer', () => {
     const health = async (token: string) => ((await (await connect(url, token)).callTool({ name: 'status', arguments: {} })).structuredContent as { health: Health }).health
     const operator = await health(tokens.operator)
     const client = await health(tokens.client)
-    expect(operator.checks.map((c) => c.name)).toEqual(['runtime', 'store', 'disk'])
+    expect(operator.checks.map((c) => c.name)).toEqual(['plugins', 'runtime', 'store', 'disk'])
+    expect(operator.checks[0]).toMatchObject({ name: 'plugins', state: 'ok' })
     expect(operator.checks.find((c) => c.name === 'store')).toMatchObject({ state: 'ok' })
     expect(client.state).toBe(operator.state)
     // A client sees which checks are ok, never versions, paths, sizes, or names.
@@ -112,6 +113,17 @@ describe('system MCP server on ctx.webServer', () => {
     expect(await operator.callTool({ name: 'evidence', arguments: { id: report.id } })).toMatchObject({ isError: true })
     const client = await connect(url, tokens.client)
     expect((await client.listTools()).tools.map((t) => t.name)).not.toContain('evidence')
+  })
+
+  it('reports health down, naming the plugin, when a plugin failed to activate or waits for a service no one supplies (M6b)', async () => {
+    const { url, tokens, ctx } = await boot()
+    const broken = ctx.plugin({ name: 'broken-plugin', apply: () => { throw new Error('bad config') } } as never, {} as never)
+    const waiting = ctx.plugin({ name: 'waiting-plugin', inject: ['nowhere'], apply: () => {} } as never, {} as never)
+    await Promise.resolve(broken).catch(() => undefined)
+    cleanups.push(() => broken.dispose(), () => waiting.dispose())
+    const health = ((await (await connect(url, tokens.operator)).callTool({ name: 'status', arguments: {} })).structuredContent as { health: { state: string; checks: Array<{ name: string; state: string; detail: string }> } }).health
+    expect(health.state).toBe('down')
+    expect(health.checks.find((c) => c.name === 'plugins')).toMatchObject({ state: 'down', detail: expect.stringMatching(/broken-plugin failed: bad config; waiting-plugin pending: waiting for service nowhere/) })
   })
 
   it('answers liveness at /healthz with no token and no data', async () => {
