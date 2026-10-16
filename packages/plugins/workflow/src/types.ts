@@ -111,8 +111,10 @@ export interface Config {
   maxAttempts?: number
   /** First back-off delay; doubles per attempt (default 5 s). */
   retryDelayMs?: number
-  /** Unfinished runs accepted at once (default 16); more are refused (INV-9). */
+  /** Unfinished runs that execute at once (default 16); more are refused (INV-9). A run waiting only on an approval or a vote is not one. */
   maxActiveRuns?: number
+  /** Runs waiting only on an approval or a vote, beyond `maxActiveRuns` (default 16): with that many, new runs are refused (INV-9). */
+  maxWaitingRuns?: number
   /** A finished run's input text and prompts are cleared after this many days (default 30); the run stays. */
   retainDays?: number
   /** Days a finished run is kept, then deleted with what only it needed; 0 keeps every run (default 0). */

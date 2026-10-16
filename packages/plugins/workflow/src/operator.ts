@@ -260,7 +260,8 @@ export function approve(e: Engine, runId: string, input: { verdict: 'approved' |
   if (!lease) throw new WorkflowFailure('overloaded', `run ${runId} is busy; retry in a moment`)
   try {
     // Read under the run's lease: nothing else decides or adds a gate meanwhile.
-    const waiting = run.status === 'running' ? e.nodeRows(runId).filter((n) => n.state === 'BLOCKED') : []
+    // A tie is BLOCKED too, but waits on a `vote`, not on an approval.
+    const waiting = run.status === 'running' ? e.nodeRows(runId).filter((n) => n.state === 'BLOCKED' && (JSON.parse(n.spec) as ResolvedNode).executor === 'gate') : []
     const planOf = (n: NodeRow): string => String((JSON.parse(n.spec) as ResolvedNode).plan)
     const gate = input.plan ? waiting.find((n) => planOf(n) === input.plan) : waiting.length === 1 ? waiting[0] : undefined
     if (!gate) {

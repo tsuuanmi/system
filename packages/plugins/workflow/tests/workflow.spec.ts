@@ -414,6 +414,8 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
     const first = ctx.artifacts.list({ kind: 'decision', runId: run.runId }).find((a) => (a.body as { decisionType: string; outcome: { option: string } }).outcome.option === 'debate')!.id
     expect(() => ctx.workflow.vote(run.runId, { decision: first, option: 'O1', rationale: 'r', by: 'client' })).toThrow(`run ${run.runId} waits on tie ${tie.decision}`)
     expect(() => ctx.workflow.vote(run.runId, { decision: tie.decision, option: 'O3', rationale: 'r', by: 'client' })).toThrow('option O3 is not one of O1, O2, or inconclusive')
+    // A tie waits on a vote, never on an approval.
+    expect(() => ctx.workflow.approve(run.runId, { verdict: 'approved' })).toThrow(`run ${run.runId} is not waiting for approval`)
     const voted = await client.callTool({ name: 'vote', arguments: { runId: run.runId, decision: tie.decision, option: 'O2', rationale: 'The tests matter more than a week' } })
     expect(voted.isError).toBeFalsy()
     const done = await ctx.workflow.wait(run.runId, 30_000)
@@ -474,6 +476,42 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
     // An uncapped 720 h timer fires at once in Node, and the run would advance again and again.
     expect(holds).toEqual([])
   }, 180_000)
+
+  it('routes a node that must differ beside the node it names, even when it is listed first (ADR-0027)', async () => {
+    const step = { objective: 'o', prompt: '{{input}}', capabilities: ['reason'], tier: 'standard' as const, conversation: 'temporary' as const, acceptance: 'acceptance.answer' }
+    const pair = [{ ...step, nodeId: 'b', differentFrom: ['a'] }, { ...step, nodeId: 'a' }, { ...step, nodeId: 'join', dependsOn: ['a', 'b'] }]
+    const { ctx } = await boot({ fake: { thinkMs: 4000 }, gemini: {}, workflow: { templates: { pair } } })
+    const run = ctx.workflow.start({ template: 'pair', input: 'q' })
+    const state = (id: string): string => ctx.workflow.get(run.runId)!.nodes.find((n) => n.nodeId === id)!.state
+    await until(() => state('b') !== 'READY' && state('b') !== 'WAITING', 60_000)
+    // b waited one routing turn for a's Worker, not for a's whole execution.
+    expect(state('a')).toBe('RUNNING')
+    expect(await ctx.workflow.wait(run.runId, 60_000)).toMatchObject({ status: 'completed' })
+    const workers = Object.fromEntries(ctx.workflow.get(run.runId)!.nodes.map((n) => [n.nodeId, n.worker]))
+    expect(workers.a?.split('/')[0]).not.toBe(workers.b?.split('/')[0])
+  }, 120_000)
+
+  it('admits new work beside a run that only waits on a vote, and bounds such runs on their own (INV-9)', async () => {
+    const { ctx } = await boot({
+      fake: { answer: (prompt) => (isProposal(prompt) ? proposal('A') : kind(prompt) === 'other' ? 'Plain answer.' : ballot('O1')) },
+      gemini: { answer: (prompt) => (isProposal(prompt) ? proposal('B') : ballot('O2')) },
+      workflow: { maxActiveRuns: 1, maxWaitingRuns: 1 },
+    })
+    const tied = ctx.workflow.start({ template: 'brainstorm', input: 'q' })
+    expect((await ctx.workflow.wait(tied.runId, 120_000)).blocked).toMatchObject({ kind: 'tie' })
+    // The tie runs nothing, so it holds no slot of the one run that may execute.
+    const asked = ctx.workflow.start({ template: 'ask', input: 'an unrelated question' })
+    expect(() => ctx.workflow.start({ template: 'ask', input: 'one more' })).toThrow('1 runs are already executing (limit 1)')
+    expect(await ctx.workflow.wait(asked.runId, 60_000)).toMatchObject({ status: 'completed', answer: 'Plain answer.' })
+    // Waiting runs have their own bound: a second tie fills it, and new work is refused, saying why.
+    const second = ctx.workflow.start({ template: 'brainstorm', input: 'q2' })
+    expect((await ctx.workflow.wait(second.runId, 120_000)).blocked).toMatchObject({ kind: 'tie' })
+    expect(() => ctx.workflow.start({ template: 'ask', input: 'blocked' })).toThrow('2 runs wait on an approval or a vote (limit 1)')
+    // A deciding vote frees one.
+    ctx.workflow.vote(tied.runId, { decision: (ctx.workflow.get(tied.runId)!.blocked as Extract<RunView['blocked'], { kind: 'tie' }>).decision, option: 'O1', rationale: 'r', by: 'client' })
+    expect(await ctx.workflow.wait(tied.runId, 60_000)).toMatchObject({ status: 'completed' })
+    expect(ctx.workflow.start({ template: 'ask', input: 'after the vote' }).status).toBe('running')
+  }, 300_000)
 
   it('decides a review changes by a confirmed blocking finding, whatever the ballots; the deciding finding and each member\'s stance come first (PROP-0004 Phase 4)', async () => {
     const material = 'Review this change:\nfunction f() {\n  const lease = acquire()\n  work()\n}'

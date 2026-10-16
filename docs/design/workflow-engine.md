@@ -31,6 +31,14 @@ Lifecycle: `draft → preflight → confirm → accepted → active`.
   to the profile version. A run keeps its resolved spec, so a template removed
   later still answers `explain` and `result` for the runs it started; a new run
   of it is refused as an unknown template.
+- Two bounds admit a run (INV-9). Both refuse with `overloaded` and say which one was hit.
+  - `maxActiveRuns` bounds the unfinished runs that execute.
+  - A run whose only unfinished work waits on someone is not one of them. Such a run has a
+    `BLOCKED` node (a gate's approval or a tie's vote) and no `READY` or `RUNNING` node.
+    These runs count against `maxWaitingRuns`: with `maxActiveRuns + maxWaitingRuns`
+    unfinished runs in all, no new run is admitted.
+  - An approval or a vote is never refused to free a slot. A run it resumes can push the
+    executing runs above `maxActiveRuns` until they finish, never above the sum.
 
 ### Variants
 
@@ -141,8 +149,11 @@ stateDiagram-v2
   RETIRED --> [*]
 ```
 
-A scheduler exception moves the run to `BLOCKED` with `CODE_FIX_REQUIRED`. It
-never crash-loops.
+A scheduler exception while a node executes fails that node as `internal` with
+disposition `CODE_FIX`, and the run fails on it. Once the code is fixed, the operator's
+`continue` reopens the node. It never crash-loops. A node whose Worker source is no longer
+registered (its row was turned off) fails as `config_error`. It is continued once the row is
+back on. Its execution is never guessed at.
 
 ## Graph growth
 

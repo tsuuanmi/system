@@ -342,7 +342,8 @@ No options.
 | `templates` | Record<string, object[]> | `{}` | Workflow templates by name, added to the built-in ones (a same-named one replaces it) |
 | `maxAttempts` | number (1…10) | `3` | Attempts per node for retryable failures |
 | `retryDelayMs` | number (0…) | `5000` | First back-off delay, doubled per attempt |
-| `maxActiveRuns` | number (1…) | `16` | Unfinished runs accepted at once |
+| `maxActiveRuns` | number (1…) | `16` | Unfinished runs that execute at once; a run waiting only on an approval or a vote is not one |
+| `maxWaitingRuns` | number (0…) | `16` | Runs waiting only on an approval or a vote, beyond maxActiveRuns; with that many, new runs are refused |
 | `retainDays` | number (1…) | `30` | Days a finished run keeps its input text and prompts |
 | `retainRunsDays` | number (0…) | `0` | Days a finished run is kept, then deleted with the artifacts only it needed (0: every run is kept); a session's latest run always stays |
 | `autoApprovePlans` | boolean | `false` | Approve a high-confidence plan by policy instead of waiting for the operator |

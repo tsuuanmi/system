@@ -54,8 +54,9 @@ Every scheduled unit holds a lease `{ owner, generation, expiresAt, signal }`.
   lease can be taken, so it is never stranded until the next start.
 - Workflow executions use the same lease primitive with heartbeats. Target: on
   startup, a `RUNNING` node with an expired lease or a foreign owner moves to
-  `RECOVERING`. Today a run advances under a `run:<id>` lease; a lost lease re-arms
-  the run, and on start unfinished runs resume while the turn runtime reconciles
+  `RECOVERING`. Today a run advances under a `run:<id>` lease. A lost lease re-arms
+  the run, whether a fenced write throws or the `lost` signal ends a node's wait
+  for its execution. On start unfinished runs resume while the turn runtime reconciles
   their turns.
 
 Fences are required only where an old execution can race a new one. They are not

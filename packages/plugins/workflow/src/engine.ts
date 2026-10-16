@@ -113,9 +113,16 @@ export class Engine {
           return view(this, existing)
         }
       }
-      const active = (db.prepare("SELECT COUNT(*) AS n FROM workflow_runs WHERE status = 'running'").get() as { n: number }).n
+      // A run that only waits on someone (a gate's approval, a tie's vote) runs nothing: it counts
+      // against its own bound, not against the runs that execute (INV-9).
+      const { total, waiting } = db.prepare(`SELECT COUNT(*) AS total, COALESCE(SUM(
+          EXISTS (SELECT 1 FROM workflow_nodes n WHERE n.run_id = r.run_id AND n.state = 'BLOCKED')
+          AND NOT EXISTS (SELECT 1 FROM workflow_nodes n WHERE n.run_id = r.run_id AND n.state IN ('READY', 'RUNNING'))), 0) AS waiting
+        FROM workflow_runs r WHERE r.status = 'running'`).get() as { total: number; waiting: number }
       const limit = this.config.maxActiveRuns ?? 16
-      if (active >= limit) throw new WorkflowFailure('overloaded', `${active} runs are already active (limit ${limit}); retry later`)
+      const waitLimit = this.config.maxWaitingRuns ?? 16
+      if (total - waiting >= limit) throw new WorkflowFailure('overloaded', `${total - waiting} runs are already executing (limit ${limit}); retry later`)
+      if (total >= limit + waitLimit) throw new WorkflowFailure('overloaded', `${waiting} runs wait on an approval or a vote (limit ${waitLimit}); answer, stop, or let them time out, then retry`)
       // One persistent session per run, opened now so its id is returned at once (REQ-SES-8).
       // Sessions are the engine's: one per run, issued now so its id is returned at once (REQ-SES-8).
       // A run continues an engine session, or a Worker session (a team member's, woken by a message).
@@ -234,6 +241,9 @@ export class Engine {
   }
 
   private async advance(runId: string): Promise<void> {
+    // Ownership lost mid-advance (a host that slept past the lease, or a takeover): look again once
+    // the lease can be taken, so the run is never stranded until the next start.
+    let retake = false
     const outcome = await this.ctx.leases.hold(`run:${runId}`, LEASE_TTL_MS, async ({ lease: current, lost }) => {
       const operator = new AbortController()
       this.runAborts.set(runId, operator)
@@ -297,13 +307,22 @@ export class Engine {
             }
             return this.finish(run, 'failed', { error: JSON.stringify({ kind: 'internal', disposition: 'CODE_FIX', message: 'no node can run' }) }, current)
           }
-          const outcomes = await Promise.all(active.map(async (node) => {
-            const key = `${run.run_id}\0${node.node_id}`
-            this.executing.add(key)
+          // All of them are executing before any routes, so a node that must differ from one listed
+          // after it waits for that one's routing instead of deferring past it (ADR-0027).
+          const keys = active.map((node) => `${run.run_id}\0${node.node_id}`)
+          for (const key of keys) this.executing.add(key)
+          const outcomes = await Promise.all(active.map(async (node, i) => {
             try {
               return await this.execute(run, node, current, signal)
+            } catch (error) {
+              if (signal.aborted || error instanceof LeaseLost || error instanceof StaleGeneration) throw error
+              // A scheduler exception fails the node it happened on, for a code fix: the run then
+              // fails on that node, and `continue` reopens it once fixed. It never crash-loops.
+              const row = this.nodeRow(run.run_id, node.node_id)
+              if (!row || (row.state !== 'READY' && row.state !== 'RUNNING')) throw error
+              failAttempt(this, run, row, { kind: 'internal', disposition: 'CODE_FIX', message: (error as Error).message }, { sent: !!row.execution_id }, current)
             } finally {
-              this.executing.delete(key)
+              this.executing.delete(keys[i]!)
             }
           }))
           // Every node deferred to a peer that is not running (it backs off): look again shortly.
@@ -312,19 +331,21 @@ export class Engine {
       } catch (error) {
         if (this.stopped.signal.aborted || operator.signal.aborted) return
         if (lost.aborted || error instanceof LeaseLost || error instanceof StaleGeneration) {
-          // Ownership was lost (a host that slept past the lease, or a takeover): look again
-          // once the lease can be taken, so the run is never stranded until the next start.
-          this.retryLater(runId, 1000)
+          retake = true
           return
         }
         // A scheduler exception blocks the run for a code fix; it never crash-loops.
         const run = this.runRow(runId)
         if (run?.status === 'running') this.finish(run, 'failed', { error: JSON.stringify({ kind: 'internal', disposition: 'CODE_FIX', message: (error as Error).message }) }, current)
       } finally {
+        // A lost lease ends the advance without an exception as well: a node waiting on its
+        // execution returns once the signal aborts.
+        if (lost.aborted && !this.stopped.signal.aborted && !operator.signal.aborted) retake = true
         if (this.runAborts.get(runId) === operator) this.runAborts.delete(runId)
       }
     })
     if (!outcome.held) this.retryLater(runId, outcome.retryInMs)
+    else if (retake) this.retryLater(runId, 1000)
   }
 
   /** WAITING → READY: render the input from the dependencies' results and bind it by hash. */
@@ -487,8 +508,10 @@ export class Engine {
     }
     const source = node.source ? this.ctx.workers.source(node.source) : undefined
     if (!source) {
-      // The Worker's runtime is not loaded now; look again later instead of guessing.
-      throw new Error(`Worker source ${node.source ?? '(none)'} of node ${node.node_id} is not registered`)
+      // The Worker's runtime is not loaded now (its row was turned off): the node fails for the
+      // operator, who turns the row back on and continues it. Its execution is never guessed at.
+      return failAttempt(this, run, node, { kind: 'config_error', disposition: dispositionOf('config_error'),
+        message: `Worker source ${node.source ?? '(none)'} of node ${node.node_id} is not registered; turn its row back on, then continue the run` }, { sent: true }, lease)
     }
     let current = source.get(node.execution_id!)
     const stop = aborted(signal)
