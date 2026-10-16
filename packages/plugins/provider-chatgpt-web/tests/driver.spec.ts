@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import { Context } from '@deepseek-ai/cordis'
 import Providers from '@tsuuanmi/system-providers'
 import { ProviderError } from '@tsuuanmi/system-provider-core'
-import { loadUiMap } from '@tsuuanmi/system-ui-ops'
+import { type DriftEvent, loadUiMap } from '@tsuuanmi/system-ui-ops'
 import type { Browser, BrowserContext, Page } from 'patchright-core'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { canRunBrowser, launchTestBrowser } from '../../browser-patchright/tests/support.ts'
@@ -253,6 +253,20 @@ describe.runIf(canRunBrowser)('ChatGptWebDriver against the fake site, with no r
     expect(turn.text).toBe('healed')
     expect(fake.sent).toHaveLength(1)
     expect(heals).toEqual([expect.objectContaining({ element: 'composer.send', outcome: 'healed' })])
+  }, 40_000)
+
+  it('reports a Send button found only by a later candidate, with an outline of the composer: its structure, never the prompt', async () => {
+    const { fake, page, driver } = await site({ sendLabel: 'Submit message', sendTestId: 'send-button', answer: 'ok' })
+    const drift: DriftEvent[] = []
+    driver.onDrift = (event) => drift.push(event)
+    expect((await driver.ask(page, 'my private question', { conversation: 'temporary' })).text).toBe('ok')
+    expect(fake.sent).toHaveLength(1)
+    expect(drift).toEqual([expect.objectContaining({ provider: 'chatgpt-web', element: 'composer.send', kind: 'fallback', candidate: 1 })])
+    const nodes = drift[0]!.outline!.nodes
+    expect(nodes).toEqual(expect.arrayContaining([
+      expect.objectContaining({ tag: 'button', label: 'Submit message', testid: 'send-button' }),
+    ]))
+    expect(JSON.stringify(drift[0]!.outline)).not.toContain('private question')
   }, 40_000)
 
   it('fails closed as reauth_required when signed out', async () => {

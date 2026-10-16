@@ -4,7 +4,10 @@
  */
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
+import type {} from '@tsuuanmi/system-artifacts'
+import type {} from '@tsuuanmi/system-event-log'
 import type { ProviderMode } from '@tsuuanmi/system-provider-core'
+import { driftData } from '@tsuuanmi/system-ui-ops'
 import { GeminiWebDriver } from './driver.ts'
 
 export { GeminiWebDriver, shippedMap } from './driver.ts'
@@ -39,9 +42,12 @@ export const Config: z<Config> = z.object({
 })
 
 export function apply(ctx: Context, config: Config = {}): void {
-  ctx.providers.register(new GeminiWebDriver({
+  const driver = new GeminiWebDriver({
     ...(config.origin ? { origin: config.origin } : {}),
     modes: config.modes ?? DEFAULT_MODES,
     defaultMode: config.defaultMode ?? 'flash',
-  }))
+  })
+  // A stale element, with the outline of its region as local-private evidence (docs/design/ui-operations.md#drift-evidence).
+  driver.onDrift = (e) => ctx.get('eventLog')?.append({ type: 'ui.drift', data: driftData(e, ctx.get('artifacts')) })
+  ctx.providers.register(driver)
 }

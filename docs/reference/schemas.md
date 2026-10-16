@@ -230,3 +230,16 @@ guesses.
 - `ui-map@1.1` adds the optional element field `frames` (`main` or `any`).
   Elements with `frames: any` are searched in every frame and take no `scope`.
   Readers accept 1.0 and 1.1.
+
+### `ui-outline`
+
+- The body of a local-private `evidence` artifact that a `ui.drift` event names
+  ([drift evidence](../design/ui-operations.md#drift-evidence)). Only the operator
+  reads it (`system evidence`).
+- Structure only: per node, the tag, role, `aria-label` (never a link's),
+  `aria-*` states, test id, names of other `data-*` attributes, id, up to five
+  classes, `editable`, and the visible text **length**. Never text, input values,
+  or URLs.
+- `depth` counts kept nodes only; `repeat` counts like siblings folded into the
+  node. At most 200 nodes; `truncated` says the bound cut it short.
+- Example: [ui-outline.composer.json](../../schemas/examples/ui-outline.composer.json).

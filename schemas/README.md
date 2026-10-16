@@ -21,6 +21,7 @@ each field, which a schema cannot fully express, is documented in
 | [provider-turn-receipt.v1.json](provider-turn-receipt.v1.json) | body of a provider turn `receipt` artifact |
 | [worker-session.v1.json](worker-session.v1.json) | durable Worker session with its own `SessionId` ([ADR-0015](../docs/decisions/adr/0015-worker-sessions-and-peer-messaging.md)) |
 | [session-summary.v1.json](session-summary.v1.json) | body of a Worker session's `report` checkpoint or `handoff` compaction artifact |
+| [ui-outline.v1.json](ui-outline.v1.json) | body of a local-private `evidence` artifact: the structure of a page region a `ui.drift` event names, never its text |
 | [message.v1.json](message.v1.json) | body of a `message` artifact sent directly between sessions |
 | [event.v1.json](event.v1.json) | one entry of the append-only event log (`ctx.eventLog`); event types are dotted names such as `ui.heal` |
 | [lease.v1.json](lease.v1.json) | a held lease (`ctx.leases`): resource, owner, token, monotonic generation, expiry |

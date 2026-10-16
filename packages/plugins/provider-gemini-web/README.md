@@ -63,7 +63,10 @@ driver, its operations are data: a UI map,
 - **Readiness:** pages get 60 s to render, since the live app took over 30 s
   several times. A conversation that does not open in time fails before
   sending, or is reported as not observed.
-- **No self-heal.** A drifted element fails closed until the map is updated.
+- **No self-heal.** A drifted element fails closed until the map is updated. A
+  stale element is logged as `ui.drift`, naming its region's outline, kept as
+  local-private evidence
+  ([drift evidence](../../../docs/design/ui-operations.md#drift-evidence)).
 - **Fixtures:** [`fixtures/fake-gemini.ts`](fixtures/fake-gemini.ts) is a local
   stand-in built from the signed-in page read live on 2026-10-12, with no
   private data. It reproduces the live traps:

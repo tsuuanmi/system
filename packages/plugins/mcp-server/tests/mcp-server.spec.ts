@@ -66,7 +66,7 @@ describe('system MCP server on ctx.webServer', () => {
     expect(statSync(join(dir, 'mcp.json')).mode & 0o777).toBe(0o600)
     const client = await connect(url, token)
     const { tools } = await client.listTools()
-    expect(tools.map((tool) => tool.name).sort()).toEqual(['ask', 'events', 'research', 'result', 'status'])
+    expect(tools.map((tool) => tool.name).sort()).toEqual(['ask', 'events', 'evidence', 'research', 'result', 'status'])
     const status = await client.callTool({ name: 'status', arguments: {} })
     expect(status.structuredContent).toMatchObject({ harness: 'system', store: 'ok', artifacts: 0, kernel: ['store', 'artifacts'] })
     // No milestone baked into the code: status reports what is mounted, not a roadmap stage.
@@ -100,6 +100,18 @@ describe('system MCP server on ctx.webServer', () => {
     expect((await read({ type: 'a.three' })).events).toHaveLength(1)
     const client = await connect(url, tokens.client)
     expect((await client.listTools()).tools.map((t) => t.name)).not.toContain('events')
+  })
+
+  it('shows drift evidence to the operator only, and nothing but evidence (INV-12, ADR-0023)', async () => {
+    const { url, tokens, ctx } = await boot()
+    const outline = { schema: 'ui-outline@1.0', root: 'body', truncated: false, nodes: [{ depth: 0, tag: 'body', text: 3 }] }
+    const evidence = ctx.artifacts.put({ kind: 'evidence', bodySchema: 'ui-outline@1.0', body: outline, classification: 'local-private', producer: { type: 'system', ref: 'ui-ops/test' } })
+    const report = ctx.artifacts.put({ kind: 'report', bodySchema: 'ui-outline@1.0', body: outline, classification: 'local-private', producer: { type: 'system', ref: 'test' } })
+    const operator = await connect(url, tokens.operator)
+    expect((await operator.callTool({ name: 'evidence', arguments: { id: evidence.id } })).structuredContent).toMatchObject({ id: evidence.id, bodySchema: 'ui-outline@1.0', body: outline })
+    expect(await operator.callTool({ name: 'evidence', arguments: { id: report.id } })).toMatchObject({ isError: true })
+    const client = await connect(url, tokens.client)
+    expect((await client.listTools()).tools.map((t) => t.name)).not.toContain('evidence')
   })
 
   it('answers liveness at /healthz with no token and no data', async () => {
@@ -161,7 +173,7 @@ describe('scoped tokens', () => {
     expect((await client.listTools()).tools.map((t) => t.name).sort()).toEqual(['ask', 'cl_tool', 'research', 'result', 'status'])
     const operator = await connect(url, tokens.operator)
     const listed = (await operator.listTools()).tools
-    expect(listed.map((t) => t.name).sort()).toEqual(['ask', 'cl_tool', 'events', 'op_only', 'research', 'result', 'status'])
+    expect(listed.map((t) => t.name).sort()).toEqual(['ask', 'cl_tool', 'events', 'evidence', 'op_only', 'research', 'result', 'status'])
     // The reference page shows each tool's scope from the listing.
     expect(listed.find((t) => t.name === 'op_only')?._meta).toMatchObject({ 'system/scope': 'operator' })
     expect(listed.find((t) => t.name === 'cl_tool')?._meta).toMatchObject({ 'system/scope': 'client' })

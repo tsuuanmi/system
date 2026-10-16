@@ -29,6 +29,7 @@ const USAGE = `Usage: system <command>
                             replace a completed step's result; everything downstream runs again
   usage [<limit>]           recent runs: per step, the Worker, tier, and quota class used
   explain <runId|artifact>  the decision chain behind a run (egress, tier, route, acceptance)
+  evidence <id>             the page outline a ui.drift event names (structure, never text; local-private)
   model key <NAME>          store a model route's API key from stdin, encrypted, under the
                             credential reference its apiKeyEnv names
   account list              list provider accounts and their status (profile must be running)
@@ -377,6 +378,13 @@ async function main(argv: string[]): Promise<number> {
       if (outcome.isError) throw new Error(outcome.text)
       const page = outcome.structured as { events: EventLine[]; next: number }
       console.log(rest.includes('--json') ? JSON.stringify(page, null, 2) : [...formatEvents(page.events), `next: --after ${page.next}`].join('\n'))
+      return 0
+    }
+    case 'evidence': {
+      if (!rest[0]) break
+      const outcome = await callTool('evidence', { id: rest[0] })
+      if (outcome.isError) throw new Error(outcome.text)
+      console.log(JSON.stringify(outcome.structured, null, 2))
       return 0
     }
     case 'health': {

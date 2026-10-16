@@ -250,6 +250,21 @@ export class McpEndpoint extends McpTools {
         return { content: [{ type: 'text', text: JSON.stringify(page) }], structuredContent: page }
       },
     })
+    // Drift evidence for the operator: a local-private outline of a page region, which no client scope reads (INV-12).
+    this.tools.set('evidence', {
+      placeholder: false,
+      spec: {
+        scope: 'operator',
+        description: 'Read a drift evidence artifact (the outline a ui.drift event names): the structure of a page region, never its text. Local-private: the operator\'s alone.',
+        inputSchema: { id: zod.string().max(200).describe('The evidence artifact id from a ui.drift event\'s outline') },
+      },
+      handler: async (args) => {
+        const envelope = this.ctx.get('artifacts')?.get(String(args.id))
+        if (!envelope || envelope.kind !== 'evidence') return { isError: true, content: [{ type: 'text', text: `no evidence artifact ${String(args.id)}` }] }
+        const evidence = { id: envelope.id, bodySchema: envelope.bodySchema, createdAt: envelope.createdAt, body: envelope.body }
+        return { content: [{ type: 'text', text: JSON.stringify(evidence) }], structuredContent: evidence }
+      },
+    })
     const notInstalled: ToolHandler = async () => ({ isError: true, content: [{ type: 'text', text: NOT_INSTALLED }] })
     const session = { sessionId: zod.string().max(200).optional().describe('Continue an existing system session') }
     const idempotency = { clientRequestId: zod.string().max(200).optional().describe('Retry-safe request key') }

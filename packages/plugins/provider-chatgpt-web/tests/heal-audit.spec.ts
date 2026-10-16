@@ -24,8 +24,8 @@ describe.runIf(canRunBrowser)('self-heal is audited (INV-13) and persisted to th
     while (cleanups.length) await cleanups.pop()!()
   })
 
-  async function boot(withAudit: boolean) {
-    const fake = new FakeChatGpt({ sendLabel: 'Submit message', answer: 'healed' })
+  async function boot(withAudit: boolean, sendTestId = '') {
+    const fake = new FakeChatGpt({ sendLabel: 'Submit message', sendTestId, answer: 'healed' })
     await fake.start()
     const dir = mkdtempSync(join(tmpdir(), 'system-heal-'))
     const ctx = new Context()
@@ -50,6 +50,16 @@ describe.runIf(canRunBrowser)('self-heal is audited (INV-13) and persisted to th
     expect(statSync(overlay).mode & 0o777).toBe(0o600)
     expect(readFileSync(overlay, 'utf8')).toMatch(/composer\.send:[\s\S]*Submit message/)
     expect(ctx.eventLog.query({ limit: 10 }).map((e) => e.type)).toContain('ui.heal')
+  }, 60_000)
+
+  it('logs a stale element as ui.drift, its region\'s outline kept as local-private evidence (drift evidence, INV-12)', async () => {
+    const { ctx, page, driver } = await boot(true, 'send-button')
+    await driver.ask(page, 'my private question', { conversation: 'temporary' })
+    const [event] = ctx.eventLog.query({ type: 'ui.drift', limit: 10 })
+    expect(event!.data).toMatchObject({ provider: 'chatgpt-web', element: 'composer.send', kind: 'fallback', candidate: 1, outline: expect.stringMatching(/^sha256:/) })
+    const evidence = ctx.artifacts.get(String(event!.data!.outline))!
+    expect(evidence).toMatchObject({ kind: 'evidence', bodySchema: 'ui-outline@1.0', classification: 'local-private', body: { root: 'parent of composer.send' } })
+    expect(JSON.stringify(evidence.body)).not.toContain('private question')
   }, 60_000)
 
   it('does not heal without a decision store; the fallback key still sends', async () => {

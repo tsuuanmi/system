@@ -8,3 +8,4 @@ export { type HealThresholds, type Scored, type SnapshotNode, choose, parseAiSna
 export { candidateFromLocator, localizedRegex, toLocator } from './locate.ts'
 export { type ActionSpec, type Candidate, type Condition, type ElementSpec, type ErrorRule, type Fingerprint, type Localized, type NetworkPattern, type SideEffect, type SourcedCandidate, type UiMap, appendOverlay, loadUiMap } from './map.ts'
 export { NetworkObserver } from './network.ts'
+export { driftData, type EvidenceStore, OUTLINE_LIMITS, type OutlineNode, outlineOf, type UiOutline } from './outline.ts'

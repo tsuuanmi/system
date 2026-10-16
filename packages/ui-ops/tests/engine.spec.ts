@@ -166,11 +166,51 @@ describe.runIf(canRunBrowser)('UiEngine on a real page', { timeout: 15_000 }, ()
     expect(drift).toEqual([])
   })
 
-  it('falls back to the next candidate and reports drift', async () => {
-    const { engine, drift } = await open(RENAMED_TESTID)
+  it('falls back to the next candidate and reports drift, with an outline of the found element\'s parent: structure, never text', async () => {
+    const { engine, drift } = await open(RENAMED_TESTID.replace('<div contenteditable', '<div contenteditable data-secret-note="x"').replace('role="textbox"></div>', 'role="textbox">my private draft</div>'))
     const send = await engine.resolve('composer.send')
     expect(send.candidate).toBe(1)
-    expect(drift).toEqual([expect.objectContaining({ element: 'composer.send', candidate: 1 })])
+    expect(drift).toEqual([expect.objectContaining({ element: 'composer.send', kind: 'fallback', candidate: 1, source: 'shipped' })])
+    const outline = drift[0]!.outline!
+    expect(outline).toMatchObject({ schema: 'ui-outline@1.0', root: 'parent of composer.send', truncated: false })
+    expect(outline.nodes).toEqual([
+      { depth: 0, tag: 'form', data: ['data-type'], text: 18 },
+      { depth: 1, tag: 'div', role: 'textbox', data: ['data-secret-note'], testid: 'prompt-textarea', editable: true, text: 16 },
+      { depth: 1, tag: 'button', label: 'Send prompt', testid: 'composer-submit', data: ['data-send'], text: 1 },
+    ])
+    // Text, attribute values other than the named ones, and URLs never appear.
+    expect(JSON.stringify(outline)).not.toMatch(/private|draft|"x"/)
+    // Reported once per element and kind for the page.
+    await engine.resolve('composer.send')
+    expect(drift).toHaveLength(1)
+  })
+
+  it('reports an action that misses its postcondition, and an action target that no candidate finds, with a page outline', async () => {
+    const stuck = loadUiMap(MAP.replace("verify: { attr: { of: composer.input, name: data-filled, present: true } }", "verify: { attr: { of: composer.input, name: data-never, present: true } }\n    timeouts: { verifyMs: 300 }"))
+    const { engine, drift } = await open(CURRENT, stuck)
+    await expect(engine.act('composer.insert', { text: 'hello' })).rejects.toMatchObject({ kind: 'ui_drift' })
+    expect(drift).toEqual([expect.objectContaining({ element: 'composer.insert', kind: 'postcondition', candidate: -1 })])
+    expect(drift[0]!.outline).toMatchObject({ root: 'body', nodes: expect.arrayContaining([expect.objectContaining({ tag: 'main' }), expect.objectContaining({ tag: 'form' })]) })
+    expect(JSON.stringify(drift[0]!.outline)).not.toContain('hello')
+    const gone = await open(AMBIGUOUS)
+    await gone.engine.act('composer.insert', { text: 'hello' })
+    await expect(gone.engine.act('composer.send', {}, { allowFallback: false })).rejects.toMatchObject({ kind: 'ui_drift' })
+    expect(gone.drift.filter((d) => d.kind === 'unresolved')).toEqual([expect.objectContaining({ element: 'composer.send', outline: expect.objectContaining({ root: 'composer.form' }) })])
+  })
+
+  it('folds a run of like siblings into one node, and bounds the outline', async () => {
+    const chats = Array.from({ length: 300 }, (_, i) => `<li role="option" aria-label="Chat ${i}"><a href="/c/${i}" aria-label="secret title ${i}">t</a></li>`).join('')
+    const buttons = Array.from({ length: 300 }, (_, i) => `<button data-testid="b${i}">x</button>`).join('')
+    const { tab } = await open(page('<form data-type="composer"><div contenteditable role="textbox"></div></form>', `<nav><ul>${chats}</ul></nav><aside>${buttons}</aside>`))
+    const { outlineOf } = await import('../src/index.ts')
+    const nav = await outlineOf(tab.locator('nav'), 'nav')
+    // A list of chats is one node with a count; a link's label (often content, such as a chat's title) is never kept.
+    expect(nav.nodes.filter((n) => n.role === 'option')).toEqual([expect.objectContaining({ label: 'Chat 0', repeat: 299 })])
+    expect(JSON.stringify(nav)).not.toContain('secret title')
+    // Distinct nodes stop at the bound.
+    const aside = await outlineOf(tab.locator('aside'), 'aside')
+    expect(aside).toMatchObject({ truncated: true })
+    expect(aside.nodes).toHaveLength(200)
   })
 
   it('matches localized accessible names', async () => {

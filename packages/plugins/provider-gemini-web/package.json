@@ -20,6 +20,8 @@
     "build": "tsc -p tsconfig.build.json"
   },
   "dependencies": {
+    "@tsuuanmi/system-artifacts": "workspace:*",
+    "@tsuuanmi/system-event-log": "workspace:*",
     "@tsuuanmi/system-provider-core": "workspace:*",
     "@tsuuanmi/system-ui-ops": "workspace:*"
   },
@@ -34,6 +36,7 @@
     "@tsuuanmi/system-browser-patchright": "workspace:*",
     "@tsuuanmi/system-display-virtual": "workspace:*",
     "@tsuuanmi/system-providers": "workspace:*",
+    "@tsuuanmi/system-store": "workspace:*",
     "patchright-core": "1.63.0"
   }
 }

@@ -10,7 +10,7 @@ import type {} from '@tsuuanmi/system-artifacts'
 import type {} from '@tsuuanmi/system-event-log'
 import { type ContentId, dshHome } from '@tsuuanmi/system-libs'
 import type { ProviderMode } from '@tsuuanmi/system-provider-core'
-import { type HealEvent, appendOverlay } from '@tsuuanmi/system-ui-ops'
+import { type HealEvent, appendOverlay, driftData } from '@tsuuanmi/system-ui-ops'
 import { ChatGptWebDriver } from './driver.ts'
 
 export interface Config {
@@ -93,7 +93,8 @@ function wireHealAudit(ctx: Context, driver: ChatGptWebDriver, overlayPath: stri
     const id = record(e, true)
     if (id) decisions.set(key(e), id)
   }
-  driver.onDrift = (e) => log('ui.drift', { provider: e.provider, element: e.element, candidate: e.candidate, source: e.source, mapHash: e.mapHash })
+  // A stale element, with the outline of its region as local-private evidence (docs/design/ui-operations.md#drift-evidence).
+  driver.onDrift = (e) => log('ui.drift', driftData(e, ctx.get('artifacts')))
   driver.onHeal = (e) => {
     const decision = e.outcome === 'rejected' ? record(e, false) : decisions.get(key(e))
     if (e.outcome === 'healed' && e.candidate) {

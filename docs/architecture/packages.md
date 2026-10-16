@@ -45,7 +45,7 @@ its types is not listed).
 | [login](../../packages/plugins/login/README.md) | provider runtime | `login` | `login` | `accounts`, `browser`, `providers`, `mcp` (optional) | `display-virtual`, `gateway-core`, `libs`, `provider-core` |
 | [provider-chatgpt-web](../../packages/plugins/provider-chatgpt-web/README.md) | provider runtime | — | `provider-chatgpt-web` | `providers`, `artifacts` (optional), `eventLog` (optional) | `libs`, `provider-core`, `ui-ops` |
 | [provider-core](../../packages/provider-core/README.md) | provider runtime | defines `browser`, defines `display`, defines `providers` | — | — | `libs` |
-| [provider-gemini-web](../../packages/plugins/provider-gemini-web/README.md) | provider runtime | — | `provider-gemini-web` | `providers` | `provider-core`, `ui-ops` |
+| [provider-gemini-web](../../packages/plugins/provider-gemini-web/README.md) | provider runtime | — | `provider-gemini-web` | `providers`, `artifacts` (optional), `eventLog` (optional) | `provider-core`, `ui-ops` |
 | [providers](../../packages/plugins/providers/README.md) | provider runtime | `providers` | `providers` | — | `provider-core` |
 | [turn-receipts](../../packages/plugins/turn-receipts/README.md) | provider runtime | `turnReceipts` | `turn-receipts` | `store`, `artifacts` | `libs`, `provider-core` |
 | [ui-ops](../../packages/ui-ops/README.md) | provider runtime | — | — | — | `libs`, `provider-core` |
@@ -163,6 +163,8 @@ flowchart TB
   provider_chatgpt_web -.-> artifacts
   provider_chatgpt_web -.-> event_log
   provider_gemini_web --> providers
+  provider_gemini_web -.-> artifacts
+  provider_gemini_web -.-> event_log
   runtime_acp --> agent_runtimes
   runtime_claude_agent_sdk --> agent_runtimes
   runtime_codex_sdk --> agent_runtimes

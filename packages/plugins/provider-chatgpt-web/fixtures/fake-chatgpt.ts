@@ -39,6 +39,8 @@ export interface FakeOptions {
   userId?: string
   /** Accessible name of the send button (drift tests). */
   sendLabel?: string
+  /** A `data-testid` on the Send button, so a later map candidate can find it (drift without heal). */
+  sendTestId?: string
   /** Answer text, or a function of the prompt; streamed word by word. */
   answer?: string | ((prompt: string, sent: Sent) => string)
   /**
@@ -178,7 +180,7 @@ function render() {
     ? '<button type="button" aria-label="Stop" id="stop">s</button>'
     : (empty && home && !temporary
       ? '<button type="button" aria-label="Start Voice">v</button>'
-      : '<button type="button" aria-label="' + options.sendLabel + '" id="send"' + (empty ? ' disabled' : '') + '>↑</button>')
+      : '<button type="button" aria-label="' + options.sendLabel + '" id="send"' + (options.sendTestId ? ' data-testid="' + options.sendTestId + '"' : '') + (empty ? ' disabled' : '') + '>↑</button>')
   if ($('send')) $('send').onclick = send
   if ($('stop')) $('stop').onclick = () => { running = false; render() }
 }
@@ -320,7 +322,7 @@ export class FakeChatGpt {
 
   constructor(options: FakeOptions = {}) {
     this.options = {
-      startOnWork: true, chatToggleBroken: false, signedIn: true, requireCookie: false, userId: 'user-fake123', sendLabel: 'Send',
+      startOnWork: true, chatToggleBroken: false, signedIn: true, requireCookie: false, userId: 'user-fake123', sendLabel: 'Send', sendTestId: '',
       answer: 'OK', thinkMs: 300, models: ['Latest', 'GPT-6', 'GPT-5.6 Sol', 'GPT-5.5'], lockedModels: [],
       researchMs: 1500, report: 'Deep research report body.', clarify: false, features: ['deep-research', 'web-search', 'image-generation'], modelPicker: true,
       mfa: 'totp', email: 'operator@example.test', password: 'correct horse', totpSecret: 'JBSWY3DPEHPK3PXP',

@@ -9,7 +9,7 @@
  */
 import { readFileSync } from 'node:fs'
 import { type AskOptions, type AskResult, type AuthState, bindingReporter, completionOptions, modePresets, ProviderError, type ProviderDriver, type ProviderFeature, type ProviderMode, type ResearchState, type TurnSnapshot, waitForReport, waitForStableCompletion, withSources } from '@tsuuanmi/system-provider-core'
-import { copiedMarkdown, preWrapText, UiEngine, type UiMap, loadUiMap } from '@tsuuanmi/system-ui-ops'
+import { copiedMarkdown, type DriftEvent, preWrapText, UiEngine, type UiMap, loadUiMap } from '@tsuuanmi/system-ui-ops'
 import type { Locator, Page } from 'patchright-core'
 
 const MAP_URL = new URL('../ui/gemini-web.ui.yaml', import.meta.url)
@@ -71,6 +71,8 @@ export class GeminiWebDriver implements ProviderDriver<Page> {
   /** Google's sign-in lives on google.com; Gemini on its own subdomain. */
   readonly stateOrigins: readonly string[]
   readonly map: UiMap
+  /** A stale map element, with an outline of its region; the plugin records it. */
+  onDrift: ((event: DriftEvent) => void) | undefined
   private readonly origin: string
   private readonly timeouts: Required<DriverTimeouts>
   private readonly preset: (name: string | undefined) => ProviderMode | undefined
@@ -381,8 +383,8 @@ export class GeminiWebDriver implements ProviderDriver<Page> {
   private engine(page: Page): UiEngine {
     let engine = this.engines.get(page)
     if (!engine) {
-      // No self-heal here: a drifted element fails closed until the map is updated.
-      engine = new UiEngine(page, this.map, { heal: false })
+      // No self-heal here: a drifted element fails closed until the map is updated, and is reported.
+      engine = new UiEngine(page, this.map, { heal: false, onDrift: (event) => this.onDrift?.(event) })
       this.engines.set(page, engine)
     }
     return engine

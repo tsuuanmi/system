@@ -10,6 +10,7 @@ import { type Scored, choose, parseAiSnapshot, scoreNodes } from './heal.ts'
 import { candidateFromLocator, toLocator } from './locate.ts'
 import type { ActionSpec, Candidate, Condition, ElementSpec, UiMap } from './map.ts'
 import { NetworkObserver } from './network.ts'
+import { outlineOf, type UiOutline } from './outline.ts'
 
 export interface Resolved {
   locator: Locator
@@ -17,12 +18,20 @@ export interface Resolved {
   candidate: number
 }
 
+/**
+ * A stale map: an element found only on a later candidate (`fallback`), an action's target not
+ * found (`unresolved`), or an action that did not reach its postcondition (`postcondition`; its
+ * `element` is the action). It carries a structural outline of the region, when one could be read.
+ */
 export interface DriftEvent {
   provider: string
   element: string
+  kind: 'fallback' | 'unresolved' | 'postcondition'
+  /** The winning candidate (`fallback`), or -1. */
   candidate: number
-  source: 'shipped' | 'overlay'
+  source?: 'shipped' | 'overlay'
   mapHash: string
+  outline?: UiOutline
 }
 
 export interface HealEvent {
@@ -191,7 +200,10 @@ export class UiEngine {
         await on.locator.press(spec.fallback.press)
         await this.verify(id, spec, verifyMs, baselines)
         return
-      } else throw error
+      } else {
+        await this.reportDrift(spec.target, 'unresolved', -1)
+        throw error
+      }
     }
 
     await this.require(target.locator, spec, resolveMs)
@@ -234,8 +246,9 @@ export class UiEngine {
       const visible = locator.filter({ visible: true })
       const n = await visible.count()
       if (spec.cardinality === 'many' ? n === 0 : n !== 1) continue
-      if (index > 0) this.reportDrift(id, index, candidate.source)
-      return { locator: spec.cardinality === 'many' ? locator : visible, candidate: index }
+      const resolved = { locator: spec.cardinality === 'many' ? locator : visible, candidate: index }
+      if (index > 0) await this.reportDrift(id, 'fallback', index, candidate.source, resolved.locator)
+      return resolved
     }
     return undefined
   }
@@ -246,10 +259,19 @@ export class UiEngine {
     return spec
   }
 
-  private reportDrift(element: string, candidate: number, source: 'shipped' | 'overlay'): void {
-    if (this.drifted.has(element)) return
-    this.drifted.add(element)
-    this.options.onDrift?.({ provider: this.map.provider, element, candidate, source, mapHash: this.map.hash })
+  /**
+   * Report a stale map once per element and kind for this page, with a structural outline: of the
+   * found element's parent on a fallback, of an unresolved element's scope, or else of the page
+   * body. An outline that cannot be read is left out; it never fails the turn.
+   */
+  private async reportDrift(element: string, kind: DriftEvent['kind'], candidate: number, source?: 'shipped' | 'overlay', found?: Locator): Promise<void> {
+    if (!this.options.onDrift || this.drifted.has(`${kind}\0${element}`)) return
+    this.drifted.add(`${kind}\0${element}`)
+    const spec = this.map.elements[element]
+    const scope = kind === 'unresolved' && spec?.scope ? await this.tryResolve(spec.scope).catch(() => undefined) : undefined
+    const root = found ? found.first().locator('xpath=..') : scope?.locator
+    const outline = await outlineOf(root ?? this.page, found ? `parent of ${element}` : scope ? spec!.scope! : 'body').catch(() => undefined)
+    this.options.onDrift({ provider: this.map.provider, element, kind, candidate, ...(source ? { source } : {}), mapHash: this.map.hash, ...(outline ? { outline } : {}) })
   }
 
   /** The map's `errors` conditions guard every action: a login surface or challenge is never healed around. */
@@ -356,6 +378,7 @@ export class UiEngine {
     try {
       await this.waitFor(spec.verify, timeoutMs, baselines)
     } catch (error) {
+      await this.reportDrift(action, 'postcondition', -1)
       throw new ProviderError('ui_drift', `${this.map.provider}: ${action} did not reach its postcondition`, { cause: error })
     }
   }

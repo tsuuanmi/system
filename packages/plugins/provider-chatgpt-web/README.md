@@ -47,7 +47,9 @@ The **ChatGPT Web provider driver**
   - every chosen heal is a `recovery` decision recorded before the click;
   - verified heals are appended to the overlay (0600, with the decision id in a
     comment);
-  - `ui.drift` / `ui.heal` events are logged;
+  - `ui.drift` / `ui.heal` events are logged; a drift event names its region's
+    outline, kept as local-private evidence
+    ([drift evidence](../../../docs/design/ui-operations.md#drift-evidence));
   - healing is off when `ctx.artifacts` is absent.
 - **Fixtures:** [`fixtures/fake-chatgpt.ts`](fixtures/fake-chatgpt.ts) is a
   local stand-in built from the live accessibility tree of 2026-10-11, with no

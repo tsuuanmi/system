@@ -16,8 +16,8 @@ elements:
   auth.account:
     description: "The signed-in Google account's button; its name carries the account (Google Account, then the name and email)."
     candidates:
-      - { role: button, name: { en: '^Google Account:' } }
       - { role: link, name: { en: '^Google Account:' } }
+      - { role: button, name: { en: '^Google Account:' } }
 
   tab.any:
     description: The Chat / Spark tabs; Spark is the agent, never used for turns. Some layouts show no tabs.

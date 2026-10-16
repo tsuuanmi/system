@@ -51,6 +51,13 @@ describe('host health (REQ-HOST-6)', () => {
     })
   })
 
+  it('counts a reported drift and the turn it failed as one change', async () => {
+    const events = (type: string) => (type === 'ui.drift'
+      ? [{ data: { provider: 'gemini-web', element: 'temporary.enable', kind: 'postcondition', candidate: -1, mapHash: 'sha256:aa' } }]
+      : [{ data: { kind: 'ui_drift', message: 'gemini-web: temporary.enable did not reach its postcondition' } }, { data: { kind: 'ui_drift', message: 'gemini-web: the report cannot be read' } }])
+    expect(await check({ events }, 'ui-drift')).toMatchObject({ detail: expect.stringMatching(/^2 provider UI change\(s\) seen recently \(gemini-web temporary\.enable\)/) })
+  })
+
   it('is down when the store fails its integrity check, no Worker is available, or the runtime is outside the supported range', async () => {
     expect((await healthReport(base({ storeCheck: () => 'row 7 missing from index' }))).state).toBe('down')
     expect((await healthReport(base({ workers: async () => [{ worker: 'w1', state: 'reauth-required' }, { worker: 'w2', state: 'quota-exhausted' }] }))).state).toBe('down')

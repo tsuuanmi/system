@@ -134,7 +134,33 @@ For an element:
 4. For an action, run it, then poll `verify` until `verifyMs` expires.
 5. If a non-primary candidate won, report drift (`onDrift`, logged as
    `ui.drift`). The turn still succeeds; the event feeds the health view and,
-   once built, `system ui doctor`.
+   once built, `system ui doctor`. An action whose target no candidate finds
+   (with no heal or fallback), or that misses its postcondition, is reported
+   too before it fails, each with [drift evidence](#drift-evidence).
+
+### Drift evidence
+
+A drift report carries a structural **outline** of the region (`ui-outline@1.0`),
+so a stale element can be mapped again without opening the operator's browser:
+
+- **Region:** the found element's parent on a fallback; an unresolved element's
+  scope; otherwise the page body.
+- **Content:** per node, the tag, role, `aria-label` (not on links, whose labels
+  are often content such as chat titles), the `aria-*` states, the test id, the
+  names of other `data-*` attributes, the id, up to five classes, whether it is
+  editable, and its visible text length. Never text, input values, or URLs.
+- **Bounds:** only nodes that carry one of those marks (wrappers are skipped),
+  like siblings folded into one node with a count, at most 200 nodes and 12
+  levels.
+- **Record:** the provider plugin stores it as a local-private `evidence`
+  artifact, which never leaves the machine
+  ([INV-12](../architecture/invariants.md#inv-12-data-egress-is-explicit)), and
+  the `ui.drift` event names it (`outline`). Each element and kind is reported
+  once per page. An outline that cannot be read is left out; it never fails
+  the turn.
+
+The playbook says how to turn an outline into a map candidate
+([playbooks](../operations/playbooks.md#a-provider-ui-change)).
 
 Prompt text is inserted with an insert-text method that does not trigger editor
 shortcuts, read back, and compared by hash before sending

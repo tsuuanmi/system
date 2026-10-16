@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:tsuuanmi:system:schema:ui-outline:v1",
+  "title": "UI outline",
+  "description": "Body of a local-private `evidence` artifact recorded with a `ui.drift` event: a bounded structural outline of a page region (docs/design/ui-operations.md#drift-evidence). Structure only: tags, roles, labels and states, test ids, data attribute names, ids, classes, and visible text lengths. Never text, input values, or URLs.",
+  "type": "object",
+  "required": ["schema", "root", "nodes", "truncated"],
+  "properties": {
+    "schema": { "const": "ui-outline@1.0" },
+    "root": { "type": "string", "maxLength": 200 },
+    "truncated": { "type": "boolean" },
+    "nodes": {
+      "type": "array",
+      "maxItems": 200,
+      "items": {
+        "type": "object",
+        "required": ["depth", "tag", "text"],
+        "properties": {
+          "depth": { "type": "integer", "minimum": 0, "maximum": 12 },
+          "tag": { "type": "string", "maxLength": 100 },
+          "role": { "type": "string", "maxLength": 100 },
+          "label": { "type": "string", "maxLength": 80 },
+          "states": { "type": "object", "maxProperties": 7, "additionalProperties": { "type": "string", "maxLength": 20 } },
+          "testid": { "type": "string", "maxLength": 80 },
+          "data": { "type": "array", "maxItems": 8, "items": { "type": "string", "maxLength": 100 } },
+          "id": { "type": "string", "maxLength": 40 },
+          "classes": { "type": "array", "maxItems": 5, "items": { "type": "string", "maxLength": 30 } },
+          "editable": { "const": true },
+          "text": { "type": "integer", "minimum": 0 },
+          "repeat": { "type": "integer", "minimum": 1 }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

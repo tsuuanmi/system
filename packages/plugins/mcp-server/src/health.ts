@@ -116,7 +116,10 @@ export async function healthReport(sources: HealthSources): Promise<HealthReport
       // One stale element of one map is one change, however many turns resolve it on a fallback.
       const drifted = new Map<string, string>()
       for (const { data } of events('ui.drift', since)) drifted.set(`${data?.provider}\0${data?.element}\0${data?.mapHash}`, `${data?.provider} ${data?.element}`)
-      const failed = new Set(events('workflow.node.failed', since).filter((e) => e.data?.kind === 'ui_drift').map((e) => String(e.data?.message ?? '')))
+      // A failed turn whose drift was reported with its element is that one change, not another.
+      const reported = [...drifted.values()].map((named) => named.replace(' ', ': '))
+      const failed = new Set(events('workflow.node.failed', since).filter((e) => e.data?.kind === 'ui_drift').map((e) => String(e.data?.message ?? ''))
+        .filter((message) => !reported.some((prefix) => message.startsWith(`${prefix} `))))
       const count = drifted.size + failed.size
       const named = [...new Set(drifted.values())].sort()
       return count

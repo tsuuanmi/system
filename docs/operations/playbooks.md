@@ -56,7 +56,9 @@ drift and does not silently break.
 
 - **Detection:**
   - a `ui.drift` event when an element resolves only through a fallback or a
-    heal;
+    heal (`kind: fallback`), when an action's target resolves through nothing
+    (`unresolved`), or when an action does not reach its postcondition
+    (`postcondition`; its `element` is the action);
   - a step that fails with `ui_drift` when nothing resolves;
   - the driver's fixture test fails when the shipped map no longer matches the
     recorded structure.
@@ -64,6 +66,19 @@ drift and does not silently break.
     `driftWindowHours`. It counts each stale element of a map once, however
     many turns resolve it on a fallback, and names it (`chatgpt-web
     composer.form`). `system events --type ui.drift` lists every occurrence.
+- **Read the evidence.** A `ui.drift` event's `outline` names a local-private
+  `evidence` artifact: the structure of the region around the element, never
+  its text ([drift evidence](../design/ui-operations.md#drift-evidence)).
+  `system evidence <outline id>` shows it (operator only). To map the element again:
+  1. Find the node that plays the element's part by its role, label, test id,
+     or state (for a toggle, the `pressed`, `checked`, or `expanded` state that
+     flips; for a notice that is gone, a state on the control itself).
+  2. Write a candidate from what is stable on it, in this order: a role with an
+     accessible name, a test id, a `data-*` attribute, then a CSS path through
+     the parents the outline shows (`form:has([role=textbox])` only when the
+     textbox sits under the form).
+  3. Make the fake site render that structure, so a test fails on the old map
+     and passes on the new one.
 - **A fallback that wins every turn** means the primary candidate is stale,
   even though nothing fails. Promote the fallback to primary in the shipped map,
   keep the old one as a fallback, and change the fake site to match the

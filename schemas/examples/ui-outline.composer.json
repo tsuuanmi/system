@@ -1,0 +1,11 @@
+{
+  "schema": "ui-outline@1.0",
+  "root": "parent of composer.form",
+  "truncated": false,
+  "nodes": [
+    { "depth": 0, "tag": "div", "classes": ["composer-parent"], "text": 0 },
+    { "depth": 1, "tag": "form", "data": ["data-type"], "text": 0 },
+    { "depth": 2, "tag": "div", "role": "textbox", "label": "Chat with ChatGPT", "id": "prompt-textarea", "editable": true, "text": 0 },
+    { "depth": 2, "tag": "button", "label": "Send prompt", "testid": "send-button", "states": { "disabled": "true" }, "text": 0 }
+  ]
+}

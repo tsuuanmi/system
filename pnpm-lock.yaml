@@ -823,6 +823,12 @@ importers:
 
   packages/plugins/provider-gemini-web:
     dependencies:
+      '@tsuuanmi/system-artifacts':
+        specifier: workspace:*
+        version: link:../artifacts
+      '@tsuuanmi/system-event-log':
+        specifier: workspace:*
+        version: link:../event-log
       '@tsuuanmi/system-provider-core':
         specifier: workspace:*
         version: link:../../provider-core
@@ -845,6 +851,9 @@ importers:
       '@tsuuanmi/system-providers':
         specifier: workspace:*
         version: link:../providers
+      '@tsuuanmi/system-store':
+        specifier: workspace:*
+        version: link:../store
       patchright-core:
         specifier: 1.63.0
         version: 1.63.0

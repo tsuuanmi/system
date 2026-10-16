@@ -1,7 +1,14 @@
+import { mkdtempSync, rmSync } from 'node:fs'
 import { createServer, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
+import Artifacts from '@tsuuanmi/system-artifacts'
+import EventLog from '@tsuuanmi/system-event-log'
 import Providers from '@tsuuanmi/system-providers'
+import Store from '@tsuuanmi/system-store'
+import type { DriftEvent } from '@tsuuanmi/system-ui-ops'
 import { SchemaRegistry } from '@tsuuanmi/system-libs'
 import type { ProviderDriver } from '@tsuuanmi/system-provider-core'
 import type { Browser, BrowserContext, Page } from 'patchright-core'
@@ -46,6 +53,23 @@ describe('the Gemini Web UI map and driver contract', () => {
     await ctx.plugin(Providers)
     await ctx.plugin(GeminiWebPlugin, { origin: 'http://127.0.0.1:9' })
     expect(ctx.providers.get('gemini-web')).toBeInstanceOf(GeminiWebDriver)
+  })
+
+  it('logs drift as ui.drift, its outline kept as local-private evidence (drift evidence, INV-12)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'system-gemini-'))
+    const ctx = new Context()
+    const fibers = [ctx.plugin(Store, { path: join(dir, 'system.db') }), ctx.plugin(Artifacts, {}), ctx.plugin(EventLog, {}), ctx.plugin(Providers), ctx.plugin(GeminiWebPlugin, { origin: 'http://127.0.0.1:9' })]
+    try {
+      await Promise.all(fibers)
+      const driver = ctx.providers.get('gemini-web') as GeminiWebDriver
+      driver.onDrift!({ provider: 'gemini-web', element: 'temporary.enable', kind: 'postcondition', candidate: -1, mapHash: 'sha256:00', outline: { schema: 'ui-outline@1.0', root: 'body', truncated: false, nodes: [{ depth: 0, tag: 'body', text: 3 }] } })
+      const [event] = ctx.eventLog.query({ type: 'ui.drift', limit: 10 })
+      expect(event!.data).toEqual({ provider: 'gemini-web', element: 'temporary.enable', kind: 'postcondition', candidate: -1, mapHash: 'sha256:00', outline: expect.stringMatching(/^sha256:/) })
+      expect(ctx.artifacts.get(String(event!.data!.outline))).toMatchObject({ kind: 'evidence', bodySchema: 'ui-outline@1.0', classification: 'local-private' })
+    } finally {
+      for (const fiber of fibers.reverse()) await fiber.dispose()
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })
 
@@ -108,10 +132,15 @@ describe.runIf(canRunBrowser)('GeminiWebDriver against the fake site', { timeout
     expect(fake.sent).toEqual([])
   })
 
-  it('refuses to send when Temporary chat does not turn on', async () => {
+  it('refuses to send when Temporary chat does not turn on, and reports it with an outline of the page: structure, never text', async () => {
     const { page, driver, fake } = await open({ temporaryBroken: true })
-    await expect(driver.ask(page, 'hi', { conversation: 'temporary' })).rejects.toMatchObject({ kind: 'ui_drift' })
+    const drift: DriftEvent[] = []
+    driver.onDrift = (event) => drift.push(event)
+    await expect(driver.ask(page, 'my private question', { conversation: 'temporary' })).rejects.toMatchObject({ kind: 'ui_drift' })
     expect(fake.sent).toEqual([])
+    expect(drift).toEqual([expect.objectContaining({ provider: 'gemini-web', element: 'temporary.enable', kind: 'postcondition', candidate: -1 })])
+    expect(drift[0]!.outline).toMatchObject({ root: 'body', nodes: expect.arrayContaining([expect.objectContaining({ tag: 'button', label: 'Temporary chat' })]) })
+    expect(JSON.stringify(drift[0]!.outline)).not.toContain('private question')
   })
 
   it('fails closed on a model or level the account does not offer, before sending', async () => {

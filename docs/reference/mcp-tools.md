@@ -163,6 +163,16 @@ Scope: `operator`
 | `afterSeq` | integer |  | The cursor: entries after this seq (default 0, the start) |
 | `limit` | integer |  | Entries per page (default 100, at most 1000) |
 
+## `evidence`
+
+Read a drift evidence artifact (the outline a ui.drift event names): the structure of a page region, never its text. Local-private: the operator's alone.
+
+Scope: `operator`
+
+| Argument | Type | Required | Description |
+|---|---|---|---|
+| `id` | string | yes | The evidence artifact id from a ui.drift event's outline |
+
 ## `explain`
 
 The decision chain behind a run (egress, tier, route, acceptance per step), or the inputs of any artifact id.
