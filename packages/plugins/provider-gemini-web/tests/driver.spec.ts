@@ -231,6 +231,37 @@ describe.runIf(canRunBrowser)('GeminiWebDriver against the fake site', { timeout
     expect(await driver.snapshot(page, 'ffffffffffffffff')).toEqual({ text: '', running: false, observable: false })
   })
 
+  it('deletes exactly one bound conversation from its own menu, and a deleted one counts as gone (PROP-0004 Phase 5)', async () => {
+    const { page, driver, fake } = await open({ answer: 'to be deleted' })
+    const kept = await driver.ask(page, 'keep me', { conversation: 'persistent' })
+    const doomed = await driver.ask(await context!.newPage(), 'delete me', { conversation: 'persistent' })
+    expect(await driver.deleteConversation(await context!.newPage(), doomed.binding!)).toBe('deleted')
+    expect([...fake.deleted]).toEqual([doomed.binding])
+    expect(fake.conversations.has(kept.binding!)).toBe(true)
+    // Again, as a retry after a crash would: the site shows it is gone, and nothing is clicked.
+    expect(await driver.deleteConversation(await context!.newPage(), doomed.binding!)).toBe('gone')
+    expect(driver.deletes).toEqual(['chat'])
+  })
+
+  it('inspects a conversation\'s own menu without choosing anything: outlines, never text', async () => {
+    const { page, driver, fake } = await open({ answer: 'secret answer text' })
+    const turn = await driver.ask(page, 'inspect me', { conversation: 'persistent' })
+    const outlines = await driver.inspectConversation(page, turn.binding!)
+    expect(outlines.map((o) => o.root)).toEqual(['conversation page (shown)', 'conversation menu'])
+    expect(JSON.stringify(outlines)).not.toMatch(/secret answer text|inspect me/)
+    expect(JSON.stringify(outlines[1])).toMatch(/"role":"menuitem"/)
+    expect(fake.deleted.size).toBe(0)
+  })
+
+  it('deletes nothing when the conversation does not open as itself', async () => {
+    const { page, driver, fake } = await open()
+    const quick = new GeminiWebDriver({ origin: fake.origin, timeouts: { readyMs: 5000, snapshotMs: 1500 } })
+    // An unknown chat goes to /unavailable, which shows no prompt and no sign of a deletion.
+    await expect(quick.deleteConversation(page, 'ffffffffffffffff')).rejects.toMatchObject({ kind: 'ui_drift', message: expect.stringMatching(/nothing was deleted/) })
+    await expect(driver.deleteConversation(page, 'not-an-id')).rejects.toMatchObject({ kind: 'invalid_input' })
+    expect(fake.deleted.size).toBe(0)
+  })
+
   it('does not observe a conversation whose prompt it cannot read, so nothing is resent blind', async () => {
     const { page, driver, fake } = await open()
     const { binding } = await driver.ask(page, 'the prompt', { conversation: 'persistent' })

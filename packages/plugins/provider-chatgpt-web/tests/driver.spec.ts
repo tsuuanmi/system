@@ -232,6 +232,36 @@ describe.runIf(canRunBrowser)('ChatGptWebDriver against the fake site, with no r
     expect(second.text).toBe('Research findings\nSecond report.')
   }, 120_000)
 
+  it('deletes exactly one bound conversation from its own menu, and a deleted one counts as gone (PROP-0004 Phase 5)', async () => {
+    const { page, driver, context, fake } = await site({ answer: 'to be deleted' })
+    const kept = await driver.ask(page, 'keep me', { conversation: 'persistent' })
+    const doomed = await driver.ask(await context.newPage(), 'delete me', { conversation: 'persistent' })
+    expect(await driver.deleteConversation(await context.newPage(), doomed.binding!)).toBe('deleted')
+    expect([...fake.deleted]).toEqual([doomed.binding])
+    expect(fake.conversations.has(kept.binding!)).toBe(true)
+    // Again, as a retry after a crash would: the site shows it is gone, and nothing is clicked.
+    expect(await driver.deleteConversation(await context.newPage(), doomed.binding!)).toBe('gone')
+    expect(driver.deletes).toEqual(['chat', 'web-search'])
+  }, 60_000)
+
+  it('inspects a conversation\'s own menu without choosing anything: outlines, never text', async () => {
+    const { page, driver, fake } = await site({ answer: 'secret answer text' })
+    const turn = await driver.ask(page, 'inspect me', { conversation: 'persistent' })
+    const outlines = await driver.inspectConversation(page, turn.binding!)
+    expect(outlines.map((o) => o.root)).toEqual(['conversation page (shown)', 'conversation menu'])
+    expect(JSON.stringify(outlines)).not.toMatch(/secret answer text|inspect me/)
+    expect(JSON.stringify(outlines[1])).toMatch(/"role":"menuitem"/)
+    expect(fake.deleted.size).toBe(0)
+    expect(fake.conversations.has(turn.binding!)).toBe(true)
+  }, 60_000)
+
+  it('deletes nothing when the conversation does not open as itself', async () => {
+    const { page, driver, fake } = await site({ timeouts: { snapshotMs: 1500 } })
+    await expect(driver.deleteConversation(page, '00000000-0000-4000-8000-000000000000')).rejects.toMatchObject({ kind: 'ui_drift', message: expect.stringMatching(/nothing was deleted/) })
+    await expect(driver.deleteConversation(page, 'not-an-id')).rejects.toMatchObject({ kind: 'invalid_input' })
+    expect(fake.deleted.size).toBe(0)
+  }, 60_000)
+
   it('reports a conversation that shows no turn as not observed, never as nothing new (live 2026-10-12)', async () => {
     const { page, driver } = await site({ timeouts: { snapshotMs: 1500 } })
     // A bound URL whose page never renders a user turn: no evidence either way.

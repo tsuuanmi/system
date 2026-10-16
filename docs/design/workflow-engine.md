@@ -280,9 +280,16 @@ reports list the blockers explicitly, not just a percentage.
 
 The operator deletes a run at any time: a preview lists it, and deletion is keyed
 on the exact `runId` and `updatedAt`. On its own, after `retainDays`, a finished
-run's input and rendered prompts are cleared and the run stays. With
-`retainRunsDays` set (off by default), a finished run older than that is deleted
+run's input and rendered prompts are cleared and the run stays. After
+`retainRunsDays` (default 30, the turns' own retention; 0 keeps every run), a finished run is deleted
 as the operator's delete does, except the latest run of a session (a persistent
 session has no closed state, and continuing it needs one of its runs); then the
 artifacts that only expired runs needed are collected
-([storage](artifacts.md#storage)). Each expiry is a `workflow.run.expired` event.
+([storage](artifacts.md#storage)). Each expiry is a `workflow.run.expired` event, and each
+sweep that expires runs is one `workflow.retention.swept` event and log line with how many runs
+it expired and conversations it released; `system health` notes it (`retention`, never
+degraded).
+A deleted or expired run releases the Worker sessions its nodes used that no remaining run
+uses (`ctx.workers.release`), in the same transaction, so the website conversations they
+created are deleted on their sites
+([conversation ledger](provider-turns.md#conversation-ledger)).

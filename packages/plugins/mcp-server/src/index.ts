@@ -204,9 +204,11 @@ export class McpEndpoint extends McpTools {
     const workers = this.ctx.get('workers')
     const eventLog = this.ctx.get('eventLog')
     const workflow = this.ctx.get('workflow' as never) as { refusedTemplates?: () => Array<{ name: string; reason: string }> } | undefined
+    const turns = this.ctx.get('turns' as never) as { conversations?: (filter: { state: 'failed' }) => Array<{ account: string; binding: string; reason?: string }> } | undefined
     const report = await healthReport({
       plugins: () => brokenPlugins(this.ctx),
       ...(workflow?.refusedTemplates ? { templates: () => workflow.refusedTemplates!() } : {}),
+      ...(turns?.conversations ? { undeleted: () => turns.conversations!({ state: 'failed' }) } : {}),
       dshHome: dshHome(),
       ...(store ? { storeCheck: () => this.cachedStoreCheck(() => String(Object.values(store.db.prepare('PRAGMA quick_check(1)').get() ?? {})[0])) } : {}),
       ...(credentials?.custody ? { keyCustody: () => credentials.custody!() } : {}),

@@ -20,6 +20,19 @@ The **ChatGPT Web provider driver**
   - completion needs the answer's finished marker ("Copy") and stable text, via
     the two-clock `waitForStableCompletion`;
   - the event stream stays open on the live site and is never consulted.
+- **`deleteConversation(page, binding)`** (PROP-0004 Phase 5; `deletes`:
+  `chat`, `web-search`; Deep research waits for its live check): opens
+  `/c/<id>` and clicks nothing unless the page is at exactly that path and shows
+  a prompt (otherwise `ui_drift`, nothing deleted). The path is checked again
+  before each click: **Open conversation options** → **Delete** → **Delete
+  chat?** → **Delete** (the request `PATCH /backend-api/conversation/<id>` is
+  the postcondition). After the site leaves the URL, the chat is reopened and
+  counts as `deleted` only when it shows that it no longer exists (map element
+  `conversation.missing`); one that already shows it is `gone`, with nothing
+  clicked. The map entries are not yet verified live: they are marked `unverified`, and `deletionUnverified()` names them, so the turn runtime deletes nothing until the live check lifts them.
+- **`inspectConversation(page, binding)`:** read-only evidence for those
+  entries: the chat's page and its own menu outlined (structure, never text),
+  the menu closed with Escape, no item chosen.
 - **Feature probe (REQ-PRV-7):** `probeFeatures` opens a new chat's "+" tools
   popover and reports which known entries it offers: Deep research, Web
   search, and Create image. Then it closes the popover, sending nothing. A

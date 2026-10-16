@@ -106,6 +106,24 @@ invoked by the [workflow engine](../workflow/README.md)
   - A requirement with `web-search` runs with Web search turned on.
 - **Deep research:** a requirement with `deep-research` runs as Deep research in
   its persistent session (`researchTimeoutMs`, `researchStallTimeoutMs`).
+- **Conversation ledger (REQ-PRV-8, [design](../../../docs/design/provider-turns.md#conversation-ledger)):**
+  - `bind` records every conversation in `turn_conversations`, in the turn's
+    fenced transaction ([`ledger.ts`](src/ledger.ts)); a temporary chat is
+    `kept`.
+  - The source's `release(sessions, reason)` makes their live conversations
+    `due`, as one `retention` decision (rule `turns.conversation-retention`),
+    and starts a deletion pass. Passes also run at start and hourly, one at a
+    time.
+  - A pass deletes each due conversation under the lease
+    `conversation:<account>:<binding>`, on the account's scheduler with
+    `runExclusive`, through the driver's `deleteConversation`. A driver without
+    it, a feature outside its `deletes`, or a removed account keeps the
+    conversation, with why. A signed-out account leaves it due. Three failed
+    attempts make it `failed` (health `conversations`). Events:
+    `conversation.released`, `.deleted`, `.delete-retried`, `.delete-failed`.
+  - `inspectConversation(account, binding)` stores the driver's read-only
+    outlines of a recorded conversation as local-private evidence (event
+    `conversation.inspected`).
 - **Sessions:**
   - the caller issues session ids; a session is bound to the account of its
     first turn;
@@ -136,5 +154,6 @@ invoked by the [workflow engine](../workflow/README.md)
   stays queued for the next start.
 - **Injects:** `store`, `artifacts`, `leases`, `egress`, `turnReceipts`, `accounts`,
   `browser`, `providers`, `workers`; `mcp` is optional.
-- **MCP:** none of its own; the workflow engine serves `ask`, `research`, and
-  `result` as runs.
+- **MCP:** `account_verify`, `account_probe`, `conversation_list`, and
+  `conversation_inspect` (operator); the workflow engine serves `ask`,
+  `research`, and `result` as runs.

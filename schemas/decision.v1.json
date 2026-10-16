@@ -19,7 +19,8 @@
       "enum": [
         "decision@1.0",
         "decision@1.1",
-        "decision@1.2"
+        "decision@1.2",
+        "decision@1.3"
       ]
     },
     "decisionType": {
@@ -35,7 +36,8 @@
         "graph-growth",
         "recovery",
         "spec-admission",
-        "vote"
+        "vote",
+        "retention"
       ]
     },
     "question": {
@@ -669,7 +671,8 @@
           "schema": {
             "enum": [
               "decision@1.1",
-              "decision@1.2"
+              "decision@1.2",
+              "decision@1.3"
             ]
           },
           "vote": {
@@ -834,7 +837,30 @@
       "then": {
         "properties": {
           "schema": {
-            "const": "decision@1.2"
+            "enum": [
+              "decision@1.2",
+              "decision@1.3"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "description": "@1.3: a retention decision (a released session's website conversations deleted) is refused before @1.3.",
+      "if": {
+        "properties": {
+          "decisionType": {
+            "const": "retention"
+          }
+        },
+        "required": [
+          "decisionType"
+        ]
+      },
+      "then": {
+        "properties": {
+          "schema": {
+            "const": "decision@1.3"
           }
         }
       }

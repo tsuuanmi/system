@@ -94,8 +94,11 @@ const MAX_TERMS = 50
 const MAX_FOCUS = 20
 const MAX_WILDCARDS = 8
 const MAX_SEGMENTS = 16
-/** Steps the focus globs may take over the whole tree, so a pathological pattern cannot stall the daemon. */
-const GLOB_BUDGET = 50_000_000
+/**
+ * Steps the focus globs may take over the whole tree, so a pathological pattern cannot stall the
+ * daemon: 20 patterns such as `**\/*auth*` over 50,000 ordinary paths take well under it.
+ */
+export const GLOB_BUDGET = 200_000_000
 
 /**
  * The git options that pin every connection to `host` to the addresses checked before it, so git
@@ -365,7 +368,7 @@ interface Entry {
  * focus (paths or globs, else the request's words in a path), then tests beside what was chosen.
  * Within a class, shorter paths first, then smaller files. Terms are deduplicated and capped.
  */
-export function selectFiles(entries: Entry[], request: Pick<SnapshotRequest, 'focus' | 'terms'>, entryPoints: string[] = []): Entry[] {
+export function selectFiles(entries: Entry[], request: Pick<SnapshotRequest, 'focus' | 'terms'>, entryPoints: string[] = [], globBudget = GLOB_BUDGET): Entry[] {
   const candidates = entries.filter((e) => !SKIPPED_DIRS.test(e.path) && !LOCKFILES.test(e.path))
   const lower = new Map(candidates.map((e) => [e, e.path.toLowerCase()]))
   const order = (list: Entry[]): Entry[] => [...list].sort((a, b) => a.path.split('/').length - b.path.split('/').length || a.path.length - b.path.length
@@ -373,7 +376,7 @@ export function selectFiles(entries: Entry[], request: Pick<SnapshotRequest, 'fo
   const focus = request.focus ?? []
   const terms = [...new Set((request.terms ?? []).map((t) => t.toLowerCase()).filter((t) => t.length >= 4))].slice(0, MAX_TERMS)
   const named = new Set(entryPoints.map((p) => p.replace(/^\.\//, '')))
-  const budget: GlobBudget = { left: GLOB_BUDGET }
+  const budget: GlobBudget = { left: globBudget }
   const classes = [
     candidates.filter((e) => /^readme(\.[a-z]+)?$/i.test(e.path)),
     candidates.filter((e) => MANIFESTS.test(e.path) || (e.path.split('/').length === 2 && /\/(package\.json|pyproject\.toml|Cargo\.toml|go\.mod)$/.test(e.path))),

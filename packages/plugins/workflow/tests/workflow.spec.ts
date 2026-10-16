@@ -811,6 +811,26 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
     expect(after[1]!.inputReceipt!.inputHash).toBe(before[1]!.inputReceipt!.inputHash)
   }, 120_000)
 
+  it('deletes a deleted run\'s website conversation on its site, but never one a later run of the session still uses (REQ-PRV-8)', async () => {
+    const { ctx, fake } = await boot()
+    // As the live check does for the real site: the fake's delete flow is the one its map describes.
+    const map = (ctx.providers.get('chatgpt-web') as unknown as { map: { elements: Record<string, { unverified?: true }>; actions: Record<string, { unverified?: true }> } }).map
+    for (const spec of [...Object.values(map.elements), ...Object.values(map.actions)]) delete spec.unverified
+    const first = await ctx.workflow.wait(ctx.workflow.start({ template: 'ask', input: 'hello', persist: true }).runId, 30_000)
+    const second = await ctx.workflow.wait(ctx.workflow.start({ template: 'ask', input: 'again', sessionId: first.sessionId }).runId, 30_000)
+    const alone = await ctx.workflow.wait(ctx.workflow.start({ template: 'ask', input: 'alone', persist: true }).runId, 30_000)
+    const [binding] = ctx.turns.conversations({ sessionId: first.sessionId! }).map((c) => c.binding)
+    // The session continues in the second run: deleting the first releases nothing.
+    ctx.workflow.delete(first.runId, ctx.workflow.delete(first.runId).updatedAt)
+    expect(ctx.turns.conversations({ sessionId: first.sessionId! })).toEqual([expect.objectContaining({ binding, state: 'live' })])
+    ctx.workflow.delete(alone.runId, ctx.workflow.delete(alone.runId).updatedAt)
+    await expect.poll(() => ctx.turns.conversations({ sessionId: alone.sessionId! })[0]?.state, { timeout: 60_000 }).toBe('deleted')
+    ctx.workflow.delete(second.runId, ctx.workflow.delete(second.runId).updatedAt)
+    await expect.poll(() => ctx.turns.conversations({ sessionId: first.sessionId! })[0]?.state, { timeout: 60_000 }).toBe('deleted')
+    expect(fake.deleted.has(binding!)).toBe(true)
+    expect(ctx.eventLog.query({ type: 'conversation.released' })).toHaveLength(2)
+  }, 180_000)
+
   it('deletes a finished run only on the exact version its preview showed (REQ-WF-7)', async () => {
     const { ctx } = await boot()
     const done = await ctx.workflow.wait(ctx.workflow.start({ template: 'ask', input: 'bye' }).runId, 30_000)
@@ -1067,15 +1087,15 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
     expect(first.fake.sent.map((s) => s.deepResearch)).toEqual([true, false])
   }, 150_000)
 
-  it('clears a finished run\'s private text after the retention period, but keeps the run', async () => {
+  it('clears a finished run\'s private text after the retention period, but keeps the run while run retention is off', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'system-workflow-'))
     cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
-    const first = await boot({ dir })
+    const first = await boot({ dir, workflow: { retainRunsDays: 0 } })
     const done = await first.ctx.workflow.wait(first.ctx.workflow.start({ template: 'ask', input: 'private words' }).runId, 30_000)
     first.ctx.store.db.prepare("UPDATE workflow_runs SET updated_at = '2000-01-01T00:00:00.000Z'").run()
     await first.stop()
     cleanups.splice(cleanups.indexOf(first.stop), 1)
-    const second = await boot({ dir, shared: first.fake })
+    const second = await boot({ dir, shared: first.fake, workflow: { retainRunsDays: 0 } })
     await until(() => (second.ctx.store.db.prepare('SELECT input FROM workflow_runs').get() as { input: string }).input === '')
     expect(second.ctx.store.db.prepare('SELECT prompt FROM workflow_nodes').get()).toEqual({ prompt: null })
     expect(second.ctx.workflow.get(done.runId)).toMatchObject({ status: 'completed', answer: 'Plain answer.' })
@@ -1106,6 +1126,9 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
     expect(second.ctx.artifacts.get(s2.result!)).toBeDefined()
     const events = second.ctx.eventLog.query({ type: 'workflow.run.expired' }).map((e) => e.runId).sort()
     expect(events).toEqual([one.runId, s1.runId].sort())
+    // One summary per sweep; the session continued by the retained run keeps its conversation.
+    expect(second.ctx.eventLog.query({ type: 'workflow.retention.swept' })).toEqual([expect.objectContaining({ data: { runs: 2, conversations: 0, retainRunsDays: 1 } })])
+    expect(second.ctx.turns.conversations({ sessionId: s1.sessionId! })).toEqual([expect.objectContaining({ state: 'live' })])
   }, 120_000)
 
   it('explains a run: egress, tier, route, and acceptance for every node (REQ-ART-3)', async () => {

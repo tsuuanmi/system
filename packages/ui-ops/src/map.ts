@@ -37,6 +37,8 @@ export interface ElementSpec {
   description?: string
   /** `any` searches every frame (a report rendered in an iframe); such elements take no scope. */
   frames?: 'main' | 'any'
+  /** Not yet checked on the live site (`ui-map@1.2`): no irreversible action may depend on it. */
+  unverified?: true
   scope?: string
   cardinality?: 'one' | 'many'
   candidates: SourcedCandidate[]
@@ -56,6 +58,8 @@ export interface ActionSpec {
   sideEffect: SideEffect
   heal?: 'off' | 'deterministic' | 'model'
   timeouts?: { resolveMs?: number; verifyMs?: number }
+  /** Not yet checked on the live site (`ui-map@1.2`). */
+  unverified?: true
 }
 
 export interface NetworkPattern {
@@ -74,7 +78,7 @@ export interface ErrorRule {
 }
 
 export interface UiMap {
-  schema: 'ui-map@1.0' | 'ui-map@1.1'
+  schema: 'ui-map@1.0' | 'ui-map@1.1' | 'ui-map@1.2'
   provider: string
   uiRevision: string
   locales: string[]
@@ -85,6 +89,11 @@ export interface UiMap {
   errors: ErrorRule[]
   /** Content address of the merged map, recorded with heals and diagnostics. */
   hash: ContentId
+}
+
+/** The map's elements and actions under `prefix` that are not yet checked on the live site. */
+export function unverifiedEntries(map: Pick<UiMap, 'elements' | 'actions'>, prefix: string): string[] {
+  return [...Object.entries(map.elements), ...Object.entries(map.actions)].filter(([id, spec]) => id.startsWith(prefix) && spec.unverified).map(([id]) => id).sort()
 }
 
 let registry: SchemaRegistry | undefined

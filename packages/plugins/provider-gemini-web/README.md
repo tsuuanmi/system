@@ -63,6 +63,18 @@ driver, its operations are data: a UI map,
   positive evidence counts: a conversation that does not open there, renders no
   prompt, or shows a prompt it cannot read is not observed. For Deep research,
   only research after the last prompt counts, never its plan.
+- **`deleteConversation(page, binding)`** (PROP-0004 Phase 5; `deletes`:
+  `chat`, Deep research waits for its live check): opens `/app/<id>` and
+  clicks nothing unless the page is at exactly that path and shows a prompt
+  (otherwise `ui_drift`, nothing deleted). The path is checked again before each
+  click: the chat's own menu → **Delete** → **Delete chat?** → **Delete**. After
+  the site leaves the URL, the chat is reopened and counts as `deleted` only
+  when it shows that it no longer exists (map element `conversation.missing`);
+  one that already shows it is `gone`, with nothing clicked. The map entries
+  are not yet verified live: they are marked `unverified`, and `deletionUnverified()` names them, so the turn runtime deletes nothing until the live check lifts them.
+- **`inspectConversation(page, binding)`:** read-only evidence for those
+  entries: the chat's page and its own menu outlined (structure, never text),
+  the menu closed with Escape, no item chosen.
 - **Feature probe (REQ-PRV-7):** `probeFeatures` opens a new normal chat's tools
   and more tools, reports Deep research if offered, and sends nothing.
 - **Sign-in:**
@@ -89,7 +101,9 @@ driver, its operations are data: a UI map,
   - a Spark start, and a Temporary chat with no pressed state;
   - a mode menu that closes on each choice, and a prompt heading that repeats
     the prompt shortened;
-  - a Deep research plan that already has Copy, and its Start research turn.
+  - a Deep research plan that already has Copy, and its Start research turn;
+  - a chat's own menu, its "Delete chat?" dialog, and a deleted chat's
+    "Unable to load" notice (`deleted` records each deletion).
 
   Tests drive it in a real headed Chrome.
 - **Live checks:** what was verified on the live site, and what is verified

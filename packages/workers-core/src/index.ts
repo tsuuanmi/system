@@ -108,6 +108,12 @@ export interface WorkerSource {
   /** Start the session's next work in a fresh native conversation, on the same Worker (a compaction, REQ-SES-6). */
   reset?(sessionId: string): boolean
   /**
+   * The caller is done with these sessions for good (their run was deleted or expired): what the
+   * source created for them outside `system` (a website conversation) is deleted. How many of
+   * its records became due; zero when it owns none of them.
+   */
+  release?(sessionIds: readonly string[], reason: string): { due: number }
+  /**
    * Cancel an execution (REQ-WRK-4): a queued one never starts, a running one is aborted and
    * fails as `aborted`. False when it had already finished. Work already sent is not undone.
    */
@@ -198,6 +204,9 @@ export abstract class Workers extends Service {
 
   /** Start a session's next work in a fresh native conversation; false when no source owns it. */
   abstract reset(sessionId: string): boolean
+
+  /** Release sessions for good, at every source that owns some of them: how many records became due. */
+  abstract release(sessionIds: readonly string[], reason: string): { due: number }
 
   /**
    * Admit and choose exactly one Worker, deterministically for the same configuration,

@@ -25,6 +25,9 @@ import type {} from '@tsuuanmi/system-store'
 import type {} from '@tsuuanmi/system-turn-receipts'
 import type { CapabilityDescriptor, WorkerExecution, WorkerStart, WorkerState } from '@tsuuanmi/system-workers-core'
 import { z as zod } from 'zod'
+import { type ConversationView, deleteDue, LEDGER_MIGRATION, type LedgerHost, type LedgerState, listConversations, recordConversation, releaseSessions } from './ledger.ts'
+
+export type { ConversationView, LedgerState } from './ledger.ts'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -170,6 +173,9 @@ export class Turns extends Service {
   /** Operator cancellation of turns running in this process. */
   private readonly cancels = new Map<string, AbortController>()
   private stopping = false
+  /** The deletion pass in progress, and whether another was asked for meanwhile. */
+  private deleting: Promise<{ deleted: number; failed: number }> | undefined
+  private deleteAgain = false
   /** Aborted when the runtime stops, so waits in progress end at once. */
   private readonly halted = new AbortController()
 
@@ -214,7 +220,7 @@ export class Turns extends Service {
       version: 6,
       sql: `ALTER TABLE turns ADD COLUMN submitted_at TEXT;
       ALTER TABLE turns ADD COLUMN objective TEXT;`,
-    }])
+    }, LEDGER_MIGRATION])
     ctx.workers.register({
       name: 'website',
       describe: () => this.describeWorkers(),
@@ -231,6 +237,8 @@ export class Turns extends Service {
       handle: (sessionId) => this.session(sessionId)?.binding ?? undefined,
       // The account stays (session affinity); without a binding the next turn opens a new conversation.
       reset: (sessionId) => Number(this.ctx.store.db.prepare('UPDATE turn_sessions SET binding = NULL WHERE session_id = ?').run(sessionId).changes) > 0,
+      // The caller is done with these sessions: their recorded conversations are deleted on their sites.
+      release: (sessionIds, reason) => this.release(sessionIds, reason),
       cancel: (id) => this.cancel(id),
     })
     ctx.inject(['mcp'], (c) => {
@@ -241,6 +249,24 @@ export class Turns extends Service {
         try {
           const outcome = await this.verify(String(args.account))
           return { content: [{ type: 'text' as const, text: outcome.reason }], structuredContent: outcome }
+        } catch (error) {
+          return { isError: true, content: [{ type: 'text' as const, text: (error as Error).message }] }
+        }
+      })
+      c.mcp.tool('conversation_list', {
+        description: 'The website conversations system recorded (the conversation ledger), oldest first: live, due for deletion, deleted, kept (and why), or failed.',
+        inputSchema: { state: zod.enum(['live', 'due', 'deleted', 'kept', 'failed']).optional(), sessionId: zod.string().max(200).optional() },
+      }, async (args) => {
+        const conversations = this.conversations({ ...(args.state ? { state: args.state as LedgerState } : {}), ...(args.sessionId ? { sessionId: String(args.sessionId) } : {}) })
+        return { content: [{ type: 'text' as const, text: JSON.stringify(conversations) }], structuredContent: { conversations } }
+      })
+      c.mcp.tool('conversation_inspect', {
+        description: 'Outline a recorded website conversation\'s page and its own menu, choosing nothing (read-only evidence for its deletion; local-private, read with evidence).',
+        inputSchema: { account: zod.string().max(100), binding: zod.string().max(200) },
+      }, async (args) => {
+        try {
+          const outcome = await this.inspectConversation(String(args.account), String(args.binding))
+          return { content: [{ type: 'text' as const, text: `evidence: ${outcome.evidence.join(', ')}` }], structuredContent: outcome }
         } catch (error) {
           return { isError: true, content: [{ type: 'text' as const, text: (error as Error).message }] }
         }
@@ -261,12 +287,17 @@ export class Turns extends Service {
       queueMicrotask(() => {
         this.purge()
         this.recover()
+        // Deletions a stop or crash interrupted are checked on the site again first (INV-4).
+        void this.deleteConversations()
       })
       const daily = setInterval(() => this.purge(), 24 * 60 * 60_000)
       daily.unref()
       // Features are proven per account (REQ-PRV-7): missing or stale probes are refreshed in the background.
       const probing = setTimeout(() => void this.refreshProbes(), 2000)
-      const hourly = setInterval(() => void this.refreshProbes(), 60 * 60_000)
+      const hourly = setInterval(() => {
+        void this.refreshProbes()
+        void this.deleteConversations()
+      }, 60 * 60_000)
       probing.unref()
       hourly.unref()
       return async () => {
@@ -330,6 +361,85 @@ export class Turns extends Service {
       return this.view(row)
     })
     return view
+  }
+
+  /**
+   * Release sessions (the worker source's `release`): their recorded website conversations
+   * become due and are deleted on their sites in the background (PROP-0004 Phase 5).
+   */
+  release(sessionIds: readonly string[], reason: string): { due: number; decision?: ContentId } {
+    const released = releaseSessions(this.ledgerHost, sessionIds, reason)
+    if (released.due) this.ctx.store.afterCommit(() => void this.deleteConversations())
+    return released
+  }
+
+  /** The conversation ledger, oldest first (operator). */
+  conversations(filter: { state?: LedgerState; sessionId?: string } = {}): ConversationView[] {
+    return listConversations(this.ctx.store.db, filter)
+  }
+
+  /**
+   * Read-only evidence of how a recorded conversation is deleted on its site: its page and its
+   * own menu outlined (structure, never text), with nothing chosen, on the account's slot held
+   * exclusively. Each outline is a local-private `evidence` artifact (`system evidence <id>`).
+   */
+  async inspectConversation(accountId: string, binding: string, signal?: AbortSignal): Promise<{ account: string; binding: string; evidence: ContentId[] }> {
+    if (!this.conversations().some((c) => c.account === accountId && c.binding === binding)) {
+      throw new ProviderError('invalid_input', `${binding} is not a conversation system recorded on ${accountId}; only recorded conversations are inspected`)
+    }
+    const view = await this.ctx.accounts.get(accountId)
+    if (view.status !== 'ready') throw new ProviderError('reauth_required', `${accountId} is ${view.status}`)
+    const driver = this.ctx.providers.get(view.provider)
+    if (!driver.inspectConversation) throw new ProviderError('invalid_input', `${view.provider} cannot inspect a conversation`)
+    const outlines = await this.scheduler(accountId).runExclusive(async () => {
+      const turn = await this.ctx.browser.openTurn(accountId, { state: await this.ctx.accounts.portableState(accountId), ...(signal ? { signal } : {}) })
+      try {
+        return await driver.inspectConversation!(turn.page, binding)
+      } finally {
+        await turn.close()
+      }
+    }, signal)
+    const evidence = outlines.map((body) => this.ctx.artifacts.put({ kind: 'evidence', bodySchema: 'ui-outline@1.0', body, classification: 'local-private', producer: { type: 'system', ref: `turns/${view.provider}` } }).id)
+    this.ctx.get('eventLog')?.append({ type: 'conversation.inspected', data: { account: accountId, binding, evidence } })
+    return { account: accountId, binding, evidence }
+  }
+
+  /** One deletion pass at a time; a release during a pass is picked up by the next one. */
+  async deleteConversations(): Promise<{ deleted: number; failed: number }> {
+    if (this.stopping) return { deleted: 0, failed: 0 }
+    if (this.deleting) {
+      this.deleteAgain = true
+      return this.deleting
+    }
+    const pass = (async () => {
+      const total = { deleted: 0, failed: 0 }
+      do {
+        this.deleteAgain = false
+        const one = await deleteDue(this.ledgerHost)
+        total.deleted += one.deleted
+        total.failed += one.failed
+        if (one.retryInMs !== undefined && !this.stopping) {
+          const timer = setTimeout(() => {
+            this.retries.delete(timer)
+            void this.deleteConversations()
+          }, one.retryInMs)
+          timer.unref()
+          this.retries.add(timer)
+        }
+      } while (this.deleteAgain && !this.stopping)
+      return total
+    })()
+    this.deleting = pass
+    this.inflight.add(pass.then(() => undefined, () => undefined))
+    try {
+      return await pass
+    } finally {
+      this.deleting = undefined
+    }
+  }
+
+  private get ledgerHost(): LedgerHost {
+    return { ctx: this.ctx, scheduler: (account) => this.scheduler(account), stopping: () => this.stopping }
   }
 
   get(turnId: string): TurnView | undefined {
@@ -703,11 +813,12 @@ export class Turns extends Service {
     }
   }
 
-  /** Record the conversation binding on the receipt, the session, and the turn (fenced). */
+  /** Record the conversation binding on the receipt, the session, the turn, and the conversation ledger (fenced). */
   private bind(row: Row, accountId: string, binding: string, lease: () => Lease): void {
     this.ctx.store.transaction((db) => {
       this.ctx.leases.fence(lease())
       this.ctx.turnReceipts.bindConversation(this.identity(row, accountId), binding)
+      recordConversation(db, { account: accountId, binding, sessionId: row.session_id, turnId: row.turn_id, feature: row.feature, mode: row.mode })
       if (row.session_id) db.prepare('UPDATE turn_sessions SET binding = ?, account = COALESCE(account, ?) WHERE session_id = ?').run(binding, accountId, row.session_id)
       db.prepare('UPDATE turns SET binding = ?, updated_at = ? WHERE turn_id = ?').run(binding, now(), row.turn_id)
     })

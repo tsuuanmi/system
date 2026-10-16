@@ -56,7 +56,7 @@ guesses.
 - `decision@1.1` adds the decision type `vote`, the decider type `client`, and
   the `vote` object ([teams](../design/teams.md#the-record)). A record with any
   of them must be `@1.1` and carry `vote`; every other decision stays `@1.0`,
-  so earlier decisions keep their ids. Readers accept 1.0, 1.1, and 1.2.
+  so earlier decisions keep their ids. Readers accept 1.0 through 1.3.
 - `decision@1.2` adds a review's quote checks ([teams](../design/teams.md#review)):
   - the method and the round end `blocking-finding` (decider rule
     `workflow.blocking-finding`);
@@ -71,6 +71,13 @@ guesses.
   A record with any of them must be `@1.2`. A review's votes, its tallies and
   its final decision, are always `@1.2`; a brainstorm's stay `@1.1`. Example:
   [`decision.review-blocking.json`](../../schemas/examples/decision.review-blocking.json).
+- `decision@1.3` adds the decision type `retention`: a released session's
+  website conversations are deleted on their sites (decider rule
+  `turns.conversation-retention`; `outcome.detail` names the released
+  `sessions` and the `conversations` it made due,
+  [conversation ledger](../design/provider-turns.md#conversation-ledger)). A
+  `retention` decision must be `@1.3`. Example:
+  [`decision.retention.json`](../../schemas/examples/decision.retention.json).
 - A tally's `vote` holds one round; the team's final `vote` holds every round,
   its `method`, the `dissent`, any `revisions` and `tiebreak`, and a review's
   `findings`. `threshold` is a strict majority of every member, never of the
@@ -99,6 +106,17 @@ guesses.
   graph. It stays as history, never runs again, and its `lastDecision` is the
   `graph-growth` decision that retired it. Only a retired node is written as
   1.1; readers accept 1.0 and 1.1.
+
+### `conversation`
+
+- One row of the [conversation ledger](../design/provider-turns.md#conversation-ledger), as
+  `system conversations` and MCP `conversation_list` show it.
+- `state`: `live` while its session holds it; `due` once released; `deleted` when the site
+  shows it gone (`reason` says so when it was already gone); `kept` with why (a temporary chat,
+  a feature not yet proven deletable, no deletion on the site, a removed account); `failed`
+  after three attempts, with the last error in `reason`.
+- `decision` is the `retention` decision that released it. Example:
+  [`conversation.deleted.json`](../../schemas/examples/conversation.deleted.json).
 
 ### `provider-turn-receipt`
 
@@ -266,6 +284,11 @@ guesses.
   merged after the shipped candidates. It never replaces the shipped map.
 - `heal` is capped by `sideEffect`: an `irreversible` action never uses `model`.
 - `ui-map@1.1` adds the optional element field `frames` (`main` or `any`).
+- `ui-map@1.2` adds `unverified: true` on an element or action not yet checked on
+  the live site. No irreversible job may depend on one: while a delete flow's
+  entries are unverified, its conversations wait, due, and nothing is clicked
+  ([conversation ledger](../design/provider-turns.md#conversation-ledger)). The
+  live check removes the flag entry by entry.
   Elements with `frames: any` are searched in every frame and take no `scope`.
   Readers accept 1.0 and 1.1.
 

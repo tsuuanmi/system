@@ -160,8 +160,11 @@ describe('snapshotRepository: a public repository read at one commit (PROP-0004 
     // A pattern deep enough to cost pattern × path steps on every deep path runs out of its budget, quickly.
     const deep = Array.from({ length: 5000 }, (_, i) => ({ path: `${'a/'.repeat(495)}c${i}`, sha: '0'.repeat(40), bytes: 10 }))
     const costly = Date.now()
-    expect(() => selectFiles(deep, { focus: [`**/${'a/'.repeat(14)}b`] })).toThrow(/too costly/)
+    expect(() => selectFiles(deep, { focus: [`**/${'a/'.repeat(14)}b`] }, [], 50_000_000)).toThrow(/too costly/)
     expect(Date.now() - costly).toBeLessThan(10_000)
+    // Ordinary focus over a large ordinary tree stays well within the budget.
+    const tree = Array.from({ length: 50_000 }, (_, i) => ({ path: `packages/p${i % 40}/src/${['auth', 'core', 'util'][i % 3]}/m${i}/file${i}.ts`, sha: '0'.repeat(40), bytes: 10 }))
+    expect(selectFiles(tree, { focus: Array.from({ length: 20 }, (_, i) => `**/*${['auth', 'core'][i % 2]}*`) }).length).toBeGreaterThan(0)
     expect(await snapshotRepository({ url: repo.url, focus: [`**/${'a/'.repeat(240)}b`] }, {}, undefined, local).catch((e: unknown) => e)).toMatchObject({ kind: 'invalid_input', message: expect.stringMatching(/16 segments/) })
     expect(await snapshotRepository({ url: repo.url, focus: Array.from({ length: 21 }, () => 'a') }, {}, undefined, local).catch((e: unknown) => e)).toMatchObject({ kind: 'invalid_input', message: expect.stringMatching(/at most 20 focus/) })
     expect(await snapshotRepository({ url: repo.url, focus: ['*'.repeat(9)] }, {}, undefined, local).catch((e: unknown) => e)).toMatchObject({ kind: 'invalid_input', message: expect.stringMatching(/8 wildcards/) })

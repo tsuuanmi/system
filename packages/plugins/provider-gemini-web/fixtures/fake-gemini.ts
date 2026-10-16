@@ -23,6 +23,10 @@
  *   "Start research" follows, then a reply holds a card (`gem-processing-card`, class
  *   `processing`, then `completed`) while Stop shows, and the report opens in a panel
  *   (`deep-research-immersive-panel`): its title, the report, then "Sources used in the report".
+ * - deleting one conversation (NOT yet verified live, PROP-0004 Phase 5): its own menu button
+ *   ("Open menu for conversation actions") → "Delete" → a "Delete chat?" dialog → "Delete", which
+ *   POSTs a batchexecute call (`rpcids=GzXR5e`, the chat as `c_<id>`) and goes to `/app`; a
+ *   deleted chat's URL then shows "Unable to load this conversation".
  * No private data from the live account is included.
  */
 import { randomBytes } from 'node:crypto'
@@ -118,6 +122,7 @@ function render() {
   $('picker').setAttribute('aria-label', 'Open mode picker, currently ' + short(model))
   $('picker').textContent = short(model)
   $('chip').hidden = !deepResearch
+  $('conv-options').hidden = !conversationId || !!$('missing')
 }
 function renderMenu() {
   const item = (name, kind, i) => '<div role="menuitem" tabindex="0" data-kind="' + kind + '" data-name="' + name + '"'
@@ -143,7 +148,18 @@ $('more-tools').onclick = () => { $('more').hidden = false; $('dr').hidden = tem
 // A checkbox, like the live entry: choosing it again turns Deep research off.
 $('dr').onclick = () => { deepResearch = !deepResearch; $('tools-menu').hidden = true; render() }
 $('chip').onclick = () => { deepResearch = false; render() }
-document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { $('menu').hidden = true; $('tools-menu').hidden = true; levelsOpen = false } })
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { $('menu').hidden = true; $('tools-menu').hidden = true; $('conv-menu').hidden = true; levelsOpen = false } })
+$('conv-options').onclick = () => { $('conv-menu').hidden = !$('conv-menu').hidden }
+$('conv-delete').onclick = () => { $('conv-menu').hidden = true; $('conv-dialog').hidden = false }
+$('conv-cancel').onclick = () => { $('conv-dialog').hidden = true }
+$('conv-confirm').onclick = async () => {
+  // Like the app's own calls: one batchexecute RPC naming the chat, then the app goes to a new chat.
+  const req = JSON.stringify([[['GzXR5e', JSON.stringify(['c_' + conversationId]), null, 'generic']]])
+  const res = await fetch('/_/BardChatUi/data/batchexecute?rpcids=GzXR5e', { method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded;charset=UTF-8' }, body: 'f.req=' + encodeURIComponent(req) })
+  $('conv-dialog').hidden = true
+  if (res.ok) location.assign('/app')
+}
 $('tab-chat').onclick = () => { if (!options.chatTabBroken) tab = 'chat'; render() }
 $('tab-spark').onclick = () => { tab = 'spark'; render() }
 $('temp').onclick = () => { if (!options.temporaryBroken) temporary = true; render() }
@@ -278,17 +294,20 @@ async function send() {
     }
   }
 }
-if (conversationId) refresh()
+if (conversationId && !$('missing')) refresh()
 render()
 `
 
-function html(options: Required<FakeOptions>): string {
+function html(options: Required<FakeOptions>, missing = false): string {
   const data = JSON.stringify({ ...options, notes: NOTES }).replace(/</g, '\\u003c')
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Gemini</title>
 <style>.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}[hidden]{display:none}</style></head>
 <body>
 <header><a href="#" aria-label="Google Account: Test User (test@example.test)">T</a>${options.signInOffer ? '<button>Sign in</button>' : ''}</header>
-<nav><button aria-label="Temporary chat" id="temp">t</button></nav>
+<nav><button aria-label="Temporary chat" id="temp">t</button><button aria-label="Open menu for conversation actions" aria-haspopup="menu" id="conv-options" hidden>⋮</button></nav>
+${missing ? '<div role="alert" id="missing">Unable to load this conversation</div>' : ''}
+<div role="menu" id="conv-menu" hidden><div role="menuitem" tabindex="0">Share conversation</div><div role="menuitem" tabindex="0">Pin</div><div role="menuitem" tabindex="0" id="conv-delete">Delete</div></div>
+<div role="dialog" aria-label="Delete chat?" id="conv-dialog" hidden><p>You'll no longer see this chat here.</p><button id="conv-cancel">Cancel</button><button id="conv-confirm">Delete</button></div>
 <div><button data-test-id="app-tab-chat" class="app-tab" id="tab-chat">Chat</button><button data-test-id="app-tab-agent" class="app-tab" id="tab-spark">Spark<br>BETA</button></div>
 <main>
   <div class="description" id="notice" hidden> <a href="#">Temporary chats</a> don't appear in recent chats <a href="#">and</a> aren't used to improve Google AI.</div>
@@ -319,6 +338,8 @@ export class FakeGemini {
   readonly sent: Sent[] = []
   readonly started: string[] = []
   readonly conversations = new Map<string, Turn[]>()
+  /** Conversations deleted from the history by their own menu: they no longer open. */
+  readonly deleted = new Set<string>()
   /** Whether each conversation's last prompt was sent with Deep research chosen. */
   private readonly chips = new Map<string, boolean>()
   private server: Server | undefined
@@ -396,10 +417,23 @@ export class FakeGemini {
       turns.push({ role: 'user', text: 'Start research' }, { role: 'research', title: plan.title, startedAt: Date.now() })
       return json(200, {})
     }
+    if (url.pathname === '/_/BardChatUi/data/batchexecute' && url.searchParams.get('rpcids') === 'GzXR5e' && req.method === 'POST') {
+      let body = ''
+      for await (const chunk of req) body += String(chunk)
+      const rpc = JSON.parse(new URLSearchParams(body).get('f.req') ?? '[]') as Array<Array<[string, string]>>
+      const id = /^c_([0-9a-f]{16})$/.exec((JSON.parse(rpc[0]?.[0]?.[1] ?? '[]') as string[])[0] ?? '')?.[1]
+      const known = id !== undefined && this.conversations.delete(id)
+      if (known) this.deleted.add(id)
+      return json(known ? 200 : 400, {})
+    }
     const state = /^\/_\/c\/([0-9a-f]{16})$/.exec(url.pathname)
     if (state) return this.conversations.has(state[1]!) ? json(200, { turns: this.view(state[1]!), deepResearch: this.chips.get(state[1]!) ?? false }) : json(404, {})
     const page = /^\/app(?:\/([0-9a-f]{16}))?$/.exec(url.pathname)
     if (page) {
+      if (page[1] && this.deleted.has(page[1])) {
+        res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }).end(html(this.options, true))
+        return
+      }
       if (page[1] && !this.conversations.has(page[1])) {
         res.writeHead(302, { location: '/app' }).end()
         return

@@ -65,6 +65,10 @@
 - **REQ-PRV-7** Website-native features enabled on an account, such as web search
   and connectors, apps, or plugins, are exposed as named capabilities. Each is
   proven by a feature probe on that account (purpose P2).
+- **REQ-PRV-8** Every website conversation `system` creates is recorded. When the
+  run that owns it is deleted or expires, it is deleted on its site, and only
+  it: a chat the operator started is never touched, and a temporary chat is
+  left to the site (PROP-0004).
 
 ## Workers (`REQ-WRK`)
 

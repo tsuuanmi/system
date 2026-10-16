@@ -97,6 +97,12 @@ export class WorkerRouter extends Workers {
     return false
   }
 
+  release(sessionIds: readonly string[], reason: string): { due: number } {
+    let due = 0
+    if (sessionIds.length) for (const source of this.sources.values()) due += source.release?.(sessionIds, reason).due ?? 0
+    return { due }
+  }
+
   async list(): Promise<CapabilityDescriptor[]> {
     return (await this.described()).map((d) => d.worker)
   }

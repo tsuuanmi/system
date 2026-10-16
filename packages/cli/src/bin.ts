@@ -45,6 +45,10 @@ const USAGE = `Usage: system <command>
   account save <id>         after an interactive login: capture, verify, store encrypted
   account probe <id>        prove which website features the account offers (Deep research, Web search, ...)
   account verify <id>       re-verify a reauth-required account from its stored state (no login, nothing saved)
+  conversations [--state <s>]
+                            the website conversations system recorded: live, due, deleted, kept (why), failed
+  conversation inspect <account> <binding>
+                            outline a recorded conversation's page and menu, choosing nothing (read with evidence)
   start [dsh args...]       boot the profile (e.g. --patch ./overlay.yml)
   backup <dir> [--include-key]
                             snapshot the store and encrypted vault into an empty dir (the key only with --include-key)
@@ -271,6 +275,20 @@ async function main(argv: string[]): Promise<number> {
       const value = (await readAllStdin()).trim()
       if (!value) throw new Error('no key on stdin')
       const outcome = await callTool('model_key', { name: rest[1], value })
+      if (outcome.isError) throw new Error(outcome.text)
+      console.log(outcome.text)
+      return 0
+    }
+    case 'conversations': {
+      const at = rest.indexOf('--state')
+      const outcome = await callTool('conversation_list', at >= 0 ? { state: rest[at + 1] } : {})
+      if (outcome.isError) throw new Error(outcome.text)
+      console.log(JSON.stringify((outcome.structured as { conversations?: unknown } | undefined)?.conversations ?? [], null, 2))
+      return 0
+    }
+    case 'conversation': {
+      if (rest[0] !== 'inspect' || !rest[1] || !rest[2]) throw new Error('usage: system conversation inspect <account> <binding>')
+      const outcome = await callTool('conversation_inspect', { account: rest[1], binding: rest[2] })
       if (outcome.isError) throw new Error(outcome.text)
       console.log(outcome.text)
       return 0

@@ -81,7 +81,7 @@ export class Workflow extends Service {
     maxActiveRuns: z.natural().min(1).default(16).description('Unfinished runs that execute at once; a run waiting only on an approval or a vote is not one'),
     maxWaitingRuns: z.natural().default(16).description('Runs waiting only on an approval or a vote, beyond maxActiveRuns; with that many, new runs are refused'),
     retainDays: z.natural().min(1).default(30).description('Days a finished run keeps its input text and prompts'),
-    retainRunsDays: z.natural().default(0).description('Days a finished run is kept, then deleted with the artifacts only it needed (0: every run is kept); a session\'s latest run always stays'),
+    retainRunsDays: z.natural().default(30).description('Days a finished run is kept, then deleted with the artifacts only it needed and the website chats only it used (0: every run is kept); a session\'s latest run always stays'),
     autoApprovePlans: z.boolean().default(false).description('Approve a high-confidence plan by policy instead of waiting for the operator'),
     maxReviewCycles: z.natural().min(1).max(5).default(3).description('Reviews of one change, the first included, before remediation stops'),
     tieTimeoutHours: z.number().min(0.0001).max(720).default(24).description('Hours a tied team waits for a deciding vote, then completes inconclusive (INV-9)'),

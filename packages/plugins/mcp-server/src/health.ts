@@ -35,6 +35,8 @@ export interface HealthSources {
   plugins?: () => Array<{ name: string; state: 'failed' | 'pending'; detail: string }>
   /** Configured workflow templates refused at load, with why. */
   templates?: () => Array<{ name: string; reason: string }>
+  /** Website conversations whose deletion failed every attempt (the conversation ledger). */
+  undeleted?: () => Array<{ account: string; binding: string; reason?: string }>
   nodeVersion?: string
   minFreeBytes: number
   driftWindowMs: number
@@ -130,6 +132,17 @@ export async function healthReport(sources: HealthSources): Promise<HealthReport
     }))
   }
 
+  const undeleted = sources.undeleted
+  if (undeleted) {
+    checks.push(await guarded('conversations', () => {
+      const failed = undeleted()
+      const accounts = [...new Set(failed.map((c) => c.account))].sort()
+      return failed.length
+        ? { name: 'conversations', state: 'degraded', detail: `${failed.length} website conversation(s) of ${accounts.join(', ')} could not be deleted: see system conversations --state failed, and the playbook (docs/operations/playbooks.md)` }
+        : ok('conversations', 'every released website conversation was deleted or is due')
+    }))
+  }
+
   const events = sources.events
   if (events) {
     checks.push(await guarded('ui-drift', () => {
@@ -146,6 +159,19 @@ export async function healthReport(sources: HealthSources): Promise<HealthReport
       return count
         ? { name: 'ui-drift', state: 'degraded', detail: `${count} provider UI change(s) seen recently${named.length ? ` (${named.join(', ')})` : ''}: update the UI map (docs/operations/playbooks.md)` }
         : ok('ui-drift', 'no provider UI change seen recently')
+    }))
+  }
+
+  // A notice, not an alarm: what retention removed recently (the first sweep after an upgrade may remove many runs).
+  if (events) {
+    checks.push(await guarded('retention', () => {
+      const since = new Date((sources.now ?? Date.now)() - sources.driftWindowMs).toISOString()
+      const swept = events('workflow.retention.swept', since)
+      const runs = swept.reduce((n, e) => n + Number(e.data?.runs ?? 0), 0)
+      const conversations = swept.reduce((n, e) => n + Number(e.data?.conversations ?? 0), 0)
+      return ok('retention', swept.length
+        ? `retention expired ${runs} run(s) and released ${conversations} website conversation(s) for deletion recently (system events --type workflow.retention.swept)`
+        : 'retention expired no run recently')
     }))
   }
 

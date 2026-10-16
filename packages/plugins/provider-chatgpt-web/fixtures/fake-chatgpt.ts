@@ -39,6 +39,8 @@ export interface FakeOptions {
   requireCookie?: boolean
   /** A signed-in page load rotates the session cookie `session_seen` (write-back tests). */
   rotateOnLoad?: boolean
+  /** The conversation menu offers Delete (default true): without it a deletion fails, and nothing is deleted. */
+  deleteMenu?: boolean
   /** Account id returned by `GET /backend-api/me`. */
   userId?: string
   /** Accessible name of the send button (drift tests). */
@@ -118,7 +120,7 @@ export function researchDocument(research: { done: boolean; report: string }): s
     + `<body><iframe srcdoc="${escape(inner)}" style="width:940px;height:620px;border:0"></iframe></body></html>`
 }
 
-function html(options: Required<FakeOptions>, conversation: Conversation | undefined): string {
+function html(options: Required<FakeOptions>, conversation: Conversation | undefined, missing?: string): string {
   const turns = (conversation?.turns ?? []).map((t) => t.role === 'user'
     ? `<div class="turn"><h4 class="sr-only">You said:</h4><div>${t.text}</div><button aria-label="Copy message">c</button><button aria-label="Edit message">e</button></div>`
       + (t.research !== undefined ? researchHost(conversation!.id, t.research) : '')
@@ -128,6 +130,10 @@ function html(options: Required<FakeOptions>, conversation: Conversation | undef
 <style>.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}[hidden]{display:none}</style></head>
 <body>
 <nav aria-label="App navigation"><button aria-label="Open profile menu">me</button>${options.loginOffer ? '<button>Log in</button>' : ''}</nav>
+${missing ? `<div role="alert">Unable to load conversation ${missing}</div>` : ''}
+<header>${conversation ? '<button id="conv-options" aria-label="Open conversation options" aria-haspopup="menu">…</button>' : ''}</header>
+<div role="menu" aria-label="Conversation options" id="conv-menu" hidden><div role="menuitem" tabindex="0">Share</div><div role="menuitem" id="conv-delete" tabindex="0"${options.deleteMenu ? '' : ' hidden'}>Delete</div></div>
+<div role="dialog" aria-label="Delete chat?" id="conv-dialog" hidden><p>This will delete the chat.</p><button id="conv-cancel">Cancel</button><button id="conv-confirm">Delete</button></div>
 <main>
   <button id="temp" aria-label="Temporary chat">t</button>
   <button id="temp-off" aria-label="Turn off temporary chat" hidden>x</button>
@@ -226,6 +232,15 @@ $('tool-dr').onclick = () => {
   $('tools').hidden = true
   render()
 }
+if ($('conv-options')) $('conv-options').onclick = () => { $('conv-menu').hidden = false }
+$('conv-delete').onclick = () => { $('conv-menu').hidden = true; $('conv-dialog').hidden = false }
+$('conv-cancel').onclick = () => { $('conv-dialog').hidden = true }
+$('conv-confirm').onclick = async () => {
+  // Like the live site: the chat is hidden from the history, then the app goes home.
+  const res = await fetch('/backend-api/conversation/' + convId, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ is_visible: false }) })
+  $('conv-dialog').hidden = true
+  if (res.ok) location.assign('/')
+}
 $('mode-chat').onclick = () => { if (!options.chatToggleBroken) mode = 'chat'; render() }
 $('mode-work').onclick = () => { mode = 'work'; render() }
 $('temp').onclick = () => { temporary = true; history.pushState({}, '', '/?temporary-chat=true'); render() }
@@ -319,6 +334,10 @@ export class FakeChatGpt {
   readonly codeAttempts: string[] = []
   readonly sent: Sent[] = []
   readonly conversations = new Map<string, Conversation>()
+  /** Conversations deleted from the history (PATCH is_visible false): they no longer open. */
+  readonly deleted = new Set<string>()
+  /** Every deletion request the page made, by conversation id (a repeated click shows twice). */
+  readonly deleteRequests: string[] = []
   private server: Server | undefined
   private readonly streams = new Set<ServerResponse>()
   options: Required<FakeOptions>
@@ -326,7 +345,7 @@ export class FakeChatGpt {
 
   constructor(options: FakeOptions = {}) {
     this.options = {
-      startOnWork: true, chatToggleBroken: false, signedIn: true, loginOffer: false, requireCookie: false, rotateOnLoad: false, userId: 'user-fake123', sendLabel: 'Send', sendTestId: '',
+      startOnWork: true, chatToggleBroken: false, signedIn: true, loginOffer: false, requireCookie: false, rotateOnLoad: false, deleteMenu: true, userId: 'user-fake123', sendLabel: 'Send', sendTestId: '',
       answer: 'OK', thinkMs: 300, models: ['Latest', 'GPT-6', 'GPT-5.6 Sol', 'GPT-5.5'], lockedModels: [],
       researchMs: 1500, report: 'Deep research report body.', clarify: false, features: ['deep-research', 'web-search', 'image-generation'], modelPicker: true,
       mfa: 'totp', email: 'operator@example.test', password: 'correct horse', totpSecret: 'JBSWY3DPEHPK3PXP',
@@ -432,6 +451,14 @@ export class FakeChatGpt {
       res.end(run ? researchDocument(run) : '')
       return
     }
+    const patched = /^\/backend-api\/conversation\/([0-9a-f-]+)$/.exec(url.pathname)
+    if (patched && req.method === 'PATCH') {
+      this.deleteRequests.push(patched[1]!)
+      const known = signedIn && this.conversations.delete(patched[1]!)
+      if (known) this.deleted.add(patched[1]!)
+      res.writeHead(known ? 200 : 404, { 'content-type': 'application/json' }).end(JSON.stringify({ success: known }))
+      return
+    }
     if (url.pathname === '/backend-api/me' && req.method === 'GET') {
       res.writeHead(signedIn ? 200 : 401, { 'content-type': 'application/json' })
       res.end(JSON.stringify(signedIn ? { id: this.options.userId, object: 'user' } : { detail: 'unauthorized' }))
@@ -446,6 +473,6 @@ export class FakeChatGpt {
     if (url.pathname.startsWith('/auth')) return this.auth(url, req, res)
     if (this.options.rotateOnLoad) res.setHeader('set-cookie', `session_seen=${Date.now()}; Path=/; Max-Age=3600`)
     const match = /^\/c\/([0-9a-f-]+)$/.exec(url.pathname)
-    res.end(html(this.options, match ? this.conversations.get(match[1]!) : undefined))
+    res.end(html(this.options, match ? this.conversations.get(match[1]!) : undefined, match && this.deleted.has(match[1]!) ? match[1] : undefined))
   }
 }

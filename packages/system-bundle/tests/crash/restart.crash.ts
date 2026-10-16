@@ -97,6 +97,22 @@ const bound = (dir: string): boolean => {
   }
 }
 
+/** The ledger's state of every recorded conversation, read from the store. */
+const ledger = (dir: string): string[] => {
+  try {
+    const db = new DatabaseSync(join(dir, 'system.db'), { readOnly: true })
+    try {
+      return (db.prepare('SELECT state FROM turn_conversations').all() as Array<{ state: string }>).map((r) => r.state)
+    } catch {
+      return []
+    } finally {
+      db.close()
+    }
+  } catch {
+    return []
+  }
+}
+
 const answered = (fake: FakeChatGpt): boolean => [...fake.conversations.values()].some((c) => c.turns.some((t) => t.role === 'assistant'))
 
 describe.runIf(canRunBrowser)('crash injection at every reconcile point of a website turn (QA-1, INV-4)', () => {
@@ -117,6 +133,33 @@ describe.runIf(canRunBrowser)('crash injection at every reconcile point of a web
     expect(done).toMatchObject({ status: 'failed', error: { kind: 'reconciliation_failed' } })
     expect(fake.sent).toHaveLength(1)
   }, 300_000)
+
+  it('after a deletion was clicked on the site, before it was recorded: the site shows it gone, so it is recorded deleted and never clicked again (PROP-0004 Phase 5)', async () => {
+    const fake = new FakeChatGpt({ answer: 'Delete me later.' })
+    await fake.start()
+    cleanups.push(() => fake.stop())
+    const dir = mkdtempSync(join(tmpdir(), 'system-crash-'))
+    cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+    const first = engine(dir, fake, ['delete', 'a chat to delete'])
+    await first.runId
+    // The site took the deletion; the ledger still says it is due.
+    await until(() => fake.deleteRequests.length === 1 && ledger(dir).includes('due'), 180_000)
+    await crash(first)
+    const second = spawn(process.execPath, [HARNESS, dir, fake.origin, testChrome!, 'settle'], { detached: true, stdio: ['ignore', 'pipe', 'pipe'] })
+    cleanups.push(() => {
+      try {
+        process.kill(-second.pid!, 'SIGKILL')
+      } catch {
+        // already gone
+      }
+    })
+    let out = ''
+    second.stdout!.on('data', (chunk: Buffer) => { out += chunk.toString('utf8') })
+    await new Promise((resolve) => second.once('exit', resolve))
+    const settled = JSON.parse(out.split('\n').find((l) => l.startsWith('@@ {"conversations"'))!.slice(3)) as { conversations: Array<{ state: string; reason?: string }> }
+    expect(settled.conversations).toEqual([expect.objectContaining({ state: 'deleted', reason: 'already gone from the site' })])
+    expect(fake.deleteRequests).toHaveLength(1)
+  }, 400_000)
 
   it('after a temporary chat was sent: it cannot be observed, so the run fails closed as AMBIGUOUS, never resent blind', async () => {
     const { fake, done } = await scenario({ thinkMs: 8000 }, 'temporary', (f) => f.sent.length === 1)

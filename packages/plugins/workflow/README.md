@@ -361,6 +361,6 @@ in `engine.ts`:
 | `teams.ts` | team contracts and parsing, quote checks and merging of findings, options, ballot and debate prompts, tally and the blocking-finding rule, decision, tie and `vote`, distinct accounts |
 | `sessions.ts` | wake-on-message, checkpoints, compaction |
 | `operator.ts` | `stop`, `continue`, `supersede`, `approve` |
-| `retention.ts` | `delete` and the expiry of private text |
+| `retention.ts` | `delete` and the expiry of private text and runs; a deleted run releases the Worker sessions no other run uses |
 | `views.ts` | run views, `usage`, `explain` |
 | `tools.ts` | the MCP tools |

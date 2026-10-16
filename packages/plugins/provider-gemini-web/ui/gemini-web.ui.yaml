@@ -2,7 +2,7 @@
 # /app page (read-only, Temporary-chat prompts, and one Deep research run); the fake site in
 # fixtures/ follows it.
 # When the site changes, edit this file (and the fixture), not the driver code.
-schema: ui-map@1.1
+schema: ui-map@1.2
 provider: gemini-web
 uiRevision: '2026-10-12'
 locales: [en]
@@ -169,6 +169,37 @@ elements:
     candidates:
       - { role: button, name: { en: '^Copy$' }, exact: true }
 
+  # Deleting one conversation (PROP-0004 Phase 5). NOT yet verified live: the names are the
+  # expected shape of the open conversation's menu (the site's test ids are `data-test-id`, so
+  # CSS), and the fake follows them; the live check replaces them.
+  conversation.options:
+    unverified: true
+    description: The open conversation's own menu button (never the history's bulk actions).
+    candidates:
+      - { role: button, name: { en: '^(More options|Open menu for conversation actions)$' } }
+      - { css: 'button[data-test-id="conversation-actions-menu-button"]' }
+  conversation.delete:
+    unverified: true
+    description: Delete in the open conversation's menu.
+    candidates:
+      - { role: menuitem, name: { en: '^Delete$' } }
+      - { css: '[role="menuitem"][data-test-id="delete-button"]' }
+  conversation.delete-dialog:
+    unverified: true
+    candidates:
+      - { role: dialog, name: { en: '^Delete chat\?$' } }
+  conversation.delete-confirm:
+    unverified: true
+    scope: conversation.delete-dialog
+    candidates:
+      - { role: button, name: { en: '^Delete$' } }
+      - { css: 'button[data-test-id="confirm-button"]' }
+  conversation.missing:
+    unverified: true
+    description: Positive evidence that the opened conversation no longer exists.
+    candidates:
+      - { text: { en: "^(Unable to load|This conversation (was deleted|isn't available))" } }
+
 actions:
   tab.select-chat:
     do: click
@@ -234,6 +265,31 @@ actions:
     verify: { anyOf: [{ countIncreased: turn.user }, { visible: composer.stop }] }
     sideEffect: irreversible
     timeouts: { resolveMs: 5000, verifyMs: 20000 }
+  conversation.open-options:
+    unverified: true
+    do: click
+    target: conversation.options
+    verify: { visible: conversation.delete }
+    sideEffect: reversible
+    timeouts: { resolveMs: 10000, verifyMs: 5000 }
+  conversation.choose-delete:
+    unverified: true
+    do: click
+    target: conversation.delete
+    verify: { visible: conversation.delete-confirm }
+    sideEffect: reversible
+    timeouts: { resolveMs: 5000, verifyMs: 5000 }
+  conversation.confirm-delete:
+    unverified: true
+    do: click
+    target: conversation.delete-confirm
+    verify: { network: conversation.delete }
+    sideEffect: irreversible
+    timeouts: { resolveMs: 5000, verifyMs: 15000 }
+
+network:
+  # NOT yet verified live: the fake's stand-in for the app's batchexecute call that deletes a chat.
+  conversation.delete: { method: POST, url: '/_/BardChatUi/data/batchexecute\?rpcids=GzXR5e(&|$)' }
 
 states:
   auth.signed-in: { visible: auth.account }

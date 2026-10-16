@@ -31,6 +31,9 @@ interface ProviderDriver<Page> {                   // provider-core
                       beforeSend?, onBinding? }): Promise<AskResult>;  // { text, binding, mode }
   signIn?(page, credentials, code): Promise<void>; // credential login (ADR-0017)
   snapshot(page, binding, { feature? }): Promise<TurnSnapshot>;     // for reconciliation
+  readonly deletes?: readonly ProviderFeature[];   // features whose conversations it is proven to delete
+  deleteConversation?(page, binding): Promise<'deleted' | 'gone'>;  // one conversation, from its own menu
+  inspectConversation?(page, binding): Promise<PageOutline[]>;      // read-only: outlines, nothing chosen
 }
 ```
 
@@ -203,6 +206,46 @@ After completion, the receipt is marked `COMPLETED`, auth state is recaptured, a
 it is written back (a background sign-in check that finds the account signed in does the same) **only if** both the account revision and the scheduler lease
 generation are still current. Otherwise the write is dropped
 ([scheduling-and-leases](scheduling-and-leases.md)).
+
+## Conversation ledger
+
+Every website conversation `system` creates is recorded in the turn runtime's ledger
+(REQ-PRV-8; record [`conversation@1.0`](../../schemas/conversation.v1.json)): account, binding,
+the session that owns it, the turn that opened it, its feature and mode, and its state.
+
+- **Recorded at bind time,** inside the turn's fenced transaction, so no binding exists without
+  its row. A compaction that starts a new conversation adds a row; the old one stays live. The
+  ledger outlives the turn records and receipts, which expire on their own clock. When the
+  ledger was introduced, it was filled from the turns that still held a binding; older
+  conversations were never recorded and are not deleted.
+- **Released with its run.** When a run is deleted or expires, the workflow engine releases
+  the Worker sessions its nodes used that no remaining run uses (the Worker source's `release`,
+  [workers](../../packages/workers-core/src/index.ts)); a persistent session continued by a
+  later run stays. Every release is one `retention` decision, by the rule
+  `turns.conversation-retention` (INV-13), naming the sessions and the conversations it makes
+  due. This is the only clock: only the workflow engine starts Worker work, so every website
+  session belongs to a run, and a conversation lives exactly as long as the runs that use it.
+- **Deleted on its site,** one conversation at a time, under a lease, on the account's
+  scheduler with its page held exclusively, so never beside a turn. The driver opens exactly
+  that conversation (its own path, its turns shown) before anything is clicked, deletes it from
+  its own menu (never a bulk deletion), confirms the dialog, and reopens it to see that it is
+  gone. Before every click the page must still be on the conversation's own path.
+- **Never on a guessed flow.** While any of the delete flow's UI map entries is still
+  `unverified` (not yet checked on the live site), its conversations wait, due, with the reason
+  `unverified-map`, and nothing is clicked. The live check lifts the flag entry by entry.
+- **Reconcile before repeat** (INV-4). A deletion that may have happened (a crash between the
+  click and the record) is checked on the site first: a conversation already gone is recorded
+  as deleted, and nothing is clicked again.
+- **Kept, and why.** A temporary chat leaves the history on its own (the provider keeps it up to
+  30 days on ChatGPT, 72 hours on Gemini) and is never deleted by `system`. A conversation of a
+  feature its driver is not proven to delete (`deletes`; Deep research until a live check) is
+  kept, as is one on a site with no deletion or of a removed account.
+- **Failures** are retried on the next pass; after three attempts the conversation is `failed`,
+  and `system health` reports it. A signed-out account leaves its conversations due.
+- **Evidence without the operator's browser:** `system conversation inspect <account> <binding>`
+  opens a recorded conversation, outlines the page and its own menu (structure, never text),
+  closes the menu, and stores the outlines as local-private evidence (`system evidence <id>`).
+- Deletion on the site does not bind the provider's own retention of the chat.
 
 ## Runtime (MVP slice 1)
 

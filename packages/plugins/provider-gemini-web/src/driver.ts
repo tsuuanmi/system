@@ -6,10 +6,11 @@
  * - `persistent`: a normal chat, bound by its `/app/<id>` URL, continued and reopened there;
  * - Deep research (an account feature, normal chats only): its plan is started, and its
  *   report is read from the report panel, with the sources it used.
+ * A bound chat is deleted from its own menu, only once it opens as itself (PROP-0004 Phase 5).
  */
 import { readFileSync } from 'node:fs'
 import { type AskOptions, type AskResult, type AuthState, bindingReporter, completionOptions, modePresets, ProviderError, type ProviderDriver, type ProviderFeature, type ProviderMode, type ResearchState, type TurnSnapshot, waitForReport, waitForStableCompletion, withSources } from '@tsuuanmi/system-provider-core'
-import { copiedMarkdown, type DriftEvent, preWrapText, UiEngine, type UiMap, loadUiMap } from '@tsuuanmi/system-ui-ops'
+import { copiedMarkdown, type DriftEvent, outlineOf, preWrapText, UiEngine, type UiMap, type UiOutline, loadUiMap, unverifiedEntries } from '@tsuuanmi/system-ui-ops'
 import type { Locator, Page } from 'patchright-core'
 
 const MAP_URL = new URL('../ui/gemini-web.ui.yaml', import.meta.url)
@@ -69,6 +70,8 @@ export class GeminiWebDriver implements ProviderDriver<Page> {
   readonly capabilities = ['reason', 'persistent-conversation'] as const
   /** Account features, each proven on the account by `probeFeatures` (REQ-PRV-7). */
   readonly features = ['deep-research'] as const
+  /** Conversations `deleteConversation` deletes; a Deep research one waits for its live check (PROP-0004 Phase 5). */
+  readonly deletes = ['chat'] as const
   readonly loginUrl: string
   /** Google's sign-in lives on google.com; Gemini on its own subdomain. */
   readonly stateOrigins: readonly string[]
@@ -207,6 +210,63 @@ export class GeminiWebDriver implements ProviderDriver<Page> {
     const text = answer ? await this.answerText(engine) : ''
     const finished = answer ? (await engine.findIn('turn.assistant.done', answer)) !== undefined : false
     return { text, running: (await engine.state('turn.running')) || (!!answer && !finished), observable: true, lastPrompt }
+  }
+
+  /**
+   * Delete one bound conversation from its own menu: it must open as exactly that conversation
+   * (its `/app/<id>` path, a prompt shown) before anything is clicked, and the page must still be
+   * at that path before each click. Reopening it must then show that it no longer exists.
+   */
+  async deleteConversation(page: Page, binding: string): Promise<'deleted' | 'gone'> {
+    const path = `/app/${binding}`
+    // Never click on a page that has moved off this conversation.
+    const click = async (action: string): Promise<void> => {
+      if (new URL(page.url()).pathname !== path) throw new ProviderError('ui_drift', `gemini-web: the page left conversation ${binding} before ${action}; nothing was deleted`)
+      await this.engine(page).act(action)
+    }
+    const before = await this.openConversation(page, binding)
+    if (before === 'missing') return 'gone'
+    if (before === 'unknown') throw new ProviderError('ui_drift', `gemini-web: conversation ${binding} did not open as itself; nothing was deleted`)
+    await click('conversation.open-options')
+    await click('conversation.choose-delete')
+    await click('conversation.confirm-delete')
+    // The site leaves the deleted conversation on its own; reopening it before then is aborted.
+    await page.waitForURL((url) => url.pathname !== path, { timeout: this.timeouts.snapshotMs, waitUntil: 'domcontentloaded' }).catch(() => undefined)
+    if ((await this.openConversation(page, binding)) === 'missing') return 'deleted'
+    throw new ProviderError('session_broken', `gemini-web: conversation ${binding} still opens after its deletion`)
+  }
+
+  /** The deletion's map entries not yet checked on the live site: while any is, nothing is deleted. */
+  deletionUnverified(): string[] {
+    return unverifiedEntries(this.map, 'conversation.')
+  }
+
+  /**
+   * Outline a conversation's page and its own menu, choosing nothing: the evidence that fixes the
+   * deletion's map entries without opening the operator's browser. The menu is closed with Escape.
+   */
+  async inspectConversation(page: Page, binding: string): Promise<UiOutline[]> {
+    const shown = await this.openConversation(page, binding)
+    const outlines = [await outlineOf(page, `conversation page (${shown})`)]
+    if (shown !== 'shown') return outlines
+    const opened = await this.engine(page).act('conversation.open-options').then(() => true, () => false)
+    outlines.push(await outlineOf(page, opened ? 'conversation menu' : 'conversation menu (not opened)'))
+    await page.keyboard.press('Escape')
+    return outlines
+  }
+
+  /** Open a bound conversation: shown as itself (its own path, its turns), positively missing, or neither. */
+  private async openConversation(page: Page, binding: string): Promise<'shown' | 'missing' | 'unknown'> {
+    if (!/^[0-9a-f]{16}$/.test(binding)) throw new ProviderError('invalid_input', `gemini-web: ${binding} is not a conversation id`)
+    const path = `/app/${binding}`
+    await page.goto(`${this.origin}${path}`, { waitUntil: 'domcontentloaded' })
+    const auth = await this.checkAuth(page)
+    if (auth === 'signed-out') throw new ProviderError('reauth_required', 'gemini-web: signed out')
+    if (auth === 'unknown') return 'unknown'
+    const engine = this.engine(page)
+    await engine.waitFor({ anyOf: [{ visible: 'turn.user' }, { visible: 'conversation.missing' }] }, this.timeouts.snapshotMs).catch(() => undefined)
+    if (await engine.count('conversation.missing')) return 'missing'
+    return new URL(page.url()).pathname === path && (await engine.count('turn.user')) > 0 ? 'shown' : 'unknown'
   }
 
   /**

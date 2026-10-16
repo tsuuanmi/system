@@ -82,7 +82,9 @@ runs the work the router admitted to them. Callers never reach a source directly
 - **Website Workers** (`ctx.turns`): one Worker per account and tier. It owns the durable turn
   (idempotent by request key), the egress check of the actual prompt, the per-account
   scheduler, the receipt before send, the write-back of refreshed state, the answer artifact,
-  and reconciliation after a restart. Persistent sessions stay on their account.
+  and reconciliation after a restart. Persistent sessions stay on their account. It records
+  every website conversation it creates and deletes it on its site once its session is
+  released ([conversation ledger](../design/provider-turns.md#conversation-ledger)).
 - **Agent Workers** (`ctx.agentWorkers`): one Worker per configured agent, held to a policy from
   configuration (workspace, sandbox, tool allow-list). Its rows and the agent runtimes' are off
   in the default composition

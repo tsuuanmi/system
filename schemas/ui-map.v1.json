@@ -15,9 +15,10 @@
     "schema": {
       "enum": [
         "ui-map@1.0",
-        "ui-map@1.1"
+        "ui-map@1.1",
+        "ui-map@1.2"
       ],
-      "description": "1.1 adds element `frames`."
+      "description": "1.1 adds element `frames`; 1.2 adds `unverified` on elements and actions."
     },
     "provider": {
       "type": "string",
@@ -454,6 +455,10 @@
             "any"
           ],
           "description": "`any` searches every frame (e.g. a report rendered in an iframe); such elements take no scope."
+        },
+        "unverified": {
+          "description": "True while the entry is not yet checked on the live site: a driver takes no irreversible action that depends on it (an irreversible job waits).",
+          "const": true
         }
       },
       "additionalProperties": false
@@ -551,6 +556,10 @@
             }
           },
           "additionalProperties": false
+        },
+        "unverified": {
+          "description": "True while the entry is not yet checked on the live site: a driver takes no irreversible action that depends on it (an irreversible job waits).",
+          "const": true
         }
       },
       "additionalProperties": false,

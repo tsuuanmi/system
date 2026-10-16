@@ -6,7 +6,7 @@ Routing **seam definition**
 
 | Seam | Definition | Provider |
 |---|---|---|
-| `ctx.workers` | abstract `Workers` with `register(source)`, `list()`, `route(requirement, options)`, `contract(id, check)`, `contracts()`, `accept(result, contract, { resultSchema })` (the result's JSON checked against the schema first, REQ-ART-5); `source(name)`, `affinity(sessionId)`, `handle(sessionId)`, `reset(sessionId)`; `WorkerSource` (describe, start, get, wait, affinity, handle, reset, cancel), `WorkerStart`, `WorkerExecution`, `CapabilityDescriptor`, `WorkRequirement`, `AdmittedWorker`, `AdmissionFailure`, `AcceptanceContract` | `@tsuuanmi/system-workers` |
+| `ctx.workers` | abstract `Workers` with `register(source)`, `list()`, `route(requirement, options)`, `contract(id, check)`, `contracts()`, `accept(result, contract, { resultSchema })` (the result's JSON checked against the schema first, REQ-ART-5); `source(name)`, `affinity(sessionId)`, `handle(sessionId)`, `reset(sessionId)`, `release(sessionIds, reason)`; `WorkerSource` (describe, start, get, wait, affinity, handle, reset, release, cancel), `WorkerStart`, `WorkerExecution`, `CapabilityDescriptor`, `WorkRequirement`, `AdmittedWorker`, `AdmissionFailure`, `AcceptanceContract` | `@tsuuanmi/system-workers` |
 
 - The types mirror `capability-descriptor@1.1` (its optional `family`, an opaque
   provider family) and `work-requirement@1.0`. The schemas in `schemas/` are

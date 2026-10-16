@@ -5,6 +5,8 @@
  * SIGKILL (its whole process group: Xvfb and Chrome too) at a reconcile point, then starts it
  * again on the same state. Usage: crash-harness.mjs <dir> <origin> <chrome> start <persist|temporary> <prompt>
  *                                 crash-harness.mjs <dir> <origin> <chrome> resume <runId>
+ *                                 crash-harness.mjs <dir> <origin> <chrome> delete <prompt>   (a persistent ask, then its run deleted)
+ *                                 crash-harness.mjs <dir> <origin> <chrome> settle            (until no conversation is due)
  */
 import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
@@ -42,13 +44,24 @@ const fibers = [
 await Promise.all(fibers)
 // Services come up once their dependencies are ready, possibly after the fibers settle.
 await new Promise((resolve) => ctx.inject(['workflow', 'accounts'], () => resolve(undefined)))
+// As the live check does for the real site: the fake site's delete flow is the one its map describes.
+const map = ctx.providers.get('chatgpt-web').map
+for (const spec of [...Object.values(map.elements), ...Object.values(map.actions)]) delete spec.unverified
+if (mode === 'settle') {
+  // Deletions a crash interrupted are taken up again at start.
+  const deadline = Date.now() + 180_000
+  while (ctx.turns.conversations({ state: 'due' }).length && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 200))
+  report({ conversations: ctx.turns.conversations() })
+  for (const fiber of [...fibers].reverse()) await fiber.dispose()
+  process.exit(0)
+}
 let runId
-if (mode === 'start') {
+if (mode === 'start' || mode === 'delete') {
   await ctx.accounts.saveState('chatgpt-main', {
     state: { origins: [origin], cookies: [], capturedAt: '2026-10-12T00:00:00Z' }, identityHash: `sha256:${'0'.repeat(64)}`, verifiedAt: '2026-10-12T00:00:00Z',
   })
   await ctx.accounts.setFeatures('chatgpt-main', ['deep-research', 'web-search', 'image-generation'])
-  const [conversation, prompt] = rest
+  const [conversation, prompt] = mode === 'delete' ? ['persist', rest[0]] : rest
   runId = ctx.workflow.start({ template: 'ask', input: prompt, ...(conversation === 'persist' ? { persist: true } : {}) }).runId
 } else {
   runId = rest[0]
@@ -56,5 +69,12 @@ if (mode === 'start') {
 report({ runId })
 const done = await ctx.workflow.wait(runId, 240_000)
 report({ done })
+if (mode === 'delete') {
+  // Its run deleted: the session is released and its conversation deleted in the background,
+  // until the suite kills this process mid-deletion.
+  ctx.workflow.delete(runId, ctx.workflow.delete(runId).updatedAt)
+  report({ deleted: runId })
+  await new Promise((resolve) => setTimeout(resolve, 240_000))
+}
 for (const fiber of [...fibers].reverse()) await fiber.dispose()
 process.exit(0)

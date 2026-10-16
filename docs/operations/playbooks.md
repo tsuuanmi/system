@@ -100,3 +100,27 @@ drift and does not silently break.
   2. Refresh the fake-site fixture to match.
   3. Release the fix.
   4. Continue the failed runs.
+
+## A website conversation that could not be deleted
+
+When a run is deleted or expires, the website conversations of its sessions are deleted on
+their sites ([conversation ledger](../design/provider-turns.md#conversation-ledger)).
+
+- **Detection:** `system health` reports `conversations` as degraded once a deletion failed
+  three times. `system conversations --state failed` lists each, with the last error in
+  `reason`; `system events --type conversation.delete-failed` shows when.
+- **A UI change** (`ui_drift`) is the usual cause: the delete flow's map entries are stale.
+  `system conversation inspect <account> <binding>` outlines the conversation's page and its
+  own menu without choosing anything; `system evidence <id>` shows each outline. Update the
+  `conversation.*` entries of the site's UI map and its fake site as for any
+  [UI change](#a-provider-ui-change).
+- **Waiting on `unverified-map`** is not a failure either: the delete flow's map entries are
+  not yet checked on the live site, so nothing is deleted. Check them on a throwaway chat
+  `system` creates itself: `system ask --persist "ping"`, then `system conversation inspect`
+  and `system evidence`; fix the entries from the outlines, remove their `unverified: true`,
+  re-gate and release; only then delete that ping run (`system delete <runId> --yes`) and
+  confirm with `system conversations`.
+- **A signed-out account** is not a failure: its conversations stay due and are deleted on the
+  next hourly pass after it signs in again.
+- Nothing is ever deleted that `system` did not record; a chat deleted by hand on the site is
+  found gone and recorded as deleted.

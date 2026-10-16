@@ -85,4 +85,36 @@ export interface ProviderDriver<Page = unknown> {
   signIn?(page: Page, credentials: { email: string; password: string }, code: (kind: 'totp' | 'email') => Promise<string>): Promise<void>
   /** Reopen a bound conversation and report its last answer and whether it is still generating. */
   snapshot(page: Page, binding: string, options?: { feature?: ProviderFeature }): Promise<TurnSnapshot>
+  /**
+   * The features whose conversations `deleteConversation` is proven to delete (a live check per
+   * feature, PROP-0004 Phase 5). A conversation of another feature is kept, and reported so.
+   */
+  readonly deletes?: readonly ProviderFeature[]
+  /**
+   * Delete one bound conversation from the account's history: open it, verify the page shows
+   * exactly that conversation, delete it from its own menu (never a bulk deletion), confirm when
+   * the site asks, and check that it is gone. `gone` when the site shows positively that it no
+   * longer exists, before anything is clicked. Anything else throws a ProviderError: a deletion
+   * is never assumed.
+   */
+  deleteConversation?(page: Page, binding: string): Promise<'deleted' | 'gone'>
+  /**
+   * The deletion's UI map entries not yet checked on the live site. While any is, the runtime
+   * deletes nothing (an irreversible click on a guessed entry could reach another chat).
+   */
+  deletionUnverified?(): readonly string[]
+  /**
+   * Read-only evidence of how a conversation is deleted (PROP-0004 Phase 5): open it, outline the
+   * page, open its own menu, outline that, and close it with Escape; no menu item is ever chosen.
+   * Outlines hold structure only, never text (`ui-outline@1.0`).
+   */
+  inspectConversation?(page: Page, binding: string): Promise<PageOutline[]>
+}
+
+/** A structural page outline (`ui-outline@1.0`, docs/design/ui-operations.md#drift-evidence): never text. */
+export interface PageOutline {
+  schema: 'ui-outline@1.0'
+  root: string
+  nodes: unknown[]
+  truncated: boolean
 }

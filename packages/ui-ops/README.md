@@ -6,10 +6,13 @@ The **UI engine** for website drivers
 not a plugin: provider drivers create one `UiEngine` per turn page.
 
 - **`loadUiMap(text, overlay?)`:**
-  - validates a provider's map, `ui-map@1.0` or `ui-map@1.1` (YAML or JSON),
+  - validates a provider's map, `ui-map@1.0` to `ui-map@1.2` (YAML or JSON),
     and checks that every reference resolves;
   - appends the local overlay's candidates after the shipped ones;
   - returns the merged map with its content `hash`.
+- **`unverifiedEntries(map, prefix)`:** the elements and actions under `prefix`
+  marked `unverified: true` (`ui-map@1.2`): not yet checked on the live site, so
+  no irreversible job may depend on them.
 - **Frames:** an element with `frames: any` (`ui-map@1.1`) is searched in every
   frame, for content rendered in iframes such as a research report.
 - **`UiEngine`:**

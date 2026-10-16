@@ -1,0 +1,15 @@
+{
+  "schema": "conversation@1.0",
+  "account": "chatgpt-main",
+  "binding": "6f1e2d3c-4b5a-4968-8776-655443322110",
+  "sessionId": "ses_0123456789abcdef",
+  "turnId": "turn_0123456789abcdef",
+  "feature": "chat",
+  "mode": "persistent",
+  "state": "deleted",
+  "attempts": 1,
+  "createdAt": "2026-10-16T08:00:00.000Z",
+  "releasedAt": "2026-10-16T09:00:00.000Z",
+  "deletedAt": "2026-10-16T09:00:05.000Z",
+  "decision": "sha256:3333333333333333333333333333333333333333333333333333333333333333"
+}

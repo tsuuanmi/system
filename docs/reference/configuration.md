@@ -346,7 +346,7 @@ No options.
 | `maxActiveRuns` | number (1…) | `16` | Unfinished runs that execute at once; a run waiting only on an approval or a vote is not one |
 | `maxWaitingRuns` | number (0…) | `16` | Runs waiting only on an approval or a vote, beyond maxActiveRuns; with that many, new runs are refused |
 | `retainDays` | number (1…) | `30` | Days a finished run keeps its input text and prompts |
-| `retainRunsDays` | number (0…) | `0` | Days a finished run is kept, then deleted with the artifacts only it needed (0: every run is kept); a session's latest run always stays |
+| `retainRunsDays` | number (0…) | `30` | Days a finished run is kept, then deleted with the artifacts only it needed and the website chats only it used (0: every run is kept); a session's latest run always stays |
 | `autoApprovePlans` | boolean | `false` | Approve a high-confidence plan by policy instead of waiting for the operator |
 | `maxReviewCycles` | number (1…5) | `3` | Reviews of one change, the first included, before remediation stops |
 | `tieTimeoutHours` | number (0.0001…720) | `24` | Hours a tied team waits for a deciding vote, then completes inconclusive (INV-9) |

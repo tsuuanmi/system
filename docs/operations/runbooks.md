@@ -483,18 +483,37 @@ Rotate a scope's token when it may have leaked
 ## Retention
 
 - **Workflow runs** are deleted by the operator (`system delete <runId>`
-  previews, `--yes` deletes that exact version), and, when the `workflow` row
-  sets `retainRunsDays`, a finished run older than that is deleted daily, except
-  each session's latest run. Then the artifacts nothing retained references are
-  collected (older than the `artifacts` row's `collectGraceHours`, default 24);
-  `system explain` shows a collected input as expired. Back up before you first
-  turn this on.
+  previews, `--yes` deletes that exact version), and a finished run older than
+  the `workflow` row's `retainRunsDays` (default 30; 0 keeps every run) is
+  deleted daily, except each session's latest run. Then the artifacts nothing
+  retained references are collected (older than the `artifacts` row's
+  `collectGraceHours`, default 24); `system explain` shows a collected input as
+  expired.
+  - **Upgrading to the 30-day default:** existing runs older than 30 days are
+    expired at the first sweep after the update (at start), and the website
+    chats only they used are deleted. Back up first, or set `retainRunsDays: 0`
+    (or a longer period) on the `workflow` row before the update to keep them.
+    The sweep logs how many runs it expired and conversations it released;
+    `system health` shows it under `retention`, and `system events --type
+    workflow.retention.swept` lists each sweep.
 - **Private text:** after `retainDays` (default 30), a finished run's input
   text and rendered prompts are cleared, daily. Decision chains stay, so
   `system explain` still works.
 - **Turns:** finished turns, their prompts, their receipts, and sessions with no
   turns left are deleted after the turn runtime's `retainDays` (default 30).
   Answers stay as artifacts.
+- **Website chats:** when a run is deleted or expires, the website conversations
+  its sessions created are deleted on their sites, unless a later run of the
+  session still uses them
+  ([conversation ledger](../design/provider-turns.md#conversation-ledger)).
+  `system conversations` lists what was recorded and what became of it.
+  - Only conversations `system` recorded are deleted: the ledger was filled
+    from the turns kept when it was introduced, so older chats stay on the
+    sites. Delete those by hand.
+  - Temporary chats are left to the site. Deep research chats are kept until a
+    live check shows they can be deleted.
+  - Deleting a chat on the site does not bind the provider's own retention of
+    it.
 - **The event log** keeps every entry unless the `event-log` row sets
   `retainDays`; then entries older than that are deleted at start and daily.
   Nothing references an entry, so `system explain` and readers' cursors keep

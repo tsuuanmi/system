@@ -1,7 +1,7 @@
 # ChatGPT Web UI map (ui-map@1.0, ADR-0021). Checked against the live site on 2026-10-11
 # (docs/research/browser-interaction-and-self-healing.md#live-check-2026-10-11-signed-in-account-read-only).
 # When the site changes, edit this file (and the fixture), not the driver code.
-schema: ui-map@1.1
+schema: ui-map@1.2
 provider: chatgpt-web
 uiRevision: '2026-10-11'
 locales: [en]
@@ -216,6 +216,36 @@ elements:
       - { css: 'pre code' }
       - { role: textbox, name: { en: '^Edit code$' } }
 
+
+  # Deleting one conversation (PROP-0004 Phase 5). NOT yet verified live: the names follow the
+  # site's conversation menu as documented by OpenAI; the live check replaces them.
+  conversation.options:
+    unverified: true
+    description: The open conversation's own menu button (never the history's bulk actions).
+    candidates:
+      - { role: button, name: { en: '^Open conversation options$' } }
+      - { testId: conversation-options-button }
+  conversation.delete:
+    unverified: true
+    description: Delete in the open conversation's menu.
+    candidates:
+      - { role: menuitem, name: { en: '^Delete$' } }
+      - { testId: delete-chat-menu-item }
+  conversation.delete-dialog:
+    unverified: true
+    candidates:
+      - { role: dialog, name: { en: '^Delete chat\?$' } }
+  conversation.delete-confirm:
+    unverified: true
+    scope: conversation.delete-dialog
+    candidates:
+      - { role: button, name: { en: '^Delete$' } }
+      - { testId: delete-conversation-confirm-button }
+  conversation.missing:
+    unverified: true
+    description: Positive evidence that the opened conversation no longer exists.
+    candidates:
+      - { text: { en: '^Unable to load conversation\b' } }
 actions:
   mode.select-chat:
     do: click
@@ -328,9 +358,32 @@ actions:
     heal: deterministic
     timeouts: { resolveMs: 5000, verifyMs: 20000 }
 
+  conversation.open-options:
+    unverified: true
+    do: click
+    target: conversation.options
+    verify: { visible: conversation.delete }
+    sideEffect: reversible
+    timeouts: { resolveMs: 10000, verifyMs: 5000 }
+  conversation.choose-delete:
+    unverified: true
+    do: click
+    target: conversation.delete
+    verify: { visible: conversation.delete-confirm }
+    sideEffect: reversible
+    timeouts: { resolveMs: 5000, verifyMs: 5000 }
+  conversation.confirm-delete:
+    unverified: true
+    do: click
+    target: conversation.delete-confirm
+    verify: { network: conversation.delete }
+    sideEffect: irreversible
+    timeouts: { resolveMs: 5000, verifyMs: 15000 }
+
 network:
   conversation.post: { method: POST, url: '/backend-api/f/conversation$' }
   account.me: { method: GET, url: '/backend-api/me$' }
+  conversation.delete: { method: PATCH, url: '/backend-api/conversation/[0-9a-f-]+$' }
   conversation.too-large: { url: '/backend-api/f/conversation$', status: 413 }
   challenge: { url: '.*', header: { name: cf-mitigated, equals: challenge } }
 

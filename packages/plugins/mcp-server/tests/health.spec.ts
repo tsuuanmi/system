@@ -16,7 +16,7 @@ describe('host health (REQ-HOST-6)', () => {
   it('is ok when every check is, and names each check', async () => {
     const report = await healthReport(base())
     expect(report.state).toBe('ok')
-    expect(report.checks.map((c) => c.name)).toEqual(['runtime', 'store', 'disk', 'vault-key', 'accounts', 'workers', 'ui-drift'])
+    expect(report.checks.map((c) => c.name)).toEqual(['runtime', 'store', 'disk', 'vault-key', 'accounts', 'workers', 'ui-drift', 'retention'])
   })
 
   it('is degraded by an account to sign in again, a Worker that cannot take work, or low disk, saying what to do', async () => {
@@ -57,6 +57,17 @@ describe('host health (REQ-HOST-6)', () => {
     expect((await healthReport(base({ plugins: () => [] }))).checks.find((c) => c.name === 'plugins')).toMatchObject({ state: 'ok' })
     expect(await check({ templates: () => [{ name: 'panel-led', reason: 'node panel: team must be {kind: …}' }] }, 'templates'))
       .toMatchObject({ state: 'degraded', detail: '1 configured template(s) refused, every other one works: panel-led (node panel: team must be {kind: …})' })
+  })
+
+  it('notes what retention removed recently, without degrading health', async () => {
+    const events = (type: string) => (type === 'workflow.retention.swept' ? [{ data: { runs: 40, conversations: 12, retainRunsDays: 30 } }, { data: { runs: 2, conversations: 0, retainRunsDays: 30 } }] : [])
+    expect(await check({ events }, 'retention')).toMatchObject({ state: 'ok', detail: expect.stringMatching(/^retention expired 42 run\(s\) and released 12 website conversation\(s\)/) })
+  })
+
+  it('is degraded by website conversations whose deletion failed every attempt (PROP-0004 Phase 5)', async () => {
+    expect(await check({ undeleted: () => [{ account: 'gemini-main', binding: 'b1', reason: 'ui_drift: …' }, { account: 'chatgpt-main', binding: 'b2' }] }, 'conversations'))
+      .toMatchObject({ state: 'degraded', detail: expect.stringMatching(/^2 website conversation\(s\) of chatgpt-main, gemini-main could not be deleted/) })
+    expect(await check({ undeleted: () => [] }, 'conversations')).toMatchObject({ state: 'ok' })
   })
 
   it('counts a reported drift and the turn it failed as one change', async () => {

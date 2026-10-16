@@ -150,6 +150,28 @@ export function workersConformance(name: string, boot: Boot): void {
       }
     })
 
+    it('releases sessions at every source that owns some of them, and counts what became due', async () => {
+      const { ctx, dispose } = await boot()
+      try {
+        const released: Array<{ source: string; sessions: readonly string[]; reason: string }> = []
+        const releasing = (name: string, owned: string[]) => source(name, [worker(`w:${name}`)], {
+          release: (sessions, reason) => {
+            released.push({ source: name, sessions, reason })
+            return { due: sessions.filter((s) => owned.includes(s)).length }
+          },
+        })
+        ctx.workers.register(releasing('one', ['ses_a']))
+        ctx.workers.register(releasing('two', ['ses_b', 'ses_c']))
+        ctx.workers.register(source('none', [worker('w:none')]))
+        expect(ctx.workers.release(['ses_a', 'ses_b', 'ses_c', 'ses_x'], 'run deleted')).toEqual({ due: 3 })
+        expect(released.map((r) => r.source).sort()).toEqual(['one', 'two'])
+        expect(released.every((r) => r.reason === 'run deleted')).toBe(true)
+        expect(ctx.workers.release([], 'nothing')).toEqual({ due: 0 })
+      } finally {
+        await dispose()
+      }
+    })
+
     it('honours a restriction, such as a persistent session bound to its account', async () => {
       await withWorkers([worker('w:a'), worker('w:b')], async (ctx) => {
         const admitted = await ctx.workers.route(requirement(), { restrict: { workers: ['w:b'], reason: 'the session is bound to b' } })

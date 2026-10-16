@@ -137,6 +137,28 @@ Scope: `operator`
 | `runId` | string | yes |  |
 | `nodeId` | string |  |  |
 
+## `conversation_inspect`
+
+Outline a recorded website conversation's page and its own menu, choosing nothing (read-only evidence for its deletion; local-private, read with evidence).
+
+Scope: `operator`
+
+| Argument | Type | Required | Description |
+|---|---|---|---|
+| `account` | string | yes |  |
+| `binding` | string | yes |  |
+
+## `conversation_list`
+
+The website conversations system recorded (the conversation ledger), oldest first: live, due for deletion, deleted, kept (and why), or failed.
+
+Scope: `operator`
+
+| Argument | Type | Required | Description |
+|---|---|---|---|
+| `state` | "live" \| "due" \| "deleted" \| "kept" \| "failed" |  |  |
+| `sessionId` | string |  |  |
+
 ## `delete`
 
 Delete a finished run: without updatedAt, preview; with the preview's updatedAt, delete. Artifacts stay.

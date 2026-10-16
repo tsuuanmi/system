@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:tsuuanmi:system:schema:conversation:v1",
+  "title": "Recorded website conversation",
+  "description": "One row of the conversation ledger (docs/design/provider-turns.md#conversation-ledger): a website conversation system created, recorded when it was bound, kept after its turns and receipts expire, and deleted on its site when its session is released.",
+  "type": "object",
+  "required": ["schema", "account", "binding", "turnId", "feature", "mode", "state", "attempts", "createdAt"],
+  "properties": {
+    "schema": { "const": "conversation@1.0" },
+    "account": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+    "binding": { "description": "The site's conversation id.", "type": "string", "minLength": 1, "maxLength": 200 },
+    "sessionId": { "description": "The session that owns it; absent for a temporary chat.", "type": "string", "maxLength": 200 },
+    "turnId": { "description": "The turn that opened it.", "type": "string", "maxLength": 200 },
+    "feature": { "enum": ["chat", "deep-research", "web-search"] },
+    "mode": { "enum": ["temporary", "persistent"] },
+    "state": {
+      "description": "live: its session holds it; due: released, to be deleted; deleted: gone from the site; kept: never deleted (why in reason); failed: every attempt failed (in health).",
+      "enum": ["live", "due", "deleted", "kept", "failed"]
+    },
+    "reason": { "description": "Why it is kept, or what the last failed deletion said.", "type": "string", "maxLength": 400 },
+    "attempts": { "type": "integer", "minimum": 0 },
+    "createdAt": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp" },
+    "releasedAt": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp" },
+    "deletedAt": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp" },
+    "decision": { "description": "The retention decision that released it.", "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/sha256" }
+  },
+  "additionalProperties": false
+}

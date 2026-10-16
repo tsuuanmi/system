@@ -9,7 +9,7 @@
  */
 import { readFileSync } from 'node:fs'
 import { type AskOptions, type AskResult, type AuthState, bindingReporter, completionOptions, type ConversationMode, modePresets, ProviderError, type ProviderDriver, type ProviderFeature, type ProviderMode, type ResearchState, type TurnSnapshot, waitForReport, waitForStableCompletion, withMissingSources } from '@tsuuanmi/system-provider-core'
-import { copiedMarkdown, type DriftEvent, type HealEvent, linksIn, preWrapText, UiEngine, type UiMap, loadUiMap } from '@tsuuanmi/system-ui-ops'
+import { copiedMarkdown, type DriftEvent, type HealEvent, linksIn, outlineOf, preWrapText, UiEngine, type UiMap, type UiOutline, loadUiMap, unverifiedEntries } from '@tsuuanmi/system-ui-ops'
 import type { Frame, Page } from 'patchright-core'
 
 export type { AskOptions, AskResult, AuthState, ConversationMode, ProviderMode }
@@ -65,6 +65,8 @@ export class ChatGptWebDriver implements ProviderDriver<Page> {
   readonly capabilities = ['reason', 'persistent-conversation'] as const
   /** Account features, each proven on the account by `probeFeatures` (REQ-PRV-7). */
   readonly features = ['deep-research', 'web-search', 'image-generation'] as const
+  /** Conversations `deleteConversation` deletes; a Deep research one waits for its live check (PROP-0004 Phase 5). */
+  readonly deletes = ['chat', 'web-search'] as const
   readonly loginUrl: string
   readonly stateOrigins: readonly string[]
   readonly map: UiMap
@@ -270,6 +272,64 @@ export class ChatGptWebDriver implements ProviderDriver<Page> {
     await engine.waitFor({ visible: 'turn.assistant' }, 5000).catch(() => undefined)
     const text = (await engine.count('turn.assistant')) > 0 ? await this.answerText(engine) : ''
     return { text, running: await engine.state('turn.running'), observable: true, lastPrompt }
+  }
+
+  /**
+   * Delete one bound conversation from its own menu: it must open as exactly that conversation
+   * (its id in the URL, its turns shown) before anything is clicked, and the page must still be on
+   * it when the deletion is confirmed. Reopening it must then show that it no longer exists.
+   */
+  async deleteConversation(page: Page, binding: string): Promise<'deleted' | 'gone'> {
+    const before = await this.openConversation(page, binding)
+    if (before === 'missing') return 'gone'
+    if (before === 'unknown') throw new ProviderError('ui_drift', `chatgpt-web: conversation ${binding} did not open as itself; nothing was deleted`)
+    const engine = this.engine(page)
+    // Exactly the conversation's own path before every click: a redirect or a dialog never points a click at another chat.
+    const guard = (): void => {
+      if (new URL(page.url()).pathname !== `/c/${binding}`) throw new ProviderError('ui_drift', `chatgpt-web: the page left conversation ${binding} before the deletion was confirmed; nothing was deleted`)
+    }
+    guard()
+    await engine.act('conversation.open-options')
+    guard()
+    await engine.act('conversation.choose-delete')
+    guard()
+    await engine.act('conversation.confirm-delete')
+    // The site leaves the deleted conversation on its own; reopening it before then is aborted.
+    await page.waitForURL((url) => CONVERSATION.exec(url.pathname)?.[1] !== binding, { timeout: this.timeouts.snapshotMs, waitUntil: 'domcontentloaded' }).catch(() => undefined)
+    if ((await this.openConversation(page, binding)) === 'missing') return 'deleted'
+    throw new ProviderError('session_broken', `chatgpt-web: conversation ${binding} still opens after its deletion`)
+  }
+
+  /** The deletion's map entries not yet checked on the live site: while any is, nothing is deleted. */
+  deletionUnverified(): string[] {
+    return unverifiedEntries(this.map, 'conversation.')
+  }
+
+  /**
+   * Outline a conversation's page and its own menu, choosing nothing: the evidence that fixes the
+   * deletion's map entries without opening the operator's browser. The menu is closed with Escape.
+   */
+  async inspectConversation(page: Page, binding: string): Promise<UiOutline[]> {
+    const shown = await this.openConversation(page, binding)
+    const outlines = [await outlineOf(page, `conversation page (${shown})`)]
+    if (shown !== 'shown') return outlines
+    const opened = await this.engine(page).act('conversation.open-options').then(() => true, () => false)
+    outlines.push(await outlineOf(page, opened ? 'conversation menu' : 'conversation menu (not opened)'))
+    await page.keyboard.press('Escape')
+    return outlines
+  }
+
+  /** Open a bound conversation: shown as itself (its own path, its turns), positively missing, or neither. */
+  private async openConversation(page: Page, binding: string): Promise<'shown' | 'missing' | 'unknown'> {
+    if (!/^[0-9a-f-]{36}$/.test(binding)) throw new ProviderError('invalid_input', `chatgpt-web: ${binding} is not a conversation id`)
+    await page.goto(`${this.origin}/c/${binding}`, { waitUntil: 'domcontentloaded' })
+    const auth = await this.checkAuth(page)
+    if (auth === 'signed-out') throw new ProviderError('reauth_required', 'chatgpt-web: signed out')
+    if (auth === 'unknown') return 'unknown'
+    const engine = this.engine(page)
+    await engine.waitFor({ anyOf: [{ visible: 'turn.user' }, { visible: 'conversation.missing' }] }, this.timeouts.snapshotMs).catch(() => undefined)
+    if (await engine.count('conversation.missing')) return 'missing'
+    return new URL(page.url()).pathname === `/c/${binding}` && (await engine.count('turn.user')) > 0 ? 'shown' : 'unknown'
   }
 
   /** Text of the last user turn: the container of its "You said:" heading. */
