@@ -94,7 +94,7 @@ failure (`USER_ACTION` or `BACKOFF`), not a silent switch to a different provide
 
 A step can be required to run on a different provider from other steps of its run, such as
 `research`'s second literature review
-([templates](../reference/workflow-templates.md#research)). ADR-0027 (proposed) decides how,
+([templates](../reference/workflow-templates.md#research)). [ADR-0027](../decisions/adr/0027-provider-diversity-in-routing.md) decides how,
 without naming a provider ([INV-11](../architecture/invariants.md#inv-11-no-tool-lock-in)).
 
 - **Provider family.** A capability descriptor may carry `family`

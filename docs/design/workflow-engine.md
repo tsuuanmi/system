@@ -60,7 +60,7 @@ conversation, such as Deep research reviews, use `own`.
 
 A template node may declare `differentFrom: [nodeId, …]`: its Worker must be of another
 provider family than the Workers that served those nodes
-([provider diversity](routing.md#provider-diversity), ADR-0027 (proposed)).
+([provider diversity](routing.md#provider-diversity), [ADR-0027](../decisions/adr/0027-provider-diversity-in-routing.md)).
 
 - Preflight refuses a node that names itself, an unknown node, or a team node (a team has
   several Workers).

@@ -104,8 +104,9 @@ guesses.
   routing inputs.
 - `capability-descriptor@1.1` adds the optional `family`: an opaque provider
   family the Worker source sets, which routing only compares for inequality
-  ([provider diversity](../design/routing.md#provider-diversity), ADR-0027
-  (proposed)). A `@1.0` record carrying `family` is refused. Readers accept 1.0
+  ([provider diversity](../design/routing.md#provider-diversity),
+  [ADR-0027](../decisions/adr/0027-provider-diversity-in-routing.md)). A `@1.0`
+  record carrying `family` is refused. Readers accept 1.0
   and 1.1.
 
 ### `plan`
