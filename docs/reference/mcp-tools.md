@@ -116,7 +116,7 @@ Scope: `client`
 
 ## `brainstorm`
 
-Decide a question as a team, one member per provider family: each proposes on its own, then all vote by sealed ballot; a split vote gets one debate and a re-vote, and a tie comes back to you (`vote`). Returns at once with a runId; poll `result`. The answer starts with a line `outcome: …; method: …; winner: …; decision: …`.
+Ask a team to recommend an answer to a question, one member per provider family: each proposes on its own, then all vote by sealed ballot; a split vote gets one debate and a re-vote, and a tie comes back to you (`vote`). Returns at once with a runId; poll `result`. The answer starts with a line `outcome: …; method: …; winner: …; decision: …`. The outcome is advice to you, the caller: it approves and authorizes nothing.
 
 Scope: `client`
 
@@ -238,7 +238,7 @@ No arguments.
 
 ## `review`
 
-Review as a team, one member per provider family: text you give (an approach, a design, a diff), or a public repository read at one pinned commit. Each member lists findings that quote `path:line` and the line's text; system checks every quote against what the members read. A confirmed blocking finding decides changes; otherwise all vote pass or changes by sealed ballot, a split gets one debate, and a tie comes back to you (`vote`). Returns at once with a runId; poll `result`. The answer starts with a line `outcome: …; method: …; winner: …; decision: …`.
+Review as a team, one member per provider family: text you give (an approach, a design, a diff), or a public repository read at one pinned commit. Each member lists findings that quote `path:line` and the line's text; system checks every quote against what the members read. A confirmed blocking finding decides changes; otherwise all vote pass or changes by sealed ballot, a split gets one debate, and a tie comes back to you (`vote`). Returns at once with a runId; poll `result`. The answer starts with a line `outcome: …; method: …; winner: …; decision: …`. The outcome is advice to you, the caller: it approves and authorizes nothing.
 
 Scope: `client`
 

@@ -1,6 +1,6 @@
 # ADR-0009: Claude Code and Codex are first-class, as clients and as Workers
 
-- **Status:** Accepted
+- **Status:** Accepted; amended 2026-10-16 (further agents)
 - **Date:** 2026-10-11
 - **Related:** ADR-0006, ADR-0008, REQ-GW-1, REQ-GW-5, REQ-WRK-5..6
 
@@ -56,3 +56,23 @@ Option 2, symmetric for both agents:
 - Supersedes nothing. It extends the protocol table in
   [ADR-0006](0006-protocol-introduction-gates.md), which was updated in the same
   change.
+
+## Amendment (2026-10-16): how a further agent is integrated
+
+The decision for Claude Code and Codex stands. For any other coding agent, the
+cheapest path that keeps every invariant comes first:
+
+1. **As a client: configuration only.** An MCP-capable agent uses the MCP server
+   as it is ([ADR-0011](0011-mvp-integration-via-mcp.md)). It gets no runtime, plugin,
+   or vendor-specific code of its own.
+2. **As a Worker: the generic ACP runtime.** An ACP-speaking agent becomes a Worker
+   through `runtime-acp`. It is admitted only for the capabilities its runtime
+   evidence proves.
+   - It must prove the confinement it runs under: write and read confinement
+     ([ADR-0024](0024-agent-workers-confined-for-reads.md)), egress, and resume.
+   - A capability it cannot prove is one the agent does not offer (INV-2).
+3. **As a Worker: a native SDK adapter, only on evidence.** Write one only when ACP
+   cannot carry a required capability or security guarantee, and record the gap in
+   the [dependency register](../../engineering/dependencies.md).
+
+An agent that can connect to MCP gets no runtime of its own for that reason alone.

@@ -6,11 +6,13 @@ DSH bundle and profile, reusing DSH plugins without being locked in. Every part 
 it is a plugin.
 
 - **Workers:** website Workers on browser-backed accounts (ChatGPT Web, Gemini
-  Web), and agent Workers (Claude Code, Codex, ACP agents). API and local-model
-  providers are planned.
+  Web), and agent Workers (Claude Code, Codex, ACP agents), and API and
+  local-model Workers. The default composition serves website Workers only; the
+  others are opt-in.
 - **Workflows:** durable and reconcilable, built from Workers and teams.
 - **Clients:** Claude Code, Codex, or any MCP client over MCP, and the `system`
-  CLI. The Anthropic Messages and Responses gateways, which make a website
+  CLI. The calling agent is the Lead: it decides, and what `system` returns is
+  advice to it. The Anthropic Messages and Responses gateways, which make a website
   Worker a client's model, are off by default.
 
 > Right Worker, right job. Every effect reconciled, never blindly replayed.

@@ -45,6 +45,24 @@ These change no behavior. Each lands with its tests unchanged:
   recovery stay separate on purpose: a website turn is reconciled from its
   receipt, an agent run fails closed, a model call is sent once more.
 
+## Follow-ups from the reliability review
+
+The review of 2026-10-16 fixed the confirmed liveness defects it found in the
+workflow engine, with regression tests (see the changesets). It left these, by
+priority:
+
+| Priority | Item | Why it waits |
+|---|---|---|
+| P1 | **Agent Worker workspace isolation and remediation approval.** Superseding a remediation fix leaves later cycles live; they then fail the run with a duplicate node id, because each cycle records the original review as its grower. Remediation also appends a writing step without an approval ([ADR-0028](../decisions/adr/0028-local-lead-final-authority.md), INV-15). The agent runtime's always-hidden paths name one agent's directory, not every agent's credential directory. | Reachable only with agent Worker rows on, which are off in the website-only MVP. Fix all three before agent Workers serve real work. |
+| P1 | **Superseding a run left with a `RUNNING` node after a restart.** The node is reset without its execution being cancelled, so a second provider turn can start beside the orphaned one. Cancel the executions of reset nodes, as `stop` does. | Needs a restart-in-the-middle test harness. |
+| P2 | **Bounded approval waits.** A plan's gate waits for the operator with no time limit. `maxWaitingRuns` bounds how many runs wait, not how long. Add a gate timeout that ends the run, as a tie's does (INV-9). | A behavior change that operators must see first. |
+| P2 | **Per-Worker input limits.** A website's composer can drop an over-long prompt. A Worker descriptor should declare its largest input, and admission should refuse a Worker below the prompt's size (a capability check, never a vendor name). The driver-side check comes first. | Needs a measured limit. |
+| P2 | **Provider diversity.** A family's value comes from the live descriptor, and one vendor reached through several Worker sources counts as several families ([ADR-0027](../decisions/adr/0027-provider-diversity-in-routing.md#consequences)). Record the family at routing, and allow an operator override per account. | The MVP has website Workers only. |
+| P2 | **Evidence-backed review approval.** Today a review returns accepted results, a majority, and verified quotes. Approval stays with the Lead ([ADR-0028](../decisions/adr/0028-local-lead-final-authority.md)). A gate that requires verified findings before a run reports `pass` is a separate design. | Scope. |
+| P3 | **Teams of 5 to 10 members, and ranked choice.** Contracts exist for 2 to 5 members. Larger teams need more provider families than the MVP has. | No requirement yet. |
+| P3 | **Engine details.** Only the first tie gets a deadline timer. Two concurrent `stop`s each record a decision. The session record labels a model Worker's runtime `local-tool`. The runtime vocabulary in `worker-sessions` names agent runtimes, so the INV-11 architecture rule does not cover it yet. | Low impact; each is a small change with its own test. |
+| P3 | **Website-only composition.** The default already serves only website Workers. The mounted `llm`, `llm-pi-ai`, and `models` rows are inert until a model catalog is configured. A `website-only` preset would turn them off, and `web-ui` optionally too. | It saves little and adds a preset to keep in step. |
+
 ## Later candidates
 
 Each needs its own proposal: an A2A gateway and runtime (cross-runtime peers), an

@@ -51,6 +51,15 @@ and can *be used* by `system` as a Worker
 ([ADR-0009](../decisions/adr/0009-claude-and-codex-first-class.md)). No side is tied to a
 particular tool ([INV-11](invariants.md#inv-11-no-tool-lock-in)).
 
+As a client, an agent reaches `system` over MCP. That is the one client interface,
+the same for every MCP-capable agent
+([ADR-0011](../decisions/adr/0011-mvp-integration-via-mcp.md)). The client is the
+Lead: it makes the final decision, and what `system` returns is advice to it
+([ADR-0028](../decisions/adr/0028-local-lead-final-authority.md)). As a Worker, an
+agent is driven through a runtime. That is ACP for any ACP-speaking agent, and a
+native SDK only where ACP cannot carry a required guarantee
+([ADR-0009](../decisions/adr/0009-claude-and-codex-first-class.md)).
+
 The operator is trusted. Remote websites, tool output, repository content, model text, and
 third-party plugins that the operator has not installed are not (see the
 [threat model](../security/threat-model.md)).

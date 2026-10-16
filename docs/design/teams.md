@@ -20,6 +20,12 @@ The models supply reasoning and evidence only. Deterministic code fixes the opti
 seals the ballots, checks a review's quotes, counts the ballots, ends the rounds, and handles a
 tie.
 
+A team's outcome is advice to the caller, who is the Lead and decides
+([ADR-0028](../decisions/adr/0028-local-lead-final-authority.md)). It authorizes no effect
+outside the run. The record keeps these apart: a member's result was accepted, the team reached
+a majority, a review's findings were verified, and a person or the Lead approved. A majority of
+`pass` means that most members judged nothing blocking, not that the code is correct.
+
 ## Membership: Model A
 
 A **team member** is a persistent collaboration identity, and it is also the

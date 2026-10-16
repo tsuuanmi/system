@@ -16,9 +16,9 @@ Status values: `Proposed`, `Accepted`, `Rejected`, `Superseded by ADR-NNNN`,
 | [0006](0006-protocol-introduction-gates.md) | Responses + Anthropic Messages + MCP now, ACP as Worker runtime, A2A deferred; no mirrored protocol objects | Accepted |
 | [0007](0007-everything-is-a-plugin.md) | Everything is a plugin, on Cordis; seams + profiles/patches | Accepted |
 | [0008](0008-tool-agnostic.md) | Tool-agnostic boundaries: no model, vendor, agent, client, or infra lock-in | Accepted |
-| [0009](0009-claude-and-codex-first-class.md) | Claude Code and Codex first-class, as clients and as Workers | Accepted |
-| [0010](0010-reuse-before-build.md) | Reuse or adapt existing tools before building; dependency register | Accepted |
-| [0011](0011-mvp-integration-via-mcp.md) | MVP integrates with Claude Code and Codex through MCP first; model gateways in v1.0 | Accepted |
+| [0009](0009-claude-and-codex-first-class.md) | Claude Code and Codex first-class, as clients and as Workers | Accepted; amended 2026-10-16 (further agents: MCP client config, then ACP, then a native SDK on evidence) |
+| [0010](0010-reuse-before-build.md) | Reuse or adapt existing tools before building; dependency register | Accepted; amended 2026-10-16 (the six-step reuse check) |
+| [0011](0011-mvp-integration-via-mcp.md) | MVP integrates with Claude Code and Codex through MCP first; model gateways in v1.0 | Accepted; amended 2026-10-16 (MCP for any local agent; no second client protocol) |
 | [0012](0012-dag-execution-model.md) | All multi-step work runs as an append-only DAG; agent loops live inside Workers | Accepted |
 | [0013](0013-typed-artifacts-and-decision-records.md) | Typed, content-addressed artifacts; every decision recorded as an artifact | Accepted |
 | [0014](0014-json-schema-contracts.md) | JSON Schema 2020-12 is the canonical contract for records and wire payloads | Accepted |
@@ -35,3 +35,4 @@ Status values: `Proposed`, `Accepted`, `Rejected`, `Superseded by ADR-NNNN`,
 | [0025](0025-api-first-composition.md) | An `api-first` preset in one bundle; website Workers and model gateways are opt-in there | Accepted |
 | [0026](0026-versioned-releases-with-provenance.md) | Lockstep versioned releases with provenance and SBOM; SemVer covers `system`'s own contracts; supported Node range | Accepted |
 | [0027](0027-provider-diversity-in-routing.md) | Routing may require a provider family different from a named node's; it compares opaque families for inequality and never names one | Accepted |
+| [0028](0028-local-lead-final-authority.md) | The calling agent is the Lead and decides; a team's outcome is advice bounded to the run, and authorizes no effect outside it | Accepted |

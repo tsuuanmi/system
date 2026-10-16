@@ -32,8 +32,8 @@ One answer from one Worker. `system ask` and the MCP tool `ask` run it.
 
 ### `brainstorm`
 
-A [team](../design/teams.md) of 2 members, one per provider family, that decides a question by
-vote. Each member's recommendation is one option (`O<k>`). The MCP tool `brainstorm` and
+A [team](../design/teams.md) of 2 members, one per provider family, that recommends an answer to a question by
+vote, as advice to the caller ([ADR-0028](../decisions/adr/0028-local-lead-final-authority.md)). Each member's recommendation is one option (`O<k>`). The MCP tool `brainstorm` and
 `system brainstorm` run it.
 
 | Node | Capabilities | Tier | Conversation | Acceptance |

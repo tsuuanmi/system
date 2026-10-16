@@ -112,9 +112,10 @@
 - **REQ-TEAM-5** Reviewers receive the exact subject (for example a diff at a
   head SHA), the criteria, and the relevant decision artifacts, but not the
   producer's conversation. Review independence is structural.
-- **REQ-TEAM-6** A team decides by a strict-majority vote over sealed ballots,
-  and every ballot is recorded. It debates only on a split vote, for a bounded
-  number of rounds.
+- **REQ-TEAM-6** A team reaches its outcome by a strict-majority vote over sealed
+  ballots, and every ballot is recorded. It debates only on a split vote, for a
+  bounded number of rounds. The outcome is advice to the caller, who decides; it
+  authorizes no effect outside the run.
 - **REQ-TEAM-7** A tie is broken by the caller through `vote`, bound to the tie
   decision. A tie waits a bounded time, then ends inconclusive.
 

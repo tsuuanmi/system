@@ -1,8 +1,8 @@
 # @tsuuanmi/system-mcp-server
 
 An MCP Streamable HTTP endpoint inside the `system` profile, on DSH
-`ctx.webServer`, published as **`ctx.mcp`**. It serves Claude Code, Codex, and
-the `system` CLI
+`ctx.webServer`, published as **`ctx.mcp`**. It serves any MCP client, such as
+Claude Code and Codex, and the `system` CLI. It is the primary client interface
 ([ADR-0011](../../../docs/decisions/adr/0011-mvp-integration-via-mcp.md)).
 
 - **Security:** the request guard every client endpoint shares
@@ -74,7 +74,7 @@ one scope another's rights).
 | Scope | Token file | Reaches | Handed out by |
 |---|---|---|---|
 | `operator` | `operator.token` | every MCP tool, and `/ui` | the `system` CLI's own tool calls, `system ui` |
-| `client` | `client.token` | the client tools on `/mcp`: `ask`, `research`, `run`, `result`, `status`, `explain`, `usage`, `session_send`, `session_inbox` | `system mcp-headers` (Claude Code), `system mcp-stdio` (Codex) |
+| `client` | `client.token` | the client tools on `/mcp`: `ask`, `research`, `brainstorm`, `review`, `vote`, `run`, `result`, `status`, `explain`, `usage`, `session_send`, `session_inbox` | `system mcp-headers` (an HTTP client's headers, such as Claude Code's `headersHelper`), `system mcp-stdio` (a stdio client, such as Codex) |
 | `model` | `model.token` | `/anthropic` and `/openai` only; `/mcp` and `/ui` answer `401` | `system claude-env`, `system codex-env`, `system mcp-token --scope model` (a Codex Worker on the Responses gateway); each refuses while its gateway row is off ([runbook](../../../docs/operations/runbooks.md#turn-an-off-row-back-on)) |
 
 - **Tool scope:** a tool declares `scope: 'client' | 'operator'` in its

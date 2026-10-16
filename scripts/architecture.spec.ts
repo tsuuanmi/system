@@ -25,16 +25,19 @@ function sources(dir: string, out: string[] = []): string[] {
 const code = (text: string): string => text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:'"`])\/\/.*$/gm, '$1')
 
 describe('architecture rules', () => {
-  it('routing, workflows, profiles, presets, the models seam, and the gateways\' shared turns name capabilities, never a model, vendor, client, or browser, and set no provider family (INV-11, QA-13, ADR-0027)', () => {
+  it('routing, workflows, profiles, presets, the models seam, the client edge, and the gateways\' shared turns name capabilities, never a model, vendor, client, or browser, and set no provider family (INV-11, QA-13, ADR-0027)', () => {
     const governed = [
       join(packages, 'workers-core', 'src'), join(plugins, 'workers', 'src'), join(plugins, 'workflow', 'src'), join(packages, 'gateway-turns', 'src'),
       join(packages, 'models-core', 'src'), join(plugins, 'models', 'src'),
+      // The client edge and the other control-plane plugins: one MCP interface for every client (ADR-0011).
+      join(packages, 'gateway-core', 'src'), join(plugins, 'mcp-server', 'src'), join(plugins, 'egress', 'src'), join(plugins, 'turns', 'src'),
+      join(plugins, 'accounts', 'src'), join(plugins, 'agent-workers', 'src'), join(packages, 'agent-runtime-core', 'src'),
       ...readdirSync(plugins).filter((d) => d.startsWith('profile-')).map((d) => join(plugins, d, 'src')),
     ]
     const presets = join(packages, 'system-bundle', 'presets')
     const patches = readdirSync(presets).map((d) => join(presets, d, 'cordis.patch.yml'))
     expect(patches.length).toBeGreaterThan(0)
-    const named = /\b(chatgpt|openai|anthropic|claude|gemini|codex|patchright|chrome|chromium)\b/i
+    const named = /\b(chatgpt|openai|anthropic|claude|gemini|codex|antigravity|patchright|chrome|chromium)\b/i
     // A preset turns rows off by their bundle ids (`- id: provider-…`); its configuration names nothing.
     const yaml = (text: string): string => text.split('\n').map((line) => (/^- id: [\w-]+$/.test(line) ? '' : line)).join('\n')
     const offenders = [...governed.flatMap((dir) => sources(dir)), ...patches].flatMap((file) => (file.endsWith('.yml') ? yaml(readFileSync(file, 'utf8')) : code(readFileSync(file, 'utf8'))).split('\n')
