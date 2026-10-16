@@ -368,8 +368,9 @@ interface Entry {
 }
 
 /**
- * The order files are read in, until the bounds: the root README, manifests, entry points, the
- * focus (paths or globs, else the request's words in a path), then tests beside what was chosen.
+ * The order files are read in, until the bounds: the caller's focus first (paths or globs, tests
+ * included), then the root README, manifests, entry points, the request's words in a path (with no
+ * focus), then tests beside what was chosen.
  * Within a class, shorter paths first, then smaller files. Terms are deduplicated and capped.
  */
 export function selectFiles(entries: Entry[], request: Pick<SnapshotRequest, 'focus' | 'terms'>, entryPoints: string[] = [], globBudget = GLOB_BUDGET): Entry[] {
@@ -381,11 +382,15 @@ export function selectFiles(entries: Entry[], request: Pick<SnapshotRequest, 'fo
   const terms = [...new Set((request.terms ?? []).map((t) => t.toLowerCase()).filter((t) => t.length >= 4))].slice(0, MAX_TERMS)
   const named = new Set(entryPoints.map((p) => p.replace(/^\.\//, '')))
   const budget: GlobBudget = { left: globBudget }
+  // The caller's own focus comes first, tests included when it names them: the files a review is
+  // asked about are read before the repository's README and manifests use the bounds.
+  const focused = focus.length ? candidates.filter((e) => focus.some((f) => globMatches(f, e.path, budget))) : []
   const classes = [
+    focused,
     candidates.filter((e) => /^readme(\.[a-z]+)?$/i.test(e.path)),
     candidates.filter((e) => MANIFESTS.test(e.path) || (e.path.split('/').length === 2 && /\/(package\.json|pyproject\.toml|Cargo\.toml|go\.mod)$/.test(e.path))),
     candidates.filter((e) => named.has(e.path) || ENTRY.test(e.path)),
-    candidates.filter((e) => !TEST.test(e.path) && (focus.length ? focus.some((f) => globMatches(f, e.path, budget)) : terms.some((t) => lower.get(e)!.includes(t)))),
+    focus.length ? [] : candidates.filter((e) => !TEST.test(e.path) && terms.some((t) => lower.get(e)!.includes(t))),
   ]
   const chosen = new Set<Entry>()
   for (const list of classes) for (const e of order(list)) chosen.add(e)

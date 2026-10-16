@@ -257,9 +257,11 @@ A repository read uses the installed `git`, read-only, with fixed arguments and 
 
 The URL and connection checks (an allowed host, public addresses, pinned resolution) are in the
 [threat model](../security/threat-model.md#threats-and-controls). Files are chosen in this
-order, shorter paths first within a class: the root README; manifests; entry points (from
-`package.json` `main`, `module`, `bin`, and `exports`, and by convention); the `focus` globs, or
-else the request's words (four letters or more) in paths; then tests beside the chosen files.
+order, shorter paths first within a class: the `focus` globs first, tests included (the files a
+review is asked about are read before anything else uses the bounds); the root README; manifests;
+entry points (from `package.json` `main`, `module`, `bin`, and `exports`, and by convention); with
+no `focus`, the request's words (four letters or more) in paths; then tests beside the chosen
+files.
 Vendored and build directories are skipped. Bounds ([INV-9](../architecture/invariants.md)):
 40 files, 300 KB in all, 48 KB per file (config `repositories`), then, as members read it
 (line-numbered, with the list of files not shown), at most `maxSourceChars` characters

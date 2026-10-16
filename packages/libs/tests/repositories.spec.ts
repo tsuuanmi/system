@@ -65,9 +65,10 @@ describe('snapshotRepository: a public repository read at one commit (PROP-0004 
   it('reads a tag at its commit, and keeps within the file, byte, and size bounds; a blob over the per-file bound is not downloaded', async () => {
     const tagged = await snapshotWithTestSeams({ url: repo.url, ref: 'v1', focus: ['docs/**', 'assets/*'] }, { maxFiles: 3 }, undefined, local)
     expect(tagged.commit).toBe(repo.head)
-    // README, the manifest, the entry point: the bound is reached before the focus.
-    expect(tagged.files.map((f) => f.path)).toEqual(['README.md', 'package.json', 'src/server.ts'])
-    expect(tagged.unread).toEqual(expect.arrayContaining([{ path: 'docs/big.md', why: 'bounds' }, { path: 'assets/logo.png', why: 'bounds' }]))
+    // The focus first: its large file is never downloaded, its image takes a slot and is no text;
+    // then the README and the manifest reach the bound before the entry point.
+    expect(tagged.files.map((f) => f.path)).toEqual(['README.md', 'package.json'])
+    expect(tagged.unread).toEqual(expect.arrayContaining([{ path: 'docs/big.md', why: 'too-large' }, { path: 'assets/logo.png', why: 'binary' }, { path: 'src/server.ts', why: 'bounds' }]))
     const focused = await snapshotWithTestSeams({ url: repo.url, focus: ['docs/**', 'assets/*'] }, {}, undefined, local)
     expect(focused.unread).toEqual(expect.arrayContaining([{ path: 'docs/big.md', why: 'too-large' }, { path: 'assets/logo.png', why: 'binary' }]))
     const tight = await snapshotWithTestSeams({ url: repo.url }, { maxBytes: 40 }, undefined, local)
@@ -150,7 +151,8 @@ describe('snapshotRepository: a public repository read at one commit (PROP-0004 
   it('orders files by class, then by shorter path, then by size', () => {
     const e = (path: string, bytes = 10) => ({ path, sha: '0'.repeat(40), bytes })
     const chosen = selectFiles([e('lib/b.ts'), e('cmd/tool/main.go'), e('Cargo.toml'), e('readme.rst'), e('pkg/api/handler.go', 5), e('pkg/api/handler_test.go'), e('vendor/x/y.go')], { focus: ['pkg/**'] })
-    expect(chosen.map((c) => c.path)).toEqual(['readme.rst', 'Cargo.toml', 'cmd/tool/main.go', 'pkg/api/handler.go', 'pkg/api/handler_test.go'])
+    // The focus first, its test included; then the README, manifests, and entry points.
+    expect(chosen.map((c) => c.path)).toEqual(['pkg/api/handler.go', 'pkg/api/handler_test.go', 'readme.rst', 'Cargo.toml', 'cmd/tool/main.go'])
   })
 
   it('matches globs in linear time, and bounds focus patterns and request words (DoS)', async () => {
