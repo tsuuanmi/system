@@ -493,16 +493,16 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
     expect(done.status).toBe('completed')
     // The members read the material line-numbered between fence lines, as the one file `material`.
     // (The fake site reads the sent prompt back with runs of spaces collapsed.)
-    expect(fake.sent[0]!.prompt).toMatch(/### material\n(~~~~ [0-9a-f]{12} ~~~~)\n\s*1\s+Review this change:\n\s*2\s+function f\(\) \{\n\s*3\s+const lease = acquire\(\)\n[\s\S]*\n\1/)
+    expect(fake.sent[0]!.prompt).toMatch(/### File 1 of 1\n(~~~~ [0-9a-f]{12} ~~~~)\npath: material\n\s*1\s+Review this change:\n\s*2\s+function f\(\) \{\n\s*3\s+const lease = acquire\(\)\n[\s\S]*\n\1/)
     expect(done.answer!.split('\n').slice(0, 5)).toEqual([
       expect.stringMatching(/^outcome: changes; method: blocking-finding; winner: changes; decision: sha256:/),
       '',
       '## Decision: changes (a confirmed blocking finding decides it)',
       '',
-      '- F1 blocking (confirmed) at material:3: The lease is never released; m1 agrees, m2 disagrees',
+      '- F1 blocking (confirmed) at material:3: m1: The lease is never released; m1 agrees, m2 disagrees',
     ])
     // Merged by quoted line: m2's finding on line 3 is F1's too. The mismatched quote is not confirmed.
-    expect(done.answer).toContain('- F1 [m1, m2] confirmed blocking: The lease is never released at material:3 (cited 2) (evidence: read it)')
+    expect(done.answer).toContain('- F1 [m1, m2] confirmed blocking: The lease is never released at material:3 (cited 2) (evidence: read it); also m2 confirmed info: Same line')
     expect(done.answer).toContain('- F2 [m1] needs-verification warning: work() can throw at material:4 (evidence: read it) (quote not found within ±2 lines of material:4)')
     const final = ctx.artifacts.get(ctx.workflow.records(done.runId).at(-1)!.outputReceipt!.acceptance)!
     expect(final.body).toMatchObject({ schema: 'decision@1.2', decider: { type: 'rule', id: 'workflow.blocking-finding' },
@@ -511,6 +511,30 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
     // The source step's decision records what the reviewers read.
     const source = ctx.workflow.explain(done.runId)!.nodes.find((n) => n.nodeId === 'source')!
     expect(source).toMatchObject({ state: 'COMPLETED', decisions: [{ type: 'acceptance', outcome: 'accept' }] })
+  }, 240_000)
+
+  it('never lends one member\'s confirmed quote to another\'s blocking claim, and does not confirm a trivial quote (record integrity)', async () => {
+    const material = 'Review this change:\nfunction f() {\n  const lease = acquire()\n  work()\n}'
+    const { ctx } = await boot({
+      // m1: a correct quote, but only info. m2: blocking, on the same line, with a quote that is not there.
+      fake: { answer: (prompt) => (isProposal(prompt) ? findings([{ severity: 'info', claim: 'A lease is taken', quote: { path: 'material', line: 3, text: 'const lease = acquire()' } }]) : ballot('pass', [], 'review')) },
+      gemini: { answer: (prompt) => (isProposal(prompt)
+        ? findings([
+          { severity: 'blocking', claim: 'The lease leaks', quote: { path: 'material', line: 3, text: 'const lease = leak()' } },
+          // `}` is on line 5, but it identifies no line: never confirmed.
+          { severity: 'blocking', claim: 'The function never ends', quote: { path: 'material', line: 5, text: '}' } },
+        ])
+        : ballot('pass', [], 'review')) },
+    })
+    const done = await ctx.workflow.wait(ctx.workflow.start({ template: 'review', input: material }).runId, 120_000)
+    // No report is both confirmed and blocking: the vote decides (both pass).
+    expect(done.answer).toMatch(/^outcome: pass; method: team-majority;/)
+    const final = ctx.artifacts.get(ctx.workflow.records(done.runId).at(-1)!.outputReceipt!.acceptance)!.body as { vote: { findings: Array<{ id: string; reports: unknown[] }> } }
+    expect(final.vote.findings[0]).toMatchObject({ id: 'F1', class: 'confirmed', severity: 'blocking', reports: [
+      { member: 'm1', severity: 'info', claim: 'A lease is taken', class: 'confirmed' },
+      { member: 'm2', severity: 'blocking', claim: 'The lease leaks', class: 'needs-verification', why: 'quote not found within ±2 lines of material:3' },
+    ] })
+    expect(final.vote.findings[1]).toMatchObject({ class: 'needs-verification', why: expect.stringMatching(/too short to identify one line/) })
   }, 240_000)
 
   it('refuses a repository on a host it may not read, before anything is sent', async () => {

@@ -138,7 +138,15 @@
           "text": "const lease = acquire()",
           "matched": 13
         },
-        "class": "confirmed"
+        "class": "confirmed",
+        "reports": [
+          {
+            "member": "m1",
+            "severity": "blocking",
+            "claim": "The lease is never released on error",
+            "class": "confirmed"
+          }
+        ]
       },
       {
         "id": "F2",
@@ -151,7 +159,16 @@
         "claim": "A magic number",
         "evidence": "8080",
         "class": "needs-verification",
-        "why": "it quotes no line"
+        "why": "it quotes no line",
+        "reports": [
+          {
+            "member": "m2",
+            "severity": "warning",
+            "claim": "A magic number",
+            "class": "needs-verification",
+            "why": "it quotes no line"
+          }
+        ]
       }
     ],
     "repository": {

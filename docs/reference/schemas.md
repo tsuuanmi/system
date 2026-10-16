@@ -62,14 +62,13 @@ guesses.
     `workflow.blocking-finding`);
   - per finding: its reporters `members`, `kind` (`defect`, `suggestion`),
     `quote {path, line, text, matched}` (`matched`: the line the quote was found
-    on), `class` (`confirmed`, `needs-verification`, `suggestion`), and `why` it
-    is not confirmed;
+    on), `class` (`confirmed`, `needs-verification`, `suggestion`), `why` it
+    is not confirmed, and each member's own `reports` (claim, severity, class);
   - on the vote: the `repository {url, ref?, commit}` read, the number of files
     `unread`, and, for `blocking-finding`, the deciding findings `blocking`.
 
-  A record with any of them must be `@1.2`. A review's final vote decision is
-  always `@1.2`, and a review's tally is when it has findings; a brainstorm's
-  votes stay `@1.1`. Example:
+  A record with any of them must be `@1.2`. A review's votes, its tallies and
+  its final decision, are always `@1.2`; a brainstorm's stay `@1.1`. Example:
   [`decision.review-blocking.json`](../../schemas/examples/decision.review-blocking.json).
 - A tally's `vote` holds one round; the team's final `vote` holds every round,
   its `method`, the `dissent`, any `revisions` and `tiebreak`, and a review's
@@ -231,13 +230,15 @@ guesses.
   step, never by a model, with an `acceptance` decision
   `workflow.source-snapshot` that lists the files with their ids and the unread
   files.
-- `repository {url, ref?, commit}` is present for a public repository and
+- `repository {url, ref?, commit, pinnedBy}` is present for a public repository
+  (`pinnedBy`: `sha` when the caller named the commit, `ref` when a branch or tag
+  was resolved to it) and
   absent for the caller's text, which is the one file `material` (its `sha` is
   the text's sha256).
 - Each file's `sha` is its git blob id at `commit`. Quotes are checked against
   each file's `text`.
 - `unread` lists every file of the tree not read, with `why`: `bounds`,
-  `too-large`, `binary`, `lockfile`, or `not-selected`.
+  `too-large`, `binary`, `lockfile`, `path-too-long`, or `not-selected`.
 - `text` is what members read: every file line-numbered between fence lines
   derived from its hash, then the unread list. Example:
   [`source-snapshot.repository.json`](../../schemas/examples/source-snapshot.repository.json).

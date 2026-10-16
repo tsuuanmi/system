@@ -55,8 +55,23 @@ export interface ReviewFinding extends Finding {
   member: string
   /** Every member who reported it, in member order. */
   members: string[]
+  /** Confirmed when any report's quote is; the class of the first report otherwise. */
   class?: 'confirmed' | 'needs-verification' | 'suggestion'
   /** Why it is not confirmed. */
+  why?: string
+  /**
+   * Each member's own report on this line, with its own claim, severity, and class: merging never
+   * lends one member's quote to another's claim, and only a report that is both confirmed and
+   * blocking counts for the blocking-finding rule.
+   */
+  reports?: FindingReport[]
+}
+
+export interface FindingReport {
+  member: string
+  severity: Finding['severity']
+  claim: string
+  class?: ReviewFinding['class']
   why?: string
 }
 
@@ -248,6 +263,8 @@ export function classify(f: Finding, source: SourceSnapshot): Pick<ReviewFinding
   if (!file) return { class: 'needs-verification', why: `${f.quote.path} was not shown` }
   const wanted = norm(f.quote.text)
   if (!wanted) return { class: 'needs-verification', why: 'its quote is empty' }
+  // A quote like `}` matches lines everywhere: it identifies none (nor confirms a claim).
+  if (wanted.replace(/\s/g, '').length < 8) return { class: 'needs-verification', why: 'its quote is too short to identify one line (at least 8 characters)' }
   const lines = file.text.split('\n')
   for (const d of [0, -1, 1, -2, 2]) {
     const at = f.quote.line + d
@@ -274,16 +291,18 @@ export function findingsOf(e: Engine, team: TeamRole, nodes: NodeRow[]): ReviewF
       // A suggestion never merges with a defect on the same line: it would lend the defect its words.
       const key = f.quote ? `${f.kind ?? 'defect'}:${f.quote.path}:${checked.line ?? f.quote.line}` : undefined
       const same = key ? byLine.get(key) : undefined
+      const { line, ...cls } = checked
+      const report: FindingReport = { member, severity: f.severity, claim: f.claim, ...(cls.class ? { class: cls.class } : {}), ...(cls.why ? { why: cls.why } : {}) }
       if (same) {
         if (!same.members.includes(member)) same.members.push(member)
+        same.reports!.push(report)
         if (SEVERITY[f.severity] > SEVERITY[same.severity]) same.severity = f.severity
         if (same.class !== 'confirmed' && checked.class === 'confirmed') Object.assign(same, { class: 'confirmed', why: undefined })
         continue
       }
-      const { line, ...cls } = checked
       const finding: ReviewFinding = {
         id: `F${merged.length + 1}`, ...f, member, members: [member], ...(cls.class ? { class: cls.class } : {}), ...(cls.why ? { why: cls.why } : {}),
-        ...(f.quote && line ? { quote: { ...f.quote, matched: line } } : {}),
+        ...(f.quote && line ? { quote: { ...f.quote, matched: line } } : {}), reports: [report],
       }
       merged.push(finding)
       if (key) byLine.set(key, finding)
@@ -292,11 +311,11 @@ export function findingsOf(e: Engine, team: TeamRole, nodes: NodeRow[]): ReviewF
   return merged.map((f) => (f.why === undefined ? (({ why: _why, ...rest }) => rest)(f) as ReviewFinding : f))
 }
 
-/** Whether findings carry a review's quote checks (decision@1.2). */
-const hasChecks = (findings: ReviewFinding[]): boolean => findings.length > 0
+/** The reports that decide a review by rule: confirmed and blocking, each in its own member's words. */
+export const decidingReports = (f: ReviewFinding): FindingReport[] => (f.reports ?? []).filter((r) => r.class === 'confirmed' && r.severity === 'blocking')
 
 /** A confirmed blocking defect decides a review `changes`, whatever the ballots say (PROP-0004). */
-export const blockingConfirmed = (findings: ReviewFinding[]): ReviewFinding[] => findings.filter((f) => f.class === 'confirmed' && f.severity === 'blocking')
+export const blockingConfirmed = (findings: ReviewFinding[]): ReviewFinding[] => findings.filter((f) => decidingReports(f).length > 0)
 
 /** The ballots of voting round `round`: round 1's ballot steps, then each debate's re-vote. */
 function ballotsOf(e: Engine, team: TeamRole, nodes: NodeRow[], round: number, options: readonly string[]): CastBallot[] {
@@ -413,7 +432,8 @@ export function tally(e: Engine, run: RunRow, node: NodeRow, spec: ResolvedNode,
         ...options.map((o) => ({ option: o.option, selected: o.option === winner, reasons: ballots.filter((b) => b.choice === o.option).map((b) => `${b.member} (${b.confidence}): ${b.rationale}`) })),
         { option: debate ? 'debate' : 'tie', selected: !winner, reasons: winner ? [] : [why] },
       ],
-      ...(team.kind === 'review' && (blocking.length || hasChecks(findingsOf(e, team, nodes))) ? { schema: 'decision@1.2' as const } : {}),
+      // A review's vote carries its quote checks: decision@1.2, always.
+      ...(team.kind === 'review' ? { schema: 'decision@1.2' as const } : {}),
       decider: { type: 'rule', id: blocking.length ? 'workflow.blocking-finding' : 'workflow.team-majority', version: '1' },
       outcome: { option: winner ?? (debate ? 'debate' : 'tie'), detail: { round, counts, threshold, ended, reason: why } },
       deterministic: true,
@@ -467,7 +487,10 @@ function proposalsOf(team: TeamRole, nodes: NodeRow[]): ArtifactRef[] {
 /** One finding as a line: its id, reporters, class, severity, claim, and quoted place. */
 function findingLine(f: ReviewFinding): string {
   const place = f.quote ? ` at ${f.quote.path}:${f.quote.matched ?? f.quote.line}${f.quote.matched && f.quote.matched !== f.quote.line ? ` (cited ${f.quote.line})` : ''}` : f.location ? ` at ${f.location}` : ''
-  return `${f.id} [${f.members.join(', ')}]${f.class ? ` ${f.class}` : ''} ${f.severity}: ${f.claim}${place}${f.evidence ? ` (evidence: ${f.evidence})` : ''}${f.why ? ` (${f.why})` : ''}`
+  const head = `${f.id} [${f.members.join(', ')}]${f.class ? ` ${f.class}` : ''} ${f.severity}: ${f.claim}${place}${f.evidence ? ` (evidence: ${f.evidence})` : ''}${f.why ? ` (${f.why})` : ''}`
+  // Merged reports keep their own words, severity, and class.
+  const others = (f.reports ?? []).slice(1)
+  return others.length ? `${head}; also ${others.map((r) => `${r.member} ${r.class ?? ''} ${r.severity}: ${r.claim}${r.why ? ` (${r.why})` : ''}`.replace(/ +/g, ' ')).join('; ')}` : head
 }
 
 /** Members by opaque identity (their sessions), never by provider. */
@@ -599,7 +622,7 @@ function conclude(e: Engine, run: RunRow, node: NodeRow, spec: ResolvedNode, nod
       inputs: rounds.map((t) => t.decision),
       candidates: [...options.map((o) => ({ option: o.option, selected: o.option === how.winner, reasons: o.option === how.winner ? [why.slice(0, 300)] : [] })),
         { option: 'inconclusive', selected: how.winner === null, reasons: how.winner === null ? [why.slice(0, 300)] : [] }],
-      ...(how.method === 'blocking-finding' || source || hasChecks(findings) ? { schema: 'decision@1.2' as const } : {}),
+      ...(team.kind === 'review' ? { schema: 'decision@1.2' as const } : {}),
       decider: { type: how.by, id: how.id, version: '1' },
       outcome: { option: how.winner ?? 'inconclusive', detail: { method: how.method } },
       deterministic: how.by === 'rule',
@@ -637,7 +660,9 @@ function resultText(kind: TeamKind, how: Conclusion, options: TeamOption[], roun
     // What decided it, and where the members stand on each: the caller judges a disputed blocker here.
     for (const f of blockingConfirmed(findings)) {
       const stances = last.ballots.map((b) => `${b.member} ${b.findings?.[f.id] === 'agree' ? 'agrees' : b.findings?.[f.id] === 'disagree' ? 'disagrees' : 'is unsure'}`)
-      lines.push(`- ${f.id} blocking (confirmed) at ${f.quote!.path}:${f.quote!.matched ?? f.quote!.line}: ${f.claim}; ${stances.join(', ')}`)
+      // In the deciding report's own words: never another member's claim on the same line.
+      const by = decidingReports(f).map((r) => `${r.member}: ${r.claim}`).join('; ')
+      lines.push(`- ${f.id} blocking (confirmed) at ${f.quote!.path}:${f.quote!.matched ?? f.quote!.line}: ${by}; ${stances.join(', ')}`)
     }
     lines.push('')
   }

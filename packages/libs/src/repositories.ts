@@ -1,10 +1,15 @@
 /**
  * Public repository snapshots (PROP-0004 Phase 4): the files a team reviews, read at one pinned
  * commit by `system` itself, so no member browses the repository and every quote can be checked
- * against the bytes the members saw. A confined, read-only probe like `subjects.ts`: fixed `git`
- * argument lists, no shell, no hooks, no credentials, bounded time, files, and bytes (INV-9).
+ * against the bytes the members saw. A confined, read-only probe like `subjects.ts`:
+ * - the URL is rebuilt from checked parts, and git gets only that canonical URL;
+ * - git runs with fixed arguments, no shell, no hooks, no credentials, no user or system config,
+ *   https only, pinned to the addresses that were checked;
+ * - a blob larger than the per-file bound is never downloaded;
+ * - every git call has a bound, the whole snapshot has a deadline, and a stopped call stops its
+ *   whole process group (INV-9).
  */
-import { execFile } from 'node:child_process'
+import { spawn } from 'node:child_process'
 import { lookup } from 'node:dns/promises'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { isIP } from 'node:net'
@@ -12,7 +17,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 export interface SnapshotRequest {
-  /** An `https://` URL of a public repository (no credentials in it). */
+  /** An `https://<host>/<owner>/<repo>` URL of a public repository (no credentials, query, or fragment). */
   url: string
   /** A branch, a tag, or a full commit SHA (default: the remote's HEAD). */
   ref?: string
@@ -22,23 +27,26 @@ export interface SnapshotRequest {
   terms?: string[]
 }
 
+/** What an operator may configure (`workflow.repositories`). */
 export interface SnapshotBounds {
   /** Files read (default 40). */
   maxFiles?: number
   /** Bytes of text read in all (default 300 KB). */
   maxBytes?: number
-  /** A larger file is listed as unread (default 48 KB). */
+  /** A larger file is never downloaded, and is listed as unread (default 48 KB). */
   maxFileBytes?: number
-  /** A tree with more entries is refused (default 50 000). */
-  maxEntries?: number
-  /** Each git call (default 20 s). */
-  timeoutMs?: number
   /** Hosts a repository may be read from (default `github.com`): known forges only. */
   hosts?: string[]
-  /** Tests only: accept a `file://` URL and local hosts. */
+}
+
+/** Test seams: never reachable from configuration. */
+export interface SnapshotTesting {
+  /** Accept a `file://` repository, with no host checks. */
   allowLocal?: boolean
-  /** Tests only: how a host resolves (default DNS). */
+  /** How a host resolves (default DNS). */
   resolve?: (host: string) => Promise<string[]>
+  /** The whole snapshot's deadline (default 120 s). */
+  deadlineMs?: number
 }
 
 export interface SnapshotFile {
@@ -49,11 +57,13 @@ export interface SnapshotFile {
   text: string
 }
 
-export type UnreadReason = 'bounds' | 'too-large' | 'binary' | 'lockfile' | 'not-selected'
+export type UnreadReason = 'bounds' | 'too-large' | 'binary' | 'lockfile' | 'not-selected' | 'path-too-long'
 
 export interface RepositorySnapshot {
   url: string
   commit: string
+  /** How the commit was chosen: a full SHA the caller named (on GitHub it may come from a fork of the repository), or a ref resolved to it. */
+  pinnedBy: 'sha' | 'ref'
   files: SnapshotFile[]
   /** Every file of the tree that was not read, with why. */
   unread: Array<{ path: string; why: UnreadReason }>
@@ -61,74 +71,191 @@ export interface RepositorySnapshot {
 
 /** A refused or failed snapshot: what the caller can tell its caller. */
 export class SnapshotError extends Error {
-  /** `invalid_input` and `config_error` cannot pass by retrying; `unavailable` (the network, the host) may. */
+  /** Only `unavailable` (the network, the host) may pass by retrying. */
   constructor(readonly kind: 'invalid_input' | 'overloaded' | 'unavailable' | 'config_error', message: string) {
     super(message)
     this.name = 'SnapshotError'
   }
 }
 
-/** git 2.37 added `http.curloptResolve`, which pins a connection to the address that was checked. */
+/** git 2.37 added `http.curloptResolve`, which pins a connection to the addresses that were checked. */
 export const GIT_FLOOR = [2, 37] as const
-
-const ENV = { PATH: process.env.PATH ?? '/usr/bin:/bin', GIT_TERMINAL_PROMPT: '0', GIT_CONFIG_NOSYSTEM: '1', GIT_ASKPASS: '/bin/false', LC_ALL: 'C', HOME: '/nonexistent' }
-const SAFE = ['-c', 'core.hooksPath=/dev/null', '-c', 'protocol.file.allow=user', '-c', 'credential.helper=', '-c', 'http.followRedirects=false']
+const CALL_MS = 20_000
+const DEADLINE_MS = 120_000
+const MAX_ENTRIES = 50_000
+const MAX_PATH = 1000
+const MAX_TERMS = 50
+const MAX_FOCUS = 20
+const MAX_WILDCARDS = 8
 
 /**
- * The git options that pin every connection to `host` to the address checked before it, so git
+ * The git options that pin every connection to `host` to the addresses checked before it, so git
  * cannot resolve the host again to another (DNS rebinding).
  */
-export function pinnedTo(host: string, address: string): string[] {
-  return ['-c', `http.curloptResolve=${host}:443:${isIP(address) === 6 ? `[${address}]` : address}`]
+export function pinnedTo(host: string, addresses: readonly string[]): string[] {
+  return ['-c', `http.curloptResolve=${host}:443:${addresses.map((a) => (isIP(a) === 6 ? `[${a}]` : a)).join(',')}`]
 }
 
-function git(args: string[], timeoutMs: number, cwd?: string, pin: string[] = []): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    execFile('git', [...SAFE, ...pin, ...(cwd ? ['-C', cwd] : []), ...args], { env: ENV, timeout: timeoutMs, maxBuffer: 64 * 1024 * 1024, encoding: 'buffer' }, (error, stdout) => {
-      if (error) reject(error)
-      else resolve(stdout)
-    })
-  })
+interface Git {
+  run(args: string[], options?: { input?: string; noLazyFetch?: boolean }): Promise<Buffer>
 }
 
-const PRIVATE_V4 = [/^10\./, /^127\./, /^169\.254\./, /^172\.(1[6-9]|2\d|3[01])\./, /^192\.168\./, /^0\./, /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./]
-const isPrivate = (address: string): boolean => (isIP(address) === 6
-  ? /^(::1|::|fc|fd|fe80)/i.test(address) || /^::ffff:/i.test(address) && isPrivate(address.replace(/^::ffff:/i, ''))
-  : PRIVATE_V4.some((range) => range.test(address)))
+/** A git failure that carries its exit code and the start of what it said. */
+class GitFailed extends Error {
+  constructor(readonly code: number | null, readonly stderr: string) {
+    super(`git exited ${code}: ${stderr.slice(0, 300)}`)
+  }
+}
 
 /**
- * The URL is https on an allowed host, with no credentials, and the host resolves to public
- * addresses only. Returns the git options that pin git to the address checked.
+ * A git confined to `dir` (an empty bare repository): no user, system, or ambient repository
+ * config; https only (and file, for tests); no hooks, credentials, prompts, redirects, or ssh.
+ * Each call is bounded by `CALL_MS` and by the deadline; a stopped call kills its process group,
+ * so a lazy fetch it started stops too.
  */
-async function checkUrl(url: string, bounds: SnapshotBounds): Promise<string[]> {
+function confinedGit(dir: string, pin: string[], allowFile: boolean, deadline: number, signal: AbortSignal | undefined): Git {
+  const env = {
+    PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: dir, LC_ALL: 'C', GIT_TERMINAL_PROMPT: '0', GIT_ASKPASS: '/bin/false', GIT_SSH_COMMAND: '/bin/false',
+    GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_CEILING_DIRECTORIES: join(dir, '..'),
+  }
+  const safe = [
+    '-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false', '-c', 'core.sshCommand=/bin/false', '-c', 'credential.helper=',
+    '-c', 'http.followRedirects=false', '-c', 'protocol.allow=never', '-c', 'protocol.https.allow=always', ...(allowFile ? ['-c', 'protocol.file.allow=always'] : []),
+  ]
+  return {
+    run: (args, options = {}) => new Promise((resolve, reject) => {
+      const left = deadline - Date.now()
+      if (left <= 0) return reject(new SnapshotError('unavailable', 'the repository read ran past its deadline'))
+      if (signal?.aborted) return reject(new SnapshotError('unavailable', 'the repository read was stopped'))
+      const child = spawn('git', [...safe, ...pin, ...args], { cwd: dir, env: { ...env, ...(options.noLazyFetch ? { GIT_NO_LAZY_FETCH: '1' } : {}) }, detached: true, stdio: ['pipe', 'pipe', 'pipe'] })
+      const out: Buffer[] = []
+      let size = 0
+      let err = ''
+      const stop = (): void => {
+        try {
+          process.kill(-child.pid!, 'SIGKILL')
+        } catch {
+          // already gone
+        }
+      }
+      const timer = setTimeout(() => {
+        stop()
+        reject(new SnapshotError('unavailable', `git ${args[0]} took longer than ${Math.round(Math.min(CALL_MS, left) / 1000)} s`))
+      }, Math.min(CALL_MS, left))
+      const onAbort = (): void => {
+        stop()
+        reject(new SnapshotError('unavailable', 'the repository read was stopped'))
+      }
+      signal?.addEventListener('abort', onAbort, { once: true })
+      const done = (): void => {
+        clearTimeout(timer)
+        signal?.removeEventListener('abort', onAbort)
+      }
+      child.stdout.on('data', (chunk: Buffer) => {
+        size += chunk.length
+        if (size > 64 * 1024 * 1024) {
+          stop()
+          return
+        }
+        out.push(chunk)
+      })
+      child.stderr.on('data', (chunk: Buffer) => {
+        if (err.length < 4000) err += chunk.toString('utf8')
+      })
+      child.on('error', (error: NodeJS.ErrnoException) => {
+        done()
+        reject(error.code === 'ENOENT' ? new SnapshotError('config_error', 'git is not installed: a repository review needs it') : error)
+      })
+      child.on('close', (code) => {
+        done()
+        if (code === 0) resolve(Buffer.concat(out))
+        else reject(new GitFailed(code, err))
+      })
+      child.stdin.end(options.input ?? '')
+    }),
+  }
+}
+
+/** An IPv4 address as a number, or undefined. */
+function v4(address: string): number | undefined {
+  const parts = address.split('.')
+  if (parts.length !== 4 || !parts.every((p) => /^\d{1,3}$/.test(p) && Number(p) <= 255)) return undefined
+  return parts.reduce((n, p) => n * 256 + Number(p), 0)
+}
+
+/** Non-public IPv4 ranges: this network, private, CGNAT, loopback, link-local, protocol, documentation, benchmarking, multicast, reserved. */
+const V4_RANGES = [
+  ['0.0.0.0', 8], ['10.0.0.0', 8], ['100.64.0.0', 10], ['127.0.0.0', 8], ['169.254.0.0', 16], ['172.16.0.0', 12], ['192.0.0.0', 24], ['192.0.2.0', 24],
+  ['192.168.0.0', 16], ['198.18.0.0', 15], ['198.51.100.0', 24], ['203.0.113.0', 24], ['224.0.0.0', 4], ['240.0.0.0', 4],
+] as const
+
+/** An IPv6 address as eight 16-bit groups, or undefined. */
+function v6(address: string): number[] | undefined {
+  let text = address.toLowerCase().split('%')[0]!
+  const tail = /(\d+\.\d+\.\d+\.\d+)$/.exec(text)
+  if (tail) {
+    const n = v4(tail[1]!)
+    if (n === undefined) return undefined
+    text = `${text.slice(0, -tail[1]!.length)}${(n >>> 16).toString(16)}:${(n & 0xffff).toString(16)}`
+  }
+  const [head, rest] = text.split('::') as [string, string | undefined]
+  const groups = (s: string): number[] => (s ? s.split(':').map((g) => parseInt(g, 16)) : [])
+  const a = groups(head)
+  const b = rest === undefined ? [] : groups(rest)
+  const all = rest === undefined ? a : [...a, ...Array(8 - a.length - b.length).fill(0), ...b]
+  return all.length === 8 && all.every((g) => Number.isInteger(g) && g >= 0 && g <= 0xffff) ? all : undefined
+}
+
+/** Whether an address is not on the public internet (refused before git connects). */
+export function isPrivateAddress(address: string): boolean {
+  const n = v4(address)
+  if (n !== undefined) return V4_RANGES.some(([base, bits]) => (n >>> (32 - bits)) === (v4(base)! >>> (32 - bits)))
+  const g = v6(address)
+  if (!g) return true
+  if (g.slice(0, 7).every((x) => x === 0)) return true // :: and ::1 (and the deprecated compatible block)
+  if (g.slice(0, 5).every((x) => x === 0) && g[5] === 0xffff) return isPrivateAddress(`${g[6]! >> 8}.${g[6]! & 255}.${g[7]! >> 8}.${g[7]! & 255}`) // mapped v4
+  if ((g[0]! & 0xfe00) === 0xfc00 || (g[0]! & 0xffc0) === 0xfe80 || (g[0]! & 0xff00) === 0xff00) return true // unique local, link-local, multicast
+  if (g[0] === 0x64 && g[1] === 0xff9b) return true // NAT64: it embeds any v4
+  if (g[0] === 0x2002) return true // 6to4: it embeds any v4
+  if (g[0] === 0x2001 && g[1] === 0x0db8) return true // documentation
+  return false
+}
+
+/** True when the text holds a control character, whitespace, or a backslash: never in a repository URL. */
+const unsafe = (text: string): boolean => [...text].some((c) => c.charCodeAt(0) <= 32 || c.charCodeAt(0) === 127 || c === '\\')
+
+/**
+ * The canonical URL git is given, rebuilt from checked parts: https on an allowed host (port
+ * 443), no credentials, query, or fragment, and a path `/<owner>/<repo>[.git]`. The URL must be
+ * exactly its own parse, so a form one parser reads one way and git another is refused. Returns
+ * the URL and the git options that pin git to the addresses checked.
+ */
+async function canonicalUrl(url: string, bounds: SnapshotBounds, testing: SnapshotTesting): Promise<{ href: string; pin: string[] }> {
+  if (testing.allowLocal && url.startsWith('file:///')) return { href: url, pin: [] }
+  if (url.length > 500 || unsafe(url)) throw new SnapshotError('invalid_input', 'a repository URL has no spaces, control characters, or backslashes')
   let parsed: URL
   try {
     parsed = new URL(url)
   } catch {
     throw new SnapshotError('invalid_input', `${url} is not a URL`)
   }
-  if (bounds.allowLocal && parsed.protocol === 'file:') return []
   if (parsed.protocol !== 'https:') throw new SnapshotError('invalid_input', 'a repository is read over https only')
   if (parsed.username || parsed.password) throw new SnapshotError('invalid_input', 'a repository URL carries no credentials: only public repositories are read')
-  if (parsed.port && parsed.port !== '443') throw new SnapshotError('invalid_input', 'a repository is read on the https port only')
-  const host = parsed.hostname.replace(/^\[|\]$/g, '').toLowerCase()
-  const hosts = bounds.hosts ?? ['github.com']
-  if (!hosts.includes(host)) throw new SnapshotError('invalid_input', `${host} is not an allowed repository host (allowed: ${hosts.join(', ')})`)
-  if (host === 'localhost' || host.endsWith('.local') || host.endsWith('.internal')) throw new SnapshotError('invalid_input', `${host} is not a public host`)
-  const resolve = bounds.resolve ?? (async (h: string) => (await lookup(h, { all: true })).map((a) => a.address))
-  const addresses = isIP(host) ? [host] : await resolve(host).catch(() => [])
-  if (!addresses.length) throw new SnapshotError('unavailable', `${host} does not resolve`)
-  if (addresses.some(isPrivate)) throw new SnapshotError('invalid_input', `${host} resolves to a private address`)
-  return isIP(host) ? [] : pinnedTo(host, addresses[0]!)
-}
-
-/** Fail closed on a git older than the floor: it could not be pinned to the checked address. */
-async function checkGit(timeoutMs: number): Promise<void> {
-  const version = /(\d+)\.(\d+)/.exec((await git(['--version'], timeoutMs)).toString('utf8'))
-  const [major, minor] = version ? [Number(version[1]), Number(version[2])] : [0, 0]
-  if (major < GIT_FLOOR[0] || (major === GIT_FLOOR[0] && minor < GIT_FLOOR[1])) {
-    throw new SnapshotError('config_error', `git ${major}.${minor} cannot pin a connection to a checked address; ${GIT_FLOOR.join('.')} or later is needed`)
+  if (parsed.port) throw new SnapshotError('invalid_input', 'a repository is read on the https port only')
+  if (parsed.search || parsed.hash || url.includes('?') || url.includes('#')) throw new SnapshotError('invalid_input', 'a repository URL has no query or fragment')
+  if (!/^\/[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+?(\.git)?\/?$/.test(parsed.pathname) || /(^|\/)\.\.?(\/|$)/.test(parsed.pathname)) {
+    throw new SnapshotError('invalid_input', 'a repository URL is https://<host>/<owner>/<repo>')
   }
+  if (url !== parsed.href) throw new SnapshotError('invalid_input', `${url} is not in its canonical form (${parsed.href})`)
+  const host = parsed.hostname.toLowerCase()
+  const hosts = (bounds.hosts ?? ['github.com']).map((h) => h.toLowerCase())
+  if (!hosts.includes(host)) throw new SnapshotError('invalid_input', `${host} is not an allowed repository host (allowed: ${hosts.join(', ')})`)
+  if (isIP(host)) throw new SnapshotError('invalid_input', 'a repository host is named, not an address')
+  const resolve = testing.resolve ?? (async (h: string) => (await lookup(h, { all: true })).map((a) => a.address))
+  const addresses = await resolve(host).catch(() => [])
+  if (!addresses.length) throw new SnapshotError('unavailable', `${host} does not resolve`)
+  if (addresses.some(isPrivateAddress)) throw new SnapshotError('invalid_input', `${host} resolves to a non-public address`)
+  return { href: `https://${host}${parsed.pathname}`, pin: pinnedTo(host, addresses) }
 }
 
 const SKIPPED_DIRS = /(^|\/)(node_modules|vendor|dist|build|out|target|coverage|\.next|\.git|third_party)\//
@@ -138,112 +265,218 @@ const ENTRY = /^(src\/)?(index|main|lib|app|__main__|cli)\.[a-z]+$|^cmd\/[^/]+\/
 const TEST = /(^|\/)(tests?|__tests__|spec)\/|\.(test|spec)\.[a-z]+$|(^|\/)test_[^/]+\.py$|_test\.go$/
 const stem = (path: string): string => path.split('/').pop()!.replace(/\.(test|spec)(?=\.)/, '').replace(/^test_/, '').replace(/_test(?=\.go$)/, '').replace(/\.[^.]+$/, '').toLowerCase()
 
-/** `*` within a segment, `**` across segments; anything else literal. */
-function glob(pattern: string): RegExp {
-  const body = pattern.replace(/^\.?\//, '').split(/(\*\*\/?|\*)/).map((part) => (part === '**/' ? '(?:.*/)?' : part === '**' ? '.*' : part === '*' ? '[^/]*' : part.replace(/[.+?^${}()|[\]\\]/g, '\\$&'))).join('')
-  return new RegExp(`^${body}${pattern.endsWith('/') ? '.*' : '(?:/.*)?'}$`)
+/** One path segment against one pattern segment: `*` is any run of characters (linear, no backtracking blow-up). */
+function segmentMatches(pattern: string, text: string): boolean {
+  let p = 0
+  let t = 0
+  let star = -1
+  let mark = 0
+  while (t < text.length) {
+    if (p < pattern.length && pattern[p] === text[t]) {
+      p++
+      t++
+    } else if (p < pattern.length && pattern[p] === '*') {
+      star = p++
+      mark = t
+    } else if (star >= 0) {
+      p = star + 1
+      t = ++mark
+    } else return false
+  }
+  while (p < pattern.length && pattern[p] === '*') p++
+  return p === pattern.length
+}
+
+/**
+ * Whether `path` is under `pattern`: `*` within a segment, `**` across any segments, a path or a
+ * directory prefix otherwise. Segment by segment, so it is O(pattern × path) and never backtracks.
+ */
+export function globMatches(pattern: string, path: string): boolean {
+  const parts = pattern.replace(/^\.?\//, '').split('/').filter((s, i, all) => s !== '' || i === all.length - 1)
+    .map((s) => (/^\*{2,}$/.test(s) ? '**' : s.replace(/\*+/g, '*')))
+    .filter((s, i, all) => !(s === '**' && all[i - 1] === '**'))
+  // A pattern names a path or everything under it.
+  if (parts.at(-1) === '') parts.pop()
+  if (parts.at(-1) !== '**') parts.push('**')
+  const segs = path.split('/')
+  const memo = new Map<number, boolean>()
+  const at = (i: number, j: number): boolean => {
+    const key = i * (segs.length + 1) + j
+    const known = memo.get(key)
+    if (known !== undefined) return known
+    let ok: boolean
+    if (i === parts.length) ok = j === segs.length
+    else if (parts[i] === '**') ok = at(i + 1, j) || (j < segs.length && at(i, j + 1))
+    else ok = j < segs.length && segmentMatches(parts[i]!, segs[j]!) && at(i + 1, j + 1)
+    memo.set(key, ok)
+    return ok
+  }
+  return at(0, 0)
+}
+
+/** A focus pattern within its bounds: at most 500 characters and 8 wildcards. */
+function checkFocus(focus: readonly string[]): void {
+  if (focus.length > MAX_FOCUS) throw new SnapshotError('invalid_input', `at most ${MAX_FOCUS} focus patterns`)
+  for (const f of focus) {
+    if (f.length > 500 || (f.match(/\*/g)?.length ?? 0) > MAX_WILDCARDS) throw new SnapshotError('invalid_input', `a focus pattern has at most 500 characters and ${MAX_WILDCARDS} wildcards`)
+  }
 }
 
 interface Entry {
   path: string
   sha: string
-  bytes: number
+  /** Undefined when the blob was not downloaded: larger than the per-file bound. */
+  bytes: number | undefined
 }
 
 /**
  * The order files are read in, until the bounds: the root README, manifests, entry points, the
  * focus (paths or globs, else the request's words in a path), then tests beside what was chosen.
- * Within a class, shorter paths first, then smaller files.
+ * Within a class, shorter paths first, then smaller files. Terms are deduplicated and capped.
  */
 export function selectFiles(entries: Entry[], request: Pick<SnapshotRequest, 'focus' | 'terms'>, entryPoints: string[] = []): Entry[] {
   const candidates = entries.filter((e) => !SKIPPED_DIRS.test(e.path) && !LOCKFILES.test(e.path))
-  const order = (list: Entry[]): Entry[] => [...list].sort((a, b) => a.path.split('/').length - b.path.split('/').length || a.path.length - b.path.length || a.bytes - b.bytes || (a.path < b.path ? -1 : 1))
-  const focus = (request.focus ?? []).map(glob)
-  const terms = (request.terms ?? []).map((t) => t.toLowerCase()).filter((t) => t.length >= 4)
+  const lower = new Map(candidates.map((e) => [e, e.path.toLowerCase()]))
+  const order = (list: Entry[]): Entry[] => [...list].sort((a, b) => a.path.split('/').length - b.path.split('/').length || a.path.length - b.path.length
+    || (a.bytes ?? Infinity) - (b.bytes ?? Infinity) || (a.path < b.path ? -1 : 1))
+  const focus = request.focus ?? []
+  const terms = [...new Set((request.terms ?? []).map((t) => t.toLowerCase()).filter((t) => t.length >= 4))].slice(0, MAX_TERMS)
   const named = new Set(entryPoints.map((p) => p.replace(/^\.\//, '')))
   const classes = [
     candidates.filter((e) => /^readme(\.[a-z]+)?$/i.test(e.path)),
     candidates.filter((e) => MANIFESTS.test(e.path) || (e.path.split('/').length === 2 && /\/(package\.json|pyproject\.toml|Cargo\.toml|go\.mod)$/.test(e.path))),
     candidates.filter((e) => named.has(e.path) || ENTRY.test(e.path)),
-    candidates.filter((e) => !TEST.test(e.path) && (focus.length ? focus.some((f) => f.test(e.path)) : terms.some((t) => e.path.toLowerCase().includes(t)))),
+    candidates.filter((e) => !TEST.test(e.path) && (focus.length ? focus.some((f) => globMatches(f, e.path)) : terms.some((t) => lower.get(e)!.includes(t)))),
   ]
-  const chosen: Entry[] = []
-  for (const list of classes) for (const e of order(list)) if (!chosen.includes(e)) chosen.push(e)
-  const stems = new Set(chosen.map((e) => stem(e.path)))
-  for (const e of order(candidates.filter((c) => TEST.test(c.path) && stems.has(stem(c.path))))) if (!chosen.includes(e)) chosen.push(e)
-  return chosen
+  const chosen = new Set<Entry>()
+  for (const list of classes) for (const e of order(list)) chosen.add(e)
+  const stems = new Set([...chosen].map((e) => stem(e.path)))
+  for (const e of order(candidates.filter((c) => TEST.test(c.path) && stems.has(stem(c.path))))) chosen.add(e)
+  return [...chosen]
+}
+
+/** The commit a ref names, by git's own precedence: a tag (its peeled commit when annotated), then a branch. */
+function commitOf(listed: string[], ref: string | undefined): string | undefined {
+  const line = (name: string): string | undefined => listed.find((l) => l.endsWith(`\t${name}`))
+  const found = ref ? line(`refs/tags/${ref}^{}`) ?? line(`refs/tags/${ref}`) ?? line(`refs/heads/${ref}`) : line('HEAD')
+  return found?.split('\t')[0]
 }
 
 /**
- * Snapshot a public repository at one commit: resolve the ref, fetch the commit's tree without
- * its blobs, choose the files in a fixed order, and read only those, within the bounds. Every file
- * not read is listed with why. Throws {@link SnapshotError}.
+ * Snapshot a public repository at one commit: resolve the ref, fetch the commit with only blobs
+ * within the per-file bound, choose the files in a fixed order, and read only those, within the
+ * bounds. Every file not read is listed with why. Throws {@link SnapshotError}.
  */
-export async function snapshotRepository(request: SnapshotRequest, bounds: SnapshotBounds = {}): Promise<RepositorySnapshot> {
-  const limits = { maxFiles: 40, maxBytes: 300_000, maxFileBytes: 48_000, maxEntries: 50_000, timeoutMs: 20_000, ...bounds }
-  await checkGit(limits.timeoutMs)
-  const pin = await checkUrl(request.url, bounds)
-  if (request.ref !== undefined && !/^[A-Za-z0-9._/-]{1,200}$/.test(request.ref)) throw new SnapshotError('invalid_input', 'a ref is a branch, a tag, or a commit SHA')
-  const dir = await mkdtemp(join(tmpdir(), 'system-repo-'))
+export async function snapshotRepository(request: SnapshotRequest, bounds: SnapshotBounds = {}, signal?: AbortSignal, testing: SnapshotTesting = {}): Promise<RepositorySnapshot> {
+  const limits = { maxFiles: bounds.maxFiles ?? 40, maxBytes: bounds.maxBytes ?? 300_000, maxFileBytes: bounds.maxFileBytes ?? 48_000 }
+  if (request.ref !== undefined && (!/^[A-Za-z0-9._/-]{1,200}$/.test(request.ref) || request.ref.startsWith('-') || request.ref.includes('..'))) {
+    throw new SnapshotError('invalid_input', 'a ref is a branch, a tag, or a commit SHA')
+  }
+  checkFocus(request.focus ?? [])
+  const { href, pin } = await canonicalUrl(request.url, bounds, testing)
+  const deadline = Date.now() + (testing.deadlineMs ?? DEADLINE_MS)
+  const base = await mkdtemp(join(tmpdir(), 'system-repo-'))
+  const dir = join(base, 'repo.git')
+  let failure: unknown
   try {
-    let commit = request.ref && /^[0-9a-f]{40}$/.test(request.ref) ? request.ref : undefined
-    if (!commit) {
-      const patterns = request.ref ? [request.ref, `${request.ref}^{}`] : ['HEAD']
-      const listed = (await git(['ls-remote', request.url, ...patterns], limits.timeoutMs, undefined, pin).catch(() => {
-        throw new SnapshotError('unavailable', `${request.url} cannot be read: it is not a public git repository, or it is unreachable`)
-      })).toString('utf8').trim().split('\n').filter(Boolean)
-      // An annotated tag is listed twice; its peeled line (`^{}`) names the commit.
-      const named = (suffix: string): string | undefined => listed.find((line) => line.endsWith(`\trefs/tags/${request.ref}${suffix}`) || line.endsWith(`\trefs/heads/${request.ref}${suffix}`))
-      const exact = request.ref ? named('^{}') ?? named('') : listed.find((line) => line.endsWith('\tHEAD'))
-      commit = exact?.split('\t')[0]
-      if (!commit || !/^[0-9a-f]{40}$/.test(commit)) throw new SnapshotError('invalid_input', `${request.url} has no ref ${request.ref ?? 'HEAD'}`)
+    // Every call runs in an empty bare repository of its own, so no ambient config is read.
+    await confinedGit(base, [], false, deadline, signal).run(['init', '-q', '--bare', dir])
+    const git = confinedGit(dir, pin, !!testing.allowLocal, deadline, signal)
+    const version = /(\d+)\.(\d+)/.exec((await git.run(['--version'])).toString('utf8'))
+    const [major, minor] = version ? [Number(version[1]), Number(version[2])] : [0, 0]
+    if (major < GIT_FLOOR[0] || (major === GIT_FLOOR[0] && minor < GIT_FLOOR[1])) {
+      throw new SnapshotError('config_error', `git ${major}.${minor} cannot pin a connection to a checked address; ${GIT_FLOOR.join('.')} or later is needed`)
     }
-    await git(['init', '-q', '--bare', dir], limits.timeoutMs)
-    await git(['remote', 'add', 'origin', request.url], limits.timeoutMs, dir)
-    await git(['fetch', '-q', '--no-tags', '--depth', '1', '--filter=blob:none', 'origin', commit], limits.timeoutMs * 3, dir, pin).catch(() => {
-      throw new SnapshotError('unavailable', `commit ${commit} of ${request.url} cannot be fetched`)
+    const pinnedBy = request.ref && /^[0-9a-f]{40}$/.test(request.ref) ? 'sha' : 'ref'
+    let commit = pinnedBy === 'sha' ? request.ref! : undefined
+    if (!commit) {
+      const patterns = request.ref ? [`refs/tags/${request.ref}`, `refs/tags/${request.ref}^{}`, `refs/heads/${request.ref}`] : ['HEAD']
+      const listed = (await git.run(['ls-remote', href, ...patterns]).catch((error: unknown) => {
+        if (error instanceof GitFailed && /not found|does not exist|not appear to be a git repository|could not read Username/i.test(error.stderr)) {
+          throw new SnapshotError('invalid_input', `${href} is not a public git repository`)
+        }
+        throw error instanceof SnapshotError ? error : new SnapshotError('unavailable', `${href} cannot be read now`)
+      })).toString('utf8').trim().split('\n').filter(Boolean)
+      commit = commitOf(listed, request.ref)
+      if (!commit || !/^[0-9a-f]{40}$/.test(commit)) throw new SnapshotError('invalid_input', `${href} has no ref ${request.ref ?? 'HEAD'}`)
+    }
+    await git.run(['remote', 'add', 'origin', href])
+    // Only blobs within the per-file bound come down; a larger one is never downloaded.
+    await git.run(['fetch', '-q', '--no-tags', '--depth', '1', `--filter=blob:limit=${limits.maxFileBytes}`, 'origin', commit]).catch((error: unknown) => {
+      throw error instanceof SnapshotError ? error : new SnapshotError('unavailable', `commit ${commit} of ${href} cannot be fetched`)
     })
-    const tree = (await git(['ls-tree', '-r', '-l', '--full-tree', commit], limits.timeoutMs, dir)).toString('utf8').split('\n').filter(Boolean)
-    if (tree.length > limits.maxEntries) throw new SnapshotError('overloaded', `${request.url} has ${tree.length} files; at most ${limits.maxEntries} are listed`)
-    const entries: Entry[] = tree.flatMap((line) => {
-      const [meta, path] = line.split('\t') as [string, string]
-      const [, type, sha, size] = meta.split(/\s+/) as [string, string, string, string]
-      return type === 'blob' ? [{ path, sha, bytes: Number(size) }] : []
+    const listing = (await git.run(['ls-tree', '-r', '-z', '--full-tree', commit], { noLazyFetch: true })).toString('utf8').split('\0').filter(Boolean)
+    if (listing.length > MAX_ENTRIES) throw new SnapshotError('overloaded', `${href} has ${listing.length} files; at most ${MAX_ENTRIES} are listed`)
+    const blobs = listing.flatMap((line) => {
+      const tab = line.indexOf('\t')
+      const [, type, sha] = line.slice(0, tab).split(' ') as [string, string, string]
+      return type === 'blob' ? [{ path: line.slice(tab + 1), sha }] : []
     })
-    // A blob is fetched on demand from the same remote: pinned too.
-    const read = async (sha: string): Promise<Buffer> => git(['cat-file', 'blob', sha], limits.timeoutMs, dir, pin)
-    // A package manifest at the root names its entry points.
-    const manifest = entries.find((e) => e.path === 'package.json' && e.bytes <= limits.maxFileBytes)
-    const entryPoints = manifest ? packageEntries((await read(manifest.sha)).toString('utf8')) : []
-    const files: SnapshotFile[] = []
+    // What came down, and its size, without fetching what did not (a missing blob is too large).
+    const missing = new Set((await git.run(['rev-list', '--objects', '--missing=print', commit], { noLazyFetch: true })).toString('utf8')
+      .split('\n').filter((l) => l.startsWith('?')).map((l) => l.slice(1).trim()))
+    const present = [...new Set(blobs.map((b) => b.sha).filter((sha) => !missing.has(sha)))]
+    const sizes = new Map((present.length ? (await git.run(['cat-file', '--batch-check=%(objectname) %(objectsize)'], { input: `${present.join('\n')}\n`, noLazyFetch: true })).toString('utf8') : '')
+      .split('\n').filter(Boolean).map((l) => l.split(' ') as [string, string]).map(([sha, size]) => [sha, Number(size)] as const))
     const why = new Map<string, UnreadReason>()
+    const entries: Entry[] = blobs.flatMap((b) => {
+      if (b.path.length > MAX_PATH) {
+        why.set(b.path, 'path-too-long')
+        return []
+      }
+      return [{ path: b.path, sha: b.sha, bytes: sizes.get(b.sha) }]
+    })
+    const read = async (shas: string[]): Promise<Map<string, Buffer>> => {
+      if (!shas.length) return new Map()
+      const raw = await git.run(['cat-file', '--batch'], { input: `${shas.join('\n')}\n`, noLazyFetch: true })
+      const bodies = new Map<string, Buffer>()
+      for (let at = 0; at < raw.length;) {
+        const eol = raw.indexOf(10, at)
+        const [sha, , size] = raw.subarray(at, eol).toString('utf8').split(' ') as [string, string, string]
+        const n = Number(size)
+        bodies.set(sha, raw.subarray(eol + 1, eol + 1 + n))
+        at = eol + 1 + n + 1
+      }
+      return bodies
+    }
+    // A package manifest at the root names its entry points.
+    const manifest = entries.find((e) => e.path === 'package.json' && e.bytes !== undefined)
+    const entryPoints = manifest ? packageEntries((await read([manifest.sha])).get(manifest.sha)?.toString('utf8') ?? '') : []
+    const chosen: Entry[] = []
     let total = 0
     for (const e of selectFiles(entries, request, entryPoints)) {
-      if (files.length >= limits.maxFiles) {
-        why.set(e.path, 'bounds')
-        continue
+      if (chosen.length >= limits.maxFiles) why.set(e.path, 'bounds')
+      else if (e.bytes === undefined || e.bytes > limits.maxFileBytes) why.set(e.path, 'too-large')
+      else if (total + e.bytes > limits.maxBytes) why.set(e.path, 'bounds')
+      else {
+        chosen.push(e)
+        total += e.bytes
       }
-      if (e.bytes > limits.maxFileBytes) {
-        why.set(e.path, 'too-large')
-        continue
-      }
-      if (total + e.bytes > limits.maxBytes) {
-        why.set(e.path, 'bounds')
-        continue
-      }
-      const body = await read(e.sha)
-      if (body.includes(0)) {
+    }
+    const bodies = await read([...new Set(chosen.map((e) => e.sha))])
+    const files: SnapshotFile[] = []
+    for (const e of chosen) {
+      const body = bodies.get(e.sha)
+      if (!body || body.includes(0)) {
         why.set(e.path, 'binary')
         continue
       }
       files.push({ path: e.path, sha: e.sha, bytes: body.length, text: body.toString('utf8') })
-      total += body.length
     }
     const readPaths = new Set(files.map((f) => f.path))
-    const unread = entries.filter((e) => !readPaths.has(e.path)).map((e) => ({ path: e.path, why: why.get(e.path) ?? (LOCKFILES.test(e.path) ? 'lockfile' as const : 'not-selected' as const) }))
-    return { url: request.url, commit, files, unread }
+    const unread = blobs.filter((b) => !readPaths.has(b.path)).map((b) => ({
+      path: b.path.length > MAX_PATH ? `${b.path.slice(0, MAX_PATH - 1)}…` : b.path,
+      why: why.get(b.path) ?? (LOCKFILES.test(b.path) ? 'lockfile' as const : 'not-selected' as const),
+    }))
+    return { url: href, commit, pinnedBy, files, unread }
+  } catch (error) {
+    failure = error
+    throw error instanceof SnapshotError ? error : new SnapshotError('unavailable', `the repository could not be read: ${(error as Error).message.slice(0, 200)}`)
   } finally {
-    await rm(dir, { recursive: true, force: true })
+    // A stopped git's children may still be writing: retry the removal, and never mask the failure.
+    await rm(base, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }).catch((error: unknown) => {
+      if (!failure) throw error
+    })
   }
 }
 
