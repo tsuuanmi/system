@@ -42,7 +42,7 @@ Every artifact shares one envelope
 | domain | `plan` | planner node | proposed nodes for graph growth ([ADR-0012](../decisions/adr/0012-dag-execution-model.md)) |
 | domain | `finding`, `evidence` | research Workers | a cited claim, a source excerpt, a test log |
 | domain | `assessment` | review Workers | a verdict against criteria on an exact subject |
-| domain | `report`, `handoff` | synthesis, compaction | a compact, cited synthesis passed downstream |
+| domain | `report`, `handoff` | synthesis, team decision, compaction | a compact, cited synthesis passed downstream; a team's result (`team-result@1.0`) |
 | domain | `delivery` | implementation Workers | a PR, a patch, or a dataset output, with its subject |
 | control | `decision` | routing, engine, policies, operator | see below |
 | control | `receipt` | provider runtime, engine | provider turn receipt, node input and output receipts |
@@ -83,9 +83,10 @@ A decision artifact records **one decision**
 | `acceptance` | routing | accepted or rejected against the acceptance contract |
 | `gate` | engine | exact-subject gate passed or failed |
 | `reconciliation` | provider runtime | WAIT, RECOVER, RESUBMIT, or AMBIGUOUS, with snapshot hashes |
-| `graph-growth` | engine | `plan` artifact accepted (nodes appended) or rejected |
+| `graph-growth` | engine | `plan` artifact accepted (nodes appended) or rejected; a team's debate appended |
 | `recovery` | engine | failure class and retry disposition |
 | `spec-admission` | engine | the workflow spec accepted, with the provenance of each value |
+| `vote` | engine, caller, or operator | a team's tally of one round, or its decision: an option or `inconclusive` ([teams](teams.md#the-record); `decision@1.1`) |
 
 Rules:
 
@@ -127,7 +128,7 @@ flowchart RL
 ```
 
 `system explain <runId>` gives each step's egress, tier, route (or admission), and acceptance
-or recovery decisions with their reasons; `system explain <artifact id>` walks that artifact's
+or recovery decisions with their reasons, and a vote decision's ballots; `system explain <artifact id>` walks that artifact's
 inputs, within `explainDepth` and `explainBudget`.
 
 ## Storage

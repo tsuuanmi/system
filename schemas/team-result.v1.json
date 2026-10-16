@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:tsuuanmi:system:schema:team-result:v1",
+  "title": "Team result",
+  "description": "Body of a `report` artifact holding a team's answer (docs/design/teams.md): composed by the engine, never by a model, from the team's final `vote` decision. Its text starts with one machine-readable line: outcome, method, winner, decision.",
+  "type": "object",
+  "required": ["schema", "runId", "team", "kind", "method", "winner", "decision", "text"],
+  "properties": {
+    "schema": { "const": "team-result@1.0" },
+    "runId": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+    "team": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+    "kind": { "enum": ["brainstorm", "review"] },
+    "method": { "enum": ["team-majority", "caller-tiebreak", "inconclusive"] },
+    "winner": { "description": "The chosen option; null when inconclusive.", "type": ["string", "null"], "maxLength": 16 },
+    "decision": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/artifactRef" },
+    "text": { "type": "string", "maxLength": 4000000 }
+  },
+  "additionalProperties": false
+}

@@ -19,7 +19,8 @@ a choice was made (see [decisions](../decisions/README.md)).
 
 ## Rules
 
-- Requirement ids are stable. A retired requirement is marked *withdrawn* and its
-  id is never reused.
+- Requirement ids are stable. A retired requirement keeps its id and text, marked
+  `*(retired <date>, <PROP or ADR>: <why>)*` after the id. It needs no test, no
+  test may cite it (`pnpm check:traceability` fails), and its id is never reused.
 - Each requirement must be verifiable. When code exists, the test or validation
   evidence links back to the id.

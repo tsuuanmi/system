@@ -6,14 +6,14 @@
 MVP subset. Every MCP `ask` and `research` call is a run on it; there is no
 second execution path (INV-1).
 
-- **Templates are data.** The built-in ones are `ask` and `panel` (until a team
-  `brainstorm` replaces it, PROP-0004); profiles add theirs, such as `research`
+- **Templates are data.** The built-in ones are `ask`, `brainstorm`, and `review`;
+  profiles add theirs, such as `research`
   and `agent-review`; config `templates` adds or replaces any. Each one's nodes,
   and the templates PROP-0004 removed, are listed in the
   [workflow templates](../../../docs/reference/workflow-templates.md) reference.
   - `ask` is one node, `ask:1`. It takes the caller's tier and session.
-  - `panel` is a team of two members over two rounds, on distinct accounts,
-    and a cited synthesis (see Teams).
+  - `brainstorm` and `review` are each one team node of two members, one per
+    provider family (see Teams).
   - **Variants.** A node may declare `variants`; the caller picks one at start
     (`variant`), and its fields replace the node's own before the spec is hashed.
     An unknown variant is refused as `invalid_input`
@@ -65,7 +65,8 @@ second execution path (INV-1).
     - a prompt may use only `{{input}}` and its own dependencies
       (`{{node:<id>}}`);
     - exactly one final node, whose result is the run's;
-    - `differentFrom` names only other, non-team nodes.
+    - `differentFrom` names only other, non-team nodes;
+    - a team node has no `differentFrom`, `grows`, or `resultSchema`.
   - At `start`, every node's acceptance contract must be registered with
     `ctx.workers`; otherwise the run is refused before anything is sent.
 - **Start (admission).**
@@ -123,7 +124,7 @@ second execution path (INV-1).
 - **Approval gate (REQ-WF-11).**
   - Steps that need a capability in `approvalRequired` (default `develop`) run
     behind a `gate` node, which waits `BLOCKED`. The run is parked, not failed,
-    and its view shows `blocked { nodeId, plan }`.
+    and its view shows `blocked { kind: 'gate', nodeId, plan }`.
   - `approve(runId, { verdict, note?, plan? })` (MCP `approve`,
     `system approve`) records an `approval@1.0` bound to that exact plan, then a
     `gate` decision. Approved, the steps run; rejected, the run fails as
@@ -133,25 +134,51 @@ second execution path (INV-1).
     exactly one plan; with several waiting, the call is refused and lists them,
     so a plan that arrived later is never approved unseen.
   - `autoApprovePlans` (default off) approves a high-confidence plan by policy.
-- **Teams (REQ-TEAM-1..4, [design](../../../docs/design/teams.md)).**
-  - A template node with `team: { members (2-5), rounds (1-3, default 2),
-    distinctAccounts (default true), synthesisTier }` is unrolled at admission:
-    - `id:m<k>:r1` per member: no dependency on a peer and no peer text. This
-      is the independent-first barrier, made structural;
-    - `id:m<k>:r<n>`: each depends on every member's previous round, and reads
-      its own inbox (`{{inbox}}`) to critique and revise;
-    - a synthesis under the team node's own id, which reads every final answer
-      (`{{members}}`).
+- **Teams (REQ-TEAM-1, 2, 4, 6, 7, [design](../../../docs/design/teams.md)).**
+  - A template node with `team: { kind: brainstorm | review, members (2-5,
+    default 2), debateRounds (0-2, default 1) }` is unrolled at admission:
+    - `id:m<k>:propose` per member, with no peer text (the independent-first
+      rule, made structural). Member k has `differentFrom` members 1..k-1
+      (ADR-0027). It must pass `acceptance.team-proposal` (brainstorm) or
+      `acceptance.team-findings` (review);
+    - `id:m<k>:ballot:1`: a sealed ballot over every option, its prompt composed
+      by the engine, peers quoted as fenced data
+      (`acceptance.team-ballot-<n>` or `acceptance.team-ballot-review`);
+    - `id:tally:1` and the decision under the team node's own id: deterministic
+      `team` steps that run no Worker.
+  - Options are fixed at propose time: brainstorm `O<k>` is member k's
+    recommendation, verbatim; review options are `pass` and `changes`, over one
+    list `F1..Fn` of every member's findings, in member order, unmerged.
+  - A tally records a `vote` decision (decision@1.1) with the round's ballots,
+    against a strict majority of every member. On a split, with an objection
+    open and debate rounds left, it appends `id:m<k>:debate:<r>` and
+    `id:tally:<r+1>` (a `graph-growth` decision `workflow.team-debate`). A
+    debate turn answers the crux and casts the next sealed ballot.
+  - The decision completes as `team-majority`, or blocks as a `tie`: the view
+    shows `blocked { kind: 'tie', nodeId, decision, options, until }`, and a
+    waiter on `result` or `wait` returns at once. `vote(runId, { decision,
+    option | inconclusive, rationale, by })` decides it, bound to that exact
+    tie decision; `by` is `client` or `operator`, from the token's scope. After
+    `tieTimeoutHours` (default 24) the tie completes `inconclusive` by the rule
+    `workflow.tie-timeout`.
+  - The final `vote` decision holds the members by session id, the options,
+    every round, the dissent, revisions, any tiebreak, and a review's findings.
+    The result is a `team-result@1.0` report whose text starts with
+    `outcome: …; method: …; winner: …; decision: …`.
+  - An invalid ballot is rejected, then escalated or retried; if it still fails,
+    the run fails (`continue` redoes it). The threshold never drops.
   - Each member is one persistent session that the engine issues, so session
     affinity keeps one identity and one Worker for the team's lifetime
-    (Model A).
-  - Members talk through `ctx.workerSessions`. The run forms one group per team
-    with its barrier closed, and each member joins at its first admission. An
-    accepted answer is posted as that member's message, in the same
-    transaction as its completion. A `To m<k>: …` line is a direct message
-    instead. The barrier opens when the first round is done.
-  - When the run finishes, its members' leftover mail is acknowledged: the
-    rounds consumed it.
+    (Model A). The run forms one session group per team, and each member joins
+    at its first admission. Members never message each other.
+  - Members route one at a time, each avoiding every account another member
+    holds (REQ-TEAM-4). A member that finds no other provider family fails as
+    `config_error`, naming how many families the team needs and how many are
+    ready.
+  - When the run finishes, its members' leftover mail is acknowledged.
+  - A run of the removed procedure (critique rounds, a lead, a synthesis) stays
+    readable with `explain` and `result`; `continue` refuses it
+    (`invalid_input`).
 - **Wake-on-message ([design](../../../docs/design/sessions-and-messaging.md)).**
   - A message to an idle Worker session wakes it once its own run is no
     longer running. The message must ask for a reply: any intent but `answer`
@@ -177,19 +204,6 @@ second execution path (INV-1).
     2. The Worker source resets the native conversation (`workers.reset`), and
        the session's generation advances.
     3. The next wake opens a fresh conversation that starts from the handoff.
-  - `lead: { tier }` (default `economy`) adds a lead after each round but the
-    last ([lead](../../../docs/design/teams.md#lead)). It reads the members'
-    current answers and replies `{"converged": …, "reason": …}`
-    (`acceptance.team-lead`). The engine records that as a `gate` decision
-    decided by a model.
-    - Not converged: the next critique round runs.
-    - Converged: later rounds are carried. Each member keeps its last answer,
-      with the lead's decision as the cause, and nothing is sent.
-  - With `distinctAccounts`, members route one at a time, each avoiding every
-    account another member holds. Too few ready accounts fails closed
-    (`config_error`).
-  - The synthesis must pass `acceptance.team-synthesis`: it must have text and
-    cite members as `[m<k>]` (REQ-TEAM-3).
 - **Retries (REQ-WF-6).**
   - A failure is retried, up to `maxAttempts` and after
     `retryDelayMs × 2^(attempt−1)`, only when all of these hold:
@@ -211,7 +225,8 @@ second execution path (INV-1).
     loops.
 - **Events:** `workflow.run.started|completed|failed|continued|deleted|expired`,
   `workflow.node.started|retry|completed|failed|blocked|escalated|superseded`,
-  `workflow.graph.grown|retired`, and `workflow.gate.opened|closed`. A completed node's
+  `workflow.graph.grown|retired`, `workflow.gate.opened|closed`, and
+  `workflow.team.tallied|decided`. A completed node's
   event carries the Worker, tier, and quota class that served it.
 - **Read side:**
   - `get`, `wait`, and `records` read a run and its node records.
@@ -219,7 +234,8 @@ second execution path (INV-1).
     and the tokens its result reports, when its Worker counts them (a model
     Worker's `model-answer`) (the usage report).
   - `explain` gives each step's egress, tier, route (or admission), and
-    acceptance or recovery decisions with their reasons (REQ-ART-3). A node keeps
+    acceptance or recovery decisions with their reasons (REQ-ART-3), and each
+    vote decision's ballots (round, member, choice, confidence, rationale). A node keeps
     its turn's decision ids, so the chain outlives the turn runtime's retention.
   - Node requirements carry the node's objective and tier provenance:
     `profile` for template tiers, `caller` when the caller's tier replaced one.
@@ -233,7 +249,12 @@ second execution path (INV-1).
     reports the runs still executing; call it again to poll. `resume` admits
     runs again;
   - `research` returns at once; `deep: true` runs its `deep` variant;
-  - `result` takes a `runId` and long-polls it;
+  - `brainstorm { question }` and `review { material }` start those templates and
+    return at once;
+  - `vote { runId, decision, option, rationale }` (client scope; an operator
+    token may call it too) breaks a team's tie;
+  - `result` takes a `runId` and long-polls it, returning early when the run
+    waits on a gate or a tie;
   - `usage`;
   - `explain` takes a run id, or any artifact id (its input tree).
 - **Operator control (REQ-WF-7).** Each action is recorded as the operator's
@@ -285,13 +306,13 @@ in `engine.ts`:
 | Module | Owns |
 |---|---|
 | `engine.ts` | engine state; admission (`start`); the run loop under the run lease; a node's path from `WAITING` to `COMPLETED` or `FAILED`; node writes |
-| `spec.ts` | templates, preflight, resolution, prompt rendering, and parsing of plans, assessments, and lead decisions |
+| `spec.ts` | templates, team unrolling, preflight, resolution, prompt rendering, and parsing of plans and assessments |
 | `types.ts` | records, views, config, row shapes, `WorkflowFailure` |
 | `migrations.ts` | the engine's tables |
 | `recovery.ts` | retries after a failed attempt, escalation after a rejected result, admission failure kinds |
 | `growth.ts` | graph growth and approval gates |
 | `review.ts` | exact-subject review and remediation cycles |
-| `teams.ts` | team messages, barrier, lead and carried rounds, distinct accounts, team contracts |
+| `teams.ts` | team contracts and parsing, options, ballot and debate prompts, tally, decision, tie and `vote`, distinct accounts |
 | `sessions.ts` | wake-on-message, checkpoints, compaction |
 | `operator.ts` | `stop`, `continue`, `supersede`, `approve` |
 | `retention.ts` | `delete` and the expiry of private text |

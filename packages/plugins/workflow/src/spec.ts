@@ -33,8 +33,9 @@ export interface NodeTemplate {
    */
   grows?: GrowthPolicy
   /**
-   * A team (docs/design/teams.md, Model A): unrolled into members answering independently in
-   * round 1, critique rounds behind a barrier, and a synthesis that keeps this node's id.
+   * A team (docs/design/teams.md, Model A): unrolled into members proposing independently, sealed
+   * ballots, a deterministic tally, a debate only on disagreement, and a decision that keeps this
+   * node's id.
    */
   team?: TeamPolicy
   /**
@@ -58,31 +59,32 @@ export interface NodeTemplate {
 export type NodeVariant = Partial<Pick<NodeTemplate, 'objective' | 'prompt' | 'capabilities' | 'tier' | 'conversation' | 'acceptance'>>
 
 export interface TeamPolicy {
-  /** 2 to 5 members. */
-  members: number
-  /** 1 to 3 rounds (default 2): round 1 independent, later rounds see the peers' answers. */
-  rounds?: number
-  /** Members are backed by distinct accounts (REQ-TEAM-4; default true). */
-  distinctAccounts?: boolean
-  synthesisTier?: Tier
-  /**
-   * A lead (docs/design/teams.md#lead) after each round but the last: it reads the members'
-   * current answers and decides whether another round is needed. It controls the procedure; it
-   * never answers or relays. Converged, the remaining rounds carry each member's last answer.
-   */
-  lead?: { tier?: Tier }
+  /** `brainstorm`: each member's recommendation is an option. `review`: the options are `pass` and `changes`, over the members' findings. */
+  kind: TeamKind
+  /** 2 to 5 members (default 2), each on a provider family no earlier member has (ADR-0027). */
+  members?: number
+  /** Debate rounds after a split vote (0 to 2, default 1); each ends in a re-vote. */
+  debateRounds?: number
 }
+
+export type TeamKind = 'brainstorm' | 'review'
+
+/** The steps of an unrolled team: a member's proposal, ballot, and debate; the tally; the decision. */
+export type TeamStep = 'propose' | 'ballot' | 'debate' | 'tally' | 'decide'
 
 /** A node's place in an unrolled team. */
 export interface TeamRole {
   id: string
-  role: 'member' | 'synthesis' | 'lead'
+  kind: TeamKind
+  role: TeamStep
   member?: number
+  /** A ballot's or a tally's voting round; a debate's round is the one it answers. */
   round?: number
   members: number
-  rounds: number
-  distinct: boolean
+  debateRounds: number
 }
+
+export const TEAM_STEPS: readonly string[] = ['propose', 'ballot', 'debate', 'tally', 'decide']
 
 export interface GrowthPolicy {
   /** At most this many appended steps (default 6). */
@@ -152,8 +154,11 @@ export interface ResolvedNode extends Omit<NodeTemplate, 'callerTier' | 'convers
   tierSource: 'caller' | 'profile' | 'decision'
   /** The `graph-growth` decision that set a plan step's tier. */
   tierDecision?: string
-  /** `gate` waits for an operator's approval of `plan`; default `worker`. */
-  executor?: 'worker' | 'gate'
+  /**
+   * `gate` waits for an operator's approval of `plan`; `tally` and `decide` are a team's
+   * deterministic steps (docs/design/teams.md); default `worker`.
+   */
+  executor?: 'worker' | 'gate' | 'tally' | 'decide'
   /** The plan artifact a gate approves. */
   plan?: string
   /** A plan step's prompt is model text: used as it is, never expanded as a template. */
@@ -185,17 +190,23 @@ export interface ResolvedSpec {
 }
 
 /**
- * Built-in templates (PROP-0004): `ask`, and `panel` until a team `brainstorm` replaces it.
- * Profiles add domain procedures (`research`; `agent-review`, for agent Workers).
+ * Built-in templates (PROP-0004): `ask`, and the teams `brainstorm` and `review`. Profiles add
+ * domain procedures (`research`; `agent-review`, for agent Workers).
  */
 export const DEFAULT_TEMPLATES: Record<string, NodeTemplate[]> = {
   ask: [
     { nodeId: 'ask:1', objective: 'Answer the caller\'s prompt', prompt: '{{input}}', capabilities: ['reason'], tier: 'standard', callerTier: true, conversation: 'caller', acceptance: 'acceptance.answer' },
   ],
-  panel: [
+  brainstorm: [
     {
-      nodeId: 'panel', objective: 'Answer the caller\'s question as a panel', prompt: '{{input}}', capabilities: ['reason'], tier: 'standard',
-      conversation: 'temporary', acceptance: 'acceptance.team-synthesis', team: { members: 2, rounds: 2, distinctAccounts: true },
+      nodeId: 'brainstorm', objective: 'Decide the caller\'s question as a team', prompt: '{{input}}', capabilities: ['reason'], tier: 'standard',
+      conversation: 'temporary', acceptance: 'acceptance.team-proposal', team: { kind: 'brainstorm' },
+    },
+  ],
+  review: [
+    {
+      nodeId: 'review', objective: 'Review the caller\'s material as a team', prompt: '{{input}}', capabilities: ['reason'], tier: 'standard',
+      conversation: 'temporary', acceptance: 'acceptance.team-findings', team: { kind: 'review' },
     },
   ],
 }
@@ -214,7 +225,11 @@ export function preflight(nodes: readonly NodeTemplate[]): string[] {
   }
   for (const node of nodes) {
     if (node.grows !== undefined && node.grows !== null) checkGrowth(node.nodeId, node.grows)
-    if (node.team !== undefined && node.team !== null) checkTeam(node.nodeId, node.team)
+    if (node.team !== undefined && node.team !== null) {
+      checkTeam(node.nodeId, node.team)
+      // A team's members differ from each other; its steps never plan or carry a result schema.
+      if (node.differentFrom?.length || node.grows || node.resultSchema) throw new TypeError(`node ${node.nodeId}: a team has no differentFrom, grows, or resultSchema`)
+    }
     if (node.variants !== undefined && node.variants !== null) checkVariants(node)
     if (node.resultSchema !== undefined && !(typeof node.resultSchema === 'string' && /^[a-z][a-z0-9-]*@\d+\.\d+$/.test(node.resultSchema))) {
       throw new TypeError(`node ${node.nodeId}: resultSchema must be a schema tag such as plan@1.0`)
@@ -305,76 +320,71 @@ function checkDifferentFrom(nodes: readonly NodeTemplate[]): void {
 function checkTeam(nodeId: string, team: unknown): void {
   const policy = team as Record<string, unknown>
   const members = policy?.members
-  const rounds = policy?.rounds
-  if (typeof policy !== 'object' || !Number.isInteger(members) || (members as number) < 2 || (members as number) > 5
-    || (rounds !== undefined && !(Number.isInteger(rounds) && (rounds as number) >= 1 && (rounds as number) <= 3))
-    || (policy.distinctAccounts !== undefined && typeof policy.distinctAccounts !== 'boolean')
-    || (policy.synthesisTier !== undefined && !TIERS.includes(policy.synthesisTier as Tier))
-    || (policy.lead !== undefined && (typeof policy.lead !== 'object' || policy.lead === null
-      || ((policy.lead as { tier?: unknown }).tier !== undefined && !TIERS.includes((policy.lead as { tier: Tier }).tier))))) {
-    throw new TypeError(`node ${nodeId}: team must be {members (2-5), rounds (1-3), distinctAccounts, synthesisTier, lead: {tier}}`)
+  const debate = policy?.debateRounds
+  const extra = typeof policy === 'object' && policy !== null ? Object.keys(policy).filter((key) => !['kind', 'members', 'debateRounds'].includes(key)) : []
+  if (typeof policy !== 'object' || policy === null || Array.isArray(policy) || extra.length || !['brainstorm', 'review'].includes(policy.kind as string)
+    || (members !== undefined && !(Number.isInteger(members) && (members as number) >= 2 && (members as number) <= 5))
+    || (debate !== undefined && !(Number.isInteger(debate) && (debate as number) >= 0 && (debate as number) <= 2))) {
+    throw new TypeError(`node ${nodeId}: team must be {kind: brainstorm | review, members (2-5), debateRounds (0-2)}`)
   }
 }
 
-const PEERS_PROMPT = (round: number): string => [
-  `Messages from the other panel members since your answer in round ${round}:`,
-  '',
-  '{{inbox}}',
-  '',
-  'Point out where they are wrong, keep what is right, and give your revised answer to the original question.',
-  'To write to one member only, add a separate line like: To m2: your message',
-].join('\n')
+/** A brainstorm member's proposal: its recommendation is its option, verbatim. */
+const PROPOSE: Record<TeamKind, string> = {
+  brainstorm: [
+    'End your answer with one JSON object:',
+    '{"recommendation": "your recommendation, at most 2000 characters", "rationale": "why", "risks": ["what could go wrong"]}',
+    'The recommendation is quoted verbatim to the other members as your option.',
+  ].join('\n'),
+  review: [
+    'Review the material above. End your answer with one JSON object listing your findings (an empty list when you find no defect):',
+    '{"findings": [{"severity": "blocking" | "warning" | "info", "claim": "the defect", "evidence": "what shows it", "location": "where, if it has one"}]}',
+  ].join('\n'),
+}
 
-const LEAD_PROMPT = (round: number): string => [
-  `You lead a panel's procedure. You do not answer the question yourself. After round ${round}, the members' current answers are:`,
-  '',
-  '{{members}}',
-  '',
-  'Decide whether they have converged (they agree on the substance, and another round of critique would not change it).',
-  'Reply with only a JSON object: {"converged": true or false, "reason": "one sentence"}',
-].join('\n')
-
-/** Unroll each team node into its members' rounds and a synthesis under the team's own id. */
+/**
+ * Unroll each team node: each member proposes on its own (no peer text: the independent-first
+ * barrier, made structural), then casts a sealed ballot over every option; a deterministic tally
+ * records the vote, and appends a debate and re-vote on a split (growth); a deterministic decision
+ * keeps the team node's id. Member k must differ in provider family from members 1..k-1.
+ */
 function unrollTeams(nodes: readonly NodeTemplate[]): NodeTemplate[] {
   return nodes.flatMap((node): NodeTemplate[] => {
     if (!node.team) return [node]
     const { team, ...base } = node
-    const rounds = team.rounds ?? 2
-    const id = (k: number, r: number): string => `${node.nodeId}:m${k}:r${r}`
-    const members = Array.from({ length: team.members }, (_, i) => i + 1)
-    const role = (extra: Partial<TeamRole>): TeamRole => ({ id: node.nodeId, role: 'member', members: team.members, rounds, distinct: team.distinctAccounts ?? true, ...extra })
-    const unrolled: Array<NodeTemplate & { teamRole: TeamRole }> = []
-    const lead = (r: number): string => `${node.nodeId}:lead:${r}`
-    for (let r = 1; r <= rounds; r++) {
-      if (team.lead && r > 1) {
-        unrolled.push({
-          ...base, nodeId: lead(r - 1), objective: `${node.objective} (lead, after round ${r - 1})`, capabilities: ['reason'], tier: team.lead.tier ?? 'economy',
-          conversation: 'temporary', dependsOn: members.map((m) => id(m, r - 1)), prompt: LEAD_PROMPT(r - 1),
-          acceptance: 'acceptance.team-lead', teamRole: role({ role: 'lead', round: r - 1 }),
-        })
-      }
-      for (const k of members) {
-        unrolled.push({
-          ...base, nodeId: id(k, r), objective: `${node.objective} (member ${k}, round ${r})`,
-          dependsOn: r === 1 ? node.dependsOn ?? [] : [...members.map((m) => id(m, r - 1)), ...(team.lead ? [lead(r - 1)] : [])],
-          prompt: r === 1
-            ? `${node.prompt}\n\nYou are member ${k} of a panel of ${team.members}. Answer on your own; you will see the others' answers afterwards.`
-            : PEERS_PROMPT(r - 1),
-          acceptance: 'acceptance.answer', teamRole: role({ member: k, round: r }),
-        })
-      }
-    }
-    unrolled.push({
-      ...base, nodeId: node.nodeId, objective: `${node.objective} (synthesis)`, tier: team.synthesisTier ?? node.tier,
-      dependsOn: [...members.map((m) => id(m, rounds)), ...(node.dependsOn ?? [])],
-      prompt: [
-        'Question:', node.prompt, '', 'The panel members\' final answers:', '', '{{members}}', '',
-        'Give the strongest-supported answer. Cite the members you rely on as [m1], [m2], and so on.',
-      ].join('\n'),
-      acceptance: 'acceptance.team-synthesis', teamRole: role({ role: 'synthesis' }),
-    })
-    return unrolled
+    const n = team.members ?? 2
+    const members = Array.from({ length: n }, (_, i) => i + 1)
+    const role = (extra: Pick<TeamRole, 'role'> & Partial<TeamRole>): TeamRole => ({ id: node.nodeId, kind: team.kind, members: n, debateRounds: team.debateRounds ?? 1, ...extra })
+    const propose = (k: number): string => `${node.nodeId}:m${k}:propose`
+    const ballot = (k: number): string => `${node.nodeId}:m${k}:ballot:1`
+    const tally = `${node.nodeId}:tally:1`
+    const step = { ...base, capabilities: ['reason'], tier: 'economy' as Tier, conversation: 'temporary' as const, acceptance: 'acceptance.answer' }
+    return [
+      ...members.map((k): NodeTemplate & { teamRole: TeamRole } => ({
+        ...base, nodeId: propose(k), objective: `${node.objective} (member ${k}: proposal)`, dependsOn: node.dependsOn ?? [],
+        prompt: `${node.prompt}\n\nYou are member ${k} of a team of ${n}. Answer on your own: the others answer independently, and you will see their proposals afterwards.\n\n${PROPOSE[team.kind]}`,
+        acceptance: team.kind === 'review' ? 'acceptance.team-findings' : 'acceptance.team-proposal',
+        ...(k > 1 ? { differentFrom: members.slice(0, k - 1).map(propose) } : {}),
+        teamRole: role({ role: 'propose', member: k }),
+      })),
+      ...members.map((k): NodeTemplate & { teamRole: TeamRole } => ({
+        ...base, nodeId: ballot(k), objective: `${node.objective} (member ${k}: ballot, round 1)`, dependsOn: members.map(propose),
+        prompt: '{{team}}', acceptance: ballotContract(team.kind, n), teamRole: role({ role: 'ballot', member: k, round: 1 }),
+      })),
+      { ...step, nodeId: tally, objective: `${node.objective} (tally, round 1)`, dependsOn: members.map(ballot), prompt: '', executor: 'tally', teamRole: role({ role: 'tally', round: 1 }) } as NodeTemplate & { teamRole: TeamRole },
+      { ...step, nodeId: node.nodeId, objective: `${node.objective} (decision)`, dependsOn: [tally], prompt: '', executor: 'decide', teamRole: role({ role: 'decide' }) } as NodeTemplate & { teamRole: TeamRole },
+    ]
   })
+}
+
+/** A node's executor as its record names it: a team's tally and decision are the `team` executor. */
+export function recordExecutor(node: ResolvedNode): 'worker' | 'gate' | 'team' {
+  return node.executor === 'tally' || node.executor === 'decide' ? 'team' : node.executor ?? 'worker'
+}
+
+/** The contract a team's ballots must pass: it knows the options, so a choice outside them is rejected. */
+export function ballotContract(kind: TeamKind, members: number): string {
+  return kind === 'review' ? 'acceptance.team-ballot-review' : `acceptance.team-ballot-${members}`
 }
 
 function checkGrowth(nodeId: string, grows: unknown): void {
@@ -399,11 +409,12 @@ export function resolve(template: string, nodes: readonly NodeTemplate[], caller
   const order = preflight(expanded)
   const byId = new Map(expanded.map((n) => [n.nodeId, n as NodeTemplate & { teamRole?: TeamRole }]))
   const resolved = order.map((id): ResolvedNode => {
-    const { callerTier, conversation, teamRole, ...template } = byId.get(id)!
+    const { callerTier, conversation, teamRole, ...template } = byId.get(id)! as NodeTemplate & { teamRole?: TeamRole; executor?: ResolvedNode['executor'] }
     // Teams are unrolled by now; the remaining fields are the node's own.
     const node = Object.fromEntries(Object.entries(template).filter(([key]) => key !== 'team')) as Omit<NodeTemplate, 'callerTier' | 'conversation' | 'team'>
     if (teamRole) {
-      const session = teamRole.role === 'member' ? { member: `${teamRole.id}:m${teamRole.member}` } : {}
+      // Each member's steps share its one conversation (Model A); the tally and decision run no Worker.
+      const session = teamRole.member ? { member: `${teamRole.id}:m${teamRole.member}` } : {}
       return { ...node, dependsOn: node.dependsOn ?? [], tier: node.tier, tierSource: 'profile', session, team: teamRole }
     }
     const session = conversation === 'temporary'
@@ -420,19 +431,17 @@ export function resolve(template: string, nodes: readonly NodeTemplate[], caller
   return { template, nodes: resolved, specHash: contentId({ template, nodes: resolved }) }
 }
 
-/** Engine-computed texts: a planner's steps, a member's peers, a team's members. */
+/** Engine-computed texts: a planner's steps; a team member's ballot or debate prompt, quoting its peers as data. */
 export interface RenderExtras {
   grown?: string
-  /** A member's unread messages, delivered verbatim from its mailbox. */
-  inbox?: string
-  members?: string
+  team?: string
 }
 
 /** Fill a prompt in one pass, so text from a dependency is never expanded again. */
 export function render(prompt: string, input: string, results: Readonly<Record<string, string>>, extras: RenderExtras = {}): string {
-  return prompt.replace(/\{\{(input|grown|inbox|members|node:[^}]+)\}\}/g, (_, key: string) => {
+  return prompt.replace(/\{\{(input|grown|team|node:[^}]+)\}\}/g, (_, key: string) => {
     if (key === 'input') return input
-    if (key === 'grown' || key === 'inbox' || key === 'members') return extras[key] ?? ''
+    if (key === 'grown' || key === 'team') return extras[key] ?? ''
     return results[key.slice(5)] ?? ''
   })
 }
@@ -554,16 +563,6 @@ export function remediationPrompt(request: string, subject: string, findings: As
   ].join('\n')
 }
 
-/** A lead's decision from its answer, or undefined when it is not one. */
-export function parseLead(text: string): { converged: boolean; reason: string } | undefined {
-  const raw = (/```(?:json)?\s*\n([\s\S]*?)\n```/.exec(text)?.[1]) ?? text.slice(text.indexOf('{'), text.lastIndexOf('}') + 1)
-  try {
-    const value = JSON.parse(raw) as { converged?: unknown; reason?: unknown }
-    return typeof value.converged === 'boolean' ? { converged: value.converged, reason: typeof value.reason === 'string' ? value.reason.slice(0, 500) : '' } : undefined
-  } catch {
-    return undefined
-  }
-}
 
 /** The structured-result instruction appended to a node's prompt: the schema itself, verbatim (REQ-ART-5). */
 export function schemaBlock(tag: string, schema: object): string {

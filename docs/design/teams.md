@@ -1,19 +1,24 @@
 # Teams
 
 > Target state. Boundary: [orchestration](../architecture/components.md#orchestration).
-> Requirements: REQ-TEAM-1..5.
+> Requirements: REQ-TEAM-1, 2, 4..7.
 >
 > Implemented in [`workflow`](../../packages/plugins/workflow/README.md) (the `team` option on a
-> template node, unrolled by the engine) and
-> [`worker-sessions`](../../packages/plugins/worker-sessions/README.md) (members and their
-> mailboxes); differs from target: the only procedure is critique rounds (the `panel` template);
-> auxiliary Workers are not built; independent review is the engine's exact-subject review on a
-> read-only Worker, not a team procedure.
+> template node, unrolled by the engine; the `vote` tool) and
+> [`worker-sessions`](../../packages/plugins/worker-sessions/README.md) (members' sessions and
+> their group); differs from target: auxiliary Workers are not built; `review` takes material
+> as text only (a pinned repository with checked quotes is Phase 4 of
+> [PROP-0004](../proposals/0004-claude-code-lead-mvp.md)).
 
-There is no team seam or team runner. A team is the `team` option on a workflow template node
-(`members`, `rounds`, `distinctAccounts`, `synthesisTier`, `lead`). The engine unrolls it into
-member nodes per round, optional lead nodes, and a synthesis node that keeps the team node's
-id. Each member is a Worker session.
+There is no team seam or team runner. A team is the `team` option on a workflow template node:
+`{kind: brainstorm | review, members (2..5, default 2), debateRounds (0..2, default 1)}`. A team
+node has no `differentFrom`, `grows`, or `resultSchema`. The engine unrolls it into steps per
+member, a deterministic tally, and a deterministic decision that keeps the team node's id. The
+built-in templates `brainstorm` and `review` are such nodes
+([workflow templates](../reference/workflow-templates.md#brainstorm)).
+
+The models supply reasoning and evidence only. Deterministic code fixes the options, checks and
+seals the ballots, counts them, ends the rounds, and handles a tie.
 
 ## Membership: Model A
 
@@ -22,69 +27,159 @@ logical Worker for that team's lifetime. The Worker is chosen once, at member
 formation, through normal admission. Process-local activations can be recreated
 without changing identity.
 
-Proxy members, which delegate their reasoning to hidden Workers, are not allowed.
-A member may use **auxiliary Workers** for one-shot help. Their output is evidence
-the member cites, and they never become peers.
+- Each member is a Worker session, joined to the team's session group at its first
+  admission. All of a member's steps run in that one conversation.
+- Members never message each other. The engine composes every prompt from sealed records.
+- Proxy members, which delegate their reasoning to hidden Workers, are not allowed.
+- A member may use **auxiliary Workers** for one-shot help. Their output is evidence
+  the member cites, and they never become peers.
 
-Members of an independence-sensitive team must be backed by distinct accounts
-(REQ-TEAM-4). Admission enforces this.
+Member *k* must use a provider family other than those of members 1..*k*−1
+([ADR-0027](../decisions/adr/0027-provider-diversity-in-routing.md)). Members also use distinct
+accounts (REQ-TEAM-4): they route one at a time, and each avoids every account another member
+holds. A member that finds no other family fails with `config_error`. Its message starts
+`team T needs N provider families, one per member; M is/are ready (ADR-0027).`
 
-## Plan
-
-A team run follows a deterministic plan:
+## Procedure
 
 ```mermaid
 flowchart LR
-  subgraph R1[round 1: independent]
-    M11[member 1]
-    M21[member 2]
-  end
-  R1 -->|barrier opens| L1{lead: converged?}
-  L1 -->|no| R2
-  L1 -->|yes: later rounds carry each member's last answer| S
-  subgraph R2[round 2..n: critique and revise]
-    M12[member 1 reads its inbox]
-    M22[member 2 reads its inbox]
-  end
-  R2 --> S[synthesis: the strongest-supported answer, citing members]
-  S --> A[acceptance: acceptance.team-synthesis]
+  P[propose: each member alone] --> B[sealed ballots, round 1]
+  B --> T{tally}
+  T -->|strict majority| D[decide: team-majority]
+  T -->|split, objection open, rounds left| DB[debate: crux and the next sealed ballot]
+  DB --> T
+  T -->|split, no objection or rounds spent| TIE{tie: the run blocks}
+  TIE -->|vote: an option| V[caller-tiebreak]
+  TIE -->|vote: inconclusive| I[inconclusive]
+  TIE -->|tieTimeoutHours pass| I
 ```
 
-The lead is optional (`team.lead`). Without it, every round runs.
+| Step | Node | Executor | Acceptance |
+|---|---|---|---|
+| propose | `T:m<k>:propose` | Worker | `acceptance.team-proposal` (brainstorm) or `acceptance.team-findings` (review) |
+| ballot | `T:m<k>:ballot:1` | Worker | `acceptance.team-ballot-<n>` or `acceptance.team-ballot-review` |
+| tally | `T:tally:<r>` | `team` (deterministic) | — |
+| debate | `T:m<k>:debate:<r>` (appended) | Worker | as the ballot |
+| decide | `T` | `team` (deterministic) | — |
 
-- The **independent-first barrier** guarantees no member sees a peer's output
-  before every member has produced an independent result. It opens once they
-  all have, whether or not another round follows.
-- Debate, critique, and plain parallel review are *procedures* that a profile
-  selects. The engine's unrolling provides critique rounds; the others are
-  planned.
-- Each member step is a durable workflow node, so a crash mid-round does not repeat
-  completed member turns
-  ([workflow-engine](workflow-engine.md#execution-loop)).
+Each step is a durable workflow node, so a crash does not repeat completed member turns
+([workflow engine](workflow-engine.md#execution-loop)).
+
+### Propose
+
+Each member answers alone. It sees no peer text, so the independent-first rule (REQ-TEAM-1) is
+structural.
+
+- **brainstorm**: a JSON proposal: a `recommendation` (at most 2000 characters), a `rationale`,
+  and `risks`.
+- **review**: JSON `findings`, each with a `severity` (`blocking`, `warning`, `info`), a
+  `claim`, `evidence`, and an optional `location`.
+
+### Options
+
+Options are fixed once every member has proposed. They never change.
+
+- **brainstorm**: option `O<k>` is member *k*'s recommendation, verbatim, with its provenance.
+  No option is invented or merged.
+- **review**: the options are `pass` and `changes`, over one list of findings `F1..Fn`: every
+  member's findings in member order, each with who reported it. Findings are not merged.
+
+### Ballots
+
+Each member casts one sealed ballot over every option. No member sees another's ballot until
+every ballot is in. A ballot holds:
+
+- exactly one `choice`, and a `ranking` of all options (advisory);
+- the `rationale` and `evidence`;
+- the `strongest` point of each option it did not choose;
+- its unresolved `objections` (possibly none), and a `confidence`;
+- brainstorm: optionally, an option that `misstated` its author's position;
+- review: optionally, its stance on each finding (`agree`, `disagree`, `unsure`).
+
+A member may vote for its own option. The engine composes the ballot prompt and quotes each
+peer's text as fenced data, marked as another participant's words and never instructions.
+
+An invalid ballot is rejected by acceptance, then escalated or retried. If it still fails, the
+node fails and the run fails; `continue` redoes it. The threshold never drops.
+
+### Tally and debate
+
+A tally counts one round's ballots against a strict majority of every member
+(⌊*n*/2⌋+1). It records a [decision](#the-record) of type `vote` with that round. The round
+ends one of four ways:
+
+| Ended | When |
+|---|---|
+| `majority` | an option has a strict majority |
+| `debate` | split, an objection is still open, and debate rounds are left |
+| `no-objections` | split, and no ballot holds an objection |
+| `rounds-exhausted` | split, an objection is open, and `debateRounds` are spent |
+
+On `debate`, the tally appends one debate step per member and the next tally by
+[graph growth](workflow-engine.md#graph-growth), with a `graph-growth` decision
+`workflow.team-debate`. A debate turn reads the round's ballots, quoted as data, answers only
+the crux, and casts the next sealed ballot in the same turn. It may revise its proposal. A
+revision is recorded, but it never replaces an option.
+
+With two members, a strict majority means both agree, so every split is a tie.
+
+### Decide
+
+After the last tally:
+
+- **Majority**: the team completes, method `team-majority`.
+- **Split**: the decision node is `BLOCKED` as a [tie](#tie).
+
+### Tie
+
+The run view shows
+`blocked: {kind: 'tie', nodeId, decision, options: [{option, summary}], until}`. A plan's gate
+shows `{kind: 'gate', nodeId, plan}` instead. A waiter on `result` or `wait` returns as soon as
+the run blocks.
+
+- The caller breaks the tie with the client-scope tool `vote(runId, decision, option |
+  inconclusive, rationale)`, or with `system vote` ([CLI](../reference/cli.md)). It is bound to
+  that exact tie decision, as `approve` is bound to a plan.
+- An operator token may call it too. The decider is `client` or `operator`, by the token's
+  scope ([ADR-0023](../decisions/adr/0023-scoped-control-credentials.md)).
+- An option gives `caller-tiebreak`. `inconclusive` ends the team without a choice.
+- A tie waits `tieTimeoutHours` (workflow config, default 24;
+  [INV-9](../architecture/invariants.md)). Then it completes `inconclusive` by the rule
+  `workflow.tie-timeout`.
+- After the team completes, the operator can replace its result with `supersede`, as for any
+  node.
+
+### The record
+
+The decision node records the final `vote` decision
+([decision@1.1](../reference/schemas.md#decision)) before the result. It holds:
+
+- the members, by opaque identity (their session ids), never by provider;
+- the options, and every round with its ballots and why it ended;
+- the method, the dissent, any revisions, and any tiebreak with its rationale;
+- a review's findings.
+
+The result is a `report` artifact, `team-result@1.0`. Its text starts with one
+machine-readable line:
+
+```text
+outcome: <winner|inconclusive>; method: <team-majority|caller-tiebreak|inconclusive>; winner: <option|none>; decision: <id>
+```
+
+The rest is for a reader: the decision, the last round's votes, the options, the dissent, and
+for a review every finding, with the blocking ones counted. A tied review never defaults to
+`pass`. `explain` shows each vote decision's ballots: round, member, choice, confidence, and
+rationale.
 
 ## Independent review
 
-Reviewers are a team procedure with **no shared context** with the producer
-(REQ-TEAM-5). They receive the exact subject, the acceptance criteria, and the
-relevant decision artifacts, and nothing from the producer's conversation.
-Findings are `assessment` artifacts, each with a severity (`blocking`,
-`warning`, or `info`), bound to the subject version.
+`review` is this procedure with kind `review`. Reviewers have **no shared context** with the
+producer (REQ-TEAM-5): each member gets only the material and its criteria, in its own
+conversation. Phase 4 of [PROP-0004](../proposals/0004-claude-code-lead-mvp.md) adds review of
+a pinned repository, with every quoted line checked against the bytes the members saw.
 
-## Lead
+## Removed procedure
 
-The lead controls the procedure and observes durable state. It does not relay
-content between members. Each member is a durable session with its own
-`SessionId`, and peers **message each other directly** through the session
-mailbox, under the group policy and barriers
-([sessions and messaging](sessions-and-messaging.md)). Rounds are the
-procedure's checkpoints, not the only channel.
-
-- A lead step sits after each round but the last. It is a cheap `reason` step
-  (default tier `economy`) in a temporary conversation.
-- It reads the members' current answers and decides only whether they have
-  converged (`acceptance.team-lead`). It never answers the question.
-- Its decision is a `gate` decision decided by a model, with its answer
-  recorded.
-- When the members have converged, the later rounds run nothing: each member
-  keeps its last answer, with the lead's decision as the cause. The synthesis
-  then reads those answers.
+Runs of the removed procedure (critique rounds, a lead, a synthesis; the `panel` template) stay
+readable with `explain` and `result`. `continue` refuses them with `invalid_input`.

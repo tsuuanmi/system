@@ -94,7 +94,8 @@ failure (`USER_ACTION` or `BACKOFF`), not a silent switch to a different provide
 
 A step can be required to run on a different provider from other steps of its run, such as
 `research`'s second literature review
-([templates](../reference/workflow-templates.md#research)). [ADR-0027](../decisions/adr/0027-provider-diversity-in-routing.md) decides how,
+([templates](../reference/workflow-templates.md#research)) or each later member of a
+[team](teams.md#membership-model-a). [ADR-0027](../decisions/adr/0027-provider-diversity-in-routing.md) decides how,
 without naming a provider ([INV-11](../architecture/invariants.md#inv-11-no-tool-lock-in)).
 
 - **Provider family.** A capability descriptor may carry `family`
@@ -148,14 +149,13 @@ without naming a provider ([INV-11](../architecture/invariants.md#inv-11-no-tool
   driver verifies the mode before every send (REQ-PRV-3), so a declared tier is
   always the tier that actually runs.
 - Profiles declare each node's minimum tier, for example triage → `economy`,
-  research → `frontier`, compacting a handoff → `economy`, final synthesis →
-  `frontier`.
+  research → `frontier`, compacting a handoff → `economy`.
 - **Escalation:** if acceptance rejects a result, the workflow engine opens a
   *new* execution of the node at the next tier above the one that served it, at
   most `maxEscalations` times (per node, default 1, at most 3). The rejected
   result stays as evidence. The choice is an `escalation` decision either way,
   and it is never applied to a running turn.
-- Planning and synthesis may use a higher tier than the steps they coordinate,
+- Planning may use a higher tier than the steps it coordinates,
   in line with "spend intelligence where intelligence matters".
 
 Inferring the tier for work that does not declare one, using a decision model, is

@@ -147,7 +147,8 @@ runs the work the router admitted to them. Callers never reach a source directly
 - **Workflow engine** (`ctx.workflow`): runs **all** multi-step work as an append-only DAG
   ([ADR-0012](../decisions/adr/0012-dag-execution-model.md)): templates, durable nodes,
   input-hash binding, routing every node by its requirement, acceptance, escalation, retries,
-  graph growth from plans, plan approval gates, teams (rounds, barrier, leads), exact-subject
+  graph growth from plans, plan approval gates, teams (proposals, sealed ballots, tally, bounded
+  debate, tie votes), exact-subject
   review and remediation cycles, wake-on-message, operator stop, continue, supersede, and
   delete, drain and resume ([workflow engine](../design/workflow-engine.md),
   [teams](../design/teams.md)).
@@ -159,7 +160,7 @@ runs the work the router admitted to them. Callers never reach a source directly
   contracts through `ctx.workers`. A profile never names a provider, browser, or account, and
   holds no engine code.
 - **Does not own:** provider mechanics, Worker admission, or protocol framing.
-- **Contracts:** `workflow.start / wait / get / approve / stop / continue / supersede / delete /
+- **Contracts:** `workflow.start / wait / get / approve / vote / stop / continue / supersede / delete /
   drain / resume / explain / usage`, `workflow.template(name, nodes)`;
   `workerSessions.join / send / inbox / ack / openBarrier / activate / settle`.
 - **Packages:** [workflow](../../packages/plugins/workflow/README.md),

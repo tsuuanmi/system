@@ -5,8 +5,9 @@
 > Templates: [workflow templates](../reference/workflow-templates.md).
 >
 > Implemented in [`workflow`](../../packages/plugins/workflow/README.md); differs from target:
-> admission has preflight and a spec hash but no provenance or confirmation step; only `worker`
-> and `gate` nodes run (teams are unrolled into `worker` nodes); `RECOVERING` is not used;
+> admission has preflight and a spec hash but no provenance or confirmation step; only `worker`,
+> `gate`, and `team` nodes run (a team is unrolled into `worker` steps and its `team` tally and
+> decision); `RECOVERING` is not used;
 > a scheduler exception fails the run as `internal` (`CODE_FIX`) instead of blocking it;
 > handoff envelopes, the plan's side-effect classes, and convergence blocker reports are
 > planned.
@@ -125,8 +126,8 @@ stateDiagram-v2
   [*] --> WAITING
   WAITING --> READY: every dependency COMPLETED
   READY --> RUNNING: routed and started
-  READY --> BLOCKED: gate waits for the operator
-  BLOCKED --> COMPLETED: plan approved
+  READY --> BLOCKED: gate waits for the operator, or a team tied
+  BLOCKED --> COMPLETED: plan approved, or a tie decided or timed out
   BLOCKED --> FAILED: plan rejected
   RUNNING --> COMPLETED: result accepted
   RUNNING --> READY: retry (prompt never sent) or tier escalation
@@ -150,8 +151,9 @@ comes from two sources, and both are recorded as `graph-growth` decision artifac
 
 - **`plan` artifacts** emitted by a planner node (dynamic). The engine validates a plan
   (acyclic, admissible capabilities, within bounds) before appending its nodes.
-- **Engine rules** (static), the same for every profile. The one rule today is
-  **remediation**: when a node that requires the `review` capability is bound to an exact
+- **Engine rules** (static), the same for every profile. A team's tally appends a
+  **debate** and the next tally on a split vote, bounded by `debateRounds`
+  ([teams](teams.md#tally-and-debate)). The other rule is **remediation**: when a node that requires the `review` capability is bound to an exact
   subject, its assessment requests changes with blocking findings, and a step it depends on
   wrote the change (`develop`), the engine appends a fix step (on that step's capabilities) and
   a re-review bound to the new subject. Whatever waited for the review waits for both. Cycles are bounded by the engine

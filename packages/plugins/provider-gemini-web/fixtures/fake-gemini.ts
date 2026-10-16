@@ -49,8 +49,8 @@ export interface FakeOptions {
    * each with its note on the same line ("Medium Balanced depth"). False: each note on its own line.
    */
   levelsInline?: boolean
-  /** Answer Markdown, streamed word by word. */
-  answer?: string
+  /** Answer Markdown, streamed word by word; or computed from the prompt. */
+  answer?: string | ((prompt: string, sent: Sent) => string)
   /** Deep research answers with this instead of a plan (a clarifying question). */
   clarify?: string
   /** Deep research: time from Start research to the finished report, in ms. */
@@ -357,7 +357,7 @@ export class FakeGemini {
         res.end(`data: ${JSON.stringify({ done: true, plan })}\n\n`)
         return
       }
-      const answer = sent.deepResearch ? this.options.clarify : this.options.answer
+      const answer = sent.deepResearch ? this.options.clarify : typeof this.options.answer === 'function' ? this.options.answer(sent.prompt, sent) : this.options.answer
       for (const word of answer.split(/(?<= )/)) {
         res.write(`data: ${JSON.stringify({ delta: word })}\n\n`)
         await new Promise((resolve) => setTimeout(resolve, 40))

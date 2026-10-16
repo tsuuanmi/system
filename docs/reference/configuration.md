@@ -346,3 +346,4 @@ No options.
 | `retainRunsDays` | number (0…) | `0` | Days a finished run is kept, then deleted with the artifacts only it needed (0: every run is kept); a session's latest run always stays |
 | `autoApprovePlans` | boolean | `false` | Approve a high-confidence plan by policy instead of waiting for the operator |
 | `maxReviewCycles` | number (1…5) | `3` | Reviews of one change, the first included, before remediation stops |
+| `tieTimeoutHours` | number (0.0001…720) | `24` | Hours a tied team waits for a deciding vote, then completes inconclusive (INV-9) |

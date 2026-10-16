@@ -19,8 +19,8 @@ every template at load (preflight) and refuses a run whose contracts are not reg
 
 ## Built-in templates
 
-Provided by [`workflow`](../../packages/plugins/workflow/README.md): `ask`, and `panel` until a
-team `brainstorm` replaces it (PROP-0004).
+Provided by [`workflow`](../../packages/plugins/workflow/README.md): `ask`, and the teams
+`brainstorm` and `review`.
 
 ### `ask`
 
@@ -30,19 +30,35 @@ One answer from one Worker. `system ask` and the MCP tool `ask` run it.
 |---|---|---|---|---|
 | `ask:1` | `reason` | standard (caller) | caller | `acceptance.answer` |
 
-### `panel`
+### `brainstorm`
 
-A [team](../design/teams.md) of 2 members over 2 rounds, on distinct accounts, then a
-synthesis that cites the members.
+A [team](../design/teams.md) of 2 members, one per provider family, that decides a question by
+vote. Each member's recommendation is one option (`O<k>`). The MCP tool `brainstorm` runs it.
 
 | Node | Capabilities | Tier | Conversation | Acceptance |
 |---|---|---|---|---|
-| `panel:m<k>:r1` (round 1, independent) | `reason` | standard | the member's own session | `acceptance.answer` |
-| `panel:m<k>:r2` (critique, after the barrier) | `reason` | standard | the member's own session | `acceptance.answer` |
-| `panel` (synthesis) | `reason` | standard | temporary | `acceptance.team-synthesis` |
+| `brainstorm:m<k>:propose` (independent; member k differs from members 1..k-1) | `reason` | standard | the member's own session | `acceptance.team-proposal` |
+| `brainstorm:m<k>:ballot:1` (sealed) | `reason` | standard | the member's own session | `acceptance.team-ballot-<n>` |
+| `brainstorm:tally:1` | none (`team` executor) | — | — | — |
+| `brainstorm` (decision) | none (`team` executor) | — | — | — |
 
-A template with `team.lead` adds `panel:lead:<round>` nodes (`reason`, economy by default,
-temporary, `acceptance.team-lead`) after each round but the last.
+On a split vote with an objection open, `brainstorm:tally:<r>` appends
+`brainstorm:m<k>:debate:<r>` (the member's session, `acceptance.team-ballot-<n>`) and
+`brainstorm:tally:<r+1>`, at most `debateRounds` times.
+
+### `review`
+
+The same team procedure over material the caller gives as text. The options are `pass` and
+`changes`, over the members' merged findings. The MCP tool `review` runs it.
+
+| Node | Capabilities | Tier | Conversation | Acceptance |
+|---|---|---|---|---|
+| `review:m<k>:propose` (independent findings; member k differs from members 1..k-1) | `reason` | standard | the member's own session | `acceptance.team-findings` |
+| `review:m<k>:ballot:1` (sealed) | `reason` | standard | the member's own session | `acceptance.team-ballot-review` |
+| `review:tally:1` | none (`team` executor) | — | — | — |
+| `review` (decision) | none (`team` executor) | — | — | — |
+
+Debate steps are appended as for `brainstorm`, with `acceptance.team-ballot-review`.
 
 ## Profile templates
 
@@ -88,8 +104,10 @@ by a read-only local agent Worker; never a website account.
 
 ## Removed templates
 
-PROP-0004 removed `investigate`, `deep-research`, and `develop`, and replaced `research-deep`
-with the `deep` variant of `research` and the built-in `review` with `agent-review`. A new run of
+PROP-0004 removed `investigate`, `deep-research`, `develop`, and `panel`, and replaced
+`research-deep` with the `deep` variant of `research`, and the built-in agent `review` with
+`agent-review` (the name `review` now runs the team). A run of `panel` stays readable, but
+`continue` refuses it. A new run of
 a removed template is refused (`unknown workflow template`). Runs started before keep their
 resolved spec and records, so `explain` and `result` still answer for them.
 
@@ -103,7 +121,7 @@ one fails admission, fail closed, with the capability named:
 | Template | Under `api-first` |
 |---|---|
 | `ask` | runs on model Workers; an `ask` in a session (`--persist`, `--session`) fails: no model Worker proves `persistent-conversation` |
-| `panel` | fails: its members keep sessions, and no model Worker proves `persistent-conversation` |
+| `brainstorm`, `review` | fail: their members keep sessions, and no model Worker proves `persistent-conversation` |
 | `agent-review` | runs on agent Workers (the preset turns their rows and the software-development profile on) |
 | `research` | `frame:1` runs; `literature:1` fails: no Worker proves `web-search` (variant `deep`: `deep-research`), and `literature:2` sends nothing |
 
@@ -113,8 +131,10 @@ one fails admission, fail closed, with the capability named:
 |---|---|---|
 | `acceptance.answer` | `workers` | the answer has text |
 | `acceptance.cited` | `workers` | the answer has text and cites at least one http(s) source link |
-| `acceptance.team-synthesis` | `workflow` | the synthesis has text and cites members as `[m<k>]` |
-| `acceptance.team-lead` | `workflow` | the lead's answer carries a `{"converged": …}` decision |
+| `acceptance.team-proposal` | `workflow` | the answer ends with a JSON proposal: a `recommendation` (at most 2000 characters), a `rationale`, and optional `risks` |
+| `acceptance.team-findings` | `workflow` | the answer ends with JSON `findings` (at most 50, possibly none), each with a `severity` (`blocking`, `warning`, `info`) and a `claim`, plus `evidence` and an optional `location` |
+| `acceptance.team-ballot-<n>` (n = 2..5) | `workflow` | the answer ends with a JSON ballot over `O1`..`O<n>`: one `choice`, a `ranking` of all, a `rationale`, the `strongest` point of each option not chosen, its `objections` (possibly none), and a `confidence` |
+| `acceptance.team-ballot-review` | `workflow` | the same ballot over `pass` and `changes` |
 | `acceptance.cited-conclusions` | `profile-scientific-research` | the conclusion names a hypothesis (`H1`, …) and cites evidence (`[E1]`, …) |
 
 Config `templates` on the `workflow` plugin adds templates or replaces a built-in one of the

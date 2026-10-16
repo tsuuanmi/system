@@ -69,7 +69,7 @@ Each kind of Worker does what it is strongest at:
 
 | Worker | Strength | Typical jobs |
 |---|---|---|
-| **Website Workers** (ChatGPT Web, Gemini Web) | searching, reading many sources, Deep Research, independent multi-account reasoning, synthesis | research, literature review, option analysis, critique, review of a provided diff |
+| **Website Workers** (ChatGPT Web, Gemini Web) | searching, reading many sources, Deep Research, independent reasoning on accounts of different providers, synthesis | research, literature review, option analysis and team decisions by vote, critique, review of a provided diff |
 | **Local Workers** (Claude Code, Codex, local tools) | access to local files, private data, the repository, the shell, and tests | implementation, data processing, running analyses on local datasets, validation |
 | **Model Workers** (API and local models, from the operator's catalog) | one answer to one prompt; a local model keeps local-private data on this machine | economy-tier extraction and summarizing, reasoning without website quota, private-text processing on a local model |
 
@@ -84,7 +84,7 @@ A typical flow combines the purposes:
 question ─▶ website team: Deep Research + search + synthesis   (P1 quota, P2 capability)
          ─▶ economy tier: compact the report into a cited synthesis    (P4)
          ─▶ local agent: apply to local code/data, run tests   (P3 locality)
-         ─▶ website reviewers: review the exact result          (P1, exact-subject binding)
+         ─▶ website review team: vote on the exact result       (P1, exact-subject binding)
 ```
 
 *Requirements:* REQ-WRK-7, REQ-WRK-10. *Design:* [routing](../design/routing.md#data-locality-policy), [models](../design/models.md).

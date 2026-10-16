@@ -95,7 +95,7 @@ describe('system profile (e2e through dsh)', () => {
       return (await scoped.listTools().finally(() => scoped.close())).tools.map((t) => t.name).sort()
     }
     const clientTools = await toolsOf('client')
-    expect(clientTools).toEqual(['ask', 'explain', 'research', 'result', 'run', 'session_inbox', 'session_send', 'status', 'usage'])
+    expect(clientTools).toEqual(['ask', 'brainstorm', 'explain', 'research', 'result', 'review', 'run', 'session_inbox', 'session_send', 'status', 'usage', 'vote'])
     expect(await toolsOf('operator')).toEqual(expect.arrayContaining([...clientTools, 'approve', 'stop', 'delete', 'drain', 'account_set_credentials', 'account_relogin', 'account_code', 'model_key']))
     const origin = new URL(url).origin
     const send = (path: string, scope: 'operator' | 'client' | 'model', body?: object) => fetch(`${origin}${path}`, {

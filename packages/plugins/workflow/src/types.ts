@@ -23,7 +23,8 @@ export interface NodeRecord {
   runId: string
   nodeId: string
   objective: string
-  executor: 'worker' | 'gate'
+  /** `team`: a team's deterministic tally or decision (no Worker). */
+  executor: 'worker' | 'gate' | 'team'
   requirement: WorkRequirement
   dependsOn: string[]
   state: NodeState
@@ -65,8 +66,11 @@ export interface RunView {
   result?: ArtifactRef
   answer?: string
   nodes: NodeView[]
-  /** A gate waiting for the operator: approve or reject `plan` with `approve`. */
-  blocked?: { nodeId: string; plan: ArtifactRef }
+  /**
+   * What the run waits for: a `gate`, the operator's approval of `plan` (`approve`); or a team's
+   * `tie`, a deciding `vote` on `decision` (one of `options`) until `until`.
+   */
+  blocked?: { kind: 'gate'; nodeId: string; plan: ArtifactRef } | { kind: 'tie'; nodeId: string; decision: ArtifactRef; options: Array<{ option: string; summary: string }>; until: string }
   error?: WorkflowError
   createdAt: string
   /** The run's last progress: its own last change or any node's, whichever is later. */
@@ -88,6 +92,8 @@ export interface ExplainedDecision {
   outcome: string
   /** Reasons of the selected candidate. */
   reasons: string[]
+  /** A team vote's ballots, per round: who chose what, how sure, and why. */
+  ballots?: Array<{ round: number; member: string; choice: string; confidence: string; rationale: string }>
 }
 
 export interface Explanation {
@@ -115,6 +121,8 @@ export interface Config {
   autoApprovePlans?: boolean
   /** Reviews of one change, the first included, before remediation stops (default 3). */
   maxReviewCycles?: number
+  /** Hours a tied team waits for a deciding `vote`, then completes `inconclusive` by rule (default 24; INV-9). */
+  tieTimeoutHours?: number
 }
 
 export interface RunRow {

@@ -148,9 +148,10 @@ Messages gateways, the operator Web UI, and packaged installers.
 Adds, as plugins:
 
 - **Orchestration:** the full `workflow` engine, `worker-sessions`, and
-  `profile-software-development` (REQ-WF-1..11, REQ-TEAM-1..5, REQ-SES-1..8).
-  A team is the `team` option of a workflow node, which the engine unrolls; its
-  members are durable sessions that message each other directly.
+  `profile-software-development` (REQ-WF-1..11, REQ-TEAM-1, 2, 4..7,
+  REQ-SES-1..8). A team is the `team` option of a workflow node, which the
+  engine unrolls; its members are durable sessions that propose, vote, and
+  debate on prompts the engine composes ([teams](../design/teams.md)).
 - **Workers:** `agent-runtimes`, `agent-workers`, `runtime-claude-agent-sdk`,
   `runtime-codex-sdk`, `runtime-acp` (REQ-WRK-5..6). Claude Code and Codex become
   Workers as well as clients.
@@ -165,9 +166,10 @@ Beta exit criteria:
 1. The full software-development cycle (research team → local implementation →
    validation → exact-head review → bounded remediation) runs across mixed
    Workers. Killing the host mid-workflow never repeats a completed node.
-2. A two-member team uses two distinct accounts, and the independent-first
-   barrier is proven by test. Members exchange direct messages, and killing the
-   host mid-conversation loses or duplicates no message.
+2. A two-member team uses two provider families on distinct accounts, and its
+   independent-first proposals are proven by test. Worker sessions exchange
+   direct messages, and killing the host mid-conversation loses or duplicates
+   no message.
 3. A long-running session (several hours, past the compaction threshold) survives
    a host restart, keeps its `SessionId`, and continues from its handoff summary.
 4. Agent-runtime Workers pass probe, run, resume, cancel, and sandbox-enforcement

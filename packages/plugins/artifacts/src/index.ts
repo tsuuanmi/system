@@ -46,16 +46,19 @@ export type NewArtifact = Omit<Envelope, 'schema' | 'id' | 'createdAt' | 'inputs
 
 /** Body of a decision artifact (schemas/decision.v1.json). */
 export interface Decision {
-  schema: 'decision@1.0'
+  /** `@1.1` once it records a team vote or a client's decision; otherwise `@1.0`, so earlier decisions keep their ids. */
+  schema: 'decision@1.0' | 'decision@1.1'
   decisionType: string
   question: string
   inputs: ContentId[]
   candidates: { option: string; selected: boolean; reasons: string[] }[]
-  decider: { type: 'rule' | 'policy' | 'model' | 'operator'; id: string; version: string; hash?: ContentId }
+  decider: { type: 'rule' | 'policy' | 'model' | 'operator' | 'client'; id: string; version: string; hash?: ContentId }
   modelAnswers?: unknown[]
   outcome: { option: string; detail?: Record<string, unknown> }
   deterministic: boolean
   rationale?: string
+  /** A team's vote (decision type `vote`; decision@1.1), shaped by the schema. */
+  vote?: Record<string, unknown>
 }
 
 const CLASSIFICATION_RANK: Record<Classification, number> = { public: 0, 'operator-shared': 1, 'local-private': 2 }
@@ -206,8 +209,9 @@ export class Artifacts extends Service {
     // Decision inputs are a set (uniqueItems): sort them so order never changes the id. Prose
     // (questions, reasons, rationale) can quote model or caller text of any length: it is clamped
     // to the schema's bounds here, once, so a long reason never fails the decision it explains.
+    const v11 = decision.decisionType === 'vote' || decision.vote !== undefined || decision.decider.type === 'client'
     const body: Decision = {
-      schema: 'decision@1.0', ...decision, inputs: [...new Set(decision.inputs)].sort(),
+      schema: v11 ? 'decision@1.1' : 'decision@1.0', ...decision, inputs: [...new Set(decision.inputs)].sort(),
       question: clampProse(decision.question, 500),
       candidates: decision.candidates.map((c) => ({ ...c, reasons: c.reasons.map((r) => clampProse(r, 300)) })),
       ...(decision.rationale !== undefined ? { rationale: clampProse(decision.rationale, 1000) } : {}),
@@ -218,7 +222,7 @@ export class Artifacts extends Service {
       throw new TypeError('decision: exactly one selected candidate must equal outcome.option')
     }
     return this.put({
-      kind: 'decision', bodySchema: 'decision@1.0', body, inputs: body.inputs,
+      kind: 'decision', bodySchema: body.schema, body, inputs: body.inputs,
       classification: meta.classification ?? 'operator-shared', producer: meta.producer,
       ...(meta.runId !== undefined && { runId: meta.runId }), ...(meta.nodeId !== undefined && { nodeId: meta.nodeId }),
     })

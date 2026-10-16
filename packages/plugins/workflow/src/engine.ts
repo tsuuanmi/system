@@ -14,8 +14,8 @@ import { block, grow, grownText } from './growth.ts'
 import { admissionKind, escalate, failAttempt, routedDecisions } from './recovery.ts'
 import { remediate, reviewSubject, subjectGate } from './review.ts'
 import { recoverWakes, settleWake } from './sessions.ts'
-import { DEFAULT_TEMPLATES, type NodeTemplate, render, type ResolvedNode, resolve, schemaBlock, variantProblem, variantsOf } from './spec.ts'
-import { carry, leadDecision, post, restriction, runtimeOf, teamGroup, teamTexts } from './teams.ts'
+import { DEFAULT_TEMPLATES, type NodeTemplate, recordExecutor, render, type ResolvedNode, resolve, schemaBlock, variantProblem, variantsOf } from './spec.ts'
+import { decide, expireTie, restriction, runtimeOf, tally, teamGroup, teamPrompt } from './teams.ts'
 import { type Config, errorOf, LEASE_TTL_MS, newId, type NodeHelpers, type NodeRecord, type NodeRow, now, type RunRow, type RunView, type StartInput, type WorkflowError, WorkflowFailure } from './types.ts'
 import { view } from './views.ts'
 
@@ -114,7 +114,7 @@ export class Engine {
         const session = node.session.member ? { sessionId: sessionOf(node.session.member) } : node.session.persist ? { sessionId: sessionId! } : node.session
         const resolved: ResolvedNode = { ...node, session }
         const record: NodeRecord = {
-          schema: 'workflow-node@1.0', runId: run.run_id, nodeId: node.nodeId, objective: node.objective, executor: 'worker',
+          schema: 'workflow-node@1.0', runId: run.run_id, nodeId: node.nodeId, objective: node.objective, executor: recordExecutor(node),
           requirement: this.requirementOf(node, resolved.session.sessionId !== undefined, input.classification),
           dependsOn: node.dependsOn, state: 'WAITING', revision: 0,
         }
@@ -122,9 +122,10 @@ export class Engine {
         db.prepare(`INSERT INTO workflow_nodes (run_id, node_id, ordinal, spec, record, state, updated_at) VALUES (?, ?, ?, ?, ?, 'WAITING', ?)`)
           .run(run.run_id, node.nodeId, ordinal, JSON.stringify(resolved), JSON.stringify(record), now())
       })
-      // One message group per team; its first round runs behind a closed barrier (REQ-TEAM-1).
+      // One session group per team, holding its members' sessions (Model A). Members never message
+      // each other: the engine composes their prompts from sealed records (REQ-TEAM-1).
       for (const team of new Set(spec.nodes.flatMap((n) => (n.team ? [n.team.id] : [])))) {
-        this.ctx.workerSessions.group(teamGroup(run.run_id, team), { barrier: true })
+        this.ctx.workerSessions.group(teamGroup(run.run_id, team))
       }
       this.ctx.eventLog.append({ type: 'workflow.run.started', runId: run.run_id, ...(sessionId ? { sessionId } : {}), data: { template: input.template, specHash: spec.specHash } })
       this.ctx.store.afterCommit(() => this.schedule(run.run_id))
@@ -147,7 +148,8 @@ export class Engine {
   async wait(runId: string, timeoutMs: number): Promise<RunView> {
     const current = this.get(runId)
     if (!current) throw new WorkflowFailure('invalid_input', `unknown run ${runId}`)
-    if (current.status !== 'running' || this.stopped.signal.aborted) return current
+    // A run that waits on someone (a plan's approval, a tie's vote) is returned at once, like a finished one.
+    if (current.status !== 'running' || current.blocked || this.stopped.signal.aborted) return current
     await new Promise<void>((resolve) => {
       const set = this.waiters.get(runId) ?? new Set()
       this.waiters.set(runId, set)
@@ -243,7 +245,7 @@ export class Engine {
           }
           const current_ = this.nodeRows(runId).filter((n) => n.state !== 'RETIRED')
           if (current_.some((n) => n.state === 'FAILED')) continue
-          // A carried node completed without running (a converged team): its dependents may be ready now.
+          // A step completed without a Worker (a team's tally or decision): its dependents may be ready now.
           if (current_.filter((n) => n.state === 'COMPLETED').length > nodes.filter((n) => n.state === 'COMPLETED').length) continue
           const runnable = current_.filter((n) => n.state === 'READY' || n.state === 'RUNNING')
           // A node that must differ from a peer with no Worker yet runs only beside that peer, so
@@ -254,8 +256,22 @@ export class Engine {
             return !row?.worker && row?.state !== 'FAILED' && !ids.has(peer)
           }))
           if (!active.length) {
-            // Waiting for the operator: park until `approve` schedules the run again.
-            if (current_.some((n) => n.state === 'BLOCKED')) return
+            // A tie waits a bounded time for a deciding vote (INV-9), then completes inconclusive.
+            const tie = current_.find((n) => n.state === 'BLOCKED' && (JSON.parse(n.spec) as ResolvedNode).executor === 'decide')
+            if (tie) {
+              const left = Date.parse(tie.not_before ?? '') - Date.now()
+              if (!(left > 0)) {
+                expireTie(this, run, tie, current)
+                continue
+              }
+              this.retryLater(runId, left)
+            }
+            // Waiting for the operator's `approve` or the caller's `vote`, which schedule the run again;
+            // whoever waits on the run learns now that it waits on them.
+            if (current_.some((n) => n.state === 'BLOCKED')) {
+              for (const wake of this.waiters.get(runId) ?? []) wake()
+              return
+            }
             return this.finish(run, 'failed', { error: JSON.stringify({ kind: 'internal', disposition: 'CODE_FIX', message: 'no node can run' }) }, current)
           }
           const outcomes = await Promise.all(active.map(async (node) => {
@@ -292,13 +308,14 @@ export class Engine {
   private promote(run: RunRow, node: NodeRow & NodeHelpers, nodes: NodeRow[], lease: () => Lease): void {
     const spec = JSON.parse(node.spec) as ResolvedNode
     if (spec.executor === 'gate') return block(this, run, node, spec, lease)
-    if (carry(this, run, node, spec, nodes, lease)) return
+    if (spec.executor === 'tally') return tally(this, run, node, spec, nodes, lease)
+    if (spec.executor === 'decide') return decide(this, run, node, spec, nodes, lease)
     const deps = spec.dependsOn.map((id) => nodes.find((n) => n.node_id === id)!)
     const results = deps.map((d) => (JSON.parse(d.record) as NodeRecord).outputReceipt!.result)
     const texts = Object.fromEntries(deps.map((d, i) => [d.node_id, this.resultText(results[i]!)]))
     const extras = {
       ...(spec.prompt.includes('{{grown}}') ? { grown: grownText(this, spec, nodes) } : {}),
-      ...(spec.team ? teamTexts(this, spec, nodes) : {}),
+      ...(spec.team?.role === 'ballot' || spec.team?.role === 'debate' ? { team: teamPrompt(this, spec, nodes) } : {}),
     }
     let prompt = spec.literal ? spec.prompt : render(spec.prompt, run.input, texts, extras)
     if (spec.resultSchema) prompt = `${prompt}\n\n${schemaBlock(spec.resultSchema, this.schemas.schemaOf(spec.resultSchema))}`
@@ -311,40 +328,55 @@ export class Engine {
   }
 
   /**
-   * The provider families this node's Worker must differ from (ADR-0027): those of the Workers that
-   * served its `differentFrom` nodes, read from their descriptors. It waits while one of those nodes
-   * has no Worker yet, so the branches of a run still start together, one routing turn apart. When
-   * one of those nodes failed, the run fails on it: this node sends nothing and stays as it is. When
-   * a served Worker's family cannot be read, no Worker can be shown to differ: that fails closed.
+   * Whether this node may route yet under ADR-0027: it waits while one of its `differentFrom` nodes
+   * has no Worker, so the branches of a run still start together, one routing turn apart. When one
+   * of those nodes failed, the run fails on it: this node sends nothing and stays as it is. Undefined
+   * when the node is in no such relation, either way.
    */
-  private async diversity(run: RunRow, spec: ResolvedNode, signal: AbortSignal): Promise<{ families: string[]; reason: string } | { problem: string } | undefined | 'stopped' | 'deferred'> {
+  private async diversity(run: RunRow, spec: ResolvedNode, signal: AbortSignal): Promise<'ready' | undefined | 'stopped' | 'deferred'> {
     const others = spec.differentFrom ?? []
-    // The relation holds both ways: a node routing again (a retry, an escalation, a continue) also
-    // differs from the routed nodes that name it, though it never waits for them.
-    const named = this.nodeRows(run.run_id).filter((n) => n.worker && ((JSON.parse(n.spec) as ResolvedNode).differentFrom ?? []).includes(spec.nodeId))
-    if (!others.length && !named.length) return undefined
+    if (!others.length && !this.nodeRows(run.run_id).some((n) => ((JSON.parse(n.spec) as ResolvedNode).differentFrom ?? []).includes(spec.nodeId))) return undefined
     for (;;) {
       const rows = this.nodeRows(run.run_id).filter((n) => others.includes(n.node_id))
       if (rows.some((n) => n.state === 'FAILED')) return 'stopped'
-      if (rows.every((n) => n.worker)) {
-        const listed = new Map((await this.ctx.workers.list()).map((w) => [w.worker, w.family]))
-        const families = new Set<string>()
-        for (const row of [...rows, ...named]) {
-          if (!row.worker) continue
-          const family = listed.get(row.worker)
-          if (family === undefined) {
-            return { problem: `node ${row.node_id}'s Worker ${row.worker} ${listed.has(row.worker) ? 'declares no provider family' : 'is no longer listed'}, so no Worker can be shown to differ from it (ADR-0027)` }
-          }
-          families.add(family)
-        }
-        const all = [...others, ...named.map((n) => n.node_id)]
-        return { families: [...families], reason: `differs from node${all.length > 1 ? 's' : ''} ${all.join(', ')}` }
-      }
+      if (rows.every((n) => n.worker)) return 'ready'
       // A peer that is not running now (backing off before a retry) will not be routed while this
       // waits: give the turn back to the run loop, which runs both again.
       if (rows.some((n) => !n.worker && !this.executing.has(`${run.run_id}\0${n.node_id}`))) return 'deferred'
       if (!(await sleep(250, signal))) return 'stopped'
     }
+  }
+
+  /** The routed nodes that name this one in their `differentFrom`: the relation holds both ways. */
+  private namers(run: RunRow, spec: ResolvedNode): NodeRow[] {
+    return this.nodeRows(run.run_id).filter((n) => n.worker && ((JSON.parse(n.spec) as ResolvedNode).differentFrom ?? []).includes(spec.nodeId))
+  }
+
+  /**
+   * The provider families this node's Worker must differ from (ADR-0027): those of the Workers that
+   * served the nodes it differs from, read from their descriptors inside the run's routing turn, so
+   * the Workers it reads are the ones routing sees. When a served Worker's family cannot be read, no
+   * Worker can be shown to differ: that fails closed. Undefined while no such node has a Worker.
+   */
+  private async families(run: RunRow, spec: ResolvedNode): Promise<{ families: string[]; reason: string } | { problem: string } | undefined> {
+    const others = spec.differentFrom ?? []
+    // A node routing again (a retry, an escalation, a continue) also differs from the routed nodes
+    // that name it, though it never waits for them.
+    const named = this.namers(run, spec)
+    const rows = this.nodeRows(run.run_id).filter((n) => others.includes(n.node_id))
+    if (![...rows, ...named].some((n) => n.worker)) return undefined
+    const listed = new Map((await this.ctx.workers.list()).map((w) => [w.worker, w.family]))
+    const families = new Set<string>()
+    for (const row of [...rows, ...named]) {
+      if (!row.worker) continue
+      const family = listed.get(row.worker)
+      if (family === undefined) {
+        return { problem: `node ${row.node_id}'s Worker ${row.worker} ${listed.has(row.worker) ? 'declares no provider family' : 'is no longer listed'}, so no Worker can be shown to differ from it (ADR-0027)` }
+      }
+      families.add(family)
+    }
+    const all = [...others, ...named.map((n) => n.node_id)]
+    return { families: [...families], reason: `differs from node${all.length > 1 ? 's' : ''} ${all.join(', ')}` }
   }
 
   /**
@@ -360,14 +392,16 @@ export class Engine {
       const record = JSON.parse(node.record) as NodeRecord
       const attempt = node.attempt + 1
       // A node that must differ from others routes once they have Workers (ADR-0027).
-      const exclude = await this.diversity(run, spec, signal)
-      if (exclude === 'stopped') return
-      if (exclude === 'deferred') return 'deferred'
-      if (exclude && 'problem' in exclude) {
-        return failAttempt(this, run, { ...node, attempt }, { kind: 'config_error', disposition: dispositionOf('config_error'), message: exclude.problem }, { sent: false, decisions: [] }, lease)
-      }
+      const differs = await this.diversity(run, spec, signal)
+      if (differs === 'stopped') return
+      if (differs === 'deferred') return 'deferred'
       // Members of one team route one at a time, so each sees which accounts the others hold.
       const release = await this.routingTurn(run.run_id)
+      const exclude = differs ? await this.families(run, spec) : undefined
+      if (exclude && 'problem' in exclude) {
+        release()
+        return failAttempt(this, run, { ...node, attempt }, { kind: 'config_error', disposition: dispositionOf('config_error'), message: exclude.problem }, { sent: false, decisions: [] }, lease)
+      }
       let admitted: AdmittedWorker
       try {
         admitted = await this.ctx.workers.route(record.requirement, { producer: 'workflow', ...(await restriction(this, run, spec)), ...(exclude ? { exclude } : {}) })
@@ -375,7 +409,9 @@ export class Engine {
         release()
         if (!(error instanceof AdmissionFailure)) throw error
         const hint = error.rejections.length ? '' : ': no Worker is configured (for website Workers, map tiers to modes in the account catalog, then sign the account in)'
-        return failAttempt(this, run, { ...node, attempt }, { kind: admissionKind(error), disposition: dispositionOf(admissionKind(error)), message: `${error.message}${hint}` },
+        // A team member that finds no other provider family: say what the team needs, beside why this one failed.
+        const team = spec.team?.role === 'propose' && exclude ? await this.familyShortage(spec) : ''
+        return failAttempt(this, run, { ...node, attempt }, { kind: admissionKind(error), disposition: dispositionOf(admissionKind(error)), message: `${team}${error.message}${hint}` },
           { sent: false, decisions: [error.decision] }, lease)
       }
       // A stop while routing starts nothing: the node is routed again on the next start.
@@ -394,7 +430,7 @@ export class Engine {
       }
       try {
         this.ctx.store.transaction(() => {
-          if (spec.team?.role === 'member' && spec.session.sessionId) {
+          if (spec.team?.member && spec.session.sessionId) {
             // Model A: the member's session is bound to the Worker its first admission chose.
             this.ctx.workerSessions.join(teamGroup(run.run_id, spec.team.id), {
               sessionId: spec.session.sessionId, role: `m${spec.team.member}`, runtime: runtimeOf(admitted.source, admitted.worker.provider),
@@ -448,6 +484,12 @@ export class Engine {
     this.complete(run, node, spec, current, lease)
   }
 
+  /** A team's need for provider families against those ready now, as the start of a member's admission failure. */
+  private async familyShortage(spec: ResolvedNode): Promise<string> {
+    const ready = new Set((await this.ctx.workers.list()).filter((w) => (w.state === 'ready' || w.state === 'busy') && w.family !== undefined).map((w) => w.family))
+    return `team ${spec.team!.id} needs ${spec.team!.members} provider families, one per member; ${ready.size} ${ready.size === 1 ? 'is' : 'are'} ready (ADR-0027). `
+  }
+
   /** Wait for this run's turn to route; the returned function ends it. */
   private async routingTurn(runId: string): Promise<() => void> {
     const previous = this.routing.get(runId) ?? Promise.resolve()
@@ -483,14 +525,11 @@ export class Engine {
         this.writeNode(node, { state: 'FAILED', error: JSON.stringify(error), ...decisions }, (r) => ({ ...r, lastDecision: gate!.decision }), lease)
         this.ctx.eventLog.append({ type: 'workflow.node.failed', runId: run.run_id, nodeId: node.node_id, decision: gate.decision, data: { ...data, kind: error.kind } })
       } else if (acceptance.accepted) {
-        if (spec.team?.role === 'member') post(this, run, node, spec, execution, result)
         if (gate?.passed) {
           decisions.decisions = JSON.stringify([...JSON.parse(decisions.decisions) as string[], gate.decision])
           remediate(this, run, node, spec, gate.assessment, gate.subject, lease)
         }
-        const lead = spec.team?.role === 'lead' ? leadDecision(this, run, node, spec, result) : undefined
-        if (lead) decisions.decisions = JSON.stringify([...JSON.parse(decisions.decisions) as string[], lead])
-        this.writeNode(node, { state: 'COMPLETED', error: null, ...decisions }, (r) => ({ ...r, outputReceipt: { result, acceptance: acceptance.decision }, lastDecision: lead ?? acceptance.decision }), lease)
+        this.writeNode(node, { state: 'COMPLETED', error: null, ...decisions }, (r) => ({ ...r, outputReceipt: { result, acceptance: acceptance.decision }, lastDecision: acceptance.decision }), lease)
         this.ctx.eventLog.append({ type: 'workflow.node.completed', runId: run.run_id, nodeId: node.node_id, decision: acceptance.decision, data })
       } else if (!escalate(this, run, node, spec, result, acceptance.decision, acceptance.reasons, decisions, lease)) {
         const error: WorkflowError = { kind: 'acceptance_rejected', disposition: 'NONE', message: `${spec.acceptance}: ${acceptance.reasons.join('; ')}` }
@@ -504,7 +543,7 @@ export class Engine {
     this.ctx.store.transaction((db) => {
       if (lease) this.ctx.leases.fence(lease())
       db.prepare('UPDATE workflow_runs SET status = ?, result = ?, error = ?, updated_at = ? WHERE run_id = ?').run(status, fields.result ?? null, fields.error ?? null, now(), run.run_id)
-      // The team's rounds consumed its members' mail: what is left over must not wake them later.
+      // A member's mail is not the team's procedure: what is left over must not wake it later.
       for (const member of this.ctx.workerSessions.ofRun(run.run_id)) {
         const left = this.ctx.workerSessions.inbox(member.sessionId)
         if (left.length) this.ctx.workerSessions.ack(member.sessionId, left.at(-1)!.seq)

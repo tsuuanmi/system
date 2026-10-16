@@ -7,8 +7,8 @@
 >
 > Implemented in [`worker-sessions`](../../packages/plugins/worker-sessions/README.md) (sessions,
 > groups, mailboxes, budgets) and [`workflow`](../../packages/plugins/workflow/README.md)
-> (wake-on-message, checkpoints, compaction); differs from target: Workers message only through
-> the engine (a member's answer, or a `To m<k>: …` line), and `session_send` is the operator's;
+> (wake-on-message, checkpoints, compaction); differs from target: a Worker sends a message only
+> as its reply to a wake, and `session_send` is the operator's or a client's;
 > sessions start `IDLE` at their first admission (no `FORMING`) and are never `CLOSED`; a group
 > lives for its run, not inside one `team` node; the A2A adapter is planned.
 
@@ -19,7 +19,7 @@
 | **Session** | one Worker's durable participation, with its own `SessionId`, role, and policy | from formation until it is closed; survives restarts |
 | **Activation** | the live process, browser context, or SDK client currently serving a session | disposable, recreated on demand |
 | **Execution binding** | `SessionId → { nativeHandle, generation }` | updated on every re-activation; the generation fences stale activations |
-| **Session group** | sessions that may message each other under one policy, such as a team | the lifetime of its DAG node |
+| **Session group** | sessions under one policy, such as a team's members | the lifetime of its DAG node |
 | **Mailbox** | the durable, ordered inbox of a session | the lifetime of the session |
 
 This is AgentOS's Model A, generalized beyond DSH. The session *is* the
@@ -60,10 +60,9 @@ stateDiagram-v2
 ## Direct messaging
 
 1. A session sends `message(to: SessionId | group, body, inReplyTo?, refs[])`.
-   - A Worker's outgoing messages come from its response: a team member's
-     accepted answer is its message to the team, and a `To m<k>: …` line is a
-     direct message to one member. Incoming messages are injected as its next
-     turn.
+   - Incoming messages are injected as the target's next turn. A team's
+     members do not message each other: the engine composes their prompts from
+     sealed records ([teams](teams.md#membership-model-a)).
    - The operator sends with the MCP tool `session_send` and reads with
      `session_inbox`.
 2. **Policy check.** The group policy decides whether the sender may address the
@@ -76,13 +75,10 @@ stateDiagram-v2
 4. **Wake.** An `IDLE` target is activated, cold-resumed if necessary, and
    receives its unread messages in order as one turn.
 5. The engine **records** every message but **never relays or rewrites**
-   content. The lead controls the procedure, not the conversation.
+   content.
 
-Barriers (the independent-first rule in [teams](teams.md)) are mailbox gates.
-Messages to a member are held until the barrier opens. A team's barrier opens
-as soon as every member has finished round 1, even when no later round runs (a
-lead closed the team, or it has a single round), so later messages still reach
-the members.
+Barriers are mailbox gates. Messages to a member of a group with a closed
+barrier are held until it opens.
 
 ## Long-running mechanics
 
@@ -99,11 +95,11 @@ the members.
 
 ## Relation to the DAG
 
-A session group lives **inside** one node with executor `team` or `session`.
-The node is `RUNNING` while its sessions work, and it completes when the group's
-procedure reaches acceptance. The node's output is the accepted synthesis
-artifact. The DAG gives the durable macro structure. Sessions give long-running,
-conversational work inside a node
+A team's session group spans the steps its node is unrolled into: each
+member's steps run in its own session, and the team's `team` steps tally the
+ballots and decide ([teams](teams.md#procedure)). The decision step's output is
+the team's result. The DAG gives the durable macro structure. Sessions give
+long-running, conversational work inside it
 ([ADR-0012](../decisions/adr/0012-dag-execution-model.md)).
 
 ## A2A alignment (for the planned adapter)

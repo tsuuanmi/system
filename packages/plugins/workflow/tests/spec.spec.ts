@@ -47,7 +47,7 @@ describe('workflow specs', () => {
     expect(JSON.stringify(deep)).not.toContain('variants')
     expect(() => resolve('t', nodes, { variant: 'fast' })).toThrow('template t has no variant fast (it has: deep)')
     expect(() => resolve('ask', DEFAULT_TEMPLATES.ask!, { variant: 'deep' })).toThrow('template ask has no variant deep (it has: none)')
-    expect(() => preflight([node('team', { team: { members: 2 }, variants: { deep: { tier: 'frontier' } } })])).toThrow('node team: a team or a planner has no variants')
+    expect(() => preflight([node('team', { team: { kind: 'brainstorm' }, variants: { deep: { tier: 'frontier' } } })])).toThrow('node team: a team or a planner has no variants')
     expect(() => preflight([node('a', { variants: { deep: { dependsOn: ['b'] } as never } })])).toThrow('node a, variant deep: dependsOn cannot vary')
     expect(() => preflight([node('a', { variants: { Deep: {} } })])).toThrow(/variant name "Deep"/)
   })
@@ -72,7 +72,7 @@ describe('workflow specs', () => {
     expect(() => preflight([node('a'), node('b', { differentFrom: ['a'] }), node('c', { dependsOn: ['a', 'b'] })])).not.toThrow()
     expect(() => preflight([node('a', { differentFrom: ['a'] })])).toThrow('node a differs from itself')
     expect(() => preflight([node('a', { differentFrom: ['zz'] })])).toThrow('node a differs from unknown node zz')
-    expect(() => preflight([node('t', { team: { members: 2 } }), node('b', { dependsOn: ['t'], prompt: '{{node:t}}', differentFrom: ['t'] })])).toThrow('node b differs from team t, which has several Workers')
+    expect(() => preflight([node('t', { team: { kind: 'brainstorm' } }), node('b', { dependsOn: ['t'], prompt: '{{node:t}}', differentFrom: ['t'] })])).toThrow('node b differs from team t, which has several Workers')
   })
 
   it('records where each value came from, and hashes what was admitted (REQ-WF-2)', () => {
@@ -120,38 +120,41 @@ describe('workflow specs', () => {
     expect(bad([step('a', { tier: 'ultra' })])).toMatchObject({ ok: false })
   })
 
-  it('unrolls a team into independent first-round members, critique rounds behind a barrier, and a synthesis under the team\'s id', () => {
-    const team = node('panel', { prompt: '{{input}}', team: { members: 2, rounds: 2 } })
-    const spec = resolve('t', [team, node('after', { dependsOn: ['panel'], prompt: '{{node:panel}}' })], {})
+  it('unrolls a team: independent proposals, sealed ballots over them, a tally, and a decision under the team\'s id (REQ-TEAM-1, ADR-0027)', () => {
+    const team = node('brainstorm', { prompt: '{{input}}', team: { kind: 'brainstorm', members: 3 } })
+    const spec = resolve('t', [team, node('after', { dependsOn: ['brainstorm'], prompt: '{{node:brainstorm}}' })], {})
+    const proposals = ['brainstorm:m1:propose', 'brainstorm:m2:propose', 'brainstorm:m3:propose']
+    const ballots = ['brainstorm:m1:ballot:1', 'brainstorm:m2:ballot:1', 'brainstorm:m3:ballot:1']
     expect(spec.nodes.map((n) => [n.nodeId, n.dependsOn])).toEqual([
-      ['panel:m1:r1', []], ['panel:m2:r1', []],
-      ['panel:m1:r2', ['panel:m1:r1', 'panel:m2:r1']], ['panel:m2:r2', ['panel:m1:r1', 'panel:m2:r1']],
-      ['panel', ['panel:m1:r2', 'panel:m2:r2']],
-      ['after', ['panel']],
+      ...proposals.map((p) => [p, []]),
+      ...ballots.map((b) => [b, proposals]),
+      ['brainstorm:tally:1', ballots],
+      ['brainstorm', ['brainstorm:tally:1']],
+      ['after', ['brainstorm']],
     ])
-    // Round 1 never sees a peer; later rounds read the peers; the synthesis reads every member.
-    expect(spec.nodes[0]!.prompt).not.toContain('{{inbox}}')
-    expect(spec.nodes[2]!.prompt).toContain('{{inbox}}')
-    expect(spec.nodes[4]!.prompt).toContain('{{members}}')
-    expect(spec.nodes[0]!.session).toEqual({ member: 'panel:m1' })
-    expect(spec.nodes[2]!.session).toEqual({ member: 'panel:m1' })
-    expect(spec.nodes[0]!.team).toMatchObject({ id: 'panel', role: 'member', member: 1, round: 1, members: 2, distinct: true })
-    expect(spec.nodes[4]).toMatchObject({ acceptance: 'acceptance.team-synthesis', team: { role: 'synthesis' } })
-    expect(() => preflight([node('t', { team: { members: 1 } })])).toThrow(/team/)
-    expect(() => preflight([node('t', { team: { members: 2, rounds: 9 } })])).toThrow(/team/)
-    expect(preflight(DEFAULT_TEMPLATES.panel!)).toEqual(['panel'])
+    // A proposal sees no peer; member k differs in provider family from every earlier member.
+    expect(spec.nodes.slice(0, 3).map((n) => n.differentFrom)).toEqual([undefined, [proposals[0]], proposals.slice(0, 2)])
+    expect(spec.nodes[0]!.prompt).toContain('You are member 1 of a team of 3')
+    expect(spec.nodes[0]).toMatchObject({ acceptance: 'acceptance.team-proposal', session: { member: 'brainstorm:m1' }, team: { id: 'brainstorm', kind: 'brainstorm', role: 'propose', member: 1, members: 3, debateRounds: 1 } })
+    // A ballot is engine-composed in the member's own conversation, checked against the options.
+    expect(spec.nodes[3]).toMatchObject({ prompt: '{{team}}', acceptance: 'acceptance.team-ballot-3', session: { member: 'brainstorm:m1' }, team: { role: 'ballot', round: 1 } })
+    // The tally and the decision run no Worker.
+    expect(spec.nodes[6]).toMatchObject({ executor: 'tally', session: {}, team: { role: 'tally', round: 1 } })
+    expect(spec.nodes[7]).toMatchObject({ executor: 'decide', session: {}, team: { role: 'decide' } })
+    const review = resolve('t', DEFAULT_TEMPLATES.review!, {})
+    expect(review.nodes[0]).toMatchObject({ acceptance: 'acceptance.team-findings' })
+    expect(review.nodes[2]).toMatchObject({ acceptance: 'acceptance.team-ballot-review' })
+    expect(preflight(DEFAULT_TEMPLATES.brainstorm!)).toEqual(['brainstorm'])
+    expect(DEFAULT_TEMPLATES.panel).toBeUndefined()
   })
 
-  it('puts a lead between rounds: the next round waits for its decision; it reads the members and answers nothing', () => {
-    const spec = resolve('t', [node('panel', { prompt: '{{input}}', team: { members: 2, rounds: 2, lead: {} } })], {})
-    expect(spec.nodes.map((n) => [n.nodeId, n.dependsOn])).toEqual([
-      ['panel:m1:r1', []], ['panel:m2:r1', []],
-      ['panel:lead:1', ['panel:m1:r1', 'panel:m2:r1']],
-      ['panel:m1:r2', ['panel:m1:r1', 'panel:m2:r1', 'panel:lead:1']], ['panel:m2:r2', ['panel:m1:r1', 'panel:m2:r1', 'panel:lead:1']],
-      ['panel', ['panel:m1:r2', 'panel:m2:r2']],
-    ])
-    expect(spec.nodes[2]).toMatchObject({ tier: 'economy', capabilities: ['reason'], acceptance: 'acceptance.team-lead', session: {}, team: { role: 'lead', round: 1 } })
-    expect(spec.nodes[2]!.prompt).toContain('{{members}}')
-    expect(() => preflight([node('t', { team: { members: 2, lead: { tier: 'huge' as never } } })])).toThrow(/lead/)
+  it('refuses a team policy outside its bounds, and fields a team cannot have', () => {
+    expect(() => preflight([node('t', { team: { kind: 'brainstorm', members: 1 } })])).toThrow(/team must be/)
+    expect(() => preflight([node('t', { team: { kind: 'brainstorm', debateRounds: 3 } })])).toThrow(/team must be/)
+    expect(() => preflight([node('t', { team: { kind: 'vote' as never } })])).toThrow(/team must be/)
+    // The procedure an earlier version ran (rounds, a lead, a synthesis) is refused, never half-run.
+    expect(() => preflight([node('t', { team: { kind: 'brainstorm', rounds: 2 } as never })])).toThrow(/team must be/)
+    expect(() => preflight([node('t', { team: { members: 2, rounds: 2 } as never })])).toThrow(/team must be/)
+    expect(() => preflight([node('a'), node('t', { dependsOn: ['a'], prompt: '{{node:a}}', team: { kind: 'review' }, differentFrom: ['a'] })])).toThrow('node t: a team has no differentFrom, grows, or resultSchema')
   })
 })

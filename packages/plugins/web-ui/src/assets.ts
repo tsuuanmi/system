@@ -77,7 +77,7 @@ export const APP_JS = `'use strict'
     show(el('h2', {}, 'Runs'), table(['Run', 'Template', 'Status', 'Steps', 'Created'], runs.map((run) => el('tr', {},
       el('td', {}, el('a', { href: '?run=' + encodeURIComponent(run.runId), onclick: (e) => { e.preventDefault(); go(run.runId) } }, run.runId)),
       el('td', {}, run.template),
-      el('td', { class: 'state ' + run.status }, run.status + (run.blocked ? ' (waiting for approval)' : '')),
+      el('td', { class: 'state ' + run.status }, run.status + (run.blocked ? (run.blocked.kind === 'tie' ? ' (tied: waiting for a deciding vote)' : ' (waiting for approval)') : '')),
       el('td', {}, run.nodes.map((n) => n.nodeId + ' ' + n.state).join(', ')),
       el('td', { class: 'muted' }, new Date(run.createdAt).toLocaleString()),
     ))))
@@ -89,13 +89,22 @@ export const APP_JS = `'use strict'
       try { await api('runs/' + encodeURIComponent(runId) + '/' + action, body()); await detail(runId) } catch (error) { status.textContent = error.message }
     }
     const note = el('input', { placeholder: 'note (optional)', 'aria-label': 'Note' })
+    const rationale = el('input', { placeholder: 'rationale (required)', 'aria-label': 'Rationale' })
+    const tie = run.blocked && run.blocked.kind === 'tie' ? run.blocked : null
+    const vote = (option) => act('vote', () => ({ decision: tie.decision, option, rationale: rationale.value }))
     const decisions = new Map((explain ? explain.nodes : []).map((n) => [n.nodeId, n.decisions]))
     show(
       el('p', {}, el('a', { href: '/ui/', onclick: (e) => { e.preventDefault(); go() } }, '← all runs')),
       el('h2', {}, run.runId + ' ', el('span', { class: 'state ' + run.status }, run.status)),
       el('p', { class: 'muted' }, run.template + ' · spec ', el('code', {}, run.specHash)),
       run.error ? el('p', { class: 'state failed' }, run.error.kind + ': ' + run.error.message) : null,
-      run.blocked ? el('div', { class: 'panel' },
+      tie ? el('div', { class: 'panel' },
+        el('p', {}, 'The team tied at ', tie.nodeId, '; until ' + new Date(tie.until).toLocaleString() + ' it waits for a deciding vote, then ends inconclusive.'),
+        el('ul', {}, tie.options.map((o) => el('li', {}, el('strong', {}, o.option + ': '), o.summary))),
+        rationale,
+        tie.options.map((o) => el('button', { onclick: vote(o.option) }, 'Vote ' + o.option)),
+        el('button', { onclick: vote('inconclusive') }, 'Leave inconclusive')) : null,
+      run.blocked && !tie ? el('div', { class: 'panel' },
         el('p', {}, 'Waiting for your approval of plan ', el('code', {}, run.blocked.plan), ' at ', run.blocked.nodeId, '.'),
         note,
         el('button', { class: 'primary', onclick: act('approve', () => ({ verdict: 'approved', note: note.value, plan: run.blocked.plan })) }, 'Approve plan'),

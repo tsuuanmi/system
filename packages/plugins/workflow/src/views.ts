@@ -4,6 +4,7 @@ import type { ContentId } from '@tsuuanmi/system-libs'
 import type { ArtifactRef } from '@tsuuanmi/system-workers-core'
 import type { Engine } from './engine.ts'
 import type { ResolvedNode } from './spec.ts'
+import { tieOf, type TeamRound } from './teams.ts'
 import type { ExplainedDecision, Explanation, NodeRecord, NodeView, RunRow, RunView, WorkflowError } from './types.ts'
 
 export function view(e: Engine, run: RunRow): RunView {
@@ -36,9 +37,12 @@ function usageOf(e: Engine, result: ArtifactRef): Pick<NodeView, 'usage'> {
   return typeof usage?.inputTokens === 'number' && typeof usage.outputTokens === 'number' ? { usage: { inputTokens: usage.inputTokens, outputTokens: usage.outputTokens } } : {}
 }
 
-function blockedOf(e: Engine, runId: string): { blocked?: { nodeId: string; plan: ArtifactRef } } {
-  const gate = e.nodeRows(runId).find((n) => n.state === 'BLOCKED')
-  return gate ? { blocked: { nodeId: gate.node_id, plan: (JSON.parse(gate.spec) as ResolvedNode).plan as ArtifactRef } } : {}
+/** What the run waits for: a plan's gate (the operator's `approve`) or a team's tie (a deciding `vote`). */
+function blockedOf(e: Engine, runId: string): Pick<RunView, 'blocked'> {
+  const node = e.nodeRows(runId).find((n) => n.state === 'BLOCKED')
+  if (!node) return {}
+  const spec = JSON.parse(node.spec) as ResolvedNode
+  return { blocked: spec.executor === 'decide' ? tieOf(e, node) : { kind: 'gate', nodeId: node.node_id, plan: spec.plan as ArtifactRef } }
 }
 
 /** Recent runs and, per node, which Worker, tier, and quota class served it (usage report). */
@@ -70,5 +74,7 @@ export function explain(e: Engine, runId: string): Explanation | undefined {
 function decision(e: Engine, id: ArtifactRef): ExplainedDecision | undefined {
   const body = e.ctx.artifacts.get(id)?.body as Decision | undefined
   if (!body) return undefined
-  return { id, type: body.decisionType, outcome: body.outcome.option, reasons: body.candidates.find((c) => c.selected)?.reasons ?? [] }
+  const rounds = (body.vote as { rounds?: TeamRound[] } | undefined)?.rounds ?? []
+  const ballots = rounds.flatMap((r) => r.ballots.map((b) => ({ round: r.round, member: b.member, choice: b.choice, confidence: b.confidence, rationale: b.rationale })))
+  return { id, type: body.decisionType, outcome: body.outcome.option, reasons: body.candidates.find((c) => c.selected)?.reasons ?? [], ...(ballots.length ? { ballots } : {}) }
 }

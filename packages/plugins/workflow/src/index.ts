@@ -21,7 +21,7 @@ import { approve, continueRun, stop, supersede } from './operator.ts'
 import { deleteRun, purge } from './retention.ts'
 import { wake, wakeSafely } from './sessions.ts'
 import type { NodeTemplate } from './spec.ts'
-import { teamContracts } from './teams.ts'
+import { teamContracts, vote } from './teams.ts'
 import { registerTools } from './tools.ts'
 import type { Config, Explanation, NodeRecord, RunStatus, RunView, StartInput } from './types.ts'
 import { explain, usage } from './views.ts'
@@ -57,7 +57,7 @@ export class Workflow extends Service {
       resultSchema: z.string().description('Schema tag the answer\'s JSON must be valid against (REQ-ART-5)'),
       differentFrom: z.array(z.string()).description('Nodes whose Workers this node\'s Worker must differ from in provider family (ADR-0027)'),
       // Not z.object, for the same reason as grows.
-      team: z.any().description('Team policy {members, rounds, distinctAccounts, synthesisTier, lead: {tier}}; checked by preflight'),
+      team: z.any().description('Team policy {kind: brainstorm | review, members, debateRounds}; checked by preflight'),
     }))).default({}).description('Workflow templates by name, added to the built-in ones (a same-named one replaces it)'),
     maxAttempts: z.natural().min(1).max(10).default(3).description('Attempts per node for retryable failures'),
     retryDelayMs: z.natural().default(5000).description('First back-off delay, doubled per attempt'),
@@ -66,6 +66,7 @@ export class Workflow extends Service {
     retainRunsDays: z.natural().default(0).description('Days a finished run is kept, then deleted with the artifacts only it needed (0: every run is kept); a session\'s latest run always stays'),
     autoApprovePlans: z.boolean().default(false).description('Approve a high-confidence plan by policy instead of waiting for the operator'),
     maxReviewCycles: z.natural().min(1).max(5).default(3).description('Reviews of one change, the first included, before remediation stops'),
+    tieTimeoutHours: z.number().min(0.0001).max(720).default(24).description('Hours a tied team waits for a deciding vote, then completes inconclusive (INV-9)'),
   }) as unknown as z<Config>
 
   private readonly engine: Engine
@@ -217,6 +218,15 @@ export class Workflow extends Service {
    */
   approve(runId: string, input: { verdict: 'approved' | 'rejected'; note?: string; plan?: string }): RunView {
     return approve(this.engine, runId, input)
+  }
+
+  /**
+   * The deciding vote on a team's tie (REQ-TEAM-7), through a trusted channel (INV-6): bound to
+   * the exact tie decision the caller read, recorded with the caller (`client`) or the operator
+   * as the decider. `inconclusive` ends the team without forcing a choice.
+   */
+  vote(runId: string, input: { decision: string; option: string; rationale: string; by: 'client' | 'operator' }): RunView {
+    return vote(this.engine, runId, input)
   }
 }
 

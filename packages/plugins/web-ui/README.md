@@ -6,7 +6,7 @@ The **operator's web UI**, on the DSH webserver under `/ui` (loopback only):
 - each step's Worker, tier, quota class, and decision chain (egress, tier,
   route, acceptance, recovery);
 - the answer;
-- the operator's **Approve / Reject plan**, **Stop run**, and **Continue run**.
+- the operator's **Approve / Reject plan**, **Vote** on a team's tie, **Stop run**, and **Continue run**.
 
 ## Use
 
@@ -37,7 +37,8 @@ the host, or over `ssh -L <port>:127.0.0.1:<port> host` like the login desktop.
 - **Actions** take a JSON body only (a form post cannot reach them) and go to
   the workflow engine as operator decisions. Approve and Reject send the plan
   the page shows (`plan`, a `sha256:` id), so the engine decides only that plan
-  (INV-5).
+  (INV-5). A vote sends the tie decision the page shows, an option or
+  `inconclusive`, and a rationale; it is recorded as the operator's.
 - **Rendering:** the page is built with DOM methods and `textContent` only.
   Model output is never parsed as HTML.
 - **Scope:** only the operator scope reaches `/ui`

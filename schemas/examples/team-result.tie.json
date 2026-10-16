@@ -1,0 +1,10 @@
+{
+  "schema": "team-result@1.0",
+  "runId": "run_0123456789abcdef",
+  "team": "brainstorm",
+  "kind": "brainstorm",
+  "method": "caller-tiebreak",
+  "winner": "O2",
+  "decision": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "text": "outcome: O2; method: caller-tiebreak; winner: O2; decision: sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n\n## Decision: O2 (m2's proposal)\n\nShip a separate team runner first.\n"
+}

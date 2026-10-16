@@ -53,6 +53,19 @@ guesses.
 - Prose can quote model or caller text of any length. The store clamps
   `question` (500), each reason (300), and `rationale` (1000) to their bounds on
   whole characters, ending in `…`, so a long reason never fails its decision.
+- `decision@1.1` adds the decision type `vote`, the decider type `client`, and
+  the `vote` object ([teams](../design/teams.md#the-record)). A record with any
+  of them must be `@1.1` and carry `vote`; every other decision stays `@1.0`,
+  so earlier decisions keep their ids. Readers accept 1.0 and 1.1.
+- A tally's `vote` holds one round; the team's final `vote` holds every round,
+  its `method`, the `dissent`, any `revisions` and `tiebreak`, and a review's
+  `findings`. `threshold` is a strict majority of every member, never of the
+  ballots cast.
+- Members are named by opaque identity (their session ids), never by provider.
+- The decider is `rule` for a tally, a majority, or a tie that timed out
+  (`workflow.tie-timeout`), and `client` or `operator` for a deciding `vote`,
+  by the caller's token scope. Example:
+  [`decision.team-vote.json`](../../schemas/examples/decision.team-vote.json).
 
 ### `work-requirement`
 
@@ -181,6 +194,17 @@ guesses.
   run's two literature reviews state the claim (`["A"]`, `["B"]`, or
   `["A", "B"]`), so a conclusion can say where they agree and differ. A `@1.0`
   record carrying `reviews` is refused. Readers accept 1.0 and 1.1.
+
+### `team-result`
+
+- The body of a team's `report` artifact, composed by the engine from its final
+  `vote` decision, never by a model.
+- `text` starts with one machine-readable line:
+  `outcome: <winner|inconclusive>; method: <team-majority|caller-tiebreak|inconclusive>; winner: <option|none>; decision: <id>`.
+  A review's text lists every finding, blocking ones included, whatever the
+  outcome.
+- `winner` is null when the method is `inconclusive`. Example:
+  [`team-result.tie.json`](../../schemas/examples/team-result.tie.json).
 
 ### `assessment`
 

@@ -252,7 +252,7 @@ describe('the command surface (REQ-GW-4)', () => {
     const help = spawnSync(tsx, [bin, '--help'], { encoding: 'utf8' })
     const usage = `${help.stdout}${help.stderr}`
     const commands = [...usage.matchAll(/^ {2}([a-z][a-z-]*(?: [a-z][a-z-]*)?)/gm)].map((m) => m[1]!.split(' ')[0])
-    for (const family of [['ask', 'research'], ['run', 'approve', 'result', 'stop', 'continue', 'delete', 'supersede', 'usage', 'explain'], ['account'], ['init', 'start', 'drain', 'resume', 'shutdown', 'backup', 'restore', 'tools']]) {
+    for (const family of [['ask', 'research'], ['run', 'approve', 'vote', 'result', 'stop', 'continue', 'delete', 'supersede', 'usage', 'explain'], ['account'], ['init', 'start', 'drain', 'resume', 'shutdown', 'backup', 'restore', 'tools']]) {
       for (const command of family) expect(commands, command).toContain(command)
     }
   })

@@ -58,6 +58,40 @@ export function registerTools(c: Context, w: Workflow, ctx: Context): void {
       return failure(error)
     }
   })
+  const team = (template: 'brainstorm' | 'review', description: string, field: string, about: string): void => {
+    c.mcp.tool(template, {
+      scope: 'client',
+      description,
+      inputSchema: { [field]: zod.string().min(1).max(200_000).describe(about), classification, clientRequestId },
+    }, async (args) => {
+      try {
+        return shape(w.start({ template, input: String(args[field]), classification: args.classification as Classification | undefined, clientRequestId: args.clientRequestId as string | undefined }))
+      } catch (error) {
+        return failure(error)
+      }
+    })
+  }
+  team('brainstorm', 'Decide a question as a team, one member per provider family: each proposes on its own, then all vote by sealed ballot; a split vote gets one debate and a re-vote, and a tie comes back to you (`vote`). Returns at once with a runId; poll `result`. The answer starts with a line `outcome: …; method: …; winner: …; decision: …`.', 'question', 'The question and its context: options, constraints, what has been decided')
+  team('review', 'Review material as a team (an approach, a design, or a diff, as text), one member per provider family: each lists findings on its own, then all vote pass or changes by sealed ballot over the merged findings; a split vote gets one debate, and a tie comes back to you (`vote`). Returns at once with a runId; poll `result`.', 'material', 'What to review, with the criteria it must meet')
+  c.mcp.tool('vote', {
+    scope: 'client',
+    description: 'Break a team\'s tie: the deciding vote, bound to the exact tie decision the run shows in `blocked` (an option, or inconclusive), with your rationale.',
+    inputSchema: {
+      runId: zod.string().max(200),
+      decision: zod.string().max(200).describe('The tie decision from the run\'s blocked view'),
+      option: zod.string().max(16).describe('One of the tie\'s options, or inconclusive'),
+      rationale: zod.string().min(1).max(2000),
+    },
+  }, async (args, { scope }) => {
+    try {
+      // The decider is whoever's token it was: a client's vote is the caller's, never the operator's.
+      const by = scope === 'operator' ? 'operator' : 'client'
+      const view = w.vote(String(args.runId), { decision: String(args.decision), option: String(args.option), rationale: String(args.rationale), by })
+      return shape(await w.wait(view.runId, 10_000))
+    } catch (error) {
+      return failure(error)
+    }
+  })
   c.mcp.tool('run', {
     scope: 'client',
     description: `Start a workflow template by name (built in: ${Object.keys(DEFAULT_TEMPLATES).sort().join(', ')}; profiles add more, such as research); its steps are routed by capability to the Workers that can do them. Waits up to waitSeconds; otherwise returns a runId for \`result\`.`,
@@ -146,7 +180,7 @@ export function registerTools(c: Context, w: Workflow, ctx: Context): void {
   })
   c.mcp.tool('result', {
     scope: 'client',
-    description: 'Fetch a run started by `ask` or `research`; waits up to waitSeconds for it to finish.',
+    description: 'Fetch a run (ask, research, brainstorm, review, or run); waits up to waitSeconds for it to finish or to wait on you (a tie\'s `blocked`).',
     inputSchema: { runId: zod.string().max(200), waitSeconds },
   }, async (args) => {
     try {

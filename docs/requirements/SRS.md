@@ -104,13 +104,19 @@
   peer's output until every member has produced its independent result.
 - **REQ-TEAM-2** A team member keeps one collaboration identity, and one logical
   Worker, for the team's lifetime.
-- **REQ-TEAM-3** A synthesis step produces the strongest-supported result and
-  cites the member evidence it relies on.
+- **REQ-TEAM-3** *(retired 2026-10-16, PROP-0004: replaced by REQ-TEAM-6)* A
+  synthesis step produces the strongest-supported result and cites the member
+  evidence it relies on.
 - **REQ-TEAM-4** Members of an independence-sensitive team are backed by distinct
   accounts.
 - **REQ-TEAM-5** Reviewers receive the exact subject (for example a diff at a
   head SHA), the criteria, and the relevant decision artifacts, but not the
   producer's conversation. Review independence is structural.
+- **REQ-TEAM-6** A team decides by a strict-majority vote over sealed ballots,
+  and every ballot is recorded. It debates only on a split vote, for a bounded
+  number of rounds.
+- **REQ-TEAM-7** A tie is broken by the caller through `vote`, bound to the tie
+  decision. A tie waits a bounded time, then ends inconclusive.
 
 ## Workflows (`REQ-WF`)
 

@@ -48,8 +48,9 @@ Built today:
 - agent Workers on Claude Code, Codex, and ACP agents, held to each runtime's own
   sandbox;
 - the workflow engine: capability routing with decision artifacts, acceptance
-  contracts, graph growth with plan approval, panels with team leads, Worker
-  sessions with peer messages, and exact-subject review;
+  contracts, graph growth with plan approval, teams that decide by sealed vote
+  (`brainstorm`, `review`), Worker sessions with peer messages, and
+  exact-subject review;
 - profiles for scientific research (`research`, with a `deep` variant) and
   software development (`agent-review`, for agent Workers);
 - the MCP server, the Anthropic Messages and Responses gateways, the `system`
@@ -70,7 +71,7 @@ never served. A common pattern is two accounts:
         provider: chatgpt-web
         quotaClass: subscription-chat
         tiers: { economy: instant, standard: medium, frontier: high }
-      - id: gemini-main                  # panels hold members to distinct accounts
+      - id: gemini-main                  # a team puts each member on another provider
         provider: gemini-web
         quotaClass: subscription-chat
         tiers: { economy: flash-lite, standard: flash, frontier: pro }
@@ -92,11 +93,12 @@ system mcp-config codex >> ~/.codex/config.toml   # Codex: runs the stdio shim (
 
 ## What clients get
 
-- **MCP tools:** `ask` (one turn on a website Worker), `research`, `run` (any
-  workflow template), `result`, `usage`, `explain`, and `status`; operator tools
-  for runs (`approve`, `stop`, `continue`, `supersede`, `delete`, `drain`,
-  `resume`), accounts (`account_*`), and sessions (`session_send`,
-  `session_inbox`). The full contracts are generated in
+- **MCP tools:** `ask` (one turn on a website Worker), `research`,
+  `brainstorm`, `review`, `vote` (break a team's tie), `run` (any workflow
+  template), `result`, `usage`, `explain`, `status`, and sessions
+  (`session_send`, `session_inbox`); operator tools for runs (`approve`,
+  `stop`, `continue`, `supersede`, `delete`, `drain`, `resume`) and accounts
+  (`account_*`). The full contracts are generated in
   [docs/reference/mcp-tools.md](docs/reference/mcp-tools.md).
 - **`research`:** the scientific-research procedure: testable hypotheses, two
   cited literature reviews on two provider families (one with web search), an
@@ -104,6 +106,10 @@ system mcp-config codex >> ~/.codex/config.toml   # Codex: runs the stdio shim (
   hypothesis. `system research --deep` (MCP
   `deep: true`) reviews with Deep research instead
   ([templates](docs/reference/workflow-templates.md)).
+- **`brainstorm` and `review`:** a team of two members on two provider
+  families proposes (or lists findings) independently, then votes by sealed
+  ballot, debating once on a split. A tie comes back to the caller (`vote`)
+  ([teams](docs/design/teams.md)).
 - **Website Workers as the model:** with a gateway row turned on,
   `system claude-env` and `system codex-env` print commands that run Claude Code
   or Codex on the gateways, with a website Worker as their model.
@@ -153,7 +159,8 @@ flowchart LR
    website Worker its model. Through a gateway, the model proposes the client's
    tool calls in text, and the client runs them locally
    ([ADR-0022](docs/decisions/adr/0022-text-protocol-tool-calls-for-website-models.md)).
-3. Run a single turn, or a durable workflow such as `research` or a panel.
+3. Run a single turn, or a durable workflow such as `research` or a team
+   `brainstorm`.
 
 ## Build / run / test
 

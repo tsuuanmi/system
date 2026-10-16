@@ -21,14 +21,14 @@
     artifact, appended to each target's mailbox with a sequence number. A
     repeated sender message id is delivered once.
 - **Barriers are mailbox gates.** While a group's barrier is closed, messages
-  are stored but `inbox` delivers nothing; `openBarrier` releases them
-  (independent-first).
+  are stored but `inbox` delivers nothing; `openBarrier` releases them. The
+  workflow engine's teams open their groups without one: their members never
+  message each other.
 - **Mailbox.** `inbox(session)` returns unread messages in order. `ack(session,
   seq)` moves the session's `mailboxSeq`, so a redelivery after a crash resumes
   after it.
-- **It records, never relays or rewrites.** The workflow engine posts a panel
-  member's accepted answer as that member's message. A `To m<k>: …` line in an
-  answer is a direct message to that member only.
+- **It records, never relays or rewrites.** A message is stored as its sender
+  wrote it.
 - **MCP:**
   - `session_send` (to a session or a group, client scope). It records the caller
     as the sender: `operator` for the operator token, `client` (producer

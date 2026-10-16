@@ -7,7 +7,7 @@ import type { Lease } from '@tsuuanmi/system-leases'
 import { canonicalJson, sha256 } from '@tsuuanmi/system-libs'
 import type { ArtifactRef, Tier } from '@tsuuanmi/system-workers-core'
 import type { Engine } from './engine.ts'
-import { DEFAULT_GROWTH, growthPrefix, parsePlan, type PlannedNode, type ResolvedNode } from './spec.ts'
+import { DEFAULT_GROWTH, growthPrefix, parsePlan, type PlannedNode, recordExecutor, type ResolvedNode } from './spec.ts'
 import { type NodeRecord, type NodeRow, now, type RunRow, type WorkflowError } from './types.ts'
 
 /**
@@ -73,8 +73,8 @@ export function append(e: Engine, run: RunRow, after: NodeRow, added: ResolvedNo
     db.prepare('UPDATE workflow_nodes SET ordinal = ordinal + ? WHERE run_id = ? AND ordinal > ?').run(added.length, run.run_id, after.ordinal)
     added.forEach((node, index) => {
       const record: NodeRecord = {
-        schema: 'workflow-node@1.0', runId: run.run_id, nodeId: node.nodeId, objective: node.objective, executor: node.executor ?? 'worker',
-        requirement: e.requirementOf(node, false, run.classification ?? undefined), dependsOn: node.dependsOn, state: 'WAITING', revision: 0,
+        schema: 'workflow-node@1.0', runId: run.run_id, nodeId: node.nodeId, objective: node.objective, executor: recordExecutor(node),
+        requirement: e.requirementOf(node, node.session.sessionId !== undefined, run.classification ?? undefined), dependsOn: node.dependsOn, state: 'WAITING', revision: 0,
       }
       e.schemas.assertRecord(record)
       db.prepare(`INSERT INTO workflow_nodes (run_id, node_id, ordinal, spec, record, state, updated_at) VALUES (?, ?, ?, ?, ?, 'WAITING', ?)`)

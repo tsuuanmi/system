@@ -3,7 +3,7 @@
  * upgrade.e2e.ts beside this file): the real kernel, Worker router, sessions, and workflow
  * engine, with a scripted chat Worker source standing in for website accounts, run through every
  * kind of run the engine keeps (ask, a persistent session, a plan and its steps, an approval gate,
- * a re-plan with retired nodes, a team panel, a rejected result). The store is written as SQL text
+ * a re-plan with retired nodes, a team brainstorm, a rejected result). The store is written as SQL text
  * (reviewable, no binary in git) with a manifest of the runs and what the suite expects of them.
  *
  *   pnpm gen:upgrade-fixture <label>
@@ -41,15 +41,16 @@ function chatSource(ctx: Context): void {
   const answer = (prompt: string): string => {
     if (prompt.includes('Plan how to answer')) return plan(prompt.includes('Corrected context') ? 'new-step' : 'old-step')
     if (prompt.includes('<findings>')) return 'Synthesis of the findings https://example.org/source'
-    if (prompt.includes('converged')) return '{"converged": true, "reason": "the members agree"}'
-    if (prompt.includes('final answers')) return 'Both members hold [m1] [m2].'
+    if (prompt.includes('"recommendation"')) return 'Close it for inspection.\n{"recommendation": "Close the bridge for an inspection", "rationale": "Cracks were reported", "risks": ["traffic delays"]}'
+    if (prompt.includes('your ballot')) return '{"choice": "O1", "ranking": ["O1", "O2"], "rationale": "Safety first", "evidence": [], "strongest": {"O2": "It is the same advice"}, "objections": [], "confidence": "high"}'
     if (prompt.includes('reject me')) return ''
     return `An answer to: ${prompt.slice(0, 60)} https://example.org/answer`
   }
   ctx.workers.register({
     name: 'chat',
+    // Two provider families, so a team has its two members (ADR-0027).
     describe: async () => ['a', 'b'].map((account) => ({
-      schema: 'capability-descriptor@1.0' as const, worker: `chat:${account}`, provider: 'fixture', tier: 'standard' as const, quotaClass: 'subscription-chat', locality: 'remote' as const,
+      schema: 'capability-descriptor@1.1' as const, worker: `chat:${account}`, provider: 'fixture', family: `fixture-${account}`, tier: 'standard' as const, quotaClass: 'subscription-chat', locality: 'remote' as const,
       capabilities: ['reason', 'persistent-conversation'].map((capability) => ({ capability, evidence: { kind: 'conformance' as const, at: '2026-10-14T00:00:00Z' } })),
       state: 'ready' as const, observedAt: '2026-10-14T00:00:00Z',
     })),
@@ -67,6 +68,9 @@ function chatSource(ctx: Context): void {
     wait: async (id) => executions.get(id)!,
   })
 }
+
+/** The plan a run's gate waits on. */
+const planOf = (view: RunView): string => (view.blocked?.kind === 'gate' ? view.blocked.plan : '')
 
 /** An operator action, retried while the run's advance still holds its lease. */
 const asOperator = async <T>(action: () => T): Promise<T> => {
@@ -101,15 +105,15 @@ async function seed(ctx: Context): Promise<{ runs: RunView[]; sessions: string[]
   // A gated plan, approved; then a re-plan after its input was superseded, approved again.
   const gated = wf.start({ template: 'fixture-gated', input: 'Plan with a gate' })
   await settle(() => wf.get(gated.runId)?.blocked !== undefined)
-  await asOperator(() => wf.approve(gated.runId, { verdict: 'approved', plan: wf.get(gated.runId)!.blocked!.plan, note: 'fixture approval' }))
+  await asOperator(() => wf.approve(gated.runId, { verdict: 'approved', plan: planOf(wf.get(gated.runId)!), note: 'fixture approval' }))
   await done(gated.runId)
   await new Promise((resolve) => setTimeout(resolve, 200))
   await asOperator(() => wf.supersede(gated.runId, 'context:1', { text: 'Corrected context', note: 'fixture re-plan' }))
   await settle(() => wf.get(gated.runId)?.blocked !== undefined)
-  await asOperator(() => wf.approve(gated.runId, { verdict: 'approved', plan: wf.get(gated.runId)!.blocked!.plan }))
+  await asOperator(() => wf.approve(gated.runId, { verdict: 'approved', plan: planOf(wf.get(gated.runId)!) }))
   runs.push(await done(gated.runId))
-  // A team panel on two accounts, and a run that fails on a rejected result.
-  runs.push(await done(wf.start({ template: 'panel', input: 'Is the bridge safe?' }).runId))
+  // A team brainstorm on two provider families, and a run that fails on a rejected result.
+  runs.push(await done(wf.start({ template: 'brainstorm', input: 'Is the bridge safe?' }).runId))
   runs.push(await done(wf.start({ template: 'fixture-strict', input: 'reject me' }).runId))
   const sessions = [...new Set(runs.flatMap((r) => (r.sessionId ? [r.sessionId] : [])))]
   return { runs, sessions }

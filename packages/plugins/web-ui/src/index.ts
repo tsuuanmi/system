@@ -1,6 +1,6 @@
 /**
  * The operator's web UI (REQ-HOST "Web UI: status, watch"): runs, their steps, and each
- * step's decision chain, plus the operator's approve, stop, and continue. It is served on the
+ * step's decision chain, plus the operator's approve, deciding vote on a tie, stop, and continue. It is served on the
  * DSH webserver under `/ui`, which is loopback-only:
  * - the page and script carry no data, under a strict content security policy;
  * - the token arrives in the URL fragment (never sent to a server), and the script sends it as
@@ -66,7 +66,7 @@ export function apply(ctx: Context, config: Config = {}): void {
     if (refused) return json(res, refused[0], { error: refused[1] })
     const workflow = ctx.workflow
     if (req.method === 'GET' && path === 'runs') return json(res, 200, { runs: workflow.usage(100) })
-    const match = /^runs\/([A-Za-z0-9_-]{1,100})(?:\/(approve|stop|continue))?$/.exec(path)
+    const match = /^runs\/([A-Za-z0-9_-]{1,100})(?:\/(approve|vote|stop|continue))?$/.exec(path)
     if (!match) return json(res, 404, { error: 'not found' })
     const [, runId, action] = match as unknown as [string, string, string | undefined]
     if (!action && req.method === 'GET') {
@@ -82,6 +82,14 @@ export function apply(ctx: Context, config: Config = {}): void {
         // The plan the page showed: the engine decides only that one (INV-5).
         const plan = typeof body.plan === 'string' && /^sha256:[0-9a-f]+$/.test(body.plan) ? body.plan : undefined
         return json(res, 200, { run: workflow.approve(runId, { verdict: body.verdict, ...(note ? { note } : {}), ...(plan ? { plan } : {}) }) })
+      }
+      if (action === 'vote') {
+        // The tie the page showed: the engine decides only that one. The UI is the operator's (ADR-0023).
+        const decision = typeof body.decision === 'string' && /^sha256:[0-9a-f]+$/.test(body.decision) ? body.decision : undefined
+        const option = typeof body.option === 'string' && /^[A-Za-z0-9-]{1,16}$/.test(body.option) ? body.option : undefined
+        const rationale = typeof body.rationale === 'string' ? body.rationale.trim().slice(0, 2000) : ''
+        if (!decision || !option || !rationale) return json(res, 400, { error: 'a vote needs the tie decision, an option, and a rationale' })
+        return json(res, 200, { run: workflow.vote(runId, { decision, option, rationale, by: 'operator' }) })
       }
       if (action === 'stop') return json(res, 200, { run: await workflow.stop(runId, typeof body.reason === 'string' && body.reason.trim() ? body.reason.trim().slice(0, 500) : undefined) })
       return json(res, 200, { run: workflow.continue(runId, typeof body.nodeId === 'string' ? body.nodeId : undefined) })

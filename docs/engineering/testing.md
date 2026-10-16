@@ -42,7 +42,9 @@ package's `conformance/` directory. Each provider's tests call the suite with a
   - Each fixture is a store seeded by that release's code and written as SQL
     text with a manifest of its runs: every kind of run the engine keeps (ask, a
     persistent session, a plan, an approval gate, a re-plan with retired nodes,
-    a team panel, a rejected result).
+    a team, a rejected result). The generator seeds a team `brainstorm`; the
+    committed fixture `seed-2026-10-14` holds a run of the removed `panel`,
+    which must still `explain` and answer `result`.
   - The suite boots the shipped profile on each fixture through `dsh`, which
     migrates it. Every old run must still `explain` and answer `result` as the
     manifest says, no migration may go backwards, and every node, session, and

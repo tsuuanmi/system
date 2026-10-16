@@ -160,8 +160,10 @@ together with, the update that removes the preset:
    `~/.dsh/system/login-profiles/<id>`, while no remote login for it is open
    ([login](../../packages/plugins/login/README.md)).
 
-A panel holds its members to distinct accounts, so with one ChatGPT account left
-it needs another one, such as a Gemini account. `research` needs Workers of two
+A team (`brainstorm`, `review`) puts each member on its own provider family and
+account, so with one ChatGPT account left it needs another provider's account,
+such as a Gemini account ([teams](../design/teams.md#membership-model-a)).
+`research` needs Workers of two
 provider families, such as accounts of two providers, one of them proving Web
 search: its two literature reviews run on different families
 ([templates](../reference/workflow-templates.md#research)).

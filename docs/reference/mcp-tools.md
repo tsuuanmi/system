@@ -104,6 +104,18 @@ Scope: `client`
 | `clientRequestId` | string |  | Retry-safe request key |
 | `waitSeconds` | integer |  | How long to wait for the run to finish before returning (default 45 s) |
 
+## `brainstorm`
+
+Decide a question as a team, one member per provider family: each proposes on its own, then all vote by sealed ballot; a split vote gets one debate and a re-vote, and a tie comes back to you (`vote`). Returns at once with a runId; poll `result`. The answer starts with a line `outcome: …; method: …; winner: …; decision: …`.
+
+Scope: `client`
+
+| Argument | Type | Required | Description |
+|---|---|---|---|
+| `question` | string | yes | The question and its context: options, constraints, what has been decided |
+| `classification` | "public" \| "operator-shared" \| "local-private" |  | Data classification of the input; local-private content never leaves the machine (INV-12) |
+| `clientRequestId` | string |  | Retry-safe request key |
+
 ## `continue`
 
 Continue a failed run: reopen its one failed node (or a stopped run's nodes) as a new attempt (an operator decision).
@@ -187,7 +199,7 @@ Scope: `client`
 
 ## `result`
 
-Fetch a run started by `ask` or `research`; waits up to waitSeconds for it to finish.
+Fetch a run (ask, research, brainstorm, review, or run); waits up to waitSeconds for it to finish or to wait on you (a tie's `blocked`).
 
 Scope: `client`
 
@@ -204,9 +216,21 @@ Scope: `operator`
 
 No arguments.
 
+## `review`
+
+Review material as a team (an approach, a design, or a diff, as text), one member per provider family: each lists findings on its own, then all vote pass or changes by sealed ballot over the merged findings; a split vote gets one debate, and a tie comes back to you (`vote`). Returns at once with a runId; poll `result`.
+
+Scope: `client`
+
+| Argument | Type | Required | Description |
+|---|---|---|---|
+| `material` | string | yes | What to review, with the criteria it must meet |
+| `classification` | "public" \| "operator-shared" \| "local-private" |  | Data classification of the input; local-private content never leaves the machine (INV-12) |
+| `clientRequestId` | string |  | Retry-safe request key |
+
 ## `run`
 
-Start a workflow template by name (built in: ask, panel; profiles add more, such as research); its steps are routed by capability to the Workers that can do them. Waits up to waitSeconds; otherwise returns a runId for `result`.
+Start a workflow template by name (built in: ask, brainstorm, review; profiles add more, such as research); its steps are routed by capability to the Workers that can do them. Waits up to waitSeconds; otherwise returns a runId for `result`.
 
 Scope: `client`
 
@@ -286,4 +310,17 @@ Scope: `client`
 | Argument | Type | Required | Description |
 |---|---|---|---|
 | `limit` | integer |  |  |
+
+## `vote`
+
+Break a team's tie: the deciding vote, bound to the exact tie decision the run shows in `blocked` (an option, or inconclusive), with your rationale.
+
+Scope: `client`
+
+| Argument | Type | Required | Description |
+|---|---|---|---|
+| `runId` | string | yes |  |
+| `decision` | string | yes | The tie decision from the run's blocked view |
+| `option` | string | yes | One of the tie's options, or inconclusive |
+| `rationale` | string | yes |  |
 

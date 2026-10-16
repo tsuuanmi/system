@@ -18,7 +18,7 @@ const RUN = {
   runId: 'run_abc', template: 'investigate', status: 'running', specHash: 'sha256:00', createdAt: '2026-10-12T00:00:00Z', updatedAt: '2026-10-12T00:00:01Z',
   nodes: [{ nodeId: 'plan:1', state: 'COMPLETED', minTier: 'standard', attempt: 1, worker: 'worker:a/standard', tier: 'standard', quotaClass: 'subscription-chat' },
     { nodeId: 'plan:1:gate', state: 'BLOCKED', minTier: 'economy', attempt: 0 }],
-  blocked: { nodeId: 'plan:1:gate', plan: 'sha256:11' },
+  blocked: { kind: 'gate', nodeId: 'plan:1:gate', plan: 'sha256:11' },
 }
 
 /** A stand-in engine: what the UI reads and what it asks. */
@@ -33,6 +33,7 @@ class StubWorkflow extends Service {
   approve(id: string, input: unknown) { this.calls.push(['approve', id, input]); return RUN }
   async stop(id: string, reason?: string) { this.calls.push(['stop', id, reason]); return RUN }
   continue(id: string, nodeId?: string) { this.calls.push(['continue', id, nodeId]); return RUN }
+  vote(id: string, input: unknown) { this.calls.push(['vote', id, input]); return RUN }
 }
 
 async function boot() {
@@ -110,10 +111,13 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     expect((await post('approve', { verdict: 'approved', note: 'ok', plan: 'sha256:11' })).status).toBe(200)
     expect((await post('stop', { reason: 'enough' })).status).toBe(200)
     expect((await post('continue', {})).status).toBe(200)
+    expect((await post('vote', { decision: 'sha256:33', option: 'O2', rationale: 'the operator decides' })).status).toBe(200)
+    expect((await post('vote', { decision: 'sha256:33', option: 'O2' })).status).toBe(400)
     expect((await post('approve', { verdict: 'maybe' })).status).toBe(400)
     expect((await post('stop', {}, 'text/plain')).status).toBe(415)
     expect((await post('delete', {})).status).toBe(404)
-    expect(workflow.calls).toEqual([['approve', 'run_abc', { verdict: 'approved', note: 'ok', plan: 'sha256:11' }], ['stop', 'run_abc', 'enough'], ['continue', 'run_abc', undefined]])
+    expect(workflow.calls).toEqual([['approve', 'run_abc', { verdict: 'approved', note: 'ok', plan: 'sha256:11' }], ['stop', 'run_abc', 'enough'], ['continue', 'run_abc', undefined],
+      ['vote', 'run_abc', { decision: 'sha256:33', option: 'O2', rationale: 'the operator decides', by: 'operator' }]])
   })
 
   it.runIf(canRunBrowser)('renders runs, steps, and decisions in a real browser, and approves a waiting plan', async () => {

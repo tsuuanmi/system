@@ -1,0 +1,192 @@
+{
+  "schema": "decision@1.1",
+  "decisionType": "vote",
+  "question": "What does team brainstorm of run run_0123456789abcdef decide?",
+  "inputs": [
+    "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+    "sha256:4444444444444444444444444444444444444444444444444444444444444444"
+  ],
+  "candidates": [
+    {
+      "option": "O1",
+      "selected": false,
+      "reasons": []
+    },
+    {
+      "option": "O2",
+      "selected": true,
+      "reasons": [
+        "the client broke the tie for O2: the deadline matters more this quarter"
+      ]
+    },
+    {
+      "option": "inconclusive",
+      "selected": false,
+      "reasons": []
+    }
+  ],
+  "decider": {
+    "type": "client",
+    "id": "workflow.vote",
+    "version": "1"
+  },
+  "outcome": {
+    "option": "O2",
+    "detail": {
+      "method": "caller-tiebreak"
+    }
+  },
+  "deterministic": false,
+  "vote": {
+    "kind": "brainstorm",
+    "method": "caller-tiebreak",
+    "threshold": 2,
+    "members": [
+      {
+        "member": "m1",
+        "identity": "ses_1111111111111111"
+      },
+      {
+        "member": "m2",
+        "identity": "ses_2222222222222222"
+      }
+    ],
+    "options": [
+      {
+        "option": "O1",
+        "text": "Extend the existing engine with a tally step.",
+        "member": "m1",
+        "ref": "sha256:5555555555555555555555555555555555555555555555555555555555555555"
+      },
+      {
+        "option": "O2",
+        "text": "Ship a separate team runner first.",
+        "member": "m2",
+        "ref": "sha256:6666666666666666666666666666666666666666666666666666666666666666"
+      }
+    ],
+    "rounds": [
+      {
+        "round": 1,
+        "ballots": [
+          {
+            "member": "m1",
+            "ref": "sha256:7777777777777777777777777777777777777777777777777777777777777777",
+            "choice": "O1",
+            "ranking": [
+              "O1",
+              "O2"
+            ],
+            "rationale": "It keeps one authoritative runtime and needs no new protocol.",
+            "evidence": [
+              "ADR-0004: one workflow runtime"
+            ],
+            "strongest": {
+              "O2": "It ships a week sooner."
+            },
+            "objections": [
+              "O2 duplicates the runtime"
+            ],
+            "confidence": "medium"
+          },
+          {
+            "member": "m2",
+            "ref": "sha256:8888888888888888888888888888888888888888888888888888888888888888",
+            "choice": "O2",
+            "ranking": [
+              "O2",
+              "O1"
+            ],
+            "rationale": "It keeps one authoritative runtime and needs no new protocol.",
+            "evidence": [
+              "ADR-0004: one workflow runtime"
+            ],
+            "strongest": {
+              "O1": "It ships a week sooner."
+            },
+            "objections": [
+              "O1 delays the release"
+            ],
+            "confidence": "medium"
+          }
+        ],
+        "counts": {
+          "O1": 1,
+          "O2": 1
+        },
+        "winner": null,
+        "ended": "debate"
+      },
+      {
+        "round": 2,
+        "ballots": [
+          {
+            "member": "m1",
+            "ref": "sha256:9999999999999999999999999999999999999999999999999999999999999999",
+            "choice": "O1",
+            "ranking": [
+              "O1",
+              "O2"
+            ],
+            "rationale": "It keeps one authoritative runtime and needs no new protocol.",
+            "evidence": [
+              "ADR-0004: one workflow runtime"
+            ],
+            "strongest": {
+              "O2": "It ships a week sooner."
+            },
+            "objections": [
+              "O2 duplicates the runtime"
+            ],
+            "confidence": "medium",
+            "crux": "A second runner breaks INV-1."
+          },
+          {
+            "member": "m2",
+            "ref": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "choice": "O2",
+            "ranking": [
+              "O2",
+              "O1"
+            ],
+            "rationale": "It keeps one authoritative runtime and needs no new protocol.",
+            "evidence": [
+              "ADR-0004: one workflow runtime"
+            ],
+            "strongest": {
+              "O1": "It ships a week sooner."
+            },
+            "objections": [
+              "O1 delays the release"
+            ],
+            "confidence": "medium",
+            "crux": "The release date is fixed."
+          }
+        ],
+        "counts": {
+          "O1": 1,
+          "O2": 1
+        },
+        "winner": null,
+        "ended": "rounds-exhausted"
+      }
+    ],
+    "dissent": [
+      {
+        "member": "m1",
+        "choice": "O1",
+        "objections": [
+          "O2 duplicates the runtime"
+        ],
+        "strongest": {
+          "O2": "It ships a week sooner."
+        }
+      }
+    ],
+    "tiebreak": {
+      "by": "client",
+      "option": "O2",
+      "rationale": "The deadline matters more this quarter."
+    }
+  }
+}

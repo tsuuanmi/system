@@ -8,6 +8,7 @@ import type { ArtifactRef } from '@tsuuanmi/system-workers-core'
 import type { Engine } from './engine.ts'
 import { decideGate, grewFrom, grow } from './growth.ts'
 import { DEFAULT_GROWTH, parsePlan, type ResolvedNode } from './spec.ts'
+import { isRemovedTeamStep } from './teams.ts'
 import { LEASE_TTL_MS, type NodeRecord, type NodeRow, now, type RunRow, type RunView, type WorkflowError, WorkflowFailure } from './types.ts'
 
 /**
@@ -47,6 +48,10 @@ export function continueRun(e: Engine, runId: string, nodeId?: string): RunView 
     : stopped ? failed.filter((n) => (JSON.parse(n.error ?? '{}') as WorkflowError).kind === 'stopped') : failed
   if (!reopen.length) throw new WorkflowFailure('invalid_input', nodeId ? `node ${nodeId} of run ${runId} has not failed` : `run ${runId} has no failed node`)
   if (!stopped && reopen.length > 1) throw new WorkflowFailure('invalid_input', `run ${runId} has ${reopen.length} failed nodes; name the one to continue`)
+  // A team procedure an earlier version ran (critique rounds, a lead, a synthesis) is not run any more: its record stays readable.
+  if (e.nodeRows(runId).some((n) => isRemovedTeamStep(JSON.parse(n.spec) as ResolvedNode))) {
+    throw new WorkflowFailure('invalid_input', `run ${runId} is a team procedure that was removed (PROP-0004); its record stays readable with explain and result, and it cannot run again`)
+  }
   const view = asOperator(e, runId, (lease) => {
     const decision = operatorDecision(e, run, 'continue', ['continue', 'leave'], `reopen ${reopen.map((n) => n.node_id).join(', ')}`)
     for (const node of reopen) {

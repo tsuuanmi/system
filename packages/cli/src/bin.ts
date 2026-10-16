@@ -15,10 +15,12 @@ const USAGE = `Usage: system <command>
                             the research procedure: hypotheses, two cited reviews on two
                             providers, evidence, critique, conclusions (--deep: Deep research)
   run <template> [--variant <v>] [--session <id>] [--persist] [--tier <t>] [--classification <c>] (<input...> | -)
-                            start any workflow template (ask, panel, research, ...)
+                            start any workflow template (ask, brainstorm, review, research, ...)
   approve <runId> [--plan <id>] [--reject] [note...]
                             approve (or reject) the plan a run is waiting on, bound to that exact plan
                             (name it with --plan when several wait)
+  vote <runId> --decision <id> <option|inconclusive> <rationale...>
+                            break a team's tie: the deciding vote, bound to that exact tie decision
   result <runId>            wait for a run and print its answer (also: watch <runId>)
   stop <runId> [reason]     stop a run: running work is cancelled, nothing is resent
   continue <runId> [nodeId] reopen a failed run's failed node as a new attempt
@@ -79,7 +81,7 @@ interface RunOutcome {
   sessionId?: string
   answer?: string
   nodes?: Array<{ nodeId: string; state: string }>
-  blocked?: { nodeId: string; plan: string }
+  blocked?: { kind: 'gate'; nodeId: string; plan: string } | { kind: 'tie'; nodeId: string; decision: string; options: Array<{ option: string; summary: string }>; until: string }
   error?: { kind: string; message: string }
 }
 
@@ -92,7 +94,14 @@ async function awaitRun(first: ToolOutcome): Promise<number> {
     const run = outcome.structured as unknown as RunOutcome
     const now = (run.nodes ?? []).map((n) => `${n.nodeId} ${n.state}`).join(', ')
     if (run.status === 'running' && now !== progress) console.error(`${run.runId}: ${(progress = now)}`)
-    if (run.status === 'running' && run.blocked) {
+    if (run.status === 'running' && run.blocked?.kind === 'tie') {
+      const tie = run.blocked
+      console.error(`the team tied; until ${tie.until} it waits for a deciding vote, then ends inconclusive:`)
+      for (const o of tie.options) console.error(`  ${o.option}: ${o.summary}`)
+      console.error(`system vote ${run.runId} --decision ${tie.decision} <${tie.options.map((o) => o.option).join('|')}|inconclusive> <rationale>`)
+      return 0
+    }
+    if (run.status === 'running' && run.blocked?.kind === 'gate') {
       console.error(`waiting for approval of plan ${run.blocked.plan}: system approve ${run.runId} --plan ${run.blocked.plan} [--reject] [note]`)
       return 0
     }
@@ -163,6 +172,15 @@ async function main(argv: string[]): Promise<number> {
       if (outcome.isError) throw new Error(outcome.text)
       console.log(`${reject ? 'rejected' : 'approved'}: ${runId}`)
       return reject ? 0 : awaitRun(await callTool('result', { runId, waitSeconds: 55 }))
+    }
+    case 'vote': {
+      const [runId, flag, decision, option, ...words] = rest
+      const rationale = words.join(' ').trim()
+      if (!runId || flag !== '--decision' || !decision || !option || !rationale) break
+      const outcome = await callTool('vote', { runId, decision, option, rationale })
+      if (outcome.isError) throw new Error(outcome.text)
+      console.error(`voted ${option}: ${runId}`)
+      return awaitRun(await callTool('result', { runId, waitSeconds: 55 }))
     }
     case 'stop': {
       if (!rest[0]) break
