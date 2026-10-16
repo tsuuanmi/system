@@ -286,6 +286,12 @@ A turn that fails with `reauth_required` or `challenge` (disposition
 - Store credentials once with `system account credentials <id>` (JSON on
   stdin). They are encrypted in the vault and never logged.
 
+- **A challenge** (`system health`: the account is `challenge`; event
+  `account.challenged`) is the site's own check, such as Google's unusual-traffic
+  CAPTCHA. Nothing loads the site again until you pass it: wait a while (repeated
+  automated loads deepen it), run `system account login <id>`, solve the check in
+  the login browser, and press Save.
+
 Then continue the failed run: `system continue <runId>`.
 
 ## Backup and restore

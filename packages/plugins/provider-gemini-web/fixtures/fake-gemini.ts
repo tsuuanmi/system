@@ -43,6 +43,8 @@ export interface FakeOptions {
   startOnSpark?: boolean
   /** The app shows only an interstitial dialog: neither signed in nor signed out can be told. */
   interstitial?: boolean
+  /** Google's unusual-traffic check instead of the app: a form holding a reCAPTCHA (seen live 2026-10-16). */
+  captcha?: boolean
   /** A prompt this long or longer is dropped on Send, as the live site drops a long paste: the composer empties, nothing is asked (0: never). */
   dropOver?: number
   /** Clicking Chat does nothing (the driver must refuse to send). */
@@ -366,7 +368,7 @@ export class FakeGemini {
 
   constructor(options: FakeOptions = {}) {
     this.options = {
-      paneMenu: true, dialogTarget: '', dialogExtraCall: false, startOnSpark: true, interstitial: false, dropOver: 0, signInOffer: false, chatTabBroken: false, temporaryBroken: false, modePicker: true, promptParagraphs: true, deepResearch: true,
+      paneMenu: true, dialogTarget: '', dialogExtraCall: false, startOnSpark: true, interstitial: false, captcha: false, dropOver: 0, signInOffer: false, chatTabBroken: false, temporaryBroken: false, modePicker: true, promptParagraphs: true, deepResearch: true,
       models: ['3.5 Flash-Lite', '3.8 Flash', '3.1 Pro'], levels: ['Low', 'Medium', 'High'], levelsInline: true, levelsSubmenu: true, submenuBroken: false, answer: 'OK', clarify: '',
       researchMs: 1500, report: 'HTTP/3 runs over QUIC, not TCP.', sources: [{ title: 'RFC 9114: HTTP/3', url: 'https://www.rfc-editor.org/rfc/rfc9114' }], ...options,
     }
@@ -455,6 +457,10 @@ export class FakeGemini {
       }
       if (page[1] && !this.conversations.has(page[1])) {
         res.writeHead(302, { location: '/app' }).end()
+        return
+      }
+      if (this.options.captcha) {
+        res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }).end('<!doctype html><html><body><form action="/sorry/index" method="post"><iframe title="reCAPTCHA" src="/recaptcha/api2/anchor" style="width:304px;height:78px"></iframe><textarea class="g-recaptcha-response" style="display:none"></textarea><input type="submit" value="Submit"></form><a href="#">Why did this happen?</a></body></html>')
         return
       }
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }).end(this.options.interstitial

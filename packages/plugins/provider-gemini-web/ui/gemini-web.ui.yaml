@@ -13,6 +13,13 @@ elements:
     candidates:
       - { role: link, name: { en: '^Sign in$' } }
       - { role: button, name: { en: '^Sign in$' } }
+  auth.challenge:
+    description: >-
+      Google's "unusual traffic" check: a form holding a reCAPTCHA (seen live on 2026-10-16, in
+      turns and in the login profile alike). Only the operator can pass it.
+    candidates:
+      - { css: 'form:has(textarea.g-recaptcha-response)' }
+      - { css: 'iframe[src*="recaptcha"]' }
   auth.account:
     description: "The signed-in Google account's button; its name carries the account (Google Account, then the name and email)."
     candidates:
@@ -304,7 +311,9 @@ states:
   # A "Sign in" control beside the account's own button is not a signed-out page (an offer to add an
   # account, say): only the sign-in host, or a sign-in control with no account shown, is.
   auth.signed-out: { anyOf: [{ url: '^https?://accounts\.google\.com/' }, { allOf: [{ visible: auth.login }, { not: { visible: auth.account } }] }] }
+  auth.challenge: { anyOf: [{ url: '^https?://(www\.)?google\.com/sorry/' }, { visible: auth.challenge }] }
   turn.running: { visible: composer.stop }
 
 errors:
+  - { when: { state: auth.challenge }, kind: challenge, message: 'gemini-web: Google shows its unusual-traffic check (a CAPTCHA); solve it in the login profile (system account login) and Save' }
   - { when: { state: auth.signed-out }, kind: reauth_required, message: 'gemini-web: signed out' }

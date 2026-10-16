@@ -135,6 +135,20 @@ describe.runIf(canRunBrowser)('ctx.turns: ask through a saved account', () => {
     expect((await ctx.accounts.get('chatgpt-main')).status).toBe('reauth-required')
   }, 90_000)
 
+  it('marks an account challenged when its site shows a check only the operator can pass: its Workers stop, nothing is sent (live 2026-10-16)', async () => {
+    const { ctx, fake } = await boot()
+    const driver = ctx.providers.get('chatgpt-web') as unknown as { checkAuth: () => Promise<string> }
+    driver.checkAuth = async () => {
+      throw new ProviderError('challenge', 'chatgpt-web: the site shows a CAPTCHA')
+    }
+    const turn = await ctx.turns.wait((await ask(ctx, { prompt: 'blocked' })).turnId, 30_000)
+    expect(turn).toMatchObject({ status: 'failed', submitted: false, error: { kind: 'challenge', disposition: 'USER_ACTION' } })
+    expect((await ctx.accounts.get('chatgpt-main')).status).toBe('challenge')
+    expect((await ctx.workers.list()).filter((w) => w.worker.startsWith('worker:chatgpt-main/')).every((w) => w.state === 'unavailable')).toBe(true)
+    expect(ctx.eventLog.query({ type: 'account.challenged' })).toEqual([expect.objectContaining({ data: expect.objectContaining({ account: 'chatgpt-main' }) })])
+    expect(fake.sent).toEqual([])
+  }, 90_000)
+
   it('checks a ready account\'s sign-in, sending nothing, and marks it signed out only on positive evidence (health sees it before a turn)', async () => {
     const { ctx, fake } = await boot({ fake: { loginOffer: true } })
     expect(await ctx.turns.checkSignIn('chatgpt-main')).toBe('signed-in')

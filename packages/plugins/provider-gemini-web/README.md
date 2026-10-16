@@ -90,7 +90,10 @@ driver, its operations are data: a UI map,
   sending, or is reported as not observed. A page that shows neither the
   signed-in account nor a sign-in page in time (a dialog or interstitial, say)
   is outlined as a `ui.drift` of `auth.account`, so `system evidence` shows what
-  it showed instead.
+  it showed instead, and fails the turn as `ui_drift` once (never three retries
+  of 60 s on the same account). Google's unusual-traffic check (a form holding a
+  reCAPTCHA, `auth.challenge`, seen live on 2026-10-16) is `challenge`: the turn
+  stops at once, and the turn runtime marks the account `challenge`.
 - **No self-heal.** A drifted element fails closed until the map is updated. A
   stale element is logged as `ui.drift`, naming its region's outline, kept as
   local-private evidence

@@ -109,6 +109,23 @@ describe.runIf(canRunBrowser)('GeminiWebDriver against the fake site', { timeout
     expect(drifts[0]!.outline!.nodes.some((n) => n.role === 'dialog')).toBe(true)
   })
 
+  it('stops at Google\'s unusual-traffic check as a challenge, at once and with nothing sent (live 2026-10-16)', async () => {
+    const { page, driver, fake } = await open({ captcha: true })
+    const started = Date.now()
+    await expect(driver.checkAuth(page)).rejects.toMatchObject({ kind: 'challenge', disposition: 'USER_ACTION', message: expect.stringMatching(/unusual-traffic check/) })
+    // Not the 60 s a page that never becomes ready waits.
+    expect(Date.now() - started).toBeLessThan(20_000)
+    await expect(driver.ask(page, 'hello', { conversation: 'temporary' })).rejects.toMatchObject({ kind: 'challenge' })
+    expect(fake.sent).toEqual([])
+  })
+
+  it('fails a page that shows neither signed in nor signed out once, as drift, never as a session to retry', async () => {
+    const { page, fake } = await open({ interstitial: true })
+    const driver = new GeminiWebDriver({ origin: fake.origin, modes: PRESETS, defaultMode: 'flash', timeouts: { readyMs: 1500 } })
+    await expect(driver.ask(page, 'hello', { conversation: 'temporary' })).rejects.toMatchObject({ kind: 'ui_drift', disposition: 'CONFIG_FIX' })
+    expect(fake.sent).toEqual([])
+  })
+
   it('fails a bound conversation the site no longer has at once, as conversation_lost: reopening it cannot help (live 2026-10-16)', async () => {
     const { page, driver, fake } = await open({ answer: 'first' })
     const first = await driver.ask(page, 'remember', { conversation: 'persistent' })

@@ -676,6 +676,9 @@ export class Turns extends Service {
         const turn = await this.ctx.browser.openTurn(accountId, { state: await this.ctx.accounts.portableState(accountId), ...(signal ? { signal } : {}) })
         try {
           return await driver.probeFeatures!(turn.page)
+        } catch (error) {
+          await this.challenged(accountId, error, view.revision)
+          throw error
         } finally {
           await turn.close()
         }
@@ -713,11 +716,14 @@ export class Turns extends Service {
     const view = await this.ctx.accounts.get(accountId)
     if (view.status !== 'ready') return 'unknown'
     const driver = this.ctx.providers.get(view.provider)
-    const auth = await this.scheduler(accountId).runTurn(`auth:${accountId}`, signal, async (slot) => {
+    const auth = await this.scheduler(accountId).runTurn(`auth:${accountId}`, signal, async (slot): Promise<'signed-in' | 'signed-out' | 'unknown'> => {
       const state = await this.ctx.accounts.portableState(accountId)
       const turn = await this.ctx.browser.openTurn(accountId, { state, ...(signal ? { signal } : {}) })
       try {
-        const seen = await driver.checkAuth(turn.page)
+        const seen = await driver.checkAuth(turn.page).catch(async (error: unknown) => {
+          await this.challenged(accountId, error, view.revision)
+          throw error
+        })
         if (seen === 'signed-in') await this.writeBack(accountId, turn, driver.stateOrigins, state, view.revision, () => slot.signal.throwIfAborted())
         return seen
       } finally {
@@ -791,6 +797,7 @@ export class Turns extends Service {
         }
         await this.ctx.accounts.markSignedOut(accountId, 'login-surface', view.revision).catch(() => undefined)
       }
+      await this.challenged(accountId, error, view.revision)
       throw error
     }
     try {
@@ -816,6 +823,17 @@ export class Turns extends Service {
     } catch (error) {
       this.ctx.get('eventLog')?.append({ type: 'account.write-back-skipped', data: { account: accountId, reason: (error as Error).message.slice(0, 200) } })
     }
+  }
+
+  /**
+   * A site's challenge (a CAPTCHA, an unusual-traffic check) needs the operator: the account is
+   * marked `challenge`, so its Workers are unavailable and nothing loads the site again until the
+   * operator has passed it and saved the account (event `account.challenged`).
+   */
+  private async challenged(accountId: string, error: unknown, revision: number): Promise<void> {
+    if (!(error instanceof ProviderError) || error.kind !== 'challenge') return
+    await this.ctx.accounts.markChallenge(accountId, error.message, revision).catch(() => undefined)
+    this.ctx.get('eventLog')?.append({ type: 'account.challenged', data: { account: accountId, reason: error.message.slice(0, 200) } })
   }
 
   /** Record the conversation binding on the receipt, the session, the turn, and the conversation ledger (fenced). */

@@ -121,13 +121,15 @@ export class GeminiWebDriver implements ProviderDriver<Page> {
     if (!page.url().startsWith(this.origin)) await page.goto(this.loginUrl, { waitUntil: 'domcontentloaded' })
     const engine = this.engine(page)
     try {
-      await engine.waitFor({ anyOf: [{ state: 'auth.signed-in' }, { state: 'auth.signed-out' }] }, this.timeouts.readyMs)
+      await engine.waitFor({ anyOf: [{ state: 'auth.signed-in' }, { state: 'auth.signed-out' }, { state: 'auth.challenge' }] }, this.timeouts.readyMs)
     } catch {
       // Neither state: whatever the page shows instead (a dialog, an interstitial) is outlined as
       // drift evidence, so it can be read without opening the operator's browser.
       await engine.drift('auth.account').catch(() => undefined)
       return 'unknown'
     }
+    // Google's unusual-traffic check is neither: only the operator can pass it, and loading again deepens it.
+    if (await engine.state('auth.challenge')) throw new ProviderError('challenge', 'gemini-web: Google shows its unusual-traffic check (a CAPTCHA); solve it in the login profile (system account login) and Save')
     return (await engine.state('auth.signed-out')) ? 'signed-out' : 'signed-in'
   }
 
@@ -335,7 +337,8 @@ export class GeminiWebDriver implements ProviderDriver<Page> {
     await page.goto(binding ? `${this.origin}/app/${binding}` : this.loginUrl, { waitUntil: 'domcontentloaded' })
     const auth = await this.checkAuth(page)
     if (auth === 'signed-out') throw new ProviderError('reauth_required', 'gemini-web: signed out')
-    if (auth === 'unknown') throw new ProviderError('session_broken', 'gemini-web: page did not become ready')
+    // Neither signed in nor signed out (outlined as drift): loading it again on this account only adds traffic.
+    if (auth === 'unknown') throw new ProviderError('ui_drift', 'gemini-web: the page showed neither the signed-in account nor a sign-in page in time (outlined as a ui.drift of auth.account)')
     if (binding && this.bindingOf(page) !== binding) {
       // Signed in, and the site sent the page elsewhere: it no longer has this conversation.
       throw new ProviderError('conversation_lost', `gemini-web: conversation ${binding} no longer opens (the site sent the page to ${new URL(page.url()).pathname}); a session that needs it cannot continue`)
