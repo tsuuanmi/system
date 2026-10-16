@@ -9,7 +9,8 @@
  *   moves to `/app/<16 hex>` once sent, and reopens there; an unknown one goes to `/unavailable`;
  * - the mode picker (`data-test-id="bard-mode-menu-button"`, "Open mode picker, currently Flash")
  *   opens one menu holding the models (`data-test-id="bard-mode-option-…"`, "3.8 Flash\nAll-around
- *   help") and the thinking levels ("Low\nQuick and efficient"); the chosen model and level have
+ *   help") and the thinking levels under a "Thinking level" item, each with its note on the same
+ *   line ("Low Quick and efficient", since 2026-10-16); the chosen model and level have
  *   the class `selected`. Here, choosing an item closes the menu;
  * - turns are `user-query` (a heading "You said" with a shortened copy, then the prompt's
  *   paragraphs) and `model-response` (heading "Gemini said", then
@@ -43,6 +44,11 @@ export interface FakeOptions {
   models?: string[]
   /** Thinking levels in the mode menu. */
   levels?: string[]
+  /**
+   * The thinking levels as seen live on 2026-10-16 (default true): under a "Thinking level" item,
+   * each with its note on the same line ("Medium Balanced depth"). False: each note on its own line.
+   */
+  levelsInline?: boolean
   /** Answer Markdown, streamed word by word. */
   answer?: string
   /** Deep research answers with this instead of a plan (a clarifying question). */
@@ -101,8 +107,11 @@ function render() {
 function renderMenu() {
   const item = (name, kind, i) => '<div role="menuitem" tabindex="0" data-kind="' + kind + '" data-name="' + name + '"'
     + (kind === 'model' ? ' data-test-id="bard-mode-option-' + i + '"' : '')
-    + ' class="' + ((kind === 'model' ? name === model : name === level) ? 'selected' : '') + '">' + name + '<br><span>' + (options.notes[short(name)] ?? '') + '</span></div>'
-  $('menu').innerHTML = options.models.map((m, i) => item(m, 'model', i)).join('') + options.levels.map((l, i) => item(l, 'level', i)).join('')
+    + ' class="' + ((kind === 'model' ? name === model : name === level) ? 'selected' : '') + '">' + name
+    + (kind === 'level' && options.levelsInline ? ' <span>' : '<br><span>') + (options.notes[short(name)] ?? '') + '</span></div>'
+  $('menu').innerHTML = options.models.map((m, i) => item(m, 'model', i)).join('')
+    + (options.levelsInline ? '<div role="menuitem" tabindex="0">Thinking level</div>' : '')
+    + options.levels.map((l, i) => item(l, 'level', i)).join('')
   for (const el of $('menu').querySelectorAll('[data-kind]')) el.onclick = () => {
     if (el.dataset.kind === 'model') model = el.dataset.name
     else level = el.dataset.name
@@ -300,7 +309,7 @@ export class FakeGemini {
   constructor(options: FakeOptions = {}) {
     this.options = {
       startOnSpark: true, chatTabBroken: false, temporaryBroken: false, modePicker: true, promptParagraphs: true, deepResearch: true,
-      models: ['3.5 Flash-Lite', '3.8 Flash', '3.1 Pro'], levels: ['Low', 'Medium', 'High'], answer: 'OK', clarify: '',
+      models: ['3.5 Flash-Lite', '3.8 Flash', '3.1 Pro'], levels: ['Low', 'Medium', 'High'], levelsInline: true, answer: 'OK', clarify: '',
       researchMs: 1500, report: 'HTTP/3 runs over QUIC, not TCP.', sources: [{ title: 'RFC 9114: HTTP/3', url: 'https://www.rfc-editor.org/rfc/rfc9114' }], ...options,
     }
   }

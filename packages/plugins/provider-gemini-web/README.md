@@ -22,6 +22,8 @@ driver, its operations are data: a UI map,
   them. The mode menu holds both, and the chosen items are marked `selected`.
   - A model may be named without its version: `Flash` matches `3.8 Flash` and
     never `3.5 Flash-Lite`.
+  - An item's note may follow its name on the same line (`Medium Balanced
+    depth`) or on its own line; the name is matched either way.
   - Both are read back before sending, and the read-back (with the version) is
     the turn's mode. An item the account does not offer fails closed
     (`config_error`).

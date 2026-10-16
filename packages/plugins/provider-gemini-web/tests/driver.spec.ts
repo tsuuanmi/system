@@ -90,6 +90,12 @@ describe.runIf(canRunBrowser)('GeminiWebDriver against the fake site', { timeout
     expect(fake.sent.map((s) => [s.model, s.level])).toEqual([['3.5 Flash-Lite', 'Low'], ['3.8 Flash', 'Medium']])
   })
 
+  it('reads a thinking level with its note on its own line too (the layout before 2026-10-16)', async () => {
+    const { page, driver, fake } = await open({ levelsInline: false })
+    expect((await driver.ask(page, 'hi', { conversation: 'temporary', mode: 'flash' })).mode).toEqual({ model: '3.8 Flash', effort: 'Medium' })
+    expect(fake.sent.map((s) => s.level)).toEqual(['Medium'])
+  })
+
   it('returns the answer as Markdown from its Copy, with code lines kept (REQ-PRV-5)', async () => {
     const markdown = '## Plan\n\n* **First** item\n* **Second** item\n\nSee `x` and [example.com](https://example.com).\n\n```python\ndef add(a, b):\n    return a + b\n```'
     const { page, driver } = await open({ answer: markdown })

@@ -52,8 +52,15 @@ export interface DriverOptions {
 
 /** The first line of a mode item ("3.8 Flash\nAll-around help"). */
 const itemName = (text: string): string => text.split('\n')[0]!.trim()
+/**
+ * Whether an item as the site shows it is `name`: alone, or followed on the same line by its note
+ * ("Medium Balanced depth", seen live on 2026-10-16; the note used to be on its own line).
+ */
+const named = (shown: string, name: string): boolean => shown === name || shown.startsWith(`${name} `)
 /** Whether a model as the site shows it is the wanted one, with or without its version. */
-const sameModel = (shown: string, wanted: string): boolean => shown === wanted || shown.replace(/^\d[\d.]*\s+/, '') === wanted
+const sameModel = (shown: string, wanted: string): boolean => named(shown, wanted) || named(shown.replace(/^\d[\d.]*\s+/, ''), wanted)
+/** A matched item's name without a note on its line: "3.8 Flash" of "3.8 Flash All-around help". */
+const nameOf = (shown: string, wanted: string): string => shown.slice(0, shown.indexOf(wanted) + wanted.length)
 
 export class GeminiWebDriver implements ProviderDriver<Page> {
   readonly provider = 'gemini-web'
@@ -237,12 +244,14 @@ export class GeminiWebDriver implements ProviderDriver<Page> {
     if (!wanted?.model && !wanted?.effort && (await engine.count('composer.mode')) === 0) return {}
     try {
       if (wanted?.model) await this.choose(engine, 'mode.model', 'model', wanted.model, sameModel)
-      if (wanted?.effort) await this.choose(engine, 'mode.level', 'thinking level', wanted.effort, (shown, name) => shown === name)
+      if (wanted?.effort) await this.choose(engine, 'mode.level', 'thinking level', wanted.effort, named)
       await this.openMenu(engine)
-      const model = await this.chosen(engine, 'mode.model.selected')
-      const effort = await this.chosen(engine, 'mode.level.selected')
+      let model = await this.chosen(engine, 'mode.model.selected')
+      let effort = await this.chosen(engine, 'mode.level.selected')
       if (wanted?.model && !(model && sameModel(model, wanted.model))) throw new ProviderError('config_error', `gemini-web: model reads back as ${model ?? 'none'}, not ${wanted.model}`)
-      if (wanted?.effort && effort !== wanted.effort) throw new ProviderError('config_error', `gemini-web: thinking level reads back as ${effort ?? 'none'}, not ${wanted.effort}`)
+      if (wanted?.effort && !(effort && named(effort, wanted.effort))) throw new ProviderError('config_error', `gemini-web: thinking level reads back as ${effort ?? 'none'}, not ${wanted.effort}`)
+      if (model && wanted?.model) model = nameOf(model, wanted.model)
+      if (effort && wanted?.effort) effort = nameOf(effort, wanted.effort)
       return { ...(model ? { model } : {}), ...(effort ? { effort } : {}) }
     } finally {
       await page.keyboard.press('Escape')

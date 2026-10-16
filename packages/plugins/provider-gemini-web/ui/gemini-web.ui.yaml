@@ -124,7 +124,7 @@ elements:
     candidates:
       - { css: '[role="menuitem"][data-test-id^="bard-mode-option-"]' }
   mode.level:
-    description: 'One item per thinking level ("Low", "Medium", "High"); the chosen one is mode.level.selected.'
+    description: 'One item per thinking level ("Low", "Medium", "High"), each name followed by its note, under a "Thinking level" item; the chosen one is mode.level.selected.'
     scope: mode.menu
     cardinality: many
     candidates:
