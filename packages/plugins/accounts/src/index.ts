@@ -137,6 +137,19 @@ export class Accounts extends Service {
     return this.mutate(id, expectedRevision, (current) => ({ ...current, status: 'reauth-required', statusEvidence: evidence }))
   }
 
+  /**
+   * A signed-out mark the stored state disproves (a false positive): the account is ready again,
+   * verified now, with its state and identity unchanged. The caller has just signed in with the
+   * stored state as the same identity; nothing is saved or written back here.
+   */
+  async reverify(id: string, identityHash: ContentId, expectedRevision: number): Promise<AccountView> {
+    return this.mutate(id, expectedRevision, ({ statusEvidence: _cleared, ...current }) => {
+      if (current.status !== 'reauth-required') throw new ProviderError('invalid_input', `account ${id} is ${current.status}, not reauth-required`)
+      if (current.identityHash !== identityHash) throw new ProviderError('reauth_required', `account ${id}: the stored state signs in as a different account than the one saved`)
+      return { ...current, status: 'ready', verifiedAt: new Date().toISOString() }
+    })
+  }
+
   /** A challenge needs the operator but is not a sign-out: the state is kept. */
   async markChallenge(id: string, evidence: string, expectedRevision?: number): Promise<AccountView> {
     return this.mutate(id, expectedRevision, (current) => ({ ...current, status: 'challenge', statusEvidence: evidence.slice(0, 200) }))

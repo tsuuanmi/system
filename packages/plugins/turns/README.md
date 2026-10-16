@@ -90,6 +90,11 @@ invoked by the [workflow engine](../workflow/README.md)
     result on the account (MCP `account_probe`, `system account probe <id>`).
   - Ready accounts whose probe is missing or older than `probeTtlMs`
     (default 24 h) are probed in the background, at start and hourly.
+  - `verify(account)` re-verifies a reauth-required account on its scheduler:
+    it opens the site with the saved state, sends nothing, runs `checkAuth`
+    and `identity`, and if the state signs in as the saved account,
+    `accounts.reverify` marks it ready (event `account.re-verified`). Nothing
+    is saved or written back (MCP `account_verify`, `system account verify`).
   - A requirement with `web-search` runs with Web search turned on.
 - **Deep research:** a requirement with `deep-research` runs as Deep research in
   its persistent session (`researchTimeoutMs`, `researchStallTimeoutMs`).

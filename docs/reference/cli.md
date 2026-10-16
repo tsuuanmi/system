@@ -54,6 +54,7 @@ on `run`.
 | `system account code <id> <code>` | supply a one-time code a running sign-in is waiting for |
 | `system account save <id>` | after an interactive login: capture, verify, store encrypted |
 | `system account probe <id>` | prove which website features the account offers (Deep research, Web search, …) |
+| `system account verify <id>` | re-verify a reauth-required account from its saved state, sending nothing: ready again if it still signs in as the saved account (exit 0), else it stays marked (exit 1) |
 
 `system account add` and `system account remove` are planned; accounts are configuration
 ([`accounts`](configuration.md#accounts)).

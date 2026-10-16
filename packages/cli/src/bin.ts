@@ -40,6 +40,7 @@ const USAGE = `Usage: system <command>
   account code <id> <code>  supply a one-time code a running sign-in is waiting for
   account save <id>         after an interactive login: capture, verify, store encrypted
   account probe <id>        prove which website features the account offers (Deep research, Web search, ...)
+  account verify <id>       re-verify a reauth-required account from its stored state (no login, nothing saved)
   start [dsh args...]       boot the profile (e.g. --patch ./overlay.yml)
   backup <dir> [--include-key]
                             snapshot the store and encrypted vault into an empty dir (the key only with --include-key)
@@ -251,6 +252,12 @@ async function main(argv: string[]): Promise<number> {
       return 0
     }
     case 'account': {
+      if (rest[0] === 'verify' && rest[1]) {
+        const outcome = await callTool('account_verify', { account: rest[1] })
+        if (outcome.isError) throw new Error(outcome.text)
+        console.log(outcome.text)
+        return (outcome.structured as { verified?: boolean } | undefined)?.verified ? 0 : 1
+      }
       if (rest[0] === 'probe' && rest[1]) {
         const outcome = await callTool('account_probe', { account: rest[1] })
         if (outcome.isError) throw new Error(outcome.text)

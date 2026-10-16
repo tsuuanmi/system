@@ -266,6 +266,14 @@ is sent anywhere ([templates](../reference/workflow-templates.md#presets)).
 A turn that fails with `reauth_required` or `challenge` (disposition
 `USER_ACTION`) means the account's saved session no longer works.
 
+- **First, re-verify:** `system account verify <id>` opens the site with the
+  saved state, sends nothing, and checks the sign-in. If it still signs in as
+  the saved account, the signed-out mark was false (a page that only looked
+  signed out), and the account is ready again (`account.re-verified` in the
+  event log). Nothing is saved. If it does not sign in, sign in again as
+  below. Never `system account save` from an old login profile to undo a
+  mark: it would replace the newer saved state with older cookies.
+
 - **With stored credentials:**
   1. Run `system account relogin <id>`. The TOTP code is computed locally.
   2. If the site emails a code, supply it with `system account code <id> <code>`.

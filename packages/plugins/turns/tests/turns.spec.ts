@@ -7,6 +7,7 @@ import { Context } from '@deepseek-ai/cordis'
 import Accounts from '@tsuuanmi/system-accounts'
 import Artifacts from '@tsuuanmi/system-artifacts'
 import Egress from '@tsuuanmi/system-egress'
+import EventLog from '@tsuuanmi/system-event-log'
 import Leases from '@tsuuanmi/system-leases'
 import Login from '@tsuuanmi/system-login'
 import BrowserPool from '@tsuuanmi/system-browser-patchright'
@@ -58,6 +59,7 @@ async function boot(options: { fake?: FakeOptions; accounts?: CatalogEntry[]; re
   const fibers = [
     ctx.plugin(Store, { path: join(dir, 'system.db') }),
     ctx.plugin(Artifacts, {}),
+    ctx.plugin(EventLog, {}),
     ctx.plugin(Leases, {}),
     ctx.plugin(Egress, {}),
     ctx.plugin(TurnReceipts, {}),
@@ -110,6 +112,28 @@ describe.runIf(canRunBrowser)('ctx.turns: ask through a saved account', () => {
     const admitted = await ctx.workers.route({ schema: 'work-requirement@1.0', objective: 'x', capabilities: ['reason'], data: { classification: 'public', refs: [] }, egressPolicy: 'default', tier: { min: 'economy', source: 'default' }, acceptance: { contract: 'acceptance.answer' } })
     expect(admitted.worker.worker).toBe('worker:chatgpt-main/economy')
   }, 60_000)
+
+  it('re-verifies a falsely signed-out account from its stored state, without a login, and keeps a really signed-out one marked (REQ-ACC-5)', async () => {
+    // A "Log in" offer beside the composer: the maps before 431508f took it for a sign-out.
+    const { ctx, fake } = await boot({ fake: { loginOffer: true, answer: 'back' } })
+    const ready = await ctx.accounts.get('chatgpt-main')
+    expect(await ctx.turns.verify('chatgpt-main')).toMatchObject({ status: 'ready', verified: false, reason: expect.stringMatching(/only a reauth-required account/) })
+    await ctx.accounts.markSignedOut('chatgpt-main', 'login-surface', ready.revision)
+    const restored = await ctx.turns.verify('chatgpt-main')
+    expect(restored).toMatchObject({ account: 'chatgpt-main', status: 'ready', verified: true })
+    const view = await ctx.accounts.get('chatgpt-main')
+    expect(view.status).toBe('ready')
+    expect(Date.parse(view.verifiedAt!)).toBeGreaterThan(Date.parse(ready.verifiedAt!))
+    expect(ctx.eventLog.query({ type: 'account.re-verified' })).toEqual([expect.objectContaining({ data: expect.objectContaining({ account: 'chatgpt-main' }) })])
+    // Nothing was sent to verify; the account works again.
+    expect(fake.sent).toEqual([])
+    expect((await ctx.turns.wait((await ask(ctx, { prompt: 'are you back?' })).turnId, 30_000)).answer).toBe('back')
+    // Really signed out: it stays marked, and says what to do.
+    fake.options.signedIn = false
+    await ctx.accounts.markSignedOut('chatgpt-main', 'login-surface', (await ctx.accounts.get('chatgpt-main')).revision)
+    expect(await ctx.turns.verify('chatgpt-main')).toMatchObject({ status: 'reauth-required', verified: false, reason: expect.stringMatching(/does not sign in: sign in again/) })
+    expect((await ctx.accounts.get('chatgpt-main')).status).toBe('reauth-required')
+  }, 90_000)
 
   it('proves an account\'s website features by a probe that sends nothing, and routes only on proven ones (REQ-PRV-7)', async () => {
     const { ctx, fake } = await boot({ fake: { answer: 'Found it', features: ['web-search'] } })

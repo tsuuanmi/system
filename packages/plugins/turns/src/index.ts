@@ -19,7 +19,7 @@ import type {} from '@tsuuanmi/system-gateway-core'
 import type {} from '@tsuuanmi/system-login'
 import type {} from '@tsuuanmi/system-artifacts'
 import { type Lease, LeaseLost, StaleGeneration } from '@tsuuanmi/system-leases'
-import { type ContentId, sha256 } from '@tsuuanmi/system-libs'
+import { type ContentId, contentId, sha256 } from '@tsuuanmi/system-libs'
 import { type BrowserTurn, type ConversationMode, type Disposition, type PortableState, ProviderError, type ProviderFeature, ProviderScheduler, type Tier, type TurnReceipt, type TurnSnapshot, dispositionOf, toProviderError } from '@tsuuanmi/system-provider-core'
 import type {} from '@tsuuanmi/system-store'
 import type {} from '@tsuuanmi/system-turn-receipts'
@@ -228,6 +228,17 @@ export class Turns extends Service {
       cancel: (id) => this.cancel(id),
     })
     ctx.inject(['mcp'], (c) => {
+      c.mcp.tool('account_verify', {
+        description: 'Re-verify a reauth-required account from its stored state, without a login: if the site still signs it in as the saved account, it is ready again (a false signed-out mark undone); nothing is saved.',
+        inputSchema: { account: zod.string().max(100) },
+      }, async (args) => {
+        try {
+          const outcome = await this.verify(String(args.account))
+          return { content: [{ type: 'text' as const, text: outcome.reason }], structuredContent: outcome }
+        } catch (error) {
+          return { isError: true, content: [{ type: 'text' as const, text: (error as Error).message }] }
+        }
+      })
       c.mcp.tool('account_probe', {
         description: 'Prove which website features an account offers now (Deep research, Web search, ...), read from the site without sending anything; routing uses only proven features.',
         inputSchema: { account: zod.string().max(100) },
@@ -515,6 +526,31 @@ export class Turns extends Service {
    * site without sending anything, on the account's own scheduler, and they are recorded on the
    * account. Only features the driver declares are kept.
    */
+  /**
+   * Re-verify a reauth-required account from its stored state, without a login: open the site
+   * with that state (nothing is sent), and if it is signed in as the account saved, mark it ready
+   * again and record `account.re-verified`. Otherwise it stays reauth-required. Nothing is saved
+   * or written back: a false signed-out mark is undone, never papered over.
+   */
+  async verify(accountId: string, signal?: AbortSignal): Promise<{ account: string; status: AccountStatus; verified: boolean; reason: string }> {
+    const view = await this.ctx.accounts.get(accountId)
+    if (view.status !== 'reauth-required') return { account: accountId, status: view.status, verified: false, reason: `${accountId} is ${view.status}; only a reauth-required account is re-verified` }
+    const driver = this.ctx.providers.get(view.provider)
+    const seen = await this.scheduler(accountId).runTurn(`verify:${accountId}`, signal, async () => {
+      const turn = await this.ctx.browser.openTurn(accountId, { state: await this.ctx.accounts.portableState(accountId), ...(signal ? { signal } : {}) })
+      try {
+        if ((await driver.checkAuth(turn.page)) !== 'signed-in') return undefined
+        return await driver.identity(turn.page)
+      } finally {
+        await turn.close()
+      }
+    })
+    if (!seen) return { account: accountId, status: view.status, verified: false, reason: `${accountId}'s stored state does not sign in: sign in again (system account login ${accountId})` }
+    const restored = await this.ctx.accounts.reverify(accountId, contentId({ provider: view.provider, identity: seen }), view.revision)
+    this.ctx.get('eventLog')?.append({ type: 'account.re-verified', data: { account: accountId, revision: restored.revision } })
+    return { account: accountId, status: restored.status, verified: true, reason: `${accountId}'s stored state signs in as the saved account: ready again` }
+  }
+
   async probe(accountId: string, signal?: AbortSignal): Promise<string[]> {
     const view = await this.ctx.accounts.get(accountId)
     if (view.status !== 'ready') throw new ProviderError('reauth_required', `${accountId} is ${view.status}`)

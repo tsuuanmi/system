@@ -27,6 +27,9 @@
   ran is never overwritten by that turn's older state.
 - **Rules:**
   - `markSignedOut` needs positive evidence (`login-url` / `login-surface`).
+  - `reverify` undoes a false signed-out mark: a reauth-required account whose
+    saved state signs in again as the same identity is ready, verified now,
+    with its state unchanged.
   - `markChallenge` keeps the state.
   - `duplicateIdentities` flags accounts that share an identity (REQ-TEAM-4).
 - **Known limitation:** every read decrypts the whole vault, including every

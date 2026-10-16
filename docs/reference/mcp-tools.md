@@ -75,6 +75,16 @@ Scope: `operator`
 | `password` | string | yes |  |
 | `totpSecret` | string |  |  |
 
+## `account_verify`
+
+Re-verify a reauth-required account from its stored state, without a login: if the site still signs it in as the saved account, it is ready again (a false signed-out mark undone); nothing is saved.
+
+Scope: `operator`
+
+| Argument | Type | Required | Description |
+|---|---|---|---|
+| `account` | string | yes |  |
+
 ## `approve`
 
 Approve or reject the plan a run is waiting on (an operator decision, bound to that exact plan).
