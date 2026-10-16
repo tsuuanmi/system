@@ -202,10 +202,11 @@ export class Engine {
 
   private retryLater(runId: string, delayMs: number): void {
     if (this.stopped.signal.aborted) return
+    // A timer longer than 2^31-1 ms fires at once in Node: a long wait (a tie's) looks again then.
     const timer = setTimeout(() => {
       this.retries.delete(timer)
       this.schedule(runId)
-    }, delayMs)
+    }, Math.min(delayMs, 2 ** 31 - 1))
     timer.unref()
     this.retries.add(timer)
   }

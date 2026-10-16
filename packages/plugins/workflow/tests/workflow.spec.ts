@@ -390,6 +390,52 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
     expect(() => ctx.workflow.vote(run.runId, { decision: tie.decision, option: 'O1', rationale: 'again', by: 'client' })).toThrow('is not waiting for a deciding vote')
   }, 240_000)
 
+  it('keeps a tie through the operator\'s stop and continue, and through a supersede that splits the vote again; a late or misdirected vote is refused', async () => {
+    const { ctx, gemini } = await boot({
+      fake: { answer: (prompt) => (isProposal(prompt) ? proposal('Ship now') : ballot('O1', ['O2 delays the release'])) },
+      gemini: { answer: (prompt) => (isProposal(prompt) ? proposal('Ship next week') : ballot('O2', ['O1 skips the tests'])) },
+    })
+    const run = ctx.workflow.start({ template: 'brainstorm', input: 'When do we ship?' })
+    const tied = await ctx.workflow.wait(run.runId, 120_000)
+    expect(tied.blocked).toMatchObject({ kind: 'tie' })
+    // Stop, then continue: the decision is promoted again and blocks on the same tie; no Worker is asked.
+    await ctx.workflow.stop(run.runId)
+    // The tally and the decision are the engine's: no supersede.
+    expect(() => ctx.workflow.supersede(run.runId, 'brainstorm:tally:1', { text: 'x' })).toThrow('which the engine computes')
+    const before = gemini!.sent.length
+    ctx.workflow.continue(run.runId)
+    await until(() => ctx.workflow.get(run.runId)!.blocked?.kind === 'tie', 30_000)
+    expect(gemini!.sent).toHaveLength(before)
+    // Supersede m1's first ballot: the tally runs again, and its new debate gets ids of a new generation.
+    await ctx.workflow.stop(run.runId)
+    ctx.workflow.supersede(run.runId, 'brainstorm:m1:ballot:1', { text: ballot('O1', ['O2 still delays the release']) })
+    await until(() => ctx.workflow.get(run.runId)!.blocked?.kind === 'tie', 120_000)
+    const ids = ctx.workflow.get(run.runId)!.nodes.map((n) => `${n.nodeId} ${n.state}`)
+    expect(ids).toEqual(expect.arrayContaining(['brainstorm:m1:debate:1 RETIRED', 'brainstorm:tally:2 RETIRED', 'brainstorm:m1:debate:1:g2 COMPLETED', 'brainstorm:tally:2:g2 COMPLETED', 'brainstorm BLOCKED']))
+    // A vote after the deadline ends the tie by rule and is refused.
+    const tie = ctx.workflow.get(run.runId)!.blocked as Extract<RunView['blocked'], { kind: 'tie' }>
+    ctx.store.db.prepare("UPDATE workflow_nodes SET not_before = '2000-01-01T00:00:00.000Z' WHERE run_id = ? AND node_id = 'brainstorm'").run(run.runId)
+    expect(() => ctx.workflow.vote(run.runId, { decision: tie.decision, option: 'O1', rationale: 'late', by: 'client' })).toThrow('it has ended inconclusive')
+    await until(() => ctx.workflow.get(run.runId)!.status === 'completed', 30_000)
+    expect(ctx.workflow.get(run.runId)!.answer).toMatch(/^outcome: inconclusive; method: inconclusive;/)
+  }, 300_000)
+
+  it('waits a tie of the longest allowed timeout without spinning: timers are capped (INV-9)', async () => {
+    const { ctx } = await boot({
+      fake: { answer: (prompt) => (isProposal(prompt) ? proposal('A') : ballot('O1')) },
+      gemini: { answer: (prompt) => (isProposal(prompt) ? proposal('B') : ballot('O2')) },
+      workflow: { tieTimeoutHours: 720 },
+    })
+    const run = ctx.workflow.start({ template: 'brainstorm', input: 'q' })
+    expect((await ctx.workflow.wait(run.runId, 120_000)).blocked).toMatchObject({ kind: 'tie' })
+    const holds: unknown[] = []
+    const hold = ctx.leases.hold.bind(ctx.leases)
+    ctx.leases.hold = ((...args: Parameters<typeof hold>) => (holds.push(args[0]), hold(...args))) as typeof hold
+    await new Promise((resolve) => setTimeout(resolve, 1500))
+    // An uncapped 720 h timer fires at once in Node, and the run would advance again and again.
+    expect(holds).toEqual([])
+  }, 180_000)
+
   it('ends a tie nobody decides as inconclusive, by rule, after tieTimeoutHours (INV-9); a tied review never passes silently', async () => {
     // No objections: no debate; split: a tie at once.
     const { ctx } = await boot({
@@ -400,8 +446,9 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
     const run = ctx.workflow.start({ template: 'review', input: 'Review this change: ...' })
     const tied = await ctx.workflow.wait(run.runId, 120_000)
     expect(tied.blocked).toMatchObject({ kind: 'tie', options: [{ option: 'pass' }, { option: 'changes' }] })
-    const done = await ctx.workflow.wait(run.runId, 30_000)
-    expect(done.status).toBe('completed')
+    // A blocked run is returned at once; the rule ends the tie once its time is up.
+    await until(() => ctx.workflow.get(run.runId)!.status === 'completed', 30_000)
+    const done = ctx.workflow.get(run.runId)!
     expect(done.answer).toMatch(/^outcome: inconclusive; method: inconclusive; winner: none; /)
     // Whatever ends the tie, the blocking finding stays in the answer.
     expect(done.answer).toContain('## Findings (1 blocking)\n\n- F1 [m1] blocking: The lock is never released (a.ts:10)')

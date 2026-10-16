@@ -159,8 +159,13 @@ second execution path (INV-1).
     waiter on `result` or `wait` returns at once. `vote(runId, { decision,
     option | inconclusive, rationale, by })` decides it, bound to that exact
     tie decision; `by` is `client` or `operator`, from the token's scope. After
-    `tieTimeoutHours` (default 24) the tie completes `inconclusive` by the rule
-    `workflow.tie-timeout`.
+    `tieTimeoutHours` (default 24, at most 720) the tie completes `inconclusive`
+    by the rule `workflow.tie-timeout`; a later `vote` ends it so and is refused.
+    Engine timers are capped at 2^31−1 ms, so a long wait looks again then.
+  - `stop` then `continue` on a tie promotes the tally and the decision again:
+    the tie blocks again, with a new deadline. `supersede` refuses a tally or a
+    decision; superseding a member's step re-runs the tally, whose new debate
+    gets `:g<n>` ids.
   - The final `vote` decision holds the members by session id, the options,
     every round, the dissent, revisions, any tiebreak, and a review's findings.
     The result is a `team-result@1.0` report whose text starts with
@@ -177,7 +182,7 @@ second execution path (INV-1).
     ready.
   - When the run finishes, its members' leftover mail is acknowledged.
   - A run of the removed procedure (critique rounds, a lead, a synthesis) stays
-    readable with `explain` and `result`; `continue` refuses it
+    readable with `explain` and `result`; `continue` and `supersede` refuse it
     (`invalid_input`).
 - **Wake-on-message ([design](../../../docs/design/sessions-and-messaging.md)).**
   - A message to an idle Worker session wakes it once its own run is no

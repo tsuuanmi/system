@@ -216,7 +216,9 @@ function ballotsOf(e: Engine, team: TeamRole, nodes: NodeRow[], round: number, o
       const ballot = parseBallot(e.resultText(ref), options)
       // Acceptance already checked it; a ballot that no longer parses is a defect, never a lowered threshold.
       if (typeof ballot === 'string') throw new Error(`the accepted ballot of ${row.node_id} no longer parses: ${ballot}`)
-      return { member: `m${role.member}`, ref, ...ballot }
+      // Only a debate answers a crux or revises a proposal; a first ballot's extra fields are dropped.
+      const { crux, revision, ...cast } = ballot
+      return { member: `m${role.member}`, ref, ...cast, ...(round > 1 && crux ? { crux } : {}), ...(round > 1 && revision ? { revision } : {}) }
     })
 }
 
@@ -309,7 +311,7 @@ export function tally(e: Engine, run: RunRow, node: NodeRow, spec: ResolvedNode,
     const decision = e.ctx.artifacts.recordDecision({
       decisionType: 'vote',
       question: `Which option does team ${team.id} of run ${run.run_id} choose in round ${round}?`,
-      inputs: [...options.flatMap((o) => (o.ref ? [o.ref] : [])), ...ballots.map((b) => b.ref)],
+      inputs: [...proposalsOf(team, nodes), ...ballots.map((b) => b.ref)],
       candidates: [
         ...options.map((o) => ({ option: o.option, selected: o.option === winner, reasons: ballots.filter((b) => b.choice === o.option).map((b) => `${b.member} (${b.confidence}): ${b.rationale}`) })),
         { option: debate ? 'debate' : 'tie', selected: !winner, reasons: winner ? [] : [why] },
@@ -321,10 +323,13 @@ export function tally(e: Engine, run: RunRow, node: NodeRow, spec: ResolvedNode,
     }, { producer: { type: 'system', ref: 'workflow' }, runId: run.run_id, nodeId: node.node_id, classification: run.classification ?? e.ctx.egress.defaultClassification }).id as ArtifactRef
     if (debate) {
       const members = Array.from({ length: team.members }, (_, i) => i + 1)
-      const grownBy = { node: node.node_id, generation: 1 }
+      // A re-run tally (its input superseded) grows a new generation: its old growth stays, RETIRED.
+      const generation = spec.generation ?? 1
+      const suffix = generation > 1 ? `:g${generation}` : ''
+      const grownBy = { node: node.node_id, generation }
       const base = { capabilities: spec.capabilities, tierSource: 'profile' as const, grownBy }
-      const debateId = (k: number): string => `${team.id}:m${k}:debate:${round}`
-      const nextTally = `${team.id}:tally:${round + 1}`
+      const debateId = (k: number): string => `${team.id}:m${k}:debate:${round}${suffix}`
+      const nextTally = `${team.id}:tally:${round + 1}${suffix}`
       const proposer = (k: number): ResolvedNode => specOf(nodes.find((n) => specOf(n).team?.id === team.id && specOf(n).team?.role === 'propose' && specOf(n).team?.member === k)!)
       const added: ResolvedNode[] = [
         ...members.map((k): ResolvedNode => ({
@@ -354,6 +359,11 @@ export function tally(e: Engine, run: RunRow, node: NodeRow, spec: ResolvedNode,
     }), lease)
     e.ctx.eventLog.append({ type: 'workflow.team.tallied', runId: run.run_id, nodeId: node.node_id, decision, data: { round, counts, winner, ended } })
   })
+}
+
+/** Every member's proposal (a brainstorm's options, a review's findings), for the vote's lineage (INV-13). */
+function proposalsOf(team: TeamRole, nodes: NodeRow[]): ArtifactRef[] {
+  return ofTeam(nodes, team.id).filter(({ role }) => role.role === 'propose').flatMap(({ row }) => (resultOf(row) ? [resultOf(row)!] : []))
 }
 
 /** Members by opaque identity (their sessions), never by provider. */
@@ -413,6 +423,7 @@ export function vote(e: Engine, runId: string, input: { decision: string; option
   if (!input.rationale.trim()) throw new WorkflowFailure('invalid_input', 'a deciding vote needs its rationale')
   const lease = e.ctx.leases.acquire(`run:${runId}`, LEASE_TTL_MS)
   if (!lease) throw new WorkflowFailure('overloaded', `run ${runId} is busy; retry in a moment`)
+  let late: string | undefined
   try {
     // Read under the run's lease: nothing else decides the tie meanwhile.
     const tied = run.status === 'running' ? e.nodeRows(runId).filter((n) => n.state === 'BLOCKED' && specOf(n).executor === 'decide') : []
@@ -422,17 +433,24 @@ export function vote(e: Engine, runId: string, input: { decision: string; option
       throw new WorkflowFailure('invalid_input', waiting.length ? `run ${runId} waits on tie ${waiting.join(', ')}, not ${input.decision}; read it and vote on it` : `run ${runId} is not waiting for a deciding vote`)
     }
     const tie = tieOf(e, node)
-    if (input.option !== 'inconclusive' && !tie.options.some((o) => o.option === input.option)) {
-      throw new WorkflowFailure('invalid_input', `option ${input.option} is not one of ${tie.options.map((o) => o.option).join(', ')}, or inconclusive`)
+    if (Date.parse(tie.until) <= Date.now()) {
+      // Too late: the rule ends the tie now, as the run loop would (INV-9).
+      expireTie(e, run, node, () => lease)
+      late = tie.until
+    } else {
+      if (input.option !== 'inconclusive' && !tie.options.some((o) => o.option === input.option)) {
+        throw new WorkflowFailure('invalid_input', `option ${input.option} is not one of ${tie.options.map((o) => o.option).join(', ')}, or inconclusive`)
+      }
+      conclude(e, run, node, specOf(node), e.nodeRows(runId), input.option === 'inconclusive'
+        ? { method: 'inconclusive', winner: null, by: input.by, id: 'workflow.vote', rationale: input.rationale.slice(0, 2000) }
+        : { method: 'caller-tiebreak', winner: input.option, by: input.by, id: 'workflow.vote', rationale: input.rationale.slice(0, 2000) }, () => lease)
     }
-    const nodes = e.nodeRows(runId)
-    conclude(e, run, node, specOf(node), nodes, input.option === 'inconclusive'
-      ? { method: 'inconclusive', winner: null, by: input.by, id: 'workflow.vote', rationale: input.rationale.slice(0, 2000) }
-      : { method: 'caller-tiebreak', winner: input.option, by: input.by, id: 'workflow.vote', rationale: input.rationale.slice(0, 2000) }, () => lease)
   } finally {
     e.ctx.leases.release(lease)
   }
+  // Once the run's lease is free again, so the run finishes at once.
   e.schedule(runId)
+  if (late) throw new WorkflowFailure('invalid_input', `the tie of run ${runId} waited until ${late}; it has ended inconclusive`)
   return e.get(runId)!
 }
 

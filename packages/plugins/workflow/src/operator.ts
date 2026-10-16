@@ -7,7 +7,7 @@ import type { Lease } from '@tsuuanmi/system-leases'
 import type { ArtifactRef } from '@tsuuanmi/system-workers-core'
 import type { Engine } from './engine.ts'
 import { decideGate, grewFrom, grow } from './growth.ts'
-import { DEFAULT_GROWTH, parsePlan, type ResolvedNode } from './spec.ts'
+import { DEFAULT_GROWTH, parsePlan, recordExecutor, type ResolvedNode } from './spec.ts'
 import { isRemovedTeamStep } from './teams.ts'
 import { LEASE_TTL_MS, type NodeRecord, type NodeRow, now, type RunRow, type RunView, type WorkflowError, WorkflowFailure } from './types.ts'
 
@@ -57,7 +57,9 @@ export function continueRun(e: Engine, runId: string, nodeId?: string): RunView 
     for (const node of reopen) {
       const record = JSON.parse(node.record) as NodeRecord
       const spec = JSON.parse(node.spec) as ResolvedNode
-      const ready = spec.executor !== 'gate' && record.inputReceipt !== undefined
+      // A Worker step with its input bound runs again as it was; a gate, tally, or team decision is
+      // promoted again, so it decides afresh (a tie blocks again, with a new deadline).
+      const ready = recordExecutor(spec) === 'worker' && record.inputReceipt !== undefined
       e.writeNode(node, { state: ready ? 'READY' : 'WAITING', execution_id: null, worker: null, not_before: null, error: null }, (r) => {
         const next: NodeRecord = { ...r, lastDecision: decision }
         delete next.execution
@@ -101,6 +103,12 @@ export function supersede(e: Engine, runId: string, nodeId: string, replacement:
     if (!node || node.state !== 'COMPLETED' || !record?.outputReceipt) throw new WorkflowFailure('invalid_input', `node ${nodeId} of run ${runId} has no completed result`)
     const spec = specOf(node)
     if (spec.executor === 'gate') throw new WorkflowFailure('invalid_input', `node ${nodeId} is a plan's gate: approve or reject the plan instead`)
+    if (spec.executor === 'tally' || spec.executor === 'decide') {
+      throw new WorkflowFailure('invalid_input', `node ${nodeId} is a team's ${spec.executor === 'tally' ? 'tally' : 'decision'}, which the engine computes: supersede a member's step, or break a tie with vote`)
+    }
+    if (nodes.some((n) => isRemovedTeamStep(specOf(n)))) {
+      throw new WorkflowFailure('invalid_input', `run ${runId} is a team procedure that was removed (PROP-0004); its record stays readable with explain and result, and it cannot run again`)
+    }
     // Everything downstream, transitively.
     const downstream = new Set<string>()
     for (let grew = true; grew;) {

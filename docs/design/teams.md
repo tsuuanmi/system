@@ -30,6 +30,9 @@ without changing identity.
 - Each member is a Worker session, joined to the team's session group at its first
   admission. All of a member's steps run in that one conversation.
 - Members never message each other. The engine composes every prompt from sealed records.
+  That is the team's messaging policy under the session seam, "nobody, during the
+  procedure" ([ADR-0015](../decisions/adr/0015-worker-sessions-and-peer-messaging.md)); the
+  seam itself is unchanged, and a member's session still takes messages after the team.
 - Proxy members, which delegate their reasoning to hidden Workers, are not allowed.
 - A member may use **auxiliary Workers** for one-shot help. Their output is evidence
   the member cites, and they never become peers.
@@ -120,7 +123,12 @@ On `debate`, the tally appends one debate step per member and the next tally by
 [graph growth](workflow-engine.md#graph-growth), with a `graph-growth` decision
 `workflow.team-debate`. A debate turn reads the round's ballots, quoted as data, answers only
 the crux, and casts the next sealed ballot in the same turn. It may revise its proposal. A
-revision is recorded, but it never replaces an option.
+revision is recorded, but it never replaces an option; a first ballot's crux or revision is
+dropped.
+
+A tally that runs again (an operator superseded a member's step upstream) retires what it grew
+and grows a new generation, with ids ending `:g<n>`, as a re-planned planner does
+([re-planning](workflow-engine.md#re-planning)).
 
 With two members, a strict majority means both agree, so every split is a tie.
 
@@ -144,11 +152,14 @@ the run blocks.
 - An operator token may call it too. The decider is `client` or `operator`, by the token's
   scope ([ADR-0023](../decisions/adr/0023-scoped-control-credentials.md)).
 - An option gives `caller-tiebreak`. `inconclusive` ends the team without a choice.
-- A tie waits `tieTimeoutHours` (workflow config, default 24;
+- A tie waits `tieTimeoutHours` (workflow config, default 24, at most 720;
   [INV-9](../architecture/invariants.md)). Then it completes `inconclusive` by the rule
-  `workflow.tie-timeout`.
-- After the team completes, the operator can replace its result with `supersede`, as for any
-  node.
+  `workflow.tie-timeout`. A `vote` that arrives after the deadline ends the tie that way and is
+  refused.
+- The operator may `stop` a tied run and `continue` it: the tally and the decision are promoted
+  again, so the decision blocks on the same tie with a new deadline, and no Worker is asked.
+- The tally and the decision are the engine's: `supersede` refuses them. The operator supersedes
+  a member's step, and everything downstream runs again.
 
 ### The record
 
@@ -182,4 +193,4 @@ a pinned repository, with every quoted line checked against the bytes the member
 ## Removed procedure
 
 Runs of the removed procedure (critique rounds, a lead, a synthesis; the `panel` template) stay
-readable with `explain` and `result`. `continue` refuses them with `invalid_input`.
+readable with `explain` and `result`. `continue` and `supersede` refuse them with `invalid_input`.
