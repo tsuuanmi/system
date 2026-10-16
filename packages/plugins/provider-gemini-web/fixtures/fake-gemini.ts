@@ -6,7 +6,8 @@
  *   active one has the class `app-tab--active`, and nothing else marks it;
  * - "Temporary chat" is an icon button with no pressed state: only its notice ("Temporary chats
  *   don't appear in recent chats ...") shows it is on, and the URL stays `/app`. A normal chat
- *   moves to `/app/<16 hex>` once sent, and reopens there; an unknown one goes to `/unavailable`;
+ *   moves to `/app/<16 hex>` once sent, and reopens there; an unknown one is sent to `/app`, as
+ *   the live site does (2026-10-16);
  * - the mode picker (`data-test-id="bard-mode-menu-button"`, "Open mode picker, currently Flash")
  *   opens one menu holding the models (`data-test-id="bard-mode-option-…"`, "3.8 Flash\nAll-around
  *   help") and the thinking levels under a "Thinking level" item, each with its note on the same
@@ -30,6 +31,10 @@ import { type IncomingMessage, type Server, type ServerResponse, createServer } 
 export interface FakeOptions {
   /** Start on the Spark tab (the trap the driver must avoid). Default true. */
   startOnSpark?: boolean
+  /** The app shows only an interstitial dialog: neither signed in nor signed out can be told. */
+  interstitial?: boolean
+  /** A prompt this long or longer is dropped on Send, as the live site drops a long paste: the composer empties, nothing is asked (0: never). */
+  dropOver?: number
   /** Clicking Chat does nothing (the driver must refuse to send). */
   chatTabBroken?: boolean
   /** Clicking Temporary chat does nothing (the driver must refuse to send). */
@@ -239,6 +244,7 @@ async function startResearch() {
 async function send() {
   const prompt = $('input').innerText.trim()
   $('input').textContent = ''
+  if (options.dropOver && prompt.length >= options.dropOver) { render(); return }
   $('log').append(userTurn(prompt))
   running = true
   render()
@@ -321,7 +327,7 @@ export class FakeGemini {
 
   constructor(options: FakeOptions = {}) {
     this.options = {
-      startOnSpark: true, signInOffer: false, chatTabBroken: false, temporaryBroken: false, modePicker: true, promptParagraphs: true, deepResearch: true,
+      startOnSpark: true, interstitial: false, dropOver: 0, signInOffer: false, chatTabBroken: false, temporaryBroken: false, modePicker: true, promptParagraphs: true, deepResearch: true,
       models: ['3.5 Flash-Lite', '3.8 Flash', '3.1 Pro'], levels: ['Low', 'Medium', 'High'], levelsInline: true, levelsSubmenu: true, submenuBroken: false, answer: 'OK', clarify: '',
       researchMs: 1500, report: 'HTTP/3 runs over QUIC, not TCP.', sources: [{ title: 'RFC 9114: HTTP/3', url: 'https://www.rfc-editor.org/rfc/rfc9114' }], ...options,
     }
@@ -395,14 +401,12 @@ export class FakeGemini {
     const page = /^\/app(?:\/([0-9a-f]{16}))?$/.exec(url.pathname)
     if (page) {
       if (page[1] && !this.conversations.has(page[1])) {
-        res.writeHead(302, { location: '/unavailable' }).end()
+        res.writeHead(302, { location: '/app' }).end()
         return
       }
-      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }).end(html(this.options))
-      return
-    }
-    if (url.pathname === '/unavailable') {
-      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }).end('<!doctype html><html><body><div contenteditable="true" role="textbox" aria-label="Ask Gemini"></div></body></html>')
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }).end(this.options.interstitial
+        ? '<!doctype html><html><body><div role="dialog" aria-label="Before you continue"><h2>Before you continue</h2><button>Continue</button></div></body></html>'
+        : html(this.options))
       return
     }
     res.writeHead(404).end()

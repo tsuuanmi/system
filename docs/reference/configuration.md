@@ -225,6 +225,7 @@ No options.
 | `origin` | string |  | Site origin (default https://gemini.google.com) |
 | `modes` | Record<string, object> | `{"flash-lite":{"model":"Flash-Lite","effort":"Low"},"flash":{"model":"Flash","effort":"Medium"},"pro":{"model":"Pro","effort":"High"},"site":{}}` | Named mode presets (model and thinking level); an empty preset selects nothing |
 | `defaultMode` | string | `"flash"` | Preset when a caller names none |
+| `maxPromptChars` | number (1…) | `30000` | The longest prompt sent, in characters; a longer one is refused before anything is sent (observed, not published: the site drops longer pastes without an error) |
 
 ## `providers`
 

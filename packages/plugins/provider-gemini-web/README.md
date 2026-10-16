@@ -18,6 +18,14 @@ driver, its operations are data: a UI map,
   - `persistent`: a normal chat. It returns, and continues, the conversation id
     from `/app/<id>`. `onBinding` reports a new conversation's id as soon as the
     URL shows it, and a conversation that does not open at its URL fails.
+- **Input limit:** a prompt over `maxPromptChars` (default 30,000 characters)
+  is refused as `invalid_input` before anything is sent. The site publishes no
+  limit; it drops a longer paste without an error (observed live on
+  2026-10-16). A prompt the site empties from the composer without asking is
+  `input_dropped`, not UI drift.
+- **A bound conversation the site no longer has** (it sends the page to
+  `/app`) is `conversation_lost`: reopening it cannot help, so it is not
+  retried.
 - **Modes.** A preset names a model and a thinking level as the site names
   them. The mode menu holds both, and the chosen items are marked `selected`.
   - A model may be named without its version: `Flash` matches `3.8 Flash` and
@@ -67,7 +75,10 @@ driver, its operations are data: a UI map,
     then saved encrypted, as for ChatGPT.
 - **Readiness:** pages get 60 s to render, since the live app took over 30 s
   several times. A conversation that does not open in time fails before
-  sending, or is reported as not observed.
+  sending, or is reported as not observed. A page that shows neither the
+  signed-in account nor a sign-in page in time (a dialog or interstitial, say)
+  is outlined as a `ui.drift` of `auth.account`, so `system evidence` shows what
+  it showed instead.
 - **No self-heal.** A drifted element fails closed until the map is updated. A
   stale element is logged as `ui.drift`, naming its region's outline, kept as
   local-private evidence

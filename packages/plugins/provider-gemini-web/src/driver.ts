@@ -48,6 +48,8 @@ export interface DriverOptions {
   modes?: Record<string, ProviderMode>
   /** Preset used when a turn names none; with no default the site's current selection is kept and read back. */
   defaultMode?: string
+  /** The longest prompt sent, in characters (default 30,000, observed): a longer one is refused, unsent. */
+  maxPromptChars?: number
 }
 
 /** The first line of a mode item ("3.8 Flash\nAll-around help"). */
@@ -75,6 +77,7 @@ export class GeminiWebDriver implements ProviderDriver<Page> {
   onDrift: ((event: DriftEvent) => void) | undefined
   private readonly origin: string
   private readonly timeouts: Required<DriverTimeouts>
+  private readonly maxPromptChars: number
   private readonly preset: (name: string | undefined) => ProviderMode | undefined
   private readonly engines = new WeakMap<Page, UiEngine>()
   readonly modes: readonly string[]
@@ -86,6 +89,7 @@ export class GeminiWebDriver implements ProviderDriver<Page> {
     this.stateOrigins = options.origin ? [this.origin] : ['https://gemini.google.com', 'https://accounts.google.com', 'https://www.google.com', 'https://google.com']
     this.preset = modePresets(this.provider, options.modes, options.defaultMode)
     this.modes = Object.keys(options.modes ?? {})
+    this.maxPromptChars = options.maxPromptChars ?? 30_000
     this.timeouts = { turnMs: 15 * 60_000, stallMs: 3 * 60_000, stableMs: 1500, pollMs: 250, readyMs: 60_000, snapshotMs: 20_000, reportReadMs: 30_000, ...options.timeouts }
   }
 
@@ -95,6 +99,9 @@ export class GeminiWebDriver implements ProviderDriver<Page> {
     try {
       await engine.waitFor({ anyOf: [{ state: 'auth.signed-in' }, { state: 'auth.signed-out' }] }, this.timeouts.readyMs)
     } catch {
+      // Neither state: whatever the page shows instead (a dialog, an interstitial) is outlined as
+      // drift evidence, so it can be read without opening the operator's browser.
+      await engine.drift('auth.account').catch(() => undefined)
       return 'unknown'
     }
     return (await engine.state('auth.signed-out')) ? 'signed-out' : 'signed-in'
@@ -128,6 +135,10 @@ export class GeminiWebDriver implements ProviderDriver<Page> {
     if (options.conversation === 'temporary' && options.binding !== undefined) {
       throw new ProviderError('invalid_input', 'gemini-web: a temporary turn has no conversation to continue')
     }
+    // The site drops a paste over its input limit without an error: refused here, before anything is sent.
+    if (prompt.length > this.maxPromptChars) {
+      throw new ProviderError('invalid_input', `gemini-web: the prompt has ${prompt.length} characters, over the ${this.maxPromptChars} this site takes (maxPromptChars); nothing was sent`)
+    }
     const preset = this.preset(options.mode)
     await this.open(page, options.conversation, options.binding)
     const engine = this.engine(page)
@@ -143,8 +154,15 @@ export class GeminiWebDriver implements ProviderDriver<Page> {
       throw new ProviderError('ui_drift', 'gemini-web: Temporary chat is not on before sending; refusing to save the conversation')
     }
     options.signal?.throwIfAborted()
+    const asked = await engine.count('turn.user')
     await options.beforeSend?.({ previousResponse, mode })
-    await engine.act('composer.send')
+    await engine.act('composer.send').catch(async (error: unknown) => {
+      // An emptied composer and no new prompt: the site dropped the text (too long, say), not a UI change.
+      if (error instanceof ProviderError && error.kind === 'ui_drift' && (await engine.count('turn.user')) === asked && !(await engine.text('composer.input').catch(() => 'unknown')).trim()) {
+        throw new ProviderError('input_dropped', `gemini-web: the site emptied the composer and took no prompt (${prompt.length} characters); it was not answered`, { cause: error })
+      }
+      throw error
+    })
     const onBinding = options.conversation === 'persistent' && !options.binding ? options.onBinding : undefined
     const reply = await this.waitForAnswer(page, engine, before, options.signal, options.deadlines, onBinding)
     const text = feature === 'deep-research' ? await this.research(engine, reply, options.signal, options.deadlines) : await this.markdownOf(engine, reply)
@@ -213,7 +231,10 @@ export class GeminiWebDriver implements ProviderDriver<Page> {
     const auth = await this.checkAuth(page)
     if (auth === 'signed-out') throw new ProviderError('reauth_required', 'gemini-web: signed out')
     if (auth === 'unknown') throw new ProviderError('session_broken', 'gemini-web: page did not become ready')
-    if (binding && this.bindingOf(page) !== binding) throw new ProviderError('session_broken', `gemini-web: conversation ${binding} did not open (now ${new URL(page.url()).pathname})`)
+    if (binding && this.bindingOf(page) !== binding) {
+      // Signed in, and the site sent the page elsewhere: it no longer has this conversation.
+      throw new ProviderError('conversation_lost', `gemini-web: conversation ${binding} no longer opens (the site sent the page to ${new URL(page.url()).pathname}); a session that needs it cannot continue`)
+    }
     const engine = this.engine(page)
     await engine.waitFor({ visible: 'composer.input' }, this.timeouts.readyMs)
     // A bound conversation renders its turns after the page: its last answer is the boundary.

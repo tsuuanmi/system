@@ -98,6 +98,35 @@ describe.runIf(canRunBrowser)('GeminiWebDriver against the fake site', { timeout
     return { page, driver, fake }
   }
 
+  it('outlines a page that shows neither signed in nor signed out, as drift evidence, and reports it unknown', async () => {
+    const { page, fake } = await open({ interstitial: true })
+    const driver = new GeminiWebDriver({ origin: fake.origin, modes: PRESETS, defaultMode: 'flash', timeouts: { readyMs: 1500 } })
+    const drifts: Array<{ element: string; outline?: { nodes: Array<{ role?: string }> } }> = []
+    driver.onDrift = (event) => void drifts.push(event as never)
+    expect(await driver.checkAuth(page)).toBe('unknown')
+    expect(drifts).toEqual([expect.objectContaining({ element: 'auth.account', kind: 'unresolved' })])
+    expect(drifts[0]!.outline!.nodes.some((n) => n.role === 'dialog')).toBe(true)
+  })
+
+  it('fails a bound conversation the site no longer has at once, as conversation_lost: reopening it cannot help (live 2026-10-16)', async () => {
+    const { page, driver, fake } = await open({ answer: 'first' })
+    const first = await driver.ask(page, 'remember', { conversation: 'persistent' })
+    // Gone on the site (as after the live re-login): the site sends the page to /app.
+    fake.conversations.delete(first.binding!)
+    await expect(driver.ask(page, 'again', { conversation: 'persistent', binding: first.binding })).rejects.toMatchObject({ kind: 'conversation_lost', disposition: 'USER_ACTION', message: expect.stringMatching(/no longer opens/) })
+    expect(fake.sent).toHaveLength(1)
+  })
+
+  it('refuses a prompt over its input limit before anything is sent, and calls a dropped prompt dropped, not UI drift', async () => {
+    const { page, fake } = await open({ answer: 'never', dropOver: 50 })
+    const limited = new GeminiWebDriver({ origin: fake.origin, modes: PRESETS, defaultMode: 'flash', maxPromptChars: 40, timeouts: { readyMs: 5000, stableMs: 300, pollMs: 100, turnMs: 30_000, stallMs: 15_000 } })
+    await expect(limited.ask(page, 'x'.repeat(41), { conversation: 'temporary' })).rejects.toMatchObject({ kind: 'invalid_input', message: expect.stringMatching(/41 characters, over the 40 .*nothing was sent/) })
+    // Under the driver's limit but over the site's: the site empties the composer and asks nothing.
+    const loose = new GeminiWebDriver({ origin: fake.origin, modes: PRESETS, defaultMode: 'flash', maxPromptChars: 1000, timeouts: { readyMs: 5000, stableMs: 300, pollMs: 100, turnMs: 30_000, stallMs: 15_000 } })
+    await expect(loose.ask(page, 'y'.repeat(60), { conversation: 'temporary' })).rejects.toMatchObject({ kind: 'input_dropped', disposition: 'USER_ACTION' })
+    expect(fake.sent).toEqual([])
+  }, 60_000)
+
   it('asks in a Temporary chat on the Chat tab, never Spark, with the preset read back before sending', async () => {
     const { page, driver, fake } = await open({ answer: 'Gemini test OK.' })
     const boundaries: unknown[] = []
@@ -240,7 +269,7 @@ describe.runIf(canRunBrowser)('GeminiWebDriver against the fake site', { timeout
   })
 
   it('reopens a Deep research turn as running while its card works, then as its report', async () => {
-    const { page, driver, fake } = await open({ researchMs: 6000 })
+    const { page, driver, fake } = await open({ researchMs: 12_000 })
     let binding: string | undefined
     const asked = driver.ask(page, 'Compare HTTP/2 and HTTP/3', { conversation: 'persistent', feature: 'deep-research', onBinding: (b) => { binding = b } })
     for (let i = 0; i < 100 && !fake.started.length; i++) await new Promise((resolve) => setTimeout(resolve, 100))
