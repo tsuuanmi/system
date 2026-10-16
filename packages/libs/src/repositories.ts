@@ -39,7 +39,11 @@ export interface SnapshotBounds {
   hosts?: string[]
 }
 
-/** Test seams: never reachable from configuration. */
+/**
+ * Test seams, for this package's own tests only: not exported from the package, and no other
+ * source file may name them (scripts/architecture.spec.ts). Production reads go through
+ * {@link snapshotRepository}, which has no way to pass them.
+ */
 export interface SnapshotTesting {
   /** Accept a `file://` repository, with no host checks. */
   allowLocal?: boolean
@@ -400,9 +404,15 @@ function commitOf(listed: string[], ref: string | undefined): string | undefined
 /**
  * Snapshot a public repository at one commit: resolve the ref, fetch the commit with only blobs
  * within the per-file bound, choose the files in a fixed order, and read only those, within the
- * bounds. Every file not read is listed with why. Throws {@link SnapshotError}.
+ * bounds. Every file not read is listed with why. Throws {@link SnapshotError}. It takes no test
+ * seam: a `file://` repository or a fake resolver cannot reach it, even as an extra argument.
  */
-export async function snapshotRepository(request: SnapshotRequest, bounds: SnapshotBounds = {}, signal?: AbortSignal, testing: SnapshotTesting = {}): Promise<RepositorySnapshot> {
+export function snapshotRepository(request: SnapshotRequest, bounds: SnapshotBounds = {}, signal?: AbortSignal): Promise<RepositorySnapshot> {
+  return snapshotWithTestSeams(request, bounds, signal, {})
+}
+
+/** {@link snapshotRepository} with this package's test seams: for its own tests only (see {@link SnapshotTesting}). */
+export async function snapshotWithTestSeams(request: SnapshotRequest, bounds: SnapshotBounds, signal: AbortSignal | undefined, testing: SnapshotTesting): Promise<RepositorySnapshot> {
   const limits = { maxFiles: bounds.maxFiles ?? 40, maxBytes: bounds.maxBytes ?? 300_000, maxFileBytes: bounds.maxFileBytes ?? 48_000 }
   if (request.ref !== undefined && (!/^[A-Za-z0-9._/-]{1,200}$/.test(request.ref) || request.ref.startsWith('-') || request.ref.includes('..'))) {
     throw new SnapshotError('invalid_input', 'a ref is a branch, a tag, or a commit SHA')

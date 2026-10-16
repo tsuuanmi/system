@@ -50,6 +50,18 @@ describe('architecture rules', () => {
     expect(families).toEqual([])
   })
 
+  it('keeps the repository reader\'s test seams in its own package: no other source names them, and the package does not export them (PROP-0004 Phase 6)', () => {
+    const owner = join(packages, 'libs', 'src', 'repositories.ts')
+    const seams = /\b(snapshotWithTestSeams|SnapshotTesting)\b/
+    // Every package's own sources, whichever way they would import it (by package name or by path).
+    const roots = [...readdirSync(packages).filter((d) => d !== 'plugins').map((d) => join(packages, d, 'src')), ...readdirSync(plugins).map((d) => join(plugins, d, 'src'))]
+    const named = roots.flatMap((dir) => sources(dir)).filter((file) => file !== owner && seams.test(code(readFileSync(file, 'utf8'))))
+    expect(named.map((file) => relative(root, file))).toEqual([])
+    // Nothing reaches them through the package: its entry exports neither, and it exports only its entry.
+    expect(code(readFileSync(join(packages, 'libs', 'src', 'index.ts'), 'utf8'))).not.toMatch(seams)
+    expect(Object.keys((JSON.parse(readFileSync(join(packages, 'libs', 'package.json'), 'utf8')) as { exports: Record<string, unknown> }).exports)).toEqual(['.'])
+  })
+
   it('keeps native protocol objects inside their own adapters: each protocol SDK is imported only where that protocol is spoken, and no gateway imports another (INV-7)', () => {
     // Each SDK's native types cross only their own boundary; everything else sees behavior.
     const speakers: Record<string, string[]> = {

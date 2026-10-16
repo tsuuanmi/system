@@ -148,7 +148,9 @@
     (`protocol.allow=never`), with no redirects, hooks, credential helper, prompt, or ssh; no
     system, global, or ambient repository configuration (it runs in an empty repository of its
     own, `GIT_CONFIG_GLOBAL=/dev/null`, `GIT_CEILING_DIRECTORIES`); a ref is a plain branch, tag,
-    or commit name. Local repositories are a test seam that no configuration reaches.
+    or commit name. Local repositories and a stub resolver are test seams of the reader's own
+    package: the exported reader takes none, and an architecture rule refuses any other source that
+    names them, so neither configuration nor code elsewhere can reach them.
   - **Bounds.** A blob over the per-file bound is never downloaded; files, bytes, tree entries,
     git output, every git call, and the whole read are bounded, and a stopped call kills its
     process group (its input pipe closing then is expected, never a crash). Focus globs are
