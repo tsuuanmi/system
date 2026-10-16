@@ -2,7 +2,7 @@
 export type Disposition = 'IMMEDIATE' | 'BACKOFF' | 'RECREATE_SESSION' | 'USER_ACTION' | 'CODE_FIX' | 'CONFIG_FIX' | 'NONE'
 
 export type ProviderErrorKind =
-  | 'network' | 'timeout' | 'provider_stalled' | 'session_broken'
+  | 'network' | 'timeout' | 'provider_stalled' | 'session_broken' | 'conversation_lost' | 'input_dropped'
   | 'reauth_required' | 'challenge' | 'quota_exhausted' | 'reconciliation_failed'
   | 'ui_drift' | 'config_error' | 'aborted' | 'invalid_input' | 'internal' | 'overloaded' | 'egress_denied'
 
@@ -11,6 +11,10 @@ const DISPOSITIONS: Record<ProviderErrorKind, Disposition> = {
   timeout: 'BACKOFF',
   provider_stalled: 'RECREATE_SESSION',
   session_broken: 'RECREATE_SESSION',
+  // The site positively no longer has the bound conversation: reopening it again cannot help.
+  conversation_lost: 'USER_ACTION',
+  // The site took the text away without answering (over its input limit): sending it again cannot help.
+  input_dropped: 'USER_ACTION',
   reauth_required: 'USER_ACTION',
   challenge: 'USER_ACTION',
   quota_exhausted: 'USER_ACTION',

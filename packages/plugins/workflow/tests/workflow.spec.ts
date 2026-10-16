@@ -322,6 +322,23 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
     expect(() => ctx.workflow.approve(second.runId, { verdict: 'approved' })).toThrow(/waiting for approval/)
   }, 150_000)
 
+  it('fails a member whose conversation the site no longer has at once, naming it, with no attempt spent reopening it (live 2026-10-16)', async () => {
+    const { ctx, gemini } = await boot({
+      fake: { thinkMs: 6000, answer: (prompt) => (isProposal(prompt) ? proposal('Use SQLite') : ballot('O1')) },
+      gemini: { answer: (prompt) => (isProposal(prompt) ? proposal('Use Postgres') : ballot('O1')) },
+    })
+    const run = ctx.workflow.start({ template: 'brainstorm', input: 'Which store?' })
+    // m2 proposes first; its conversation is gone from the site before its ballot.
+    await until(() => ctx.workflow.get(run.runId)!.nodes.some((n) => n.nodeId === 'brainstorm:m2:propose' && n.state === 'COMPLETED'), 60_000)
+    gemini!.conversations.clear()
+    const done = await ctx.workflow.wait(run.runId, 120_000)
+    expect(done.status).toBe('failed')
+    const ballot2 = done.nodes.find((n) => n.nodeId === 'brainstorm:m2:ballot:1')!
+    expect(ballot2).toMatchObject({ state: 'FAILED', error: { kind: 'conversation_lost', disposition: 'USER_ACTION', message: expect.stringMatching(/no longer opens/) } })
+    expect(ctx.eventLog.query({ type: 'workflow.node.retry', nodeId: 'brainstorm:m2:ballot:1' })).toEqual([])
+    expect(gemini!.sent).toHaveLength(1)
+  }, 180_000)
+
   it('runs a brainstorm: proposals on two provider families, sealed ballots over them, and a majority with no debate (REQ-TEAM-1, REQ-TEAM-2, REQ-TEAM-6)', async () => {
     const { ctx, fake, gemini } = await boot({
       fake: { answer: (prompt) => (isProposal(prompt) ? proposal('Use SQLite') : ballot('O1')) },

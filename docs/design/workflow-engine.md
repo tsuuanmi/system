@@ -249,7 +249,7 @@ the decision artifact that caused it.
 |---|---|
 | transient provider / network | `IMMEDIATE` or `BACKOFF` |
 | browser session or conversation broken | `RECREATE_SESSION` |
-| auth lost, confirmation needed, quota | `USER_ACTION` |
+| auth lost, confirmation needed, quota; a bound conversation the site no longer has (`conversation_lost`: reopening it cannot help, and a team member's conversation holds its context) | `USER_ACTION` |
 | contract violation, scheduler exception, internal programming error (`internal`) | `CODE_FIX` |
 | website UI drift that self-heal could not resolve | `CONFIG_FIX` (update the UI map; [UI operations](ui-operations.md)) |
 | invalid input, rejected by acceptance | `NONE` |
