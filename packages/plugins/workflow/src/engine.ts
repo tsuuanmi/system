@@ -449,8 +449,23 @@ export class Engine {
         return failAttempt(this, run, { ...node, attempt }, { kind: 'config_error', disposition: dispositionOf('config_error'), message: exclude.problem }, { sent: false, decisions: [] }, lease)
       }
       let admitted: AdmittedWorker
+      const { distinctAccounts, ...restricted } = await restriction(this, run, spec)
+      // Recorded when the node runs on the same provider family for want of another (ADR-0029).
+      let sameFamily: ArtifactRef | undefined
       try {
-        admitted = await this.ctx.workers.route(record.requirement, { producer: 'workflow', ...(await restriction(this, run, spec)), ...(exclude ? { exclude } : {}) })
+        try {
+          admitted = await this.ctx.workers.route(record.requirement, { producer: 'workflow', ...restricted, ...(exclude ? { exclude } : {}) })
+        } catch (error) {
+          if (!(error instanceof AdmissionFailure) || !this.config.allowSameFamily || (!exclude && !distinctAccounts)) throw error
+          // Opt-in only: with no Worker of another family (or account), route without that rule, and say so.
+          // A session's own Worker still binds it; only the family and distinct-account rules are
+          // lifted, so a Worker refused for its quota, sign-in, tier, or capability stays refused.
+          // When nothing passes even then, the first refusal, with what the team needs, stands.
+          admitted = await this.ctx.workers.route(record.requirement, { producer: 'workflow', ...(distinctAccounts ? {} : restricted) }).catch(() => {
+            throw error
+          })
+          sameFamily = this.sameFamilyDecision(run, node, error.decision, [exclude?.reason, distinctAccounts ? restricted.restrict?.reason : undefined].filter((r): r is string => !!r), admitted)
+        }
       } catch (error) {
         release()
         if (!(error instanceof AdmissionFailure)) throw error
@@ -472,7 +487,8 @@ export class Engine {
       }
       const routed = {
         worker: admitted.worker.worker, source: admitted.source, served_tier: admitted.worker.tier, quota_class: admitted.worker.quotaClass,
-        decisions: JSON.stringify([admitted.decisions.tier, admitted.decisions.route]),
+        // The same-family decision first: the last two stay the tier and route decisions.
+        decisions: JSON.stringify([...(sameFamily ? [sameFamily] : []), admitted.decisions.tier, admitted.decisions.route]),
       }
       try {
         this.ctx.store.transaction(() => {
@@ -535,6 +551,27 @@ export class Engine {
   }
 
   /** A team's need for provider families against those ready now, as the start of a member's admission failure. */
+  /**
+   * The operator allows a node to run on the same provider family when no Worker of another
+   * family (or another account, for a team member) is admitted (ADR-0029, `allowSameFamily`): the
+   * choice is a decision that says so, never "independent", and its node stays in its own session.
+   */
+  private sameFamilyDecision(run: RunRow, node: NodeRow, refused: ArtifactRef, rules: string[], admitted: AdmittedWorker): ArtifactRef {
+    const why = `no admitted Worker satisfies: ${rules.join('; ')}`
+    return this.ctx.artifacts.recordDecision({
+      decisionType: 'admission',
+      question: `Does node ${node.node_id} of run ${run.run_id} run on the same provider family, for want of another?`,
+      inputs: [refused, admitted.decisions.route],
+      candidates: [
+        { option: 'same-family', selected: true, reasons: [why, 'the operator allows it (workflow.allowSameFamily)', 'same provider family: its work is not judged by another provider'] },
+        { option: 'fail', selected: false, reasons: [] },
+      ],
+      decider: { type: 'policy', id: 'workflow.same-family', version: '1' },
+      outcome: { option: 'same-family', detail: { worker: admitted.worker.worker, sameProviderFamily: true, rules } },
+      deterministic: true,
+    }, { producer: { type: 'system', ref: 'workflow' }, runId: run.run_id, nodeId: node.node_id }).id as ArtifactRef
+  }
+
   private async familyShortage(spec: ResolvedNode): Promise<string> {
     const ready = new Set((await this.ctx.workers.list()).filter((w) => (w.state === 'ready' || w.state === 'busy') && w.family !== undefined).map((w) => w.family))
     return `team ${spec.team!.id} needs ${spec.team!.members} provider families, one per member; ${ready.size} ${ready.size === 1 ? 'is' : 'are'} ready (ADR-0027). `
@@ -561,7 +598,7 @@ export class Engine {
   private complete(run: RunRow, node: NodeRow, spec: ResolvedNode, execution: WorkerExecution, lease: () => Lease): void {
     const result = execution.result as ArtifactRef
     const acceptance = this.ctx.workers.accept(result, spec.acceptance, { producer: 'workflow', runId: run.run_id, nodeId: node.node_id, ...(spec.resultSchema ? { resultSchema: spec.resultSchema } : {}) })
-    const decisions = { decisions: JSON.stringify([...execution.decisions, ...routedDecisions(node)]) }
+    const decisions = { decisions: JSON.stringify([...execution.decisions, ...routedDecisions(node, this)]) }
     const data = { executionId: execution.id, source: node.source, worker: node.worker, tier: node.served_tier, quotaClass: node.quota_class, accepted: acceptance.accepted }
     let gate: ReturnType<typeof subjectGate> | undefined
     this.ctx.store.transaction(() => {

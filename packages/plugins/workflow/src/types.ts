@@ -119,6 +119,12 @@ export interface Config {
   retainDays?: number
   /** Days a finished run is kept, then deleted with what only it needed; 0 keeps every run (default 0). */
   retainRunsDays?: number
+  /**
+   * When no Worker of another provider family (or, for a team member, another account) is
+   * admitted, run on the same family instead of failing, recorded as a `same-family` decision
+   * (ADR-0029). Off by default.
+   */
+  allowSameFamily?: boolean
   /** Approve a high-confidence plan by policy (`by: policy`) instead of waiting for the operator (default false). */
   autoApprovePlans?: boolean
   /** Reviews of one change, the first included, before remediation stops (default 3). */

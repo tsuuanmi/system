@@ -4,6 +4,7 @@ import type { ContentId } from '@tsuuanmi/system-libs'
 import type { ArtifactRef } from '@tsuuanmi/system-workers-core'
 import type { Engine } from './engine.ts'
 import type { ResolvedNode } from './spec.ts'
+import { isSameFamily } from './recovery.ts'
 import { tieOf, type TeamRound } from './teams.ts'
 import type { ExplainedDecision, Explanation, NodeRecord, NodeView, RunRow, RunView, WorkflowError } from './types.ts'
 
@@ -23,12 +24,21 @@ export function view(e: Engine, run: RunRow): RunView {
   return {
     runId: run.run_id, template: run.template, status: run.status, specHash: run.spec_hash as ContentId,
     ...(run.session_id ? { sessionId: run.session_id } : {}),
-    ...(run.result ? { result: run.result as ArtifactRef, answer: e.resultText(run.result as ArtifactRef) } : {}),
+    ...(run.result ? { result: run.result as ArtifactRef, answer: sameFamilyNote(e, rows) + e.resultText(run.result as ArtifactRef) } : {}),
     nodes,
     ...blockedOf(e, run.run_id),
     ...(run.error ? { error: JSON.parse(run.error) as WorkflowError } : {}),
     createdAt: run.created_at, updatedAt: rows.reduce((latest, n) => (n.updated_at > latest ? n.updated_at : latest), run.updated_at),
   }
+}
+
+/**
+ * A run whose steps that should differ in provider family ran on one (ADR-0029) says so first,
+ * naming them, so the caller reads it with the answer. A team says it in its own answer.
+ */
+function sameFamilyNote(e: Engine, rows: ReturnType<Engine['nodeRows']>): string {
+  const same = rows.filter((n) => !(JSON.parse(n.spec) as ResolvedNode).team && (n.decisions ? (JSON.parse(n.decisions) as ArtifactRef[]) : []).some((d) => isSameFamily(e, d)))
+  return same.length ? `Same provider family (allowSameFamily): ${same.map((n) => n.node_id).join(', ')} ran on the family of the steps ${same.length > 1 ? 'they' : 'it'} should differ from; no other provider judged ${same.length > 1 ? 'them' : 'it'}.\n\n` : ''
 }
 
 /** The token usage a result reports (`model-answer`), for the usage report. */

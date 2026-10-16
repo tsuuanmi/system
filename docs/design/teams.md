@@ -51,6 +51,12 @@ accounts (REQ-TEAM-4): they route one at a time, and each avoids every account a
 holds. A member that finds no other family fails with `config_error`. Its message starts
 `team T needs N provider families, one per member; M is/are ready (ADR-0027).`
 
+With the workflow's `allowSameFamily` on ([ADR-0029](../decisions/adr/0029-opt-in-same-family-fallback.md)),
+such a member routes again without the family and distinct-account rules, so two members may
+share one account, each in its own conversation. The fallback is a `same-family` admission
+decision on the member; the team's final decision records `members: same provider family`, and
+its answer's second line says that no other provider judged it.
+
 ## Procedure
 
 ```mermaid

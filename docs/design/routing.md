@@ -113,7 +113,9 @@ without naming a provider ([INV-11](../architecture/invariants.md#inv-11-no-tool
   literature:1`), never a family, so route and admission decisions carry no family value. An
   architecture test refuses a family literal in routing, workflow, profile, and models code.
 - The workflow engine builds the exclusion from a node's `differentFrom`
-  ([workflow engine](workflow-engine.md#different-provider-families)).
+  ([workflow engine](workflow-engine.md#different-provider-families)). Routing itself never
+  lifts it; an operator opt-in lets the engine route again without it, recorded
+  ([ADR-0029](../decisions/adr/0029-opt-in-same-family-fallback.md)).
 
 ## Data locality policy
 

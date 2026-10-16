@@ -34,5 +34,6 @@ Status values: `Proposed`, `Accepted`, `Rejected`, `Superseded by ADR-NNNN`,
 | [0024](0024-agent-workers-confined-for-reads.md) | Agent Workers are confined for reads; the DSH home is never readable (bubblewrap where a runtime's own sandbox does not confine reads) | Accepted |
 | [0025](0025-api-first-composition.md) | An `api-first` preset in one bundle; website Workers and model gateways are opt-in there | Accepted |
 | [0026](0026-versioned-releases-with-provenance.md) | Lockstep versioned releases with provenance and SBOM; SemVer covers `system`'s own contracts; supported Node range | Accepted |
-| [0027](0027-provider-diversity-in-routing.md) | Routing may require a provider family different from a named node's; it compares opaque families for inequality and never names one | Accepted |
+| [0027](0027-provider-diversity-in-routing.md) | Routing may require a provider family different from a named node's; it compares opaque families for inequality and never names one | Accepted; superseded in part by 0029 |
 | [0028](0028-local-lead-final-authority.md) | The calling agent is the Lead and decides; a team's outcome is advice bounded to the run, and authorizes no effect outside it | Accepted |
+| [0029](0029-opt-in-same-family-fallback.md) | An operator may let work run on one provider family when no other is admitted (`allowSameFamily`), recorded as a same-family decision, never silent | Accepted |

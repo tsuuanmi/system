@@ -18,12 +18,12 @@ afterEach(async () => {
   while (cleanups.length) await cleanups.pop()!()
 })
 
-async function boot() {
+async function boot(workflow: Record<string, unknown> = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'system-science-'))
   const ctx = new Context()
   const fibers = [
     ctx.plugin(Store, { path: join(dir, 'system.db') }), ctx.plugin(Artifacts, {}), ctx.plugin(EventLog, {}), ctx.plugin(Leases, {}), ctx.plugin(Egress, {}),
-    ctx.plugin(WorkerRouter, {}), ctx.plugin(WorkerSessions, {}), ctx.plugin(Workflow, { retryDelayMs: 100 }),
+    ctx.plugin(WorkerRouter, {}), ctx.plugin(WorkerSessions, {}), ctx.plugin(Workflow, { retryDelayMs: 100, ...workflow }),
   ]
   await Promise.all(fibers)
   cleanups.push(async () => { for (const f of [...fibers].reverse()) await f.dispose() }, () => rmSync(dir, { recursive: true, force: true }))
@@ -149,6 +149,18 @@ describe('the scientific-research profile, on the unchanged engine (REQ-WF-9)', 
     const done = await ctx.workflow.wait(ctx.workflow.start({ template: 'research', input: 'Does X lower Y?' }).runId, 30_000)
     expect(done.status).toBe('failed')
     expect(done.nodes.find((n) => n.nodeId === 'literature:2')!.error!.message).toMatch(/^no Worker can take this work: .*same provider family \(differs from node literature:1\)/)
+  })
+
+  it('runs the second review on the same provider family only when the operator allows it, and records that it did (ADR-0029)', async () => {
+    const ctx = await boot({ allowSameFamily: true })
+    await ctx.plugin(Science)
+    scholar(ctx, ['fam-a', 'fam-a'])
+    const done = await ctx.workflow.wait(ctx.workflow.start({ template: 'research', input: 'Does X lower Y?' }).runId, 30_000)
+    expect(done.status).toBe('completed')
+    const second = ctx.workflow.explain(done.runId)!.nodes.find((n) => n.nodeId === 'literature:2')!
+    expect(second.decisions).toEqual(expect.arrayContaining([expect.objectContaining({ type: 'admission', outcome: 'same-family' })]))
+    // The caller reads it first, with the answer, not only in explain.
+    expect(done.answer).toMatch(/^Same provider family \(allowSameFamily\): literature:2(, critique:1)? ran on the family of the steps/)
   })
 
   it('keeps an old run\'s typed evidence on the version its step asked for, and supersedes it when the step reruns', async () => {

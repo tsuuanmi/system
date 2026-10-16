@@ -261,6 +261,22 @@ example `no Worker can take this work: no Worker proves deep-research`; nothing
 is sent anywhere ([templates](../reference/workflow-templates.md#presets)).
 `system init --preset default` returns to the default composition.
 
+## One provider family
+
+When a second provider cannot serve work (for example Gemini blocked by Google's check), teams and
+research fail admission: they need two provider families
+([ADR-0027](../decisions/adr/0027-provider-diversity-in-routing.md)). To run them on one family
+instead ([ADR-0029](../decisions/adr/0029-opt-in-same-family-fallback.md)):
+
+1. Turn the blocked website's driver row off (`provider-gemini-web`), so nothing loads it.
+2. Set `allowSameFamily: true` on the `workflow` row.
+3. Restart (`system shutdown`, then start).
+
+Two team members then share one account, each in its own conversation. The team's answer says
+"same provider family", and each run spends that account's quota for both members. To return to
+two families, turn the row back on and sign the account in; `allowSameFamily` can stay on, since
+a second family is used whenever one is admitted.
+
 ## Account re-auth
 
 A turn that fails with `reauth_required` or `challenge` (disposition

@@ -86,6 +86,13 @@ provider family than the Workers that served those nodes
   literature:1`). The relation holds both ways: a node routing again (a retry, an
   escalation, a `continue`) also excludes the families of the routed nodes that name it.
   A node that routes again forgets its old Worker, so no peer differs from a stale one.
+- With `allowSameFamily` on ([ADR-0029](../decisions/adr/0029-opt-in-same-family-fallback.md)), a
+  node that no Worker of another family admits routes again without the exclusion (a team
+  member, also without the distinct-account rule; a session's own Worker still binds it). The
+  fallback is an `admission` decision (`workflow.same-family`, outcome `same-family`) kept among
+  the node's decisions, and the run's answer starts with a line naming those steps (`Same
+  provider family (allowSameFamily): …`; a team says it in its own answer). Off by default:
+  then the node fails as above.
 - If a named node failed, the node sends nothing and the run fails on that node. If a named
   node's Worker declares no family or is no longer listed, no Worker can be shown to differ:
   the node fails as `config_error`, with nothing sent (fail closed). With only Workers of the

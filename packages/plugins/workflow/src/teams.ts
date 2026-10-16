@@ -12,6 +12,7 @@ import { type Runtime, RUNTIMES } from '@tsuuanmi/system-worker-sessions'
 import type { ArtifactRef, Tier } from '@tsuuanmi/system-workers-core'
 import type { Engine } from './engine.ts'
 import { append } from './growth.ts'
+import { isSameFamily } from './recovery.ts'
 import { type SourceSnapshot, sourceOf } from './sources.ts'
 import { ballotContract, type ResolvedNode, TEAM_STEPS, type TeamKind, type TeamRole } from './spec.ts'
 import { LEASE_TTL_MS, type NodeRecord, type NodeRow, type RunRow, type RunView, WorkflowFailure } from './types.ts'
@@ -637,6 +638,8 @@ function conclude(e: Engine, run: RunRow, node: NodeRow, spec: ResolvedNode, nod
   const revisions = rounds.flatMap(({ round }) => round.ballots.filter((b) => b.revision).map((b) => ({ member: b.member, round: round.round, revision: b.revision! })))
   const tiebreak = how.by === 'rule' && (how.method === 'team-majority' || how.method === 'blocking-finding') ? undefined : { by: how.by, option: how.winner ?? 'inconclusive', rationale: how.rationale ?? '' }
   const source = team.kind === 'review' ? sourceOf(e, nodes, nodes.filter((n) => specOf(n).team?.id === team.id && specOf(n).team?.role === 'propose').flatMap((n) => specOf(n).dependsOn)) : undefined
+  // Members on one provider family (ADR-0029): said on the record and in the answer, never "independent".
+  const sameFamily = nodes.some((n) => specOf(n).team?.id === team.id && specOf(n).team?.role === 'propose' && (n.decisions ? (JSON.parse(n.decisions) as ArtifactRef[]) : []).some((d) => isSameFamily(e, d)))
   const why = how.method === 'blocking-finding'
     ? `confirmed blocking finding(s) ${blockingConfirmed(findings).map((f) => f.id).join(', ')} decide changes`
     : how.method === 'team-majority'
@@ -651,7 +654,7 @@ function conclude(e: Engine, run: RunRow, node: NodeRow, spec: ResolvedNode, nod
         { option: 'inconclusive', selected: how.winner === null, reasons: how.winner === null ? [why.slice(0, 300)] : [] }],
       ...(team.kind === 'review' ? { schema: 'decision@1.2' as const } : {}),
       decider: { type: how.by, id: how.id, version: '1' },
-      outcome: { option: how.winner ?? 'inconclusive', detail: { method: how.method } },
+      outcome: { option: how.winner ?? 'inconclusive', detail: { method: how.method, ...(sameFamily ? { members: 'same provider family' } : {}) } },
       deterministic: how.by === 'rule',
       vote: {
         kind: team.kind, method: how.method, threshold: Math.floor(team.members / 2) + 1, members: memberIdentities(e, team, nodes), options: options.map(optionRecord),
@@ -660,7 +663,7 @@ function conclude(e: Engine, run: RunRow, node: NodeRow, spec: ResolvedNode, nod
         ...(how.method === 'blocking-finding' ? { blocking: blockingConfirmed(findings).map((f) => f.id) } : {}),
       },
     }, { producer: { type: 'system', ref: 'workflow' }, runId: run.run_id, nodeId: node.node_id, classification: run.classification ?? e.ctx.egress.defaultClassification }).id as ArtifactRef
-    const text = resultText(team.kind, how, options, rounds.map((t) => t.round), dissent, findings, decision, source)
+    const text = resultText(team.kind, how, options, rounds.map((t) => t.round), dissent, findings, decision, source, sameFamily)
     const result = e.ctx.artifacts.put({
       kind: 'report', bodySchema: how.method === 'blocking-finding' ? 'team-result@1.1' : 'team-result@1.0',
       body: { schema: how.method === 'blocking-finding' ? 'team-result@1.1' : 'team-result@1.0', runId: run.run_id, team: team.id, kind: team.kind, method: how.method, winner: how.winner, decision, text },
@@ -675,10 +678,11 @@ function conclude(e: Engine, run: RunRow, node: NodeRow, spec: ResolvedNode, nod
 }
 
 /** The team's answer: one machine-readable line, then the decision for a reader. A review's blocking findings always show. */
-function resultText(kind: TeamKind, how: Conclusion, options: TeamOption[], rounds: TeamRound[], dissent: Array<{ member: string; choice: string; objections: string[] }>, findings: ReviewFinding[], decision: ArtifactRef, source?: SourceSnapshot): string {
+function resultText(kind: TeamKind, how: Conclusion, options: TeamOption[], rounds: TeamRound[], dissent: Array<{ member: string; choice: string; objections: string[] }>, findings: ReviewFinding[], decision: ArtifactRef, source?: SourceSnapshot, sameFamily = false): string {
   const winner = options.find((o) => o.option === how.winner)
   const last = rounds.at(-1)!
   const lines = [`outcome: ${how.winner ?? 'inconclusive'}; method: ${how.method}; winner: ${how.winner ?? 'none'}; decision: ${decision}`, '']
+  if (sameFamily) lines.push('Members: same provider family (allowSameFamily): no other provider judged this.', '')
   if (winner && kind === 'brainstorm') lines.push(`## Decision: ${winner.option} (${winner.member}'s proposal)`, '', winner.text, '')
   else if (winner) lines.push(`## Decision: ${winner.option}${how.method === 'blocking-finding' ? ' (a confirmed blocking finding decides it)' : ''}`, '')
   else lines.push('## No decision', '', how.by === 'rule' ? 'The vote tied and no deciding vote arrived in time.' : `The ${how.by} left it inconclusive.`, '')
@@ -722,7 +726,7 @@ function resultText(kind: TeamKind, how: Conclusion, options: TeamOption[], roun
  * Which Workers may take a node: a session stays on its Worker; a member of a team avoids every
  * account another member already holds (REQ-TEAM-4), on top of its provider family (ADR-0027).
  */
-export async function restriction(e: Engine, run: RunRow, spec: ResolvedNode): Promise<{ restrict?: { workers: string[]; reason: string } }> {
+export async function restriction(e: Engine, run: RunRow, spec: ResolvedNode): Promise<{ restrict?: { workers: string[]; reason: string }; distinctAccounts?: true }> {
   const own = spec.session.sessionId ? e.ctx.workers.affinity(spec.session.sessionId) : undefined
   if (own) return { restrict: { workers: own, reason: `session ${spec.session.sessionId} stays on its Worker` } }
   if (!spec.team?.member) return {}
@@ -732,5 +736,5 @@ export async function restriction(e: Engine, run: RunRow, spec: ResolvedNode): P
     .flatMap((s) => e.ctx.workers.affinity(s.session.sessionId!) ?? []))
   if (!taken.size) return {}
   const workers = (await e.ctx.workers.list()).map((w) => w.worker).filter((w) => !taken.has(w))
-  return { restrict: { workers, reason: `team ${spec.team.id}: members use distinct accounts (REQ-TEAM-4); another member holds this account` } }
+  return { restrict: { workers, reason: `team ${spec.team.id}: members use distinct accounts (REQ-TEAM-4); another member holds this account` }, distinctAccounts: true }
 }

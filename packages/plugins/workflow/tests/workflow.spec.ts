@@ -735,6 +735,39 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
     expect(ctx.artifacts.list({ kind: 'report' }).filter((a) => a.bodySchema === 'session-summary@1.0').length).toBeGreaterThanOrEqual(1)
   }, 300_000)
 
+  it('runs a team on one account in two conversations when the operator allows the same family, and says so on the record (ADR-0029)', async () => {
+    const { ctx, fake } = await boot({ fake: { answer: member }, workflow: { allowSameFamily: true } })
+    const done = await ctx.workflow.wait(ctx.workflow.start({ template: 'brainstorm', input: 'q' }).runId, 120_000)
+    expect(done.status).toBe('completed')
+    const worker = (id: string) => done.nodes.find((n) => n.nodeId === id)!.worker
+    expect([worker('brainstorm:m1:propose'), worker('brainstorm:m2:propose')]).toEqual(['worker:chatgpt-main/standard', 'worker:chatgpt-main/standard'])
+    // Two members, two conversations: each ballot goes back to its own member's conversation.
+    const proposals = fake.sent.filter((s) => kind(s.prompt) === 'proposal')
+    const ballots = fake.sent.filter((s) => kind(s.prompt) === 'ballot')
+    expect(new Set(ballots.map((b) => b.conversationId)).size).toBe(2)
+    expect(proposals).toHaveLength(2)
+    // Never "independent": the decision and the answer say the members are one provider family.
+    expect(done.answer).toContain('Members: same provider family (allowSameFamily): no other provider judged this.')
+    const final = ctx.artifacts.get(ctx.workflow.records(done.runId).at(-1)!.outputReceipt!.acceptance)!.body as { outcome: { detail: Record<string, unknown> } }
+    expect(final.outcome.detail).toMatchObject({ members: 'same provider family' })
+    const m2 = ctx.workflow.explain(done.runId)!.nodes.find((n) => n.nodeId === 'brainstorm:m2:propose')!
+    expect(m2.decisions).toEqual(expect.arrayContaining([expect.objectContaining({ type: 'admission', outcome: 'same-family' })]))
+  }, 180_000)
+
+  it('still uses a second family whenever one is admitted, with the same-family opt-in on (ADR-0029)', async () => {
+    const { ctx } = await boot({
+      fake: { answer: (prompt) => (isProposal(prompt) ? proposal('Use SQLite') : ballot('O1')) },
+      gemini: { answer: (prompt) => (isProposal(prompt) ? proposal('Use Postgres') : ballot('O1')) },
+      workflow: { allowSameFamily: true },
+    })
+    const done = await ctx.workflow.wait(ctx.workflow.start({ template: 'brainstorm', input: 'Which store?' }).runId, 120_000)
+    expect(done.status).toBe('completed')
+    expect(done.nodes.find((n) => n.nodeId === 'brainstorm:m2:propose')!.worker).toBe('worker:gemini-main/standard')
+    expect(done.answer).not.toContain('same provider family')
+    const decisions = ctx.workflow.explain(done.runId)!.nodes.flatMap((n) => n.decisions)
+    expect(decisions.some((d) => d.outcome === 'same-family')).toBe(false)
+  }, 180_000)
+
   it('fails closed when a team finds fewer provider families than members, and says what it needs (ADR-0027, REQ-TEAM-4)', async () => {
     // Two accounts of one provider: one family. The second member is refused, and nothing is sent for it.
     const { ctx, fake } = await boot({ fake: { answer: member }, accounts: ['chatgpt-main', 'chatgpt-2'] })

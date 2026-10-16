@@ -46,10 +46,18 @@ export function escalate(e: Engine, run: RunRow, node: NodeRow, spec: ResolvedNo
   return true
 }
 
-/** The tier and route decisions recorded when the node's current attempt was routed. */
-export function routedDecisions(node: NodeRow): ArtifactRef[] {
+/** Whether a decision is the opt-in same-family admission of ADR-0029. */
+export function isSameFamily(e: Engine, decision: ArtifactRef | undefined): boolean {
+  if (!decision) return false
+  const body = e.ctx.artifacts.get(decision)?.body as { decider?: { id?: string } } | undefined
+  return body?.decider?.id === 'workflow.same-family'
+}
+
+/** The decisions recorded when the node's current attempt was routed: tier and route, after a same-family admission if there was one. */
+export function routedDecisions(node: NodeRow, e?: Engine): ArtifactRef[] {
   const stored = node.decisions ? (JSON.parse(node.decisions) as ArtifactRef[]) : []
-  return stored.slice(-2)
+  const before = stored.at(-3)
+  return e && isSameFamily(e, before) ? stored.slice(-3) : stored.slice(-2)
 }
 
 /**
@@ -72,7 +80,7 @@ export function failAttempt(e: Engine, run: RunRow, node: NodeRow, error: Workfl
   // What failed, in the decision `explain` shows, so the CLI alone tells why.
   const said = errorLine(error.message)
   if (said) (retry ? reasons.retry : reasons.fail).push(`error: ${said}`)
-  const kept = attempt.decisions ?? (attempt.execution ? [...attempt.execution.decisions, ...routedDecisions(node)] : node.decisions ? (JSON.parse(node.decisions) as ArtifactRef[]) : [])
+  const kept = attempt.decisions ?? (attempt.execution ? [...attempt.execution.decisions, ...routedDecisions(node, e)] : node.decisions ? (JSON.parse(node.decisions) as ArtifactRef[]) : [])
   const decision = e.ctx.artifacts.recordDecision({
     decisionType: 'recovery',
     question: `How does node ${node.node_id} of run ${run.run_id} recover from ${error.kind}?`,
