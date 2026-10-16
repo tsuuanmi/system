@@ -211,7 +211,8 @@ describe.runIf(canRunBrowser)('ChatGptWebDriver against the fake site, with no r
   }, 60_000)
 
   it('snapshots a Deep research conversation: running until the report is complete', async () => {
-    const { page, driver, context, fake } = await site({ researchMs: 4000, report: 'Final report.' })
+    // Running until the test says otherwise: no window to race, however loaded the host.
+    const { page, driver, context, fake } = await site({ researchHeld: true, report: 'Final report.' })
     let binding = ''
     const asking = driver.ask(page, 'long research', { conversation: 'persistent', feature: 'deep-research', onBinding: (id) => { binding = id } })
     // Awaited below; a failed assertion before that must not leave its rejection unhandled when the page closes.
@@ -221,6 +222,7 @@ describe.runIf(canRunBrowser)('ChatGptWebDriver against the fake site, with no r
     const other = await context.newPage()
     await expect.poll(() => binding, { timeout: 15_000 }).not.toBe('')
     expect(await driver.snapshot(other, binding, { feature: 'deep-research' })).toMatchObject({ running: true, observable: true, lastPrompt: expect.stringContaining('long research') })
+    fake.finishResearch()
     await asking
     expect(await driver.snapshot(other, binding, { feature: 'deep-research' })).toMatchObject({ text: 'Research findings\nFinal report.', running: false, observable: true })
   }, 90_000)

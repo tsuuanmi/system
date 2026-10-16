@@ -81,6 +81,8 @@ export interface FakeOptions {
   clarify?: string
   /** Deep research: time from Start research to the finished report, in ms. */
   researchMs?: number
+  /** Deep research stays running, however long, until a test sets this back to false. */
+  researchHeld?: boolean
   /** The finished report's text, and the sources it used. */
   report?: string
   sources?: Array<{ title: string; url: string }>
@@ -370,7 +372,7 @@ export class FakeGemini {
     this.options = {
       paneMenu: true, dialogTarget: '', dialogExtraCall: false, startOnSpark: true, interstitial: false, captcha: false, dropOver: 0, signInOffer: false, chatTabBroken: false, temporaryBroken: false, modePicker: true, promptParagraphs: true, deepResearch: true,
       models: ['3.5 Flash-Lite', '3.8 Flash', '3.1 Pro'], levels: ['Low', 'Medium', 'High'], levelsInline: true, levelsSubmenu: true, submenuBroken: false, answer: 'OK', clarify: '',
-      researchMs: 1500, report: 'HTTP/3 runs over QUIC, not TCP.', sources: [{ title: 'RFC 9114: HTTP/3', url: 'https://www.rfc-editor.org/rfc/rfc9114' }], ...options,
+      researchMs: 1500, researchHeld: false, report: 'HTTP/3 runs over QUIC, not TCP.', sources: [{ title: 'RFC 9114: HTTP/3', url: 'https://www.rfc-editor.org/rfc/rfc9114' }], ...options,
     }
   }
 
@@ -389,7 +391,7 @@ export class FakeGemini {
   /** A conversation's turns as the page renders them; research is done once its time has passed. */
   private view(id: string): unknown[] {
     return (this.conversations.get(id) ?? []).map((turn) => turn.role === 'research'
-      ? { ...turn, done: Date.now() - turn.startedAt >= this.options.researchMs, report: this.options.report, sources: this.options.sources }
+      ? { ...turn, done: !this.options.researchHeld && Date.now() - turn.startedAt >= this.options.researchMs, report: this.options.report, sources: this.options.sources }
       : turn)
   }
 

@@ -67,6 +67,8 @@ export interface FakeOptions {
   lockedModels?: string[]
   /** Deep research: time from acknowledgement to the finished report, in ms. */
   researchMs?: number
+  /** Deep research stays running, however long, until a test calls `finishResearch()`. */
+  researchHeld?: boolean
   /** Deep research report text. */
   report?: string
   /** Whether the account has a model picker (default true); without one the driver refuses to send. */
@@ -343,6 +345,11 @@ export class FakeChatGpt {
   readonly codeAttempts: string[] = []
   readonly sent: Sent[] = []
   readonly conversations = new Map<string, Conversation>()
+
+  /** Finish every held Deep research run now (`researchHeld`). */
+  finishResearch(): void {
+    for (const c of this.conversations.values()) for (const run of c.researches) run.done = true
+  }
   /** Conversations deleted from the history (PATCH is_visible false): they no longer open. */
   readonly deleted = new Set<string>()
   /** Every deletion request the page made, by conversation id (a repeated click shows twice). */
@@ -356,7 +363,7 @@ export class FakeChatGpt {
     this.options = {
       startOnWork: true, chatToggleBroken: false, signedIn: true, loginOffer: false, requireCookie: false, rotateOnLoad: false, deleteMenu: true, paneMenu: true, dialogTarget: '', userId: 'user-fake123', sendLabel: 'Send', sendTestId: '',
       answer: 'OK', thinkMs: 300, models: ['Latest', 'GPT-6', 'GPT-5.6 Sol', 'GPT-5.5'], lockedModels: [],
-      researchMs: 1500, report: 'Deep research report body.', clarify: false, features: ['deep-research', 'web-search', 'image-generation'], modelPicker: true,
+      researchMs: 1500, researchHeld: false, report: 'Deep research report body.', clarify: false, features: ['deep-research', 'web-search', 'image-generation'], modelPicker: true,
       mfa: 'totp', email: 'operator@example.test', password: 'correct horse', totpSecret: 'JBSWY3DPEHPK3PXP',
       copied: (markdown) => markdown.replace(/(```)[^\n]*\n([\s\S]*?)\n```/g, (_, fence: string, code: string) => `${fence}\n${code.split('\n').join('')}\n${fence}`), ...options,
     }
@@ -436,7 +443,7 @@ export class FakeChatGpt {
       if (research) {
         const run = { done: false, report: this.options.report }
         user.research = conversation.researches.push(run) - 1
-        setTimeout(() => { run.done = true }, this.options.researchMs).unref()
+        if (!this.options.researchHeld) setTimeout(() => { run.done = true }, this.options.researchMs).unref()
       }
       // Like a real session, the cookie is refreshed while answering.
       res.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8', 'set-cookie': `session_refresh=${this.sent.length}; Path=/; Max-Age=3600` })

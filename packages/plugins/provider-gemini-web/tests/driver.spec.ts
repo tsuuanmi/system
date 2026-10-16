@@ -359,7 +359,8 @@ describe.runIf(canRunBrowser)('GeminiWebDriver against the fake site', { timeout
   })
 
   it('reopens a Deep research turn as running while its card works, then as its report', async () => {
-    const { page, driver, fake } = await open({ researchMs: 12_000 })
+    // Running until the test says otherwise: no window to race, however loaded the host.
+    const { page, driver, fake } = await open({ researchHeld: true })
     let binding: string | undefined
     const asked = driver.ask(page, 'Compare HTTP/2 and HTTP/3', { conversation: 'persistent', feature: 'deep-research', onBinding: (b) => { binding = b } })
     // Awaited below; a failed assertion before that must not leave its rejection unhandled when the page closes.
@@ -368,6 +369,7 @@ describe.runIf(canRunBrowser)('GeminiWebDriver against the fake site', { timeout
     expect(fake.started).toEqual([binding])
     const other = await context!.newPage()
     expect(await driver.snapshot(other, binding!, { feature: 'deep-research' })).toMatchObject({ text: '', running: true, observable: true })
+    fake.options.researchHeld = false
     const result = await asked
     // Starting the plan is the conversation's last user turn.
     expect(await driver.snapshot(other, binding!, { feature: 'deep-research' })).toEqual({ text: result.text, running: false, observable: true, lastPrompt: 'Start research' })
