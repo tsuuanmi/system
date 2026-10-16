@@ -359,6 +359,34 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
     expect(explained).toMatchObject({ type: 'vote', outcome: 'O1', ballots: [{ round: 1, member: 'm1', choice: 'O1', confidence: 'high' }, { round: 1, member: 'm2', choice: 'O1' }] })
   }, 180_000)
 
+  it('escalates a member whose proposal is rejected within its own conversation and account, and explains every attempt (Model A, REQ-WRK-9)', async () => {
+    let first = true
+    const { ctx, fake } = await boot({
+      fake: { answer: (prompt) => {
+        if (!isProposal(prompt)) return ballot('O1')
+        if (first) {
+          first = false
+          return 'A proposal without its JSON object.'
+        }
+        return proposal('Use SQLite')
+      } },
+      gemini: { answer: (prompt) => (isProposal(prompt) ? proposal('Use Postgres') : ballot('O1')) },
+    })
+    const done = await ctx.workflow.wait(ctx.workflow.start({ template: 'brainstorm', input: 'Which store?' }).runId, 180_000)
+    expect(done).toMatchObject({ status: 'completed', answer: expect.stringMatching(/^outcome: O1; method: team-majority;/) })
+    // The escalation runs on the same account at the next tier, and the ballot stays in that conversation.
+    const worker = (id: string) => done.nodes.find((n) => n.nodeId === id)!.worker
+    expect(worker('brainstorm:m1:propose')).toBe('worker:chatgpt-main/frontier')
+    expect(worker('brainstorm:m1:ballot:1')).toMatch(/^worker:chatgpt-main\//)
+    expect(fake.sent.map((s) => kind(s.prompt))).toEqual(['proposal', 'proposal', 'ballot'])
+    // explain keeps the rejected first answer's acceptance and the escalation it led to.
+    const decisions = ctx.workflow.explain(done.runId)!.nodes.find((n) => n.nodeId === 'brainstorm:m1:propose')!.decisions
+    expect(decisions.filter((d) => d.type === 'acceptance').map((d) => [d.outcome, d.reasons.join(' ')])).toEqual([
+      ['reject', expect.stringMatching(/no JSON object/)], ['accept', expect.any(String)],
+    ])
+    expect(decisions.map((d) => d.type)).toContain('escalation')
+  }, 240_000)
+
   it('debates only on a split vote, then ties to the caller: a deciding vote bound to the tie decision, recorded as the client\'s (REQ-TEAM-7)', async () => {
     const { ctx, fake, gemini, dir } = await boot({
       fake: { answer: (prompt) => (isProposal(prompt) ? proposal('Ship now') : ballot('O1', ['O2 delays the release'])) },
@@ -817,6 +845,12 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
     expect(retry.data).toMatchObject({ kind: 'overloaded', disposition: 'BACKOFF' })
     // The retry is a decision (INV-13), named by the event.
     expect(ctx.artifacts.get(retry.decision!)?.body).toMatchObject({ decisionType: 'recovery', outcome: { option: 'retry' } })
+    // explain shows why the failed attempt failed, in its own words, after the run completed.
+    const recovery = ctx.workflow.explain(run.runId)!.nodes[0]!.decisions.find((d) => d.type === 'recovery')!
+    expect(recovery).toMatchObject({ outcome: 'retry', reasons: expect.arrayContaining([expect.stringMatching(/^error: \S/)]) })
+    // A browser's call log never carries typed text into a decision.
+    const { errorLine } = await import('../src/recovery.ts')
+    expect(errorLine('locator.fill: Timeout\n\u001b[2m  - waiting for fill("my private prompt")\u001b[22m')).toBe('locator.fill: Timeout - waiting for fill(…)')
     expect((await ctx.workflow.wait(blocker.runId, 10_000)).status).toBe('completed')
     expect(fake.sent.map((s) => s.prompt)).toEqual(['hold the only slot', 'after the blocker'])
   }, 90_000)

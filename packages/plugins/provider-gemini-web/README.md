@@ -24,6 +24,10 @@ driver, its operations are data: a UI map,
     never `3.5 Flash-Lite`.
   - An item's note may follow its name on the same line (`Medium Balanced
     depth`) or on its own line; the name is matched either way.
+  - An item in a submenu (the thinking levels, under "Thinking level", since
+    2026-10-16; map element `mode.submenu`) is reached by opening it first, to
+    choose and to read back. One that still cannot be reached is reported as
+    drift, with evidence, and fails the turn as `ui_drift` before sending.
   - Both are read back before sending, and the read-back (with the version) is
     the turn's mode. An item the account does not offer fails closed
     (`config_error`).

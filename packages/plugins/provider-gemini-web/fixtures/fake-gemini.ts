@@ -49,6 +49,13 @@ export interface FakeOptions {
    * each with its note on the same line ("Medium Balanced depth"). False: each note on its own line.
    */
   levelsInline?: boolean
+  /**
+   * The thinking levels sit in a submenu that opens from the "Thinking level" item (seen live on
+   * 2026-10-16, default true with `levelsInline`): hidden until that item is clicked.
+   */
+  levelsSubmenu?: boolean
+  /** The "Thinking level" item opens nothing (drift: the levels cannot be reached). */
+  submenuBroken?: boolean
   /** Answer Markdown, streamed word by word; or computed from the prompt. */
   answer?: string | ((prompt: string, sent: Sent) => string)
   /** Deep research answers with this instead of a plan (a clarifying question). */
@@ -87,6 +94,7 @@ let running = false
 let deepResearch = false
 let conversationId = (/^\/app\/([0-9a-f]{16})$/.exec(location.pathname) || [])[1]
 let model = options.models[1] ?? options.models[0]
+let levelsOpen = false
 let level = options.levels[0]
 const $ = (id) => document.getElementById(id)
 const short = (name) => name.replace(/^\d[\d.]*\s+/, '')
@@ -109,23 +117,26 @@ function renderMenu() {
     + (kind === 'model' ? ' data-test-id="bard-mode-option-' + i + '"' : '')
     + ' class="' + ((kind === 'model' ? name === model : name === level) ? 'selected' : '') + '">' + name
     + (kind === 'level' && options.levelsInline ? ' <span>' : '<br><span>') + (options.notes[short(name)] ?? '') + '</span></div>'
+  const submenu = options.levelsInline && options.levelsSubmenu
   $('menu').innerHTML = options.models.map((m, i) => item(m, 'model', i)).join('')
-    + (options.levelsInline ? '<div role="menuitem" tabindex="0">Thinking level</div>' : '')
-    + options.levels.map((l, i) => item(l, 'level', i)).join('')
+    + (options.levelsInline ? '<div role="menuitem" tabindex="0" id="levels-open"' + (submenu ? ' aria-haspopup="true"' : '') + '>Thinking level</div>' : '')
+    + (submenu ? '<div id="levels"' + (levelsOpen ? '' : ' hidden') + '>' : '') + options.levels.map((l, i) => item(l, 'level', i)).join('') + (submenu ? '</div>' : '')
+  if (submenu && !options.submenuBroken) $('levels-open').onclick = () => { levelsOpen = !levelsOpen; renderMenu() }
   for (const el of $('menu').querySelectorAll('[data-kind]')) el.onclick = () => {
     if (el.dataset.kind === 'model') model = el.dataset.name
     else level = el.dataset.name
     $('menu').hidden = true
+    levelsOpen = false
     render()
   }
 }
-$('picker').onclick = () => { renderMenu(); $('menu').hidden = !$('menu').hidden }
+$('picker').onclick = () => { levelsOpen = false; renderMenu(); $('menu').hidden = !$('menu').hidden }
 $('tools').onclick = () => { $('more').hidden = true; $('tools-menu').hidden = !$('tools-menu').hidden }
 $('more-tools').onclick = () => { $('more').hidden = false; $('dr').hidden = temporary || !options.deepResearch }
 // A checkbox, like the live entry: choosing it again turns Deep research off.
 $('dr').onclick = () => { deepResearch = !deepResearch; $('tools-menu').hidden = true; render() }
 $('chip').onclick = () => { deepResearch = false; render() }
-document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { $('menu').hidden = true; $('tools-menu').hidden = true } })
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { $('menu').hidden = true; $('tools-menu').hidden = true; levelsOpen = false } })
 $('tab-chat').onclick = () => { if (!options.chatTabBroken) tab = 'chat'; render() }
 $('tab-spark').onclick = () => { tab = 'spark'; render() }
 $('temp').onclick = () => { if (!options.temporaryBroken) temporary = true; render() }
@@ -309,7 +320,7 @@ export class FakeGemini {
   constructor(options: FakeOptions = {}) {
     this.options = {
       startOnSpark: true, chatTabBroken: false, temporaryBroken: false, modePicker: true, promptParagraphs: true, deepResearch: true,
-      models: ['3.5 Flash-Lite', '3.8 Flash', '3.1 Pro'], levels: ['Low', 'Medium', 'High'], levelsInline: true, answer: 'OK', clarify: '',
+      models: ['3.5 Flash-Lite', '3.8 Flash', '3.1 Pro'], levels: ['Low', 'Medium', 'High'], levelsInline: true, levelsSubmenu: true, submenuBroken: false, answer: 'OK', clarify: '',
       researchMs: 1500, report: 'HTTP/3 runs over QUIC, not TCP.', sources: [{ title: 'RFC 9114: HTTP/3', url: 'https://www.rfc-editor.org/rfc/rfc9114' }], ...options,
     }
   }

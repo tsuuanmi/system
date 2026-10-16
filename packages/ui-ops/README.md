@@ -34,7 +34,8 @@ not a plugin: provider drivers create one `UiEngine` per turn page.
     page. It carries `outlineOf`'s structural outline of the region
     ([drift evidence](../../docs/design/ui-operations.md#drift-evidence));
     `driftData` turns a report into the `ui.drift` event's data, keeping the
-    outline as a local-private `evidence` artifact.
+    outline as a local-private `evidence` artifact. `drift(element, kind)`
+    reports a stale element a driver found itself, with the same evidence.
   - `onHeal` fires with `healed`, `rejected`, or `failed`, the scores, the
     snapshot hash, and the durable candidate for the overlay.
   - `beforeHealedAction` receives a chosen heal **before** the element is acted

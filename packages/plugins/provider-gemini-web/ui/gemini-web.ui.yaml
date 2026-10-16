@@ -129,6 +129,12 @@ elements:
     cardinality: many
     candidates:
       - { css: '[role="menuitem"]:not([data-test-id^="bard-mode-option-"])' }
+  mode.submenu:
+    description: 'An item of the mode menu that opens a submenu ("Thinking level", which holds the levels, seen live on 2026-10-16).'
+    scope: mode.menu
+    cardinality: many
+    candidates:
+      - { css: '[role="menuitem"][aria-haspopup="true"]' }
   mode.model.selected:
     scope: mode.menu
     candidates:

@@ -283,11 +283,34 @@ export class GeminiWebDriver implements ProviderDriver<Page> {
     if ((await item.getAttribute('aria-disabled')) === 'true') throw new ProviderError('config_error', `gemini-web: ${what} ${name} is locked for this account`)
     const current = await this.chosen(engine, `${element}.selected`)
     if (current === names[index]) return
-    await item.click()
+    if (!(await this.reach(engine, item))) {
+      await engine.drift(element)
+      throw new ProviderError('ui_drift', `gemini-web: ${what} ${name} is offered but cannot be reached in the mode menu`)
+    }
+    await item.click({ timeout: 5000 })
   }
 
+  /** Make a menu item visible: it may sit in a submenu that one of the menu's items opens. */
+  private async reach(engine: UiEngine, item: Locator): Promise<boolean> {
+    if (await item.isVisible()) return true
+    const openers = await engine.count('mode.submenu') ? (await engine.resolve('mode.submenu', 1000)).locator : undefined
+    for (let i = 0; openers && i < (await openers.count()); i++) {
+      await openers.nth(i).click({ timeout: 3000 }).catch(() => undefined)
+      if (await item.waitFor({ state: 'visible', timeout: 1500 }).then(() => true, () => false)) return true
+    }
+    return false
+  }
+
+  /** The chosen item's name, opening a submenu when it sits in a closed one. */
   private async chosen(engine: UiEngine, element: string): Promise<string | undefined> {
-    const found = await engine.resolve(element, 1000).catch(() => undefined)
+    let found = await engine.resolve(element, 1000).catch(() => undefined)
+    if (!found && (await engine.count('mode.submenu'))) {
+      const openers = (await engine.resolve('mode.submenu', 1000)).locator
+      for (let i = 0; !found && i < (await openers.count()); i++) {
+        await openers.nth(i).click({ timeout: 3000 }).catch(() => undefined)
+        found = await engine.resolve(element, 1500).catch(() => undefined)
+      }
+    }
     return found ? itemName(await found.locator.innerText()) : undefined
   }
 

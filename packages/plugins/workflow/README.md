@@ -180,7 +180,10 @@ second execution path (INV-1).
   - Each member is one persistent session that the engine issues, so session
     affinity keeps one identity and one Worker for the team's lifetime
     (Model A). The run forms one session group per team, and each member joins
-    at its first admission. Members never message each other.
+    at its first admission. Members never message each other. A member's later
+    steps stay in its conversation through session affinity, which admits any
+    tier of the same account, so an escalated step runs in the same
+    conversation without joining again.
   - Members route one at a time, each avoiding every account another member
     holds (REQ-TEAM-4). A member that finds no other provider family fails as
     `config_error`, naming how many families the team needs and how many are
@@ -245,8 +248,11 @@ second execution path (INV-1).
     Worker's `model-answer`) (the usage report).
   - `explain` gives each step's egress, tier, route (or admission), and
     acceptance or recovery decisions with their reasons (REQ-ART-3), and each
-    vote decision's ballots (round, member, choice, confidence, rationale). A node keeps
-    its turn's decision ids, so the chain outlives the turn runtime's retention.
+    vote decision's ballots (round, member, choice, confidence, rationale). It
+    lists every attempt's decisions in the order they were made, so a rejected
+    answer, and the escalation or retry it led to, stay visible after a later
+    attempt. A node keeps its turn's decision ids, so the chain outlives the turn
+    runtime's retention. `system explain --json` prints it as it is.
   - Node requirements carry the node's objective and tier provenance:
     `profile` for template tiers, `caller` when the caller's tier replaced one.
 - **MCP tools** (they replace the built-in placeholders):

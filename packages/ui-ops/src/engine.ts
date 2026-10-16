@@ -137,6 +137,14 @@ export class UiEngine {
     return found ? found.locator.filter({ visible: true }).count() : 0
   }
 
+  /**
+   * Report a stale element the driver found itself (a mode it could not reach, say), with drift
+   * evidence, before the driver fails the turn as `ui_drift`.
+   */
+  async drift(element: string, kind: DriftEvent['kind'] = 'unresolved'): Promise<void> {
+    await this.reportDrift(element, kind, -1)
+  }
+
   /** Evaluate a named state now. */
   async state(id: string): Promise<boolean> {
     return this.evaluate({ state: id }, new Map())

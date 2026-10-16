@@ -61,7 +61,13 @@ export function explain(e: Engine, runId: string): Explanation | undefined {
       const record = JSON.parse(node.record) as NodeRecord
       const kept = node.decisions ? (JSON.parse(node.decisions) as ArtifactRef[]) : []
       const last = record.outputReceipt?.acceptance ?? record.lastDecision
-      const ids = [...kept, ...(last && !kept.includes(last) ? [last] : [])]
+      // Every attempt's decisions, in the order they were made: an earlier attempt's rejected
+      // acceptance and the escalation or retry it led to stay visible after a later attempt.
+      // The latest attempt's chain keeps its order; earlier attempts' decisions come before it, as
+      // made (a decision shared by content with an earlier one keeps its place in the chain).
+      const latest = [...kept, ...(last && !kept.includes(last) ? [last] : [])]
+      const earlier = e.ctx.artifacts.list({ kind: 'decision', runId, nodeId: node.node_id, limit: 1000 }).map((a) => a.id as ArtifactRef).filter((id) => !latest.includes(id))
+      const ids = [...earlier, ...latest]
       return {
         nodeId: node.node_id, state: node.state,
         ...(node.execution_id ? { executionId: node.execution_id } : {}), ...(node.worker ? { worker: node.worker } : {}), ...(node.quota_class ? { quotaClass: node.quota_class } : {}),

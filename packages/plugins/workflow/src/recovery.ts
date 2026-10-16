@@ -69,6 +69,9 @@ export function failAttempt(e: Engine, run: RunRow, node: NodeRow, error: Workfl
   else if (node.attempt >= max) reasons.fail.push(`attempt ${node.attempt} of ${max} failed`)
   else reasons.retry.push(`${error.kind} is ${error.disposition}, the prompt was never sent, and attempt ${node.attempt} of ${max} failed`)
   const retry = reasons.retry.length > 0
+  // What failed, in the decision `explain` shows, so the CLI alone tells why.
+  const said = errorLine(error.message)
+  if (said) (retry ? reasons.retry : reasons.fail).push(`error: ${said}`)
   const kept = attempt.decisions ?? (attempt.execution ? [...attempt.execution.decisions, ...routedDecisions(node)] : node.decisions ? (JSON.parse(node.decisions) as ArtifactRef[]) : [])
   const decision = e.ctx.artifacts.recordDecision({
     decisionType: 'recovery',
@@ -102,6 +105,18 @@ export function failAttempt(e: Engine, run: RunRow, node: NodeRow, error: Workfl
     e.writeNode(node, { state: 'FAILED', attempt: node.attempt, error: JSON.stringify(final), ...decisions }, (r) => ({ ...r, lastDecision: decision.id as ArtifactRef }), lease)
     e.ctx.eventLog.append({ type: 'workflow.node.failed', runId: run.run_id, nodeId: node.node_id, decision: decision.id, data: { attempt: node.attempt, kind: final.kind, disposition: final.disposition } })
   })
+}
+
+/**
+ * A failure's message as one line for a decision: bounded, with terminal escapes and control
+ * characters removed, and no text a browser's call log echoes from a typing call.
+ */
+export function errorLine(message: string): string {
+  return [...message.split(`${String.fromCharCode(27)}[`).map((part, i) => (i ? part.replace(/^[0-9;]*m/, '') : part)).join('')]
+    .map((c) => (c.charCodeAt(0) < 32 || c.charCodeAt(0) === 127 ? ' ' : c)).join('')
+    // A browser's call log echoes typed text (fill("…"), type("…")): never a prompt in a decision.
+    .replace(/\b(fill|type|pressSequentially|insertText)\((["'`])[\s\S]*?\2/g, '$1(…')
+    .replace(/\s+/g, ' ').trim().slice(0, 280)
 }
 
 /**

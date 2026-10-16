@@ -29,6 +29,8 @@ without changing identity.
 
 - Each member is a Worker session, joined to the team's session group at its first
   admission. All of a member's steps run in that one conversation.
+  A later step, an escalated one too, stays in that conversation through session affinity,
+  which admits any tier of the same account; it never joins again.
 - Members never message each other. The engine composes every prompt from sealed records.
   That is the team's messaging policy under the session seam, "nobody, during the
   procedure" ([ADR-0015](../decisions/adr/0015-worker-sessions-and-peer-messaging.md)); the

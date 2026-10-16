@@ -114,6 +114,21 @@ describe.runIf(canRunBrowser)('GeminiWebDriver against the fake site', { timeout
     expect(fake.sent.map((s) => [s.model, s.level])).toEqual([['3.5 Flash-Lite', 'Low'], ['3.8 Flash', 'Medium']])
   })
 
+  it('opens the thinking-level submenu to choose a level (the layout since 2026-10-16)', async () => {
+    const { page, driver, fake } = await open()
+    expect((await driver.ask(page, 'one', { conversation: 'temporary', mode: 'pro' })).mode).toEqual({ model: '3.1 Pro', effort: 'High' })
+    expect(fake.sent.map((s) => s.level)).toEqual(['High'])
+  })
+
+  it('reports a level it cannot reach in the submenu as drift, with evidence, and sends nothing', async () => {
+    const broken = await open({ submenuBroken: true })
+    const drift: DriftEvent[] = []
+    broken.driver.onDrift = (event) => drift.push(event)
+    await expect(broken.driver.ask(broken.page, 'two', { conversation: 'temporary', mode: 'pro' })).rejects.toMatchObject({ kind: 'ui_drift', message: expect.stringMatching(/thinking level High is offered but cannot be reached/) })
+    expect(broken.fake.sent).toEqual([])
+    expect(drift).toEqual([expect.objectContaining({ element: 'mode.level', kind: 'unresolved', outline: expect.objectContaining({ nodes: expect.arrayContaining([expect.objectContaining({ role: 'menuitem' })]) }) })])
+  })
+
   it('reads a thinking level with its note on its own line too (the layout before 2026-10-16)', async () => {
     const { page, driver, fake } = await open({ levelsInline: false })
     expect((await driver.ask(page, 'hi', { conversation: 'temporary', mode: 'flash' })).mode).toEqual({ model: '3.8 Flash', effort: 'Medium' })

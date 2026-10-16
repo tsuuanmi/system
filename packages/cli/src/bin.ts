@@ -28,7 +28,8 @@ const USAGE = `Usage: system <command>
   supersede <runId> <nodeId> (<text...> | -)
                             replace a completed step's result; everything downstream runs again
   usage [<limit>]           recent runs: per step, the Worker, tier, and quota class used
-  explain <runId|artifact>  the decision chain behind a run (egress, tier, route, acceptance)
+  explain [--json] <runId|artifact>
+                            the decision chain behind a run (egress, tier, route, acceptance), every attempt's
   evidence <id>             the page outline a ui.drift event names (structure, never text; local-private)
   model key <NAME>          store a model route's API key from stdin, encrypted, under the
                             credential reference its apiKeyEnv names
@@ -228,12 +229,13 @@ async function main(argv: string[]): Promise<number> {
       return 0
     }
     case 'explain': {
-      if (!rest[0]) break
-      const outcome = await callTool('explain', { id: rest[0] })
+      const id = rest.find((a) => a !== '--json')
+      if (!id) break
+      const outcome = await callTool('explain', { id })
       if (outcome.isError) throw new Error(outcome.text)
       const explained = outcome.structured as unknown as Parameters<typeof formatExplanation>[0]
-      // A run prints as its decision chain; any other artifact as its input tree.
-      console.log(Array.isArray(explained.nodes) ? formatExplanation(explained).join('\n') : JSON.stringify(outcome.structured, null, 2))
+      // A run prints as its decision chain; any other artifact as its input tree; --json as it is.
+      console.log(!rest.includes('--json') && Array.isArray(explained.nodes) ? formatExplanation(explained).join('\n') : JSON.stringify(outcome.structured, null, 2))
       return 0
     }
     case 'model': {

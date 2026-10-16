@@ -451,8 +451,10 @@ export class Engine {
       }
       try {
         this.ctx.store.transaction(() => {
-          if (spec.team?.member && spec.session.sessionId) {
-            // Model A: the member's session is bound to the Worker its first admission chose.
+          // Model A: a member joins its team once, at its first admission, bound to the Worker that
+          // admission chose. Later steps stay in the same conversation through session affinity,
+          // which may admit another tier of the same conversation's account (an escalation).
+          if (spec.team?.member && spec.session.sessionId && !this.ctx.workerSessions.session(spec.session.sessionId)) {
             this.ctx.workerSessions.join(teamGroup(run.run_id, spec.team.id), {
               sessionId: spec.session.sessionId, role: `m${spec.team.member}`, runtime: runtimeOf(admitted.source, admitted.worker.provider),
               worker: admitted.worker.worker, formation: admitted.decisions.route, runId: run.run_id, nodeId: spec.team.id,
