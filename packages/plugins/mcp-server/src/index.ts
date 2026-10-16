@@ -313,19 +313,22 @@ export default McpEndpoint
 
 /**
  * The plugins of the composition that are not running: one that failed to activate, with its
- * error, or one still waiting for a required service that no plugin supplies. Read from the
- * plugin registry's own fiber states (Cordis), never inferred from the tools that are listed.
+ * error, or one still waiting for a service that no plugin supplies. Read from the plugin
+ * registry's own fiber states (Cordis), never inferred from the tools that are listed. Only named
+ * plugins count: an anonymous `ctx.inject` callback inside a plugin (DSH's own wait for a
+ * `settings` service, say) is that plugin's optional part, not a plugin of the composition.
  */
 export function brokenPlugins(ctx: Context): Array<{ name: string; state: 'failed' | 'pending'; detail: string }> {
   const out: Array<{ name: string; state: 'failed' | 'pending'; detail: string }> = []
   for (const runtime of ctx.registry.values()) {
+    const name = runtime.name?.trim()
+    if (!name) continue
     for (const fiber of runtime.fibers) {
       // FiberState: PENDING 0, LOADING 1, ACTIVE 2, FAILED 3.
       const state = fiber.state as number
-      const name = runtime.name ?? 'anonymous'
       if (state === 3) out.push({ name, state: 'failed', detail: String((fiber as unknown as { _error?: Error })._error?.message ?? 'activation failed').slice(0, 300) })
       else if (state === 0) {
-        const missing = Object.entries(fiber.inject ?? {}).filter(([service, spec]) => (spec as { required?: boolean } | undefined)?.required !== false && fiber.parent.get(service as never) === undefined).map(([service]) => service)
+        const missing = Object.entries(fiber.inject ?? {}).filter(([service, spec]) => (spec as { required?: boolean } | null)?.required !== false && fiber.parent.get(service as never) === undefined).map(([service]) => service)
         if (missing.length) out.push({ name, state: 'pending', detail: `waiting for service ${missing.join(', ')}` })
       }
     }

@@ -41,7 +41,9 @@ the `system` CLI
     check is reused for `storeCheckMinutes`.
   - `plugins` is down when a plugin failed to activate (with its error) or is
     still pending on a required service no plugin supplies, read from the
-    Cordis registry's own fiber states. `templates` is degraded when the
+    Cordis registry's own fiber states. Only named plugins count: an anonymous
+    `ctx.inject` callback inside a running plugin (DSH waiting for a `settings`
+    service this composition never supplies) is not a plugin of the composition. `templates` is degraded when the
     workflow engine refused a configured template at load (with why); every
     other template still works.
 - **`GET /healthz`:** liveness for a supervisor, with no token and no data

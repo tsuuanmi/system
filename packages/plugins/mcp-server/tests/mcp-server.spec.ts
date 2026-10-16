@@ -126,6 +126,15 @@ describe('system MCP server on ctx.webServer', () => {
     expect(health.checks.find((c) => c.name === 'plugins')).toMatchObject({ state: 'down', detail: expect.stringMatching(/broken-plugin failed: bad config; waiting-plugin pending: waiting for service nowhere/) })
   })
 
+  it('keeps health ok when a running plugin waits, inside itself, for a service no one supplies (an anonymous inject callback, as DSH waits for settings)', async () => {
+    const { url, tokens, ctx } = await boot()
+    const fine = ctx.plugin({ name: 'fine-plugin', apply: (c: Context) => { c.inject(['settings'], () => {}) } } as never, {} as never)
+    await fine
+    cleanups.push(() => fine.dispose())
+    const health = ((await (await connect(url, tokens.operator)).callTool({ name: 'status', arguments: {} })).structuredContent as { health: { checks: Array<{ name: string; state: string; detail: string }> } }).health
+    expect(health.checks.find((c) => c.name === 'plugins')).toMatchObject({ state: 'ok' })
+  })
+
   it('answers liveness at /healthz with no token and no data', async () => {
     const { url } = await boot()
     const live = await fetch(new URL('/healthz', url))
