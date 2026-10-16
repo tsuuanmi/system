@@ -238,8 +238,8 @@ A repository read uses the installed `git`, read-only, with fixed arguments and 
 1. `ls-remote` pins the ref (default `HEAD`) to one commit, by git's precedence: a tag (an
    annotated one through its peeled line), then a branch. A full commit SHA is used as given and
    recorded as `pinnedBy: sha` (on GitHub such a SHA may come from a fork of the repository).
-2. A shallow fetch of that commit with `--filter=blob:limit=<per-file bound>`: a larger blob is
-   never downloaded. `ls-tree -z` lists every file (paths as they are, never C-quoted).
+2. A shallow fetch of that commit that leaves out every blob larger than the per-file bound: such
+   a blob is never downloaded. `ls-tree -z` lists every file (paths as they are, never C-quoted).
 3. `rev-list --missing=print` and `cat-file --batch-check` tell what came down and its size,
    without fetching what did not; one `cat-file --batch` reads the chosen blobs.
 
@@ -250,9 +250,12 @@ order, shorter paths first within a class: the root README; manifests; entry poi
 else the request's words (four letters or more) in paths; then tests beside the chosen files.
 Vendored and build directories are skipped. Bounds ([INV-9](../architecture/invariants.md)):
 40 files, 300 KB in all, 48 KB per file (config `repositories`), a tree of at most 50,000
-entries (else `overloaded`), 20 s per git call and 120 s for the whole read, which a stop of
-the run also ends; a stopped call kills its whole process group. Up to 20 `focus` globs of at
-most 500 characters and 8 wildcards, matched segment by segment, and at most 50 request words.
+entries and 64 MB of git output (else `overloaded`), 20 s per git call (60 s for the fetch) and
+120 s for the whole read, which a stop of the run also ends; a call is not started with less than
+a second left, and a stopped call kills its whole process group. Up to 20 `focus` globs of at
+most 500 characters, 8 wildcards, and 16 segments, matched segment by segment within a step
+budget over the whole tree (else `overloaded`), and at most 50 request words. A repository URL
+names an owner and a repository only, so a nested group (GitLab's `group/sub/repo`) is not read.
 Every file not read is listed with why: `bounds` (past the file or byte bound), `too-large`,
 `binary`, `lockfile`, `path-too-long` (over 1,000 characters), or `not-selected`.
 
@@ -274,8 +277,12 @@ The tally classes every finding against the source:
 
 Findings are merged only when they quote the same `path:line` and are of the same kind: the
 matched line when the quote was found, else the cited one. A merged finding lists every reporter
-(`members`, in member order), shows the highest severity, and is confirmed if any of its quotes
-is. It keeps each member's own report (`reports`: claim, severity, class), so merging never lends
+(`members`, in member order) and keeps each member's own report (`reports`: claim, severity,
+class), one per member: a member's several findings on one line fold into its one report there,
+which keeps the most severe one's class and adds the others' claims, each labelled with its own
+severity and class. The finding's own claim, quote, severity, and class are its lead report's
+(the one that decides by rule if any, else the most severe, confirmed first), never a mix of
+several, and members see every report with its own class and severity. So merging never lends
 one member's confirmed quote to another's claim. A finding without a quote is never merged.
 
 ### The blocking-finding rule

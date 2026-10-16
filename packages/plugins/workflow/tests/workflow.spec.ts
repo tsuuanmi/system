@@ -501,9 +501,9 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
       '',
       '- F1 blocking (confirmed) at material:3: m1: The lease is never released; m1 agrees, m2 disagrees',
     ])
-    // Merged by quoted line: m2's finding on line 3 is F1's too. The mismatched quote is not confirmed.
-    expect(done.answer).toContain('- F1 [m1, m2] confirmed blocking: The lease is never released at material:3 (cited 2) (evidence: read it); also m2 confirmed info: Same line')
-    expect(done.answer).toContain('- F2 [m1] needs-verification warning: work() can throw at material:4 (evidence: read it) (quote not found within ±2 lines of material:4)')
+    // Merged by quoted line: m2's finding on line 3 is F1's too, each report in its own words. The mismatched quote is not confirmed.
+    expect(done.answer).toContain('- F1 at material:3 (cited 2) (evidence: read it) [m1 blocking confirmed: The lease is never released; m2 info confirmed: Same line]')
+    expect(done.answer).toContain('- F2 at material:4 (evidence: read it) [m1 warning needs-verification: work() can throw (quote not found within ±2 lines of material:4)]')
     const final = ctx.artifacts.get(ctx.workflow.records(done.runId).at(-1)!.outputReceipt!.acceptance)!
     expect(final.body).toMatchObject({ schema: 'decision@1.2', decider: { type: 'rule', id: 'workflow.blocking-finding' },
       vote: { method: 'blocking-finding', blocking: ['F1'], findings: [{ id: 'F1', members: ['m1', 'm2'], class: 'confirmed', quote: { line: 2, matched: 3 } }, { id: 'F2', class: 'needs-verification' }] } })
@@ -515,7 +515,7 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
 
   it('never lends one member\'s confirmed quote to another\'s blocking claim, and does not confirm a trivial quote (record integrity)', async () => {
     const material = 'Review this change:\nfunction f() {\n  const lease = acquire()\n  work()\n}'
-    const { ctx } = await boot({
+    const { ctx, fake } = await boot({
       // m1: a correct quote, but only info. m2: blocking, on the same line, with a quote that is not there.
       fake: { answer: (prompt) => (isProposal(prompt) ? findings([{ severity: 'info', claim: 'A lease is taken', quote: { path: 'material', line: 3, text: 'const lease = acquire()' } }]) : ballot('pass', [], 'review')) },
       gemini: { answer: (prompt) => (isProposal(prompt)
@@ -523,6 +523,8 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
           { severity: 'blocking', claim: 'The lease leaks', quote: { path: 'material', line: 3, text: 'const lease = leak()' } },
           // `}` is on line 5, but it identifies no line: never confirmed.
           { severity: 'blocking', claim: 'The function never ends', quote: { path: 'material', line: 5, text: '}' } },
+          // More findings on one line from one member fold into its one report there.
+          ...[1, 2, 3, 4, 5].map((i) => ({ severity: 'warning' as const, claim: `Extra ${i}`, quote: { path: 'material', line: 3, text: `const lease = other${i}()` } })),
         ])
         : ballot('pass', [], 'review')) },
     })
@@ -530,10 +532,15 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
     // No report is both confirmed and blocking: the vote decides (both pass).
     expect(done.answer).toMatch(/^outcome: pass; method: team-majority;/)
     const final = ctx.artifacts.get(ctx.workflow.records(done.runId).at(-1)!.outputReceipt!.acceptance)!.body as { vote: { findings: Array<{ id: string; reports: unknown[] }> } }
-    expect(final.vote.findings[0]).toMatchObject({ id: 'F1', class: 'confirmed', severity: 'blocking', reports: [
+    // The finding's own class and severity are one report's (the most severe): never m1's class beside m2's severity.
+    expect(final.vote.findings[0]).toMatchObject({ id: 'F1', member: 'm2', class: 'needs-verification', severity: 'blocking', claim: expect.stringMatching(/^The lease leaks; also/), reports: [
       { member: 'm1', severity: 'info', claim: 'A lease is taken', class: 'confirmed' },
-      { member: 'm2', severity: 'blocking', claim: 'The lease leaks', class: 'needs-verification', why: 'quote not found within ±2 lines of material:3' },
+      { member: 'm2', severity: 'blocking', claim: expect.stringMatching(/^The lease leaks; also warning needs-verification: Extra 1; .*Extra 5$/), class: 'needs-verification', why: 'quote not found within ±2 lines of material:3' },
     ] })
+    expect(final.vote.findings[0]!.reports).toHaveLength(2)
+    // Voters see each report's class and severity, never a confirmed blocking finding.
+    const ballotPrompt = fake.sent.map((s) => s.prompt).find((p) => !isProposal(p))!
+    expect(ballotPrompt).toMatch(/F1 at material:3 \(evidence: read it\) \[m1 info confirmed: A lease is taken; m2 blocking needs-verification: The lease leaks; also/)
     expect(final.vote.findings[1]).toMatchObject({ class: 'needs-verification', why: expect.stringMatching(/too short to identify one line/) })
   }, 240_000)
 
@@ -562,7 +569,7 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
     expect(done.answer).toMatch(/^outcome: inconclusive; method: inconclusive; winner: none; /)
     // Whatever ends the tie, the blocking finding stays in the answer.
     // An unquoted finding cannot be confirmed: the vote decides, and it tied.
-    expect(done.answer).toContain('## Findings (1 blocking, 0 of them confirmed)\n\n- F1 [m1] needs-verification blocking: The lock is never released at a.ts:10 (evidence: read it) (it quotes no line)')
+    expect(done.answer).toContain('## Findings (1 blocking, 0 of them confirmed)\n\n- F1 at a.ts:10 (evidence: read it) [m1 blocking needs-verification: The lock is never released (it quotes no line)]')
     const final = ctx.artifacts.get(ctx.workflow.records(run.runId).at(-1)!.outputReceipt!.acceptance)!.body
     expect(final).toMatchObject({ decider: { type: 'rule', id: 'workflow.tie-timeout' }, deterministic: true, outcome: { option: 'inconclusive' },
       vote: { kind: 'review', method: 'inconclusive', tiebreak: { by: 'rule', option: 'inconclusive' }, rounds: [{ ended: 'no-objections' }], findings: [{ id: 'F1', member: 'm1', severity: 'blocking' }] } })
