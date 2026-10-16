@@ -225,7 +225,8 @@ the same for `brainstorm` and `review`:
      as dissent.
 5. **Decide.** A strict majority (more than half the ballots) decides,
    deterministically. An invalid or missing ballot never lowers the threshold:
-   it makes the outcome inconclusive. The record names the method:
+   a ballot still invalid after its retries fails the run, which `continue` can
+   redo. The record names the method:
    `team-majority`, `caller-tiebreak`, or `inconclusive`. The decision is a
    decision artifact ([INV-13](../architecture/invariants.md)) that holds:
    - the members (by opaque identity), the original proposals, and any
@@ -244,8 +245,18 @@ the same for `brainstorm` and `review`:
    ([ADR-0023](../decisions/adr/0023-scoped-control-credentials.md)). The
    operator can still override with an operator tool.
    - The caller may also answer `inconclusive` instead of forcing a choice.
+   - A tie waits a bounded time (default 24 hours,
+     [INV-9](../architecture/invariants.md)). If no deciding vote arrives, the
+     team completes as `inconclusive`, decided by that rule, and its result still
+     shows both positions and any blocking findings.
    - A tied review never defaults to `pass`: blocking findings stay visible
      whatever the caller decides.
+
+Each member's prompts are composed by the engine from sealed records. A peer's
+proposal or ballot is quoted as delimited data, marked as another participant's
+text and not instructions. The result begins with one machine-readable line
+(the outcome, the method, the winner), so the caller reads the decision without
+parsing prose.
 
 The orchestrator enforces the protocol in deterministic code: it fixes the
 options, validates and seals the ballots, tallies the votes,
