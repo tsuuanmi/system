@@ -561,6 +561,13 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
     expect(final.vote.findings[1]).toMatchObject({ class: 'needs-verification', why: expect.stringMatching(/too short to identify one line/) })
   }, 240_000)
 
+  it('refuses material too long for a member to read whole, before anything is sent', async () => {
+    const { ctx, fake } = await boot({ fake: { answer: 'x' }, gemini: { answer: 'x' }, workflow: { repositories: { maxSourceChars: 2000 } } })
+    const done = await ctx.workflow.wait(ctx.workflow.start({ template: 'review', input: 'Review this:\n' + 'line of the change\n'.repeat(200) }).runId, 60_000)
+    expect(done).toMatchObject({ status: 'failed', error: { kind: 'invalid_input', message: expect.stringMatching(/over the 2000 a member takes/) } })
+    expect(fake.sent).toEqual([])
+  }, 90_000)
+
   it('refuses a repository on a host it may not read, before anything is sent', async () => {
     const { ctx, fake } = await boot({ fake: { answer: 'x' }, gemini: { answer: 'x' } })
     const run = ctx.workflow.start({ template: 'review', input: 'Is it safe?', repository: { url: 'https://gitlab.com/a/b' } })

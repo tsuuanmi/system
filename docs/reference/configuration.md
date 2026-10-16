@@ -354,3 +354,4 @@ No options.
 | `repositories.maxFiles` | number (1…200) |  | Files a review reads from a repository (default 40) |
 | `repositories.maxBytes` | number (1000…2000000) |  | Bytes of text it reads in all (default 300 KB) |
 | `repositories.maxFileBytes` | number (1000…500000) |  | A larger file is listed as unread (default 48 KB) |
+| `repositories.maxSourceChars` | number (2000…2000000) | `24000` | Characters of source a member reads, as shown (line-numbered files and the list of files not shown): files past it are not shown; caller text past it is refused (default 24,000, so a review prompt fits a 30,000-character member input) |
