@@ -115,7 +115,7 @@ export function errorLine(message: string): string {
   return [...message.split(`${String.fromCharCode(27)}[`).map((part, i) => (i ? part.replace(/^[0-9;]*m/, '') : part)).join('')]
     .map((c) => (c.charCodeAt(0) < 32 || c.charCodeAt(0) === 127 ? ' ' : c)).join('')
     // A browser's call log echoes typed text (fill("…"), type("…")): never a prompt in a decision.
-    .replace(/\b(fill|type|pressSequentially|insertText)\((["'`])[\s\S]*?\2/g, '$1(…')
+    .replace(/\b(fill|type|pressSequentially|insertText)\((["'`])(?:\\[\s\S]|(?!\2)[^\\])*\2/g, '$1(…')
     .replace(/\s+/g, ' ').trim().slice(0, 280)
 }
 

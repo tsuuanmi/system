@@ -851,6 +851,9 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
     // A browser's call log never carries typed text into a decision.
     const { errorLine } = await import('../src/recovery.ts')
     expect(errorLine('locator.fill: Timeout\n\u001b[2m  - waiting for fill("my private prompt")\u001b[22m')).toBe('locator.fill: Timeout - waiting for fill(…)')
+    // An escaped quote inside the typed text does not end it early.
+    expect(errorLine('locator.type: x, type("say \\"hi\\" and my secret") failed')).toBe('locator.type: x, type(…) failed')
+    expect(errorLine("press: pressSequentially('it\\'s my secret')")).toBe('press: pressSequentially(…)')
     expect((await ctx.workflow.wait(blocker.runId, 10_000)).status).toBe('completed')
     expect(fake.sent.map((s) => s.prompt)).toEqual(['hold the only slot', 'after the blocker'])
   }, 90_000)
