@@ -117,7 +117,9 @@ their sites ([conversation ledger](../design/provider-turns.md#conversation-ledg
 - **Waiting on `unverified-map`** is not a failure either: the delete flow's map entries are
   not yet checked on the live site, so nothing is deleted. Check them on a throwaway chat
   `system` creates itself: `system ask --persist "ping"`, then `system conversation inspect`
-  and `system evidence`; fix the entries from the outlines, remove their `unverified: true`,
+  and `system evidence`; check in the outline that `conversation.pane` holds the conversation's
+  own menu button and none of the history list (whose rows carry other chats' buttons); fix the
+  entries from the outlines, remove their `unverified: true`,
   re-gate and release; only then delete that ping run (`system delete <runId> --yes`) and
   confirm with `system conversations`.
 - **A signed-out account** is not a failure: its conversations stay due and are deleted on the

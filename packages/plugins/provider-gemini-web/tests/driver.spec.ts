@@ -16,6 +16,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { canRunBrowser, launchTestBrowser } from '../../browser-patchright/tests/support.ts'
 import { FakeGemini, type FakeOptions } from '../fixtures/fake-gemini.ts'
 import { GeminiWebDriver, shippedMap } from '../src/index.ts'
+import { namesOnly } from '../src/driver.ts'
 import * as GeminiWebPlugin from '../src/index.ts'
 
 const PRESETS = { 'flash-lite': { model: 'Flash-Lite', effort: 'Low' }, flash: { model: 'Flash', effort: 'Medium' }, pro: { model: 'Pro', effort: 'High' }, site: {} }
@@ -275,6 +276,23 @@ describe.runIf(canRunBrowser)('GeminiWebDriver against the fake site', { timeout
     fake.options.dialogTarget = ''
     await expect(driver.deleteConversation(await context!.newPage(), doomed.binding!, { confirmed: true })).rejects.toMatchObject({ kind: 'session_broken', message: expect.stringMatching(/not clicked again/) })
     expect(fake.deleteRequests).toEqual([])
+  })
+
+  it('stops a deletion request that names another chat even when a second call in it names this one (guard bypass)', async () => {
+    const { page, driver, fake } = await open({ answer: 'x' })
+    const other = await driver.ask(page, 'the operator\'s chat', { conversation: 'persistent' })
+    const doomed = await driver.ask(await context!.newPage(), 'delete me', { conversation: 'persistent' })
+    fake.options.dialogTarget = other.binding!
+    fake.options.dialogExtraCall = true
+    await expect(driver.deleteConversation(await context!.newPage(), doomed.binding!)).rejects.toBeInstanceOf(ProviderError)
+    expect(fake.deleteRequests).toEqual([])
+    expect(fake.conversations.has(other.binding!)).toBe(true)
+    // The check itself: every conversation id any call carries must be the bound one.
+    const body = (calls: unknown[]) => `f.req=${encodeURIComponent(JSON.stringify([calls]))}&at=x`
+    expect(namesOnly(body([['GzXR5e', JSON.stringify(['c_aaaaaaaaaaaaaaaa']), null, 'generic']]), 'aaaaaaaaaaaaaaaa')).toBe(true)
+    expect(namesOnly(body([['GzXR5e', JSON.stringify(['c_bbbbbbbbbbbbbbbb']), null, 'generic'], ['MaZiqc', JSON.stringify(['c_aaaaaaaaaaaaaaaa']), null, 'generic']]), 'aaaaaaaaaaaaaaaa')).toBe(false)
+    expect(namesOnly(body([['ESY5D', '[]', null, 'generic']]), 'aaaaaaaaaaaaaaaa')).toBe(true)
+    expect(namesOnly('f.req=%7Bnot json', 'aaaaaaaaaaaaaaaa')).toBe(false)
   })
 
   it('deletes nothing when the conversation does not open as itself', async () => {

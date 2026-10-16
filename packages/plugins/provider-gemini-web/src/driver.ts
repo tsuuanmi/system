@@ -42,6 +42,22 @@ const DELETION_ENTRIES = ['conversation.pane', 'conversation.options', 'conversa
 /** The site's RPC endpoint, which a deletion goes through. */
 const RPC_REQUEST = /\/_\/BardChatUi\/data\/batchexecute/
 
+/**
+ * Whether an RPC request names no conversation but `binding`: its form-encoded `f.req` calls are
+ * parsed, and every conversation id any call carries (16 hex digits, `c_`-prefixed or not) must be
+ * the bound one. A body that cannot be read is refused.
+ */
+export function namesOnly(body: string, binding: string): boolean {
+  let calls: unknown
+  try {
+    calls = JSON.parse(new URLSearchParams(body).get('f.req') ?? '[]')
+  } catch {
+    return false
+  }
+  const ids = [...JSON.stringify(calls).matchAll(/(?<![0-9a-f])(?:c_)?([0-9a-f]{16})(?![0-9a-f])/g)].map((m) => m[1])
+  return ids.every((id) => id === binding)
+}
+
 export interface DriverOptions {
   /** Site origin (default https://gemini.google.com); tests point it at a local fake. */
   origin?: string
@@ -231,20 +247,24 @@ export class GeminiWebDriver implements ProviderDriver<Page> {
     }
     const before = await this.openConversation(page, binding)
     if (before === 'missing') return 'gone'
-    if (options.confirmed) throw new ProviderError('session_broken', `gemini-web: conversation ${binding} still opens after a deletion was confirmed; it is not clicked again`)
+    if (options.confirmed) {
+      throw new ProviderError('session_broken', before === 'shown'
+        ? `gemini-web: conversation ${binding} still opens after a deletion was confirmed; it is not clicked again`
+        : `gemini-web: conversation ${binding} could not be checked after a deletion was confirmed (the page showed neither it nor that it is gone); it is not clicked again`)
+    }
     if (before === 'unknown') throw new ProviderError('ui_drift', `gemini-web: conversation ${binding} did not open as itself; nothing was deleted`)
-    await click('conversation.open-options')
-    await click('conversation.choose-delete')
-    // While the deletion is confirmed, no call of the site's RPC endpoint leaves the page unless it
-    // names this conversation: a click that reached another chat's dialog deletes nothing.
+    // From the first click on, no call of the site's RPC endpoint leaves the page if any of its
+    // calls names another conversation: a click that reached another chat deletes nothing, even
+    // in a request that also names this one.
     const block = async (route: Route): Promise<void> => {
       const request = route.request()
-      const named = decodeURIComponent(request.postData() ?? '').includes(binding)
-      if (request.method() !== 'POST' || named) await route.continue()
+      if (request.method() !== 'POST' || namesOnly(request.postData() ?? '', binding)) await route.continue()
       else await route.abort('blockedbyclient')
     }
     await page.route(RPC_REQUEST, block)
     try {
+      await click('conversation.open-options')
+      await click('conversation.choose-delete')
       await options.beforeConfirm?.()
       await click('conversation.confirm-delete')
     } finally {

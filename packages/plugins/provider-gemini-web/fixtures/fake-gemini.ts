@@ -37,6 +37,8 @@ export interface FakeOptions {
   paneMenu?: boolean
   /** The delete dialog deletes this chat instead of the one whose menu opened it (a wrong-chat test). */
   dialogTarget?: string
+  /** The delete request also carries a second call naming the chat whose menu opened it (a guard bypass test). */
+  dialogExtraCall?: boolean
   /** Start on the Spark tab (the trap the driver must avoid). Default true. */
   startOnSpark?: boolean
   /** The app shows only an interstitial dialog: neither signed in nor signed out can be told. */
@@ -163,7 +165,9 @@ $('conv-delete').onclick = () => { $('conv-menu').hidden = true; $('conv-dialog'
 $('conv-cancel').onclick = () => { $('conv-dialog').hidden = true }
 $('conv-confirm').onclick = async () => {
   // Like the app's own calls: one batchexecute RPC naming the chat, then the app goes to a new chat.
-  const req = JSON.stringify([[['GzXR5e', JSON.stringify(['c_' + (options.dialogTarget || menuFor)]), null, 'generic']]])
+  const calls = [['GzXR5e', JSON.stringify(['c_' + (options.dialogTarget || menuFor)]), null, 'generic']]
+  if (options.dialogExtraCall) calls.push(['MaZiqc', JSON.stringify(['c_' + menuFor]), null, 'generic'])
+  const req = JSON.stringify([calls])
   const res = await fetch('/_/BardChatUi/data/batchexecute?rpcids=GzXR5e', { method: 'POST',
     headers: { 'content-type': 'application/x-www-form-urlencoded;charset=UTF-8' }, body: 'f.req=' + encodeURIComponent(req) })
   $('conv-dialog').hidden = true
@@ -362,7 +366,7 @@ export class FakeGemini {
 
   constructor(options: FakeOptions = {}) {
     this.options = {
-      paneMenu: true, dialogTarget: '', startOnSpark: true, interstitial: false, dropOver: 0, signInOffer: false, chatTabBroken: false, temporaryBroken: false, modePicker: true, promptParagraphs: true, deepResearch: true,
+      paneMenu: true, dialogTarget: '', dialogExtraCall: false, startOnSpark: true, interstitial: false, dropOver: 0, signInOffer: false, chatTabBroken: false, temporaryBroken: false, modePicker: true, promptParagraphs: true, deepResearch: true,
       models: ['3.5 Flash-Lite', '3.8 Flash', '3.1 Pro'], levels: ['Low', 'Medium', 'High'], levelsInline: true, levelsSubmenu: true, submenuBroken: false, answer: 'OK', clarify: '',
       researchMs: 1500, report: 'HTTP/3 runs over QUIC, not TCP.', sources: [{ title: 'RFC 9114: HTTP/3', url: 'https://www.rfc-editor.org/rfc/rfc9114' }], ...options,
     }

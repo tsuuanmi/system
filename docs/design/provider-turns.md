@@ -233,8 +233,9 @@ the session that owns it, the turn that opened it, its feature and mode, and its
   never a history row's, whose rows carry other chats' menus. Before every click the page must
   still be on the conversation's own path, and while it runs, the page lets no deletion request
   leave that does not name this conversation (ChatGPT: only `PATCH
-  /backend-api/conversation/<binding>` hiding it; Gemini: only RPC calls that name it), so a click
-  that reached another chat's dialog deletes nothing. "Gone" must hold on two loads in a row.
+  /backend-api/conversation/<binding>` hiding it; Gemini: an RPC request whose calls name no
+  conversation but this one, from the first click on), so a click that reached another chat's
+  dialog deletes nothing, even in a request that also names this one. "Gone" must hold on two loads in a row.
 - **Never on a guessed flow.** While any of the delete flow's UI map entries is still
   `unverified` (not yet checked on the live site), its conversations wait, due, with the reason
   `unverified-map`, and nothing is clicked. The live check lifts the flag entry by entry.
@@ -242,9 +243,10 @@ the session that owns it, the turn that opened it, its feature and mode, and its
   fenced. A conversation with a recorded confirm is never clicked again: a later pass only checks
   that it is gone (then deleted) and otherwise marks it failed.
 - **Never under a turn.** The pass reads the row again once it holds the account's slot and
-  skips it unless it is still due. Releasing a session clears its binding, so its next turn opens
-  a new conversation; a turn that binds a due conversation anyway (a stale handle) makes it live
-  again.
+  skips it unless it is still due. Releasing a session clears its binding, and its next turn
+  fails as `conversation_lost`, unsent: a new conversation would lose its context (a team
+  member's above all). A turn that binds a due conversation anyway (a stale handle) makes it live
+  again, owned by that turn's session.
 - **Reconcile before repeat** (INV-4). A deletion that may have happened (a crash between the
   click and the record) is checked on the site first: a conversation already gone is recorded
   as deleted, and nothing is clicked again.

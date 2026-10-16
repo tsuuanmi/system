@@ -286,7 +286,11 @@ export class ChatGptWebDriver implements ProviderDriver<Page> {
   async deleteConversation(page: Page, binding: string, options: DeleteOptions = {}): Promise<'deleted' | 'gone'> {
     const before = await this.openConversation(page, binding)
     if (before === 'missing') return 'gone'
-    if (options.confirmed) throw new ProviderError('session_broken', `chatgpt-web: conversation ${binding} still opens after a deletion was confirmed; it is not clicked again`)
+    if (options.confirmed) {
+      throw new ProviderError('session_broken', before === 'shown'
+        ? `chatgpt-web: conversation ${binding} still opens after a deletion was confirmed; it is not clicked again`
+        : `chatgpt-web: conversation ${binding} could not be checked after a deletion was confirmed (the page showed neither it nor that it is gone); it is not clicked again`)
+    }
     if (before === 'unknown') throw new ProviderError('ui_drift', `chatgpt-web: conversation ${binding} did not open as itself; nothing was deleted`)
     const engine = this.engine(page)
     // Exactly the conversation's own path before every click: a redirect or a dialog never points a click at another chat.

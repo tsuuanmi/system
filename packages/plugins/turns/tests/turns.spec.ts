@@ -609,24 +609,45 @@ describe.runIf(canRunBrowser)('ctx.turns: the conversation ledger (PROP-0004 Pha
     expect(ctx.turns.release([persistent.sessionId!], 'again')).toEqual({ due: 0 })
   }, 150_000)
 
-  it('never deletes a released conversation a turn uses again: the session continues in a new one, and a reused one is live again', async () => {
+  it('never continues a released session in a new conversation, and a released conversation reused by a session becomes that session\'s, live', async () => {
     const { ctx, fake } = await boot({ fake: { answer: 'again' } })
     const first = await ctx.turns.wait((await ask(ctx, { prompt: 'one', persist: true })).turnId, 30_000)
     // Released while its map entries were still unchecked, so it waits, due.
     ctx.turns.release([first.sessionId!], 'run run_c deleted')
-    // The session continues: a released session's next turn opens a new conversation.
+    // Continuing it would silently start over without its context: the turn fails, unsent.
     const next = await ctx.turns.wait((await ask(ctx, { prompt: 'two', sessionId: first.sessionId! })).turnId, 30_000)
-    expect(next.binding).not.toBe(first.binding)
-    // A stale handle that reopens the due conversation makes it live again.
-    ctx.store.db.prepare('UPDATE turn_sessions SET binding = ? WHERE session_id = ?').run(first.binding!, first.sessionId!)
-    const third = await ctx.turns.wait((await ask(ctx, { prompt: 'three', sessionId: first.sessionId! })).turnId, 30_000)
-    expect(third.binding).toBe(first.binding)
+    expect(next).toMatchObject({ status: 'failed', submitted: false, error: { kind: 'conversation_lost', disposition: 'USER_ACTION' } })
+    // Another session that reopens the due conversation (a stale handle) makes it live, and its own.
+    const other = await ctx.turns.wait((await ask(ctx, { prompt: 'three', persist: true })).turnId, 30_000)
+    ctx.store.db.prepare('UPDATE turn_sessions SET binding = ? WHERE session_id = ?').run(first.binding!, other.sessionId!)
+    const reused = await ctx.turns.wait((await ask(ctx, { prompt: 'four', sessionId: other.sessionId! })).turnId, 30_000)
+    expect(reused.binding).toBe(first.binding)
+    expect(ctx.turns.conversations().find((c) => c.binding === first.binding)).toMatchObject({ state: 'live', sessionId: other.sessionId, turnId: reused.turnId })
     liveChecked(ctx)
     await ctx.turns.deleteConversations()
-    const rows = Object.fromEntries(ctx.turns.conversations({ sessionId: first.sessionId! }).map((c) => [c.binding, c.state]))
-    expect(rows).toEqual({ [first.binding!]: 'live', [next.binding!]: 'live' })
     expect(fake.deleteRequests).toEqual([])
-  }, 150_000)
+    // Released with its new owner, it is deleted.
+    ctx.turns.release([other.sessionId!], 'run run_d deleted')
+    await expect.poll(() => ctx.turns.conversations().find((c) => c.binding === first.binding)?.state, { timeout: 60_000 }).toBe('deleted')
+  }, 180_000)
+
+  it('fails closed on a driver that cannot say its delete flow is checked, and keeps a conversation no driver can delete', async () => {
+    const { ctx, fake } = await boot()
+    liveChecked(ctx)
+    const driver = ctx.providers.get('chatgpt-web') as unknown as Record<string, unknown>
+    const turn = await ctx.turns.wait((await ask(ctx, { prompt: 'unchecked', persist: true })).turnId, 30_000)
+    const method = driver.deletionUnverified
+    // An own property hides the prototype's method, as a driver without it would.
+    driver.deletionUnverified = undefined
+    ctx.turns.release([turn.sessionId!], 'run run_e deleted')
+    await ctx.turns.deleteConversations()
+    expect(ctx.turns.conversations({ sessionId: turn.sessionId! })[0]).toMatchObject({ state: 'due', reason: expect.stringMatching(/^unverified-map: \(the driver does not report its delete flow as checked\)/) })
+    driver.deletionUnverified = method
+    driver.deleteConversation = undefined
+    await ctx.turns.deleteConversations()
+    expect(ctx.turns.conversations({ sessionId: turn.sessionId! })[0]).toMatchObject({ state: 'kept', reason: 'chatgpt-web cannot delete a conversation' })
+    expect(fake.deleteRequests).toEqual([])
+  }, 120_000)
 
   it('checks the site before deleting again: a deletion a crash interrupted counts as gone, and nothing is clicked', async () => {
     const { ctx, fake } = await boot()

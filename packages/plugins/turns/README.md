@@ -112,7 +112,8 @@ invoked by the [workflow engine](../workflow/README.md)
     `kept`.
   - The source's `release(sessions, reason)` makes their live conversations
     `due`, as one `retention` decision (rule `turns.conversation-retention`),
-    and starts a deletion pass. Passes also run at start and hourly, one at a
+    clears the sessions' bindings, and starts a deletion pass. A released
+    session's next turn fails as `conversation_lost`, unsent. Passes also run at start and hourly, one at a
     time.
   - A pass deletes each due conversation under the lease
     `conversation:<account>:<binding>`, on the account's scheduler with

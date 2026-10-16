@@ -100,7 +100,8 @@ export function recordConversation(db: DatabaseSync, row: { account: string; bin
   // deletion was already confirmed, which nothing can take back).
   db.prepare(`INSERT INTO turn_conversations (account, binding, session_id, turn_id, feature, mode, state, reason, created_at, updated_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT (account, binding) DO UPDATE SET state = 'live', released_at = NULL, decision = NULL, reason = NULL, updated_at = excluded.updated_at
+    ON CONFLICT (account, binding) DO UPDATE SET state = 'live', released_at = NULL, decision = NULL, reason = NULL,
+      session_id = excluded.session_id, turn_id = excluded.turn_id, updated_at = excluded.updated_at
     WHERE turn_conversations.state = 'due' AND turn_conversations.confirmed_at IS NULL`)
     .run(row.account, row.binding, row.sessionId, row.turnId, row.feature, row.mode, temporary ? 'kept' : 'live', temporary ? 'temporary' : null, now(), now())
 }
@@ -111,6 +112,15 @@ const view = (r: LedgerRow): ConversationView => ({
   attempts: r.attempts, createdAt: r.created_at, ...(r.released_at ? { releasedAt: r.released_at } : {}),
   ...(r.deleted_at ? { deletedAt: r.deleted_at } : {}), ...(r.decision ? { decision: r.decision as ContentId } : {}),
 })
+
+/**
+ * Whether a session's conversation was released (its run deleted or expired) and none of its
+ * conversations is live: continuing it would silently start a new conversation without its context.
+ */
+export function sessionReleased(db: DatabaseSync, sessionId: string): boolean {
+  const states = (db.prepare("SELECT state FROM turn_conversations WHERE session_id = ? AND mode != 'temporary'").all(sessionId) as Array<{ state: LedgerState }>).map((r) => r.state)
+  return states.length > 0 && !states.includes('live') && states.some((s) => s === 'due' || s === 'deleted' || s === 'failed')
+}
 
 export function listConversations(db: DatabaseSync, filter: { state?: LedgerState; sessionId?: string } = {}): ConversationView[] {
   const rows = db.prepare(`SELECT * FROM turn_conversations WHERE (? IS NULL OR state = ?) AND (? IS NULL OR session_id = ?) ORDER BY created_at, binding`)
@@ -141,7 +151,8 @@ export function releaseSessions(host: LedgerHost, sessionIds: readonly string[],
     for (const r of rows) {
       db.prepare("UPDATE turn_conversations SET state = 'due', released_at = ?, decision = ?, updated_at = ? WHERE account = ? AND binding = ? AND state = 'live'").run(at, decision, at, r.account, r.binding)
     }
-    // A later turn of a released session opens a new conversation, never the one being deleted.
+    // A later turn of a released session never reopens the conversation being deleted; it fails
+    // as conversation_lost rather than start over without its context.
     db.prepare(`UPDATE turn_sessions SET binding = NULL WHERE session_id IN (${marks})`).run(...sessions)
     host.ctx.get('eventLog')?.append({ type: 'conversation.released', data: { reason, sessions: sessions.length, conversations: rows.length, decision } })
     return { due: rows.length, decision }

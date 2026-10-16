@@ -25,7 +25,7 @@ import type {} from '@tsuuanmi/system-store'
 import type {} from '@tsuuanmi/system-turn-receipts'
 import type { CapabilityDescriptor, WorkerExecution, WorkerStart, WorkerState } from '@tsuuanmi/system-workers-core'
 import { z as zod } from 'zod'
-import { type ConversationView, deleteDue, LEDGER_MIGRATION, type LedgerHost, type LedgerState, listConversations, recordConversation, releaseSessions } from './ledger.ts'
+import { type ConversationView, deleteDue, LEDGER_MIGRATION, type LedgerHost, type LedgerState, listConversations, recordConversation, releaseSessions, sessionReleased } from './ledger.ts'
 
 export type { ConversationView, LedgerState } from './ledger.ts'
 
@@ -738,6 +738,11 @@ export class Turns extends Service {
     const driver = this.ctx.providers.get(view.provider)
     const state = await this.ctx.accounts.portableState(accountId)
     const session = row.session_id ? this.session(row.session_id) : undefined
+    // A released session has no conversation to continue: a new one would lose its context
+    // (a team member's above all), so the turn fails, unsent, instead of starting over silently.
+    if (row.session_id && !session?.binding && sessionReleased(this.ctx.store.db, row.session_id)) {
+      throw new ProviderError('conversation_lost', `session ${row.session_id}'s conversation was released for deletion with its run; it cannot be continued, and a new conversation would lose its context`)
+    }
     const identity = this.identity(row, accountId)
     const research = row.feature === 'deep-research'
     if (!row.worker) throw new ProviderError('internal', `turn ${row.turn_id} has an account but no Worker`)
