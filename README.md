@@ -108,8 +108,10 @@ system mcp-config codex >> ~/.codex/config.toml   # Codex: runs the stdio shim (
   ([templates](docs/reference/workflow-templates.md)).
 - **`brainstorm` and `review`:** a team of two members on two provider
   families proposes (or lists findings) independently, then votes by sealed
-  ballot, debating once on a split. A tie comes back to the caller (`vote`)
-  ([teams](docs/design/teams.md)).
+  ballot, debating once on a split. A tie comes back to the caller (`vote`).
+  `review` reads text, or a public repository at one pinned commit; `system`
+  checks every finding's quote, and a confirmed blocking finding decides
+  `changes` ([teams](docs/design/teams.md)).
 - **Website Workers as the model:** with a gateway row turned on,
   `system claude-env` and `system codex-env` print commands that run Claude Code
   or Codex on the gateways, with a website Worker as their model.

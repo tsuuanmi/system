@@ -84,6 +84,12 @@ export class Workflow extends Service {
     autoApprovePlans: z.boolean().default(false).description('Approve a high-confidence plan by policy instead of waiting for the operator'),
     maxReviewCycles: z.natural().min(1).max(5).default(3).description('Reviews of one change, the first included, before remediation stops'),
     tieTimeoutHours: z.number().min(0.0001).max(720).default(24).description('Hours a tied team waits for a deciding vote, then completes inconclusive (INV-9)'),
+    repositories: z.object({
+      hosts: z.array(z.string()).default(['github.com']).description('Hosts a review may read a public repository from'),
+      maxFiles: z.natural().min(1).max(200).description('Files a review reads from a repository (default 40)'),
+      maxBytes: z.natural().min(1000).max(2_000_000).description('Bytes of text it reads in all (default 300 KB)'),
+      maxFileBytes: z.natural().min(1000).max(500_000).description('A larger file is listed as unread (default 48 KB)'),
+    }).description('A review\'s repository reads: allowed hosts and bounds (INV-9)'),
   }) as unknown as z<Config>
 
   private readonly engine: Engine

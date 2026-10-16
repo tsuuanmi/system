@@ -45,7 +45,7 @@ const REPORT = 'Plugins matter <a href="https://src.example/catalog">[1]</a>.'
 const isProposal = (prompt: string): boolean => prompt.includes('Answer on your own')
 const kind = (prompt: string): string => (isProposal(prompt) ? 'proposal' : prompt.includes('is split') ? 'debate' : prompt.includes('your ballot') ? 'ballot' : 'other')
 const proposal = (recommendation: string): string => `My proposal.\n${JSON.stringify({ recommendation, rationale: 'it fits', risks: [] })}`
-const findings = (list: Array<{ severity: string; claim: string; location?: string }>): string => JSON.stringify({ findings: list.map((f) => ({ evidence: 'read it', ...f })) })
+const findings = (list: Array<{ severity: string; claim: string; location?: string; quote?: { path: string; line: number; text: string } }>): string => JSON.stringify({ findings: list.map((f) => ({ evidence: 'read it', ...f })) })
 const ballot = (choice: string, objections: string[] = [], team: 'brainstorm' | 'review' = 'brainstorm'): string => {
   const options = team === 'review' ? ['pass', 'changes'] : ['O1', 'O2']
   const other = options.find((o) => o !== choice)!
@@ -475,6 +475,53 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
     expect(holds).toEqual([])
   }, 180_000)
 
+  it('decides a review changes by a confirmed blocking finding, whatever the ballots; the deciding finding and each member\'s stance come first (PROP-0004 Phase 4)', async () => {
+    const material = 'Review this change:\nfunction f() {\n  const lease = acquire()\n  work()\n}'
+    const { ctx, fake } = await boot({
+      fake: { answer: (prompt) => (isProposal(prompt)
+        ? findings([
+          // Cited one line off, indentation dropped: confirmed on the line it is found on.
+          { severity: 'blocking', claim: 'The lease is never released', quote: { path: 'material', line: 2, text: 'const lease = acquire()' } },
+          { severity: 'warning', claim: 'work() can throw', quote: { path: 'material', line: 4, text: 'work(); // never here' } },
+        ])
+        : JSON.stringify({ ...JSON.parse(ballot('changes', [], 'review')), findings: { F1: 'agree', F2: 'agree' } })) },
+      gemini: { answer: (prompt) => (isProposal(prompt)
+        ? findings([{ severity: 'info', claim: 'Same line', quote: { path: 'material', line: 3, text: '  const lease = acquire()  ' } }])
+        : JSON.stringify({ ...JSON.parse(ballot('pass', [], 'review')), findings: { F1: 'disagree', F2: 'unsure' } })) },
+    })
+    const done = await ctx.workflow.wait(ctx.workflow.start({ template: 'review', input: material }).runId, 120_000)
+    expect(done.status).toBe('completed')
+    // The members read the material line-numbered between fence lines, as the one file `material`.
+    // (The fake site reads the sent prompt back with runs of spaces collapsed.)
+    expect(fake.sent[0]!.prompt).toMatch(/### material\n(~~~~ [0-9a-f]{12} ~~~~)\n\s*1\s+Review this change:\n\s*2\s+function f\(\) \{\n\s*3\s+const lease = acquire\(\)\n[\s\S]*\n\1/)
+    expect(done.answer!.split('\n').slice(0, 5)).toEqual([
+      expect.stringMatching(/^outcome: changes; method: blocking-finding; winner: changes; decision: sha256:/),
+      '',
+      '## Decision: changes (a confirmed blocking finding decides it)',
+      '',
+      '- F1 blocking (confirmed) at material:3: The lease is never released; m1 agrees, m2 disagrees',
+    ])
+    // Merged by quoted line: m2's finding on line 3 is F1's too. The mismatched quote is not confirmed.
+    expect(done.answer).toContain('- F1 [m1, m2] confirmed blocking: The lease is never released at material:3 (cited 2) (evidence: read it)')
+    expect(done.answer).toContain('- F2 [m1] needs-verification warning: work() can throw at material:4 (evidence: read it) (quote not found within ±2 lines of material:4)')
+    const final = ctx.artifacts.get(ctx.workflow.records(done.runId).at(-1)!.outputReceipt!.acceptance)!
+    expect(final.body).toMatchObject({ schema: 'decision@1.2', decider: { type: 'rule', id: 'workflow.blocking-finding' },
+      vote: { method: 'blocking-finding', blocking: ['F1'], findings: [{ id: 'F1', members: ['m1', 'm2'], class: 'confirmed', quote: { line: 2, matched: 3 } }, { id: 'F2', class: 'needs-verification' }] } })
+    expect(ctx.artifacts.get(done.result!)).toMatchObject({ bodySchema: 'team-result@1.1' })
+    // The source step's decision records what the reviewers read.
+    const source = ctx.workflow.explain(done.runId)!.nodes.find((n) => n.nodeId === 'source')!
+    expect(source).toMatchObject({ state: 'COMPLETED', decisions: [{ type: 'acceptance', outcome: 'accept' }] })
+  }, 240_000)
+
+  it('refuses a repository on a host it may not read, before anything is sent', async () => {
+    const { ctx, fake } = await boot({ fake: { answer: 'x' }, gemini: { answer: 'x' } })
+    const run = ctx.workflow.start({ template: 'review', input: 'Is it safe?', repository: { url: 'https://gitlab.com/a/b' } })
+    const done = await ctx.workflow.wait(run.runId, 60_000)
+    expect(done).toMatchObject({ status: 'failed', error: { kind: 'invalid_input', message: expect.stringMatching(/not an allowed repository host/) } })
+    expect(fake.sent).toEqual([])
+    expect(() => ctx.workflow.start({ template: 'brainstorm', input: 'q', repository: { url: 'https://github.com/a/b' } })).toThrow('template brainstorm reads no repository')
+  }, 90_000)
+
   it('ends a tie nobody decides as inconclusive, by rule, after tieTimeoutHours (INV-9); a tied review never passes silently', async () => {
     // No objections: no debate; split: a tie at once.
     const { ctx } = await boot({
@@ -490,7 +537,8 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
     const done = ctx.workflow.get(run.runId)!
     expect(done.answer).toMatch(/^outcome: inconclusive; method: inconclusive; winner: none; /)
     // Whatever ends the tie, the blocking finding stays in the answer.
-    expect(done.answer).toContain('## Findings (1 blocking)\n\n- F1 [m1] blocking: The lock is never released (a.ts:10)')
+    // An unquoted finding cannot be confirmed: the vote decides, and it tied.
+    expect(done.answer).toContain('## Findings (1 blocking, 0 of them confirmed)\n\n- F1 [m1] needs-verification blocking: The lock is never released at a.ts:10 (evidence: read it) (it quotes no line)')
     const final = ctx.artifacts.get(ctx.workflow.records(run.runId).at(-1)!.outputReceipt!.acceptance)!.body
     expect(final).toMatchObject({ decider: { type: 'rule', id: 'workflow.tie-timeout' }, deterministic: true, outcome: { option: 'inconclusive' },
       vote: { kind: 'review', method: 'inconclusive', tiebreak: { by: 'rule', option: 'inconclusive' }, rounds: [{ ended: 'no-objections' }], findings: [{ id: 'F1', member: 'm1', severity: 'blocking' }] } })

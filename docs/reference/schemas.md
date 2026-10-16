@@ -56,13 +56,28 @@ guesses.
 - `decision@1.1` adds the decision type `vote`, the decider type `client`, and
   the `vote` object ([teams](../design/teams.md#the-record)). A record with any
   of them must be `@1.1` and carry `vote`; every other decision stays `@1.0`,
-  so earlier decisions keep their ids. Readers accept 1.0 and 1.1.
+  so earlier decisions keep their ids. Readers accept 1.0, 1.1, and 1.2.
+- `decision@1.2` adds a review's quote checks ([teams](../design/teams.md#review)):
+  - the method and the round end `blocking-finding` (decider rule
+    `workflow.blocking-finding`);
+  - per finding: its reporters `members`, `kind` (`defect`, `suggestion`),
+    `quote {path, line, text, matched}` (`matched`: the line the quote was found
+    on), `class` (`confirmed`, `needs-verification`, `suggestion`), and `why` it
+    is not confirmed;
+  - on the vote: the `repository {url, ref?, commit}` read, the number of files
+    `unread`, and, for `blocking-finding`, the deciding findings `blocking`.
+
+  A record with any of them must be `@1.2`. A review's final vote decision is
+  always `@1.2`, and a review's tally is when it has findings; a brainstorm's
+  votes stay `@1.1`. Example:
+  [`decision.review-blocking.json`](../../schemas/examples/decision.review-blocking.json).
 - A tally's `vote` holds one round; the team's final `vote` holds every round,
   its `method`, the `dissent`, any `revisions` and `tiebreak`, and a review's
   `findings`. `threshold` is a strict majority of every member, never of the
   ballots cast.
 - Members are named by opaque identity (their session ids), never by provider.
-- The decider is `rule` for a tally, a majority, or a tie that timed out
+- The decider is `rule` for a tally, a majority, a confirmed blocking finding
+  (`workflow.blocking-finding`), or a tie that timed out
   (`workflow.tie-timeout`), and `client` or `operator` for a deciding `vote`,
   by the caller's token scope. Example:
   [`decision.team-vote.json`](../../schemas/examples/decision.team-vote.json).
@@ -200,11 +215,32 @@ guesses.
 - The body of a team's `report` artifact, composed by the engine from its final
   `vote` decision, never by a model.
 - `text` starts with one machine-readable line:
-  `outcome: <winner|inconclusive>; method: <team-majority|caller-tiebreak|inconclusive>; winner: <option|none>; decision: <id>`.
+  `outcome: <winner|inconclusive>; method: <team-majority|caller-tiebreak|inconclusive|blocking-finding>; winner: <option|none>; decision: <id>`.
   A review's text lists every finding, blocking ones included, whatever the
   outcome.
 - `winner` is null when the method is `inconclusive`. Example:
   [`team-result.tie.json`](../../schemas/examples/team-result.tie.json).
+- `team-result@1.1` adds the method `blocking-finding`, whose winner is
+  `changes`. Only that method uses `@1.1`; every other result stays `@1.0`.
+  Readers accept 1.0 and 1.1.
+
+### `source-snapshot`
+
+- The body of an `evidence` artifact: what a review's members read
+  ([sources](../design/teams.md#sources)). It is written by the engine's source
+  step, never by a model, with an `acceptance` decision
+  `workflow.source-snapshot` that lists the files with their ids and the unread
+  files.
+- `repository {url, ref?, commit}` is present for a public repository and
+  absent for the caller's text, which is the one file `material` (its `sha` is
+  the text's sha256).
+- Each file's `sha` is its git blob id at `commit`. Quotes are checked against
+  each file's `text`.
+- `unread` lists every file of the tree not read, with `why`: `bounds`,
+  `too-large`, `binary`, `lockfile`, or `not-selected`.
+- `text` is what members read: every file line-numbered between fence lines
+  derived from its hash, then the unread list. Example:
+  [`source-snapshot.repository.json`](../../schemas/examples/source-snapshot.repository.json).
 
 ### `assessment`
 

@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:tsuuanmi:system:schema:source-snapshot:v1",
+  "title": "Source snapshot",
+  "description": "Body of an `evidence` artifact: what a review's members read (PROP-0004 Phase 4): a public repository at one pinned commit, or the caller's text as the one file `material`, each file line-numbered in `text`. A team's tally checks every quote against these files.",
+  "type": "object",
+  "required": ["schema", "files", "unread", "text"],
+  "properties": {
+    "schema": { "const": "source-snapshot@1.0" },
+    "repository": {
+      "type": "object",
+      "required": ["url", "commit"],
+      "properties": {
+        "url": { "type": "string", "maxLength": 2000 },
+        "ref": { "type": "string", "maxLength": 200 },
+        "commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" }
+      },
+      "additionalProperties": false
+    },
+    "files": {
+      "type": "array",
+      "maxItems": 200,
+      "items": {
+        "type": "object",
+        "required": ["path", "sha", "text"],
+        "properties": {
+          "path": { "type": "string", "maxLength": 1000 },
+          "sha": { "type": "string", "maxLength": 80 },
+          "text": { "type": "string", "maxLength": 2000000 }
+        },
+        "additionalProperties": false
+      }
+    },
+    "unread": {
+      "type": "array",
+      "maxItems": 50000,
+      "items": {
+        "type": "object",
+        "required": ["path", "why"],
+        "properties": {
+          "path": { "type": "string", "maxLength": 1000 },
+          "why": { "enum": ["bounds", "too-large", "binary", "lockfile", "not-selected"] }
+        },
+        "additionalProperties": false
+      }
+    },
+    "text": { "type": "string", "maxLength": 6000000 }
+  },
+  "additionalProperties": false
+}

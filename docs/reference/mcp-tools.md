@@ -238,13 +238,15 @@ No arguments.
 
 ## `review`
 
-Review material as a team (an approach, a design, or a diff, as text), one member per provider family: each lists findings on its own, then all vote pass or changes by sealed ballot over the merged findings; a split vote gets one debate, and a tie comes back to you (`vote`). Returns at once with a runId; poll `result`.
+Review as a team, one member per provider family: text you give (an approach, a design, a diff), or a public repository read at one pinned commit. Each member lists findings that quote `path:line` and the line's text; system checks every quote against what the members read. A confirmed blocking finding decides changes; otherwise all vote pass or changes by sealed ballot, a split gets one debate, and a tie comes back to you (`vote`). Returns at once with a runId; poll `result`. The answer starts with a line `outcome: …; method: …; winner: …; decision: …`.
 
 Scope: `client`
 
 | Argument | Type | Required | Description |
 |---|---|---|---|
-| `material` | string | yes | What to review, with the criteria it must meet |
+| `material` | string | yes | What to review and the criteria it must meet; with `repository`, what to look for in it |
+| `repository` | object |  | Review this public repository, read by system at one pinned commit |
+| `focus` | array |  | Paths or globs of the repository to read first |
 | `classification` | "public" \| "operator-shared" \| "local-private" |  | Data classification of the input; local-private content never leaves the machine (INV-12) |
 | `clientRequestId` | string |  | Retry-safe request key |
 

@@ -51,6 +51,12 @@ describe('schema checks', () => {
     const table = example('evidence-table.two-reviews.json')
     expect(valid('evidence-table', table)).toBe(true)
     expect(valid('evidence-table', { ...table, schema: 'evidence-table@1.0' })).toBe(false)
+    // A review's quote checks are decision@1.2; a team vote is never @1.0.
+    const review = example('decision.review-blocking.json')
+    expect(valid('decision', review)).toBe(true)
+    expect(valid('decision', { ...review, schema: 'decision@1.1' })).toBe(false)
+    expect(valid('decision', { ...review, schema: 'decision@1.0' })).toBe(false)
+    expect(valid('decision', { ...example('decision.team-vote.json'), schema: 'decision@1.0' })).toBe(false)
   })
 
   it('rejects an envelope carrying both an inline body and a blob', () => {

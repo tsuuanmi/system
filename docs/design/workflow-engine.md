@@ -7,7 +7,7 @@
 > Implemented in [`workflow`](../../packages/plugins/workflow/README.md); differs from target:
 > admission has preflight and a spec hash but no provenance or confirmation step; only `worker`,
 > `gate`, and `team` nodes run (a team is unrolled into `worker` steps and its `team` tally and
-> decision); `RECOVERING` is not used;
+> decision), and one `effect`, a review's [source step](teams.md#sources); `RECOVERING` is not used;
 > a scheduler exception fails the run as `internal` (`CODE_FIX`) instead of blocking it;
 > handoff envelopes, the plan's side-effect classes, and convergence blocker reports are
 > planned.

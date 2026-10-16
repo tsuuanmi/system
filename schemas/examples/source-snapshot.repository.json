@@ -1,0 +1,31 @@
+{
+  "schema": "source-snapshot@1.0",
+  "repository": {
+    "url": "https://github.com/example/demo",
+    "ref": "main",
+    "commit": "3b17b2e84b97624a683aafaa38184bf2746fab22"
+  },
+  "files": [
+    {
+      "path": "README.md",
+      "sha": "8f2c1e0d9b7a6f5e4d3c2b1a0f9e8d7c6b5a4f3e",
+      "text": "# Demo\n"
+    },
+    {
+      "path": "src/index.ts",
+      "sha": "1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d",
+      "text": "export const port = 8080\n"
+    }
+  ],
+  "unread": [
+    {
+      "path": "pnpm-lock.yaml",
+      "why": "lockfile"
+    },
+    {
+      "path": "docs/guide.md",
+      "why": "not-selected"
+    }
+  ],
+  "text": "The repository https://github.com/example/demo at commit 3b17b2e84b97624a683aafaa38184bf2746fab22, 2 file(s) ...\n"
+}

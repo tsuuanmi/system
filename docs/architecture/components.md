@@ -148,7 +148,7 @@ runs the work the router admitted to them. Callers never reach a source directly
   ([ADR-0012](../decisions/adr/0012-dag-execution-model.md)): templates, durable nodes,
   input-hash binding, routing every node by its requirement, acceptance, escalation, retries,
   graph growth from plans, plan approval gates, teams (proposals, sealed ballots, tally, bounded
-  debate, tie votes), exact-subject
+  debate, tie votes; a review's source step, quote checks, and blocking-finding rule), exact-subject
   review and remediation cycles, wake-on-message, operator stop, continue, supersede, and
   delete, drain and resume ([workflow engine](../design/workflow-engine.md),
   [teams](../design/teams.md)).
