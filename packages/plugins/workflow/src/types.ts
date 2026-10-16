@@ -126,7 +126,7 @@ export interface Config {
   /** Hours a tied team waits for a deciding `vote`, then completes `inconclusive` by rule (default 24; INV-9). */
   tieTimeoutHours?: number
   /** A review's repository reads: the hosts allowed (default github.com) and the bounds (40 files, 300 KB, 48 KB a file; INV-9). */
-  repositories?: { hosts?: string[]; maxFiles?: number; maxBytes?: number; maxFileBytes?: number }
+  repositories?: { hosts?: string[]; maxFiles?: number; maxBytes?: number; maxFileBytes?: number; maxSourceChars?: number }
 }
 
 export interface RunRow {

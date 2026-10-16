@@ -255,7 +255,11 @@ order, shorter paths first within a class: the root README; manifests; entry poi
 `package.json` `main`, `module`, `bin`, and `exports`, and by convention); the `focus` globs, or
 else the request's words (four letters or more) in paths; then tests beside the chosen files.
 Vendored and build directories are skipped. Bounds ([INV-9](../architecture/invariants.md)):
-40 files, 300 KB in all, 48 KB per file (config `repositories`), a tree of at most 50,000
+40 files, 300 KB in all, 48 KB per file (config `repositories`), then, as members read it
+(line-numbered, with the list of files not shown), at most `maxSourceChars` characters
+(default 24,000, so a review prompt fits a 30,000-character member input): files past it are
+listed as not shown (`bounds`), and caller text past it is refused as `invalid_input` before
+anything is sent, never cut. A tree of at most 50,000
 entries and 64 MB of git output (else `overloaded`), 20 s per git call (60 s for the fetch) and
 120 s for the whole read, which a stop of the run also ends; a call is not started with less than
 a second left, and a stopped call kills its whole process group. Up to 20 `focus` globs of at

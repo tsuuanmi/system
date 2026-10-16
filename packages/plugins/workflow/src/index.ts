@@ -90,6 +90,7 @@ export class Workflow extends Service {
       maxFiles: z.natural().min(1).max(200).description('Files a review reads from a repository (default 40)'),
       maxBytes: z.natural().min(1000).max(2_000_000).description('Bytes of text it reads in all (default 300 KB)'),
       maxFileBytes: z.natural().min(1000).max(500_000).description('A larger file is listed as unread (default 48 KB)'),
+      maxSourceChars: z.natural().min(2000).max(2_000_000).default(24_000).description('Characters of source a member reads, as shown (line-numbered files and the list of files not shown): files past it are not shown; caller text past it is refused (default 24,000, so a review prompt fits a 30,000-character member input)'),
     }).description('A review\'s repository reads: allowed hosts and bounds (INV-9)'),
   }) as unknown as z<Config>
 

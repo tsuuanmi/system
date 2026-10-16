@@ -164,7 +164,9 @@ second execution path (INV-1).
     proposal prompt is the request, then the files line-numbered between
     content-derived fences, then the unread list. Config `repositories`: the
     allowed `hosts` (default `github.com`), `maxFiles` (40), `maxBytes`
-    (300 KB), and `maxFileBytes` (48 KB). A refused URL fails the step as
+    (300 KB), `maxFileBytes` (48 KB), and `maxSourceChars` (24,000 characters
+    as members read it; `fitSource` lists files past it as not shown, and
+    caller text past it is refused). A refused URL fails the step as
     `invalid_input`; an unreachable one is retried with backoff.
   - Options are fixed at propose time: brainstorm `O<k>` is member k's
     recommendation, verbatim; review options are `pass` and `changes`, over one
