@@ -187,8 +187,10 @@ export class GeminiWebDriver implements ProviderDriver<Page> {
     if (feature === 'deep-research') await this.chooseDeepResearch(engine)
     // A reopened Deep research conversation keeps Deep research chosen: a plain turn clears it.
     else if ((await engine.count('composer.deep-research')) > 0) await engine.act('composer.clear-deep-research')
-    await engine.act('composer.insert', { text: prompt })
+    // The mode first, as on ChatGPT: a long prompt grows the composer around the mode picker (live
+    // 2026-10-17, a review's 26,000 characters: mode.open missed its postcondition).
     const mode = await this.selectMode(page, preset)
+    await engine.act('composer.insert', { text: prompt })
     await this.requireChat(engine, 'before sending')
     if (options.conversation === 'temporary' && (await engine.count('temporary.notice')) === 0) {
       throw new ProviderError('ui_drift', 'gemini-web: Temporary chat is not on before sending; refusing to save the conversation')
@@ -409,6 +411,11 @@ export class GeminiWebDriver implements ProviderDriver<Page> {
   async selectMode(page: Page, wanted: ProviderMode | undefined): Promise<ProviderMode> {
     const engine = this.engine(page)
     if (!wanted?.model && !wanted?.effort && (await engine.count('composer.mode')) === 0) return {}
+    // A menu or dialog left open (the input menu, say) would take the picker's click: closed first.
+    if (await engine.state('page.busy-overlay')) {
+      await page.keyboard.press('Escape')
+      await engine.waitFor({ state: 'page.overlay-closed' }, 3000).catch(() => undefined)
+    }
     try {
       if (wanted?.model) await this.choose(engine, 'mode.model', 'model', wanted.model, sameModel)
       if (wanted?.effort) await this.choose(engine, 'mode.level', 'thinking level', wanted.effort, named)

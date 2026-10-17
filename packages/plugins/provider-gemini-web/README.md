@@ -27,7 +27,10 @@ driver, its operations are data: a UI map,
   `/app`) is `conversation_lost`: reopening it cannot help, so it is not
   retried.
 - **Modes.** A preset names a model and a thinking level as the site names
-  them. The mode menu holds both, and the chosen items are marked `selected`.
+  them. The mode is chosen **before** the prompt is typed: a long prompt grows
+  the composer around the picker (live 2026-10-17, when a review's 26,000
+  characters made `mode.open` miss its postcondition). A menu or dialog left
+  open is closed with Escape before the picker is clicked. The mode menu holds both, and the chosen items are marked `selected`.
   - A model may be named without its version: `Flash` matches `3.8 Flash` and
     never `3.5 Flash-Lite`.
   - An item's note may follow its name on the same line (`Medium Balanced

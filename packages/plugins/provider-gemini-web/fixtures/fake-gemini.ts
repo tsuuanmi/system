@@ -13,7 +13,8 @@
  *   help") and the thinking levels under a "Thinking level" item, each with its note on the same
  *   line ("Low Quick and efficient", since 2026-10-16); the chosen model and level have
  *   the class `selected`. Here, choosing an item closes the menu;
- * - turns are `user-query` (a heading "You said" with a shortened copy, then the prompt's
+ * - turns are `user-query` around its bubble `user-query-content`; the outer element draws no box
+ *   (live 2026-10-17). Inside: a heading "You said" with a shortened copy, then the prompt's
  *   paragraphs) and `model-response` (heading "Gemini said", then
  *   `message-content`); a finished answer gets "Copy" and "Redo"; Stop is "Stop response";
  * - the answer's Copy gives its Markdown, with a blank line before a code block's closing fence;
@@ -165,7 +166,8 @@ function renderMenu() {
     render()
   }
 }
-$('picker').onclick = () => { levelsOpen = false; renderMenu(); $('menu').hidden = !$('menu').hidden }
+// What the composer held each time the picker opened, for tests (a DOM attribute: page.evaluate runs in another world).
+$('picker').onclick = () => { document.body.dataset.pickerOpenedWith = (document.body.dataset.pickerOpenedWith ? document.body.dataset.pickerOpenedWith + ',' : '') + $('input').textContent.length; levelsOpen = false; renderMenu(); $('menu').hidden = !$('menu').hidden }
 $('tools').onclick = () => { $('more').hidden = true; $('tools-menu').hidden = !$('tools-menu').hidden }
 $('more-tools').onclick = () => { $('more').hidden = false; $('dr').hidden = temporary || !options.deepResearch }
 // A checkbox, like the live entry: choosing it again turns Deep research off.
@@ -218,8 +220,10 @@ function renderMarkdown(text) {
 const ACTIONS = '<div class="actions"><button aria-label="Copy">c</button><button aria-label="Redo">r</button><button aria-label="Show more options">m</button></div>'
 function userTurn(text) {
   const user = document.createElement('user-query')
-  // Like the live site: the heading repeats the prompt, shortened, before its full text.
-  user.innerHTML = '<h5 class="sr-only"><span>You said</span> <span class="short"></span></h5>' + (options.promptParagraphs ? '<p class="query-text"></p>' : '<div class="query-text"></div>')
+  // Like the live site (2026-10-17): user-query draws no box of its own, its bubble does; the
+  // heading repeats the prompt, shortened, before its full text.
+  user.style.display = 'contents'
+  user.innerHTML = '<user-query-content class="user-query-container"><h5 class="sr-only"><span>You said</span> <span class="short"></span></h5>' + (options.promptParagraphs ? '<p class="query-text"></p>' : '<div class="query-text"></div>') + '</user-query-content>'
   user.querySelector('.short').textContent = text.length > 20 ? text.slice(0, 20) + '…' : text
   user.querySelector('.query-text').textContent = text
   return user

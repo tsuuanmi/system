@@ -99,6 +99,18 @@ describe.runIf(canRunBrowser)('GeminiWebDriver against the fake site', { timeout
     return { page, driver, fake }
   }
 
+  it('chooses the mode before typing the prompt, and finds each prompt by its bubble with no drift (live 2026-10-17)', async () => {
+    const { page, driver } = await open({ startOnSpark: false })
+    const drifts: Array<{ element: string }> = []
+    driver.onDrift = (event) => void drifts.push(event as never)
+    await driver.ask(page, 'x'.repeat(2000), { conversation: 'temporary', mode: 'pro' })
+    // Every time the picker opened, the composer was still empty.
+    const opened = (await page.evaluate(() => document.body.dataset.pickerOpenedWith ?? '')).split(',').filter(Boolean).map(Number)
+    expect(opened.length).toBeGreaterThan(0)
+    expect(opened.every((n) => n === 0)).toBe(true)
+    expect(drifts.filter((d) => d.element === 'turn.user')).toEqual([])
+  })
+
   it('outlines a stalled answer with the page\'s visibility, focus, and path, and fails it as provider_stalled', async () => {
     const { page, fake } = await open({ startOnSpark: false, holdAnswer: true })
     const driver = new GeminiWebDriver({ origin: fake.origin, modes: PRESETS, defaultMode: 'flash', timeouts: { readyMs: 5000, stableMs: 300, pollMs: 100, turnMs: 30_000, stallMs: 1500 } })

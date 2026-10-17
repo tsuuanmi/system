@@ -152,8 +152,12 @@ elements:
       - { css: '[role="menuitem"]:not([data-test-id^="bard-mode-option-"]).selected' }
 
   turn.user:
+    description: >-
+      One per prompt. The bubble (`user-query-content`) is the box: the `user-query` around it
+      draws none on the live site (2026-10-17), so it never counts as visible.
     cardinality: many
     candidates:
+      - { css: 'user-query-content' }
       - { css: 'user-query' }
       - { role: heading, name: { en: '^You said' } }
   turn.user.text:
@@ -323,6 +327,9 @@ states:
   turn.running: { visible: composer.stop }
   # Nothing generating and nothing open: the page can be kept for the session's next turn.
   page.idle: { allOf: [{ not: { state: turn.running } }, { hidden: page.overlay }] }
+  # An open dialog or menu, and its absence (Escape closes one before the mode picker is clicked).
+  page.busy-overlay: { visible: page.overlay }
+  page.overlay-closed: { hidden: page.overlay }
 
 errors:
   - { when: { state: auth.challenge }, kind: challenge, message: 'gemini-web: Google shows its unusual-traffic check (a CAPTCHA); solve it in the login profile (system account login) and Save' }
