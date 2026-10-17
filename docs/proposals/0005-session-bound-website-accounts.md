@@ -19,12 +19,11 @@ cookies, local storage and IndexedDB), and the login profile is used only to sig
 [browser runtime](../design/browser-runtime.md): "Automated turns never use it"). That works for
 ChatGPT. It does not work for the Gemini account, live, on 2026-10-16:
 
-- A copy of the state worked for one turn; the next fresh context, seconds to minutes later, was
-  signed out (brainstorms `run_4f112b5f0b87473b` and `run_39cdb5914a558ee3`).
-- A copy saved from the signed-in login profile at 12:04 was already signed out in a fresh context
-  at 12:05 (`run_26e89c411ea5829b`).
-- Repeated loads then drew Google's unusual-traffic check (a reCAPTCHA) for the host, in turns and
-  in the login profile alike (drift outlines `sha256:3bde29cd…`).
+- A copy of the state worked for one turn, and the next fresh context was signed out; a copy saved
+  from the signed-in login profile was signed out a minute later; repeated loads then drew Google's
+  unusual-traffic check (a reCAPTCHA) for the host, in turns and in the login profile alike. The
+  runs and outlines are listed in [PROP-0004's implementation record](0004-claude-code-lead-mvp.md#implementation)
+  and its roadmap item (P1, Gemini turns in the persistent login profile).
 - Through all of it, the operator saw the login profile itself still signed in, and Save worked.
 
 So Gemini, and with it the second provider family that teams and research are built for
@@ -53,10 +52,28 @@ which is weaker evidence.
 ## Evidence and research
 
 - The events and outlines above (event log of 2026-10-16, `system evidence`).
-- Research run `run_233d4e56456ac0a9` (pending): why a site ends a session copied into a new
-  browser context, and what maintained automation projects do instead.
 - Precedent: codex-chatgpt-web, one of the projects ADR-0016 learned from, ran one persistent
   partition per account rather than fresh contexts.
+- **The mechanism is the research question, not an assumption.** The research (pending: its first
+  run, `run_233d4e56456ac0a9`, failed on ChatGPT's page) must separate three candidate causes,
+  since each predicts something different for "the profile stays signed in, copies die within a
+  minute":
+  - **(a) Chrome account sign-in.** If the login profile is signed in to Chrome itself with the
+    Google account, Chrome refreshes the Google session cookies from its own account token. A
+    cookie copy outside the profile cannot be refreshed, so it dies when the short-lived cookie
+    rotates, and the profile survives. Then this proposal fixes it, and so might a profile that
+    signs in to Google on the web only (alternative 6).
+  - **(b) Device-bound session credentials.** Chrome binds the session to a key held by the
+    profile. Chrome's own documentation promises this only with secure key storage such as a TPM;
+    the status of software keys on Linux in the pinned Chrome must be checked. If it applies,
+    only the profile can refresh the session, and this proposal fixes it.
+  - **(c) Suspicious-cookie heuristics.** Google ends a session whose cookie appears in a browser
+    that differs from the one it was issued to (address, user agent, fingerprint). Then running
+    in the profile helps only if the profile looks unchanged across turns, and pacing matters more
+    than the profile.
+- Whether the login profile is signed in to Chrome itself is a fact of the profile's own state,
+  not of Google's page. The product cannot read it today, and this proposal adds no tooling for it:
+  the operator can tell from the login browser's profile menu.
 
 ## Proposed design
 
@@ -72,8 +89,19 @@ which is weaker evidence.
   when idle; a sign-in never runs beside a turn.
 - **Sessions stay apart.** Each session is its own conversation in its own tab, so several team
   members can still share the account (ADR-0015, ADR-0029).
-- **Accounts.** Save keeps verifying identity from the profile. The account's portable state is
-  kept only as the identity record; `account verify` and the sign-in check open the profile.
+- **Every operation on the account, not only turns.** For a session-bound account, each one opens
+  a tab in the profile context and never a fresh context from the portable state:
+  - turns (temporary and persistent), and their reconciliation snapshots;
+  - `account verify`, `account probe`, and the background sign-in check;
+  - the conversation ledger's `inspectConversation` and `deleteConversation` (PROP-0004 Phase 5);
+  - Save, which already captures from the profile and keeps verifying identity there; the portable
+    state is kept only as the identity record.
+- **Lifecycle.** The profile context is opened lazily, on the account's first operation, within a
+  bound (a failed open fails that operation, never retried in a loop). It closes after a validated
+  idle time (`Config`), so the profile is not held when no work runs and a remote login can start.
+  If its browser dies, every in-flight turn of the account fails with the browser's error and
+  reconciles as today, by its receipt (a submitted prompt is never resent); the next operation
+  reopens the context.
 - **Pacing.** A session-bound account's turns are spaced (a minimum gap between page loads, a
   validated driver `Config` field), and an unknown page fails once, never retried
   (as `0e753c7` does today).
@@ -91,6 +119,11 @@ which is weaker evidence.
 4. **An official API Worker.** Real, but another product (metered, its own quota class); it does
    not make the subscription account usable.
 5. **Drop the second family.** Teams stay single-family (ADR-0029), with weaker evidence.
+6. **A profile not signed in to Chrome.** If the research finds cause (a), signing in to Google on
+   the web page only, never to Chrome itself, may let copies be refreshed like any other site's: a
+   runbook change, not a design change.
+
+The alternatives are ranked once the research has separated the causes.
 
 ## Validation plan
 
@@ -99,8 +132,11 @@ which is weaker evidence.
   two sessions in two tabs answer independently; a remote login waits for, or ends, the turns.
 - Crash: a host killed mid-turn restarts with the profile lock released (`releaseStaleProfileLock`)
   and reconciles the turn as today.
-- Live, after the operator clears the challenge: a two-turn brainstorm with a Gemini member, then
-  turns spaced over hours, then a review with members on both families; no sign-out, no challenge.
+- Live, only once the operator has cleared Google's check in the login profile, and never before:
+  a two-turn brainstorm with a Gemini member, then turns spaced over hours, then a review with
+  members on both families; no sign-out, no challenge. During validation the Gemini account loads
+  at most a fixed number of pages per hour, and the first challenge or sign-out ends the
+  validation for the operator to look at.
 
 ## Rollout and rollback
 
