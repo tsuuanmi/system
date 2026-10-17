@@ -249,14 +249,24 @@ loads six pages where two would do.
 - **A kept tab per session.** A persistent session's turn opens its profile page with a key (the
   session id). When the turn completes, its page is not closed: it stays open, idle, as the
   session's tab. The session's next turn gets that page back, with no new page.
+- **Checked again, never assumed.** A tab idle for minutes may have been signed out, challenged,
+  or covered by an interstitial. So on hand-back:
+  - the page is brought to the front, since Chrome throttles background tabs and the composer and
+    clipboard paths assume a focused page;
+  - the driver checks the sign-in on the page as it is, with no navigation, with the same outcomes
+    as an open: a challenge is `challenge`, signed out is `reauth_required`, an unknown page is
+    `ui_drift` once. The tab is then discarded.
 - **No navigation when already there.** Before going to a bound conversation, a driver checks
   whether the page already shows it: its URL is the conversation's, and its turns are rendered. If
   so it does not navigate; otherwise it navigates as today. Both drivers get this check.
-- **Discarded, never reused, after anything but success.** A turn that fails, is aborted, or whose
-  page closed closes its tab for good. The next turn starts from a fresh page. A reconciliation
-  after a restart always opens a fresh page, since nothing is kept across a restart.
-- **Bounded.** At most 4 kept tabs per account, a constant (INV-9). Opening a fifth closes the
-  least recently used.
+- **Kept only when idle and clean.** A tab is kept only after a completed turn whose page is idle:
+  no answer or Deep research still running, and no dialog or menu open. Otherwise, and after any
+  failure, abort or closed page, the tab is closed for good, and the next turn starts from a fresh
+  page. A reconciliation after a restart always opens a fresh page, since nothing is kept across a
+  restart.
+- **Bounded.** At most 4 kept tabs per account (`MAX_KEPT_TABS`, a named constant: INV-9 bounds
+  every resource). That covers two team members and the research thread, with one to spare.
+  Opening a fifth closes the least recently used.
   - Kept tabs close with their context: on the idle close (they count as idle, so the context
     still closes after `closeAfterMs` with no turn running), on a reservation, or when the
     display is lost.
@@ -274,6 +284,9 @@ loads six pages where two would do.
   entries verified live: later, if the loads still matter.
 - **Scope.** Session-bound accounts only (profile contexts). The ChatGPT account, on fresh
   contexts, is unchanged until it declares `sessionBound`.
+
+**Observability.** `profileStates` reports each account's kept tabs, so health shows them. No event
+per kept or discarded tab: that would flood the log.
 
 **Seam.**
 
@@ -299,6 +312,11 @@ loads six pages where two would do.
 - Releasing the session closes its tab.
 - A reservation and the idle close close every kept tab.
 - A driver on a kept page that no longer shows its conversation navigates once.
+- A kept page that was signed out, or shows a challenge, while idle fails as an open would, and is
+  discarded.
+- A turn left with a menu open, or an answer still running, is not kept.
 
-**Live validation**, added to the plan above: count the page loads of one brainstorm on Gemini.
-They should match the table.
+**Live validation**, added to the plan above, in one brainstorm on Gemini:
+- count its page loads; they should match the table;
+- check that the two members' kept tabs leave each other alone: each keeps its own mode and its
+  own conversation.
