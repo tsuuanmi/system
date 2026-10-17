@@ -131,6 +131,25 @@ flowchart RL
 or recovery decisions with their reasons, and a vote decision's ballots; `system explain <artifact id>` walks that artifact's
 inputs, within `explainDepth` and `explainBudget`.
 
+## Reading
+
+The operator reads any artifact with `system artifact <id>` (MCP `artifact`, operator scope
+only, so no client model receives a local-private answer:
+[INV-12](../architecture/invariants.md#inv-12-data-egress-is-explicit)). It is how a rejected
+attempt's answer is read: `system explain <runId>` names, on each acceptance decision, the
+`result` it judged.
+
+- **Header:** kind, body schema, classification, producer, run and node, creation time, inputs.
+- **Window:** the body's `text` when it has one (an answer), else the body as JSON, counted in
+  characters (code points, so a window never splits one), from `offset` (default 0), at most
+  `max` (default 20,000, at most 200,000; INV-9). It says the whole length and whether more
+  follows.
+- **Ids:** anything but a content id (`sha256:` and 64 lowercase hex digits) is refused before any
+  lookup.
+- **Not stored:** `expired` when a stored artifact still names it (collected by retention, which
+  records no time of its own: the read names that artifact and when it was recorded), else
+  `unknown`.
+
 ## Storage
 
 Envelopes and their bodies are stored in `ctx.store`, indexed by id, kind,

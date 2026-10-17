@@ -518,6 +518,20 @@ Rotate a scope's token when it may have leaked
    - an open web UI tab holds the old operator token: open the new link from
      `system ui`.
 
+## Why a step's answer was rejected
+
+An acceptance contract refuses an answer with a short reason (`system explain <runId>`, on the
+step's `acceptance  reject` line). To read the answer itself, take that line's `result` id:
+
+```sh
+system explain <runId>
+system artifact <result id>                 # the header, then the first 20,000 characters
+system artifact --offset 20000 <result id>  # the next window, as the header says
+```
+
+The header names its classification: a website answer is `local-private`, so keep it on this
+machine. A result collected by retention prints as `expired`.
+
 ## Retention
 
 - **Workflow runs** are deleted by the operator (`system delete <runId>`

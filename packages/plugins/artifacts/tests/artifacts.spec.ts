@@ -180,6 +180,65 @@ describe('review fixes (PR #3 kernel review)', () => {
     expect(ctx.artifacts.explain(child.id)!.inputs).toEqual([{ id: input.id, kind: 'expired', summary: 'expired: collected by retention', inputs: [] }])
   })
 
+  describe('read, for the operator', () => {
+    const answer = (text: string) => ({
+      kind: 'report' as const, bodySchema: 'provider-answer@1.0', classification: 'local-private' as const, producer: { type: 'worker' as const, ref: 'chatgpt-web/chatgpt-main' },
+      body: { schema: 'provider-answer@1.0', provider: 'chatgpt-web', account: 'chatgpt-main', turnId: 'turn_1', conversation: { mode: 'temporary' }, promptHash: `sha256:${'0'.repeat(64)}`, text },
+    })
+
+    it('reads an answer\'s text with its header, in a window of characters that never splits a surrogate pair', async () => {
+      const ctx = await boot()
+      const stored = ctx.artifacts.put({ ...answer('a😀b😀c'), runId: 'run_1', nodeId: 'review:m2:propose' })
+      expect(ctx.artifacts.read(stored.id)).toMatchObject({
+        id: stored.id, state: 'stored', kind: 'report', bodySchema: 'provider-answer@1.0', classification: 'local-private', runId: 'run_1', nodeId: 'review:m2:propose',
+        content: 'text', chars: 5, offset: 0, truncated: false, text: 'a😀b😀c',
+      })
+      // Counted in characters: the emoji is one, and a window starts and ends on whole ones.
+      expect(ctx.artifacts.read(stored.id, { offset: 1, max: 1 })).toMatchObject({ chars: 5, offset: 1, truncated: true, text: '😀' })
+      expect(ctx.artifacts.read(stored.id, { offset: 3, max: 10 })).toMatchObject({ offset: 3, truncated: false, text: '😀c' })
+      // Past the end: an empty window, at the end.
+      expect(ctx.artifacts.read(stored.id, { offset: 99 })).toMatchObject({ offset: 5, truncated: false, text: '' })
+      // A body without text reads as its JSON.
+      const decision = ctx.artifacts.recordDecision(route, { producer })
+      const read = ctx.artifacts.read(decision.id)
+      expect(read).toMatchObject({ state: 'stored', kind: 'decision', content: 'json', classification: 'operator-shared' })
+      expect(JSON.parse((read as { text: string }).text)).toEqual(decision.body)
+    })
+
+    it('reads an artifact past retention as expired, naming what still names it, and one nothing names as unknown, never as an error', async () => {
+      const ctx = await boot()
+      const input = ctx.artifacts.recordDecision(route, { producer })
+      const child = ctx.artifacts.recordDecision({ ...route, question: 'Which Worker runs research:2?', inputs: [input.id] }, { producer })
+      ctx.store.db.prepare('DELETE FROM artifacts WHERE id = ?').run(input.id)
+      expect(ctx.artifacts.read(input.id)).toEqual({
+        id: input.id, state: 'expired', referencedBy: { id: child.id, kind: 'decision', createdAt: child.createdAt },
+        note: `expired: collected by retention; its content is gone (still named by decision ${child.id}, recorded ${child.createdAt})`,
+      })
+      const none = `sha256:${'a'.repeat(64)}`
+      expect(ctx.artifacts.read(none)).toMatchObject({ id: none, state: 'unknown', note: expect.stringMatching(/^unknown: /) })
+    })
+
+    it('refuses an id that is not a content id before any lookup, and a window out of bounds (INV-9)', async () => {
+      const ctx = await boot()
+      const prepare = ctx.store.db.prepare.bind(ctx.store.db)
+      let lookups = 0
+      ctx.store.db.prepare = ((sql: string) => {
+        lookups++
+        return prepare(sql)
+      }) as typeof ctx.store.db.prepare
+      for (const id of ['run_b1e912c9c25d8a79', `sha256:${'A'.repeat(64)}`, `sha256:${'a'.repeat(63)}`, `sha256:${'a'.repeat(64)}%`, `x sha256:${'a'.repeat(64)}`]) {
+        expect(() => ctx.artifacts.read(id), id).toThrow(/^not a content id/)
+      }
+      expect(lookups).toBe(0)
+      ctx.store.db.prepare = prepare
+      const id = ctx.artifacts.put(answer('x')).id
+      expect(() => ctx.artifacts.read(id, { max: 0 })).toThrow(/^max must be/)
+      expect(() => ctx.artifacts.read(id, { max: 200_001 })).toThrow(/^max must be/)
+      expect(() => ctx.artifacts.read(id, { offset: -1 })).toThrow(/^offset must be/)
+      expect(ctx.artifacts.read(id, { max: 200_000 })).toMatchObject({ text: 'x' })
+    })
+  })
+
   it('keeps a candidate that something written after the scan names, deletes in short batches, and reads every page (INV-9)', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'system-artifacts-'))
     cleanups.push(() => rmSync(dir, { recursive: true, force: true }))

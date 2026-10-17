@@ -98,6 +98,18 @@ Scope: `operator`
 | `note` | string |  |  |
 | `plan` | string |  | The plan artifact you read; required when several plans wait |
 
+## `artifact`
+
+Read an artifact by id: its header (kind, schema, classification, run, node, inputs) and a window of its body (an answer's text, else its JSON), in characters. One no longer stored reads as expired or unknown. Operator only.
+
+Scope: `operator`
+
+| Argument | Type | Required | Description |
+|---|---|---|---|
+| `id` | string | yes | The artifact id (sha256:…), e.g. the result an acceptance decision in explain judged |
+| `offset` | integer |  | The window's first character (default 0) |
+| `max` | integer |  | Characters in the window (bounded by the artifacts service; the result says whether more follow) |
+
 ## `ask`
 
 Ask one Worker, chosen by the router for the work (capability, tier, quota order). Waits up to waitSeconds; otherwise returns a runId for `result`.

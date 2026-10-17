@@ -22,7 +22,7 @@ the layers above. Each contract is published as one or more Cordis seams
 - **Does not own:** domain semantics. The kernel stores receipts and decisions, but it does not
   know what a workflow, a turn, or a Worker is.
 - **Contracts:** `store.transaction / afterCommit / migrate`;
-  `artifacts.put / get / list / recordDecision / explain`; `eventLog.append / query`;
+  `artifacts.put / get / list / read / recordDecision / explain`; `eventLog.append / query`;
   `leases.acquire / renew / release / fence / current`; DSH `credentials.resolve / set`.
 - **Packages:** [store](../../packages/plugins/store/README.md),
   [artifacts](../../packages/plugins/artifacts/README.md),

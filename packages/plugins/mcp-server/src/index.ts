@@ -272,6 +272,30 @@ export class McpEndpoint extends McpTools {
         return { content: [{ type: 'text', text: JSON.stringify(evidence) }], structuredContent: evidence }
       },
     })
+    // Any artifact, for the operator: a rejected attempt's answer, a step's output. Its classification
+    // is in the header, and no client scope reads it (INV-12), as for evidence.
+    this.tools.set('artifact', {
+      placeholder: false,
+      spec: {
+        scope: 'operator',
+        description: 'Read an artifact by id: its header (kind, schema, classification, run, node, inputs) and a window of its body (an answer\'s text, else its JSON), in characters. One no longer stored reads as expired or unknown. Operator only.',
+        inputSchema: {
+          id: zod.string().max(200).describe('The artifact id (sha256:…), e.g. the result an acceptance decision in explain judged'),
+          offset: zod.number().int().min(0).optional().describe('The window\'s first character (default 0)'),
+          max: zod.number().int().min(1).optional().describe('Characters in the window (bounded by the artifacts service; the result says whether more follow)'),
+        },
+      },
+      handler: async (args) => {
+        const artifacts = this.ctx.get('artifacts')
+        if (!artifacts) return { isError: true, content: [{ type: 'text', text: 'the artifacts service is not mounted in this composition' }] }
+        try {
+          const read = artifacts.read(String(args.id), { ...(args.offset !== undefined ? { offset: args.offset as number } : {}), ...(args.max !== undefined ? { max: args.max as number } : {}) })
+          return { content: [{ type: 'text', text: JSON.stringify(read) }], structuredContent: read }
+        } catch (error) {
+          return { isError: true, content: [{ type: 'text', text: (error as Error).message }] }
+        }
+      },
+    })
     const notInstalled: ToolHandler = async () => ({ isError: true, content: [{ type: 'text', text: NOT_INSTALLED }] })
     const session = { sessionId: zod.string().max(200).optional().describe('Continue an existing system session') }
     const idempotency = { clientRequestId: zod.string().max(200).optional().describe('Retry-safe request key') }

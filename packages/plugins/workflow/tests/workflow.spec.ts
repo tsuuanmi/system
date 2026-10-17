@@ -404,6 +404,11 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
       ['reject', expect.stringMatching(/no JSON object/)], ['accept', expect.any(String)],
     ])
     expect(decisions.map((d) => d.type)).toContain('escalation')
+    // Each acceptance names the answer it judged, so the operator can read the rejected one (system artifact).
+    const [rejected, accepted] = decisions.filter((d) => d.type === 'acceptance')
+    expect(rejected!.result).not.toBe(accepted!.result)
+    expect(ctx.artifacts.read(rejected!.result!)).toMatchObject({ state: 'stored', content: 'text', text: 'A proposal without its JSON object.' })
+    expect(decisions.filter((d) => d.type !== 'acceptance').every((d) => d.result === undefined)).toBe(true)
   }, 240_000)
 
   it('debates only on a split vote, then ties to the caller: a deciding vote bound to the tie decision, recorded as the client\'s (REQ-TEAM-7)', async () => {

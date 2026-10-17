@@ -75,6 +75,59 @@ export interface ExplainNode {
   inputs: ExplainNode[]
 }
 
+/**
+ * An artifact as the operator reads it (`system artifact`): its envelope's header and a window of
+ * its body, or why there is none.
+ */
+export type ArtifactRead =
+  | {
+    id: ContentId
+    state: 'stored'
+    kind: ArtifactKind
+    bodySchema: string
+    classification: Classification
+    producer: Producer
+    runId?: string
+    nodeId?: string
+    createdAt: string
+    inputs: ContentId[]
+    /** What the window is of: the body's `text`, else the body as JSON; `blob` when the body is in a blob store (none is read here). */
+    content: 'text' | 'json' | 'blob'
+    /** Characters (code points) of the whole content, the window's first one, and whether more follow it. */
+    chars: number
+    offset: number
+    truncated: boolean
+    text: string
+  }
+  | {
+    id: ContentId
+    /** `expired`: a stored artifact still names it, so it was stored and collected by retention; `unknown`: nothing here names it. */
+    state: 'expired' | 'unknown'
+    /** A stored artifact that names it, and when that one was recorded (collection records no time of its own). */
+    referencedBy?: { id: ContentId; kind: ArtifactKind; createdAt: string }
+    note: string
+  }
+
+/** Bounds of a read window, in characters (INV-9). */
+export const READ_DEFAULT_CHARS = 20_000
+export const READ_MAX_CHARS = 200_000
+const CONTENT_ID_EXACT = /^sha256:[0-9a-f]{64}$/
+
+/**
+ * The UTF-16 index of the code point `count` code points after `from`, and how many were passed:
+ * a window counted this way never splits a surrogate pair.
+ */
+function advance(text: string, from: number, count: number): { index: number; passed: number } {
+  let index = from
+  let passed = 0
+  while (index < text.length && passed < count) {
+    const code = text.charCodeAt(index)
+    index += code >= 0xd800 && code <= 0xdbff && index + 1 < text.length && (text.charCodeAt(index + 1) & 0xfc00) === 0xdc00 ? 2 : 1
+    passed++
+  }
+  return { index, passed }
+}
+
 /** What one collection did. */
 export interface Collected {
   /** Artifacts deleted. */
@@ -251,6 +304,39 @@ export class Artifacts extends Service {
     const limit = Math.min(Math.max(Number.isFinite(filter.limit) ? Math.floor(filter.limit as number) : 100, 1), 1000)
     const rows = this.ctx.store.db.prepare(`SELECT DISTINCT a.envelope, a.created_at, a.id FROM artifacts a ${join} ${where} ORDER BY a.created_at, a.id LIMIT ${limit}`).all(...params) as { envelope: string }[]
     return rows.map((row) => JSON.parse(row.envelope) as Envelope)
+  }
+
+  /**
+   * Read an artifact for the operator: its header, and a window of `max` characters (code points)
+   * of its body from `offset`. The body's `text` when it has one (an answer), else the body as
+   * JSON. An id that is not a content id is refused before any lookup. One that is not stored
+   * reads as `expired` when a stored artifact still names it, else `unknown`.
+   */
+  read(id: string, window: { offset?: number; max?: number } = {}): ArtifactRead {
+    if (!CONTENT_ID_EXACT.test(id)) throw new TypeError(`not a content id (sha256: and 64 lowercase hex digits): ${id.slice(0, 80)}`)
+    const offset = window.offset ?? 0
+    const max = window.max ?? READ_DEFAULT_CHARS
+    if (!Number.isInteger(offset) || offset < 0) throw new TypeError('offset must be a whole number from 0')
+    if (!Number.isInteger(max) || max < 1 || max > READ_MAX_CHARS) throw new TypeError(`max must be a whole number from 1 to ${READ_MAX_CHARS}`)
+    const envelope = this.get(id)
+    if (!envelope) {
+      // The id is plain hex here (checked above), so it holds no LIKE wildcard.
+      const row = this.ctx.store.db.prepare('SELECT id, kind, created_at FROM artifacts WHERE envelope LIKE ? LIMIT 1').get(`%"${id}"%`) as { id: ContentId; kind: ArtifactKind; created_at: string } | undefined
+      return row
+        ? { id: id as ContentId, state: 'expired', referencedBy: { id: row.id, kind: row.kind, createdAt: row.created_at }, note: `expired: collected by retention; its content is gone (still named by ${row.kind} ${row.id}, recorded ${row.created_at})` }
+        : { id: id as ContentId, state: 'unknown', note: 'unknown: no artifact here has this id, and none names it (never stored here, or collected with everything that named it)' }
+    }
+    const body = envelope.body as { text?: unknown } | undefined
+    const content = envelope.body === undefined ? 'blob' : typeof body?.text === 'string' ? 'text' : 'json'
+    const whole = content === 'blob' ? '' : content === 'text' ? body!.text as string : JSON.stringify(envelope.body, null, 2)
+    const start = advance(whole, 0, offset)
+    const end = advance(whole, start.index, max)
+    const chars = start.passed + end.passed + advance(whole, end.index, Number.POSITIVE_INFINITY).passed
+    return {
+      id: envelope.id, state: 'stored', kind: envelope.kind, bodySchema: envelope.bodySchema, classification: envelope.classification, producer: envelope.producer,
+      ...(envelope.runId !== undefined ? { runId: envelope.runId } : {}), ...(envelope.nodeId !== undefined ? { nodeId: envelope.nodeId } : {}),
+      createdAt: envelope.createdAt, inputs: envelope.inputs, content, chars, offset: start.passed, truncated: end.index < whole.length, text: whole.slice(start.index, end.index),
+    }
   }
 
   /**

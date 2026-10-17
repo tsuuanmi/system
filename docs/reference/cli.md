@@ -37,7 +37,8 @@ on `run`, `--repo`, `--ref`, and `--focus` only on `review` (`--ref` and `--focu
 | `system delete <runId> [--yes]` | preview, then delete a finished run (artifacts stay) |
 | `system supersede <runId> <nodeId> (<text…> \| -)` | replace a completed step's result; everything downstream runs again, and a planner downstream plans again (a planner's replacement must be a valid plan; what an old plan grew is retired) |
 | `system usage [<limit>]` | recent runs: per step, the Worker, tier, and quota class used, and a model Worker's tokens |
-| `system explain [--json] <runId\|artifact>` | the decision chain behind a run (egress, tier, route, acceptance), every attempt's in order, so a rejected answer and its escalation stay visible |
+| `system explain [--json] <runId\|artifact>` | the decision chain behind a run (egress, tier, route, acceptance), every attempt's in order, so a rejected answer and its escalation stay visible; each acceptance names the `result` it judged |
+| `system artifact [--json] [--offset <n>] [--max <n>] <id>` | an artifact's header (kind, schema, classification, run, node, inputs) and a window of its body: an answer's text, else its JSON ([reading](../design/artifacts.md#reading)). One no longer stored prints as `expired` or `unknown` and exits 1 (operator; may be local-private) |
 | `system evidence <id>` | the page outline a `ui.drift` event names: structure, never text (operator; local-private) |
 
 ## Models

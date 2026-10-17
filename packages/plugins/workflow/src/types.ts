@@ -92,6 +92,8 @@ export interface ExplainedDecision {
   outcome: string
   /** Reasons of the selected candidate. */
   reasons: string[]
+  /** The result an acceptance decision judged (read it with `system artifact`). */
+  result?: ArtifactRef
   /** A team vote's ballots, per round: who chose what, how sure, and why. */
   ballots?: Array<{ round: number; member: string; choice: string; confidence: string; rationale: string }>
 }

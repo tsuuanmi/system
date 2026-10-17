@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { CHROME_LOCK } from '@tsuuanmi/system-browser-patchright'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { assertRuntime, callTool, formatEvents, formatHealth, parseEvents, healthExit, hostHealth, claudeGatewayCommand, codexGatewayCommand, drainHost, formatTools, ensureBrowser, hostProcessProblem, shutdownHost, exitCode, formatExplanation, formatUsage, mcpConfig, mcpHeaders, mcpToken, mergeProfileManifest, parseAsk, uiUrl, parseComposedRows, presetOf, rowOffProblem } from '../src/index.ts'
+import { assertRuntime, callTool, formatEvents, formatHealth, parseEvents, healthExit, hostHealth, claudeGatewayCommand, codexGatewayCommand, drainHost, formatTools, ensureBrowser, hostProcessProblem, shutdownHost, exitCode, formatArtifact, formatExplanation, formatUsage, mcpConfig, mcpHeaders, mcpToken, mergeProfileManifest, parseAsk, uiUrl, parseComposedRows, presetOf, rowOffProblem } from '../src/index.ts'
 
 const dirs: string[] = []
 afterEach(() => {
@@ -161,6 +161,7 @@ describe('system usage and explain output', () => {
       nodes: [{ nodeId: 'ask:1', state: 'COMPLETED', worker: 'worker:a/standard', quotaClass: 'subscription-chat', turnId: 'turn_1', decisions: [
         { id: 'sha256:01', type: 'egress', outcome: 'allow', reasons: ['public content is permitted'] },
         { id: 'sha256:02', type: 'route', outcome: 'worker:a/standard', reasons: ['proves reason', 'quota class subscription-chat'] },
+        { id: 'sha256:03', type: 'acceptance', outcome: 'reject', reasons: ['no JSON'], result: 'sha256:a1' },
       ] }],
     })
     expect(lines).toEqual([
@@ -168,7 +169,20 @@ describe('system usage and explain output', () => {
       '  ask:1  COMPLETED  worker:a/standard  subscription-chat  turn_1',
       '    egress  allow  public content is permitted  (sha256:01)',
       '    route  worker:a/standard  proves reason; quota class subscription-chat  (sha256:02)',
+      '    acceptance  reject  no JSON  (sha256:03)  result sha256:a1',
     ])
+  })
+
+  it('prints an artifact\'s header, its classification first among its facts, then the window; one not stored as its note', () => {
+    const stored = { id: 'sha256:a1', state: 'stored' as const, kind: 'report', bodySchema: 'provider-answer@1.0', classification: 'local-private', runId: 'run_1', nodeId: 'review:m2:propose', createdAt: '2026-10-17T14:12:53.000Z', inputs: ['sha256:b2'] }
+    expect(formatArtifact({ ...stored, content: 'text', chars: 5, offset: 1, truncated: true, text: '😀b' })).toEqual([
+      'sha256:a1  report (provider-answer@1.0)  local-private  run run_1 / review:m2:propose  2026-10-17T14:12:53.000Z',
+      'inputs: sha256:b2',
+      'text: 5 characters; 1..3 (more: --offset 3)',
+      '---',
+      '😀b',
+    ])
+    expect(formatArtifact({ id: 'sha256:c3', state: 'expired', note: 'expired: collected by retention; its content is gone' })).toEqual(['sha256:c3  expired: collected by retention; its content is gone'])
   })
 })
 

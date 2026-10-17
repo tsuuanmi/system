@@ -6,7 +6,8 @@ records ([design](../../../docs/design/artifacts.md),
 
 - **Owns:** `put` (id computed here, schema-validated, deduplicated, classification
   never below the strictest input), `recordDecision` (enforces that the selected
-  candidate equals the outcome), `get`, `list`, `explain` (a "why" walk over
+  candidate equals the outcome), `get`, `list`, `read` (the operator's bounded
+  read of one artifact, [reading](../../../docs/design/artifacts.md#reading)), `explain` (a "why" walk over
   inputs, bounded by depth and by the number of artifacts visited; a collected
   input shows as `expired`), and `collect`: retention's sweep of the artifacts
   nothing retained needs ([storage](../../../docs/design/artifacts.md#storage)).

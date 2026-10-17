@@ -92,5 +92,6 @@ function decision(e: Engine, id: ArtifactRef): ExplainedDecision | undefined {
   if (!body) return undefined
   const rounds = (body.vote as { rounds?: TeamRound[] } | undefined)?.rounds ?? []
   const ballots = rounds.flatMap((r) => r.ballots.map((b) => ({ round: r.round, member: b.member, choice: b.choice, confidence: b.confidence, rationale: b.rationale })))
-  return { id, type: body.decisionType, outcome: body.outcome.option, reasons: body.candidates.find((c) => c.selected)?.reasons ?? [], ...(ballots.length ? { ballots } : {}) }
+  const result = body.decisionType === 'acceptance' ? body.inputs[0] as ArtifactRef | undefined : undefined
+  return { id, type: body.decisionType, outcome: body.outcome.option, reasons: body.candidates.find((c) => c.selected)?.reasons ?? [], ...(result ? { result } : {}), ...(ballots.length ? { ballots } : {}) }
 }

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { checkProfile, type EventLine, formatEvents, formatHealth, healthExit, hostHealth, parseEvents, assertRuntime, backupHost, browserDeps, callTool, claudeGatewayCommand, codexGatewayCommand, drainHost, formatTools, listTools, restoreHost, shutdownHost, ensureBrowser, formatExplanation, formatUsage, init, mcpConfig, mcpHeaders, mcpToken, parseAsk, readAllStdin, serveStdio, start, type ToolOutcome, uiUrl, composedRows, PRESETS, type Preset, rowOffProblem } from './index.ts'
+import { checkProfile, type EventLine, formatEvents, formatHealth, healthExit, hostHealth, parseEvents, assertRuntime, backupHost, browserDeps, callTool, claudeGatewayCommand, codexGatewayCommand, drainHost, formatTools, listTools, restoreHost, shutdownHost, ensureBrowser, formatArtifact, type ArtifactRead, formatExplanation, formatUsage, init, mcpConfig, mcpHeaders, mcpToken, parseAsk, readAllStdin, serveStdio, start, type ToolOutcome, uiUrl, composedRows, PRESETS, type Preset, rowOffProblem } from './index.ts'
 
 const USAGE = `Usage: system <command>
 
@@ -34,6 +34,9 @@ const USAGE = `Usage: system <command>
   usage [<limit>]           recent runs: per step, the Worker, tier, and quota class used
   explain [--json] <runId|artifact>
                             the decision chain behind a run (egress, tier, route, acceptance), every attempt's
+  artifact [--json] [--offset <n>] [--max <n>] <id>
+                            an artifact's header (kind, classification, run, node, inputs) and a window of its
+                            body, e.g. a rejected attempt's answer from explain (operator; may be local-private)
   evidence <id>             the page outline a ui.drift event names (structure, never text; local-private)
   model key <NAME>          store a model route's API key from stdin, encrypted, under the
                             credential reference its apiKeyEnv names
@@ -445,6 +448,24 @@ async function main(argv: string[]): Promise<number> {
       const page = outcome.structured as { events: EventLine[]; next: number }
       console.log(rest.includes('--json') ? JSON.stringify(page, null, 2) : [...formatEvents(page.events), `next: --after ${page.next}`].join('\n'))
       return 0
+    }
+    case 'artifact': {
+      const flag = (name: string): number | undefined => {
+        const at = rest.indexOf(name)
+        if (at < 0) return undefined
+        const value = Number(rest[at + 1])
+        if (!Number.isInteger(value)) throw new Error(`${name} takes a whole number`)
+        return value
+      }
+      const id = rest.find((a, i) => !a.startsWith('--') && rest[i - 1] !== '--offset' && rest[i - 1] !== '--max')
+      if (!id) break
+      const offset = flag('--offset')
+      const max = flag('--max')
+      const outcome = await callTool('artifact', { id, ...(offset !== undefined ? { offset } : {}), ...(max !== undefined ? { max } : {}) })
+      if (outcome.isError) throw new Error(outcome.text)
+      const read = outcome.structured as unknown as ArtifactRead
+      console.log(rest.includes('--json') ? JSON.stringify(read, null, 2) : formatArtifact(read).join('\n'))
+      return read.state === 'stored' ? 0 : 1
     }
     case 'evidence': {
       if (!rest[0]) break

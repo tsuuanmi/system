@@ -23,7 +23,11 @@ Claude Code and Codex, and the `system` CLI. It is the primary client interface
   built-in placeholder may be replaced. For example, `login` contributes
   `account_list` and `account_save`.
 - **Built-in tools:** `status`, `ask`, `research`, `result` (`client` scope),
-  and `events` (`operator` scope):
+  and `events`, `evidence`, `artifact` (`operator` scope):
+  - `evidence` and `artifact` read local-private content, which no client scope
+    reads (INV-12): a drift outline, and any artifact's header and a bounded
+    window of its body
+    ([reading](../../../docs/design/artifacts.md#reading)).
   - `events` reads the event log in order (QA-7), optionally for one run,
     session, or type, a page of at most 1000 after `afterSeq`; it returns the
     page and `next`, the cursor for the following one.

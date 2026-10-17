@@ -66,7 +66,7 @@ describe('system MCP server on ctx.webServer', () => {
     expect(statSync(join(dir, 'mcp.json')).mode & 0o777).toBe(0o600)
     const client = await connect(url, token)
     const { tools } = await client.listTools()
-    expect(tools.map((tool) => tool.name).sort()).toEqual(['ask', 'events', 'evidence', 'research', 'result', 'status'])
+    expect(tools.map((tool) => tool.name).sort()).toEqual(['artifact', 'ask', 'events', 'evidence', 'research', 'result', 'status'])
     const status = await client.callTool({ name: 'status', arguments: {} })
     expect(status.structuredContent).toMatchObject({ harness: 'system', store: 'ok', artifacts: 0, kernel: ['store', 'artifacts'] })
     // No milestone baked into the code: status reports what is mounted, not a roadmap stage.
@@ -179,6 +179,21 @@ describe('scoped tokens', () => {
     method: 'POST', body, headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', authorization: `Bearer ${token}` },
   })
 
+  it('lets the operator read any artifact, local-private included, and never a client (INV-12, QA-14)', async () => {
+    const { url, tokens, ctx } = await boot()
+    const answer = ctx.artifacts.put({
+      kind: 'report', bodySchema: 'provider-answer@1.0', classification: 'local-private', producer: { type: 'worker', ref: 'gemini-web/gemini-main' },
+      body: { schema: 'provider-answer@1.0', provider: 'gemini-web', account: 'gemini-main', turnId: 'turn_1', conversation: { mode: 'temporary' }, promptHash: `sha256:${'0'.repeat(64)}`, text: 'The findings follow.' },
+    })
+    const operator = await connect(url, tokens.operator)
+    expect((await operator.callTool({ name: 'artifact', arguments: { id: answer.id, max: 3 } })).structuredContent).toMatchObject({ state: 'stored', classification: 'local-private', content: 'text', chars: 20, truncated: true, text: 'The' })
+    expect(await operator.callTool({ name: 'artifact', arguments: { id: 'run_1' } })).toMatchObject({ isError: true, content: [{ text: expect.stringMatching(/^not a content id/) }] })
+    const client = await connect(url, tokens.client)
+    expect((await client.listTools()).tools.map((t) => t.name)).not.toContain('artifact')
+    const refused = await post(url, tokens.client, JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'artifact', arguments: { id: answer.id } } }))
+    expect(refused.status).toBe(403)
+  })
+
   it('refuses a client token calling the operator\'s events tool (QA-14, QA-7)', async () => {
     const { url, tokens } = await boot()
     const refused = await post(url, tokens.client, callBody('events'))
@@ -194,7 +209,7 @@ describe('scoped tokens', () => {
     expect((await client.listTools()).tools.map((t) => t.name).sort()).toEqual(['ask', 'cl_tool', 'research', 'result', 'status'])
     const operator = await connect(url, tokens.operator)
     const listed = (await operator.listTools()).tools
-    expect(listed.map((t) => t.name).sort()).toEqual(['ask', 'cl_tool', 'events', 'evidence', 'op_only', 'research', 'result', 'status'])
+    expect(listed.map((t) => t.name).sort()).toEqual(['artifact', 'ask', 'cl_tool', 'events', 'evidence', 'op_only', 'research', 'result', 'status'])
     // The reference page shows each tool's scope from the listing.
     expect(listed.find((t) => t.name === 'op_only')?._meta).toMatchObject({ 'system/scope': 'operator' })
     expect(listed.find((t) => t.name === 'cl_tool')?._meta).toMatchObject({ 'system/scope': 'client' })

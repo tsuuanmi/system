@@ -651,7 +651,7 @@ interface Explained {
   template: string
   status: string
   specHash: string
-  nodes: Array<{ nodeId: string; state: string; worker?: string; quotaClass?: string; turnId?: string; decisions: Array<{ id: string; type: string; outcome: string; reasons: string[] }> }>
+  nodes: Array<{ nodeId: string; state: string; worker?: string; quotaClass?: string; turnId?: string; decisions: Array<{ id: string; type: string; outcome: string; reasons: string[]; result?: string }> }>
 }
 
 /** `system explain <runId>`: each step's decisions (egress, tier, route, acceptance) with their reasons. */
@@ -660,8 +660,30 @@ export function formatExplanation(explained: Explained): string[] {
     `${explained.runId}  ${explained.template}  ${explained.status}  spec ${explained.specHash}`,
     ...explained.nodes.flatMap((n) => [
       `  ${n.nodeId}  ${n.state}  ${n.worker ?? '-'}  ${n.quotaClass ?? '-'}  ${n.turnId ?? '-'}`,
-      ...n.decisions.map((d) => `    ${d.type}  ${d.outcome}  ${d.reasons.join('; ')}  (${d.id})`),
+      ...n.decisions.map((d) => `    ${d.type}  ${d.outcome}  ${d.reasons.join('; ')}  (${d.id})${d.result ? `  result ${d.result}` : ''}`),
     ]),
+  ]
+}
+
+/** What the `artifact` tool returns (the artifacts service's read). */
+export type ArtifactRead =
+  | { id: string; state: 'stored'; kind: string; bodySchema: string; classification: string; runId?: string; nodeId?: string; createdAt: string; inputs: string[]
+    content: 'text' | 'json' | 'blob'; chars: number; offset: number; truncated: boolean; text: string }
+  | { id: string; state: 'expired' | 'unknown'; note: string }
+
+/** `system artifact <id>`: a header, which says the classification, then the window of the body. */
+export function formatArtifact(read: ArtifactRead): string[] {
+  if (read.state !== 'stored') return [`${read.id}  ${read.note}`]
+  const end = read.offset + [...read.text].length
+  const where = read.runId ? `  run ${read.runId}${read.nodeId ? ` / ${read.nodeId}` : ''}` : ''
+  return [
+    `${read.id}  ${read.kind} (${read.bodySchema})  ${read.classification}${where}  ${read.createdAt}`,
+    ...(read.inputs.length ? [`inputs: ${read.inputs.join(', ')}`] : []),
+    read.content === 'blob'
+      ? 'body: in a blob store, not read here'
+      : `${read.content}: ${read.chars} characters; ${read.offset}..${end}${read.truncated ? ` (more: --offset ${end})` : ''}`,
+    '---',
+    read.text,
   ]
 }
 
