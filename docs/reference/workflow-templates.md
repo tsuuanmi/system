@@ -149,5 +149,9 @@ one fails admission, fail closed, with the capability named:
 | `acceptance.team-ballot-review` | `workflow` | the same ballot over `pass` and `changes` |
 | `acceptance.cited-conclusions` | `profile-scientific-research` | the conclusion names a hypothesis (`H1`, …) and cites evidence (`[E1]`, …) |
 
+The JSON an answer ends with is its last fenced code block that holds JSON, with fences paired as
+Markdown pairs them; anything there but an object is refused. With no such block, it is the object
+that ends at the answer's last `}`. Code or prose quoted before it does not hide it.
+
 Config `templates` on the `workflow` plugin adds templates or replaces a built-in one of the
 same name ([configuration](configuration.md#workflow)).

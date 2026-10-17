@@ -601,6 +601,24 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
     expect(final.vote.findings[1]).toMatchObject({ class: 'needs-verification', why: expect.stringMatching(/too short to identify one line/) })
   }, 240_000)
 
+  it('reads a review answer that quotes code in its own blocks before the findings, from either site', async () => {
+    const material = 'Review this change:\nfunction f() {\n  const lease = acquire()\n  work()\n}'
+    // As members answer a long review: code quoted in a block of its own, prose with braces, then the findings last.
+    const reviewed = (lang: string) => (prompt: string): string => (isProposal(prompt)
+      ? [
+        'In `function f() { ... }` the lease is taken:',
+        '', '```' + lang, 'const lease = acquire()', 'work()', '```', '',
+        'and nothing releases it, so `{ lease }` outlives the call.',
+        '', '```json', JSON.stringify({ findings: [{ severity: 'blocking', claim: 'The lease is never released', evidence: 'read it', quote: { path: 'material', line: 3, text: 'const lease = acquire()' } }] }, null, 2), '```',
+      ].join('\n')
+      : ballot('changes', [], 'review'))
+    const { ctx } = await boot({ fake: { answer: reviewed('ts') }, gemini: { answer: reviewed('typescript') } })
+    const done = await ctx.workflow.wait(ctx.workflow.start({ template: 'review', input: material }).runId, 120_000)
+    expect(done).toMatchObject({ status: 'completed' })
+    expect(done.answer).toMatch(/^outcome: changes; method: blocking-finding;/)
+    expect(done.answer).toContain('[m1 blocking confirmed: The lease is never released; m2 blocking confirmed: The lease is never released]')
+  }, 240_000)
+
   it('refuses material too long for a member to read whole, before anything is sent', async () => {
     const { ctx, fake } = await boot({ fake: { answer: 'x' }, gemini: { answer: 'x' }, workflow: { repositories: { maxSourceChars: 2000 } } })
     const done = await ctx.workflow.wait(ctx.workflow.start({ template: 'review', input: 'Review this:\n' + 'line of the change\n'.repeat(200) }).runId, 60_000)

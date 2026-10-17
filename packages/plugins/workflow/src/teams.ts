@@ -7,7 +7,7 @@
  */
 import type { Context } from '@deepseek-ai/cordis'
 import type { Lease } from '@tsuuanmi/system-leases'
-import { canonicalJson, sha256 } from '@tsuuanmi/system-libs'
+import { canonicalJson, extractJson, sha256 } from '@tsuuanmi/system-libs'
 import { type Runtime, RUNTIMES } from '@tsuuanmi/system-worker-sessions'
 import type { ArtifactRef, Tier } from '@tsuuanmi/system-workers-core'
 import type { Engine } from './engine.ts'
@@ -129,20 +129,8 @@ const TEXT_MAX = 4000
 const clip = (value: unknown, max = TEXT_MAX): string => String(value ?? '').slice(0, max)
 const strings = (value: unknown): value is string[] => Array.isArray(value) && value.every((v) => typeof v === 'string')
 
-/** The JSON object an answer ends with: a fenced block, or the outermost braces. Untrusted model text. */
-function jsonOf(text: string): Record<string, unknown> | undefined {
-  const fenced = [...text.matchAll(/```(?:json)?\s*\n([\s\S]*?)\n```/g)].at(-1)?.[1]
-  const raw = fenced ?? text.slice(text.indexOf('{'), text.lastIndexOf('}') + 1)
-  try {
-    const value = JSON.parse(raw) as unknown
-    return typeof value === 'object' && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : undefined
-  } catch {
-    return undefined
-  }
-}
-
 export function parseProposal(text: string): Proposal | string {
-  const value = jsonOf(text)
+  const value = extractJson(text)
   if (!value) return 'the answer ends with no JSON object'
   if (typeof value.recommendation !== 'string' || !value.recommendation.trim()) return 'the proposal has no recommendation'
   if (value.recommendation.length > 2000) return `the recommendation has ${value.recommendation.length} characters; at most 2000`
@@ -152,7 +140,7 @@ export function parseProposal(text: string): Proposal | string {
 }
 
 export function parseFindings(text: string): Finding[] | string {
-  const value = jsonOf(text)
+  const value = extractJson(text)
   if (!value || !Array.isArray(value.findings)) return 'the answer ends with no JSON object holding "findings" (a list; empty when there is no defect)'
   if (value.findings.length > 50) return `${value.findings.length} findings; at most 50`
   const findings: Finding[] = []
@@ -177,7 +165,7 @@ export function parseFindings(text: string): Finding[] | string {
 
 /** A ballot over exactly `options`: one choice, a ranking of all of them, and the strongest point of each one not chosen. */
 export function parseBallot(text: string, options: readonly string[]): Ballot | string {
-  const value = jsonOf(text)
+  const value = extractJson(text)
   if (!value) return 'the answer ends with no JSON ballot'
   const choice = value.choice
   if (typeof choice !== 'string' || !options.includes(choice)) return `the ballot's choice must be one of ${options.join(', ')}`

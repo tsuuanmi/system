@@ -77,15 +77,57 @@ function defaultSchemaDir(): string {
   return dirname(require.resolve('@tsuuanmi/system-schemas/package.json'))
 }
 
-/** The JSON object an answer carries: in a ```json block, or the outermost braces; undefined if none. */
-export function extractJson(text: string): Record<string, unknown> | undefined {
-  const fenced = /```(?:json)?\s*\n([\s\S]*?)\n```/.exec(text)?.[1]
-  const raw = fenced ?? text.slice(text.indexOf('{'), text.lastIndexOf('}') + 1)
+/** The JSON a text parses to, or undefined when it is none. */
+const parsed = (raw: string): { value: unknown } | undefined => {
   try {
-    const value = JSON.parse(raw) as unknown
-    return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined
+    return { value: JSON.parse(raw) as unknown }
   } catch {
     return undefined
   }
+}
+
+const objectOf = (value: unknown): Record<string, unknown> | undefined =>
+  value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined
+
+/**
+ * The bodies of a text's fenced code blocks, in order. Fences pair line by line, as Markdown
+ * pairs them: a block closes only on a fence line of its own character, at least as long as the
+ * one that opened it, so one block's closing fence is never read as the next one's opening.
+ */
+function fencedBlocks(text: string): string[] {
+  const blocks: string[] = []
+  let open: { close: RegExp; lines: string[] } | undefined
+  for (const line of text.split('\n')) {
+    if (!open) {
+      const fence = /^ {0,3}(`{3,}|~{3,})[^`]*$/.exec(line)?.[1]
+      if (fence) open = { close: new RegExp(`^ {0,3}${fence[0]}{${fence.length},}[ \\t]*$`), lines: [] }
+    } else if (open.close.test(line)) {
+      blocks.push(open.lines.join('\n'))
+      open = undefined
+    } else {
+      open.lines.push(line)
+    }
+  }
+  return blocks
+}
+
+/**
+ * The JSON object an answer ends with. Its last fenced block that holds JSON decides: an object
+ * there is the answer's, anything else (a list, a string) is no object, and an earlier block never
+ * stands in for it. Blocks that hold no JSON (quoted code) are passed over. With no such block,
+ * the object ending at the answer's last closing brace, from the first opening brace it parses
+ * from (prose or code quoted before it may hold braces of its own). Untrusted model text.
+ */
+export function extractJson(text: string): Record<string, unknown> | undefined {
+  for (const block of fencedBlocks(text).reverse()) {
+    const json = parsed(block)
+    if (json) return objectOf(json.value)
+  }
+  const end = text.lastIndexOf('}') + 1
+  for (let start = text.indexOf('{'); start >= 0 && start < end; start = text.indexOf('{', start + 1)) {
+    const value = objectOf(parsed(text.slice(start, end))?.value)
+    if (value) return value
+  }
+  return undefined
 }
 

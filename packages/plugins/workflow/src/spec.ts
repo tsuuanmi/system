@@ -3,7 +3,7 @@
  * preflight validates a DAG before anything runs, and a resolved spec is hashed so a run
  * binds to exactly what was admitted.
  */
-import { contentId, type ContentId } from '@tsuuanmi/system-libs'
+import { contentId, type ContentId, extractJson } from '@tsuuanmi/system-libs'
 import { TIERS, type Tier } from '@tsuuanmi/system-workers-core'
 
 export interface NodeTemplate {
@@ -490,14 +490,8 @@ const STEP_ID = /^[a-z0-9][a-z0-9-]{0,40}$/
 export const growthPrefix = (nodeId: string, generation = 1): string => (generation > 1 ? `${nodeId}:g${generation}` : nodeId)
 
 export function parsePlan(text: string, planner: string, policy: { maxNodes: number; capabilities: string[] }): ParsedPlan {
-  const fenced = /```(?:json)?\s*([\s\S]*?)```/.exec(text)?.[1]
-  const raw = fenced ?? text.slice(text.indexOf('{'), text.lastIndexOf('}') + 1)
-  let value: { confidence?: unknown; nodes?: unknown }
-  try {
-    value = JSON.parse(raw) as typeof value
-  } catch {
-    return { ok: false, reason: 'the answer carries no JSON plan' }
-  }
+  const value = extractJson(text) as { confidence?: unknown; nodes?: unknown } | undefined
+  if (!value) return { ok: false, reason: 'the answer carries no JSON plan' }
   if (!['low', 'medium', 'high'].includes(String(value.confidence))) return { ok: false, reason: 'the plan states no confidence (low, medium, or high)' }
   if (!Array.isArray(value.nodes) || value.nodes.length === 0) return { ok: false, reason: 'the plan has no steps' }
   if (value.nodes.length > policy.maxNodes) return { ok: false, reason: `the plan has ${value.nodes.length} steps; at most ${policy.maxNodes} are allowed` }
@@ -557,16 +551,9 @@ export function subjectBlock(id: string, workspace: string, head: string, diff: 
 
 /** A reviewer's assessment from its answer, or why it is not one. */
 export function parseAssessment(text: string): { ok: true; assessment: Assessment } | { ok: false; reason: string } {
-  const fenced = /```(?:json)?\s*\n([\s\S]*?)\n```/.exec(text)?.[1]
-  const raw = fenced ?? text.slice(text.indexOf('{'), text.lastIndexOf('}') + 1)
-  let value: unknown
-  try {
-    value = JSON.parse(raw)
-  } catch {
-    return { ok: false, reason: 'the review has no JSON assessment' }
-  }
-  const v = value as Partial<Assessment> | null
-  if (!v || typeof v.subject !== 'string') return { ok: false, reason: 'the assessment names no subject' }
+  const v = extractJson(text) as Partial<Assessment> | undefined
+  if (!v) return { ok: false, reason: 'the review has no JSON assessment' }
+  if (typeof v.subject !== 'string') return { ok: false, reason: 'the assessment names no subject' }
   if (v.verdict !== 'approve' && v.verdict !== 'changes-requested') return { ok: false, reason: 'the assessment has no verdict (approve or changes-requested)' }
   if (!Array.isArray(v.findings)) return { ok: false, reason: 'the assessment has no findings list' }
   const findings: Assessment['findings'] = []
