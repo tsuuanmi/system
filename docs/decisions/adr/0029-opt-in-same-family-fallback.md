@@ -40,17 +40,9 @@ Option 3.
   `workflow.same-family`, outcome `same-family`) naming the rules no Worker satisfied, kept among
   the node's decisions. A team with such a member records `members: same provider family` on its
   final decision, and its answer says so on its second line. Nothing says "independent".
-- **Each member in its own session.** Members keep their own sessions (Model A), so two members
-  on one Worker answer and vote in two native sessions, and each ballot is sealed as before.
-- **General, not one provider's.** The fallback is in the workflow engine and names no provider
-  (INV-11). It rests on the Worker session model of
-  [ADR-0015](0015-worker-sessions-and-peer-messaging.md): every member is a system-owned session
-  bound to its own native handle. A website account hosts one conversation per session; an agent
-  runtime (over ACP, or an SDK) hosts one native session per session. So any Worker source that
-  keeps sessions apart can serve several members of one team.
-- **Live evidence (2026-10-16).** Two members on one website account, each in its own
-  conversation: brainstorm `run_2380ceeefba5d628` and review `run_4846cd12f59e4bbd`, each
-  recorded as same provider family.
+- **Each member in its own conversation.** Members keep their own sessions (Model A), so two
+  members on one account answer and vote in two conversations, and each ballot is sealed as
+  before.
 
 ## Consequences
 
@@ -62,3 +54,15 @@ Option 3.
   steps on the same account.
 - The fix for the second family is separate (roadmap: run Gemini turns in its persistent login
   profile, a change to the browser runtime's rule that automated turns never use it).
+
+## Amendment (2026-10-16): scope and live evidence
+
+- **General, not one provider's.** The fallback is in the workflow engine and names no provider
+  (INV-11). It rests on the Worker session model of
+  [ADR-0015](0015-worker-sessions-and-peer-messaging.md): every member is a system-owned session
+  bound to its own native handle. A website account hosts one conversation per session; an agent
+  runtime (over ACP, or an SDK) hosts one native session per session. So any Worker source that
+  keeps sessions apart can serve several members of one team, each in its own session.
+- **Live evidence.** Two members on one website account, each in its own conversation: brainstorm
+  `run_2380ceeefba5d628` and review `run_4846cd12f59e4bbd`, each recorded as same provider
+  family.

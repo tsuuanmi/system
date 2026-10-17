@@ -264,7 +264,8 @@ entry points (from `package.json` `main`, `module`, `bin`, and `exports`, and by
 no `focus`, the request's words (four letters or more) in paths; then tests beside the chosen
 files. A review never gives a verdict on a focus file it did not show: a file the `focus` names
 exactly that does not fit (`bounds`, `too-large`, `path-too-long`) fails the step as
-`invalid_input` before anything is sent, with what to narrow or raise. A glob or directory whose
+`invalid_input` before anything is sent, with what to narrow or raise; so does a plain path the
+repository does not have at that commit (a typo). A glob or directory whose
 readable matches did not all fit is reviewed on what was shown, and the answer says so first
 (`Focus not shown: N of M file(s) matching <glob>`).
 Vendored and build directories are skipped. Bounds ([INV-9](../architecture/invariants.md)):

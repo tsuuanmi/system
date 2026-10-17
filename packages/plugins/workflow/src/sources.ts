@@ -71,7 +71,13 @@ export function focusShortfall(focus: readonly string[], snapshot: Pick<SourceSn
       if (why === 'bounds' || why === 'too-large' || why === 'path-too-long') missing.push(`${pattern} (${why})`)
       continue
     }
-    const readable = tree.filter((p) => globMatches(pattern, p) && unread.get(p) !== 'binary' && unread.get(p) !== 'lockfile')
+    const matches = tree.filter((p) => globMatches(pattern, p))
+    // A plain path that is neither a file nor a directory of the tree (a typo, or absent at this commit) names nothing to review.
+    if (!pattern.includes('*') && !matches.length) {
+      missing.push(`${pattern} (not in the repository at this commit)`)
+      continue
+    }
+    const readable = matches.filter((p) => unread.get(p) !== 'binary' && unread.get(p) !== 'lockfile')
     const notShown = readable.filter((p) => !shown.has(p))
     if (!readable.length) notes.push(`focus matches no readable file: ${pattern}`)
     else if (notShown.length) notes.push(`focus not shown: ${notShown.length} of ${readable.length} file(s) matching ${pattern}`)
