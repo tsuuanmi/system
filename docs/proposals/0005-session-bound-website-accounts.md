@@ -247,6 +247,11 @@ Accepted on 2026-10-17 by the operator, in Researcher's session: both ranked opt
   - a turn answers in the profile, writes nothing back, and a copy is signed out;
   - a turn that fails on a page the site has signed out reports `reauth_required` (the turn
     runtime re-checks the page), so the account shows signed out instead of a stall.
+- Live on 2026-10-17 and 2026-10-18: a normal research ran with both accounts in their login
+  profiles. Then the interim was lifted: `maxConcurrentTurnsPerAccount` is back at 2, with the
+  operator's approval. Two ChatGPT turns started 0.3 s apart, in two tabs of its profile and in
+  different modes, each read its own mode back and answered. Gemini's two-tab check comes with its
+  next two-member run.
 - Kept tabs (the amendment below), built on branch `feat/kept-tabs`:
   - `profile.keep`, `BrowserTurn.discard`, `discardTab`, and kept tabs in `profileStates`;
   - in the turn runtime, a session's page is kept or closed before its turn completes, so a next

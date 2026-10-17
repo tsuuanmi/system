@@ -69,6 +69,14 @@ export function shippedMap(overlay?: string): UiMap {
 /** The tools popover entry that proves each account feature. */
 const FEATURE_ENTRIES = [['deep-research', 'tools.deep-research'], ['web-search', 'tools.web-search'], ['image-generation', 'tools.create-image']] as const
 
+/** The failures that are the site's own error page, which `open` loads once more. */
+const SITE_ERROR_PAGES = new WeakSet<object>()
+function siteErrorPage(): ProviderError {
+  const error = new ProviderError('overloaded', 'chatgpt-web: the site shows its own error page instead of the app; nothing was sent')
+  SITE_ERROR_PAGES.add(error)
+  return error
+}
+
 /** How long a page may take to settle (its Stop control gone) before it counts as busy and is not kept. */
 const PAGE_IDLE_WAIT_MS = 3000
 
@@ -114,12 +122,15 @@ export class ChatGptWebDriver implements ProviderDriver<Page> {
     this.timeouts = { turnMs: 15 * 60_000, stallMs: 3 * 60_000, stableMs: 1500, pollMs: 250, readyMs: 30_000, researchStartMs: 60_000, snapshotMs: 20_000, reportReadMs: 30_000, ...options.timeouts }
   }
 
-  /** Signed in (composer present), signed out (positive evidence only), or unknown. */
+  /**
+   * Signed in (composer present), signed out (positive evidence only), or unknown. The site's own
+   * error page in place of the app is none of them: `overloaded`, a transient failure.
+   */
   async checkAuth(page: Page): Promise<AuthState> {
     if (!page.url().startsWith(this.origin)) await page.goto(`${this.origin}/`, { waitUntil: 'domcontentloaded' })
     const engine = this.engine(page)
     try {
-      await engine.waitFor({ anyOf: [{ state: 'auth.signed-in' }, { state: 'auth.signed-out' }, { state: 'auth.challenge' }] }, this.timeouts.readyMs)
+      await engine.waitFor({ anyOf: [{ state: 'auth.signed-in' }, { state: 'auth.signed-out' }, { state: 'auth.challenge' }, { state: 'site.error-page' }] }, this.timeouts.readyMs)
     } catch {
       // Neither state: whatever the page shows instead is outlined as drift evidence, so it can be
       // read without opening the operator's browser.
@@ -128,6 +139,7 @@ export class ChatGptWebDriver implements ProviderDriver<Page> {
     }
     // A challenge page is neither: only the operator can pass it, and loading again deepens it.
     if (await engine.state('auth.challenge')) throw new ProviderError('challenge', 'chatgpt-web: the site shows a challenge (Verify you are human); pass it in the login profile (system account login) and Save')
+    if (await engine.state('site.error-page')) throw siteErrorPage()
     if (!(await engine.state('auth.signed-out'))) return 'signed-in'
     if (await engine.state('auth.login-page')) return 'signed-out'
     // Only the logged-out home: a signed-in app may paint that shell before it loads its session, and
@@ -264,7 +276,13 @@ export class ChatGptWebDriver implements ProviderDriver<Page> {
     const url = options.binding ? `${this.origin}/c/${options.binding}` : `${this.origin}/`
     // A kept tab already showing the conversation is checked as it is, never loaded again (ADR-0030).
     if (!(options.binding && (await this.showing(page, options.binding)))) await page.goto(url, { waitUntil: 'domcontentloaded' })
-    const auth = await this.checkAuth(page)
+    // The site's own error page in place of the app (live, a fresh profile's first page): nothing
+    // is typed yet, so it is loaded once more; a second one fails as transient.
+    const auth = await this.checkAuth(page).catch(async (error: unknown) => {
+      if (!SITE_ERROR_PAGES.has(error as object)) throw error
+      await page.reload({ waitUntil: 'domcontentloaded' })
+      return this.checkAuth(page)
+    })
     if (auth === 'signed-out') throw new ProviderError('reauth_required', 'chatgpt-web: signed out')
     // Neither signed in nor signed out (outlined as drift): loading it again on this account only adds traffic.
     if (auth === 'unknown') throw new ProviderError('ui_drift', 'chatgpt-web: the page showed neither the composer nor a sign-in page in time (outlined as a ui.drift of composer.input)')

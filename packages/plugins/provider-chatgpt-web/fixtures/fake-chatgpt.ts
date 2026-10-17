@@ -53,6 +53,12 @@ export interface FakeOptions {
    * without the key, the app becomes the logged-out home once the key fails its check.
    */
   deviceBound?: boolean
+  /**
+   * The first this many app pages are the site's own error page (live 2026-10-17, the first page
+   * of a freshly launched profile): the signed-in shell, and in `main` a heading, an alert, and two
+   * buttons, with no composer.
+   */
+  errorPages?: number
   /** Every page is the logged-out home: the app shell with an anonymous composer and no account. */
   loggedOutHome?: boolean
   /** A signed-in page first paints the logged-out home for this long, then the app (0: no flash). */
@@ -160,6 +166,12 @@ caches.open('device').then((c) => c.match('/device-key')).then((r) => (r ? r.tex
   document.documentElement.classList.remove('binding')
 })
 </script>`
+
+/** The shape of the live error page (2026-10-17): the signed-in shell, an error in `main`, no composer. */
+const ERROR_PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>ChatGPT</title></head><body>
+<nav aria-label="App navigation"><button aria-label="Open profile menu">me</button><ol aria-label="Chat history"></ol></nav>
+<main><h1>Something went wrong</h1><p role="alert">An error occurred. Please try again later.</p><button>Try again</button><button>Help</button></main>
+</body></html>`
 
 function html(options: Required<FakeOptions>, conversation: Conversation | undefined, missing?: string, history: string[] = []): string {
   const turns = (conversation?.turns ?? []).map((t) => t.role === 'user'
@@ -391,6 +403,8 @@ export class FakeChatGpt {
   readonly deleted = new Set<string>()
   /** Every deletion request the page made, by conversation id (a repeated click shows twice). */
   readonly deleteRequests: string[] = []
+  /** Error pages served so far (`errorPages`). */
+  errorPagesShown = 0
   /** Device checks of a `deviceBound` session, in order: whether each passed. */
   readonly deviceChecks: boolean[] = []
   /** Sessions signed in at `/signin` and the device key each was bound to. */
@@ -402,7 +416,7 @@ export class FakeChatGpt {
 
   constructor(options: FakeOptions = {}) {
     this.options = {
-      startOnWork: true, chatToggleBroken: false, signedIn: true, loginOffer: false, requireCookie: false, rotateOnLoad: false, deleteMenu: true, captcha: false, interstitial: false, deviceBound: false, loggedOutHome: false, logoutFlashMs: 0, paneMenu: true, dialogTarget: '', userId: 'user-fake123', sendLabel: 'Send', sendTestId: '',
+      startOnWork: true, chatToggleBroken: false, signedIn: true, loginOffer: false, requireCookie: false, rotateOnLoad: false, deleteMenu: true, captcha: false, interstitial: false, deviceBound: false, errorPages: 0, loggedOutHome: false, logoutFlashMs: 0, paneMenu: true, dialogTarget: '', userId: 'user-fake123', sendLabel: 'Send', sendTestId: '',
       answer: 'OK', thinkMs: 300, models: ['Latest', 'GPT-6', 'GPT-5.6 Sol', 'GPT-5.5'], lockedModels: [],
       researchMs: 1500, researchHeld: false, report: 'Deep research report body.', clarify: false, features: ['deep-research', 'web-search', 'image-generation'], modelPicker: true,
       mfa: 'totp', email: 'operator@example.test', password: 'correct horse', totpSecret: 'JBSWY3DPEHPK3PXP',
@@ -555,6 +569,10 @@ export class FakeChatGpt {
     if (this.options.interstitial) return void res.end('<!doctype html><html><body><div role="dialog" aria-label="Before you continue"><h2>Before you continue</h2><button>Continue</button></div></body></html>')
     if (url.pathname.startsWith('/auth')) return this.auth(url, req, res)
     if (this.options.rotateOnLoad) res.setHeader('set-cookie', `session_seen=${Date.now()}; Path=/; Max-Age=3600`)
+    if (this.errorPagesShown < this.options.errorPages) {
+      this.errorPagesShown++
+      return void res.end(ERROR_PAGE)
+    }
     const match = /^\/c\/([0-9a-f-]+)$/.exec(url.pathname)
     const page = html(this.options, match ? this.conversations.get(match[1]!) : undefined, match && this.deleted.has(match[1]!) ? match[1] : undefined, [...this.conversations.keys()])
     res.end(this.options.deviceBound ? page.replace('<head>', `<head>${DEVICE_CHECK}`) : page)

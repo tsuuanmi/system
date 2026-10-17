@@ -59,6 +59,27 @@ describe.runIf(canRunBrowser)('ChatGptWebDriver against the fake site, with no r
     expect(fake.sent).toEqual([])
   }, 60_000)
 
+  it('loads the site\'s own error page once more before anything is typed, and fails a second one as transient, unsent (live 2026-10-17)', async () => {
+    const { page, driver, fake } = await site({ errorPages: 1, timeouts: { readyMs: 5000 } })
+    const drifts: unknown[] = []
+    driver.onDrift = (event) => void drifts.push(event)
+    expect((await driver.ask(page, 'ping', { conversation: 'temporary' })).text).toBe('OK')
+    expect(fake.errorPagesShown).toBe(1)
+    expect(fake.sent).toHaveLength(1)
+    // Twice in a row: transient, and nothing sent; never drift.
+    fake.options.errorPages = 3
+    const started = Date.now()
+    await expect(driver.ask(page, 'again', { conversation: 'temporary' })).rejects.toMatchObject({ kind: 'overloaded', disposition: 'BACKOFF', message: expect.stringMatching(/its own error page/) })
+    expect(Date.now() - started).toBeLessThan(5000)
+    expect(fake.errorPagesShown).toBe(3)
+    expect(fake.sent).toHaveLength(1)
+    // A sign-in check never reloads: it reports the error page as it is.
+    fake.options.errorPages = 4
+    await page.goto(`${fake.origin}/`)
+    await expect(driver.checkAuth(page)).rejects.toMatchObject({ kind: 'overloaded' })
+    expect(drifts).toEqual([])
+  }, 60_000)
+
   it('outlines a page that shows neither signed in nor signed out, and fails it once as drift, never as a session to retry', async () => {
     const { page, fake } = await site({ interstitial: true })
     const driver = new ChatGptWebDriver({ origin: fake.origin, timeouts: { readyMs: 1500 }, modes: { instant: { model: 'Latest', effort: 'Instant' } }, defaultMode: 'instant' })

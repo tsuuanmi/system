@@ -14,6 +14,13 @@ elements:
       - { role: link, name: { en: '^Log in$' } }
       - { role: heading, name: { en: '^Log in or sign up$' } }
       - { testId: login-button }
+  site.error:
+    description: >-
+      The app's own error page in place of a chat (live 2026-10-17, the first page of a freshly
+      launched login profile): the signed-in shell, and in `main` only a heading, an alert, and two
+      buttons. A page that shows it with no composer is loaded once more before anything is typed.
+    candidates:
+      - { css: 'main [role="alert"]' }
   auth.logged-out-home:
     description: >-
       The logged-out home (live 2026-10-17): the app shell with an anonymous composer and header
@@ -432,6 +439,7 @@ states:
   # paints before it loads its session.
   auth.login-page: { anyOf: [{ url: '^https?://auth\.openai\.com/|/auth/login' }, { allOf: [{ visible: auth.login }, { not: { visible: composer.input } }] }] }
   auth.signed-out: { anyOf: [{ state: auth.login-page }, { allOf: [{ visible: auth.logged-out-home }, { not: { visible: composer.input } }] }] }
+  site.error-page: { allOf: [{ visible: site.error }, { not: { visible: composer.input } }] }
   turn.running: { visible: composer.stop }
   # Nothing generating and nothing open: the page can be kept for the session's next turn.
   page.idle: { allOf: [{ not: { state: turn.running } }, { hidden: page.overlay }] }

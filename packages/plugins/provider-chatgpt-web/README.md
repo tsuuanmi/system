@@ -39,6 +39,10 @@ The **ChatGPT Web provider driver**
 - **Kept tabs** (ADR-0030). A page that already shows
   the bound conversation is not loaded again. `pageIdle` (map state `page.idle`) tells the turn
   runtime it may keep the page for the session's next turn.
+- **The site's own error page** (`site.error-page`: an alert in `main` and no composer; live
+  2026-10-17, the first page of a freshly launched login profile). Opening a conversation loads it
+  once more, since nothing is typed yet; a second one fails as `overloaded` (transient), never as
+  drift. A sign-in check reports it as `overloaded` without loading again.
 - **Logged-out home.** When the session ends, ChatGPT may show its anonymous home instead of the
   login page: the app shell with a logged-out composer and sign-in buttons whose names vary
   (`auth.logged-out-home`). Visible, with no `composer.input`, for 3 s, it is signed out
