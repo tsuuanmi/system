@@ -153,6 +153,14 @@ describe.runIf(canRunBrowser)('GeminiWebDriver against the fake site', { timeout
     expect(fake.sent).toEqual([])
   })
 
+  it('fails an answer that is the site\'s own error before anything judges it, and reads a longer answer about errors as an answer (live 2026-10-17)', async () => {
+    const { page, driver, fake } = await open({ answer: 'I seem to be encountering an error. Can I try something else for you?' })
+    await expect(driver.ask(page, 'hello', { conversation: 'temporary' })).rejects.toMatchObject({ kind: 'overloaded', message: expect.stringMatching(/the site answered with its own error instead of an answer \("I seem to be encountering an error/) })
+    expect(fake.sent).toHaveLength(1)
+    fake.options.answer = `Something went wrong in the build: ${'the cache was stale, so the step ran twice. '.repeat(10)}`
+    expect((await driver.ask(page, 'why?', { conversation: 'temporary' })).text).toMatch(/^Something went wrong in the build/)
+  })
+
   it('stops at a terms notice over the input as a challenge for the operator, at once, never clicking it and with nothing sent (live 2026-10-17)', async () => {
     const { page, driver, fake } = await open({ termsNotice: true })
     const notice = { kind: 'challenge', disposition: 'USER_ACTION', message: 'gemini-web: the site shows a terms notice over the input; acknowledge it in the login profile (system account login) and Save' }

@@ -34,6 +34,16 @@ Every artifact shares one envelope
 | `runId`, `nodeId` | where it was produced, if inside a workflow |
 | `createdAt` | timestamp (not part of `id`) |
 
+An artifact is never classified below its strictest input. A Worker's answer is classified by
+what it may hold:
+
+- **A model answer** (`model-answer`) is as sensitive as everything it was answered from, its
+  replayed history included.
+- **A website answer** (`provider-answer`) is `local-private`, whatever the run's classification.
+  It is raw page text from a signed-in account, and the site can add the account's own data that
+  the prompt never carried (its memory, personalization, connected apps). So it is never treated as
+  less private than local, and `system artifact` shows it as such.
+
 ## Kinds
 
 | Family | Kind | Produced by | Example |

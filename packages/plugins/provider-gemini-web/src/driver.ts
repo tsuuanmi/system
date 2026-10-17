@@ -88,6 +88,9 @@ const sameModel = (shown: string, wanted: string): boolean => named(shown, wante
 /** A matched item's name without a note on its line: "3.8 Flash" of "3.8 Flash All-around help". */
 const nameOf = (shown: string, wanted: string): string => shown.slice(0, shown.indexOf(wanted) + wanted.length)
 
+/** The longest answer read for the site's own error: its errors are a sentence or two. */
+const SITE_ERROR_MAX_CHARS = 300
+
 /** How long a page may take to settle (its Stop control gone) before it counts as busy and is not kept. */
 const PAGE_IDLE_WAIT_MS = 3000
 
@@ -218,6 +221,7 @@ export class GeminiWebDriver implements ProviderDriver<Page> {
     const onBinding = options.conversation === 'persistent' && !options.binding ? options.onBinding : undefined
     const reply = await this.waitForAnswer(page, engine, before, options.signal, options.deadlines, onBinding)
     const text = feature === 'deep-research' ? await this.research(engine, reply, options.signal, options.deadlines) : await this.markdownOf(engine, reply)
+    await this.refuseSiteError(engine, text)
     if (options.conversation === 'temporary') return { text, binding: undefined, mode }
     const binding = this.bindingOf(page)
     if (!binding) throw new ProviderError('session_broken', 'gemini-web: no conversation id after the answer')
@@ -225,6 +229,18 @@ export class GeminiWebDriver implements ProviderDriver<Page> {
       throw new ProviderError('session_broken', `gemini-web: conversation moved from ${options.binding} to ${binding}`)
     }
     return { text, binding, mode }
+  }
+
+  /**
+   * The site's own error shown as the answer (`answer.site-error`, in a short answer only) is no
+   * answer: the turn fails before any acceptance judges it. The prompt was sent, so it is
+   * `overloaded` and never resent from here (INV-4).
+   */
+  private async refuseSiteError(engine: UiEngine, text: string): Promise<void> {
+    if (text.length > SITE_ERROR_MAX_CHARS) return
+    const answer = (await engine.resolve('turn.assistant', 1000)).locator.last()
+    if (!(await engine.findIn('answer.site-error', answer))) return
+    throw new ProviderError('overloaded', `gemini-web: the site answered with its own error instead of an answer ("${text.slice(0, 120)}"); the prompt was sent, so it is not resent`)
   }
 
   /**

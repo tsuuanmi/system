@@ -100,6 +100,10 @@ driver, its operations are data: a UI map,
   notice of updated terms over the input (`site.terms-notice`, seen live on
   2026-10-17), which covers the textbox and the mode switcher: it is never
   clicked, and the operator acknowledges it in the login profile.
+- **The site's own error as an answer** (`answer.site-error`, live 2026-10-17: "I seem to be
+  encountering an error. Can I try something else for you?"), read only in a short answer, fails
+  the turn as `overloaded` before any acceptance judges it. The prompt was sent, so it is not
+  resent ([INV-4](../../../docs/architecture/invariants.md#inv-4-restart-is-reconciliation-not-replay)).
 - **No self-heal.** A drifted element fails closed until the map is updated. A
   stale element is logged as `ui.drift`, naming its region's outline, kept as
   local-private evidence

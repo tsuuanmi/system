@@ -181,6 +181,13 @@ elements:
     description: The rendered answer inside a turn.assistant.
     candidates:
       - { css: 'message-content' }
+  answer.site-error:
+    description: >-
+      The site's own error in place of an answer, as the answer's text (seen live on 2026-10-17:
+      "I seem to be encountering an error. Can I try something else for you?"). Read only in a
+      short answer, so an answer about errors is never taken for one.
+    candidates:
+      - { text: { en: '^(I seem to be encountering an error|(Sorry, )?[Ss]omething went wrong)\b' } }
   turn.assistant.done:
     description: The answer's own Copy, present under every finished answer (a code block's is "Copy code").
     cardinality: many
