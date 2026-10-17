@@ -39,6 +39,10 @@ accepted/implemented -> superseded
   website Workers on two providers that debate and decide by majority vote. Only
   the core templates remain, and retention also deletes the website chats
   `system` created.
+- [PROP-0005: Session-bound website accounts](0005-session-bound-website-accounts.md),
+  **draft**. An account whose site ties its session to the browser that signed in (Gemini, live
+  2026-10-16) runs its turns as tabs of its own persistent login profile instead of fresh contexts
+  from copied state, behind a driver capability; nothing changes for the others.
 
 Use [0000-template.md](0000-template.md) for new proposals. The
 [roadmap](roadmap.md) is a non-normative queue of milestones, not a substitute for
