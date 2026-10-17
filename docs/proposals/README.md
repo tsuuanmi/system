@@ -45,6 +45,11 @@ accepted/implemented -> superseded
   behind a driver capability. Copies died on Gemini (2026-10-16) and on ChatGPT (2026-10-17) while
   the profiles stayed signed in. Gemini goes first.
 
+- [PROP-0006: Model Workers keep sessions](0006-model-worker-sessions.md), **draft**. A model
+  Worker (an API or local model) keeps a session by replaying its transcript, a provider-neutral
+  `history` on `ctx.models`, so it can be a team member, carry research's synthesis thread, and
+  continue an `ask`. Bounded, durable, idempotent, and egress-checked.
+
 Use [0000-template.md](0000-template.md) for new proposals. The
 [roadmap](roadmap.md) is a non-normative queue of milestones, not a substitute for
 a reviewed proposal.
