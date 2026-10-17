@@ -40,9 +40,10 @@ accepted/implemented -> superseded
   the core templates remain, and retention also deletes the website chats
   `system` created.
 - [PROP-0005: Session-bound website accounts](0005-session-bound-website-accounts.md),
-  **draft**. An account whose site ties its session to the browser that signed in (Gemini, live
-  2026-10-16) runs its turns as tabs of its own persistent login profile instead of fresh contexts
-  from copied state, behind a driver capability; nothing changes for the others.
+  **proposed**. An account whose site ties its session to the browser that signed in runs its
+  turns as tabs of its own persistent login profile instead of fresh contexts from copied state,
+  behind a driver capability. Copies died on Gemini (2026-10-16) and on ChatGPT (2026-10-17) while
+  the profiles stayed signed in. Gemini goes first.
 
 Use [0000-template.md](0000-template.md) for new proposals. The
 [roadmap](roadmap.md) is a non-normative queue of milestones, not a substitute for

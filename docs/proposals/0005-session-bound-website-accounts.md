@@ -1,7 +1,7 @@
 ---
 id: PROP-0005
 type: proposal
-status: draft
+status: proposed
 owners: [operator]
 created: 2026-10-17
 related-requirements: [REQ-ACC-5, REQ-TEAM-4, REQ-PRV-1]
@@ -36,7 +36,7 @@ which is weaker evidence.
 
 1. An account whose site binds its session to the browser that signed in serves turns reliably,
    for hours, without new sign-outs or challenges caused by the way `system` drives it.
-2. Nothing changes for an account whose site accepts portable state (ChatGPT today).
+2. Nothing changes for an account whose driver does not declare the capability.
 3. No provider is named outside its driver (INV-11): the binding is a driver capability.
 4. Several sessions of one account still run side by side, each in its own conversation (ADR-0015).
 
@@ -63,36 +63,40 @@ which is weaker evidence.
   still signed in. They only pressed Save, and the next turn worked (`run_ebb1c54e07df48d6`). So it
   was the copy that died, not the account's session: the same pattern as Gemini, on a second site,
   after six days rather than a minute. chatgpt-main signs in with email and password, not "Sign in
-  with Google", so Google ending the flagged account's sessions is not a common cause. The research
-  must now explain why a copy dies while the profile lives on both sites. Cause (a) is Google-only
-  and cannot explain ChatGPT, so (b) and (c), or a site-side rotation that only the live profile
-  follows, weigh more.
-- **The mechanism is the research question, not an assumption.** The research (pending: its first
-  run, `run_233d4e56456ac0a9`, failed on ChatGPT's page) must separate three candidate causes,
-  since each predicts something different for "the profile stays signed in, copies die within a
-  minute":
-  - **(a) Chrome account sign-in.** If the login profile is signed in to Chrome itself with the
-    Google account, Chrome refreshes the Google session cookies from its own account token. A
-    cookie copy outside the profile cannot be refreshed, so it dies when the short-lived cookie
-    rotates, and the profile survives. Then this proposal fixes it, and so might a profile that
-    signs in to Google on the web only (alternative 6).
-  - **(b) Device-bound session credentials.** Chrome binds the session to a key held by the
-    profile. Chrome's own documentation promises this only with secure key storage such as a TPM;
-    the status of software keys on Linux in the pinned Chrome must be checked. If it applies,
-    only the profile can refresh the session, and this proposal fixes it.
-  - **(c) Suspicious-cookie heuristics.** Google ends a session whose cookie appears in a browser
-    that differs from the one it was issued to (address, user agent, fingerprint). Then running
-    in the profile helps only if the profile looks unchanged across turns, and pacing matters more
-    than the profile.
-- Whether the login profile is signed in to Chrome itself is a fact of the profile's own state,
-  not of Google's page. The product cannot read it today, and this proposal adds no tooling for it:
-  the operator can tell from the login browser's profile menu.
+  with Google", so Google ending the flagged account's sessions is not a common cause.
+- **Research: `run_c34e9ed099c2254b`** (2026-10-17; one provider family, recorded as such). Researcher
+  checked its claims independently. It weighed four mechanisms that fit "the profile stays signed
+  in, the copy dies":
+  - **H1, device-bound session credentials (DBSC).** Real, but it ships for Windows with a TPM, then
+    macOS. On Linux it exists only as experimental software keys. Nothing shows that Gemini or
+    ChatGPT bind these sessions with it. Not established.
+  - **H2, provider risk controls** (a session cookie seen in a browser that differs from the one it
+    was issued to). Real and documented in general. Not established for either failure.
+  - **H3, an incomplete copy.** The portable state (cookies, local storage, IndexedDB) leaves out
+    sessionStorage, service-worker and Cache storage, partitioned cookies, and other domains' state.
+    Real. Not established as the cause.
+  - **H4, refresh-token rotation with reuse detection.** A replayed, already-rotated token revokes
+    the whole token family. Real and documented (for example, Auth0's rotation). Not established
+    from the run alone, but see the next point.
+  - **Conclusion:** none of the four is established as the cause. Each one is avoided by running in
+    the original persistent profile rather than replaying copies. That does not guarantee
+    indefinite sign-in, but it removes a documented class of portability failures, whatever the
+    cause.
+- **Two writers per account (our event log).** chatgpt-main logged repeated
+  `account.write-back-skipped`. With `maxConcurrentTurnsPerAccount: 2`, two fresh contexts started
+  from the same saved revision, and both refreshed the session. The fenced write-back keeps only one
+  of them. Under H4 that is exactly the pattern that revokes a session: the other context has
+  already presented the token that the stored copy still holds. One persistent context per account
+  has a single cookie jar, so it cannot do this.
+- Whether a login profile is signed in to Chrome itself (a Google-only mechanism) is not needed to
+  decide this proposal: the ChatGPT failure rules it out as a common cause.
 
 ## Proposed design
 
 - **A driver capability.** A driver declares `sessionBound: true` when its site ties a session to
-  the browser profile that signed in. The Gemini driver declares it; the ChatGPT driver does not.
-  Nothing else names a provider.
+  the browser profile that signed in. The Gemini driver declares it first, since Gemini is blocked
+  without it. The ChatGPT driver declares it once Gemini's validation passes: its copies died too,
+  after six days, so it should get the same fix, but it works today. Nothing else names a provider.
 - **Turns in the login profile.** For a session-bound account, the browser runtime opens one
   persistent context on the account's login profile (headed, on the invisible display, as Save
   does today) and keeps it open while the account works. Each turn is a new page (tab) in that
@@ -132,11 +136,25 @@ which is weaker evidence.
 4. **An official API Worker.** Real, but another product (metered, its own quota class); it does
    not make the subscription account usable.
 5. **Drop the second family.** Teams stay single-family (ADR-0029), with weaker evidence.
-6. **A profile not signed in to Chrome.** If the research finds cause (a), signing in to Google on
-   the web page only, never to Chrome itself, may let copies be refreshed like any other site's: a
-   runbook change, not a design change.
+6. **A profile not signed in to Chrome.** Signing in to Google on the web page only, never to
+   Chrome itself. It addresses a Google-only mechanism, which the ChatGPT failure rules out as the
+   common cause.
+7. **One context per account, with fresh copies (interim).** Set
+   `maxConcurrentTurnsPerAccount: 1`, so one context at a time holds and refreshes the copy (the
+   two-writer pattern under H4). It is a configuration change, cheap and reversible, and it needs
+   no code. It does nothing for H1 to H3. Team members on one account then answer in turn rather
+   than together, so a round is slower.
 
-The alternatives are ranked once the research has separated the causes.
+Ranked:
+
+1. **This proposal** (the login profile, for both drivers, Gemini first). It avoids all four
+   mechanisms, including the two-writer pattern.
+2. **Alternative 7** as an interim, right away and independently of the decision on 1. It is the
+   only measure available before 1 is built, and it is undone by restoring the setting. It does not
+   unblock Gemini, whose copies died on their first reuse.
+3. Alternative 4 (an API Worker), as a separate product, if a subscription account cannot be kept
+   signed in at all.
+4. Alternatives 1, 2, 3, 5 and 6 do not address the evidence.
 
 ## Validation plan
 
@@ -180,7 +198,8 @@ The alternatives are ranked once the research has separated the causes.
 
 ## Decision
 
-Pending: the operator decides after the research run and Researcher's review.
+Pending, for the operator: accept this proposal (the ranked option 1), apply the interim
+(option 2) now, both, or neither. Researcher has reviewed the research.
 
 ## Implementation
 
