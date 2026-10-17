@@ -32,4 +32,13 @@ describe('profileUser: who runs Chrome on a login profile, read from /proc/<pid>
     expect(profileUser(`${chrome} --user-data-dir=${dir} ${OWNED_PROFILE_SWITCH}-not\0`, [dir])).toEqual({ browser: true, owned: false })
     expect(profileUser(`node -e x -- --user-data-dir=${dir}x\0`, [dir])).toBeUndefined()
   })
+
+  it('tells a profile from a longer one with spaces, in both forms', () => {
+    const short = '/home/op/x/a'
+    expect(profileUser(`${chrome} --user-data-dir=/home/op/x/a b ${OWNED_PROFILE_SWITCH}\0`, [short])).toBeUndefined()
+    expect(profileUser(`${chrome} --user-data-dir=/home/op/x/a b\0`, [short])).toBeUndefined()
+    expect(profileUser([chrome, '--user-data-dir=/home/op/x/a b'].join('\0'), [short])).toBeUndefined()
+    // The path, then a last URL argument: still this profile.
+    expect(profileUser(`${chrome} ${OWNED_PROFILE_SWITCH} --user-data-dir=${short} https://gemini.example/app\0`, [short])).toEqual({ browser: true, owned: true })
+  })
 })

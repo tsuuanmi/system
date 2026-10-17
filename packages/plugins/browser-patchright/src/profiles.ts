@@ -93,14 +93,29 @@ export function profileUsers(dir: string): ProfileUser[] {
 }
 
 /**
- * Whether a process's `/proc/<pid>/cmdline` runs Chrome on one of `dirs`, and as what. The
- * command line may be NUL-separated, or the single space-separated string Chrome rewrites it into.
- * Each argument is matched whole, with a space on both sides, so a path with spaces, a path at the
- * end of the line, and a sibling such as `<dir>2` are all told apart.
+ * Whether a process's `/proc/<pid>/cmdline` runs Chrome on one of `dirs`, and as what.
+ * - A NUL-separated command line is matched argument by argument, exactly.
+ * - Chrome rewrites its own into one space-separated string. There, the profile path runs from
+ *   `--user-data-dir=` to the next ` --` switch (or a last URL argument) and must equal a profile
+ *   path. So a path with spaces, a path at the end of the line, a sibling such as `<dir>2`, and
+ *   `/x/a` against `/x/a b` are all told apart.
  */
 export function profileUser(cmdline: string, dirs: readonly string[]): { browser: boolean; owned: boolean } | undefined {
-  const line = ` ${cmdline.replace(/\0+$/, '').replace(/\0/g, ' ')} `
-  if (!dirs.some((dir) => line.includes(` --user-data-dir=${dir} `))) return undefined
+  const args = cmdline.replace(/\0+$/, '').split('\0')
+  if (args.length > 1) {
+    if (!args.some((arg) => dirs.some((dir) => arg === `--user-data-dir=${dir}`))) return undefined
+    const browser = !args.some((arg) => arg.startsWith('--type='))
+    return { browser, owned: browser && args.includes(OWNED_PROFILE_SWITCH) }
+  }
+  const line = ` ${args[0]} `
+  const at = line.indexOf(' --user-data-dir=')
+  if (at < 0) return undefined
+  const rest = line.slice(at + ' --user-data-dir='.length)
+  const next = rest.indexOf(' --')
+  const value = (next < 0 ? rest : rest.slice(0, next)).trimEnd()
+  // A last argument that is a URL (`about:blank`, `https://…`) may follow the path.
+  const path = (candidate: string): boolean => dirs.some((dir) => candidate === dir || (candidate.startsWith(`${dir} `) && /^\S+:\S*$/.test(candidate.slice(dir.length + 1))))
+  if (!path(value)) return undefined
   const browser = !line.includes(' --type=')
   return { browser, owned: browser && line.includes(` ${OWNED_PROFILE_SWITCH} `) }
 }
