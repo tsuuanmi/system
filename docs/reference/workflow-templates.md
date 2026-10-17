@@ -132,10 +132,10 @@ one fails admission, fail closed, with the capability named:
 
 | Template | Under `api-first` |
 |---|---|
-| `ask` | runs on model Workers; an `ask` in a session (`--persist`, `--session`) fails: no model Worker proves `persistent-conversation` |
-| `brainstorm`, `review` | fail: their members keep sessions, and no model Worker proves `persistent-conversation` |
+| `ask` | runs on model Workers, in a session too: a model Worker keeps it by replay ([ADR-0031](../decisions/adr/0031-model-worker-sessions-by-replay.md)) |
+| `brainstorm`, `review` | run on model Workers, each member in its own session by replay; members of one family need `allowSameFamily` ([ADR-0029](../decisions/adr/0029-opt-in-same-family-fallback.md)) |
 | `agent-review` | runs on agent Workers (the preset turns their rows and the software-development profile on) |
-| `research` | `frame:1` fails before anything is sent: the synthesis thread needs `persistent-conversation`, which no model Worker proves (and `literature:1` would need `web-search`, variant `deep`: `deep-research`) |
+| `research` | `frame:1` runs on a model Worker; `literature:1` fails: no Worker proves `web-search` (variant `deep`: `deep-research`), and `literature:2` sends nothing |
 
 ## Acceptance contracts
 

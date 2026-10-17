@@ -5,8 +5,8 @@
  * `ctx.credentials` per request and never appears here.
  */
 import type { Context } from '@deepseek-ai/cordis'
-import type { LlmFailure, StreamChunk } from '@deepseek-ai/dsh-llm'
-import { type ModelCompletion, type ModelEntry, ModelError, type ModelFailure, type ModelRequest, Models, type ModelStatus } from '@tsuuanmi/system-models-core'
+import { createAssistantMessage, type LlmFailure, type StreamChunk } from '@deepseek-ai/dsh-llm'
+import { type ModelCompletion, type ModelEntry, ModelError, type ModelFailure, type ModelRequest, Models, type ModelStatus, type ModelTurn } from '@tsuuanmi/system-models-core'
 
 export interface CatalogEntry extends ModelEntry {
   /** The `llm` provider route that reaches the model. */
@@ -72,7 +72,7 @@ export class LlmModels extends Models {
     const policy = this.ctx.llm.providerRetryPolicy(entry.route)
     const limit = Math.min(this.config.maxRetries ?? 2, policy.mode === 'normal' ? policy.maxRetries : Number.POSITIVE_INFINITY)
     for (let attempt = 0; ; attempt++) {
-      const outcome = await this.attempt(entry, request.prompt, maxTokens, signal)
+      const outcome = await this.attempt(entry, request.prompt, request.history ?? [], maxTokens, signal)
       if (outcome.ok) return { model: entry.id, ...outcome.completion, maxTokens, attempts: attempt + 1 }
       const { failure } = outcome
       const transient = !NEVER_RETRIED.has(failure.code) && (policy.mode === 'always' || policy.retryableCodes.includes(failure.code))
@@ -83,12 +83,18 @@ export class LlmModels extends Models {
   }
 
   /** One provider request: the visible text, usage, and how it finished. */
-  private async attempt(entry: CatalogEntry, prompt: string, maxTokens: number, signal: AbortSignal | undefined): Promise<Attempt> {
+  private async attempt(entry: CatalogEntry, prompt: string, history: readonly ModelTurn[], maxTokens: number, signal: AbortSignal | undefined): Promise<Attempt> {
     const texts: string[] = []
     let usage = { inputTokens: 0, outputTokens: 0 }
     const stream = this.ctx.llm.stream({
       provider: entry.route, model: entry.model, maxTokens,
-      messages: [{ role: 'user', content: [{ type: 'text', text: prompt }] }],
+      // A session's earlier turns, then the prompt (ADR-0031).
+      messages: [
+        ...history.map((turn) => (turn.role === 'user'
+          ? { role: 'user' as const, content: [{ type: 'text' as const, text: turn.text }] }
+          : createAssistantMessage({ content: [{ type: 'text', text: turn.text }], source: { provider: entry.route, model: entry.model } }))),
+        { role: 'user', content: [{ type: 'text', text: prompt }] },
+      ],
       ...(signal ? { signal } : {}),
     })
     for await (const chunk of stream as AsyncIterable<StreamChunk>) {

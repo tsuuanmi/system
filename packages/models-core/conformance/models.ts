@@ -59,6 +59,11 @@ export function modelsConformance(name: string, boot: Boot): void {
       expect((await ctx.models.complete({ model: 'local', prompt: 'c' })).maxTokens).toBe(32)
     }))
 
+    it('takes a session\'s history and answers the prompt after it (ADR-0031)', () => withModels(async (ctx) => {
+      const completion = await ctx.models.complete({ model: 'echo', prompt: 'and now?', history: [{ role: 'user', text: 'first' }, { role: 'assistant', text: 'echo: first' }] })
+      expect(completion).toMatchObject({ model: 'echo', text: 'echo: and now?', finish: 'stop' })
+    }))
+
     it('fails closed with a provider-neutral reason: unknown, unavailable, aborted (INV-2)', () => withModels(async (ctx) => {
       expect(await failureOf(ctx.models.complete({ model: 'nope', prompt: 'x' }))).toBe('unknown-model')
       expect(await failureOf(ctx.models.complete({ model: 'gone', prompt: 'x' }))).toBe('unavailable')
@@ -74,8 +79,8 @@ export interface FakeScript {
   holdMs?: number
   /** Fail the next calls with these reasons, in order. */
   fail?: ModelFailure[]
-  /** Answer with this text instead of the echo. */
-  answer?: (prompt: string) => string
+  /** Answer with this text instead of the echo; it sees the request, the history included. */
+  answer?: (prompt: string, request: ModelRequest) => string
 }
 
 /**
@@ -115,6 +120,6 @@ export class FakeModels extends Models {
     const failure = this.script.fail?.shift()
     if (failure) throw new ModelError(failure, `scripted ${failure}`)
     const maxTokens = Math.min(request.maxTokens ?? entry.maxTokens, entry.maxTokens)
-    return { model: entry.id, text: this.script.answer?.(request.prompt) ?? `echo: ${request.prompt}`, usage: { inputTokens: 7, outputTokens: 3 }, finish: 'stop', maxTokens, attempts: 1 }
+    return { model: entry.id, text: this.script.answer?.(request.prompt, request) ?? `echo: ${request.prompt}`, usage: { inputTokens: 7, outputTokens: 3 }, finish: 'stop', maxTokens, attempts: 1 }
   }
 }

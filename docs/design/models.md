@@ -12,8 +12,10 @@
 > ([release checklist](../validation/release-checklist.md)).
 
 A **model Worker** is one entry of the operator's model catalog: an API model or a model served
-on this machine. It answers one prompt with text. It runs no tools and keeps no conversation, so
-it proves only `reason`.
+on this machine. It answers one prompt with text, and runs no tools. It keeps a session by
+replaying the session's transcript
+([ADR-0031](../decisions/adr/0031-model-worker-sessions-by-replay.md)), so it proves `reason`
+and `persistent-conversation`, and can be a team member or carry a run's conversation.
 
 ## Composition
 
@@ -39,9 +41,10 @@ abstract class Models extends Service {             // ctx.models
   abstract complete(request: ModelRequest, signal?: AbortSignal): Promise<ModelCompletion>;
 }
 
-interface ModelEntry { id; tier; quotaClass: "metered" | "local"; locality: "remote" | "local"; maxTokens; family? }
+interface ModelEntry { id; tier; quotaClass: "metered" | "local"; locality: "remote" | "local"; maxTokens; family?; maxSessionTurns?; maxHistoryChars? }
 interface ModelStatus extends ModelEntry { available: boolean; detail: string }
-interface ModelRequest { model: string; prompt: string; maxTokens?: number }   // cut to the entry's bound
+interface ModelRequest { model: string; prompt: string; history?: ModelTurn[]; maxTokens?: number }   // cut to the entry's bound
+interface ModelTurn { role: "user" | "assistant"; text: string }   // a session's earlier turns, sent before the prompt
 interface ModelCompletion { model; text; usage: { inputTokens; outputTokens }; finish: "stop" | "max-tokens"; maxTokens }
 ```
 
@@ -84,7 +87,7 @@ fixed message: a provider can echo part of a key in its error text.
 | Field | Value |
 |---|---|
 | id | `model:<id>` |
-| capabilities | `reason` with evidence kind `probe`: the route is mounted and resolves the model, without a model call; none when it does not |
+| capabilities | `reason` with evidence kind `probe`: the route is mounted and resolves the model, without a model call; and `persistent-conversation` with evidence kind `conformance`, since the source keeps sessions itself (below). None when the route does not serve the model |
 | state | `ready`, or `unavailable` (route missing or model unknown on it) |
 | tier, quotaClass, locality, family | from the catalog entry (`family`: by default its route) |
 
@@ -95,7 +98,8 @@ locality is what admits `local-private` work to it
 ## A call
 
 1. **Start** (`start`): durable at once in the `model_calls` table, idempotent by key; a key
-   reused with another prompt is refused. A session is refused: a model keeps no conversation.
+   reused with another prompt or session is refused. A session's turn records the history it is
+   accepted with ([sessions](#sessions)).
 2. **Egress** ([INV-12](../architecture/invariants.md#inv-12-data-egress-is-explicit)): the exact
    prompt is checked by `ctx.egress` before it is sent, for Worker class `model` (remote, default
    `public` and `operator-shared`) or `model-local` (local, the same default: `local-private`
@@ -125,6 +129,30 @@ locality is what admits `local-private` work to it
 | `unknown-model`, `unavailable` | `config_error` | `CODE_FIX` |
 | `invalid-request` | `invalid_input` | `NONE` |
 | `aborted` | `aborted` | `NONE` |
+
+## Sessions
+
+[ADR-0031](../decisions/adr/0031-model-worker-sessions-by-replay.md). A model has no native
+session, so the source keeps the transcript:
+
+- **Turns.** A session's completed turns live in `model_session_turns`: prompt, answer text,
+  and classification. A turn joins in the transaction that completes its call. The session's
+  first model and its family are in `model_sessions`.
+- **One turn at a time.** A session's next turn is refused (`overloaded`, retried) while one is in
+  flight, so two turns never replay the same history.
+- **Exactly what was accepted.** A turn's call records its history: the last turn's sequence
+  number and a hash of the turns. A re-send after a restart replays exactly that. A session reset
+  since then fails the turn (`invalid_input`), and it is never replayed as if nothing happened.
+- **Bounds (INV-9).** `maxSessionTurns` (default 12) and `maxHistoryChars` (default 48,000) on the
+  `models` row, which a catalog entry may set for itself, fitted to its context window. Past a
+  bound the turn fails as `invalid_input` before anything is sent. Nothing is cut or summarized.
+- **Affinity.** A session stays with the model Workers of its first model's family. Escalation
+  may move it to another of them, which replays the history after its own bounds and egress are
+  checked.
+- **Egress.** What is checked is exactly what is sent: the prompt and the history as messages, at
+  the highest classification of the prompt and of every replayed prompt and answer.
+- **End.** A reset or release (the run deleted or expired) deletes the transcript. A call's own
+  retention never removes a turn that a live session still replays.
 
 ## Cancel and restart
 

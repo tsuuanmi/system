@@ -164,4 +164,24 @@ Recorded as [ADR-0031](../decisions/adr/0031-model-worker-sessions-by-replay.md)
 
 ## Implementation
 
-None yet.
+- Built on branch `feat/model-sessions`:
+  - `ModelRequest.history` and the per-entry bounds in `models-core`, with a conformance case;
+  - `llm` sends the history as messages before the prompt;
+  - the `models` source keeps `model_sessions` and `model_session_turns` (store migration 2);
+  - each call records its history's last turn and hash;
+  - one turn per session in flight;
+  - bounds per row or entry;
+  - egress on the history as sent;
+  - affinity within the family;
+  - `handle`, `reset` and `release`.
+- Tests:
+  - three turns replay 0, 2 and 4 messages in order;
+  - a second turn is refused while one is in flight;
+  - the row's and an entry's bounds fail with nothing sent;
+  - a reset fails a turn accepted before it;
+  - a call's retention leaves a live session's turns;
+  - a remote model never gets a local-private turn replayed;
+  - a restart re-sends the same history;
+  - a brainstorm with model Workers as both members, each ballot replaying only its own proposal;
+  - against a fake OpenAI-compatible server, the history reaches the route in order.
+- Live check: waiting for a key.

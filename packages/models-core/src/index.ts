@@ -27,6 +27,15 @@ export interface ModelEntry {
   maxTokens: number
   /** Who serves the model, as an opaque provider family (ADR-0027); the Worker's family. */
   family?: string
+  /** Session bounds for this entry (ADR-0031); the Worker source's defaults when absent. */
+  maxSessionTurns?: number
+  maxHistoryChars?: number
+}
+
+/** One earlier turn of a session, as text (ADR-0031). */
+export interface ModelTurn {
+  role: 'user' | 'assistant'
+  text: string
 }
 
 /** An entry with what the provider can prove about it now. */
@@ -40,6 +49,8 @@ export interface ModelRequest {
   /** Catalog id. */
   model: string
   prompt: string
+  /** A session's earlier turns, in order, sent before the prompt (ADR-0031). */
+  history?: readonly ModelTurn[] | undefined
   /** At most the entry's own bound; a larger value is cut to it. */
   maxTokens?: number | undefined
 }

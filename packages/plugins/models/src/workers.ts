@@ -4,6 +4,10 @@
  * tokens, concurrency, deadline), and stored as `model-answer` artifacts. A model call has no
  * effect beyond its cost, so after a restart a call that was running is sent once more, never
  * twice (INV-4, safe-to-repeat with a bounded cost).
+ *
+ * A session (ADR-0031) is kept as its transcript: each turn replays the session's earlier turns,
+ * one turn in flight at a time, within bounds, and the exact history a call was accepted with is
+ * what any re-send replays. A transcript ends with its session.
  */
 import { randomBytes } from 'node:crypto'
 import { type Context } from '@deepseek-ai/cordis'
@@ -11,7 +15,7 @@ import type {} from '@tsuuanmi/system-artifacts'
 import type { Classification } from '@tsuuanmi/system-egress'
 import { type Lease, LeaseLost, StaleGeneration } from '@tsuuanmi/system-leases'
 import { type ContentId, sha256 } from '@tsuuanmi/system-libs'
-import { ModelError, type ModelFailure, type ModelStatus } from '@tsuuanmi/system-models-core'
+import { ModelError, type ModelFailure, type ModelStatus, type ModelTurn } from '@tsuuanmi/system-models-core'
 import { ProviderError, type ProviderErrorKind, ProviderScheduler, dispositionOf, toProviderError } from '@tsuuanmi/system-provider-core'
 import type {} from '@tsuuanmi/system-store'
 import type { ArtifactRef, CapabilityDescriptor, ExecutionStatus, WorkerExecution, WorkerStart } from '@tsuuanmi/system-workers-core'
@@ -23,7 +27,23 @@ export interface ModelWorkersConfig {
   callTimeoutMs?: number
   /** Days a finished call (with its prompt) is kept, as turns are (default 30; INV-9). */
   retainDays?: number
+  /** A session's turns, at most (default 12; an entry may set its own; ADR-0031). */
+  maxSessionTurns?: number
+  /** The characters of a session's history a turn may replay, at most (default 48,000; an entry may set its own). */
+  maxHistoryChars?: number
 }
+
+interface TurnRow {
+  seq: number
+  prompt: string
+  answer: string
+  classification: string
+}
+
+const CLASSIFICATIONS: readonly Classification[] = ['public', 'operator-shared', 'local-private']
+const highest = (values: readonly string[]): Classification => CLASSIFICATIONS[Math.max(0, ...values.map((v) => CLASSIFICATIONS.indexOf(v as Classification)))]!
+/** What a history is, by its turns: a re-send must replay exactly the turns it was accepted with. */
+const hashTurns = (turns: readonly TurnRow[]): string => sha256(JSON.stringify(turns.map((t) => [t.seq, t.prompt, t.answer])))
 
 interface CallRow {
   call_id: string
@@ -40,6 +60,10 @@ interface CallRow {
   error: string | null
   /** Every decision the call's sends were made under: each egress check, each reconciliation (JSON array). */
   decisions: string
+  /** A session's turn: the session, and the history it was accepted with (its last turn and hash). */
+  session_id: string | null
+  history_seq: number | null
+  history_hash: string | null
   created_at: string
   updated_at: string
 }
@@ -66,6 +90,8 @@ export class ModelWorkers {
   private readonly cancels = new Map<string, AbortController>()
   private readonly stopped = new AbortController()
   private readonly retries = new Set<NodeJS.Timeout>()
+  /** Each model Worker's family, as last described: a session may move within its family (escalation). */
+  private readonly families = new Map<string, string>()
 
   constructor(private readonly ctx: Context, private readonly config: ModelWorkersConfig = {}) {
     this.scheduler = new ProviderScheduler(config.maxConcurrentCalls ?? 4)
@@ -77,6 +103,17 @@ export class ModelWorkers {
         created_at TEXT NOT NULL, updated_at TEXT NOT NULL
       );
       CREATE INDEX model_calls_status ON model_calls (status);`,
+    }, {
+      version: 2,
+      sql: `ALTER TABLE model_calls ADD COLUMN session_id TEXT;
+      ALTER TABLE model_calls ADD COLUMN history_seq INTEGER;
+      ALTER TABLE model_calls ADD COLUMN history_hash TEXT;
+      CREATE INDEX model_calls_session ON model_calls (session_id, status);
+      CREATE TABLE model_sessions (session_id TEXT PRIMARY KEY, worker TEXT NOT NULL, family TEXT, created_at TEXT NOT NULL);
+      CREATE TABLE model_session_turns (
+        session_id TEXT NOT NULL, seq INTEGER NOT NULL, call_id TEXT NOT NULL, prompt TEXT NOT NULL, answer TEXT NOT NULL,
+        classification TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY (session_id, seq)
+      );`,
     }])
     ctx.workers.register({
       name: 'models',
@@ -88,6 +125,21 @@ export class ModelWorkers {
       },
       wait: (id, timeoutMs) => this.wait(id, timeoutMs),
       cancel: (id) => this.cancel(id),
+      // A session stays with its model, or another of the same family (escalation replays the history).
+      affinity: (sessionId) => {
+        const session = this.session(sessionId)
+        if (!session) return undefined
+        const family = session.family ?? this.families.get(session.worker)
+        const same = family ? [...this.families].filter(([, f]) => f === family).map(([w]) => w) : []
+        return same.length ? same : [session.worker]
+      },
+      handle: (sessionId) => (this.session(sessionId) ? `model-session:${sessionId}` : undefined),
+      // Reset or released: the transcript ends with the session (ADR-0031).
+      reset: (sessionId) => this.forget([sessionId]) > 0,
+      release: (sessionIds) => {
+        this.forget(sessionIds)
+        return { due: 0 }
+      },
     })
     ctx.effect(() => {
       queueMicrotask(() => {
@@ -124,13 +176,21 @@ export class ModelWorkers {
     }
   }
 
-  /** Each catalog entry: `reason` while its route serves the model, unavailable otherwise. */
+  /**
+   * Each catalog entry: `reason` while its route serves the model, unavailable otherwise; and
+   * `persistent-conversation`, which this source provides by replay (ADR-0031), so its own
+   * conformance is the evidence.
+   */
   private async describe(): Promise<CapabilityDescriptor[]> {
     const observedAt = now()
-    return (await this.ctx.models.list()).map((model): CapabilityDescriptor => ({
+    const models = await this.ctx.models.list()
+    for (const model of models) if (model.family) this.families.set(PREFIX + model.id, model.family)
+    return models.map((model): CapabilityDescriptor => ({
       schema: model.family ? 'capability-descriptor@1.1' : 'capability-descriptor@1.0', worker: PREFIX + model.id, provider: 'models',
       ...(model.family ? { family: model.family } : {}), tier: model.tier, quotaClass: model.quotaClass, locality: model.locality,
-      capabilities: model.available ? [{ capability: 'reason', evidence: { kind: 'probe', at: observedAt } }] : [],
+      capabilities: model.available
+        ? [{ capability: 'reason', evidence: { kind: 'probe', at: observedAt } }, { capability: 'persistent-conversation', evidence: { kind: 'conformance', at: observedAt } }]
+        : [],
       state: model.available ? 'ready' : 'unavailable', observedAt,
     }))
   }
@@ -138,22 +198,32 @@ export class ModelWorkers {
   /** Accept a call on an admitted model Worker: durable at once, idempotent by key. */
   private start(request: WorkerStart): WorkerExecution {
     if (!request.worker.startsWith(PREFIX)) throw new ProviderError('invalid_input', `${request.worker} is not a model Worker`)
-    if (request.sessionId) throw new ProviderError('invalid_input', 'model Workers hold no sessions; a session needs persistent-conversation')
     if (!request.prompt.trim()) throw new ProviderError('invalid_input', 'prompt must not be empty')
     const key = sha256(`model\0${request.key}`)
+    const sessionId = request.sessionId ?? null
     return this.ctx.store.transaction((db) => {
       const existing = db.prepare('SELECT * FROM model_calls WHERE request_key = ?').get(key) as CallRow | undefined
       if (existing) {
-        if (existing.prompt !== request.prompt) throw new ProviderError('invalid_input', 'the request key was reused with a different prompt')
+        if (existing.prompt !== request.prompt || existing.session_id !== sessionId) throw new ProviderError('invalid_input', 'the request key was reused with a different prompt or session')
         return execution(existing)
+      }
+      let historySeq: number | null = null
+      let historyHash: string | null = null
+      if (sessionId) {
+        // One turn in flight per session: the next replays the history this one appends to.
+        const busy = db.prepare("SELECT call_id FROM model_calls WHERE session_id = ? AND status IN ('queued', 'running')").get(sessionId) as { call_id: string } | undefined
+        if (busy) throw new ProviderError('overloaded', `session ${sessionId} has a turn in flight (${busy.call_id}); its next turn waits for it`)
+        const turns = this.turns(sessionId, Number.MAX_SAFE_INTEGER)
+        historySeq = turns.at(-1)?.seq ?? 0
+        historyHash = hashTurns(turns)
       }
       const row: CallRow = {
         call_id: newId(), request_key: key, worker: request.worker, prompt: request.prompt, classification: request.requirement.data.classification,
         max_tokens: request.requirement.budget?.maxTokens ?? null, status: 'queued', sends: 0, submitted_at: null, result: null, error: null, decisions: '[]',
-        created_at: now(), updated_at: now(),
+        session_id: sessionId, history_seq: historySeq, history_hash: historyHash, created_at: now(), updated_at: now(),
       }
-      db.prepare(`INSERT INTO model_calls (call_id, request_key, worker, prompt, classification, max_tokens, status, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, 'queued', ?, ?)`).run(row.call_id, key, row.worker, row.prompt, row.classification, row.max_tokens, row.created_at, row.updated_at)
+      db.prepare(`INSERT INTO model_calls (call_id, request_key, worker, prompt, classification, max_tokens, status, session_id, history_seq, history_hash, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?)`).run(row.call_id, key, row.worker, row.prompt, row.classification, row.max_tokens, sessionId, historySeq, historyHash, row.created_at, row.updated_at)
       this.ctx.store.afterCommit(() => this.schedule(row.call_id))
       return execution(row)
     })
@@ -249,9 +319,11 @@ export class ModelWorkers {
       if (row.sends > 0 && !this.reconcile(row, current)) return
       const model = (await this.ctx.models.list()).find((m) => PREFIX + m.id === row.worker)
       if (!model) throw new ProviderError('config_error', `${row.worker} is no longer in the model catalog`)
+      // The history this turn was accepted with, within this entry's bounds; nothing is sent otherwise.
+      const history = this.history(row, model)
       // Before every send: the route may have changed since an earlier one (INV-12).
-      if (!(await this.egress(row, model, current))) return
-      await this.scheduler.runTurn(row.call_id, signal, async (slot) => this.execute(row, model, AbortSignal.any([signal, slot.signal]), current))
+      if (!(await this.egress(row, model, history, current))) return
+      await this.scheduler.runTurn(row.call_id, signal, async (slot) => this.execute(row, model, history.turns, AbortSignal.any([signal, slot.signal]), current))
     } catch (error) {
       if (this.stopped.signal.aborted) return
       if (error instanceof LeaseLost || error instanceof StaleGeneration || lost.signal.aborted) {
@@ -273,12 +345,16 @@ export class ModelWorkers {
   }
 
   /**
-   * INV-12: the exact prompt is checked before it is sent. A remote model is Worker class
-   * `model`; a local one is `model-local`, which by default may also receive local-private data.
+   * INV-12: exactly what is sent is checked before it is sent: the prompt, and a session's
+   * history as it is sent, at the highest classification of the prompt and of every turn
+   * replayed. A remote model is Worker class `model`; a local one is `model-local`, which by
+   * default may also receive local-private data.
    */
-  private async egress(row: CallRow, model: ModelStatus, lease: () => Lease): Promise<boolean> {
+  private async egress(row: CallRow, model: ModelStatus, history: { turns: ModelTurn[]; classification: Classification | undefined }, lease: () => Lease): Promise<boolean> {
+    const payload = history.turns.length ? JSON.stringify([...history.turns, { role: 'user', text: row.prompt }]) : row.prompt
+    const classification = highest([row.classification, ...(history.classification ? [history.classification] : [])])
     const verdict = await this.ctx.egress.check({
-      payload: row.prompt, classification: row.classification as Classification, workerClass: model.locality === 'local' ? 'model-local' : 'model',
+      payload, classification, workerClass: model.locality === 'local' ? 'model-local' : 'model',
     })
     this.addDecision(row, verdict.decision, lease)
     if (!verdict.allowed) this.fail(row, new ProviderError('egress_denied', `${verdict.reason} (decision ${verdict.decision})`), lease)
@@ -314,12 +390,52 @@ export class ModelWorkers {
     return resend
   }
 
-  private async execute(row: CallRow, model: ModelStatus, signal: AbortSignal, lease: () => Lease): Promise<void> {
+  /**
+   * A session turn's history: exactly the turns it was accepted with (their hash must match, so a
+   * reset since is not replayed as if nothing happened), within this entry's bounds. Past a bound
+   * the turn fails, and nothing is cut.
+   */
+  private history(row: CallRow, model: ModelStatus): { turns: ModelTurn[]; classification: Classification | undefined } {
+    if (!row.session_id) return { turns: [], classification: undefined }
+    const turns = this.turns(row.session_id, row.history_seq ?? 0)
+    if (hashTurns(turns) !== row.history_hash) throw new ProviderError('invalid_input', `session ${row.session_id} changed after this turn was accepted (it was reset); it is not sent`)
+    const maxTurns = model.maxSessionTurns ?? this.config.maxSessionTurns ?? 12
+    if (turns.length + 1 > maxTurns) throw new ProviderError('invalid_input', `session ${row.session_id} would have ${turns.length + 1} turns; ${model.id} allows ${maxTurns} (maxSessionTurns)`)
+    const chars = turns.reduce((n, t) => n + t.prompt.length + t.answer.length, 0)
+    const maxChars = model.maxHistoryChars ?? this.config.maxHistoryChars ?? 48_000
+    if (chars > maxChars) throw new ProviderError('invalid_input', `session ${row.session_id} has ${chars} characters of history; ${model.id} replays at most ${maxChars} (maxHistoryChars)`)
+    return {
+      turns: turns.flatMap((t): ModelTurn[] => [{ role: 'user', text: t.prompt }, { role: 'assistant', text: t.answer }]),
+      classification: turns.length ? highest(turns.map((t) => t.classification)) : undefined,
+    }
+  }
+
+  private turns(sessionId: string, upTo: number): TurnRow[] {
+    return this.ctx.store.db.prepare('SELECT seq, prompt, answer, classification FROM model_session_turns WHERE session_id = ? AND seq <= ? ORDER BY seq').all(sessionId, upTo) as unknown as TurnRow[]
+  }
+
+  private session(sessionId: string): { worker: string; family: string | null } | undefined {
+    return this.ctx.store.db.prepare('SELECT worker, family FROM model_sessions WHERE session_id = ?').get(sessionId) as { worker: string; family: string | null } | undefined
+  }
+
+  /** Delete sessions' transcripts; how many sessions there were. */
+  private forget(sessionIds: readonly string[]): number {
+    return this.ctx.store.transaction((db) => {
+      let n = 0
+      for (const id of sessionIds) {
+        db.prepare('DELETE FROM model_session_turns WHERE session_id = ?').run(id)
+        n += Number(db.prepare('DELETE FROM model_sessions WHERE session_id = ?').run(id).changes)
+      }
+      return n
+    })
+  }
+
+  private async execute(row: CallRow, model: ModelStatus, history: ModelTurn[], signal: AbortSignal, lease: () => Lease): Promise<void> {
     // Sent from here on: each send may be billed, so it is counted before it happens.
     this.update(row.call_id, { status: 'running', submitted_at: now(), sends: row.sends + 1 }, lease)
     const timeoutMs = this.config.callTimeoutMs ?? 5 * 60_000
     const deadline = AbortSignal.timeout(timeoutMs)
-    const completion = await this.ctx.models.complete({ model: model.id, prompt: row.prompt, maxTokens: row.max_tokens ?? undefined }, AbortSignal.any([signal, deadline]))
+    const completion = await this.ctx.models.complete({ model: model.id, prompt: row.prompt, maxTokens: row.max_tokens ?? undefined, ...(history.length ? { history } : {}) }, AbortSignal.any([signal, deadline]))
       .catch((error: unknown) => {
         if (deadline.aborted && !signal.aborted) throw new ProviderError('timeout', `${row.worker} did not answer within ${timeoutMs} ms; the call was stopped`, { cause: error })
         if (error instanceof ModelError) throw new ProviderError(KINDS[error.failure], error.message, { cause: error })
@@ -338,6 +454,12 @@ export class ModelWorkers {
         classification: row.classification as Classification,
         producer: { type: 'worker', ref: row.worker },
       })
+      if (row.session_id) {
+        // The turn joins its session's transcript with the call's completion, never apart.
+        this.ctx.store.db.prepare('INSERT OR IGNORE INTO model_sessions (session_id, worker, family, created_at) VALUES (?, ?, ?, ?)').run(row.session_id, row.worker, model.family ?? null, now())
+        this.ctx.store.db.prepare('INSERT INTO model_session_turns (session_id, seq, call_id, prompt, answer, classification, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+          .run(row.session_id, (row.history_seq ?? 0) + 1, row.call_id, row.prompt, completion.text, row.classification, now())
+      }
       this.update(row.call_id, { status: 'completed', result: artifact.id }, lease)
     })
   }

@@ -75,10 +75,15 @@ describe('the DSH llm rows (spike, ADR-0025): they mount without dsh-base and st
     expect(completion).toEqual({ model: 'echo', text: 'echo: hello', usage: { inputTokens: 7, outputTokens: 3 }, finish: 'stop', maxTokens: 64, attempts: 1 })
     // The key never sits in configuration: the route names a reference, the vault holds the value.
     expect(server.requests[0]).toMatchObject({ authorization: 'Bearer sk-test-0123456789', body: { model: 'm1', max_completion_tokens: 64, messages: [{ role: 'user', content: 'hello' }] } })
+    // A session's history goes first, in order, then the prompt (ADR-0031).
+    await ctx.models.complete({ model: 'echo', prompt: 'and now?', history: [{ role: 'user', text: 'first' }, { role: 'assistant', text: 'echo: first' }] })
+    expect((server.requests.at(-1)!.body as { messages: unknown[] }).messages).toEqual([
+      { role: 'user', content: 'first' }, { role: 'assistant', content: 'echo: first' }, { role: 'user', content: 'and now?' },
+    ])
     // A missing key fails closed as a credential failure, before anything reaches the provider.
     await ctx.credentials.unset(credentialRef(KEY))
     await expect(ctx.models.complete({ model: 'echo', prompt: 'again' })).rejects.toMatchObject({ failure: 'credential' })
-    expect(server.requests).toHaveLength(1)
+    expect(server.requests).toHaveLength(2)
   })
 })
 
@@ -155,13 +160,13 @@ const CATALOG_W: ModelEntry[] = [
   { id: 'private', tier: 'standard', quotaClass: 'local', locality: 'local', maxTokens: 32 },
 ]
 
-async function boot(options: { script?: FakeScript; workers?: Record<string, unknown>; egress?: Record<string, unknown>; dir?: string; research?: boolean } = {}) {
+async function boot(options: { script?: FakeScript; workers?: Record<string, unknown>; egress?: Record<string, unknown>; workflow?: Record<string, unknown>; dir?: string; research?: boolean } = {}) {
   const dir = options.dir ?? temp('system-model-workers-')
   const ctx = new Context()
   const fibers = [
     ctx.plugin(Store, { path: join(dir, 'system.db') }), ctx.plugin(Artifacts, {}), ctx.plugin(EventLog, {}), ctx.plugin(Leases, {}), ctx.plugin(Egress, options.egress ?? {}),
     ctx.plugin(WorkerRouter, {}), ctx.plugin(FakeModels, { catalog: CATALOG_W, script: options.script ?? {} }),
-    ctx.plugin(ModelWorkers, { callTimeoutMs: 5_000, ...options.workers }), ctx.plugin(WorkerSessions, {}), ctx.plugin(Workflow, { retryDelayMs: 100 }),
+    ctx.plugin(ModelWorkers, { callTimeoutMs: 5_000, ...options.workers }), ctx.plugin(WorkerSessions, {}), ctx.plugin(Workflow, { retryDelayMs: 100, ...options.workflow }),
   ]
   await Promise.all(fibers)
   if (options.research) {
@@ -195,9 +200,10 @@ describe('ctx.workers source `models`: API and local models as Workers (REQ-WRK-
     const { ctx } = await boot()
     const workers = Object.fromEntries((await ctx.workers.list()).map((w) => [w.worker, w]))
     expect(workers['model:fast']).toMatchObject({ tier: 'standard', quotaClass: 'metered', locality: 'remote', state: 'ready' })
-    expect(workers['model:fast']!.capabilities.map((c) => [c.capability, c.evidence.kind])).toEqual([['reason', 'probe']])
+    // A session is the source's own (ADR-0031): its conformance is the evidence.
+    expect(workers['model:fast']!.capabilities.map((c) => [c.capability, c.evidence.kind])).toEqual([['reason', 'probe'], ['persistent-conversation', 'conformance']])
     expect(workers['model:private']).toMatchObject({ quotaClass: 'local', locality: 'local', state: 'ready' })
-    expect(workers['model:private']!.capabilities.map((c) => c.capability)).toEqual(['reason'])
+    expect(workers['model:private']!.capabilities.map((c) => c.capability)).toEqual(['reason', 'persistent-conversation'])
     expect(workers['model:gone']).toMatchObject({ state: 'unavailable', capabilities: [] })
   })
 
@@ -225,7 +231,105 @@ describe('ctx.workers source `models`: API and local models as Workers (REQ-WRK-
     expect(await settle(ctx, first)).toMatchObject({ status: 'completed', submitted: true })
     expect(fake.calls).toHaveLength(1)
     expect(() => start('other')).toThrow(/different prompt/)
-    expect(() => source.start({ key: 'k-2', worker: 'model:fast', prompt: 'x', sessionId: 's-1', requirement: requirement(), decisions: DECISIONS })).toThrow(/no sessions/)
+    // A key is one call: reused for a session turn, it is refused too.
+    expect(() => source.start({ key: 'k-1', worker: 'model:fast', prompt: 'hello', sessionId: 's-1', requirement: requirement(), decisions: DECISIONS })).toThrow(/different prompt or session/)
+  })
+
+  describe('sessions by replay (ADR-0031)', () => {
+    const turn = (ctx: Context, key: string, prompt: string, sessionId: string, worker = 'model:fast', classification: WorkRequirement['data']['classification'] = 'operator-shared') =>
+      ctx.workers.source('models')!.start({ key, worker, prompt, sessionId, requirement: requirement({ data: { classification, refs: [] } }), decisions: DECISIONS })
+    const seen = (fake: FakeModels) => fake.calls.map((c) => (c.history ?? []).map((t) => `${t.role}:${t.text}`))
+
+    it('replays a session\'s turns in order before each prompt, and proves persistent-conversation by its own conformance', async () => {
+      const { ctx, fake } = await boot({ script: { answer: (prompt, request) => `${prompt}#${request.history?.length ?? 0}` } })
+      for (const [i, prompt] of ['one', 'two', 'three'].entries()) expect(await settle(ctx, turn(ctx, `s${i}`, prompt, 'ses_a'))).toMatchObject({ status: 'completed' })
+      expect(seen(fake)).toEqual([[], ['user:one', 'assistant:one#0'], ['user:one', 'assistant:one#0', 'user:two', 'assistant:two#2']])
+      const source = ctx.workers.source('models')!
+      expect(source.handle!('ses_a')).toBe('model-session:ses_a')
+      // It stays with its model's family: every model Worker of that family may serve it.
+      expect(source.affinity!('ses_a')).toEqual(expect.arrayContaining(['model:fast']))
+      const fast = (await ctx.workers.list()).find((w) => w.worker === 'model:fast')!
+      expect(fast.capabilities.map((c) => [c.capability, c.evidence.kind])).toEqual([['reason', 'probe'], ['persistent-conversation', 'conformance']])
+    })
+
+    it('runs one turn of a session at a time', async () => {
+      const { ctx } = await boot({ script: { holdMs: 1000 } })
+      const first = turn(ctx, 'o1', 'one', 'ses_b')
+      expect(() => turn(ctx, 'o2', 'two', 'ses_b')).toThrow(/turn in flight/)
+      expect(await settle(ctx, first)).toMatchObject({ status: 'completed' })
+      expect(await settle(ctx, turn(ctx, 'o2', 'two', 'ses_b'))).toMatchObject({ status: 'completed' })
+    })
+
+    it('fails a turn past its bounds, with nothing sent: the row\'s default, and an entry\'s own', async () => {
+      const capped = await boot({ workers: { maxSessionTurns: 2 } })
+      await settle(capped.ctx, turn(capped.ctx, 'c1', 'one', 'ses_c'))
+      await settle(capped.ctx, turn(capped.ctx, 'c2', 'two', 'ses_c'))
+      expect(await settle(capped.ctx, turn(capped.ctx, 'c3', 'three', 'ses_c'))).toMatchObject({ status: 'failed', error: { kind: 'invalid_input', message: expect.stringMatching(/would have 3 turns; fast allows 2 \(maxSessionTurns\)/) } })
+      expect(capped.fake.calls).toHaveLength(2)
+      // The local model's own, smaller bound: a history of more than 10 characters is not replayed to it.
+      const small = await boot()
+      ;(small.fake as unknown as { config: { catalog: ModelEntry[] } }).config.catalog = CATALOG_W.map((m) => (m.id === 'private' ? { ...m, maxHistoryChars: 10 } : m))
+      await settle(small.ctx, turn(small.ctx, 'h1', 'a long first prompt', 'ses_d', 'model:private'))
+      expect(await settle(small.ctx, turn(small.ctx, 'h2', 'two', 'ses_d', 'model:private'))).toMatchObject({ status: 'failed', error: { kind: 'invalid_input', message: expect.stringMatching(/replays at most 10 \(maxHistoryChars\)/) } })
+      expect(small.fake.calls).toHaveLength(1)
+    })
+
+    it('ends a transcript only with its session: a reset or release clears it, and a call\'s own retention never does', async () => {
+      const { ctx, fake } = await boot()
+      const source = ctx.workers.source('models')!
+      await settle(ctx, turn(ctx, 'e1', 'one', 'ses_e'))
+      // Its call expires, as retention removes finished calls: the live session keeps its turn.
+      ctx.store.db.prepare("DELETE FROM model_calls WHERE status IN ('completed', 'failed')").run()
+      await settle(ctx, turn(ctx, 'e2', 'two', 'ses_e'))
+      expect(seen(fake).at(-1)).toEqual(['user:one', 'assistant:echo: one'])
+      // A turn accepted before a reset is not replayed as if nothing had happened.
+      const stale = turn(ctx, 'e3', 'three', 'ses_e')
+      expect(source.reset!('ses_e')).toBe(true)
+      expect(await settle(ctx, stale)).toMatchObject({ status: 'failed', error: { kind: 'invalid_input', message: expect.stringMatching(/changed after this turn was accepted/) } })
+      await settle(ctx, turn(ctx, 'e4', 'fresh', 'ses_e'))
+      expect(seen(fake).at(-1)).toEqual([])
+      source.release!(['ses_e'], 'run deleted')
+      expect(source.handle!('ses_e')).toBeUndefined()
+    })
+
+    it('checks egress on the history as sent, at its highest classification: a remote model never gets a local-private turn replayed (INV-12)', async () => {
+      // The operator lets the local model take local-private data, and never the remote one.
+      const { ctx, fake } = await boot({ egress: { workerClasses: { model: ['public', 'operator-shared'], 'model-local': ['public', 'operator-shared', 'local-private'] } } })
+      expect(await settle(ctx, turn(ctx, 'g1', 'my diary', 'ses_g', 'model:private', 'local-private'))).toMatchObject({ status: 'completed' })
+      const denied = await settle(ctx, turn(ctx, 'g2', 'summarize it', 'ses_g', 'model:fast', 'public'))
+      expect(denied).toMatchObject({ status: 'failed', error: { kind: 'egress_denied' } })
+      expect(fake.calls).toHaveLength(1)
+    })
+
+    it('lets model Workers be team members: each member keeps its own session across its turns (one family, recorded)', async () => {
+      // Two members of one family on model Workers, each answering in its own session.
+      const answer = (prompt: string): string => (prompt.includes('Answer on your own')
+        ? `My proposal.\n${JSON.stringify({ recommendation: `option of ${/member (\d)/.exec(prompt)?.[1]}`, rationale: 'it fits', risks: [] })}`
+        : JSON.stringify({ choice: 'O1', ranking: ['O1', 'O2'], rationale: 'I prefer O1', evidence: [], strongest: { O2: 'it is simpler' }, objections: [], confidence: 'high' }))
+      const { ctx, fake } = await boot({ script: { answer }, workflow: { allowSameFamily: true } })
+      const done = await ctx.workflow.wait(ctx.workflow.start({ template: 'brainstorm', input: 'Which store?', classification: 'public' }).runId, 30_000)
+      expect(done.status).toBe('completed')
+      // Each member's ballot replays its own proposal, and nobody else's.
+      const ballots = fake.calls.filter((c) => !c.prompt.includes('Answer on your own'))
+      expect(ballots.length).toBeGreaterThanOrEqual(2)
+      for (const b of ballots) {
+        expect(b.history).toHaveLength(2)
+        expect(b.history![0]!.text).toContain('Answer on your own')
+      }
+      expect(new Set(ballots.map((b) => b.history![1]!.text)).size).toBe(ballots.length)
+    })
+
+    it('after a restart, re-sends a session turn with exactly the history it was accepted with', async () => {
+      const first = await boot()
+      await settle(first.ctx, turn(first.ctx, 'r1', 'one', 'ses_r'))
+      first.fake.script.holdMs = 60_000
+      const held = turn(first.ctx, 'r2', 'two', 'ses_r')
+      await expect.poll(() => first.fake.calls.length).toBe(2)
+      await first.stop()
+      const second = await boot({ dir: first.dir })
+      expect(await second.ctx.workers.source('models')!.wait(held.id, 10_000)).toMatchObject({ status: 'completed' })
+      expect(seen(second.fake)).toEqual([['user:one', 'assistant:echo: one']])
+    })
   })
 
   it('checks egress on the exact prompt: a remote model never receives local-private data; a credential never leaves (INV-12)', async () => {
@@ -323,16 +427,17 @@ describe('ctx.workers source `models`: API and local models as Workers (REQ-WRK-
   })
 
   it('with only model Workers, templates that need website capabilities fail admission with the reason (ADR-0025, INV-2)', async () => {
-    // Research's synthesis thread keeps a conversation, which no model Worker holds; its reviews need the web.
-    const { ctx, fake } = await boot({ research: true })
-    for (const variant of ['deep', undefined] as const) {
+    // A model frames the question (in the run's conversation, ADR-0031); the cited reviews need the web.
+    const framed = '```json\n' + JSON.stringify({ question: 'Does caffeine improve recall?', hypotheses: [{ id: 'H1', statement: 'Caffeine improves recall.' }] }) + '\n```'
+    const { ctx, fake } = await boot({ research: true, script: { answer: () => framed } })
+    for (const [variant, capability] of [['deep', 'deep-research'], [undefined, 'web-search']] as const) {
       const run = ctx.workflow.start({ template: 'research', variant, input: 'Does caffeine improve recall?', classification: 'public' })
       const done = await ctx.workflow.wait(run.runId, 10_000)
       expect(done.status).toBe('failed')
-      expect(done.nodes.find((n) => n.nodeId === 'frame:1')!.error!.message).toMatch(/^no Worker can take this work: no Worker proves persistent-conversation\b/)
+      expect(done.nodes.find((n) => n.nodeId === 'literature:1')!.error!.message).toMatch(new RegExp(`^no Worker can take this work: no Worker proves ${capability}\\b`))
     }
-    // Nothing was sent.
-    expect(fake.calls).toHaveLength(0)
+    // Only the framing steps ran on a model; nothing was sent for the website-only steps.
+    expect(fake.calls).toHaveLength(2)
   })
 })
 

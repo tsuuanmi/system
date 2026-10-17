@@ -22,10 +22,20 @@ REQ-WRK-10). One row, `models`, mounts two parts from one configuration:
     while available; otherwise it is `unavailable`. Tier, quota class, and
     locality come from the entry, and so does its provider family
     (`family`, by default the route; give two routes to one vendor the same
-    family). It never proves `local-data` or
-    `persistent-conversation`.
+    family). It proves `persistent-conversation` too (evidence `conformance`):
+    it keeps sessions itself. It never proves `local-data`.
   - **Calls** (`start`, `get`, `wait`, `cancel`): durable at once in
-    `model_calls`, idempotent by key; a session is refused.
+    `model_calls`, idempotent by key.
+  - **Sessions** ([ADR-0031](../../../docs/decisions/adr/0031-model-worker-sessions-by-replay.md),
+    `affinity`, `handle`, `reset`, `release`):
+    - each turn replays the session's earlier turns from `model_session_turns`,
+      exactly the turns it was accepted with (a hash);
+    - one turn in flight per session;
+    - `maxSessionTurns` and `maxHistoryChars` are bounds per row or entry: past
+      one, the turn fails and nothing is cut;
+    - a session stays within its model's family;
+    - egress covers the history as sent, at its highest classification;
+    - the transcript ends with the session, never with a call's retention.
   - **Egress (INV-12):** the exact prompt is checked by `ctx.egress` before it
     is sent, as Worker class `model`, or `model-local` for a local entry. The
     decision joins the call's decision chain. A denial fails the call as
@@ -46,8 +56,10 @@ REQ-WRK-10). One row, `models`, mounts two parts from one configuration:
 - **`model_key`** (MCP tool, operator scope; `system model key <NAME>`): stores a
   route's API key, encrypted, under the credential reference its `apiKeyEnv`
   names. Nothing is returned or logged.
-- **Config:** `models` (the catalog; empty by default, so no Workers),
-  `maxRetries`, `maxConcurrentCalls`, `callTimeoutMs`
+- **Config:** `models` (the catalog; empty by default, so no Workers; an entry
+  may set `maxSessionTurns` and `maxHistoryChars`), `maxRetries`,
+  `maxConcurrentCalls`, `callTimeoutMs`, `retainDays`, `maxSessionTurns`,
+  `maxHistoryChars`
   ([catalog](../../../docs/reference/configuration.md#models)).
 - **Injects:** `LlmModels` `llm`; `ModelWorkers` `store`, `artifacts`, `leases`,
   `workers`, `egress`, `models`; the tool, optionally, `mcp` and `credentials`.
