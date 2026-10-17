@@ -15,7 +15,11 @@ export async function closeWithin(context: BrowserContext, ms = 5000): Promise<v
   clearTimeout(timer)
 }
 
-/** `promise`, unless `signal` aborts first; then it rejects at once, and a late value goes to `onLate`. */
+/**
+ * `promise`, unless `signal` aborts first; then it rejects at once, and a late value goes to
+ * `onLate`, once. Without a signal it is `promise` itself, with no bound of its own: each caller
+ * bounds the operation it waits on.
+ */
 export function abortable<T>(promise: Promise<T>, signal: AbortSignal | undefined, onLate?: (value: T) => void): Promise<T> {
   if (!signal) return promise
   if (signal.aborted) {
@@ -23,10 +27,8 @@ export function abortable<T>(promise: Promise<T>, signal: AbortSignal | undefine
     return Promise.reject(abortReason(signal, 'browser turn aborted'))
   }
   return new Promise<T>((resolve, reject) => {
-    const onAbort = (): void => {
-      void promise.then((value) => onLate?.(value), () => undefined)
-      reject(abortReason(signal, 'browser turn aborted'))
-    }
+    // A value after the abort reaches `onLate` from the handler below, never from here as well.
+    const onAbort = (): void => reject(abortReason(signal, 'browser turn aborted'))
     signal.addEventListener('abort', onAbort, { once: true })
     promise.then(
       (value) => {
