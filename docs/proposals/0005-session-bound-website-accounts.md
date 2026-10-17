@@ -235,7 +235,7 @@ Accepted on 2026-10-17 by the operator, in Researcher's session: both ranked opt
 
 ## Amendment (2026-10-17): keep a session's tab between its turns
 
-Status: proposed, for review. It changes the design above, not ADR-0030's decision: the work
+Status: accepted 2026-10-17 (the operator's direction to keep and reuse open windows; reviewed by Researcher). It changes the design above, not ADR-0030's decision: the work
 still runs in pages of the account's profile, never from a copy. Once accepted, it is appended
 to ADR-0030 as an amendment.
 
