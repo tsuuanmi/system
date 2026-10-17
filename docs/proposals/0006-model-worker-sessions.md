@@ -1,7 +1,7 @@
 ---
 id: PROP-0006
 type: proposal
-status: draft
+status: proposed
 owners: [operator]
 created: 2026-10-17
 related-requirements: [REQ-WRK-10, REQ-WRK-7, REQ-TEAM-4, REQ-PRV-8]
@@ -66,28 +66,35 @@ All of these need `persistent-conversation`, and under the `api-first` preset th
   - A session turn's call records the history it was accepted with: the turns up to sequence N,
     and their hash. A re-send after a restart replays exactly that history. Reusing a key with
     another history is `invalid_input`.
-- **Bounds (INV-9), validated `Config` on the `models` row:**
+  - One turn in flight per session: turn N+1 is accepted only after turn N has completed or
+    failed. Two turns never replay the same history and both append.
+- **Bounds (INV-9), validated `Config`:**
   - `maxSessionTurns` (default 12);
   - `maxHistoryChars` (default 48,000). Characters, not tokens: the source cannot count a
     provider's tokens before the call.
-  A turn whose history would pass either bound fails as `invalid_input`, naming the bound. Nothing
-  is cut.
+
+  The row gives the defaults, and each catalog entry may lower or raise its own, so a small local
+  model with a short context window is not sent 48,000 characters. A turn whose history would pass
+  its entry's bound fails as `invalid_input`, naming the bound. Nothing is cut.
 - **Capability.** Every available model Worker proves `persistent-conversation`, with evidence of
   kind `conformance`: it is the source's behavior, not the model's.
 - **Affinity.**
   - A session stays on the model Worker that served its first turn.
   - Escalation to a higher tier moves to another model Worker of the same family, which inherits
     the history.
-  - That other model is a new destination, so the history is egress-checked again for it (below).
+  - That other entry is checked before anything is sent: its own bounds (a history over them
+    fails as `invalid_input`, never cut), and egress for its destination (below).
 - **Egress.**
-  - What a turn sends is its prompt plus its history, and the egress decision covers both for the
-    call's destination.
-  - The session's classification is the highest of its turns'. A `local-private` session stays on
-    `local` Workers (REQ-WRK-7).
+  - The egress decision covers exactly the bytes sent: the prompt, and the history serialized as
+    it is sent, for the call's destination.
+  - The history's classification is the highest of its turns', and both the prompts' and the
+    answers' classifications count. A `local-private` session stays on `local` Workers
+    (REQ-WRK-7).
 - **Ends.**
-  - Releasing a session (its run deleted or expired) deletes its transcript.
-  - A reset clears it.
-  - Retention removes the turns of expired calls (`retainDays`), as it does their prompts today.
+  - A transcript is deleted only when its session ends: released (its run deleted, or expired by
+    retention), or reset.
+  - A call's own retention (`retainDays`) never removes a turn that a live session still replays.
+    A long-lived session keeps its whole history until it ends, within its bounds.
 - **Team members.**
   - Two members on one model entry share one "account", in REQ-TEAM-4's sense, so they fall
     under [ADR-0029](../decisions/adr/0029-opt-in-same-family-fallback.md), as two members on one
@@ -111,17 +118,21 @@ On acceptance, an ADR records model sessions by replay, and the models design, t
 ## Validation plan
 
 - Seam conformance: history order, usage, and a `max-tokens` finish with history.
+- A fake provider that echoes the number of history messages it received.
 - The source:
   - three turns of one session send histories of 0, 1, and 2 turns;
-  - a crash between send and completion re-sends the same history once (crash suite);
-  - a bound exceeded fails with nothing sent;
-  - release and reset delete the transcript;
+  - a second turn of a session is not accepted while the first is in flight;
+  - a restart mid-session re-sends the same history once, with the same hash (crash suite);
+  - a bound exceeded fails with nothing sent, under the row's default and under an entry's own;
+  - escalation to an entry with a smaller bound fails before sending;
+  - release and reset delete the transcript, and a call's retention leaves a live session's turns;
   - a `local-private` session never reaches a remote entry.
 - End to end on fakes:
   - a brainstorm with model Workers as both members (same-family, recorded);
   - research's synthesis thread on a model Worker;
   - under `api-first`, `brainstorm` and `review` now run.
-- Live, after Stage 1's key: one short brainstorm with an API member.
+- Live, with a real route once the operator supplies a key: one short brainstorm with an API
+  member.
 
 ## Rollout and rollback
 
@@ -148,7 +159,7 @@ session.
 
 ## Decision
 
-Pending: Researcher's review, then the operator's decision.
+Pending: the operator's decision. Researcher has reviewed it.
 
 ## Implementation
 
