@@ -49,7 +49,7 @@ export type SideEffect = 'none' | 'reversible' | 'irreversible'
 
 export interface ActionSpec {
   description?: string
-  do: 'click' | 'insertText' | 'press' | 'setFiles' | 'select'
+  do: 'click' | 'insertText' | 'clearText' | 'press' | 'setFiles' | 'select'
   target: string
   key?: string
   require?: Array<'enabled' | 'editable'>
@@ -78,7 +78,7 @@ export interface ErrorRule {
 }
 
 export interface UiMap {
-  schema: 'ui-map@1.0' | 'ui-map@1.1' | 'ui-map@1.2'
+  schema: 'ui-map@1.0' | 'ui-map@1.1' | 'ui-map@1.2' | 'ui-map@1.3'
   provider: string
   uiRevision: string
   locales: string[]

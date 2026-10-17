@@ -121,6 +121,10 @@ driver, its operations are data: a UI map,
   operation of a Gemini account runs as a page of its own login profile.
   `pageGapMs` (default 10 s, at most 10 min) spaces the **opens** of the
   account's pages. Navigations within a page are not spaced.
+- **Drafts.** The composer is emptied (`composer.clear`) before a turn chooses
+  anything or types, so an unsent draft the site kept across page loads (Gemini in
+  a login profile, live 2026-10-17) never goes with a prompt. A turn that fails
+  after typing and before sending empties it again.
 - **A stalled answer** (`provider_stalled`, or a deadline) is outlined as it
   stands: event `provider.stall`, with the page's structure as local-private
   evidence, its `visibilityState`, focus, and path. It is never retried from the

@@ -155,15 +155,23 @@ export class ChatGptWebDriver implements ProviderDriver<Page> {
     const engine = this.engine(page)
     const before = await engine.count('turn.assistant')
     const previousResponse = before > 0 ? await this.answerText(engine) : null
+    // An unsent draft the site kept (as Gemini does in a login profile) never goes with the prompt.
+    await engine.act('composer.clear')
     const mode = await this.selectMode(page, preset)
     if (feature === 'deep-research' || feature === 'web-search') {
       await engine.act('tools.open')
       await engine.act(feature === 'deep-research' ? 'tools.deep-research' : 'tools.web-search')
     }
     await engine.act('composer.insert', { text: prompt })
-    await this.requireChat(engine, 'before sending')
-    options.signal?.throwIfAborted()
-    await options.beforeSend?.({ previousResponse, mode })
+    try {
+      await this.requireChat(engine, 'before sending')
+      options.signal?.throwIfAborted()
+      await options.beforeSend?.({ previousResponse, mode })
+    } catch (error) {
+      // Typed, never sent: the text is not left behind as a draft for the next turn or the operator.
+      await engine.act('composer.clear').catch(() => undefined)
+      throw error
+    }
     await engine.act('composer.send')
     const reply = await this.waitForAnswer(page, before, options.signal, options.deadlines, options.conversation === 'persistent' && !options.binding ? options.onBinding : undefined)
     // Deep research answers with an acknowledgement; the report arrives later in its frame.

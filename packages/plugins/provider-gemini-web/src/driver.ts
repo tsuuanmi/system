@@ -184,6 +184,8 @@ export class GeminiWebDriver implements ProviderDriver<Page> {
     const engine = this.engine(page)
     const before = await engine.count('turn.assistant')
     const previousResponse = before > 0 ? await this.answerText(engine) : null
+    // An unsent draft the site kept (live 2026-10-17, in the login profile) never goes with the prompt.
+    await engine.act('composer.clear')
     if (feature === 'deep-research') await this.chooseDeepResearch(engine)
     // A reopened Deep research conversation keeps Deep research chosen: a plain turn clears it.
     else if ((await engine.count('composer.deep-research')) > 0) await engine.act('composer.clear-deep-research')
@@ -191,13 +193,19 @@ export class GeminiWebDriver implements ProviderDriver<Page> {
     // 2026-10-17, a review's 26,000 characters: mode.open missed its postcondition).
     const mode = await this.selectMode(page, preset)
     await engine.act('composer.insert', { text: prompt })
-    await this.requireChat(engine, 'before sending')
-    if (options.conversation === 'temporary' && (await engine.count('temporary.notice')) === 0) {
-      throw new ProviderError('ui_drift', 'gemini-web: Temporary chat is not on before sending; refusing to save the conversation')
-    }
-    options.signal?.throwIfAborted()
     const asked = await engine.count('turn.user')
-    await options.beforeSend?.({ previousResponse, mode })
+    try {
+      await this.requireChat(engine, 'before sending')
+      if (options.conversation === 'temporary' && (await engine.count('temporary.notice')) === 0) {
+        throw new ProviderError('ui_drift', 'gemini-web: Temporary chat is not on before sending; refusing to save the conversation')
+      }
+      options.signal?.throwIfAborted()
+      await options.beforeSend?.({ previousResponse, mode })
+    } catch (error) {
+      // Typed, never sent: the text is not left behind as a draft for the next turn or the operator.
+      await engine.act('composer.clear').catch(() => undefined)
+      throw error
+    }
     await engine.act('composer.send').catch(async (error: unknown) => {
       // An emptied composer and no new prompt: the site dropped the text (too long, say), not a UI change.
       if (error instanceof ProviderError && error.kind === 'ui_drift' && (await engine.count('turn.user')) === asked && !(await engine.text('composer.input').catch(() => 'unknown')).trim()) {

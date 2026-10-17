@@ -65,6 +65,11 @@ export interface FakeOptions {
   promptLagMs?: number
   /** The composer rewrites a paste: it drops backticks (a readback test). */
   rewritePaste?: boolean
+  /**
+   * The composer keeps an unsent draft across page loads, per conversation (as the live site did
+   * in a login profile, 2026-10-17); a send clears it.
+   */
+  draftPersist?: boolean
   /** Clicking Temporary chat does nothing (the driver must refuse to send). */
   temporaryBroken?: boolean
   /** A "Sign in" control shows beside the account's button (an offer to add an account): still signed in. */
@@ -300,6 +305,7 @@ async function startResearch() {
 async function send() {
   const prompt = $('input').innerText.trim()
   $('input').textContent = ''
+  if (options.draftPersist) localStorage.removeItem(draftKey())
   if (options.dropOver && prompt.length >= options.dropOver) { render(); return }
   $('log').append(userTurn(prompt))
   running = true
@@ -336,6 +342,13 @@ async function send() {
 }
 if (conversationId && !$('missing')) refresh()
 render()
+// An unsent draft, kept per conversation across page loads.
+function draftKey() { return 'draft:' + (conversationId || 'home') }
+if (options.draftPersist) {
+  const saved = localStorage.getItem(draftKey())
+  if (saved) $('input').innerText = saved
+  $('input').addEventListener('input', () => localStorage.setItem(draftKey(), $('input').innerText))
+}
 `
 
 const SIGNED_OUT = '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Gemini</title></head><body><header><a href="/signin">Sign in</a></header><main><h1>Meet Gemini</h1></main></body></html>'
@@ -413,7 +426,7 @@ export class FakeGemini {
 
   constructor(options: FakeOptions = {}) {
     this.options = {
-      paneMenu: true, dialogTarget: '', dialogExtraCall: false, startOnSpark: true, interstitial: false, captcha: false, deviceBound: false, holdAnswer: false, promptLagMs: 0, rewritePaste: false, dropOver: 0, signInOffer: false, chatTabBroken: false, temporaryBroken: false, modePicker: true, promptParagraphs: true, deepResearch: true,
+      paneMenu: true, dialogTarget: '', dialogExtraCall: false, startOnSpark: true, interstitial: false, captcha: false, deviceBound: false, holdAnswer: false, promptLagMs: 0, rewritePaste: false, draftPersist: false, dropOver: 0, signInOffer: false, chatTabBroken: false, temporaryBroken: false, modePicker: true, promptParagraphs: true, deepResearch: true,
       models: ['3.5 Flash-Lite', '3.8 Flash', '3.1 Pro'], levels: ['Low', 'Medium', 'High'], levelsInline: true, levelsSubmenu: true, submenuBroken: false, answer: 'OK', clarify: '',
       researchMs: 1500, researchHeld: false, report: 'HTTP/3 runs over QUIC, not TCP.', sources: [{ title: 'RFC 9114: HTTP/3', url: 'https://www.rfc-editor.org/rfc/rfc9114' }], ...options,
     }

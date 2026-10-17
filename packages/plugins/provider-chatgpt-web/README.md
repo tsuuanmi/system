@@ -17,6 +17,10 @@ The **ChatGPT Web provider driver**
   runtime marks the account `challenge`. A page that shows neither the composer nor a sign-in
   page in time is outlined as a `ui.drift` of `composer.input` (`system evidence`) and fails the
   turn once as `ui_drift`, never as a session to retry.
+- **Drafts.** The composer is emptied (`composer.clear`) before a turn chooses
+  anything or types, so an unsent draft the site kept across page loads (Gemini in
+  a login profile, live 2026-10-17) never goes with a prompt. A turn that fails
+  after typing and before sending empties it again.
 - **A stalled answer** (`provider_stalled`, or a deadline) is outlined as it
   stands: event `provider.stall`, with the page's structure as local-private
   evidence, its `visibilityState`, focus, and path. It is never retried from the

@@ -2,7 +2,7 @@
 # /app page (read-only, Temporary-chat prompts, and one Deep research run); the fake site in
 # fixtures/ follows it.
 # When the site changes, edit this file (and the fixture), not the driver code.
-schema: ui-map@1.2
+schema: ui-map@1.3
 provider: gemini-web
 uiRevision: '2026-10-12'
 locales: [en]
@@ -278,6 +278,16 @@ actions:
     verify: { visible: mode.model }
     sideEffect: reversible
     timeouts: { resolveMs: 5000, verifyMs: 5000 }
+  composer.clear:
+    description: >-
+      Empty the composer before a turn types anything: a site can keep an unsent draft across
+      page loads (live 2026-10-17, in a login profile).
+    do: clearText
+    target: composer.input
+    require: [editable]
+    verify: { visible: composer.input }
+    sideEffect: reversible
+    timeouts: { resolveMs: 15000, verifyMs: 5000 }
   composer.insert:
     do: insertText
     target: composer.input
