@@ -447,4 +447,24 @@ followed the dogfood research:
 
 ## Implementation
 
-None yet.
+Each phase landed on `main` with its own gate; the live install follows `main`.
+
+- **Phase 6, the loop on a real change** (retire the repository reader's exported test seams),
+  run from Claude Code through the live `system` on 2026-10-16, on one provider family
+  (`allowSameFamily`, [ADR-0029](../decisions/adr/0029-opt-in-same-family-fallback.md)):
+  1. Research `run_c02c2a9076c476d7`: package `exports` and `#internal` imports give API
+     encapsulation, not isolation; a public injection point exposes substitution.
+  2. Brainstorm `run_2380ceeefba5d628`: both members chose a separate internal test entry; the
+     vote tied, and the Lead decided for O1 (with a repository rule guarding the boundary).
+  3. Implement `dfdb057`: `snapshotRepository` takes no test seam; `snapshotWithTestSeams` is the
+     package's own; an architecture rule refuses any other source that names it.
+  4. Review: `run_feaf612780ffaf04` passed 2-0 and then failed to record its decision (fixed in
+     `1f212e3`); `run_4846cd12f59e4bbd` passed without its members seeing the changed files
+     (fixed: focus first, `0b531f7`; a focus file not shown refuses the review); and
+     `run_624b7872215c9919` passed 2-0 having read the change, with two confirmed warnings on the
+     architecture rule's scope.
+  - A successful read of a real public repository needs the network, so it is a live check, not
+    a unit test (`tsuuanmi/system`: 34 files in 1.9 s).
+- **Gemini** could not serve work after its copied sessions were signed out and Google served its
+  unusual-traffic check; the turns stop at once now (`challenge`), and the fix is its own
+  proposal (roadmap, P1).

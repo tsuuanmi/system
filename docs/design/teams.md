@@ -53,7 +53,8 @@ holds. A member that finds no other family fails with `config_error`. Its messag
 
 With the workflow's `allowSameFamily` on ([ADR-0029](../decisions/adr/0029-opt-in-same-family-fallback.md)),
 such a member routes again without the family and distinct-account rules, so two members may
-share one account, each in its own conversation. The fallback is a `same-family` admission
+share one Worker, each in its own session: on a website account its own conversation, on an
+agent runtime (ACP, an SDK) its own native session ([worker sessions](../decisions/adr/0015-worker-sessions-and-peer-messaging.md)). The fallback is a `same-family` admission
 decision on the member; the team's final decision records `members: same provider family`, and
 its answer's second line says that no other provider judged it.
 
