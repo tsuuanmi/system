@@ -59,11 +59,14 @@ which is weaker evidence.
   2026-10-11, with about 160 state write-backs. At about 00:46 UTC on 2026-10-17 it was signed out:
   ChatGPT served its logged-out home, which the UI map did not yet read as signed out. The probe's
   outline, `sha256:83e6431746c7645c40e69f8cbc9068982ea094751e7a3607be5d6792f8f102dd`, is in
-  `system evidence`. This is either the same copied-session pattern starting on a second site, or
-  an ordinary session expiry. The research must ask which, and whether chatgpt-main signs in with
-  "Sign in with Google" using the Google account that Google flagged. If it does, Google ending
-  that account's sessions may be the common cause, and the cause is not two sites binding their
-  sessions.
+  `system evidence`. When the operator opened the login profile (`system account login`), it was
+  still signed in. They only pressed Save, and the next turn worked (`run_ebb1c54e07df48d6`). So it
+  was the copy that died, not the account's session: the same pattern as Gemini, on a second site,
+  after six days rather than a minute. chatgpt-main signs in with email and password, not "Sign in
+  with Google", so Google ending the flagged account's sessions is not a common cause. The research
+  must now explain why a copy dies while the profile lives on both sites. Cause (a) is Google-only
+  and cannot explain ChatGPT, so (b) and (c), or a site-side rotation that only the live profile
+  follows, weigh more.
 - **The mechanism is the research question, not an assumption.** The research (pending: its first
   run, `run_233d4e56456ac0a9`, failed on ChatGPT's page) must separate three candidate causes,
   since each predicts something different for "the profile stays signed in, copies die within a
