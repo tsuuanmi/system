@@ -16,8 +16,9 @@ implementation: []
 Every website turn runs in a fresh browser context built from the account's portable state (its
 cookies, local storage and IndexedDB), and the login profile is used only to sign in
 ([ADR-0016](../decisions/adr/0016-invisible-headed-browser-and-portable-accounts.md),
-[browser runtime](../design/browser-runtime.md): "Automated turns never use it"). That works for
-ChatGPT. It does not work for the Gemini account, live, on 2026-10-16:
+[browser runtime](../design/browser-runtime.md): "Automated turns never use it"). That worked for
+ChatGPT for six days (see the evidence below for its sign-out on 2026-10-17). It does not work for
+the Gemini account, live, on 2026-10-16:
 
 - A copy of the state worked for one turn, and the next fresh context was signed out; a copy saved
   from the signed-in login profile was signed out a minute later; repeated loads then drew Google's
@@ -54,6 +55,15 @@ which is weaker evidence.
 - The events and outlines above (event log of 2026-10-16, `system evidence`).
 - Precedent: codex-chatgpt-web, one of the projects ADR-0016 learned from, ran one persistent
   partition per account rather than fresh contexts.
+- **ChatGPT signed out too, on 2026-10-17.** chatgpt-main had worked on portable state since
+  2026-10-11, with about 160 state write-backs. At about 00:46 UTC on 2026-10-17 it was signed out:
+  ChatGPT served its logged-out home, which the UI map did not yet read as signed out. The probe's
+  outline, `sha256:83e6431746c7645c40e69f8cbc9068982ea094751e7a3607be5d6792f8f102dd`, is in
+  `system evidence`. This is either the same copied-session pattern starting on a second site, or
+  an ordinary session expiry. The research must ask which, and whether chatgpt-main signs in with
+  "Sign in with Google" using the Google account that Google flagged. If it does, Google ending
+  that account's sessions may be the common cause, and the cause is not two sites binding their
+  sessions.
 - **The mechanism is the research question, not an assumption.** The research (pending: its first
   run, `run_233d4e56456ac0a9`, failed on ChatGPT's page) must separate three candidate causes,
   since each predicts something different for "the profile stays signed in, copies die within a
