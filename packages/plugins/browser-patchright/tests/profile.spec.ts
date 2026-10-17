@@ -8,6 +8,7 @@ import VirtualDisplay from '@tsuuanmi/system-display-virtual'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { OWNED_PROFILE_SWITCH } from '@tsuuanmi/system-provider-core'
 import BrowserPool from '../src/index.ts'
+import { profileUsers } from '../src/profiles.ts'
 import { canRunBrowser, testChrome } from './support.ts'
 import { chromium } from 'patchright-core'
 
@@ -125,9 +126,14 @@ describe.runIf(canRunBrowser)('pool(ctx).captureProfile (the Save flow)', () => 
       expect(b.page.isClosed()).toBe(false)
       expect(pool(ctx).openAccounts()).toEqual(['acct'])
       expect(pool(ctx).profileStates()).toEqual([{ account: 'acct', open: true, pages: 1, reserved: false }])
+      // The real browser is seen on the profile, marked as system's; its children carry no mark.
+      expect(profileUsers(dir).filter((u) => u.browser)).toEqual([expect.objectContaining({ owned: true })])
+      expect(profileUsers(dir).some((u) => !u.browser && !u.owned)).toBe(true)
       await b.close()
       await pool(ctx).close('acct')
       expect(pool(ctx).openAccounts()).toEqual([])
+      // Closing returned only once the browser and its children had exited.
+      expect(profileUsers(dir)).toEqual([])
       // Closed, its browser has exited: the Save flow reopens the profile at once.
       await expect(capture(ctx, dir)).resolves.toMatchObject({ result: 'signed in' })
     }, 90_000)
@@ -142,6 +148,29 @@ describe.runIf(canRunBrowser)('pool(ctx).captureProfile (the Save flow)', () => 
       expect(await reads(turn.page)).toBe('signed in')
       await turn.close()
     }, 90_000)
+
+    it('stops a real Chrome system left on the profile, and never one it did not start', async () => {
+      const ctx = await boot()
+      const dir = await signedInProfile()
+      const mine = await chromium.launchPersistentContext(dir, { executablePath: testChrome!, headless: true, args: [OWNED_PROFILE_SWITCH] })
+      let stopped = false
+      mine.once('close', () => void (stopped = true))
+      const turn = await pool(ctx).openTurn('acct', { profile: { dir } })
+      expect(stopped).toBe(true)
+      await turn.close()
+      await pool(ctx).close('acct')
+      const theirs = await chromium.launchPersistentContext(dir, { executablePath: testChrome!, headless: true })
+      try {
+        await expect(pool(ctx).openTurn('acct', { profile: { dir } })).rejects.toMatchObject({ kind: 'overloaded', message: expect.stringMatching(/never stopped/) })
+        const page = await theirs.newPage()
+        await page.goto(`${origin}/`)
+        expect(await reads(page)).toBe('signed in')
+      } finally {
+        await theirs.close()
+      }
+      const again = await pool(ctx).openTurn('acct', { profile: { dir } })
+      await again.close()
+    }, 120_000)
 
     it('never stops a browser system did not start: it blocks the account until it closes, and health shows it', async () => {
       const ctx = await boot()

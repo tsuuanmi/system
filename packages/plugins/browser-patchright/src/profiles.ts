@@ -56,14 +56,21 @@ interface Held {
 
 export interface ProfileUser {
   pid: number
-  /** Started by `system` (it carries `OWNED_PROFILE_SWITCH`): it may be stopped. */
+  /** The browser process itself, not one of its children (`--type=…`), which exit with it. */
+  browser: boolean
+  /** A browser `system` started (it carries `OWNED_PROFILE_SWITCH`): it may be stopped. */
   owned: boolean
 }
 
-/** Processes on this host running Chrome on `dir`: a browser, and the children still exiting with it. */
+/**
+ * Processes on this host running Chrome on `dir`: the browser, and its children (which name the
+ * profile too, but carry no switch of the browser's). Chrome rewrites its command line into one
+ * space-separated string, so arguments are matched by their space boundaries, not as NUL-separated
+ * entries.
+ */
 export function profileUsers(dir: string): ProfileUser[] {
   if (process.platform !== 'linux') return lockHolder(dir)
-  const flags = new Set([`--user-data-dir=${dir}`, `--user-data-dir=${resolve(dir)}`])
+  const dirs = [...new Set([dir, resolve(dir)])]
   let entries: string[]
   try {
     entries = readdirSync('/proc')
@@ -73,15 +80,29 @@ export function profileUsers(dir: string): ProfileUser[] {
   const users: ProfileUser[] = []
   for (const name of entries) {
     if (!/^\d+$/.test(name) || Number(name) === process.pid) continue
-    let args: string[]
+    let cmdline: string
     try {
-      args = readFileSync(`/proc/${name}/cmdline`, 'utf8').split('\0')
+      cmdline = readFileSync(`/proc/${name}/cmdline`, 'utf8')
     } catch {
       continue
     }
-    if (args.some((arg) => flags.has(arg))) users.push({ pid: Number(name), owned: args.includes(OWNED_PROFILE_SWITCH) })
+    const user = profileUser(cmdline, dirs)
+    if (user) users.push({ pid: Number(name), ...user })
   }
   return users
+}
+
+/**
+ * Whether a process's `/proc/<pid>/cmdline` runs Chrome on one of `dirs`, and as what. The
+ * command line may be NUL-separated, or the single space-separated string Chrome rewrites it into.
+ * Each argument is matched whole, with a space on both sides, so a path with spaces, a path at the
+ * end of the line, and a sibling such as `<dir>2` are all told apart.
+ */
+export function profileUser(cmdline: string, dirs: readonly string[]): { browser: boolean; owned: boolean } | undefined {
+  const line = ` ${cmdline.replace(/\0+$/, '').replace(/\0/g, ' ')} `
+  if (!dirs.some((dir) => line.includes(` --user-data-dir=${dir} `))) return undefined
+  const browser = !line.includes(' --type=')
+  return { browser, owned: browser && line.includes(` ${OWNED_PROFILE_SWITCH} `) }
 }
 
 /** Without /proc: the live local pid Chrome's `SingletonLock` (`<host>-<pid>`) names, if any; never stopped. */
@@ -90,7 +111,7 @@ function lockHolder(dir: string): ProfileUser[] {
     const lock = join(dir, 'SingletonLock')
     if (!lstatSync(lock).isSymbolicLink()) return []
     const match = /^(.*)-(\d+)$/.exec(readlinkSync(lock))
-    return match && match[1] === hostname() && alive(Number(match[2])) ? [{ pid: Number(match[2]), owned: false }] : []
+    return match && match[1] === hostname() && alive(Number(match[2])) ? [{ pid: Number(match[2]), browser: true, owned: false }] : []
   } catch {
     return []
   }
@@ -396,10 +417,17 @@ export class ProfileContexts {
       this.host.report('browser.profile-orphan', { account, pids: owned })
       await stopOwned(dir, owned)
     }
-    const users = profileUsers(dir)
+    // A stopped browser's children exit after it.
+    const users = await this.settle(dir)
     if (users.length) throw this.block(account, dir, users)
     this.blocked.delete(account)
     clearLockFiles(dir)
+  }
+
+  /** Who is left on `dir`: the processes of a browser that is gone may take a moment to follow it. */
+  private async settle(dir: string): Promise<ProfileUser[]> {
+    const users = profileUsers(dir)
+    return users.length && !users.some((u) => u.browser) ? waitFree(dir, KILL_WAIT_MS) : users
   }
 
   /** Close a context and wait until its Chrome has exited; that browser, if still there after the bound, is stopped. */
@@ -407,16 +435,19 @@ export class ProfileContexts {
     await closeWithin(context)
     const lingering = (await waitFree(dir, EXIT_WAIT_MS)).filter((u) => u.owned).map((u) => u.pid)
     if (lingering.length) await stopOwned(dir, lingering)
-    const users = profileUsers(dir)
+    const users = await this.settle(dir)
     if (users.length) throw this.block(account, dir, users)
     clearLockFiles(dir)
   }
 
   private block(account: string, dir: string, users: ProfileUser[]): ProviderError {
     const pids = users.map((u) => u.pid).join(', ')
-    const why = users.every((u) => u.owned)
+    const browsers = users.filter((u) => u.browser)
+    const why = browsers.length && browsers.every((u) => u.owned)
       ? `process ${pids} (a browser system started) still runs on ${account}'s login profile and could not be stopped: stop it, then retry`
-      : `process ${pids} has ${account}'s login profile open and was not started by system, so it is never stopped: close that browser, then retry`
+      : browsers.length
+        ? `process ${pids} has ${account}'s login profile open and was not started by system, so it is never stopped: close that browser, then retry`
+        : `process ${pids} (left from a browser that is gone) still holds ${account}'s login profile: stop it, then retry`
     this.blocked.set(account, { dir, why })
     return new ProviderError('overloaded', why)
   }

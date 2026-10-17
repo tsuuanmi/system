@@ -28,7 +28,11 @@
   - Page opens are spaced at least `gapMs` apart. Navigations within a page are
     not spaced.
 - **Who holds a profile.** On Linux, a profile is in use while a process on this
-  host has `--user-data-dir=<dir>` in its command line (read from `/proc`). A
+  host has `--user-data-dir=<dir>` in its command line (read from `/proc`).
+  Chrome rewrites its command line into one space-separated string, so arguments
+  are matched by their space boundaries. Its children name the profile too, but
+  only the browser process carries Chrome's switches: ownership is the browser's,
+  and its children exit after it. A
   lock file alone proves nothing: its pid may be reused, or it may name another
   host. Elsewhere, the lock's live local pid is all there is, so a held profile is
   refused and never stopped.
