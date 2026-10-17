@@ -1,11 +1,11 @@
 ---
 id: PROP-0005
 type: proposal
-status: proposed
+status: accepted
 owners: [operator]
 created: 2026-10-17
 related-requirements: [REQ-ACC-5, REQ-TEAM-4, REQ-PRV-1]
-related-decisions: [ADR-0016, ADR-0017, ADR-0027, ADR-0029]
+related-decisions: [ADR-0016, ADR-0017, ADR-0027, ADR-0029, ADR-0030]
 implementation: []
 ---
 
@@ -198,8 +198,15 @@ Ranked:
 
 ## Decision
 
-Pending, for the operator: accept this proposal (the ranked option 1), apply the interim
-(option 2) now, both, or neither. Researcher has reviewed the research.
+Accepted on 2026-10-17 by the operator, in Researcher's session: both ranked options.
+
+- **Option 1, this proposal.** The profile path, recorded as
+  [ADR-0030](../decisions/adr/0030-session-bound-accounts-use-their-login-profile.md). Gemini goes
+  first and ChatGPT follows after Gemini's validation. Fake-site tests come first. The live
+  validation waits until the operator has cleared Google's challenge, and it runs under the
+  page-load cap.
+- **Option 2, the interim.** Applied live the same day: `maxConcurrentTurnsPerAccount: 1`. Team
+  members on one account now answer one after another.
 
 ## Implementation
 

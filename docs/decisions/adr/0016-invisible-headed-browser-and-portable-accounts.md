@@ -1,6 +1,6 @@
 # ADR-0016: Invisible headed browser and portable multi-account vault
 
-- **Status:** Accepted; amended by [ADR-0020](0020-pinned-managed-chrome.md) (managed Chrome when no recent system Chrome exists)
+- **Status:** Accepted; amended by [ADR-0020](0020-pinned-managed-chrome.md) (managed Chrome when no recent system Chrome exists); superseded in part by [ADR-0030](0030-session-bound-accounts-use-their-login-profile.md) (a session-bound account works in its own login profile)
 - **Date:** 2026-10-11
 - **Related:** ADR-0005, CON-3, CON-5, [browser runtime](../../design/browser-runtime.md)
 

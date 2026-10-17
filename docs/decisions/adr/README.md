@@ -23,7 +23,7 @@ Status values: `Proposed`, `Accepted`, `Rejected`, `Superseded by ADR-NNNN`,
 | [0013](0013-typed-artifacts-and-decision-records.md) | Typed, content-addressed artifacts; every decision recorded as an artifact | Accepted |
 | [0014](0014-json-schema-contracts.md) | JSON Schema 2020-12 is the canonical contract for records and wire payloads | Accepted |
 | [0015](0015-worker-sessions-and-peer-messaging.md) | Durable Worker sessions with own SessionId and direct peer messaging; A2A for cross-runtime peers, ACP for driving agents | Accepted |
-| [0016](0016-invisible-headed-browser-and-portable-accounts.md) | Invisible headed system Chrome (never headless for provider turns); provider-agnostic multi-account vault | Accepted; amended by 0020 |
+| [0016](0016-invisible-headed-browser-and-portable-accounts.md) | Invisible headed system Chrome (never headless for provider turns); provider-agnostic multi-account vault | Accepted; amended by 0020; superseded in part by 0030 |
 | [0017](0017-credential-login-and-linux-remote-browser.md) | Opt-in credential login (email, password, local TOTP) with remote-view fallback; Linux-first MVP; port internet's noVNC remote login | Accepted; drift disposition amended by 0021 |
 | [0018](0018-build-on-dsh-core.md) | `system` is our own harness built on DSH core, reusing DSH plugins behind our seams; Node runtime; telemetry off | Accepted; superseded in part by 0019; amended 2026-10-14 (Node range) |
 | [0019](0019-explicit-minimal-dsh-core.md) | Mount only the allow-listed DSH core rows; no `dsh-base` | Accepted |
@@ -37,3 +37,4 @@ Status values: `Proposed`, `Accepted`, `Rejected`, `Superseded by ADR-NNNN`,
 | [0027](0027-provider-diversity-in-routing.md) | Routing may require a provider family different from a named node's; it compares opaque families for inequality and never names one | Accepted; superseded in part by 0029 |
 | [0028](0028-local-lead-final-authority.md) | The calling agent is the Lead and decides; a team's outcome is advice bounded to the run, and authorizes no effect outside it | Accepted |
 | [0029](0029-opt-in-same-family-fallback.md) | An operator may let work run on one provider family when no other is admitted (`allowSameFamily`), recorded as a same-family decision, never silent; members share a Worker in their own sessions | Accepted; amended 2026-10-16 (scope: any Worker source with sessions) |
+| [0030](0030-session-bound-accounts-use-their-login-profile.md) | A session-bound website account (a driver capability) runs every operation as a tab of one persistent context on its own login profile, never from copied state | Accepted |
