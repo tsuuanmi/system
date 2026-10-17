@@ -319,6 +319,15 @@ second execution path (INV-1).
     downstream, transitively, is fenced and runs again: new inputs, new hashes,
     no stale reuse. Each records a `recovery` decision naming both artifacts.
     It is refused for a running run.
+    - Every check that could refuse it runs first. Then the executions of the
+      nodes it runs again or retires are cancelled through their sources, as
+      `stop` does, and have ended (at most 30 s, else it is refused as
+      `overloaded` and nothing changes) before anything is reset. A run that
+      failed beside a running node, then restarted, never gets a new attempt
+      beside the orphaned one (INV-4).
+    - An execution that had already finished keeps its result as history: the
+      node's `recovery` decision names it and says so, and it is never taken
+      or resent.
   - **Re-planning** ([design](../../../docs/design/workflow-engine.md#re-planning)):
     a planner downstream of the replacement plans again, and a replaced planner's
     result is its new plan (an invalid one is refused, and nothing changes).

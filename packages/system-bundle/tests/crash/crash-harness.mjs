@@ -29,6 +29,19 @@ import WorkerRouter from '@tsuuanmi/system-workers'
 import Workflow from '@tsuuanmi/system-workflow'
 
 const [dir, origin, chrome, mode, ...rest] = process.argv.slice(2)
+/**
+ * A step two others build on: `slow:1` answers slowly in its own conversation, and `blocked:1`
+ * needs a capability no Worker has, so it fails at once and the run fails beside a running node.
+ */
+const step = (nodeId, prompt, extra = {}) => ({ nodeId, objective: nodeId, prompt, capabilities: ['reason'], tier: 'standard', conversation: 'temporary', acceptance: 'acceptance.answer', ...extra })
+const TEMPLATES = {
+  'fan-out': [
+    step('context:1', 'Context for: {{input}}'),
+    step('slow:1', 'Slow step on: {{node:context:1}}', { dependsOn: ['context:1'], conversation: 'persistent' }),
+    step('blocked:1', 'Blocked on: {{node:context:1}}', { dependsOn: ['context:1'], capabilities: ['reason', 'connector:nowhere'] }),
+    step('final:1', 'Both: {{node:slow:1}} {{node:blocked:1}}', { dependsOn: ['slow:1', 'blocked:1'] }),
+  ],
+}
 const report = (value) => void process.stdout.write(`@@ ${JSON.stringify(value)}\n`)
 
 const ctx = new Context()
@@ -39,7 +52,7 @@ const fibers = [
   ctx.plugin(VirtualDisplay, {}), ctx.plugin(BrowserPool, { chromePath: chrome }), ctx.plugin(Providers),
   ctx.plugin(ChatGptWeb, { origin, pageGapMs: 0, overlayPath: join(dir, 'none.yaml'), modes: { instant: { model: 'Latest', effort: 'Instant' }, medium: { model: 'Latest', effort: 'Medium' }, high: { model: 'GPT-6', effort: 'High' } }, defaultMode: 'instant' }),
   ctx.plugin(Login, { profilesDir: join(dir, 'profiles') }), ctx.plugin(WorkerRouter, {}),
-  ctx.plugin(Turns, { turnTimeoutMs: 90_000, stallTimeoutMs: 80_000 }), ctx.plugin(WorkerSessions, {}), ctx.plugin(Workflow, { retryDelayMs: 300 }),
+  ctx.plugin(Turns, { turnTimeoutMs: 90_000, stallTimeoutMs: 80_000 }), ctx.plugin(WorkerSessions, {}), ctx.plugin(Workflow, { retryDelayMs: 300, templates: TEMPLATES }),
 ]
 await Promise.all(fibers)
 // Services come up once their dependencies are ready, possibly after the fibers settle.
@@ -56,17 +69,27 @@ if (mode === 'settle') {
   process.exit(0)
 }
 let runId
-if (mode === 'start' || mode === 'delete') {
+if (mode === 'start' || mode === 'delete' || mode === 'fan-out') {
   await ctx.accounts.saveState('chatgpt-main', {
     state: { origins: [origin], cookies: [], capturedAt: '2026-10-12T00:00:00Z' }, identityHash: `sha256:${'0'.repeat(64)}`, verifiedAt: '2026-10-12T00:00:00Z',
   })
   await ctx.accounts.setFeatures('chatgpt-main', ['deep-research', 'web-search', 'image-generation'])
-  const [conversation, prompt] = mode === 'delete' ? ['persist', rest[0]] : rest
-  runId = ctx.workflow.start({ template: 'ask', input: prompt, ...(conversation === 'persist' ? { persist: true } : {}) }).runId
+  const [conversation, prompt] = mode === 'delete' || mode === 'fan-out' ? ['persist', rest[0]] : rest
+  runId = mode === 'fan-out'
+    ? ctx.workflow.start({ template: 'fan-out', input: prompt }).runId
+    : ctx.workflow.start({ template: 'ask', input: prompt, ...(conversation === 'persist' ? { persist: true } : {}) }).runId
 } else {
   runId = rest[0]
 }
 report({ runId })
+if (mode === 'supersede') {
+  // Started again: the run fails at once on the node that cannot run, while its sibling's turn
+  // is still being reconciled. The operator replaces the step they both build on.
+  const failed = await ctx.workflow.wait(runId, 120_000)
+  report({ before: failed.status })
+  await ctx.workflow.supersede(runId, 'context:1', { text: rest[1] })
+  report({ superseded: true })
+}
 const done = await ctx.workflow.wait(runId, 240_000)
 report({ done })
 if (mode === 'delete') {
