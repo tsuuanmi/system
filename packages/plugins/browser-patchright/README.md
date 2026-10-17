@@ -14,6 +14,13 @@
   arrives late stays pooled and is closed when idle, and a late context is
   closed. Under heavy load on 2026-10-12, a stalled launch made a runtime stop
   hang.
+- **A context closes only after its pages attached.** Every page opens through
+  one helper that tracks it until it has opened or failed, and every context
+  close (an abort, a turn's end, a profile's idle close or shutdown) first waits
+  for those, at most 10 s. patchright attaches a new page's session in steps of
+  its own, and one of them (`Network.setCacheDisabled`) rejected with no handler
+  when the context closed under it: unhandled rejections under load. Nothing
+  handles them at the process level.
 - **`openTurn(account, { profile: { dir, gapMs }, signal })`: a session-bound
   account** ([ADR-0030](../../../docs/decisions/adr/0030-session-bound-accounts-use-their-login-profile.md);
   `src/profiles.ts`).

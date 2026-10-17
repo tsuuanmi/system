@@ -164,6 +164,29 @@ describe.runIf(canRun)('ctx.browser with a real headed Chrome on Xvfb', () => {
     await closed
   }, 60_000)
 
+  it('closes an aborted turn\'s context only after its page attached: no rejection is left unhandled (roadmap P2, flaky under load)', async () => {
+    const { ctx } = await boot()
+    await (await pool(ctx).openTurn('acct-race')).close()
+    // Observed, not handled: the test fails if the library rejects with no handler of its own.
+    const unhandled: unknown[] = []
+    const observe = (reason: unknown): void => void unhandled.push(reason)
+    process.on('unhandledRejection', observe)
+    try {
+      // Aborts spread across the context's creation and its page's attach.
+      for (let i = 0; i < 24; i++) {
+        const controller = new AbortController()
+        const opening = pool(ctx).openTurn('acct-race', { signal: controller.signal })
+        setTimeout(() => controller.abort(new ProviderError('aborted', 'race')), i * 4)
+        const turn = await opening.catch(() => undefined)
+        await turn?.close()
+      }
+      await new Promise((resolve) => setTimeout(resolve, 1500))
+    } finally {
+      process.off('unhandledRejection', observe)
+    }
+    expect(unhandled.map((r) => String((r as Error)?.message ?? r))).toEqual([])
+  }, 120_000)
+
   it('honours an abort that arrives while Chrome is still launching', async () => {
     const { ctx } = await boot()
     const controller = new AbortController()

@@ -14,7 +14,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { Browser as BrowserSeam, OWNED_PROFILE_SWITCH, type PortableState, type PreparedDisplay, type ProfileState, ProviderError } from '@tsuuanmi/system-provider-core'
 import { type Browser, type BrowserContext, type Page, chromium } from 'patchright-core'
-import { abortable, closeWithin } from './async.ts'
+import { abortable, closeWithin, newPage } from './async.ts'
 import { discoverChrome } from './chrome.ts'
 import { ProfileContexts } from './profiles.ts'
 import { type StorageState, fromStorageState, toStorageState } from './state.ts'
@@ -155,7 +155,7 @@ export class BrowserPool extends BrowserSeam<Page, BrowserContext> {
       // The engine enables focus emulation on every page, so background windows still
       // behave as focused; tests/browser.spec.ts guards that.
       // newPage can hang if the context closes under it (an abort racing it, live 2026-10-12).
-      const page = await abortable(context.newPage(), options.signal)
+      const page = await abortable(newPage(context), options.signal)
       return { context, page, close }
     } catch (error) {
       await close()
