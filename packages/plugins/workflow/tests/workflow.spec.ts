@@ -624,6 +624,19 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
     expect(done.answer).toContain('[m1 blocking confirmed: The lease is never released; m2 blocking confirmed: The lease is never released]')
   }, 240_000)
 
+  it('fails a member whose site answered with its own error, before any acceptance judges it and without escalating (live 2026-10-17)', async () => {
+    const { ctx, gemini } = await boot({ fake: { answer: member }, gemini: { answer: 'I seem to be encountering an error. Can I try something else for you?' } })
+    const done = await ctx.workflow.wait(ctx.workflow.start({ template: 'brainstorm', input: 'Which store?' }).runId, 120_000)
+    expect(done.status).toBe('failed')
+    const m2 = ctx.workflow.explain(done.runId)!.nodes.find((n) => n.nodeId === 'brainstorm:m2:propose')!
+    expect(m2.state).toBe('FAILED')
+    // No acceptance and no escalation: the error is the site's, and the prompt was sent once.
+    expect(m2.decisions.map((d) => d.type)).not.toContain('acceptance')
+    expect(m2.decisions.map((d) => d.type)).not.toContain('escalation')
+    expect(m2.decisions.find((d) => d.type === 'recovery')).toMatchObject({ outcome: 'fail', reasons: expect.arrayContaining([expect.stringMatching(/^overloaded came after the prompt was sent/)]) })
+    expect(gemini!.sent).toHaveLength(1)
+  }, 240_000)
+
   it('refuses material too long for a member to read whole, before anything is sent', async () => {
     const { ctx, fake } = await boot({ fake: { answer: 'x' }, gemini: { answer: 'x' }, workflow: { repositories: { maxSourceChars: 2000 } } })
     const done = await ctx.workflow.wait(ctx.workflow.start({ template: 'review', input: 'Review this:\n' + 'line of the change\n'.repeat(200) }).runId, 60_000)
