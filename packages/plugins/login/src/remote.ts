@@ -18,7 +18,7 @@ import { tmpdir } from 'node:os'
 import { basename, dirname, join, resolve, sep } from 'node:path'
 import { type XvfbHandle, startXvfb } from '@tsuuanmi/system-display-virtual'
 import { registerSecretPath } from '@tsuuanmi/system-libs'
-import { ProviderError } from '@tsuuanmi/system-provider-core'
+import { OWNED_PROFILE_SWITCH, ProviderError } from '@tsuuanmi/system-provider-core'
 import { WebSocketServer } from 'ws'
 
 export type RemoteState = 'waiting' | 'saving' | 'complete' | 'failed' | 'ended'
@@ -157,7 +157,8 @@ export class RemoteLogin {
     }
     // A plain Chrome with no automation attached: the operator signs in exactly as usual.
     this.chrome = spawn(this.options.chromePath, [
-      `--user-data-dir=${this.options.profileDir}`, '--no-first-run', '--no-default-browser-check', '--restore-last-session',
+      // Marked as started by system, so a crashed host's login browser can be reclaimed (ADR-0030).
+      `--user-data-dir=${this.options.profileDir}`, OWNED_PROFILE_SWITCH, '--no-first-run', '--no-default-browser-check', '--restore-last-session',
       '--disable-background-mode', '--window-position=0,0', '--window-size=1920,1080', '--lang=en-US', this.options.loginUrl,
     ], { env, stdio: 'ignore' })
     this.chrome.once('exit', () => {

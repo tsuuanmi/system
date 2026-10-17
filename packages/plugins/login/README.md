@@ -40,9 +40,13 @@
     run beside the operator's browser.
   - A second `remote` for the same account, while the first is starting or open,
     joins it and gets the same desktop. A taken port fails as `config_error`.
+  - The login browser carries `OWNED_PROFILE_SWITCH`, so the browser of a
+    crashed host's login is stopped the next time the profile is used. Its Xvfb
+    and VNC server hold no profile and are not reaped (roadmap P3).
 - **One Save per account at a time.** That also means one automated sign-in:
   two turns that both find the account signed out run their relogins one after
-  the other.
+  the other. A relogin is refused (`overloaded`) while a remote login for the
+  account is open.
 - **`relogin(account)`: credential login** (ADR-0017, opt-in per account).
   - It runs only for accounts in `credentials` mode (`accounts.setCredentials`),
     on the persistent login profile, inside the Save flow.

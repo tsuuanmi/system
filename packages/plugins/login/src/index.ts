@@ -203,6 +203,8 @@ export class Login extends Service {
    * failed sign-in marks the account `reauth-required` and nothing is saved.
    */
   async relogin(accountId: string): Promise<AccountView> {
+    // The operator is signing in at the remote login: an automated sign-in would race it.
+    if (this.remotes.has(accountId)) throw new ProviderError('overloaded', `${accountId} has a remote login open; the automated sign-in fails now and is retried later`)
     const account = await this.ctx.accounts.get(accountId)
     if (account.loginMode !== 'credentials') throw new ProviderError('invalid_input', `${accountId} uses manual login; run system account login ${accountId}`)
     const driver = this.ctx.providers.get(account.provider)

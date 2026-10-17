@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import VirtualDisplay from '@tsuuanmi/system-display-virtual'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
+import { OWNED_PROFILE_SWITCH } from '@tsuuanmi/system-provider-core'
 import BrowserPool from '../src/index.ts'
 import { canRunBrowser, testChrome } from './support.ts'
 import { chromium } from 'patchright-core'
@@ -56,11 +57,12 @@ describe.runIf(canRunBrowser)('pool(ctx).captureProfile (the Save flow)', () => 
 
   /**
    * A process that runs "Chrome" on `dir` as far as the host can tell (its command line names the
-   * profile): a login browser a crashed host left, or a browser that will not exit. `stubborn`
-   * ignores SIGTERM.
+   * profile). `owned`: one system started (a crashed host's browser, or one that will not exit);
+   * otherwise one the operator opened. `stubborn` ignores SIGTERM.
    */
-  function squatter(dir: string, stubborn = false): ChildProcess {
-    const child = spawn(process.execPath, ['-e', `${stubborn ? "process.on('SIGTERM', () => {});" : ''}setInterval(() => {}, 1000)`, '--', `--user-data-dir=${dir}`], { stdio: 'ignore' })
+  function squatter(dir: string, options: { owned?: boolean; stubborn?: boolean } = {}): ChildProcess {
+    const args = ['-e', `${options.stubborn ? "process.on('SIGTERM', () => {});" : ''}setInterval(() => {}, 1000)`, '--', `--user-data-dir=${dir}`, ...(options.owned ? [OWNED_PROFILE_SWITCH] : [])]
+    const child = spawn(process.execPath, args, { stdio: 'ignore' })
     fibers.push({ dispose: async () => void child.kill('SIGKILL') })
     return child
   }
@@ -133,11 +135,27 @@ describe.runIf(canRunBrowser)('pool(ctx).captureProfile (the Save flow)', () => 
     it('stops a browser a crashed host left on the profile, then opens it', async () => {
       const ctx = await boot()
       const dir = await signedInProfile()
-      const orphan = squatter(dir, true)
+      const orphan = squatter(dir, { owned: true, stubborn: true })
       const turn = await pool(ctx).openTurn('acct', { profile: { dir } })
       await gone(orphan)
       await turn.page.goto(`${origin}/`)
       expect(await reads(turn.page)).toBe('signed in')
+      await turn.close()
+    }, 90_000)
+
+    it('never stops a browser system did not start: it blocks the account until it closes, and health shows it', async () => {
+      const ctx = await boot()
+      const dir = await signedInProfile()
+      const operator = squatter(dir)
+      await expect(pool(ctx).openTurn('acct', { profile: { dir } })).rejects.toMatchObject({ kind: 'overloaded', message: expect.stringMatching(/not started by system, so it is never stopped: close that browser/) })
+      await expect(pool(ctx).reserveProfile('acct', dir)).rejects.toMatchObject({ kind: 'overloaded' })
+      expect(running(operator)).toBe(true)
+      expect(pool(ctx).profileStates()).toEqual([expect.objectContaining({ account: 'acct', blocked: expect.stringMatching(/close that browser/) })])
+      operator.kill('SIGKILL')
+      await gone(operator)
+      // Its process gone, the profile is free again.
+      expect(pool(ctx).profileStates()).toEqual([])
+      const turn = await pool(ctx).openTurn('acct', { profile: { dir } })
       await turn.close()
     }, 90_000)
 
@@ -147,7 +165,7 @@ describe.runIf(canRunBrowser)('pool(ctx).captureProfile (the Save flow)', () => 
       const turn = await pool(ctx).openTurn('acct', { profile: { dir } })
       await turn.close()
       // A process of the closing browser that will not exit.
-      const wedged = squatter(dir, true)
+      const wedged = squatter(dir, { owned: true, stubborn: true })
       await pool(ctx).close('acct')
       await gone(wedged)
       expect(pool(ctx).profileStates()).toEqual([])
@@ -183,7 +201,7 @@ describe.runIf(canRunBrowser)('pool(ctx).captureProfile (the Save flow)', () => 
     it('stops a browser a crashed host left on the profile when the operator reserves it', async () => {
       const ctx = await boot()
       const dir = await signedInProfile()
-      const orphan = squatter(dir)
+      const orphan = squatter(dir, { owned: true })
       const release = await pool(ctx).reserveProfile('acct', dir)
       await gone(orphan)
       release()

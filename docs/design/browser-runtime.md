@@ -208,16 +208,17 @@ account's profile open, Save reads it in place, in a page of its own.
 
   Portable state is neither loaded nor written back.
   - **Lifecycle.**
-    - The context opens lazily, one launch at a time, without session restore.
+    - The context opens lazily, one launch at a time, with session restore so
+      session-only cookies survive; the restored tabs are blanked.
     - It closes after `closeAfterMs` idle. A close waits until its Chrome has
       exited, and stops one that has not within 10 s.
     - If the browser dies, in-flight operations fail, and a submitted turn
       reconciles by its receipt.
   - **Who holds a profile.** A process on this host whose command line names
-    the profile (`/proc` on Linux), never a lock file alone. A browser left on
-    the profile by a crashed host is stopped when the profile is next opened or
-    reserved. One that cannot be stopped is shown in health
-    (`login-profiles`).
+    the profile (`/proc` on Linux), never a lock file alone. Only a browser
+    `system` started (it carries `--system-owned-profile`) is ever stopped, for
+    example one a crash left. Any other process blocks the account until it
+    closes, and health shows it (`login-profiles`).
   - **The operator first.**
     - A remote login reserves the profile (`reserveProfile`). It is refused while
       operations run, and it returns only after the idle context's browser has

@@ -32,6 +32,13 @@ export interface BrowserTurn<Page = unknown, BrowserContext = unknown> {
   close(): Promise<void>
 }
 
+/**
+ * A command-line switch on every browser `system` starts on a login profile: the automation's,
+ * and the remote login's. Only a process carrying it is ever stopped to free a profile. Chrome
+ * ignores a switch it does not know.
+ */
+export const OWNED_PROFILE_SWITCH = '--system-owned-profile'
+
 /** A login profile the browser holds, reserves, or cannot free (ADR-0030; health shows it). */
 export interface ProfileState {
   account: string

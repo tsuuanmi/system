@@ -3,29 +3,37 @@
  * session-bound account, the operator's reservations, the Save flow's captures, and who holds
  * a profile directory.
  *
- * A profile counts as in use only while a process on this host runs Chrome on it
- * (`--user-data-dir=<dir>` in its command line, read from /proc). A lock file proves nothing on
- * its own: its pid may have been reused, or it may name another host. Elsewhere than Linux, the
- * lock's pid is all there is to go on, so a process holding a profile is refused and never stopped.
+ * - **In use.** A profile counts as in use only while a process on this host runs Chrome on it
+ *   (`--user-data-dir=<dir>` in its command line, read from /proc). A lock file proves nothing
+ *   on its own: its pid may have been reused, or it may name another host. Elsewhere than Linux,
+ *   the lock's live local pid is all there is.
+ * - **Stopped.** Only a browser `system` started is ever stopped: it carries
+ *   `OWNED_PROFILE_SWITCH`, as the automation's launches and the remote login's browser do. Any
+ *   other process on a profile, such as a browser the operator opened, blocks the account until it
+ *   closes. It is never signalled.
+ * - **One at a time.** Launches, standalone captures, and a reservation's close-and-evict run one
+ *   at a time per account.
  */
 import { lstatSync, readdirSync, readFileSync, readlinkSync, rmSync } from 'node:fs'
 import { hostname } from 'node:os'
 import { join, resolve } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { ensurePrivateDir } from '@tsuuanmi/system-libs'
-import { type ProfileState, ProviderError } from '@tsuuanmi/system-provider-core'
+import { OWNED_PROFILE_SWITCH, type ProfileState, ProviderError } from '@tsuuanmi/system-provider-core'
 import type { BrowserContext, Page } from 'patchright-core'
 import { abortable, closeWithin } from './async.ts'
 
-/** How long a closed profile's Chrome may take to exit before it is killed. */
+/** How long a closed profile's Chrome may take to exit before it is stopped. */
 const EXIT_WAIT_MS = 10_000
 /** How long a stopped process may take to go after SIGTERM, then after SIGKILL. */
 const STOP_GRACE_MS = 3000
 const KILL_WAIT_MS = 5000
+/** A page that does not open in a held context within this is a wedged browser (INV-9). */
+const PAGE_OPEN_MS = 30_000
 
 export interface ProfileHost {
-  /** Launch Chrome on a login profile, headed on the invisible display. `restore` reopens the last session. */
-  launch(dir: string, restore: boolean): Promise<{ context: BrowserContext; lost: AbortSignal }>
+  /** Launch Chrome on a login profile, headed on the invisible display, marked as owned, with session restore. */
+  launch(dir: string): Promise<{ context: BrowserContext; lost: AbortSignal }>
   closeAfterMs(): number
   /** An operator-visible event (an orphaned browser stopped, say). */
   report(type: string, data: Record<string, unknown>): void
@@ -46,8 +54,14 @@ interface Held {
   idle?: NodeJS.Timeout | undefined
 }
 
-/** Processes on this host running Chrome on `dir`: the browser, and the children still exiting with it. */
-export function profileUsers(dir: string): number[] {
+export interface ProfileUser {
+  pid: number
+  /** Started by `system` (it carries `OWNED_PROFILE_SWITCH`): it may be stopped. */
+  owned: boolean
+}
+
+/** Processes on this host running Chrome on `dir`: a browser, and the children still exiting with it. */
+export function profileUsers(dir: string): ProfileUser[] {
   if (process.platform !== 'linux') return lockHolder(dir)
   const flags = new Set([`--user-data-dir=${dir}`, `--user-data-dir=${resolve(dir)}`])
   let entries: string[]
@@ -56,7 +70,7 @@ export function profileUsers(dir: string): number[] {
   } catch {
     return lockHolder(dir)
   }
-  const users: number[] = []
+  const users: ProfileUser[] = []
   for (const name of entries) {
     if (!/^\d+$/.test(name) || Number(name) === process.pid) continue
     let args: string[]
@@ -65,18 +79,18 @@ export function profileUsers(dir: string): number[] {
     } catch {
       continue
     }
-    if (args.some((arg) => flags.has(arg))) users.push(Number(name))
+    if (args.some((arg) => flags.has(arg))) users.push({ pid: Number(name), owned: args.includes(OWNED_PROFILE_SWITCH) })
   }
   return users
 }
 
-/** Without /proc: the live local pid Chrome's `SingletonLock` (`<host>-<pid>`) names, if any. */
-function lockHolder(dir: string): number[] {
+/** Without /proc: the live local pid Chrome's `SingletonLock` (`<host>-<pid>`) names, if any; never stopped. */
+function lockHolder(dir: string): ProfileUser[] {
   try {
     const lock = join(dir, 'SingletonLock')
     if (!lstatSync(lock).isSymbolicLink()) return []
     const match = /^(.*)-(\d+)$/.exec(readlinkSync(lock))
-    return match && match[1] === hostname() && alive(Number(match[2])) ? [Number(match[2])] : []
+    return match && match[1] === hostname() && alive(Number(match[2])) ? [{ pid: Number(match[2]), owned: false }] : []
   } catch {
     return []
   }
@@ -87,22 +101,25 @@ export function clearLockFiles(dir: string): void {
   for (const name of ['SingletonLock', 'SingletonCookie', 'SingletonSocket']) rmSync(join(dir, name), { force: true })
 }
 
-/** Until nobody uses `dir`, or `ms` has passed: who still does. */
-async function waitFree(dir: string, ms: number): Promise<number[]> {
+/** Until none of `pids` (or, without `pids`, nobody) uses `dir`, or `ms` has passed: who still does. */
+async function waitFree(dir: string, ms: number, pids?: readonly number[]): Promise<ProfileUser[]> {
   const deadline = Date.now() + ms
   for (;;) {
-    const users = profileUsers(dir)
+    const users = profileUsers(dir).filter((u) => !pids || pids.includes(u.pid))
     if (!users.length || Date.now() >= deadline) return users
     await sleep(100)
   }
 }
 
-/** Stop every process on `dir`: SIGTERM, then SIGKILL. Who is left (none, unless it cannot be stopped). */
-async function stopUsers(dir: string, pids: number[]): Promise<number[]> {
+/**
+ * Stop exactly `pids` (browsers `system` started): SIGTERM, then SIGKILL for those of them still
+ * there. A process that appeared meanwhile is never signalled. Returns those that could not be stopped.
+ */
+async function stopOwned(dir: string, pids: readonly number[]): Promise<number[]> {
   for (const pid of pids) signal(pid, 'SIGTERM')
-  const left = await waitFree(dir, STOP_GRACE_MS)
-  for (const pid of left) signal(pid, 'SIGKILL')
-  return waitFree(dir, KILL_WAIT_MS)
+  const left = await waitFree(dir, STOP_GRACE_MS, pids)
+  for (const { pid } of left) signal(pid, 'SIGKILL')
+  return (await waitFree(dir, KILL_WAIT_MS, pids)).map((u) => u.pid)
 }
 
 function signal(pid: number, name: NodeJS.Signals): void {
@@ -122,6 +139,20 @@ function alive(pid: number): boolean {
   }
 }
 
+function within<T>(promise: Promise<T>, ms: number, what: string, onLate: (value: T) => void): Promise<T> {
+  let timer: NodeJS.Timeout | undefined
+  return Promise.race([
+    promise.finally(() => clearTimeout(timer)),
+    new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        void promise.then(onLate, () => undefined)
+        reject(new ProviderError('session_broken', what))
+      }, ms)
+      timer.unref()
+    }),
+  ])
+}
+
 const reservedError = (account: string): ProviderError =>
   new ProviderError('overloaded', `${account}'s login profile is reserved by the operator's login; the operation fails now and is retried later`)
 
@@ -129,11 +160,12 @@ export class ProfileContexts {
   private readonly held = new Map<string, Held>()
   private readonly launching = new Map<string, Promise<Held>>()
   private readonly closing = new Map<string, Promise<void>>()
-  private readonly capturing = new Map<string, Promise<unknown>>()
+  /** The tail of each account's one-at-a-time work: launches, standalone captures, a reservation's close-and-evict. */
+  private readonly chains = new Map<string, Promise<unknown>>()
   /** Open reservations per account (each release ends one). */
   private readonly reservations = new Map<string, number>()
-  /** Accounts whose profile a process holds that could not be stopped, with what to do. */
-  private readonly blocked = new Map<string, string>()
+  /** Accounts whose profile a process holds that may not or could not be stopped, and what to do. */
+  private readonly blocked = new Map<string, { dir: string; why: string }>()
   private disposed = false
 
   constructor(private readonly host: ProfileHost) {}
@@ -145,13 +177,15 @@ export class ProfileContexts {
 
   /** Open profiles, reservations, and profiles held by a process that could not be stopped (health). */
   states(): ProfileState[] {
+    // A blocked profile its process has since let go of is free again.
+    for (const [account, { dir }] of this.blocked) if (!profileUsers(dir).length) this.blocked.delete(account)
     const ids = [...new Set([...this.held.keys(), ...this.reservations.keys(), ...this.blocked.keys()])].sort()
     return ids.map((account) => ({
       account,
       open: this.held.has(account),
       pages: this.held.get(account)?.pages ?? 0,
       reserved: this.reservations.has(account),
-      ...(this.blocked.has(account) ? { blocked: this.blocked.get(account)! } : {}),
+      ...(this.blocked.has(account) ? { blocked: this.blocked.get(account)!.why } : {}),
     }))
   }
 
@@ -173,7 +207,7 @@ export class ProfileContexts {
       const at = Math.max(Date.now(), held.nextOpen)
       held.nextOpen = at + gapMs
       if (at > Date.now()) await abortable(sleep(at - Date.now(), undefined, { ref: false }), signal)
-      page = await abortable(held.context.newPage(), signal, (late) => void late.close().catch(() => undefined))
+      page = await abortable(this.newPage(account, held), signal, (late) => void late.close().catch(() => undefined))
     } catch (error) {
       this.release(account, held)
       throw error
@@ -194,9 +228,7 @@ export class ProfileContexts {
 
   /**
    * Run `run` in a page of the profile: in place when the account holds it open (or is opening
-   * it), else in a launch of its own that restores the operator's last session and is closed
-   * afterwards (the Save after a remote login). One capture per account at a time, and no launch
-   * for turns meanwhile.
+   * it), else in a launch of its own that is closed afterwards (the Save after a remote login).
    */
   async capture<T>(account: string, dir: string, run: (page: Page, context: BrowserContext) => Promise<T>): Promise<T> {
     if (!this.reservations.has(account) && (this.held.has(account) || this.launching.has(account))) {
@@ -204,7 +236,7 @@ export class ProfileContexts {
       held.pages++
       clearTimeout(held.idle)
       try {
-        const page = await held.context.newPage()
+        const page = await this.newPage(account, held)
         try {
           return await run(page, held.context)
         } finally {
@@ -214,35 +246,27 @@ export class ProfileContexts {
         this.release(account, held)
       }
     }
-    const previous = this.capturing.get(account)
-    const task = (async () => {
-      await previous?.catch(() => undefined)
+    return this.serial(account, async () => {
       await this.closing.get(account)?.catch(() => undefined)
       ensurePrivateDir(dir)
       // The operator's own browser may still be exiting: it is waited for, never stopped.
       const users = await waitFree(dir, EXIT_WAIT_MS)
-      if (users.length) throw new ProviderError('session_broken', `login profile ${dir} is in use by process ${users.join(', ')}; close that browser first`)
+      if (users.length) throw new ProviderError('session_broken', `login profile ${dir} is in use by process ${users.map((u) => u.pid).join(', ')}; close that browser first`)
       clearLockFiles(dir)
-      const { context } = await this.host.launch(dir, true)
+      const { context } = await this.host.launch(dir)
       try {
         const page = context.pages()[0] ?? (await context.newPage())
         return await run(page, context)
       } finally {
         await this.shutDown(account, dir, context).catch(() => undefined)
       }
-    })()
-    this.capturing.set(account, task)
-    try {
-      return await task
-    } finally {
-      if (this.capturing.get(account) === task) this.capturing.delete(account)
-    }
+    })
   }
 
   /**
    * Reserve the profile for the operator's own browser (a remote login). Refused while pages are
    * open. Otherwise the context is closed, and its Chrome has exited (or been stopped) before this
-   * returns. A browser left on the profile by a crashed host is stopped too. Until every
+   * returns. A browser `system` left on the profile in a crash is stopped too. Until every
    * reservation is released, profile turns fail as `overloaded`.
    */
   async reserve(account: string, dir: string): Promise<() => void> {
@@ -259,11 +283,13 @@ export class ProfileContexts {
       else this.reservations.delete(account)
     }
     try {
-      await this.launching.get(account)?.catch(() => undefined)
-      await this.capturing.get(account)?.catch(() => undefined)
-      await this.close(account)
-      // Under an earlier reservation, a browser on the profile is the operator's own: never stopped.
-      if (first) await this.evict(account, dir)
+      // Under an earlier reservation the profile is the operator's already: nothing to free.
+      if (first) {
+        await this.serial(account, async () => {
+          await this.close(account)
+          await this.evict(account, dir)
+        })
+      }
     } catch (error) {
       release()
       throw error
@@ -286,9 +312,27 @@ export class ProfileContexts {
 
   async dispose(): Promise<void> {
     this.disposed = true
-    await Promise.allSettled([...this.launching.values(), ...this.capturing.values()])
+    await Promise.allSettled([...this.launching.values(), ...this.chains.values()])
     await Promise.allSettled([...this.held.keys()].map((account) => this.close(account)))
     await Promise.allSettled(this.closing.values())
+  }
+
+  /** Run `task` after the account's earlier one-at-a-time work, and before its later work. */
+  private serial<T>(account: string, task: () => Promise<T>): Promise<T> {
+    const previous = this.chains.get(account)
+    const run = (async () => {
+      await previous?.catch(() => undefined)
+      return task()
+    })()
+    this.chains.set(account, run)
+    void run.catch(() => undefined).finally(() => {
+      if (this.chains.get(account) === run) this.chains.delete(account)
+    })
+    return run
+  }
+
+  private newPage(account: string, held: Held): Promise<Page> {
+    return within(held.context.newPage(), PAGE_OPEN_MS, `the login profile of ${account} did not open a page in ${PAGE_OPEN_MS / 1000} s`, (late) => void late.close().catch(() => undefined))
   }
 
   private ensure(account: string, dir: string): Promise<Held> {
@@ -300,30 +344,31 @@ export class ProfileContexts {
     }
     let launch = this.launching.get(account)
     if (!launch) {
-      launch = this.launchHeld(account, dir).finally(() => this.launching.delete(account))
+      launch = this.serial(account, () => this.launchHeld(account, dir)).finally(() => this.launching.delete(account))
       this.launching.set(account, launch)
     }
     return launch
   }
 
   private async launchHeld(account: string, dir: string): Promise<Held> {
-    // Never beside a close or a Save still using the directory.
+    // Never beside a close still using the directory.
     await this.closing.get(account)?.catch(() => undefined)
-    await this.capturing.get(account)?.catch(() => undefined)
     if (this.reservations.has(account)) throw reservedError(account)
     ensurePrivateDir(dir)
     await this.evict(account, dir)
     let context: BrowserContext
     let lost: AbortSignal
     try {
-      // No session restore: restored tabs would all load the site at once, unpaced.
-      ;({ context, lost } = await this.host.launch(dir, false))
+      ;({ context, lost } = await this.host.launch(dir))
     } catch (error) {
       if (error instanceof ProviderError) throw error
       throw new ProviderError('session_broken', `the login profile of ${account} failed to open: ${(error as Error).message}`, { cause: error })
     }
+    // Opened with session restore, so the profile's session-only cookies survive. The restored
+    // tabs are blanked: each turn opens its own page, spaced.
+    for (const restored of context.pages()) await restored.goto('about:blank').catch(() => undefined)
     const held: Held = { context, dir, pages: 0, nextOpen: 0 }
-    const onLost = (): void => void this.close(account)
+    const onLost = (): void => void this.close(account).catch(() => undefined)
     lost.addEventListener('abort', onLost, { once: true })
     context.once('close', () => {
       lost.removeEventListener('abort', onLost)
@@ -341,38 +386,39 @@ export class ProfileContexts {
   }
 
   /**
-   * A process still running Chrome on a profile that nothing here holds was left by a crashed
-   * host: an automation browser, or a login browser. It is stopped within a bound. One that cannot
-   * be stopped blocks the account, and health shows what to do.
+   * Free a profile nothing here holds before using it. A browser `system` started and left in a
+   * crash (an automation or a login browser) is stopped within a bound. Any other process on it,
+   * such as a browser the operator opened, blocks the account until it closes, and is never signalled.
    */
   private async evict(account: string, dir: string): Promise<void> {
-    const users = profileUsers(dir)
-    if (users.length) {
-      if (process.platform !== 'linux') throw new ProviderError('session_broken', `login profile ${dir} is in use by process ${users.join(', ')}; close that browser first`)
-      this.host.report('browser.profile-orphan', { account, pids: users })
-      const left = await stopUsers(dir, users)
-      if (left.length) {
-        const why = `process ${left.join(', ')} still runs Chrome on ${account}'s login profile and could not be stopped: stop it, then retry`
-        this.blocked.set(account, why)
-        throw new ProviderError('session_broken', why)
-      }
+    const owned = profileUsers(dir).filter((u) => u.owned).map((u) => u.pid)
+    if (owned.length) {
+      this.host.report('browser.profile-orphan', { account, pids: owned })
+      await stopOwned(dir, owned)
     }
+    const users = profileUsers(dir)
+    if (users.length) throw this.block(account, dir, users)
     this.blocked.delete(account)
     clearLockFiles(dir)
   }
 
-  /** Close a context and wait until its Chrome has exited; one that will not, within the bound, is stopped. */
+  /** Close a context and wait until its Chrome has exited; that browser, if still there after the bound, is stopped. */
   private async shutDown(account: string, dir: string, context: BrowserContext): Promise<void> {
     await closeWithin(context)
-    let users = await waitFree(dir, EXIT_WAIT_MS)
-    // Nothing else can run on a profile this context held: what is left is its own wedged browser.
-    if (users.length && process.platform === 'linux') users = await stopUsers(dir, users)
-    if (users.length) {
-      const why = `process ${users.join(', ')} still runs Chrome on ${account}'s login profile after it was closed: stop it, then retry`
-      this.blocked.set(account, why)
-      throw new ProviderError('session_broken', why)
-    }
+    const lingering = (await waitFree(dir, EXIT_WAIT_MS)).filter((u) => u.owned).map((u) => u.pid)
+    if (lingering.length) await stopOwned(dir, lingering)
+    const users = profileUsers(dir)
+    if (users.length) throw this.block(account, dir, users)
     clearLockFiles(dir)
+  }
+
+  private block(account: string, dir: string, users: ProfileUser[]): ProviderError {
+    const pids = users.map((u) => u.pid).join(', ')
+    const why = users.every((u) => u.owned)
+      ? `process ${pids} (a browser system started) still runs on ${account}'s login profile and could not be stopped: stop it, then retry`
+      : `process ${pids} has ${account}'s login profile open and was not started by system, so it is never stopped: close that browser, then retry`
+    this.blocked.set(account, { dir, why })
+    return new ProviderError('overloaded', why)
   }
 
   private release(account: string, held: Held): void {

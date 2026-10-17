@@ -169,7 +169,8 @@ Ranked:
   at most a fixed number of pages per hour, and the first challenge or sign-out ends the
   validation for the operator to look at. Check, too, what the site shares between tabs of one
   profile (localStorage or BroadcastChannel state, such as the mode picker or Temporary chat):
-  two members in two tabs must not change each other's mode or chat.
+  two members in two tabs must not change each other's mode or chat. And check that the sign-in
+  survives a restart of the held context: after the idle close, the next turn is still signed in.
 
 ## Rollout and rollback
 

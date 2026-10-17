@@ -12,7 +12,7 @@
  */
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
-import { Browser as BrowserSeam, type PortableState, type PreparedDisplay, type ProfileState, ProviderError } from '@tsuuanmi/system-provider-core'
+import { Browser as BrowserSeam, OWNED_PROFILE_SWITCH, type PortableState, type PreparedDisplay, type ProfileState, ProviderError } from '@tsuuanmi/system-provider-core'
 import { type Browser, type BrowserContext, type Page, chromium } from 'patchright-core'
 import { abortable, closeWithin } from './async.ts'
 import { discoverChrome } from './chrome.ts'
@@ -86,11 +86,11 @@ export class BrowserPool extends BrowserSeam<Page, BrowserContext> {
   constructor(ctx: Context, private readonly config: Config) {
     super(ctx)
     this.profiles = new ProfileContexts({
-      launch: async (dir, restore) => {
+      launch: async (dir) => {
         const display = await this.ctx.display.prepare('invisible')
         const chrome = discoverChrome(this.config.chromePath)
         if (!chrome) throw new ProviderError('config_error', 'no usable Chrome: run `system init` or set chromePath / CHROME_PATH')
-        return { context: await launchProfile(dir, chrome.path, display, restore), lost: display.lost }
+        return { context: await launchProfile(dir, chrome.path, display), lost: display.lost }
       },
       closeAfterMs: () => this.config.closeAfterMs ?? 30 * 60_000,
       report: (type, data) => void this.ctx.get('eventLog')?.append({ type, data }),
@@ -277,17 +277,17 @@ export class BrowserPool extends BrowserSeam<Page, BrowserContext> {
 }
 
 /**
- * A login profile, headed on the invisible display. `restore` reopens the last session, so the
- * session cookies of the operator's browser survive (the Save flow); turns open without it.
+ * A login profile, headed on the invisible display, marked as a browser `system` started. It
+ * reopens the last session, so the profile's session-only cookies survive.
  */
-function launchProfile(dir: string, executablePath: string, display: PreparedDisplay, restore: boolean): Promise<BrowserContext> {
+function launchProfile(dir: string, executablePath: string, display: PreparedDisplay): Promise<BrowserContext> {
   return chromium.launchPersistentContext(dir, {
     executablePath,
     headless: false,
     env: { ...process.env, ...display.env },
     viewport: display.viewport,
     ignoreDefaultArgs: IGNORED_DEFAULT_ARGS,
-    args: [...(restore ? ['--restore-last-session'] : []), '--disable-background-mode', ...CHROME_ARGS, ...display.windowArgs],
+    args: ['--restore-last-session', '--disable-background-mode', OWNED_PROFILE_SWITCH, ...CHROME_ARGS, ...display.windowArgs],
   })
 }
 
