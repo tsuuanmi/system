@@ -14,6 +14,9 @@ import type { Frame, Page, Route } from 'patchright-core'
 
 export type { AskOptions, AskResult, AuthState, ConversationMode, ProviderMode }
 
+/** How long the logged-out home must hold, with no composer, before it counts as signed out. */
+const LOGGED_OUT_HOLD_MS = 3000
+
 export interface DriverTimeouts {
   /** Hard deadline for one turn (default 15 min). */
   turnMs?: number
@@ -110,7 +113,14 @@ export class ChatGptWebDriver implements ProviderDriver<Page> {
     }
     // A challenge page is neither: only the operator can pass it, and loading again deepens it.
     if (await engine.state('auth.challenge')) throw new ProviderError('challenge', 'chatgpt-web: the site shows a challenge (Verify you are human); pass it in the login profile (system account login) and Save')
-    return (await engine.state('auth.signed-out')) ? 'signed-out' : 'signed-in'
+    if (!(await engine.state('auth.signed-out'))) return 'signed-in'
+    if (await engine.state('auth.login-page')) return 'signed-out'
+    // Only the logged-out home: a signed-in app may paint that shell before it loads its session, and
+    // a false sign-out takes the operator to undo. It counts only if no composer appears meanwhile.
+    if (await engine.waitFor({ state: 'auth.signed-in' }, LOGGED_OUT_HOLD_MS).then(() => true, () => false)) return 'signed-in'
+    if (await engine.state('auth.signed-out')) return 'signed-out'
+    await engine.drift('composer.input').catch(() => undefined)
+    return 'unknown'
   }
 
   /**

@@ -100,6 +100,14 @@ describe.runIf(canRunBrowser)('ChatGptWebDriver against the fake site, with no r
     expect(await offer.driver.checkAuth(offer.page)).toBe('signed-in')
   }, 60_000)
 
+  it('holds a logged-out home verdict: a signed-in app that paints that shell first stays signed in', async () => {
+    const { page, driver, fake } = await site({ logoutFlashMs: 1000 })
+    await page.goto(`${fake.origin}/`)
+    expect(await page.locator('form[data-logged-out]').isVisible()).toBe(true)
+    expect(await driver.checkAuth(page)).toBe('signed-in')
+    expect((await driver.ask(page, 'hello', { conversation: 'temporary' })).text).toBe('OK')
+  }, 60_000)
+
   it('asks in Temporary chat after switching Work to Chat, and waits for completion though the stream stays open', async () => {
     const { fake, page, driver } = await site({ answer: 'Hello from the fake site' })
     const drift: unknown[] = []

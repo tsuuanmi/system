@@ -47,6 +47,8 @@ export interface FakeOptions {
   interstitial?: boolean
   /** Every page is the logged-out home: the app shell with an anonymous composer and no account. */
   loggedOutHome?: boolean
+  /** A signed-in page first paints the logged-out home for this long, then the app (0: no flash). */
+  logoutFlashMs?: number
   /** The open conversation's pane has its own menu button (default true); the history rows always have theirs. */
   paneMenu?: boolean
   /** The delete dialog deletes this conversation instead of the one whose menu opened it (a wrong-chat test). */
@@ -150,7 +152,9 @@ function html(options: Required<FakeOptions>, conversation: Conversation | undef
   const state = JSON.stringify({ options, conversationId: conversation?.id })
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>ChatGPT</title>
 <style>.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}[hidden]{display:none}</style></head>
-<body>
+<body${options.logoutFlashMs ? ' class="ssr"' : ''}>
+${options.logoutFlashMs ? `<style>body.ssr > :not(#ssr-shell){display:none !important}</style><div id="ssr-shell"><form data-logged-out><input aria-label="Ask anything"></form><button data-login-button>Get started</button></div>`
+  + `<script>setTimeout(() => { document.getElementById('ssr-shell').remove(); document.body.classList.remove('ssr') }, ${options.logoutFlashMs})</script>` : ''}
 <nav aria-label="App navigation"><button aria-label="Open profile menu">me</button>${options.loginOffer ? '<button data-login-button>Log in</button>' : ''}
   <ol aria-label="Chat history">${history.filter((id) => id !== conversation?.id).map((id) => `<li><a href="/c/${id}">chat</a><button class="row-options" data-id="${id}" aria-label="Open conversation options" aria-haspopup="menu">…</button></li>`).join('')}</ol>
 </nav>
@@ -377,7 +381,7 @@ export class FakeChatGpt {
 
   constructor(options: FakeOptions = {}) {
     this.options = {
-      startOnWork: true, chatToggleBroken: false, signedIn: true, loginOffer: false, requireCookie: false, rotateOnLoad: false, deleteMenu: true, captcha: false, interstitial: false, loggedOutHome: false, paneMenu: true, dialogTarget: '', userId: 'user-fake123', sendLabel: 'Send', sendTestId: '',
+      startOnWork: true, chatToggleBroken: false, signedIn: true, loginOffer: false, requireCookie: false, rotateOnLoad: false, deleteMenu: true, captcha: false, interstitial: false, loggedOutHome: false, logoutFlashMs: 0, paneMenu: true, dialogTarget: '', userId: 'user-fake123', sendLabel: 'Send', sendTestId: '',
       answer: 'OK', thinkMs: 300, models: ['Latest', 'GPT-6', 'GPT-5.6 Sol', 'GPT-5.5'], lockedModels: [],
       researchMs: 1500, researchHeld: false, report: 'Deep research report body.', clarify: false, features: ['deep-research', 'web-search', 'image-generation'], modelPicker: true,
       mfa: 'totp', email: 'operator@example.test', password: 'correct horse', totpSecret: 'JBSWY3DPEHPK3PXP',

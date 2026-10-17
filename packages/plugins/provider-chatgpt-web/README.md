@@ -19,8 +19,10 @@ The **ChatGPT Web provider driver**
   turn once as `ui_drift`, never as a session to retry.
 - **Logged-out home.** When the session ends, ChatGPT may show its anonymous home instead of the
   login page: the app shell with a logged-out composer and sign-in buttons whose names vary
-  (`auth.logged-out-home`). Visible, with no `composer.input`, it is signed out
-  (`reauth_required`).
+  (`auth.logged-out-home`). Visible, with no `composer.input`, for 3 s, it is signed out
+  (`reauth_required`). The hold exists because a signed-in app may paint that shell before it
+  loads its session, and a false sign-out takes the operator to undo. The login page is signed
+  out at once.
 - **Mode guard.** A new conversation starts with **Chat** selected
   (`aria-pressed=true`), never Work, which spends the Codex quota. If Chat
   cannot be selected, nothing is sent.

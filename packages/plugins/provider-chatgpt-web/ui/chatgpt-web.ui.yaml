@@ -408,8 +408,11 @@ states:
   auth.signed-in: { visible: composer.input }
   auth.challenge: { anyOf: [{ visible: login.challenge }, { url: '/cdn-cgi/challenge-platform/' }] }
   # A "Log in" control beside a working composer is not a signed-out page: only the login host, or a
-  # login control or the logged-out home with no composer, is.
-  auth.signed-out: { anyOf: [{ url: '^https?://auth\.openai\.com/|/auth/login' }, { allOf: [{ anyOf: [{ visible: auth.login }, { visible: auth.logged-out-home }] }, { not: { visible: composer.input } }] }] }
+  # login control with no composer, is (auth.login-page). The logged-out home with no composer is
+  # signed out too, but the driver holds that verdict briefly: it may be the shell a signed-in app
+  # paints before it loads its session.
+  auth.login-page: { anyOf: [{ url: '^https?://auth\.openai\.com/|/auth/login' }, { allOf: [{ visible: auth.login }, { not: { visible: composer.input } }] }] }
+  auth.signed-out: { anyOf: [{ state: auth.login-page }, { allOf: [{ visible: auth.logged-out-home }, { not: { visible: composer.input } }] }] }
   turn.running: { visible: composer.stop }
   turn.idle: { allOf: [{ hidden: composer.stop }, { anyOf: [{ visible: composer.send }, { visible: composer.voice }] }] }
 
