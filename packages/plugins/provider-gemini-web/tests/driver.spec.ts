@@ -394,6 +394,14 @@ describe.runIf(canRunBrowser)('GeminiWebDriver against the fake site', { timeout
     expect(fake.sent.map((s) => s.deepResearch)).toEqual([true, true])
   })
 
+  it('waits for a reopened prompt\'s text before judging it: a bubble that renders first is still observed', async () => {
+    const { page, driver, fake } = await open({ answer: 'done' })
+    const first = await driver.ask(page, 'remember this', { conversation: 'persistent' })
+    fake.options.promptLagMs = 1500
+    const other = await context!.newPage()
+    expect(await driver.snapshot(other, first.binding!)).toMatchObject({ observable: true, running: false, text: 'done', lastPrompt: 'remember this' })
+  })
+
   it('reopens a Deep research turn as running while its card works, then as its report', async () => {
     // Running until the test says otherwise: no window to race, however loaded the host.
     const { page, driver, fake } = await open({ researchHeld: true })

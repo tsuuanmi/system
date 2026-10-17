@@ -61,6 +61,8 @@ export interface FakeOptions {
   chatTabBroken?: boolean
   /** A sent prompt gets its conversation id and then nothing more: the answer never comes (a stall). */
   holdAnswer?: boolean
+  /** A prompt's bubble renders this long before its text does (0: at once), as a loaded page does. */
+  promptLagMs?: number
   /** Clicking Temporary chat does nothing (the driver must refuse to send). */
   temporaryBroken?: boolean
   /** A "Sign in" control shows beside the account's button (an offer to add an account): still signed in. */
@@ -225,7 +227,9 @@ function userTurn(text) {
   user.style.display = 'contents'
   user.innerHTML = '<user-query-content class="user-query-container"><h5 class="sr-only"><span>You said</span> <span class="short"></span></h5>' + (options.promptParagraphs ? '<p class="query-text"></p>' : '<div class="query-text"></div>') + '</user-query-content>'
   user.querySelector('.short').textContent = text.length > 20 ? text.slice(0, 20) + '…' : text
-  user.querySelector('.query-text').textContent = text
+  const fill = () => { user.querySelector('.query-text').textContent = text }
+  if (options.promptLagMs) setTimeout(fill, options.promptLagMs)
+  else fill()
   return user
 }
 function modelTurn(inner, done, copy) {
@@ -405,7 +409,7 @@ export class FakeGemini {
 
   constructor(options: FakeOptions = {}) {
     this.options = {
-      paneMenu: true, dialogTarget: '', dialogExtraCall: false, startOnSpark: true, interstitial: false, captcha: false, deviceBound: false, holdAnswer: false, dropOver: 0, signInOffer: false, chatTabBroken: false, temporaryBroken: false, modePicker: true, promptParagraphs: true, deepResearch: true,
+      paneMenu: true, dialogTarget: '', dialogExtraCall: false, startOnSpark: true, interstitial: false, captcha: false, deviceBound: false, holdAnswer: false, promptLagMs: 0, dropOver: 0, signInOffer: false, chatTabBroken: false, temporaryBroken: false, modePicker: true, promptParagraphs: true, deepResearch: true,
       models: ['3.5 Flash-Lite', '3.8 Flash', '3.1 Pro'], levels: ['Low', 'Medium', 'High'], levelsInline: true, levelsSubmenu: true, submenuBroken: false, answer: 'OK', clarify: '',
       researchMs: 1500, researchHeld: false, report: 'HTTP/3 runs over QUIC, not TCP.', sources: [{ title: 'RFC 9114: HTTP/3', url: 'https://www.rfc-editor.org/rfc/rfc9114' }], ...options,
     }

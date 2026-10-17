@@ -229,12 +229,17 @@ export class GeminiWebDriver implements ProviderDriver<Page> {
     if (auth === 'signed-out') throw new ProviderError('reauth_required', 'gemini-web: signed out')
     if (auth === 'unknown' || this.bindingOf(page) !== binding) return { text: '', running: false, observable: false }
     const engine = this.engine(page)
+    const deadline = Date.now() + this.timeouts.snapshotMs
     if (!(await engine.waitFor({ visible: 'turn.user' }, this.timeouts.snapshotMs).then(() => true, () => false))) return { text: '', running: false, observable: false }
-    const lastPrompt = await this.promptText(engine)
+    // A prompt renders before its text does: read it again until it shows, within the same bound.
+    let lastPrompt = await this.promptText(engine)
+    while (!lastPrompt && Date.now() < deadline) {
+      await page.waitForTimeout(250)
+      lastPrompt = await this.promptText(engine)
+    }
     // A prompt that cannot be read is no evidence of what was sent.
     if (!lastPrompt) return { text: '', running: false, observable: false }
     if (options.feature === 'deep-research') {
-      const deadline = Date.now() + this.timeouts.snapshotMs
       for (;;) {
         const research = await this.researchState(engine)
         if (research.done && research.text) return { text: research.text, running: false, observable: true, lastPrompt }
