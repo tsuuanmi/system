@@ -9,7 +9,7 @@
  */
 import { readFileSync } from 'node:fs'
 import { type AskOptions, type AskResult, type AuthState, bindingReporter, completionOptions, type ConversationMode, type DeleteOptions, modePresets, ProviderError, type ProviderDriver, type ProviderFeature, type ProviderMode, type ResearchState, type TurnSnapshot, waitForReport, waitForStableCompletion, withMissingSources } from '@tsuuanmi/system-provider-core'
-import { copiedMarkdown, type DriftEvent, type HealEvent, linksIn, outlineOf, preWrapText, UiEngine, type UiMap, type UiOutline, loadUiMap, unverifiedEntries } from '@tsuuanmi/system-ui-ops'
+import { copiedMarkdown, type DriftEvent, type HealEvent, linksIn, outlineOf, preWrapText, type StallEvent, UiEngine, type UiMap, type UiOutline, loadUiMap, unverifiedEntries } from '@tsuuanmi/system-ui-ops'
 import type { Frame, Page, Route } from 'patchright-core'
 
 export type { AskOptions, AskResult, AuthState, ConversationMode, ProviderMode }
@@ -78,6 +78,8 @@ export class ChatGptWebDriver implements ProviderDriver<Page> {
   readonly stateOrigins: readonly string[]
   readonly map: UiMap
   onDrift: ((event: DriftEvent) => void) | undefined
+  /** A turn whose answer stalled or ran out of time, outlined; the plugin records it (`provider.stall`). */
+  onStall: ((event: StallEvent) => void) | undefined
   onHeal: ((event: HealEvent) => void) | undefined
   /** Records a chosen heal before it acts (INV-13); a throw aborts the action. */
   beforeHealedAction: ((event: HealEvent) => void | Promise<void>) | undefined
@@ -555,7 +557,10 @@ export class ChatGptWebDriver implements ProviderDriver<Page> {
       signal?.throwIfAborted()
       await page.waitForTimeout(500)
     }
-    return waitForReport(() => this.researchState(engine), this.timeouts, { provider: this.provider, element: 'research.report-title', deadlines, signal })
+    return waitForReport(() => this.researchState(engine), this.timeouts, { provider: this.provider, element: 'research.report-title', deadlines, signal }).catch(async (error: unknown) => {
+      await this.stalled(engine, 'research', error)
+      throw error
+    })
   }
 
   /**
@@ -616,7 +621,16 @@ export class ChatGptWebDriver implements ProviderDriver<Page> {
       const running = (await engine.state('turn.running')) || !finished
       return { responsePresent: true, text, html: '', running }
     }
-    const completed = await waitForStableCompletion(read, completionOptions(this.timeouts, deadlines, signal))
+    const completed = await waitForStableCompletion(read, completionOptions(this.timeouts, deadlines, signal)).catch(async (error: unknown) => {
+      await this.stalled(engine, 'answer', error)
+      throw error
+    })
     return completed.text
+  }
+
+  /** A stall or a deadline, with the page as it stands: outlined, never retried from here. */
+  private async stalled(engine: UiEngine, phase: string, error: unknown): Promise<void> {
+    if (!this.onStall || !(error instanceof ProviderError) || (error.kind !== 'provider_stalled' && error.kind !== 'timeout')) return
+    this.onStall(await engine.stall(phase))
   }
 }

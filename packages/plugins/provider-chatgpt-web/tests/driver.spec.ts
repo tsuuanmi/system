@@ -71,6 +71,15 @@ describe.runIf(canRunBrowser)('ChatGptWebDriver against the fake site, with no r
     expect(fake.sent).toEqual([])
   }, 60_000)
 
+  it('outlines a stalled answer with the page\'s visibility, focus, and path, and fails it as provider_stalled', async () => {
+    const { page, driver } = await site({ thinkMs: 60_000, timeouts: { stallMs: 1500 } })
+    const stalls: Array<{ provider: string; phase: string; visibility?: string; focused?: boolean; url?: string; outline?: { nodes: unknown[] } }> = []
+    driver.onStall = (event) => void stalls.push(event as never)
+    await expect(driver.ask(page, 'hello', { conversation: 'temporary' })).rejects.toMatchObject({ kind: 'provider_stalled' })
+    expect(stalls).toEqual([expect.objectContaining({ provider: 'chatgpt-web', phase: 'answer', visibility: 'visible', focused: true, url: '/' })])
+    expect(stalls[0]!.outline!.nodes.length).toBeGreaterThan(0)
+  }, 60_000)
+
   it('reports signed-in and signed-out with positive evidence', async () => {
     const a = await site()
     expect(await a.driver.checkAuth(a.page)).toBe('signed-in')

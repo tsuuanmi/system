@@ -163,9 +163,17 @@ Ranked:
   two sessions in two tabs answer independently; a remote login waits for, or ends, the turns.
 - Crash: a host killed mid-turn restarts with the profile lock released (`releaseStaleProfileLock`)
   and reconciles the turn as today.
-- Live, only once the operator has cleared Google's check in the login profile, and never before:
-  a two-turn brainstorm with a Gemini member, then turns spaced over hours, then a review with
-  members on both families; no sign-out, no challenge. During validation the Gemini account loads
+- Live, only once the operator has cleared Google's check in the login profile, and never before.
+  Short work first, in this order, each step only after the one before passes (the operator's
+  direction, 2026-10-17):
+  1. one short single-turn check that lands on Gemini (or the Gemini member of the brainstorm, if
+     routing will not send a single turn there);
+  2. a short two-member brainstorm, Gemini and ChatGPT;
+  3. a short review on a small focus.
+
+  No `research`, no Deep research, and nothing long-running until those pass. Then turns spaced
+  over hours. No sign-out and no challenge at any step. A stall is read from its
+  `provider.stall` outline before the next attempt. During validation the Gemini account loads
   at most a fixed number of pages per hour, and the first challenge or sign-out ends the
   validation for the operator to look at. Check, too, what the site shares between tabs of one
   profile (localStorage or BroadcastChannel state, such as the mode picker or Temporary chat):

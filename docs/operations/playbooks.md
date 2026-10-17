@@ -66,6 +66,10 @@ drift and does not silently break.
     `driftWindowHours`. It counts each stale element of a map once, however
     many turns resolve it on a fallback, and names it (`chatgpt-web
     composer.form`). `system events --type ui.drift` lists every occurrence.
+- **A stalled turn** (`provider_stalled`) is outlined the same way: event
+  `provider.stall` (`system events --type provider.stall`) carries the page's
+  outline as evidence, with its `visibilityState`, focus, and path, so a stall
+  can be read without the operator's browser.
 - **Read the evidence.** A `ui.drift` event's `outline` names a local-private
   `evidence` artifact: the structure of the region around the element, never
   its text ([drift evidence](../design/ui-operations.md#drift-evidence)).

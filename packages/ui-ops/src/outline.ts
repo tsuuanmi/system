@@ -138,6 +138,11 @@ export interface EvidenceStore {
  * since an event carries no page detail.
  */
 export function driftData(event: { provider: string; element: string; kind: string; candidate: number; source?: string; mapHash: string; outline?: UiOutline }, store?: EvidenceStore): Record<string, unknown> {
+  return evidenceData(event, store)
+}
+
+/** Any event's data with its outline stored the same way and named (a drift, a stall). */
+export function evidenceData(event: { provider: string; outline?: UiOutline | undefined }, store?: EvidenceStore): Record<string, unknown> {
   const { outline, ...data } = event
   const kept = outline && store ? store.put({ kind: 'evidence', bodySchema: 'ui-outline@1.0', body: outline, classification: 'local-private', producer: { type: 'system', ref: `ui-ops/${event.provider}` } }).id : undefined
   return { ...data, ...(kept ? { outline: kept } : {}) }

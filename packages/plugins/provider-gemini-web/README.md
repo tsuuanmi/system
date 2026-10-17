@@ -118,5 +118,9 @@ driver, its operations are data: a UI map,
   operation of a Gemini account runs as a page of its own login profile.
   `pageGapMs` (default 10 s, at most 10 min) spaces the **opens** of the
   account's pages. Navigations within a page are not spaced.
+- **A stalled answer** (`provider_stalled`, or a deadline) is outlined as it
+  stands: event `provider.stall`, with the page's structure as local-private
+  evidence, its `visibilityState`, focus, and path. It is never retried from the
+  driver.
 - **Config:** `origin`, `modes`, `defaultMode`, `maxPromptChars`, `pageGapMs`.
 - **Injects:** `providers`.

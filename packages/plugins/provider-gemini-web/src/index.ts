@@ -7,7 +7,7 @@ import z from '@deepseek-ai/schemastery'
 import type {} from '@tsuuanmi/system-artifacts'
 import type {} from '@tsuuanmi/system-event-log'
 import type { ProviderMode } from '@tsuuanmi/system-provider-core'
-import { driftData } from '@tsuuanmi/system-ui-ops'
+import { driftData, evidenceData } from '@tsuuanmi/system-ui-ops'
 import { GeminiWebDriver } from './driver.ts'
 
 export { GeminiWebDriver, shippedMap } from './driver.ts'
@@ -60,5 +60,7 @@ export function apply(ctx: Context, config: Config = {}): void {
   })
   // A stale element, with the outline of its region as local-private evidence (docs/design/ui-operations.md#drift-evidence).
   driver.onDrift = (e) => ctx.get('eventLog')?.append({ type: 'ui.drift', data: driftData(e, ctx.get('artifacts')) })
+  // A stalled answer, with the page outlined as local-private evidence (PROP-0005 validation).
+  driver.onStall = (e) => ctx.get('eventLog')?.append({ type: 'provider.stall', data: evidenceData(e, ctx.get('artifacts')) })
   ctx.providers.register(driver)
 }

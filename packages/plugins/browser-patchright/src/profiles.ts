@@ -244,6 +244,8 @@ export class ProfileContexts {
       held.nextOpen = at + gapMs
       if (at > Date.now()) await abortable(sleep(at - Date.now(), undefined, { ref: false }), signal)
       page = await abortable(this.newPage(account, held), signal, (late) => void late.close().catch(() => undefined))
+      // The turn's page is the active tab of its window, whatever else the profile has open.
+      await abortable(page.bringToFront(), signal)
     } catch (error) {
       this.release(account, held)
       throw error

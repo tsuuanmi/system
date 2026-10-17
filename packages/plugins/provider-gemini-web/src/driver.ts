@@ -10,7 +10,7 @@
  */
 import { readFileSync } from 'node:fs'
 import { type AskOptions, type AskResult, type AuthState, bindingReporter, completionOptions, type DeleteOptions, modePresets, ProviderError, type ProviderDriver, type ProviderFeature, type ProviderMode, type ResearchState, type TurnSnapshot, waitForReport, waitForStableCompletion, withSources } from '@tsuuanmi/system-provider-core'
-import { copiedMarkdown, type DriftEvent, outlineOf, preWrapText, UiEngine, type UiMap, type UiOutline, loadUiMap, unverifiedEntries } from '@tsuuanmi/system-ui-ops'
+import { copiedMarkdown, type DriftEvent, outlineOf, preWrapText, type StallEvent, UiEngine, type UiMap, type UiOutline, loadUiMap, unverifiedEntries } from '@tsuuanmi/system-ui-ops'
 import type { Locator, Page, Route } from 'patchright-core'
 
 const MAP_URL = new URL('../ui/gemini-web.ui.yaml', import.meta.url)
@@ -107,6 +107,8 @@ export class GeminiWebDriver implements ProviderDriver<Page> {
   readonly map: UiMap
   /** A stale map element, with an outline of its region; the plugin records it. */
   onDrift: ((event: DriftEvent) => void) | undefined
+  /** A turn whose answer stalled or ran out of time, outlined; the plugin records it (`provider.stall`). */
+  onStall: ((event: StallEvent) => void) | undefined
   private readonly origin: string
   private readonly timeouts: Required<DriverTimeouts>
   private readonly maxPromptChars: number
@@ -484,8 +486,17 @@ export class GeminiWebDriver implements ProviderDriver<Page> {
       const answer = (await engine.resolve('turn.assistant', 1000)).locator.last()
       const finished = (await engine.findIn('turn.assistant.done', answer)) !== undefined
       return { responsePresent: text !== '', text, html: '', running: (await engine.state('turn.running')) || !finished }
-    }, completionOptions(this.timeouts, deadlines, signal))
+    }, completionOptions(this.timeouts, deadlines, signal)).catch(async (error: unknown) => {
+      await this.stalled(engine, 'answer', error)
+      throw error
+    })
     return completed.text
+  }
+
+  /** A stall or a deadline, with the page as it stands: outlined, never retried from here. */
+  private async stalled(engine: UiEngine, phase: string, error: unknown): Promise<void> {
+    if (!this.onStall || !(error instanceof ProviderError) || (error.kind !== 'provider_stalled' && error.kind !== 'timeout')) return
+    this.onStall(await engine.stall(phase))
   }
 
   /**
@@ -497,7 +508,10 @@ export class GeminiWebDriver implements ProviderDriver<Page> {
     if ((await engine.count('research.start')) === 0) return this.markdownOf(engine, reply)
     signal?.throwIfAborted()
     await engine.act('research.start')
-    return waitForReport(() => this.researchState(engine), this.timeouts, { provider: this.provider, element: 'research.report', deadlines, signal })
+    return waitForReport(() => this.researchState(engine), this.timeouts, { provider: this.provider, element: 'research.report', deadlines, signal }).catch(async (error: unknown) => {
+      await this.stalled(engine, 'research', error)
+      throw error
+    })
   }
 
   /** The research card in the answer after the last prompt: working, or done with its report. */

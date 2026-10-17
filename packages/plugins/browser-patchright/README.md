@@ -27,6 +27,7 @@
     with no open page, or when the display is lost.
   - Page opens are spaced at least `gapMs` apart. Navigations within a page are
     not spaced.
+  - Each new page is brought to the front, so it is the active tab of its window.
 - **Who holds a profile.** On Linux, a profile is in use while a process on this
   host has `--user-data-dir=<dir>` in its command line (read from `/proc`).
   Chrome rewrites its command line into one space-separated string, so arguments

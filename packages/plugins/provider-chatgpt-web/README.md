@@ -17,6 +17,10 @@ The **ChatGPT Web provider driver**
   runtime marks the account `challenge`. A page that shows neither the composer nor a sign-in
   page in time is outlined as a `ui.drift` of `composer.input` (`system evidence`) and fails the
   turn once as `ui_drift`, never as a session to retry.
+- **A stalled answer** (`provider_stalled`, or a deadline) is outlined as it
+  stands: event `provider.stall`, with the page's structure as local-private
+  evidence, its `visibilityState`, focus, and path. It is never retried from the
+  driver.
 - **Logged-out home.** When the session ends, ChatGPT may show its anonymous home instead of the
   login page: the app shell with a logged-out composer and sign-in buttons whose names vary
   (`auth.logged-out-home`). Visible, with no `composer.input`, for 3 s, it is signed out

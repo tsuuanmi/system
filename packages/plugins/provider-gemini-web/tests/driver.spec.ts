@@ -99,6 +99,16 @@ describe.runIf(canRunBrowser)('GeminiWebDriver against the fake site', { timeout
     return { page, driver, fake }
   }
 
+  it('outlines a stalled answer with the page\'s visibility, focus, and path, and fails it as provider_stalled', async () => {
+    const { page, fake } = await open({ startOnSpark: false, holdAnswer: true })
+    const driver = new GeminiWebDriver({ origin: fake.origin, modes: PRESETS, defaultMode: 'flash', timeouts: { readyMs: 5000, stableMs: 300, pollMs: 100, turnMs: 30_000, stallMs: 1500 } })
+    const stalls: Array<{ provider: string; phase: string; visibility?: string; focused?: boolean; url?: string; outline?: { nodes: unknown[] } }> = []
+    driver.onStall = (event) => void stalls.push(event as never)
+    await expect(driver.ask(page, 'hello', { conversation: 'persistent' })).rejects.toMatchObject({ kind: 'provider_stalled' })
+    expect(stalls).toEqual([expect.objectContaining({ provider: 'gemini-web', phase: 'answer', visibility: 'visible', focused: true, url: expect.stringMatching(/^\/app/) })])
+    expect(stalls[0]!.outline!.nodes.length).toBeGreaterThan(0)
+  })
+
   it('outlines a page that shows neither signed in nor signed out, as drift evidence, and reports it unknown', async () => {
     const { page, fake } = await open({ interstitial: true })
     const driver = new GeminiWebDriver({ origin: fake.origin, modes: PRESETS, defaultMode: 'flash', timeouts: { readyMs: 1500 } })

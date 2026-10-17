@@ -34,6 +34,22 @@ export interface DriftEvent {
   outline?: UiOutline
 }
 
+/**
+ * A turn whose answer stalled or ran out of time: the page outlined (structure only, redacted as a
+ * drift outline is), with what it said of itself. So a stall can be read without the operator's
+ * browser.
+ */
+export interface StallEvent {
+  provider: string
+  /** Where it stalled: `answer`, `research`. */
+  phase: string
+  /** `document.visibilityState` and `document.hasFocus()` of the page, when readable. */
+  visibility?: string
+  focused?: boolean
+  url?: string
+  outline?: UiOutline
+}
+
 export interface HealEvent {
   provider: string
   element: string
@@ -286,6 +302,20 @@ export class UiEngine {
     const redact = await this.options.redact?.().catch(() => []) ?? []
     const outline = await outlineOf(root ?? this.page, found ? `parent of ${element}` : scope ? spec!.scope! : 'body', undefined, redact).catch(() => undefined)
     this.options.onDrift({ provider: this.map.provider, element, kind, candidate, ...(source ? { source } : {}), mapHash: this.map.hash, ...(outline ? { outline } : {}) })
+  }
+
+  /** The page as it stands, for a stall: outlined (structure only, redacted), with its visibility, focus, and path. */
+  async stall(phase: string): Promise<StallEvent> {
+    const redact = await this.options.redact?.().catch(() => []) ?? []
+    const outline = await outlineOf(this.page, `turn page (${phase} stalled)`, undefined, redact).catch(() => undefined)
+    const seen = await this.page.evaluate(() => ({ visibility: document.visibilityState as string, focused: document.hasFocus() })).catch(() => undefined)
+    let url: string | undefined
+    try {
+      url = new URL(this.page.url()).pathname
+    } catch {
+      url = undefined
+    }
+    return { provider: this.map.provider, phase, ...(seen ?? {}), ...(url ? { url } : {}), ...(outline ? { outline } : {}) }
   }
 
   /** The map's `errors` conditions guard every action: a login surface or challenge is never healed around. */

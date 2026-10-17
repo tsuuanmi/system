@@ -58,6 +58,8 @@ export interface FakeOptions {
   dropOver?: number
   /** Clicking Chat does nothing (the driver must refuse to send). */
   chatTabBroken?: boolean
+  /** A sent prompt gets its conversation id and then nothing more: the answer never comes (a stall). */
+  holdAnswer?: boolean
   /** Clicking Temporary chat does nothing (the driver must refuse to send). */
   temporaryBroken?: boolean
   /** A "Sign in" control shows beside the account's button (an offer to add an account): still signed in. */
@@ -397,7 +399,7 @@ export class FakeGemini {
 
   constructor(options: FakeOptions = {}) {
     this.options = {
-      paneMenu: true, dialogTarget: '', dialogExtraCall: false, startOnSpark: true, interstitial: false, captcha: false, deviceBound: false, dropOver: 0, signInOffer: false, chatTabBroken: false, temporaryBroken: false, modePicker: true, promptParagraphs: true, deepResearch: true,
+      paneMenu: true, dialogTarget: '', dialogExtraCall: false, startOnSpark: true, interstitial: false, captcha: false, deviceBound: false, holdAnswer: false, dropOver: 0, signInOffer: false, chatTabBroken: false, temporaryBroken: false, modePicker: true, promptParagraphs: true, deepResearch: true,
       models: ['3.5 Flash-Lite', '3.8 Flash', '3.1 Pro'], levels: ['Low', 'Medium', 'High'], levelsInline: true, levelsSubmenu: true, submenuBroken: false, answer: 'OK', clarify: '',
       researchMs: 1500, researchHeld: false, report: 'HTTP/3 runs over QUIC, not TCP.', sources: [{ title: 'RFC 9114: HTTP/3', url: 'https://www.rfc-editor.org/rfc/rfc9114' }], ...options,
     }
@@ -439,6 +441,7 @@ export class FakeGemini {
       turns.push({ role: 'user', text: sent.prompt })
       res.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
       if (id) res.write(`data: ${JSON.stringify({ conversationId: id })}\n\n`)
+      if (this.options.holdAnswer) return
       await new Promise((resolve) => setTimeout(resolve, 300))
       if (sent.deepResearch && !this.options.clarify) {
         const plan = { role: 'plan' as const, title: 'HTTP/2 and HTTP/3 Comparison', started: false }
