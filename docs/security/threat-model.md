@@ -241,6 +241,10 @@
   and offsets, never the secret. A denial fails the turn, agent run, or model call as
   `egress_denied` (USER_ACTION) and nothing is sent. A scan cannot recognize every
   kind of private data, so classification remains the caller's statement.
+  Client-scope `result` returns the requester's own answer text, which for a website
+  Worker is a `local-private` provider answer
+  ([artifacts](../design/artifacts.md#envelope)): INV-12 governs what is sent to
+  Workers, not returning a caller its own result.
 - **An AI client holding a control token triggers operator actions.** Each
   credential grants only its scope
   ([ADR-0023](../decisions/adr/0023-scoped-control-credentials.md),
