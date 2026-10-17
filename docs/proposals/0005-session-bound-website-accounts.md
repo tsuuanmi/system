@@ -232,3 +232,73 @@ Accepted on 2026-10-17 by the operator, in Researcher's session: both ranked opt
   profile lock, reopens the conversation in the profile, and adopts the answer, sending nothing
   twice.
 - Live validation: pending, until the operator has cleared Google's challenge.
+
+## Amendment (2026-10-17): keep a session's tab between its turns
+
+Status: proposed, for review. It changes the design above, not ADR-0030's decision: the work
+still runs in pages of the account's profile, never from a copy. Once accepted, it is appended
+to ADR-0030 as an amendment.
+
+**Why.** The operator asked to cut page loads and new chats. Live, it was repeated loads that
+drew Google's check. Today a session's every turn opens a new tab and loads its conversation
+again. A team member runs three turns (proposal, ballot, debate), so a two-member brainstorm
+loads six pages where two would do.
+
+**Design.**
+
+- **A kept tab per session.** A persistent session's turn opens its profile page with a key (the
+  session id). When the turn completes, its page is not closed: it stays open, idle, as the
+  session's tab. The session's next turn gets that page back, with no new page.
+- **No navigation when already there.** Before going to a bound conversation, a driver checks
+  whether the page already shows it: its URL is the conversation's, and its turns are rendered. If
+  so it does not navigate; otherwise it navigates as today. Both drivers get this check.
+- **Discarded, never reused, after anything but success.** A turn that fails, is aborted, or whose
+  page closed closes its tab for good. The next turn starts from a fresh page. A reconciliation
+  after a restart always opens a fresh page, since nothing is kept across a restart.
+- **Bounded.** At most 4 kept tabs per account, a constant (INV-9). Opening a fifth closes the
+  least recently used.
+  - Kept tabs close with their context: on the idle close (they count as idle, so the context
+    still closes after `closeAfterMs` with no turn running), on a reservation, or when the
+    display is lost.
+  - A reservation is refused only by pages in use, never by kept tabs.
+- **Ends with its session.** When a session is released (its run deleted or expired) or reset (its
+  conversation lost), its kept tab is closed.
+- **One user at a time.** One session's turns run strictly in order, so a kept tab is never in two
+  turns at once.
+- **Pacing.**
+  - Page opens stay spaced by `pageGapMs`. A kept tab handed back opens no page and is not paced.
+  - If its driver must navigate it after all (it no longer shows its conversation), that one load
+    is not paced. That happens rarely.
+- **Temporary turns are unchanged.** Each needs a fresh Temporary chat, which is reached by
+  navigation, so reusing a tab would save no load. An in-app "New chat" could, but it needs map
+  entries verified live: later, if the loads still matter.
+- **Scope.** Session-bound accounts only (profile contexts). The ChatGPT account, on fresh
+  contexts, is unchanged until it declares `sessionBound`.
+
+**Seam.**
+
+- `openTurn(account, { profile: { dir, gapMs, keep } })`: `keep` is the session id.
+- `BrowserTurn.discard()` closes a kept tab for good, where `close()` would keep it.
+- `ctx.browser.discardTab(account, keep)` closes a session's kept tab when the session ends.
+- The conformance suite gets a case for each.
+
+**Expected savings, in page loads.**
+
+| Work | Now | Kept tabs |
+|---|---|---|
+| A two-member brainstorm (proposal, ballot, debate) | 6 | 2 |
+| Research's synthesis thread (frame, evidence, conclusion) | 3 | 1 |
+| A one-shot `ask` (Temporary chat) | 1 | 1 |
+
+**Tests.**
+
+- Fake site: it counts page loads per conversation. A session's three turns load the
+  conversation once.
+- A failed turn's tab is discarded, and the next turn loads afresh.
+- The fifth kept tab closes the least recently used.
+- Releasing the session closes its tab.
+- A reservation and the idle close close every kept tab.
+- A driver on a kept page that no longer shows its conversation navigates once.
+
+**Live validation**, added to the plan above: count the page loads of one brainstorm on Gemini.
+They should match the table.
