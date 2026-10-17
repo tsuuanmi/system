@@ -106,6 +106,7 @@ interface Row {
   tier_decision: string | null
   egress_decision: string | null
   classification: Classification | null
+  cancel_requested_at: string | null
   error: string | null
   created_at: string
   updated_at: string
@@ -249,7 +250,11 @@ export class Turns extends Service {
       version: 6,
       sql: `ALTER TABLE turns ADD COLUMN submitted_at TEXT;
       ALTER TABLE turns ADD COLUMN objective TEXT;`,
-    }, LEDGER_MIGRATION])
+    }, LEDGER_MIGRATION, {
+      // A cancel asked for while another owner holds the turn, or before a restart: honored at its next start.
+      version: 8,
+      sql: `ALTER TABLE turns ADD COLUMN cancel_requested_at TEXT;`,
+    }])
     ctx.workers.register({
       name: 'website',
       describe: () => this.describeWorkers(),
@@ -384,7 +389,7 @@ export class Turns extends Service {
         acceptance: requirement.acceptance.contract, objective: requirement.objective, submitted_at: null, prompt, status: 'queued',
         account, worker: request.worker, binding: null, answer: null, answer_artifact: null,
         route_decision: request.decisions.route, tier_decision: request.decisions.tier, egress_decision: null,
-        classification: requirement.data.classification, error: null, created_at: now(), updated_at: now(),
+        classification: requirement.data.classification, cancel_requested_at: null, error: null, created_at: now(), updated_at: now(),
       }
       db.prepare(`INSERT INTO turns (turn_id, request_key, session_id, mode, feature, tier, tier_source, acceptance, objective, classification, prompt, status,
         account, worker, route_decision, tier_decision, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?)`)
@@ -532,18 +537,22 @@ export class Turns extends Service {
 
   /**
    * Cancel a turn (REQ-WRK-4): a running one is aborted, a queued one never starts. The
-   * provider may still finish an answer it was already generating; it is not taken.
+   * provider may still finish an answer it was already generating; it is not taken. The cancel
+   * is recorded first, so a turn this process does not hold now (another owner, or a restart
+   * before the abort lands) fails as `aborted` when it next starts, and is never resent.
    */
   cancel(turnId: string): boolean {
     const row = this.row(turnId)
     if (!row || TERMINAL.has(row.status)) return false
+    this.ctx.store.db.prepare('UPDATE turns SET cancel_requested_at = COALESCE(cancel_requested_at, ?) WHERE turn_id = ?').run(now(), turnId)
     const running = this.cancels.get(turnId)
     if (running) {
       running.abort(new ProviderError('aborted', 'cancelled by the operator'))
       return true
     }
     const lease = this.ctx.leases.acquire(`turn:${turnId}`, LEASE_TTL_MS)
-    if (!lease) return false
+    // Held elsewhere: its owner fails it when it next starts.
+    if (!lease) return true
     try {
       this.fail(turnId, new ProviderError('aborted', 'cancelled by the operator'), () => lease)
     } finally {
@@ -614,6 +623,11 @@ export class Turns extends Service {
       try {
         const row = this.row(turnId)
         if (!row || TERMINAL.has(row.status)) return
+        // Cancelled while another owner held it, or before a restart: never run, reconciled, or resent.
+        if (row.cancel_requested_at) {
+          this.fail(turnId, new ProviderError('aborted', 'cancelled by the operator'), current)
+          return
+        }
         const receipt = row.account ? this.ctx.turnReceipts.read(this.identity(row, row.account)) : undefined
         if (row.status === 'running' && receipt?.status === 'SUBMITTED') {
           if ((await this.reconcileSubmitted(row, receipt, AbortSignal.any([lost, cancel.signal, this.halted.signal]), current)) === 'done') return

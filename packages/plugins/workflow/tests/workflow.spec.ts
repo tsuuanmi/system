@@ -466,14 +466,14 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
     // Stop, then continue: the decision is promoted again and blocks on the same tie; no Worker is asked.
     await ctx.workflow.stop(run.runId)
     // The tally and the decision are the engine's: no supersede.
-    expect(() => ctx.workflow.supersede(run.runId, 'brainstorm:tally:1', { text: 'x' })).toThrow('which the engine computes')
+    await expect(ctx.workflow.supersede(run.runId, 'brainstorm:tally:1', { text: 'x' })).rejects.toThrow('which the engine computes')
     const before = gemini!.sent.length
     ctx.workflow.continue(run.runId)
     await until(() => ctx.workflow.get(run.runId)!.blocked?.kind === 'tie', 30_000)
     expect(gemini!.sent).toHaveLength(before)
     // Supersede m1's first ballot: the tally runs again, and its new debate gets ids of a new generation.
     await ctx.workflow.stop(run.runId)
-    ctx.workflow.supersede(run.runId, 'brainstorm:m1:ballot:1', { text: ballot('O1', ['O2 still delays the release']) })
+    await ctx.workflow.supersede(run.runId, 'brainstorm:m1:ballot:1', { text: ballot('O1', ['O2 still delays the release']) })
     await until(() => ctx.workflow.get(run.runId)!.blocked?.kind === 'tie', 120_000)
     const ids = ctx.workflow.get(run.runId)!.nodes.map((n) => `${n.nodeId} ${n.state}`)
     expect(ids).toEqual(expect.arrayContaining(['brainstorm:m1:debate:1 RETIRED', 'brainstorm:tally:2 RETIRED', 'brainstorm:m1:debate:1:g2 COMPLETED', 'brainstorm:tally:2:g2 COMPLETED', 'brainstorm BLOCKED']))
@@ -919,7 +919,7 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
     const done = await ctx.workflow.wait(ctx.workflow.start({ template: 'deep-research', input: 'q' }).runId, 60_000)
     expect(done.status).toBe('completed')
     const old = ctx.workflow.records(done.runId)[0]!.outputReceipt!.result
-    const reopened = ctx.workflow.supersede(done.runId, 'research:1', { text: 'Corrected report https://src.example/fixed', note: 'the first report misread the catalog' })
+    const reopened = await ctx.workflow.supersede(done.runId, 'research:1', { text: 'Corrected report https://src.example/fixed', note: 'the first report misread the catalog' })
     expect(reopened).toMatchObject({ status: 'running' })
     const again = await ctx.workflow.wait(done.runId, 60_000)
     expect(again.status).toBe('completed')
@@ -934,7 +934,7 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
       .map((a) => a.body as { outcome: { option: string }; inputs: string[] })
       .find((b) => b.outcome.option === 'rerun')!
     expect(invalidation.inputs).toEqual([old, replacement.id].sort())
-    expect(() => ctx.workflow.supersede(done.runId, 'compact:1', { text: 'x' })).not.toThrow()
+    await expect(ctx.workflow.supersede(done.runId, 'compact:1', { text: 'x' })).resolves.toBeDefined()
     await ctx.workflow.wait(done.runId, 60_000)
   }, 150_000)
 
@@ -982,7 +982,7 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
     // Long after the run ended: the re-plan starts at once, not when a lease expires.
     await new Promise((resolve) => setTimeout(resolve, 1500))
 
-    expect(ctx.workflow.supersede(run.runId, 'context:1', { text: 'Corrected context' })).toMatchObject({ status: 'running' })
+    expect(await ctx.workflow.supersede(run.runId, 'context:1', { text: 'Corrected context' })).toMatchObject({ status: 'running' })
     await until(() => ctx.workflow.get(run.runId)?.blocked !== undefined, 20_000)
     const newPlan = waitingPlan(ctx.workflow.get(run.runId)!)
     expect(newPlan).not.toBe(oldPlan)
@@ -1018,7 +1018,7 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
     await settledOp(() => ctx.workflow.approve(run.runId, { verdict: 'rejected', note: 'wrong step' }))
     expect(await ctx.workflow.wait(run.runId, 30_000)).toMatchObject({ status: 'failed', error: { kind: 'plan_rejected' } })
     const asked = fake.sent.length
-    ctx.workflow.supersede(run.runId, 'plan:1', { text: planOf('edited-step'), note: 'the operator edited the plan' })
+    await ctx.workflow.supersede(run.runId, 'plan:1', { text: planOf('edited-step'), note: 'the operator edited the plan' })
     await until(() => ctx.workflow.get(run.runId)?.blocked !== undefined, 20_000)
     const view = ctx.workflow.get(run.runId)!
     expect(states(view)).toMatchObject({ 'plan:1:gate': 'RETIRED', 'plan:1:old-step': 'RETIRED', 'plan:1:g2:gate': 'BLOCKED', 'plan:1:g2:edited-step': 'WAITING' })
@@ -1028,7 +1028,7 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
     expect((await ctx.workflow.wait(run.runId, 60_000)).status).toBe('completed')
     expect(fake.sent.slice(asked).map((s) => s.prompt.includes('Plan how to answer'))).not.toContain(true)
     // A gate is decided by a verdict, never replaced.
-    expect(() => ctx.workflow.supersede(run.runId, 'plan:1:g2:gate', { text: 'approved' })).toThrow(/approve or reject the plan/)
+    await expect(ctx.workflow.supersede(run.runId, 'plan:1:g2:gate', { text: 'approved' })).rejects.toThrow(/approve or reject the plan/)
   }, 240_000)
 
   it('refuses a superseding plan that fails validation, and changes nothing', async () => {
@@ -1038,7 +1038,7 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
     await settledOp(() => ctx.workflow.approve(run.runId, { verdict: 'rejected' }))
     await ctx.workflow.wait(run.runId, 30_000)
     const before = ctx.workflow.get(run.runId)!
-    expect(() => ctx.workflow.supersede(run.runId, 'plan:1', { text: 'not a plan at all' })).toThrow(/replacement plan is refused/)
+    await expect(ctx.workflow.supersede(run.runId, 'plan:1', { text: 'not a plan at all' })).rejects.toThrow(/replacement plan is refused/)
     expect(ctx.workflow.get(run.runId)).toEqual(before)
   }, 120_000)
 
@@ -1046,7 +1046,7 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
     const { ctx } = await boot({ fake: { answer: replanAnswer }, workflow: { templates: { replan: replanTemplate() }, autoApprovePlans: true } })
     const run = ctx.workflow.start({ template: 'replan', input: 'q' })
     expect(await ctx.workflow.wait(run.runId, 90_000)).toMatchObject({ status: 'completed', answer: 'final from old finding' })
-    ctx.workflow.supersede(run.runId, 'context:1', { text: 'Corrected context' })
+    await ctx.workflow.supersede(run.runId, 'context:1', { text: 'Corrected context' })
     await until(() => ctx.workflow.get(run.runId)?.blocked !== undefined, 20_000)
     const view = ctx.workflow.get(run.runId)!
     await settledOp(() => ctx.workflow.approve(run.runId, { verdict: 'approved', plan: waitingPlan(view) }))
@@ -1060,7 +1060,7 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
     const failed = await ctx.workflow.wait(run.runId, 120_000)
     expect(failed.status).toBe('failed')
     expect(states(failed)['plan:1:old-step']).toBe('FAILED')
-    ctx.workflow.supersede(run.runId, 'context:1', { text: 'Corrected context' })
+    await ctx.workflow.supersede(run.runId, 'context:1', { text: 'Corrected context' })
     await until(() => ctx.workflow.get(run.runId)?.blocked !== undefined, 20_000)
     expect(ctx.workflow.get(run.runId)).toMatchObject({ status: 'running', blocked: { nodeId: 'plan:1:g2:gate' } })
   }, 240_000)
@@ -1140,6 +1140,56 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
     cleanups.splice(cleanups.indexOf(stop), 1)
     expect(fake.sent).toEqual([])
   }, 60_000)
+
+  it('supersedes a run left with a running node after a restart: a turn that answered meanwhile stays history, never taken or resent, and the node runs again once (INV-4)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'system-workflow-'))
+    cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+    const step = (nodeId: string, prompt: string, extra: Record<string, unknown> = {}) => ({ nodeId, objective: nodeId, prompt, capabilities: ['reason'], tier: 'standard' as const, conversation: 'temporary' as const, acceptance: 'acceptance.answer', ...extra })
+    // The slow step answers in its own conversation; its sibling needs a capability no Worker has, so the run fails beside it.
+    const templates = { 'fan-out': [
+      step('context:1', 'Context for: {{input}}'),
+      step('slow:1', 'Slow step on: {{node:context:1}}', { dependsOn: ['context:1'], conversation: 'persistent' }),
+      step('blocked:1', 'Blocked on: {{node:context:1}}', { dependsOn: ['context:1'], capabilities: ['reason', 'connector:nowhere'] }),
+      step('final:1', 'Both: {{node:slow:1}} {{node:blocked:1}}', { dependsOn: ['slow:1', 'blocked:1'] }),
+    ] }
+    const first = await boot({ dir, fake: { thinkMs: 3000, answer: (prompt) => (prompt.startsWith('Context for') ? 'the old context' : `answered: ${prompt}`) }, workflow: { templates } })
+    const run = first.ctx.workflow.start({ template: 'fan-out', input: 'a question' })
+    const slowTurn = (): string | undefined => first.ctx.workflow.get(run.runId)!.nodes.find((n) => n.nodeId === 'slow:1')?.executionId
+    await until(() => slowTurn() !== undefined && first.ctx.turns.get(slowTurn()!)?.binding !== undefined)
+    const orphan = slowTurn()!
+    await first.stop()
+    cleanups.splice(cleanups.indexOf(first.stop), 1)
+    const slow = (context: string) => first.fake.sent.filter((s) => s.prompt.startsWith(`Slow step on: ${context}`))
+    // The site answers while no host runs; the restarted turn runtime recovers that answer.
+    const second = await boot({ dir, shared: first.fake, workflow: { templates } })
+    expect(await second.ctx.workflow.wait(run.runId, 60_000)).toMatchObject({ status: 'failed' })
+    await until(() => second.ctx.turns.get(orphan)?.status === 'completed', 60_000)
+    expect(second.ctx.workflow.get(run.runId)!.nodes.find((n) => n.nodeId === 'slow:1')).toMatchObject({ state: 'RUNNING', executionId: orphan })
+    const website = second.ctx.workers.source('website')!
+    const cancel = website.cancel!.bind(website)
+    const cancels: Array<[string, boolean]> = []
+    website.cancel = (id) => {
+      const done = cancel(id)
+      cancels.push([id, done])
+      return done
+    }
+    // Refused before anything is cancelled: the slow step has no result to replace.
+    await expect(second.ctx.workflow.supersede(run.runId, 'slow:1', { text: 'x' })).rejects.toThrow('has no completed result')
+    expect(cancels).toEqual([])
+    await second.ctx.workflow.supersede(run.runId, 'context:1', { text: 'the new context' })
+    // Asked to cancel, too late: it had answered.
+    expect(cancels).toEqual([[orphan, false]])
+    const done = await second.ctx.workflow.wait(run.runId, 90_000)
+    expect(done.status).toBe('failed')
+    expect(slow('the old context')).toHaveLength(1)
+    expect(slow('the new context')).toHaveLength(1)
+    const node = second.ctx.workflow.explain(run.runId)!.nodes.find((n) => n.nodeId === 'slow:1')!
+    expect(node.state).toBe('COMPLETED')
+    const rerun = node.decisions.find((d) => d.type === 'recovery' && d.outcome === 'rerun')!
+    expect(rerun.reasons).toEqual([expect.stringMatching(/^context:1's result .* was superseded by/), expect.stringMatching(new RegExp(`^its execution ${orphan} had already finished; its result sha256:[0-9a-f]{64} is history, never taken or resent$`))])
+    // The orphan's answer is not the node's result.
+    expect(second.ctx.artifacts.read(node.decisions.filter((d) => d.type === 'acceptance').at(-1)!.result!)).toMatchObject({ text: expect.stringMatching(/^answered: Slow step on: the new context/) })
+  }, 240_000)
 
   it('recovers a run after a restart without sending the research prompt again (REQ-WF-4)', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'system-workflow-'))

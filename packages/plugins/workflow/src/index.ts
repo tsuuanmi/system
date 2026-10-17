@@ -236,7 +236,7 @@ export class Workflow extends Service {
    * fenced and re-runs, its `recovery` decision pointing at both artifacts. New inputs mean new
    * input hashes, so nothing stale is reused.
    */
-  supersede(runId: string, nodeId: string, replacement: { text: string; note?: string }): RunView {
+  supersede(runId: string, nodeId: string, replacement: { text: string; note?: string }): Promise<RunView> {
     return supersede(this.engine, runId, nodeId, replacement)
   }
 

@@ -164,6 +164,35 @@ describe.runIf(canRunBrowser)('crash injection at every reconcile point of a web
     expect(fake.deleteRequests).toHaveLength(1)
   }, 400_000)
 
+  it('a run that failed beside a running node, superseded after a restart: the orphaned turn is cancelled before the node runs again, and its prompt is never resent (INV-4)', async () => {
+    const fake = new FakeChatGpt({ thinkMs: 40_000, answer: (prompt) => (prompt.startsWith('Context for') ? 'the old context' : 'a slow answer') })
+    await fake.start()
+    cleanups.push(() => fake.stop())
+    const dir = mkdtempSync(join(tmpdir(), 'system-crash-'))
+    cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+    const first = engine(dir, fake, ['fan-out', 'a question'])
+    const runId = await first.runId
+    const slow = (context: string) => fake.sent.filter((s) => s.prompt.startsWith(`Slow step on: ${context}`))
+    // The slow step was sent and bound; its sibling failed at routing; the run waits on the slow one.
+    await until(() => slow('the old context').length === 1 && bound(dir), 180_000)
+    await crash(first)
+    const second = engine(dir, fake, ['supersede', runId, 'the new context'])
+    const done = await second.done
+    // The run failed again on the step no Worker can run, after the slow step ran on the new context.
+    expect(done).toMatchObject({ status: 'failed' })
+    expect(slow('the old context')).toHaveLength(1)
+    expect(slow('the new context')).toHaveLength(1)
+    const db = new DatabaseSync(join(dir, 'system.db'), { readOnly: true })
+    try {
+      const turns = db.prepare("SELECT status, error, cancel_requested_at FROM turns WHERE prompt LIKE 'Slow step on: %' ORDER BY created_at").all() as Array<{ status: string; error: string | null; cancel_requested_at: string | null }>
+      expect(turns.map((t) => [t.status, t.error && (JSON.parse(t.error) as { kind: string }).kind, !!t.cancel_requested_at])).toEqual([['failed', 'aborted', true], ['completed', null, false]])
+      const node = db.prepare("SELECT state FROM workflow_nodes WHERE run_id = ? AND node_id = 'slow:1'").get(runId) as { state: string }
+      expect(node.state).toBe('COMPLETED')
+    } finally {
+      db.close()
+    }
+  }, 400_000)
+
   it('a session-bound account, killed after the prompt was sent and bound: the restart clears the dead browser\'s profile lock, reopens the conversation in the profile, and adopts the answer (ADR-0030)', async () => {
     const fake = new FakeGemini({ startOnSpark: false, deviceBound: true, answer: `${'Slowly streamed words. '.repeat(80)}Done.` })
     await fake.start()

@@ -120,7 +120,9 @@ fenced and becomes re-runnable. Its replacement execution records a `recovery`
 decision that points at the superseding artifact.
 
 The operator's `supersede` on a workflow node starts this
-([workflow](../../packages/plugins/workflow/README.md)).
+([workflow](../../packages/plugins/workflow/README.md)). The executions of the nodes it runs
+again are cancelled and have ended first, so no replacement runs beside an orphaned one; a
+result one of them had already produced stays as history and is never taken.
 
 ## Explain
 

@@ -91,64 +91,14 @@ export function continueRun(e: Engine, runId: string, nodeId?: string): RunView 
  * growth gets new ids. The new plan supersedes the old one behind a new gate, so the old approval
  * never opens it (INV-5). Everything is read and changed under the run's lease.
  */
-export function supersede(e: Engine, runId: string, nodeId: string, replacement: { text: string; note?: string }): RunView {
+export async function supersede(e: Engine, runId: string, nodeId: string, replacement: { text: string; note?: string }): Promise<RunView> {
   if (!replacement.text.trim()) throw new WorkflowFailure('invalid_input', 'the replacement text must not be empty')
+  // Everything that would refuse it is checked before any execution is cancelled.
+  prepare(e, runId, nodeId, replacement)
+  const ended = await endExecutions(e, runId, nodeId)
   let schedule = false
   const view = asOperator(e, runId, (lease) => {
-    const run = e.runRow(runId)
-    if (!run || run.status === 'running') throw new WorkflowFailure('invalid_input', `run ${runId} is ${run ? 'running; stop it or wait' : 'unknown'}`)
-    const nodes = e.nodeRows(runId).filter((n) => n.state !== 'RETIRED')
-    const node = nodes.find((n) => n.node_id === nodeId)
-    const record = node ? (JSON.parse(node.record) as NodeRecord) : undefined
-    if (!node || node.state !== 'COMPLETED' || !record?.outputReceipt) throw new WorkflowFailure('invalid_input', `node ${nodeId} of run ${runId} has no completed result`)
-    const spec = specOf(node)
-    if (spec.executor === 'gate') throw new WorkflowFailure('invalid_input', `node ${nodeId} is a plan's gate: approve or reject the plan instead`)
-    if (spec.executor === 'tally' || spec.executor === 'decide') {
-      throw new WorkflowFailure('invalid_input', `node ${nodeId} is a team's ${spec.executor === 'tally' ? 'tally' : 'decision'}, which the engine computes: supersede a member's step, or break a tie with vote`)
-    }
-    if (nodes.some((n) => isRemovedTeamStep(specOf(n)))) {
-      throw new WorkflowFailure('invalid_input', `run ${runId} is a team procedure that was removed (PROP-0004); its record stays readable with explain and result, and it cannot run again`)
-    }
-    // Everything downstream, transitively.
-    const downstream = new Set<string>()
-    for (let grew = true; grew;) {
-      grew = false
-      for (const n of nodes) {
-        if (!downstream.has(n.node_id) && specOf(n).dependsOn.some((d) => d === nodeId || downstream.has(d))) {
-          downstream.add(n.node_id)
-          grew = true
-        }
-      }
-    }
-    const affected = nodes.filter((n) => downstream.has(n.node_id))
-    // What is retired: everything the replaced node or a node that runs again grew, transitively.
-    const growers = new Set([nodeId, ...downstream])
-    const retired = new Set<string>()
-    for (let grew = true; grew;) {
-      grew = false
-      for (const n of nodes) {
-        if (retired.has(n.node_id) || n.node_id === nodeId) continue
-        if ([...growers, ...retired].some((g) => grewFrom(n, g))) {
-          retired.add(n.node_id)
-          grew = true
-        }
-      }
-    }
-    const rerun = affected.filter((n) => !retired.has(n.node_id))
-    if (spec.grows) {
-      // A replaced planner's result is its new plan: an invalid one changes nothing.
-      const parsed = parsePlan(replacement.text, nodeId, { ...DEFAULT_GROWTH, ...spec.grows })
-      if (!parsed.ok) throw new WorkflowFailure('invalid_input', `the replacement plan is refused: ${parsed.reason}`)
-    }
-    const old = e.ctx.artifacts.get(record.outputReceipt.result)!
-    const body = { ...(old.body as Record<string, unknown>), text: replacement.text }
-    const artifact = e.ctx.artifacts.put({
-      kind: old.kind, bodySchema: old.bodySchema, body, classification: old.classification,
-      producer: { type: 'operator', ref: 'operator' }, inputs: [old.id], lineage: { supersedes: [old.id] }, runId, nodeId,
-    })
-    const result = artifact.id as ArtifactRef
-    const acceptance = e.ctx.workers.accept(result, spec.acceptance, { producer: 'workflow', runId, nodeId, ...(spec.resultSchema ? { resultSchema: spec.resultSchema } : {}) })
-    if (!acceptance.accepted) throw new WorkflowFailure('invalid_input', `the replacement fails ${spec.acceptance}: ${acceptance.reasons.join('; ')}`)
+    const { run, nodes, node, spec, affected, retired, rerun, old, result, acceptance } = prepare(e, runId, nodeId, replacement)
     const why = `${nodeId}'s result ${old.id} was superseded by ${result}${replacement.note ? `: ${replacement.note}` : ''}`
     schedule = !!spec.grows || rerun.length > 0
     e.ctx.store.transaction((db) => {
@@ -158,11 +108,13 @@ export function supersede(e: Engine, runId: string, nodeId: string, replacement:
         if (grown.length) retireGrowth(e, run, grower.node_id, grown, [old.id, result], why, lease)
       }
       for (const dependent of rerun) {
+        const stopped = ended.get(dependent.node_id)
         const decision = e.ctx.artifacts.recordDecision({
           decisionType: 'recovery',
           question: `Does node ${dependent.node_id} of run ${runId} run again on the superseding input?`,
-          inputs: [old.id, result],
-          candidates: [{ option: 'rerun', selected: true, reasons: [why] }, { option: 'keep', selected: false, reasons: [] }],
+          // An execution that had already finished keeps its result as history: it is never taken, nor resent.
+          inputs: [old.id, result, ...(stopped?.result ? [stopped.result] : [])],
+          candidates: [{ option: 'rerun', selected: true, reasons: [why, ...(stopped ? [stopped.reason] : [])] }, { option: 'keep', selected: false, reasons: [] }],
           decider: { type: 'policy', id: 'workflow.lineage-invalidation', version: '1' },
           outcome: { option: 'rerun' },
           deterministic: true,
@@ -196,6 +148,112 @@ export function supersede(e: Engine, runId: string, nodeId: string, replacement:
 }
 
 const specOf = (n: NodeRow): ResolvedNode => JSON.parse(n.spec) as ResolvedNode
+
+/**
+ * Check a supersede and store its replacement (idempotent: the same content keeps its id): the
+ * run is not running, the node has a completed result an operator may replace, and the
+ * replacement passes the node's contract (a planner's, as a valid plan).
+ */
+function prepare(e: Engine, runId: string, nodeId: string, replacement: { text: string; note?: string }) {
+  const run = e.runRow(runId)
+  if (!run || run.status === 'running') throw new WorkflowFailure('invalid_input', `run ${runId} is ${run ? 'running; stop it or wait' : 'unknown'}`)
+  const nodes = e.nodeRows(runId).filter((n) => n.state !== 'RETIRED')
+  const node = nodes.find((n) => n.node_id === nodeId)
+  const record = node ? (JSON.parse(node.record) as NodeRecord) : undefined
+  if (!node || node.state !== 'COMPLETED' || !record?.outputReceipt) throw new WorkflowFailure('invalid_input', `node ${nodeId} of run ${runId} has no completed result`)
+  const spec = specOf(node)
+  if (spec.executor === 'gate') throw new WorkflowFailure('invalid_input', `node ${nodeId} is a plan's gate: approve or reject the plan instead`)
+  if (spec.executor === 'tally' || spec.executor === 'decide') {
+    throw new WorkflowFailure('invalid_input', `node ${nodeId} is a team's ${spec.executor === 'tally' ? 'tally' : 'decision'}, which the engine computes: supersede a member's step, or break a tie with vote`)
+  }
+  if (nodes.some((n) => isRemovedTeamStep(specOf(n)))) {
+    throw new WorkflowFailure('invalid_input', `run ${runId} is a team procedure that was removed (PROP-0004); its record stays readable with explain and result, and it cannot run again`)
+  }
+  const { affected, retired, rerun } = scopeOf(nodes, nodeId)
+  if (spec.grows) {
+    // A replaced planner's result is its new plan: an invalid one changes nothing.
+    const parsed = parsePlan(replacement.text, nodeId, { ...DEFAULT_GROWTH, ...spec.grows })
+    if (!parsed.ok) throw new WorkflowFailure('invalid_input', `the replacement plan is refused: ${parsed.reason}`)
+  }
+  const old = e.ctx.artifacts.get(record.outputReceipt.result)!
+  const body = { ...(old.body as Record<string, unknown>), text: replacement.text }
+  const artifact = e.ctx.artifacts.put({
+    kind: old.kind, bodySchema: old.bodySchema, body, classification: old.classification,
+    producer: { type: 'operator', ref: 'operator' }, inputs: [old.id], lineage: { supersedes: [old.id] }, runId, nodeId,
+  })
+  const result = artifact.id as ArtifactRef
+  const acceptance = e.ctx.workers.accept(result, spec.acceptance, { producer: 'workflow', runId, nodeId, ...(spec.resultSchema ? { resultSchema: spec.resultSchema } : {}) })
+  if (!acceptance.accepted) throw new WorkflowFailure('invalid_input', `the replacement fails ${spec.acceptance}: ${acceptance.reasons.join('; ')}`)
+  return { run, nodes, node, spec, affected, retired, rerun, old, result, acceptance }
+}
+
+
+/** What superseding `nodeId` touches: every node downstream, transitively, and what they or it grew (retired, never run again). */
+function scopeOf(nodes: NodeRow[], nodeId: string): { affected: NodeRow[]; retired: Set<string>; rerun: NodeRow[] } {
+  const downstream = new Set<string>()
+  for (let grew = true; grew;) {
+    grew = false
+    for (const n of nodes) {
+      if (!downstream.has(n.node_id) && specOf(n).dependsOn.some((d) => d === nodeId || downstream.has(d))) {
+        downstream.add(n.node_id)
+        grew = true
+      }
+    }
+  }
+  const affected = nodes.filter((n) => downstream.has(n.node_id))
+  // What is retired: everything the replaced node or a node that runs again grew, transitively.
+  const growers = new Set([nodeId, ...downstream])
+  const retired = new Set<string>()
+  for (let grew = true; grew;) {
+    grew = false
+    for (const n of nodes) {
+      if (retired.has(n.node_id) || n.node_id === nodeId) continue
+      if ([...growers, ...retired].some((g) => grewFrom(n, g))) {
+        retired.add(n.node_id)
+        grew = true
+      }
+    }
+  }
+  return { affected, retired, rerun: affected.filter((n) => !retired.has(n.node_id)) }
+}
+
+/** How long a supersede waits for the executions it cancels to end before it refuses. */
+const CANCEL_WAIT_MS = 30_000
+
+/**
+ * Before anything is reset, the executions of the nodes a supersede runs again or retires are
+ * cancelled through their sources, as `stop` does, and have ended: a run left with a `RUNNING`
+ * node (it failed beside it, then the host restarted) never gets a new attempt beside the
+ * orphaned one (INV-4). One that had already finished keeps its result as history. One that does
+ * not end within the bound, or whose source is not loaded, refuses the supersede: nothing is reset.
+ */
+async function endExecutions(e: Engine, runId: string, nodeId: string): Promise<Map<string, { reason: string; result?: ArtifactRef }>> {
+  const nodes = e.nodeRows(runId).filter((n) => n.state !== 'RETIRED')
+  const { retired, rerun } = scopeOf(nodes, nodeId)
+  const live = [...rerun, ...nodes.filter((n) => retired.has(n.node_id))]
+    .filter((n) => n.execution_id && n.state !== 'COMPLETED' && n.state !== 'FAILED')
+  const ended = new Map<string, { reason: string; result?: ArtifactRef }>()
+  for (const node of live) {
+    const id = node.execution_id!
+    const source = node.source ? e.ctx.workers.source(node.source) : undefined
+    if (!source?.cancel) throw new WorkflowFailure('invalid_input', `node ${node.node_id}'s execution ${id} runs on ${node.source ?? 'no source'}, which cannot cancel it now (its row is off?); nothing was superseded`)
+    source.cancel(id)
+    const deadline = Date.now() + CANCEL_WAIT_MS
+    let current = source.get(id)
+    while (current && (current.status === 'queued' || current.status === 'running') && Date.now() < deadline) {
+      await source.wait(id, Math.max(1, Math.min(5000, deadline - Date.now())))
+      current = source.get(id)
+    }
+    if (current && (current.status === 'queued' || current.status === 'running')) {
+      throw new WorkflowFailure('overloaded', `node ${node.node_id}'s execution ${id} was cancelled but has not ended in ${CANCEL_WAIT_MS / 1000} s; supersede again in a moment (nothing was superseded)`)
+    }
+    // Answered before the cancel landed: that answer is history too.
+    ended.set(node.node_id, current?.status === 'completed' && current.result
+      ? { reason: `its execution ${id} had already finished; its result ${current.result} is history, never taken or resent`, result: current.result }
+      : { reason: `its execution ${id} was cancelled first, so it never runs beside the new attempt (work already sent is not undone)` })
+  }
+  return ended
+}
 
 /**
  * Retire what `grower` grew (re-planning): each node becomes `RETIRED`, kept as history, with a

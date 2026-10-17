@@ -181,7 +181,7 @@ describe('the scientific-research profile, on the unchanged engine (REQ-WF-9)', 
     // A run started before PROP-0004: its evidence step asked for evidence-table@1.0.
     ctx.workflow.template('research-deep', Science.RESEARCH.map((n) => (n.nodeId === 'evidence:1' ? { ...n, resultSchema: 'evidence-table@1.0' } : n)))
     const run = await ctx.workflow.wait(ctx.workflow.start({ template: 'research-deep', input: 'Does X lower Y?' }).runId, 30_000)
-    ctx.workflow.supersede(run.runId, 'evidence:1', { text: json(EVIDENCE), note: 'rerun' })
+    await ctx.workflow.supersede(run.runId, 'evidence:1', { text: json(EVIDENCE), note: 'rerun' })
     await ctx.workflow.wait(run.runId, 30_000)
     const tables = ctx.artifacts.list({ kind: 'evidence', runId: run.runId })
     expect(tables.map((t) => t.bodySchema)).toEqual(['evidence-table@1.0', 'evidence-table@1.0'])
@@ -200,7 +200,7 @@ describe('the scientific-research profile, on the unchanged engine (REQ-WF-9)', 
     scholar(ctx)
     const run = await ctx.workflow.wait(ctx.workflow.start({ template: 'research', input: 'Does X lower Y?' }).runId, 30_000)
     const corrected = { evidence: [...EVIDENCE.evidence, { id: 'E2', claim: 'A larger trial found no effect.', source: 'https://example.org/big', bears: [{ hypothesis: 'H1', direction: 'refutes' }], strength: 'strong' }] }
-    ctx.workflow.supersede(run.runId, 'evidence:1', { text: json(corrected), note: 'a missed trial' })
+    await ctx.workflow.supersede(run.runId, 'evidence:1', { text: json(corrected), note: 'a missed trial' })
     const again = await ctx.workflow.wait(run.runId, 30_000)
     expect(again).toMatchObject({ status: 'completed', answer: 'H1 is supported with moderate confidence [E2]. H2 is insufficient.' })
     const tables = ctx.artifacts.list({ kind: 'evidence', runId: run.runId })

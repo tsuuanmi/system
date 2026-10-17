@@ -176,7 +176,10 @@ invoked by the [workflow engine](../workflow/README.md)
   is never stranded until the next start.
 - **Cancel (REQ-WRK-4):** `cancel(turnId)` aborts a running turn, or fails a
   queued one before it starts, as `aborted`. An answer the provider was already
-  generating is not taken.
+  generating is not taken. The cancel is recorded first (`cancel_requested_at`),
+  so a turn this process does not hold now, held by another owner or caught by a
+  restart before the abort landed, fails as `aborted` when it next starts. It is
+  never reconciled or resent.
 - **Stop:** a stopped runtime starts nothing. A turn caught before scheduling
   stays queued for the next start.
 - **Injects:** `store`, `artifacts`, `leases`, `egress`, `turnReceipts`, `accounts`,
