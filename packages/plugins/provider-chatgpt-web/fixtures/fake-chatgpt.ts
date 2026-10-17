@@ -23,7 +23,7 @@
  *   instead ask a clarifying question (no frame).
  * No private data from the live account is included.
  */
-import { randomUUID } from 'node:crypto'
+import { randomBytes, randomUUID } from 'node:crypto'
 import { type IncomingMessage, type Server, type ServerResponse, createServer } from 'node:http'
 import { Secret, TOTP } from 'otpauth'
 
@@ -45,6 +45,14 @@ export interface FakeOptions {
   captcha?: boolean
   /** Every page is an interstitial dialog: neither signed in nor signed out can be told. */
   interstitial?: boolean
+  /**
+   * The session is bound to the browser profile that signed in (ADR-0030), as a copy of
+   * chatgpt-main's state died live (2026-10-17). `/signin` sets a session cookie and keeps a device
+   * key in the profile's Cache Storage, which a copy of the portable state (cookies, localStorage,
+   * IndexedDB) does not carry. Without the cookie a page is the logged-out home; with it but
+   * without the key, the app becomes the logged-out home once the key fails its check.
+   */
+  deviceBound?: boolean
   /** Every page is the logged-out home: the app shell with an anonymous composer and no account. */
   loggedOutHome?: boolean
   /** A signed-in page first paints the logged-out home for this long, then the app (0: no flash). */
@@ -143,6 +151,15 @@ const LOGGED_OUT_HOME = `<!doctype html><html lang="en"><head><meta charset="utf
   <h1>What can I help with?</h1>
   <form data-logged-out><button type="button" aria-label="Add files and more">+</button><input aria-label="Ask anything" type="text"></form>
 </main></body></html>`
+
+/** The app stays hidden until the profile's device key checks out; without it the page becomes the logged-out home. */
+const DEVICE_CHECK = `<style>html.binding body{visibility:hidden}</style><script>
+document.documentElement.classList.add('binding')
+caches.open('device').then((c) => c.match('/device-key')).then((r) => (r ? r.text() : '')).then((key) => fetch('/_/device', { method: 'POST', body: key })).then((r) => {
+  if (!r.ok) document.body.innerHTML = ${JSON.stringify(LOGGED_OUT_HOME.slice(LOGGED_OUT_HOME.indexOf('<body>') + 6, LOGGED_OUT_HOME.indexOf('</body>')))}
+  document.documentElement.classList.remove('binding')
+})
+</script>`
 
 function html(options: Required<FakeOptions>, conversation: Conversation | undefined, missing?: string, history: string[] = []): string {
   const turns = (conversation?.turns ?? []).map((t) => t.role === 'user'
@@ -374,6 +391,10 @@ export class FakeChatGpt {
   readonly deleted = new Set<string>()
   /** Every deletion request the page made, by conversation id (a repeated click shows twice). */
   readonly deleteRequests: string[] = []
+  /** Device checks of a `deviceBound` session, in order: whether each passed. */
+  readonly deviceChecks: boolean[] = []
+  /** Sessions signed in at `/signin` and the device key each was bound to. */
+  private readonly devices = new Map<string, string>()
   private server: Server | undefined
   private readonly streams = new Set<ServerResponse>()
   options: Required<FakeOptions>
@@ -381,7 +402,7 @@ export class FakeChatGpt {
 
   constructor(options: FakeOptions = {}) {
     this.options = {
-      startOnWork: true, chatToggleBroken: false, signedIn: true, loginOffer: false, requireCookie: false, rotateOnLoad: false, deleteMenu: true, captcha: false, interstitial: false, loggedOutHome: false, logoutFlashMs: 0, paneMenu: true, dialogTarget: '', userId: 'user-fake123', sendLabel: 'Send', sendTestId: '',
+      startOnWork: true, chatToggleBroken: false, signedIn: true, loginOffer: false, requireCookie: false, rotateOnLoad: false, deleteMenu: true, captcha: false, interstitial: false, deviceBound: false, loggedOutHome: false, logoutFlashMs: 0, paneMenu: true, dialogTarget: '', userId: 'user-fake123', sendLabel: 'Send', sendTestId: '',
       answer: 'OK', thinkMs: 300, models: ['Latest', 'GPT-6', 'GPT-5.6 Sol', 'GPT-5.5'], lockedModels: [],
       researchMs: 1500, researchHeld: false, report: 'Deep research report body.', clarify: false, features: ['deep-research', 'web-search', 'image-generation'], modelPicker: true,
       mfa: 'totp', email: 'operator@example.test', password: 'correct horse', totpSecret: 'JBSWY3DPEHPK3PXP',
@@ -479,7 +500,25 @@ export class FakeChatGpt {
       // Like the live site, the stream is left open after the answer is complete.
       return
     }
-    const signedIn = this.options.requireCookie ? /(?:^|; )session=valid(?:;|$)/.test(req.headers.cookie ?? '') : this.options.signedIn
+    if (url.pathname === '/signin' && this.options.deviceBound) {
+      const sid = randomBytes(8).toString('hex')
+      const key = randomBytes(8).toString('hex')
+      this.devices.set(sid, key)
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'set-cookie': `SID=${sid}; Path=/; Max-Age=86400; HttpOnly` })
+      res.end(`<!doctype html><html><body><p id="bound" hidden>signed in</p><script>caches.open('device').then((c) => c.put('/device-key', new Response('${key}'))).then(() => { document.getElementById('bound').hidden = false })</script></body></html>`)
+      return
+    }
+    if (url.pathname === '/_/device' && req.method === 'POST') {
+      let key = ''
+      for await (const chunk of req) key += String(chunk)
+      const sid = /(?:^|; )SID=([0-9a-f]+)/.exec(req.headers.cookie ?? '')?.[1]
+      const ok = sid !== undefined && this.devices.get(sid) === key
+      this.deviceChecks.push(ok)
+      res.writeHead(ok ? 200 : 401, { 'content-type': 'application/json' }).end('{}')
+      return
+    }
+    const bound = this.options.deviceBound && this.devices.has(/(?:^|; )SID=([0-9a-f]+)/.exec(req.headers.cookie ?? '')?.[1] ?? '')
+    const signedIn = this.options.deviceBound ? bound : this.options.requireCookie ? /(?:^|; )session=valid(?:;|$)/.test(req.headers.cookie ?? '') : this.options.signedIn
     const hostMatch = /^\/web-sandbox\.oai\/([0-9a-f-]+)\/(\d+)$/.exec(url.pathname)
     if (hostMatch) {
       const run = this.conversations.get(hostMatch[1]!)?.researches[Number(hostMatch[2])]
@@ -500,6 +539,11 @@ export class FakeChatGpt {
       res.end(JSON.stringify(signedIn ? { id: this.options.userId, object: 'user' } : { detail: 'unauthorized' }))
       return
     }
+    // A session-bound site without its session shows its logged-out home, as the live one did.
+    if (this.options.deviceBound && !signedIn && !url.pathname.startsWith('/auth') && !url.pathname.startsWith('/backend-api')) {
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }).end(LOGGED_OUT_HOME)
+      return
+    }
     if (!signedIn && !url.pathname.startsWith('/auth')) {
       res.writeHead(302, { location: '/auth/login' })
       res.end()
@@ -512,6 +556,7 @@ export class FakeChatGpt {
     if (url.pathname.startsWith('/auth')) return this.auth(url, req, res)
     if (this.options.rotateOnLoad) res.setHeader('set-cookie', `session_seen=${Date.now()}; Path=/; Max-Age=3600`)
     const match = /^\/c\/([0-9a-f-]+)$/.exec(url.pathname)
-    res.end(html(this.options, match ? this.conversations.get(match[1]!) : undefined, match && this.deleted.has(match[1]!) ? match[1] : undefined, [...this.conversations.keys()]))
+    const page = html(this.options, match ? this.conversations.get(match[1]!) : undefined, match && this.deleted.has(match[1]!) ? match[1] : undefined, [...this.conversations.keys()])
+    res.end(this.options.deviceBound ? page.replace('<head>', `<head>${DEVICE_CHECK}`) : page)
   }
 }

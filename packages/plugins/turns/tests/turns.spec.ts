@@ -39,6 +39,13 @@ const account = (id: string, tiers: Record<string, string> = { economy: 'instant
 type AskSpec = { prompt: string; tier?: Tier; sessionId?: string; persist?: boolean; research?: boolean; search?: boolean; classification?: WorkRequirement['data']['classification']; key?: string }
 
 /** What the workflow engine does before a turn: build the requirement, route it, start it on the admitted Worker. */
+/**
+ * The fresh-context path (ADR-0016): a driver that is not session-bound works from the account's
+ * portable state and writes it back. Both shipped drivers are session-bound (ADR-0030), so the
+ * tests of that path turn it off on ChatGPT's.
+ */
+const fromCopies = (ctx: Context): void => void Object.defineProperty(ctx.providers.get('chatgpt-web'), 'sessionBound', { value: false })
+
 async function ask(ctx: Context, input: AskSpec) {
   const sessionId = input.sessionId ?? (input.persist || input.research ? `ses_${randomBytes(8).toString('hex')}` : undefined)
   const requirement: WorkRequirement = {
@@ -71,7 +78,7 @@ async function boot(options: { fake?: FakeOptions; accounts?: CatalogEntry[]; re
     ctx.plugin(VirtualDisplay, {}),
     ctx.plugin(BrowserPool, { chromePath: testChrome! }),
     ctx.plugin(Providers),
-    ctx.plugin(ChatGptWeb, { origin: fake.origin, overlayPath: join(dir, 'none.yaml'), modes: { instant: { model: 'Latest', effort: 'Instant' }, medium: { model: 'Latest', effort: 'Medium' }, high: { model: 'GPT-6', effort: 'High' } }, defaultMode: 'instant' }),
+    ctx.plugin(ChatGptWeb, { origin: fake.origin, pageGapMs: 0, overlayPath: join(dir, 'none.yaml'), modes: { instant: { model: 'Latest', effort: 'Instant' }, medium: { model: 'Latest', effort: 'Medium' }, high: { model: 'GPT-6', effort: 'High' } }, defaultMode: 'instant' }),
     ctx.plugin(Login, { profilesDir: join(dir, 'profiles') }),
     ctx.plugin(WorkerRouter, {}),
     ctx.plugin(Turns, { turnTimeoutMs: 90_000, stallTimeoutMs: 80_000, maxConcurrentTurnsPerAccount: options.capacity ?? 2, ...options.turns }),
@@ -167,6 +174,7 @@ describe.runIf(canRunBrowser)('ctx.turns: ask through a saved account', () => {
 
   it('writes back the state a signed-in check refreshed, and never one from a check that found it signed out', async () => {
     const { ctx, fake } = await boot({ fake: { rotateOnLoad: true } })
+    fromCopies(ctx)
     const before = await ctx.accounts.get('chatgpt-main')
     expect(await ctx.turns.checkSignIn('chatgpt-main')).toBe('signed-in')
     const after = await ctx.accounts.get('chatgpt-main')
@@ -267,6 +275,7 @@ describe.runIf(canRunBrowser)('ctx.turns: ask through a saved account', () => {
 
   it('writes the refreshed browser state back to the account after a turn', async () => {
     const { ctx } = await boot()
+    fromCopies(ctx)
     const before = await ctx.accounts.get('chatgpt-main')
     await ctx.turns.wait((await ask(ctx, { prompt: 'refresh me' })).turnId, 30_000)
     const after = await ctx.accounts.get('chatgpt-main')
@@ -735,6 +744,82 @@ async function bootBound(options: { fake?: FakeGeminiOptions; turns?: Record<str
   await ctx.accounts.setFeatures('gemini-main', ['deep-research'])
   return { ctx, fake }
 }
+
+/** A ChatGPT account bound to the profile that signed in, as chatgpt-main was live: signed in there, then Saved. */
+async function bootBoundChatGpt(options: { fake?: FakeOptions; turns?: Record<string, unknown> } = {}) {
+  const fake = new FakeChatGpt({ deviceBound: true, answer: 'From the ChatGPT profile.', ...options.fake })
+  await fake.start()
+  cleanups.push(() => fake.stop())
+  const dir = mkdtempSync(join(tmpdir(), 'system-turns-bound-chatgpt-'))
+  cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+  const ctx = new Context()
+  const fibers = [
+    ctx.plugin(Store, { path: join(dir, 'system.db') }),
+    ctx.plugin(Artifacts, {}),
+    ctx.plugin(EventLog, {}),
+    ctx.plugin(Leases, {}),
+    ctx.plugin(Egress, {}),
+    ctx.plugin(TurnReceipts, {}),
+    ctx.plugin(Vault, { path: join(dir, 'vault.enc'), keyFile: join(dir, 'vault.key') }),
+    ctx.plugin(Accounts, { accounts: [{ id: 'chatgpt-main', provider: 'chatgpt-web', quotaClass: 'subscription-chat', tiers: { economy: 'instant', standard: 'medium', frontier: 'high' } }] }),
+    ctx.plugin(VirtualDisplay, {}),
+    ctx.plugin(BrowserPool, { chromePath: testChrome! }),
+    ctx.plugin(Providers),
+    ctx.plugin(ChatGptWeb, { origin: fake.origin, pageGapMs: 0, overlayPath: join(dir, 'none.yaml'), modes: { instant: { model: 'Latest', effort: 'Instant' }, medium: { model: 'Latest', effort: 'Medium' }, high: { model: 'GPT-6', effort: 'High' } }, defaultMode: 'instant' }),
+    ctx.plugin(Login, { profilesDir: join(dir, 'profiles') }),
+    ctx.plugin(WorkerRouter, {}),
+    ctx.plugin(Turns, { turnTimeoutMs: 90_000, stallTimeoutMs: 80_000, ...options.turns }),
+  ]
+  await Promise.all(fibers)
+  cleanups.push(async () => {
+    for (const fiber of [...fibers].reverse()) await fiber.dispose()
+  })
+  const profile = await chromium.launchPersistentContext(ctx.login.profileDir('chatgpt-main'), { executablePath: testChrome!, headless: true })
+  const page = await profile.newPage()
+  await page.goto(`${fake.origin}/signin`)
+  await page.locator('#bound').waitFor({ state: 'visible' })
+  await profile.close()
+  await ctx.login.save('chatgpt-main')
+  await ctx.accounts.setFeatures('chatgpt-main', ['deep-research', 'web-search', 'image-generation'])
+  return { ctx, fake }
+}
+
+describe.runIf(canRunBrowser)('ctx.turns: a ChatGPT account works in its own login profile (ADR-0030)', () => {
+  it('answers in the profile and writes no copy back; a copy of its state shows the logged-out home (live 2026-10-17)', async () => {
+    const { ctx, fake } = await bootBoundChatGpt()
+    const before = await ctx.accounts.get('chatgpt-main')
+    const turn = await ctx.turns.wait((await ask(ctx, { prompt: 'Where are you?' })).turnId, 60_000)
+    expect(turn).toMatchObject({ status: 'completed', account: 'chatgpt-main', answer: 'From the ChatGPT profile.' })
+    expect(fake.sent).toEqual([expect.objectContaining({ prompt: 'Where are you?' })])
+    expect((await ctx.accounts.get('chatgpt-main')).revision).toBe(before.revision)
+    expect(ctx.eventLog.query({ type: 'account.write-back-skipped' })).toEqual([])
+    expect(fake.deviceChecks.length).toBeGreaterThan(0)
+    expect(fake.deviceChecks.every(Boolean)).toBe(true)
+    // What the fresh-context path would have done: the copied state is signed out.
+    const copy = await ctx.browser.openTurn('chatgpt-main', { state: await ctx.accounts.portableState('chatgpt-main') })
+    try {
+      expect(await ctx.providers.get('chatgpt-web').checkAuth(copy.page)).toBe('signed-out')
+    } finally {
+      await copy.close()
+    }
+  }, 180_000)
+
+  it('reports a turn that stalls on a page the site signed out as a sign-out, so the account shows it (live 2026-10-17)', async () => {
+    const { ctx, fake } = await bootBoundChatGpt({ fake: { thinkMs: 60_000 }, turns: { stallTimeoutMs: 4000 } })
+    const { turnId } = await ask(ctx, { prompt: 'Still there?' })
+    const deadline = Date.now() + 30_000
+    while (fake.sent.length === 0 && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 100))
+    // The site signs the session out while the answer is pending: its page becomes the logged-out home.
+    fake.options.loggedOutHome = true
+    const held = (ctx.browser as unknown as { profiles: { held: Map<string, { context: import('patchright-core').BrowserContext }> } }).profiles.held.get('chatgpt-main')!
+    await held.context.pages().find((p) => p.url().startsWith(fake.origin))!.reload()
+    const done = await ctx.turns.wait(turnId, 60_000)
+    expect(done).toMatchObject({ status: 'failed', submitted: true, error: { kind: 'reauth_required', disposition: 'USER_ACTION', message: expect.stringMatching(/signed out \(the turn had failed as provider_stalled/) } })
+    expect((await ctx.accounts.get('chatgpt-main')).status).toBe('reauth-required')
+    // Sent once, never again on a sign-in (INV-4).
+    expect(fake.sent).toHaveLength(1)
+  }, 180_000)
+})
 
 describe.runIf(canRunBrowser)('ctx.turns: a session-bound account works in its own login profile (ADR-0030)', () => {
   it('answers in the profile, writes no copy back, and a copy of its state is signed out (REQ-ACC-4)', async () => {

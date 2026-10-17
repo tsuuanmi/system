@@ -25,7 +25,18 @@ The **ChatGPT Web provider driver**
   stands: event `provider.stall`, with the page's structure as local-private
   evidence, its `visibilityState`, focus, and path. It is never retried from the
   driver.
-- **Kept tabs** (for when the account is session-bound; ADR-0030). A page that already shows
+- **Session-bound** ([ADR-0030](../../../docs/decisions/adr/0030-session-bound-accounts-use-their-login-profile.md)).
+  Copies of chatgpt-main's session died while its login profile stayed signed in (live
+  2026-10-17: after six days, then about 9 h after a Save). So the driver declares
+  `sessionBound`, as Gemini's does: every operation of a ChatGPT account runs as a page of its
+  own login profile, and nothing is written back. `pageGapMs` (default 10 s, at most 10 min)
+  spaces the opens of the account's pages.
+- **A failure on a signed-out page.** A turn that fails after its page opened (a stall, a
+  deadline, a broken session, drift) is checked against the page as it stands: positive
+  sign-out evidence (the login page, or the logged-out home past its hold) fails it as
+  `reauth_required`, so the account shows signed out instead of a stall (live 2026-10-17). The
+  logged-out home's cookie consent dialog is an overlay (`page.overlay`), never answered.
+- **Kept tabs** (ADR-0030). A page that already shows
   the bound conversation is not loaded again. `pageIdle` (map state `page.idle`) tells the turn
   runtime it may keep the page for the session's next turn.
 - **Logged-out home.** When the session ends, ChatGPT may show its anonymous home instead of the

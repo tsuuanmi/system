@@ -219,6 +219,7 @@ No options.
 | `overlayPath` | string |  | Local UI overlay file |
 | `modes` | Record<string, object> | `{"instant":{"model":"Latest","effort":"Instant"},"medium":{"model":"Latest","effort":"Medium"},"high":{"model":"Latest","effort":"High"}}` | Named mode presets (model and Power level), read back before sending; an account without a model picker fails ui_drift |
 | `defaultMode` | string | `"instant"` | Preset when a caller names none |
+| `pageGapMs` | number (0…600000) | `10000` | Minimum gap between the opens of the account's pages in its login profile, in milliseconds, at most 10 min (ADR-0030); navigations within a page are not spaced |
 
 ## `provider-gemini-web`
 

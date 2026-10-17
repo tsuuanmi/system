@@ -32,7 +32,7 @@ describe.runIf(canRunBrowser)('self-heal is audited (INV-13) and persisted to th
     const fibers = [
       ...(withAudit ? [ctx.plugin(Store, { path: join(dir, 'system.db') }), ctx.plugin(Artifacts, {}), ctx.plugin(EventLog, {})] : []),
       ctx.plugin(Providers),
-      ctx.plugin(ChatGptWeb, { origin: fake.origin, overlayPath: join(dir, 'ui', 'chatgpt-web.overlay.yaml') }),
+      ctx.plugin(ChatGptWeb, { origin: fake.origin, pageGapMs: 0, overlayPath: join(dir, 'ui', 'chatgpt-web.overlay.yaml') }),
     ]
     await Promise.all(fibers)
     const context = await browser.newContext()

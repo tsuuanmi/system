@@ -138,6 +138,35 @@ function execution(turn: TurnView): WorkerExecution {
   }
 }
 
+/** Failures a signed-out page can show up as, once a turn is on it: each is re-checked against the page. */
+const RECHECKED: ReadonlySet<string> = new Set(['provider_stalled', 'timeout', 'session_broken', 'ui_drift'])
+/** How long that re-check may take (the driver's own sign-out evidence may hold a few seconds). */
+const RECHECK_MS = 15_000
+
+/**
+ * The failure a turn reports: `error`, unless it is one a sign-out shows up as and the page now
+ * positively shows the site signed out (then `reauth_required`) or a challenge (the driver's own
+ * `challenge`). The page is read as it stands, never loaded again; an unclear page keeps `error`.
+ */
+async function signedOutAfter(driver: ProviderDriver, page: unknown, error: unknown): Promise<unknown> {
+  if (!(error instanceof ProviderError) || !RECHECKED.has(error.kind)) return error
+  let timer: NodeJS.Timeout | undefined
+  try {
+    const seen = await Promise.race([
+      driver.checkAuth(page as never),
+      new Promise<'unknown'>((resolve) => {
+        timer = setTimeout(() => resolve('unknown'), RECHECK_MS)
+        timer.unref()
+      }),
+    ])
+    return seen === 'signed-out' ? new ProviderError('reauth_required', `${driver.provider}: the page shows the site signed out (the turn had failed as ${error.kind}: ${error.message.slice(0, 200)})`, { cause: error }) : error
+  } catch (checked) {
+    return checked instanceof ProviderError && checked.kind === 'challenge' ? checked : error
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 const newId = (prefix: string): string => `${prefix}_${randomBytes(8).toString('hex')}`
 const now = (): string => new Date().toISOString()
 const TERMINAL: ReadonlySet<TurnStatus> = new Set(['completed', 'failed'])
@@ -811,8 +840,11 @@ export class Turns extends Service {
         // Bind as soon as the conversation has its id, so a crash mid-answer can be reconciled.
         onBinding: (binding) => this.bind(row, accountId, binding, lease),
       })
-    } catch (error) {
+    } catch (caught) {
       signal.removeEventListener('abort', forward)
+      // A turn that failed on a page the site has since signed out reports the sign-out, so the
+      // account shows its real state (live 2026-10-17: a stall on the logged-out home).
+      const error = signal.aborted ? caught : await signedOutAfter(driver, turn.page, caught)
       // Never kept after a failure: the next turn starts from a fresh page.
       await (turn.discard?.() ?? turn.close())
       if (error instanceof ProviderError && error.kind === 'reauth_required') {

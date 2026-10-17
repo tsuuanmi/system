@@ -26,6 +26,8 @@ export interface Config {
   modes?: Record<string, ProviderMode>
   /** Preset when a caller names none (the turn runtime always names its Worker's preset). */
   defaultMode?: string
+  /** The account's page opens (turns, checks, deletions) are spaced at least this far apart, in milliseconds (default 10 s, at most 10 min); navigations within a page are not. */
+  pageGapMs?: number
 }
 
 const DEFAULT_MODES: Record<string, ProviderMode> = {
@@ -41,6 +43,7 @@ export const Config: z<Config> = z.object({
   overlayPath: z.string().description('Local UI overlay file'),
   modes: z.dict(z.object({ model: z.string(), effort: z.string() })).default(DEFAULT_MODES).description('Named mode presets (model and Power level), read back before sending; an account without a model picker fails ui_drift'),
   defaultMode: z.string().default('instant').description('Preset when a caller names none'),
+  pageGapMs: z.natural().max(600_000).default(10_000).description('Minimum gap between the opens of the account\'s pages in its login profile, in milliseconds, at most 10 min (ADR-0030); navigations within a page are not spaced'),
 })
 
 export function apply(ctx: Context, config: Config = {}): void {
@@ -51,6 +54,7 @@ export function apply(ctx: Context, config: Config = {}): void {
     ...(overlay ? { overlay } : {}),
     modes: config.modes ?? DEFAULT_MODES,
     defaultMode: config.defaultMode ?? 'instant',
+    pageGapMs: config.pageGapMs ?? 10_000,
   })
   wireHealAudit(ctx, driver, overlayPath)
   ctx.providers.register(driver)

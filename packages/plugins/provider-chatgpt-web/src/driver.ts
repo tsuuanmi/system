@@ -45,6 +45,8 @@ export interface DriverOptions {
   modes?: Record<string, ProviderMode>
   /** Preset used when a turn names none; with no default the site's current selection is kept and read back. */
   defaultMode?: string
+  /** The account's page opens are spaced at least this far apart (default 10 s, ADR-0030). */
+  pageGapMs?: number
 }
 
 const escapeRegex = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
@@ -78,6 +80,13 @@ export class ChatGptWebDriver implements ProviderDriver<Page> {
   /** Conversations `deleteConversation` deletes; a Deep research one waits for its live check (PROP-0004 Phase 5). */
   readonly deletes = ['chat', 'web-search'] as const
   readonly loginUrl: string
+  /**
+   * Copies of chatgpt-main's session died (live 2026-10-17, twice: after six days, then about 9 h
+   * after a Save) while its login profile stayed signed in: the account works in its own login
+   * profile (ADR-0030), as Gemini's does.
+   */
+  readonly sessionBound = true
+  readonly pageGapMs: number
   readonly stateOrigins: readonly string[]
   readonly map: UiMap
   onDrift: ((event: DriftEvent) => void) | undefined
@@ -101,6 +110,7 @@ export class ChatGptWebDriver implements ProviderDriver<Page> {
     this.modes = Object.keys(options.modes ?? {})
     this.loginUrl = `${this.origin}/auth/login`
     this.stateOrigins = [this.origin]
+    this.pageGapMs = options.pageGapMs ?? 10_000
     this.timeouts = { turnMs: 15 * 60_000, stallMs: 3 * 60_000, stableMs: 1500, pollMs: 250, readyMs: 30_000, researchStartMs: 60_000, snapshotMs: 20_000, reportReadMs: 30_000, ...options.timeouts }
   }
 

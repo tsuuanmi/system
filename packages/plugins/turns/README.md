@@ -150,6 +150,11 @@ invoked by the [workflow engine](../workflow/README.md)
     whose lease a crashed process still holds. So it never answers into a
     conversation that is not reconciled yet; otherwise, after a quick restart,
     a turn could be recorded with the next turn's answer.
+- **A failure on a signed-out page:** a turn that fails after its page opened, as
+  `provider_stalled`, `timeout`, `session_broken`, or `ui_drift`, has its page checked as it
+  stands (`checkAuth`, at most 15 s, never loaded again). Positive sign-out evidence turns the
+  failure into `reauth_required`, which marks the account signed out (below); a challenge, into
+  `challenge`. An unclear page keeps the original failure.
 - **Challenge:** a driver `challenge` (a CAPTCHA, an unusual-traffic check, a terms notice) from
   a turn, a sign-in check, or a feature probe marks the account `challenge`
   (event `account.challenged`): its Workers are unavailable, so nothing loads the

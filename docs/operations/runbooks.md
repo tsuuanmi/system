@@ -311,7 +311,7 @@ A turn that fails with `reauth_required` or `challenge` (disposition
     acknowledges it. In the login browser, open a new chat, press the notice's own button (not a
     link in it) until the notice is gone, then press Save. Save is refused while it still shows.
 
-- **A session-bound account** (Gemini;
+- **A session-bound account** (Gemini and ChatGPT;
   [ADR-0030](../decisions/adr/0030-session-bound-accounts-use-their-login-profile.md)) works in
   its login profile. `system account verify <id>` checks it there.
   - `system account login <id>` is refused while operations run in the profile: try again when

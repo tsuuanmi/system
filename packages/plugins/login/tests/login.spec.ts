@@ -38,7 +38,7 @@ describe.runIf(canRunBrowser)('ctx.login.save', () => {
       ctx.plugin(VirtualDisplay, {}),
       ctx.plugin(BrowserPool, { chromePath: testChrome! }),
       ctx.plugin(Providers),
-      ctx.plugin(ChatGptWeb, { origin: fake.origin, overlayPath: join(dir, 'none.yaml') }),
+      ctx.plugin(ChatGptWeb, { origin: fake.origin, pageGapMs: 0, overlayPath: join(dir, 'none.yaml') }),
       ctx.plugin(Login, { profilesDir: join(dir, 'profiles') }),
       ctx.plugin(WebServer, { host: '127.0.0.1', port: 0 }),
       ctx.plugin(McpEndpoint, { tokenDir: dir, discoveryFile: join(dir, 'mcp.json') }),
@@ -112,7 +112,7 @@ describe.runIf(canRunBrowser)('ctx.login.relogin (credential login with local TO
       ctx.plugin(VirtualDisplay, {}),
       ctx.plugin(BrowserPool, { chromePath: testChrome! }),
       ctx.plugin(Providers),
-      ctx.plugin(ChatGptWeb, { origin: fake.origin, overlayPath: join(dir, 'none.yaml') }),
+      ctx.plugin(ChatGptWeb, { origin: fake.origin, pageGapMs: 0, overlayPath: join(dir, 'none.yaml') }),
       ctx.plugin(Login, { profilesDir: join(dir, 'profiles') }),
     ]
     await Promise.all(fibers)

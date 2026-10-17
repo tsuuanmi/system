@@ -239,7 +239,14 @@ Accepted on 2026-10-17 by the operator, in Researcher's session: both ranked opt
 - Crash: a host killed after the prompt was sent and bound restarts, clears the dead browser's
   profile lock, reopens the conversation in the profile, and adopts the answer, sending nothing
   twice.
-- Live validation: pending, until the operator has cleared Google's challenge.
+- Live validation: passed on 2026-10-17 (a single Gemini turn, a short two-member brainstorm, and a
+  short review, Gemini in its login profile).
+- ChatGPT, after that validation (branch `feat/chatgpt-session-bound`):
+  - the ChatGPT driver declares `sessionBound`, with its own `pageGapMs`;
+  - its fake's `deviceBound` mode shows the logged-out home to a copy, as the live site did;
+  - a turn answers in the profile, writes nothing back, and a copy is signed out;
+  - a turn that fails on a page the site has signed out reports `reauth_required` (the turn
+    runtime re-checks the page), so the account shows signed out instead of a stall.
 - Kept tabs (the amendment below), built on branch `feat/kept-tabs`:
   - `profile.keep`, `BrowserTurn.discard`, `discardTab`, and kept tabs in `profileStates`;
   - in the turn runtime, a session's page is kept or closed before its turn completes, so a next

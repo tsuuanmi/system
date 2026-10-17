@@ -266,10 +266,11 @@ elements:
   page.overlay:
     description: >-
       An open dialog or menu. A page showing one is not kept for its session's next turn
-      (ADR-0030, kept tabs).
+      (ADR-0030, kept tabs). The logged-out home shows a cookie consent dialog
+      (`dialog#cookie-consent`, seen live on 2026-10-17); it is never answered.
     cardinality: many
     candidates:
-      - { css: '[role="dialog"], [role="alertdialog"], [role="menu"]' }
+      - { css: '[role="dialog"], [role="alertdialog"], [role="menu"], dialog[open]' }
 
 actions:
   mode.select-chat:

@@ -37,7 +37,7 @@ describe.runIf(canRunBrowser && vnc)('ctx.login.remote: the noVNC login desktop'
       ctx.plugin(VirtualDisplay, {}),
       ctx.plugin(BrowserPool, { chromePath: testChrome! }),
       ctx.plugin(Providers),
-      ctx.plugin(ChatGptWeb, { origin: fake.origin, overlayPath: join(dir, 'none.yaml') }),
+      ctx.plugin(ChatGptWeb, { origin: fake.origin, pageGapMs: 0, overlayPath: join(dir, 'none.yaml') }),
       ctx.plugin(Login, { profilesDir: join(dir, 'profiles'), vncPath: vnc!, chromePath: testChrome! }),
     ]
     await Promise.all(fibers)
