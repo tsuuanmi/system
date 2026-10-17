@@ -45,6 +45,8 @@ export interface FakeOptions {
   captcha?: boolean
   /** Every page is an interstitial dialog: neither signed in nor signed out can be told. */
   interstitial?: boolean
+  /** Every page is the logged-out home: the app shell with an anonymous composer and no account. */
+  loggedOutHome?: boolean
   /** The open conversation's pane has its own menu button (default true); the history rows always have theirs. */
   paneMenu?: boolean
   /** The delete dialog deletes this conversation instead of the one whose menu opened it (a wrong-chat test). */
@@ -130,6 +132,16 @@ export function researchDocument(research: { done: boolean; report: string }): s
     + `<body><iframe srcdoc="${escape(inner)}" style="width:940px;height:620px;border:0"></iframe></body></html>`
 }
 
+/** The shape of the live logged-out home (2026-10-17): no "Log in" name, no contenteditable composer. */
+const LOGGED_OUT_HOME = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>ChatGPT</title><style>[hidden]{display:none}</style></head><body>
+<nav aria-label="Chat history"><button>Deep research</button><button aria-label="Settings">s</button></nav>
+<main aria-label="ChatGPT" data-app-shell data-default-home>
+  <header><button data-login-button data-mobile-auth-entry>Get started</button><button data-login-button>Sign up for free</button></header>
+  <aside data-recurring-login-banner hidden><h2>Log in or sign up</h2></aside>
+  <h1>What can I help with?</h1>
+  <form data-logged-out><button type="button" aria-label="Add files and more">+</button><input aria-label="Ask anything" type="text"></form>
+</main></body></html>`
+
 function html(options: Required<FakeOptions>, conversation: Conversation | undefined, missing?: string, history: string[] = []): string {
   const turns = (conversation?.turns ?? []).map((t) => t.role === 'user'
     ? `<div class="turn"><h4 class="sr-only">You said:</h4><div>${t.text}</div><button aria-label="Copy message">c</button><button aria-label="Edit message">e</button></div>`
@@ -139,7 +151,7 @@ function html(options: Required<FakeOptions>, conversation: Conversation | undef
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>ChatGPT</title>
 <style>.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}[hidden]{display:none}</style></head>
 <body>
-<nav aria-label="App navigation"><button aria-label="Open profile menu">me</button>${options.loginOffer ? '<button>Log in</button>' : ''}
+<nav aria-label="App navigation"><button aria-label="Open profile menu">me</button>${options.loginOffer ? '<button data-login-button>Log in</button>' : ''}
   <ol aria-label="Chat history">${history.filter((id) => id !== conversation?.id).map((id) => `<li><a href="/c/${id}">chat</a><button class="row-options" data-id="${id}" aria-label="Open conversation options" aria-haspopup="menu">…</button></li>`).join('')}</ol>
 </nav>
 ${missing ? `<div role="alert">Unable to load conversation ${missing}</div>` : ''}
@@ -365,7 +377,7 @@ export class FakeChatGpt {
 
   constructor(options: FakeOptions = {}) {
     this.options = {
-      startOnWork: true, chatToggleBroken: false, signedIn: true, loginOffer: false, requireCookie: false, rotateOnLoad: false, deleteMenu: true, captcha: false, interstitial: false, paneMenu: true, dialogTarget: '', userId: 'user-fake123', sendLabel: 'Send', sendTestId: '',
+      startOnWork: true, chatToggleBroken: false, signedIn: true, loginOffer: false, requireCookie: false, rotateOnLoad: false, deleteMenu: true, captcha: false, interstitial: false, loggedOutHome: false, paneMenu: true, dialogTarget: '', userId: 'user-fake123', sendLabel: 'Send', sendTestId: '',
       answer: 'OK', thinkMs: 300, models: ['Latest', 'GPT-6', 'GPT-5.6 Sol', 'GPT-5.5'], lockedModels: [],
       researchMs: 1500, researchHeld: false, report: 'Deep research report body.', clarify: false, features: ['deep-research', 'web-search', 'image-generation'], modelPicker: true,
       mfa: 'totp', email: 'operator@example.test', password: 'correct horse', totpSecret: 'JBSWY3DPEHPK3PXP',
@@ -491,6 +503,7 @@ export class FakeChatGpt {
     }
     res.setHeader('content-type', 'text/html; charset=utf-8')
     if (this.options.captcha) return void res.end('<!doctype html><html><body><h1>Verify you are human</h1><iframe title="Widget containing a Cloudflare security challenge" src="/cdn-cgi/challenge-platform/h/b" style="width:300px;height:65px"></iframe></body></html>')
+    if (this.options.loggedOutHome && !url.pathname.startsWith('/auth')) return void res.end(LOGGED_OUT_HOME)
     if (this.options.interstitial) return void res.end('<!doctype html><html><body><div role="dialog" aria-label="Before you continue"><h2>Before you continue</h2><button>Continue</button></div></body></html>')
     if (url.pathname.startsWith('/auth')) return this.auth(url, req, res)
     if (this.options.rotateOnLoad) res.setHeader('set-cookie', `session_seen=${Date.now()}; Path=/; Max-Age=3600`)

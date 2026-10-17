@@ -78,6 +78,28 @@ describe.runIf(canRunBrowser)('ChatGptWebDriver against the fake site, with no r
     expect(await b.driver.checkAuth(b.page)).toBe('signed-out')
   }, 30_000)
 
+  it('reads the logged-out home as signed out, so the turn fails as reauth_required, not drift', async () => {
+    const { page, driver, fake } = await site({ loggedOutHome: true })
+    const drifts: unknown[] = []
+    driver.onDrift = (event) => void drifts.push(event)
+    expect(await driver.checkAuth(page)).toBe('signed-out')
+    await expect(driver.ask(page, 'hello', { conversation: 'temporary' })).rejects.toMatchObject({ kind: 'reauth_required' })
+    expect(drifts).toEqual([])
+    expect(fake.sent).toEqual([])
+  }, 60_000)
+
+  it('counts the logged-out marks only while visible, and never beside a working composer', async () => {
+    const hidden = await site({ loggedOutHome: true, timeouts: { readyMs: 1500 } })
+    await hidden.page.goto(`${hidden.fake.origin}/`)
+    await hidden.page.evaluate(() => document.querySelectorAll('[data-login-button], form[data-logged-out]').forEach((e) => e.setAttribute('hidden', '')))
+    expect(await hidden.driver.checkAuth(hidden.page)).toBe('unknown')
+    // A signed-in app showing a sign-in button (an offer to switch accounts) stays signed in.
+    const offer = await site({ loginOffer: true })
+    await offer.page.goto(`${offer.fake.origin}/`)
+    expect(await offer.page.locator('[data-login-button]').isVisible()).toBe(true)
+    expect(await offer.driver.checkAuth(offer.page)).toBe('signed-in')
+  }, 60_000)
+
   it('asks in Temporary chat after switching Work to Chat, and waits for completion though the stream stays open', async () => {
     const { fake, page, driver } = await site({ answer: 'Hello from the fake site' })
     const drift: unknown[] = []

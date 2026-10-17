@@ -14,6 +14,13 @@ elements:
       - { role: link, name: { en: '^Log in$' } }
       - { role: heading, name: { en: '^Log in or sign up$' } }
       - { testId: login-button }
+  auth.logged-out-home:
+    description: >-
+      The logged-out home (live 2026-10-17): the app shell with an anonymous composer and header
+      sign-in buttons whose names vary, not the login page.
+    candidates:
+      - { css: 'form[data-logged-out]' }
+      - { css: '[data-login-button]' }
 
   # Credential sign-in (ADR-0017). The email page was seen live on 2026-10-11; the later
   # steps (password, codes, method choice, challenge) are NOT yet verified live.
@@ -401,8 +408,8 @@ states:
   auth.signed-in: { visible: composer.input }
   auth.challenge: { anyOf: [{ visible: login.challenge }, { url: '/cdn-cgi/challenge-platform/' }] }
   # A "Log in" control beside a working composer is not a signed-out page: only the login host, or a
-  # login control with no composer, is.
-  auth.signed-out: { anyOf: [{ url: '^https?://auth\.openai\.com/|/auth/login' }, { allOf: [{ visible: auth.login }, { not: { visible: composer.input } }] }] }
+  # login control or the logged-out home with no composer, is.
+  auth.signed-out: { anyOf: [{ url: '^https?://auth\.openai\.com/|/auth/login' }, { allOf: [{ anyOf: [{ visible: auth.login }, { visible: auth.logged-out-home }] }, { not: { visible: composer.input } }] }] }
   turn.running: { visible: composer.stop }
   turn.idle: { allOf: [{ hidden: composer.stop }, { anyOf: [{ visible: composer.send }, { visible: composer.voice }] }] }
 
