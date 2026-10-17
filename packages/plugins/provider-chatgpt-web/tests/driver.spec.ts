@@ -50,6 +50,27 @@ describe.runIf(canRunBrowser)('ChatGptWebDriver against the fake site, with no r
     return { fake, page, context, driver }
   }
 
+  it('stops at a challenge page as a challenge, at once and with nothing sent', async () => {
+    const { page, driver, fake } = await site({ captcha: true })
+    const started = Date.now()
+    await expect(driver.checkAuth(page)).rejects.toMatchObject({ kind: 'challenge', disposition: 'USER_ACTION', message: expect.stringMatching(/Verify you are human/) })
+    expect(Date.now() - started).toBeLessThan(20_000)
+    await expect(driver.ask(page, 'hello', { conversation: 'temporary' })).rejects.toMatchObject({ kind: 'challenge' })
+    expect(fake.sent).toEqual([])
+  }, 60_000)
+
+  it('outlines a page that shows neither signed in nor signed out, and fails it once as drift, never as a session to retry', async () => {
+    const { page, fake } = await site({ interstitial: true })
+    const driver = new ChatGptWebDriver({ origin: fake.origin, timeouts: { readyMs: 1500 }, modes: { instant: { model: 'Latest', effort: 'Instant' } }, defaultMode: 'instant' })
+    const drifts: Array<{ element: string; kind: string; outline?: { nodes: Array<{ role?: string }> } }> = []
+    driver.onDrift = (event) => void drifts.push(event as never)
+    expect(await driver.checkAuth(page)).toBe('unknown')
+    expect(drifts).toEqual([expect.objectContaining({ element: 'composer.input', kind: 'unresolved' })])
+    expect(drifts[0]!.outline!.nodes.some((n) => n.role === 'dialog')).toBe(true)
+    await expect(driver.ask(page, 'hello', { conversation: 'temporary' })).rejects.toMatchObject({ kind: 'ui_drift', disposition: 'CONFIG_FIX' })
+    expect(fake.sent).toEqual([])
+  }, 60_000)
+
   it('reports signed-in and signed-out with positive evidence', async () => {
     const a = await site()
     expect(await a.driver.checkAuth(a.page)).toBe('signed-in')

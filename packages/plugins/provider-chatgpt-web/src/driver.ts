@@ -101,10 +101,15 @@ export class ChatGptWebDriver implements ProviderDriver<Page> {
     if (!page.url().startsWith(this.origin)) await page.goto(`${this.origin}/`, { waitUntil: 'domcontentloaded' })
     const engine = this.engine(page)
     try {
-      await engine.waitFor({ anyOf: [{ state: 'auth.signed-in' }, { state: 'auth.signed-out' }] }, this.timeouts.readyMs)
+      await engine.waitFor({ anyOf: [{ state: 'auth.signed-in' }, { state: 'auth.signed-out' }, { state: 'auth.challenge' }] }, this.timeouts.readyMs)
     } catch {
+      // Neither state: whatever the page shows instead is outlined as drift evidence, so it can be
+      // read without opening the operator's browser.
+      await engine.drift('composer.input').catch(() => undefined)
       return 'unknown'
     }
+    // A challenge page is neither: only the operator can pass it, and loading again deepens it.
+    if (await engine.state('auth.challenge')) throw new ProviderError('challenge', 'chatgpt-web: the site shows a challenge (Verify you are human); pass it in the login profile (system account login) and Save')
     return (await engine.state('auth.signed-out')) ? 'signed-out' : 'signed-in'
   }
 
@@ -227,7 +232,8 @@ export class ChatGptWebDriver implements ProviderDriver<Page> {
     await page.goto(url, { waitUntil: 'domcontentloaded' })
     const auth = await this.checkAuth(page)
     if (auth === 'signed-out') throw new ProviderError('reauth_required', 'chatgpt-web: signed out')
-    if (auth === 'unknown') throw new ProviderError('session_broken', 'chatgpt-web: page did not become ready')
+    // Neither signed in nor signed out (outlined as drift): loading it again on this account only adds traffic.
+    if (auth === 'unknown') throw new ProviderError('ui_drift', 'chatgpt-web: the page showed neither the composer nor a sign-in page in time (outlined as a ui.drift of composer.input)')
     const engine = this.engine(page)
     if (!options.binding) {
       // A new conversation: Chat must be selected on the home page first.

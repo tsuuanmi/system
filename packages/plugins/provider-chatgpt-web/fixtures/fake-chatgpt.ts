@@ -41,6 +41,10 @@ export interface FakeOptions {
   rotateOnLoad?: boolean
   /** The conversation menu offers Delete (default true): without it a deletion fails, and nothing is deleted. */
   deleteMenu?: boolean
+  /** Every page is a challenge ("Verify you are human" with its challenge frame) instead of the app. */
+  captcha?: boolean
+  /** Every page is an interstitial dialog: neither signed in nor signed out can be told. */
+  interstitial?: boolean
   /** The open conversation's pane has its own menu button (default true); the history rows always have theirs. */
   paneMenu?: boolean
   /** The delete dialog deletes this conversation instead of the one whose menu opened it (a wrong-chat test). */
@@ -361,7 +365,7 @@ export class FakeChatGpt {
 
   constructor(options: FakeOptions = {}) {
     this.options = {
-      startOnWork: true, chatToggleBroken: false, signedIn: true, loginOffer: false, requireCookie: false, rotateOnLoad: false, deleteMenu: true, paneMenu: true, dialogTarget: '', userId: 'user-fake123', sendLabel: 'Send', sendTestId: '',
+      startOnWork: true, chatToggleBroken: false, signedIn: true, loginOffer: false, requireCookie: false, rotateOnLoad: false, deleteMenu: true, captcha: false, interstitial: false, paneMenu: true, dialogTarget: '', userId: 'user-fake123', sendLabel: 'Send', sendTestId: '',
       answer: 'OK', thinkMs: 300, models: ['Latest', 'GPT-6', 'GPT-5.6 Sol', 'GPT-5.5'], lockedModels: [],
       researchMs: 1500, researchHeld: false, report: 'Deep research report body.', clarify: false, features: ['deep-research', 'web-search', 'image-generation'], modelPicker: true,
       mfa: 'totp', email: 'operator@example.test', password: 'correct horse', totpSecret: 'JBSWY3DPEHPK3PXP',
@@ -486,6 +490,8 @@ export class FakeChatGpt {
       return
     }
     res.setHeader('content-type', 'text/html; charset=utf-8')
+    if (this.options.captcha) return void res.end('<!doctype html><html><body><h1>Verify you are human</h1><iframe title="Widget containing a Cloudflare security challenge" src="/cdn-cgi/challenge-platform/h/b" style="width:300px;height:65px"></iframe></body></html>')
+    if (this.options.interstitial) return void res.end('<!doctype html><html><body><div role="dialog" aria-label="Before you continue"><h2>Before you continue</h2><button>Continue</button></div></body></html>')
     if (url.pathname.startsWith('/auth')) return this.auth(url, req, res)
     if (this.options.rotateOnLoad) res.setHeader('set-cookie', `session_seen=${Date.now()}; Path=/; Max-Age=3600`)
     const match = /^\/c\/([0-9a-f-]+)$/.exec(url.pathname)

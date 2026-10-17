@@ -12,6 +12,11 @@ The **ChatGPT Web provider driver**
   - `temporary`: Temporary chat; no binding is kept;
   - `persistent`: a normal chat; returns, and continues, the conversation id
     from `/c/<id>`.
+- **Challenge and unreadable pages.** A challenge page ("Verify you are human", a Cloudflare
+  challenge frame or path: `auth.challenge`) is `challenge`: the turn stops at once and the turn
+  runtime marks the account `challenge`. A page that shows neither the composer nor a sign-in
+  page in time is outlined as a `ui.drift` of `composer.input` (`system evidence`) and fails the
+  turn once as `ui_drift`, never as a session to retry.
 - **Mode guard.** A new conversation starts with **Chat** selected
   (`aria-pressed=true`), never Work, which spends the Codex quota. If Chat
   cannot be selected, nothing is sent.
