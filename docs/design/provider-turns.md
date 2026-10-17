@@ -27,6 +27,7 @@ interface ProviderDriver<Page> {                   // provider-core
   readonly stateOrigins: readonly string[];
   readonly sessionBound?: boolean;                 // works in its login profile, never from a copy (ADR-0030)
   readonly pageGapMs?: number;                     // a session-bound account's page loads, spaced
+  pageIdle?(page): Promise<boolean>;               // nothing running or open: the session keeps the page
   checkAuth(page): Promise<AuthState>;             // signed-in | signed-out | unknown
   identity(page): Promise<string>;                 // hashed before storage
   ask(page, prompt, { conversation, mode?, feature?, binding?, signal?, deadlines?,

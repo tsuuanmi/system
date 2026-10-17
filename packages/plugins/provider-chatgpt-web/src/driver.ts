@@ -67,6 +67,9 @@ export function shippedMap(overlay?: string): UiMap {
 /** The tools popover entry that proves each account feature. */
 const FEATURE_ENTRIES = [['deep-research', 'tools.deep-research'], ['web-search', 'tools.web-search'], ['image-generation', 'tools.create-image']] as const
 
+/** How long a page may take to settle (its Stop control gone) before it counts as busy and is not kept. */
+const PAGE_IDLE_WAIT_MS = 3000
+
 export class ChatGptWebDriver implements ProviderDriver<Page> {
   readonly provider = 'chatgpt-web'
   readonly capabilities = ['reason', 'persistent-conversation'] as const
@@ -241,7 +244,8 @@ export class ChatGptWebDriver implements ProviderDriver<Page> {
       throw new ProviderError('invalid_input', 'chatgpt-web: a temporary turn has no conversation to continue')
     }
     const url = options.binding ? `${this.origin}/c/${options.binding}` : `${this.origin}/`
-    await page.goto(url, { waitUntil: 'domcontentloaded' })
+    // A kept tab already showing the conversation is checked as it is, never loaded again (ADR-0030).
+    if (!(options.binding && (await this.showing(page, options.binding)))) await page.goto(url, { waitUntil: 'domcontentloaded' })
     const auth = await this.checkAuth(page)
     if (auth === 'signed-out') throw new ProviderError('reauth_required', 'chatgpt-web: signed out')
     // Neither signed in nor signed out (outlined as drift): loading it again on this account only adds traffic.
@@ -258,6 +262,20 @@ export class ChatGptWebDriver implements ProviderDriver<Page> {
       await this.ensureChat(engine, 'in the bound conversation')
     }
     await this.requireChat(engine, 'after opening the conversation')
+  }
+
+  /** The page shows `binding` already: its URL is the conversation's, and its turns are rendered. */
+  private async showing(page: Page, binding: string): Promise<boolean> {
+    return this.bindingOf(page) === binding && (await this.engine(page).count('turn.user')) > 0
+  }
+
+  /**
+   * Nothing generating, no dialog or menu open: a session-bound account keeps the page for the
+   * session's next turn. Right after an answer the Stop control may linger a moment, so it waits
+   * briefly (`PAGE_IDLE_WAIT_MS`) before calling the page busy.
+   */
+  async pageIdle(page: Page): Promise<boolean> {
+    return this.engine(page).waitFor({ state: 'page.idle' }, PAGE_IDLE_WAIT_MS).then(() => true, () => false)
   }
 
   /** Select Chat if it is not already the pressed mode, then require it. */

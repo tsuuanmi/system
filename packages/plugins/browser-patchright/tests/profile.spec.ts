@@ -8,7 +8,7 @@ import VirtualDisplay from '@tsuuanmi/system-display-virtual'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { OWNED_PROFILE_SWITCH } from '@tsuuanmi/system-provider-core'
 import BrowserPool from '../src/index.ts'
-import { profileUsers } from '../src/profiles.ts'
+import { MAX_KEPT_TABS, profileUsers } from '../src/profiles.ts'
 import { canRunBrowser, testChrome } from './support.ts'
 import { chromium } from 'patchright-core'
 
@@ -125,7 +125,7 @@ describe.runIf(canRunBrowser)('pool(ctx).captureProfile (the Save flow)', () => 
       expect(a.page.isClosed()).toBe(true)
       expect(b.page.isClosed()).toBe(false)
       expect(pool(ctx).openAccounts()).toEqual(['acct'])
-      expect(pool(ctx).profileStates()).toEqual([{ account: 'acct', open: true, pages: 1, reserved: false }])
+      expect(pool(ctx).profileStates()).toEqual([{ account: 'acct', open: true, pages: 1, kept: 0, reserved: false }])
       // The real browser is seen on the profile, marked as system's; its children carry no mark.
       expect(profileUsers(dir).filter((u) => u.browser)).toEqual([expect.objectContaining({ owned: true })])
       expect(profileUsers(dir).some((u) => !u.browser && !u.owned)).toBe(true)
@@ -209,7 +209,7 @@ describe.runIf(canRunBrowser)('pool(ctx).captureProfile (the Save flow)', () => 
       const first = await pool(ctx).reserveProfile('acct', dir)
       // Closed for the operator's browser, and no turn opens it meanwhile.
       expect(pool(ctx).openAccounts()).toEqual([])
-      expect(pool(ctx).profileStates()).toEqual([{ account: 'acct', open: false, pages: 0, reserved: true }])
+      expect(pool(ctx).profileStates()).toEqual([{ account: 'acct', open: false, pages: 0, kept: 0, reserved: true }])
       await expect(pool(ctx).openTurn('acct', { profile: { dir } })).rejects.toMatchObject({ kind: 'overloaded', disposition: 'BACKOFF' })
       // The Save that ends a remote login still reads the profile.
       await expect(capture(ctx, dir)).resolves.toMatchObject({ result: 'signed in' })
@@ -248,5 +248,63 @@ describe.runIf(canRunBrowser)('pool(ctx).captureProfile (the Save flow)', () => 
       // Used in place: the profile stays held for the account's next turn.
       expect(pool(ctx).openAccounts()).toEqual(['acct'])
     }, 90_000)
+
+    describe('kept tabs: a session\'s page between its turns (ADR-0030)', () => {
+      it('keeps a session\'s page on close and hands it back, in front, with no new page and no pacing; discard closes it for good', async () => {
+        const ctx = await boot()
+        const dir = await signedInProfile()
+        const first = await pool(ctx).openTurn('acct', { profile: { dir, gapMs: 5000, keep: 'ses_a' } })
+        expect(first.reused).toBe(false)
+        await first.page.goto(`${origin}/`)
+        await first.close()
+        expect(first.page.isClosed()).toBe(false)
+        expect(pool(ctx).profileStates()).toEqual([{ account: 'acct', open: true, pages: 0, kept: 1, reserved: false }])
+        const started = Date.now()
+        const again = await pool(ctx).openTurn('acct', { profile: { dir, gapMs: 5000, keep: 'ses_a' } })
+        expect(Date.now() - started).toBeLessThan(2000)
+        expect(again.reused).toBe(true)
+        expect(again.page).toBe(first.page)
+        expect(again.page.url()).toBe(`${origin}/`)
+        expect(await again.page.evaluate(() => document.visibilityState)).toBe('visible')
+        await again.discard!()
+        expect(again.page.isClosed()).toBe(true)
+        expect(pool(ctx).profileStates()).toEqual([{ account: 'acct', open: true, pages: 0, kept: 0, reserved: false }])
+      }, 90_000)
+
+      it('keeps at most MAX_KEPT_TABS per account, closing the least recently used; a session\'s end closes its tab', async () => {
+        const ctx = await boot()
+        const dir = await signedInProfile()
+        const pages = []
+        for (const key of ['s1', 's2', 's3', 's4', 's5']) {
+          const turn = await pool(ctx).openTurn('acct', { profile: { dir, keep: key } })
+          pages.push(turn.page)
+          await turn.close()
+        }
+        expect(MAX_KEPT_TABS).toBe(4)
+        expect(pool(ctx).profileStates()[0]).toMatchObject({ kept: 4 })
+        expect(pages[0]!.isClosed()).toBe(true)
+        expect(pages.slice(1).every((p) => !p.isClosed())).toBe(true)
+        await pool(ctx).discardTab('acct', 's3')
+        expect(pages[2]!.isClosed()).toBe(true)
+        expect(pool(ctx).profileStates()[0]).toMatchObject({ kept: 3 })
+        // A kept tab the browser closes on its own is forgotten.
+        await pages[1]!.close()
+        expect(pool(ctx).profileStates()[0]).toMatchObject({ kept: 2 })
+      }, 90_000)
+
+      it('never lets kept tabs refuse the operator: a reservation closes them with the context', async () => {
+        const ctx = await boot()
+        const dir = await signedInProfile()
+        const turn = await pool(ctx).openTurn('acct', { profile: { dir, keep: 's1' } })
+        await turn.close()
+        const release = await pool(ctx).reserveProfile('acct', dir)
+        expect(turn.page.isClosed()).toBe(true)
+        expect(pool(ctx).profileStates()).toEqual([{ account: 'acct', open: false, pages: 0, kept: 0, reserved: true }])
+        release()
+        const fresh = await pool(ctx).openTurn('acct', { profile: { dir, keep: 's1' } })
+        expect(fresh.reused).toBe(false)
+        await fresh.discard!()
+      }, 90_000)
+    })
   })
 })

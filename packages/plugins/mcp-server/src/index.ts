@@ -205,7 +205,7 @@ export class McpEndpoint extends McpTools {
     const eventLog = this.ctx.get('eventLog')
     const workflow = this.ctx.get('workflow' as never) as { refusedTemplates?: () => Array<{ name: string; reason: string }> } | undefined
     const turns = this.ctx.get('turns' as never) as { conversations?: (filter: { state: 'failed' }) => Array<{ account: string; binding: string; reason?: string }> } | undefined
-    const browser = this.ctx.get('browser' as never) as { profileStates?: () => Array<{ account: string; open: boolean; pages: number; reserved: boolean; blocked?: string }> } | undefined
+    const browser = this.ctx.get('browser' as never) as { profileStates?: () => Array<{ account: string; open: boolean; pages: number; kept?: number; reserved: boolean; blocked?: string }> } | undefined
     const report = await healthReport({
       plugins: () => brokenPlugins(this.ctx),
       ...(workflow?.refusedTemplates ? { templates: () => workflow.refusedTemplates!() } : {}),

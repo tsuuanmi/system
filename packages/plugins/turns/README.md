@@ -42,6 +42,14 @@ invoked by the [workflow engine](../workflow/README.md)
   the page is in the account's login profile (`ctx.login.profileDir`), spaced by
   the driver's `pageGapMs`, with nothing written back. For any other driver, it
   is a fresh context from the portable state.
+- **Kept tabs** ([ADR-0030](../../../docs/decisions/adr/0030-session-bound-accounts-use-their-login-profile.md)'s
+  amendment): a session-bound account's persistent session keeps its page between turns.
+  - Once the answer is in, the page is kept if the driver reports it idle and clean
+    (`pageIdle`), otherwise discarded. This happens before the turn completes, so the session's
+    next turn finds it. A commit that fails takes it back.
+  - The page follows the turn's abort only until the answer is in.
+  - A failed turn discards its page.
+  - Releasing or resetting a session closes its tab.
 - **Write-back:** before completing, the turn captures the browser state for the
   driver's origins and stores it with `accounts.refreshState`. A session-bound
   account has no copy to refresh. This happens only

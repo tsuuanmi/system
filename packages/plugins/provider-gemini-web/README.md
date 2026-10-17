@@ -122,5 +122,9 @@ driver, its operations are data: a UI map,
   stands: event `provider.stall`, with the page's structure as local-private
   evidence, its `visibilityState`, focus, and path. It is never retried from the
   driver.
+- **Kept tabs.** A page that already shows the bound conversation is not loaded
+  again, and its sign-in is checked as it is. `pageIdle` (map state `page.idle`:
+  nothing generating, no `page.overlay` dialog or menu) tells the turn runtime it
+  may keep the page for the session's next turn.
 - **Config:** `origin`, `modes`, `defaultMode`, `maxPromptChars`, `pageGapMs`.
 - **Injects:** `providers`.

@@ -88,6 +88,9 @@ const sameModel = (shown: string, wanted: string): boolean => named(shown, wante
 /** A matched item's name without a note on its line: "3.8 Flash" of "3.8 Flash All-around help". */
 const nameOf = (shown: string, wanted: string): string => shown.slice(0, shown.indexOf(wanted) + wanted.length)
 
+/** How long a page may take to settle (its Stop control gone) before it counts as busy and is not kept. */
+const PAGE_IDLE_WAIT_MS = 3000
+
 export class GeminiWebDriver implements ProviderDriver<Page> {
   readonly provider = 'gemini-web'
   readonly capabilities = ['reason', 'persistent-conversation'] as const
@@ -345,7 +348,8 @@ export class GeminiWebDriver implements ProviderDriver<Page> {
 
   /** A new chat (or the bound one) on the Chat tab; a new temporary turn turns Temporary chat on. */
   private async open(page: Page, conversation: AskOptions['conversation'], binding: string | undefined): Promise<void> {
-    await page.goto(binding ? `${this.origin}/app/${binding}` : this.loginUrl, { waitUntil: 'domcontentloaded' })
+    // A kept tab already showing the conversation is checked as it is, never loaded again (ADR-0030).
+    if (!(binding && (await this.showing(page, binding)))) await page.goto(binding ? `${this.origin}/app/${binding}` : this.loginUrl, { waitUntil: 'domcontentloaded' })
     const auth = await this.checkAuth(page)
     if (auth === 'signed-out') throw new ProviderError('reauth_required', 'gemini-web: signed out')
     // Neither signed in nor signed out (outlined as drift): loading it again on this account only adds traffic.
@@ -362,6 +366,20 @@ export class GeminiWebDriver implements ProviderDriver<Page> {
     if ((await engine.count('tab.any')) > 0 && (await engine.count('tab.chat-active')) === 0) await engine.act('tab.select-chat').catch(driftOnly)
     await this.requireChat(engine, 'after opening')
     if (conversation === 'temporary') await engine.act('temporary.enable')
+  }
+
+  /** The page shows `binding` already: its URL is the conversation's, and its turns are rendered. */
+  private async showing(page: Page, binding: string): Promise<boolean> {
+    return this.bindingOf(page) === binding && (await this.engine(page).count('turn.user')) > 0
+  }
+
+  /**
+   * Nothing generating, no dialog or menu open: a session-bound account keeps the page for the
+   * session's next turn. Right after an answer the Stop control may linger a moment, so it waits
+   * briefly (`PAGE_IDLE_WAIT_MS`) before calling the page busy.
+   */
+  async pageIdle(page: Page): Promise<boolean> {
+    return this.engine(page).waitFor({ state: 'page.idle' }, PAGE_IDLE_WAIT_MS).then(() => true, () => false)
   }
 
   /** Where the tabs are shown, Chat must be the active one. */

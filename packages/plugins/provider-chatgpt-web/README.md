@@ -21,6 +21,9 @@ The **ChatGPT Web provider driver**
   stands: event `provider.stall`, with the page's structure as local-private
   evidence, its `visibilityState`, focus, and path. It is never retried from the
   driver.
+- **Kept tabs** (for when the account is session-bound; ADR-0030). A page that already shows
+  the bound conversation is not loaded again. `pageIdle` (map state `page.idle`) tells the turn
+  runtime it may keep the page for the session's next turn.
 - **Logged-out home.** When the session ends, ChatGPT may show its anonymous home instead of the
   login page: the app shell with a logged-out composer and sign-in buttons whose names vary
   (`auth.logged-out-home`). Visible, with no `composer.input`, for 3 s, it is signed out

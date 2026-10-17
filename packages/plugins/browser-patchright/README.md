@@ -51,6 +51,17 @@
   (automation or login) is stopped when the account next opens the profile, or
   when the operator reserves it (event `browser.profile-orphan`). A page that a
   held context does not open within 30 s fails as `session_broken`.
+- **Kept tabs** (`profile.keep`, a session id): a turn's `close()` keeps its page as
+  the session's tab, and the session's next `openTurn` hands it back (`reused`), in
+  front, with no new page and no pacing.
+  - `discard()` closes a page for good, and `discardTab(account, keep)` closes a
+    session's tab.
+  - At most `MAX_KEPT_TABS` (4) per account; past it, the least recently used
+    closes. A tab idle for more than `MAX_KEPT_IDLE_MS` (10 min) is not handed
+    back. A fresh page loads the conversation, which shows whether the site still
+    has it.
+  - Kept tabs close with the context. They never refuse a reservation, which
+    closes them too. `profileStates` counts them.
 - **`reserveProfile(account, dir)`:** for the operator's remote login. It is
   refused (`overloaded`) while profile pages are open. Otherwise it closes the
   context and returns only after that browser has exited. Profile turns then fail

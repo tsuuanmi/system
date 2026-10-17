@@ -236,7 +236,11 @@ export class Turns extends Service {
       },
       handle: (sessionId) => this.session(sessionId)?.binding ?? undefined,
       // The account stays (session affinity); without a binding the next turn opens a new conversation.
-      reset: (sessionId) => Number(this.ctx.store.db.prepare('UPDATE turn_sessions SET binding = NULL WHERE session_id = ?').run(sessionId).changes) > 0,
+      reset: (sessionId) => {
+        // A lost conversation's kept tab shows nothing to continue.
+        this.discardTab(sessionId)
+        return Number(this.ctx.store.db.prepare('UPDATE turn_sessions SET binding = NULL WHERE session_id = ?').run(sessionId).changes) > 0
+      },
       // The caller is done with these sessions: their recorded conversations are deleted on their sites.
       release: (sessionIds, reason) => this.release(sessionIds, reason),
       cancel: (id) => this.cancel(id),
@@ -368,9 +372,17 @@ export class Turns extends Service {
    * become due and are deleted on their sites in the background (PROP-0004 Phase 5).
    */
   release(sessionIds: readonly string[], reason: string): { due: number; decision?: ContentId } {
+    // Their kept tabs close with them (ADR-0030).
+    for (const id of sessionIds) this.discardTab(id)
     const released = releaseSessions(this.ledgerHost, sessionIds, reason)
     if (released.due) this.ctx.store.afterCommit(() => void this.deleteConversations())
     return released
+  }
+
+  /** Close a session's kept tab, if its account keeps one. */
+  private discardTab(sessionId: string): void {
+    const account = this.session(sessionId)?.account
+    if (account) void this.ctx.browser.discardTab(account, sessionId).catch(() => undefined)
   }
 
   /** The conversation ledger, oldest first (operator). */
@@ -760,7 +772,22 @@ export class Turns extends Service {
     const deadlines = research
       ? { timeoutMs: this.config.researchTimeoutMs ?? 60 * 60_000, stallTimeoutMs: this.config.researchStallTimeoutMs ?? 30 * 60_000 }
       : { timeoutMs: this.config.turnTimeoutMs ?? 15 * 60_000, stallTimeoutMs: this.config.stallTimeoutMs ?? 5 * 60_000 }
-    const turn = await this.openPage(accountId, driver, signal, state)
+    // A session-bound account's persistent session keeps its tab between turns (ADR-0030). Its page
+    // follows the turn's signal only until the answer is in: the turn's end must not close a page
+    // that is being kept.
+    const keep = driver.sessionBound && row.session_id && row.mode === 'persistent' ? row.session_id : undefined
+    const pageAbort = new AbortController()
+    const forward = (): void => pageAbort.abort(signal.reason)
+    if (signal.aborted) forward()
+    else signal.addEventListener('abort', forward, { once: true })
+    let turn: BrowserTurn
+    try {
+      turn = await this.openPage(accountId, driver, keep ? pageAbort.signal : signal, state, keep)
+    } catch (error) {
+      signal.removeEventListener('abort', forward)
+      throw error
+    }
+    if (!keep) signal.removeEventListener('abort', forward)
     let result: Awaited<ReturnType<typeof driver.ask>>
     try {
       result = await driver.ask(turn.page, row.prompt, {
@@ -785,7 +812,9 @@ export class Turns extends Service {
         onBinding: (binding) => this.bind(row, accountId, binding, lease),
       })
     } catch (error) {
-      await turn.close()
+      signal.removeEventListener('abort', forward)
+      // Never kept after a failure: the next turn starts from a fresh page.
+      await (turn.discard?.() ?? turn.close())
       if (error instanceof ProviderError && error.kind === 'reauth_required') {
         // Signed out before anything was sent: a credentials-mode account signs in again once
         // (ADR-0017), then the turn runs again; otherwise the account needs the operator. A turn
@@ -801,6 +830,21 @@ export class Turns extends Service {
       await this.challenged(accountId, error, view.revision)
       throw error
     }
+    // The answer is in: from here the page is kept or closed below, never by the turn's end.
+    signal.removeEventListener('abort', forward)
+    if (keep !== undefined) {
+      // Kept (only when idle and clean) or closed before the turn completes, so the session's next
+      // turn, which may start at once, finds it. A commit that fails takes the kept tab back.
+      const idle = turn.discard !== undefined && (await driver.pageIdle?.(turn.page).catch(() => false) ?? false)
+      await (idle ? turn.close() : (turn.discard?.() ?? turn.close()))
+      try {
+        this.commit(row, accountId, view.provider, result.text, result.binding, lease)
+      } catch (error) {
+        if (idle) await this.ctx.browser.discardTab(accountId, keep).catch(() => undefined)
+        throw error
+      }
+      return
+    }
     try {
       // Before completion is visible: callers that see `completed` see the refreshed account.
       if (!driver.sessionBound) await this.writeBack(accountId, turn, driver.stateOrigins, state, view.revision, () => this.ctx.store.transaction(() => this.ctx.leases.fence(lease())))
@@ -812,15 +856,15 @@ export class Turns extends Service {
 
   /**
    * The page an operation on the account runs in. A session-bound driver's account (ADR-0030)
-   * works in a page of its own login profile, paced by the driver. Any other account works in a
-   * fresh context from its portable state: `state` when the caller already read it, for its
-   * write-back.
+   * works in a page of its own login profile, paced by the driver; with `keep`, the session's kept
+   * tab when there is one. Any other account works in a fresh context from its portable state:
+   * `state` when the caller already read it, for its write-back.
    */
-  private async openPage(accountId: string, driver: ProviderDriver, signal?: AbortSignal, state?: PortableState): Promise<BrowserTurn> {
+  private async openPage(accountId: string, driver: ProviderDriver, signal?: AbortSignal, state?: PortableState, keep?: string): Promise<BrowserTurn> {
     if (driver.sessionBound) {
       const login = this.ctx.get('login')
       if (!login) throw new ProviderError('config_error', `${accountId} works in its login profile (${driver.provider} is session-bound), but no login service is mounted`)
-      return this.ctx.browser.openTurn(accountId, { profile: { dir: login.profileDir(accountId), gapMs: driver.pageGapMs }, signal })
+      return this.ctx.browser.openTurn(accountId, { profile: { dir: login.profileDir(accountId), gapMs: driver.pageGapMs, keep }, signal })
     }
     return this.ctx.browser.openTurn(accountId, { state: state ?? await this.ctx.accounts.portableState(accountId), signal })
   }

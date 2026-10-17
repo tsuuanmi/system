@@ -328,9 +328,11 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
       gemini: { answer: (prompt) => (isProposal(prompt) ? proposal('Use Postgres') : ballot('O1')) },
     })
     const run = ctx.workflow.start({ template: 'brainstorm', input: 'Which store?' })
-    // m2 proposes first; its conversation is gone from the site before its ballot.
+    // m2 proposes first; its conversation is gone from the site before its ballot, as after the live
+    // re-login, whose reservation closes the account's kept tabs (ADR-0030).
     await until(() => ctx.workflow.get(run.runId)!.nodes.some((n) => n.nodeId === 'brainstorm:m2:propose' && n.state === 'COMPLETED'), 60_000)
     gemini!.conversations.clear()
+    ;(await ctx.browser.reserveProfile('gemini-main', ctx.login.profileDir('gemini-main')))()
     const done = await ctx.workflow.wait(run.runId, 120_000)
     expect(done.status).toBe('failed')
     const ballot2 = done.nodes.find((n) => n.nodeId === 'brainstorm:m2:ballot:1')!

@@ -109,6 +109,18 @@ describe.runIf(canRunBrowser)('GeminiWebDriver against the fake site', { timeout
     expect(stalls[0]!.outline!.nodes.length).toBeGreaterThan(0)
   })
 
+  it('keeps a page that already shows its conversation as it is, and reports it idle only with nothing open (kept tabs, ADR-0030)', async () => {
+    const { page, driver, fake } = await open({ startOnSpark: false })
+    const first = await driver.ask(page, 'hello', { conversation: 'persistent' })
+    expect(await driver.pageIdle(page)).toBe(true)
+    const loads = fake.pageLoads.length
+    // The page shows the conversation already: the next turn does not load it again.
+    await driver.ask(page, 'again', { conversation: 'persistent', binding: first.binding! })
+    expect(fake.pageLoads.length).toBe(loads)
+    await page.locator('#conv-options').click()
+    expect(await driver.pageIdle(page)).toBe(false)
+  })
+
   it('outlines a page that shows neither signed in nor signed out, as drift evidence, and reports it unknown', async () => {
     const { page, fake } = await open({ interstitial: true })
     const driver = new GeminiWebDriver({ origin: fake.origin, modes: PRESETS, defaultMode: 'flash', timeouts: { readyMs: 1500 } })
@@ -139,9 +151,11 @@ describe.runIf(canRunBrowser)('GeminiWebDriver against the fake site', { timeout
   it('fails a bound conversation the site no longer has at once, as conversation_lost: reopening it cannot help (live 2026-10-16)', async () => {
     const { page, driver, fake } = await open({ answer: 'first' })
     const first = await driver.ask(page, 'remember', { conversation: 'persistent' })
-    // Gone on the site (as after the live re-login): the site sends the page to /app.
+    // Gone on the site (as after the live re-login, which closes kept tabs): a fresh page opens it,
+    // and the site sends that page to /app.
     fake.conversations.delete(first.binding!)
-    await expect(driver.ask(page, 'again', { conversation: 'persistent', binding: first.binding })).rejects.toMatchObject({ kind: 'conversation_lost', disposition: 'USER_ACTION', message: expect.stringMatching(/no longer opens/) })
+    const fresh = await page.context().newPage()
+    await expect(driver.ask(fresh, 'again', { conversation: 'persistent', binding: first.binding })).rejects.toMatchObject({ kind: 'conversation_lost', disposition: 'USER_ACTION', message: expect.stringMatching(/no longer opens/) })
     expect(fake.sent).toHaveLength(1)
   })
 

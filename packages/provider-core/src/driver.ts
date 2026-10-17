@@ -79,6 +79,11 @@ export interface ProviderDriver<Page = unknown> {
   readonly sessionBound?: boolean
   /** A session-bound account's page loads are spaced at least this far apart, in milliseconds. */
   readonly pageGapMs?: number
+  /**
+   * Nothing generating, no dialog or menu open: a session-bound account keeps such a page, after
+   * a completed turn, for the session's next turn (ADR-0030). Absent, no page is kept.
+   */
+  pageIdle?(page: Page): Promise<boolean>
   /** Origins whose cookies, localStorage, and IndexedDB make up the portable state. */
   readonly stateOrigins: readonly string[]
   checkAuth(page: Page): Promise<AuthState>

@@ -30,6 +30,16 @@ const STOP_GRACE_MS = 3000
 const KILL_WAIT_MS = 5000
 /** A page that does not open in a held context within this is a wedged browser (INV-9). */
 const PAGE_OPEN_MS = 30_000
+/**
+ * Kept tabs per account (INV-9 bounds every resource): two team members and the research thread,
+ * with one to spare. A fifth closes the least recently used.
+ */
+export const MAX_KEPT_TABS = 4
+/**
+ * A kept tab idle longer than this is not handed back: the turn starts from a fresh page, which
+ * loads the conversation and so finds out if the site no longer has it, or has signed it out.
+ */
+export const MAX_KEPT_IDLE_MS = 10 * 60_000
 
 export interface ProfileHost {
   /** Launch Chrome on a login profile, headed on the invisible display, marked as owned, with session restore. */
@@ -42,13 +52,19 @@ export interface ProfileHost {
 export interface ProfileTurn {
   context: BrowserContext
   page: Page
+  /** Closes the turn: a turn opened with `keep` keeps its page as the session's tab. */
   close(): Promise<void>
+  /** Closes the page for good. */
+  discard(): Promise<void>
+  reused: boolean
 }
 
 interface Held {
   context: BrowserContext
   dir: string
   pages: number
+  /** Sessions' idle pages, least recently used first, with when each was kept. */
+  kept: Map<string, { page: Page; at: number }>
   /** When the next page may open (page opens are spaced by the caller's gap). */
   nextOpen: number
   idle?: NodeJS.Timeout | undefined
@@ -202,6 +218,8 @@ export class ProfileContexts {
   private readonly reservations = new Map<string, number>()
   /** Accounts whose profile a process holds that may not or could not be stopped, and what to do. */
   private readonly blocked = new Map<string, { dir: string; why: string }>()
+  /** Pages whose closing already forgets them as kept tabs. */
+  private readonly watched = new WeakSet<Page>()
   private disposed = false
 
   constructor(private readonly host: ProfileHost) {}
@@ -220,6 +238,7 @@ export class ProfileContexts {
       account,
       open: this.held.has(account),
       pages: this.held.get(account)?.pages ?? 0,
+      kept: this.held.get(account)?.kept.size ?? 0,
       reserved: this.reservations.has(account),
       ...(this.blocked.has(account) ? { blocked: this.blocked.get(account)!.why } : {}),
     }))
@@ -227,9 +246,11 @@ export class ProfileContexts {
 
   /**
    * A page of the account's persistent context on its login profile, opened lazily, one launch at
-   * a time. Closing the turn closes its page only; the context closes when idle.
+   * a time. Closing the turn closes its page only; the context closes when idle. With `keep` (a
+   * session id), the session's kept tab is handed back, brought to the front, with no new page and
+   * no pacing; and `close` keeps the page for the session's next turn.
    */
-  async open(account: string, dir: string, gapMs: number, signal: AbortSignal | undefined): Promise<ProfileTurn> {
+  async open(account: string, dir: string, gapMs: number, signal: AbortSignal | undefined, keep?: string): Promise<ProfileTurn> {
     if (this.reservations.has(account)) throw reservedError(account)
     const held = await abortable(this.ensure(account, dir), signal)
     // Reserved, or closed, while it launched: never a page in a context that is going away.
@@ -238,12 +259,22 @@ export class ProfileContexts {
     held.pages++
     clearTimeout(held.idle)
     let page: Page
+    let reused = false
     try {
-      // Spaced page loads: each open takes the next free slot, so concurrent opens queue.
-      const at = Math.max(Date.now(), held.nextOpen)
-      held.nextOpen = at + gapMs
-      if (at > Date.now()) await abortable(sleep(at - Date.now(), undefined, { ref: false }), signal)
-      page = await abortable(this.newPage(account, held), signal, (late) => void late.close().catch(() => undefined))
+      const kept = keep === undefined ? undefined : held.kept.get(keep)
+      if (kept) held.kept.delete(keep!)
+      const fresh = kept !== undefined && !kept.page.isClosed() && Date.now() - kept.at <= MAX_KEPT_IDLE_MS
+      if (kept && !fresh) await kept.page.close().catch(() => undefined)
+      if (kept && fresh) {
+        page = kept.page
+        reused = true
+      } else {
+        // Spaced page loads: each open takes the next free slot, so concurrent opens queue.
+        const at = Math.max(Date.now(), held.nextOpen)
+        held.nextOpen = at + gapMs
+        if (at > Date.now()) await abortable(sleep(at - Date.now(), undefined, { ref: false }), signal)
+        page = await abortable(this.newPage(account, held), signal, (late) => void late.close().catch(() => undefined))
+      }
       // The turn's page is the active tab of its window, whatever else the profile has open.
       await abortable(page.bringToFront(), signal)
     } catch (error) {
@@ -252,16 +283,51 @@ export class ProfileContexts {
     }
     const onAbort = (): void => void page.close().catch(() => undefined)
     signal?.addEventListener('abort', onAbort, { once: true })
-    let closed = false
-    const close = async (): Promise<void> => {
-      if (closed) return
-      closed = true
+    let ended = false
+    const end = async (keepIt: boolean): Promise<void> => {
+      if (ended) return
+      ended = true
       signal?.removeEventListener('abort', onAbort)
-      await page.close().catch(() => undefined)
+      page.off('close', onClose)
+      if (keepIt && keep !== undefined && !page.isClosed() && this.held.get(account) === held) await this.keepTab(held, keep, page)
+      else await page.close().catch(() => undefined)
       this.release(account, held)
     }
-    page.once('close', () => void close())
-    return { context: held.context, page, close }
+    const onClose = (): void => void end(false)
+    page.once('close', onClose)
+    return { context: held.context, page, reused, close: () => end(true), discard: () => end(false) }
+  }
+
+  /** Close a session's kept tab, if any. */
+  async discardTab(account: string, keep: string): Promise<void> {
+    const held = this.held.get(account)
+    const tab = held?.kept.get(keep)
+    if (!held || !tab) return
+    held.kept.delete(keep)
+    await tab.page.close().catch(() => undefined)
+  }
+
+  /** Keep `page` as the session's tab, least recently used last out; past the bound, the oldest closes. */
+  private async keepTab(held: Held, keep: string, page: Page): Promise<void> {
+    const closing: Page[] = []
+    const previous = held.kept.get(keep)?.page
+    held.kept.delete(keep)
+    if (previous && previous !== page) closing.push(previous)
+    held.kept.set(keep, { page, at: Date.now() })
+    // A kept tab closed by the site or the browser is forgotten (one listener per page, however
+    // many times it is kept).
+    if (!this.watched.has(page)) {
+      this.watched.add(page)
+      page.once('close', () => {
+        for (const [key, tab] of held.kept) if (tab.page === page) held.kept.delete(key)
+      })
+    }
+    while (held.kept.size > MAX_KEPT_TABS) {
+      const [oldest, tab] = held.kept.entries().next().value as [string, { page: Page }]
+      held.kept.delete(oldest)
+      closing.push(tab.page)
+    }
+    await Promise.all(closing.map((tab) => tab.close().catch(() => undefined)))
   }
 
   /**
@@ -405,7 +471,7 @@ export class ProfileContexts {
     // Opened with session restore, so the profile's session-only cookies survive. The restored
     // tabs are blanked: each turn opens its own page, spaced.
     for (const restored of context.pages()) await restored.goto('about:blank').catch(() => undefined)
-    const held: Held = { context, dir, pages: 0, nextOpen: 0 }
+    const held: Held = { context, dir, pages: 0, kept: new Map(), nextOpen: 0 }
     const onLost = (): void => void this.close(account).catch(() => undefined)
     lost.addEventListener('abort', onLost, { once: true })
     context.once('close', () => {

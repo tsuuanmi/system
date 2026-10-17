@@ -228,6 +228,16 @@ account's profile open, Save reads it in place, in a page of its own.
     - Saves, and with them automated sign-ins, run one at a time per account.
   - **Pacing.** The opens of the account's pages are spaced by the driver's
     `pageGapMs`; navigations within a page are not.
+  - **Kept tabs** (ADR-0030's amendment).
+    - A persistent session's page stays open between its turns
+      (`openTurn(account, { profile: { keep: sessionId } })`). The next turn gets it back, in
+      front, with no new page. A driver does not reload a page that already shows the
+      conversation, and checks the sign-in on the page as it is.
+    - The page is kept, before the turn completes, only when the turn succeeded and the page is
+      idle and clean (the driver's `pageIdle`). Otherwise it is discarded.
+    - At most 4 per account (least recently used out). Kept tabs close with their session
+      (release, reset), with the context, and on a reservation, which they never refuse.
+    - Temporary turns open a page each.
   - Sessions stay apart by conversation, each in its own tab, so one account still
     serves several team members.
 - **Retained page per session** (planned), opt-in per capability. For long sessions and

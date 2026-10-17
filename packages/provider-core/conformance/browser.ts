@@ -95,6 +95,30 @@ export function browserConformance(name: string, boot: Boot, probe: PageProbe): 
       }
     }, 90_000)
 
+    it('keeps a session\'s profile page on close and hands it back; discard and discardTab close it for good (ADR-0030)', async () => {
+      const { ctx, dispose } = await boot()
+      const dir = mkdtempSync(join(tmpdir(), 'system-conformance-kept-'))
+      try {
+        const first = await ctx.browser.openTurn('acct', { profile: { dir, keep: 's1' } })
+        expect(first.reused).toBe(false)
+        await probe.goto(first.page, `${origin}/`)
+        await first.close()
+        expect(ctx.browser.profileStates()).toEqual([expect.objectContaining({ account: 'acct', kept: 1, pages: 0 })])
+        const again = await ctx.browser.openTurn('acct', { profile: { dir, keep: 's1' } })
+        expect(again.reused).toBe(true)
+        expect(again.page).toBe(first.page)
+        await again.discard!()
+        expect(ctx.browser.profileStates()).toEqual([expect.objectContaining({ kept: 0 })])
+        const other = await ctx.browser.openTurn('acct', { profile: { dir, keep: 's2' } })
+        await other.close()
+        await ctx.browser.discardTab('acct', 's2')
+        expect(ctx.browser.profileStates()).toEqual([expect.objectContaining({ kept: 0 })])
+      } finally {
+        await dispose()
+        rmSync(dir, { recursive: true, force: true })
+      }
+    }, 90_000)
+
     it('names the executable it launches', async () => {
       const { ctx, dispose } = await boot()
       try {

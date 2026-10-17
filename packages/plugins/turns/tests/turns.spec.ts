@@ -779,5 +779,64 @@ describe.runIf(canRunBrowser)('ctx.turns: a session-bound account works in its o
     release()
     expect((await ctx.turns.wait((await ask(ctx, { prompt: 'now' })).turnId, 60_000)).answer).toBe('From the profile.')
   }, 180_000)
-})
 
+  describe('kept tabs: a session\'s page between its turns (ADR-0030)', () => {
+    /** The page a session's account keeps for it (test-only: read from the pool's state). */
+    const keptPage = (ctx: Context, sessionId: string): import('patchright-core').Page => (ctx.browser as unknown as { profiles: { held: Map<string, { kept: Map<string, { page: import('patchright-core').Page }> }> } }).profiles.held.get('gemini-main')!.kept.get(sessionId)!.page
+    const kept = (ctx: Context): number => ctx.browser.profileStates().find((p) => p.account === 'gemini-main')?.kept ?? 0
+    const session = (): string => `ses_${randomBytes(8).toString('hex')}`
+    const turn = async (ctx: Context, prompt: string, sessionId: string) => ctx.turns.wait((await ask(ctx, { prompt, sessionId })).turnId, 60_000)
+
+    it('runs a session\'s three turns on its kept tab: the conversation loads once, and the session\'s end closes the tab', async () => {
+      const { ctx, fake } = await bootBound({ fake: { answer: (prompt) => `A: ${prompt}` } })
+      const loads = fake.pageLoads.length
+      const id = session()
+      for (const prompt of ['one', 'two', 'three']) expect(await turn(ctx, prompt, id)).toMatchObject({ status: 'completed', answer: `A: ${prompt}` })
+      expect(fake.pageLoads.length - loads).toBe(1)
+      expect(fake.conversations.size).toBe(1)
+      expect(kept(ctx)).toBe(1)
+      ctx.turns.release([id], 'the run ended')
+      const deadline = Date.now() + 10_000
+      while (kept(ctx) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 50))
+      expect(kept(ctx)).toBe(0)
+    }, 180_000)
+
+    it('discards the tab after a failed turn: the next turn starts from a fresh page', async () => {
+      const { ctx, fake } = await bootBound({ fake: { dropOver: 40 } })
+      const loads = fake.pageLoads.length
+      const id = session()
+      expect(await turn(ctx, 'short', id)).toMatchObject({ status: 'completed' })
+      expect(await turn(ctx, 'a prompt long enough for the site to drop it', id)).toMatchObject({ status: 'failed', error: expect.objectContaining({ kind: 'input_dropped' }) })
+      expect(kept(ctx)).toBe(0)
+      expect(await turn(ctx, 'again', id)).toMatchObject({ status: 'completed' })
+      // The first turn's load, and the fresh page's; the failed turn reused the kept tab.
+      expect(fake.pageLoads.length - loads).toBe(2)
+    }, 180_000)
+
+    it('navigates a kept tab once when it no longer shows its conversation', async () => {
+      const { ctx, fake } = await bootBound()
+      const id = session()
+      await turn(ctx, 'one', id)
+      await keptPage(ctx, id).goto(`${fake.origin}/app`)
+      const loads = fake.pageLoads.length
+      expect(await turn(ctx, 'two', id)).toMatchObject({ status: 'completed' })
+      expect(fake.pageLoads.slice(loads)).toEqual([expect.stringMatching(/^\/app\/[0-9a-f]{16}$/)])
+    }, 180_000)
+
+    it('checks a kept tab again: Google\'s check shown over it while idle fails as an open would, with nothing sent or loaded, and the tab is discarded', async () => {
+      const { ctx, fake } = await bootBound()
+      const id = session()
+      await turn(ctx, 'one', id)
+      // Still showing its conversation, so the turn does not reload it: the check runs on the page as it stands.
+      await keptPage(ctx, id).evaluate(() => document.body.insertAdjacentHTML('beforeend', '<iframe title="reCAPTCHA" src="/recaptcha/api2/anchor" style="width:304px;height:78px"></iframe>'))
+      const sent = fake.sent.length
+      const loads = fake.pageLoads.length
+      expect(await turn(ctx, 'two', id)).toMatchObject({ status: 'failed', error: expect.objectContaining({ kind: 'challenge' }) })
+      expect((await ctx.accounts.get('gemini-main')).status).toBe('challenge')
+      expect(fake.sent.length).toBe(sent)
+      // Checked as it stood: nothing was loaded first.
+      expect(fake.pageLoads.length).toBe(loads)
+      expect(kept(ctx)).toBe(0)
+    }, 180_000)
+  })
+})

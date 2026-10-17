@@ -240,12 +240,25 @@ Accepted on 2026-10-17 by the operator, in Researcher's session: both ranked opt
   profile lock, reopens the conversation in the profile, and adopts the answer, sending nothing
   twice.
 - Live validation: pending, until the operator has cleared Google's challenge.
+- Kept tabs (the amendment below), built on branch `feat/kept-tabs`:
+  - `profile.keep`, `BrowserTurn.discard`, `discardTab`, and kept tabs in `profileStates`;
+  - in the turn runtime, a session's page is kept or closed before its turn completes, so a next
+    turn that starts at once finds it; a release or reset closes the session's tab;
+  - each driver has `pageIdle`, and skips the load when the page already shows the conversation;
+  - the UI maps gain `page.overlay` and `page.idle`.
+- Kept-tab tests:
+  - a session's three turns load the conversation once;
+  - a failed turn's tab is discarded;
+  - a kept tab no longer showing its conversation navigates once;
+  - Google's check over a kept tab fails as `challenge`, with nothing loaded or sent;
+  - the least recently used tab closes past the bound;
+  - a reservation and a release close kept tabs.
 
 ## Amendment (2026-10-17): keep a session's tab between its turns
 
 Status: accepted 2026-10-17 (the operator's direction to keep and reuse open windows; reviewed by Researcher). It changes the design above, not ADR-0030's decision: the work
-still runs in pages of the account's profile, never from a copy. Once accepted, it is appended
-to ADR-0030 as an amendment.
+still runs in pages of the account's profile, never from a copy. It is appended to ADR-0030 as an
+amendment.
 
 **Why.** The operator asked to cut page loads and new chats. Live, it was repeated loads that
 drew Google's check. Today a session's every turn opens a new tab and loads its conversation
@@ -274,7 +287,12 @@ loads six pages where two would do.
   restart.
 - **Bounded.** At most 4 kept tabs per account (`MAX_KEPT_TABS`, a named constant: INV-9 bounds
   every resource). That covers two team members and the research thread, with one to spare.
-  Opening a fifth closes the least recently used.
+  Opening a fifth closes the least recently used. A tab idle for more than 10 minutes
+  (`MAX_KEPT_IDLE_MS`) is not handed back: the turn starts from a fresh page.
+- **What a kept tab cannot see.** A conversation the site has dropped is found out by loading it
+  (the site sends the page away). A kept tab skips that load. The live case, after a re-login, is
+  still caught, because the re-login's reservation closes every kept tab. A chat deleted elsewhere
+  while its tab is kept is caught within the 10-minute bound, or by the session's next fresh page.
   - Kept tabs close with their context: on the idle close (they count as idle, so the context
     still closes after `closeAfterMs` with no turn running), on a reservation, or when the
     display is lost.
@@ -324,7 +342,7 @@ per kept or discarded tab: that would flood the log.
   discarded.
 - A turn left with a menu open, or an answer still running, is not kept.
 
-**Live validation**, added to the plan above, in one brainstorm on Gemini:
+**Live validation**, added to the plan above, in its short two-member brainstorm (step 2):
 - count its page loads; they should match the table;
 - check that the two members' kept tabs leave each other alone: each keeps its own mode and its
   own conversation.

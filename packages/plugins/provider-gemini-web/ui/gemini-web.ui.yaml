@@ -215,6 +215,14 @@ elements:
     candidates:
       - { text: { en: "^(Unable to load|This conversation (was deleted|isn't available))" } }
 
+  page.overlay:
+    description: >-
+      An open dialog or menu. A page showing one is not kept for its session's next turn
+      (ADR-0030, kept tabs).
+    cardinality: many
+    candidates:
+      - { css: '[role="dialog"], [role="alertdialog"], [role="menu"]' }
+
 actions:
   tab.select-chat:
     do: click
@@ -313,6 +321,8 @@ states:
   auth.signed-out: { anyOf: [{ url: '^https?://accounts\.google\.com/' }, { allOf: [{ visible: auth.login }, { not: { visible: auth.account } }] }] }
   auth.challenge: { anyOf: [{ url: '^https?://(www\.)?google\.com/sorry/' }, { visible: auth.challenge }] }
   turn.running: { visible: composer.stop }
+  # Nothing generating and nothing open: the page can be kept for the session's next turn.
+  page.idle: { allOf: [{ not: { state: turn.running } }, { hidden: page.overlay }] }
 
 errors:
   - { when: { state: auth.challenge }, kind: challenge, message: 'gemini-web: Google shows its unusual-traffic check (a CAPTCHA); solve it in the login profile (system account login) and Save' }

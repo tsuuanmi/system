@@ -46,8 +46,8 @@ export interface Config {
 export interface OpenTurnOptions {
   /** The account's portable state; absent for a signed-out probe. Ignored with `profile`. */
   state?: PortableState | undefined
-  /** A page of the account's persistent login-profile context, page opens spaced `gapMs` apart (ADR-0030). */
-  profile?: { dir: string; gapMs?: number | undefined } | undefined
+  /** A page of the account's persistent login-profile context, page opens spaced `gapMs` apart; `keep`: the session's kept tab (ADR-0030). */
+  profile?: { dir: string; gapMs?: number | undefined; keep?: string | undefined } | undefined
   /** Closes the turn's context when aborted, e.g. a lease invalidation; a profile turn's page. */
   signal?: AbortSignal | undefined
 }
@@ -56,6 +56,10 @@ export interface Turn {
   context: BrowserContext
   page: Page
   close(): Promise<void>
+  /** A profile turn's page, closed for good (ADR-0030). */
+  discard?(): Promise<void>
+  /** A profile turn on the session's kept tab. */
+  reused?: boolean
 }
 
 /** The engine's typed storage state; `state.ts` keeps entries as plain records. */
@@ -115,7 +119,7 @@ export class BrowserPool extends BrowserSeam<Page, BrowserContext> {
   /** A fresh, isolated context and page for one turn on the account's browser (or a profile page). */
   async openTurn(account: string, options: OpenTurnOptions = {}): Promise<Turn> {
     options.signal?.throwIfAborted()
-    if (options.profile) return this.profiles.open(account, options.profile.dir, options.profile.gapMs ?? 0, options.signal)
+    if (options.profile) return this.profiles.open(account, options.profile.dir, options.profile.gapMs ?? 0, options.signal, options.profile.keep)
     // A launch can stall (display, Chrome, a new context under load); an aborted turn never waits
     // for it. A browser that arrives late stays pooled (closed when idle); a late context is closed.
     const managed = await abortable(this.ensure(account), options.signal)
@@ -190,6 +194,10 @@ export class BrowserPool extends BrowserSeam<Page, BrowserContext> {
 
   profileStates(): ProfileState[] {
     return this.profiles.states()
+  }
+
+  discardTab(account: string, keep: string): Promise<void> {
+    return this.profiles.discardTab(account, keep)
   }
 
   /** Closes the account's browser, its login-profile context, and every context on them. */

@@ -19,9 +19,11 @@ export interface OpenTurnOptions {
   /**
    * A session-bound account (ADR-0030): the turn is a page (tab) of one persistent context on
    * the account's login profile `dir`, never a fresh context from portable state. Page opens of
-   * one account are spaced at least `gapMs` apart.
+   * one account are spaced at least `gapMs` apart. With `keep` (a session id), the session's kept
+   * tab is handed back (brought to the front, no new page, not paced) when there is one, and the
+   * turn's `close` keeps its page for the session's next turn.
    */
-  profile?: { dir: string; gapMs?: number | undefined } | undefined
+  profile?: { dir: string; gapMs?: number | undefined; keep?: string | undefined } | undefined
   /** Closes the turn's context when aborted (e.g. a lease invalidation); a profile turn's page. */
   signal?: AbortSignal | undefined
 }
@@ -29,7 +31,12 @@ export interface OpenTurnOptions {
 export interface BrowserTurn<Page = unknown, BrowserContext = unknown> {
   context: BrowserContext
   page: Page
+  /** Closes the turn; a profile turn opened with `keep` keeps its page instead, as the session's tab. */
   close(): Promise<void>
+  /** Closes the turn's page for good, kept or not (after a failure, or a page left busy). */
+  discard?(): Promise<void>
+  /** The page is the session's kept tab, handed back. */
+  reused?: boolean
 }
 
 /**
@@ -44,8 +51,10 @@ export interface ProfileState {
   account: string
   /** Its persistent context is open. */
   open: boolean
-  /** Pages open in it now. */
+  /** Pages open in it now, in use by an operation. */
   pages: number
+  /** Kept tabs: sessions' idle pages, waiting for their next turn (ADR-0030). */
+  kept: number
   /** The operator's login holds it: its operations fail as `overloaded` meanwhile. */
   reserved: boolean
   /** A process holds it that could not be stopped, and what to do. */
@@ -79,6 +88,8 @@ export abstract class Browser<Page = unknown, BrowserContext = unknown> extends 
   abstract reserveProfile(account: string, dir: string): Promise<() => void>
   /** Login profiles held open, reserved, or held by a process that could not be stopped. */
   abstract profileStates(): ProfileState[]
+  /** Close a session's kept tab, if any (the session ended, or its conversation was lost). */
+  abstract discardTab(account: string, keep: string): Promise<void>
   /** The turn's state for `origins` only; IndexedDB over the cap keeps `previous`. */
   abstract capture(turn: BrowserTurn<Page, BrowserContext>, options: { origins: string[]; previous?: PortableState | undefined }): Promise<PortableState>
   /**

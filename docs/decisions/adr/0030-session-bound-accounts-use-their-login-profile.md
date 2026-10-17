@@ -1,6 +1,6 @@
 # ADR-0030: A session-bound website account works in its own login profile
 
-- **Status:** Accepted
+- **Status:** Accepted; amended 2026-10-17 (a session keeps its tab between its turns)
 - **Date:** 2026-10-17 (accepted 2026-10-17, by the operator, in Researcher's session)
 - **Related:** [PROP-0005](../../proposals/0005-session-bound-website-accounts.md),
   [ADR-0016](0016-invisible-headed-browser-and-portable-accounts.md) (superseded in part),
@@ -80,3 +80,17 @@ Option 4.
   operations and pauses new ones.
 - Revisit this if a site's sessions still die inside its own profile. Then the cause is not
   portability, and alternative 4 of PROP-0005 (an API Worker) is next.
+
+## Amendment (2026-10-17): a session keeps its tab between its turns
+
+The decision stands: a session-bound account works in pages of its own profile, never from a
+copy. Detailed in [PROP-0005's amendment](../../proposals/0005-session-bound-website-accounts.md#amendment-2026-10-17-keep-a-sessions-tab-between-its-turns),
+to cut page loads at the operator's request:
+
+- A persistent session's page stays open between its turns, as the session's tab. The next turn
+  gets it back, brought to the front, and a driver does not reload a page that already shows the
+  conversation. Its sign-in is checked on the page as it is.
+- A page is kept only after a completed turn whose page is idle and clean. Any failure discards it.
+- At most `MAX_KEPT_TABS` (4) per account, each idle for at most 10 minutes. Kept tabs close with
+  their session, with the context, and on a reservation, which they never refuse.
+- Temporary turns open a page each, as before.

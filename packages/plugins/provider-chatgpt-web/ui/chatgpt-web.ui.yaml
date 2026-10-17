@@ -263,6 +263,14 @@ elements:
     description: Positive evidence that the opened conversation no longer exists.
     candidates:
       - { text: { en: '^Unable to load conversation\b' } }
+  page.overlay:
+    description: >-
+      An open dialog or menu. A page showing one is not kept for its session's next turn
+      (ADR-0030, kept tabs).
+    cardinality: many
+    candidates:
+      - { css: '[role="dialog"], [role="alertdialog"], [role="menu"]' }
+
 actions:
   mode.select-chat:
     do: click
@@ -414,6 +422,8 @@ states:
   auth.login-page: { anyOf: [{ url: '^https?://auth\.openai\.com/|/auth/login' }, { allOf: [{ visible: auth.login }, { not: { visible: composer.input } }] }] }
   auth.signed-out: { anyOf: [{ state: auth.login-page }, { allOf: [{ visible: auth.logged-out-home }, { not: { visible: composer.input } }] }] }
   turn.running: { visible: composer.stop }
+  # Nothing generating and nothing open: the page can be kept for the session's next turn.
+  page.idle: { allOf: [{ not: { state: turn.running } }, { hidden: page.overlay }] }
   turn.idle: { allOf: [{ hidden: composer.stop }, { anyOf: [{ visible: composer.send }, { visible: composer.voice }] }] }
 
 errors:

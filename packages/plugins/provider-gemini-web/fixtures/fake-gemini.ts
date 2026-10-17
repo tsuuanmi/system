@@ -387,6 +387,8 @@ export class FakeGemini {
   readonly deleted = new Set<string>()
   /** Every deletion RPC the page made, by the chat it named (a repeated click shows twice). */
   readonly deleteRequests: string[] = []
+  /** Every app page load (`/app` or `/app/<id>`), in order: what kept tabs save (ADR-0030). */
+  readonly pageLoads: string[] = []
   /** Device checks of a `deviceBound` session, in order: whether each passed. */
   readonly deviceChecks: boolean[] = []
   /** Sessions signed in at `/signin` and the device key each was bound to. */
@@ -501,6 +503,7 @@ export class FakeGemini {
     if (state) return this.conversations.has(state[1]!) ? json(200, { turns: this.view(state[1]!), deepResearch: this.chips.get(state[1]!) ?? false }) : json(404, {})
     const page = /^\/app(?:\/([0-9a-f]{16}))?$/.exec(url.pathname)
     if (page) {
+      this.pageLoads.push(url.pathname)
       if (page[1] && this.deleted.has(page[1])) {
         res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }).end(html(this.options, true, [...this.conversations.keys()]))
         return

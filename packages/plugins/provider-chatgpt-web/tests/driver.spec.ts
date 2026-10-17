@@ -80,6 +80,20 @@ describe.runIf(canRunBrowser)('ChatGptWebDriver against the fake site, with no r
     expect(stalls[0]!.outline!.nodes.length).toBeGreaterThan(0)
   }, 60_000)
 
+  it('reports a page idle only with nothing open, and keeps one that already shows its conversation as it is (kept tabs, ADR-0030)', async () => {
+    const { page, driver, fake } = await site({ answer: 'one' })
+    const first = await driver.ask(page, 'hello', { conversation: 'persistent' })
+    expect(await driver.pageIdle(page)).toBe(true)
+    const requests: string[] = []
+    page.on('request', (r) => { if (r.resourceType() === 'document') requests.push(new URL(r.url()).pathname) })
+    await driver.ask(page, 'again', { conversation: 'persistent', binding: first.binding! })
+    expect(requests).toEqual([])
+    expect(fake.sent).toHaveLength(2)
+    // An open menu (rendered by the page, hidden until opened).
+    await page.evaluate(() => { document.getElementById('conv-menu')!.hidden = false })
+    expect(await driver.pageIdle(page)).toBe(false)
+  }, 60_000)
+
   it('reports signed-in and signed-out with positive evidence', async () => {
     const a = await site()
     expect(await a.driver.checkAuth(a.page)).toBe('signed-in')
