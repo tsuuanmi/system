@@ -45,7 +45,7 @@ accepted/implemented -> superseded
   behind a driver capability. Copies died on Gemini (2026-10-16) and on ChatGPT (2026-10-17) while
   the profiles stayed signed in. Gemini goes first.
 
-- [PROP-0006: Model Workers keep sessions](0006-model-worker-sessions.md), **proposed**. A model
+- [PROP-0006: Model Workers keep sessions](0006-model-worker-sessions.md), **accepted** ([ADR-0031](../decisions/adr/0031-model-worker-sessions-by-replay.md)). A model
   Worker (an API or local model) keeps a session by replaying its transcript, a provider-neutral
   `history` on `ctx.models`, so it can be a team member, carry research's synthesis thread, and
   continue an `ask`. Bounded, durable, idempotent, and egress-checked.

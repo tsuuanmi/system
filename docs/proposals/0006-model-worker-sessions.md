@@ -1,11 +1,11 @@
 ---
 id: PROP-0006
 type: proposal
-status: proposed
+status: accepted
 owners: [operator]
 created: 2026-10-17
 related-requirements: [REQ-WRK-10, REQ-WRK-7, REQ-TEAM-4, REQ-PRV-8]
-related-decisions: [ADR-0015, ADR-0025, ADR-0027, ADR-0029]
+related-decisions: [ADR-0015, ADR-0025, ADR-0027, ADR-0029, ADR-0031]
 implementation: []
 ---
 
@@ -159,7 +159,8 @@ session.
 
 ## Decision
 
-Pending: the operator's decision. Researcher has reviewed it.
+Accepted on 2026-10-17 by the operator, in Researcher's session, after Researcher's review.
+Recorded as [ADR-0031](../decisions/adr/0031-model-worker-sessions-by-replay.md).
 
 ## Implementation
 
