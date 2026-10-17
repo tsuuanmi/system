@@ -88,13 +88,19 @@ literature:1)`), fail closed.
 
 | Node | Capabilities | Tier | Conversation | Acceptance |
 |---|---|---|---|---|
-| `frame:1` | `reason` | standard | temporary | `resultSchema: hypothesis-set@1.0`, then `acceptance.answer` |
+| `frame:1` | `reason` | standard | persistent (the run's conversation) | `resultSchema: hypothesis-set@1.0`, then `acceptance.answer` |
 | `literature:1` (review A) | `reason`, `web-search` | standard | temporary | `acceptance.cited` |
 | `literature:2` (review B; differs from `literature:1`) | `reason` | standard | temporary | `acceptance.cited` |
 | `literature:1`, `literature:2` (variant `deep`) | `reason`, `deep-research` | frontier | own (each review its own conversation) | `acceptance.cited` |
-| `evidence:1` | `reason` | economy | temporary | `resultSchema: evidence-table@1.1`, then `acceptance.answer` |
+| `evidence:1` | `reason` | economy | persistent (the run's conversation) | `resultSchema: evidence-table@1.1`, then `acceptance.answer` |
 | `critique:1` (differs from `evidence:1`) | `reason` | standard | temporary | `acceptance.answer` |
-| `conclusion:1` | `reason` | standard | temporary | `acceptance.cited-conclusions` |
+| `conclusion:1` | `reason` | standard | persistent (the run's conversation) | `acceptance.cited-conclusions` |
+
+The synthesis steps (`frame:1`, `evidence:1`, `conclusion:1`) run in order in the run's one
+conversation (the caller's session, if it named one), on one account (session affinity). Each
+still receives its inputs inline. The two reviews and the critique each run in a conversation of
+their own, so none of them sees the thread it feeds or judges. A run opens four conversations,
+not six. The run's conversation is recorded, and deleted at retention like any other.
 
 ### `agent-review`
 
@@ -129,7 +135,7 @@ one fails admission, fail closed, with the capability named:
 | `ask` | runs on model Workers; an `ask` in a session (`--persist`, `--session`) fails: no model Worker proves `persistent-conversation` |
 | `brainstorm`, `review` | fail: their members keep sessions, and no model Worker proves `persistent-conversation` |
 | `agent-review` | runs on agent Workers (the preset turns their rows and the software-development profile on) |
-| `research` | `frame:1` runs; `literature:1` fails: no Worker proves `web-search` (variant `deep`: `deep-research`), and `literature:2` sends nothing |
+| `research` | `frame:1` fails before anything is sent: the synthesis thread needs `persistent-conversation`, which no model Worker proves (and `literature:1` would need `web-search`, variant `deep`: `deep-research`) |
 
 ## Acceptance contracts
 

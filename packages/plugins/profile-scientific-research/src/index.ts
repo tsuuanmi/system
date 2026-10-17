@@ -89,9 +89,15 @@ const CONCLUDE = [
   '</critique>',
 ].join('\n')
 
-/** The research procedure; its `deep` variant reviews the literature with the provider's Deep research. */
+/**
+ * The research procedure; its `deep` variant reviews the literature with the provider's Deep research.
+ * The synthesis steps (frame, evidence, conclusion) build on one another in the run's one
+ * conversation (`persistent`), so a run opens four conversations rather than six. The two reviews
+ * and the critique each keep a conversation of their own: they must be independent of the thread
+ * they feed or judge.
+ */
 export const RESEARCH: NodeTemplate[] = [
-    { nodeId: 'frame:1', objective: 'Frame the question as testable hypotheses', prompt: FRAME, capabilities: ['reason'], tier: 'standard', conversation: 'temporary', acceptance: 'acceptance.answer', resultSchema: 'hypothesis-set@1.0' },
+    { nodeId: 'frame:1', objective: 'Frame the question as testable hypotheses', prompt: FRAME, capabilities: ['reason'], tier: 'standard', conversation: 'persistent', acceptance: 'acceptance.answer', resultSchema: 'hypothesis-set@1.0' },
     // Two reviews in parallel on different provider families (PROP-0004, ADR-0027). Review A must
     // prove web search; review B is held to its citations, since its provider cannot prove a search.
     // Deep research needs a persistent conversation: each review has its own (`own`), never a shared one.
@@ -107,7 +113,7 @@ export const RESEARCH: NodeTemplate[] = [
     },
     {
       nodeId: 'evidence:1', objective: 'Extract one evidence table from both reviews', dependsOn: ['frame:1', 'literature:1', 'literature:2'], prompt: EVIDENCE,
-      capabilities: ['reason'], tier: 'economy', conversation: 'temporary', acceptance: 'acceptance.answer', resultSchema: 'evidence-table@1.1',
+      capabilities: ['reason'], tier: 'economy', conversation: 'persistent', acceptance: 'acceptance.answer', resultSchema: 'evidence-table@1.1',
     },
     {
       nodeId: 'critique:1', objective: 'Critique the evidence independently', dependsOn: ['frame:1', 'evidence:1'], prompt: CRITIQUE, capabilities: ['reason'],
@@ -115,7 +121,7 @@ export const RESEARCH: NodeTemplate[] = [
     },
     {
       nodeId: 'conclusion:1', objective: 'Conclude per hypothesis, citing the evidence', dependsOn: ['frame:1', 'evidence:1', 'critique:1'], prompt: CONCLUDE,
-      capabilities: ['reason'], tier: 'standard', conversation: 'temporary', acceptance: 'acceptance.cited-conclusions',
+      capabilities: ['reason'], tier: 'standard', conversation: 'persistent', acceptance: 'acceptance.cited-conclusions',
     },
 ]
 

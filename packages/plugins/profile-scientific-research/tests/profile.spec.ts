@@ -40,14 +40,15 @@ const AT = '2026-10-12T00:00:00Z'
  * Scripted chat Workers that answer each study step and record the prompts: `chat:a` proves web
  * search, `chat:b` only reasons, each of its own provider family unless `families` says otherwise.
  */
-function scholar(ctx: Context, families: [string, string] = ['fam-a', 'fam-b'], options: { busyAfterFramingMs?: number; deep?: boolean } = {}): string[] {
-  const prompts: string[] = []
+function scholar(ctx: Context, families: [string, string] = ['fam-a', 'fam-b'], options: { busyAfterFramingMs?: number; deep?: boolean } = {}): string[] & { sessions: Array<string | undefined> } {
+  const prompts = Object.assign([] as string[], { sessions: [] as Array<string | undefined> })
   const executions = new Map<string, WorkerExecution>()
   const sessions = new Map<string, string>()
   let busyUntil = 0
   const descriptor = (id: string, family: string, web: boolean) => ({
     schema: 'capability-descriptor@1.1' as const, worker: id, provider: 'test', family, tier: (options.deep ? 'frontier' : 'standard') as 'frontier' | 'standard', quotaClass: 'subscription-chat' as const, locality: 'remote' as const,
-    capabilities: ['reason', ...(web ? ['web-search'] : []), ...(options.deep ? ['deep-research', 'persistent-conversation'] : [])].map((capability) => ({ capability, evidence: { kind: 'probe' as const, at: AT } })),
+    // Website Workers keep conversations: the synthesis thread needs it.
+    capabilities: ['reason', 'persistent-conversation', ...(web ? ['web-search'] : []), ...(options.deep ? ['deep-research'] : [])].map((capability) => ({ capability, evidence: { kind: 'probe' as const, at: AT } })),
     // chat:a is busy for a while after framing, so review A backs off at admission and is routed again.
     state: (id === 'chat:a' && Date.now() < busyUntil ? 'busy' : 'ready') as 'busy' | 'ready', observedAt: AT,
   })
@@ -57,6 +58,7 @@ function scholar(ctx: Context, families: [string, string] = ['fam-a', 'fam-b'], 
     affinity: (sessionId) => (sessions.has(sessionId) ? [sessions.get(sessionId)!] : undefined),
     start: (request) => {
       prompts.push(request.prompt)
+      prompts.sessions.push(request.sessionId)
       if (request.sessionId && !sessions.has(request.sessionId)) sessions.set(request.sessionId, request.worker)
       const p = request.prompt
       if (p.includes('Frame the research question') && options.busyAfterFramingMs) busyUntil = Date.now() + options.busyAfterFramingMs
@@ -103,6 +105,15 @@ describe('the scientific-research profile, on the unchanged engine (REQ-WF-9)', 
     expect(done.nodes.map((n) => [n.nodeId, n.worker])).toEqual([
       ['frame:1', 'chat:a'], ['literature:1', 'chat:a'], ['literature:2', 'chat:b'], ['evidence:1', 'chat:a'], ['critique:1', 'chat:b'], ['conclusion:1', 'chat:a'],
     ])
+    // Four conversations, not six: the synthesis thread (frame, evidence, conclusion) is the run's one
+    // conversation; each review and the critique has its own, so neither sees the thread it feeds or judges.
+    const sessionOf = (marker: string) => prompts.sessions[prompts.findIndex((p) => p.includes(marker))]
+    const thread = sessionOf('Frame the research question')
+    expect(thread).toBe(done.sessionId)
+    expect(thread).toMatch(/^ses_/)
+    expect([sessionOf('Extract one evidence table'), sessionOf('Conclude the study')]).toEqual([thread, thread])
+    expect(prompts.filter((p) => p.includes('Review the published evidence')).map((p) => prompts.sessions[prompts.indexOf(p)])).toEqual([undefined, undefined])
+    expect(sessionOf('independent critic')).toBeUndefined()
     // A structured step is given its schema verbatim, and its result is checked against it (REQ-ART-5).
     expect(prompts[0]).toContain('"$id":"urn:tsuuanmi:system:schema:hypothesis-set:v1"')
     expect(ctx.artifacts.get(ctx.workflow.records(done.runId)[0]!.outputReceipt!.acceptance)!.body).toMatchObject({ candidates: [{ option: 'accept', reasons: ['a valid hypothesis-set@1.0', expect.any(String)] }, expect.anything()] })
