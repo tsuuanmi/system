@@ -21,7 +21,7 @@ import { setTimeout as sleep } from 'node:timers/promises'
 import { ensurePrivateDir } from '@tsuuanmi/system-libs'
 import { OWNED_PROFILE_SWITCH, type ProfileState, ProviderError } from '@tsuuanmi/system-provider-core'
 import type { BrowserContext, Page } from 'patchright-core'
-import { abortable, closeWithin } from './async.ts'
+import { abortable, closeWithin, newPage } from './async.ts'
 
 /** How long a closed profile's Chrome may take to exit before it is stopped. */
 const EXIT_WAIT_MS = 10_000
@@ -359,7 +359,7 @@ export class ProfileContexts {
       clearLockFiles(dir)
       const { context } = await this.host.launch(dir)
       try {
-        const page = context.pages()[0] ?? (await context.newPage())
+        const page = context.pages()[0] ?? (await newPage(context))
         return await run(page, context)
       } finally {
         await this.shutDown(account, dir, context).catch(() => undefined)
@@ -436,7 +436,7 @@ export class ProfileContexts {
   }
 
   private newPage(account: string, held: Held): Promise<Page> {
-    return within(held.context.newPage(), PAGE_OPEN_MS, `the login profile of ${account} did not open a page in ${PAGE_OPEN_MS / 1000} s`, (late) => void late.close().catch(() => undefined))
+    return within(newPage(held.context), PAGE_OPEN_MS, `the login profile of ${account} did not open a page in ${PAGE_OPEN_MS / 1000} s`, (late) => void late.close().catch(() => undefined))
   }
 
   private ensure(account: string, dir: string): Promise<Held> {
