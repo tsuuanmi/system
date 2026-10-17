@@ -1,7 +1,7 @@
 /**
  * Conformance suite for `ctx.models` (plugin rule 7, INV-11), and a fake provider that passes
- * it. A provider's test wires the provider to a model that answers `echo: <prompt>` and
- * configures the catalog in {@link CATALOG}: `echo` and `local` reach that model, `gone` names a
+ * it. A provider's test wires the provider to a model that answers `echo: <prompt>`, followed by
+ * ` (after N messages)` when the request carried N earlier messages, and configures the catalog in {@link CATALOG}: `echo` and `local` reach that model, `gone` names a
  * route that is not mounted.
  */
 import { type Context } from '@deepseek-ai/cordis'
@@ -61,7 +61,8 @@ export function modelsConformance(name: string, boot: Boot): void {
 
     it('takes a session\'s history and answers the prompt after it (ADR-0031)', () => withModels(async (ctx) => {
       const completion = await ctx.models.complete({ model: 'echo', prompt: 'and now?', history: [{ role: 'user', text: 'first' }, { role: 'assistant', text: 'echo: first' }] })
-      expect(completion).toMatchObject({ model: 'echo', text: 'echo: and now?', finish: 'stop' })
+      // The model saw both earlier messages: a provider that dropped the history would answer without them.
+      expect(completion).toMatchObject({ model: 'echo', text: 'echo: and now? (after 2 messages)', finish: 'stop' })
     }))
 
     it('fails closed with a provider-neutral reason: unknown, unavailable, aborted (INV-2)', () => withModels(async (ctx) => {
@@ -120,6 +121,6 @@ export class FakeModels extends Models {
     const failure = this.script.fail?.shift()
     if (failure) throw new ModelError(failure, `scripted ${failure}`)
     const maxTokens = Math.min(request.maxTokens ?? entry.maxTokens, entry.maxTokens)
-    return { model: entry.id, text: this.script.answer?.(request.prompt, request) ?? `echo: ${request.prompt}`, usage: { inputTokens: 7, outputTokens: 3 }, finish: 'stop', maxTokens, attempts: 1 }
+    return { model: entry.id, text: this.script.answer?.(request.prompt, request) ?? `echo: ${request.prompt}${request.history?.length ? ` (after ${request.history.length} messages)` : ''}`, usage: { inputTokens: 7, outputTokens: 3 }, finish: 'stop', maxTokens, attempts: 1 }
   }
 }

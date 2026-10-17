@@ -158,6 +158,7 @@ const CATALOG_W: ModelEntry[] = [
   { id: 'fast', tier: 'standard', quotaClass: 'metered', locality: 'remote', maxTokens: 64 },
   { id: 'gone', tier: 'standard', quotaClass: 'metered', locality: 'remote', maxTokens: 64 },
   { id: 'private', tier: 'standard', quotaClass: 'local', locality: 'local', maxTokens: 32 },
+  { id: 'strong', tier: 'frontier', quotaClass: 'metered', locality: 'remote', maxTokens: 64 },
 ]
 
 async function boot(options: { script?: FakeScript; workers?: Record<string, unknown>; egress?: Record<string, unknown>; workflow?: Record<string, unknown>; dir?: string; research?: boolean } = {}) {
@@ -260,7 +261,7 @@ describe('ctx.workers source `models`: API and local models as Workers (REQ-WRK-
       expect(await settle(ctx, turn(ctx, 'o2', 'two', 'ses_b'))).toMatchObject({ status: 'completed' })
     })
 
-    it('fails a turn past its bounds, with nothing sent: the row\'s default, and an entry\'s own', async () => {
+    it('fails a turn past its bounds, with nothing sent: the row\'s default, and an entry\'s own (INV-9)', async () => {
       const capped = await boot({ workers: { maxSessionTurns: 2 } })
       await settle(capped.ctx, turn(capped.ctx, 'c1', 'one', 'ses_c'))
       await settle(capped.ctx, turn(capped.ctx, 'c2', 'two', 'ses_c'))
@@ -292,13 +293,64 @@ describe('ctx.workers source `models`: API and local models as Workers (REQ-WRK-
       expect(source.handle!('ses_e')).toBeUndefined()
     })
 
-    it('checks egress on the history as sent, at its highest classification: a remote model never gets a local-private turn replayed (INV-12)', async () => {
+    it('labels a session\'s answers as sensitive as all it replayed, and never moves a session to another locality (REQ-WRK-7, INV-12)', async () => {
       // The operator lets the local model take local-private data, and never the remote one.
       const { ctx, fake } = await boot({ egress: { workerClasses: { model: ['public', 'operator-shared'], 'model-local': ['public', 'operator-shared', 'local-private'] } } })
       expect(await settle(ctx, turn(ctx, 'g1', 'my diary', 'ses_g', 'model:private', 'local-private'))).toMatchObject({ status: 'completed' })
-      const denied = await settle(ctx, turn(ctx, 'g2', 'summarize it', 'ses_g', 'model:fast', 'public'))
-      expect(denied).toMatchObject({ status: 'failed', error: { kind: 'egress_denied' } })
-      expect(fake.calls).toHaveLength(1)
+      // A public question in that session is answered from the diary: its answer is local-private too.
+      const second = await settle(ctx, turn(ctx, 'g2', 'summarize it', 'ses_g', 'model:private', 'public'))
+      expect(ctx.artifacts.get(second.result!)!.classification).toBe('local-private')
+      const egress = second.decisions.map((id) => ctx.artifacts.get(id)!.body as { decisionType: string; outcome: { detail: { classification?: string } } }).find((d) => d.decisionType === 'egress')!
+      expect(JSON.stringify(egress)).toContain('local-private')
+      // The remote model never takes over the session.
+      expect(() => turn(ctx, 'g3', 'and now?', 'ses_g', 'model:fast', 'public')).toThrow(/escalation within its family and locality/)
+      expect(fake.calls).toHaveLength(2)
+    })
+
+    it('stays on its model, and escalates only within its family and locality, replaying the history', async () => {
+      const { ctx, fake } = await boot()
+      await ctx.workers.list()
+      const source = ctx.workers.source('models')!
+      await settle(ctx, turn(ctx, 'x1', 'one', 'ses_x', 'model:fast'))
+      expect(source.affinity!('ses_x')).toEqual(['model:fast', 'model:strong'])
+      // The same tier elsewhere is no escalation.
+      expect(() => turn(ctx, 'x2', 'two', 'ses_x', 'model:private')).toThrow(/escalation/)
+      expect(await settle(ctx, turn(ctx, 'x3', 'two', 'ses_x', 'model:strong'))).toMatchObject({ status: 'completed' })
+      expect(seen(fake).at(-1)).toEqual(['user:one', 'assistant:echo: one'])
+    })
+
+    it('appends nothing for a turn that finishes after its session was released or reset, and a reset keeps the session on its model', async () => {
+      const { ctx, fake } = await boot()
+      const source = ctx.workers.source('models')!
+      await settle(ctx, turn(ctx, 'y1', 'one', 'ses_y'))
+      fake.script.holdMs = 800
+      const late = turn(ctx, 'y2', 'two', 'ses_y')
+      await expect.poll(() => fake.calls.length).toBe(2)
+      expect(source.reset!('ses_y')).toBe(true)
+      expect(await settle(ctx, late)).toMatchObject({ status: 'completed' })
+      expect(ctx.eventLog.query({ type: 'models.session.turn-dropped' })).toEqual([expect.objectContaining({ data: expect.objectContaining({ reason: 'the session was reset' }) })])
+      // Still on its model, and starting over: the late turn did not join.
+      expect(source.affinity!('ses_y')).toEqual(expect.arrayContaining(['model:fast']))
+      fake.script.holdMs = 0
+      await settle(ctx, turn(ctx, 'y3', 'fresh', 'ses_y'))
+      expect(seen(fake).at(-1)).toEqual([])
+      // Released while a turn runs: the session is gone, and stays gone.
+      fake.script.holdMs = 800
+      const orphan = turn(ctx, 'y4', 'four', 'ses_y')
+      await expect.poll(() => fake.calls.length).toBe(4)
+      source.release!(['ses_y'], 'run deleted')
+      expect(await settle(ctx, orphan)).toMatchObject({ status: 'completed' })
+      expect(source.handle!('ses_y')).toBeUndefined()
+      expect(ctx.store.db.prepare('SELECT COUNT(*) AS n FROM model_session_turns WHERE session_id = ?').get('ses_y')).toEqual({ n: 0 })
+    })
+
+    it('a compaction (a reset) frees a long session\'s history before its bound fails it (INV-9)', async () => {
+      const { ctx } = await boot({ workers: { maxHistoryChars: 40 } })
+      const source = ctx.workers.source('models')!
+      await settle(ctx, turn(ctx, 'z1', 'a fairly long first prompt', 'ses_z'))
+      // The session layer compacts it into a handoff: the turns go, the session stays.
+      source.reset!('ses_z')
+      expect(await settle(ctx, turn(ctx, 'z2', 'the handoff, and a fairly long second prompt', 'ses_z'))).toMatchObject({ status: 'completed' })
     })
 
     it('lets model Workers be team members: each member keeps its own session across its turns (one family, recorded)', async () => {

@@ -105,6 +105,8 @@ runs the work the router admitted to them. Callers never reach a source directly
   passes the egress check (Worker class `model` or `model-local`), output tokens, concurrency,
   re-attempts, and time are bounded, and a call interrupted by a restart is sent once more at
   most ([purpose P4](../requirements/purpose.md#p4-cheap-models-do-low-level-work-strong-models-do-hard-work)).
+  The source also keeps sessions by replaying their transcript
+  ([ADR-0031](../decisions/adr/0031-model-worker-sessions-by-replay.md)).
 - **Does not own:** routing decisions, acceptance, or the steps of a workflow.
 - **Contracts:** the `WorkerSource` interface in `@tsuuanmi/system-workers-core`:
   `describe` (capability descriptors with evidence), `start` (durable at once, idempotent by

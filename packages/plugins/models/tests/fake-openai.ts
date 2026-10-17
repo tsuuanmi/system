@@ -1,6 +1,6 @@
 /**
  * A minimal OpenAI-compatible chat-completions server on 127.0.0.1 for tests: it streams
- * `echo: <last user text>` as server-sent events with a usage chunk, and records each request.
+ * `echo: <last user text>` (with ` (after N messages)` for N earlier messages) as server-sent events with a usage chunk, and records each request.
  * Each response can be scripted: fail with a status, or hold the stream open.
  */
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
@@ -46,7 +46,9 @@ export async function fakeOpenAi(): Promise<FakeOpenAi> {
         return
       }
       const last = [...body.messages].reverse().find((m) => m.role === 'user')
-      const answer = step && 'text' in step ? step.text : `echo: ${text(last?.content)}`
+      // The messages before the last prompt: a history the model was given (ADR-0031).
+      const earlier = body.messages.length - 1
+      const answer = step && 'text' in step ? step.text : `echo: ${text(last?.content)}${earlier > 0 ? ` (after ${earlier} messages)` : ''}`
       const id = `chatcmpl-${requests.length}`
       const chunk = (delta: Record<string, unknown>, finish: string | null): string =>
         `data: ${JSON.stringify({ id, object: 'chat.completion.chunk', created: 0, model: body.model, choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`

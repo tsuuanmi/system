@@ -136,23 +136,40 @@ locality is what admits `local-private` work to it
 session, so the source keeps the transcript:
 
 - **Turns.** A session's completed turns live in `model_session_turns`: prompt, answer text,
-  and classification. A turn joins in the transaction that completes its call. The session's
-  first model and its family are in `model_sessions`.
+  and classification.
+  - The session itself is in `model_sessions` from its first turn: its model, family, locality,
+    tier, and a generation.
+  - A turn joins in the transaction that completes its call, and only into the session it was
+    accepted for. One that ended (released), started over (reset, a new generation), or moved on
+    since takes nothing (`models.session.turn-dropped`), while the call still completes.
 - **One turn at a time.** A session's next turn is refused (`overloaded`, retried) while one is in
   flight, so two turns never replay the same history.
 - **Exactly what was accepted.** A turn's call records its history: the last turn's sequence
   number and a hash of the turns. A re-send after a restart replays exactly that. A session reset
   since then fails the turn (`invalid_input`), and it is never replayed as if nothing happened.
-- **Bounds (INV-9).** `maxSessionTurns` (default 12) and `maxHistoryChars` (default 48,000) on the
-  `models` row, which a catalog entry may set for itself, fitted to its context window. Past a
-  bound the turn fails as `invalid_input` before anything is sent. Nothing is cut or summarized.
-- **Affinity.** A session stays with the model Workers of its first model's family. Escalation
-  may move it to another of them, which replays the history after its own bounds and egress are
-  checked.
-- **Egress.** What is checked is exactly what is sent: the prompt and the history as messages, at
-  the highest classification of the prompt and of every replayed prompt and answer.
-- **End.** A reset or release (the run deleted or expired) deletes the transcript. A call's own
-  retention never removes a turn that a live session still replays.
+- **Bounds (INV-9).** `maxSessionTurns` (default 100) and `maxHistoryChars` (default 320,000,
+  about 80k tokens) on the `models` row. A catalog entry may set its own, fitted to its context
+  window.
+  - The defaults sit above the session layer's own turn budget and its compaction point
+    (`compactAtTokens`, 60k). So a long session is compacted into a handoff, and reset, before a
+    bound fails it.
+  - An entry with a smaller bound needs a smaller `compactAtTokens` too.
+  - Past a bound the turn fails as `invalid_input` before anything is sent. Nothing is cut or
+    summarized.
+- **Affinity.** A session stays on its first model.
+  - Only an escalation moves it, to a Worker of the same family and locality at a higher tier,
+    which replays the history after its own bounds and egress are checked.
+  - The source enforces this itself at `start`, not only routing.
+  - It knows each Worker's family from the last `describe`, which routing runs before it starts
+    anything.
+- **Egress.** The prompt and the replayed turns, serialized as the turns sent in order, are
+  checked at the highest classification of the prompt and of every replayed prompt and answer.
+  The answer's artifact and its stored turn carry that classification too (REQ-WRK-7).
+- **End.**
+  - A reset (a compaction) deletes the turns and keeps the session on its model, at a new
+    generation.
+  - A release (the run deleted or expired) deletes the session and its turns.
+  - A call's own retention never removes a turn that a live session still replays.
 
 ## Cancel and restart
 

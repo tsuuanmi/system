@@ -6,7 +6,7 @@ owners: [operator]
 created: 2026-10-17
 related-requirements: [REQ-WRK-10, REQ-WRK-7, REQ-TEAM-4, REQ-PRV-8]
 related-decisions: [ADR-0015, ADR-0025, ADR-0027, ADR-0029, ADR-0031]
-implementation: []
+implementation: [packages/models-core, packages/plugins/models]
 ---
 
 # Proposal: Model Workers keep sessions by replaying their transcript
@@ -69,12 +69,15 @@ All of these need `persistent-conversation`, and under the `api-first` preset th
   - One turn in flight per session: turn N+1 is accepted only after turn N has completed or
     failed. Two turns never replay the same history and both append.
 - **Bounds (INV-9), validated `Config`:**
-  - `maxSessionTurns` (default 12);
-  - `maxHistoryChars` (default 48,000). Characters, not tokens: the source cannot count a
-    provider's tokens before the call.
+  - `maxSessionTurns` (default 100);
+  - `maxHistoryChars` (default 320,000, about 80k tokens). Characters, not tokens: the source
+    cannot count a provider's tokens before the call.
+
+  The defaults sit above the session layer's own turn budget and compaction point (revised in
+  review from 12 and 48,000, which a session would have hit before it was compacted).
 
   The row gives the defaults, and each catalog entry may lower or raise its own, so a small local
-  model with a short context window is not sent 48,000 characters. A turn whose history would pass
+  model with a short context window is not sent 320,000 characters. A turn whose history would pass
   its entry's bound fails as `invalid_input`, naming the bound. Nothing is cut.
 - **Capability.** Every available model Worker proves `persistent-conversation`, with evidence of
   kind `conformance`: it is the source's behavior, not the model's.

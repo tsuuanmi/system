@@ -296,6 +296,9 @@ artifacts that only expired runs needed are collected
 sweep that expires runs is one `workflow.retention.swept` event and log line with how many runs
 it expired and conversations it released; `system health` notes it (`retention`, never
 degraded).
+A model Worker's session transcript lives as long as its session: it is deleted when the run's
+release reaches it, never by the model calls' own `retainDays`
+([models](models.md#sessions)).
 A deleted or expired run releases the Worker sessions its nodes used that no remaining run
 uses (`ctx.workers.release`), in the same transaction, so the website conversations they
 created are deleted on their sites

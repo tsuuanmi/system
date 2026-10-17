@@ -30,9 +30,9 @@ export interface Config {
   callTimeoutMs?: number
   /** Days a finished call and its prompt are kept (default 30). */
   retainDays?: number
-  /** A session's turns, at most, unless an entry sets its own (default 12; ADR-0031). */
+  /** A session's turns, at most, unless an entry sets its own (default 100; ADR-0031). */
   maxSessionTurns?: number
-  /** Characters of history a session turn replays, at most, unless an entry sets its own (default 48,000). */
+  /** Characters of history a session turn replays, at most, unless an entry sets its own (default 320,000). */
   maxHistoryChars?: number
 }
 
@@ -49,15 +49,15 @@ export const Config: z<Config> = z.object({
     locality: z.union(['remote', 'local']).default('remote').description('local: the model runs on this machine (egress class model-local)'),
     maxTokens: z.natural().min(1).max(200_000).default(4096).description('Output bound of every call (INV-9)'),
     family: z.string().description('Opaque provider family (ADR-0027; default: the route). Give two routes to one vendor the same family, so diversity treats them as one'),
-    maxSessionTurns: z.natural().min(1).max(200).description('This model\'s session turns, at most (default: the row\'s maxSessionTurns)'),
+    maxSessionTurns: z.natural().min(1).max(10_000).description('This model\'s session turns, at most (default: the row\'s maxSessionTurns)'),
     maxHistoryChars: z.natural().min(1).max(2_000_000).description('Characters of history this model replays, at most (default: the row\'s maxHistoryChars); fit it to the context window'),
   })).default([]).description('The model catalog (REQ-WRK-10); names no key: a key is stored with the operator tool model_key'),
   maxRetries: z.natural().max(5).default(2).description('Re-attempts of a transiently failed call'),
   maxConcurrentCalls: z.natural().min(1).max(64).default(4).description('Model calls in flight at once'),
   callTimeoutMs: z.natural().min(1).default(5 * 60_000).description('Hard deadline per call'),
   retainDays: z.natural().min(1).default(30).description('Days a finished call and its prompt are kept'),
-  maxSessionTurns: z.natural().min(1).max(200).default(12).description('A session\'s turns, at most, unless an entry sets its own (ADR-0031)'),
-  maxHistoryChars: z.natural().min(1).max(2_000_000).default(48_000).description('Characters of history a session turn replays, at most, unless an entry sets its own; a turn past it fails, never cut'),
+  maxSessionTurns: z.natural().min(1).max(10_000).default(100).description('A session\'s turns, at most, unless an entry sets its own (ADR-0031; default: the session layer\'s turn budget)'),
+  maxHistoryChars: z.natural().min(1).max(2_000_000).default(320_000).description('Characters of history a session turn replays, at most, unless an entry sets its own; a turn past it fails, never cut (default: above the session layer\'s compaction point)'),
 }) as unknown as z<Config>
 
 export function apply(ctx: Context, config: Config): void {

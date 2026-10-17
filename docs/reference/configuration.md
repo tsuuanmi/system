@@ -188,14 +188,14 @@
 | `models[].locality` | "remote" \| "local" | `"remote"` | local: the model runs on this machine (egress class model-local) |
 | `models[].maxTokens` | number (1…200000) | `4096` | Output bound of every call (INV-9) |
 | `models[].family` | string |  | Opaque provider family (ADR-0027; default: the route). Give two routes to one vendor the same family, so diversity treats them as one |
-| `models[].maxSessionTurns` | number (1…200) |  | This model's session turns, at most (default: the row's maxSessionTurns) |
+| `models[].maxSessionTurns` | number (1…10000) |  | This model's session turns, at most (default: the row's maxSessionTurns) |
 | `models[].maxHistoryChars` | number (1…2000000) |  | Characters of history this model replays, at most (default: the row's maxHistoryChars); fit it to the context window |
 | `maxRetries` | number (0…5) | `2` | Re-attempts of a transiently failed call |
 | `maxConcurrentCalls` | number (1…64) | `4` | Model calls in flight at once |
 | `callTimeoutMs` | number (1…) | `300000` | Hard deadline per call |
 | `retainDays` | number (1…) | `30` | Days a finished call and its prompt are kept |
-| `maxSessionTurns` | number (1…200) | `12` | A session's turns, at most, unless an entry sets its own (ADR-0031) |
-| `maxHistoryChars` | number (1…2000000) | `48000` | Characters of history a session turn replays, at most, unless an entry sets its own; a turn past it fails, never cut |
+| `maxSessionTurns` | number (1…10000) | `100` | A session's turns, at most, unless an entry sets its own (ADR-0031; default: the session layer's turn budget) |
+| `maxHistoryChars` | number (1…2000000) | `320000` | Characters of history a session turn replays, at most, unless an entry sets its own; a turn past it fails, never cut (default: above the session layer's compaction point) |
 
 ## `profile-scientific-research`
 
