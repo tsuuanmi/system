@@ -14,8 +14,25 @@
   arrives late stays pooled and is closed when idle, and a late context is
   closed. Under heavy load on 2026-10-12, a stalled launch made a runtime stop
   hang.
+- **`openTurn(account, { profile: { dir, gapMs }, signal })`: a session-bound
+  account** ([ADR-0030](../../../docs/decisions/adr/0030-session-bound-accounts-use-their-login-profile.md)).
+  - The turn is a page of one persistent context on the account's login profile,
+    headed on the invisible display, as Save opens it.
+  - The context opens lazily, one launch at a time. Restored tabs are blanked so
+    they stop loading the site.
+  - Closing the turn closes only its page. The context closes after `closeAfterMs`
+    with no open page, or when the display is lost.
+  - Page opens are spaced at least `gapMs` apart.
+  - A lock left by a dead browser is cleared on open; one held by a live browser
+    refuses (`session_broken`).
+- **`reserveProfile(account)`:** for the operator's remote login. It is refused
+  (`overloaded`) while profile pages are open. Otherwise it closes the context,
+  and profile turns fail as `overloaded` until the returned release is called.
 - **`capture(turn, { origins, previous })`:** cookies, localStorage, and IndexedDB
   for the driver's origins only. IndexedDB over the size cap keeps `previous`.
+- **`captureProfile(dir, …)`** (the Save flow) uses a profile the pool already holds
+  open in place, in a page of its own. Otherwise it launches the profile and closes
+  it afterwards.
 - **Lifecycle:**
   - one launch at a time per account;
   - the browser closes after `closeAfterMs` with no open turn;

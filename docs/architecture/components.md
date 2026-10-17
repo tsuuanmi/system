@@ -39,8 +39,9 @@ the layers above. Each contract is published as one or more Cordis seams
     portable state, and filtered capture of refreshed state;
   - accounts (`ctx.accounts`): records, revisioned portable auth state, credentials, and proven
     features, as encrypted grants in `ctx.credentials`;
-  - login (`ctx.login`): login profiles, Save, the remote login desktop, and credential
-    sign-in;
+  - login (`ctx.login`): login profiles, Save, the remote login desktop (which reserves the
+    profile), and credential sign-in. A session-bound account's operations run in its login
+    profile ([ADR-0030](../decisions/adr/0030-session-bound-accounts-use-their-login-profile.md));
   - provider turn receipts (`ctx.turnReceipts`) and the reconciliation decision;
   - the driver registry (`ctx.providers`) and one **driver** per website: `chatgpt-web` and
     `gemini-web`;

@@ -1,8 +1,9 @@
 /**
  * `ctx.login`: account login profiles and the Save flow
  * (docs/design/browser-runtime.md#save-both-modes). Each account has its own login
- * profile, used only for interactive login. Save reopens that profile invisibly,
- * captures the portable state in memory, verifies it in a fresh context, and stores it
+ * profile, used for interactive login, and for every operation of a session-bound account
+ * (ADR-0030). Save reopens that profile invisibly, captures the portable state in memory,
+ * verifies it in a fresh context (in the profile itself when session-bound), and stores it
  * encrypted through `ctx.accounts` with a hashed identity. A failed verification saves
  * nothing.
  * @module @tsuuanmi/system-login
@@ -153,12 +154,24 @@ export class Login extends Service {
     if (!vncPath) throw new ProviderError('config_error', 'remote login needs a VNC server: apt install tigervnc-scraping-server (x0vncserver) or x11vnc')
     const profileDir = this.profileDir(accountId)
     ensurePrivateDir(profileDir)
-    const session = await RemoteLogin.start({
-      account: accountId, profileDir, loginUrl: driver.loginUrl, chromePath, vncPath,
-      ttlMs: this.config.remoteTtlMs ?? 30 * 60_000, port: this.config.remotePort ?? 47318,
-      onSave: () => this.save(accountId),
-      onEnded: () => this.remotes.delete(accountId),
-    })
+    // The operator's browser and the automation never share the profile (ADR-0030): refused
+    // while operations run in it, and new ones wait until the login ends.
+    const release = await this.ctx.browser.reserveProfile(accountId)
+    let session: RemoteLogin
+    try {
+      session = await RemoteLogin.start({
+        account: accountId, profileDir, loginUrl: driver.loginUrl, chromePath, vncPath,
+        ttlMs: this.config.remoteTtlMs ?? 30 * 60_000, port: this.config.remotePort ?? 47318,
+        onSave: () => this.save(accountId),
+        onEnded: () => {
+          this.remotes.delete(accountId)
+          release()
+        },
+      })
+    } catch (error) {
+      release()
+      throw error
+    }
     this.remotes.set(accountId, session)
     return session.info()
   }
@@ -228,7 +241,11 @@ export class Login extends Service {
     })
   }
 
-  /** Capture → verify in a fresh context → store encrypted (revision-guarded). */
+  /**
+   * Capture → verify in a fresh context → store encrypted (revision-guarded). A session-bound
+   * account (ADR-0030) is verified in its profile only: a copy is not how it works, and loading
+   * one could end its session.
+   */
   async save(accountId: string, options: { signIn?: (page: unknown) => Promise<void> } = {}): Promise<AccountView> {
     const account = await this.ctx.accounts.get(accountId)
     const driver = this.ctx.providers.get(account.provider)
@@ -250,13 +267,15 @@ export class Login extends Service {
         return driver.identity(page)
       },
     })
-    const turn = await this.ctx.browser.openTurn(accountId, { state })
-    try {
-      if ((await driver.checkAuth(turn.page)) !== 'signed-in') {
-        throw new ProviderError('reauth_required', `${accountId}: the captured state does not sign in`)
+    if (!driver.sessionBound) {
+      const turn = await this.ctx.browser.openTurn(accountId, { state })
+      try {
+        if ((await driver.checkAuth(turn.page)) !== 'signed-in') {
+          throw new ProviderError('reauth_required', `${accountId}: the captured state does not sign in`)
+        }
+      } finally {
+        await turn.close()
       }
-    } finally {
-      await turn.close()
     }
     return this.ctx.accounts.saveState(accountId, {
       state,

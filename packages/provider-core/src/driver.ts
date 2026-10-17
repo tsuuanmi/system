@@ -71,6 +71,14 @@ export interface ProviderDriver<Page = unknown> {
   probeFeatures?(page: Page): Promise<string[]>
   /** Where an interactive login starts. */
   readonly loginUrl: string
+  /**
+   * The site ties a session to the browser profile that signed it in (ADR-0030): every operation
+   * on the account runs as a page of its persistent login profile, and its portable state is
+   * never loaded or written back.
+   */
+  readonly sessionBound?: boolean
+  /** A session-bound account's page loads are spaced at least this far apart, in milliseconds. */
+  readonly pageGapMs?: number
   /** Origins whose cookies, localStorage, and IndexedDB make up the portable state. */
   readonly stateOrigins: readonly string[]
   checkAuth(page: Page): Promise<AuthState>

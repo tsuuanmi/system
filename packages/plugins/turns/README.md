@@ -35,8 +35,16 @@ invoked by the [workflow engine](../workflow/README.md)
   - the driver call uses the conversation mode (temporary by default;
     `persist` / `sessionId` for a persistent `/c/<id>` binding);
   - the receipt is written in the driver's `beforeSend` hook.
+- **Where an operation runs:** every page the runtime opens goes through one helper.
+  That covers turns, reconciliation, verify, probe, the sign-in check, and
+  conversation inspection and deletion. For a session-bound driver
+  ([ADR-0030](../../../docs/decisions/adr/0030-session-bound-accounts-use-their-login-profile.md)),
+  the page is in the account's login profile (`ctx.login.profileDir`), spaced by
+  the driver's `pageGapMs`, with nothing written back. For any other driver, it
+  is a fresh context from the portable state.
 - **Write-back:** before completing, the turn captures the browser state for the
-  driver's origins and stores it with `accounts.refreshState`. This happens only
+  driver's origins and stores it with `accounts.refreshState`. A session-bound
+  account has no copy to refresh. This happens only
   if the turn still holds its lease and the account is still at the revision the
   turn started from. A failure is logged (`account.write-back-skipped`) and never
   fails an answered turn.
@@ -159,7 +167,8 @@ invoked by the [workflow engine](../workflow/README.md)
 - **Stop:** a stopped runtime starts nothing. A turn caught before scheduling
   stays queued for the next start.
 - **Injects:** `store`, `artifacts`, `leases`, `egress`, `turnReceipts`, `accounts`,
-  `browser`, `providers`, `workers`; `mcp` is optional.
+  `browser`, `providers`, `workers`. `mcp` and `login` are optional. `login` is used for
+  credential relogin, and a session-bound account needs it for its profile path.
 - **MCP:** `account_verify`, `account_probe`, `conversation_list`, and
   `conversation_inspect` (operator); the workflow engine serves `ask`,
   `research`, and `result` as runs.

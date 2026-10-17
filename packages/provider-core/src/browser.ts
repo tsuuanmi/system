@@ -14,9 +14,15 @@ declare module '@deepseek-ai/cordis' {
 }
 
 export interface OpenTurnOptions {
-  /** The account's portable state; absent for a signed-out probe. */
+  /** The account's portable state; absent for a signed-out probe. Ignored with `profile`. */
   state?: PortableState | undefined
-  /** Closes the turn's context when aborted (e.g. a lease invalidation). */
+  /**
+   * A session-bound account (ADR-0030): the turn is a page (tab) of one persistent context on
+   * the account's login profile `dir`, never a fresh context from portable state. Page opens of
+   * one account are spaced at least `gapMs` apart.
+   */
+  profile?: { dir: string; gapMs?: number | undefined } | undefined
+  /** Closes the turn's context when aborted (e.g. a lease invalidation); a profile turn's page. */
   signal?: AbortSignal | undefined
 }
 
@@ -38,11 +44,24 @@ export abstract class Browser<Page = unknown, BrowserContext = unknown> extends 
     super(ctx, 'browser')
   }
 
-  /** A fresh, isolated context and page for one turn on the account's browser. */
+  /**
+   * A fresh, isolated context and page for one turn on the account's browser; with `profile`,
+   * a page of the account's persistent login-profile context. A profile turn while the profile
+   * is reserved fails as `overloaded`.
+   */
   abstract openTurn(account: string, options?: OpenTurnOptions): Promise<BrowserTurn<Page, BrowserContext>>
+  /**
+   * Reserve the account's login profile for the operator's own browser (a remote login): its
+   * persistent context is closed, and profile turns fail as `overloaded` until the returned
+   * release is called. Refused (`overloaded`) while profile turns are open.
+   */
+  abstract reserveProfile(account: string): Promise<() => void>
   /** The turn's state for `origins` only; IndexedDB over the cap keeps `previous`. */
   abstract capture(turn: BrowserTurn<Page, BrowserContext>, options: { origins: string[]; previous?: PortableState | undefined }): Promise<PortableState>
-  /** Reopen a login profile invisibly, let `inspect` read it, and capture its state in memory (the Save flow). */
+  /**
+   * Reopen a login profile invisibly, let `inspect` read it, and capture its state in memory (the
+   * Save flow). A profile the pool already holds open for turns is used in place, in a new page.
+   */
   abstract captureProfile<T>(profileDir: string, options: CaptureProfileOptions<Page, T>): Promise<{ state: PortableState; result: T }>
   /** Close the account's browser and every context on it. */
   abstract close(account: string): Promise<void>

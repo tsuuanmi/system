@@ -14,8 +14,11 @@ import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
 import { canRunBrowser, testChrome } from '../../../plugins/browser-patchright/tests/support.ts'
 import { FakeChatGpt, type FakeOptions } from '../../../plugins/provider-chatgpt-web/fixtures/fake-chatgpt.ts'
+import { FakeGemini } from '../../../plugins/provider-gemini-web/fixtures/fake-gemini.ts'
 
 const HARNESS = fileURLToPath(new URL('./crash-harness.mjs', import.meta.url))
+/** A session-bound account (ADR-0030): its turns run in its login profile. */
+const PROFILE_HARNESS = fileURLToPath(new URL('./profile-harness.mjs', import.meta.url))
 
 const cleanups: Array<() => unknown> = []
 afterEach(async () => {
@@ -25,8 +28,8 @@ afterEach(async () => {
 interface Engine { child: ChildProcess; runId: Promise<string>; done: Promise<{ status: string; answer?: string; error?: { kind: string } }> }
 
 /** One engine process in its own process group, so a crash takes its Xvfb and Chrome with it. */
-function engine(dir: string, fake: FakeChatGpt, args: string[]): Engine {
-  const child = spawn(process.execPath, [HARNESS, dir, fake.origin, testChrome!, ...args], { detached: true, stdio: ['ignore', 'pipe', 'pipe'] })
+function engine(dir: string, fake: { origin: string }, args: string[], harness = HARNESS): Engine {
+  const child = spawn(process.execPath, [harness, dir, fake.origin, testChrome!, ...args], { detached: true, stdio: ['ignore', 'pipe', 'pipe'] })
   const crash = (): void => {
     try {
       process.kill(-child.pid!, 'SIGKILL')
@@ -160,6 +163,25 @@ describe.runIf(canRunBrowser)('crash injection at every reconcile point of a web
     expect(settled.conversations).toEqual([expect.objectContaining({ state: 'deleted', reason: 'already gone from the site' })])
     expect(fake.deleteRequests).toHaveLength(1)
   }, 400_000)
+
+  it('a session-bound account, killed after the prompt was sent and bound: the restart clears the dead browser\'s profile lock, reopens the conversation in the profile, and adopts the answer (ADR-0030)', async () => {
+    const fake = new FakeGemini({ startOnSpark: false, deviceBound: true, answer: `${'Slowly streamed words. '.repeat(80)}Done.` })
+    await fake.start()
+    cleanups.push(() => fake.stop())
+    const dir = mkdtempSync(join(tmpdir(), 'system-crash-'))
+    cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+    const first = engine(dir, fake, ['start', 'survive a crash in the profile'], PROFILE_HARNESS)
+    const runId = await first.runId
+    await until(() => fake.sent.length === 1 && bound(dir), 120_000)
+    await crash(first)
+    const second = engine(dir, fake, ['resume', runId], PROFILE_HARNESS)
+    const done = await second.done
+    expect(done).toMatchObject({ status: 'completed', answer: expect.stringMatching(/Done\.$/) })
+    expect(fake.sent).toHaveLength(1)
+    // Still the profile's own session after the crash: no copy was ever used.
+    expect(fake.deviceChecks.length).toBeGreaterThan(1)
+    expect(fake.deviceChecks.every(Boolean)).toBe(true)
+  }, 300_000)
 
   it('after a temporary chat was sent: it cannot be observed, so the run fails closed as AMBIGUOUS, never resent blind', async () => {
     const { fake, done } = await scenario({ thinkMs: 8000 }, 'temporary', (f) => f.sent.length === 1)

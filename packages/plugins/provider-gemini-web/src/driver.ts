@@ -72,6 +72,8 @@ export interface DriverOptions {
   defaultMode?: string
   /** The longest prompt sent, in characters (default 30,000, observed): a longer one is refused, unsent. */
   maxPromptChars?: number
+  /** The account's page loads are spaced at least this far apart (default 10 s, ADR-0030). */
+  pageGapMs?: number
 }
 
 /** The first line of a mode item ("3.8 Flash\nAll-around help"). */
@@ -94,6 +96,12 @@ export class GeminiWebDriver implements ProviderDriver<Page> {
   /** Conversations `deleteConversation` deletes; a Deep research one waits for its live check (PROP-0004 Phase 5). */
   readonly deletes = ['chat'] as const
   readonly loginUrl: string
+  /**
+   * Copies of a Gemini session died within a minute while its login profile stayed signed in
+   * (live 2026-10-16): the account works in its own login profile (ADR-0030).
+   */
+  readonly sessionBound = true
+  readonly pageGapMs: number
   /** Google's sign-in lives on google.com; Gemini on its own subdomain. */
   readonly stateOrigins: readonly string[]
   readonly map: UiMap
@@ -114,6 +122,7 @@ export class GeminiWebDriver implements ProviderDriver<Page> {
     this.preset = modePresets(this.provider, options.modes, options.defaultMode)
     this.modes = Object.keys(options.modes ?? {})
     this.maxPromptChars = options.maxPromptChars ?? 30_000
+    this.pageGapMs = options.pageGapMs ?? 10_000
     this.timeouts = { turnMs: 15 * 60_000, stallMs: 3 * 60_000, stableMs: 1500, pollMs: 250, readyMs: 60_000, snapshotMs: 20_000, reportReadMs: 30_000, ...options.timeouts }
   }
 

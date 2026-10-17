@@ -20,7 +20,7 @@ import type {} from '@tsuuanmi/system-login'
 import type {} from '@tsuuanmi/system-artifacts'
 import { type Lease, LeaseLost, StaleGeneration } from '@tsuuanmi/system-leases'
 import { type ContentId, contentId, sha256 } from '@tsuuanmi/system-libs'
-import { type BrowserTurn, type ConversationMode, type Disposition, type PortableState, ProviderError, type ProviderFeature, ProviderScheduler, type Tier, type TurnReceipt, type TurnSnapshot, dispositionOf, toProviderError } from '@tsuuanmi/system-provider-core'
+import { type BrowserTurn, type ConversationMode, type Disposition, type PortableState, type ProviderDriver, ProviderError, type ProviderFeature, ProviderScheduler, type Tier, type TurnReceipt, type TurnSnapshot, dispositionOf, toProviderError } from '@tsuuanmi/system-provider-core'
 import type {} from '@tsuuanmi/system-store'
 import type {} from '@tsuuanmi/system-turn-receipts'
 import type { CapabilityDescriptor, WorkerExecution, WorkerStart, WorkerState } from '@tsuuanmi/system-workers-core'
@@ -392,7 +392,7 @@ export class Turns extends Service {
     const driver = this.ctx.providers.get(view.provider)
     if (!driver.inspectConversation) throw new ProviderError('invalid_input', `${view.provider} cannot inspect a conversation`)
     const outlines = await this.scheduler(accountId).runExclusive(async () => {
-      const turn = await this.ctx.browser.openTurn(accountId, { state: await this.ctx.accounts.portableState(accountId), ...(signal ? { signal } : {}) })
+      const turn = await this.openPage(accountId, driver, signal)
       try {
         return await driver.inspectConversation!(turn.page, binding)
       } finally {
@@ -439,7 +439,7 @@ export class Turns extends Service {
   }
 
   private get ledgerHost(): LedgerHost {
-    return { ctx: this.ctx, scheduler: (account) => this.scheduler(account), stopping: () => this.stopping }
+    return { ctx: this.ctx, scheduler: (account) => this.scheduler(account), stopping: () => this.stopping, openPage: (account, driver, signal) => this.openPage(account, driver, signal) }
   }
 
   get(turnId: string): TurnView | undefined {
@@ -653,7 +653,7 @@ export class Turns extends Service {
     if (view.status !== 'reauth-required') return { account: accountId, status: view.status, verified: false, reason: `${accountId} is ${view.status}; only a reauth-required account is re-verified` }
     const driver = this.ctx.providers.get(view.provider)
     const seen = await this.scheduler(accountId).runTurn(`verify:${accountId}`, signal, async () => {
-      const turn = await this.ctx.browser.openTurn(accountId, { state: await this.ctx.accounts.portableState(accountId), ...(signal ? { signal } : {}) })
+      const turn = await this.openPage(accountId, driver, signal)
       try {
         if ((await driver.checkAuth(turn.page)) !== 'signed-in') return undefined
         return await driver.identity(turn.page)
@@ -673,7 +673,7 @@ export class Turns extends Service {
     const driver = this.ctx.providers.get(view.provider)
     const found = driver.probeFeatures
       ? await this.scheduler(accountId).runTurn(`probe:${accountId}`, signal, async () => {
-        const turn = await this.ctx.browser.openTurn(accountId, { state: await this.ctx.accounts.portableState(accountId), ...(signal ? { signal } : {}) })
+        const turn = await this.openPage(accountId, driver, signal)
         try {
           return await driver.probeFeatures!(turn.page)
         } catch (error) {
@@ -717,14 +717,15 @@ export class Turns extends Service {
     if (view.status !== 'ready') return 'unknown'
     const driver = this.ctx.providers.get(view.provider)
     const auth = await this.scheduler(accountId).runTurn(`auth:${accountId}`, signal, async (slot): Promise<'signed-in' | 'signed-out' | 'unknown'> => {
-      const state = await this.ctx.accounts.portableState(accountId)
-      const turn = await this.ctx.browser.openTurn(accountId, { state, ...(signal ? { signal } : {}) })
+      const state = driver.sessionBound ? undefined : await this.ctx.accounts.portableState(accountId)
+      const turn = await this.openPage(accountId, driver, signal, state)
       try {
         const seen = await driver.checkAuth(turn.page).catch(async (error: unknown) => {
           await this.challenged(accountId, error, view.revision)
           throw error
         })
-        if (seen === 'signed-in') await this.writeBack(accountId, turn, driver.stateOrigins, state, view.revision, () => slot.signal.throwIfAborted())
+        // A session-bound account's session lives in its profile: there is no copy to refresh.
+        if (seen === 'signed-in' && !driver.sessionBound) await this.writeBack(accountId, turn, driver.stateOrigins, state, view.revision, () => slot.signal.throwIfAborted())
         return seen
       } finally {
         await turn.close()
@@ -742,7 +743,7 @@ export class Turns extends Service {
     const view = await this.ctx.accounts.get(accountId)
     if (view.status !== 'ready') throw new ProviderError('reauth_required', `${accountId} is ${view.status}`)
     const driver = this.ctx.providers.get(view.provider)
-    const state = await this.ctx.accounts.portableState(accountId)
+    const state = driver.sessionBound ? undefined : await this.ctx.accounts.portableState(accountId)
     const session = row.session_id ? this.session(row.session_id) : undefined
     // A released session has no conversation to continue: a new one would lose its context
     // (a team member's above all), so the turn fails, unsent, instead of starting over silently.
@@ -759,7 +760,7 @@ export class Turns extends Service {
     const deadlines = research
       ? { timeoutMs: this.config.researchTimeoutMs ?? 60 * 60_000, stallTimeoutMs: this.config.researchStallTimeoutMs ?? 30 * 60_000 }
       : { timeoutMs: this.config.turnTimeoutMs ?? 15 * 60_000, stallTimeoutMs: this.config.stallTimeoutMs ?? 5 * 60_000 }
-    const turn = await this.ctx.browser.openTurn(accountId, { state, signal })
+    const turn = await this.openPage(accountId, driver, signal, state)
     let result: Awaited<ReturnType<typeof driver.ask>>
     try {
       result = await driver.ask(turn.page, row.prompt, {
@@ -802,11 +803,26 @@ export class Turns extends Service {
     }
     try {
       // Before completion is visible: callers that see `completed` see the refreshed account.
-      await this.writeBack(accountId, turn, driver.stateOrigins, state, view.revision, () => this.ctx.store.transaction(() => this.ctx.leases.fence(lease())))
+      if (!driver.sessionBound) await this.writeBack(accountId, turn, driver.stateOrigins, state, view.revision, () => this.ctx.store.transaction(() => this.ctx.leases.fence(lease())))
       this.commit(row, accountId, view.provider, result.text, result.binding, lease)
     } finally {
       await turn.close()
     }
+  }
+
+  /**
+   * The page an operation on the account runs in. A session-bound driver's account (ADR-0030)
+   * works in a page of its own login profile, paced by the driver. Any other account works in a
+   * fresh context from its portable state: `state` when the caller already read it, for its
+   * write-back.
+   */
+  private async openPage(accountId: string, driver: ProviderDriver, signal?: AbortSignal, state?: PortableState): Promise<BrowserTurn> {
+    if (driver.sessionBound) {
+      const login = this.ctx.get('login')
+      if (!login) throw new ProviderError('config_error', `${accountId} works in its login profile (${driver.provider} is session-bound), but no login service is mounted`)
+      return this.ctx.browser.openTurn(accountId, { profile: { dir: login.profileDir(accountId), gapMs: driver.pageGapMs }, signal })
+    }
+    return this.ctx.browser.openTurn(accountId, { state: state ?? await this.ctx.accounts.portableState(accountId), signal })
   }
 
   /**
@@ -888,7 +904,7 @@ export class Turns extends Service {
         const view = await this.ctx.accounts.get(accountId)
         provider = view.provider
         const driver = this.ctx.providers.get(view.provider)
-        const turn = await this.ctx.browser.openTurn(accountId, { state: await this.ctx.accounts.portableState(accountId), signal })
+        const turn = await this.openPage(accountId, driver, signal)
         try {
           snapshot = await driver.snapshot(turn.page, binding, { feature: row.feature })
         } finally {

@@ -44,6 +44,7 @@
     "@tsuuanmi/system-credentials-vault": "workspace:*",
     "@tsuuanmi/system-display-virtual": "workspace:*",
     "@tsuuanmi/system-provider-chatgpt-web": "workspace:*",
+    "@tsuuanmi/system-provider-gemini-web": "workspace:*",
     "@tsuuanmi/system-providers": "workspace:*",
     "@tsuuanmi/system-workers": "workspace:*",
     "patchright-core": "1.63.0"

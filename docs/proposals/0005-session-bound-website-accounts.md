@@ -210,4 +210,22 @@ Accepted on 2026-10-17 by the operator, in Researcher's session: both ranked opt
 
 ## Implementation
 
-None yet.
+- Built on branch `feat/session-bound-accounts`:
+  - the `sessionBound` and `pageGapMs` driver fields;
+  - `openTurn(account, { profile })` and `reserveProfile` on `ctx.browser`;
+  - one page helper in the turn runtime, with no write-back for a bound account;
+  - in the login service, the remote login reserves the profile, and Save verifies in the profile;
+  - the Gemini driver declares `sessionBound`.
+- Fake-site tests:
+  - the Gemini fake's `deviceBound` mode keeps a device key in the profile's Cache Storage, which
+    a copy does not carry;
+  - a turn, a sign-in check and Save work in the profile, while a copy is signed out;
+  - two sessions answer in two tabs;
+  - a reserved profile fails turns as `overloaded` with nothing sent;
+  - in the browser conformance suite and the pool, profile pages share one context, a stale lock
+    is cleared and a live one refused, reservation refuses while pages are open, and page opens
+    are spaced.
+- Crash: a host killed after the prompt was sent and bound restarts, clears the dead browser's
+  profile lock, reopens the conversation in the profile, and adopts the answer, sending nothing
+  twice.
+- Live validation: pending, until the operator has cleared Google's challenge.

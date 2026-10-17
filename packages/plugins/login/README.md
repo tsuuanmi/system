@@ -4,14 +4,19 @@
 ([browser runtime](../../../docs/design/browser-runtime.md#save-both-modes)).
 
 - **`profileDir(account)`:** `<DSH_HOME>/system/login-profiles/<id>`, owner-only.
-  It is used only for interactive login; automated turns never use it.
+  It is used for interactive login. Automated turns never use it, except on a
+  session-bound account, which does all its work there
+  ([ADR-0030](../../../docs/decisions/adr/0030-session-bound-accounts-use-their-login-profile.md)).
+  The turn runtime asks for the path.
 - **`save(account)`:**
   1. Reopen the login profile headed on the invisible display
      (`ctx.browser.captureProfile`). A profile still held by a live browser is
      refused.
   2. The driver confirms the sign-in and reads its identity hint.
   3. Capture the state for the driver's `stateOrigins`, in memory only.
-  4. Verify that state signs in, in a fresh context.
+  4. Verify that state signs in, in a fresh context. A session-bound account skips
+     this step: step 2 already verified it in the profile, and loading a copy
+     could end its session. Its stored state is only the identity record.
   5. Store it through `ctx.accounts` (encrypted, revision-guarded), with
      `identityHash = sha256(provider, identity)`.
 
@@ -28,6 +33,11 @@
   - **Save** (a POST that must come from the page's own origin) closes Chrome
     until it releases the profile, then runs `save`. **Cancel** tears down.
   - The desktop closes after `remoteTtlMs` (default 30 min).
+  - **The profile is reserved while the desktop is open**
+    (`ctx.browser.reserveProfile`). A remote login is refused while a
+    session-bound account's operations still run in the profile. While the
+    desktop is open, new operations fail as `overloaded` (backoff), so they never
+    run beside the operator's browser.
 - **`relogin(account)`: credential login** (ADR-0017, opt-in per account).
   - It runs only for accounts in `credentials` mode (`accounts.setCredentials`),
     on the persistent login profile, inside the Save flow.

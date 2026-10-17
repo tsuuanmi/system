@@ -4,7 +4,8 @@
  * invisible `ctx.display` and driven by patchright-core; never headless, no fingerprint
  * spoofing, no debugging port (the default pipe transport). Each turn gets a fresh
  * context from the account's portable state; capture filters state back to the
- * driver's origins. Ported from tsuuanmi/internet `src/browser/runtime.ts` and
+ * driver's origins. A session-bound account's turns are pages of one persistent context on
+ * its login profile instead (ADR-0030). Ported from tsuuanmi/internet `src/browser/runtime.ts` and
  * `chrome.ts`; launch and filter patterns from `@anweat/dsh-browser`
  * (docs/research/dsh-community-plugins-review.md#browser-runtime-second-pass-2026-10-11).
  * @module @tsuuanmi/system-browser-patchright
@@ -45,9 +46,11 @@ export interface Config {
 }
 
 export interface OpenTurnOptions {
-  /** The account's portable state; absent for a signed-out probe. */
+  /** The account's portable state; absent for a signed-out probe. Ignored with `profile`. */
   state?: PortableState | undefined
-  /** Closes the turn's context when aborted, e.g. a lease invalidation. */
+  /** A page of the account's persistent login-profile context, page opens spaced `gapMs` apart (ADR-0030). */
+  profile?: { dir: string; gapMs?: number | undefined } | undefined
+  /** Closes the turn's context when aborted, e.g. a lease invalidation; a profile turn's page. */
   signal?: AbortSignal | undefined
 }
 
@@ -67,6 +70,16 @@ interface Managed {
   idle?: NodeJS.Timeout | undefined
 }
 
+/** One account's persistent context on its login profile (ADR-0030). */
+interface Held {
+  context: BrowserContext
+  dir: string
+  pages: number
+  /** When the next page may open (page opens are spaced by the caller's gap). */
+  nextOpen: number
+  idle?: NodeJS.Timeout | undefined
+}
+
 export class BrowserPool extends BrowserSeam<Page, BrowserContext> {
   static inject = ['display']
 
@@ -78,14 +91,17 @@ export class BrowserPool extends BrowserSeam<Page, BrowserContext> {
 
   private readonly browsers = new Map<string, Managed>()
   private readonly launches = new Map<string, Promise<Managed>>()
+  private readonly profiles = new Map<string, Held>()
+  private readonly profileLaunches = new Map<string, Promise<Held>>()
+  private readonly reserved = new Set<string>()
   private disposed = false
 
   constructor(ctx: Context, private readonly config: Config) {
     super(ctx)
     ctx.effect(() => async () => {
       this.disposed = true
-      await Promise.allSettled(this.launches.values())
-      await Promise.allSettled([...this.browsers.keys()].map((account) => this.close(account)))
+      await Promise.allSettled([...this.launches.values(), ...this.profileLaunches.values()])
+      await Promise.allSettled([...new Set([...this.browsers.keys(), ...this.profiles.keys()])].map((account) => this.close(account)))
     })
   }
 
@@ -93,14 +109,15 @@ export class BrowserPool extends BrowserSeam<Page, BrowserContext> {
     return discoverChrome(this.config.chromePath)?.path
   }
 
-  /** Accounts with a running browser. */
+  /** Accounts with a running browser (a turn browser, or a login-profile context). */
   openAccounts(): string[] {
-    return [...this.browsers.keys()]
+    return [...new Set([...this.browsers.keys(), ...this.profiles.keys()])]
   }
 
-  /** A fresh, isolated context and page for one turn on the account's browser. */
+  /** A fresh, isolated context and page for one turn on the account's browser (or a profile page). */
   async openTurn(account: string, options: OpenTurnOptions = {}): Promise<Turn> {
     options.signal?.throwIfAborted()
+    if (options.profile) return this.openProfileTurn(account, options.profile, options.signal)
     // A launch can stall (display, Chrome, a new context under load); an aborted turn never waits
     // for it. A browser that arrives late stays pooled (closed when idle); a late context is closed.
     const managed = await abortable(this.ensure(account), options.signal)
@@ -146,61 +163,197 @@ export class BrowserPool extends BrowserSeam<Page, BrowserContext> {
 
   /** The turn's state for `origins` only; IndexedDB over the cap keeps `previous`. */
   async capture(turn: Turn, options: { origins: string[]; previous?: PortableState | undefined }): Promise<PortableState> {
-    const raw = await turn.context.storageState({ indexedDB: true })
-    return fromStorageState(raw as unknown as StorageState, {
-      origins: options.origins,
-      previous: options.previous,
-      now: new Date().toISOString(),
-      maxIndexedDbBytes: this.config.maxIndexedDbBytes ?? 16 * 1024 * 1024,
-    })
+    return this.stateOf(await turn.context.storageState({ indexedDB: true }), options)
   }
 
   /**
    * The Save flow's capture step (docs/design/browser-runtime.md#save-both-modes): reopen an
    * account's login profile headed on the invisible display, let the driver `inspect` the
    * page (auth, identity), and capture the portable state for `origins`. The state stays
-   * in memory; the caller verifies it and stores it encrypted.
+   * in memory; the caller verifies it and stores it encrypted. A profile already held open
+   * for turns is used in place, in a page of its own, and stays open.
    */
   async captureProfile<T>(profileDir: string, options: { url: string; origins: string[]; previous?: PortableState | undefined; inspect: (page: Page) => Promise<T> }): Promise<{ state: PortableState; result: T }> {
+    const heldBy = [...this.profiles.entries()].find(([, held]) => held.dir === profileDir)
+    if (heldBy) {
+      const [account, held] = heldBy
+      held.pages++
+      clearTimeout(held.idle)
+      try {
+        const page = await held.context.newPage()
+        try {
+          await page.goto(options.url, { waitUntil: 'domcontentloaded' })
+          const result = await options.inspect(page)
+          return { state: this.stateOf(await held.context.storageState({ indexedDB: true }), options), result }
+        } finally {
+          await page.close().catch(() => undefined)
+        }
+      } finally {
+        this.releaseProfile(account, held)
+      }
+    }
     ensurePrivateDir(profileDir)
     releaseStaleProfileLock(profileDir)
     const display = await this.ctx.display.prepare('invisible')
     const chrome = discoverChrome(this.config.chromePath)
     if (!chrome) throw new ProviderError('config_error', 'no usable Chrome: run `system init` or set chromePath / CHROME_PATH')
-    const context = await chromium.launchPersistentContext(profileDir, {
-      executablePath: chrome.path,
-      headless: false,
-      env: { ...process.env, ...display.env },
-      viewport: display.viewport,
-      ignoreDefaultArgs: IGNORED_DEFAULT_ARGS,
-      // Session cookies survive the operator's browser → automated reopen only with session restore.
-      args: ['--restore-last-session', '--disable-background-mode', ...CHROME_ARGS, ...display.windowArgs],
-    })
+    const context = await launchProfile(profileDir, chrome.path, display)
     try {
       const page = context.pages()[0] ?? (await context.newPage())
       await page.goto(options.url, { waitUntil: 'domcontentloaded' })
       const result = await options.inspect(page)
-      const raw = await context.storageState({ indexedDB: true })
-      const state = fromStorageState(raw as unknown as StorageState, {
-        origins: options.origins,
-        previous: options.previous,
-        now: new Date().toISOString(),
-        maxIndexedDbBytes: this.config.maxIndexedDbBytes ?? 16 * 1024 * 1024,
-      })
-      return { state, result }
+      return { state: this.stateOf(await context.storageState({ indexedDB: true }), options), result }
     } finally {
       await context.close().catch(() => undefined)
       releaseStaleProfileLock(profileDir)
     }
   }
 
-  /** Closes the account's browser and every context on it. */
+  /**
+   * Reserve the account's login profile for the operator's own browser: refused while profile
+   * turns are open; otherwise its context is closed and profile turns fail as `overloaded`
+   * until the release is called.
+   */
+  async reserveProfile(account: string): Promise<() => void> {
+    const pages = this.profiles.get(account)?.pages ?? 0
+    if (pages > 0) throw new ProviderError('overloaded', `${account}'s login profile has ${pages} operation(s) running; try again when they finish`)
+    this.reserved.add(account)
+    await this.profileLaunches.get(account)?.catch(() => undefined)
+    await this.closeProfile(account)
+    let released = false
+    return () => {
+      if (released) return
+      released = true
+      this.reserved.delete(account)
+    }
+  }
+
+  /** Closes the account's browser, its login-profile context, and every context on them. */
   async close(account: string): Promise<void> {
+    await this.closeProfile(account)
     const managed = this.browsers.get(account)
     if (!managed) return
     this.browsers.delete(account)
     clearTimeout(managed.idle)
     await managed.browser.close().catch(() => undefined)
+  }
+
+  /**
+   * A page of the account's persistent login-profile context (ADR-0030), opened lazily, one
+   * launch at a time. Closing the turn closes its page only; the context closes when idle.
+   */
+  private async openProfileTurn(account: string, profile: { dir: string; gapMs?: number | undefined }, signal: AbortSignal | undefined): Promise<Turn> {
+    if (this.reserved.has(account)) throw new ProviderError('overloaded', `${account}'s login profile is in use by the operator's login; the operation waits for it`)
+    const held = await abortable(this.ensureProfile(account, profile.dir), signal)
+    // Reserved, or closed, while it launched: never a page in a context that is going away.
+    if (this.reserved.has(account)) throw new ProviderError('overloaded', `${account}'s login profile is in use by the operator's login; the operation waits for it`)
+    if (this.profiles.get(account) !== held) throw new ProviderError('session_broken', `the login profile of ${account} closed while it opened`)
+    held.pages++
+    clearTimeout(held.idle)
+    let page: Page
+    try {
+      // Spaced page loads: each open takes the next free slot, so concurrent opens queue.
+      const at = Math.max(Date.now(), held.nextOpen)
+      held.nextOpen = at + (profile.gapMs ?? 0)
+      if (at > Date.now()) await abortable(new Promise<void>((resolve) => setTimeout(resolve, at - Date.now()).unref()), signal)
+      page = await abortable(held.context.newPage(), signal, (late) => void late.close().catch(() => undefined))
+    } catch (error) {
+      this.releaseProfile(account, held)
+      throw error
+    }
+    const onAbort = (): void => void page.close().catch(() => undefined)
+    signal?.addEventListener('abort', onAbort, { once: true })
+    let closed = false
+    const close = async (): Promise<void> => {
+      if (closed) return
+      closed = true
+      signal?.removeEventListener('abort', onAbort)
+      await page.close().catch(() => undefined)
+      this.releaseProfile(account, held)
+    }
+    page.once('close', () => void close())
+    return { context: held.context, page, close }
+  }
+
+  private ensureProfile(account: string, dir: string): Promise<Held> {
+    if (this.disposed) return Promise.reject(new ProviderError('session_broken', 'browser-patchright is disposed'))
+    const existing = this.profiles.get(account)
+    if (existing) {
+      if (existing.dir !== dir) return Promise.reject(new ProviderError('internal', `${account}'s login profile is already open at another path`))
+      return Promise.resolve(existing)
+    }
+    let launch = this.profileLaunches.get(account)
+    if (!launch) {
+      launch = this.launchHeld(account, dir).finally(() => this.profileLaunches.delete(account))
+      this.profileLaunches.set(account, launch)
+    }
+    return launch
+  }
+
+  private async launchHeld(account: string, dir: string): Promise<Held> {
+    ensurePrivateDir(dir)
+    // A lock left by a crashed host is cleared; one held by a live browser refuses.
+    releaseStaleProfileLock(dir)
+    const display = await this.ctx.display.prepare('invisible')
+    const chrome = discoverChrome(this.config.chromePath)
+    if (!chrome) throw new ProviderError('config_error', 'no usable Chrome: run `system init` or set chromePath / CHROME_PATH')
+    let context: BrowserContext
+    try {
+      context = await launchProfile(dir, chrome.path, display)
+    } catch (error) {
+      throw new ProviderError('session_broken', `the login profile of ${account} failed to open: ${(error as Error).message}`, { cause: error })
+    }
+    // Restored tabs would keep loading the site in the background: each turn opens its own page.
+    for (const restored of context.pages()) await restored.goto('about:blank').catch(() => undefined)
+    const held: Held = { context, dir, pages: 0, nextOpen: 0 }
+    const onLost = (): void => void context.close().catch(() => undefined)
+    display.lost.addEventListener('abort', onLost, { once: true })
+    context.once('close', () => {
+      display.lost.removeEventListener('abort', onLost)
+      if (this.profiles.get(account) === held) {
+        this.profiles.delete(account)
+        clearTimeout(held.idle)
+      }
+    })
+    if (this.disposed || this.reserved.has(account) || display.lost.aborted) {
+      await context.close().catch(() => undefined)
+      throw new ProviderError(this.reserved.has(account) ? 'overloaded' : 'session_broken', this.reserved.has(account) ? `${account}'s login profile is in use by the operator's login` : 'browser-patchright is disposed or the display was lost')
+    }
+    this.profiles.set(account, held)
+    return held
+  }
+
+  private releaseProfile(account: string, held: Held): void {
+    held.pages = Math.max(0, held.pages - 1)
+    if (held.pages > 0 || this.profiles.get(account) !== held) return
+    clearTimeout(held.idle)
+    held.idle = setTimeout(() => {
+      if (held.pages === 0 && this.profiles.get(account) === held) void this.closeProfile(account)
+    }, this.config.closeAfterMs ?? 30 * 60_000)
+    held.idle.unref()
+  }
+
+  private async closeProfile(account: string): Promise<void> {
+    const held = this.profiles.get(account)
+    if (!held) return
+    this.profiles.delete(account)
+    clearTimeout(held.idle)
+    await closeWithin(held.context)
+    // The browser is gone: the profile is free for the operator's browser or the next open.
+    try {
+      releaseStaleProfileLock(held.dir)
+    } catch {
+      // still held by a browser that has not exited yet; the next open checks again
+    }
+  }
+
+  private stateOf(raw: unknown, options: { origins: string[]; previous?: PortableState | undefined }): PortableState {
+    return fromStorageState(raw as StorageState, {
+      origins: options.origins,
+      previous: options.previous,
+      now: new Date().toISOString(),
+      maxIndexedDbBytes: this.config.maxIndexedDbBytes ?? 16 * 1024 * 1024,
+    })
   }
 
   private ensure(account: string): Promise<Managed> {
@@ -266,6 +419,19 @@ export class BrowserPool extends BrowserSeam<Page, BrowserContext> {
     }, this.config.closeAfterMs ?? 30 * 60_000)
     managed.idle.unref()
   }
+}
+
+/** A login profile, headed on the invisible display, as the operator's browser left it. */
+function launchProfile(dir: string, executablePath: string, display: PreparedDisplay): Promise<BrowserContext> {
+  return chromium.launchPersistentContext(dir, {
+    executablePath,
+    headless: false,
+    env: { ...process.env, ...display.env },
+    viewport: display.viewport,
+    ignoreDefaultArgs: IGNORED_DEFAULT_ARGS,
+    // Session cookies survive the operator's browser → automated reopen only with session restore.
+    args: ['--restore-last-session', '--disable-background-mode', ...CHROME_ARGS, ...display.windowArgs],
+  })
 }
 
 /**

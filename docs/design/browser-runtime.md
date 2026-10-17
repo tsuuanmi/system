@@ -106,11 +106,11 @@ interface ProviderAccountSupport {          // part of ProviderDriver
 |---|---|
 | Catalog | accounts are **configuration**: id, provider, label, roles, quota class, and tier-to-mode map. Any number per provider, for example `chatgpt-main`, `chatgpt-2`, `gemini-main` |
 | Portable state | per account: cookies, localStorage, and **IndexedDB** for `stateOrigins` only, in one revisioned record ([`account.v1.json`](../../schemas/account.v1.json)). If IndexedDB is too large to capture, the previous IndexedDB is kept and a warning is recorded |
-| Login profile | a per-account native Chrome profile directory, machine-local, used **only** for interactive login and re-auth. Automated turns never use it |
+| Login profile | a per-account native Chrome profile directory, machine-local, used for interactive login and re-auth. Automated turns never use it, except on a **session-bound** account, which does all its work there (see [context lifecycle](#context-lifecycle), [ADR-0030](../decisions/adr/0030-session-bound-accounts-use-their-login-profile.md)) |
 | Storage | account records and login credentials are encrypted grant records in `ctx.credentials`, provided by the AES-256-GCM vault (canonical: [credentials vault](../../packages/plugins/credentials-vault/README.md)) |
 | Isolation | one browser process, scheduler, and set of conversation bindings per account. Ports are allocated dynamically, not by index. Two accounts never share a context |
 | Distinct identities | at save time, `identity()` is hashed. Accounts whose hashes match are flagged, which REQ-TEAM-4 needs for independent team members |
-| Write-back | after each turn, and after a sign-in check that finds the account signed in, refreshed state is written only if both the account revision and the scheduler lease generation are current ([scheduling](scheduling-and-leases.md)). A Save or relogin made while the turn ran has a newer revision, so the turn's write-back is skipped and the newer sign-in wins |
+| Write-back | after each turn, and after a sign-in check that finds the account signed in, refreshed state is written only if both the account revision and the scheduler lease generation are current ([scheduling](scheduling-and-leases.md)). A Save or relogin made while the turn ran has a newer revision, so the turn's write-back is skipped and the newer sign-in wins. A session-bound account writes nothing back: its session lives in its profile |
 | Re-auth | only **positive** signed-out evidence (a login URL or login surface) sets `reauth-required`. A challenge or an unknown state never does |
 | Removal | `system account remove <id>` (planned) deletes the record and the login profile after confirmation |
 
@@ -181,9 +181,13 @@ flowchart TD
 2. Reopen the profile headed in the invisible display.
 3. Capture the state for `stateOrigins`, including IndexedDB.
 4. Verify it with `checkAuth` in a **fresh** context built from the captured state.
-5. Hash `identity()`, then write the record with `revision + 1`.
+   A session-bound account skips this step: its sign-in and identity were already
+   verified in the profile in step 3, and a copy is not how it works.
+5. Hash `identity()`, then write the record with `revision + 1`. For a session-bound
+   account, the state is kept only as the identity record.
 
-A failed verification saves nothing.
+A failed verification saves nothing. When the pool already holds a session-bound
+account's profile open, Save reads it in place, in a page of its own.
 
 ## Context lifecycle
 
@@ -192,6 +196,27 @@ A failed verification saves nothing.
 - **Default: a fresh context per turn**, created from the portable state. The
   turn opens the bound conversation URL, and the context is closed in `finally`.
   This gives isolation and a clean recovery path.
+- **Session-bound accounts: pages of the login profile**
+  ([ADR-0030](../decisions/adr/0030-session-bound-accounts-use-their-login-profile.md)).
+  A driver declares `sessionBound` when its site ties a session to the profile that
+  signed in. Copies of such a session die while the profile stays signed in. For
+  such an account, every operation opens a page (`openTurn(account, { profile })`)
+  in one persistent context on its login profile:
+  - turns and their reconciliation;
+  - verify, probe and the sign-in check;
+  - conversation inspection and deletion.
+
+  Portable state is neither loaded nor written back.
+  - **Lifecycle.** The context opens lazily, one launch at a time, and closes after
+    `closeAfterMs` idle. A lock left by a crashed host's browser is cleared on the
+    next open; one held by a live browser refuses. If the browser dies, in-flight
+    operations fail and a submitted turn reconciles by its receipt.
+  - **The operator first.** A remote login reserves the profile
+    (`reserveProfile`): it is refused while operations run, and it closes the idle
+    context. Until the login ends, operations fail as `overloaded` (backoff).
+  - **Pacing.** The account's page opens are spaced by the driver's `pageGapMs`.
+  - Sessions stay apart by conversation, each in its own tab, so one account still
+    serves several team members.
 - **Retained page per session** (planned), opt-in per capability. For long sessions and
   Deep Research, one page stays bound to a `SessionId`
   ([sessions](sessions-and-messaging.md)), with a TTL, a cap per account, and

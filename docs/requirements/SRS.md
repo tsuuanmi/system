@@ -28,7 +28,11 @@
   machine without installing client software. A browser and an SSH tunnel are
   enough.
 - **REQ-ACC-4** Automated turns use only the account's portable authenticated
-  state, never the interactive login profile.
+  state, never the interactive login profile. The one exception is a
+  session-bound account: its driver declares that the site ties a session to the
+  profile that signed in. Every operation of such an account runs in its own login
+  profile, never from a copy, and never while the operator's login holds the
+  profile ([ADR-0030](../decisions/adr/0030-session-bound-accounts-use-their-login-profile.md)).
 - **REQ-ACC-5** When an account loses authentication, it is marked
   `reauth-required`, and its queued and running work fails closed with a
   user-action error. Only positive signed-out evidence triggers this state.

@@ -39,7 +39,7 @@ sequenceDiagram
   T->>E: check(prompt, classification, website)
   E->>K: egress decision
   T->>S: runTurn(account, session)
-  S->>D: openTurn(account state), ask(prompt, mode)
+  S->>D: openTurn(account state, or its login profile if session-bound), ask(prompt, mode)
   D->>D: fill composer, read back mode
   D->>K: beforeSend: receipt SUBMITTED (fenced)
   D->>D: send, two-clock completion

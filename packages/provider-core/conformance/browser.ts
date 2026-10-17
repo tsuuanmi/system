@@ -1,5 +1,8 @@
 /** Conformance suite for `ctx.browser` (plugin rule 7), over a local HTTP origin. */
+import { mkdtempSync, rmSync } from 'node:fs'
 import { type Server, createServer } from 'node:http'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type {} from '../src/browser.ts'
@@ -60,6 +63,37 @@ export function browserConformance(name: string, boot: Boot, probe: PageProbe): 
         await dispose()
       }
     }, 60_000)
+
+    it('opens profile turns as pages of one persistent context, kept across reopen, and refuses them while reserved (ADR-0030)', async () => {
+      const { ctx, dispose } = await boot()
+      const dir = mkdtempSync(join(tmpdir(), 'system-conformance-profile-'))
+      try {
+        const a = await ctx.browser.openTurn('acct', { profile: { dir } })
+        const b = await ctx.browser.openTurn('acct', { profile: { dir } })
+        await probe.goto(a.page, `${origin}/`)
+        await probe.setStorage(a.page, 'k', 'v')
+        await probe.goto(b.page, `${origin}/`)
+        expect((await probe.read(b.page)).storage).toBe(1)
+        await Promise.all([a.close(), b.close()])
+        await ctx.browser.close('acct')
+        // The profile keeps what its pages stored; a fresh context from no state has none of it.
+        const again = await ctx.browser.openTurn('acct', { profile: { dir } })
+        await probe.goto(again.page, `${origin}/`)
+        expect((await probe.read(again.page)).storage).toBe(1)
+        await expect(ctx.browser.reserveProfile('acct')).rejects.toMatchObject({ kind: 'overloaded' })
+        await again.close()
+        const release = await ctx.browser.reserveProfile('acct')
+        await expect(ctx.browser.openTurn('acct', { profile: { dir } })).rejects.toMatchObject({ kind: 'overloaded' })
+        release()
+        const fresh = await ctx.browser.openTurn('acct')
+        await probe.goto(fresh.page, `${origin}/`)
+        expect((await probe.read(fresh.page)).storage).toBe(0)
+        await fresh.close()
+      } finally {
+        await dispose()
+        rmSync(dir, { recursive: true, force: true })
+      }
+    }, 90_000)
 
     it('names the executable it launches', async () => {
       const { ctx, dispose } = await boot()

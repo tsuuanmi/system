@@ -27,6 +27,8 @@
  *   ("Open menu for conversation actions") → "Delete" → a "Delete chat?" dialog → "Delete", which
  *   POSTs a batchexecute call (`rpcids=GzXR5e`, the chat as `c_<id>`) and goes to `/app`; a
  *   deleted chat's URL then shows "Unable to load this conversation".
+ * - with `deviceBound`, a session works only in the browser profile that signed in, as Gemini's
+ *   did live (2026-10-16, ADR-0030): a copy of the portable state is signed out.
  * No private data from the live account is included.
  */
 import { randomBytes } from 'node:crypto'
@@ -45,6 +47,13 @@ export interface FakeOptions {
   interstitial?: boolean
   /** Google's unusual-traffic check instead of the app: a form holding a reCAPTCHA (seen live 2026-10-16). */
   captcha?: boolean
+  /**
+   * The session is bound to the browser profile that signed in (ADR-0030). `/signin` sets a session
+   * cookie and keeps a device key in the profile's Cache Storage, which a copy of the portable state
+   * (cookies, localStorage, IndexedDB) does not carry. The app checks the key before it shows the
+   * account, and shows a "Sign in" page instead when the cookie or the key is missing.
+   */
+  deviceBound?: boolean
   /** A prompt this long or longer is dropped on Send, as the live site drops a long paste: the composer empties, nothing is asked (0: never). */
   dropOver?: number
   /** Clicking Chat does nothing (the driver must refuse to send). */
@@ -315,6 +324,20 @@ if (conversationId && !$('missing')) refresh()
 render()
 `
 
+const SIGNED_OUT = '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Gemini</title></head><body><header><a href="/signin">Sign in</a></header><main><h1>Meet Gemini</h1></main></body></html>'
+
+/**
+ * The app stays hidden until the profile's device key checks out; without it the page becomes
+ * the signed-out page, as a copied session does live.
+ */
+const DEVICE_CHECK = `<style>html.binding body{visibility:hidden}</style><script>
+document.documentElement.classList.add('binding')
+caches.open('device').then((c) => c.match('/device-key')).then((r) => (r ? r.text() : '')).then((key) => fetch('/_/device', { method: 'POST', body: key })).then((r) => {
+  if (!r.ok) document.body.innerHTML = '<header><a href="/signin">Sign in</a></header><main><h1>Meet Gemini</h1></main>'
+  document.documentElement.classList.remove('binding')
+})
+</script>`
+
 function html(options: Required<FakeOptions>, missing = false, history: string[] = []): string {
   const data = JSON.stringify({ ...options, notes: NOTES }).replace(/</g, '\\u003c')
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Gemini</title>
@@ -362,6 +385,10 @@ export class FakeGemini {
   readonly deleted = new Set<string>()
   /** Every deletion RPC the page made, by the chat it named (a repeated click shows twice). */
   readonly deleteRequests: string[] = []
+  /** Device checks of a `deviceBound` session, in order: whether each passed. */
+  readonly deviceChecks: boolean[] = []
+  /** Sessions signed in at `/signin` and the device key each was bound to. */
+  private readonly devices = new Map<string, string>()
   /** Whether each conversation's last prompt was sent with Deep research chosen. */
   private readonly chips = new Map<string, boolean>()
   private server: Server | undefined
@@ -370,7 +397,7 @@ export class FakeGemini {
 
   constructor(options: FakeOptions = {}) {
     this.options = {
-      paneMenu: true, dialogTarget: '', dialogExtraCall: false, startOnSpark: true, interstitial: false, captcha: false, dropOver: 0, signInOffer: false, chatTabBroken: false, temporaryBroken: false, modePicker: true, promptParagraphs: true, deepResearch: true,
+      paneMenu: true, dialogTarget: '', dialogExtraCall: false, startOnSpark: true, interstitial: false, captcha: false, deviceBound: false, dropOver: 0, signInOffer: false, chatTabBroken: false, temporaryBroken: false, modePicker: true, promptParagraphs: true, deepResearch: true,
       models: ['3.5 Flash-Lite', '3.8 Flash', '3.1 Pro'], levels: ['Low', 'Medium', 'High'], levelsInline: true, levelsSubmenu: true, submenuBroken: false, answer: 'OK', clarify: '',
       researchMs: 1500, researchHeld: false, report: 'HTTP/3 runs over QUIC, not TCP.', sources: [{ title: 'RFC 9114: HTTP/3', url: 'https://www.rfc-editor.org/rfc/rfc9114' }], ...options,
     }
@@ -449,6 +476,24 @@ export class FakeGemini {
       if (known) this.deleted.add(id)
       return json(known ? 200 : 400, {})
     }
+    // As the live site does: its root opens the app.
+    if (url.pathname === '/') return void res.writeHead(302, { location: '/app' }).end()
+    if (url.pathname === '/signin' && this.options.deviceBound) {
+      const sid = randomBytes(8).toString('hex')
+      const key = randomBytes(8).toString('hex')
+      this.devices.set(sid, key)
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'set-cookie': `SID=${sid}; Path=/; Max-Age=86400; HttpOnly` })
+      res.end(`<!doctype html><html><body><p id="bound" hidden>signed in</p><script>caches.open('device').then((c) => c.put('/device-key', new Response('${key}'))).then(() => { document.getElementById('bound').hidden = false })</script></body></html>`)
+      return
+    }
+    if (url.pathname === '/_/device' && req.method === 'POST') {
+      let key = ''
+      for await (const chunk of req) key += String(chunk)
+      const sid = this.sid(req)
+      const ok = sid !== undefined && this.devices.get(sid) === key
+      this.deviceChecks.push(ok)
+      return json(ok ? 200 : 401, {})
+    }
     const state = /^\/_\/c\/([0-9a-f]{16})$/.exec(url.pathname)
     if (state) return this.conversations.has(state[1]!) ? json(200, { turns: this.view(state[1]!), deepResearch: this.chips.get(state[1]!) ?? false }) : json(404, {})
     const page = /^\/app(?:\/([0-9a-f]{16}))?$/.exec(url.pathname)
@@ -465,11 +510,21 @@ export class FakeGemini {
         res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }).end('<!doctype html><html><body><form action="/sorry/index" method="post"><iframe title="reCAPTCHA" src="/recaptcha/api2/anchor" style="width:304px;height:78px"></iframe><textarea class="g-recaptcha-response" style="display:none"></textarea><input type="submit" value="Submit"></form><a href="#">Why did this happen?</a></body></html>')
         return
       }
+      if (this.options.deviceBound && !this.devices.has(this.sid(req) ?? '')) {
+        res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }).end(SIGNED_OUT)
+        return
+      }
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }).end(this.options.interstitial
         ? '<!doctype html><html><body><div role="dialog" aria-label="Before you continue"><h2>Before you continue</h2><button>Continue</button></div></body></html>'
-        : html(this.options, false, [...this.conversations.keys()]))
+        : this.options.deviceBound
+          ? html(this.options, false, [...this.conversations.keys()]).replace('<head>', `<head>${DEVICE_CHECK}`)
+          : html(this.options, false, [...this.conversations.keys()]))
       return
     }
     res.writeHead(404).end()
+  }
+
+  private sid(req: IncomingMessage): string | undefined {
+    return /(?:^|; )SID=([0-9a-f]+)/.exec(req.headers.cookie ?? '')?.[1]
   }
 }

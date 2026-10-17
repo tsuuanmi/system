@@ -12,7 +12,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { DatabaseSync } from 'node:sqlite'
 import type { Lease } from '@tsuuanmi/system-leases'
 import type { ContentId } from '@tsuuanmi/system-libs'
-import { type ConversationMode, type ProviderFeature, type ProviderScheduler, toProviderError } from '@tsuuanmi/system-provider-core'
+import { type BrowserTurn, type ConversationMode, type ProviderDriver, type ProviderFeature, type ProviderScheduler, toProviderError } from '@tsuuanmi/system-provider-core'
 
 export type LedgerState = 'live' | 'due' | 'deleted' | 'kept' | 'failed'
 
@@ -88,6 +88,8 @@ export interface LedgerHost {
   ctx: Context
   scheduler(account: string): ProviderScheduler
   stopping(): boolean
+  /** The page an operation on the account runs in (its login profile when session-bound, ADR-0030). */
+  openPage(account: string, driver: ProviderDriver, signal?: AbortSignal): Promise<BrowserTurn>
 }
 
 /**
@@ -230,7 +232,7 @@ async function deleteOne(host: LedgerHost, row: LedgerRow, lease: () => Lease, l
       // Read again in the slot: a turn that used it meanwhile made it live again.
       const now_ = ctx.store.db.prepare('SELECT * FROM turn_conversations WHERE account = ? AND binding = ?').get(row.account, row.binding) as unknown as LedgerRow | undefined
       if (now_?.state !== 'due') return 'skipped' as const
-      const turn = await ctx.browser.openTurn(row.account, { state: await ctx.accounts.portableState(row.account), signal: lost })
+      const turn = await host.openPage(row.account, driver, lost)
       try {
         return await driver.deleteConversation!(turn.page, row.binding, {
           // Recorded before the irreversible click: from then on it is only ever checked.

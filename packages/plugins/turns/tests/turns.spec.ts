@@ -15,6 +15,7 @@ import Vault from '@tsuuanmi/system-credentials-vault'
 import VirtualDisplay from '@tsuuanmi/system-display-virtual'
 import WorkerRouter, { AdmissionFailure, type Tier, type WorkRequirement } from '@tsuuanmi/system-workers'
 import ChatGptWeb from '@tsuuanmi/system-provider-chatgpt-web'
+import * as GeminiWeb from '@tsuuanmi/system-provider-gemini-web'
 import { ProviderError } from '@tsuuanmi/system-provider-core'
 import Providers from '@tsuuanmi/system-providers'
 import { contentId, SchemaRegistry } from '@tsuuanmi/system-libs'
@@ -23,6 +24,8 @@ import TurnReceipts from '@tsuuanmi/system-turn-receipts'
 import { afterEach, describe, expect, it } from 'vitest'
 import { canRunBrowser, testChrome } from '../../browser-patchright/tests/support.ts'
 import { FakeChatGpt, type FakeOptions } from '../../provider-chatgpt-web/fixtures/fake-chatgpt.ts'
+import { FakeGemini, type FakeOptions as FakeGeminiOptions } from '../../provider-gemini-web/fixtures/fake-gemini.ts'
+import { chromium } from 'patchright-core'
 import Turns from '../src/index.ts'
 
 const cleanups: Array<() => unknown> = []
@@ -689,3 +692,92 @@ describe.runIf(canRunBrowser)('ctx.turns: the conversation ledger (PROP-0004 Pha
     expect(fake.deleted.size).toBe(0)
   }, 240_000)
 })
+
+/**
+ * A Gemini account whose site binds its session to the profile that signed in (ADR-0030): the
+ * operator signs in in its login profile, as a remote login does, then Saves.
+ */
+async function bootBound(options: { fake?: FakeGeminiOptions; turns?: Record<string, unknown> } = {}) {
+  const fake = new FakeGemini({ startOnSpark: false, deviceBound: true, answer: 'From the profile.', ...options.fake })
+  await fake.start()
+  cleanups.push(() => fake.stop())
+  const dir = mkdtempSync(join(tmpdir(), 'system-turns-bound-'))
+  cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+  const ctx = new Context()
+  const fibers = [
+    ctx.plugin(Store, { path: join(dir, 'system.db') }),
+    ctx.plugin(Artifacts, {}),
+    ctx.plugin(EventLog, {}),
+    ctx.plugin(Leases, {}),
+    ctx.plugin(Egress, {}),
+    ctx.plugin(TurnReceipts, {}),
+    ctx.plugin(Vault, { path: join(dir, 'vault.enc'), keyFile: join(dir, 'vault.key') }),
+    ctx.plugin(Accounts, { accounts: [{ id: 'gemini-main', provider: 'gemini-web', quotaClass: 'subscription-chat', tiers: { economy: 'flash-lite', standard: 'flash', frontier: 'pro' } }] }),
+    ctx.plugin(VirtualDisplay, {}),
+    ctx.plugin(BrowserPool, { chromePath: testChrome! }),
+    ctx.plugin(Providers),
+    ctx.plugin(GeminiWeb, { origin: fake.origin, pageGapMs: 0 }),
+    ctx.plugin(Login, { profilesDir: join(dir, 'profiles') }),
+    ctx.plugin(WorkerRouter, {}),
+    ctx.plugin(Turns, { turnTimeoutMs: 90_000, stallTimeoutMs: 80_000, ...options.turns }),
+  ]
+  await Promise.all(fibers)
+  cleanups.push(async () => {
+    for (const fiber of [...fibers].reverse()) await fiber.dispose()
+  })
+  const profile = await chromium.launchPersistentContext(ctx.login.profileDir('gemini-main'), { executablePath: testChrome!, headless: true })
+  const page = await profile.newPage()
+  await page.goto(`${fake.origin}/signin`)
+  await page.locator('#bound').waitFor({ state: 'visible' })
+  await profile.close()
+  // Verified in the profile: a copy of this state is signed out, so Save would fail on a copy.
+  await ctx.login.save('gemini-main')
+  await ctx.accounts.setFeatures('gemini-main', ['deep-research'])
+  return { ctx, fake }
+}
+
+describe.runIf(canRunBrowser)('ctx.turns: a session-bound account works in its own login profile (ADR-0030)', () => {
+  it('answers in the profile, writes no copy back, and a copy of its state is signed out (REQ-ACC-4)', async () => {
+    const { ctx, fake } = await bootBound()
+    const before = await ctx.accounts.get('gemini-main')
+    const turn = await ctx.turns.wait((await ask(ctx, { prompt: 'Where are you?' })).turnId, 60_000)
+    expect(turn).toMatchObject({ status: 'completed', account: 'gemini-main', answer: 'From the profile.' })
+    expect(fake.sent).toEqual([expect.objectContaining({ prompt: 'Where are you?' })])
+    expect(await ctx.turns.checkSignIn('gemini-main')).toBe('signed-in')
+    // No write-back: the account record is as Save left it.
+    expect((await ctx.accounts.get('gemini-main')).revision).toBe(before.revision)
+    expect(ctx.eventLog.query({ type: 'account.write-back-skipped' })).toEqual([])
+    expect(fake.deviceChecks.length).toBeGreaterThan(0)
+    expect(fake.deviceChecks.every(Boolean)).toBe(true)
+    // What the fresh-context path would have done: the copied state is signed out.
+    const copy = await ctx.browser.openTurn('gemini-main', { state: await ctx.accounts.portableState('gemini-main') })
+    try {
+      expect(await ctx.providers.get('gemini-web').checkAuth(copy.page)).toBe('signed-out')
+    } finally {
+      await copy.close()
+    }
+  }, 180_000)
+
+  it('runs two sessions side by side, each in its own conversation, in tabs of the one profile', async () => {
+    const { ctx, fake } = await bootBound({ fake: { answer: (prompt) => `Answer to ${prompt}` } })
+    const [a, b] = await Promise.all([ask(ctx, { prompt: 'first', persist: true }), ask(ctx, { prompt: 'second', persist: true })])
+    const [ta, tb] = await Promise.all([ctx.turns.wait(a.turnId, 90_000), ctx.turns.wait(b.turnId, 90_000)])
+    expect([ta.answer, tb.answer]).toEqual(['Answer to first', 'Answer to second'])
+    expect(ta.binding).toBeTruthy()
+    expect(tb.binding).toBeTruthy()
+    expect(ta.binding).not.toBe(tb.binding)
+    expect(fake.conversations.size).toBe(2)
+    expect(fake.deviceChecks.every(Boolean)).toBe(true)
+  }, 180_000)
+
+  it('waits for the operator: while a login holds the profile, a turn fails as overloaded with nothing sent', async () => {
+    const { ctx, fake } = await bootBound()
+    const release = await ctx.browser.reserveProfile('gemini-main')
+    const held = await ctx.turns.wait((await ask(ctx, { prompt: 'not now' })).turnId, 60_000)
+    expect(held).toMatchObject({ status: 'failed', error: expect.objectContaining({ kind: 'overloaded' }) })
+    expect(fake.sent).toEqual([])
+    release()
+    expect((await ctx.turns.wait((await ask(ctx, { prompt: 'now' })).turnId, 60_000)).answer).toBe('From the profile.')
+  }, 180_000)
+})
+

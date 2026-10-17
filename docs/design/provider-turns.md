@@ -25,6 +25,8 @@ interface ProviderDriver<Page> {                   // provider-core
   readonly modes?: readonly string[];              // configured preset names; a tier mapped elsewhere is unavailable
   readonly loginUrl: string;
   readonly stateOrigins: readonly string[];
+  readonly sessionBound?: boolean;                 // works in its login profile, never from a copy (ADR-0030)
+  readonly pageGapMs?: number;                     // a session-bound account's page loads, spaced
   checkAuth(page): Promise<AuthState>;             // signed-in | signed-out | unknown
   identity(page): Promise<string>;                 // hashed before storage
   ask(page, prompt, { conversation, mode?, feature?, binding?, signal?, deadlines?,
@@ -283,7 +285,7 @@ sequenceDiagram
   T->>X: check(actual payload, classification)
   X-->>T: egress decision (if denied, egress_denied and nothing is sent)
   T->>S: runTurn(session), under the turn's lease
-  S->>D: fresh context from the saved state; ask(...)
+  S->>D: fresh context from the saved state (a session-bound account: a page of its login profile); ask(...)
   D->>T: beforeSend writes the receipt (SUBMITTED)
   D-->>T: answer, binding, verified mode
   T->>T: one transaction binds, completes the receipt, stores the answer

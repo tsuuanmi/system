@@ -92,7 +92,7 @@ async function boot(options: { fake?: FakeOptions; gemini?: FakeGeminiOptions; d
     ctx.plugin(BrowserPool, { chromePath: testChrome! }),
     ctx.plugin(Providers),
     ctx.plugin(ChatGptWeb, { origin: fake.origin, overlayPath: join(dir, 'none.yaml'), modes: { instant: { model: 'Latest', effort: 'Instant' }, medium: { model: 'Latest', effort: 'Medium' }, high: { model: 'GPT-6', effort: 'High' } }, defaultMode: 'instant' }),
-    ...(gemini ? [ctx.plugin(GeminiWeb, { origin: gemini.origin })] : []),
+    ...(gemini ? [ctx.plugin(GeminiWeb, { origin: gemini.origin, pageGapMs: 0 })] : []),
     ctx.plugin(Login, { profilesDir: join(dir, 'profiles') }),
     ctx.plugin(WorkerRouter, {}),
     ctx.plugin(Turns, { turnTimeoutMs: 90_000, stallTimeoutMs: 80_000, ...options.turns }),

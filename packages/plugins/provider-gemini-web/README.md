@@ -112,5 +112,10 @@ driver, its operations are data: a UI map,
 - **Live checks:** what was verified on the live site, and what is verified
   on the fake site only, is in the
   [release checklist](../../../docs/validation/release-checklist.md).
-- **Config:** `origin`, `modes`, `defaultMode`.
+- **Session-bound** ([ADR-0030](../../../docs/decisions/adr/0030-session-bound-accounts-use-their-login-profile.md)).
+  On 2026-10-16, copies of a Gemini session died within a minute while the login
+  profile stayed signed in. So the driver declares `sessionBound`, and every
+  operation of a Gemini account runs as a page of its own login profile. Page
+  loads are spaced at least `pageGapMs` apart (default 10 s).
+- **Config:** `origin`, `modes`, `defaultMode`, `maxPromptChars`, `pageGapMs`.
 - **Injects:** `providers`.

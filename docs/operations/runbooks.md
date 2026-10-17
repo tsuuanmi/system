@@ -308,6 +308,15 @@ A turn that fails with `reauth_required` or `challenge` (disposition
   automated loads deepen it), run `system account login <id>`, solve the check in
   the login browser, and press Save.
 
+- **A session-bound account** (Gemini;
+  [ADR-0030](../decisions/adr/0030-session-bound-accounts-use-their-login-profile.md)) works in
+  its login profile. `system account verify <id>` checks it there.
+  - `system account login <id>` is refused while operations run in the profile: try again when
+    they finish.
+  - While the login desktop is open, the account's operations fail as `overloaded` and are
+    retried later, so a run may need `system continue` after a long login.
+  - The account is signed in on this host only. To move it, sign it in again on the new host.
+
 Then continue the failed run: `system continue <runId>`.
 
 ## Backup and restore

@@ -1029,6 +1029,9 @@ importers:
       '@tsuuanmi/system-provider-chatgpt-web':
         specifier: workspace:*
         version: link:../provider-chatgpt-web
+      '@tsuuanmi/system-provider-gemini-web':
+        specifier: workspace:*
+        version: link:../provider-gemini-web
       '@tsuuanmi/system-providers':
         specifier: workspace:*
         version: link:../providers

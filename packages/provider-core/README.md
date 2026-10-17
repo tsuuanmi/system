@@ -14,7 +14,7 @@ their tests, which serve as the spec (TDD).
 | `ProviderError`, `dispositionOf`, `toProviderError`, `abortReason` | failure kind → retry disposition ([recovery](../../docs/design/workflow-engine.md#recovery)); `toProviderError` types a foreign failure (programming errors are `internal`, anything else `session_broken`); `abortReason` turns an abort signal's reason into an `aborted` failure unless it is the caller's own Error |
 | `ProviderDriver`, `AskOptions`, `AskResult`, `AuthState`, `ConversationMode`, `ProviderFeature`, `ProviderMode` | the driver contract ([driver interface](../../docs/design/provider-turns.md#driver-interface)) |
 | `PortableState` | an account's portable browser state (cookies, localStorage, IndexedDB for the driver's origins), shared by `ctx.accounts` and `ctx.browser` |
-| `Browser` (abstract, `ctx.browser`; generic over page and context) | `openTurn`, `capture`, `captureProfile`, `close`, `openAccounts`, `executablePath`; provided by `@tsuuanmi/system-browser-patchright` |
+| `Browser` (abstract, `ctx.browser`; generic over page and context) | `openTurn` (a fresh context from portable state, or with `profile` a page of the account's login profile, ADR-0030), `reserveProfile`, `capture`, `captureProfile`, `close`, `openAccounts`, `executablePath`; provided by `@tsuuanmi/system-browser-patchright` |
 | `ProviderRegistry` (abstract, `ctx.providers`) | `register`, `get`, `list`; provided by `@tsuuanmi/system-providers` |
 | `Display` (abstract, `ctx.display`) | `prepare('invisible' \| 'visible')`; invisible never means headless; `visible` uses the operator's `DISPLAY` ([display modes](../../docs/design/browser-runtime.md#display-modes-ctxdisplay)); provided by `@tsuuanmi/system-display-virtual` |
 
