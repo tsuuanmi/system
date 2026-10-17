@@ -307,6 +307,9 @@ A turn that fails with `reauth_required` or `challenge` (disposition
   CAPTCHA. Nothing loads the site again until you pass it: wait a while (repeated
   automated loads deepen it), run `system account login <id>`, solve the check in
   the login browser, and press Save.
+  - A notice of updated terms over the input (Gemini) is handled the same way: `system` never
+    acknowledges it. In the login browser, open a new chat, press the notice's own button (not a
+    link in it) until the notice is gone, then press Save. Save is refused while it still shows.
 
 - **A session-bound account** (Gemini;
   [ADR-0030](../decisions/adr/0030-session-bound-accounts-use-their-login-profile.md)) works in

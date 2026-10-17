@@ -153,6 +153,18 @@ describe.runIf(canRunBrowser)('GeminiWebDriver against the fake site', { timeout
     expect(fake.sent).toEqual([])
   })
 
+  it('stops at a terms notice over the input as a challenge for the operator, at once, never clicking it and with nothing sent (live 2026-10-17)', async () => {
+    const { page, driver, fake } = await open({ termsNotice: true })
+    const notice = { kind: 'challenge', disposition: 'USER_ACTION', message: 'gemini-web: the site shows a terms notice over the input; acknowledge it in the login profile (system account login) and Save' }
+    await expect(driver.checkAuth(page)).rejects.toMatchObject(notice)
+    const started = Date.now()
+    // Not the wait for a textbox it covers (readyMs here is 5 s), nor a mode switch it hides.
+    await expect(driver.ask(page, 'hello', { conversation: 'temporary', mode: 'pro' })).rejects.toMatchObject(notice)
+    expect(Date.now() - started).toBeLessThan(4000)
+    expect(fake.sent).toEqual([])
+    expect(await page.locator('gem-banner').count()).toBe(1)
+  })
+
   it('fails a page that shows neither signed in nor signed out once, as drift, never as a session to retry', async () => {
     const { page, fake } = await open({ interstitial: true })
     const driver = new GeminiWebDriver({ origin: fake.origin, modes: PRESETS, defaultMode: 'flash', timeouts: { readyMs: 1500 } })

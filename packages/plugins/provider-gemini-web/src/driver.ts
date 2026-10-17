@@ -144,7 +144,9 @@ export class GeminiWebDriver implements ProviderDriver<Page> {
     }
     // Google's unusual-traffic check is neither: only the operator can pass it, and loading again deepens it.
     if (await engine.state('auth.challenge')) throw new ProviderError('challenge', 'gemini-web: Google shows its unusual-traffic check (a CAPTCHA); solve it in the login profile (system account login) and Save')
-    return (await engine.state('auth.signed-out')) ? 'signed-out' : 'signed-in'
+    if (await engine.state('auth.signed-out')) return 'signed-out'
+    termsNotice(await engine.state('site.terms-notice'))
+    return 'signed-in'
   }
 
   /** The account named on its own Google Account button; only a hash of it is ever stored. */
@@ -374,7 +376,9 @@ export class GeminiWebDriver implements ProviderDriver<Page> {
       throw new ProviderError('conversation_lost', `gemini-web: conversation ${binding} no longer opens (the site sent the page to ${new URL(page.url()).pathname}); a session that needs it cannot continue`)
     }
     const engine = this.engine(page)
-    await engine.waitFor({ visible: 'composer.input' }, this.timeouts.readyMs)
+    // A terms notice covers the input (it may render after the account): stop at once, never wait it out.
+    await engine.waitFor({ anyOf: [{ visible: 'composer.input' }, { state: 'site.terms-notice' }] }, this.timeouts.readyMs)
+    termsNotice(await engine.state('site.terms-notice'))
     // A bound conversation renders its turns after the page: its last answer is the boundary.
     if (binding) await engine.waitFor({ visible: 'turn.user' }, this.timeouts.readyMs)
     // A Chat tab that does not become active is refused just below, with its reason.
@@ -609,6 +613,14 @@ export class GeminiWebDriver implements ProviderDriver<Page> {
     }
     return engine
   }
+}
+
+/**
+ * A notice of updated terms over the input: only the operator acknowledges it, in the login
+ * profile, so the account waits for them as for a challenge (it is never clicked here).
+ */
+function termsNotice(shown: boolean): void {
+  if (shown) throw new ProviderError('challenge', 'gemini-web: the site shows a terms notice over the input; acknowledge it in the login profile (system account login) and Save')
 }
 
 /** Rethrow anything but UI drift, which the caller then refuses with its own reason. */

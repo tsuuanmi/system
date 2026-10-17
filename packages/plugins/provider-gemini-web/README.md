@@ -96,7 +96,10 @@ driver, its operations are data: a UI map,
   it showed instead, and fails the turn as `ui_drift` once (never three retries
   of 60 s on the same account). Google's unusual-traffic check (a form holding a
   reCAPTCHA, `auth.challenge`, seen live on 2026-10-16) is `challenge`: the turn
-  stops at once, and the turn runtime marks the account `challenge`.
+  stops at once, and the turn runtime marks the account `challenge`. So is a
+  notice of updated terms over the input (`site.terms-notice`, seen live on
+  2026-10-17), which covers the textbox and the mode switcher: it is never
+  clicked, and the operator acknowledges it in the login profile.
 - **No self-heal.** A drifted element fails closed until the map is updated. A
   stale element is logged as `ui.drift`, naming its region's outline, kept as
   local-private evidence
@@ -110,6 +113,8 @@ driver, its operations are data: a UI map,
   - a Deep research plan that already has Copy, and its Start research turn;
   - a chat's own menu, its "Delete chat?" dialog, and a deleted chat's
     "Unable to load" notice (`deleted` records each deletion).
+  - a terms notice over the input (`termsNotice`, from the live outline of
+    2026-10-17).
 
   Tests drive it in a real headed Chrome.
 - **Live checks:** what was verified on the live site, and what is verified

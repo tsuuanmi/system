@@ -20,6 +20,13 @@ elements:
     candidates:
       - { css: 'form:has(textarea.g-recaptcha-response)' }
       - { css: 'iframe[src*="recaptcha"]' }
+  site.terms-notice:
+    description: >-
+      A notice of updated terms, as a banner over the input (its title, body, and an acknowledging
+      button), seen live on 2026-10-17 inside the input container: it covers the textbox and the
+      mode switcher until acknowledged. Only the operator acknowledges it; it is never clicked.
+    candidates:
+      - { css: 'condensed-tos-disclaimer gem-banner.variant-overlay' }
   auth.account:
     description: "The signed-in Google account's button; its name carries the account (Google Account, then the name and email)."
     candidates:
@@ -334,6 +341,7 @@ states:
   # account, say): only the sign-in host, or a sign-in control with no account shown, is.
   auth.signed-out: { anyOf: [{ url: '^https?://accounts\.google\.com/' }, { allOf: [{ visible: auth.login }, { not: { visible: auth.account } }] }] }
   auth.challenge: { anyOf: [{ url: '^https?://(www\.)?google\.com/sorry/' }, { visible: auth.challenge }] }
+  site.terms-notice: { visible: site.terms-notice }
   turn.running: { visible: composer.stop }
   # Nothing generating and nothing open: the page can be kept for the session's next turn.
   page.idle: { allOf: [{ not: { state: turn.running } }, { hidden: page.overlay }] }
@@ -343,4 +351,5 @@ states:
 
 errors:
   - { when: { state: auth.challenge }, kind: challenge, message: 'gemini-web: Google shows its unusual-traffic check (a CAPTCHA); solve it in the login profile (system account login) and Save' }
+  - { when: { state: site.terms-notice }, kind: challenge, message: 'gemini-web: the site shows a terms notice over the input; acknowledge it in the login profile (system account login) and Save' }
   - { when: { state: auth.signed-out }, kind: reauth_required, message: 'gemini-web: signed out' }

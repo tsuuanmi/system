@@ -70,6 +70,11 @@ export interface FakeOptions {
    * in a login profile, 2026-10-17); a send clears it.
    */
   draftPersist?: boolean
+  /**
+   * A notice of updated terms over the input, as seen live on 2026-10-17: a banner inside the input
+   * container covering the textbox and the mode switcher, until its button is pressed.
+   */
+  termsNotice?: boolean
   /** Clicking Temporary chat does nothing (the driver must refuse to send). */
   temporaryBroken?: boolean
   /** A "Sign in" control shows beside the account's button (an offer to add an account): still signed in. */
@@ -381,8 +386,9 @@ ${missing ? '<div role="alert" id="missing">Unable to load this conversation</di
 <main>
   <div class="description" id="notice" hidden> <a href="#">Temporary chats</a> don't appear in recent chats <a href="#">and</a> aren't used to improve Google AI.</div>
   <section id="log"></section>
+  ${options.termsNotice ? '<input-container><condensed-tos-disclaimer><gem-banner class="variant-overlay has-title"><div class="title">Terms update</div><div class="body">We updated our terms. Review them to keep using Gemini.</div><button class="banner-action-button" onclick="this.closest(\'input-container\').remove();document.querySelector(\'rich-textarea\').hidden=false">Got it</button></gem-banner></condensed-tos-disclaimer></input-container>' : ''}
   <div class="input-area">
-    <rich-textarea><div contenteditable="true" role="textbox" aria-label="Enter a prompt for Gemini" id="input"></div></rich-textarea>
+    <rich-textarea${options.termsNotice ? ' hidden' : ''}><div contenteditable="true" role="textbox" aria-label="Enter a prompt for Gemini" id="input"></div></rich-textarea>
     <button type="button" aria-label="Upload &amp; tools" aria-haspopup="menu" id="tools">+</button>
     <button type="button" aria-label="Deselect Deep research" id="chip" hidden>Deep research</button>
     <button type="button" data-test-id="bard-mode-menu-button" aria-haspopup="true" id="picker">Flash</button>
@@ -426,7 +432,7 @@ export class FakeGemini {
 
   constructor(options: FakeOptions = {}) {
     this.options = {
-      paneMenu: true, dialogTarget: '', dialogExtraCall: false, startOnSpark: true, interstitial: false, captcha: false, deviceBound: false, holdAnswer: false, promptLagMs: 0, rewritePaste: false, draftPersist: false, dropOver: 0, signInOffer: false, chatTabBroken: false, temporaryBroken: false, modePicker: true, promptParagraphs: true, deepResearch: true,
+      paneMenu: true, dialogTarget: '', dialogExtraCall: false, startOnSpark: true, interstitial: false, captcha: false, deviceBound: false, holdAnswer: false, promptLagMs: 0, rewritePaste: false, draftPersist: false, dropOver: 0, signInOffer: false, termsNotice: false, chatTabBroken: false, temporaryBroken: false, modePicker: true, promptParagraphs: true, deepResearch: true,
       models: ['3.5 Flash-Lite', '3.8 Flash', '3.1 Pro'], levels: ['Low', 'Medium', 'High'], levelsInline: true, levelsSubmenu: true, submenuBroken: false, answer: 'OK', clarify: '',
       researchMs: 1500, researchHeld: false, report: 'HTTP/3 runs over QUIC, not TCP.', sources: [{ title: 'RFC 9114: HTTP/3', url: 'https://www.rfc-editor.org/rfc/rfc9114' }], ...options,
     }
