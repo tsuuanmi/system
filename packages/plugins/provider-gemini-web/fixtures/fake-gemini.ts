@@ -63,6 +63,8 @@ export interface FakeOptions {
   holdAnswer?: boolean
   /** A prompt's bubble renders this long before its text does (0: at once), as a loaded page does. */
   promptLagMs?: number
+  /** The composer rewrites a paste: it drops backticks (a readback test). */
+  rewritePaste?: boolean
   /** Clicking Temporary chat does nothing (the driver must refuse to send). */
   temporaryBroken?: boolean
   /** A "Sign in" control shows beside the account's button (an offer to add an account): still signed in. */
@@ -198,6 +200,8 @@ $('temp').onclick = () => { if (!options.temporaryBroken) temporary = true; rend
 $('input').addEventListener('input', render)
 $('send').onclick = send
 $('stop').onclick = () => { running = false; render() }
+// Drops backticks inside each line's text, keeping the lines (as a composer that rewrites a paste would).
+if (options.rewritePaste) $('input').addEventListener('input', () => { const walker = document.createTreeWalker($('input'), NodeFilter.SHOW_TEXT); for (let n = walker.nextNode(); n; n = walker.nextNode()) if (n.textContent.includes('\x60')) n.textContent = n.textContent.replace(/\x60/g, '') })
 function renderMarkdown(text) {
   const inline = (s) => escape(s).replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>').replace(/\x60([^\x60]+)\x60/g, '<code>$1</code>')
     .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>')
@@ -409,7 +413,7 @@ export class FakeGemini {
 
   constructor(options: FakeOptions = {}) {
     this.options = {
-      paneMenu: true, dialogTarget: '', dialogExtraCall: false, startOnSpark: true, interstitial: false, captcha: false, deviceBound: false, holdAnswer: false, promptLagMs: 0, dropOver: 0, signInOffer: false, chatTabBroken: false, temporaryBroken: false, modePicker: true, promptParagraphs: true, deepResearch: true,
+      paneMenu: true, dialogTarget: '', dialogExtraCall: false, startOnSpark: true, interstitial: false, captcha: false, deviceBound: false, holdAnswer: false, promptLagMs: 0, rewritePaste: false, dropOver: 0, signInOffer: false, chatTabBroken: false, temporaryBroken: false, modePicker: true, promptParagraphs: true, deepResearch: true,
       models: ['3.5 Flash-Lite', '3.8 Flash', '3.1 Pro'], levels: ['Low', 'Medium', 'High'], levelsInline: true, levelsSubmenu: true, submenuBroken: false, answer: 'OK', clarify: '',
       researchMs: 1500, researchHeld: false, report: 'HTTP/3 runs over QUIC, not TCP.', sources: [{ title: 'RFC 9114: HTTP/3', url: 'https://www.rfc-editor.org/rfc/rfc9114' }], ...options,
     }

@@ -137,7 +137,7 @@ export interface EvidenceStore {
  * local-private `evidence` artifact (it never leaves the machine, INV-12) and the event names it,
  * since an event carries no page detail.
  */
-export function driftData(event: { provider: string; element: string; kind: string; candidate: number; source?: string; mapHash: string; outline?: UiOutline }, store?: EvidenceStore): Record<string, unknown> {
+export function driftData(event: { provider: string; element: string; kind: string; candidate: number; source?: string; mapHash: string; outline?: UiOutline; readback?: object }, store?: EvidenceStore): Record<string, unknown> {
   return evidenceData(event, store)
 }
 

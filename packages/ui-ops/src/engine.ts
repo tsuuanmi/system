@@ -26,12 +26,55 @@ export interface Resolved {
 export interface DriftEvent {
   provider: string
   element: string
-  kind: 'fallback' | 'unresolved' | 'postcondition'
+  kind: 'fallback' | 'unresolved' | 'postcondition' | 'readback'
   /** The winning candidate (`fallback`), or -1. */
   candidate: number
   source?: 'shipped' | 'overlay'
   mapHash: string
   outline?: UiOutline
+  /** `readback`: where the text read back first differs from the text inserted (structure only). */
+  readback?: ReadbackDiff
+}
+
+/**
+ * Where a composer's text differs from what was inserted: lengths, lines, and the first difference
+ * by line and offset, with only the class of the characters there. It never contains the text
+ * itself: only an ASCII punctuation mark is named, since a composer that rewrites one (a code
+ * fence, say) is the likely cause.
+ */
+export interface ReadbackDiff {
+  insertedChars: number
+  readChars: number
+  /** Non-empty lines after whitespace is normalized, as the comparison sees them. */
+  insertedLines: number
+  readLines: number
+  /** The first line (0-based) and offset in it where they differ. */
+  line: number
+  offset: number
+  inserted: string
+  read: string
+  /** The text read back is the start of the text inserted: it was cut short. */
+  truncated: boolean
+}
+
+const charClass = (c: string | undefined): string => (c === undefined ? 'end' : /\p{L}/u.test(c) ? 'letter' : /\p{N}/u.test(c) ? 'digit' : /\s/.test(c) ? 'space' : /[!-/:-@[-`{-~]/.test(c) ? `punctuation ${c}` : 'other')
+
+/** The first difference between an inserted text and what the composer shows, structure only. */
+export function readbackDiff(inserted: string, read: string): ReadbackDiff {
+  const a = lineText(inserted)
+  const b = lineText(read)
+  const al = a.split('\n')
+  const bl = b.split('\n')
+  let line = 0
+  while (line < al.length && line < bl.length && al[line] === bl[line]) line++
+  const x = al[line] ?? ''
+  const y = bl[line] ?? ''
+  let offset = 0
+  while (offset < x.length && offset < y.length && x[offset] === y[offset]) offset++
+  return {
+    insertedChars: inserted.length, readChars: read.length, insertedLines: a ? al.length : 0, readLines: b ? bl.length : 0,
+    line, offset, inserted: charClass(x[offset]), read: charClass(y[offset]), truncated: b.length < a.length && a.startsWith(b),
+  }
 }
 
 /**
@@ -293,7 +336,7 @@ export class UiEngine {
    * found element's parent on a fallback, of an unresolved element's scope, or else of the page
    * body. An outline that cannot be read is left out; it never fails the turn.
    */
-  private async reportDrift(element: string, kind: DriftEvent['kind'], candidate: number, source?: 'shipped' | 'overlay', found?: Locator): Promise<void> {
+  private async reportDrift(element: string, kind: DriftEvent['kind'], candidate: number, source?: 'shipped' | 'overlay', found?: Locator, readback?: ReadbackDiff): Promise<void> {
     if (!this.options.onDrift || this.drifted.has(`${kind}\0${element}`)) return
     this.drifted.add(`${kind}\0${element}`)
     const spec = this.map.elements[element]
@@ -301,7 +344,7 @@ export class UiEngine {
     const root = found ? found.first().locator('xpath=..') : scope?.locator
     const redact = await this.options.redact?.().catch(() => []) ?? []
     const outline = await outlineOf(root ?? this.page, found ? `parent of ${element}` : scope ? spec!.scope! : 'body', undefined, redact).catch(() => undefined)
-    this.options.onDrift({ provider: this.map.provider, element, kind, candidate, ...(source ? { source } : {}), mapHash: this.map.hash, ...(outline ? { outline } : {}) })
+    this.options.onDrift({ provider: this.map.provider, element, kind, candidate, ...(source ? { source } : {}), mapHash: this.map.hash, ...(outline ? { outline } : {}), ...(readback ? { readback } : {}) })
   }
 
   /** The page as it stands, for a stall: outlined (structure only, redacted), with its visibility, focus, and path. */
@@ -412,7 +455,10 @@ export class UiEngine {
         // Editors turn line breaks into paragraphs and may change spacing; the lines and
         // their characters must survive.
         if (lineText(value) !== lineText(text)) {
-          throw new ProviderError('ui_drift', `${this.map.provider}: ${spec.target} readback differs from the inserted text`)
+          // Outlined with where it differs (never the text), so a composer that rewrites a paste can be read.
+          const diff = readbackDiff(text, value)
+          await this.reportDrift(spec.target, 'readback', -1, undefined, locator, diff)
+          throw new ProviderError('ui_drift', `${this.map.provider}: ${spec.target} readback differs from the inserted text (${diff.insertedChars} characters inserted, ${diff.readChars} read back; ${diff.insertedLines} lines against ${diff.readLines}; first difference at line ${diff.line}, offset ${diff.offset}: ${diff.inserted} against ${diff.read}${diff.truncated ? '; cut short' : ''})`)
         }
       }
     }

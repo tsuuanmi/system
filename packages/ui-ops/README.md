@@ -39,6 +39,11 @@ not a plugin: provider drivers create one `UiEngine` per turn page.
     `driftData` turns a report into the `ui.drift` event's data, keeping the
     outline as a local-private `evidence` artifact. `drift(element, kind)`
     reports a stale element a driver found itself, with the same evidence.
+  - A composer whose text differs from what was inserted is a drift of kind
+    `readback`. It carries the composer's outline and `readbackDiff`: lengths,
+    lines, and the first difference by line and offset, with only the class of
+    the characters there (an ASCII punctuation mark is named). It never carries
+    the text. The turn fails as `ui_drift` with the same figures.
   - `stall(phase)` describes the page as it stands, for a turn whose answer
     stalled or ran out of time: the same redacted outline of the page, with its
     `visibilityState`, focus, and path. `evidenceData` keeps any such event's

@@ -3,7 +3,7 @@ import { ProviderError } from '@tsuuanmi/system-provider-core'
 import type { Browser, BrowserContext, Page } from 'patchright-core'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { canRunBrowser, launchTestBrowser } from '../../plugins/browser-patchright/tests/support.ts'
-import { type DriftEvent, type EngineOptions, type HealEvent, UiEngine, loadUiMap } from '../src/index.ts'
+import { type DriftEvent, type EngineOptions, type HealEvent, UiEngine, loadUiMap, readbackDiff } from '../src/index.ts'
 
 const MAP = `
 schema: ui-map@1.0
@@ -94,6 +94,20 @@ const VIETNAMESE = page(`<form data-type="composer"><div contenteditable role="t
 const WITH_CHIP = page(`<form data-type="composer"><div contenteditable data-testid="prompt-textarea" role="textbox"><p><span contenteditable="false" data-chip><img alt="Deep research">Deep research</span>&nbsp;</p></div>
   <button type="button" data-testid="send-button" aria-label="Send prompt" data-send>↑</button></form>`)
 const SIGNED_OUT = page(`<form data-type="composer"><div contenteditable role="textbox"></div></form>`, '<a data-testid="login-button" href="#">Log in</a>')
+
+describe('readbackDiff: where a composer changed a paste, never what it said', () => {
+  it('names the first difference by line, offset, and character class', () => {
+    const inserted = 'Review the code:\n\n```ts\nconst secret = 1\n```\nThanks'
+    const read = 'Review the code:\n\nts\nconst secret = 1\nThanks'
+    expect(readbackDiff(inserted, read)).toEqual({ insertedChars: inserted.length, readChars: read.length, insertedLines: 5, readLines: 4, line: 1, offset: 0, inserted: 'punctuation `', read: 'letter', truncated: false })
+    // Structure only: none of the text itself.
+    expect(JSON.stringify(readbackDiff(inserted, read))).not.toMatch(/secret|Review|Thanks/)
+  })
+
+  it('says when the text was cut short', () => {
+    expect(readbackDiff('one two three\nfour', 'one two')).toMatchObject({ line: 0, offset: 7, inserted: 'space', read: 'end', truncated: true })
+  })
+})
 
 describe('loadUiMap', () => {
   it('validates the map and appends overlay candidates after the shipped ones', () => {

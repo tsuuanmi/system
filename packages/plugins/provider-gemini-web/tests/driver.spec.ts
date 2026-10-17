@@ -394,6 +394,19 @@ describe.runIf(canRunBrowser)('GeminiWebDriver against the fake site', { timeout
     expect(fake.sent.map((s) => s.deepResearch)).toEqual([true, true])
   })
 
+  it('outlines a composer that rewrote a paste, with where it differs and never the text, and sends nothing', async () => {
+    const { page, driver, fake } = await open({ startOnSpark: false, rewritePaste: true })
+    const drifts: Array<{ element: string; kind: string; readback?: Record<string, unknown>; outline?: { nodes: unknown[] } }> = []
+    driver.onDrift = (event) => void drifts.push(event as never)
+    await expect(driver.ask(page, 'Review this:\n```\nconst x = 1\n```', { conversation: 'temporary' }))
+      .rejects.toMatchObject({ kind: 'ui_drift', message: expect.stringMatching(/readback differs .*first difference at line 1, offset 0: punctuation ` against letter/) })
+    const readback = drifts.find((d) => d.kind === 'readback')!
+    expect(readback).toMatchObject({ element: 'composer.input', readback: { line: 1, offset: 0, inserted: 'punctuation `', read: 'letter', truncated: false } })
+    expect(readback.outline!.nodes.length).toBeGreaterThan(0)
+    expect(JSON.stringify(readback.readback)).not.toMatch(/Review|const/)
+    expect(fake.sent).toEqual([])
+  })
+
   it('waits for a reopened prompt\'s text before judging it: a bubble that renders first is still observed', async () => {
     const { page, driver, fake } = await open({ answer: 'done' })
     const first = await driver.ask(page, 'remember this', { conversation: 'persistent' })

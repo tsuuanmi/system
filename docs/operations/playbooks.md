@@ -66,6 +66,10 @@ drift and does not silently break.
     `driftWindowHours`. It counts each stale element of a map once, however
     many turns resolve it on a fallback, and names it (`chatgpt-web
     composer.form`). `system events --type ui.drift` lists every occurrence.
+- **A composer that rewrote a prompt** (`readback differs from the inserted text`) is a
+  `ui.drift` of kind `readback`. Its `readback` field gives the lengths, lines, and the first
+  difference (line, offset, character class), and its outline shows the composer. A punctuation
+  mark named there, such as a backtick, points at a composer that formats what is pasted.
 - **A stalled turn** (`provider_stalled`) is outlined the same way: event
   `provider.stall` (`system events --type provider.stall`) carries the page's
   outline as evidence, with its `visibilityState`, focus, and path, so a stall
