@@ -167,7 +167,9 @@ Ranked:
   a two-turn brainstorm with a Gemini member, then turns spaced over hours, then a review with
   members on both families; no sign-out, no challenge. During validation the Gemini account loads
   at most a fixed number of pages per hour, and the first challenge or sign-out ends the
-  validation for the operator to look at.
+  validation for the operator to look at. Check, too, what the site shares between tabs of one
+  profile (localStorage or BroadcastChannel state, such as the mode picker or Temporary chat):
+  two members in two tabs must not change each other's mode or chat.
 
 ## Rollout and rollback
 

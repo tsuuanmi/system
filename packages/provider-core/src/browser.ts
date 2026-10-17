@@ -32,6 +32,19 @@ export interface BrowserTurn<Page = unknown, BrowserContext = unknown> {
   close(): Promise<void>
 }
 
+/** A login profile the browser holds, reserves, or cannot free (ADR-0030; health shows it). */
+export interface ProfileState {
+  account: string
+  /** Its persistent context is open. */
+  open: boolean
+  /** Pages open in it now. */
+  pages: number
+  /** The operator's login holds it: its operations fail as `overloaded` meanwhile. */
+  reserved: boolean
+  /** A process holds it that could not be stopped, and what to do. */
+  blocked?: string
+}
+
 export interface CaptureProfileOptions<Page, T> {
   url: string
   origins: string[]
@@ -51,18 +64,22 @@ export abstract class Browser<Page = unknown, BrowserContext = unknown> extends 
    */
   abstract openTurn(account: string, options?: OpenTurnOptions): Promise<BrowserTurn<Page, BrowserContext>>
   /**
-   * Reserve the account's login profile for the operator's own browser (a remote login): its
-   * persistent context is closed, and profile turns fail as `overloaded` until the returned
-   * release is called. Refused (`overloaded`) while profile turns are open.
+   * Reserve the account's login profile `dir` for the operator's own browser (a remote login).
+   * Refused (`overloaded`) while profile turns are open. Otherwise the persistent context is
+   * closed and its browser has exited before this returns, and profile turns fail as `overloaded`
+   * until the returned release is called (each reservation releases once).
    */
-  abstract reserveProfile(account: string): Promise<() => void>
+  abstract reserveProfile(account: string, dir: string): Promise<() => void>
+  /** Login profiles held open, reserved, or held by a process that could not be stopped. */
+  abstract profileStates(): ProfileState[]
   /** The turn's state for `origins` only; IndexedDB over the cap keeps `previous`. */
   abstract capture(turn: BrowserTurn<Page, BrowserContext>, options: { origins: string[]; previous?: PortableState | undefined }): Promise<PortableState>
   /**
-   * Reopen a login profile invisibly, let `inspect` read it, and capture its state in memory (the
-   * Save flow). A profile the pool already holds open for turns is used in place, in a new page.
+   * Reopen the account's login profile invisibly, let `inspect` read it, and capture its state in
+   * memory (the Save flow). A profile the pool already holds open for turns is used in place, in a
+   * new page. One capture per account at a time.
    */
-  abstract captureProfile<T>(profileDir: string, options: CaptureProfileOptions<Page, T>): Promise<{ state: PortableState; result: T }>
+  abstract captureProfile<T>(account: string, profileDir: string, options: CaptureProfileOptions<Page, T>): Promise<{ state: PortableState; result: T }>
   /** Close the account's browser and every context on it. */
   abstract close(account: string): Promise<void>
   /** Accounts with a running browser. */

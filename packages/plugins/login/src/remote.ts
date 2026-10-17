@@ -179,7 +179,15 @@ export class RemoteLogin {
         ws.on('close', () => vnc.destroy())
       })
     })
-    await new Promise<void>((done) => this.server!.listen(this.options.port, LOOPBACK, done))
+    // A taken port is a typed failure, never an uncaught 'error' event.
+    await new Promise<void>((done, fail) => {
+      const onError = (error: Error): void => fail(new ProviderError('config_error', `the remote login page cannot listen on ${LOOPBACK}:${this.options.port}: ${error.message}`, { cause: error }))
+      this.server!.once('error', onError)
+      this.server!.listen(this.options.port, LOOPBACK, () => {
+        this.server!.off('error', onError)
+        done()
+      })
+    })
     this.origin = `http://${LOOPBACK}:${(this.server.address() as { port: number }).port}`
     this.timer = setTimeout(() => void this.end(), this.options.ttlMs)
     this.timer.unref()

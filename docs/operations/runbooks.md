@@ -316,6 +316,9 @@ A turn that fails with `reauth_required` or `challenge` (disposition
   - While the login desktop is open, the account's operations fail as `overloaded` and are
     retried later, so a run may need `system continue` after a long login.
   - The account is signed in on this host only. To move it, sign it in again on the new host.
+  - If a crash left a browser on the profile, it is stopped the next time the profile is used
+    (event `browser.profile-orphan`). If it cannot be stopped, `system health` shows
+    `login-profiles` degraded, with the process to stop.
 
 Then continue the failed run: `system continue <runId>`.
 

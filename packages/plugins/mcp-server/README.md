@@ -31,10 +31,12 @@ Claude Code and Codex, and the `system` CLI. It is the primary client interface
     and **health** (REQ-HOST-6, `src/health.ts`): each check (plugins of the
     composition, refused workflow templates, runtime, store integrity, free
     disk, vault key custody, accounts to sign in again, Worker availability,
-    provider UI drift within `driftWindowHours`) as `ok`,
+    login profiles held for a login or blocked by a process that could not be
+    stopped (`login-profiles`, from `browser`), provider UI drift within
+    `driftWindowHours`) as `ok`,
     `degraded`, or `down`, and the worst of them. Only an operator-scope caller
     sees the details; a client sees each check's name and state. It reads the
-    mounted services (`credentials`, `accounts`, `workers`, `eventLog`), skips
+    mounted services (`credentials`, `accounts`, `workers`, `eventLog`, `browser`), skips
     those not mounted, and reports a check whose source throws as down. Workers
     count as available only when `ready` or `busy`. A vault key beside the vault
     is advice, never degraded (the default must not page). The store integrity

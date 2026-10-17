@@ -28,7 +28,7 @@ export interface Config {
    * Observed, not published: the site drops a paste of about 30,000 characters or more without an error.
    */
   maxPromptChars?: number
-  /** The account's page loads (turns, checks, deletions) are spaced at least this far apart, in milliseconds (default 10 s). */
+  /** The account's page opens (turns, checks, deletions) are spaced at least this far apart, in milliseconds (default 10 s, at most 10 min); navigations within a page are not. */
   pageGapMs?: number
 }
 
@@ -47,7 +47,7 @@ export const Config: z<Config> = z.object({
   modes: z.dict(z.object({ model: z.string(), effort: z.string() })).default(DEFAULT_MODES).description('Named mode presets (model and thinking level); an empty preset selects nothing'),
   defaultMode: z.string().default('flash').description('Preset when a caller names none'),
   maxPromptChars: z.natural().min(1).default(30_000).description('The longest prompt sent, in characters; a longer one is refused before anything is sent (observed, not published: the site drops longer pastes without an error)'),
-  pageGapMs: z.natural().default(10_000).description('Minimum gap between the account\'s page loads in its login profile, in milliseconds (ADR-0030)'),
+  pageGapMs: z.natural().max(600_000).default(10_000).description('Minimum gap between the opens of the account\'s pages in its login profile, in milliseconds, at most 10 min (ADR-0030); navigations within a page are not spaced'),
 })
 
 export function apply(ctx: Context, config: Config = {}): void {

@@ -74,6 +74,16 @@ describe.runIf(canRunBrowser && vnc)('ctx.login.remote: the noVNC login desktop'
     expect(existsSync(session.socketDir)).toBe(false)
   }, 90_000)
 
+  it('joins a second login for the account to the first, and reserves the profile until the desktop ends (ADR-0030)', async () => {
+    const { ctx } = await boot()
+    const [a, b] = await Promise.all([ctx.login.remote('chatgpt-main'), ctx.login.remote('chatgpt-main')])
+    expect(b.url).toBe(a.url)
+    expect(ctx.browser.profileStates()).toEqual([expect.objectContaining({ account: 'chatgpt-main', reserved: true })])
+    await expect(ctx.browser.openTurn('chatgpt-main', { profile: { dir: ctx.login.profileDir('chatgpt-main') } })).rejects.toMatchObject({ kind: 'overloaded' })
+    await ctx.login.endRemote('chatgpt-main')
+    expect(ctx.browser.profileStates()).toEqual([])
+  }, 90_000)
+
   it('the noVNC page connects from a real browser and shows the remote desktop (REQ-ACC-3)', async () => {
     const { ctx } = await boot()
     const session = await ctx.login.remote('chatgpt-main')

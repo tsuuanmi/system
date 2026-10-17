@@ -38,6 +38,11 @@
     session-bound account's operations still run in the profile. While the
     desktop is open, new operations fail as `overloaded` (backoff), so they never
     run beside the operator's browser.
+  - A second `remote` for the same account, while the first is starting or open,
+    joins it and gets the same desktop. A taken port fails as `config_error`.
+- **One Save per account at a time.** That also means one automated sign-in:
+  two turns that both find the account signed out run their relogins one after
+  the other.
 - **`relogin(account)`: credential login** (ADR-0017, opt-in per account).
   - It runs only for accounts in `credentials` mode (`accounts.setCredentials`),
     on the persistent login profile, inside the Save flow.

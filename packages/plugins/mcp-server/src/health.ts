@@ -37,6 +37,8 @@ export interface HealthSources {
   templates?: () => Array<{ name: string; reason: string }>
   /** Website conversations whose deletion failed every attempt (the conversation ledger). */
   undeleted?: () => Array<{ account: string; binding: string; reason?: string }>
+  /** Login profiles the browser holds, reserves for a login, or cannot free (ADR-0030). */
+  profiles?: () => Array<{ account: string; open: boolean; pages: number; reserved: boolean; blocked?: string }>
   nodeVersion?: string
   minFreeBytes: number
   driftWindowMs: number
@@ -140,6 +142,21 @@ export async function healthReport(sources: HealthSources): Promise<HealthReport
       return failed.length
         ? { name: 'conversations', state: 'degraded', detail: `${failed.length} website conversation(s) of ${accounts.join(', ')} could not be deleted: see system conversations --state failed, and the playbook (docs/operations/playbooks.md)` }
         : ok('conversations', 'every released website conversation was deleted or is due')
+    }))
+  }
+
+  const profiles = sources.profiles
+  if (profiles) {
+    checks.push(await guarded('login-profiles', () => {
+      const states = profiles()
+      const blocked = states.filter((p) => p.blocked)
+      if (blocked.length) return { name: 'login-profiles', state: 'degraded', detail: blocked.map((p) => `${p.account}: ${p.blocked}`).join('; ') }
+      const reserved = states.filter((p) => p.reserved).map((p) => p.account)
+      const open = states.filter((p) => p.open).map((p) => p.account)
+      return ok('login-profiles', [
+        reserved.length ? `held by a remote login: ${reserved.join(', ')} (their operations fail as overloaded and are retried until it ends)` : '',
+        open.length ? `open for work: ${open.join(', ')}` : '',
+      ].filter(Boolean).join('; ') || 'no login profile is open for work')
     }))
   }
 

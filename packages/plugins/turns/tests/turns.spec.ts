@@ -772,7 +772,7 @@ describe.runIf(canRunBrowser)('ctx.turns: a session-bound account works in its o
 
   it('waits for the operator: while a login holds the profile, a turn fails as overloaded with nothing sent', async () => {
     const { ctx, fake } = await bootBound()
-    const release = await ctx.browser.reserveProfile('gemini-main')
+    const release = await ctx.browser.reserveProfile('gemini-main', ctx.login.profileDir('gemini-main'))
     const held = await ctx.turns.wait((await ask(ctx, { prompt: 'not now' })).turnId, 60_000)
     expect(held).toMatchObject({ status: 'failed', error: expect.objectContaining({ kind: 'overloaded' }) })
     expect(fake.sent).toEqual([])

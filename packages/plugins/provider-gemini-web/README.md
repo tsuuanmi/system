@@ -115,7 +115,8 @@ driver, its operations are data: a UI map,
 - **Session-bound** ([ADR-0030](../../../docs/decisions/adr/0030-session-bound-accounts-use-their-login-profile.md)).
   On 2026-10-16, copies of a Gemini session died within a minute while the login
   profile stayed signed in. So the driver declares `sessionBound`, and every
-  operation of a Gemini account runs as a page of its own login profile. Page
-  loads are spaced at least `pageGapMs` apart (default 10 s).
+  operation of a Gemini account runs as a page of its own login profile.
+  `pageGapMs` (default 10 s, at most 10 min) spaces the **opens** of the
+  account's pages. Navigations within a page are not spaced.
 - **Config:** `origin`, `modes`, `defaultMode`, `maxPromptChars`, `pageGapMs`.
 - **Injects:** `providers`.

@@ -40,7 +40,7 @@ its types is not listed).
 | [runtime-codex-sdk](../../packages/plugins/runtime-codex-sdk/README.md) | capabilities | — | `runtime-codex-sdk` | `agentRuntimes` | `agent-runtime-core`, `libs`, `provider-core` |
 | [turns](../../packages/plugins/turns/README.md) | capabilities | `turns` | `turns` | `store`, `artifacts`, `leases`, `egress`, `turnReceipts`, `accounts`, `browser`, `providers`, `workers`, `eventLog` (optional), `login` (optional), `mcp` (optional) | `gateway-core`, `leases`, `libs`, `provider-core`, `workers-core` |
 | [accounts](../../packages/plugins/accounts/README.md) | provider runtime | `accounts` | `accounts` | `credentials` | `libs`, `provider-core` |
-| [browser-patchright](../../packages/plugins/browser-patchright/README.md) | provider runtime | `browser` | `browser` | `display` | `libs`, `provider-core` |
+| [browser-patchright](../../packages/plugins/browser-patchright/README.md) | provider runtime | `browser` | `browser` | `display`, `eventLog` (optional) | `libs`, `provider-core` |
 | [display-virtual](../../packages/plugins/display-virtual/README.md) | provider runtime | `display` | `display` | — | `libs`, `provider-core` |
 | [login](../../packages/plugins/login/README.md) | provider runtime | `login` | `login` | `accounts`, `browser`, `providers`, `mcp` (optional) | `display-virtual`, `gateway-core`, `libs`, `provider-core` |
 | [provider-chatgpt-web](../../packages/plugins/provider-chatgpt-web/README.md) | provider runtime | — | `provider-chatgpt-web` | `providers`, `artifacts` (optional), `eventLog` (optional) | `libs`, `provider-core`, `ui-ops` |
@@ -123,6 +123,7 @@ flowchart TB
   agent_workers --> egress
   artifacts --> store
   browser_patchright --> display_virtual
+  browser_patchright -.-> event_log
   egress --> artifacts
   event_log --> store
   gateway_anthropic --> webserver

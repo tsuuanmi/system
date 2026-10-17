@@ -207,14 +207,26 @@ account's profile open, Save reads it in place, in a page of its own.
   - conversation inspection and deletion.
 
   Portable state is neither loaded nor written back.
-  - **Lifecycle.** The context opens lazily, one launch at a time, and closes after
-    `closeAfterMs` idle. A lock left by a crashed host's browser is cleared on the
-    next open; one held by a live browser refuses. If the browser dies, in-flight
-    operations fail and a submitted turn reconciles by its receipt.
-  - **The operator first.** A remote login reserves the profile
-    (`reserveProfile`): it is refused while operations run, and it closes the idle
-    context. Until the login ends, operations fail as `overloaded` (backoff).
-  - **Pacing.** The account's page opens are spaced by the driver's `pageGapMs`.
+  - **Lifecycle.**
+    - The context opens lazily, one launch at a time, without session restore.
+    - It closes after `closeAfterMs` idle. A close waits until its Chrome has
+      exited, and stops one that has not within 10 s.
+    - If the browser dies, in-flight operations fail, and a submitted turn
+      reconciles by its receipt.
+  - **Who holds a profile.** A process on this host whose command line names
+    the profile (`/proc` on Linux), never a lock file alone. A browser left on
+    the profile by a crashed host is stopped when the profile is next opened or
+    reserved. One that cannot be stopped is shown in health
+    (`login-profiles`).
+  - **The operator first.**
+    - A remote login reserves the profile (`reserveProfile`). It is refused while
+      operations run, and it returns only after the idle context's browser has
+      exited.
+    - Until the login ends, operations fail as `overloaded` (backoff).
+    - A second login for the account joins the first.
+    - Saves, and with them automated sign-ins, run one at a time per account.
+  - **Pacing.** The opens of the account's pages are spaced by the driver's
+    `pageGapMs`; navigations within a page are not.
   - Sessions stay apart by conversation, each in its own tab, so one account still
     serves several team members.
 - **Retained page per session** (planned), opt-in per capability. For long sessions and

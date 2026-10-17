@@ -1,4 +1,5 @@
-import { mkdtempSync, rmSync, symlinkSync } from 'node:fs'
+import { type ChildProcess, spawn } from 'node:child_process'
+import { mkdtempSync, readFileSync, rmSync, symlinkSync } from 'node:fs'
 import { type Server, createServer } from 'node:http'
 import { hostname, tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -53,31 +54,58 @@ describe.runIf(canRunBrowser)('pool(ctx).captureProfile (the Save flow)', () => 
     return dir
   }
 
+  /**
+   * A process that runs "Chrome" on `dir` as far as the host can tell (its command line names the
+   * profile): a login browser a crashed host left, or a browser that will not exit. `stubborn`
+   * ignores SIGTERM.
+   */
+  function squatter(dir: string, stubborn = false): ChildProcess {
+    const child = spawn(process.execPath, ['-e', `${stubborn ? "process.on('SIGTERM', () => {});" : ''}setInterval(() => {}, 1000)`, '--', `--user-data-dir=${dir}`], { stdio: 'ignore' })
+    fibers.push({ dispose: async () => void child.kill('SIGKILL') })
+    return child
+  }
+  /** Still running (a reaped or zombie process has no command line). */
+  const running = (child: ChildProcess): boolean => {
+    try {
+      return readFileSync(`/proc/${child.pid}/cmdline`).length > 0
+    } catch {
+      return false
+    }
+  }
+  const gone = (child: ChildProcess): Promise<unknown> => (child.exitCode !== null || child.signalCode !== null ? Promise.resolve() : new Promise((resolve) => child.once('exit', resolve)))
+  const reads = (page: { locator(s: string): { innerText(): Promise<string> } }): Promise<string> => page.locator('p').innerText()
+  const capture = (ctx: Context, dir: string) => pool(ctx).captureProfile('acct', dir, { url: `${origin}/`, origins: [origin], inspect: (page) => reads(page) })
+
   it('reopens the login profile invisibly and captures state for the origins only, in memory', async () => {
     const ctx = await boot()
     const dir = await signedInProfile()
-    const { state, result } = await pool(ctx).captureProfile(dir, {
-      url: `${origin}/`, origins: [origin], inspect: (page) => page.locator('p').innerText(),
-    })
+    const { state, result } = await capture(ctx, dir)
     expect(result).toBe('signed in')
     expect(state.cookies).toEqual([expect.objectContaining({ name: 'session', value: 'valid' })])
     expect(state.origins).toEqual([origin])
   }, 60_000)
 
-  it('refuses a profile that a live browser still holds, and clears a stale lock', async () => {
+  it('refuses a profile a live browser holds, and takes a lock whose pid runs no browser on it as stale (a reused pid)', async () => {
     const ctx = await boot()
     const dir = await signedInProfile()
+    const browser = squatter(dir)
+    await expect(capture(ctx, dir)).rejects.toMatchObject({ kind: 'session_broken', message: expect.stringMatching(/in use by process/) })
+    expect(running(browser)).toBe(true)
+    browser.kill('SIGKILL')
+    await gone(browser)
+    // A live pid, but not a browser on this profile: the lock is a leftover.
     symlinkSync(`${hostname()}-${process.pid}`, join(dir, 'SingletonLock'))
-    await expect(pool(ctx).captureProfile(dir, { url: `${origin}/`, origins: [origin], inspect: async () => 1 }))
-      .rejects.toMatchObject({ kind: 'session_broken', message: expect.stringMatching(/in use/) })
-    rmSync(join(dir, 'SingletonLock'))
-    symlinkSync(`${hostname()}-2147483646`, join(dir, 'SingletonLock'))
-    await expect(pool(ctx).captureProfile(dir, { url: `${origin}/`, origins: [origin], inspect: async () => 1 })).resolves.toMatchObject({ result: 1 })
-  }, 60_000)
+    await expect(capture(ctx, dir)).resolves.toMatchObject({ result: 'signed in' })
+  }, 90_000)
+
+  it('runs one Save per account at a time, so two never open the profile together', async () => {
+    const ctx = await boot()
+    const dir = await signedInProfile()
+    const both = await Promise.all([capture(ctx, dir), capture(ctx, dir)])
+    expect(both.map((b) => b.result)).toEqual(['signed in', 'signed in'])
+  }, 90_000)
 
   describe('profile turns (a session-bound account, ADR-0030)', () => {
-    const reads = (page: { locator(s: string): { innerText(): Promise<string> } }) => page.locator('p').innerText()
-
     it('opens each turn as a page of one persistent context on the login profile, and closes only the page (REQ-ACC-4)', async () => {
       const ctx = await boot()
       const dir = await signedInProfile()
@@ -94,41 +122,71 @@ describe.runIf(canRunBrowser)('pool(ctx).captureProfile (the Save flow)', () => 
       expect(a.page.isClosed()).toBe(true)
       expect(b.page.isClosed()).toBe(false)
       expect(pool(ctx).openAccounts()).toEqual(['acct'])
+      expect(pool(ctx).profileStates()).toEqual([{ account: 'acct', open: true, pages: 1, reserved: false }])
       await b.close()
       await pool(ctx).close('acct')
       expect(pool(ctx).openAccounts()).toEqual([])
-      // Closed, the profile is free again: the Save flow reopens it.
-      await expect(pool(ctx).captureProfile(dir, { url: `${origin}/`, origins: [origin], inspect: (page) => reads(page) })).resolves.toMatchObject({ result: 'signed in' })
+      // Closed, its browser has exited: the Save flow reopens the profile at once.
+      await expect(capture(ctx, dir)).resolves.toMatchObject({ result: 'signed in' })
     }, 90_000)
 
-    it('clears a lock a crashed host left on the profile, and refuses one a live browser holds', async () => {
+    it('stops a browser a crashed host left on the profile, then opens it', async () => {
       const ctx = await boot()
       const dir = await signedInProfile()
-      symlinkSync(`${hostname()}-${process.pid}`, join(dir, 'SingletonLock'))
-      await expect(pool(ctx).openTurn('acct', { profile: { dir } })).rejects.toMatchObject({ kind: 'session_broken', message: expect.stringMatching(/in use/) })
-      rmSync(join(dir, 'SingletonLock'))
-      symlinkSync(`${hostname()}-2147483646`, join(dir, 'SingletonLock'))
+      const orphan = squatter(dir, true)
       const turn = await pool(ctx).openTurn('acct', { profile: { dir } })
+      await gone(orphan)
       await turn.page.goto(`${origin}/`)
       expect(await reads(turn.page)).toBe('signed in')
       await turn.close()
     }, 90_000)
 
-    it('reserves the profile for the operator: refused while a turn runs, then turns wait until it is released', async () => {
+    it('waits for a closed profile\'s browser to exit, and stops one that will not before the profile counts as free', async () => {
       const ctx = await boot()
       const dir = await signedInProfile()
       const turn = await pool(ctx).openTurn('acct', { profile: { dir } })
-      await expect(pool(ctx).reserveProfile('acct')).rejects.toMatchObject({ kind: 'overloaded', message: expect.stringMatching(/1 operation/) })
       await turn.close()
-      const release = await pool(ctx).reserveProfile('acct')
+      // A process of the closing browser that will not exit.
+      const wedged = squatter(dir, true)
+      await pool(ctx).close('acct')
+      await gone(wedged)
+      expect(pool(ctx).profileStates()).toEqual([])
+    }, 90_000)
+
+    it('reserves the profile for the operator: refused while a turn runs; once reserved, turns fail as overloaded until every reservation is released', async () => {
+      const ctx = await boot()
+      const dir = await signedInProfile()
+      const turn = await pool(ctx).openTurn('acct', { profile: { dir } })
+      await expect(pool(ctx).reserveProfile('acct', dir)).rejects.toMatchObject({ kind: 'overloaded', message: expect.stringMatching(/1 operation/) })
+      await turn.close()
+      const first = await pool(ctx).reserveProfile('acct', dir)
       // Closed for the operator's browser, and no turn opens it meanwhile.
       expect(pool(ctx).openAccounts()).toEqual([])
+      expect(pool(ctx).profileStates()).toEqual([{ account: 'acct', open: false, pages: 0, reserved: true }])
       await expect(pool(ctx).openTurn('acct', { profile: { dir } })).rejects.toMatchObject({ kind: 'overloaded', disposition: 'BACKOFF' })
       // The Save that ends a remote login still reads the profile.
-      await expect(pool(ctx).captureProfile(dir, { url: `${origin}/`, origins: [origin], inspect: (page) => reads(page) })).resolves.toMatchObject({ result: 'signed in' })
-      release()
+      await expect(capture(ctx, dir)).resolves.toMatchObject({ result: 'signed in' })
+      // The operator's login browser, under the first reservation: a second one never stops it.
+      const operator = squatter(dir)
+      const second = await pool(ctx).reserveProfile('acct', dir)
+      expect(running(operator)).toBe(true)
+      operator.kill('SIGKILL')
+      await gone(operator)
+      first()
+      first()
+      await expect(pool(ctx).openTurn('acct', { profile: { dir } })).rejects.toMatchObject({ kind: 'overloaded' })
+      second()
       const again = await pool(ctx).openTurn('acct', { profile: { dir } })
       await again.close()
+    }, 90_000)
+
+    it('stops a browser a crashed host left on the profile when the operator reserves it', async () => {
+      const ctx = await boot()
+      const dir = await signedInProfile()
+      const orphan = squatter(dir)
+      const release = await pool(ctx).reserveProfile('acct', dir)
+      await gone(orphan)
+      release()
     }, 90_000)
 
     it('spaces the page opens of one account by the gap, and captures a held profile in place', async () => {
@@ -139,8 +197,7 @@ describe.runIf(canRunBrowser)('pool(ctx).captureProfile (the Save flow)', () => 
       const second = await pool(ctx).openTurn('acct', { profile: { dir, gapMs: 1500 } })
       expect(Date.now() - opened).toBeGreaterThanOrEqual(1400)
       await Promise.all([first.close(), second.close()])
-      const { result } = await pool(ctx).captureProfile(dir, { url: `${origin}/`, origins: [origin], inspect: (page) => reads(page) })
-      expect(result).toBe('signed in')
+      expect((await capture(ctx, dir)).result).toBe('signed in')
       // Used in place: the profile stays held for the account's next turn.
       expect(pool(ctx).openAccounts()).toEqual(['acct'])
     }, 90_000)

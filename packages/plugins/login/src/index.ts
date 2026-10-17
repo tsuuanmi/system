@@ -56,7 +56,10 @@ export class Login extends Service {
   })
 
   private readonly profilesDir: string
-  private readonly remotes = new Map<string, RemoteLogin>()
+  /** Remote logins by account, claimed before they start. */
+  private readonly remotes = new Map<string, Promise<RemoteLogin>>()
+  /** The Save running for each account (one at a time). */
+  private readonly saves = new Map<string, Promise<AccountView>>()
   private readonly totp = new TotpCodes()
   private readonly pendingCodes = new Map<string, { kind: 'totp' | 'email'; resolve: (code: string) => void; reject: (error: Error) => void }>()
 
@@ -66,7 +69,7 @@ export class Login extends Service {
     // Login profiles hold every session signed in through them: agent Workers never read them (ADR-0024).
     ctx.effect(() => registerSecretPath(this.profilesDir))
     ctx.effect(() => async () => {
-      await Promise.allSettled([...this.remotes.values()].map((r) => r.end()))
+      await Promise.allSettled([...this.remotes.values()].map(async (r) => (await r).end()))
     })
     // Operator tools, when the MCP endpoint is mounted. Views are secret-free (INV-8).
     ctx.inject(['mcp'], (c) => {
@@ -144,8 +147,22 @@ export class Login extends Service {
    * {@link save} after the login Chrome has exited; the desktop closes itself afterwards.
    */
   async remote(accountId: string): Promise<RemoteSessionInfo> {
+    // Claimed before the first wait: a second login for the account joins this one.
     const existing = this.remotes.get(accountId)
-    if (existing) return existing.info()
+    if (existing) return (await existing).info()
+    const starting = this.startRemote(accountId, () => {
+      if (this.remotes.get(accountId) === starting) this.remotes.delete(accountId)
+    })
+    this.remotes.set(accountId, starting)
+    try {
+      return (await starting).info()
+    } catch (error) {
+      if (this.remotes.get(accountId) === starting) this.remotes.delete(accountId)
+      throw error
+    }
+  }
+
+  private async startRemote(accountId: string, ended: () => void): Promise<RemoteLogin> {
     const account = await this.ctx.accounts.get(accountId)
     const driver = this.ctx.providers.get(account.provider)
     const chromePath = this.config.chromePath ?? this.ctx.browser.executablePath()
@@ -154,17 +171,17 @@ export class Login extends Service {
     if (!vncPath) throw new ProviderError('config_error', 'remote login needs a VNC server: apt install tigervnc-scraping-server (x0vncserver) or x11vnc')
     const profileDir = this.profileDir(accountId)
     ensurePrivateDir(profileDir)
-    // The operator's browser and the automation never share the profile (ADR-0030): refused
-    // while operations run in it, and new ones wait until the login ends.
-    const release = await this.ctx.browser.reserveProfile(accountId)
-    let session: RemoteLogin
+    // The operator's browser and the automation never share the profile (ADR-0030). The login is
+    // refused while operations run in it; while it is open, new ones fail as overloaded and are
+    // retried later.
+    const release = await this.ctx.browser.reserveProfile(accountId, profileDir)
     try {
-      session = await RemoteLogin.start({
+      return await RemoteLogin.start({
         account: accountId, profileDir, loginUrl: driver.loginUrl, chromePath, vncPath,
         ttlMs: this.config.remoteTtlMs ?? 30 * 60_000, port: this.config.remotePort ?? 47318,
         onSave: () => this.save(accountId),
         onEnded: () => {
-          this.remotes.delete(accountId)
+          ended()
           release()
         },
       })
@@ -172,13 +189,11 @@ export class Login extends Service {
       release()
       throw error
     }
-    this.remotes.set(accountId, session)
-    return session.info()
   }
 
   /** Close the account's remote login desktop, if open. */
   async endRemote(accountId: string): Promise<void> {
-    await this.remotes.get(accountId)?.end()
+    await (await this.remotes.get(accountId)?.catch(() => undefined))?.end()
   }
 
   /**
@@ -244,15 +259,29 @@ export class Login extends Service {
   /**
    * Capture → verify in a fresh context → store encrypted (revision-guarded). A session-bound
    * account (ADR-0030) is verified in its profile only: a copy is not how it works, and loading
-   * one could end its session.
+   * one could end its session. One Save (and so one automated sign-in) per account at a time.
    */
   async save(accountId: string, options: { signIn?: (page: unknown) => Promise<void> } = {}): Promise<AccountView> {
+    const previous = this.saves.get(accountId)
+    const run = (async () => {
+      await previous?.catch(() => undefined)
+      return this.saveNow(accountId, options)
+    })()
+    this.saves.set(accountId, run)
+    try {
+      return await run
+    } finally {
+      if (this.saves.get(accountId) === run) this.saves.delete(accountId)
+    }
+  }
+
+  private async saveNow(accountId: string, options: { signIn?: (page: unknown) => Promise<void> }): Promise<AccountView> {
     const account = await this.ctx.accounts.get(accountId)
     const driver = this.ctx.providers.get(account.provider)
     const [home] = driver.stateOrigins
     if (!home) throw new ProviderError('config_error', `${driver.provider} declares no state origins`)
     const previous = await this.ctx.accounts.portableState(accountId)
-    const { state, result: identity } = await this.ctx.browser.captureProfile(this.profileDir(accountId), {
+    const { state, result: identity } = await this.ctx.browser.captureProfile(accountId, this.profileDir(accountId), {
       url: `${home}/`,
       origins: [...driver.stateOrigins],
       previous,

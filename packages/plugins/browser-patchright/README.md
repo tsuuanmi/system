@@ -15,24 +15,45 @@
   closed. Under heavy load on 2026-10-12, a stalled launch made a runtime stop
   hang.
 - **`openTurn(account, { profile: { dir, gapMs }, signal })`: a session-bound
-  account** ([ADR-0030](../../../docs/decisions/adr/0030-session-bound-accounts-use-their-login-profile.md)).
+  account** ([ADR-0030](../../../docs/decisions/adr/0030-session-bound-accounts-use-their-login-profile.md);
+  `src/profiles.ts`).
   - The turn is a page of one persistent context on the account's login profile,
-    headed on the invisible display, as Save opens it.
-  - The context opens lazily, one launch at a time. Restored tabs are blanked so
-    they stop loading the site.
+    headed on the invisible display, **without** session restore. Restored tabs
+    would all load the site at once, unpaced.
+  - The context opens lazily, one launch at a time, never beside a close or a
+    Save of the same account.
   - Closing the turn closes only its page. The context closes after `closeAfterMs`
     with no open page, or when the display is lost.
-  - Page opens are spaced at least `gapMs` apart.
-  - A lock left by a dead browser is cleared on open; one held by a live browser
-    refuses (`session_broken`).
-- **`reserveProfile(account)`:** for the operator's remote login. It is refused
-  (`overloaded`) while profile pages are open. Otherwise it closes the context,
-  and profile turns fail as `overloaded` until the returned release is called.
+  - Page opens are spaced at least `gapMs` apart. Navigations within a page are
+    not spaced.
+- **Who holds a profile.** On Linux, a profile is in use while a process on this
+  host has `--user-data-dir=<dir>` in its command line (read from `/proc`). A
+  lock file alone proves nothing: its pid may be reused, or it may name another
+  host. Elsewhere, the lock's live local pid is all there is, so a held profile is
+  refused and never stopped.
+- **Closing waits for the browser.** A closed context's Chrome must exit, so the
+  next open, a Save, or the operator's login never meets it. One still running
+  after 10 s is stopped (SIGTERM, then SIGKILL). One that cannot be stopped
+  blocks the account, and `profileStates` shows what to do (health
+  `login-profiles`).
+- **A browser left by a crashed host** on a profile the pool does not hold is
+  stopped when the account next opens the profile or the operator reserves it
+  (event `browser.profile-orphan`). This covers both an automation browser and a
+  login browser.
+- **`reserveProfile(account, dir)`:** for the operator's remote login. It is
+  refused (`overloaded`) while profile pages are open. Otherwise it closes the
+  context and returns only after that browser has exited. Profile turns then fail
+  as `overloaded` until every reservation is released; each release ends one.
+- **`profileStates()`:** the profiles open for work, reserved, or blocked (for
+  health).
 - **`capture(turn, { origins, previous })`:** cookies, localStorage, and IndexedDB
   for the driver's origins only. IndexedDB over the size cap keeps `previous`.
-- **`captureProfile(dir, …)`** (the Save flow) uses a profile the pool already holds
-  open in place, in a page of its own. Otherwise it launches the profile and closes
-  it afterwards.
+- **`captureProfile(account, dir, …)`** (the Save flow) uses a profile the pool
+  already holds open (or is opening) in place, in a page of its own. Otherwise it
+  launches the profile with session restore, so the session cookies of the
+  operator's browser survive, and closes it afterwards. It waits up to 10 s for
+  the operator's browser to exit and never stops it. One capture per account runs
+  at a time, and no launch for turns runs meanwhile.
 - **Lifecycle:**
   - one launch at a time per account;
   - the browser closes after `closeAfterMs` with no open turn;

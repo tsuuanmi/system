@@ -70,6 +70,13 @@ describe('host health (REQ-HOST-6)', () => {
     expect(await check({ undeleted: () => [] }, 'conversations')).toMatchObject({ state: 'ok' })
   })
 
+  it('shows a login profile a process holds that could not be stopped, and the profiles held for a login or for work (ADR-0030)', async () => {
+    expect(await check({ profiles: () => [{ account: 'gemini-main', open: false, pages: 0, reserved: false, blocked: 'process 42 still runs Chrome on gemini-main\'s login profile and could not be stopped: stop it, then retry' }] }, 'login-profiles'))
+      .toMatchObject({ state: 'degraded', detail: expect.stringMatching(/^gemini-main: process 42 .*stop it, then retry$/) })
+    expect(await check({ profiles: () => [{ account: 'gemini-main', open: false, pages: 0, reserved: true }, { account: 'gemini-2', open: true, pages: 1, reserved: false }] }, 'login-profiles'))
+      .toMatchObject({ state: 'ok', detail: expect.stringMatching(/remote login: gemini-main .*open for work: gemini-2/) })
+  })
+
   it('counts a reported drift and the turn it failed as one change', async () => {
     const events = (type: string) => (type === 'ui.drift'
       ? [{ data: { provider: 'gemini-web', element: 'temporary.enable', kind: 'postcondition', candidate: -1, mapHash: 'sha256:aa' } }]
