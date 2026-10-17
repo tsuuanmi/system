@@ -1,7 +1,7 @@
 # ChatGPT Web UI map (ui-map@1.0, ADR-0021). Checked against the live site on 2026-10-11
 # (docs/research/browser-interaction-and-self-healing.md#live-check-2026-10-11-signed-in-account-read-only).
 # When the site changes, edit this file (and the fixture), not the driver code.
-schema: ui-map@1.2
+schema: ui-map@1.3
 provider: chatgpt-web
 uiRevision: '2026-10-11'
 locales: [en]
@@ -364,6 +364,16 @@ actions:
     sideEffect: reversible
     heal: deterministic
     timeouts: { resolveMs: 5000, verifyMs: 5000 }
+  composer.clear:
+    description: >-
+      Empty the composer before a turn types anything: a site can keep an unsent draft across
+      page loads (live 2026-10-17, in a login profile).
+    do: clearText
+    target: composer.input
+    require: [editable]
+    verify: { visible: composer.input }
+    sideEffect: reversible
+    timeouts: { resolveMs: 15000, verifyMs: 5000 }
   composer.insert:
     do: insertText
     target: composer.input

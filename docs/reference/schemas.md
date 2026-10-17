@@ -291,6 +291,9 @@ guesses.
   live check removes the flag entry by entry.
   Elements with `frames: any` are searched in every frame and take no `scope`.
   Readers accept 1.0 and 1.1.
+- `ui-map@1.3` adds the action kind `clearText`: it empties a composer (select all,
+  delete) and requires it to read back empty, so an unsent draft a site keeps across
+  page loads is never sent with a prompt.
 
 ### `ui-outline`
 

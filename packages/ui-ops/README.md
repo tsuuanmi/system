@@ -39,6 +39,9 @@ not a plugin: provider drivers create one `UiEngine` per turn page.
     `driftData` turns a report into the `ui.drift` event's data, keeping the
     outline as a local-private `evidence` artifact. `drift(element, kind)`
     reports a stale element a driver found itself, with the same evidence.
+  - `clearText` (an action kind, `ui-map@1.3`) empties a composer and requires it to
+    read back empty. A composer that keeps text is a `readback` drift, and the turn
+    fails before anything is typed.
   - A composer whose text differs from what was inserted is a drift of kind
     `readback`. It carries the composer's outline and `readbackDiff`: lengths,
     lines, and the first difference by line and offset, with only the class of

@@ -394,6 +394,21 @@ describe.runIf(canRunBrowser)('GeminiWebDriver against the fake site', { timeout
     expect(fake.sent.map((s) => s.deepResearch)).toEqual([true, true])
   })
 
+  it('never sends a draft the site kept: the composer is emptied first, and a turn that fails unsent leaves none (live 2026-10-17)', async () => {
+    const { page, driver, fake } = await open({ startOnSpark: false, draftPersist: true, answer: 'ok' })
+    // A draft left from an earlier, unsent attempt (as in the live login profile).
+    await page.goto(`${fake.origin}/app`)
+    await page.evaluate(() => localStorage.setItem('draft:home', 'an old unsent draft'))
+    expect((await driver.ask(page, 'the real prompt', { conversation: 'temporary' })).text).toBe('ok')
+    expect(fake.sent.map((s) => s.prompt)).toEqual(['the real prompt'])
+    // Typed, then refused before the send: nothing is left as a draft for the next turn.
+    await expect(driver.ask(page, 'never sent', { conversation: 'temporary', beforeSend: () => { throw new Error('stop before sending') } })).rejects.toThrow(/stop before sending/)
+    await page.goto(`${fake.origin}/app`)
+    expect((await page.evaluate(() => localStorage.getItem('draft:home') ?? '')).trim()).toBe('')
+    expect((await driver.ask(page, 'next prompt', { conversation: 'temporary' })).text).toBe('ok')
+    expect(fake.sent.map((s) => s.prompt)).toEqual(['the real prompt', 'next prompt'])
+  })
+
   it('outlines a composer that rewrote a paste, with where it differs and never the text, and sends nothing', async () => {
     const { page, driver, fake } = await open({ startOnSpark: false, rewritePaste: true })
     const drifts: Array<{ element: string; kind: string; readback?: Record<string, unknown>; outline?: { nodes: unknown[] } }> = []

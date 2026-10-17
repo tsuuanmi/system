@@ -57,6 +57,31 @@ export interface ReadbackDiff {
   truncated: boolean
 }
 
+/**
+ * The text typed into a composer, block-aware: each paragraph, div, or <br> is a line; non-editable
+ * islands (tool mention chips) are not part of it.
+ */
+function typedText(locator: Locator): Promise<string> {
+  return locator.evaluate((el) => {
+    if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) return el.value
+    const lines: string[] = ['']
+    const walk = (node: Node): void => {
+      if (node.nodeType === Node.TEXT_NODE) {
+        lines[lines.length - 1] += node.textContent ?? ''
+        return
+      }
+      if (!(node instanceof Element) || node.getAttribute('contenteditable') === 'false') return
+      if (node.tagName === 'BR') lines.push('')
+      const block = /^(P|DIV|LI|PRE|BLOCKQUOTE|H[1-6])$/.test(node.tagName)
+      if (block && lines[lines.length - 1] !== '') lines.push('')
+      for (const child of node.childNodes) walk(child)
+      if (block) lines.push('')
+    }
+    for (const child of el.childNodes) walk(child)
+    return lines.join('\n')
+  })
+}
+
 const charClass = (c: string | undefined): string => (c === undefined ? 'end' : /\p{L}/u.test(c) ? 'letter' : /\p{N}/u.test(c) ? 'digit' : /\s/.test(c) ? 'space' : /[!-/:-@[-`{-~]/.test(c) ? `punctuation ${c}` : 'other')
 
 /** The first difference between an inserted text and what the composer shows, structure only. */
@@ -358,7 +383,7 @@ export class UiEngine {
     } catch {
       url = undefined
     }
-    return { provider: this.map.provider, phase, ...(seen ?? {}), ...(url ? { url } : {}), ...(outline ? { outline } : {}) }
+    return { provider: this.map.provider, phase, ...seen, ...(url ? { url } : {}), ...(outline ? { outline } : {}) }
   }
 
   /** The map's `errors` conditions guard every action: a login surface or challenge is never healed around. */
@@ -425,6 +450,20 @@ export class UiEngine {
       case 'select':
         await locator.selectOption(args.value ?? '')
         return
+      case 'clearText': {
+        // A site can keep an unsent draft across page loads (Gemini in a login profile, live
+        // 2026-10-17): it is removed before a turn types anything, and must read back empty.
+        await locator.click()
+        await locator.press('ControlOrMeta+A')
+        await locator.press('Delete')
+        const value = await typedText(locator)
+        if (lineText(value)) {
+          const diff = readbackDiff('', value)
+          await this.reportDrift(spec.target, 'readback', -1, undefined, locator, diff)
+          throw new ProviderError('ui_drift', `${this.map.provider}: ${spec.target} could not be cleared (${diff.readChars} characters, ${diff.readLines} lines still there)`)
+        }
+        return
+      }
       case 'insertText': {
         const text = args.text ?? ''
         await locator.click()
@@ -432,26 +471,7 @@ export class UiEngine {
         await locator.press('ControlOrMeta+End')
         // Insert as text (no key events), so editor shortcuts never fire; then read back.
         await this.page.keyboard.insertText(text)
-        const value = await locator.evaluate((el) => {
-          if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) return el.value
-          // Block-aware text: each paragraph, div, or <br> is a line; non-editable islands
-          // (tool mention chips) are not part of the typed text.
-          const lines: string[] = ['']
-          const walk = (node: Node): void => {
-            if (node.nodeType === Node.TEXT_NODE) {
-              lines[lines.length - 1] += node.textContent ?? ''
-              return
-            }
-            if (!(node instanceof Element) || node.getAttribute('contenteditable') === 'false') return
-            if (node.tagName === 'BR') lines.push('')
-            const block = /^(P|DIV|LI|PRE|BLOCKQUOTE|H[1-6])$/.test(node.tagName)
-            if (block && lines[lines.length - 1] !== '') lines.push('')
-            for (const child of node.childNodes) walk(child)
-            if (block) lines.push('')
-          }
-          for (const child of el.childNodes) walk(child)
-          return lines.join('\n')
-        })
+        const value = await typedText(locator)
         // Editors turn line breaks into paragraphs and may change spacing; the lines and
         // their characters must survive.
         if (lineText(value) !== lineText(text)) {

@@ -385,10 +385,10 @@ describe.runIf(canRunBrowser)('ctx.turns: ask through a saved account', () => {
     const first = await boot({ dir, fake: { thinkMs: 2000, answer: 'once' } })
     const turn = await ask(first.ctx, { prompt: 'only once' })
     const second = await boot({ dir, shared: first.fake })
-    await new Promise((resolve) => setTimeout(resolve, 6000))
+    // However long the turn takes, both processes see it complete, and it was sent once.
+    expect((await first.ctx.turns.wait(turn.turnId, 60_000)).status).toBe('completed')
+    await expect.poll(() => second.ctx.turns.get(turn.turnId)?.status, { timeout: 30_000 }).toBe('completed')
     expect(first.fake.sent.map((s) => s.prompt)).toEqual(['only once'])
-    expect((await first.ctx.turns.wait(turn.turnId, 30_000)).status).toBe('completed')
-    expect(second.ctx.turns.get(turn.turnId)?.status).toBe('completed')
   }, 90_000)
 
   it('bounds the turns it accepts (INV-9): beyond the limit it refuses with a back-off failure', async () => {
