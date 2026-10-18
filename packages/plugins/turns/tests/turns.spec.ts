@@ -740,8 +740,9 @@ async function bootBound(options: { fake?: FakeGeminiOptions; turns?: Record<str
   await page.locator('#bound').waitFor({ state: 'visible' })
   await profile.close()
   // Verified in the profile: a copy of this state is signed out, so Save would fail on a copy.
-  await ctx.login.save('gemini-main')
+  // Its features first: a background probe that starts once the account is ready finds them fresh, so it loads nothing.
   await ctx.accounts.setFeatures('gemini-main', ['deep-research'])
+  await ctx.login.save('gemini-main')
   return { ctx, fake }
 }
 
@@ -779,8 +780,8 @@ async function bootBoundChatGpt(options: { fake?: FakeOptions; turns?: Record<st
   await page.goto(`${fake.origin}/signin`)
   await page.locator('#bound').waitFor({ state: 'visible' })
   await profile.close()
-  await ctx.login.save('chatgpt-main')
   await ctx.accounts.setFeatures('chatgpt-main', ['deep-research', 'web-search', 'image-generation'])
+  await ctx.login.save('chatgpt-main')
   return { ctx, fake }
 }
 
@@ -921,6 +922,23 @@ describe.runIf(canRunBrowser)('ctx.turns: a session-bound account works in its o
       expect(fake.pageLoads.length - loads).toBe(1)
       expect((await ctx.accounts.get('gemini-main')).status).toBe('challenge')
       await expect(ctx.login.save('gemini-main')).rejects.toMatchObject({ kind: 'challenge', message })
+    }, 180_000)
+
+    it('never loads a site for a background probe or sign-in check that waited while its account was challenged', async () => {
+      const { ctx, fake } = await bootBound({ fake: { holdAnswer: true }, turns: { maxConcurrentTurnsPerAccount: 1, stallTimeoutMs: 4000, turnTimeoutMs: 20_000 } })
+      // A turn holds the account's one slot (its answer never comes, so it stalls), and a probe and a check queue behind it.
+      const { turnId } = await ask(ctx, { prompt: 'held' })
+      const deadline = Date.now() + 30_000
+      while (fake.sent.length === 0 && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 100))
+      const loads = fake.pageLoads.length
+      const probing = ctx.turns.probe('gemini-main').then(() => 'probed', (error: unknown) => (error as Error).message)
+      const checking = ctx.turns.checkSignIn('gemini-main')
+      // The site shows its check meanwhile: the account is challenged before they get the slot.
+      await ctx.accounts.markChallenge('gemini-main', 'a check shown to another page')
+      await ctx.turns.wait(turnId, 60_000)
+      expect(await probing).toBe('gemini-main is challenge')
+      expect(await checking).toBe('unknown')
+      expect(fake.pageLoads.length).toBe(loads)
     }, 180_000)
 
     it('checks a kept tab again: Google\'s check shown over it while idle fails as an open would, with nothing sent or loaded, and the tab is discarded', async () => {

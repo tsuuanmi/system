@@ -159,7 +159,9 @@ invoked by the [workflow engine](../workflow/README.md)
   a turn, a sign-in check, or a feature probe marks the account `challenge`
   (event `account.challenged`): its Workers are unavailable, so nothing loads the
   site again until the operator passes the check in the login profile and saves
-  the account.
+  the account. A background feature probe or sign-in check that waited for the
+  account's slot checks again once it has it, so one queued behind the turn that
+  found the check loads nothing.
 - **Sign-out:** a driver `reauth_required` (it saw the login surface) marks the
   account `reauth-required`, so new turns route elsewhere. A credentials-mode
   account signs in again once (`login.relogin`, ADR-0017) and the turn runs

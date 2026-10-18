@@ -729,6 +729,8 @@ export class Turns extends Service {
     const driver = this.ctx.providers.get(view.provider)
     const found = driver.probeFeatures
       ? await this.scheduler(accountId).runTurn(`probe:${accountId}`, signal, async () => {
+        // Waited for its slot: an account that stopped being ready meanwhile (challenged, signed out) is never loaded.
+        await this.stillReady(accountId)
         const turn = await this.openPage(accountId, driver, signal)
         try {
           return await driver.probeFeatures!(turn.page)
@@ -743,6 +745,12 @@ export class Turns extends Service {
     const names = found.filter((f) => driver.features?.includes(f))
     await this.ctx.accounts.setFeatures(accountId, names)
     return names
+  }
+
+  /** Throws unless the account is still ready: checked again once a background operation has its slot. */
+  private async stillReady(accountId: string): Promise<void> {
+    const now = await this.ctx.accounts.get(accountId)
+    if (now.status !== 'ready') throw new ProviderError('reauth_required', `${accountId} is ${now.status}`)
   }
 
   private async refreshProbes(): Promise<void> {
@@ -773,6 +781,8 @@ export class Turns extends Service {
     if (view.status !== 'ready') return 'unknown'
     const driver = this.ctx.providers.get(view.provider)
     const auth = await this.scheduler(accountId).runTurn(`auth:${accountId}`, signal, async (slot): Promise<'signed-in' | 'signed-out' | 'unknown'> => {
+      // Waited for its slot: an account that stopped being ready meanwhile is never loaded.
+      if (!(await this.stillReady(accountId).then(() => true, () => false))) return 'unknown'
       const state = driver.sessionBound ? undefined : await this.ctx.accounts.portableState(accountId)
       const turn = await this.openPage(accountId, driver, signal, state)
       try {
