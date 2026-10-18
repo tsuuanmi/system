@@ -88,12 +88,13 @@ elements:
 
   composer.form:
     description: >-
-      The composer: the form that holds the textbox, in the main page. The plain form no longer
-      resolved alone (live 2026-10-17: a floating chat, outside main, can hold another), and the
-      data-chatgpt-composer mark came and went (back on 2026-10-17, gone again on 2026-10-18): the
-      form in main comes first, marked or not.
+      The composer: the form that holds the textbox, never one in a dialog. The plain form no
+      longer resolved alone (live 2026-10-17: the floating chat, a section[role=dialog], can hold
+      another); the data-chatgpt-composer mark comes and goes (gone on 2026-10-18 at 12:41Z, back
+      at 14:39Z), and the composer is not always inside a main element (14:39Z): the form outside
+      any dialog comes first, marked or not.
     candidates:
-      - { css: 'main form:has([role="textbox"][contenteditable="true"])' }
+      - { css: 'form:has([role="textbox"][contenteditable="true"]):not([role="dialog"] form)' }
       - { css: 'form[data-chatgpt-composer]:has([role="textbox"][contenteditable="true"])' }
       - { css: 'form:has([role="textbox"][contenteditable="true"])' }
   composer.input:

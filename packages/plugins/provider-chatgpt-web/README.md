@@ -56,7 +56,9 @@ The **ChatGPT Web provider driver**
   out at once.
 - **Mode guard.** A new conversation starts with **Chat** selected
   (`aria-pressed=true`), never Work, which spends the Codex quota. If Chat
-  cannot be selected, nothing is sent.
+  cannot be selected, nothing is sent. A composer whose textbox names Work
+  ("Work with ChatGPT", live 2026-10-18) never sends either, whatever the
+  switch shows.
 - **Completion:**
   - running is Stop in the composer's action slot;
   - completion needs the answer's finished marker ("Copy") and stable text, via

@@ -307,7 +307,7 @@ describe.runIf(canRunBrowser)('ChatGptWebDriver against the fake site, with no r
     await expect.poll(() => reports).toEqual([{ provider: 'chatgpt-web', path: 'inline', chars: turn.text.length, links: 2 }])
   }, 60_000)
 
-  it('finds the composer in main, marked or not, never the floating chat\'s, with no drift (live 2026-10-18)', async () => {
+  it('finds the composer outside any dialog, marked or not, never the floating chat\'s, with no drift (live 2026-10-18)', async () => {
     const { page, driver, fake } = await site({ unmarkedComposer: true, floatingChat: true })
     const drifts: Array<{ element: string }> = []
     driver.onDrift = (event) => void drifts.push(event as never)
@@ -437,6 +437,14 @@ describe.runIf(canRunBrowser)('ChatGptWebDriver against the fake site, with no r
     // A bound URL whose page never renders a user turn: no evidence either way.
     expect(await driver.snapshot(page, '00000000-0000-4000-8000-000000000000')).toEqual({ text: '', running: false, observable: false })
   }, 60_000)
+
+  it('never sends from a composer that names Work, though Chat reads as pressed (live 2026-10-18)', async () => {
+    const { fake, page, driver } = await site({ workComposer: true })
+    await expect(driver.ask(page, 'hello', { conversation: 'persistent' })).rejects.toMatchObject({ kind: 'ui_drift', message: expect.stringMatching(/Work with ChatGPT.*Codex quota/) })
+    expect(fake.sent).toEqual([])
+    // Nothing typed is left behind.
+    expect((await page.locator('#input').textContent())?.trim()).toBe('')
+  }, 40_000)
 
   it('refuses to send when Chat cannot be selected (Work spends the Codex quota)', async () => {
     const { fake, page, driver } = await site({ chatToggleBroken: true })

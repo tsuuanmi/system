@@ -195,6 +195,7 @@ export class ChatGptWebDriver implements ProviderDriver<Page> {
     await engine.act('composer.insert', { text: prompt })
     try {
       await this.requireChat(engine, 'before sending')
+      await this.refuseWorkComposer(engine)
       options.signal?.throwIfAborted()
       await options.beforeSend?.({ previousResponse, mode })
     } catch (error) {
@@ -670,6 +671,18 @@ export class ChatGptWebDriver implements ProviderDriver<Page> {
     if ((await engine.count('mode.group')) === 0) return
     if ((await this.pressed(engine)) !== 'true') {
       throw new ProviderError('ui_drift', `chatgpt-web: Chat mode is not selected ${when}; refusing to use Work (Codex quota)`)
+    }
+  }
+
+  /**
+   * The textbox names the tab it sends to ("Work with ChatGPT" on Work, live 2026-10-18): one that
+   * names Work never sends, whatever the switch shows (the switch is hidden in some views).
+   */
+  private async refuseWorkComposer(engine: UiEngine): Promise<void> {
+    const input = await engine.resolve('composer.input', 1000).catch(() => undefined)
+    const label = input ? await input.locator.getAttribute('aria-label') : null
+    if (label && /\bWork\b/.test(label)) {
+      throw new ProviderError('ui_drift', `chatgpt-web: the composer reads "${label.slice(0, 60)}" before sending; refusing to use Work (Codex quota)`)
     }
   }
 

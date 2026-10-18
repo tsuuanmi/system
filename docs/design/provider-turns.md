@@ -82,6 +82,8 @@ default. Live observations are in the
   so it is never used for chat turns. If the mode group is shown and Chat is not
   selected after one attempt, the turn fails before sending. Temporary chat does
   not show the group; Chat is selected on the home page before switching to it.
+  The textbox names the tab it sends to, so a composer that names Work fails the
+  turn before sending too, whether the group shows or not.
   Gemini's agent tab, **Spark**, is refused the same way: where the tabs are
   shown, the **Chat** tab must be active before sending.
 

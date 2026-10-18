@@ -104,6 +104,11 @@ export interface FakeOptions {
   floatingChat?: boolean
   /** The composer form is not marked `data-chatgpt-composer` (live 2026-10-18). */
   unmarkedComposer?: boolean
+  /**
+   * The textbox names the tab it sends to: "Work with ChatGPT" on Work (live 2026-10-18), else
+   * "Chat with ChatGPT". True: it reads Work whatever is pressed (a drift test).
+   */
+  workComposer?: boolean
   /** Inline, the completion line shows this long before the report's answer renders after it. */
   inlineReportDelayMs?: number
   /** A finished report frame shows no title, so its report cannot be read (a drift test). */
@@ -269,6 +274,7 @@ const $ = (id) => document.getElementById(id)
 function render() {
   $('mode-chat').setAttribute('aria-pressed', String(mode === 'chat'))
   $('mode-work').setAttribute('aria-pressed', String(mode === 'work'))
+  $('input').setAttribute('aria-label', options.workComposer || mode === 'work' ? 'Work with ChatGPT' : 'Chat with ChatGPT')
   $('modes').hidden = temporary
   $('temp').hidden = temporary
   $('temp-off').hidden = !temporary
@@ -478,7 +484,7 @@ export class FakeChatGpt {
 
   constructor(options: FakeOptions = {}) {
     this.options = {
-      startOnWork: true, chatToggleBroken: false, signedIn: true, loginOffer: false, requireCookie: false, rotateOnLoad: false, deleteMenu: true, captcha: false, interstitial: false, deviceBound: false, floatingChat: false, unmarkedComposer: false, researchInline: false, inlineReportDelayMs: 0, untitledReport: false, errorPages: 0, loggedOutHome: false, logoutFlashMs: 0, paneMenu: true, dialogTarget: '', userId: 'user-fake123', sendLabel: 'Send', sendTestId: '',
+      startOnWork: true, chatToggleBroken: false, signedIn: true, loginOffer: false, requireCookie: false, rotateOnLoad: false, deleteMenu: true, captcha: false, interstitial: false, deviceBound: false, floatingChat: false, unmarkedComposer: false, workComposer: false, researchInline: false, inlineReportDelayMs: 0, untitledReport: false, errorPages: 0, loggedOutHome: false, logoutFlashMs: 0, paneMenu: true, dialogTarget: '', userId: 'user-fake123', sendLabel: 'Send', sendTestId: '',
       answer: 'OK', thinkMs: 300, models: ['Latest', 'GPT-6', 'GPT-5.6 Sol', 'GPT-5.5'], lockedModels: [],
       researchMs: 1500, researchHeld: false, report: 'Deep research report body.', clarify: false, features: ['deep-research', 'web-search', 'image-generation'], modelPicker: true,
       mfa: 'totp', email: 'operator@example.test', password: 'correct horse', totpSecret: 'JBSWY3DPEHPK3PXP',
