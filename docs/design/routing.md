@@ -68,13 +68,15 @@ flowchart TD
   A[every Worker every source describes now] --> B{inside the caller's restriction?}
   B -->|yes| X{"of no excluded provider family, when the caller excludes some?"}
   X -->|yes| C{proves every required capability?}
-  C -->|yes| D{local, when the data is local-private?}
+  C -->|yes| L{"takes the input's length, when it declares a bound?"}
+  L -->|yes| D{local, when the data is local-private?}
   D -->|yes| E{state ready?}
   E -->|yes| F{tier within min and max?}
   F -->|yes| G[admitted]
   B -->|no| R[rejected, with the failed check]
   X -->|no| R
   C -->|no| R
+  L -->|no| R
   D -->|no| R
   E -->|no| R
   F -->|no| R
@@ -83,8 +85,16 @@ flowchart TD
   R --> J[none admitted: an admission decision and AdmissionFailure with every rejection]
 ```
 
-The checks, in order, are `restricted`, `diversity`, `capability`, `locality`, `state`, and
-`tier`; a rejected Worker carries each check it failed, with its reason.
+The checks, in order, are `restricted`, `diversity`, `capability`, `input`, `locality`, `state`,
+and `tier`; a rejected Worker carries each check it failed, with its reason.
+
+**Input length** ([ADR-0032](../decisions/adr/0032-admission-refuses-input-longer-than-a-worker-takes.md)).
+A descriptor may declare `maxInputChars` (`capability-descriptor@1.2`): the longest input the
+Worker takes, in characters of what it is sent. The caller passes `input: { chars }` in the route
+options, measured on what it rendered; the workflow engine measures a node's prompt, a review's
+shown source included. A longer input fails the `input` check. A source that replays history
+bounds it itself. With no Worker left for its length, a node fails unsent as `invalid_input`, and
+the engine names the bound that sized it (a review's `repositories.maxSourceChars`).
 
 Quota and health are inputs **before** admission. Once a turn starts on a Worker,
 it is never moved to another one. Running out of quota mid-turn is a classified

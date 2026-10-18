@@ -195,6 +195,22 @@ export function workersConformance(name: string, boot: Boot): void {
       })
     })
 
+    it('admits only a Worker that takes the input\'s length, says why, and fails closed when none does (ADR-0032)', async () => {
+      const bound = (maxInputChars: number) => ({ schema: 'capability-descriptor@1.2' as const, maxInputChars })
+      await withWorkers([worker('w:short', bound(1000)), worker('w:exact', { ...bound(5000), tier: 'frontier' }), worker('w:open', { tier: 'frontier' })], async (ctx) => {
+        // The short Worker is refused; one that takes exactly the input, or declares no bound, is admitted.
+        const admitted = await ctx.workers.route(requirement(), { input: { chars: 5000 } })
+        expect(['w:exact', 'w:open']).toContain(admitted.worker.worker)
+        const route = body(ctx, admitted.decisions.route)
+        expect(route.candidates.find((c) => c.option === 'w:short')!.reasons).toEqual(['the input has 5000 characters; it takes at most 1000'])
+        // Without an input to measure, nothing is refused for its length.
+        expect((await ctx.workers.route(requirement())).worker.worker).toBe('w:short')
+      })
+      await withWorkers([worker('w:short', bound(1000))], async (ctx) => {
+        await expect(ctx.workers.route(requirement(), { input: { chars: 1001 } })).rejects.toMatchObject({ rejections: [{ worker: 'w:short', failed: [{ check: 'input' }] }] })
+      })
+    })
+
     it('accepts or rejects a stored result by contract, records the decision, and fails closed on unknowns (REQ-WRK-3)', async () => {
       const { ctx, dispose } = await boot()
       try {

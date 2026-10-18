@@ -251,6 +251,9 @@ export class WorkerRouter extends Workers {
     const proven = new Set(worker.capabilities.map((c) => c.capability))
     const missing = requirement.capabilities.filter((c) => !proven.has(c))
     if (missing.length) fail('capability', `does not prove ${missing.join(', ')}`)
+    if (options.input && worker.maxInputChars !== undefined && options.input.chars > worker.maxInputChars) {
+      fail('input', `the input has ${options.input.chars} characters; it takes at most ${worker.maxInputChars}`)
+    }
     if (requirement.data.classification === 'local-private' && worker.locality !== 'local') fail('locality', 'local-private data stays on local Workers')
     if (worker.state !== 'ready') fail('state', `state ${worker.state}`)
     const rank = TIERS.indexOf(worker.tier)

@@ -11,7 +11,7 @@ import { canonicalJson, SchemaRegistry, sha256 } from '@tsuuanmi/system-libs'
 import { dispositionOf } from '@tsuuanmi/system-provider-core'
 import { AdmissionFailure, type AdmittedWorker, type ArtifactRef, type Classification, type WorkRequirement, type WorkerExecution } from '@tsuuanmi/system-workers-core'
 import { block, expireGate, gateDeadline, grow, grownText } from './growth.ts'
-import { admissionKind, escalate, failAttempt, routedDecisions } from './recovery.ts'
+import { admissionKind, escalate, failAttempt, inputHint, routedDecisions } from './recovery.ts'
 import { remediate, reviewSubject, subjectGate } from './review.ts'
 import { recoverWakes, settleWake } from './sessions.ts'
 import { DEFAULT_TEMPLATES, type NodeTemplate, recordExecutor, render, type ResolvedNode, resolve, schemaBlock, variantProblem, variantsOf } from './spec.ts'
@@ -453,18 +453,20 @@ export class Engine {
       }
       let admitted: AdmittedWorker
       const { distinctAccounts, ...restricted } = await restriction(this, run, spec)
+      // The prompt as it will be sent, in characters (ADR-0032): a Worker that takes less is not admitted.
+      const input = { chars: [...(node.prompt ?? '')].length }
       // Recorded when the node runs on the same provider family for want of another (ADR-0029).
       let sameFamily: ArtifactRef | undefined
       try {
         try {
-          admitted = await this.ctx.workers.route(record.requirement, { producer: 'workflow', ...restricted, ...(exclude ? { exclude } : {}) })
+          admitted = await this.ctx.workers.route(record.requirement, { producer: 'workflow', input, ...restricted, ...(exclude ? { exclude } : {}) })
         } catch (error) {
           if (!(error instanceof AdmissionFailure) || !this.config.allowSameFamily || (!exclude && !distinctAccounts)) throw error
           // Opt-in only: with no Worker of another family (or account), route without that rule, and say so.
           // A session's own Worker still binds it; only the family and distinct-account rules are
           // lifted, so a Worker refused for its quota, sign-in, tier, or capability stays refused.
           // When nothing passes even then, the first refusal, with what the team needs, stands.
-          admitted = await this.ctx.workers.route(record.requirement, { producer: 'workflow', ...(distinctAccounts ? {} : restricted) }).catch(() => {
+          admitted = await this.ctx.workers.route(record.requirement, { producer: 'workflow', input, ...(distinctAccounts ? {} : restricted) }).catch(() => {
             throw error
           })
           sameFamily = this.sameFamilyDecision(run, node, error.decision, [exclude?.reason, distinctAccounts ? restricted.restrict?.reason : undefined].filter((r): r is string => !!r), admitted)
@@ -472,7 +474,7 @@ export class Engine {
       } catch (error) {
         release()
         if (!(error instanceof AdmissionFailure)) throw error
-        const hint = error.rejections.length ? '' : ': no Worker is configured (for website Workers, map tiers to modes in the account catalog, then sign the account in)'
+        const hint = error.rejections.length ? inputHint(this, spec, error, input.chars) : ': no Worker is configured (for website Workers, map tiers to modes in the account catalog, then sign the account in)'
         // A team member that finds no other provider family: say what the team needs, beside why this one failed.
         const team = spec.team?.role === 'propose' && exclude ? await this.familyShortage(spec) : ''
         return failAttempt(this, run, { ...node, attempt }, { kind: admissionKind(error), disposition: dispositionOf(admissionKind(error)), message: `${team}${error.message}${hint}` },

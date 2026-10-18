@@ -57,7 +57,9 @@ REQ-WRK-10). One row, `models`, mounts two parts from one configuration:
   route's API key, encrypted, under the credential reference its `apiKeyEnv`
   names. Nothing is returned or logged.
 - **Config:** `models` (the catalog; empty by default, so no Workers; an entry
-  may set `maxSessionTurns` and `maxHistoryChars`), `maxRetries`,
+  may set `maxSessionTurns` and `maxHistoryChars`, and `maxInputChars`, the
+  longest prompt it takes, declared to admission
+  ([ADR-0032](../../../docs/decisions/adr/0032-admission-refuses-input-longer-than-a-worker-takes.md))), `maxRetries`,
   `maxConcurrentCalls`, `callTimeoutMs`, `retainDays`, `maxSessionTurns`,
   `maxHistoryChars`
   ([catalog](../../../docs/reference/configuration.md#models)).

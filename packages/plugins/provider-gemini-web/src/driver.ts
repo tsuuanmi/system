@@ -117,7 +117,8 @@ export class GeminiWebDriver implements ProviderDriver<Page> {
   onStall: ((event: StallEvent) => void) | undefined
   private readonly origin: string
   private readonly timeouts: Required<DriverTimeouts>
-  private readonly maxPromptChars: number
+  /** The longest prompt sent (`maxPromptChars`): declared to admission (ADR-0032), and refused here too. */
+  readonly maxInputChars: number
   private readonly preset: (name: string | undefined) => ProviderMode | undefined
   private readonly engines = new WeakMap<Page, UiEngine>()
   readonly modes: readonly string[]
@@ -129,7 +130,7 @@ export class GeminiWebDriver implements ProviderDriver<Page> {
     this.stateOrigins = options.origin ? [this.origin] : ['https://gemini.google.com', 'https://accounts.google.com', 'https://www.google.com', 'https://google.com']
     this.preset = modePresets(this.provider, options.modes, options.defaultMode)
     this.modes = Object.keys(options.modes ?? {})
-    this.maxPromptChars = options.maxPromptChars ?? 30_000
+    this.maxInputChars = options.maxPromptChars ?? 30_000
     this.pageGapMs = options.pageGapMs ?? 10_000
     this.timeouts = { turnMs: 15 * 60_000, stallMs: 3 * 60_000, stableMs: 1500, pollMs: 250, readyMs: 60_000, snapshotMs: 20_000, reportReadMs: 30_000, ...options.timeouts }
   }
@@ -181,8 +182,8 @@ export class GeminiWebDriver implements ProviderDriver<Page> {
       throw new ProviderError('invalid_input', 'gemini-web: a temporary turn has no conversation to continue')
     }
     // The site drops a paste over its input limit without an error: refused here, before anything is sent.
-    if (prompt.length > this.maxPromptChars) {
-      throw new ProviderError('invalid_input', `gemini-web: the prompt has ${prompt.length} characters, over the ${this.maxPromptChars} this site takes (maxPromptChars); nothing was sent`)
+    if (prompt.length > this.maxInputChars) {
+      throw new ProviderError('invalid_input', `gemini-web: the prompt has ${prompt.length} characters, over the ${this.maxInputChars} this site takes (maxPromptChars); nothing was sent`)
     }
     const preset = this.preset(options.mode)
     await this.open(page, options.conversation, options.binding)

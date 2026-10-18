@@ -30,6 +30,8 @@ export interface ModelEntry {
   /** Session bounds for this entry (ADR-0031); the Worker source's defaults when absent. */
   maxSessionTurns?: number
   maxHistoryChars?: number
+  /** The longest prompt this model is sent, in characters, when the operator sets one (ADR-0032); history is bounded on its own. */
+  maxInputChars?: number
 }
 
 /** One earlier turn of a session, as text (ADR-0031). */

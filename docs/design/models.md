@@ -41,7 +41,7 @@ abstract class Models extends Service {             // ctx.models
   abstract complete(request: ModelRequest, signal?: AbortSignal): Promise<ModelCompletion>;
 }
 
-interface ModelEntry { id; tier; quotaClass: "metered" | "local"; locality: "remote" | "local"; maxTokens; family?; maxSessionTurns?; maxHistoryChars? }
+interface ModelEntry { id; tier; quotaClass: "metered" | "local"; locality: "remote" | "local"; maxTokens; family?; maxSessionTurns?; maxHistoryChars?; maxInputChars? }
 interface ModelStatus extends ModelEntry { available: boolean; detail: string }
 interface ModelRequest { model: string; prompt: string; history?: ModelTurn[]; maxTokens?: number }   // cut to the entry's bound
 interface ModelTurn { role: "user" | "assistant"; text: string }   // a session's earlier turns, sent before the prompt

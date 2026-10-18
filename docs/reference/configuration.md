@@ -190,6 +190,7 @@
 | `models[].family` | string |  | Opaque provider family (ADR-0027; default: the route). Give two routes to one vendor the same family, so diversity treats them as one |
 | `models[].maxSessionTurns` | number (1…10000) |  | This model's session turns, at most (default: the row's maxSessionTurns) |
 | `models[].maxHistoryChars` | number (1…2000000) |  | Characters of history this model replays, at most (default: the row's maxHistoryChars); fit it to the context window |
+| `models[].maxInputChars` | number (1…2000000) |  | Characters of prompt this model takes, at most, declared to admission (ADR-0032; default: none declared); its history is bounded by maxHistoryChars |
 | `maxRetries` | number (0…5) | `2` | Re-attempts of a transiently failed call |
 | `maxConcurrentCalls` | number (1…64) | `4` | Model calls in flight at once |
 | `callTimeoutMs` | number (1…) | `300000` | Hard deadline per call |

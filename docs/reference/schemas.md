@@ -154,6 +154,10 @@ guesses.
   [ADR-0027](../decisions/adr/0027-provider-diversity-in-routing.md)). A `@1.0`
   record carrying `family` is refused. Readers accept 1.0
   and 1.1.
+- `capability-descriptor@1.2` adds the optional `maxInputChars`: the longest input the Worker
+  takes, in characters (code points) of what it is sent; admission refuses longer input
+  ([ADR-0032](../decisions/adr/0032-admission-refuses-input-longer-than-a-worker-takes.md)). A
+  record carrying it below `@1.2` is refused. Readers accept 1.0 to 1.2.
 
 ### `plan`
 

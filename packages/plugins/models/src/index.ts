@@ -51,6 +51,7 @@ export const Config: z<Config> = z.object({
     family: z.string().description('Opaque provider family (ADR-0027; default: the route). Give two routes to one vendor the same family, so diversity treats them as one'),
     maxSessionTurns: z.natural().min(1).max(10_000).description('This model\'s session turns, at most (default: the row\'s maxSessionTurns)'),
     maxHistoryChars: z.natural().min(1).max(2_000_000).description('Characters of history this model replays, at most (default: the row\'s maxHistoryChars); fit it to the context window'),
+    maxInputChars: z.natural().min(1).max(2_000_000).description('Characters of prompt this model takes, at most, declared to admission (ADR-0032; default: none declared); its history is bounded by maxHistoryChars'),
   })).default([]).description('The model catalog (REQ-WRK-10); names no key: a key is stored with the operator tool model_key'),
   maxRetries: z.natural().max(5).default(2).description('Re-attempts of a transiently failed call'),
   maxConcurrentCalls: z.natural().min(1).max(64).default(4).description('Model calls in flight at once'),

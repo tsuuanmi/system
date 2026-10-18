@@ -664,6 +664,22 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
     expect(gemini!.sent).toHaveLength(1)
   }, 240_000)
 
+  it('never sends a Worker more than it takes: an ask goes to one without the bound, and a review member fails unsent, naming the bound that sized it (ADR-0032)', async () => {
+    const { ctx, fake, gemini } = await boot({ fake: { answer: (prompt) => (isProposal(prompt) ? findings([]) : 'plain') }, gemini: { answer: 'x' }, workflow: { repositories: { maxSourceChars: 60_000 } } })
+    // The Gemini site takes 30,000 characters (its maxPromptChars), the ChatGPT site declares no bound.
+    const asked = await ctx.workflow.wait(ctx.workflow.start({ template: 'ask', input: 'q'.repeat(31_000) }).runId, 60_000)
+    expect(asked).toMatchObject({ status: 'completed', nodes: [{ worker: expect.stringMatching(/^worker:chatgpt-main\//) }] })
+    const route = ctx.artifacts.get(ctx.workflow.explain(asked.runId)!.nodes[0]!.decisions.find((d) => d.type === 'route')!.id)!.body as { candidates: Array<{ option: string; reasons: string[] }> }
+    expect(route.candidates.filter((c) => c.option.startsWith('worker:gemini-main/')).every((c) => c.reasons.includes('the input has 31000 characters; it takes at most 30000'))).toBe(true)
+    // A review member must be another family than the first, so only Gemini can take it, and the source shown makes it too long.
+    const material = 'Review this change:\n' + 'a line of the change to review\n'.repeat(1100)
+    const done = await ctx.workflow.wait(ctx.workflow.start({ template: 'review', input: material }).runId, 120_000)
+    expect(done.status).toBe('failed')
+    expect(done.error).toMatchObject({ kind: 'invalid_input', message: expect.stringMatching(/it takes at most 30000.*The input is \d+ characters, most of it the source shown \(repositories\.maxSourceChars, 60000\): lower that bound or narrow the focus$/s) })
+    expect(gemini!.sent).toEqual([])
+    expect(fake.sent.filter((s) => isProposal(s.prompt))).toHaveLength(1)
+  }, 240_000)
+
   it('refuses material too long for a member to read whole, before anything is sent', async () => {
     const { ctx, fake } = await boot({ fake: { answer: 'x' }, gemini: { answer: 'x' }, workflow: { repositories: { maxSourceChars: 2000 } } })
     const done = await ctx.workflow.wait(ctx.workflow.start({ template: 'review', input: 'Review this:\n' + 'line of the change\n'.repeat(200) }).runId, 60_000)

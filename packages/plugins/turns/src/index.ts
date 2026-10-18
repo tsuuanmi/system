@@ -679,7 +679,8 @@ export class Turns extends Service {
       const driver = providers.has(account.provider) ? this.ctx.providers.get(account.provider) : undefined
       return TIERS.filter((tier) => account.tiers[tier]).map((tier): CapabilityDescriptor => ({
         // The site is who serves the work, so the account's provider is the Worker's family (ADR-0027).
-        schema: 'capability-descriptor@1.1', worker: websiteWorker(account.id, tier), provider: account.provider, family: account.provider, tier,
+        schema: driver?.maxInputChars ? 'capability-descriptor@1.2' : 'capability-descriptor@1.1', worker: websiteWorker(account.id, tier), provider: account.provider, family: account.provider,
+        ...(driver?.maxInputChars ? { maxInputChars: driver.maxInputChars } : {}), tier,
         quotaClass: account.quotaClass, locality: 'remote',
         capabilities: [
           ...(driver?.capabilities ?? []).map((capability) => ({ capability, evidence: { kind: 'conformance' as const, at: observedAt } })),
