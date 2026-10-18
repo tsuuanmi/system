@@ -16,6 +16,9 @@ The seam itself, the abstract `Display`, lives in `@tsuuanmi/system-provider-cor
   accounts' browsers ([ADR-0024](../../../docs/decisions/adr/0024-agent-workers-confined-for-reads.md)).
 - **Health:** when Xvfb exits, `lost` aborts with `session_broken`, and the next
   `prepare` starts a new generation. A startup failure is not cached.
+- **Stop:** SIGTERM, then SIGKILL after `shutdownTimeoutMs`. A killed Xvfb
+  cannot remove its display's socket and lock, so `stop` removes them while
+  the lock still names that process.
 - **Fails closed:** no headless mode and no fallback to the operator's `DISPLAY`
   (`config_error` with an install hint). Linux only.
 - **`prepare('visible')`:** the operator's own `DISPLAY` (provided by the seam).

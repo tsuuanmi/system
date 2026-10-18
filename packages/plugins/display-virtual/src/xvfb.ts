@@ -4,7 +4,7 @@
  */
 import { type ChildProcess, spawn as nodeSpawn } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Readable } from 'node:stream'
@@ -93,6 +93,23 @@ async function terminate(child: ChildProcess, timeoutMs: number): Promise<void> 
   throw new ProviderError('config_error', `Xvfb process ${String(child.pid ?? 'unknown')} did not terminate`)
 }
 
+/**
+ * A server SIGKILL ended cannot remove its display's socket and lock, so the display looks in
+ * use: removed here, only while the lock still names this server's process.
+ */
+export function removeStaleDisplay(number: string, pid: number | undefined, root = '/tmp'): void {
+  const lock = join(root, `.X${number}-lock`)
+  let owner: string
+  try {
+    owner = readFileSync(lock, 'utf8').trim()
+  } catch {
+    return
+  }
+  if (pid === undefined || owner !== String(pid)) return
+  rmSync(join(root, '.X11-unix', `X${number}`), { force: true })
+  rmSync(lock, { force: true })
+}
+
 export function startXvfb(options: XvfbOptions): Promise<XvfbHandle> {
   const spawn = options.spawn ?? ((command, args, spawnOptions) => nodeSpawn(command, args, spawnOptions))
   const shutdownTimeoutMs = options.shutdownTimeoutMs ?? 2000
@@ -155,7 +172,12 @@ export function startXvfb(options: XvfbOptions): Promise<XvfbHandle> {
       }
       settled = true
       clearTimeout(timer)
-      resolve({ display: `:${number}`, authority: authority.path, exited, stop: () => terminate(child, shutdownTimeoutMs) })
+      const stop = async (): Promise<void> => {
+        await terminate(child, shutdownTimeoutMs)
+        // A loaded host may keep Xvfb past its SIGTERM grace (live gate, 2026-10-18).
+        if (child.signalCode === 'SIGKILL') removeStaleDisplay(number, child.pid)
+      }
+      resolve({ display: `:${number}`, authority: authority.path, exited, stop })
     })
   })
 }
