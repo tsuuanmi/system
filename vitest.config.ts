@@ -49,5 +49,7 @@ export default defineConfig({
   },
   test: {
     include: ['scripts/**/*.spec.ts', 'spikes/**/*.spec.ts', 'packages/**/tests/**/*.spec.ts'],
+    // One temporary parent per run, removed at its end (and a killed run's, at the next start).
+    globalSetup: ['./scripts/test-tmp.ts'],
   },
 })
