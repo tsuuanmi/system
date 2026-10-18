@@ -7,8 +7,8 @@
  * - the action slot shows Send (disabled when empty), Stop while running, and voice on an empty home page;
  * - turns are marked only by headings "You said:" / "ChatGPT said:"; a finished answer gets "Copy" and "Regenerate response";
  * - the send is `POST /backend-api/f/conversation` answered with an event stream that **stays open**;
- * - the composer form no longer carries `data-chatgpt-composer` (since 2026-10-11, from live drift);
- *   another visible form still does, without the textbox;
+ * - the composer form carries `data-chatgpt-composer` again in the app shell seen live on 2026-10-17
+ *   (it had lost it on 2026-10-11); another visible form does too, without the textbox;
  * - the textbox's accessible name is no longer "Ask ChatGPT" (since 2026-10-11; the new text is a stand-in);
  * - the model menu (`menu "Select ChatGPT model"`) has two views, as checked live on 2026-10-12: view A shows
  *   the Power slider (arrow keys; `status` "Instant, 1 of 3."; levels Instant, Medium, High) and a view toggle
@@ -91,6 +91,13 @@ export interface FakeOptions {
   researchMs?: number
   /** Deep research stays running, however long, until a test calls `finishResearch()`. */
   researchHeld?: boolean
+  /**
+   * The app shell seen live on 2026-10-18: a run shows no embedded frame, and its finished report
+   * is an ordinary answer after the prompt, opening with "Research completed in ...", with its own Copy.
+   */
+  researchInline?: boolean
+  /** A finished report frame shows no title, so its report cannot be read (a drift test). */
+  untitledReport?: boolean
   /** Deep research report text. */
   report?: string
   /** Whether the account has a model picker (default true); without one the driver refuses to send. */
@@ -126,6 +133,13 @@ interface Conversation {
   researches: Array<{ done: boolean; report: string }>
 }
 
+/** A run in the app shell of 2026-10-18: no frame; while it runs, its progress; once done, its report as an answer. */
+export function inlineRun(research: { done: boolean; report: string }): string {
+  return research.done
+    ? `<div class="turn"><div><h4 class="sr-only">ChatGPT said:</h4><p>Research completed in 1m · 3 citations</p><p>${research.report}</p></div><div><button aria-label="Copy">c</button></div></div>`
+    : '<div class="turn"><p>Researching...</p><button>Stop research</button></div>'
+}
+
 /** The embedded app frame of one Deep research run, as the live site places it after the run's prompt. */
 export function researchHost(conversationId: string, index: number): string {
   return `<iframe title="Deep research" src="/web-sandbox.oai/${conversationId}/${index}" style="display:block;width:960px;height:640px;border:0"></iframe>`
@@ -136,12 +150,12 @@ export function researchHost(conversationId: string, index: number): string {
  * report layout is the live one of 2026-10-12: the summary line with digit-reel counters, the
  * title, Export and Expand, then the title as a level-1 heading whose container is the report.
  */
-export function researchDocument(research: { done: boolean; report: string }): string {
+export function researchDocument(research: { done: boolean; report: string }, untitled = false): string {
   const reel = '<span>' + Array.from({ length: 30 }, (_, i) => String(i % 10)).join('<br>') + '</span>'
   const inner = research.done
     ? `<main><p>Research completed in 1m · ${reel} citations · ${reel} searches</p><p>Research findings</p>`
       + `<button aria-label="Export">e</button><button aria-label="Expand">x</button>`
-      + `<div role="button" tabindex="0"><h1>Research findings</h1><div>${research.report}</div></div></main>`
+      + `<div role="button" tabindex="0">${untitled ? '' : '<h1>Research findings</h1>'}<div>${research.report}</div></div></main>`
     : '<main><h2>Plan</h2><ul><li>Search sources</li></ul><p>Researching...</p><button>Stop research</button></main>'
   const escape = (text: string): string => text.replace(/&/g, '&amp;').replace(/"/g, '&quot;')
   return `<!doctype html><html><head><meta charset="utf-8">${research.done ? '' : '<meta http-equiv="refresh" content="1">'}</head>`
@@ -174,10 +188,13 @@ const ERROR_PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8"><
 </body></html>`
 
 function html(options: Required<FakeOptions>, conversation: Conversation | undefined, missing?: string, history: string[] = []): string {
-  const turns = (conversation?.turns ?? []).map((t) => t.role === 'user'
+  const all = conversation?.turns ?? []
+  const turns = all.map((t, i) => t.role === 'user'
     ? `<div class="turn"><h4 class="sr-only">You said:</h4><div>${t.text}</div><button aria-label="Copy message">c</button><button aria-label="Edit message">e</button></div>`
-      + (t.research !== undefined ? researchHost(conversation!.id, t.research) : '')
-    : `<div class="turn"><div><h4 class="sr-only">ChatGPT said:</h4><p>${t.text}</p></div><div><button aria-label="Copy">c</button><button aria-label="Regenerate response">r</button></div></div>`).join('')
+      + (t.research !== undefined && !options.researchInline ? researchHost(conversation!.id, t.research) : '')
+    : `<div class="turn"><div><h4 class="sr-only">ChatGPT said:</h4><p>${t.text}</p></div><div><button aria-label="Copy">c</button><button aria-label="Regenerate response">r</button></div></div>`
+      // Inline (the app shell of 2026-10-18), a run follows its acknowledgement.
+      + (options.researchInline && all[i - 1]?.research !== undefined ? inlineRun(conversation!.researches[all[i - 1]!.research!]!) : '')).join('')
   const state = JSON.stringify({ options, conversationId: conversation?.id })
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>ChatGPT</title>
 <style>.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}[hidden]{display:none}</style></head>
@@ -201,7 +218,7 @@ ${missing ? `<div role="alert">Unable to load conversation ${missing}</div>` : '
     <h1 id="title">Where should we begin?</h1>
     <section role="region" aria-label="Conversation" id="log">${turns}</section>
     <form data-chatgpt-composer data-thread-find-composer><input aria-label="Find in chat" type="search"></form>
-    <form data-composer-placement="home" id="composer">
+    <form data-chatgpt-composer data-composer-placement="home" id="composer">
       <button type="button" aria-label="Add files and more">+</button>
       <div contenteditable="true" role="textbox" aria-multiline="true" aria-label="Chat with ChatGPT" data-composer-markdown id="input"></div>
       <button type="button" aria-label="Select ChatGPT model" aria-haspopup="menu" aria-expanded="false" id="picker"${options.modelPicker === false ? ' hidden' : ''}>Instant</button>
@@ -348,7 +365,22 @@ async function send() {
         raw += event.delta
         answer.querySelector('p').textContent += event.delta
       }
-      if (typeof event.research === 'number') {
+      if (typeof event.research === 'number' && options.researchInline) {
+        // No frame: the run shows its progress after the answer, then its report as an answer of its own.
+        const run = document.createElement('div')
+        run.className = 'turn'
+        run.innerHTML = '<p>Researching...</p><button>Stop research</button>'
+        const index = event.research
+        setTimeout(() => answer.after(run), 0)
+        const poll = setInterval(async () => {
+          const state = await (await fetch('/_/research/' + convId + '/' + index)).json()
+          if (!state.done) return
+          clearInterval(poll)
+          const copy = 'Research completed in 1m · 3 citations\\n\\n' + state.report
+          run.innerHTML = '<div><h4 class="sr-only">ChatGPT said:</h4><p>Research completed in 1m · 3 citations</p><p>' + state.report + '</p></div><div><button aria-label="Copy">c</button></div>'
+          run.querySelector('[aria-label="Copy"]').addEventListener('click', () => navigator.clipboard.writeText(copy))
+        }, 300)
+      } else if (typeof event.research === 'number') {
         // The run's embedded app goes after its prompt; it updates itself until the report is done.
         const holder = document.createElement('div')
         answer.before(holder)
@@ -416,7 +448,7 @@ export class FakeChatGpt {
 
   constructor(options: FakeOptions = {}) {
     this.options = {
-      startOnWork: true, chatToggleBroken: false, signedIn: true, loginOffer: false, requireCookie: false, rotateOnLoad: false, deleteMenu: true, captcha: false, interstitial: false, deviceBound: false, errorPages: 0, loggedOutHome: false, logoutFlashMs: 0, paneMenu: true, dialogTarget: '', userId: 'user-fake123', sendLabel: 'Send', sendTestId: '',
+      startOnWork: true, chatToggleBroken: false, signedIn: true, loginOffer: false, requireCookie: false, rotateOnLoad: false, deleteMenu: true, captcha: false, interstitial: false, deviceBound: false, researchInline: false, untitledReport: false, errorPages: 0, loggedOutHome: false, logoutFlashMs: 0, paneMenu: true, dialogTarget: '', userId: 'user-fake123', sendLabel: 'Send', sendTestId: '',
       answer: 'OK', thinkMs: 300, models: ['Latest', 'GPT-6', 'GPT-5.6 Sol', 'GPT-5.5'], lockedModels: [],
       researchMs: 1500, researchHeld: false, report: 'Deep research report body.', clarify: false, features: ['deep-research', 'web-search', 'image-generation'], modelPicker: true,
       mfa: 'totp', email: 'operator@example.test', password: 'correct horse', totpSecret: 'JBSWY3DPEHPK3PXP',
@@ -533,11 +565,17 @@ export class FakeChatGpt {
     }
     const bound = this.options.deviceBound && this.devices.has(/(?:^|; )SID=([0-9a-f]+)/.exec(req.headers.cookie ?? '')?.[1] ?? '')
     const signedIn = this.options.deviceBound ? bound : this.options.requireCookie ? /(?:^|; )session=valid(?:;|$)/.test(req.headers.cookie ?? '') : this.options.signedIn
+    const runState = /^\/_\/research\/([0-9a-f-]+)\/(\d+)$/.exec(url.pathname)
+    if (runState) {
+      const run = this.conversations.get(runState[1]!)?.researches[Number(runState[2])]
+      res.writeHead(run ? 200 : 404, { 'content-type': 'application/json' }).end(JSON.stringify(run ?? {}))
+      return
+    }
     const hostMatch = /^\/web-sandbox\.oai\/([0-9a-f-]+)\/(\d+)$/.exec(url.pathname)
     if (hostMatch) {
       const run = this.conversations.get(hostMatch[1]!)?.researches[Number(hostMatch[2])]
       res.writeHead(run ? 200 : 404, { 'content-type': 'text/html; charset=utf-8' })
-      res.end(run ? researchDocument(run) : '')
+      res.end(run ? researchDocument(run, this.options.untitledReport) : '')
       return
     }
     const patched = /^\/backend-api\/conversation\/([0-9a-f-]+)$/.exec(url.pathname)
