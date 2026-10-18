@@ -13,8 +13,8 @@ router ([routing](../../../docs/design/routing.md#algorithm)). Definition:
   ([`agent-workers`](../agent-workers/README.md)), and model Workers
   ([`models`](../models/README.md)).
   `describe()` runs on every route, so admission sees current states. Each
-  descriptor is validated against `capability-descriptor@1.0` or `@1.1` (with
-  `family`). A Worker id that
+  descriptor is validated against `capability-descriptor@1.0`, `@1.1` (with
+  `family`), or `@1.2` (with `maxInputChars`). A Worker id that
   two sources describe is refused.
 - **Admission (REQ-WRK-1, -7, -9).** A Worker passes only if all of these hold:
   - it is inside the caller's restriction, if one is given;
@@ -22,6 +22,8 @@ router ([routing](../../../docs/design/routing.md#algorithm)). Definition:
     (`diversity`); a Worker that declares no family cannot differ, so it fails
     too ([provider diversity](../../../docs/design/routing.md#provider-diversity));
   - it proves every required capability;
+  - it takes the input's length, when the caller gives one and the Worker
+    declares a bound (`input`, [ADR-0032](../../../docs/decisions/adr/0032-admission-refuses-input-longer-than-a-worker-takes.md));
   - it is local when the data is `local-private`;
   - it is `ready`;
   - its tier is within `[min, max]`.

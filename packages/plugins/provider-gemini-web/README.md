@@ -18,8 +18,11 @@ driver, its operations are data: a UI map,
   - `persistent`: a normal chat. It returns, and continues, the conversation id
     from `/app/<id>`. `onBinding` reports a new conversation's id as soon as the
     URL shows it, and a conversation that does not open at its URL fails.
-- **Input limit:** a prompt over `maxPromptChars` (default 30,000 characters)
-  is refused as `invalid_input` before anything is sent. The site publishes no
+- **Input limit:** the Workers declare `maxPromptChars` (default 30,000
+  characters) as their `maxInputChars`, so admission routes a longer prompt
+  elsewhere or fails it unsent
+  ([ADR-0032](../../../docs/decisions/adr/0032-admission-refuses-input-longer-than-a-worker-takes.md)).
+  The driver still refuses one as `invalid_input` before anything is sent. The site publishes no
   limit; it drops a longer paste without an error (observed live on
   2026-10-16). A prompt the site empties from the composer without asking is
   `input_dropped`, not UI drift.

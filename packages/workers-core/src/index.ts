@@ -25,7 +25,7 @@ export type WorkerState = 'ready' | 'busy' | 'quota-exhausted' | 'reauth-require
 
 /** What a Worker has proven right now (`capability-descriptor@1.0`; `@1.1` adds `family`). */
 export interface CapabilityDescriptor {
-  schema: 'capability-descriptor@1.0' | 'capability-descriptor@1.1'
+  schema: 'capability-descriptor@1.0' | 'capability-descriptor@1.1' | 'capability-descriptor@1.2'
   worker: string
   /** Informational only; routing never branches on it (INV-11). */
   provider: string
@@ -34,6 +34,11 @@ export interface CapabilityDescriptor {
    * Routing only compares it for inequality (`RouteOptions.exclude`), and never names or ranks one.
    */
   family?: string
+  /**
+   * The longest input this Worker takes, in characters (code points) of what it is sent, when its
+   * source knows one (`@1.2`; ADR-0032). Admission refuses it work whose input is longer.
+   */
+  maxInputChars?: number
   tier: Tier
   quotaClass: QuotaClass
   locality: 'local' | 'remote'
@@ -121,7 +126,7 @@ export interface WorkerSource {
 }
 
 /** The admission checks, in the order the router applies them. */
-export type AdmissionCheck = 'restricted' | 'diversity' | 'capability' | 'locality' | 'state' | 'tier'
+export type AdmissionCheck = 'restricted' | 'diversity' | 'capability' | 'input' | 'locality' | 'state' | 'tier'
 
 export interface Rejection {
   worker: string
@@ -140,6 +145,11 @@ export interface RouteOptions {
    * `reason` names those nodes, never a family.
    */
   exclude?: { families: readonly string[]; reason: string }
+  /**
+   * The work's input as it will be sent, measured by whoever rendered it (ADR-0032): a Worker that
+   * declares a shorter `maxInputChars` is refused. A source that replays history checks that itself.
+   */
+  input?: { chars: number }
   /** Who asked, recorded as the producer of the decisions. */
   producer?: string
 }

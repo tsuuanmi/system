@@ -211,8 +211,8 @@ export class ModelWorkers {
     const models = await this.ctx.models.list()
     for (const model of models) this.described.set(PREFIX + model.id, { family: model.family, locality: model.locality, tier: model.tier })
     return models.map((model): CapabilityDescriptor => ({
-      schema: model.family ? 'capability-descriptor@1.1' : 'capability-descriptor@1.0', worker: PREFIX + model.id, provider: 'models',
-      ...(model.family ? { family: model.family } : {}), tier: model.tier, quotaClass: model.quotaClass, locality: model.locality,
+      schema: model.maxInputChars ? 'capability-descriptor@1.2' : model.family ? 'capability-descriptor@1.1' : 'capability-descriptor@1.0', worker: PREFIX + model.id, provider: 'models',
+      ...(model.family ? { family: model.family } : {}), ...(model.maxInputChars ? { maxInputChars: model.maxInputChars } : {}), tier: model.tier, quotaClass: model.quotaClass, locality: model.locality,
       capabilities: model.available
         ? [{ capability: 'reason', evidence: { kind: 'probe', at: observedAt } }, { capability: 'persistent-conversation', evidence: { kind: 'conformance', at: observedAt } }]
         : [],

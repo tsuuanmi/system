@@ -80,6 +80,11 @@ export interface ProviderDriver<Page = unknown> {
   /** A session-bound account's page loads are spaced at least this far apart, in milliseconds. */
   readonly pageGapMs?: number
   /**
+   * The longest prompt the site takes, in characters, when it is known: its Workers declare it, so
+   * admission never sends it a longer one (ADR-0032).
+   */
+  readonly maxInputChars?: number
+  /**
    * Nothing generating, no dialog or menu open: a session-bound account keeps such a page, after
    * a completed turn, for the session's next turn (ADR-0030). Absent, no page is kept.
    */

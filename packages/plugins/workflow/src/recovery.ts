@@ -138,5 +138,20 @@ export function admissionKind(failure: AdmissionFailure): ProviderErrorKind {
   if (onlyState.some((r) => r.state === 'quota-exhausted')) return 'quota_exhausted'
   if (onlyState.length) return 'overloaded'
   if (failure.rejections.some((r) => r.failed.every((f) => f.check === 'locality'))) return 'egress_denied'
+  // Too long for every Worker that could otherwise take it: sending it again cannot help (ADR-0032).
+  if (failure.rejections.some((r) => r.failed.every((f) => f.check === 'input'))) return 'invalid_input'
   return 'config_error'
+}
+
+/**
+ * When the input was too long for a Worker that could otherwise take it, the bound to change
+ * (ADR-0032): a review member's input is sized by the source it is shown, so that bound is named;
+ * any other input is the caller's to shorten, or a Worker's own bound to raise. Empty otherwise.
+ */
+export function inputHint(e: Engine, spec: ResolvedNode, failure: AdmissionFailure, chars: number): string {
+  if (!failure.rejections.some((r) => r.failed.length && r.failed.every((f) => f.check === 'input'))) return ''
+  if (spec.team?.kind === 'review') {
+    return `. The input is ${chars} characters, most of it the source shown (repositories.maxSourceChars, ${e.config.repositories?.maxSourceChars ?? 24_000}): lower that bound or narrow the focus`
+  }
+  return `. The input is ${chars} characters: shorten it, or raise the Worker's own input bound in its configuration if its site or model takes more`
 }
