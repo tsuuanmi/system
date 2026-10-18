@@ -132,7 +132,12 @@ second execution path (INV-1).
 - **Approval gate (REQ-WF-11).**
   - Steps that need a capability in `approvalRequired` (default `develop`) run
     behind a `gate` node, which waits `BLOCKED`. The run is parked, not failed,
-    and its view shows `blocked { kind: 'gate', nodeId, plan }`.
+    and its view shows `blocked { kind: 'gate', nodeId, plan, until }`.
+  - The wait is bounded (INV-9): after `gateTimeoutHours` (default 24, at most
+    720) with no verdict, the gate closes by rule (a `gate` decision by
+    `workflow.gate-timeout`), and the run fails as `gate_timeout`, saying when
+    and how to go on. `continue` reopens the gate, which waits again with a new
+    deadline. Nothing of the plan ran.
   - `approve(runId, { verdict, note?, plan? })` (MCP `approve`,
     `system approve`) records an `approval@1.0` bound to that exact plan, then a
     `gate` decision. Approved, the steps run; rejected, the run fails as

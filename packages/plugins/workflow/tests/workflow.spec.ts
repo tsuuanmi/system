@@ -322,6 +322,33 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
     expect(() => ctx.workflow.approve(second.runId, { verdict: 'approved' })).toThrow(/waiting for approval/)
   }, 150_000)
 
+  it('closes a gate nobody decided within gateTimeoutHours, failing the run by rule; continue waits again (INV-9)', async () => {
+    const gated = TEST_TEMPLATES.investigate!.map((n) => (n.grows ? { ...n, grows: { maxNodes: 2, approvalRequired: ['reason'] } } : n))
+    const answer = (prompt: string): string => (prompt.includes('Plan how to answer')
+      ? '```json\n{"confidence":"high","nodes":[{"id":"only","objective":"o","prompt":"the step","capabilities":["reason"],"tier":"economy"}]}\n```'
+      : prompt.includes('<findings>') ? 'final' : 'step done')
+    const { ctx, fake } = await boot({ fake: { answer }, workflow: { templates: { gated }, gateTimeoutHours: 0.0008 } })
+    const run = ctx.workflow.start({ template: 'gated', input: 'q' })
+    await until(() => ctx.workflow.get(run.runId)?.blocked !== undefined, 60_000)
+    const blocked = ctx.workflow.get(run.runId)!.blocked as Extract<RunView['blocked'], { kind: 'gate' }>
+    expect(Date.parse(blocked.until!) - Date.now()).toBeLessThanOrEqual(3000)
+    // Nobody approves: the gate closes by rule, the run fails saying why, and the plan's step never ran.
+    // A blocked run is returned at once by wait; the rule ends the wait once its time is up.
+    await until(() => ctx.workflow.get(run.runId)!.status === 'failed', 30_000)
+    expect(ctx.workflow.get(run.runId)).toMatchObject({ status: 'failed', error: { kind: 'gate_timeout', message: expect.stringMatching(/^no verdict on plan sha256:[0-9a-f]{64} arrived by .* \(gateTimeoutHours 0.0008\); continue the run to wait again$/) } })
+    expect(fake.sent).toHaveLength(1)
+    const gate = ctx.workflow.explain(run.runId)!.nodes.find((n) => n.nodeId === 'plan:1:gate')!
+    expect(gate.decisions.at(-1)).toMatchObject({ type: 'gate', outcome: 'closed' })
+    expect(ctx.artifacts.get(gate.decisions.at(-1)!.id)!.body).toMatchObject({ decider: { type: 'rule', id: 'workflow.gate-timeout' }, deterministic: true })
+    // Continued, it waits again with a new deadline, and an approval in time runs the plan.
+    ctx.workflow.continue(run.runId)
+    await until(() => ctx.workflow.get(run.runId)?.blocked !== undefined, 30_000)
+    expect((ctx.workflow.get(run.runId)!.blocked as { until: string }).until > blocked.until!).toBe(true)
+    ctx.workflow.approve(run.runId, { verdict: 'approved' })
+    await until(() => ctx.workflow.get(run.runId)!.status !== 'running', 60_000)
+    expect(ctx.workflow.get(run.runId)).toMatchObject({ status: 'completed', answer: 'final' })
+  }, 150_000)
+
   it('fails a member whose conversation the site no longer has at once, naming it, with no attempt spent reopening it (live 2026-10-16)', async () => {
     const { ctx, gemini } = await boot({
       fake: { thinkMs: 6000, answer: (prompt) => (isProposal(prompt) ? proposal('Use SQLite') : ballot('O1')) },

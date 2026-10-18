@@ -52,7 +52,7 @@ function blockedOf(e: Engine, runId: string): Pick<RunView, 'blocked'> {
   const node = e.nodeRows(runId).find((n) => n.state === 'BLOCKED')
   if (!node) return {}
   const spec = JSON.parse(node.spec) as ResolvedNode
-  return { blocked: spec.executor === 'decide' ? tieOf(e, node) : { kind: 'gate', nodeId: node.node_id, plan: spec.plan as ArtifactRef } }
+  return { blocked: spec.executor === 'decide' ? tieOf(e, node) : { kind: 'gate', nodeId: node.node_id, plan: spec.plan as ArtifactRef, ...(node.not_before ? { until: node.not_before } : {}) } }
 }
 
 /** Recent runs and, per node, which Worker, tier, and quota class served it (usage report). */

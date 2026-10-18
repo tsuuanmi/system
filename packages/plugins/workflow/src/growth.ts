@@ -116,18 +116,46 @@ export function grewFrom(node: NodeRow, grower: string): boolean {
   return node.node_id.startsWith(`${grower}:`) && (spec.tierSource === 'decision' || spec.executor === 'gate')
 }
 
-/** A gate whose planner finished waits for an approval of the exact plan (REQ-WF-11). */
+/** The latest a gate blocked now waits for its verdict (INV-9). */
+export const gateDeadline = (e: Engine): string => new Date(Date.now() + (e.config.gateTimeoutHours ?? 24) * 3_600_000).toISOString()
+
+/** A gate whose planner finished waits for an approval of the exact plan (REQ-WF-11), until `gateTimeoutHours` pass. */
 export function block(e: Engine, run: RunRow, node: NodeRow, spec: ResolvedNode, lease: () => Lease): void {
   const plan = spec.plan as ArtifactRef
   const inputHash = sha256(canonicalJson({ node: spec, plan }))
+  const until = gateDeadline(e)
   e.ctx.store.transaction(() => {
-    e.writeNode(node, { state: 'BLOCKED' }, (record) => ({ ...record, inputReceipt: { inputHash, bundle: [plan] } }), lease)
-    e.ctx.eventLog.append({ type: 'workflow.node.blocked', runId: run.run_id, nodeId: node.node_id, data: { plan } })
+    e.writeNode(node, { state: 'BLOCKED', not_before: until }, (record) => ({ ...record, inputReceipt: { inputHash, bundle: [plan] } }), lease)
+    e.ctx.eventLog.append({ type: 'workflow.node.blocked', runId: run.run_id, nodeId: node.node_id, data: { plan, until } })
   })
   const body = e.ctx.artifacts.get(plan)?.body as { confidence?: string } | undefined
   if (e.config.autoApprovePlans && body?.confidence === 'high' && !spec.operatorApproval) {
     decideGate(e, run, e.nodeRow(run.run_id, node.node_id)!, { verdict: 'approved', by: 'policy', note: 'high-confidence plan approved by policy (autoApprovePlans)' }, lease)
   }
+}
+
+/**
+ * A gate nobody decided within `gateTimeoutHours` closes by rule (INV-9): the run fails, saying so,
+ * and `continue` reopens the gate to wait again. The plan stays as it was; nothing of it ran.
+ */
+export function expireGate(e: Engine, run: RunRow, gate: NodeRow, lease: () => Lease): void {
+  const spec = JSON.parse(gate.spec) as ResolvedNode
+  const plan = spec.plan as ArtifactRef
+  const reason = `no verdict on plan ${plan} arrived by ${gate.not_before} (gateTimeoutHours ${e.config.gateTimeoutHours ?? 24}); continue the run to wait again`
+  e.ctx.store.transaction(() => {
+    const decision = e.ctx.artifacts.recordDecision({
+      decisionType: 'gate',
+      question: `May the steps of plan ${plan} run in run ${run.run_id}?`,
+      inputs: [plan],
+      candidates: [{ option: 'open', selected: false, reasons: [] }, { option: 'closed', selected: true, reasons: [reason] }],
+      decider: { type: 'rule', id: 'workflow.gate-timeout', version: '1' },
+      outcome: { option: 'closed' },
+      deterministic: true,
+    }, { producer: { type: 'system', ref: 'workflow' }, runId: run.run_id, nodeId: gate.node_id })
+    const error: WorkflowError = { kind: 'gate_timeout', disposition: 'NONE', message: reason }
+    e.writeNode(gate, { state: 'FAILED', error: JSON.stringify(error) }, (r) => ({ ...r, lastDecision: decision.id as ArtifactRef }), lease)
+    e.ctx.eventLog.append({ type: 'workflow.gate.closed', runId: run.run_id, nodeId: gate.node_id, decision: decision.id, data: { plan, by: 'rule' } })
+  })
 }
 
 export function decideGate(e: Engine, run: RunRow, gate: NodeRow, verdict: { verdict: 'approved' | 'rejected'; by: 'operator' | 'policy'; note?: string }, lease: () => Lease): void {

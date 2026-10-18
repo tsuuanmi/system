@@ -70,7 +70,7 @@ export interface RunView {
    * What the run waits for: a `gate`, the operator's approval of `plan` (`approve`); or a team's
    * `tie`, a deciding `vote` on `decision` (one of `options`) until `until`.
    */
-  blocked?: { kind: 'gate'; nodeId: string; plan: ArtifactRef } | { kind: 'tie'; nodeId: string; decision: ArtifactRef; options: Array<{ option: string; summary: string }>; until: string }
+  blocked?: { kind: 'gate'; nodeId: string; plan: ArtifactRef; until?: string } | { kind: 'tie'; nodeId: string; decision: ArtifactRef; options: Array<{ option: string; summary: string }>; until: string }
   error?: WorkflowError
   createdAt: string
   /** The run's last progress: its own last change or any node's, whichever is later. */
@@ -133,6 +133,8 @@ export interface Config {
   maxReviewCycles?: number
   /** Hours a tied team waits for a deciding `vote`, then completes `inconclusive` by rule (default 24; INV-9). */
   tieTimeoutHours?: number
+  /** Hours a plan's gate waits for the operator's verdict, then closes and fails the run by rule (default 24; INV-9). */
+  gateTimeoutHours?: number
   /** A review's repository reads: the hosts allowed (default github.com) and the bounds (40 files, 300 KB, 48 KB a file; INV-9). */
   repositories?: { hosts?: string[]; maxFiles?: number; maxBytes?: number; maxFileBytes?: number; maxSourceChars?: number }
 }

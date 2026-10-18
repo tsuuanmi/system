@@ -10,7 +10,7 @@ import { type Lease, LeaseLost, StaleGeneration } from '@tsuuanmi/system-leases'
 import { canonicalJson, SchemaRegistry, sha256 } from '@tsuuanmi/system-libs'
 import { dispositionOf } from '@tsuuanmi/system-provider-core'
 import { AdmissionFailure, type AdmittedWorker, type ArtifactRef, type Classification, type WorkRequirement, type WorkerExecution } from '@tsuuanmi/system-workers-core'
-import { block, grow, grownText } from './growth.ts'
+import { block, expireGate, gateDeadline, grow, grownText } from './growth.ts'
 import { admissionKind, escalate, failAttempt, routedDecisions } from './recovery.ts'
 import { remediate, reviewSubject, subjectGate } from './review.ts'
 import { recoverWakes, settleWake } from './sessions.ts'
@@ -289,16 +289,19 @@ export class Engine {
             return !row?.worker && row?.state !== 'FAILED' && !ids.has(peer)
           }))
           if (!active.length) {
-            // A tie waits a bounded time for a deciding vote (INV-9), then completes inconclusive.
-            const tie = current_.find((n) => n.state === 'BLOCKED' && (JSON.parse(n.spec) as ResolvedNode).executor === 'decide')
-            if (tie) {
-              const left = Date.parse(tie.not_before ?? '') - Date.now()
-              if (!(left > 0)) {
-                expireTie(this, run, tie, current)
-                continue
-              }
-              this.retryLater(runId, left)
+            // A tie waits a bounded time for a deciding vote, and a plan's gate for its verdict (INV-9):
+            // a tie then completes inconclusive, a gate closes and fails the run.
+            const waiting = current_.filter((n) => n.state === 'BLOCKED' && ['decide', 'gate'].includes((JSON.parse(n.spec) as ResolvedNode).executor ?? ''))
+            const expired = waiting.find((n) => !(Date.parse(n.not_before ?? '') - Date.now() > 0))
+            if (expired) {
+              if (!expired.not_before) {
+                // Blocked before gates had a deadline: it gets one now, never an instant expiry.
+                this.writeNode(expired, { not_before: gateDeadline(this) }, (r) => r, current)
+              } else if ((JSON.parse(expired.spec) as ResolvedNode).executor === 'decide') expireTie(this, run, expired, current)
+              else expireGate(this, run, expired, current)
+              continue
             }
+            if (waiting.length) this.retryLater(runId, Math.min(...waiting.map((n) => Date.parse(n.not_before!) - Date.now())))
             // Waiting for the operator's `approve` or the caller's `vote`, which schedule the run again;
             // whoever waits on the run learns now that it waits on them.
             if (current_.some((n) => n.state === 'BLOCKED')) {
