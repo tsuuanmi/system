@@ -132,8 +132,11 @@ For an element:
    candidates come before overlay candidates.
 3. Check `require` on the match.
 4. For an action, run it, then poll `verify` until `verifyMs` expires.
-5. If a non-primary candidate won, report drift (`onDrift`, logged as
-   `ui.drift`). The turn still succeeds; the event feeds the health view and,
+5. If a non-primary candidate won, try the candidates once more after a short
+   settle (250 ms): a page still rendering shows some elements a moment before
+   others, such as Gemini's prompt host before its bubble, or a menu still
+   opening. If a non-primary candidate still wins, report drift (`onDrift`,
+   logged as `ui.drift`). The turn still succeeds; the event feeds the health view and,
    once built, `system ui doctor`. An action whose target no candidate finds
    (with no heal or fallback), or that misses its postcondition, is reported
    too before it fails, each with [drift evidence](#drift-evidence).

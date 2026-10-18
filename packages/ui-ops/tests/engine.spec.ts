@@ -180,6 +180,14 @@ describe.runIf(canRunBrowser)('UiEngine on a real page', { timeout: 15_000 }, ()
     expect(drift).toEqual([])
   })
 
+  it('takes the primary candidate that renders a moment after a later one, with no drift', async () => {
+    const { engine, tab, drift } = await open(page(`<form data-type="composer"><div contenteditable role="textbox"></div>
+  <button type="button" aria-label="Send prompt">↑</button></form>`))
+    await tab.evaluate(() => void setTimeout(() => { document.querySelector('button')!.dataset.testid = 'send-button' }, 100))
+    expect((await engine.resolve('composer.send')).candidate).toBe(0)
+    expect(drift).toEqual([])
+  })
+
   it('falls back to the next candidate and reports drift, with an outline of the found element\'s parent: structure, never text', async () => {
     const { engine, drift } = await open(RENAMED_TESTID.replace('<div contenteditable', '<div contenteditable data-secret-note="x"').replace('role="textbox"></div>', 'role="textbox">my private draft</div>'))
     const send = await engine.resolve('composer.send')

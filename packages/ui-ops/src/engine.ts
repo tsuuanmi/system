@@ -170,6 +170,12 @@ export interface ActOptions {
 }
 
 const TICK_MS = 100
+/**
+ * How long a later candidate's match waits for an earlier one before it counts as drift: a page
+ * still rendering shows some elements a moment before others (Gemini's prompt host before its
+ * bubble, a menu still opening).
+ */
+const SETTLE_MS = 250
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
 /** Lines with inner spacing collapsed and blank lines dropped: what an editor must preserve. */
 const lineText = (s: string | null): string => (s ?? '').split('\n').map((l) => l.replace(/[\s\u00a0]+/g, ' ').trim()).filter(Boolean).join('\n')
@@ -337,12 +343,17 @@ export class UiEngine {
     return this.matchIn(id, spec, root)
   }
 
-  private async matchIn(id: string, spec: ElementSpec, root: Page | Locator | Frame): Promise<Resolved | undefined> {
+  private async matchIn(id: string, spec: ElementSpec, root: Page | Locator | Frame, settled = false): Promise<Resolved | undefined> {
     for (const [index, candidate] of spec.candidates.entries()) {
       const locator = toLocator(root, candidate, this.map.locales)
       const visible = locator.filter({ visible: true })
       const n = await visible.count()
       if (spec.cardinality === 'many' ? n === 0 : n !== 1) continue
+      // A later candidate matched: the earlier ones are tried once more after the page settles.
+      if (index > 0 && !settled) {
+        await sleep(SETTLE_MS)
+        return this.matchIn(id, spec, root, true)
+      }
       const resolved = { locator: spec.cardinality === 'many' ? locator : visible, candidate: index }
       if (index > 0) await this.reportDrift(id, 'fallback', index, candidate.source, resolved.locator)
       return resolved
