@@ -28,6 +28,11 @@ package's `conformance/` directory. Each provider's tests call the suite with a
 - **Real plugins over mocks.** Plugin tests compose the real plugins they inject
   with `ctx.plugin(...)` and mock only external boundaries (provider websites,
   agents, models).
+- **One temporary parent per run** ([`scripts/test-tmp.ts`](../../scripts/test-tmp.ts), the
+  global setup of every lane). TMPDIR points at `system-test-<pid>-…` before the workers start,
+  so test directories, browser profiles, and child processes all land under it, and teardown
+  removes it. A killed run cannot tear down; the next run removes the parents of runs that are
+  gone, and nothing else. A test keeps using `tmpdir()`.
 - **Built-artifact smoke test**
   ([`packages/cli/tests/profile.e2e.ts`](../../packages/cli/tests/profile.e2e.ts),
   [`api-first.e2e.ts`](../../packages/cli/tests/api-first.e2e.ts)).
