@@ -137,8 +137,10 @@ The **ChatGPT Web provider driver**
     The report is the container of the report's title (`research.report-title`,
     the live layout of 2026-10-12);
   - the app shell seen live on 2026-10-18 shows no frame, or a frame with no
-    title: the run's markers are then looked for in the page after the last
-    prompt, and the report is read inline, as the last answer, by its own Copy,
+    title: the run's markers are then looked for in the conversation's thread
+    after the last prompt, and running also anywhere outside the thread (a panel;
+    live 2026-10-19 the thread showed only the acknowledgement while the run
+    went on). The report is read inline, as the last answer, by its own Copy,
     as any answer is. Marked complete in the page, the report is the answer that
     holds or follows the mark (the acknowledgement comes before it); marked
     complete in a frame only, it is an answer that is not the acknowledgement;
@@ -149,7 +151,9 @@ The **ChatGPT Web provider driver**
   - a completed report that stays unreadable for `reportReadMs` (30 s) fails as
     `ui_drift`, not by waiting out the stall deadline, outlined as a `ui.drift`
     of `research.report-title`;
-  - a reply with no frame within `researchStartMs` is a clarifying question.
+  - a reply with no run seen within `researchStartMs` is a clarifying question;
+    the page is outlined first (`provider.stall`, phase `research-start`), in
+    case it was a run the map could not see.
 - **Snapshot** (reconciliation) needs positive evidence. A page that has not
   rendered a user turn within `snapshotMs` (20 s) is not observed. The last
   user turn is reported as `lastPrompt`, so a prompt the page already shows is

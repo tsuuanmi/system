@@ -73,7 +73,10 @@ drift and does not silently break.
 - **A stalled turn** (`provider_stalled`) is outlined the same way: event
   `provider.stall` (`system events --type provider.stall`) carries the page's
   outline as evidence, with its `visibilityState`, focus, and path, so a stall
-  can be read without the operator's browser.
+  can be read without the operator's browser. Phase `research-start` (ChatGPT)
+  is a Deep research reply returned as a clarifying question because no run
+  showed in time: when the reply was an acknowledgement, the outline shows where
+  the run's progress stood.
 - **A Deep research report as read** (ChatGPT): event `provider.report-read` gives
   its path (`frame` or `inline`), its length, and the source links it carries,
   counts only. A report refused for citing no source with `links: 0` was read

@@ -102,6 +102,12 @@ export interface FakeOptions {
    * again, its turns copied without their source pills.
    */
   floatingChat?: boolean
+  /**
+   * With `researchInline`, a running run shows its progress only in a panel outside main, the
+   * thread only the acknowledgement until the report comes (live 2026-10-19: a run the thread
+   * scope never saw running).
+   */
+  researchPanel?: boolean
   /** A framed run's source pills stand in the thread after its frame, not in the frame (live 2026-10-18). */
   framePills?: boolean
   /** The composer form is not marked `data-chatgpt-composer` (live 2026-10-18). */
@@ -394,12 +400,22 @@ async function send() {
         run.className = 'turn'
         run.innerHTML = '<p>Researching...</p><button>Stop research</button>'
         const index = event.research
-        setTimeout(() => answer.after(run), 0)
+        if (options.researchPanel) {
+          const panel = document.createElement('aside')
+          panel.setAttribute('aria-label', 'Deep research')
+          panel.innerHTML = '<p>Researching...</p><button>Stop research</button>'
+          document.body.append(panel)
+          run.innerHTML = ''
+          setTimeout(() => answer.after(run), 0)
+          run.dataset.panel = 'true'
+          run.panel = panel
+        } else setTimeout(() => answer.after(run), 0)
         const poll = setInterval(async () => {
           const state = await (await fetch('/_/research/' + convId + '/' + index)).json()
           if (!state.done) return
           clearInterval(poll)
           const copy = state.report
+          if (run.panel) run.panel.remove()
           // As the live shell (2026-10-18): the completion line stands before the answer's own container,
           // which may render a moment later.
           run.innerHTML = '<p>Research completed in 1m · 3 citations</p>'
@@ -486,7 +502,7 @@ export class FakeChatGpt {
 
   constructor(options: FakeOptions = {}) {
     this.options = {
-      startOnWork: true, chatToggleBroken: false, signedIn: true, loginOffer: false, requireCookie: false, rotateOnLoad: false, deleteMenu: true, captcha: false, interstitial: false, deviceBound: false, floatingChat: false, framePills: false, unmarkedComposer: false, workComposer: false, researchInline: false, inlineReportDelayMs: 0, untitledReport: false, errorPages: 0, loggedOutHome: false, logoutFlashMs: 0, paneMenu: true, dialogTarget: '', userId: 'user-fake123', sendLabel: 'Send', sendTestId: '',
+      startOnWork: true, chatToggleBroken: false, signedIn: true, loginOffer: false, requireCookie: false, rotateOnLoad: false, deleteMenu: true, captcha: false, interstitial: false, deviceBound: false, floatingChat: false, researchPanel: false, framePills: false, unmarkedComposer: false, workComposer: false, researchInline: false, inlineReportDelayMs: 0, untitledReport: false, errorPages: 0, loggedOutHome: false, logoutFlashMs: 0, paneMenu: true, dialogTarget: '', userId: 'user-fake123', sendLabel: 'Send', sendTestId: '',
       answer: 'OK', thinkMs: 300, models: ['Latest', 'GPT-6', 'GPT-5.6 Sol', 'GPT-5.5'], lockedModels: [],
       researchMs: 1500, researchHeld: false, report: 'Deep research report body.', clarify: false, features: ['deep-research', 'web-search', 'image-generation'], modelPicker: true,
       mfa: 'totp', email: 'operator@example.test', password: 'correct horse', totpSecret: 'JBSWY3DPEHPK3PXP',

@@ -300,6 +300,13 @@ describe.runIf(canRunBrowser)('ChatGptWebDriver against the fake site, with no r
     expect(drifts.map((d) => d.element)).not.toContain('conversation.thread')
   }, 60_000)
 
+  it('waits for a run that shows running only in a panel outside the thread, and reads its report (live 2026-10-19)', async () => {
+    // The run outlasts researchStartMs (3 s here), shown running only outside main meanwhile.
+    const { page, driver } = await site({ researchInline: true, researchPanel: true, researchMs: 9000, report: 'Paneled report body.' })
+    const turn = await driver.ask(page, 'Survey with a panel', { conversation: 'persistent', feature: 'deep-research' })
+    expect(turn.text).toMatch(/^Paneled report body\.\n\nSources:\n- sqlite\.org https:\/\/www\.sqlite\.org\/wal\.html/)
+  }, 60_000)
+
   it('reads a report the app shell shows inline as the last answer, with no frame, in a turn and in a snapshot (live 2026-10-18)', async () => {
     const { page, driver, context } = await site({ researchInline: true, report: 'Inline report body.' })
     const turn = await driver.ask(page, 'Survey inline', { conversation: 'persistent', feature: 'deep-research' })
@@ -359,8 +366,12 @@ describe.runIf(canRunBrowser)('ChatGptWebDriver against the fake site, with no r
 
   it('returns Deep research\'s clarifying question when no research starts', async () => {
     const { page, driver } = await site({ clarify: true })
+    const stalls: Array<{ phase: string; outline?: unknown }> = []
+    driver.onStall = (event) => void stalls.push(event)
     const turn = await driver.ask(page, 'Research something vague', { conversation: 'persistent', feature: 'deep-research' })
     expect(turn.text).toBe('Which aspect should the research focus on?')
+    // No run seen: the page is outlined first, in case it was a run the map missed.
+    expect(stalls).toEqual([expect.objectContaining({ phase: 'research-start', outline: expect.anything() })])
   }, 60_000)
 
   it('snapshots a Deep research conversation: running until the report is complete', async () => {

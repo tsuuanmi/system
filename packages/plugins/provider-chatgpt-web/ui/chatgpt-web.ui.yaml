@@ -168,8 +168,12 @@ elements:
     candidates:
       - { css: 'iframe[src*="web-sandbox"]' }
   research.running:
-    description: Deep research in progress, inside its nested report frame (live run 2026-10-12).
+    description: >-
+      Deep research in progress: inside its nested report frame (live run 2026-10-12), or in the
+      page, where it may show only outside the conversation's thread, in more than one place
+      (live 2026-10-19: the thread held only the acknowledgement while the run went on).
     frames: any
+    cardinality: many
     candidates:
       - { role: button, name: { en: '^Stop research$' } }
       - { text: { en: '^Researching' } }

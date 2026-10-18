@@ -492,8 +492,22 @@ export class ChatGptWebDriver implements ProviderDriver<Page> {
     }
     const marker = await this.afterPrompt(engine, 'research.completed')
     if (marker) return { running: false, done: true, text: await this.inlineReport(page, engine, { marker, ack }), path: 'inline' }
-    if (await this.afterPrompt(engine, 'research.running')) return { running: true, done: false, text: '' }
+    if (await this.runningAfterPrompt(engine)) return { running: true, done: false, text: '' }
     return { running: false, done: false, text: '' }
+  }
+
+  /**
+   * Whether the page shows a run going on: outside the conversation's thread (a panel, live
+   * 2026-10-19, while the thread showed only the acknowledgement), or in the thread after the
+   * last prompt (an earlier run's never counts). Running only ever means wait for the report,
+   * which is read in the thread.
+   */
+  private async runningAfterPrompt(engine: UiEngine): Promise<boolean> {
+    if ((await engine.count('research.running')) === 0) return false
+    const found = (await engine.resolve('research.running', 1000)).locator
+    const thread = await engine.resolve('conversation.thread', 1000).then((t) => t.locator.first().elementHandle(), () => null)
+    const user = (await engine.count('turn.user')) > 0 ? await (await engine.resolve('turn.user', 1000)).locator.last().elementHandle() : null
+    return found.evaluateAll((markers, [t, u]) => markers.some((m) => !t || !t.contains(m) || !u || (u.compareDocumentPosition(m) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0), [thread, user] as const).catch(() => false)
   }
 
   /**
@@ -697,7 +711,11 @@ export class ChatGptWebDriver implements ProviderDriver<Page> {
     for (;;) {
       const state = await this.researchState(page, engine, reply)
       if (state.running || state.done) break
-      if (Date.now() > startBy) return reply
+      if (Date.now() > startBy) {
+        // A clarifying question, or a run this map cannot see: the page is outlined, so a missed run can be mapped.
+        if (this.onStall) await engine.stall('research-start').then((event) => this.onStall?.(event), () => undefined)
+        return reply
+      }
       signal?.throwIfAborted()
       await page.waitForTimeout(500)
     }
