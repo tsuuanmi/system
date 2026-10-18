@@ -100,6 +100,13 @@ export class ChatGptWebDriver implements ProviderDriver<Page> {
   onDrift: ((event: DriftEvent) => void) | undefined
   /** A turn whose answer stalled or ran out of time, outlined; the plugin records it (`provider.stall`). */
   onStall: ((event: StallEvent) => void) | undefined
+  /**
+   * A Deep research report as read: from its frame or inline, its length, and the source links it
+   * carries; counts only, never text (`provider.report-read`), so an unread citation is decidable.
+   */
+  onReport: ((event: { provider: string; path: 'frame' | 'inline'; chars: number; links: number }) => void) | undefined
+  /** How the last research state's report was read, for `onReport`. */
+  private lastReport: 'frame' | 'inline' | undefined
   onHeal: ((event: HealEvent) => void) | undefined
   /** Records a chosen heal before it acts (INV-13); a throw aborts the action. */
   beforeHealedAction: ((event: HealEvent) => void | Promise<void>) | undefined
@@ -474,19 +481,32 @@ export class ChatGptWebDriver implements ProviderDriver<Page> {
    */
   private async researchState(page: Page, engine: UiEngine, ack?: string): Promise<ResearchState> {
     for (const frame of await this.researchFrames(engine)) {
-      if (await engine.findIn('research.completed', frame)) return { running: false, done: true, text: (await this.reportText(engine, frame)) || (await this.inlineReport(page, engine, { ack })) }
+      if (await engine.findIn('research.completed', frame)) {
+        const framed = await this.reportText(engine, frame)
+        this.lastReport = framed ? 'frame' : 'inline'
+        return { running: false, done: true, text: framed || (await this.inlineReport(page, engine, { ack })) }
+      }
       if (await engine.findIn('research.running', frame)) return { running: true, done: false, text: '' }
     }
     const marker = await this.afterPrompt(engine, 'research.completed')
-    if (marker) return { running: false, done: true, text: await this.inlineReport(page, engine, { marker, ack }) }
+    if (marker) {
+      this.lastReport = 'inline'
+      return { running: false, done: true, text: await this.inlineReport(page, engine, { marker, ack }) }
+    }
     if (await this.afterPrompt(engine, 'research.running')) return { running: true, done: false, text: '' }
     return { running: false, done: false, text: '' }
   }
 
-  /** The last `id` in the page itself, if it follows the last prompt (an earlier run's never counts). */
+  /**
+   * The last `id` in the conversation's thread, if it follows the last prompt (an earlier run's
+   * never counts, nor anything outside the thread, such as a floating copy of the conversation).
+   */
   private async afterPrompt(engine: UiEngine, id: string): Promise<Locator | undefined> {
-    if ((await engine.count(id)) === 0) return undefined
-    const found = (await engine.resolve(id, 1000)).locator.last()
+    const thread = await engine.resolve('conversation.thread', 1000).catch(() => undefined)
+    if (!thread) return undefined
+    const inThread = await engine.findIn(id, thread.locator.first())
+    if (!inThread) return undefined
+    const found = inThread.locator.last()
     if ((await engine.count('turn.user')) === 0) return found
     const user = await (await engine.resolve('turn.user', 1000)).locator.last().elementHandle()
     return (await found.evaluate((f, u) => !!u && (u.compareDocumentPosition(f) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0, user).catch(() => false)) ? found : undefined
@@ -670,7 +690,9 @@ export class ChatGptWebDriver implements ProviderDriver<Page> {
       signal?.throwIfAborted()
       await page.waitForTimeout(500)
     }
-    return waitForReport(() => this.researchState(page, engine, reply), this.timeouts, { provider: this.provider, element: 'research.report-title', deadlines, signal }).catch(async (error: unknown) => {
+    const report = waitForReport(() => this.researchState(page, engine, reply), this.timeouts, { provider: this.provider, element: 'research.report-title', deadlines, signal })
+    void report.then((text) => this.onReport?.({ provider: this.provider, path: this.lastReport ?? 'inline', chars: text.length, links: (text.match(/https?:\/\/[^\s)>"\]]+/g) ?? []).length }), () => undefined)
+    return report.catch(async (error: unknown) => {
       await this.stalled(engine, 'research', error)
       // A completed report that cannot be read is outlined as drift evidence of the report's entry.
       if (error instanceof ProviderError && error.kind === 'ui_drift') await engine.drift('research.report-title').catch(() => undefined)

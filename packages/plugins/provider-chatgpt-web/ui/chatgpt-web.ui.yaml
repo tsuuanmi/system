@@ -211,18 +211,30 @@ elements:
     candidates:
       - { role: status }
 
+  conversation.thread:
+    description: >-
+      The open conversation's own thread, in main. Never the floating "quick chat" (live
+      2026-10-18) that shows the same conversation again outside it: its turns, read in the
+      thread's place, carried no citations. The turns below are read inside it.
+    candidates:
+      # The main that holds the conversation region: visible even before the region has a turn.
+      - { css: 'main:has(> [role="region"][aria-label="Conversation"])' }
+      - { css: 'main:not(main main)' }
   turn.user:
     description: One heading per user turn; the prompt is the heading's container. A rendered conversation always has one.
+    scope: conversation.thread
     cardinality: many
     candidates:
       - { role: heading, name: { en: '^You said:?$' } }
   turn.assistant:
     description: One heading per assistant turn; the answer is the heading's container.
+    scope: conversation.thread
     cardinality: many
     candidates:
       - { role: heading, name: { en: '^ChatGPT said:?$' } }
   turn.assistant.done:
     description: Present under every finished answer.
+    scope: conversation.thread
     cardinality: many
     candidates:
       - { role: button, name: { en: '^Copy$' }, exact: true }

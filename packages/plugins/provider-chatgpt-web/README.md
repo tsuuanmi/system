@@ -36,6 +36,11 @@ The **ChatGPT Web provider driver**
   sign-out evidence (the login page, or the logged-out home past its hold) fails it as
   `reauth_required`, so the account shows signed out instead of a stall (live 2026-10-17). The
   logged-out home's cookie consent dialog is an overlay (`page.overlay`), never answered.
+- **The conversation's own thread** (`conversation.thread`, in main). Turns are
+  read inside it, never in the floating "quick chat" that shows the same
+  conversation again outside it (live 2026-10-18: a report read there carried
+  no citations). A Deep research report as read is reported as counts (event
+  `provider.report-read`: path, length, links).
 - **Kept tabs** (ADR-0030). A page that already shows
   the bound conversation is not loaded again. `pageIdle` (map state `page.idle`) tells the turn
   runtime it may keep the page for the session's next turn.

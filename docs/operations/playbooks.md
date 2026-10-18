@@ -74,6 +74,11 @@ drift and does not silently break.
   `provider.stall` (`system events --type provider.stall`) carries the page's
   outline as evidence, with its `visibilityState`, focus, and path, so a stall
   can be read without the operator's browser.
+- **A Deep research report as read** (ChatGPT): event `provider.report-read` gives
+  its path (`frame` or `inline`), its length, and the source links it carries,
+  counts only. A report refused for citing no source with `links: 0` was read
+  without its citations: compare with a read-only `system conversation inspect`,
+  whose outline records each link's target as a kind (`external`, `site`, `none`).
 - **Read the evidence.** A `ui.drift` event's `outline` names a local-private
   `evidence` artifact: the structure of the region around the element, never
   its text ([drift evidence](../design/ui-operations.md#drift-evidence)).

@@ -96,6 +96,11 @@ export interface FakeOptions {
    * is an ordinary answer after the prompt, opening with "Research completed in ...", with its own Copy.
    */
   researchInline?: boolean
+  /**
+   * A floating "quick chat" after the page's main (live 2026-10-18) shows the same conversation
+   * again, its turns copied without their source pills.
+   */
+  floatingChat?: boolean
   /** Inline, the completion line shows this long before the report's answer renders after it. */
   inlineReportDelayMs?: number
   /** A finished report frame shows no title, so its report cannot be read (a drift test). */
@@ -233,6 +238,7 @@ ${missing ? `<div role="alert">Unable to load conversation ${missing}</div>` : '
     </form>
   </main>
 </main>
+${options.floatingChat ? '<section role="dialog" aria-label="Quick chat" data-floating-chat-surface><div id="float-log"></div></section>' : ''}
 <div role="menu" aria-label="Select ChatGPT model" id="model-menu" hidden>
   <div role="menuitem" data-model-picker-view-toggle id="power-label">Instant</div>
   <div id="view-a">
@@ -419,6 +425,16 @@ function renderMarkdown(text) {
   return escaped.replace(/\\*\\*([^*]+)\\*\\*/g, '<strong>$1</strong>').replace(/\x60([^\x60]+)\x60/g, '<code>$1</code>')
     .replace(/\\[([^\\]]+)\\]\\(([^)]+)\\)/g, '<a href="$2">$1</a>')
 }
+// The floating quick chat mirrors the conversation, its turns copied without their source pills.
+if (options.floatingChat) {
+  const mirror = () => {
+    const copy = $('log').cloneNode(true)
+    copy.querySelectorAll('[data-inline-mention-interactive]').forEach((pill) => pill.remove())
+    $('float-log').innerHTML = copy.innerHTML
+  }
+  new MutationObserver(mirror).observe($('log'), { childList: true, subtree: true, characterData: true })
+  mirror()
+}
 render()
 fetch('/backend-api/me')
 </script></body></html>`
@@ -459,7 +475,7 @@ export class FakeChatGpt {
 
   constructor(options: FakeOptions = {}) {
     this.options = {
-      startOnWork: true, chatToggleBroken: false, signedIn: true, loginOffer: false, requireCookie: false, rotateOnLoad: false, deleteMenu: true, captcha: false, interstitial: false, deviceBound: false, researchInline: false, inlineReportDelayMs: 0, untitledReport: false, errorPages: 0, loggedOutHome: false, logoutFlashMs: 0, paneMenu: true, dialogTarget: '', userId: 'user-fake123', sendLabel: 'Send', sendTestId: '',
+      startOnWork: true, chatToggleBroken: false, signedIn: true, loginOffer: false, requireCookie: false, rotateOnLoad: false, deleteMenu: true, captcha: false, interstitial: false, deviceBound: false, floatingChat: false, researchInline: false, inlineReportDelayMs: 0, untitledReport: false, errorPages: 0, loggedOutHome: false, logoutFlashMs: 0, paneMenu: true, dialogTarget: '', userId: 'user-fake123', sendLabel: 'Send', sendTestId: '',
       answer: 'OK', thinkMs: 300, models: ['Latest', 'GPT-6', 'GPT-5.6 Sol', 'GPT-5.5'], lockedModels: [],
       researchMs: 1500, researchHeld: false, report: 'Deep research report body.', clarify: false, features: ['deep-research', 'web-search', 'image-generation'], modelPicker: true,
       mfa: 'totp', email: 'operator@example.test', password: 'correct horse', totpSecret: 'JBSWY3DPEHPK3PXP',
