@@ -149,7 +149,8 @@ so a stale element can be mapped again without opening the operator's browser:
   contents, so a site's sidebar never spends the node budget the content needs
   (live 2026-10-18, two outlines that ran out inside a sidebar).
 - **Content:** per node, the tag, role, `aria-label` (not on links, whose labels
-  are often content such as chat titles; at most 40 characters), the `aria-*`
+  are often content such as chat titles; at most 40 characters), a link's target
+  as a kind, never the URL (`external`, `site`, or `none`; `ui-outline@1.1`), the `aria-*`
   states, the test id, the names of other `data-*` attributes, the id, up to five
   classes, whether it is editable, and its visible text length. Never text,
   input values, or URLs.

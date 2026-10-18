@@ -137,9 +137,9 @@ export interface DeleteOptions {
   confirmed?: boolean
 }
 
-/** A structural page outline (`ui-outline@1.0`, docs/design/ui-operations.md#drift-evidence): never text. */
+/** A structural page outline (`ui-outline@1.x`, docs/design/ui-operations.md#drift-evidence): never text. */
 export interface PageOutline {
-  schema: 'ui-outline@1.0'
+  schema: 'ui-outline@1.0' | 'ui-outline@1.1'
   root: string
   nodes: unknown[]
   truncated: boolean

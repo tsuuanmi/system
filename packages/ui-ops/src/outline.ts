@@ -25,10 +25,16 @@ export interface OutlineNode {
   text: number
   /** Further siblings with the same signature, folded into this node. */
   repeat?: number
+  /**
+   * A link's target, as a kind, never the URL (`@1.1`): `external` (another site, http(s)), `site`
+   * (this site), or `none` (no target, or another scheme).
+   */
+  link?: 'external' | 'site' | 'none'
 }
 
 export interface UiOutline {
-  schema: 'ui-outline@1.0'
+  /** `@1.1` once a node carries `link`. */
+  schema: 'ui-outline@1.0' | 'ui-outline@1.1'
   /** The region outlined: a map element, or the page body. */
   root: string
   nodes: OutlineNode[]
@@ -80,6 +86,17 @@ export async function outlineOf(root: Page | Locator, name: string, limits = OUT
       const classes = [...e.classList].slice(0, 5).map((c) => c.slice(0, 30))
       if (classes.length) node.classes = classes
       if ((e as HTMLElement).isContentEditable && e.getAttribute('contenteditable') !== null) node.editable = true
+      if (tag === 'a') {
+        const href = e.getAttribute('href')
+        let target = 'none'
+        try {
+          const url = href ? new URL(href, location.href) : undefined
+          if (url && (url.protocol === 'http:' || url.protocol === 'https:')) target = url.origin === location.origin ? 'site' : 'external'
+        } catch {
+          target = 'none'
+        }
+        node.link = target
+      }
       return node
     }
     const shown = (e: Element): boolean => {
@@ -129,12 +146,12 @@ export async function outlineOf(root: Page | Locator, name: string, limits = OUT
     ...(n.classes ? { classes: n.classes.map(mask) } : {}),
     ...(n.states ? { states: Object.fromEntries(Object.entries(n.states).map(([k, v]) => [k, mask(v)])) } : {}),
   }))
-  return { schema: 'ui-outline@1.0', root: name, nodes, truncated: walked.truncated }
+  return { schema: nodes.some((n) => n.link) ? 'ui-outline@1.1' : 'ui-outline@1.0', root: name, nodes, truncated: walked.truncated }
 }
 
 /** What a drift report needs of the artifact store: a local-private `evidence` artifact with an id. */
 export interface EvidenceStore {
-  put(input: { kind: 'evidence'; bodySchema: 'ui-outline@1.0'; body: UiOutline; classification: 'local-private'; producer: { type: 'system'; ref: string } }): { id: string }
+  put(input: { kind: 'evidence'; bodySchema: UiOutline['schema']; body: UiOutline; classification: 'local-private'; producer: { type: 'system'; ref: string } }): { id: string }
 }
 
 /**
@@ -149,6 +166,6 @@ export function driftData(event: { provider: string; element: string; kind: stri
 /** Any event's data with its outline stored the same way and named (a drift, a stall). */
 export function evidenceData(event: { provider: string; outline?: UiOutline | undefined }, store?: EvidenceStore): Record<string, unknown> {
   const { outline, ...data } = event
-  const kept = outline && store ? store.put({ kind: 'evidence', bodySchema: 'ui-outline@1.0', body: outline, classification: 'local-private', producer: { type: 'system', ref: `ui-ops/${event.provider}` } }).id : undefined
+  const kept = outline && store ? store.put({ kind: 'evidence', bodySchema: outline.schema, body: outline, classification: 'local-private', producer: { type: 'system', ref: `ui-ops/${event.provider}` } }).id : undefined
   return { ...data, ...(kept ? { outline: kept } : {}) }
 }

@@ -445,7 +445,7 @@ export class Turns extends Service {
         await turn.close()
       }
     }, signal)
-    const evidence = outlines.map((body) => this.ctx.artifacts.put({ kind: 'evidence', bodySchema: 'ui-outline@1.0', body, classification: 'local-private', producer: { type: 'system', ref: `turns/${view.provider}` } }).id)
+    const evidence = outlines.map((body) => this.ctx.artifacts.put({ kind: 'evidence', bodySchema: body.schema, body, classification: 'local-private', producer: { type: 'system', ref: `turns/${view.provider}` } }).id)
     this.ctx.get('eventLog')?.append({ type: 'conversation.inspected', data: { account: accountId, binding, evidence } })
     return { account: accountId, binding, evidence }
   }

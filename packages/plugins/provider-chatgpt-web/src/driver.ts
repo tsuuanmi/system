@@ -512,7 +512,25 @@ export class ChatGptWebDriver implements ProviderDriver<Page> {
       const same = (a: string, b: string): boolean => a.replace(/\s+/g, ' ').trim() === b.replace(/\s+/g, ' ').trim()
       if (run.ack === undefined || same(rendered, run.ack)) return ''
     }
-    return this.markdownOf(page, rendered)
+    // Its citations may stand outside the answer's own container (inline source pills): every
+    // link to another site after the prompt, in the conversation, follows the report as a source.
+    return withMissingSources(await this.markdownOf(page, rendered), await this.linksAfterPrompt(engine))
+  }
+
+  /** The links to another site after the last prompt, within its conversation (href → text, first text wins). */
+  private async linksAfterPrompt(engine: UiEngine): Promise<Map<string, string>> {
+    if ((await engine.count('turn.user')) === 0) return new Map()
+    const user = (await engine.resolve('turn.user', 1000)).locator.last()
+    const found = await user.evaluate((u) => {
+      const scope = u.closest('[role="region"]') ?? document.body
+      return [...scope.querySelectorAll('a[href]')]
+        .filter((a) => (u.compareDocumentPosition(a) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0)
+        .map((a) => [(a as HTMLAnchorElement).href, (a.textContent ?? '').trim()] as const)
+        .filter(([href]) => /^https?:/.test(href) && new URL(href).origin !== location.origin)
+    }).catch(() => [] as Array<readonly [string, string]>)
+    const links = new Map<string, string>()
+    for (const [href, text] of found) if (!links.has(href)) links.set(href, text)
+    return links
   }
 
   private bindingOf(page: Page): string | undefined {

@@ -77,8 +77,11 @@ elements:
     candidates:
       - { role: button, name: { en: '^Upload & tools$' } }
   tools.more:
-    description: Reveals more tools (Deep research, Guided learning) in the tools menu.
+    description: >-
+      Reveals more tools (Deep research, Guided learning) in the tools menu. Live it carries
+      data-testid (the fallback on 2026-10-17 and 2026-10-18); data-test-id stays as a fallback.
     candidates:
+      - { css: '[data-testid="more-tools-button"]' }
       - { css: '[data-test-id="more-tools-button"]' }
       - { role: button, name: { en: '^More tools$' } }
   tools.deep-research:

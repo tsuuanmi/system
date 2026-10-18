@@ -2,11 +2,11 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:tsuuanmi:system:schema:ui-outline:v1",
   "title": "UI outline",
-  "description": "Body of a local-private `evidence` artifact recorded with a `ui.drift` event: a bounded structural outline of a page region (docs/design/ui-operations.md#drift-evidence). Structure only: tags, roles, labels and states, test ids, data attribute names, ids, classes, and visible text lengths. Never text, input values, or URLs.",
+  "description": "Body of a local-private `evidence` artifact recorded with a `ui.drift` event: a bounded structural outline of a page region (docs/design/ui-operations.md#drift-evidence). Structure only: tags, roles, labels and states, test ids, data attribute names, ids, classes, and visible text lengths. Never text, input values, or URLs; a link's target only as a kind (`@1.1`).",
   "type": "object",
   "required": ["schema", "root", "nodes", "truncated"],
   "properties": {
-    "schema": { "const": "ui-outline@1.0" },
+    "schema": { "enum": ["ui-outline@1.0", "ui-outline@1.1"] },
     "root": { "type": "string", "maxLength": 200 },
     "truncated": { "type": "boolean" },
     "nodes": {
@@ -27,11 +27,14 @@
           "classes": { "type": "array", "maxItems": 5, "items": { "type": "string", "maxLength": 30 } },
           "editable": { "const": true },
           "text": { "type": "integer", "minimum": 0 },
-          "repeat": { "type": "integer", "minimum": 1 }
+          "repeat": { "type": "integer", "minimum": 1 },
+          "link": { "description": "@1.1: a link's target as a kind, never the URL: external (another site, http(s)), site (this site), or none (no target, or another scheme).", "enum": ["external", "site", "none"] }
         },
         "additionalProperties": false
       }
     }
   },
-  "additionalProperties": false
+  "additionalProperties": false,
+  "if": { "properties": { "nodes": { "type": "array", "contains": { "type": "object", "properties": { "link": { "type": "string" } }, "required": ["link"] } } }, "required": ["nodes"] },
+  "then": { "properties": { "schema": { "const": "ui-outline@1.1" } } }
 }

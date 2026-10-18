@@ -50,6 +50,11 @@ driver, its operations are data: a UI map,
     without the picker.
 - **Deep research** (normal chats only; Temporary chat does not offer it):
   - It is chosen under Upload & tools → More tools, and its chip proves it.
+  - It runs on the site's own research model: no mode preset applies, and the
+    mode picker is left as the site has it, as a user who picks the tool does.
+    The turn's mode is recorded as the site's (feature `deep-research`, no model
+    or thinking level). Live on 2026-10-18 three runs that chose Pro and High
+    with it got the site's own error at once.
   - A reopened Deep research conversation keeps it chosen: a plain turn there
     clears the chip first (or sends nothing), and a Deep research follow-up
     keeps it, since choosing its checkbox again would turn it off.

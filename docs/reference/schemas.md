@@ -312,4 +312,7 @@ guesses.
   or URLs.
 - `depth` counts kept nodes only; `repeat` counts like siblings folded into the
   node. At most 200 nodes; `truncated` says the bound cut it short.
+- `ui-outline@1.1` adds a link's `link`: its target as a kind, never the URL
+  (`external`, another site over http(s); `site`; or `none`). An outline that
+  holds one names `@1.1`; readers accept 1.0 and 1.1.
 - Example: [ui-outline.composer.json](../../schemas/examples/ui-outline.composer.json).

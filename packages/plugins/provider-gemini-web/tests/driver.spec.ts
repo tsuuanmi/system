@@ -401,6 +401,15 @@ describe.runIf(canRunBrowser)('GeminiWebDriver against the fake site', { timeout
     await expect(patient.ask(page, 'Another long survey', { conversation: 'persistent', feature: 'deep-research' })).rejects.toMatchObject({ kind: 'provider_stalled' })
   }, 90_000)
 
+  it('applies no mode preset to Deep research: the picker stays as the site has it, and the mode is recorded as the site\'s (live 2026-10-18)', async () => {
+    const { page, driver, fake } = await open()
+    const result = await driver.ask(page, 'Compare HTTP/2 and HTTP/3', { conversation: 'persistent', feature: 'deep-research', mode: 'pro' })
+    expect(result.mode).toEqual({})
+    // Sent with the site's own selection, not the frontier preset's Pro.
+    expect(fake.sent[0]!.model).not.toMatch(/Pro/)
+    expect(fake.sent[0]).toMatchObject({ deepResearch: true })
+  })
+
   it('returns a clarifying question as the answer when Deep research asks one instead of a plan', async () => {
     const { page, driver, fake } = await open({ clarify: 'Which aspect should the research focus on?' })
     const result = await driver.ask(page, 'Compare HTTP/2 and HTTP/3', { conversation: 'persistent', feature: 'deep-research' })

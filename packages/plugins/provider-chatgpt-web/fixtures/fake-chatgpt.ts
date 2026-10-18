@@ -135,10 +135,14 @@ interface Conversation {
   researches: Array<{ done: boolean; report: string }>
 }
 
+/** The source pills of an inline report (the app shell of 2026-10-18): one shown, one in its overflow. */
+const INLINE_PILLS = '<div><a data-inline-mention-interactive data-search-result-target href="https://www.sqlite.org/wal.html">sqlite.org</a><a data-inline-mention-interactive data-search-result-target href="https://docs.example/notes" hidden>docs.example</a></div>'
+
 /** A run in the app shell of 2026-10-18: no frame; while it runs, its progress; once done, its report as an answer. */
 export function inlineRun(research: { done: boolean; report: string }): string {
   return research.done
-    ? `<div class="turn"><p>Research completed in 1m · 3 citations</p><div><h4 class="sr-only">ChatGPT said:</h4><p>${research.report}</p></div><div><button aria-label="Copy">c</button></div></div>`
+    // Its citations as source pills after the answer's own container, as the live shell (2026-10-18).
+    ? `<div class="turn"><p>Research completed in 1m · 3 citations</p><div><h4 class="sr-only">ChatGPT said:</h4><p>${research.report}</p></div>${INLINE_PILLS}<div><button aria-label="Copy">c</button></div></div>`
     : '<div class="turn"><p>Researching...</p><button>Stop research</button></div>'
 }
 
@@ -383,7 +387,7 @@ async function send() {
           // which may render a moment later.
           run.innerHTML = '<p>Research completed in 1m · 3 citations</p>'
           setTimeout(() => {
-            run.insertAdjacentHTML('beforeend', '<div><h4 class="sr-only">ChatGPT said:</h4><p>' + state.report + '</p></div><div><button aria-label="Copy">c</button></div>')
+            run.insertAdjacentHTML('beforeend', '<div><h4 class="sr-only">ChatGPT said:</h4><p>' + state.report + '</p></div>' + ${JSON.stringify(INLINE_PILLS)} + '<div><button aria-label="Copy">c</button></div>')
             run.querySelector('[aria-label="Copy"]').addEventListener('click', () => navigator.clipboard.writeText(copy))
           }, options.inlineReportDelayMs)
         }, 300)

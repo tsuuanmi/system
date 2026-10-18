@@ -196,8 +196,11 @@ export class GeminiWebDriver implements ProviderDriver<Page> {
     // A reopened Deep research conversation keeps Deep research chosen: a plain turn clears it.
     else if ((await engine.count('composer.deep-research')) > 0) await engine.act('composer.clear-deep-research')
     // The mode first, as on ChatGPT: a long prompt grows the composer around the mode picker (live
-    // 2026-10-17, a review's 26,000 characters: mode.open missed its postcondition).
-    const mode = await this.selectMode(page, preset)
+    // 2026-10-17, a review's 26,000 characters: mode.open missed its postcondition). Deep research
+    // runs on the site's own research model: no preset applies, and the picker is left as the site
+    // has it, as a user who picks the tool does (three runs on 2026-10-18 that chose Pro and High
+    // with it got the site's error at once). Its mode is recorded as the site's: no model or level.
+    const mode = feature === 'deep-research' ? {} : await this.selectMode(page, preset)
     await engine.act('composer.insert', { text: prompt })
     const asked = await engine.count('turn.user')
     try {

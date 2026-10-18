@@ -243,6 +243,19 @@ describe.runIf(canRunBrowser)('UiEngine on a real page', { timeout: 15_000 }, ()
     expect((await outlineOf(tab.locator('aside'), 'aside')).truncated).toBe(true)
   })
 
+  it('records each link\'s target as a kind, never the URL (ui-outline@1.1)', async () => {
+    const links = '<nav><a href="https://src.example/secret-path">a</a><a href="/c/123">b</a><a>c</a><a href="javascript:void 0">d</a></nav>'
+    const { tab } = await open(page('<form data-type="composer"><div contenteditable role="textbox"></div></form>', links))
+    const { outlineOf } = await import('../src/index.ts')
+    const outline = await outlineOf(tab.locator('nav'), 'nav')
+    expect(outline.schema).toBe('ui-outline@1.1')
+    // The two links with no target fold into one node, as like siblings do.
+    expect(outline.nodes.filter((n) => n.tag === 'a').map((n) => [n.link, n.repeat])).toEqual([['external', undefined], ['site', undefined], ['none', 1]])
+    expect(JSON.stringify(outline)).not.toMatch(/src\.example|secret-path|\/c\/123/)
+    // With no link in it, an outline stays @1.0.
+    expect((await outlineOf(tab.locator('form'), 'form')).schema).toBe('ui-outline@1.0')
+  })
+
   it('folds a run of like siblings into one node, and bounds the outline', async () => {
     const chats = Array.from({ length: 300 }, (_, i) => `<li role="option" aria-label="Chat ${i}"><a href="/c/${i}" aria-label="secret title ${i}">t</a></li>`).join('')
     const buttons = Array.from({ length: 300 }, (_, i) => `<button data-testid="b${i}">x</button>`).join('')

@@ -287,15 +287,16 @@ describe.runIf(canRunBrowser)('ChatGptWebDriver against the fake site, with no r
   it('reads a report the app shell shows inline as the last answer, with no frame, in a turn and in a snapshot (live 2026-10-18)', async () => {
     const { page, driver, context } = await site({ researchInline: true, report: 'Inline report body.' })
     const turn = await driver.ask(page, 'Survey inline', { conversation: 'persistent', feature: 'deep-research' })
-    // Not the acknowledgement: the answer after the completion line, as its Copy gives it.
-    expect(turn.text).toBe('Inline report body.')
+    // Not the acknowledgement: the answer after the completion line, as its Copy gives it, then its
+    // source pills' links (one of them in the overflow), which stand outside the answer's container.
+    expect(turn.text).toBe('Inline report body.\n\nSources:\n- sqlite.org https://www.sqlite.org/wal.html\n- docs.example https://docs.example/notes')
     const other = await context.newPage()
-    expect(await driver.snapshot(other, turn.binding!, { feature: 'deep-research' })).toMatchObject({ text: expect.stringMatching(/Inline report body\.$/), running: false, observable: true })
+    expect(await driver.snapshot(other, turn.binding!, { feature: 'deep-research' })).toMatchObject({ text: expect.stringMatching(/^Inline report body\.\n\nSources:/), running: false, observable: true })
   }, 60_000)
 
   it('keeps reading a report marked complete before its answer renders, and never takes the earlier answer for it', async () => {
     const { page, driver } = await site({ researchInline: true, inlineReportDelayMs: 3000, report: 'Late report body.' })
-    expect((await driver.ask(page, 'Survey late', { conversation: 'persistent', feature: 'deep-research' })).text).toBe('Late report body.')
+    expect((await driver.ask(page, 'Survey late', { conversation: 'persistent', feature: 'deep-research' })).text).toMatch(/^Late report body\.\n\nSources:\n- sqlite\.org https:\/\/www\.sqlite\.org\/wal\.html/)
   }, 60_000)
 
   it('fails a completed report it cannot read as drift, outlined, and never takes the acknowledgement for it', async () => {
