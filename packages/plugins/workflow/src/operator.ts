@@ -237,7 +237,8 @@ async function endExecutions(e: Engine, runId: string, nodeId: string): Promise<
     const id = node.execution_id!
     const source = node.source ? e.ctx.workers.source(node.source) : undefined
     if (!source?.cancel) throw new WorkflowFailure('invalid_input', `node ${node.node_id}'s execution ${id} runs on ${node.source ?? 'no source'}, which cannot cancel it now (its row is off?); nothing was superseded`)
-    source.cancel(id)
+    const active = source.get(id)
+    const cancelled = !!active && (active.status === 'queued' || active.status === 'running') && source.cancel(id)
     const deadline = Date.now() + CANCEL_WAIT_MS
     let current = source.get(id)
     while (current && (current.status === 'queued' || current.status === 'running') && Date.now() < deadline) {
@@ -250,7 +251,9 @@ async function endExecutions(e: Engine, runId: string, nodeId: string): Promise<
     // Answered before the cancel landed: that answer is history too.
     ended.set(node.node_id, current?.status === 'completed' && current.result
       ? { reason: `its execution ${id} had already finished; its result ${current.result} is history, never taken or resent`, result: current.result }
-      : { reason: `its execution ${id} was cancelled first, so it never runs beside the new attempt (work already sent is not undone)` })
+      : cancelled
+        ? { reason: `its execution ${id} was cancelled first, so it never runs beside the new attempt (work already sent is not undone)` }
+        : { reason: `its execution ${id} had already ended (${current?.error?.kind ?? current?.status ?? 'gone'}); nothing of it is taken or resent` })
   }
   return ended
 }

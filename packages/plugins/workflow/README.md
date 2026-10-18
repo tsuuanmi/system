@@ -327,7 +327,8 @@ second execution path (INV-1).
       beside the orphaned one (INV-4).
     - An execution that had already finished keeps its result as history: the
       node's `recovery` decision names it and says so, and it is never taken
-      or resent.
+      or resent. One that had ended otherwise (a reconciliation that failed
+      closed, say) is named with how it ended, and nothing of it is taken.
   - **Re-planning** ([design](../../../docs/design/workflow-engine.md#re-planning)):
     a planner downstream of the replacement plans again, and a replaced planner's
     result is its new plan (an invalid one is refused, and nothing changes).
