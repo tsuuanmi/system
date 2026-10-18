@@ -109,6 +109,8 @@ export interface FakeOptions {
   researchMs?: number
   /** Deep research stays running, however long, until a test sets this back to false. */
   researchHeld?: boolean
+  /** While it works, the report panel lists its thoughts, one more every 300 ms (seen live on 2026-10-18). */
+  researchActivity?: boolean
   /** The finished report's text, and the sources it used. */
   report?: string
   sources?: Array<{ title: string; url: string }>
@@ -273,12 +275,19 @@ function researchTurn(turn) {
   return el
 }
 function openPanel(turn) {
+  // While it works, the live panel grows its thinking in place: one more thought, never a new panel.
+  const thinking = document.querySelector('#panel thinking-panel')
+  if (!turn.done && turn.thoughts !== undefined && thinking) {
+    while (thinking.children.length < turn.thoughts) thinking.insertAdjacentHTML('beforeend', '<thought-item>Read a source and noted it.</thought-item>')
+    return
+  }
   const sources = (turn.sources ?? []).map((s) => '<browse-web-item><a data-test-id="browse-web-item-link" href="' + s.url + '"><div data-test-id="sub-title">' + escape(s.title) + '</div></a></browse-web-item>').join('')
   $('panel').innerHTML = '<deep-research-immersive-panel><toolbar><h2 class="title-text">' + escape(turn.title) + '</h2><button aria-label="Table of contents menu">Contents</button><button>Share &amp; Export</button><button aria-label="Close panel">x</button></toolbar>'
     + (turn.done ? '<message-content id="extended-response-message-content"><div class="markdown">' + renderMarkdown(turn.report) + '</div></message-content>'
       + '<deep-research-source-lists><collapsible-button data-test-id="used-sources-button"><button>Sources used in the report</button></collapsible-button><div>' + sources + '</div>'
       + '<collapsible-button data-test-id="unused-sources-button"><button>Sources read but not used in the report</button></collapsible-button><div><browse-web-item><a data-test-id="browse-web-item-link" href="https://unused.example/">'
-      + '<div data-test-id="sub-title">Read, not used</div></a></browse-web-item></div></deep-research-source-lists>' : '<p>Researching...</p>')
+      + '<div data-test-id="sub-title">Read, not used</div></a></browse-web-item></div></deep-research-source-lists>'
+      : turn.thoughts !== undefined ? '<thinking-panel>' + '<thought-item>Read a source and noted it.</thought-item>'.repeat(turn.thoughts) + '</thinking-panel>' : '<p>Researching...</p>')
     + '</deep-research-immersive-panel>'
 }
 function renderLog(turns) {
@@ -383,6 +392,7 @@ ${missing ? '<div role="alert" id="missing">Unable to load this conversation</di
 <div role="menu" id="conv-menu" hidden><div role="menuitem" tabindex="0">Share conversation</div><div role="menuitem" tabindex="0">Pin</div><div role="menuitem" tabindex="0" id="conv-delete">Delete</div></div>
 <div role="dialog" aria-label="Delete chat?" id="conv-dialog" hidden><p>You'll no longer see this chat here.</p><button id="conv-cancel">Cancel</button><button id="conv-confirm">Delete</button></div>
 <div><button data-test-id="app-tab-chat" class="app-tab" id="tab-chat">Chat</button><button data-test-id="app-tab-agent" class="app-tab" id="tab-spark">Spark<br>BETA</button></div>
+<chat-window>
 <main>
   <div class="description" id="notice" hidden> <a href="#">Temporary chats</a> don't appear in recent chats <a href="#">and</a> aren't used to improve Google AI.</div>
   <section id="log"></section>
@@ -397,6 +407,7 @@ ${missing ? '<div role="alert" id="missing">Unable to load this conversation</di
   </div>
 </main>
 <aside id="panel"></aside>
+</chat-window>
 <div role="menu" id="menu" hidden></div>
 <div role="menu" id="tools-menu" hidden>
   <div role="menuitem">Upload files</div>
@@ -434,7 +445,7 @@ export class FakeGemini {
     this.options = {
       paneMenu: true, dialogTarget: '', dialogExtraCall: false, startOnSpark: true, interstitial: false, captcha: false, deviceBound: false, holdAnswer: false, promptLagMs: 0, rewritePaste: false, draftPersist: false, dropOver: 0, signInOffer: false, termsNotice: false, chatTabBroken: false, temporaryBroken: false, modePicker: true, promptParagraphs: true, deepResearch: true,
       models: ['3.5 Flash-Lite', '3.8 Flash', '3.1 Pro'], levels: ['Low', 'Medium', 'High'], levelsInline: true, levelsSubmenu: true, submenuBroken: false, answer: 'OK', clarify: '',
-      researchMs: 1500, researchHeld: false, report: 'HTTP/3 runs over QUIC, not TCP.', sources: [{ title: 'RFC 9114: HTTP/3', url: 'https://www.rfc-editor.org/rfc/rfc9114' }], ...options,
+      researchMs: 1500, researchHeld: false, researchActivity: false, report: 'HTTP/3 runs over QUIC, not TCP.', sources: [{ title: 'RFC 9114: HTTP/3', url: 'https://www.rfc-editor.org/rfc/rfc9114' }], ...options,
     }
   }
 
@@ -453,7 +464,8 @@ export class FakeGemini {
   /** A conversation's turns as the page renders them; research is done once its time has passed. */
   private view(id: string): unknown[] {
     return (this.conversations.get(id) ?? []).map((turn) => turn.role === 'research'
-      ? { ...turn, done: !this.options.researchHeld && Date.now() - turn.startedAt >= this.options.researchMs, report: this.options.report, sources: this.options.sources }
+      ? { ...turn, done: !this.options.researchHeld && Date.now() - turn.startedAt >= this.options.researchMs, report: this.options.report, sources: this.options.sources,
+        ...(this.options.researchActivity ? { thoughts: Math.floor((Date.now() - turn.startedAt) / 300) } : {}) }
       : turn)
   }
 

@@ -96,6 +96,8 @@ export interface FakeOptions {
    * is an ordinary answer after the prompt, opening with "Research completed in ...", with its own Copy.
    */
   researchInline?: boolean
+  /** Inline, the completion line shows this long before the report's answer renders after it. */
+  inlineReportDelayMs?: number
   /** A finished report frame shows no title, so its report cannot be read (a drift test). */
   untitledReport?: boolean
   /** Deep research report text. */
@@ -136,7 +138,7 @@ interface Conversation {
 /** A run in the app shell of 2026-10-18: no frame; while it runs, its progress; once done, its report as an answer. */
 export function inlineRun(research: { done: boolean; report: string }): string {
   return research.done
-    ? `<div class="turn"><div><h4 class="sr-only">ChatGPT said:</h4><p>Research completed in 1m · 3 citations</p><p>${research.report}</p></div><div><button aria-label="Copy">c</button></div></div>`
+    ? `<div class="turn"><p>Research completed in 1m · 3 citations</p><div><h4 class="sr-only">ChatGPT said:</h4><p>${research.report}</p></div><div><button aria-label="Copy">c</button></div></div>`
     : '<div class="turn"><p>Researching...</p><button>Stop research</button></div>'
 }
 
@@ -376,9 +378,14 @@ async function send() {
           const state = await (await fetch('/_/research/' + convId + '/' + index)).json()
           if (!state.done) return
           clearInterval(poll)
-          const copy = 'Research completed in 1m · 3 citations\\n\\n' + state.report
-          run.innerHTML = '<div><h4 class="sr-only">ChatGPT said:</h4><p>Research completed in 1m · 3 citations</p><p>' + state.report + '</p></div><div><button aria-label="Copy">c</button></div>'
-          run.querySelector('[aria-label="Copy"]').addEventListener('click', () => navigator.clipboard.writeText(copy))
+          const copy = state.report
+          // As the live shell (2026-10-18): the completion line stands before the answer's own container,
+          // which may render a moment later.
+          run.innerHTML = '<p>Research completed in 1m · 3 citations</p>'
+          setTimeout(() => {
+            run.insertAdjacentHTML('beforeend', '<div><h4 class="sr-only">ChatGPT said:</h4><p>' + state.report + '</p></div><div><button aria-label="Copy">c</button></div>')
+            run.querySelector('[aria-label="Copy"]').addEventListener('click', () => navigator.clipboard.writeText(copy))
+          }, options.inlineReportDelayMs)
         }, 300)
       } else if (typeof event.research === 'number') {
         // The run's embedded app goes after its prompt; it updates itself until the report is done.
@@ -448,7 +455,7 @@ export class FakeChatGpt {
 
   constructor(options: FakeOptions = {}) {
     this.options = {
-      startOnWork: true, chatToggleBroken: false, signedIn: true, loginOffer: false, requireCookie: false, rotateOnLoad: false, deleteMenu: true, captcha: false, interstitial: false, deviceBound: false, researchInline: false, untitledReport: false, errorPages: 0, loggedOutHome: false, logoutFlashMs: 0, paneMenu: true, dialogTarget: '', userId: 'user-fake123', sendLabel: 'Send', sendTestId: '',
+      startOnWork: true, chatToggleBroken: false, signedIn: true, loginOffer: false, requireCookie: false, rotateOnLoad: false, deleteMenu: true, captcha: false, interstitial: false, deviceBound: false, researchInline: false, inlineReportDelayMs: 0, untitledReport: false, errorPages: 0, loggedOutHome: false, logoutFlashMs: 0, paneMenu: true, dialogTarget: '', userId: 'user-fake123', sendLabel: 'Send', sendTestId: '',
       answer: 'OK', thinkMs: 300, models: ['Latest', 'GPT-6', 'GPT-5.6 Sol', 'GPT-5.5'], lockedModels: [],
       researchMs: 1500, researchHeld: false, report: 'Deep research report body.', clarify: false, features: ['deep-research', 'web-search', 'image-generation'], modelPicker: true,
       mfa: 'totp', email: 'operator@example.test', password: 'correct horse', totpSecret: 'JBSWY3DPEHPK3PXP',

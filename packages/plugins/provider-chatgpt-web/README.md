@@ -131,9 +131,10 @@ The **ChatGPT Web provider driver**
     the live layout of 2026-10-12);
   - the app shell seen live on 2026-10-18 shows no frame, or a frame with no
     title: the run's markers are then looked for in the page after the last
-    prompt, and the report is read inline, as the last answer, only when that
-    answer itself says the research completed (never the acknowledgement), by
-    its own Copy, as any answer is;
+    prompt, and the report is read inline, as the last answer, by its own Copy,
+    as any answer is. Marked complete in the page, the report is the answer that
+    holds or follows the mark (the acknowledgement comes before it); marked
+    complete in a frame only, it is an answer that is not the acknowledgement;
   - citation links are appended as a `Sources:` list (label and URL), because
     rendered text keeps only the link labels;
   - a completed report that stays unreadable for `reportReadMs` (30 s) fails as

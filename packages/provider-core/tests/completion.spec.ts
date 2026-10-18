@@ -22,6 +22,22 @@ describe('waitForStableCompletion (two clocks)', () => {
       .rejects.toMatchObject({ kind: 'provider_stalled' })
   })
 
+  it('counts a change in the work shown before any text as progress, so it is no stall while that grows', async () => {
+    let calls = 0
+    // No text for 30 polls, but its progress changes on each: then the answer.
+    const response = await waitForStableCompletion(async () => (++calls < 30
+      ? { responsePresent: false, text: '', html: '', running: true, progress: String(calls) }
+      : snapshot('Report', false)), { timeoutMs: 2000, stallTimeoutMs: 40, pollMs: 5, stableMs: 10 })
+    expect(response.text).toBe('Report')
+    // Progress never moves the hard deadline: work that keeps changing still times out.
+    let ticks = 0
+    await expect(waitForStableCompletion(async () => ({ responsePresent: false, text: '', html: '', running: true, progress: String(++ticks) }), { timeoutMs: 100, stallTimeoutMs: 40, pollMs: 5, stableMs: 10 }))
+      .rejects.toMatchObject({ kind: 'timeout' })
+    // The same work, unchanged, is still a stall.
+    await expect(waitForStableCompletion(async () => ({ responsePresent: false, text: '', html: '', running: true, progress: '7' }), { timeoutMs: 500, stallTimeoutMs: 40, pollMs: 5, stableMs: 10 }))
+      .rejects.toMatchObject({ kind: 'provider_stalled' })
+  })
+
   it('emits progress only for meaningful transitions', async () => {
     const sequence = [
       { responsePresent: false, text: '', html: '', running: false },

@@ -6,6 +6,11 @@ export interface CompletionSnapshot {
   text: string
   html: string
   running: boolean
+  /**
+   * Work the provider shows before any answer text (Deep research's growing activity, say): any
+   * change counts as progress, so the stall clock does not run out while it grows.
+   */
+  progress?: string
 }
 
 export interface CompletedResponse {
@@ -88,6 +93,7 @@ export async function waitForStableCompletion(read: () => Promise<CompletionSnap
       emit(options.onProgress, 'response_changed', at)
       lastProgressAt = at
     }
+    if (previous !== undefined && snapshot.progress !== previous.progress) lastProgressAt = at
     previous = snapshot
 
     if (snapshot.responsePresent && text.length > 0) {

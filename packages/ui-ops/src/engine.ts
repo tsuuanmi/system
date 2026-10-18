@@ -359,7 +359,8 @@ export class UiEngine {
   /**
    * Report a stale map once per element and kind for this page, with a structural outline: of the
    * found element's parent on a fallback, of an unresolved element's scope, or else of the page
-   * body. An outline that cannot be read is left out; it never fails the turn.
+   * body, its side navigation folded. An outline that cannot be read is left out; it never fails
+   * the turn.
    */
   private async reportDrift(element: string, kind: DriftEvent['kind'], candidate: number, source?: 'shipped' | 'overlay', found?: Locator, readback?: ReadbackDiff): Promise<void> {
     if (!this.options.onDrift || this.drifted.has(`${kind}\0${element}`)) return
@@ -368,14 +369,17 @@ export class UiEngine {
     const scope = kind === 'unresolved' && spec?.scope ? await this.tryResolve(spec.scope).catch(() => undefined) : undefined
     const root = found ? found.first().locator('xpath=..') : scope?.locator
     const redact = await this.options.redact?.().catch(() => []) ?? []
-    const outline = await outlineOf(root ?? this.page, found ? `parent of ${element}` : scope ? spec!.scope! : 'body', undefined, redact).catch(() => undefined)
+    const outline = await outlineOf(root ?? this.page, found ? `parent of ${element}` : scope ? spec!.scope! : 'body', undefined, redact, { foldNavigation: !root }).catch(() => undefined)
     this.options.onDrift({ provider: this.map.provider, element, kind, candidate, ...(source ? { source } : {}), mapHash: this.map.hash, ...(outline ? { outline } : {}), ...(readback ? { readback } : {}) })
   }
 
-  /** The page as it stands, for a stall: outlined (structure only, redacted), with its visibility, focus, and path. */
+  /**
+   * The page as it stands, for a stall: outlined (structure only, redacted, its side navigation
+   * folded), with its visibility, focus, and path.
+   */
   async stall(phase: string): Promise<StallEvent> {
     const redact = await this.options.redact?.().catch(() => []) ?? []
-    const outline = await outlineOf(this.page, `turn page (${phase} stalled)`, undefined, redact).catch(() => undefined)
+    const outline = await outlineOf(this.page, `turn page (${phase} stalled)`, undefined, redact, { foldNavigation: true }).catch(() => undefined)
     const seen = await this.page.evaluate(() => ({ visibility: document.visibilityState as string, focused: document.hasFocus() })).catch(() => undefined)
     let url: string | undefined
     try {

@@ -57,6 +57,9 @@ driver, its operations are data: a UI map,
     **Start research**, which the site records as a user turn of its own.
   - The research card goes from `processing` to `completed`. The report is read
     from the report panel, followed by a `Sources:` list of the sources it used.
+  - While it works, the panel's thinking (`research.activity`) grows; that growth
+    is progress, so a run that keeps working past the stall deadline is not
+    taken for a stall (live 2026-10-18). The turn's hard deadline still bounds it.
   - A reply without a plan is a clarifying question, returned as the answer.
 - **Completion:** the answer is the last `model-response`. It is running while
   "Stop response" shows or its own Copy is missing, and done on stable text

@@ -64,6 +64,8 @@ export interface ResearchState {
   running: boolean
   done: boolean
   text: string
+  /** What the run shows while it works (its activity), when it shows any: a change is progress. */
+  progress?: string
 }
 
 /**
@@ -81,7 +83,7 @@ export async function waitForReport(state: () => Promise<ResearchState>, timeout
         throw new ProviderError('ui_drift', `${options.provider}: Deep research completed, but its report cannot be read; update ${options.element} in the UI map`)
       }
     } else unreadableSince = undefined
-    return { responsePresent: current.done && current.text !== '', text: current.text, html: '', running: !current.done }
+    return { responsePresent: current.done && current.text !== '', text: current.text, html: '', running: !current.done, ...(current.progress !== undefined ? { progress: current.progress } : {}) }
   }, completionOptions(timeouts, options.deadlines, options.signal, Math.max(timeouts.pollMs, 1000)))
   return completed.text
 }

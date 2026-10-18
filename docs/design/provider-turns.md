@@ -178,7 +178,8 @@ Completion is observed with two independent deadlines:
 
 - **hard deadline:** the absolute upper bound for the turn;
 - **stall deadline:** reset only by *meaningful* transitions, meaning response text
-  changed or generation started or stopped.
+  changed, generation started or stopped, or the work a driver reports before any
+  text changed (its `progress`, such as Deep research's growing activity).
 
 **Generating** is read from the composer's action slot. While the website
 generates, the slot shows **Stop**. When it is idle, the slot shows **Send** again

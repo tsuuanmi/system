@@ -10,7 +10,7 @@
 import { readFileSync } from 'node:fs'
 import { type AskOptions, type AskResult, type AuthState, bindingReporter, completionOptions, type ConversationMode, type DeleteOptions, modePresets, ProviderError, type ProviderDriver, type ProviderFeature, type ProviderMode, type ResearchState, type TurnSnapshot, waitForReport, waitForStableCompletion, withMissingSources } from '@tsuuanmi/system-provider-core'
 import { copiedMarkdown, type DriftEvent, type HealEvent, linksIn, outlineOf, preWrapText, type StallEvent, UiEngine, type UiMap, type UiOutline, loadUiMap, unverifiedEntries } from '@tsuuanmi/system-ui-ops'
-import type { Frame, Page, Route } from 'patchright-core'
+import type { Frame, Locator, Page, Route } from 'patchright-core'
 
 export type { AskOptions, AskResult, AuthState, ConversationMode, ProviderMode }
 
@@ -469,36 +469,50 @@ export class ChatGptWebDriver implements ProviderDriver<Page> {
   /**
    * The run of the last prompt: in its report frame (live layout of 2026-10-12), or inline as the
    * last answer, when the run shows no frame or its frame no report (the app shell seen live on
-   * 2026-10-18, whose report sits in the conversation with its own Copy).
+   * 2026-10-18, whose report sits in the conversation with its own Copy). `ack` is the run's
+   * acknowledgement, when known: the report is never it.
    */
-  private async researchState(page: Page, engine: UiEngine): Promise<ResearchState> {
+  private async researchState(page: Page, engine: UiEngine, ack?: string): Promise<ResearchState> {
     for (const frame of await this.researchFrames(engine)) {
-      if (await engine.findIn('research.completed', frame)) return { running: false, done: true, text: (await this.reportText(engine, frame)) || (await this.inlineReport(page, engine)) }
+      if (await engine.findIn('research.completed', frame)) return { running: false, done: true, text: (await this.reportText(engine, frame)) || (await this.inlineReport(page, engine, { ack })) }
       if (await engine.findIn('research.running', frame)) return { running: true, done: false, text: '' }
     }
-    if (await this.afterPrompt(engine, 'research.completed')) return { running: false, done: true, text: await this.inlineReport(page, engine) }
+    const marker = await this.afterPrompt(engine, 'research.completed')
+    if (marker) return { running: false, done: true, text: await this.inlineReport(page, engine, { marker, ack }) }
     if (await this.afterPrompt(engine, 'research.running')) return { running: true, done: false, text: '' }
     return { running: false, done: false, text: '' }
   }
 
-  /** Whether `id` shows in the page itself after the last prompt (an earlier run's never counts). */
-  private async afterPrompt(engine: UiEngine, id: string): Promise<boolean> {
-    if ((await engine.count(id)) === 0) return false
+  /** The last `id` in the page itself, if it follows the last prompt (an earlier run's never counts). */
+  private async afterPrompt(engine: UiEngine, id: string): Promise<Locator | undefined> {
+    if ((await engine.count(id)) === 0) return undefined
     const found = (await engine.resolve(id, 1000)).locator.last()
-    if ((await engine.count('turn.user')) === 0) return true
+    if ((await engine.count('turn.user')) === 0) return found
     const user = await (await engine.resolve('turn.user', 1000)).locator.last().elementHandle()
-    return found.evaluate((f, u) => !!u && (u.compareDocumentPosition(f) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0, user).catch(() => false)
+    return (await found.evaluate((f, u) => !!u && (u.compareDocumentPosition(f) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0, user).catch(() => false)) ? found : undefined
   }
 
   /**
    * The report as the last answer, read as an answer is (its own Copy, else the rendered text with
-   * its links); only an answer that itself says the research completed, never the acknowledgement.
+   * its links). With the run marked complete in the page, only the answer that holds or follows
+   * the mark (the acknowledgement comes before it); marked complete in its frame only, only an
+   * answer that is not the acknowledgement.
    */
-  private async inlineReport(page: Page, engine: UiEngine): Promise<string> {
+  private async inlineReport(page: Page, engine: UiEngine, run: { marker?: Locator; ack?: string | undefined }): Promise<string> {
     if ((await engine.count('turn.assistant')) === 0) return ''
     const answer = (await engine.resolve('turn.assistant', 1000)).locator.last().locator('xpath=..')
-    if (!(await engine.findIn('research.completed', answer))) return ''
-    return this.markdownOf(page, await this.answerText(engine))
+    const rendered = await this.answerText(engine)
+    if (run.marker) {
+      // The page marks the run complete: the report is the answer that holds or follows the mark.
+      const marker = await run.marker.elementHandle()
+      const after = await answer.evaluate((a, m) => !!m && (a.contains(m) || (m.compareDocumentPosition(a) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0), marker).catch(() => false)
+      if (!after) return ''
+    } else {
+      // Marked complete in its frame only: never the acknowledgement, and never without knowing it.
+      const same = (a: string, b: string): boolean => a.replace(/\s+/g, ' ').trim() === b.replace(/\s+/g, ' ').trim()
+      if (run.ack === undefined || same(rendered, run.ack)) return ''
+    }
+    return this.markdownOf(page, rendered)
   }
 
   private bindingOf(page: Page): string | undefined {
@@ -632,13 +646,13 @@ export class ChatGptWebDriver implements ProviderDriver<Page> {
     const engine = this.engine(page)
     const startBy = Date.now() + this.timeouts.researchStartMs
     for (;;) {
-      const state = await this.researchState(page, engine)
+      const state = await this.researchState(page, engine, reply)
       if (state.running || state.done) break
       if (Date.now() > startBy) return reply
       signal?.throwIfAborted()
       await page.waitForTimeout(500)
     }
-    return waitForReport(() => this.researchState(page, engine), this.timeouts, { provider: this.provider, element: 'research.report-title', deadlines, signal }).catch(async (error: unknown) => {
+    return waitForReport(() => this.researchState(page, engine, reply), this.timeouts, { provider: this.provider, element: 'research.report-title', deadlines, signal }).catch(async (error: unknown) => {
       await this.stalled(engine, 'research', error)
       // A completed report that cannot be read is outlined as drift evidence of the report's entry.
       if (error instanceof ProviderError && error.kind === 'ui_drift') await engine.drift('research.report-title').catch(() => undefined)

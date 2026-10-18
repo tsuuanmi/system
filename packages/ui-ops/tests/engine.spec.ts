@@ -223,6 +223,26 @@ describe.runIf(canRunBrowser)('UiEngine on a real page', { timeout: 15_000 }, ()
     expect(JSON.stringify(outline)).not.toMatch(/ann\.lee@|Ann Lee/)
   })
 
+  it('folds side navigation in page-wide outlines, so the page\'s content keeps the node budget (live 2026-10-18)', async () => {
+    const stuck = loadUiMap(MAP.replace("verify: { attr: { of: composer.input, name: data-filled, present: true } }", "verify: { attr: { of: composer.input, name: data-never, present: true } }\n    timeouts: { verifyMs: 300 }"))
+    const side = `<aside><div role="navigation" aria-label="Chats">${Array.from({ length: 300 }, (_, i) => `<button data-testid="b${i}">x</button>`).join('')}</div></aside>`
+    const form = '<form data-type="composer"><div contenteditable data-testid="prompt-textarea" role="textbox"></div></form>'
+    // The navigation comes first in the page, as a sidebar does.
+    const sidebarFirst = (content: string): string => content.replace('<body>\n<main>', `<body>\n${side}<main>`)
+    const { engine, drift } = await open(sidebarFirst(page(form)), stuck)
+    const stalled = (await engine.stall('answer')).outline!
+    expect(stalled.truncated).toBe(false)
+    expect(stalled.nodes).toEqual(expect.arrayContaining([expect.objectContaining({ role: 'navigation', label: 'Chats' }), expect.objectContaining({ tag: 'main' }), expect.objectContaining({ tag: 'form' })]))
+    expect(stalled.nodes.some((n) => n.testid?.startsWith('b'))).toBe(false)
+    // A drift with no scope: the same.
+    await expect(engine.act('composer.insert', { text: 'hello' })).rejects.toMatchObject({ kind: 'ui_drift' })
+    expect(drift.find((d) => d.kind === 'postcondition')!.outline).toMatchObject({ root: 'body', truncated: false })
+    // An outline rooted elsewhere keeps everything: only page-wide ones fold.
+    const { outlineOf } = await import('../src/index.ts')
+    const { tab } = await open(sidebarFirst(page(form)))
+    expect((await outlineOf(tab.locator('aside'), 'aside')).truncated).toBe(true)
+  })
+
   it('folds a run of like siblings into one node, and bounds the outline', async () => {
     const chats = Array.from({ length: 300 }, (_, i) => `<li role="option" aria-label="Chat ${i}"><a href="/c/${i}" aria-label="secret title ${i}">t</a></li>`).join('')
     const buttons = Array.from({ length: 300 }, (_, i) => `<button data-testid="b${i}">x</button>`).join('')

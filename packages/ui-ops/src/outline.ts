@@ -44,11 +44,14 @@ const REDACTED = '[redacted]'
 /**
  * Outline `root` (a resolved element, or the page body). Any value that holds an email address,
  * or one of `redact` (the account's own name and address, as its driver reads them), is masked
- * whole, so an outline pasted elsewhere carries no identity by construction.
+ * whole, so an outline pasted elsewhere carries no identity by construction. With
+ * `foldNavigation` (a page-wide outline), an element marked `role="navigation"` below the root is
+ * kept as one node without its contents: a site's side navigation (its chats, its projects) never
+ * spends the node budget the page's content needs (live 2026-10-18).
  */
-export async function outlineOf(root: Page | Locator, name: string, limits = OUTLINE_LIMITS, redact: readonly string[] = []): Promise<UiOutline> {
+export async function outlineOf(root: Page | Locator, name: string, limits = OUTLINE_LIMITS, redact: readonly string[] = [], options: { foldNavigation?: boolean } = {}): Promise<UiOutline> {
   const handle = 'mainFrame' in root ? root.locator('body') : root
-  const walked = await handle.first().evaluate((el, max) => {
+  const walked = await handle.first().evaluate((el, { max, fold }) => {
     const INTERESTING = new Set(['button', 'a', 'input', 'textarea', 'select', 'form', 'main', 'nav', 'header', 'footer', 'aside', 'dialog', 'menu', 'h1', 'h2', 'h3', 'label', 'pre', 'code', 'img', 'svg'])
     const STATES = ['aria-pressed', 'aria-checked', 'aria-expanded', 'aria-selected', 'aria-disabled', 'aria-current', 'aria-hidden']
     const out: Array<Record<string, unknown>> = []
@@ -108,12 +111,14 @@ export async function outlineOf(root: Page | Locator, name: string, limits = OUT
         next = depth + 1
       }
       if (next > max.depth) return
+      // Side navigation, folded: the node stands, its contents are left out.
+      if (fold && depth > 0 && e.getAttribute('role') === 'navigation') return
       for (const child of e.children) walk(child, next)
       if (e.shadowRoot) for (const child of e.shadowRoot.children) walk(child, next)
     }
     walk(el, 0)
     return { nodes: out, truncated }
-  }, limits)
+  }, { max: limits, fold: options.foldNavigation === true })
   const terms = redact.map((t) => t.trim().toLowerCase()).filter((t) => t.length >= 3)
   const mask = (value: string): string => (EMAIL.test(value) || terms.some((t) => value.toLowerCase().includes(t)) ? REDACTED : value)
   const nodes = (walked.nodes as unknown as OutlineNode[]).map((n) => ({

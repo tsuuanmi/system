@@ -392,6 +392,15 @@ describe.runIf(canRunBrowser)('GeminiWebDriver against the fake site', { timeout
     expect(fake.started).toEqual([result.binding])
   })
 
+  it('takes a run whose activity keeps growing past the stall deadline for progress, and one that shows none for a stall (live 2026-10-18)', async () => {
+    const { page, fake } = await open({ researchMs: 10_000, researchActivity: true })
+    const patient = new GeminiWebDriver({ origin: fake.origin, modes: PRESETS, defaultMode: 'flash', timeouts: { readyMs: 5000, stableMs: 300, pollMs: 100, turnMs: 45_000, stallMs: 3000 } })
+    // Ten seconds of research, more than three times the stall deadline: its thoughts grow, so it is not a stall.
+    expect((await patient.ask(page, 'A long survey', { conversation: 'persistent', feature: 'deep-research' })).text).toMatch(/^HTTP\/3 runs over QUIC/)
+    fake.options.researchActivity = false
+    await expect(patient.ask(page, 'Another long survey', { conversation: 'persistent', feature: 'deep-research' })).rejects.toMatchObject({ kind: 'provider_stalled' })
+  }, 90_000)
+
   it('returns a clarifying question as the answer when Deep research asks one instead of a plan', async () => {
     const { page, driver, fake } = await open({ clarify: 'Which aspect should the research focus on?' })
     const result = await driver.ask(page, 'Compare HTTP/2 and HTTP/3', { conversation: 'persistent', feature: 'deep-research' })

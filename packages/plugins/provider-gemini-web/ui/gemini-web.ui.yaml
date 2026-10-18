@@ -110,6 +110,13 @@ elements:
     description: The report panel, opened beside the chat.
     candidates:
       - { css: 'deep-research-immersive-panel' }
+  research.activity:
+    description: >-
+      The run's thinking in the report panel while it works (live 2026-10-18: a growing list of
+      thoughts and sources read); its growth is progress, so a run that keeps working past the stall
+      deadline is not taken for a stall.
+    candidates:
+      - { css: 'deep-research-immersive-panel thinking-panel' }
   research.report:
     description: The report itself, without the panel's toolbar.
     scope: research.panel
