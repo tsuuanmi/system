@@ -284,6 +284,23 @@ describe.runIf(canRunBrowser)('ChatGptWebDriver against the fake site, with no r
     await expect(driver.ask(page, 'x', { conversation: 'temporary', feature: 'deep-research' })).rejects.toMatchObject({ kind: 'invalid_input' })
   }, 60_000)
 
+  it('reads a report the app shell shows inline as the last answer, with no frame, in a turn and in a snapshot (live 2026-10-18)', async () => {
+    const { page, driver, context } = await site({ researchInline: true, report: 'Inline report body.' })
+    const turn = await driver.ask(page, 'Survey inline', { conversation: 'persistent', feature: 'deep-research' })
+    // Not the acknowledgement: the answer that says the research completed, as its Copy gives it.
+    expect(turn.text).toBe('Research completed in 1m · 3 citations\n\nInline report body.')
+    const other = await context.newPage()
+    expect(await driver.snapshot(other, turn.binding!, { feature: 'deep-research' })).toMatchObject({ text: expect.stringMatching(/Inline report body\.$/), running: false, observable: true })
+  }, 60_000)
+
+  it('fails a completed report it cannot read as drift, outlined, and never takes the acknowledgement for it', async () => {
+    const { page, driver } = await site({ untitledReport: true, timeouts: { reportReadMs: 1000 } })
+    const drifts: Array<{ element: string; outline?: unknown }> = []
+    driver.onDrift = (event) => void drifts.push(event as never)
+    await expect(driver.ask(page, 'Survey untitled', { conversation: 'persistent', feature: 'deep-research' })).rejects.toMatchObject({ kind: 'ui_drift', message: expect.stringMatching(/report cannot be read/) })
+    expect(drifts.filter((d) => d.element === 'research.report-title')).toEqual([expect.objectContaining({ outline: expect.anything() })])
+  }, 60_000)
+
   it('reports the conversation binding as soon as the URL shows it, before the answer is complete', async () => {
     const { page, driver } = await site({ answer: 'late answer', thinkMs: 1500 })
     const order: string[] = []

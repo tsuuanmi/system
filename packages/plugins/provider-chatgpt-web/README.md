@@ -129,10 +129,16 @@ The **ChatGPT Web provider driver**
   - `research.running` / `research.completed` are resolved inside those frames.
     The report is the container of the report's title (`research.report-title`,
     the live layout of 2026-10-12);
+  - the app shell seen live on 2026-10-18 shows no frame, or a frame with no
+    title: the run's markers are then looked for in the page after the last
+    prompt, and the report is read inline, as the last answer, only when that
+    answer itself says the research completed (never the acknowledgement), by
+    its own Copy, as any answer is;
   - citation links are appended as a `Sources:` list (label and URL), because
     rendered text keeps only the link labels;
   - a completed report that stays unreadable for `reportReadMs` (30 s) fails as
-    `ui_drift`, not by waiting out the stall deadline;
+    `ui_drift`, not by waiting out the stall deadline, outlined as a `ui.drift`
+    of `research.report-title`;
   - a reply with no frame within `researchStartMs` is a clarifying question.
 - **Snapshot** (reconciliation) needs positive evidence. A page that has not
   rendered a user turn within `snapshotMs` (20 s) is not observed. The last

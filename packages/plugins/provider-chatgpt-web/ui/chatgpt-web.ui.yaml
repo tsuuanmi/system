@@ -88,11 +88,13 @@ elements:
 
   composer.form:
     description: >-
-      The composer: the form that holds the textbox. Live since 2026-10-11 it no longer matches
-      data-chatgpt-composer (every turn resolved on the plain form), so that candidate is the fallback.
+      The composer: the form that holds the textbox, in the main page. The app shell seen live on
+      2026-10-17 marks it data-chatgpt-composer again, and the plain form no longer resolved alone
+      (a floating chat can hold another): the marked form in main comes first.
     candidates:
-      - { css: 'form:has([role="textbox"][contenteditable="true"])' }
+      - { css: 'main form[data-chatgpt-composer]:has([role="textbox"][contenteditable="true"])' }
       - { css: 'form[data-chatgpt-composer]:has([role="textbox"][contenteditable="true"])' }
+      - { css: 'form:has([role="textbox"][contenteditable="true"])' }
   composer.input:
     scope: composer.form
     description: Live since 2026-10-11 the textbox's name no longer reads "Ask ChatGPT"; the markdown editor attribute matched every turn.
@@ -177,7 +179,8 @@ elements:
   research.report-title:
     description: >-
       The report's own title (level-1 heading) in the report frame; its container holds the
-      whole report (live layout of 2026-10-12, under "Export" and "Expand").
+      whole report (live layout of 2026-10-12, under "Export" and "Expand"). With no such frame
+      or title (the app shell of 2026-10-18), the report is read inline, as the last answer.
     candidates:
       - { css: 'h1' }
 
@@ -249,6 +252,8 @@ elements:
     candidates:
       - { role: button, name: { en: '^Open conversation options$' } }
       - { testId: conversation-options-button }
+      # The app shell seen live on 2026-10-18: "More" beside "Share" in the main title bar.
+      - { css: '[data-app-shell-main-titlebar] button[aria-label="More"]' }
   conversation.delete:
     unverified: true
     description: Delete in the open conversation's menu.

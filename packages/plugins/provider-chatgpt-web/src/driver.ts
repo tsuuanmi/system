@@ -337,7 +337,7 @@ export class ChatGptWebDriver implements ProviderDriver<Page> {
     if (options.feature === 'deep-research') {
       const deadline = Date.now() + this.timeouts.snapshotMs
       for (;;) {
-        const research = await this.researchState(engine)
+        const research = await this.researchState(page, engine)
         if (research.done && research.text) return { text: research.text, running: false, observable: true, lastPrompt }
         if (research.running) return { text: '', running: true, observable: true, lastPrompt }
         // No readable run after the prompt yet (frames load late), or a clarifying question.
@@ -466,12 +466,39 @@ export class ChatGptWebDriver implements ProviderDriver<Page> {
     return frames
   }
 
-  private async researchState(engine: UiEngine): Promise<ResearchState> {
+  /**
+   * The run of the last prompt: in its report frame (live layout of 2026-10-12), or inline as the
+   * last answer, when the run shows no frame or its frame no report (the app shell seen live on
+   * 2026-10-18, whose report sits in the conversation with its own Copy).
+   */
+  private async researchState(page: Page, engine: UiEngine): Promise<ResearchState> {
     for (const frame of await this.researchFrames(engine)) {
-      if (await engine.findIn('research.completed', frame)) return { running: false, done: true, text: await this.reportText(engine, frame) }
+      if (await engine.findIn('research.completed', frame)) return { running: false, done: true, text: (await this.reportText(engine, frame)) || (await this.inlineReport(page, engine)) }
       if (await engine.findIn('research.running', frame)) return { running: true, done: false, text: '' }
     }
+    if (await this.afterPrompt(engine, 'research.completed')) return { running: false, done: true, text: await this.inlineReport(page, engine) }
+    if (await this.afterPrompt(engine, 'research.running')) return { running: true, done: false, text: '' }
     return { running: false, done: false, text: '' }
+  }
+
+  /** Whether `id` shows in the page itself after the last prompt (an earlier run's never counts). */
+  private async afterPrompt(engine: UiEngine, id: string): Promise<boolean> {
+    if ((await engine.count(id)) === 0) return false
+    const found = (await engine.resolve(id, 1000)).locator.last()
+    if ((await engine.count('turn.user')) === 0) return true
+    const user = await (await engine.resolve('turn.user', 1000)).locator.last().elementHandle()
+    return found.evaluate((f, u) => !!u && (u.compareDocumentPosition(f) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0, user).catch(() => false)
+  }
+
+  /**
+   * The report as the last answer, read as an answer is (its own Copy, else the rendered text with
+   * its links); only an answer that itself says the research completed, never the acknowledgement.
+   */
+  private async inlineReport(page: Page, engine: UiEngine): Promise<string> {
+    if ((await engine.count('turn.assistant')) === 0) return ''
+    const answer = (await engine.resolve('turn.assistant', 1000)).locator.last().locator('xpath=..')
+    if (!(await engine.findIn('research.completed', answer))) return ''
+    return this.markdownOf(page, await this.answerText(engine))
   }
 
   private bindingOf(page: Page): string | undefined {
@@ -605,14 +632,16 @@ export class ChatGptWebDriver implements ProviderDriver<Page> {
     const engine = this.engine(page)
     const startBy = Date.now() + this.timeouts.researchStartMs
     for (;;) {
-      const state = await this.researchState(engine)
+      const state = await this.researchState(page, engine)
       if (state.running || state.done) break
       if (Date.now() > startBy) return reply
       signal?.throwIfAborted()
       await page.waitForTimeout(500)
     }
-    return waitForReport(() => this.researchState(engine), this.timeouts, { provider: this.provider, element: 'research.report-title', deadlines, signal }).catch(async (error: unknown) => {
+    return waitForReport(() => this.researchState(page, engine), this.timeouts, { provider: this.provider, element: 'research.report-title', deadlines, signal }).catch(async (error: unknown) => {
       await this.stalled(engine, 'research', error)
+      // A completed report that cannot be read is outlined as drift evidence of the report's entry.
+      if (error instanceof ProviderError && error.kind === 'ui_drift') await engine.drift('research.report-title').catch(() => undefined)
       throw error
     })
   }
