@@ -102,6 +102,8 @@ export interface FakeOptions {
    * again, its turns copied without their source pills.
    */
   floatingChat?: boolean
+  /** A framed run's source pills stand in the thread after its frame, not in the frame (live 2026-10-18). */
+  framePills?: boolean
   /** The composer form is not marked `data-chatgpt-composer` (live 2026-10-18). */
   unmarkedComposer?: boolean
   /**
@@ -210,7 +212,7 @@ function html(options: Required<FakeOptions>, conversation: Conversation | undef
   const all = conversation?.turns ?? []
   const turns = all.map((t, i) => t.role === 'user'
     ? `<div class="turn"><h4 class="sr-only">You said:</h4><div>${t.text}</div><button aria-label="Copy message">c</button><button aria-label="Edit message">e</button></div>`
-      + (t.research !== undefined && !options.researchInline ? researchHost(conversation!.id, t.research) : '')
+      + (t.research !== undefined && !options.researchInline ? researchHost(conversation!.id, t.research) + (options.framePills ? INLINE_PILLS : '') : '')
     : `<div class="turn"><div><h4 class="sr-only">ChatGPT said:</h4><p>${t.text}</p></div><div><button aria-label="Copy">c</button><button aria-label="Regenerate response">r</button></div></div>`
       // Inline (the app shell of 2026-10-18), a run follows its acknowledgement.
       + (options.researchInline && all[i - 1]?.research !== undefined ? inlineRun(conversation!.researches[all[i - 1]!.research!]!) : '')).join('')
@@ -235,7 +237,7 @@ ${missing ? `<div role="alert">Unable to load conversation ${missing}</div>` : '
   </div>
   <main>
     <h1 id="title">Where should we begin?</h1>
-    <section role="region" aria-label="Conversation" id="log">${turns}</section>
+    <span id="log-name" hidden>Conversation</span><section role="region" aria-labelledby="log-name" id="log">${turns}</section>
     <form data-chatgpt-composer data-thread-find-composer><input aria-label="Find in chat" type="search"></form>
     <form${options.unmarkedComposer ? '' : ' data-chatgpt-composer'} data-composer-placement="home" id="composer">
       <button type="button" aria-label="Add files and more">+</button>
@@ -410,7 +412,7 @@ async function send() {
         // The run's embedded app goes after its prompt; it updates itself until the report is done.
         const holder = document.createElement('div')
         answer.before(holder)
-        holder.outerHTML = '<iframe title="Deep research" src="/web-sandbox.oai/' + convId + '/' + event.research + '" style="display:block;width:960px;height:640px;border:0"></iframe>'
+        holder.outerHTML = '<iframe title="Deep research" src="/web-sandbox.oai/' + convId + '/' + event.research + '" style="display:block;width:960px;height:640px;border:0"></iframe>' + (options.framePills ? ${JSON.stringify(INLINE_PILLS)} : '')
       }
       if (event.done) {
         // Like the live site: the finished answer renders its Markdown; Copy copies the Markdown itself.
@@ -484,7 +486,7 @@ export class FakeChatGpt {
 
   constructor(options: FakeOptions = {}) {
     this.options = {
-      startOnWork: true, chatToggleBroken: false, signedIn: true, loginOffer: false, requireCookie: false, rotateOnLoad: false, deleteMenu: true, captcha: false, interstitial: false, deviceBound: false, floatingChat: false, unmarkedComposer: false, workComposer: false, researchInline: false, inlineReportDelayMs: 0, untitledReport: false, errorPages: 0, loggedOutHome: false, logoutFlashMs: 0, paneMenu: true, dialogTarget: '', userId: 'user-fake123', sendLabel: 'Send', sendTestId: '',
+      startOnWork: true, chatToggleBroken: false, signedIn: true, loginOffer: false, requireCookie: false, rotateOnLoad: false, deleteMenu: true, captcha: false, interstitial: false, deviceBound: false, floatingChat: false, framePills: false, unmarkedComposer: false, workComposer: false, researchInline: false, inlineReportDelayMs: 0, untitledReport: false, errorPages: 0, loggedOutHome: false, logoutFlashMs: 0, paneMenu: true, dialogTarget: '', userId: 'user-fake123', sendLabel: 'Send', sendTestId: '',
       answer: 'OK', thinkMs: 300, models: ['Latest', 'GPT-6', 'GPT-5.6 Sol', 'GPT-5.5'], lockedModels: [],
       researchMs: 1500, researchHeld: false, report: 'Deep research report body.', clarify: false, features: ['deep-research', 'web-search', 'image-generation'], modelPicker: true,
       mfa: 'totp', email: 'operator@example.test', password: 'correct horse', totpSecret: 'JBSWY3DPEHPK3PXP',

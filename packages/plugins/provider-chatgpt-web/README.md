@@ -143,7 +143,9 @@ The **ChatGPT Web provider driver**
     holds or follows the mark (the acknowledgement comes before it); marked
     complete in a frame only, it is an answer that is not the acknowledgement;
   - citation links are appended as a `Sources:` list (label and URL), because
-    rendered text keeps only the link labels;
+    rendered text keeps only the link labels. They are the report's own links,
+    then the source pills the conversation shows after the prompt, which stand
+    outside the report, framed or inline (live 2026-10-18);
   - a completed report that stays unreadable for `reportReadMs` (30 s) fails as
     `ui_drift`, not by waiting out the stall deadline, outlined as a `ui.drift`
     of `research.report-title`;

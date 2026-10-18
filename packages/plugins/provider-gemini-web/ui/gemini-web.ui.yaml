@@ -78,11 +78,10 @@ elements:
       - { role: button, name: { en: '^Upload & tools$' } }
   tools.more:
     description: >-
-      Reveals more tools (Deep research, Guided learning) in the tools menu. Live it carries
-      data-test-id (2026-10-18: the data-testid candidate never matched); a fallback seen before
-      was the menu still opening.
+      Reveals more tools (Deep research, Guided learning) in the tools menu. Live it is a plain
+      button named "More tools" with no test id (2026-10-18: every test-id candidate fell back to
+      the name, and its outline shows no data attribute).
     candidates:
-      - { css: '[data-test-id="more-tools-button"]' }
       - { role: button, name: { en: '^More tools$' } }
   tools.deep-research:
     description: The Deep research entry, offered in a normal chat only (never in a Temporary chat).

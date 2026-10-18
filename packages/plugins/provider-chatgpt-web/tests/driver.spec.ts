@@ -287,6 +287,19 @@ describe.runIf(canRunBrowser)('ChatGptWebDriver against the fake site, with no r
     await expect(driver.ask(page, 'x', { conversation: 'temporary', feature: 'deep-research' })).rejects.toMatchObject({ kind: 'invalid_input' })
   }, 60_000)
 
+  it('reads a framed report with the source pills its conversation shows outside the frame (live 2026-10-18)', async () => {
+    const reports: unknown[] = []
+    const { page, driver } = await site({ framePills: true, report: 'Framed report body.' })
+    driver.onReport = (event) => void reports.push(event)
+    const drifts: Array<{ element: string }> = []
+    driver.onDrift = (event) => void drifts.push(event as never)
+    const turn = await driver.ask(page, 'Survey framed', { conversation: 'persistent', feature: 'deep-research' })
+    expect(turn.text).toBe('Research findings\nFramed report body.\n\nSources:\n- sqlite.org https://www.sqlite.org/wal.html\n- docs.example https://docs.example/notes')
+    await expect.poll(() => reports).toEqual([{ provider: 'chatgpt-web', path: 'frame', chars: turn.text.length, links: 2 }])
+    // The thread is found by its region, whose name is not an aria-label attribute (live 2026-10-18).
+    expect(drifts.map((d) => d.element)).not.toContain('conversation.thread')
+  }, 60_000)
+
   it('reads a report the app shell shows inline as the last answer, with no frame, in a turn and in a snapshot (live 2026-10-18)', async () => {
     const { page, driver, context } = await site({ researchInline: true, report: 'Inline report body.' })
     const turn = await driver.ask(page, 'Survey inline', { conversation: 'persistent', feature: 'deep-research' })

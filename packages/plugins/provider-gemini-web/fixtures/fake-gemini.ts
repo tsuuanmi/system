@@ -415,7 +415,7 @@ ${missing ? '<div role="alert" id="missing">Unable to load this conversation</di
 <div role="menu" id="tools-menu" hidden>
   <div role="menuitem">Upload files</div>
   <div role="menuitemcheckbox" aria-checked="false">Canvas</div>
-  <button aria-label="More tools" data-test-id="more-tools-button" id="more-tools">More tools</button>
+  <button aria-label="More tools" id="more-tools">More tools</button>
   <div id="more" hidden><div role="menuitemcheckbox" aria-checked="false" id="dr">Deep research</div><div role="menuitemcheckbox" aria-checked="false">Guided learning</div></div>
 </div>
 <script type="application/json" id="options">${data}</script>

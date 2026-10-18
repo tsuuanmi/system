@@ -720,14 +720,19 @@ export class ChatGptWebDriver implements ProviderDriver<Page> {
 
   /**
    * The report in its frame: the container of the report's title (live layout of 2026-10-12),
-   * then its citation links as a `Sources:` list, since rendered text keeps only the labels.
+   * then its citation links as a `Sources:` list, since rendered text keeps only the labels: the
+   * frame's own, then the source pills the conversation shows after the prompt, outside the frame
+   * (live 2026-10-18: a framed report whose links were all pills in the thread).
    */
   private async reportText(engine: UiEngine, frame: Frame): Promise<string> {
     const title = await engine.findIn('research.report-title', frame)
     if (!title) return ''
     const report = title.locator.locator('xpath=..')
     const text = (await report.innerText().catch(() => '')).trim()
-    return text ? withMissingSources(text, await linksIn(report)) : text
+    if (!text) return text
+    const links = await linksIn(report)
+    for (const [href, label] of await this.linksAfterPrompt(engine)) if (!links.has(href)) links.set(href, label)
+    return withMissingSources(text, links)
   }
 
   /**
