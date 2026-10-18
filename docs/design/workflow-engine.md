@@ -192,6 +192,7 @@ flowchart LR
   A --> G{gate: approval}
   G -->|approved| W[write subgraph]
   G -->|rejected| F[run fails: plan_rejected]
+  G -->|no verdict in gateTimeoutHours| T[run fails: gate_timeout]
 ```
 
 - The plan lists files or targets, intended changes, side-effect classes, and a
@@ -199,7 +200,8 @@ flowchart LR
 - **Auto-approve** only when policy allows it, confidence is high, and every step
   is `none` or `idempotent`. Otherwise the run waits in `BLOCKED` with
   `USER_ACTION` until the operator approves, edits, or rejects the plan through
-  the CLI or Web UI.
+  the CLI or Web UI, for at most `gateTimeoutHours` (default 24; INV-9). Then the
+  gate closes by rule and the run fails as `gate_timeout`; `continue` waits again.
 - The approval is an `approval` artifact bound to the exact plan id. An edited
   plan is a new artifact that needs a new approval.
 - A verdict names the plan the operator read. With several plans waiting, a

@@ -357,6 +357,7 @@ No options.
 | `autoApprovePlans` | boolean | `false` | Approve a high-confidence plan by policy instead of waiting for the operator |
 | `maxReviewCycles` | number (1…5) | `3` | Reviews of one change, the first included, before remediation stops |
 | `tieTimeoutHours` | number (0.0001…720) | `24` | Hours a tied team waits for a deciding vote, then completes inconclusive (INV-9) |
+| `gateTimeoutHours` | number (0.0001…720) | `24` | Hours a plan's gate waits for the operator's approval, then closes and fails the run, by rule (INV-9); continue the run to wait again |
 | `repositories` | object | `{}` | A review's repository reads: allowed hosts and bounds (INV-9) |
 | `repositories.hosts` | string[] | `["github.com"]` | Hosts a review may read a public repository from |
 | `repositories.maxFiles` | number (1…200) |  | Files a review reads from a repository (default 40) |
