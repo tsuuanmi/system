@@ -8,7 +8,8 @@
  * - turns are marked only by headings "You said:" / "ChatGPT said:"; a finished answer gets "Copy" and "Regenerate response";
  * - the send is `POST /backend-api/f/conversation` answered with an event stream that **stays open**;
  * - the composer form carries `data-chatgpt-composer` again in the app shell seen live on 2026-10-17
- *   (it had lost it on 2026-10-11); another visible form does too, without the textbox;
+ *   (it had lost it on 2026-10-11, and lost it again on 2026-10-18: `unmarkedComposer`); another
+ *   visible form does too, without the textbox;
  * - the textbox's accessible name is no longer "Ask ChatGPT" (since 2026-10-11; the new text is a stand-in);
  * - the model menu (`menu "Select ChatGPT model"`) has two views, as checked live on 2026-10-12: view A shows
  *   the Power slider (arrow keys; `status` "Instant, 1 of 3."; levels Instant, Medium, High) and a view toggle
@@ -101,6 +102,8 @@ export interface FakeOptions {
    * again, its turns copied without their source pills.
    */
   floatingChat?: boolean
+  /** The composer form is not marked `data-chatgpt-composer` (live 2026-10-18). */
+  unmarkedComposer?: boolean
   /** Inline, the completion line shows this long before the report's answer renders after it. */
   inlineReportDelayMs?: number
   /** A finished report frame shows no title, so its report cannot be read (a drift test). */
@@ -229,7 +232,7 @@ ${missing ? `<div role="alert">Unable to load conversation ${missing}</div>` : '
     <h1 id="title">Where should we begin?</h1>
     <section role="region" aria-label="Conversation" id="log">${turns}</section>
     <form data-chatgpt-composer data-thread-find-composer><input aria-label="Find in chat" type="search"></form>
-    <form data-chatgpt-composer data-composer-placement="home" id="composer">
+    <form${options.unmarkedComposer ? '' : ' data-chatgpt-composer'} data-composer-placement="home" id="composer">
       <button type="button" aria-label="Add files and more">+</button>
       <div contenteditable="true" role="textbox" aria-multiline="true" aria-label="Chat with ChatGPT" data-composer-markdown id="input"></div>
       <button type="button" aria-label="Select ChatGPT model" aria-haspopup="menu" aria-expanded="false" id="picker"${options.modelPicker === false ? ' hidden' : ''}>Instant</button>
@@ -238,7 +241,7 @@ ${missing ? `<div role="alert">Unable to load conversation ${missing}</div>` : '
     </form>
   </main>
 </main>
-${options.floatingChat ? '<section role="dialog" aria-label="Quick chat" data-floating-chat-surface><div id="float-log"></div></section>' : ''}
+${options.floatingChat ? '<section role="dialog" aria-label="Quick chat" data-floating-chat-surface><div id="float-log"></div><form><div contenteditable="true" role="textbox" aria-label="Message quick chat"></div></form></section>' : ''}
 <div role="menu" aria-label="Select ChatGPT model" id="model-menu" hidden>
   <div role="menuitem" data-model-picker-view-toggle id="power-label">Instant</div>
   <div id="view-a">
@@ -475,7 +478,7 @@ export class FakeChatGpt {
 
   constructor(options: FakeOptions = {}) {
     this.options = {
-      startOnWork: true, chatToggleBroken: false, signedIn: true, loginOffer: false, requireCookie: false, rotateOnLoad: false, deleteMenu: true, captcha: false, interstitial: false, deviceBound: false, floatingChat: false, researchInline: false, inlineReportDelayMs: 0, untitledReport: false, errorPages: 0, loggedOutHome: false, logoutFlashMs: 0, paneMenu: true, dialogTarget: '', userId: 'user-fake123', sendLabel: 'Send', sendTestId: '',
+      startOnWork: true, chatToggleBroken: false, signedIn: true, loginOffer: false, requireCookie: false, rotateOnLoad: false, deleteMenu: true, captcha: false, interstitial: false, deviceBound: false, floatingChat: false, unmarkedComposer: false, researchInline: false, inlineReportDelayMs: 0, untitledReport: false, errorPages: 0, loggedOutHome: false, logoutFlashMs: 0, paneMenu: true, dialogTarget: '', userId: 'user-fake123', sendLabel: 'Send', sendTestId: '',
       answer: 'OK', thinkMs: 300, models: ['Latest', 'GPT-6', 'GPT-5.6 Sol', 'GPT-5.5'], lockedModels: [],
       researchMs: 1500, researchHeld: false, report: 'Deep research report body.', clarify: false, features: ['deep-research', 'web-search', 'image-generation'], modelPicker: true,
       mfa: 'totp', email: 'operator@example.test', password: 'correct horse', totpSecret: 'JBSWY3DPEHPK3PXP',

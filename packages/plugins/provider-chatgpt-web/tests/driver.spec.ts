@@ -307,6 +307,15 @@ describe.runIf(canRunBrowser)('ChatGptWebDriver against the fake site, with no r
     await expect.poll(() => reports).toEqual([{ provider: 'chatgpt-web', path: 'inline', chars: turn.text.length, links: 2 }])
   }, 60_000)
 
+  it('finds the composer in main, marked or not, never the floating chat\'s, with no drift (live 2026-10-18)', async () => {
+    const { page, driver, fake } = await site({ unmarkedComposer: true, floatingChat: true })
+    const drifts: Array<{ element: string }> = []
+    driver.onDrift = (event) => void drifts.push(event as never)
+    expect((await driver.ask(page, 'ping', { conversation: 'persistent' })).text).toBe('OK')
+    expect(fake.sent[0]).toMatchObject({ prompt: 'ping' })
+    expect(drifts.map((d) => d.element)).not.toContain('composer.form')
+  }, 40_000)
+
   it('keeps reading a report marked complete before its answer renders, and never takes the earlier answer for it', async () => {
     const { page, driver } = await site({ researchInline: true, inlineReportDelayMs: 3000, report: 'Late report body.' })
     expect((await driver.ask(page, 'Survey late', { conversation: 'persistent', feature: 'deep-research' })).text).toMatch(/^Late report body\.\n\nSources:\n- sqlite\.org https:\/\/www\.sqlite\.org\/wal\.html/)
