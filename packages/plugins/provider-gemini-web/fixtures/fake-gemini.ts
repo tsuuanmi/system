@@ -101,6 +101,8 @@ export interface FakeOptions {
   levelsSubmenu?: boolean
   /** The "Thinking level" item opens nothing (drift: the levels cannot be reached). */
   submenuBroken?: boolean
+  /** With Deep research chosen, the mode menu shows the models only, with no thinking level (default false). */
+  researchHidesLevels?: boolean
   /** Answer Markdown, streamed word by word; or computed from the prompt. */
   answer?: string | ((prompt: string, sent: Sent) => string)
   /** Deep research answers with this instead of a plan (a clarifying question). */
@@ -170,10 +172,11 @@ function renderMenu() {
     + ' class="' + ((kind === 'model' ? name === model : name === level) ? 'selected' : '') + '">' + name
     + (kind === 'level' && options.levelsInline ? ' <span>' : '<br><span>') + (options.notes[short(name)] ?? '') + '</span></div>'
   const submenu = options.levelsInline && options.levelsSubmenu
-  $('menu').innerHTML = options.models.map((m, i) => item(m, 'model', i)).join('')
+  const levels = !(deepResearch && options.researchHidesLevels)
+  $('menu').innerHTML = options.models.map((m, i) => item(m, 'model', i)).join('') + (!levels ? '' : ''
     + (options.levelsInline ? '<div role="menuitem" tabindex="0" id="levels-open"' + (submenu ? ' aria-haspopup="true"' : '') + '>Thinking level</div>' : '')
-    + (submenu ? '<div id="levels"' + (levelsOpen ? '' : ' hidden') + '>' : '') + options.levels.map((l, i) => item(l, 'level', i)).join('') + (submenu ? '</div>' : '')
-  if (submenu && !options.submenuBroken) $('levels-open').onclick = () => { levelsOpen = !levelsOpen; renderMenu() }
+    + (submenu ? '<div id="levels"' + (levelsOpen ? '' : ' hidden') + '>' : '') + options.levels.map((l, i) => item(l, 'level', i)).join('') + (submenu ? '</div>' : ''))
+  if (levels && submenu && !options.submenuBroken) $('levels-open').onclick = () => { levelsOpen = !levelsOpen; renderMenu() }
   for (const el of $('menu').querySelectorAll('[data-kind]')) el.onclick = () => {
     if (el.dataset.kind === 'model') model = el.dataset.name
     else level = el.dataset.name
@@ -444,7 +447,7 @@ export class FakeGemini {
   constructor(options: FakeOptions = {}) {
     this.options = {
       paneMenu: true, dialogTarget: '', dialogExtraCall: false, startOnSpark: true, interstitial: false, captcha: false, deviceBound: false, holdAnswer: false, promptLagMs: 0, rewritePaste: false, draftPersist: false, dropOver: 0, signInOffer: false, termsNotice: false, chatTabBroken: false, temporaryBroken: false, modePicker: true, promptParagraphs: true, deepResearch: true,
-      models: ['3.5 Flash-Lite', '3.8 Flash', '3.1 Pro'], levels: ['Low', 'Medium', 'High'], levelsInline: true, levelsSubmenu: true, submenuBroken: false, answer: 'OK', clarify: '',
+      models: ['3.5 Flash-Lite', '3.8 Flash', '3.1 Pro'], levels: ['Low', 'Medium', 'High'], levelsInline: true, levelsSubmenu: true, submenuBroken: false, researchHidesLevels: false, answer: 'OK', clarify: '',
       researchMs: 1500, researchHeld: false, researchActivity: false, report: 'HTTP/3 runs over QUIC, not TCP.', sources: [{ title: 'RFC 9114: HTTP/3', url: 'https://www.rfc-editor.org/rfc/rfc9114' }], ...options,
     }
   }

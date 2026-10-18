@@ -50,11 +50,14 @@ driver, its operations are data: a UI map,
     without the picker.
 - **Deep research** (normal chats only; Temporary chat does not offer it):
   - It is chosen under Upload & tools → More tools, and its chip proves it.
-  - It runs on the site's own research model: no mode preset applies, and the
-    mode picker is left as the site has it, as a user who picks the tool does.
-    The turn's mode is recorded as the site's (feature `deep-research`, no model
-    or thinking level). Live on 2026-10-18 three runs that chose Pro and High
-    with it got the site's own error at once.
+  - The turn's own preset never applies (live on 2026-10-18 three runs that
+    chose Pro and High with it got the site's own error at once). Only the
+    plugin's `researchMode` does, when set: that preset is chosen after the tool,
+    so the read-back is what is sent, and is the turn's mode. A thinking level
+    the menu does not show with Deep research chosen is skipped, with no drift,
+    and the mode has no level. Unset (the shipped default), the picker is left
+    as the site has it, as a user who picks the tool does, and the mode is
+    recorded as the site's (no model or thinking level).
   - A reopened Deep research conversation keeps it chosen: a plain turn there
     clears the chip first (or sends nothing), and a Deep research follow-up
     keeps it, since choosing its checkbox again would turn it off.
@@ -153,5 +156,5 @@ driver, its operations are data: a UI map,
   again, and its sign-in is checked as it is. `pageIdle` (map state `page.idle`:
   nothing generating, no `page.overlay` dialog or menu) tells the turn runtime it
   may keep the page for the session's next turn.
-- **Config:** `origin`, `modes`, `defaultMode`, `maxPromptChars`, `pageGapMs`.
+- **Config:** `origin`, `modes`, `defaultMode`, `researchMode`, `maxPromptChars`, `pageGapMs`.
 - **Injects:** `providers`.

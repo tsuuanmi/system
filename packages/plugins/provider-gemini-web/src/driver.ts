@@ -70,6 +70,11 @@ export interface DriverOptions {
   modes?: Record<string, ProviderMode>
   /** Preset used when a turn names none; with no default the site's current selection is kept and read back. */
   defaultMode?: string
+  /**
+   * Preset Deep research selects, whatever the turn names; unset, the picker is left as the site
+   * has it. A thinking level the picker does not show with Deep research chosen is not selected.
+   */
+  researchMode?: string
   /** The longest prompt sent, in characters (default 30,000, observed): a longer one is refused, unsent. */
   maxPromptChars?: number
   /** The account's page loads are spaced at least this far apart (default 10 s, ADR-0030). */
@@ -120,6 +125,7 @@ export class GeminiWebDriver implements ProviderDriver<Page> {
   /** The longest prompt sent (`maxPromptChars`): declared to admission (ADR-0032), and refused here too. */
   readonly maxInputChars: number
   private readonly preset: (name: string | undefined) => ProviderMode | undefined
+  private readonly researchPreset: ProviderMode | undefined
   private readonly engines = new WeakMap<Page, UiEngine>()
   readonly modes: readonly string[]
 
@@ -130,6 +136,10 @@ export class GeminiWebDriver implements ProviderDriver<Page> {
     this.stateOrigins = options.origin ? [this.origin] : ['https://gemini.google.com', 'https://accounts.google.com', 'https://www.google.com', 'https://google.com']
     this.preset = modePresets(this.provider, options.modes, options.defaultMode)
     this.modes = Object.keys(options.modes ?? {})
+    if (options.researchMode !== undefined && !options.modes?.[options.researchMode]) {
+      throw new ProviderError('config_error', `${this.provider}: research mode ${options.researchMode} is not a configured mode`)
+    }
+    this.researchPreset = options.researchMode === undefined ? undefined : options.modes?.[options.researchMode]
     this.maxInputChars = options.maxPromptChars ?? 30_000
     this.pageGapMs = options.pageGapMs ?? 10_000
     this.timeouts = { turnMs: 15 * 60_000, stallMs: 3 * 60_000, stableMs: 1500, pollMs: 250, readyMs: 60_000, snapshotMs: 20_000, reportReadMs: 30_000, ...options.timeouts }
@@ -197,10 +207,12 @@ export class GeminiWebDriver implements ProviderDriver<Page> {
     else if ((await engine.count('composer.deep-research')) > 0) await engine.act('composer.clear-deep-research')
     // The mode first, as on ChatGPT: a long prompt grows the composer around the mode picker (live
     // 2026-10-17, a review's 26,000 characters: mode.open missed its postcondition). Deep research
-    // runs on the site's own research model: no preset applies, and the picker is left as the site
-    // has it, as a user who picks the tool does (three runs on 2026-10-18 that chose Pro and High
-    // with it got the site's error at once). Its mode is recorded as the site's: no model or level.
-    const mode = feature === 'deep-research' ? {} : await this.selectMode(page, preset)
+    // takes no turn preset (three runs on 2026-10-18 that chose Pro and High with it got the site's
+    // error at once): only `researchMode`, chosen with the tool already on, so what is read back is
+    // what is sent. Unset, the picker is left as the site has it, and the mode is recorded as the
+    // site's: no model or level.
+    const mode = feature !== 'deep-research' ? await this.selectMode(page, preset)
+      : this.researchPreset ? await this.selectMode(page, this.researchPreset, { levelOptional: true }) : {}
     await engine.act('composer.insert', { text: prompt })
     const asked = await engine.count('turn.user')
     try {
@@ -443,9 +455,11 @@ export class GeminiWebDriver implements ProviderDriver<Page> {
   /**
    * Choose a model and thinking level in the mode menu, then read both back. Nothing is
    * assumed: an item the account does not offer, or a read-back that differs, fails before
-   * sending. An empty preset on an account without the picker selects nothing.
+   * sending. An empty preset on an account without the picker selects nothing. With
+   * `levelOptional`, a menu that shows no thinking level (Deep research chosen, say) selects the
+   * model only, and the mode read back has no level.
    */
-  async selectMode(page: Page, wanted: ProviderMode | undefined): Promise<ProviderMode> {
+  async selectMode(page: Page, wanted: ProviderMode | undefined, options: { levelOptional?: boolean } = {}): Promise<ProviderMode> {
     const engine = this.engine(page)
     if (!wanted?.model && !wanted?.effort && (await engine.count('composer.mode')) === 0) return {}
     // A menu or dialog left open (the input menu, say) would take the picker's click: closed first.
@@ -455,14 +469,17 @@ export class GeminiWebDriver implements ProviderDriver<Page> {
     }
     try {
       if (wanted?.model) await this.choose(engine, 'mode.model', 'model', wanted.model, sameModel)
-      if (wanted?.effort) await this.choose(engine, 'mode.level', 'thinking level', wanted.effort, named)
+      // No level item at all (neither the levels nor the item that opens them): none to choose.
+      const levelShown = !options.levelOptional || (await this.openMenu(engine), (await engine.count('mode.level')) > 0)
+      const wantedEffort = levelShown ? wanted?.effort : undefined
+      if (wantedEffort) await this.choose(engine, 'mode.level', 'thinking level', wantedEffort, named)
       await this.openMenu(engine)
       let model = await this.chosen(engine, 'mode.model.selected')
-      let effort = await this.chosen(engine, 'mode.level.selected')
+      let effort = levelShown ? await this.chosen(engine, 'mode.level.selected') : undefined
       if (wanted?.model && !(model && sameModel(model, wanted.model))) throw new ProviderError('config_error', `gemini-web: model reads back as ${model ?? 'none'}, not ${wanted.model}`)
-      if (wanted?.effort && !(effort && named(effort, wanted.effort))) throw new ProviderError('config_error', `gemini-web: thinking level reads back as ${effort ?? 'none'}, not ${wanted.effort}`)
+      if (wantedEffort && !(effort && named(effort, wantedEffort))) throw new ProviderError('config_error', `gemini-web: thinking level reads back as ${effort ?? 'none'}, not ${wantedEffort}`)
       if (model && wanted?.model) model = nameOf(model, wanted.model)
-      if (effort && wanted?.effort) effort = nameOf(effort, wanted.effort)
+      if (effort && wantedEffort) effort = nameOf(effort, wantedEffort)
       return { ...(model ? { model } : {}), ...(effort ? { effort } : {}) }
     } finally {
       await page.keyboard.press('Escape')

@@ -231,6 +231,7 @@ No options.
 | `origin` | string |  | Site origin (default https://gemini.google.com) |
 | `modes` | Record<string, object> | `{"flash-lite":{"model":"Flash-Lite","effort":"Low"},"flash":{"model":"Flash","effort":"Medium"},"pro":{"model":"Pro","effort":"High"},"site":{}}` | Named mode presets (model and thinking level); an empty preset selects nothing |
 | `defaultMode` | string | `"flash"` | Preset when a caller names none |
+| `researchMode` | string |  | Preset Deep research selects, whatever its turn names; unset, the picker is left as the site has it. A thinking level not shown with Deep research chosen is skipped |
 | `maxPromptChars` | number (1…) | `30000` | The longest prompt sent, in characters; a longer one is refused before anything is sent (observed, not published: the site drops longer pastes without an error) |
 | `pageGapMs` | number (0…600000) | `10000` | Minimum gap between the opens of the account's pages in its login profile, in milliseconds, at most 10 min (ADR-0030); navigations within a page are not spaced |
 

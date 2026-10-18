@@ -16,7 +16,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { canRunBrowser, launchTestBrowser } from '../../browser-patchright/tests/support.ts'
 import { FakeGemini, type FakeOptions } from '../fixtures/fake-gemini.ts'
 import { GeminiWebDriver, shippedMap } from '../src/index.ts'
-import { namesOnly } from '../src/driver.ts'
+import { type DriverOptions, namesOnly } from '../src/driver.ts'
 import * as GeminiWebPlugin from '../src/index.ts'
 
 const PRESETS = { 'flash-lite': { model: 'Flash-Lite', effort: 'Low' }, flash: { model: 'Flash', effort: 'Medium' }, pro: { model: 'Pro', effort: 'High' }, site: {} }
@@ -47,6 +47,7 @@ describe('the Gemini Web UI map and driver contract', () => {
     const driver = new GeminiWebDriver({ modes: PRESETS })
     await expect(driver.ask({} as Page, 'hi', { conversation: 'temporary', mode: 'ultra' })).rejects.toMatchObject({ kind: 'config_error' })
     expect(() => new GeminiWebDriver({ modes: PRESETS, defaultMode: 'ultra' })).toThrow(/default mode ultra/)
+    expect(() => new GeminiWebDriver({ modes: PRESETS, researchMode: 'ultra' })).toThrow(/research mode ultra/)
   })
 
   it('registers itself on ctx.providers', async () => {
@@ -90,12 +91,12 @@ describe.runIf(canRunBrowser)('GeminiWebDriver against the fake site', { timeout
     fake = undefined
   })
 
-  async function open(options: FakeOptions = {}): Promise<{ page: Page; driver: GeminiWebDriver; fake: FakeGemini }> {
+  async function open(options: FakeOptions = {}, driverOptions: DriverOptions = {}): Promise<{ page: Page; driver: GeminiWebDriver; fake: FakeGemini }> {
     fake = new FakeGemini(options)
     const origin = await fake.start()
     context = await browser.newContext()
     const page = await context.newPage()
-    const driver = new GeminiWebDriver({ origin, modes: PRESETS, defaultMode: 'flash', timeouts: { readyMs: 5000, stableMs: 300, pollMs: 100, turnMs: 30_000, stallMs: 15_000 } })
+    const driver = new GeminiWebDriver({ origin, modes: PRESETS, defaultMode: 'flash', timeouts: { readyMs: 5000, stableMs: 300, pollMs: 100, turnMs: 30_000, stallMs: 15_000 }, ...driverOptions })
     return { page, driver, fake }
   }
 
@@ -408,6 +409,25 @@ describe.runIf(canRunBrowser)('GeminiWebDriver against the fake site', { timeout
     // Sent with the site's own selection, not the frontier preset's Pro.
     expect(fake.sent[0]!.model).not.toMatch(/Pro/)
     expect(fake.sent[0]).toMatchObject({ deepResearch: true })
+  })
+
+  it('selects the research preset for Deep research, whatever the turn names, with the tool on, and records it as read back', async () => {
+    const { page, driver, fake } = await open({}, { researchMode: 'pro' })
+    const result = await driver.ask(page, 'Compare HTTP/2 and HTTP/3', { conversation: 'persistent', feature: 'deep-research', mode: 'flash-lite' })
+    expect(result.mode).toEqual({ model: '3.1 Pro', effort: 'High' })
+    expect(fake.sent[0]).toMatchObject({ deepResearch: true, model: '3.1 Pro', level: 'High' })
+    // A plain turn still takes its own preset.
+    expect((await driver.ask(page, 'hi', { conversation: 'temporary', mode: 'flash-lite' })).mode).toEqual({ model: '3.5 Flash-Lite', effort: 'Low' })
+  })
+
+  it('selects the research preset\'s model only when the picker shows no thinking level with Deep research chosen, with no drift', async () => {
+    const { page, driver, fake } = await open({ researchHidesLevels: true }, { researchMode: 'pro' })
+    const drifts: unknown[] = []
+    driver.onDrift = (event) => void drifts.push(event)
+    const result = await driver.ask(page, 'Compare HTTP/2 and HTTP/3', { conversation: 'persistent', feature: 'deep-research' })
+    expect(result.mode).toEqual({ model: '3.1 Pro' })
+    expect(fake.sent[0]).toMatchObject({ deepResearch: true, model: '3.1 Pro', level: 'Low' })
+    expect(drifts).toEqual([])
   })
 
   it('returns a clarifying question as the answer when Deep research asks one instead of a plan', async () => {

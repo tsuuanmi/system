@@ -24,6 +24,11 @@ export interface Config {
   /** Preset when a caller names none (the turn runtime always names its Worker's preset). */
   defaultMode?: string
   /**
+   * Preset Deep research selects, whatever its turn names (unset: none, and the picker is left as
+   * the site has it). A thinking level the site does not show with Deep research chosen is skipped.
+   */
+  researchMode?: string
+  /**
    * The longest prompt sent, in characters: a longer one is refused before anything is sent.
    * Observed, not published: the site drops a paste of about 30,000 characters or more without an error.
    */
@@ -46,6 +51,7 @@ export const Config: z<Config> = z.object({
   origin: z.string().description('Site origin (default https://gemini.google.com)'),
   modes: z.dict(z.object({ model: z.string(), effort: z.string() })).default(DEFAULT_MODES).description('Named mode presets (model and thinking level); an empty preset selects nothing'),
   defaultMode: z.string().default('flash').description('Preset when a caller names none'),
+  researchMode: z.string().description('Preset Deep research selects, whatever its turn names; unset, the picker is left as the site has it. A thinking level not shown with Deep research chosen is skipped'),
   maxPromptChars: z.natural().min(1).default(30_000).description('The longest prompt sent, in characters; a longer one is refused before anything is sent (observed, not published: the site drops longer pastes without an error)'),
   pageGapMs: z.natural().max(600_000).default(10_000).description('Minimum gap between the opens of the account\'s pages in its login profile, in milliseconds, at most 10 min (ADR-0030); navigations within a page are not spaced'),
 })
@@ -55,6 +61,7 @@ export function apply(ctx: Context, config: Config = {}): void {
     ...(config.origin ? { origin: config.origin } : {}),
     modes: config.modes ?? DEFAULT_MODES,
     defaultMode: config.defaultMode ?? 'flash',
+    ...(config.researchMode !== undefined ? { researchMode: config.researchMode } : {}),
     maxPromptChars: config.maxPromptChars ?? 30_000,
     pageGapMs: config.pageGapMs ?? 10_000,
   })

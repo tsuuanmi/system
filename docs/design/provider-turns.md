@@ -91,7 +91,8 @@ default. Live observations are in the
   model menu, model radios, Power slider and its status, the tools popover, and
   the Deep research chip. Configuration holds *what* to select:
   - the driver plugin's `modes` (named presets of a model and an effort level)
-    and its `defaultMode`;
+    and its `defaultMode` (Gemini also has a `researchMode`, the one preset
+    its Deep research selects);
   - each account's catalog `tiers` (tier → preset name);
   - the workflow template's tier per node, which a caller may replace for
     `ask`.
@@ -120,7 +121,11 @@ default. Live observations are in the
   to `completed`. It reads the report from the report panel, followed by the
   sources it used. A reply with no plan is a clarifying question, returned as
   the answer. A reopened Deep research conversation keeps Deep research chosen,
-  so a plain turn there clears it first and sends nothing if it cannot.
+  so a plain turn there clears it first and sends nothing if it cannot. The
+  turn's own preset never applies to it. The driver applies only its
+  `researchMode` preset, chosen with the tool on and read back, and skips a
+  thinking level the menu does not show then. Unset, the picker is left as the
+  site has it.
 
 ## Turn receipt
 
