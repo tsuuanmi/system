@@ -39,5 +39,6 @@ export async function launchTestBrowser(): Promise<{ browser: Browser; close(): 
     executablePath: testChrome!, headless: false, env: { ...process.env, DISPLAY: xvfb.display, XAUTHORITY: xvfb.authority },
     ignoreDefaultArgs: IGNORED_DEFAULT_ARGS, args: [...CHROME_ARGS, '--window-size=1920,1080'],
   })
-  return { browser, close: async () => { await browser.close(); await xvfb.stop() } }
+  // The display is stopped even when the browser fails to close (a run killed outright leaves it to test-tmp).
+  return { browser, close: async () => { try { await browser.close() } finally { await xvfb.stop() } } }
 }

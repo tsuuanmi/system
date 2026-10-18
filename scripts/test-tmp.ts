@@ -4,8 +4,10 @@
  * set before the workers start, so every `mkdtempSync(join(tmpdir(), …))`, every Chrome profile,
  * and every child process a test starts lands under it. Teardown removes it. A run that was
  * killed cannot tear down: the next run removes the parents whose run is no longer alive.
+ * Processes a run started that outlived it (an Xvfb whose suite was killed before its close, say)
+ * name a path under its parent on their command line: they are stopped with it.
  */
-import { mkdtempSync, readdirSync, rmSync } from 'node:fs'
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -22,12 +24,45 @@ function alive(pid: number): boolean {
   }
 }
 
+/**
+ * Stop the processes whose command line names a path under `parent` (Linux `/proc`; elsewhere
+ * none is found): only a run's own children carry its parent's unique name.
+ */
+export function stopUnder(parent: string, proc = '/proc'): number[] {
+  const stopped: number[] = []
+  let pids: string[]
+  try {
+    pids = readdirSync(proc).filter((name) => /^\d+$/.test(name))
+  } catch {
+    return stopped
+  }
+  for (const name of pids) {
+    const pid = Number(name)
+    if (pid === process.pid) continue
+    let args: string
+    try {
+      args = readFileSync(join(proc, name, 'cmdline'), 'utf8')
+    } catch {
+      continue
+    }
+    if (!args.split('\0').some((arg) => arg.includes(`${parent}/`))) continue
+    try {
+      process.kill(pid, 'SIGKILL')
+      stopped.push(pid)
+    } catch {
+      // Gone already, or not ours.
+    }
+  }
+  return stopped
+}
+
 /** Remove the run parents under `root` whose run is gone; only `system-test-<pid>-…` names, never anything else. */
-export function sweepStale(root: string, isAlive: (pid: number) => boolean = alive): string[] {
+export function sweepStale(root: string, isAlive: (pid: number) => boolean = alive, stop: (parent: string) => unknown = stopUnder): string[] {
   const removed: string[] = []
   for (const name of readdirSync(root)) {
     const pid = Number(new RegExp(`^${PREFIX}(\\d+)-`).exec(name)?.[1])
     if (!pid || isAlive(pid)) continue
+    stop(join(root, name))
     rmSync(join(root, name), { recursive: true, force: true })
     removed.push(name)
   }
@@ -40,6 +75,7 @@ export default function setup(): () => void {
   const parent = mkdtempSync(join(root, `${PREFIX}${process.pid}-`))
   process.env.TMPDIR = parent
   return () => {
+    stopUnder(parent)
     rmSync(parent, { recursive: true, force: true })
   }
 }

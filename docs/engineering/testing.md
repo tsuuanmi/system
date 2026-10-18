@@ -32,7 +32,10 @@ package's `conformance/` directory. Each provider's tests call the suite with a
   global setup of every lane). TMPDIR points at `system-test-<pid>-…` before the workers start,
   so test directories, browser profiles, and child processes all land under it, and teardown
   removes it. A killed run cannot tear down; the next run removes the parents of runs that are
-  gone, and nothing else. A test keeps using `tmpdir()`.
+  gone, and nothing else. A test keeps using `tmpdir()`. A process that names a path under a
+  parent on its command line (an Xvfb's `-auth`, a Chrome profile) belongs to that run: it is
+  stopped when the parent is removed, so a host the crash suite kills, or a suite killed before
+  its close, leaves no display behind.
 - **Built-artifact smoke test**
   ([`packages/cli/tests/profile.e2e.ts`](../../packages/cli/tests/profile.e2e.ts),
   [`api-first.e2e.ts`](../../packages/cli/tests/api-first.e2e.ts)).
