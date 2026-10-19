@@ -12,7 +12,7 @@ import { type Runtime, RUNTIMES } from '@tsuuanmi/system-worker-sessions'
 import type { ArtifactRef, Tier } from '@tsuuanmi/system-workers-core'
 import type { Engine } from './engine.ts'
 import { append } from './growth.ts'
-import { isSameFamily } from './recovery.ts'
+import { sameFamilyOf } from './recovery.ts'
 import { focusShortfall, type SourceSnapshot, sourceOf } from './sources.ts'
 import { ballotContract, type ResolvedNode, TEAM_STEPS, type TeamKind, type TeamRole } from './spec.ts'
 import { LEASE_TTL_MS, type NodeRecord, type NodeRow, type RunRow, type RunView, WorkflowFailure } from './types.ts'
@@ -626,8 +626,11 @@ function conclude(e: Engine, run: RunRow, node: NodeRow, spec: ResolvedNode, nod
   const revisions = rounds.flatMap(({ round }) => round.ballots.filter((b) => b.revision).map((b) => ({ member: b.member, round: round.round, revision: b.revision! })))
   const tiebreak = how.by === 'rule' && (how.method === 'team-majority' || how.method === 'blocking-finding') ? undefined : { by: how.by, option: how.winner ?? 'inconclusive', rationale: how.rationale ?? '' }
   const source = team.kind === 'review' ? sourceOf(e, nodes, nodes.filter((n) => specOf(n).team?.id === team.id && specOf(n).team?.role === 'propose').flatMap((n) => specOf(n).dependsOn)) : undefined
-  // Members on one provider family (ADR-0029): said on the record and in the answer, never "independent".
-  const sameFamily = nodes.some((n) => specOf(n).team?.id === team.id && specOf(n).team?.role === 'propose' && (n.decisions ? (JSON.parse(n.decisions) as ArtifactRef[]) : []).some((d) => isSameFamily(e, d)))
+  // Members on one provider family (ADR-0029): said on the record and in the answer, never
+  // "independent", with whether they kept accounts of their own (ADR-0035) or shared one.
+  const outcomes = nodes.filter((n) => specOf(n).team?.id === team.id && specOf(n).team?.role === 'propose')
+    .flatMap((n) => (n.decisions ? (JSON.parse(n.decisions) as ArtifactRef[]) : []).map((d) => sameFamilyOf(e, d)).filter((o): o is string => o !== undefined))
+  const sameFamily = !outcomes.length ? undefined : outcomes.includes('same-family-shared-account') ? 'shared-account' as const : 'distinct-accounts' as const
   const why = how.method === 'blocking-finding'
     ? `confirmed blocking finding(s) ${blockingConfirmed(findings).map((f) => f.id).join(', ')} decide changes`
     : how.method === 'team-majority'
@@ -642,7 +645,7 @@ function conclude(e: Engine, run: RunRow, node: NodeRow, spec: ResolvedNode, nod
         { option: 'inconclusive', selected: how.winner === null, reasons: how.winner === null ? [why.slice(0, 300)] : [] }],
       ...(team.kind === 'review' ? { schema: 'decision@1.2' as const } : {}),
       decider: { type: how.by, id: how.id, version: '1' },
-      outcome: { option: how.winner ?? 'inconclusive', detail: { method: how.method, ...(sameFamily ? { members: 'same provider family' } : {}) } },
+      outcome: { option: how.winner ?? 'inconclusive', detail: { method: how.method, ...(sameFamily ? { members: sameFamily === 'shared-account' ? 'same provider family, sharing an account' : 'same provider family, on accounts of their own' } : {}) } },
       deterministic: how.by === 'rule',
       vote: {
         kind: team.kind, method: how.method, threshold: Math.floor(team.members / 2) + 1, members: memberIdentities(e, team, nodes), options: options.map(optionRecord),
@@ -677,11 +680,11 @@ export function voteRepository(repository: NonNullable<SourceSnapshot['repositor
 }
 
 /** The team's answer: one machine-readable line, then the decision for a reader. A review's blocking findings always show. */
-function resultText(kind: TeamKind, how: Conclusion, options: TeamOption[], rounds: TeamRound[], dissent: Array<{ member: string; choice: string; objections: string[] }>, findings: ReviewFinding[], decision: ArtifactRef, source?: SourceSnapshot, sameFamily = false, unshown: string[] = []): string {
+function resultText(kind: TeamKind, how: Conclusion, options: TeamOption[], rounds: TeamRound[], dissent: Array<{ member: string; choice: string; objections: string[] }>, findings: ReviewFinding[], decision: ArtifactRef, source?: SourceSnapshot, sameFamily?: 'distinct-accounts' | 'shared-account', unshown: string[] = []): string {
   const winner = options.find((o) => o.option === how.winner)
   const last = rounds.at(-1)!
   const lines = [`outcome: ${how.winner ?? 'inconclusive'}; method: ${how.method}; winner: ${how.winner ?? 'none'}; decision: ${decision}`, '']
-  if (sameFamily) lines.push('Members: same provider family (allowSameFamily): no other provider judged this.', '')
+  if (sameFamily) lines.push(`Members: same provider family (allowSameFamily), ${sameFamily === 'shared-account' ? 'some sharing one account' : 'each on an account of its own'}: no other provider judged this.`, '')
   if (unshown.length) lines.push(...unshown.map((n) => `${n[0]!.toUpperCase()}${n.slice(1)}.`), '')
   if (winner && kind === 'brainstorm') lines.push(`## Decision: ${winner.option} (${winner.member}'s proposal)`, '', winner.text, '')
   else if (winner) lines.push(`## Decision: ${winner.option}${how.method === 'blocking-finding' ? ' (a confirmed blocking finding decides it)' : ''}`, '')

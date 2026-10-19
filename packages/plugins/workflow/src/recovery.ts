@@ -48,9 +48,18 @@ export function escalate(e: Engine, run: RunRow, node: NodeRow, spec: ResolvedNo
 
 /** Whether a decision is the opt-in same-family admission of ADR-0029. */
 export function isSameFamily(e: Engine, decision: ArtifactRef | undefined): boolean {
-  if (!decision) return false
-  const body = e.ctx.artifacts.get(decision)?.body as { decider?: { id?: string } } | undefined
-  return body?.decider?.id === 'workflow.same-family'
+  return sameFamilyOf(e, decision) !== undefined
+}
+
+/**
+ * The outcome of a same-family admission: `same-family` (only the family rule lifted; a team
+ * member keeps an account of its own, ADR-0035) or `same-family-shared-account`; undefined for
+ * any other decision.
+ */
+export function sameFamilyOf(e: Engine, decision: ArtifactRef | undefined): string | undefined {
+  if (!decision) return undefined
+  const body = e.ctx.artifacts.get(decision)?.body as { decider?: { id?: string }; outcome?: { option?: string } } | undefined
+  return body?.decider?.id === 'workflow.same-family' ? body.outcome?.option ?? 'same-family' : undefined
 }
 
 /** The decisions recorded when the node's current attempt was routed: tier and route, after a same-family admission if there was one. */

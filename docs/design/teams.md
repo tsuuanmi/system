@@ -51,12 +51,21 @@ accounts (REQ-TEAM-4): they route one at a time, and each avoids every account a
 holds. A member that finds no other family fails with `config_error`. Its message starts
 `team T needs N provider families, one per member; M is/are ready (ADR-0027).`
 
-With the workflow's `allowSameFamily` on ([ADR-0029](../decisions/adr/0029-opt-in-same-family-fallback.md)),
-such a member routes again without the family and distinct-account rules, so two members may
-share one Worker, each in its own session: on a website account its own conversation, on an
-agent runtime (ACP, an SDK) its own native session ([worker sessions](../decisions/adr/0015-worker-sessions-and-peer-messaging.md)). The fallback is a `same-family` admission
-decision on the member; the team's final decision records `members: same provider family`, and
-its answer's second line says that no other provider judged it.
+With the workflow's `allowSameFamily` on ([ADR-0029](../decisions/adr/0029-opt-in-same-family-fallback.md),
+[ADR-0035](../decisions/adr/0035-one-family-teams-keep-distinct-accounts.md)), such a member routes
+again in up to two more steps:
+
+1. Without the family rule, **keeping distinct accounts**: on a provider with several accounts,
+   members spread over accounts of their own (the least busy first, ADR-0033). This is a
+   `same-family` admission decision.
+2. Without the distinct-account rule too, so two members may share one Worker, each in its own
+   session: on a website account its own conversation, on an agent runtime (ACP, an SDK) its own
+   native session ([worker sessions](../decisions/adr/0015-worker-sessions-and-peer-messaging.md)).
+   This is a `same-family-shared-account` admission decision.
+
+The team's final decision records `members: same provider family, on accounts of their own` or
+`…, sharing an account`, and its answer's second line says which, and that no other provider
+judged it.
 
 ## Procedure
 

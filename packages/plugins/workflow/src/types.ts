@@ -123,8 +123,9 @@ export interface Config {
   retainRunsDays?: number
   /**
    * When no Worker of another provider family (or, for a team member, another account) is
-   * admitted, run on the same family instead of failing, recorded as a `same-family` decision
-   * (ADR-0029). Off by default.
+   * admitted, run on the same family instead of failing: a team member first on an account of
+   * its own (`same-family`), then sharing one (`same-family-shared-account`) (ADR-0029,
+   * ADR-0035). Off by default.
    */
   allowSameFamily?: boolean
   /** Approve a high-confidence plan by policy (`by: policy`) instead of waiting for the operator (default false). */

@@ -117,9 +117,11 @@
   synthesis step produces the strongest-supported result and cites the member
   evidence it relies on.
 - **REQ-TEAM-4** Members of an independence-sensitive team are backed by distinct
-  accounts. When the operator allows one provider family and no other account is
-  admitted, members may share one Worker, each in its own session, and the team's
-  record says so ([ADR-0029](../decisions/adr/0029-opt-in-same-family-fallback.md)).
+  accounts. When the operator allows one provider family, members first keep distinct
+  accounts of that family while there are enough; only when no other account is
+  admitted do they share one Worker, each in its own session. The team's record says
+  which ([ADR-0029](../decisions/adr/0029-opt-in-same-family-fallback.md),
+  [ADR-0035](../decisions/adr/0035-one-family-teams-keep-distinct-accounts.md)).
 - **REQ-TEAM-5** Reviewers receive the exact subject (for example a diff at a
   head SHA), the criteria, and the relevant decision artifacts, but not the
   producer's conversation. Review independence is structural.

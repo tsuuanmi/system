@@ -816,7 +816,7 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
     expect(ctx.artifacts.list({ kind: 'report' }).filter((a) => a.bodySchema === 'session-summary@1.0').length).toBeGreaterThanOrEqual(1)
   }, 300_000)
 
-  it('runs a team on one account in two conversations when the operator allows the same family, and says so on the record (ADR-0029)', async () => {
+  it('runs a team on one account in two conversations when the operator allows the same family, and says so on the record (ADR-0029, ADR-0035)', async () => {
     const { ctx, fake } = await boot({ fake: { answer: member }, workflow: { allowSameFamily: true } })
     const done = await ctx.workflow.wait(ctx.workflow.start({ template: 'brainstorm', input: 'q' }).runId, 120_000)
     expect(done.status).toBe('completed')
@@ -828,11 +828,24 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
     expect(new Set(ballots.map((b) => b.conversationId)).size).toBe(2)
     expect(proposals).toHaveLength(2)
     // Never "independent": the decision and the answer say the members are one provider family.
-    expect(done.answer).toContain('Members: same provider family (allowSameFamily): no other provider judged this.')
+    expect(done.answer).toContain('Members: same provider family (allowSameFamily), some sharing one account: no other provider judged this.')
     const final = ctx.artifacts.get(ctx.workflow.records(done.runId).at(-1)!.outputReceipt!.acceptance)!.body as { outcome: { detail: Record<string, unknown> } }
-    expect(final.outcome.detail).toMatchObject({ members: 'same provider family' })
+    expect(final.outcome.detail).toMatchObject({ members: 'same provider family, sharing an account' })
+    // With one account the middle step admits nothing: the last step shares it (ADR-0035).
     const m2 = ctx.workflow.explain(done.runId)!.nodes.find((n) => n.nodeId === 'brainstorm:m2:propose')!
-    expect(m2.decisions).toEqual(expect.arrayContaining([expect.objectContaining({ type: 'admission', outcome: 'same-family' })]))
+    expect(m2.decisions).toEqual(expect.arrayContaining([expect.objectContaining({ type: 'admission', outcome: 'same-family-shared-account' })]))
+  }, 180_000)
+
+  it('keeps a one-provider team on accounts of their own while there are enough, before sharing one (ADR-0035)', async () => {
+    const { ctx } = await boot({ fake: { answer: member }, workflow: { allowSameFamily: true }, accounts: ['chatgpt-main', 'chatgpt-2'] })
+    const done = await ctx.workflow.wait(ctx.workflow.start({ template: 'brainstorm', input: 'q' }).runId, 120_000)
+    expect(done.status).toBe('completed')
+    const worker = (id: string) => done.nodes.find((n) => n.nodeId === id)!.worker
+    expect(new Set([worker('brainstorm:m1:propose'), worker('brainstorm:m2:propose')])).toEqual(new Set(['worker:chatgpt-main/standard', 'worker:chatgpt-2/standard']))
+    expect(done.answer).toContain('Members: same provider family (allowSameFamily), each on an account of its own: no other provider judged this.')
+    const decisions = ctx.workflow.explain(done.runId)!.nodes.flatMap((n) => n.decisions)
+    expect(decisions.some((d) => d.type === 'admission' && d.outcome === 'same-family')).toBe(true)
+    expect(decisions.some((d) => d.outcome === 'same-family-shared-account')).toBe(false)
   }, 180_000)
 
   it('still uses a second family whenever one is admitted, with the same-family opt-in on (ADR-0029)', async () => {
