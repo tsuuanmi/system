@@ -52,7 +52,8 @@ clipboard may be shared. Link texts, reference definitions, and citation chips
 may differ, because one chip can stand for several sources ("Name +2"); a
 footnote renders, so it is prose. A refused Copy leaves the rendered text. Either
 way, the answer's off-site links that the text lacks follow it as a `Sources:`
-list, so a cited answer keeps its URLs. No URL the answer keeps carries `utm_*`
+list (each URL after its title, unless the title only repeats the URL or its
+site), so a cited answer keeps its URLs. No URL the answer keeps carries `utm_*`
 tracking parameters
 ([`copiedMarkdown`](../../packages/ui-ops/src/answers.ts)).
 

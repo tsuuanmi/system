@@ -42,6 +42,9 @@ describe('website turn mechanics', () => {
 
   it('lists a report\'s sources under it', () => {
     expect(withSources('Report.', new Map([['https://a.example', 'A'], ['https://b.example', '']]))).toBe('Report.\n\nSources:\n- A https://a.example\n- https://b.example')
+    // A title that only repeats the link, its URL or its site, is left out (live 2026-10-19).
+    expect(withSources('Report.', new Map([['https://sqlite.org/wal.html', 'https://sqlite.org/wal.html'], ['https://www.sqlite.org/pragma.html', 'sqlite.org'], ['https://sqlite.org/changes.html', 'Release history']])))
+      .toBe('Report.\n\nSources:\n- https://sqlite.org/wal.html\n- https://www.sqlite.org/pragma.html\n- Release history https://sqlite.org/changes.html')
   })
 
   it('adds only the sources an answer does not carry, without tracking parameters', () => {

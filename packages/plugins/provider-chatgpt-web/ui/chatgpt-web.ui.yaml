@@ -223,10 +223,11 @@ elements:
       2026-10-18) that shows the same conversation again outside it: its turns, read in the
       thread's place, carried no citations. The turns below are read inside it.
     candidates:
-      # The main whose child is the conversation region: visible even before the region has a
-      # turn. Live (2026-10-18) the region's name does not come from an aria-label attribute.
-      - { css: 'main:has(> [role="region"])' }
+      # The outermost main: it holds the region once the conversation has one (a new chat has
+      # none yet, live 2026-10-19), and never the floating chat, a dialog outside it.
       - { css: 'main:not(main main)' }
+      # The main whose child is the conversation region, should a page ever show two.
+      - { css: 'main:has(> [role="region"])' }
   turn.user:
     description: One heading per user turn; the prompt is the heading's container. A rendered conversation always has one.
     scope: conversation.thread

@@ -88,9 +88,25 @@ export async function waitForReport(state: () => Promise<ResearchState>, timeout
   return completed.text
 }
 
-/** A report followed by its sources (href → title, first title wins), since report text keeps only labels. */
+/**
+ * A report followed by its sources (href → title, first title wins), since report text keeps only
+ * labels. A title that only repeats the link (the URL itself, or its site, as source pills show
+ * it) is left out.
+ */
 export function withSources(text: string, sources: ReadonlyMap<string, string>): string {
-  return `${text}\n\nSources:\n${[...sources].map(([href, title]) => `- ${title ? `${title} ` : ''}${href}`).join('\n')}`
+  return `${text}\n\nSources:\n${[...sources].map(([href, title]) => `- ${title && !repeatsLink(title, href) ? `${title} ` : ''}${href}`).join('\n')}`
+}
+
+/** Whether a link's title is only its URL or its site ("sqlite.org" of https://www.sqlite.org/wal.html). */
+function repeatsLink(title: string, href: string): boolean {
+  const bare = (s: string): string => s.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/+$/, '')
+  let host = ''
+  try {
+    host = new URL(href).hostname
+  } catch {
+    // Not a URL: only the text itself can match.
+  }
+  return bare(title) === bare(href) || (host !== '' && bare(title) === bare(host))
 }
 
 /** A URL without its `utm_*` tracking parameters, which sites add to the links they cite. */
