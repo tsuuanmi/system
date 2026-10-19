@@ -1,12 +1,12 @@
 ---
 id: PROP-0007
 type: proposal
-status: accepted
+status: implemented
 owners: [operator]
 created: 2026-10-19
 related-requirements: [REQ-ACC-7, REQ-WRK-2, REQ-WRK-8, REQ-TEAM-4]
 related-decisions: [ADR-0027, ADR-0029, ADR-0030, ADR-0032, ADR-0033, ADR-0034, ADR-0035]
-implementation: []
+implementation: [packages/workers-core, packages/plugins/workers, packages/plugins/turns, packages/plugins/workflow, packages/ui-ops, packages/plugins/browser-patchright, packages/plugins/login]
 ---
 
 # Proposal: Several accounts of one provider share its work
@@ -341,4 +341,18 @@ Accepted by the owner on 2026-10-19:
 
 ## Implementation
 
-None yet.
+On `main` by 2026-10-19, each part gated in full:
+- `37e0744`: load, pending admissions, the routing lock;
+- `a3c67c8`: cooldowns, error rules with `feature` and `on`, the overlay adding elements and rules, the describe timeout;
+- `4515356`: answer rules scoped to the answer just read;
+- `f78fbf8`: unsent failover;
+- `6d06bed`: every tier of the failed account left out;
+- `cacadbf`: the team middle step;
+- `d87f4b5`: pacing per provider, spread sign-in checks;
+- `f9d2640`: `maxBrowsers`;
+- `e218ae7`: free login ports.
+
+Live checks wait for a second account of one provider:
+- two concurrent `ask`s on two accounts;
+- a two-member team on two accounts;
+- a failover.

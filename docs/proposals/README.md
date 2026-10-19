@@ -50,7 +50,7 @@ accepted/implemented -> superseded
   `history` on `ctx.models`, so it can be a team member, carry research's synthesis thread, and
   continue an `ask`. Bounded, durable, idempotent, and egress-checked.
 
-- [PROP-0007: Account pools](0007-account-pools.md), **accepted** ([ADR-0033](../decisions/adr/0033-least-busy-routing.md), [ADR-0034](../decisions/adr/0034-unsent-failover-to-a-sibling-account.md), [ADR-0035](../decisions/adr/0035-one-family-teams-keep-distinct-accounts.md)). Several accounts of one provider
+- [PROP-0007: Account pools](0007-account-pools.md), **implemented** ([ADR-0033](../decisions/adr/0033-least-busy-routing.md), [ADR-0034](../decisions/adr/0034-unsent-failover-to-a-sibling-account.md), [ADR-0035](../decisions/adr/0035-one-family-teams-keep-distinct-accounts.md)). Several accounts of one provider
   share its work: the least busy account takes the next turn, a site's usage limit puts the
   account (or one feature) in a cooldown routing respects, a node that failed before anything was
   sent moves to a sibling account, and one-provider teams keep distinct accounts before sharing
