@@ -281,7 +281,8 @@ one `FAILED` node.
 **Failover** ([ADR-0034](../decisions/adr/0034-unsent-failover-to-a-sibling-account.md)). A
 node that failed with `quota_exhausted`, `challenge`, `reauth_required`, or `overloaded` before
 anything was sent (the execution reports `submitted: false`) is routed again with the failed
-Worker left out, within its attempts: the `recovery` decision's outcome is `failover`, naming the
+Worker left out, and the Workers that share its runtime (the other tiers of its account, as its
+source's `siblings` names them), within its attempts: the `recovery` decision's outcome is `failover`, naming the
 Worker it leaves (`from`) and that nothing was sent. The Workers left out are kept on the node
 row (`excluded`), so a restart keeps them; `continue` clears them. The router records each as the
 `excluded` check. With no Worker left but those, the node routes as before: an overload waits its

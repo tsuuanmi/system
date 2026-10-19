@@ -89,6 +89,14 @@ export class WorkerRouter extends Workers {
     return undefined
   }
 
+  siblings(worker: string): string[] {
+    for (const source of this.sources.values()) {
+      const workers = source.siblings?.(worker)
+      if (workers) return workers
+    }
+    return [worker]
+  }
+
   handle(sessionId: string): string | undefined {
     for (const source of this.sources.values()) {
       const handle = source.handle?.(sessionId)

@@ -290,6 +290,11 @@ export class Turns extends Service {
         const account = this.held(sessionId)
         return account ? TIERS.map((t) => websiteWorker(account, t)) : undefined
       },
+      // The tiers of one account share its scheduler, quota, and site: a failover leaves them all.
+      siblings: (worker) => {
+        const account = /^worker:([a-z][a-z0-9-]*)\/(?:economy|standard|frontier)$/.exec(worker)?.[1]
+        return account ? TIERS.map((t) => websiteWorker(account, t)) : undefined
+      },
       handle: (sessionId) => this.session(sessionId)?.binding ?? undefined,
       // The account stays (session affinity); without a binding the next turn opens a new conversation.
       reset: (sessionId) => {

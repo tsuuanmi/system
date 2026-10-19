@@ -111,7 +111,8 @@ export function failAttempt(e: Engine, run: RunRow, node: NodeRow, error: Workfl
   if (retry) {
     // Moving to another Worker needs no wait; an overload waits its back-off, in case none is left but this one.
     const delay = error.disposition === 'IMMEDIATE' || (failover && error.disposition !== 'BACKOFF') ? 0 : (e.config.retryDelayMs ?? 5000) * 2 ** Math.max(0, node.attempt - 1)
-    const excluded = failover ? { excluded: JSON.stringify([...new Set([...(node.excluded ? (JSON.parse(node.excluded) as string[]) : []), node.worker!])].sort()) } : {}
+    // The failed Worker and those that share its runtime (another tier of the same account).
+    const excluded = failover ? { excluded: JSON.stringify([...new Set([...(node.excluded ? (JSON.parse(node.excluded) as string[]) : []), ...e.ctx.workers.siblings(node.worker!)])].sort()) } : {}
     e.ctx.store.transaction(() => {
       e.writeNode(node, { state: 'READY', execution_id: null, worker: null, attempt: node.attempt, not_before: new Date(Date.now() + delay).toISOString(), error: JSON.stringify(error), ...excluded, ...decisions },
         (r) => {

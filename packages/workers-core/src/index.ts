@@ -132,6 +132,11 @@ export interface WorkerSource {
   wait(executionId: string, timeoutMs: number): Promise<WorkerExecution>
   /** The Workers a continued session must stay on, when this source owns the session. */
   affinity?(sessionId: string): string[] | undefined
+  /**
+   * The Workers that share this one's runtime (the tiers of one account), itself included, when
+   * this source owns it: a failover leaves all of them out (ADR-0034).
+   */
+  siblings?(worker: string): string[] | undefined
   /** The session's native conversation handle (conversation URL, SDK session or thread id), once known. */
   handle?(sessionId: string): string | undefined
   /** Start the session's next work in a fresh native conversation, on the same Worker (a compaction, REQ-SES-6). */
@@ -239,6 +244,8 @@ export abstract class Workers extends Service {
 
   /** The Workers a continued session must stay on, from the source that owns it. */
   abstract affinity(sessionId: string): string[] | undefined
+  /** The Workers that share a Worker's runtime (the tiers of one account), from its source; just itself when none says. */
+  abstract siblings(worker: string): string[]
 
   /** A session's native conversation handle, from the source that owns it. */
   abstract handle(sessionId: string): string | undefined

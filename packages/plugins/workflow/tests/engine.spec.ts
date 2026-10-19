@@ -12,7 +12,7 @@ import WorkerSessions from '@tsuuanmi/system-worker-sessions'
 import WorkerRouter from '@tsuuanmi/system-workers'
 import { afterEach, describe, expect, it } from 'vitest'
 import { FakeModels, type FakeScript } from '../../../models-core/conformance/models.ts'
-import type { WorkerExecution } from '@tsuuanmi/system-workers-core'
+import type { CapabilityDescriptor, WorkerExecution } from '@tsuuanmi/system-workers-core'
 import { source, worker } from '../../../workers-core/conformance/workers.ts'
 import { ModelWorkers } from '../../models/src/index.ts'
 import Workflow from '../src/index.ts'
@@ -87,10 +87,11 @@ describe('ctx.workflow: the engine under injected faults', () => {
   }, 60_000)
 
   /** Two scripted Workers: each attempt's outcome per Worker comes from `plan`, then they answer. */
-  function pair(ctx: Context, plan: Record<string, Array<{ kind: string; disposition: string; sent: boolean }>>, workers = ['w:a', 'w:b']) {
+  function pair(ctx: Context, plan: Record<string, Array<{ kind: string; disposition: string; sent: boolean }>>, workers: Array<string | CapabilityDescriptor> = ['w:a', 'w:b'], siblings?: (worker: string) => string[] | undefined) {
     const started: string[] = []
     const executions = new Map<string, WorkerExecution>()
-    ctx.workers.register(source('pair', workers.map((id) => worker(id)), {
+    ctx.workers.register(source('pair', workers.map((w) => (typeof w === 'string' ? worker(w) : w)), {
+      ...(siblings ? { siblings } : {}),
       start: (request) => {
         started.push(request.worker)
         const fault = plan[request.worker]?.shift()
@@ -98,7 +99,7 @@ describe('ctx.workflow: the engine under injected faults', () => {
         const execution: WorkerExecution = fault
           ? { id, status: 'failed', submitted: fault.sent, error: { kind: fault.kind, disposition: fault.disposition, message: `${fault.kind} on ${request.worker}` } as never, decisions: [] }
           : { id, status: 'completed', submitted: true, decisions: [], result: ctx.artifacts.put({ kind: 'report', bodySchema: 'provider-answer@1.0', classification: 'public', producer: { type: 'worker', ref: request.worker },
-            body: { schema: 'provider-answer@1.0', provider: 'p', account: request.worker.replace(/^w:/, 'acct-'), turnId: id, conversation: { mode: 'temporary' }, promptHash: `sha256:${'0'.repeat(64)}`, text: `answer from ${request.worker}` } }).id as `sha256:${string}` }
+            body: { schema: 'provider-answer@1.0', provider: 'p', account: request.worker.replace(/^w:/, 'acct-').replace(/[^a-z0-9-]/g, '-'), turnId: id, conversation: { mode: 'temporary' }, promptHash: `sha256:${'0'.repeat(64)}`, text: `answer from ${request.worker}` } }).id as `sha256:${string}` }
         executions.set(id, execution)
         return execution
       },
@@ -124,6 +125,18 @@ describe('ctx.workflow: the engine under injected faults', () => {
     const failed = await sent.ctx.workflow.wait(sent.ctx.workflow.start({ template: 'ask', input: 'q', classification: 'public' }).runId, 30_000)
     expect(failed).toMatchObject({ status: 'failed', error: { kind: 'quota_exhausted' } })
     expect(tried).toEqual(['w:a'])
+  }, 60_000)
+
+  it('fails over from every tier of the failed account, never to another tier of it (ADR-0034)', async () => {
+    const { ctx } = await boot({}, {}, [])
+    const at = (id: string, tier: 'standard' | 'frontier') => worker(id, { tier })
+    const account = (id: string) => /^w:(.)/.exec(id)?.[1]
+    const started = pair(ctx, { 'w:a-standard': [{ kind: 'overloaded', disposition: 'BACKOFF', sent: false }] },
+      [at('w:a-standard', 'standard'), at('w:a-frontier', 'frontier'), at('w:b-frontier', 'frontier')],
+      (w) => ['w:a-standard', 'w:a-frontier', 'w:b-frontier'].filter((x) => account(x) === account(w)))
+    const done = await ctx.workflow.wait(ctx.workflow.start({ template: 'ask', input: 'q', classification: 'public' }).runId, 30_000)
+    expect(done.status).toBe('completed')
+    expect(started).toEqual(['w:a-standard', 'w:b-frontier'])
   }, 60_000)
 
   it('retries an unsent overload on the same Worker when no other one is left (ADR-0034)', async () => {
