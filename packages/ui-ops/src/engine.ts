@@ -118,6 +118,22 @@ export interface StallEvent {
   outline?: UiOutline
 }
 
+/**
+ * A Copy whose Markdown was not kept, so the answer was read as rendered text: nothing copied
+ * (`empty`), its words not the rendered answer's (`words`, with the counts of the comparison), or
+ * the copy failing (`failed`). Counts only, never text (`provider.copy-refused`).
+ */
+export interface CopyRefusedEvent {
+  provider: string
+  reason: 'empty' | 'words' | 'failed'
+  prose?: number
+  shown?: number
+  matched?: number
+  links?: number
+  linkWords?: number
+  allowance?: number
+}
+
 export interface HealEvent {
   provider: string
   element: string
@@ -133,6 +149,8 @@ export interface HealEvent {
 
 export interface EngineOptions {
   onDrift?: (event: DriftEvent) => void
+  /** A Copy that was not kept (see `CopyRefusedEvent`). */
+  onCopyRefused?: (event: CopyRefusedEvent) => void
   /** After a heal settles: `healed` (verified), `failed` (acted, postcondition not met), or `rejected` (no action). */
   onHeal?: (event: HealEvent) => void
   /**
@@ -261,6 +279,11 @@ export class UiEngine {
    * and the clipboard read until it holds text (briefly). Empty when the control copied
    * nothing, so an earlier copy is never mistaken for this one.
    */
+  /** Report a Copy that was not kept, with its counts. */
+  copyRefused(event: Omit<CopyRefusedEvent, 'provider'>): void {
+    this.options.onCopyRefused?.({ provider: this.map.provider, ...event })
+  }
+
   async copied(control: Locator): Promise<string> {
     await this.page.context().grantPermissions(['clipboard-read', 'clipboard-write'], { origin: new URL(this.page.url()).origin })
     await this.page.evaluate(() => navigator.clipboard.writeText(''))

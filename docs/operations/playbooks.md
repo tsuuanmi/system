@@ -81,6 +81,14 @@ drift and does not silently break.
   `research-plan`) marks a Deep research plan the page never rendered; the
   `provider.stall` just before it outlines the page as it hung. Nothing is sent
   again. Repeated reloads point at the site, not the map.
+- **A Copy not kept**: event `provider.copy-refused` says an answer was read as
+  rendered text (tables come out cell by cell, citation chips as loose lines)
+  because its Copy was empty, failed, or its words were not the page's. For
+  `words` it gives counts only: the Markdown's prose words, the rendered words,
+  how many prose words were found in order (`matched`), its links and their
+  words, and the extra rendered words allowed. `matched` below `prose` means
+  the Markdown has words the page lacks; `shown − prose` above `allowance` means
+  the page shows words the Markdown lacks (chips, say).
 - **A Deep research report as read** (ChatGPT): event `provider.report-read` gives
   its path (`frame` or `inline`), its length, and the source links it carries,
   counts only. A report refused for citing no source with `links: 0` was read

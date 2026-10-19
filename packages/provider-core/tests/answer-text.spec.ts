@@ -1,9 +1,14 @@
 import { describe, expect, it } from 'vitest'
-import { sameWords } from '../src/index.ts'
+import { compareWords, sameWords } from '../src/index.ts'
 
 describe('Markdown from a Copy button is kept only when it is the rendered answer (REQ-PRV-5)', () => {
   it('drops heading, list, and fence markers and link targets, and allows a code block\'s label', () => {
     expect(sameWords('## Plan\n* **First** item\n\nSee [example.com](https://example.com).\n```python\nx = 1\n```', 'Plan\nFirst item\nSee example.com.\nPython\nx = 1')).toBe(true)
+  })
+
+  it('compares as counts only: prose words, shown words, matched in order, links, and the allowance', () => {
+    expect(compareWords('A claim ([Docs](https://d.example)).', 'A claim\nDocs\nSQLite\nSQLite\nSQLite\nSQLite\nSQLite')).toEqual({ same: false, prose: 2, shown: 8, matched: 2, links: 1, linkWords: 1, allowance: 5 })
+    expect(compareWords('A claim.', 'A claim.')).toEqual({ same: true, prose: 2, shown: 2, matched: 2, links: 0, linkWords: 0, allowance: 2 })
   })
 
   it('matches Markdown to its rendering, and refuses another answer', () => {

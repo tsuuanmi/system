@@ -71,5 +71,7 @@ export function apply(ctx: Context, config: Config = {}): void {
   driver.onStall = (e) => ctx.get('eventLog')?.append({ type: 'provider.stall', data: evidenceData(e, ctx.get('artifacts')) })
   // A conversation loaded once more to recover a reply its page never rendered (Deep research's plan).
   driver.onReload = (e) => ctx.get('eventLog')?.append({ type: 'provider.reload', data: e })
+  // An answer's Copy that was not kept: counts only, never text.
+  driver.onCopyRefused = (e) => ctx.get('eventLog')?.append({ type: 'provider.copy-refused', data: { ...e } })
   ctx.providers.register(driver)
 }

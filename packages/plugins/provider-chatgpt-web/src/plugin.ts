@@ -102,6 +102,7 @@ function wireHealAudit(ctx: Context, driver: ChatGptWebDriver, overlayPath: stri
   // A stalled answer, with the page outlined as local-private evidence.
   driver.onStall = (e) => log('provider.stall', evidenceData(e, ctx.get('artifacts')))
   driver.onReport = (e) => log('provider.report-read', e)
+  driver.onCopyRefused = (e) => log('provider.copy-refused', { ...e })
   driver.onHeal = (e) => {
     const decision = e.outcome === 'rejected' ? record(e, false) : decisions.get(key(e))
     if (e.outcome === 'healed' && e.candidate) {

@@ -176,13 +176,20 @@ describe.runIf(canRunBrowser)('ChatGptWebDriver against the fake site, with no r
 
   it('keeps a cited answer\'s reference-style Copy, URLs and all, without tracking parameters (REQ-PRV-5)', async () => {
     const { page, driver } = await site({ answer: cited, copied: () => referenced })
+    const refused: unknown[] = []
+    driver.onCopyRefused = (event) => void refused.push(event)
     expect((await driver.ask(page, 'Cite your sources', { conversation: 'temporary' })).text).toBe(referenced.replaceAll('?utm_source=chatgpt.com', ''))
+    expect(refused).toEqual([])
   }, 40_000)
 
   it('keeps a cited answer\'s URLs from its links when its Copy is refused', async () => {
     const { page, driver } = await site({ answer: cited, copied: () => 'Something else on the clipboard.' })
+    const refused: unknown[] = []
+    driver.onCopyRefused = (event) => void refused.push(event)
     expect((await driver.ask(page, 'Cite your sources', { conversation: 'temporary' })).text).toBe(
       'Pin actions by SHA (GitHub Docs) and attest the tarballs (GitHub).\n\nSources:\n- GitHub Docs https://docs.github.com/a\n- GitHub https://github.com/actions/attest')
+    // Recorded as counts only, so which side differed is decidable without the text.
+    expect(refused).toEqual([{ provider: 'chatgpt-web', reason: 'words', prose: 5, shown: 11, matched: 0, links: 0, linkWords: 0, allowance: 2 }])
   }, 40_000)
 
   it('refuses to send on an account without a model picker, assuming no mode (PROP-0004: no ChatGPT Free)', async () => {

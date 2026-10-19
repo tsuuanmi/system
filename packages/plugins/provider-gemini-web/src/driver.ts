@@ -10,7 +10,7 @@
  */
 import { readFileSync } from 'node:fs'
 import { type AskOptions, type AskResult, type AuthState, bindingReporter, completionOptions, type DeleteOptions, modePresets, ProviderError, type ProviderDriver, type ProviderFeature, type ProviderMode, type ResearchState, type TurnSnapshot, waitForReport, waitForStableCompletion, withSources } from '@tsuuanmi/system-provider-core'
-import { copiedMarkdown, type DriftEvent, outlineOf, preWrapText, type StallEvent, UiEngine, type UiMap, type UiOutline, loadUiMap, unverifiedEntries } from '@tsuuanmi/system-ui-ops'
+import { copiedMarkdown, type CopyRefusedEvent, type DriftEvent, outlineOf, preWrapText, type StallEvent, UiEngine, type UiMap, type UiOutline, loadUiMap, unverifiedEntries } from '@tsuuanmi/system-ui-ops'
 import type { Locator, Page, Route } from 'patchright-core'
 
 const MAP_URL = new URL('../ui/gemini-web.ui.yaml', import.meta.url)
@@ -123,6 +123,8 @@ export class GeminiWebDriver implements ProviderDriver<Page> {
   readonly map: UiMap
   /** A stale map element, with an outline of its region; the plugin records it. */
   onDrift: ((event: DriftEvent) => void) | undefined
+  /** An answer's Copy that was not kept, so it was read as rendered text: counts only; the plugin records it (`provider.copy-refused`). */
+  onCopyRefused: ((event: CopyRefusedEvent) => void) | undefined
   /** A turn whose answer stalled or ran out of time, outlined; the plugin records it (`provider.stall`). */
   onStall: ((event: StallEvent) => void) | undefined
   /** A conversation loaded once more to recover a reply the page never rendered; the plugin records it (`provider.reload`). */
@@ -678,7 +680,7 @@ export class GeminiWebDriver implements ProviderDriver<Page> {
     let engine = this.engines.get(page)
     if (!engine) {
       // No self-heal here: a drifted element fails closed until the map is updated, and is reported.
-      engine = new UiEngine(page, this.map, { heal: false, onDrift: (event) => this.onDrift?.(event), redact: () => this.accountNames(page) })
+      engine = new UiEngine(page, this.map, { heal: false, onDrift: (event) => this.onDrift?.(event), onCopyRefused: (event) => this.onCopyRefused?.(event), redact: () => this.accountNames(page) })
       this.engines.set(page, engine)
     }
     return engine

@@ -38,11 +38,31 @@ function renderedWords(markdown: string): { prose: string[]; linkWords: number; 
  * its text and a chip's count.
  */
 export function sameWords(markdown: string, rendered: string): boolean {
+  return compareWords(markdown, rendered).same
+}
+
+/**
+ * How Markdown compares with the rendered answer, as counts only (never words): its prose words,
+ * the rendered words, how many prose words were found in order, its links and their words, and
+ * how many extra rendered words are allowed. A refused Copy is recorded with them.
+ */
+export interface WordsComparison {
+  same: boolean
+  prose: number
+  shown: number
+  matched: number
+  links: number
+  linkWords: number
+  allowance: number
+}
+
+export function compareWords(markdown: string, rendered: string): WordsComparison {
   const { prose, linkWords, links } = renderedWords(markdown)
   const shown = words(rendered)
   const blocks = Math.ceil((markdown.match(/^```/gm) ?? []).length / 2)
-  if (!prose.length || shown.length - prose.length > 2 + 3 * blocks + linkWords + 2 * links) return false
-  let at = 0
-  for (const word of shown) if (at < prose.length && word === prose[at]) at++
-  return at === prose.length
+  const allowance = 2 + 3 * blocks + linkWords + 2 * links
+  let matched = 0
+  for (const word of shown) if (matched < prose.length && word === prose[matched]) matched++
+  const same = prose.length > 0 && shown.length - prose.length <= allowance && matched === prose.length
+  return { same, prose: prose.length, shown: shown.length, matched, links, linkWords, allowance }
 }

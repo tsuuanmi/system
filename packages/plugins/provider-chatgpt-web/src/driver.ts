@@ -9,7 +9,7 @@
  */
 import { readFileSync } from 'node:fs'
 import { type AskOptions, type AskResult, type AuthState, bindingReporter, completionOptions, type ConversationMode, type DeleteOptions, modePresets, ProviderError, type ProviderDriver, type ProviderFeature, type ProviderMode, type ResearchState, type TurnSnapshot, waitForReport, waitForStableCompletion, withMissingSources } from '@tsuuanmi/system-provider-core'
-import { copiedMarkdown, type DriftEvent, type HealEvent, linksIn, outlineOf, preWrapText, type StallEvent, UiEngine, type UiMap, type UiOutline, loadUiMap, unverifiedEntries } from '@tsuuanmi/system-ui-ops'
+import { copiedMarkdown, type CopyRefusedEvent, type DriftEvent, type HealEvent, linksIn, outlineOf, preWrapText, type StallEvent, UiEngine, type UiMap, type UiOutline, loadUiMap, unverifiedEntries } from '@tsuuanmi/system-ui-ops'
 import type { Frame, Locator, Page, Route } from 'patchright-core'
 
 export type { AskOptions, AskResult, AuthState, ConversationMode, ProviderMode }
@@ -101,6 +101,8 @@ export class ChatGptWebDriver implements ProviderDriver<Page> {
   readonly stateOrigins: readonly string[]
   readonly map: UiMap
   onDrift: ((event: DriftEvent) => void) | undefined
+  /** An answer's Copy that was not kept, so it was read as rendered text: counts only; the plugin records it (`provider.copy-refused`). */
+  onCopyRefused: ((event: CopyRefusedEvent) => void) | undefined
   /** A turn whose answer stalled or ran out of time, outlined; the plugin records it (`provider.stall`). */
   onStall: ((event: StallEvent) => void) | undefined
   /**
@@ -668,6 +670,7 @@ export class ChatGptWebDriver implements ProviderDriver<Page> {
     if (!engine) {
       engine = new UiEngine(page, this.map, {
         onDrift: (event) => this.onDrift?.(event),
+        onCopyRefused: (event) => this.onCopyRefused?.(event),
         onHeal: (event) => this.onHeal?.(event),
         beforeHealedAction: (event) => this.beforeHealedAction?.(event),
         heal: this.healEnabled(),
