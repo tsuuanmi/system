@@ -180,6 +180,12 @@ describe.runIf(canRunBrowser)('UiEngine on a real page', { timeout: 15_000 }, ()
     expect(drift).toEqual([])
   })
 
+  it('names what an unresolved element needed: exactly one visible match, or any for a many element', async () => {
+    const { engine } = await open(page('<form data-type="composer"><div contenteditable role="textbox"></div></form>'))
+    await expect(engine.resolve('turn.user', 0)).rejects.toMatchObject({ kind: 'ui_drift', message: expect.stringMatching(/turn\.user matched any visible element/) })
+    await expect(engine.resolve('response.stop', 0)).rejects.toMatchObject({ kind: 'ui_drift', message: expect.stringMatching(/response\.stop matched exactly one visible element/) })
+  })
+
   it('takes the primary candidate that renders a moment after a later one, with no drift', async () => {
     const { engine, tab, drift } = await open(page(`<form data-type="composer"><div contenteditable role="textbox"></div>
   <button type="button" aria-label="Send prompt">↑</button></form>`))

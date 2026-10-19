@@ -197,13 +197,13 @@ export class UiEngine {
     this.network.dispose()
   }
 
-  /** Resolve an element, waiting until one candidate has exactly one visible match. */
+  /** Resolve an element, waiting until one candidate has exactly one visible match (`many`: any). */
   async resolve(id: string, timeoutMs = this.options.defaultResolveMs ?? 5000): Promise<Resolved> {
     const deadline = Date.now() + timeoutMs
     for (;;) {
       const found = await this.tryResolve(id)
       if (found) return found
-      if (Date.now() >= deadline) throw drift(`${this.map.provider}: no candidate of ${id} matched exactly one visible element`)
+      if (Date.now() >= deadline) throw drift(`${this.map.provider}: no candidate of ${id} matched ${this.element(id).cardinality === 'many' ? 'any' : 'exactly one'} visible element`)
       await sleep(TICK_MS)
     }
   }

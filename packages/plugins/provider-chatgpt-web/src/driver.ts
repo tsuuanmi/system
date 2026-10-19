@@ -503,8 +503,10 @@ export class ChatGptWebDriver implements ProviderDriver<Page> {
    * which is read in the thread.
    */
   private async runningAfterPrompt(engine: UiEngine): Promise<boolean> {
-    if ((await engine.count('research.running')) === 0) return false
-    const found = (await engine.resolve('research.running', 1000)).locator
+    // One look, never two: a marker that left the page meanwhile (the run just finished) is not
+    // running, and never drift (a count, then a resolve, failed the turn as its report landed).
+    const found = await engine.resolve('research.running', 0).then((r) => r.locator, () => undefined)
+    if (!found) return false
     const thread = await engine.resolve('conversation.thread', 1000).then((t) => t.locator.first().elementHandle(), () => null)
     const user = (await engine.count('turn.user')) > 0 ? await (await engine.resolve('turn.user', 1000)).locator.last().elementHandle() : null
     return found.evaluateAll((markers, [t, u]) => markers.some((m) => !t || !t.contains(m) || !u || (u.compareDocumentPosition(m) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0), [thread, user] as const).catch(() => false)
