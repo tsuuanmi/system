@@ -261,8 +261,15 @@ second execution path (INV-1).
     own bound. A retryable failure after sending fails the node as
     `USER_ACTION`, so the engine never causes a duplicate provider turn
     (INV-4).
-  - Each choice is a `recovery` decision. It becomes the node's
-    `lastDecision`, and the `retry` or `failed` event names it.
+  - **Failover (ADR-0034).** An unsent `quota_exhausted`, `challenge`,
+    `reauth_required`, or `overloaded` instead routes the node again with the
+    failed Worker left out (`excluded` on the node row, the router's `excluded`
+    check), within `maxAttempts`, at once (an overload after its back-off). With
+    no other Worker it routes as before. A node whose session holds an account,
+    or a team member, never moves. `continue` clears the exclusions.
+  - Each choice is a `recovery` decision (`retry`, `failover`, or `fail`). It
+    becomes the node's `lastDecision`, and the `retry` (with `failoverFrom`) or
+    `failed` event names it.
 - **Ownership and restart (REQ-WF-4).**
   - A run advances under a `run:<id>` lease, and every node write is fenced.
   - A lost lease (a host that slept past it, or a takeover) re-arms the run,

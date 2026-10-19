@@ -24,7 +24,10 @@ invoked by the [workflow engine](../workflow/README.md)
     touched.
   - **Run:** `start`, `get`, and `wait` run turns. The engine routes; a turn
     never routes itself.
-  - **Affinity:** a session stays on the account it is bound to.
+  - **Affinity:** a session stays on the account it is bound to, once a turn of
+    it was sent, is under way, or it has a conversation. A session whose turns
+    all failed before sending holds no account: its next turn may run on another
+    (unsent failover, ADR-0034), and the tab the first account kept for it closes.
 - **Durable from acceptance.** `ask(WorkerStart)` writes the turn (`queued`) on
   the admitted Worker and returns at once.
   - The turn takes its feature from the requirement's capabilities

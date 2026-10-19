@@ -60,7 +60,7 @@ export function continueRun(e: Engine, runId: string, nodeId?: string): RunView 
       // A Worker step with its input bound runs again as it was; a gate, tally, or team decision is
       // promoted again, so it decides afresh (a tie blocks again, with a new deadline).
       const ready = recordExecutor(spec) === 'worker' && record.inputReceipt !== undefined
-      e.writeNode(node, { state: ready ? 'READY' : 'WAITING', execution_id: null, worker: null, not_before: null, error: null }, (r) => {
+      e.writeNode(node, { state: ready ? 'READY' : 'WAITING', execution_id: null, worker: null, not_before: null, error: null, excluded: null }, (r) => {
         const next: NodeRecord = { ...r, lastDecision: decision }
         delete next.execution
         return next

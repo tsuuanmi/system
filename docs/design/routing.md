@@ -85,8 +85,11 @@ flowchart TD
   R --> J[none admitted: an admission decision and AdmissionFailure with every rejection]
 ```
 
-The checks, in order, are `restricted`, `diversity`, `capability`, `input`, `locality`, `state`,
-and `tier`; a rejected Worker carries each check it failed, with its reason.
+The checks, in order, are `restricted`, `excluded` (the Workers an earlier attempt failed on
+unsent, [ADR-0034](../decisions/adr/0034-unsent-failover-to-a-sibling-account.md)),
+`diversity`, `capability`, `cooldown` (a usage limit on a capability the work needs), `input`,
+`locality`, `state`, and `tier`; a rejected Worker carries each check it failed, with its
+reason.
 
 **Input length** ([ADR-0032](../decisions/adr/0032-admission-refuses-input-longer-than-a-worker-takes.md)).
 A descriptor may declare `maxInputChars` (`capability-descriptor@1.2`): the longest input the

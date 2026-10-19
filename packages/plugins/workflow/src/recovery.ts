@@ -60,48 +60,67 @@ export function routedDecisions(node: NodeRow, e?: Engine): ArtifactRef[] {
   return e && isSameFamily(e, before) ? stored.slice(-3) : stored.slice(-2)
 }
 
+/** Failures an unsent attempt fails over from, to another Worker (ADR-0034). */
+const FAILOVER = new Set(['quota_exhausted', 'challenge', 'reauth_required', 'overloaded'])
+
 /**
- * Retry or fail a node after a failed attempt (REQ-WF-6), recorded as a `recovery`
- * decision (INV-13). A retry needs a retryable disposition, attempts left, and a prompt
- * that never reached the provider: once sent, only the turn runtime may resubmit, within
- * its own bound, so the engine never causes a duplicate provider turn (INV-4).
+ * Retry, fail over, or fail a node after a failed attempt (REQ-WF-6), recorded as a
+ * `recovery` decision (INV-13). A retry needs a retryable disposition, attempts left, and a
+ * prompt that never reached the provider: once sent, only the turn runtime may resubmit, within
+ * its own bound, so the engine never causes a duplicate provider turn (INV-4). An unsent
+ * usage limit, challenge, sign-out, or overload fails over instead: the next attempt leaves the
+ * failed Worker out (ADR-0034), unless the node's session is held to it.
  */
 export function failAttempt(e: Engine, run: RunRow, node: NodeRow, error: WorkflowError, attempt: { sent: boolean; execution?: WorkerExecution; decisions?: ArtifactRef[] }, lease: () => Lease): void {
   const max = e.config.maxAttempts ?? 3
   const reasons = {
     retry: [] as string[],
+    failover: [] as string[],
     fail: [] as string[],
   }
-  if (!RETRYABLE.has(error.disposition)) reasons.fail.push(`${error.kind} is ${error.disposition}, not retryable`)
+  // A session that already holds its account (a turn of it was sent), or a team member, which joins
+  // its team bound to the Worker of its first admission (Model A), never moves.
+  const sessionId = (JSON.parse(node.spec) as ResolvedNode).session.sessionId
+  const held = sessionId ? e.ctx.workers.affinity(sessionId) ?? e.ctx.workerSessions.session(sessionId) : undefined
+  if (!attempt.sent && node.worker && FAILOVER.has(error.kind) && node.attempt < max && !held) {
+    reasons.failover.push(`${error.kind} on ${node.worker} before anything was sent, and attempt ${node.attempt} of ${max} failed: another Worker takes it`)
+  } else if (!RETRYABLE.has(error.disposition)) reasons.fail.push(`${error.kind} is ${error.disposition}, not retryable`)
   else if (attempt.sent) reasons.fail.push(`${error.kind} came after the prompt was sent; resending could duplicate the provider turn`)
   else if (node.attempt >= max) reasons.fail.push(`attempt ${node.attempt} of ${max} failed`)
   else reasons.retry.push(`${error.kind} is ${error.disposition}, the prompt was never sent, and attempt ${node.attempt} of ${max} failed`)
-  const retry = reasons.retry.length > 0
+  const failover = reasons.failover.length > 0
+  const retry = failover || reasons.retry.length > 0
   // What failed, in the decision `explain` shows, so the CLI alone tells why.
   const said = errorLine(error.message)
-  if (said) (retry ? reasons.retry : reasons.fail).push(`error: ${said}`)
+  if (said) (failover ? reasons.failover : retry ? reasons.retry : reasons.fail).push(`error: ${said}`)
   const kept = attempt.decisions ?? (attempt.execution ? [...attempt.execution.decisions, ...routedDecisions(node, e)] : node.decisions ? (JSON.parse(node.decisions) as ArtifactRef[]) : [])
   const decision = e.ctx.artifacts.recordDecision({
     decisionType: 'recovery',
     question: `How does node ${node.node_id} of run ${run.run_id} recover from ${error.kind}?`,
     inputs: kept,
-    candidates: [{ option: 'retry', selected: retry, reasons: reasons.retry }, { option: 'fail', selected: !retry, reasons: reasons.fail }],
+    candidates: [
+      { option: 'retry', selected: retry && !failover, reasons: reasons.retry },
+      { option: 'failover', selected: failover, reasons: reasons.failover },
+      { option: 'fail', selected: !retry, reasons: reasons.fail },
+    ],
     decider: { type: 'rule', id: 'workflow.recovery', version: '1' },
-    outcome: { option: retry ? 'retry' : 'fail', detail: { kind: error.kind, disposition: error.disposition, attempt: node.attempt } },
+    outcome: { option: failover ? 'failover' : retry ? 'retry' : 'fail', detail: { kind: error.kind, disposition: error.disposition, attempt: node.attempt, ...(failover ? { from: node.worker!, sent: false } : {}) } },
     deterministic: true,
   }, { producer: { type: 'system', ref: 'workflow' }, runId: run.run_id, nodeId: node.node_id })
   const decisions = kept.length ? { decisions: JSON.stringify(kept) } : {}
   if (retry) {
-    const delay = error.disposition === 'IMMEDIATE' ? 0 : (e.config.retryDelayMs ?? 5000) * 2 ** Math.max(0, node.attempt - 1)
+    // Moving to another Worker needs no wait; an overload waits its back-off, in case none is left but this one.
+    const delay = error.disposition === 'IMMEDIATE' || (failover && error.disposition !== 'BACKOFF') ? 0 : (e.config.retryDelayMs ?? 5000) * 2 ** Math.max(0, node.attempt - 1)
+    const excluded = failover ? { excluded: JSON.stringify([...new Set([...(node.excluded ? (JSON.parse(node.excluded) as string[]) : []), node.worker!])].sort()) } : {}
     e.ctx.store.transaction(() => {
-      e.writeNode(node, { state: 'READY', execution_id: null, worker: null, attempt: node.attempt, not_before: new Date(Date.now() + delay).toISOString(), error: JSON.stringify(error), ...decisions },
+      e.writeNode(node, { state: 'READY', execution_id: null, worker: null, attempt: node.attempt, not_before: new Date(Date.now() + delay).toISOString(), error: JSON.stringify(error), ...excluded, ...decisions },
         (r) => {
           // The next attempt gets its own execution; the failed one no longer explains the node.
           const next: NodeRecord = { ...r, lastDecision: decision.id as ArtifactRef }
           delete next.execution
           return next
         }, lease)
-      e.ctx.eventLog.append({ type: 'workflow.node.retry', runId: run.run_id, nodeId: node.node_id, decision: decision.id, data: { attempt: node.attempt, kind: error.kind, disposition: error.disposition, delayMs: delay } })
+      e.ctx.eventLog.append({ type: 'workflow.node.retry', runId: run.run_id, nodeId: node.node_id, decision: decision.id, data: { attempt: node.attempt, kind: error.kind, disposition: error.disposition, delayMs: delay, ...(failover ? { failoverFrom: node.worker! } : {}) } })
     })
     return
   }

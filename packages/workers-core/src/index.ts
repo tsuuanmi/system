@@ -150,7 +150,7 @@ export interface WorkerSource {
 }
 
 /** The admission checks, in the order the router applies them. */
-export type AdmissionCheck = 'restricted' | 'diversity' | 'capability' | 'cooldown' | 'input' | 'locality' | 'state' | 'tier'
+export type AdmissionCheck = 'restricted' | 'excluded' | 'diversity' | 'capability' | 'cooldown' | 'input' | 'locality' | 'state' | 'tier'
 
 export interface Rejection {
   worker: string
@@ -163,6 +163,8 @@ export interface Rejection {
 export interface RouteOptions {
   /** Only these Workers may take the work, e.g. a persistent session's own account. */
   restrict?: { workers: readonly string[]; reason: string }
+  /** These Workers may not take the work: an earlier attempt failed on them, unsent (ADR-0034). */
+  excludeWorkers?: { workers: readonly string[]; reason: string }
   /**
    * No Worker of these provider families may take the work (ADR-0027): the families of the Workers
    * that served the nodes this one must differ from. A Worker with no family cannot prove it differs.

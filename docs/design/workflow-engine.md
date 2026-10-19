@@ -278,6 +278,23 @@ the decision artifact that caused it.
 Attempts are bounded (default 3). The operator command `continue` reopens exactly
 one `FAILED` node.
 
+**Failover** ([ADR-0034](../decisions/adr/0034-unsent-failover-to-a-sibling-account.md)). A
+node that failed with `quota_exhausted`, `challenge`, `reauth_required`, or `overloaded` before
+anything was sent (the execution reports `submitted: false`) is routed again with the failed
+Worker left out, within its attempts: the `recovery` decision's outcome is `failover`, naming the
+Worker it leaves (`from`) and that nothing was sent. The Workers left out are kept on the node
+row (`excluded`), so a restart keeps them; `continue` clears them. The router records each as the
+`excluded` check. With no Worker left but those, the node routes as before: an overload waits its
+back-off and retries there, while an account that hit a limit or needs the operator is refused
+by its own state or cooldown, and the node fails with that kind. A node never fails over:
+
+- once its prompt may have been sent: reconciliation and the dispositions above apply (INV-4);
+- when its session holds an account: a turn of it was sent, or it has a conversation (a session
+  whose turns all failed unsent holds none);
+- as a team member, which joins its team bound to the Worker of its first admission (Model A).
+
+A bare `ask` outside a run has no recovery and fails as before.
+
 ## Convergence
 
 A run is complete only when it has no blockers. Possible blockers are unmet

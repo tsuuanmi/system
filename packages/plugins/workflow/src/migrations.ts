@@ -38,4 +38,8 @@ export const MIGRATIONS = [{
   version: 7,
   sql: `ALTER TABLE workflow_wakes ADD COLUMN kind TEXT NOT NULL DEFAULT 'wake';
   CREATE TABLE session_handoffs (session_id TEXT PRIMARY KEY, artifact TEXT NOT NULL);`,
+}, {
+  // Workers a node failed over from, unsent (ADR-0034): its next routes leave them out.
+  version: 8,
+  sql: 'ALTER TABLE workflow_nodes ADD COLUMN excluded TEXT;',
 }]

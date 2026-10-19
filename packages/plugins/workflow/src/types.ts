@@ -175,6 +175,8 @@ export interface NodeRow {
   decisions: string | null
   /** Rejected results retried at a higher tier so far. */
   escalations: number
+  /** JSON array of the Workers this node failed over from, unsent (ADR-0034); its routes leave them out. */
+  excluded?: string | null
   error: string | null
   updated_at: string
 }

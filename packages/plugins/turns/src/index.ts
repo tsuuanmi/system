@@ -287,7 +287,7 @@ export class Turns extends Service {
       },
       wait: async (id, timeoutMs) => execution(await this.wait(id, timeoutMs)),
       affinity: (sessionId) => {
-        const account = this.session(sessionId)?.account
+        const account = this.held(sessionId)
         return account ? TIERS.map((t) => websiteWorker(account, t)) : undefined
       },
       handle: (sessionId) => this.session(sessionId)?.binding ?? undefined,
@@ -419,10 +419,14 @@ export class Turns extends Service {
       const sessionId = request.sessionId ?? null
       if (sessionId) {
         db.prepare('INSERT OR IGNORE INTO turn_sessions (session_id, account, binding, created_at) VALUES (?, NULL, NULL, ?)').run(sessionId, now())
-        const bound = this.session(sessionId)?.account
+        const bound = this.held(sessionId)
         if (bound && bound !== account) throw new ProviderError('invalid_input', `session ${sessionId} is bound to ${bound}, not ${account}`)
-        // A new persistent session is bound to the first account that runs it.
-        db.prepare('UPDATE turn_sessions SET account = COALESCE(account, ?) WHERE session_id = ?').run(account, sessionId)
+        // Moved before anything was sent: the tab the other account kept for it closes.
+        const before = this.session(sessionId)?.account
+        if (before && before !== account) this.ctx.store.afterCommit(() => void this.ctx.browser.discardTab(before, sessionId).catch(() => undefined))
+        // A new persistent session is bound to the account that runs it; one that never sent
+        // anything (its turns failed unsent) may move to a sibling account (ADR-0034).
+        db.prepare('UPDATE turn_sessions SET account = ? WHERE session_id = ?').run(account, sessionId)
       }
       const requirement = request.requirement
       const row: Row = {
@@ -748,6 +752,19 @@ export class Turns extends Service {
         observedAt,
       }))
     })
+  }
+
+  /**
+   * The account a session is held to: once a turn of it was sent, is under way, or it has a
+   * conversation. A session whose turns all failed before sending holds none, so its node may
+   * move to a sibling account (ADR-0034).
+   */
+  private held(sessionId: string): string | undefined {
+    const session = this.session(sessionId)
+    if (!session?.account) return undefined
+    if (session.binding) return session.account
+    const used = this.ctx.store.db.prepare(`SELECT 1 FROM turns WHERE session_id = ? AND (submitted_at IS NOT NULL OR status IN ('queued', 'running', 'completed')) LIMIT 1`).get(sessionId)
+    return used ? session.account : undefined
   }
 
   /** The usage limits in force (ADR-0034), of one account or every one; lapsed ones are gone. */

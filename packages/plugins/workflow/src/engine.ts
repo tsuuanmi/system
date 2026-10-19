@@ -465,7 +465,13 @@ export class Engine {
       let sameFamily: ArtifactRef | undefined
       try {
         try {
-          admitted = await this.ctx.workers.route(record.requirement, { producer: 'workflow', input, ...restricted, ...(exclude ? { exclude } : {}) })
+          // The Workers it failed over from, unsent (ADR-0034); with none left but them, it routes as before.
+          const failed = node.excluded ? (JSON.parse(node.excluded) as string[]) : []
+          const away = failed.length ? { excludeWorkers: { workers: failed, reason: `an earlier attempt of ${node.node_id} failed here before anything was sent` } } : {}
+          admitted = await this.ctx.workers.route(record.requirement, { producer: 'workflow', input, ...restricted, ...(exclude ? { exclude } : {}), ...away }).catch((error: unknown) => {
+            if (!failed.length || !(error instanceof AdmissionFailure)) throw error
+            return this.ctx.workers.route(record.requirement, { producer: 'workflow', input, ...restricted, ...(exclude ? { exclude } : {}) })
+          })
         } catch (error) {
           if (!(error instanceof AdmissionFailure) || !this.config.allowSameFamily || (!exclude && !distinctAccounts)) throw error
           // Opt-in only: with no Worker of another family (or account), route without that rule, and say so.

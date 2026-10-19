@@ -172,6 +172,15 @@ export function workersConformance(name: string, boot: Boot): void {
       }
     })
 
+    it('leaves out the Workers an earlier attempt failed on unsent, and says why (ADR-0034)', async () => {
+      await withWorkers([worker('w:a'), worker('w:b')], async (ctx) => {
+        const admitted = await ctx.workers.route(requirement(), { excludeWorkers: { workers: ['w:a'], reason: 'an earlier attempt failed here before anything was sent' } })
+        expect(admitted.worker.worker).toBe('w:b')
+        expect(body(ctx, admitted.decisions.route).candidates.find((c) => c.option === 'w:a')!.reasons).toEqual(['an earlier attempt failed here before anything was sent'])
+        await expect(ctx.workers.route(requirement(), { excludeWorkers: { workers: ['w:a', 'w:b'], reason: 'failed' } })).rejects.toMatchObject({ rejections: [{ failed: [{ check: 'excluded' }] }, { failed: [{ check: 'excluded' }] }] })
+      })
+    })
+
     it('honours a restriction, such as a persistent session bound to its account', async () => {
       await withWorkers([worker('w:a'), worker('w:b')], async (ctx) => {
         const admitted = await ctx.workers.route(requirement(), { restrict: { workers: ['w:b'], reason: 'the session is bound to b' } })
