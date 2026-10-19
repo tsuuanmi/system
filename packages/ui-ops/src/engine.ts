@@ -426,9 +426,23 @@ export class UiEngine {
 
   /** The map's `errors` conditions guard every action: a login surface or challenge is never healed around. */
   private async checkGuards(): Promise<void> {
+    await this.checkErrors('act')
+  }
+
+  /**
+   * The map's error rules checked on a turn's answer once it is read (`on: answer`): the site
+   * answered with its own usage limit, say. The turn was sent; the caller fails it with the rule's
+   * kind and feature (ADR-0034).
+   */
+  async answerErrors(): Promise<void> {
+    await this.checkErrors('answer')
+  }
+
+  private async checkErrors(on: 'act' | 'answer'): Promise<void> {
     for (const rule of this.map.errors) {
+      if ((rule.on ?? 'act') !== on) continue
       if (await this.evaluate(rule.when, new Map())) {
-        throw new ProviderError(rule.kind, rule.message ?? `${this.map.provider}: ${rule.kind} (${JSON.stringify(rule.when)})`)
+        throw new ProviderError(rule.kind, rule.message ?? `${this.map.provider}: ${rule.kind} (${JSON.stringify(rule.when)})`, rule.feature ? { feature: rule.feature } : undefined)
       }
     }
   }

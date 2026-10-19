@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
@@ -341,6 +341,46 @@ describe.runIf(canRunBrowser)('ctx.turns: ask through a saved account', () => {
     expect(route.candidates.find((c) => c.option === 'worker:chatgpt-2/standard')!.reasons).toEqual(['admitted; worker:chatgpt-main/standard is less busy (load 0 of 1; this one load 1 of 1)'])
     await Promise.all([ctx.turns.wait(first.turnId, 30_000), ctx.turns.wait(second.turnId, 30_000)])
   }, 90_000)
+
+  it('cools an account the site answers with its usage limit, keeps its status ready, and ends the limit by a used feature or the operator (ADR-0034)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'system-turns-'))
+    cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+    // The operator's overlay recognizes the site's limit answers, with no release.
+    writeFileSync(join(dir, 'none.yaml'), [
+      'elements:',
+      '  answer.limit:',
+      "    candidates: [{ text: { en: '^You have reached your usage limit' } }]",
+      '  answer.search-limit:',
+      "    candidates: [{ text: { en: '^You have reached your search limit' } }]",
+      'errors:',
+      '  - { when: { visible: answer.limit }, kind: quota_exhausted, on: answer }',
+      '  - { when: { visible: answer.search-limit }, kind: quota_exhausted, feature: web-search, on: answer }',
+    ].join('\n'))
+    const { ctx, fake } = await boot({ dir, fake: { answer: 'You have reached your usage limit until 18:40.', features: ['web-search'] } })
+    const stateOf = async () => (await ctx.workers.list()).find((w) => w.worker === 'worker:chatgpt-main/standard')!
+    // The whole account: sent, so it fails and is never resent; its Workers are out of quota for a while.
+    const limited = await ctx.turns.wait((await ask(ctx, { prompt: 'one' })).turnId, 30_000)
+    expect(limited).toMatchObject({ status: 'failed', error: { kind: 'quota_exhausted' } })
+    expect(fake.sent).toHaveLength(1)
+    expect(ctx.turns.cooldowns()).toEqual([expect.objectContaining({ account: 'chatgpt-main', feature: '*', source: expect.stringMatching(/quota_exhausted/) })])
+    expect((await stateOf()).state).toBe('quota-exhausted')
+    expect((await ctx.accounts.get('chatgpt-main')).status).toBe('ready')
+    expect(ctx.turns.clearCooldown('chatgpt-main')).toBe(1)
+    expect((await stateOf()).state).toBe('ready')
+    // One feature: only work that needs it is kept away; a turn that used it and succeeded ends it.
+    await ctx.turns.probe('chatgpt-main')
+    fake.options.answer = 'You have reached your search limit for today.'
+    await ctx.turns.wait((await ask(ctx, { prompt: 'news?', search: true })).turnId, 30_000)
+    expect((await stateOf()).cooldowns).toEqual([{ capability: 'web-search', until: expect.any(String) }])
+    await expect(ask(ctx, { prompt: 'more news?', search: true })).rejects.toThrow(/web-search limit until/)
+    fake.options.answer = 'Plain answer'
+    expect(await ctx.turns.wait((await ask(ctx, { prompt: 'plain' })).turnId, 30_000)).toMatchObject({ status: 'completed' })
+    const requirement: WorkRequirement = { schema: 'work-requirement@1.0', objective: 'test', egressPolicy: 'egress.classification-and-secrets', capabilities: ['reason', 'web-search'],
+      data: { classification: 'operator-shared', refs: [] }, tier: { min: 'standard', source: 'default' }, acceptance: { contract: 'acceptance.answer' } }
+    const used = ctx.turns.ask({ key: 'used-search', worker: 'worker:chatgpt-main/standard', prompt: 'news now', requirement, decisions: limited.routeDecision ? { route: limited.routeDecision, tier: limited.tierDecision! } : (undefined as never) })
+    expect(await ctx.turns.wait(used.turnId, 30_000)).toMatchObject({ status: 'completed' })
+    expect(ctx.turns.cooldowns()).toEqual([])
+  }, 120_000)
 
   it('routes through ctx.workers to an admitted Worker and records why every other one was not chosen (REQ-WRK-1, REQ-ART-1)', async () => {
     const { ctx } = await boot({ accounts: [account('chatgpt-main'), account('chatgpt-2')], ready: ['chatgpt-2'] })

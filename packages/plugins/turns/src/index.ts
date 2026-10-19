@@ -82,6 +82,19 @@ export interface Config {
   probeTtlMs?: number
   /** A ready account's sign-in is checked after this long, sending nothing (default 6 h; 0: never). */
   authCheckMs?: number
+  /** How long a site's usage limit on one feature keeps that feature off the account (default 6 h, ADR-0034). */
+  featureLimitCooldownMs?: number
+  /** How long a site's usage limit on the whole account keeps its Workers out of quota (default 1 h, ADR-0034). */
+  accountLimitCooldownMs?: number
+}
+
+/** A site's usage limit on an account: one feature, or `*` for all of it, until a time (ADR-0034). */
+export interface Cooldown {
+  account: string
+  feature: string
+  until: string
+  /** What set it: the limit's message, shortened. */
+  source: string
 }
 
 interface Row {
@@ -187,6 +200,8 @@ export class Turns extends Service {
     retainDays: z.natural().min(1).default(30).description('Days a finished turn (and its prompt) is kept'),
     probeTtlMs: z.natural().min(60_000).default(24 * 60 * 60_000).description('How long a ready account\'s feature probe stands before it is refreshed'),
     authCheckMs: z.natural().default(6 * 60 * 60_000).description('How often a ready account\'s sign-in is checked, sending nothing, so health shows a signed-out account before a turn finds it and an idle account keeps its refreshed session (0: never)'),
+    featureLimitCooldownMs: z.natural().min(60_000).default(6 * 60 * 60_000).description('How long a site\'s usage limit on one feature (Deep research, say) keeps that feature off the account, in milliseconds'),
+    accountLimitCooldownMs: z.natural().min(60_000).default(60 * 60_000).description('How long a site\'s usage limit on the whole account keeps its Workers out of quota, in milliseconds'),
   })
 
   /** When each account's sign-in was last checked (sign-in checks), in this process. */
@@ -256,6 +271,10 @@ export class Turns extends Service {
       // A cancel asked for while another owner holds the turn, or before a restart: honored at its next start.
       version: 8,
       sql: `ALTER TABLE turns ADD COLUMN cancel_requested_at TEXT;`,
+    }, {
+      // A site's usage limit per account and feature (ADR-0034): Worker state, never the account's status.
+      version: 9,
+      sql: `CREATE TABLE turn_cooldowns (account TEXT NOT NULL, feature TEXT NOT NULL, until TEXT NOT NULL, source TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY (account, feature));`,
     }])
     ctx.workers.register({
       name: 'website',
@@ -308,6 +327,26 @@ export class Turns extends Service {
         try {
           const outcome = await this.inspectConversation(String(args.account), String(args.binding))
           return { content: [{ type: 'text' as const, text: `evidence: ${outcome.evidence.join(', ')}` }], structuredContent: outcome }
+        } catch (error) {
+          return { isError: true, content: [{ type: 'text' as const, text: (error as Error).message }] }
+        }
+      })
+      c.mcp.tool('account_cooldowns', {
+        description: 'The site usage limits in force per account (ADR-0034): a feature, or * for the whole account, kept off until a time. Work that needs it routes to another account meanwhile.',
+        inputSchema: { account: zod.string().max(100).optional() },
+      }, async (args) => {
+        const cooldowns = this.cooldowns(args.account === undefined ? undefined : String(args.account))
+        return { content: [{ type: 'text' as const, text: JSON.stringify(cooldowns) }], structuredContent: { cooldowns } }
+      })
+      c.mcp.tool('account_clear_cooldown', {
+        description: 'End an account\'s usage limit early (ADR-0034): one feature, or every one when none is named. A feature probe never ends one.',
+        inputSchema: { account: zod.string().max(100), feature: zod.string().max(100).optional() },
+      }, async (args) => {
+        try {
+          const account = String(args.account)
+          await this.ctx.accounts.get(account)
+          const cleared = this.clearCooldown(account, args.feature === undefined ? undefined : String(args.feature))
+          return { content: [{ type: 'text' as const, text: `${account}: ${cleared} usage limit(s) ended` }], structuredContent: { account, cleared } }
         } catch (error) {
           return { isError: true, content: [{ type: 'text' as const, text: (error as Error).message }] }
         }
@@ -686,14 +725,19 @@ export class Turns extends Service {
       count[row.status] = row.n
       counts.set(row.account, count)
     }
+    const cooled = this.cooldowns()
     return (await this.ctx.accounts.list()).flatMap((account) => {
       const driver = providers.has(account.provider) ? this.ctx.providers.get(account.provider) : undefined
       const load = { ...(counts.get(account.id) ?? { running: 0, queued: 0 }), pending: this.pending.get(account.id) ?? 0, slots }
-      const state = driver && account.status === 'ready' && load.running >= slots ? 'busy' : undefined
+      // A usage limit on the whole account takes its Workers out of quota; one on a feature keeps work that needs it away (ADR-0034).
+      const limits = cooled.filter((c) => c.account === account.id)
+      const state = !driver || account.status !== 'ready' ? undefined
+        : limits.some((c) => c.feature === '*') ? 'quota-exhausted' : load.running >= slots ? 'busy' : undefined
+      const cooldowns = limits.filter((c) => c.feature !== '*').map((c) => ({ capability: c.feature, until: c.until }))
       return TIERS.filter((tier) => account.tiers[tier]).map((tier): CapabilityDescriptor => ({
         // The site is who serves the work, so the account's provider is the Worker's family (ADR-0027).
         schema: 'capability-descriptor@1.3', worker: websiteWorker(account.id, tier), provider: account.provider, family: account.provider,
-        ...(driver?.maxInputChars ? { maxInputChars: driver.maxInputChars } : {}), load, tier,
+        ...(driver?.maxInputChars ? { maxInputChars: driver.maxInputChars } : {}), load, ...(cooldowns.length ? { cooldowns } : {}), tier,
         quotaClass: account.quotaClass, locality: 'remote',
         capabilities: [
           ...(driver?.capabilities ?? []).map((capability) => ({ capability, evidence: { kind: 'conformance' as const, at: observedAt } })),
@@ -704,6 +748,42 @@ export class Turns extends Service {
         observedAt,
       }))
     })
+  }
+
+  /** The usage limits in force (ADR-0034), of one account or every one; lapsed ones are gone. */
+  cooldowns(account?: string): Cooldown[] {
+    const at = now()
+    this.ctx.store.db.prepare('DELETE FROM turn_cooldowns WHERE until <= ?').run(at)
+    const rows = (account
+      ? this.ctx.store.db.prepare('SELECT account, feature, until, source FROM turn_cooldowns WHERE account = ? ORDER BY account, feature').all(account)
+      : this.ctx.store.db.prepare('SELECT account, feature, until, source FROM turn_cooldowns ORDER BY account, feature').all()) as unknown as Cooldown[]
+    return rows.map((r) => ({ account: r.account, feature: r.feature, until: r.until, source: r.source }))
+  }
+
+  /**
+   * End usage limits early, by the operator (`system account clear-cooldown`) or by a turn that used
+   * the feature and succeeded: one feature, or every one of the account. How many ended.
+   */
+  clearCooldown(account: string, feature?: string, by = 'operator'): number {
+    const cleared = feature
+      ? this.ctx.store.db.prepare('DELETE FROM turn_cooldowns WHERE account = ? AND feature = ?').run(account, feature).changes
+      : this.ctx.store.db.prepare('DELETE FROM turn_cooldowns WHERE account = ?').run(account).changes
+    if (cleared) this.ctx.get('eventLog')?.append({ type: 'account.cooldown-cleared', data: { account, ...(feature ? { feature } : {}), by } })
+    return Number(cleared)
+  }
+
+  /**
+   * A site's usage limit (`quota_exhausted`): its feature, or the whole account (`*`), is cooled for
+   * the configured time, so routing sends that work elsewhere (ADR-0034). Never the account's status:
+   * its checks keep running, and health does not ask the operator to act.
+   */
+  private cool(account: string, error: ProviderError): void {
+    const feature = error.feature ?? '*'
+    const ms = feature === '*' ? this.config.accountLimitCooldownMs ?? 60 * 60_000 : this.config.featureLimitCooldownMs ?? 6 * 60 * 60_000
+    const until = new Date(Date.now() + ms).toISOString()
+    const source = error.message.slice(0, 200)
+    this.ctx.store.db.prepare('INSERT OR REPLACE INTO turn_cooldowns (account, feature, until, source, created_at) VALUES (?, ?, ?, ?, ?)').run(account, feature, until, source, now())
+    this.ctx.get('eventLog')?.append({ type: 'account.cooldown', data: { account, feature, until, source } })
   }
 
   /**
@@ -1017,6 +1097,8 @@ export class Turns extends Service {
       })
       this.update(row.turn_id, { status: 'completed', answer: text, answer_artifact: answer.id, binding: binding ?? null }, lease)
     })
+    // A turn that used a feature and succeeded ends that feature's usage limit early (ADR-0034).
+    if (row.feature !== 'chat') this.clearCooldown(accountId, row.feature, row.turn_id)
   }
 
   /**
@@ -1086,6 +1168,8 @@ export class Turns extends Service {
     // A finished turn stays as it finished: a later failure (closing its browser turn) never rewrites it.
     if (TERMINAL.has(this.row(turnId)?.status ?? 'queued')) return
     const typed = toProviderError(error)
+    const account = this.row(turnId)?.account
+    if (typed.kind === 'quota_exhausted' && account) this.cool(account, typed)
     this.update(turnId, { status: 'failed', error: JSON.stringify({ kind: typed.kind, disposition: dispositionOf(typed.kind), message: typed.message }) }, lease)
   }
 

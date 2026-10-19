@@ -262,6 +262,38 @@ export function workersConformance(name: string, boot: Boot): void {
       }
     })
 
+    it('keeps work that needs a capability under a usage limit off that Worker, and only that work, until the limit lapses (ADR-0034)', async () => {
+      const later = new Date(Date.now() + 3_600_000).toISOString()
+      const lapsed = new Date(Date.now() - 1000).toISOString()
+      const v13 = { schema: 'capability-descriptor@1.3' as const }
+      await withWorkers([
+        worker('w:a', { ...v13, proves: ['reason', 'deep-research'], cooldowns: [{ capability: 'deep-research', until: later }] }),
+        worker('w:b', { ...v13, proves: ['reason', 'deep-research'], cooldowns: [{ capability: 'deep-research', until: lapsed }] }),
+      ], async (ctx) => {
+        const research = await ctx.workers.route(requirement({ capabilities: ['reason', 'deep-research'] }))
+        expect(research.worker.worker).toBe('w:b')
+        expect(body(ctx, research.decisions.route).candidates.find((c) => c.option === 'w:a')!.reasons).toEqual([`deep-research limit until ${later}`])
+        // Work that does not need the limited capability is admitted there as before.
+        expect((await ctx.workers.route(requirement())).worker.worker).toBe('w:a')
+      })
+      await withWorkers([worker('w:a', { ...v13, proves: ['reason', 'deep-research'], cooldowns: [{ capability: 'deep-research', until: later }] })], async (ctx) => {
+        await expect(ctx.workers.route(requirement({ capabilities: ['reason', 'deep-research'] }))).rejects.toMatchObject({ rejections: [{ worker: 'w:a', failed: [{ check: 'cooldown' }] }] })
+      })
+    })
+
+    it('routes past a source that does not describe its Workers in time, and names it in the decision', async () => {
+      const { ctx, dispose } = await boot()
+      try {
+        ctx.workers.register(source('stuck', () => new Promise<never>(() => undefined)))
+        ctx.workers.register(source('live', [worker('w:a')]))
+        const admitted = await ctx.workers.route(requirement())
+        expect(admitted.worker.worker).toBe('w:a')
+        expect(body(ctx, admitted.decisions.route).candidates.find((c) => c.option === 'source stuck')).toEqual({ option: 'source stuck', selected: false, reasons: ['did not describe its Workers within 5 s'] })
+      } finally {
+        await dispose()
+      }
+    }, 20_000)
+
     it('accepts or rejects a stored result by contract, records the decision, and fails closed on unknowns (REQ-WRK-3)', async () => {
       const { ctx, dispose } = await boot()
       try {

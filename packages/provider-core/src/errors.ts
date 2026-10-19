@@ -35,11 +35,14 @@ export function dispositionOf(kind: ProviderErrorKind): Disposition {
 /** A typed provider-runtime failure; `disposition` tells the engine how to recover. */
 export class ProviderError extends Error {
   readonly disposition: Disposition
+  /** The account feature a usage limit applies to (`quota_exhausted`, ADR-0034); none means the whole account. */
+  readonly feature: string | undefined
 
-  constructor(readonly kind: ProviderErrorKind, message: string, options?: ErrorOptions) {
+  constructor(readonly kind: ProviderErrorKind, message: string, options?: ErrorOptions & { feature?: string }) {
     super(message, options)
     this.name = 'ProviderError'
     this.disposition = dispositionOf(kind)
+    this.feature = options?.feature
   }
 }
 

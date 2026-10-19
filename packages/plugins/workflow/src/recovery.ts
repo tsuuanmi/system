@@ -136,6 +136,8 @@ export function admissionKind(failure: AdmissionFailure): ProviderErrorKind {
   const onlyState = failure.rejections.filter((r) => r.failed.every((f) => f.check === 'state'))
   if (onlyState.some((r) => r.state === 'reauth-required' || r.state === 'unavailable')) return 'reauth_required'
   if (onlyState.some((r) => r.state === 'quota-exhausted')) return 'quota_exhausted'
+  // Refused only for a usage limit on what the work needs, or for that and being out of quota (ADR-0034).
+  if (failure.rejections.some((r) => r.failed.every((f) => f.check === 'cooldown' || f.check === 'state') && r.failed.some((f) => f.check === 'cooldown'))) return 'quota_exhausted'
   if (failure.rejections.some((r) => r.failed.every((f) => f.check === 'locality'))) return 'egress_denied'
   // Too long for every Worker that could otherwise take it: sending it again cannot help (ADR-0032).
   if (failure.rejections.some((r) => r.failed.every((f) => f.check === 'input'))) return 'invalid_input'

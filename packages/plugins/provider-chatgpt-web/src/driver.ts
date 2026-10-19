@@ -209,6 +209,8 @@ export class ChatGptWebDriver implements ProviderDriver<Page> {
     const reply = await this.waitForAnswer(page, before, options.signal, options.deadlines, options.conversation === 'persistent' && !options.binding ? options.onBinding : undefined)
     // Deep research answers with an acknowledgement; the report arrives later in its frame.
     const text = feature === 'deep-research' ? await this.waitForResearch(page, reply, options.signal, options.deadlines) : await this.markdownOf(page, reply)
+    // The site answered with its own usage limit (a map rule `on: answer`, ADR-0034): sent, never resent.
+    await engine.answerErrors()
     if (options.conversation === 'temporary') return { text, binding: undefined, mode }
     const binding = await this.binding(page)
     if (options.binding !== undefined && binding !== options.binding) {

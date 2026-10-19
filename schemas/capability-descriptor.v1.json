@@ -23,6 +23,20 @@
       },
       "additionalProperties": false
     },
+    "cooldowns": {
+      "description": "@1.3: capabilities it proves but may not use until `until`, a site's usage limit; work that needs one is not admitted here (ADR-0034).",
+      "type": "array",
+      "maxItems": 32,
+      "items": {
+        "type": "object",
+        "required": ["capability", "until"],
+        "properties": {
+          "capability": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/capability" },
+          "until": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp" }
+        },
+        "additionalProperties": false
+      }
+    },
     "tier": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/tier" },
     "quotaClass": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/quotaClass" },
     "locality": { "enum": ["local", "remote"] },
@@ -61,6 +75,10 @@
     {
       "if": { "properties": { "maxInputChars": { "type": "integer" } }, "required": ["maxInputChars"] },
       "then": { "properties": { "schema": { "enum": ["capability-descriptor@1.2", "capability-descriptor@1.3"] } } }
+    },
+    {
+      "if": { "properties": { "cooldowns": { "type": "array" } }, "required": ["cooldowns"] },
+      "then": { "properties": { "schema": { "const": "capability-descriptor@1.3" } } }
     },
     {
       "if": { "properties": { "load": { "type": "object" } }, "required": ["load"] },

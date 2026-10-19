@@ -5,6 +5,7 @@
  * outcome is a decision artifact listing every candidate and why (INV-13).
  * @module @tsuuanmi/system-workers
  */
+import { setTimeout as delay } from 'node:timers/promises'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import type {} from '@tsuuanmi/system-artifacts'
@@ -25,6 +26,8 @@ export interface Config {
 
 const QUOTA_CLASSES: QuotaClass[] = ['subscription-chat', 'local', 'agent-plan', 'metered']
 const DECIDER = { type: 'policy', id: 'workers.route.deterministic', version: '1' } as const
+/** How long one source may take to describe its Workers inside the routing lock (ADR-0033). */
+const DESCRIBE_MS = 5000
 
 const textOf = (body: unknown): string => {
   const text = (body as { text?: unknown } | undefined)?.text
@@ -106,12 +109,23 @@ export class WorkerRouter extends Workers {
   }
 
   async list(): Promise<CapabilityDescriptor[]> {
-    return (await this.described()).map((d) => d.worker)
+    return (await this.described()).all.map((d) => d.worker)
   }
 
-  /** Every Worker with the name of its source, validated and ordered by id. */
-  private async described(): Promise<Array<{ worker: CapabilityDescriptor; source: string }>> {
-    const described = await Promise.all([...this.sources.values()].map(async (source) => ({ source: source.name, workers: await source.describe() })))
+  /**
+   * Every Worker with the name of its source, validated and ordered by id. A source that does not
+   * describe its Workers within `DESCRIBE_MS` counts as describing none (`silent`), so one stuck
+   * source never holds every route behind the routing lock.
+   */
+  private async described(): Promise<{ all: Array<{ worker: CapabilityDescriptor; source: string }>; silent: string[] }> {
+    const silent: string[] = []
+    const described = await Promise.all([...this.sources.values()].map(async (source) => {
+      const done = new AbortController()
+      const late = delay(DESCRIBE_MS, undefined, { signal: done.signal }).catch(() => undefined)
+      const workers = await Promise.race([source.describe(), late]).finally(() => done.abort())
+      if (!workers) silent.push(source.name)
+      return { source: source.name, workers: workers ?? [] }
+    }))
     const seen = new Map<string, string>()
     const all: Array<{ worker: CapabilityDescriptor; source: string }> = []
     for (const { source, workers } of described) {
@@ -123,7 +137,7 @@ export class WorkerRouter extends Workers {
         all.push({ worker, source })
       }
     }
-    return all.sort((a, b) => compare(a.worker.worker, b.worker.worker))
+    return { all: all.sort((a, b) => compare(a.worker.worker, b.worker.worker)), silent: silent.sort() }
   }
 
   async route(requirement: WorkRequirement, options: RouteOptions = {}): Promise<AdmittedWorker> {
@@ -134,8 +148,10 @@ export class WorkerRouter extends Workers {
 
   private async routeNow(requirement: WorkRequirement, options: RouteOptions): Promise<AdmittedWorker> {
     this.schemas.assertRecord(requirement)
-    const described = await this.described()
+    const { all: described, silent } = await this.described()
     const workers = described.map((d) => d.worker)
+    // A source that did not answer in time is named in the decision, as a candidate it could not offer.
+    const unheard = silent.map((name) => ({ option: `source ${name}`, selected: false, reasons: [`did not describe its Workers within ${DESCRIBE_MS / 1000} s`] }))
     const producer = { type: 'system' as const, ref: options.producer ?? 'workers' }
     const stored = this.ctx.artifacts.put({
       kind: 'objective', bodySchema: 'work-requirement@1.0', body: requirement, classification: requirement.data.classification, producer,
@@ -155,6 +171,7 @@ export class WorkerRouter extends Workers {
         inputs: [requirementRef],
         candidates: [
           ...rejections.map((r) => ({ option: r.worker, selected: false, reasons: r.failed.map((f) => f.reason) })),
+          ...unheard,
           { option: 'none', selected: true, reasons: [why] },
         ],
         decider: DECIDER,
@@ -177,11 +194,11 @@ export class WorkerRouter extends Workers {
       decisionType: 'route',
       question: `Which Worker runs work needing ${requirement.capabilities.join(', ')}?`,
       inputs: [requirementRef, tier.id],
-      candidates: workers.map((w) => {
+      candidates: [...workers.map((w) => {
         if (w === chosen) return { option: w.worker, selected: true, reasons: this.chosenReasons(w, requirement) }
         const failed = failures.get(w.worker)!
         return { option: w.worker, selected: false, reasons: failed.length ? failed.map((f) => f.reason) : [`admitted; ${this.lostTo(w, chosen, requirement)}`] }
-      }),
+      }), ...unheard],
       decider: DECIDER,
       outcome: { option: chosen.worker },
       deterministic: true,
@@ -266,6 +283,10 @@ export class WorkerRouter extends Workers {
     const proven = new Set(worker.capabilities.map((c) => c.capability))
     const missing = requirement.capabilities.filter((c) => !proven.has(c))
     if (missing.length) fail('capability', `does not prove ${missing.join(', ')}`)
+    // A site's usage limit on a capability the work needs (ADR-0034); a lapsed one no longer counts.
+    const now = Date.now()
+    const cooled = (worker.cooldowns ?? []).filter((c) => requirement.capabilities.includes(c.capability) && Date.parse(c.until) > now)
+    if (cooled.length) fail('cooldown', cooled.map((c) => `${c.capability} limit until ${c.until}`).join(', '))
     if (options.input && worker.maxInputChars !== undefined && options.input.chars > worker.maxInputChars) {
       fail('input', `the input has ${options.input.chars} characters; it takes at most ${worker.maxInputChars}`)
     }

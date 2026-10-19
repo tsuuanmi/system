@@ -163,7 +163,10 @@ guesses.
   runtime (the tiers of one account) report the same numbers. Among equally ranked Workers the
   least busy is routed to, and the route decision records each one's load
   ([ADR-0033](../decisions/adr/0033-least-busy-routing.md)). A record carrying it below `@1.3` is
-  refused. Readers accept 1.0 to 1.3.
+  refused. It also adds the optional `cooldowns`: capabilities the Worker proves but may not use
+  until `until`, a site's usage limit; work that needs one is not admitted there (admission check
+  `cooldown`, [ADR-0034](../decisions/adr/0034-unsent-failover-to-a-sibling-account.md)).
+  Readers accept 1.0 to 1.3.
 
 ### `plan`
 
@@ -304,6 +307,12 @@ guesses.
 - `ui-map@1.3` adds the action kind `clearText`: it empties a composer (select all,
   delete) and requires it to read back empty, so an unsent draft a site keeps across
   page loads is never sent with a prompt.
+- `ui-map@1.4` adds two optional error-rule fields
+  ([ADR-0034](../decisions/adr/0034-unsent-failover-to-a-sibling-account.md)): `feature`, the
+  account feature a `quota_exhausted` rule's usage limit applies to (none means the whole
+  account), and `on`: `act` (the default) checks the rule before every action, so the turn fails
+  unsent; `answer` checks it on a turn's answer once read, so the turn fails sent. The local
+  overlay may add error rules, and elements the map does not define, as well as candidates.
 
 ### `ui-outline`
 

@@ -210,9 +210,18 @@ design.
   needs a capability only website Workers prove (`web-search`, `deep-research`) then fails
   admission: the failure names each required capability no Worker proves.
 - Usage is recorded per account from observable signals (turn counts and
-  estimated tokens) and treated as an estimate (CON-4). A provider "limit
-  reached" state marks the account temporarily not ready, and routing excludes
-  it.
+  estimated tokens) and treated as an estimate (CON-4). A site's own usage-limit
+  text, recognized by a UI-map error rule, puts a **cooldown** on the account's
+  Workers ([ADR-0034](../decisions/adr/0034-unsent-failover-to-a-sibling-account.md)):
+  - on one feature (the rule's `feature`): the Workers list it in `cooldowns`
+    (`capability-descriptor@1.3`), and work that needs it fails the `cooldown` check there
+    ("deep-research limit until …"), while other work is admitted as before;
+  - on the whole account (no feature): its Workers read `quota-exhausted`;
+  - for `featureLimitCooldownMs` (6 h) or `accountLimitCooldownMs` (1 h). It ends when its time
+    passes, when a turn that used the feature succeeds, or by the operator
+    (`system account clear-cooldown`); a feature probe never ends it. A cooldown is Worker state,
+    never the account's status: the account stays `ready`, keeps its checks, and health does not
+    ask the operator to act. A node refused only for it fails `quota_exhausted`.
 - **Context economy.** Handoffs carry the synthesized, hash-bound result, not the
   research transcript. Retained conversations receive only new suffixes. Node
   results are reused by input hash.

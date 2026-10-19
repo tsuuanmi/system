@@ -57,6 +57,7 @@ on `run`, `--repo`, `--ref`, and `--focus` only on `review` (`--ref` and `--focu
 | `system account relogin <id>` | sign in again with the stored credentials (TOTP computed locally) |
 | `system account code <id> <code>` | supply a one-time code a running sign-in is waiting for |
 | `system account save <id>` | after an interactive login: capture, verify, store encrypted |
+| `system account clear-cooldown <id> [feature]` | end a site usage limit on the account early: one feature, or every one ([ADR-0034](../decisions/adr/0034-unsent-failover-to-a-sibling-account.md)); `system account list` shows each account's limits in force (`cooldowns`) |
 | `system account probe <id>` | prove which website features the account offers (Deep research, Web search, …) |
 | `system account verify <id>` | re-verify a reauth-required account from its saved state, sending nothing: ready again if it still signs in as the saved account (exit 0), else it stays marked (exit 1) |
 

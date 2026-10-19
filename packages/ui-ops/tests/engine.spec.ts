@@ -62,6 +62,16 @@ errors:
   - { when: { state: auth.signed-out }, kind: reauth_required }
 `
 
+/** A site's usage-limit answer, added by the operator overlay (ADR-0034). */
+const LIMIT_OVERLAY = `
+elements:
+  answer.limit:
+    candidates:
+      - { text: { en: '^You have reached your Deep research limit' } }
+errors:
+  - { when: { visible: answer.limit }, kind: quota_exhausted, feature: deep-research, on: answer }
+`
+
 /** A minimal chat page: sending appends a user turn and POSTs to the conversation endpoint. */
 const page = (form: string, extra = ''): string => `<!doctype html><html lang="en"><body>
 <main>${form}<section id="log"></section></main>${extra}
@@ -118,9 +128,19 @@ describe('loadUiMap', () => {
     expect(overlaid.hash).not.toBe(shipped.hash)
   })
 
-  it('rejects an invalid map and an overlay naming an unknown element', () => {
+  it('rejects an invalid map, an overlay element with no candidate, and an overlay rule naming an unknown element', () => {
     expect(() => loadUiMap(MAP.replace('candidates:\n      - { css', 'candidates: []\n      - { css'))).toThrow()
-    expect(() => loadUiMap(MAP, 'elements:\n  nope:\n    candidates: [{ testId: x }]\n')).toThrow(/unknown element/)
+    expect(() => loadUiMap(MAP, 'elements:\n  answer.limit:\n    candidates: []\n')).toThrow()
+    expect(() => loadUiMap(MAP, 'errors:\n  - { when: { visible: nope }, kind: quota_exhausted }\n')).toThrow(/unknown element nope/)
+  })
+
+  it('adds an overlay\'s own elements and error rules, after the shipped ones, without a release (ADR-0034)', () => {
+    const overlaid = loadUiMap(MAP, LIMIT_OVERLAY)
+    expect(overlaid.elements['answer.limit']).toEqual({ candidates: [{ text: { en: '^You have reached your Deep research limit' }, source: 'overlay' }] })
+    expect(overlaid.errors).toEqual([
+      { when: { state: 'auth.signed-out' }, kind: 'reauth_required' },
+      { when: { visible: 'answer.limit' }, kind: 'quota_exhausted', feature: 'deep-research', on: 'answer' },
+    ])
   })
 })
 
@@ -184,6 +204,15 @@ describe.runIf(canRunBrowser)('UiEngine on a real page', { timeout: 15_000 }, ()
     const { engine } = await open(page('<form data-type="composer"><div contenteditable role="textbox"></div></form>'))
     await expect(engine.resolve('turn.user', 0)).rejects.toMatchObject({ kind: 'ui_drift', message: expect.stringMatching(/turn\.user matched any visible element/) })
     await expect(engine.resolve('response.stop', 0)).rejects.toMatchObject({ kind: 'ui_drift', message: expect.stringMatching(/response\.stop matched exactly one visible element/) })
+  })
+
+  it('checks an answer rule on the answer only: its usage limit fails with its feature, while actions go on (ADR-0034)', async () => {
+    const { engine } = await open(page('<form data-type="composer"><div contenteditable role="textbox"></div></form><p>You have reached your Deep research limit until 18:40.</p>'), loadUiMap(MAP, LIMIT_OVERLAY))
+    // An action is not guarded by an answer rule.
+    await engine.act('composer.insert', { text: 'next' })
+    await expect(engine.answerErrors()).rejects.toMatchObject({ kind: 'quota_exhausted', feature: 'deep-research', disposition: 'USER_ACTION' })
+    const { engine: clean } = await open(page('<form data-type="composer"><div contenteditable role="textbox"></div></form><p>An answer.</p>'), loadUiMap(MAP, LIMIT_OVERLAY))
+    await expect(clean.answerErrors()).resolves.toBeUndefined()
   })
 
   it('takes the primary candidate that renders a moment after a later one, with no drift', async () => {

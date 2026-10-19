@@ -42,6 +42,21 @@ the provider answered, so it does not guess.
 A turn that hits the provider's usage limit fails with `quota_exhausted`
 (`USER_ACTION`). Nothing retries automatically against the limit.
 
+When a UI-map error rule recognizes the site's limit text (the operator can add one in the
+overlay, with no release: an element for the text and a `quota_exhausted` rule, `on: answer`
+when the site answers with it), the account is **cooled**
+([ADR-0034](../decisions/adr/0034-unsent-failover-to-a-sibling-account.md)):
+
+- `system account list` shows its `cooldowns`: the feature (`*` for the whole account), until
+  when, and the limit's message. Event `account.cooldown` records each one.
+- Work that needs a cooled feature routes to another account of the provider; with none, it
+  fails `quota_exhausted` and names the limit. Other work still runs on the account.
+- It ends on its own (6 h for a feature, 1 h for the account; `featureLimitCooldownMs`,
+  `accountLimitCooldownMs`), when a turn that used the feature succeeds, or with
+  `system account clear-cooldown <id> [feature]` once you know the limit reset. A feature probe
+  never ends it: a tool still shown is not quota left.
+- The account stays `ready`: nothing needs a login.
+
 - Wait for the limit to reset, then `system continue <runId>`.
 - Or add capacity:
   - map another account's tiers in the account catalog, then continue: routing

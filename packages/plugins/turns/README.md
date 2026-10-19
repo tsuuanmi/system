@@ -13,6 +13,15 @@ invoked by the [workflow engine](../workflow/README.md)
     `load` (`@1.3`, ADR-0033) is the account's turns running and queued, its
     routes not started yet (`reserve`), and `maxConcurrentTurnsPerAccount` as its
     slots; a ready account with every slot running reads `busy`.
+  - **Cooldowns (ADR-0034).** A turn that fails `quota_exhausted` (a site's usage
+    limit, recognized by a UI-map error rule) cools its account in table
+    `turn_cooldowns`: the rule's `feature` for `featureLimitCooldownMs`, else the
+    whole account (`*`) for `accountLimitCooldownMs`. A cooled feature is listed in
+    the Workers' `cooldowns`; a cooled account reads `quota-exhausted`. A completed
+    turn ends its feature's cooldown, and the operator ends one with
+    `account_clear_cooldown` (`account_cooldowns` lists them). Events
+    `account.cooldown`, `account.cooldown-cleared`. The account's status is never
+    touched.
   - **Run:** `start`, `get`, and `wait` run turns. The engine routes; a turn
     never routes itself.
   - **Affinity:** a session stays on the account it is bound to.

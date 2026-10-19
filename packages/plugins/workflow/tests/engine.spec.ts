@@ -24,13 +24,13 @@ afterEach(async () => {
 const CATALOG: ModelEntry[] = [{ id: 'fast', tier: 'standard', quotaClass: 'metered', locality: 'remote', maxTokens: 64 }]
 
 /** The engine over a fake model Worker: no browser, so faults are injected deterministically. */
-async function boot(script: FakeScript = {}) {
+async function boot(script: FakeScript = {}, workflow: Record<string, unknown> = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'system-engine-'))
   const ctx = new Context()
   const fibers = [
     ctx.plugin(Store, { path: join(dir, 'system.db') }), ctx.plugin(Artifacts, {}), ctx.plugin(EventLog, {}), ctx.plugin(Leases, {}), ctx.plugin(Egress, {}),
     ctx.plugin(WorkerRouter, {}), ctx.plugin(FakeModels, { catalog: CATALOG, script }),
-    ctx.plugin(ModelWorkers, { callTimeoutMs: 60_000 }), ctx.plugin(WorkerSessions, {}), ctx.plugin(Workflow, { retryDelayMs: 100 }),
+    ctx.plugin(ModelWorkers, { callTimeoutMs: 60_000 }), ctx.plugin(WorkerSessions, {}), ctx.plugin(Workflow, { retryDelayMs: 100, ...workflow }),
   ]
   await Promise.all(fibers)
   // Start-up recovery has run, so nothing scheduled then can take a run back by chance.
@@ -72,6 +72,17 @@ describe('ctx.workflow: the engine under injected faults', () => {
     expect(done.status).toBe('failed')
     expect(reserved).toBeGreaterThan(0)
     expect(pending).toBe(0)
+  }, 60_000)
+
+  it('fails a node whose only Worker is under a usage limit for what it needs as quota_exhausted, unsent (ADR-0034)', async () => {
+    const survey = { nodeId: 'survey:1', objective: 'survey', prompt: 'Survey {{input}}', capabilities: ['reason', 'deep-research'], tier: 'standard', conversation: 'persistent', acceptance: 'acceptance.answer' }
+    const { ctx } = await boot({}, { templates: { survey: [survey] } })
+    const until = new Date(Date.now() + 3_600_000).toISOString()
+    ctx.workers.register(source('limited', [worker('w:limited', { schema: 'capability-descriptor@1.3', proves: ['reason', 'persistent-conversation', 'deep-research'], cooldowns: [{ capability: 'deep-research', until }] })]))
+    const run = ctx.workflow.start({ template: 'survey', input: 'q', classification: 'public' })
+    const done = await ctx.workflow.wait(run.runId, 30_000)
+    expect(done.status).toBe('failed')
+    expect(done.nodes.find((n) => n.error?.kind === 'quota_exhausted')?.error?.message).toMatch(/deep-research limit until/)
   }, 60_000)
 
   it('fails the node a scheduler exception happened on, so the operator can continue it once fixed', async () => {

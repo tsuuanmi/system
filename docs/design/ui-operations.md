@@ -117,6 +117,18 @@ states:
 | `heal` | `off`, `deterministic`, or `model`; target: capped by the side-effect class (below) |
 | `fallback` | a non-locator alternative, such as pressing Enter in the composer |
 
+**Error rules** (`errors`) map a page condition to a failure kind. Each is a guard checked
+before every action (`on: act`, the default), or checked on a turn's answer once the driver has
+read it (`on: answer`, `ui-map@1.4`): the site answered with its own usage limit, so the turn was
+sent and fails without a resend. A `quota_exhausted` rule may name the `feature` its limit applies
+to; the website runtime then cools that feature, or the whole account, for a while
+([ADR-0034](../decisions/adr/0034-unsent-failover-to-a-sibling-account.md)). An answer rule's
+element should match only the answer just read, not one earlier in the conversation.
+
+The local **overlay** may add candidates to the map's elements, elements the map does not define,
+and error rules after the shipped ones. A site's limit text can so be recognized without a
+release; the merged map is validated as a whole.
+
 `uiRevision` and the map's content hash (after the overlay is merged) are recorded
 in every heal decision and diagnostic bundle, so a drift can be traced to the
 exact map in use.

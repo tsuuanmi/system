@@ -75,10 +75,17 @@ export interface ErrorRule {
   when: Condition
   kind: 'challenge' | 'reauth_required' | 'quota_exhausted' | 'invalid_input' | 'provider_stalled' | 'network' | 'session_broken'
   message?: string
+  /** The account feature a `quota_exhausted` rule's limit applies to (`ui-map@1.4`, ADR-0034); none means the whole account. */
+  feature?: string
+  /**
+   * When the rule is checked (`ui-map@1.4`): before every action (`act`, the default), or on a turn's
+   * answer once it is read (`answer`: the site answered with its limit, so the turn was sent).
+   */
+  on?: 'act' | 'answer'
 }
 
 export interface UiMap {
-  schema: 'ui-map@1.0' | 'ui-map@1.1' | 'ui-map@1.2' | 'ui-map@1.3'
+  schema: 'ui-map@1.0' | 'ui-map@1.1' | 'ui-map@1.2' | 'ui-map@1.3' | 'ui-map@1.4'
   provider: string
   uiRevision: string
   locales: string[]
@@ -130,8 +137,10 @@ function references(map: Omit<UiMap, 'hash'>): string[] {
 }
 
 /**
- * Parse and validate a shipped map (YAML or JSON text), then append the overlay's
- * candidates. The overlay may only add candidates to elements the map defines.
+ * Parse and validate a shipped map (YAML or JSON text), then merge the overlay: candidates for
+ * elements the map defines, after the shipped ones; elements it does not define; and error rules,
+ * after the shipped ones (a site's usage-limit text, without a release; ADR-0034). The merged map
+ * is validated again.
  */
 export function loadUiMap(text: string, overlayText?: string): UiMap {
   registry ??= new SchemaRegistry()
@@ -139,16 +148,18 @@ export function loadUiMap(text: string, overlayText?: string): UiMap {
   registry.assert('ui-map@1.0', raw)
   const shipped = raw as unknown as Omit<UiMap, 'hash' | 'actions' | 'network' | 'states' | 'errors'> & Partial<UiMap>
   const elements: Record<string, ElementSpec> = {}
+  let overlayErrors: ErrorRule[] = []
   for (const [id, e] of Object.entries(shipped.elements)) {
     elements[id] = { ...e, candidates: e.candidates.map((c) => ({ ...c, source: 'shipped' as const })) }
   }
   if (overlayText) {
-    const overlay = (parse(overlayText) ?? {}) as { elements?: Record<string, { candidates?: Candidate[] }> }
+    const overlay = (parse(overlayText) ?? {}) as { elements?: Record<string, Omit<ElementSpec, 'candidates'> & { candidates?: Candidate[] }>; errors?: ErrorRule[] }
     for (const [id, e] of Object.entries(overlay.elements ?? {})) {
       const target = elements[id]
-      if (!target) throw new Error(`UI overlay names an unknown element: ${id}`)
-      for (const c of e.candidates ?? []) target.candidates.push({ ...c, source: 'overlay' })
+      if (target) for (const c of e.candidates ?? []) target.candidates.push({ ...c, source: 'overlay' })
+      else elements[id] = { ...e, candidates: (e.candidates ?? []).map((c) => ({ ...c, source: 'overlay' as const })) }
     }
+    overlayErrors = overlay.errors ?? []
   }
   const map = {
     schema: shipped.schema,
@@ -159,11 +170,11 @@ export function loadUiMap(text: string, overlayText?: string): UiMap {
     actions: shipped.actions ?? {},
     network: shipped.network ?? {},
     states: shipped.states ?? {},
-    errors: shipped.errors ?? [],
+    errors: [...(shipped.errors ?? []), ...overlayErrors],
   }
   const missing = references(map)
   if (missing.length) throw new Error(`UI map ${map.provider} has dangling references: ${missing.join('; ')}`)
-  if (overlayText) registry.assert('ui-map@1.0', { ...raw, elements: stripSources(elements) })
+  if (overlayText) registry.assert('ui-map@1.0', { ...raw, elements: stripSources(elements), errors: map.errors })
   return { ...map, hash: contentId(map) }
 }
 

@@ -53,6 +53,11 @@ export interface CapabilityDescriptor {
   maxInputChars?: number
   /** How busy it is (`@1.3`; ADR-0033): among equally ranked Workers, the least busy is routed to. */
   load?: WorkerLoad
+  /**
+   * Capabilities it proves but may not use until `until`: a site's usage limit (`@1.3`; ADR-0034).
+   * Work that needs one is not admitted here.
+   */
+  cooldowns?: Array<{ capability: string; until: string }>
   tier: Tier
   quotaClass: QuotaClass
   locality: 'local' | 'remote'
@@ -145,7 +150,7 @@ export interface WorkerSource {
 }
 
 /** The admission checks, in the order the router applies them. */
-export type AdmissionCheck = 'restricted' | 'diversity' | 'capability' | 'input' | 'locality' | 'state' | 'tier'
+export type AdmissionCheck = 'restricted' | 'diversity' | 'capability' | 'cooldown' | 'input' | 'locality' | 'state' | 'tier'
 
 export interface Rejection {
   worker: string

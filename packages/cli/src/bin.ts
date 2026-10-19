@@ -47,6 +47,8 @@ const USAGE = `Usage: system <command>
   account code <id> <code>  supply a one-time code a running sign-in is waiting for
   account save <id>         after an interactive login: capture, verify, store encrypted
   account probe <id>        prove which website features the account offers (Deep research, Web search, ...)
+  account clear-cooldown <id> [feature]
+                            end a site usage limit on the account early (one feature, or all)
   account verify <id>       re-verify a reauth-required account from its stored state (no login, nothing saved)
   conversations [--state <s>]
                             the website conversations system recorded: live, due, deleted, kept (why), failed
@@ -312,7 +314,20 @@ async function main(argv: string[]): Promise<number> {
       if (rest[0] === 'list') {
         const outcome = await callTool('account_list', {})
         if (outcome.isError) throw new Error(outcome.text)
-        console.log(JSON.stringify((outcome.structured as { accounts?: unknown } | undefined)?.accounts ?? [], null, 2))
+        // With each account's usage limits in force, when the website runtime is loaded (ADR-0034).
+        const limits = await callTool('account_cooldowns', {}).catch(() => undefined)
+        const cooldowns = limits && !limits.isError ? ((limits.structured as { cooldowns?: Array<{ account: string; feature: string; until: string; source: string }> } | undefined)?.cooldowns ?? []) : []
+        const accounts = ((outcome.structured as { accounts?: Array<{ id: string }> } | undefined)?.accounts ?? []).map((a) => {
+          const own = cooldowns.filter((c) => c.account === a.id).map((c) => ({ feature: c.feature, until: c.until, source: c.source }))
+          return own.length ? { ...a, cooldowns: own } : a
+        })
+        console.log(JSON.stringify(accounts, null, 2))
+        return 0
+      }
+      if (rest[0] === 'clear-cooldown' && rest[1]) {
+        const outcome = await callTool('account_clear_cooldown', { account: rest[1], ...(rest[2] ? { feature: rest[2] } : {}) })
+        if (outcome.isError) throw new Error(outcome.text)
+        console.log(outcome.text)
         return 0
       }
       if (rest[0] === 'login' && rest[1]) {

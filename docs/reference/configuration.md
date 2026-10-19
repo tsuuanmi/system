@@ -310,6 +310,8 @@ No options.
 | `retainDays` | number (1…) | `30` | Days a finished turn (and its prompt) is kept |
 | `probeTtlMs` | number (60000…) | `86400000` | How long a ready account's feature probe stands before it is refreshed |
 | `authCheckMs` | number (0…) | `21600000` | How often a ready account's sign-in is checked, sending nothing, so health shows a signed-out account before a turn finds it and an idle account keeps its refreshed session (0: never) |
+| `featureLimitCooldownMs` | number (60000…) | `21600000` | How long a site's usage limit on one feature (Deep research, say) keeps that feature off the account, in milliseconds |
+| `accountLimitCooldownMs` | number (60000…) | `3600000` | How long a site's usage limit on the whole account keeps its Workers out of quota, in milliseconds |
 
 ## `web-ui`
 
