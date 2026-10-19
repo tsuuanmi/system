@@ -1,6 +1,6 @@
 # ADR-0029: An operator may let work run on one provider family when no other is available
 
-- **Status:** Accepted; amended 2026-10-16 (its scope stated: any Worker source with sessions, and the live evidence)
+- **Status:** Accepted; amended 2026-10-16 (its scope stated: any Worker source with sessions, and the live evidence); superseded in part by [ADR-0035](0035-one-family-teams-keep-distinct-accounts.md) (distinct accounts kept before one is shared)
 - **Date:** 2026-10-16 (accepted 2026-10-16, by the operator)
 - **Related:** [ADR-0027](0027-provider-diversity-in-routing.md) (superseded in part),
   [PROP-0004](../../proposals/0004-claude-code-lead-mvp.md),

@@ -1,11 +1,11 @@
 ---
 id: PROP-0007
 type: proposal
-status: proposed
+status: accepted
 owners: [operator]
 created: 2026-10-19
 related-requirements: [REQ-ACC-7, REQ-WRK-2, REQ-WRK-8, REQ-TEAM-4]
-related-decisions: [ADR-0027, ADR-0029, ADR-0030, ADR-0032]
+related-decisions: [ADR-0027, ADR-0029, ADR-0030, ADR-0032, ADR-0033, ADR-0034, ADR-0035]
 implementation: []
 ---
 
@@ -334,7 +334,10 @@ Engineer review (2026-10-19) found these, all folded in:
 - a cooldown never as account status;
 - parallel logins needing only the free port.
 
-Acceptance by the owner is pending.
+Accepted by the owner on 2026-10-19:
+- [ADR-0033](../decisions/adr/0033-least-busy-routing.md): least-busy routing;
+- [ADR-0034](../decisions/adr/0034-unsent-failover-to-a-sibling-account.md): unsent failover and cooldowns;
+- [ADR-0035](../decisions/adr/0035-one-family-teams-keep-distinct-accounts.md): one-family teams keep distinct accounts.
 
 ## Implementation
 
