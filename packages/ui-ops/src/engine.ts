@@ -432,16 +432,17 @@ export class UiEngine {
   /**
    * The map's error rules checked on a turn's answer once it is read (`on: answer`): the site
    * answered with its own usage limit, say. The turn was sent; the caller fails it with the rule's
-   * kind and feature (ADR-0034).
+   * kind and feature (ADR-0034). The rule's elements are looked for inside `answer` only, so the
+   * same text in an earlier answer of the conversation never counts again.
    */
-  async answerErrors(): Promise<void> {
-    await this.checkErrors('answer')
+  async answerErrors(answer: Locator): Promise<void> {
+    await this.checkErrors('answer', answer)
   }
 
-  private async checkErrors(on: 'act' | 'answer'): Promise<void> {
+  private async checkErrors(on: 'act' | 'answer', root?: Locator): Promise<void> {
     for (const rule of this.map.errors) {
       if ((rule.on ?? 'act') !== on) continue
-      if (await this.evaluate(rule.when, new Map())) {
+      if (await this.evaluate(rule.when, new Map(), root)) {
         throw new ProviderError(rule.kind, rule.message ?? `${this.map.provider}: ${rule.kind} (${JSON.stringify(rule.when)})`, rule.feature ? { feature: rule.feature } : undefined)
       }
     }
@@ -556,9 +557,11 @@ export class UiEngine {
     return into
   }
 
-  private async evaluate(condition: Condition, baselines: Baselines): Promise<boolean> {
-    if ('visible' in condition) return (await this.tryResolve(condition.visible)) !== undefined
-    if ('hidden' in condition) return (await this.tryResolve(condition.hidden)) === undefined
+  /** A condition over the page; with `root`, its elements are looked for inside it only. */
+  private async evaluate(condition: Condition, baselines: Baselines, root?: Locator): Promise<boolean> {
+    const find = (id: string): Promise<Resolved | undefined> => (root ? this.findIn(id, root) : this.tryResolve(id))
+    if ('visible' in condition) return (await find(condition.visible)) !== undefined
+    if ('hidden' in condition) return (await find(condition.hidden)) === undefined
     if ('countIncreased' in condition) return (await this.count(condition.countIncreased)) > (baselines.get(`count:${condition.countIncreased}`) ?? 0)
     if ('network' in condition) {
       const open = this.map.network[condition.network]?.open
@@ -566,9 +569,9 @@ export class UiEngine {
       return open ? seen > 0 : seen > (baselines.get(`network:${condition.network}`) ?? 0)
     }
     if ('url' in condition) return new RegExp(condition.url).test(this.page.url())
-    if ('state' in condition) return this.evaluate(this.map.states[condition.state]!, baselines)
+    if ('state' in condition) return this.evaluate(this.map.states[condition.state]!, baselines, root)
     if ('attr' in condition) {
-      const found = await this.tryResolve(condition.attr.of)
+      const found = await find(condition.attr.of)
       if (!found) return false
       const value = await found.locator.getAttribute(condition.attr.name)
       if (condition.attr.equals !== undefined) return value === condition.attr.equals
@@ -587,13 +590,13 @@ export class UiEngine {
       return now - last.since >= condition.stableTextMs
     }
     if ('anyOf' in condition) {
-      for (const c of condition.anyOf) if (await this.evaluate(c, baselines)) return true
+      for (const c of condition.anyOf) if (await this.evaluate(c, baselines, root)) return true
       return false
     }
     if ('allOf' in condition) {
-      for (const c of condition.allOf) if (!(await this.evaluate(c, baselines))) return false
+      for (const c of condition.allOf) if (!(await this.evaluate(c, baselines, root))) return false
       return true
     }
-    return !(await this.evaluate(condition.not, baselines))
+    return !(await this.evaluate(condition.not, baselines, root))
   }
 }

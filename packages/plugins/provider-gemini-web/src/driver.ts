@@ -249,8 +249,10 @@ export class GeminiWebDriver implements ProviderDriver<Page> {
       : await this.waitForAnswer(page, engine, before, options.signal, options.deadlines, onBinding)
     const text = feature === 'deep-research' ? await this.research(engine, reply, options.signal, options.deadlines) : await this.markdownOf(engine, reply)
     await this.refuseSiteError(engine, text)
-    // The site answered with its own usage limit (a map rule `on: answer`, ADR-0034): sent, never resent.
-    await engine.answerErrors()
+    // The site answered with its own usage limit (a map rule `on: answer`, ADR-0034): sent, never
+    // resent. Only this answer is looked at, never an earlier one of the conversation.
+    const answered = await this.currentAnswer(engine)
+    if (answered) await engine.answerErrors(answered)
     if (options.conversation === 'temporary') return { text, binding: undefined, mode }
     const binding = this.bindingOf(page)
     if (!binding) throw new ProviderError('session_broken', 'gemini-web: no conversation id after the answer')

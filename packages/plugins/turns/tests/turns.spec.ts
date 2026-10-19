@@ -382,6 +382,27 @@ describe.runIf(canRunBrowser)('ctx.turns: ask through a saved account', () => {
     expect(ctx.turns.cooldowns()).toEqual([])
   }, 120_000)
 
+  it('never takes a limit an earlier answer of the conversation gave for the next answer\'s (ADR-0034)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'system-turns-'))
+    cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+    writeFileSync(join(dir, 'none.yaml'), [
+      'elements:',
+      '  answer.limit:',
+      "    candidates: [{ text: { en: '^You have reached your usage limit' } }]",
+      'errors:',
+      '  - { when: { visible: answer.limit }, kind: quota_exhausted, on: answer }',
+    ].join('\n'))
+    const { ctx, fake } = await boot({ dir, fake: { answer: 'You have reached your usage limit until 18:40.' } })
+    const first = await ctx.turns.wait((await ask(ctx, { prompt: 'one', persist: true })).turnId, 30_000)
+    expect(first).toMatchObject({ status: 'failed', error: { kind: 'quota_exhausted' } })
+    ctx.turns.clearCooldown('chatgpt-main')
+    // The limit answer stays in the conversation; the next answer is read on its own.
+    fake.options.answer = 'A plain answer'
+    const second = await ctx.turns.wait((await ask(ctx, { prompt: 'two', sessionId: first.sessionId! })).turnId, 30_000)
+    expect(second).toMatchObject({ status: 'completed', answer: 'A plain answer' })
+    expect(ctx.turns.cooldowns()).toEqual([])
+  }, 120_000)
+
   it('routes through ctx.workers to an admitted Worker and records why every other one was not chosen (REQ-WRK-1, REQ-ART-1)', async () => {
     const { ctx } = await boot({ accounts: [account('chatgpt-main'), account('chatgpt-2')], ready: ['chatgpt-2'] })
     const turn = await ctx.turns.wait((await ask(ctx, { prompt: 'route me' })).turnId, 30_000)

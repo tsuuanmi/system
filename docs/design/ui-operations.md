@@ -123,7 +123,8 @@ read it (`on: answer`, `ui-map@1.4`): the site answered with its own usage limit
 sent and fails without a resend. A `quota_exhausted` rule may name the `feature` its limit applies
 to; the website runtime then cools that feature, or the whole account, for a while
 ([ADR-0034](../decisions/adr/0034-unsent-failover-to-a-sibling-account.md)). An answer rule's
-element should match only the answer just read, not one earlier in the conversation.
+elements are looked for inside the answer just read only, so a limit an earlier answer of the
+conversation gave, still on the page, never counts again.
 
 The local **overlay** may add candidates to the map's elements, elements the map does not define,
 and error rules after the shipped ones. A site's limit text can so be recognized without a

@@ -206,13 +206,14 @@ describe.runIf(canRunBrowser)('UiEngine on a real page', { timeout: 15_000 }, ()
     await expect(engine.resolve('response.stop', 0)).rejects.toMatchObject({ kind: 'ui_drift', message: expect.stringMatching(/response\.stop matched exactly one visible element/) })
   })
 
-  it('checks an answer rule on the answer only: its usage limit fails with its feature, while actions go on (ADR-0034)', async () => {
-    const { engine } = await open(page('<form data-type="composer"><div contenteditable role="textbox"></div></form><p>You have reached your Deep research limit until 18:40.</p>'), loadUiMap(MAP, LIMIT_OVERLAY))
+  it('checks an answer rule inside the answer just read only: its usage limit fails with its feature, while actions go on (ADR-0034)', async () => {
+    const { engine, tab } = await open(page('<form data-type="composer"><div contenteditable role="textbox"></div></form>'
+      + '<div class="answer" id="earlier"><p>You have reached your Deep research limit until 18:40.</p></div><div class="answer" id="latest"><p>A later answer.</p></div>'), loadUiMap(MAP, LIMIT_OVERLAY))
     // An action is not guarded by an answer rule.
     await engine.act('composer.insert', { text: 'next' })
-    await expect(engine.answerErrors()).rejects.toMatchObject({ kind: 'quota_exhausted', feature: 'deep-research', disposition: 'USER_ACTION' })
-    const { engine: clean } = await open(page('<form data-type="composer"><div contenteditable role="textbox"></div></form><p>An answer.</p>'), loadUiMap(MAP, LIMIT_OVERLAY))
-    await expect(clean.answerErrors()).resolves.toBeUndefined()
+    await expect(engine.answerErrors(tab.locator('#earlier'))).rejects.toMatchObject({ kind: 'quota_exhausted', feature: 'deep-research', disposition: 'USER_ACTION' })
+    // The limit an earlier answer gave, still on the page, never counts for a later one.
+    await expect(engine.answerErrors(tab.locator('#latest'))).resolves.toBeUndefined()
   })
 
   it('takes the primary candidate that renders a moment after a later one, with no drift', async () => {
