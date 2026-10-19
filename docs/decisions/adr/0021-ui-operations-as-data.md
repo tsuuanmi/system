@@ -1,6 +1,6 @@
 # ADR-0021: Website UI operations are data, resolved by a deterministic engine with bounded self-healing
 
-- **Status:** Accepted
+- **Status:** Accepted; amended 2026-10-19 (the overlay adds elements and error rules; rules checked on the answer)
 - **Date:** 2026-10-11
 - **Related:** [ADR-0005](0005-provider-runtime-interface.md) (provider drivers),
   [ADR-0016](0016-invisible-headed-browser-and-portable-accounts.md),
@@ -65,3 +65,19 @@ operations kept in a separate configuration file.
   before promotion.
 - Selectors built on internal engine features, such as patchright's
   `aria-ref=`, are pinned by conformance tests.
+
+## Amendment (2026-10-19): the overlay may add elements and error rules
+
+[ADR-0034](0034-unsent-failover-to-a-sibling-account.md) needs an operator to add a site's
+usage-limit rule without a release. A limit shows on a page element the shipped map may not have.
+The overlay therefore also adds **elements** the shipped map lacks, and **error rules** after the
+shipped ones. The merged map is validated as a whole: an element with no candidates, or a rule that
+names an unknown element, is refused at load.
+
+An error rule also gains `on: act | answer`:
+- `act` (the default, as before) guards each action;
+- `answer` is checked against the answer just read, so a limit given as the reply classifies a sent
+  turn.
+
+The rest stands: the overlay never replaces a shipped candidate, a heal still writes only to the
+overlay, and promotion to the shipped map is still a reviewed change.

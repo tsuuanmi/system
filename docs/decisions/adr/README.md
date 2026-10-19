@@ -28,7 +28,7 @@ Status values: `Proposed`, `Accepted`, `Rejected`, `Superseded by ADR-NNNN`,
 | [0018](0018-build-on-dsh-core.md) | `system` is our own harness built on DSH core, reusing DSH plugins behind our seams; Node runtime; telemetry off | Accepted; superseded in part by 0019; amended 2026-10-14 (Node range) |
 | [0019](0019-explicit-minimal-dsh-core.md) | Mount only the allow-listed DSH core rows; no `dsh-base` | Accepted |
 | [0020](0020-pinned-managed-chrome.md) | A pinned Chrome for Testing, installed by `system init`, when the host has no recent Chrome | Accepted |
-| [0021](0021-ui-operations-as-data.md) | Website UI operations are data (UI maps) resolved by a deterministic engine with bounded, verified self-healing | Accepted |
+| [0021](0021-ui-operations-as-data.md) | Website UI operations are data (UI maps) resolved by a deterministic engine with bounded, verified self-healing | Accepted; amended 2026-10-19 (the overlay adds elements and error rules) |
 | [0022](0022-text-protocol-tool-calls-for-website-models.md) | Website models reach a client's tools through a text protocol in the turn (MCP tool inversion stays the target) | Accepted |
 | [0023](0023-scoped-control-credentials.md) | Scoped static control credentials (`operator`, `client`, `model`) on loopback; OAuth deferred until CON-6 changes | Accepted |
 | [0024](0024-agent-workers-confined-for-reads.md) | Agent Workers are confined for reads; the DSH home is never readable (bubblewrap where a runtime's own sandbox does not confine reads) | Accepted |
@@ -40,6 +40,6 @@ Status values: `Proposed`, `Accepted`, `Rejected`, `Superseded by ADR-NNNN`,
 | [0030](0030-session-bound-accounts-use-their-login-profile.md) | A session-bound website account (a driver capability) runs every operation as a tab of one persistent context on its own login profile, never from copied state | Accepted; amended 2026-10-17 (a session keeps its tab between its turns) |
 | [0031](0031-model-worker-sessions-by-replay.md) | A model Worker keeps a session by replaying its transcript: a provider-neutral `history` on `ctx.models`, bounded, durable, and egress-checked | Accepted |
 | [0032](0032-admission-refuses-input-longer-than-a-worker-takes.md) | A Worker declares the longest input it takes (`maxInputChars`); admission refuses longer input, measured as it will be sent | Accepted |
-| [0033](0033-least-busy-routing.md) | Among equally ranked Workers routing prefers the least busy (running, queued, and pending admissions), under one routing lock, with load recorded in the decision | Accepted |
+| [0033](0033-least-busy-routing.md) | Among equally ranked Workers routing prefers the least busy (running, queued, and pending admissions), under one routing lock, with load recorded in the decision | Accepted; amended 2026-10-19 (pending counted by the source per account; describe timeout) |
 | [0034](0034-unsent-failover-to-a-sibling-account.md) | An unsent attempt that failed on an account's limit, challenge, sign-out, or site error moves to a sibling account; usage limits set cooldowns admission respects, never the account's status | Accepted |
 | [0035](0035-one-family-teams-keep-distinct-accounts.md) | With one provider family, team members keep distinct accounts before sharing one (a middle step in ADR-0029's fallback) | Accepted |

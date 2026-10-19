@@ -1,6 +1,6 @@
 # ADR-0033: Routing prefers the least busy of equally ranked Workers
 
-- **Status:** Accepted
+- **Status:** Accepted; amended 2026-10-19 (pending admissions are counted by the Worker source per account; a describe timeout)
 - **Date:** 2026-10-19 (accepted 2026-10-19, by the operator, with [PROP-0007](../../proposals/0007-account-pools.md))
 - **Related:** REQ-WRK-2, REQ-ACC-7, [ADR-0030](0030-session-bound-accounts-use-their-login-profile.md),
   [INV-13](../../architecture/invariants.md#inv-13-every-decision-is-an-artifact)
@@ -54,3 +54,17 @@ Option 3.
   tested, including a node whose execution fails right after routing.
 - Revisit if a Worker source cannot report its load. Its load then reads 0, and it competes on
   `priority` as today.
+
+## Amendment (2026-10-19): where pending admissions are counted
+
+- **The Worker source counts them, per account.** An account's tiers share one scheduler, and the
+  router cannot map a Worker to its account without parsing ids, which
+  [INV-11](../../architecture/invariants.md#inv-11-no-tool-lock-in) rules out.
+- **What the router does.** It reserves the chosen Worker through the source's optional `reserve`
+  and returns an idempotent `release` with the admission. The engine calls it on every exit before
+  the turn is queued.
+- **Unchanged.** The effect, the order, and the recorded "load 1 of 2, 1 queued, 1 pending" are as
+  decided above.
+- **Describe timeout.** Each source's `describe()` gets 5 s inside the routing lock. A silent source
+  counts as describing no Workers, and the decisions name it, so one stuck source cannot block all
+  routing.
