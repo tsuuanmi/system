@@ -57,6 +57,8 @@ export class WorkerRouter extends Workers {
   private readonly sources = new Map<string, WorkerSource>()
   private readonly registered = new Map<string, AcceptanceContract>(Object.entries(BUILT_IN))
   private readonly schemas = new SchemaRegistry()
+  /** One route at a time, across every caller, so no two read the same load (ADR-0033). */
+  private routing: Promise<unknown> = Promise.resolve()
 
   constructor(ctx: Context, private readonly config: Config = {}) {
     super(ctx)
@@ -125,6 +127,12 @@ export class WorkerRouter extends Workers {
   }
 
   async route(requirement: WorkRequirement, options: RouteOptions = {}): Promise<AdmittedWorker> {
+    const turn = this.routing.then(() => this.routeNow(requirement, options))
+    this.routing = turn.catch(() => undefined)
+    return turn
+  }
+
+  private async routeNow(requirement: WorkRequirement, options: RouteOptions): Promise<AdmittedWorker> {
     this.schemas.assertRecord(requirement)
     const described = await this.described()
     const workers = described.map((d) => d.worker)
@@ -178,7 +186,14 @@ export class WorkerRouter extends Workers {
       outcome: { option: chosen.worker },
       deterministic: true,
     }, { producer, classification: requirement.data.classification })
-    return { worker: chosen, source: described.find((d) => d.worker === chosen)!.source, requirement: requirementRef, decisions: { tier: tier.id as ArtifactRef, route: route.id as ArtifactRef } }
+    const source = described.find((d) => d.worker === chosen)!.source
+    // Counted as pending on the chosen Worker until the caller starts the work, or gives it up.
+    let held = this.sources.get(source)?.reserve?.(chosen.worker)
+    const release = (): void => {
+      held?.()
+      held = undefined
+    }
+    return { worker: chosen, source, requirement: requirementRef, decisions: { tier: tier.id as ArtifactRef, route: route.id as ArtifactRef }, release }
   }
 
   contract(id: string, check: AcceptanceContract): void {
@@ -255,14 +270,15 @@ export class WorkerRouter extends Workers {
       fail('input', `the input has ${options.input.chars} characters; it takes at most ${worker.maxInputChars}`)
     }
     if (requirement.data.classification === 'local-private' && worker.locality !== 'local') fail('locality', 'local-private data stays on local Workers')
-    if (worker.state !== 'ready') fail('state', `state ${worker.state}`)
+    // Busy is admissible: it only orders the Worker after less busy ones (ADR-0033).
+    if (worker.state !== 'ready' && worker.state !== 'busy') fail('state', `state ${worker.state}`)
     const rank = TIERS.indexOf(worker.tier)
     if (rank < TIERS.indexOf(requirement.tier.min)) fail('tier', `tier ${worker.tier} is below the minimum ${requirement.tier.min}`)
     else if (requirement.tier.max && rank > TIERS.indexOf(requirement.tier.max)) fail('tier', `tier ${worker.tier} is above the maximum ${requirement.tier.max}`)
     return failed
   }
 
-  /** Lowest tier, then quota class preference, then configured priority, then stable id. */
+  /** Lowest tier, then quota class preference, then least busy, then configured priority, then stable id. */
   private order(requirement: WorkRequirement): (a: CapabilityDescriptor, b: CapabilityDescriptor) => number {
     return (a, b) => {
       for (const key of this.keys(requirement)) {
@@ -277,7 +293,7 @@ export class WorkerRouter extends Workers {
     const quota = this.quotaOrder(requirement)
     const priority = this.config.priority ?? []
     const rankOf = (list: readonly string[], value: string): number => (list.includes(value) ? list.indexOf(value) : list.length)
-    return [(w) => TIERS.indexOf(w.tier), (w) => rankOf(quota, w.quotaClass), (w) => rankOf(priority, w.worker)]
+    return [(w) => TIERS.indexOf(w.tier), (w) => rankOf(quota, w.quotaClass), busy, (w) => rankOf(priority, w.worker)]
   }
 
   private quotaOrder(requirement: WorkRequirement): QuotaClass[] {
@@ -288,15 +304,17 @@ export class WorkerRouter extends Workers {
 
   private chosenReasons(worker: CapabilityDescriptor, requirement: WorkRequirement): string[] {
     const reasons = [`proves ${requirement.capabilities.join(', ')}`, `lowest admissible tier ${worker.tier}`, `quota class ${worker.quotaClass}`]
+    if (worker.load) reasons.push(loadOf(worker.load))
     if ((this.config.priority ?? []).includes(worker.worker)) reasons.push('first in the configured priority list')
     return reasons
   }
 
   /** Why an admitted Worker ordered after the chosen one: the first ordering key that differs. */
   private lostTo(worker: CapabilityDescriptor, chosen: CapabilityDescriptor, requirement: WorkRequirement): string {
-    const [tier, quota, priority] = this.keys(requirement)
+    const [tier, quota, load, priority] = this.keys(requirement)
     if (tier!(worker) !== tier!(chosen)) return `${chosen.worker} has the lower tier ${chosen.tier}`
     if (quota!(worker) !== quota!(chosen)) return `${chosen.worker} has the preferred quota class ${chosen.quotaClass}`
+    if (load!(worker) !== load!(chosen)) return `${chosen.worker} is less busy (${loadOf(chosen.load)}; this one ${loadOf(worker.load)})`
     if (priority!(worker) !== priority!(chosen)) return `${chosen.worker} comes first in the configured priority list`
     return `${chosen.worker} comes first by id`
   }
@@ -309,6 +327,15 @@ export class WorkerRouter extends Workers {
     if (!admitted.some((w) => w.tier === tier)) return ['no admitted Worker at this tier']
     return [`the lower tier ${chosen} has an admitted Worker`]
   }
+}
+
+/** A Worker's load as one number: what runs, waits, or is routed to it; a source that reports none reads 0. */
+const busy = (w: CapabilityDescriptor): number => (w.load ? w.load.running + w.load.queued + w.load.pending : 0)
+
+/** "load 1 of 2, 1 queued, 1 pending": running against slots, then what waits (ADR-0033). */
+function loadOf(load: CapabilityDescriptor['load']): string {
+  if (!load) return 'no load reported'
+  return [`load ${load.running} of ${load.slots}`, ...(load.queued ? [`${load.queued} queued`] : []), ...(load.pending ? [`${load.pending} pending`] : [])].join(', ')
 }
 
 /** Code-point order, independent of locale, so routing is the same on every machine. */

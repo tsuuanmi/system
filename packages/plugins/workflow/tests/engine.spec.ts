@@ -12,6 +12,7 @@ import WorkerSessions from '@tsuuanmi/system-worker-sessions'
 import WorkerRouter from '@tsuuanmi/system-workers'
 import { afterEach, describe, expect, it } from 'vitest'
 import { FakeModels, type FakeScript } from '../../../models-core/conformance/models.ts'
+import { source, worker } from '../../../workers-core/conformance/workers.ts'
 import { ModelWorkers } from '../../models/src/index.ts'
 import Workflow from '../src/index.ts'
 
@@ -50,6 +51,27 @@ describe('ctx.workflow: the engine under injected faults', () => {
     ctx.store.db.prepare('UPDATE leases SET expires_at = 1 WHERE resource = ?').run(`run:${run.runId}`)
     // The model call ends after that heartbeat; the run must still finish, not stay running for ever.
     expect(await ctx.workflow.wait(run.runId, 40_000)).toMatchObject({ status: 'completed', answer: 'echo: q' })
+  }, 60_000)
+
+  it('ends an admission\'s pending count when its execution fails to start right after routing (ADR-0033)', async () => {
+    const { ctx } = await boot()
+    let reserved = 0
+    let pending = 0
+    // Ranked first (its quota class is preferred over the model Worker's), and it never starts.
+    ctx.workers.register(source('flaky', [worker('w:flaky')], {
+      reserve: () => {
+        reserved++
+        pending++
+        return () => void pending--
+      },
+      start: () => {
+        throw new Error('the runtime refused the work')
+      },
+    }))
+    const done = await ctx.workflow.wait(ctx.workflow.start({ template: 'ask', input: 'q', classification: 'public' }).runId, 30_000)
+    expect(done.status).toBe('failed')
+    expect(reserved).toBeGreaterThan(0)
+    expect(pending).toBe(0)
   }, 60_000)
 
   it('fails the node a scheduler exception happened on, so the operator can continue it once fixed', async () => {

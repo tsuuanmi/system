@@ -70,7 +70,7 @@ flowchart TD
   X -->|yes| C{proves every required capability?}
   C -->|yes| L{"takes the input's length, when it declares a bound?"}
   L -->|yes| D{local, when the data is local-private?}
-  D -->|yes| E{state ready?}
+  D -->|yes| E{state ready or busy?}
   E -->|yes| F{tier within min and max?}
   F -->|yes| G[admitted]
   B -->|no| R[rejected, with the failed check]
@@ -80,8 +80,8 @@ flowchart TD
   D -->|no| R
   E -->|no| R
   F -->|no| R
-  G --> H["order: lowest tier, budget.preferQuota, quotaPreference, priority list, id"]
-  H --> I[first candidate: tier and route decisions]
+  G --> H["order: lowest tier, budget.preferQuota, quotaPreference, least load, priority list, id"]
+  H --> I[first candidate: tier and route decisions, counted pending on it until started]
   R --> J[none admitted: an admission decision and AdmissionFailure with every rejection]
 ```
 
@@ -95,6 +95,25 @@ options, measured on what it rendered; the workflow engine measures a node's pro
 shown source included. A longer input fails the `input` check. A source that replays history
 bounds it itself. With no Worker left for its length, a node fails unsent as `invalid_input`, and
 the engine names the bound that sized it (a review's `repositories.maxSourceChars`).
+
+**Load** ([ADR-0033](../decisions/adr/0033-least-busy-routing.md)). A descriptor may carry
+`load` (`capability-descriptor@1.3`): the turns `running` in its runtime's `slots`, `queued`, and
+routed to it but not started (`pending`). The Workers of one account report the same numbers,
+since they share its scheduler. Among Workers equal in tier and quota class, the least loaded
+comes first (running, queued, and pending together); then the `priority` list and the id decide
+as before, and a source that reports no load reads 0. A Worker at its limit reads `busy`, which
+stays admissible: it only orders it later.
+
+- **Pending.** The router asks the chosen Worker's source to `reserve` it, so the admission
+  counts in that Worker's `pending` until the caller calls `release()` on what `route` returned:
+  once the work is started, or on any path that will not start it. The workflow engine releases it
+  with its routing turn, on every path. Starting is synchronous, so the work is queued by then. A
+  restart drops pending counts; the schedulers hold the real load.
+- **One route at a time.** `route` runs under one lock across every caller, so two routes never
+  read the same counts: two nodes of a run, or two runs started together, land on two accounts.
+- **Recorded.** The route decision gives the chosen Worker's load ("load 1 of 2, 1 queued, 1
+  pending"), and an admitted Worker that lost on load says so ("w:b is less busy (load 0 of 2;
+  this one load 2 of 2)"). The load read is part of the decision's input (REQ-WRK-2).
 
 Quota and health are inputs **before** admission. Once a turn starts on a Worker,
 it is never moved to another one. Running out of quota mid-turn is a classified

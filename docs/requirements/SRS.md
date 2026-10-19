@@ -79,7 +79,8 @@
 - **REQ-WRK-1** A Worker is admitted for a piece of work only when its current
   composition proves every required capability. Admission fails closed.
 - **REQ-WRK-2** Routing among admitted Workers is deterministic for a given
-  configuration and input.
+  configuration and input. The Workers' load is part of that input, and the route decision
+  records it ([ADR-0033](../decisions/adr/0033-least-busy-routing.md)).
 - **REQ-WRK-3** A provider reaching its terminal state does not make the work
   accepted. Acceptance is a separate check against the work's acceptance contract.
 - **REQ-WRK-4** Work can be cancelled. Cancellation reaches the owning runtime,

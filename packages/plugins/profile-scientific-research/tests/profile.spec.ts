@@ -40,17 +40,16 @@ const AT = '2026-10-12T00:00:00Z'
  * Scripted chat Workers that answer each study step and record the prompts: `chat:a` proves web
  * search, `chat:b` only reasons, each of its own provider family unless `families` says otherwise.
  */
-function scholar(ctx: Context, families: [string, string] = ['fam-a', 'fam-b'], options: { busyAfterFramingMs?: number; deep?: boolean } = {}): string[] & { sessions: Array<string | undefined> } {
+function scholar(ctx: Context, families: [string, string] = ['fam-a', 'fam-b'], options: { refuseFirstReview?: boolean; deep?: boolean } = {}): string[] & { sessions: Array<string | undefined> } {
   const prompts = Object.assign([] as string[], { sessions: [] as Array<string | undefined> })
   const executions = new Map<string, WorkerExecution>()
   const sessions = new Map<string, string>()
-  let busyUntil = 0
+  let refused = false
   const descriptor = (id: string, family: string, web: boolean) => ({
     schema: 'capability-descriptor@1.1' as const, worker: id, provider: 'test', family, tier: (options.deep ? 'frontier' : 'standard') as 'frontier' | 'standard', quotaClass: 'subscription-chat' as const, locality: 'remote' as const,
     // Website Workers keep conversations: the synthesis thread needs it.
     capabilities: ['reason', 'persistent-conversation', ...(web ? ['web-search'] : []), ...(options.deep ? ['deep-research'] : [])].map((capability) => ({ capability, evidence: { kind: 'probe' as const, at: AT } })),
-    // chat:a is busy for a while after framing, so review A backs off at admission and is routed again.
-    state: (id === 'chat:a' && Date.now() < busyUntil ? 'busy' : 'ready') as 'busy' | 'ready', observedAt: AT,
+    state: 'ready' as const, observedAt: AT,
   })
   ctx.workers.register({
     name: 'chat',
@@ -61,7 +60,14 @@ function scholar(ctx: Context, families: [string, string] = ['fam-a', 'fam-b'], 
       prompts.sessions.push(request.sessionId)
       if (request.sessionId && !sessions.has(request.sessionId)) sessions.set(request.sessionId, request.worker)
       const p = request.prompt
-      if (p.includes('Frame the research question') && options.busyAfterFramingMs) busyUntil = Date.now() + options.busyAfterFramingMs
+      // chat:a refuses the first review unsent, so review A backs off and is routed again (a busy
+      // Worker no longer backs off at admission: it stays admissible, ADR-0033).
+      if (options.refuseFirstReview && !refused && request.worker === 'chat:a' && p.includes('Review the published evidence')) {
+        refused = true
+        const execution: WorkerExecution = { id: `chat-refused`, status: 'failed', submitted: false, error: { kind: 'overloaded', disposition: 'BACKOFF', message: 'the account is busy' }, decisions: [] }
+        executions.set(execution.id, execution)
+        return execution
+      }
       const text = p.includes('Frame the research question') ? json(HYPOTHESES)
         : p.includes('Review the published evidence') ? `One trial (n=120) found X lowered Y: https://example.org/trial (${request.worker})`
           : p.includes('Extract one evidence table') ? json(EVIDENCE)
@@ -135,10 +141,10 @@ describe('the scientific-research profile, on the unchanged engine (REQ-WF-9)', 
     expect(ctx.artifacts.list({ kind: 'evidence', runId: done.runId })[0]).toMatchObject({ bodySchema: 'evidence-table@1.1', inputs: [ctx.workflow.records(done.runId)[3]!.outputReceipt!.result] })
   })
 
-  it('routes review B after review A backs off at admission and is routed again: no deadlock (ADR-0027)', async () => {
+  it('routes review B after review A backs off and is routed again: no deadlock (ADR-0027)', async () => {
     const ctx = await boot()
     await ctx.plugin(Science)
-    scholar(ctx, ['fam-a', 'fam-b'], { busyAfterFramingMs: 250 })
+    scholar(ctx, ['fam-a', 'fam-b'], { refuseFirstReview: true })
     const done = await ctx.workflow.wait(ctx.workflow.start({ template: 'research', input: 'Does X lower Y?' }).runId, 20_000)
     expect(done.status).toBe('completed')
     expect(done.nodes.filter((n) => n.nodeId.startsWith('literature')).map((n) => [n.nodeId, n.worker])).toEqual([['literature:1', 'chat:a'], ['literature:2', 'chat:b']])

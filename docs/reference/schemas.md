@@ -146,8 +146,8 @@ guesses.
 ### `capability-descriptor`
 
 - `provider` is informational. Routing must not branch on it (INV-11). Only
-  `capabilities`, `tier`, `quotaClass`, `locality`, `state`, and `family` are
-  routing inputs.
+  `capabilities`, `tier`, `quotaClass`, `locality`, `state`, `family`,
+  `maxInputChars`, and `load` are routing inputs.
 - `capability-descriptor@1.1` adds the optional `family`: an opaque provider
   family the Worker source sets, which routing only compares for inequality
   ([provider diversity](../design/routing.md#provider-diversity),
@@ -158,6 +158,12 @@ guesses.
   takes, in characters (code points) of what it is sent; admission refuses longer input
   ([ADR-0032](../decisions/adr/0032-admission-refuses-input-longer-than-a-worker-takes.md)). A
   record carrying it below `@1.2` is refused. Readers accept 1.0 to 1.2.
+- `capability-descriptor@1.3` adds the optional `load`: the turns `running` in the Worker
+  runtime's `slots`, `queued`, and routed to it but not started (`pending`). Workers that share a
+  runtime (the tiers of one account) report the same numbers. Among equally ranked Workers the
+  least busy is routed to, and the route decision records each one's load
+  ([ADR-0033](../decisions/adr/0033-least-busy-routing.md)). A record carrying it below `@1.3` is
+  refused. Readers accept 1.0 to 1.3.
 
 ### `plan`
 

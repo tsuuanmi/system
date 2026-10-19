@@ -23,9 +23,21 @@ export type QuotaClass = 'subscription-chat' | 'agent-plan' | 'metered' | 'local
 export type Classification = 'public' | 'operator-shared' | 'local-private'
 export type WorkerState = 'ready' | 'busy' | 'quota-exhausted' | 'reauth-required' | 'unavailable'
 
+/**
+ * How busy a Worker's runtime is (`@1.3`; ADR-0033): turns running in its `slots`, queued, and
+ * routed to it but not started yet (`pending`). Workers that share a runtime (the tiers of one
+ * account) report the same numbers.
+ */
+export interface WorkerLoad {
+  running: number
+  queued: number
+  pending: number
+  slots: number
+}
+
 /** What a Worker has proven right now (`capability-descriptor@1.0`; `@1.1` adds `family`). */
 export interface CapabilityDescriptor {
-  schema: 'capability-descriptor@1.0' | 'capability-descriptor@1.1' | 'capability-descriptor@1.2'
+  schema: 'capability-descriptor@1.0' | 'capability-descriptor@1.1' | 'capability-descriptor@1.2' | 'capability-descriptor@1.3'
   worker: string
   /** Informational only; routing never branches on it (INV-11). */
   provider: string
@@ -39,6 +51,8 @@ export interface CapabilityDescriptor {
    * source knows one (`@1.2`; ADR-0032). Admission refuses it work whose input is longer.
    */
   maxInputChars?: number
+  /** How busy it is (`@1.3`; ADR-0033): among equally ranked Workers, the least busy is routed to. */
+  load?: WorkerLoad
   tier: Tier
   quotaClass: QuotaClass
   locality: 'local' | 'remote'
@@ -103,6 +117,11 @@ export interface WorkerSource {
   describe(): Promise<CapabilityDescriptor[]>
   /** Start work on one admitted Worker; durable at once, idempotent by `key`. */
   start(request: WorkerStart): WorkerExecution
+  /**
+   * Count an admission routed to this Worker in its `load.pending` until the returned release is
+   * called (ADR-0033): the caller releases it once the work is started, or will not be.
+   */
+  reserve?(worker: string): () => void
   get(executionId: string): WorkerExecution | undefined
   /** Wait until the execution finishes or `timeoutMs` passes; the current state either way. */
   wait(executionId: string, timeoutMs: number): Promise<WorkerExecution>
@@ -161,6 +180,11 @@ export interface AdmittedWorker {
   /** The stored work requirement and the decisions that chose the Worker (INV-13). */
   requirement: ArtifactRef
   decisions: { tier: ArtifactRef; route: ArtifactRef }
+  /**
+   * Ends the admission's place in the Worker's `load.pending` (ADR-0033). Call it once the work
+   * is started, or on any path that will not start it; calling it again does nothing.
+   */
+  release(): void
 }
 
 /** A result as an acceptance contract sees it: the stored artifact. */

@@ -211,6 +211,57 @@ export function workersConformance(name: string, boot: Boot): void {
       })
     })
 
+    it('routes to the least busy of equally ranked Workers, after tier and quota, before priority and id, and says so (ADR-0033)', async () => {
+      const load = (running: number, queued = 0, pending = 0) => ({ schema: 'capability-descriptor@1.3' as const, load: { running, queued, pending, slots: 2 } })
+      await withWorkers([worker('w:a', load(2, 1)), worker('w:b', { ...load(2), state: 'busy' }), worker('w:c', load(1)), worker('w:eco', { ...load(2, 3), tier: 'economy' })], async (ctx) => {
+        // The lower tier still comes first, however busy.
+        expect((await ctx.workers.route(requirement())).worker.worker).toBe('w:eco')
+        const admitted = await ctx.workers.route(requirement({ tier: { min: 'standard', source: 'caller' } }))
+        expect(admitted.worker.worker).toBe('w:c')
+        const route = body(ctx, admitted.decisions.route)
+        expect(route.candidates.find((c) => c.option === 'w:c')!.reasons).toContain('load 1 of 2')
+        // Busy is admissible: it only orders the Worker after less busy ones.
+        expect(route.candidates.find((c) => c.option === 'w:b')!.reasons).toEqual(['admitted; w:c is less busy (load 1 of 2; this one load 2 of 2)'])
+        expect(route.candidates.find((c) => c.option === 'w:a')!.reasons).toEqual(['admitted; w:c is less busy (load 1 of 2; this one load 2 of 2, 1 queued)'])
+      })
+      // Equally busy: the configured order, then the id, decide as before; a source that reports no load reads 0.
+      await withWorkers([worker('w:b', load(1)), worker('w:a', load(1)), worker('w:x', load(2))], async (ctx) => {
+        expect((await ctx.workers.route(requirement())).worker.worker).toBe('w:a')
+      })
+      await withWorkers([worker('w:b'), worker('w:a', load(1))], async (ctx) => {
+        expect((await ctx.workers.route(requirement())).worker.worker).toBe('w:b')
+      })
+    })
+
+    it('counts an admission as pending on its Worker until released, routing one at a time, so two routes spread (ADR-0033)', async () => {
+      const { ctx, dispose } = await boot()
+      try {
+        const pending = new Map<string, number>()
+        const describe = async () => {
+          // A slow description: concurrent routes would read the same counts without one lock.
+          await new Promise((resolve) => setTimeout(resolve, 20))
+          return ['w:a', 'w:b'].map((id) => worker(id, { schema: 'capability-descriptor@1.3', load: { running: 0, queued: 0, pending: pending.get(id) ?? 0, slots: 2 } }))
+        }
+        ctx.workers.register(source('pool', describe, {
+          reserve: (id) => {
+            pending.set(id, (pending.get(id) ?? 0) + 1)
+            return () => pending.set(id, pending.get(id)! - 1)
+          },
+        }))
+        const [first, second] = await Promise.all([ctx.workers.route(requirement()), ctx.workers.route(requirement())])
+        expect([first.worker.worker, second.worker.worker]).toEqual(['w:a', 'w:b'])
+        expect(body(ctx, second.decisions.route).candidates.find((c) => c.option === 'w:a')!.reasons).toEqual(['admitted; w:b is less busy (load 0 of 2; this one load 0 of 2, 1 pending)'])
+        // Released once, however often it is called.
+        first.release()
+        first.release()
+        second.release()
+        expect([...pending.values()]).toEqual([0, 0])
+        expect((await ctx.workers.route(requirement())).worker.worker).toBe('w:a')
+      } finally {
+        await dispose()
+      }
+    })
+
     it('accepts or rejects a stored result by contract, records the decision, and fails closed on unknowns (REQ-WRK-3)', async () => {
       const { ctx, dispose } = await boot()
       try {

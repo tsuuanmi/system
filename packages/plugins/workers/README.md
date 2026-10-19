@@ -25,15 +25,20 @@ router ([routing](../../../docs/design/routing.md#algorithm)). Definition:
   - it takes the input's length, when the caller gives one and the Worker
     declares a bound (`input`, [ADR-0032](../../../docs/decisions/adr/0032-admission-refuses-input-longer-than-a-worker-takes.md));
   - it is local when the data is `local-private`;
-  - it is `ready`;
+  - it is `ready` or `busy` (busy only orders it later);
   - its tier is within `[min, max]`.
 
   Every failed check is kept with its reason.
 - **Order (REQ-WRK-2, -8).** Lowest tier first, then the requirement's
   `budget.preferQuota`, then `quotaPreference` (default `subscription-chat`,
   `local`, `agent-plan`, `metered`; the `api-first` preset sets `local`, `metered`,
-  `agent-plan`, `subscription-chat`), then `priority` (Worker ids), then the id in
-  code-point order. The result does not depend on the locale or on source order.
+  `agent-plan`, `subscription-chat`), then the least `load` (running, queued, and
+  pending; a source that reports none reads 0), then `priority` (Worker ids), then the
+  id in code-point order. The result does not depend on the locale or on source order.
+- **Load (ADR-0033).** `route` runs under one lock across every caller. The chosen
+  Worker's source `reserve`s it, so the admission counts as `pending` until the caller
+  calls `release()` on the admitted Worker (idempotent), once the work is started or
+  will not be.
 - **Decisions (INV-13).** The requirement is stored as an `objective` artifact
   (`work-requirement@1.0`).
   - **Success:** a `tier` decision, and a `route` decision whose candidates are

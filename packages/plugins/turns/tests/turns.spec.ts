@@ -56,7 +56,11 @@ async function ask(ctx: Context, input: AskSpec) {
   }
   const affinity = sessionId ? ctx.workers.affinity(sessionId) : undefined
   const admitted = await ctx.workers.route(requirement, affinity ? { restrict: { workers: affinity, reason: 'the session stays on its account' } } : {})
-  return ctx.turns.ask({ key: input.key ?? randomBytes(8).toString('hex'), worker: admitted.worker.worker, prompt: input.prompt, sessionId, requirement, decisions: admitted.decisions })
+  try {
+    return ctx.turns.ask({ key: input.key ?? randomBytes(8).toString('hex'), worker: admitted.worker.worker, prompt: input.prompt, sessionId, requirement, decisions: admitted.decisions })
+  } finally {
+    admitted.release()
+  }
 }
 
 async function boot(options: { fake?: FakeOptions; accounts?: CatalogEntry[]; ready?: string[]; dir?: string; capacity?: number; shared?: FakeChatGpt; turns?: Record<string, unknown> } = {}) {
@@ -314,6 +318,28 @@ describe.runIf(canRunBrowser)('ctx.turns: ask through a saved account', () => {
     await ctx.turns.wait(a.turnId, 30_000)
     expect(fake.sent).toHaveLength(1)
     await expect(ask(ctx, { prompt: 'different', key: 'req-1' })).rejects.toThrow(/different prompt/)
+  }, 90_000)
+
+  it('reports each account\'s load, busy at its limit, and routes the next turn to the least busy account (ADR-0033)', async () => {
+    const { ctx } = await boot({ accounts: [account('chatgpt-main'), account('chatgpt-2')], ready: ['chatgpt-main', 'chatgpt-2'], capacity: 1, fake: { thinkMs: 4000 } })
+    const loadOf = async (id: string) => (await ctx.workers.list()).find((w) => w.worker === `worker:${id}/standard`)!
+    // With equal loads the id decides: chatgpt-2 first.
+    const first = await ask(ctx, { prompt: 'one' })
+    expect(first.account).toBe('chatgpt-2')
+    await expect.poll(async () => (await loadOf('chatgpt-2')).load, { timeout: 30_000 }).toEqual({ running: 1, queued: 0, pending: 0, slots: 1 })
+    expect((await loadOf('chatgpt-2')).state).toBe('busy')
+    // Routed and not started yet: pending on its account until released.
+    const routed = await ctx.workers.route({ schema: 'work-requirement@1.0', objective: 'test', egressPolicy: 'egress.classification-and-secrets', capabilities: ['reason'],
+      data: { classification: 'operator-shared', refs: [] }, tier: { min: 'standard', source: 'default' }, acceptance: { contract: 'acceptance.answer' } })
+    expect(routed.worker.worker).toBe('worker:chatgpt-main/standard')
+    expect((await loadOf('chatgpt-main')).load).toEqual({ running: 0, queued: 0, pending: 1, slots: 1 })
+    routed.release()
+    expect((await loadOf('chatgpt-main')).load).toEqual({ running: 0, queued: 0, pending: 0, slots: 1 })
+    const second = await ask(ctx, { prompt: 'two' })
+    expect(second.account).toBe('chatgpt-main')
+    const route = ctx.artifacts.get(second.routeDecision!)?.body as { candidates: Array<{ option: string; reasons: string[] }> }
+    expect(route.candidates.find((c) => c.option === 'worker:chatgpt-2/standard')!.reasons).toEqual(['admitted; worker:chatgpt-main/standard is less busy (load 0 of 1; this one load 1 of 1)'])
+    await Promise.all([ctx.turns.wait(first.turnId, 30_000), ctx.turns.wait(second.turnId, 30_000)])
   }, 90_000)
 
   it('routes through ctx.workers to an admitted Worker and records why every other one was not chosen (REQ-WRK-1, REQ-ART-1)', async () => {

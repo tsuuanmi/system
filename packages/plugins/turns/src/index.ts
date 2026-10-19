@@ -193,6 +193,8 @@ export class Turns extends Service {
   private readonly authChecked = new Map<string, number>()
   private readonly startedAt = Date.now()
   private readonly schedulers = new Map<string, ProviderScheduler>()
+  /** Admissions routed to each account and not started yet (ADR-0033). */
+  private readonly pending = new Map<string, number>()
   private readonly waiters = new Map<string, Set<() => void>>()
   /** Turns of one session run in acceptance order, each after the previous one settles. */
   private readonly sessionChains = new Map<string, Promise<void>>()
@@ -259,6 +261,7 @@ export class Turns extends Service {
       name: 'website',
       describe: () => this.describeWorkers(),
       start: (request) => execution(this.ask(request)),
+      reserve: (worker) => this.reserve(worker),
       get: (id) => {
         const turn = this.get(id)
         return turn && execution(turn)
@@ -675,22 +678,50 @@ export class Turns extends Service {
   private async describeWorkers(): Promise<CapabilityDescriptor[]> {
     const providers = new Set(this.ctx.providers.list())
     const observedAt = now()
+    const slots = this.config.maxConcurrentTurnsPerAccount ?? 2
+    // Each account's turns as they stand, read with the routes that are not started yet (ADR-0033).
+    const counts = new Map<string, { running: number; queued: number }>()
+    for (const row of this.ctx.store.db.prepare(`SELECT account, status, COUNT(*) AS n FROM turns WHERE status IN ('queued', 'running') AND account IS NOT NULL GROUP BY account, status`).all() as Array<{ account: string; status: 'queued' | 'running'; n: number }>) {
+      const count = counts.get(row.account) ?? { running: 0, queued: 0 }
+      count[row.status] = row.n
+      counts.set(row.account, count)
+    }
     return (await this.ctx.accounts.list()).flatMap((account) => {
       const driver = providers.has(account.provider) ? this.ctx.providers.get(account.provider) : undefined
+      const load = { ...(counts.get(account.id) ?? { running: 0, queued: 0 }), pending: this.pending.get(account.id) ?? 0, slots }
+      const state = driver && account.status === 'ready' && load.running >= slots ? 'busy' : undefined
       return TIERS.filter((tier) => account.tiers[tier]).map((tier): CapabilityDescriptor => ({
         // The site is who serves the work, so the account's provider is the Worker's family (ADR-0027).
-        schema: driver?.maxInputChars ? 'capability-descriptor@1.2' : 'capability-descriptor@1.1', worker: websiteWorker(account.id, tier), provider: account.provider, family: account.provider,
-        ...(driver?.maxInputChars ? { maxInputChars: driver.maxInputChars } : {}), tier,
+        schema: 'capability-descriptor@1.3', worker: websiteWorker(account.id, tier), provider: account.provider, family: account.provider,
+        ...(driver?.maxInputChars ? { maxInputChars: driver.maxInputChars } : {}), load, tier,
         quotaClass: account.quotaClass, locality: 'remote',
         capabilities: [
           ...(driver?.capabilities ?? []).map((capability) => ({ capability, evidence: { kind: 'conformance' as const, at: observedAt } })),
           // An account feature counts only once a probe on this account proved it (REQ-PRV-7).
           ...(account.features?.names ?? []).filter((f) => driver?.features?.includes(f)).map((capability) => ({ capability, evidence: { kind: 'probe' as const, at: account.features!.provedAt } })),
         ],
-        state: driver && (!driver.modes || driver.modes.includes(account.tiers[tier]!)) ? WORKER_STATE[account.status] : 'unavailable',
+        state: driver && (!driver.modes || driver.modes.includes(account.tiers[tier]!)) ? state ?? WORKER_STATE[account.status] : 'unavailable',
         observedAt,
       }))
     })
+  }
+
+  /**
+   * An admission routed to an account's Worker, counted in that account's `load.pending` until its
+   * turn is started or given up (ADR-0033). Starting is synchronous, so the turn is queued by the
+   * time its caller releases this.
+   */
+  private reserve(worker: string): () => void {
+    const { account } = parseWebsiteWorker(worker)
+    this.pending.set(account, (this.pending.get(account) ?? 0) + 1)
+    let held = true
+    return () => {
+      if (!held) return
+      held = false
+      const left = (this.pending.get(account) ?? 1) - 1
+      if (left > 0) this.pending.set(account, left)
+      else this.pending.delete(account)
+    }
   }
 
   /**

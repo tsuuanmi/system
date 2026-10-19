@@ -452,6 +452,12 @@ export class Engine {
         return failAttempt(this, run, { ...node, attempt }, { kind: 'config_error', disposition: dispositionOf('config_error'), message: exclude.problem }, { sent: false, decisions: [] }, lease)
       }
       let admitted: AdmittedWorker
+      // The routing turn, and the admission's place in its Worker's pending load, end together on
+      // every path: started, refused, stopped, or failed (ADR-0033).
+      const done = (): void => {
+        release()
+        ;(admitted as AdmittedWorker | undefined)?.release()
+      }
       const { distinctAccounts, ...restricted } = await restriction(this, run, spec)
       // The prompt as it will be sent, in characters (ADR-0032): a Worker that takes less is not admitted.
       const input = { chars: [...(node.prompt ?? '')].length }
@@ -472,7 +478,7 @@ export class Engine {
           sameFamily = this.sameFamilyDecision(run, node, error.decision, [exclude?.reason, distinctAccounts ? restricted.restrict?.reason : undefined].filter((r): r is string => !!r), admitted)
         }
       } catch (error) {
-        release()
+        done()
         if (!(error instanceof AdmissionFailure)) throw error
         const hint = error.rejections.length ? inputHint(this, spec, error, input.chars) : ': no Worker is configured (for website Workers, map tiers to modes in the account catalog, then sign the account in)'
         // A team member that finds no other provider family: say what the team needs, beside why this one failed.
@@ -482,12 +488,12 @@ export class Engine {
       }
       // A stop while routing starts nothing: the node is routed again on the next start.
       if (signal.aborted) {
-        release()
+        done()
         return
       }
       const source = this.ctx.workers.source(admitted.source)
       if (!source) {
-        release()
+        done()
         throw new Error(`Worker source ${admitted.source} is gone`)
       }
       const routed = {
@@ -523,7 +529,7 @@ export class Engine {
         if (error instanceof LeaseLost || error instanceof StaleGeneration) throw error
         return failAttempt(this, run, { ...node, attempt }, errorOf(error), { sent: false, decisions: [admitted.decisions.tier, admitted.decisions.route] }, lease)
       } finally {
-        release()
+        done()
       }
       node = this.nodeRow(run.run_id, node.node_id)!
     }

@@ -9,7 +9,10 @@ invoked by the [workflow engine](../workflow/README.md)
     its catalog maps to a mode preset. It proves what the account's driver
     declares, in a state taken from the account's status. A tier mapped to a
     preset the driver does not have (the driver's `modes`) is `unavailable`. Its
-    provider family (`capability-descriptor@1.1`) is the account's provider.
+    provider family (`capability-descriptor@1.1`) is the account's provider. Its
+    `load` (`@1.3`, ADR-0033) is the account's turns running and queued, its
+    routes not started yet (`reserve`), and `maxConcurrentTurnsPerAccount` as its
+    slots; a ready account with every slot running reads `busy`.
   - **Run:** `start`, `get`, and `wait` run turns. The engine routes; a turn
     never routes itself.
   - **Affinity:** a session stays on the account it is bound to.
