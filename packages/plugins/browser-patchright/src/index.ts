@@ -39,6 +39,11 @@ export interface Config {
   chromePath?: string
   /** Close an account's browser after this long without an open turn (default 30 min). */
   closeAfterMs?: number
+  /**
+   * The most account browsers on login profiles open at once (default 0: no cap; PROP-0007). Over
+   * it, the longest-idle one that holds no turn closes; with every one busy, a new one waits.
+   */
+  maxBrowsers?: number
   /** Serialized IndexedDB above this size keeps the previous capture (default 16 MiB). */
   maxIndexedDbBytes?: number
 }
@@ -78,6 +83,7 @@ export class BrowserPool extends BrowserSeam<Page, BrowserContext> {
   static Config: z<Config> = z.object({
     chromePath: z.string().description('Chrome executable; defaults to CHROME_PATH, a recent system Chrome, then the managed build'),
     closeAfterMs: z.natural().default(30 * 60_000).description('Idle time before an account browser closes, in milliseconds'),
+    maxBrowsers: z.natural().default(0).description('The most account browsers on login profiles open at once (0: no cap); over it the longest-idle one holding no turn closes, and with every one busy a new one waits'),
     maxIndexedDbBytes: z.natural().default(16 * 1024 * 1024).description('IndexedDB capture size cap in bytes'),
   })
 
@@ -97,6 +103,7 @@ export class BrowserPool extends BrowserSeam<Page, BrowserContext> {
         return { context: await launchProfile(dir, chrome.path, display), lost: display.lost }
       },
       closeAfterMs: () => this.config.closeAfterMs ?? 30 * 60_000,
+      maxBrowsers: () => this.config.maxBrowsers ?? 0,
       report: (type, data) => void this.ctx.get('eventLog')?.append({ type, data }),
     })
     ctx.effect(() => async () => {
@@ -194,6 +201,10 @@ export class BrowserPool extends BrowserSeam<Page, BrowserContext> {
 
   profileStates(): ProfileState[] {
     return this.profiles.states()
+  }
+
+  override browserCap(): number {
+    return this.config.maxBrowsers ?? 0
   }
 
   discardTab(account: string, keep: string): Promise<void> {

@@ -74,7 +74,12 @@
   context and returns only after that browser has exited. Profile turns then fail
   as `overloaded` until every reservation is released; each release ends one.
 - **`profileStates()`:** the profiles open for work, reserved, or blocked (for
-  health).
+  health). `browserCap()` is `maxBrowsers`.
+- **`maxBrowsers`** (default 0, no cap; PROP-0007): the most login-profile browsers
+  open at once. An open that needs another browser over it first closes the
+  longest-idle one holding no turn (event `browser.closed-for-room`); with every one
+  holding a turn it waits until one frees (bounded by the turn runtime's
+  `maxPendingTurns`). The last check and the launch run with nothing between them.
 - **`capture(turn, { origins, previous })`:** cookies, localStorage, and IndexedDB
   for the driver's origins only. IndexedDB over the size cap keeps `previous`.
 - **`captureProfile(account, dir, …)`** (the Save flow) uses a profile the pool
@@ -91,7 +96,7 @@
   (`installManagedChrome`, used by `system init`;
   [ADR-0020](../../../docs/decisions/adr/0020-pinned-managed-chrome.md)). A
   missing or unlaunchable Chrome is a `config_error`.
-- **Injects:** `display`. **Config:** `chromePath`, `closeAfterMs`, `maxIndexedDbBytes`.
+- **Injects:** `display`. **Config:** `chromePath`, `closeAfterMs`, `maxBrowsers`, `maxIndexedDbBytes`.
 - **Ported from:** tsuuanmi/internet `src/browser/runtime.ts` and `chrome.ts`. The
   origin filter and launch patterns come from `@anweat/dsh-browser`
   ([review](../../../docs/research/dsh-community-plugins-review.md#browser-runtime-second-pass-2026-10-11)).

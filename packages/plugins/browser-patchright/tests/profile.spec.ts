@@ -36,11 +36,11 @@ describe.runIf(canRunBrowser)('pool(ctx).captureProfile (the Save flow)', () => 
     for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true })
   })
 
-  async function boot(): Promise<Context> {
+  async function boot(config: Record<string, unknown> = {}): Promise<Context> {
     const ctx = new Context()
     const display = ctx.plugin(VirtualDisplay, {})
     await display
-    const browser = ctx.plugin(BrowserPool, { chromePath: testChrome! })
+    const browser = ctx.plugin(BrowserPool, { chromePath: testChrome!, ...config })
     await browser
     fibers.push(display, browser)
     return ctx
@@ -262,6 +262,28 @@ describe.runIf(canRunBrowser)('pool(ctx).captureProfile (the Save flow)', () => 
       expect(Date.now() - opened).toBeGreaterThanOrEqual(1400)
       await Promise.all([first.close(), second.close()])
     }, 120_000)
+
+    it('keeps account browsers under maxBrowsers: the longest-idle one closes for a new one, and with all busy the new one waits (PROP-0007)', async () => {
+      const ctx = await boot({ maxBrowsers: 2 })
+      const [a, b, c] = [await signedInProfile(), await signedInProfile(), await signedInProfile()]
+      const busy = await pool(ctx).openTurn('acct-a', { profile: { dir: a } })
+      await (await pool(ctx).openTurn('acct-b', { profile: { dir: b } })).close()
+      // acct-b holds no turn, so it closes to make room; acct-a, busy, stays.
+      const third = await pool(ctx).openTurn('acct-c', { profile: { dir: c } })
+      expect(pool(ctx).openAccounts().sort()).toEqual(['acct-a', 'acct-c'])
+      // Both busy: a fourth waits until one frees.
+      let opened = false
+      const waiting = pool(ctx).openTurn('acct-b', { profile: { dir: b } }).then((turn) => {
+        opened = true
+        return turn
+      })
+      await new Promise((resolve) => setTimeout(resolve, 1500))
+      expect(opened).toBe(false)
+      await third.close()
+      const fourth = await waiting
+      expect(pool(ctx).openAccounts().sort()).toEqual(['acct-a', 'acct-b'])
+      await Promise.all([busy.close(), fourth.close()])
+    }, 180_000)
 
     describe('kept tabs: a session\'s page between its turns (ADR-0030)', () => {
       it('keeps a session\'s page on close and hands it back, in front, with no new page and no pacing; discard closes it for good', async () => {

@@ -226,6 +226,10 @@ account's profile open, Save reads it in place, in a page of its own.
     - Until the login ends, operations fail as `overloaded` (backoff).
     - A second login for the account joins the first.
     - Saves, and with them automated sign-ins, run one at a time per account.
+  - **Cap.** `maxBrowsers` bounds the login-profile browsers open at once (default
+    none; PROP-0007): a new one first closes the longest-idle browser holding no
+    turn, and waits while every one holds a turn. Health shows the open ones
+    against the cap.
   - **Pacing.** The opens of the account's pages are spaced by the driver's
     `pageGapMs`, and the opens across all accounts of one provider by the turn
     runtime's `providerPageGapMs` (a pace group keyed by the provider; PROP-0007),

@@ -90,6 +90,10 @@ export abstract class Browser<Page = unknown, BrowserContext = unknown> extends 
   abstract reserveProfile(account: string, dir: string): Promise<() => void>
   /** Login profiles held open, reserved, or held by a process that could not be stopped. */
   abstract profileStates(): ProfileState[]
+  /** The most login-profile browsers it keeps open at once; 0 is no cap (PROP-0007). */
+  browserCap(): number {
+    return 0
+  }
   /** Close a session's kept tab, if any (the session ended, or its conversation was lost). */
   abstract discardTab(account: string, keep: string): Promise<void>
   /** The turn's state for `origins` only; IndexedDB over the cap keeps `previous`. */

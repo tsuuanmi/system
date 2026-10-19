@@ -65,6 +65,7 @@
 |---|---|---|---|
 | `chromePath` | string |  | Chrome executable; defaults to CHROME_PATH, a recent system Chrome, then the managed build |
 | `closeAfterMs` | number (0…) | `1800000` | Idle time before an account browser closes, in milliseconds |
+| `maxBrowsers` | number (0…) | `0` | The most account browsers on login profiles open at once (0: no cap); over it the longest-idle one holding no turn closes, and with every one busy a new one waits |
 | `maxIndexedDbBytes` | number (0…) | `16777216` | IndexedDB capture size cap in bytes |
 
 ## `credentials-vault`

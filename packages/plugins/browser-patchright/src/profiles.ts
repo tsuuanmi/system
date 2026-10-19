@@ -41,10 +41,15 @@ export const MAX_KEPT_TABS = 4
  */
 export const MAX_KEPT_IDLE_MS = 10 * 60_000
 
+/** How often an open waiting for room under `maxBrowsers` looks again. */
+const ROOM_POLL_MS = 500
+
 export interface ProfileHost {
   /** Launch Chrome on a login profile, headed on the invisible display, marked as owned, with session restore. */
   launch(dir: string): Promise<{ context: BrowserContext; lost: AbortSignal }>
   closeAfterMs(): number
+  /** The most login-profile browsers open at once; 0 is no cap (PROP-0007). */
+  maxBrowsers(): number
   /** An operator-visible event (an orphaned browser stopped, say). */
   report(type: string, data: Record<string, unknown>): void
 }
@@ -68,6 +73,8 @@ interface Held {
   /** When the next page may open (page opens are spaced by the caller's gap). */
   nextOpen: number
   idle?: NodeJS.Timeout | undefined
+  /** Since when it holds no turn: the longest-idle browser makes room first under the cap. */
+  idleSince: number
 }
 
 export interface ProfileUser {
@@ -254,7 +261,7 @@ export class ProfileContexts {
    */
   async open(account: string, dir: string, gapMs: number, signal: AbortSignal | undefined, keep?: string, pace?: { key: string; gapMs: number }): Promise<ProfileTurn> {
     if (this.reservations.has(account)) throw reservedError(account)
-    const held = await abortable(this.ensure(account, dir), signal)
+    const held = await abortable(this.withRoom(account, dir, signal), signal)
     // Reserved, or closed, while it launched: never a page in a context that is going away.
     if (this.reservations.has(account)) throw reservedError(account)
     if (this.held.get(account) !== held) throw new ProviderError('session_broken', `the login profile of ${account} closed while it opened`)
@@ -443,6 +450,24 @@ export class ProfileContexts {
     return within(newPage(held.context), PAGE_OPEN_MS, `the login profile of ${account} did not open a page in ${PAGE_OPEN_MS / 1000} s`, (late) => void late.close().catch(() => undefined))
   }
 
+  /**
+   * The account's browser, launched only when there is room under `maxBrowsers` (PROP-0007): the
+   * longest-idle browser that holds no turn closes to make room; with every one holding a turn,
+   * the open waits until one frees. The last check and the launch run with nothing between them,
+   * so two opens never both take the last place.
+   */
+  private async withRoom(account: string, dir: string, signal: AbortSignal | undefined): Promise<Held> {
+    for (;;) {
+      const max = this.host.maxBrowsers()
+      if (!max || this.held.has(account) || this.launching.has(account) || this.held.size + this.launching.size < max) return this.ensure(account, dir)
+      const idle = [...this.held.entries()].filter(([, h]) => h.pages === 0).sort((a, b) => a[1].idleSince - b[1].idleSince)[0]
+      if (idle) {
+        this.host.report('browser.closed-for-room', { account: idle[0], for: account, max })
+        await this.close(idle[0])
+      } else await abortable(sleep(ROOM_POLL_MS, undefined, { ref: false }), signal)
+    }
+  }
+
   private ensure(account: string, dir: string): Promise<Held> {
     if (this.disposed) return Promise.reject(new ProviderError('session_broken', 'browser-patchright is disposed'))
     const existing = this.held.get(account)
@@ -475,7 +500,7 @@ export class ProfileContexts {
     // Opened with session restore, so the profile's session-only cookies survive. The restored
     // tabs are blanked: each turn opens its own page, spaced.
     for (const restored of context.pages()) await restored.goto('about:blank').catch(() => undefined)
-    const held: Held = { context, dir, pages: 0, kept: new Map(), nextOpen: 0 }
+    const held: Held = { context, dir, pages: 0, kept: new Map(), nextOpen: 0, idleSince: Date.now() }
     const onLost = (): void => void this.close(account).catch(() => undefined)
     lost.addEventListener('abort', onLost, { once: true })
     context.once('close', () => {
@@ -542,6 +567,7 @@ export class ProfileContexts {
   private release(account: string, held: Held): void {
     held.pages = Math.max(0, held.pages - 1)
     if (held.pages > 0 || this.held.get(account) !== held) return
+    held.idleSince = Date.now()
     clearTimeout(held.idle)
     held.idle = setTimeout(() => {
       if (held.pages === 0 && this.held.get(account) === held) void this.close(account).catch(() => undefined)

@@ -39,6 +39,8 @@ export interface HealthSources {
   undeleted?: () => Array<{ account: string; binding: string; reason?: string }>
   /** Login profiles the browser holds, reserves for a login, or cannot free (ADR-0030). */
   profiles?: () => Array<{ account: string; open: boolean; pages: number; kept?: number; reserved: boolean; blocked?: string }>
+  /** The most login-profile browsers open at once; 0 or absent is no cap (PROP-0007). */
+  browserCap?: number
   nodeVersion?: string
   minFreeBytes: number
   driftWindowMs: number
@@ -155,7 +157,7 @@ export async function healthReport(sources: HealthSources): Promise<HealthReport
       const open = states.filter((p) => p.open).map((p) => (p.kept ? `${p.account} (${p.kept} kept tab(s))` : p.account))
       return ok('login-profiles', [
         reserved.length ? `held by a remote login: ${reserved.join(', ')} (their operations fail as overloaded and are retried until it ends)` : '',
-        open.length ? `open for work: ${open.join(', ')}` : '',
+        open.length ? `open for work${sources.browserCap ? ` (${open.length} of at most ${sources.browserCap})` : ''}: ${open.join(', ')}` : '',
       ].filter(Boolean).join('; ') || 'no login profile is open for work')
     }))
   }

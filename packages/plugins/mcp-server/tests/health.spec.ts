@@ -75,6 +75,9 @@ describe('host health (REQ-HOST-6)', () => {
       .toMatchObject({ state: 'degraded', detail: expect.stringMatching(/^gemini-main: process 42 .*stop it, then retry$/) })
     expect(await check({ profiles: () => [{ account: 'gemini-main', open: false, pages: 0, kept: 0, reserved: true }, { account: 'gemini-2', open: true, pages: 1, kept: 2, reserved: false }] }, 'login-profiles'))
       .toMatchObject({ state: 'ok', detail: expect.stringMatching(/remote login: gemini-main .*open for work: gemini-2 \(2 kept tab\(s\)\)/) })
+    // Against the cap, when one is set (PROP-0007).
+    expect(await check({ profiles: () => [{ account: 'gemini-2', open: true, pages: 1, reserved: false }], browserCap: 2 }, 'login-profiles'))
+      .toMatchObject({ state: 'ok', detail: 'open for work (1 of at most 2): gemini-2' })
   })
 
   it('counts a reported drift and the turn it failed as one change', async () => {
