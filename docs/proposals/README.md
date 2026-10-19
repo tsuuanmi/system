@@ -50,6 +50,12 @@ accepted/implemented -> superseded
   `history` on `ctx.models`, so it can be a team member, carry research's synthesis thread, and
   continue an `ask`. Bounded, durable, idempotent, and egress-checked.
 
+- [PROP-0007: Account pools](0007-account-pools.md), **proposed**. Several accounts of one provider
+  share its work: the least busy account takes the next turn, a site's usage limit puts the
+  account (or one feature) in a cooldown routing respects, a node that failed before anything was
+  sent moves to a sibling account, and one-provider teams keep distinct accounts before sharing
+  one. Page opens are spaced per provider, background checks spread, browsers capped.
+
 Use [0000-template.md](0000-template.md) for new proposals. The
 [roadmap](roadmap.md) is a non-normative queue of milestones, not a substitute for
 a reviewed proposal.
