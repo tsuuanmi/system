@@ -77,6 +77,10 @@ drift and does not silently break.
   is a Deep research reply returned as a clarifying question because no run
   showed in time: when the reply was an acknowledgement, the outline shows where
   the run's progress stood.
+- **A conversation loaded once more** (Gemini): event `provider.reload` (phase
+  `research-plan`) marks a Deep research plan the page never rendered; the
+  `provider.stall` just before it outlines the page as it hung. Nothing is sent
+  again. Repeated reloads point at the site, not the map.
 - **A Deep research report as read** (ChatGPT): event `provider.report-read` gives
   its path (`frame` or `inline`), its length, and the source links it carries,
   counts only. A report refused for citing no source with `links: 0` was read

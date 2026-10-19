@@ -101,6 +101,8 @@ export interface FakeOptions {
   levelsSubmenu?: boolean
   /** The "Thinking level" item opens nothing (drift: the levels cannot be reached). */
   submenuBroken?: boolean
+  /** Deep research's plan is not rendered in the page that sent it, only once the page is loaded again (live 2026-10-19). */
+  planHangs?: boolean
   /** With Deep research chosen, the mode menu shows the models only, with no thinking level (default false). */
   researchHidesLevels?: boolean
   /** Answer Markdown, streamed word by word; or computed from the prompt. */
@@ -349,7 +351,12 @@ async function send() {
         raw += event.delta
         answer.querySelector('.markdown').textContent = raw
       }
-      if (event.done) {
+      if (event.done && event.plan && options.planHangs) {
+        // The intro stays, unfinished: the plan card never comes in this page.
+        answer.querySelector('.markdown').textContent = 'Here is a research plan for that.'
+        running = false
+        render()
+      } else if (event.done) {
         answer.replaceWith(event.plan ? planTurn(event.plan) : modelTurn(renderMarkdown(raw), true, raw))
         running = false
         render()
@@ -447,7 +454,7 @@ export class FakeGemini {
   constructor(options: FakeOptions = {}) {
     this.options = {
       paneMenu: true, dialogTarget: '', dialogExtraCall: false, startOnSpark: true, interstitial: false, captcha: false, deviceBound: false, holdAnswer: false, promptLagMs: 0, rewritePaste: false, draftPersist: false, dropOver: 0, signInOffer: false, termsNotice: false, chatTabBroken: false, temporaryBroken: false, modePicker: true, promptParagraphs: true, deepResearch: true,
-      models: ['3.5 Flash-Lite', '3.8 Flash', '3.1 Pro'], levels: ['Low', 'Medium', 'High'], levelsInline: true, levelsSubmenu: true, submenuBroken: false, researchHidesLevels: false, answer: 'OK', clarify: '',
+      models: ['3.5 Flash-Lite', '3.8 Flash', '3.1 Pro'], levels: ['Low', 'Medium', 'High'], levelsInline: true, levelsSubmenu: true, submenuBroken: false, researchHidesLevels: false, planHangs: false, answer: 'OK', clarify: '',
       researchMs: 1500, researchHeld: false, researchActivity: false, report: 'HTTP/3 runs over QUIC, not TCP.', sources: [{ title: 'RFC 9114: HTTP/3', url: 'https://www.rfc-editor.org/rfc/rfc9114' }], ...options,
     }
   }

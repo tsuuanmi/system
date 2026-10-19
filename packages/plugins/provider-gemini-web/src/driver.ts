@@ -35,6 +35,11 @@ export interface DriverTimeouts {
   snapshotMs?: number
   /** How long a completed Deep research report may stay unreadable before it is UI drift (default 30 s). */
   reportReadMs?: number
+  /**
+   * How long Deep research's first reply may stand still with no plan before its conversation is
+   * loaded once more (default 3 min): the site can leave the plan unrendered until a reload.
+   */
+  planHangMs?: number
 }
 
 /** The map entries the deletion depends on: each must be checked on the live site before anything is deleted. */
@@ -120,6 +125,8 @@ export class GeminiWebDriver implements ProviderDriver<Page> {
   onDrift: ((event: DriftEvent) => void) | undefined
   /** A turn whose answer stalled or ran out of time, outlined; the plugin records it (`provider.stall`). */
   onStall: ((event: StallEvent) => void) | undefined
+  /** A conversation loaded once more to recover a reply the page never rendered; the plugin records it (`provider.reload`). */
+  onReload: ((event: { provider: string; phase: string; binding: string }) => void) | undefined
   private readonly origin: string
   private readonly timeouts: Required<DriverTimeouts>
   /** The longest prompt sent (`maxPromptChars`): declared to admission (ADR-0032), and refused here too. */
@@ -142,7 +149,7 @@ export class GeminiWebDriver implements ProviderDriver<Page> {
     this.researchPreset = options.researchMode === undefined ? undefined : options.modes?.[options.researchMode]
     this.maxInputChars = options.maxPromptChars ?? 30_000
     this.pageGapMs = options.pageGapMs ?? 10_000
-    this.timeouts = { turnMs: 15 * 60_000, stallMs: 3 * 60_000, stableMs: 1500, pollMs: 250, readyMs: 60_000, snapshotMs: 20_000, reportReadMs: 30_000, ...options.timeouts }
+    this.timeouts = { turnMs: 15 * 60_000, stallMs: 3 * 60_000, stableMs: 1500, pollMs: 250, readyMs: 60_000, snapshotMs: 20_000, reportReadMs: 30_000, planHangMs: 3 * 60_000, ...options.timeouts }
   }
 
   async checkAuth(page: Page): Promise<AuthState> {
@@ -235,7 +242,9 @@ export class GeminiWebDriver implements ProviderDriver<Page> {
       throw error
     })
     const onBinding = options.conversation === 'persistent' && !options.binding ? options.onBinding : undefined
-    const reply = await this.waitForAnswer(page, engine, before, options.signal, options.deadlines, onBinding)
+    const reply = feature === 'deep-research'
+      ? await this.waitForPlan(page, engine, before, options.signal, options.deadlines, onBinding)
+      : await this.waitForAnswer(page, engine, before, options.signal, options.deadlines, onBinding)
     const text = feature === 'deep-research' ? await this.research(engine, reply, options.signal, options.deadlines) : await this.markdownOf(engine, reply)
     await this.refuseSiteError(engine, text)
     if (options.conversation === 'temporary') return { text, binding: undefined, mode }
@@ -556,7 +565,29 @@ export class GeminiWebDriver implements ProviderDriver<Page> {
     return text ? (await text.locator.allInnerTexts()).join('\n').trim() : ''
   }
 
-  private async waitForAnswer(page: Page, engine: UiEngine, before: number, signal: AbortSignal | undefined, deadlines: AskOptions['deadlines'], onBinding?: (binding: string) => void): Promise<string> {
+  /**
+   * Deep research's first reply, its plan. The site can leave the plan unrendered in the page that
+   * sent it (live 2026-10-19: a reply of a few words for 30 min, the plan there after a reload): a
+   * reply that stands still for `planHangMs` with no plan has its conversation loaded once more,
+   * which resends nothing, and is then waited for as any reply, within what is left of the turn.
+   */
+  private async waitForPlan(page: Page, engine: UiEngine, before: number, signal: AbortSignal | undefined, deadlines: AskOptions['deadlines'], onBinding?: (binding: string) => void): Promise<string> {
+    const started = Date.now()
+    const turnMs = deadlines?.timeoutMs ?? this.timeouts.turnMs
+    const stallMs = deadlines?.stallTimeoutMs ?? this.timeouts.stallMs
+    try {
+      return await this.waitForAnswer(page, engine, before, signal, { timeoutMs: turnMs, stallTimeoutMs: Math.min(this.timeouts.planHangMs, stallMs) }, onBinding, 'research-plan')
+    } catch (error) {
+      const binding = this.bindingOf(page)
+      if (!(error instanceof ProviderError && error.kind === 'provider_stalled') || !binding || (await engine.count('research.start')) > 0) throw error
+      this.onReload?.({ provider: this.provider, phase: 'research-plan', binding })
+      await page.goto(`${this.origin}/app/${binding}`, { waitUntil: 'domcontentloaded' })
+      await engine.waitFor({ visible: 'turn.user' }, this.timeouts.readyMs).catch(() => undefined)
+      return this.waitForAnswer(page, engine, before, signal, { timeoutMs: Math.max(1, turnMs - (Date.now() - started)), stallTimeoutMs: stallMs })
+    }
+  }
+
+  private async waitForAnswer(page: Page, engine: UiEngine, before: number, signal: AbortSignal | undefined, deadlines: AskOptions['deadlines'], onBinding?: (binding: string) => void, phase = 'answer'): Promise<string> {
     const reportBinding = bindingReporter(() => this.bindingOf(page), onBinding)
     const completed = await waitForStableCompletion(async () => {
       reportBinding()
@@ -566,7 +597,7 @@ export class GeminiWebDriver implements ProviderDriver<Page> {
       const finished = (await engine.findIn('turn.assistant.done', answer)) !== undefined
       return { responsePresent: text !== '', text, html: '', running: (await engine.state('turn.running')) || !finished }
     }, completionOptions(this.timeouts, deadlines, signal)).catch(async (error: unknown) => {
-      await this.stalled(engine, 'answer', error)
+      await this.stalled(engine, phase, error)
       throw error
     })
     return completed.text

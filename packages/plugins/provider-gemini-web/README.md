@@ -63,6 +63,12 @@ driver, its operations are data: a UI map,
     keeps it, since choosing its checkbox again would turn it off.
   - Its first reply is a plan, which already has Copy. The driver clicks
     **Start research**, which the site records as a user turn of its own.
+  - The site can leave the plan unrendered in the page that sent it (live
+    2026-10-19: a few words for 30 min, the plan there after a reload). A first
+    reply that stands still for `planHangMs` (3 min) with no plan is outlined
+    (`provider.stall`, phase `research-plan`), its conversation is loaded once
+    more, which resends nothing (event `provider.reload`), and the reply is then
+    waited for as any reply, within what is left of the turn.
   - The research card goes from `processing` to `completed`. The report is read
     from the report panel, followed by a `Sources:` list of the sources it used.
   - While it works, the panel's thinking (`research.activity`) grows; that growth

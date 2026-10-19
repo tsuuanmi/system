@@ -69,5 +69,7 @@ export function apply(ctx: Context, config: Config = {}): void {
   driver.onDrift = (e) => ctx.get('eventLog')?.append({ type: 'ui.drift', data: driftData(e, ctx.get('artifacts')) })
   // A stalled answer, with the page outlined as local-private evidence (PROP-0005 validation).
   driver.onStall = (e) => ctx.get('eventLog')?.append({ type: 'provider.stall', data: evidenceData(e, ctx.get('artifacts')) })
+  // A conversation loaded once more to recover a reply its page never rendered (Deep research's plan).
+  driver.onReload = (e) => ctx.get('eventLog')?.append({ type: 'provider.reload', data: e })
   ctx.providers.register(driver)
 }
