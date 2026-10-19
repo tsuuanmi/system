@@ -55,7 +55,9 @@ invoked by the [workflow engine](../workflow/README.md)
   conversation inspection and deletion. For a session-bound driver
   ([ADR-0030](../../../docs/decisions/adr/0030-session-bound-accounts-use-their-login-profile.md)),
   the page is in the account's login profile (`ctx.login.profileDir`), spaced by
-  the driver's `pageGapMs`, with nothing written back. For any other driver, it
+  the driver's `pageGapMs`, and across all accounts of its provider by
+  `providerPageGapMs` (default 3 s, PROP-0007: they share the host's address),
+  with nothing written back. For any other driver, it
   is a fresh context from the portable state.
 - **Kept tabs** ([ADR-0030](../../../docs/decisions/adr/0030-session-bound-accounts-use-their-login-profile.md)'s
   amendment): a session-bound account's persistent session keeps its page between turns.
@@ -127,8 +129,10 @@ invoked by the [workflow engine](../workflow/README.md)
     a turn finds it. Signed in, the state the site refreshed is written back as
     after a turn (revision and scheduler slot current), so an idle account's
     session does not age out; unknown changes nothing. It runs in the background
-    every `authCheckMs` (default 6 h, the first one interval after start; 0:
-    never) for ready accounts whose feature probe is still fresh.
+    every `authCheckMs` (default 6 h; 0: never) for ready accounts whose feature
+    probe is still fresh. The first one comes within one interval after start, at
+    an offset derived from the account id, so the accounts' checks spread over the
+    interval (PROP-0007). Background probes and checks run one at a time.
   - `verify(account)` re-verifies a reauth-required account on its scheduler:
     it opens the site with the saved state, sends nothing, runs `checkAuth`
     and `identity`, and if the state signs in as the saved account,

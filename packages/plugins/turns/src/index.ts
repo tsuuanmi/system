@@ -82,6 +82,11 @@ export interface Config {
   probeTtlMs?: number
   /** A ready account's sign-in is checked after this long, sending nothing (default 6 h; 0: never). */
   authCheckMs?: number
+  /**
+   * Page opens across all accounts of one provider are spaced at least this far apart (default
+   * 3 s, PROP-0007): they share the host's address. Each account keeps its own `pageGapMs` too.
+   */
+  providerPageGapMs?: number
   /** How long a site's usage limit on one feature keeps that feature off the account (default 6 h, ADR-0034). */
   featureLimitCooldownMs?: number
   /** How long a site's usage limit on the whole account keeps its Workers out of quota (default 1 h, ADR-0034). */
@@ -135,6 +140,11 @@ interface SessionRow {
 const WORKER_STATE: Record<AccountStatus, WorkerState> = { ready: 'ready', new: 'reauth-required', 'reauth-required': 'reauth-required', challenge: 'unavailable', disabled: 'unavailable' }
 
 const websiteWorker = (account: string, tier: Tier): string => `worker:${account}/${tier}`
+
+/** A stable offset in `[0, interval)` for an account: its background checks spread over the interval. */
+export function phase(account: string, interval: number): number {
+  return Number.parseInt(sha256(`phase\0${account}`).slice(-8), 16) % interval
+}
 
 function parseWebsiteWorker(worker: string): { account: string; tier: Tier } {
   const match = /^worker:([a-z][a-z0-9-]*)\/(economy|standard|frontier)$/.exec(worker)
@@ -200,6 +210,7 @@ export class Turns extends Service {
     retainDays: z.natural().min(1).default(30).description('Days a finished turn (and its prompt) is kept'),
     probeTtlMs: z.natural().min(60_000).default(24 * 60 * 60_000).description('How long a ready account\'s feature probe stands before it is refreshed'),
     authCheckMs: z.natural().default(6 * 60 * 60_000).description('How often a ready account\'s sign-in is checked, sending nothing, so health shows a signed-out account before a turn finds it and an idle account keeps its refreshed session (0: never)'),
+    providerPageGapMs: z.natural().max(600_000).default(3000).description('Minimum gap between page opens across all accounts of one provider, in milliseconds, at most 10 min: they share the host\'s address (each account keeps its own pageGapMs too)'),
     featureLimitCooldownMs: z.natural().min(60_000).default(6 * 60 * 60_000).description('How long a site\'s usage limit on one feature (Deep research, say) keeps that feature off the account, in milliseconds'),
     accountLimitCooldownMs: z.natural().min(60_000).default(60 * 60_000).description('How long a site\'s usage limit on the whole account keeps its Workers out of quota, in milliseconds'),
   })
@@ -886,6 +897,7 @@ export class Turns extends Service {
     if (now.status !== 'ready') throw new ProviderError('reauth_required', `${accountId} is ${now.status}`)
   }
 
+  /** One background operation at a time, across every account and provider: probes and sign-in checks queue. */
   private async refreshProbes(): Promise<void> {
     if (this.stopping) return
     const ttl = this.config.probeTtlMs ?? 24 * 60 * 60_000
@@ -895,8 +907,10 @@ export class Turns extends Service {
       if (account.status !== 'ready' || !this.ctx.providers.list().includes(account.provider)) continue
       const fresh = account.features && Date.now() - Date.parse(account.features.provedAt) < ttl
       if (!fresh) await this.probe(account.id).catch((error: unknown) => this.ctx.logger.warn(`turns: feature probe of ${account.id} failed: ${(error as Error).message}`))
-      // The first check comes one interval after start: a turn at start checks the sign-in anyway.
-      else if (every > 0 && Date.now() - (this.authChecked.get(account.id) ?? this.startedAt) >= every) {
+      // The first check comes within one interval after start, at an offset of its own (derived from
+      // the account id, so stable across restarts): the accounts' checks spread over the interval
+      // instead of all loading their sites at once (PROP-0007). A turn at start checks the sign-in anyway.
+      else if (every > 0 && Date.now() - (this.authChecked.get(account.id) ?? this.startedAt - phase(account.id, every)) >= every) {
         await this.checkSignIn(account.id).catch((error: unknown) => this.ctx.logger.warn(`turns: sign-in check of ${account.id} failed: ${(error as Error).message}`))
       }
     }
@@ -1054,7 +1068,8 @@ export class Turns extends Service {
     if (driver.sessionBound) {
       const login = this.ctx.get('login')
       if (!login) throw new ProviderError('config_error', `${accountId} works in its login profile (${driver.provider} is session-bound), but no login service is mounted`)
-      return this.ctx.browser.openTurn(accountId, { profile: { dir: login.profileDir(accountId), gapMs: driver.pageGapMs, keep }, signal })
+      const pace = { key: driver.provider, gapMs: this.config.providerPageGapMs ?? 3000 }
+      return this.ctx.browser.openTurn(accountId, { profile: { dir: login.profileDir(accountId), gapMs: driver.pageGapMs, keep, pace }, signal })
     }
     return this.ctx.browser.openTurn(accountId, { state: state ?? await this.ctx.accounts.portableState(accountId), signal })
   }

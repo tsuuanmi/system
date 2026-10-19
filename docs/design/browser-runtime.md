@@ -227,7 +227,9 @@ account's profile open, Save reads it in place, in a page of its own.
     - A second login for the account joins the first.
     - Saves, and with them automated sign-ins, run one at a time per account.
   - **Pacing.** The opens of the account's pages are spaced by the driver's
-    `pageGapMs`; navigations within a page are not.
+    `pageGapMs`, and the opens across all accounts of one provider by the turn
+    runtime's `providerPageGapMs` (a pace group keyed by the provider; PROP-0007),
+    since they share the host's address; navigations within a page are not.
   - **Kept tabs** (ADR-0030's amendment).
     - A persistent session's page stays open between its turns
       (`openTurn(account, { profile: { keep: sessionId } })`). The next turn gets it back, in

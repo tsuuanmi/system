@@ -210,6 +210,8 @@ const reservedError = (account: string): ProviderError =>
 
 export class ProfileContexts {
   private readonly held = new Map<string, Held>()
+  /** The next free page-open time of each pace group (one provider's accounts), across its accounts. */
+  private readonly paced = new Map<string, number>()
   private readonly launching = new Map<string, Promise<Held>>()
   private readonly closing = new Map<string, Promise<void>>()
   /** The tail of each account's one-at-a-time work: launches, standalone captures, a reservation's close-and-evict. */
@@ -250,7 +252,7 @@ export class ProfileContexts {
    * session id), the session's kept tab is handed back, brought to the front, with no new page and
    * no pacing; and `close` keeps the page for the session's next turn.
    */
-  async open(account: string, dir: string, gapMs: number, signal: AbortSignal | undefined, keep?: string): Promise<ProfileTurn> {
+  async open(account: string, dir: string, gapMs: number, signal: AbortSignal | undefined, keep?: string, pace?: { key: string; gapMs: number }): Promise<ProfileTurn> {
     if (this.reservations.has(account)) throw reservedError(account)
     const held = await abortable(this.ensure(account, dir), signal)
     // Reserved, or closed, while it launched: never a page in a context that is going away.
@@ -269,9 +271,11 @@ export class ProfileContexts {
         page = kept.page
         reused = true
       } else {
-        // Spaced page loads: each open takes the next free slot, so concurrent opens queue.
-        const at = Math.max(Date.now(), held.nextOpen)
+        // Spaced page loads: each open takes the next free slot of its account, and of its pace
+        // group (the accounts of one provider), so concurrent opens queue.
+        const at = Math.max(Date.now(), held.nextOpen, pace ? this.paced.get(pace.key) ?? 0 : 0)
         held.nextOpen = at + gapMs
+        if (pace) this.paced.set(pace.key, at + pace.gapMs)
         if (at > Date.now()) await abortable(sleep(at - Date.now(), undefined, { ref: false }), signal)
         page = await abortable(this.newPage(account, held), signal, (late) => void late.close().catch(() => undefined))
       }

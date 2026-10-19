@@ -249,6 +249,20 @@ describe.runIf(canRunBrowser)('pool(ctx).captureProfile (the Save flow)', () => 
       expect(pool(ctx).openAccounts()).toEqual(['acct'])
     }, 90_000)
 
+    it('spaces page opens across the accounts of one pace group (PROP-0007)', async () => {
+      const ctx = await boot()
+      const [a, b] = [await signedInProfile(), await signedInProfile()]
+      // Both profiles launched first, so what is timed below is the spacing, not a browser start.
+      for (const [account, dir] of [['acct-a', a], ['acct-b', b]] as const) await (await pool(ctx).openTurn(account, { profile: { dir, gapMs: 0 } })).close()
+      const pace = { key: 'site-1', gapMs: 1500 }
+      const first = await pool(ctx).openTurn('acct-a', { profile: { dir: a, gapMs: 0, pace } })
+      const opened = Date.now()
+      // Another account of the same site waits the group's gap, though its own gap is 0.
+      const second = await pool(ctx).openTurn('acct-b', { profile: { dir: b, gapMs: 0, pace } })
+      expect(Date.now() - opened).toBeGreaterThanOrEqual(1400)
+      await Promise.all([first.close(), second.close()])
+    }, 120_000)
+
     describe('kept tabs: a session\'s page between its turns (ADR-0030)', () => {
       it('keeps a session\'s page on close and hands it back, in front, with no new page and no pacing; discard closes it for good', async () => {
         const ctx = await boot()

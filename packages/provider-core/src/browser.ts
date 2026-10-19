@@ -21,9 +21,11 @@ export interface OpenTurnOptions {
    * the account's login profile `dir`, never a fresh context from portable state. Page opens of
    * one account are spaced at least `gapMs` apart. With `keep` (a session id), the session's kept
    * tab is handed back (brought to the front, no new page, not paced) when there is one, and the
-   * turn's `close` keeps its page for the session's next turn.
+   * turn's `close` keeps its page for the session's next turn. With `pace`, page opens of every
+   * account sharing its `key` (one provider's accounts, which share the host's address) are also
+   * spaced `pace.gapMs` apart (PROP-0007).
    */
-  profile?: { dir: string; gapMs?: number | undefined; keep?: string | undefined } | undefined
+  profile?: { dir: string; gapMs?: number | undefined; keep?: string | undefined; pace?: { key: string; gapMs: number } | undefined } | undefined
   /** Closes the turn's context when aborted (e.g. a lease invalidation); a profile turn's page. */
   signal?: AbortSignal | undefined
 }

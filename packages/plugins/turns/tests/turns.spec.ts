@@ -26,7 +26,7 @@ import { canRunBrowser, testChrome } from '../../browser-patchright/tests/suppor
 import { FakeChatGpt, type FakeOptions } from '../../provider-chatgpt-web/fixtures/fake-chatgpt.ts'
 import { FakeGemini, type FakeOptions as FakeGeminiOptions } from '../../provider-gemini-web/fixtures/fake-gemini.ts'
 import { chromium } from 'patchright-core'
-import Turns from '../src/index.ts'
+import Turns, { phase } from '../src/index.ts'
 
 const cleanups: Array<() => unknown> = []
 afterEach(async () => {
@@ -977,7 +977,17 @@ describe.runIf(canRunBrowser)('ctx.turns: a session-bound account works in its o
     expect((await ctx.turns.wait((await ask(ctx, { prompt: 'now' })).turnId, 60_000)).answer).toBe('From the profile.')
   }, 180_000)
 
-  describe('kept tabs: a session\'s page between its turns (ADR-0030)', () => {
+  describe('background checks spread over their interval (PROP-0007)', () => {
+  it('gives each account a stable offset of its own within the interval', () => {
+    const hour = 60 * 60_000
+    const offsets = ['gemini-main', 'gemini-2', 'gemini-3', 'chatgpt-main', 'chatgpt-2'].map((id) => phase(id, 6 * hour))
+    expect(offsets.every((o) => o >= 0 && o < 6 * hour)).toBe(true)
+    expect(new Set(offsets).size).toBe(5)
+    expect(phase('gemini-main', 6 * hour)).toBe(offsets[0])
+  })
+})
+
+describe('kept tabs: a session\'s page between its turns (ADR-0030)', () => {
     /** The page a session's account keeps for it (test-only: read from the pool's state). */
     const keptPage = (ctx: Context, sessionId: string): import('patchright-core').Page => (ctx.browser as unknown as { profiles: { held: Map<string, { kept: Map<string, { page: import('patchright-core').Page }> }> } }).profiles.held.get('gemini-main')!.kept.get(sessionId)!.page
     const kept = (ctx: Context): number => ctx.browser.profileStates().find((p) => p.account === 'gemini-main')?.kept ?? 0

@@ -581,11 +581,9 @@ export class Engine {
    * The operator allows a node to run on the same provider family when no Worker of another
    * family (or another account, for a team member) is admitted (ADR-0029, `allowSameFamily`): the
    * choice is a decision that says so, never "independent", and its node stays in its own session.
-   */
-  /**
-   * The same-family admission (ADR-0029): `same-family` when only the family rule was lifted (a
-   * team member keeps an account of its own, ADR-0035), `same-family-shared-account` when the
-   * team's distinct-account rule was lifted too.
+   * Its outcome is `same-family` when only the family rule was lifted (a team member keeps an
+   * account of its own, ADR-0035), `same-family-shared-account` when the team's distinct-account
+   * rule was lifted too.
    */
   private sameFamilyDecision(run: RunRow, node: NodeRow, refused: ArtifactRef, rules: string[], admitted: AdmittedWorker, option: 'same-family' | 'same-family-shared-account'): ArtifactRef {
     const why = `no admitted Worker satisfies: ${rules.join('; ')}`
