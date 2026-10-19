@@ -80,7 +80,8 @@ accounts do not share the work:
   - `provider-core/src/errors.ts`: the dispositions.
   - `workflow/src/engine.ts`: the same-family fallback lifts `restricted` (distinct accounts) along
     with the family exclusion.
-  - `login`: `remotePort` defaults to 47318, and 0 picks a free port.
+  - `login`: each remote login has its own Xvfb and VNC server, held per account; `remotePort`
+    defaults to 47318, and 0 picks a free port.
 - **Live, 2026-10-16.** Google's reCAPTCHA hit the host and the login profile after copied
   sessions (ADR-0029). Page spacing per account (`pageGapMs`, ADR-0030) followed.
 - **Live, 2026-10-19.** The first full `research --deep` run completed on one ChatGPT and one
@@ -102,24 +103,50 @@ Each part is generic. None names a provider, model, or site
   lower load first. The full order becomes tier, quota class, load, `priority`, id. Tier and quota
   stay the operator's first preferences; among equal ones, the least busy account wins, and among
   equally busy ones the configured order still decides.
-- The `route` decision records each candidate's load among its reasons ("load 1 of 2"). The
-  decision can then be reproduced from its own record (REQ-WRK-2: deterministic for a given
-  configuration and input, where load is part of the input).
+- **Pending admissions count too.** A routed turn reaches its account's scheduler only later,
+  when the node executes. So two nodes routed back to back (both literature branches of one run,
+  or two runs started together) would both read load 0 on the same account and pile onto it.
+  - `workers` keeps an in-memory count of pending admissions per Worker. `route()` increments it,
+    and the count is released when the execution is enqueued or fails to start.
+  - Load is the scheduler's load plus the pending admissions.
+  - `route()` runs under one lock across all runs: routing is cheap, and two concurrent routes must
+    not read the same counts. Today the engine serializes routing within a single run only
+    (`routingTurn`).
+- The `route` decision records both numbers among each candidate's reasons ("load 1 of 2, 1
+  pending"). The decision can then be reproduced from its own record (REQ-WRK-2: deterministic for
+  a given configuration and input, where load is part of the input).
+- The source is `turns` `describeWorkers()`, which already builds every website descriptor from the
+  accounts. It adds the scheduler's running and queued counts.
 - A pool is not a new object: it is the set of Workers of one provider at one tier. Nothing is
   configured to create one.
 
 ### Usage limits and cooldowns
 
-- Each UI map may declare `limit` rules under its error rules: text the site shows when a usage
-  limit is reached, optionally naming the feature (`deep-research`) it applies to. A match
-  classifies the turn `quota_exhausted` with its feature. The operator overlay can add rules
-  without a release (ADR-0021).
-- `accounts` keeps a **cooldown** per account and feature: `{ feature | "*", until, source }`.
-  - The site's own reset time is used when the rule can read one.
-  - Otherwise a configured cooldown applies: `featureLimitCooldownMs` (default 6 h) or
-    `accountLimitCooldownMs` (default 1 h).
-  - A successful feature probe clears a feature's cooldown early.
-- A Worker of an account in cooldown for every feature it proves reads `quota-exhausted`. A
+A site shows a usage limit in one of two places, and the two are handled differently:
+
+- **Before sending** (a banner, or a tool shown greyed with "limit reached"). The UI map's error
+  rules already allow kind `quota_exhausted` (`ui-map.v1.json`), and they are guards checked before
+  every action. A rule gains an optional `feature` property (a minor ui-map bump), and the operator
+  overlay can add rules without a release (ADR-0021). The turn fails **unsent**, so it may fail
+  over (below).
+- **As the reply after sending** ("You've reached your Deep research limit…"). This is a **sent**
+  turn. A map element for the limit answer classifies it `quota_exhausted` with its feature, the way
+  a site's own error answer is classified today (`answer.site-error`). The turn fails and its node
+  does **not** fail over (INV-4). The cooldown it sets steers later nodes elsewhere.
+
+Either way, `accounts` keeps a **cooldown** per account and feature: `{ feature | "*", until,
+source }`.
+
+- The configured cooldown applies: `featureLimitCooldownMs` (default 6 h) or
+  `accountLimitCooldownMs` (default 1 h). Reading the site's own reset time is left out until a live
+  limit text shows its format; parsing it is locale- and format-specific.
+- A cooldown clears when its time passes, when a turn that used the feature succeeds, or by the
+  operator (`system account clear-cooldown <id> [feature]`). A feature probe does **not** clear it:
+  a probe proves the tool entry exists, not that quota remains.
+- A cooldown is state of the account's Workers, never the account's `status`. The account stays
+  `ready`, so sign-in checks and probes still run, and health does not list it as needing the
+  operator.
+- A Worker in cooldown for every feature it proves (or under `*`) reads `quota-exhausted`. A
   requirement that needs a feature in cooldown does not admit that account (reason
   "deep-research limit until 18:40"). This makes REQ-WRK-8's "excluded before admission" true and
   removes the "nothing sets a Worker `quota-exhausted`" gap in [routing](../design/routing.md).
@@ -128,14 +155,20 @@ Each part is generic. None names a provider, model, or site
 
 ### Failover to a sibling account, unsent only
 
-- The engine's recovery handles a node that failed with `quota_exhausted`, `challenge`,
-  `reauth_required`, or `overloaded`, when the turn's receipt shows **nothing was sent**. It routes
-  the node again, with that account excluded for this attempt, within the same
-  `maxAttempts`.
-  - The first three kinds also change the account's state, so later routes exclude it anyway.
-  - The attempt exclusion covers `overloaded`, which leaves the account `ready`.
-- The move is a `failover` decision (policy `workflow.failover`). It names the failed account, the
-  kind, and the proof that nothing was sent, and it is kept among the node's decisions.
+- **The decision is made in recovery, the exclusion is applied in the router.** Recovery
+  (`failAttempt`) already knows whether the attempt was sent, the attempt budget, and records the
+  `recovery` decision.
+  - When a node failed with `quota_exhausted`, `challenge`, `reauth_required`, or `overloaded` and
+    **nothing was sent**, recovery chooses a new outcome option, `failover`, within the same
+    `maxAttempts`. Its detail names the failed Worker, the kind, and the proof that nothing was
+    sent.
+  - The first three kinds also change the account's state, so later routes exclude it anyway. The
+    attempt exclusion also covers `overloaded`, which leaves the account `ready`.
+- The exclusion is persisted on the node row beside `not_before`, so a restart keeps it (a restart
+  is reconciliation). The router takes `excludeWorkers` in its route options, the same pattern as
+  today's family `exclude`, and records it as a rejection reason ("attempt 2 failed on this account,
+  unsent").
+- Scope is workflow nodes. A bare `ask` has no recovery and fails as today.
 - If the turn may have been sent (a receipt past `beforeSend`), nothing moves: reconciliation and
   the existing dispositions apply unchanged (INV-4).
 - A node bound to a session's Worker (a team member's later rounds, a persistent `ask`) never
@@ -170,20 +203,21 @@ says so (ADR-0029), but its members no longer share one account's quota and conv
   - When every open browser holds a turn, the new turn waits in the queue, which `maxPendingTurns`
     already bounds.
   - Health reports open browsers against the cap.
-- **Parallel logins.** Each remote login takes a free port by default (`remotePort: 0`). The CLI
-  prints its tunnel command with that port. Logins use separate login profiles, so two can be open
-  at once. A test proves two concurrent remote logins.
+- **Parallel logins.** Each remote login already has its own Xvfb, VNC server, and login profile,
+  and is held per account. Only the fixed port (`remotePort` 47318) stops a second one. The default
+  becomes a free port (`remotePort: 0`), and the CLI prints its tunnel command with that port. A
+  test proves two concurrent remote logins.
 
 ### Contract and documentation changes on acceptance
 
 - **ADRs:**
-  - least-busy routing;
-  - unsent failover;
+  - least-busy routing, with pending admissions and a routing lock across runs;
+  - unsent `USER_ACTION` and `overloaded` kinds retry with an account exclusion;
   - the distinct-account middle step, which amends ADR-0029.
 - **Requirements:** REQ-WRK-2 notes load as a recorded input. REQ-WRK-8 stays and becomes true.
   REQ-TEAM-4 gains the middle step.
 - **Schemas:** the capability descriptor's `load` (minor bump); the account's `cooldowns`; the
-  error-rule `limit` kind in the UI map schema.
+  error rule's optional `feature` in the UI map schema.
 - **Reference:** configuration for `providerPageGapMs`, the two limit cooldowns, and `maxBrowsers`;
   playbooks for a cooldown; the [routing](../design/routing.md) and [teams](../design/teams.md)
   design pages.
@@ -205,6 +239,8 @@ says so (ADR-0029), but its members no longer share one account's quota and conv
 
 - **Router conformance** (fake Workers):
   - the least-busy order;
+  - pending admissions: two parallel nodes of one run, and two runs started together, land on two
+    accounts;
   - the tie order by `priority`, then id;
   - load shown in the decision;
   - `busy` stays admissible;
@@ -215,13 +251,17 @@ says so (ADR-0029), but its members no longer share one account's quota and conv
   - background checks spread out, one per provider at a time;
   - `providerPageGapMs` spacing across two accounts of one fake site.
 - **Limits:**
-  - a fake site's limit text classifies `quota_exhausted` with its feature;
+  - a limit shown before sending fails unsent and fails over;
+  - a limit given as the reply fails sent, does not fail over, and sets the cooldown;
   - the cooldown excludes that account for that feature only, and admits it for another;
-  - a probe clears the cooldown early;
+  - a probe does not clear a cooldown; a successful turn with the feature, and the operator
+    command, do;
+  - the account stays `ready` and keeps its background checks;
   - an overlay rule works without a release.
 - **Failover** (workflow e2e on the fake site, two accounts):
-  - an unsent limit, challenge, or sign-out moves the node to the sibling, with one `failover`
-    decision;
+  - an unsent limit, challenge, or sign-out moves the node to the sibling, with one `recovery`
+    decision whose outcome is `failover`;
+  - the exclusion survives a restart;
   - a sent turn never moves;
   - a session-bound node never moves.
 - **Teams:**
@@ -248,11 +288,14 @@ says so (ADR-0029), but its members no longer share one account's quota and conv
 
 ## Observability and operations
 
-- `route` decisions show each candidate's load. `failover` decisions name what moved and why.
+- `route` decisions show each candidate's load and pending admissions. A `recovery` decision with
+  outcome `failover` names what moved and why.
 - `system account list` shows cooldowns and their reset times. Health shows open browsers against
   the cap.
-- **Playbook "an account hit its limit":** what the cooldown means, when it clears, and how a probe
-  clears it early.
+- **Playbook "an account hit its limit":** what the cooldown means, when it clears, and
+  `system account clear-cooldown`.
+- **Runbook:** with free login ports, the operator's `ssh -L` tunnel changes with every login, and
+  the CLI prints it.
 
 ## Security and privacy
 
@@ -267,8 +310,11 @@ says so (ADR-0029), but its members no longer share one account's quota and conv
 
 - The capability descriptor gains `load` (minor schema bump).
 - Account state gains `cooldowns` (additive).
-- Decisions gain the `failover` type and the `same-family-shared-account` outcome. Old runs still
-  explain, because these are new values and nothing is renamed.
+- Recovery decisions gain the `failover` outcome, and admission decisions the
+  `same-family-shared-account` outcome. Old runs still explain, because these are new values and
+  nothing is renamed.
+- The node row gains its attempt exclusion (a forward migration).
+- The ui-map error rule gains an optional `feature` (minor bump).
 - No configuration needs to change.
 
 ## Decision
@@ -279,7 +325,16 @@ Owner direction (2026-10-19), on the questions this proposal raises:
 - teams on one provider use distinct accounts of the same family;
 - all four limits: pacing per provider, spread checks, a browser cap, and parallel logins.
 
-Review of the design is pending.
+Engineer review (2026-10-19) found these, all folded in:
+- a routing race (pending admissions, a lock across runs);
+- failover decided in recovery and excluded in the router;
+- a limit before sending versus a limit as the reply;
+- no reset-time parsing;
+- no probe clearing a cooldown;
+- a cooldown never as account status;
+- parallel logins needing only the free port.
+
+Acceptance by the owner is pending.
 
 ## Implementation
 
