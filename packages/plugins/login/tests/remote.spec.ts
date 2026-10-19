@@ -26,14 +26,14 @@ afterEach(async () => {
 })
 
 describe.runIf(canRunBrowser && vnc)('ctx.login.remote: the noVNC login desktop', () => {
-  async function boot() {
+  async function boot(ids: string[] = ['chatgpt-main']) {
     const fake = new FakeChatGpt({ requireCookie: true, userId: 'user-remote' })
     await fake.start()
     const dir = mkdtempSync(join(tmpdir(), 'system-remote-'))
     const ctx = new Context()
     const fibers = [
       ctx.plugin(Vault, { path: join(dir, 'vault.enc'), keyFile: join(dir, 'vault.key') }),
-      ctx.plugin(Accounts, { accounts: [{ id: 'chatgpt-main', provider: 'chatgpt-web', quotaClass: 'subscription-chat', tiers: {} }] }),
+      ctx.plugin(Accounts, { accounts: ids.map((id) => ({ id, provider: 'chatgpt-web', quotaClass: 'subscription-chat' as const, tiers: {} })) }),
       ctx.plugin(VirtualDisplay, {}),
       ctx.plugin(BrowserPool, { chromePath: testChrome! }),
       ctx.plugin(Providers),
@@ -83,6 +83,17 @@ describe.runIf(canRunBrowser && vnc)('ctx.login.remote: the noVNC login desktop'
     await ctx.login.endRemote('chatgpt-main')
     expect(ctx.browser.profileStates()).toEqual([])
   }, 90_000)
+
+  it('opens remote logins of two accounts at once, each on a free port of its own with its own tunnel (PROP-0007)', async () => {
+    const { ctx } = await boot(['chatgpt-main', 'chatgpt-2'])
+    const [a, b] = await Promise.all([ctx.login.remote('chatgpt-main'), ctx.login.remote('chatgpt-2')])
+    const port = (url: string) => new URL(url).port
+    expect(port(a.url)).not.toBe(port(b.url))
+    expect(a.sshCommand).toBe(`ssh -L ${port(a.url)}:127.0.0.1:${port(a.url)} <this-host>`)
+    expect(b.sshCommand).toBe(`ssh -L ${port(b.url)}:127.0.0.1:${port(b.url)} <this-host>`)
+    for (const session of [a, b]) expect(await rfbHello(session.url.replace(/^http/, 'ws') + 'websockify')).toMatch(/^RFB 003\.00\d\n/)
+    await Promise.all([ctx.login.endRemote('chatgpt-main'), ctx.login.endRemote('chatgpt-2')])
+  }, 120_000)
 
   it('the noVNC page connects from a real browser and shows the remote desktop (REQ-ACC-3)', async () => {
     const { ctx } = await boot()

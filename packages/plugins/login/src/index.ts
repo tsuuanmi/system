@@ -35,7 +35,7 @@ export interface Config {
   chromePath?: string
   /** How long a remote login desktop stays open (default 30 min). */
   remoteTtlMs?: number
-  /** Loopback port of the remote login page (default 47318; 0 picks a free one). */
+  /** Loopback port of the remote login page (default 0: a free one per login, so several accounts sign in at once; PROP-0007). */
   remotePort?: number
   /** How long a credential sign-in waits for an operator-supplied code (default 5 min). */
   codeWaitMs?: number
@@ -51,7 +51,7 @@ export class Login extends Service {
     vncPath: z.string().description('VNC server (x0vncserver or x11vnc)'),
     chromePath: z.string().description('Chrome for the remote login desktop'),
     remoteTtlMs: z.natural().default(30 * 60_000).description('Lifetime of a remote login desktop, in milliseconds'),
-    remotePort: z.natural().default(47318).description('Loopback port of the remote login page (0 = any free port)'),
+    remotePort: z.natural().default(0).description('Loopback port of the remote login page (0, the default: a free port per login, so several accounts sign in at once; the CLI prints the tunnel for it)'),
     codeWaitMs: z.natural().default(5 * 60_000).description('How long a sign-in waits for an operator-supplied code, in milliseconds'),
   })
 
@@ -178,7 +178,7 @@ export class Login extends Service {
     try {
       return await RemoteLogin.start({
         account: accountId, profileDir, loginUrl: driver.loginUrl, chromePath, vncPath,
-        ttlMs: this.config.remoteTtlMs ?? 30 * 60_000, port: this.config.remotePort ?? 47318,
+        ttlMs: this.config.remoteTtlMs ?? 30 * 60_000, port: this.config.remotePort ?? 0,
         onSave: () => this.save(accountId),
         onEnded: () => {
           ended()

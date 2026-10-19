@@ -26,7 +26,8 @@
     private, X-authenticated Xvfb.
   - `x0vncserver` (TigerVNC) or `x11vnc` serves that display **only on an
     owner-only unix socket** (no TCP port).
-  - A loopback page (default port 47318) behind a random 256-bit URL token serves
+  - A loopback page (on a free port of its own by default, `remotePort: 0`, so
+    several accounts sign in at once; PROP-0007) behind a random 256-bit URL token serves
     noVNC (`@novnc/novnc`, MPL-2.0) and proxies its WebSocket (`ws`) to the
     socket. It accepts only Host `127.0.0.1`/`localhost` and sends
     `no-referrer`, `no-store`, and `DENY` framing headers.

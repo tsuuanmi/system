@@ -29,7 +29,10 @@
 4. Sign in each account: run `system account login <id>`, open the printed
    noVNC link through the printed `ssh -L` command, sign in, and press
    **Save account**. Alternatively, run `system account save <id>` after the
-   sign-in.
+   sign-in. Each login takes a free port of its own, so several accounts can
+   sign in at once; the port, and so the `ssh -L` tunnel, changes with every
+   login: use the command each login prints (`remotePort` fixes one port, for
+   one login at a time).
 5. Map the account's tiers to modes in the account catalog (`accounts[].tiers`),
    then check `system account list`. A ChatGPT account maps its tiers to
    `instant`, `medium`, and `high`; one without a model picker cannot be used

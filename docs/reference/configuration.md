@@ -156,7 +156,7 @@
 | `vncPath` | string |  | VNC server (x0vncserver or x11vnc) |
 | `chromePath` | string |  | Chrome for the remote login desktop |
 | `remoteTtlMs` | number (0…) | `1800000` | Lifetime of a remote login desktop, in milliseconds |
-| `remotePort` | number (0…) | `47318` | Loopback port of the remote login page (0 = any free port) |
+| `remotePort` | number (0…) | `0` | Loopback port of the remote login page (0, the default: a free port per login, so several accounts sign in at once; the CLI prints the tunnel for it) |
 | `codeWaitMs` | number (0…) | `300000` | How long a sign-in waits for an operator-supplied code, in milliseconds |
 
 ## `mcp-server`
