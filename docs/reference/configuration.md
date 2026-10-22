@@ -47,6 +47,7 @@
 | `workers[].account` | string |  | The account the pool belongs to; required with pool |
 | `workers[].windows` | Record<string, string> | `{}` | The runtime's limit window names mapped to the pool's window ids, for example five_hour: five-hour |
 | `workers[].worktreePerRun` | boolean | `false` | Each run of a workflow run works in that run's own git worktree of the workspace (the top level of a git repository), on branch system/run/<runId> |
+| `workers[].limitCooldownSeconds` | number (60…604800) | `3600` | How long a limit hit with no reset time keeps the pool closed |
 | `probeTtlMs` | number (0…) | `300000` | How long a probe result stands |
 | `runTimeoutMs` | number (1…) | `900000` | Hard deadline per run |
 | `worktreeRoot` | string |  | Where the worktrees of worktreePerRun Workers go (default <DSH_HOME>/system/worktrees) |

@@ -226,13 +226,15 @@ const PLAUSIBLE_MS = 400 * 86_400_000
  * One `rate_limit_event`'s `rate_limit_info` as an observation. `resetsAt` is Unix time in
  * seconds: the CLI fills it from the `anthropic-ratelimit-unified-reset` header, which it compares
  * with `Date.now() / 1000` (Claude Code 2.1.308). `utilization` is a fraction (0 to 1). The window
- * is the SDK's `rateLimitType`, kept opaque; an event without one names no window and is not
- * reported (it still marks the run as limited).
+ * is the SDK's `rateLimitType`, kept opaque; a rejection without one is reported with the window
+ * `*`, which no configuration maps, so the ledger closes every window of the pool; any other event
+ * without one is not reported.
  */
 function limitFrom(info: Record<string, unknown> | undefined): LimitObservation | undefined {
   const status = typeof info?.status === 'string' ? STATUS[info.status] : undefined
-  const window = info?.rateLimitType
-  if (!status || typeof window !== 'string' || !window) return undefined
+  // A rejection that names no window is still reported (window '*'), so the ledger closes the pool.
+  const window = typeof info?.rateLimitType === 'string' && info.rateLimitType ? info.rateLimitType : status === 'rejected' ? '*' : undefined
+  if (!status || !window) return undefined
   const observed = Date.now()
   const reset = typeof info!.resetsAt === 'number' && Number.isFinite(info!.resetsAt) ? info!.resetsAt * 1000 : undefined
   const used = typeof info!.utilization === 'number' && Number.isFinite(info!.utilization) ? Math.min(100, Math.max(0, Math.round(info!.utilization * 10_000) / 100)) : undefined

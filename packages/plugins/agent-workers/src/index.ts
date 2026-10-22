@@ -67,6 +67,8 @@ export interface AgentWorkerConfig {
    * `system/run/<runId>`, never in the repository's main working tree. Default false.
    */
   worktreePerRun?: boolean
+  /** How long a limit hit with no reset time keeps the pool closed, in seconds (default 3600). */
+  limitCooldownSeconds?: number
 }
 
 export interface Config {
@@ -136,6 +138,7 @@ export class AgentWorkers extends Service {
       account: z.string().description('The account the pool belongs to; required with pool'),
       windows: z.dict(z.string()).description('The runtime\'s limit window names mapped to the pool\'s window ids, for example five_hour: five-hour'),
       worktreePerRun: z.boolean().default(false).description('Each run of a workflow run works in that run\'s own git worktree of the workspace (the top level of a git repository), on branch system/run/<runId>'),
+      limitCooldownSeconds: z.natural().min(60).max(604_800).default(3600).description('How long a limit hit with no reset time keeps the pool closed'),
     })).default([]).description('Agent-runtime Workers; each policy comes from here only (INV-6)'),
     probeTtlMs: z.natural().default(5 * 60_000).description('How long a probe result stands'),
     runTimeoutMs: z.natural().min(1).default(15 * 60_000).description('Hard deadline per run'),
@@ -658,25 +661,33 @@ export class AgentWorkers extends Service {
   /** Record the runtime's limit observations as readings of the pool's mapped windows. */
   private async observe(id: string, worker: AgentWorkerConfig, meter: Meter, limits: LimitObservation[]): Promise<void> {
     const pool = await meter.resources.pools({ account: meter.account }).then((pools) => pools.find((p) => p.pool === meter.pool), () => undefined)
+    const cooldownMs = (worker.limitCooldownSeconds ?? 3600) * 1000
     for (const limit of limits) {
       const windowId = worker.windows?.[limit.window]
-      const window = windowId === undefined ? undefined : pool?.windows.find((w) => w.id === windowId)
-      if (!window) {
+      const mapped = windowId === undefined ? undefined : pool?.windows.find((w) => w.id === windowId)
+      // A limit hit the ledger cannot place (an unmapped or unnamed window) closes every window of
+      // the pool: it is never retried on the same pool unseen (INV-2). Anything else unmapped is skipped.
+      const windows = mapped ? [mapped] : limit.status === 'rejected' ? pool?.windows ?? [] : []
+      if (!windows.length) {
         this.ctx.logger.warn(`agent Workers: ${id} observed limit window ${limit.window}, which ${windowId === undefined ? 'its windows do not map' : `maps to ${windowId}, not a window of pool ${meter.pool}`}; not recorded`)
         continue
       }
-      const reading: LimitState = {
-        schema: 'limit-state@1.0', pool: meter.pool, account: meter.account,
-        window: { id: window.id, kind: window.kind, ...(window.seconds !== undefined ? { seconds: window.seconds } : {}) },
-        // A limit hit with no reset time is unknown, not ok: the pool stays closed until a reading says otherwise (INV-2).
-        ...(limit.status !== 'rejected' ? { state: 'ok' as const, ...(limit.resetsAt ? { resetsAt: limit.resetsAt } : {}) }
-          : limit.resetsAt ? { state: 'limited' as const, resetsAt: limit.resetsAt } : { state: 'unknown' as const }),
-        ...(limit.usedPercentage !== undefined ? { usedPercentage: limit.usedPercentage } : {}),
-        source: 'runtime-result', observedAt: limit.observedAt,
+      for (const window of windows) {
+        const reading: LimitState = {
+          schema: 'limit-state@1.0', pool: meter.pool, account: meter.account,
+          window: { id: window.id, kind: window.kind, ...(window.seconds !== undefined ? { seconds: window.seconds } : {}) },
+          // A limit hit is limited until its reset, or, with none given, for the configured cooldown:
+          // never unknown, which a pool configured to admit unknown windows would ignore.
+          ...(limit.status !== 'rejected' ? { state: 'ok' as const, ...(limit.resetsAt ? { resetsAt: limit.resetsAt } : {}) }
+            : limit.resetsAt ? { state: 'limited' as const, resetsAt: limit.resetsAt }
+              : { state: 'limited' as const, cooldownUntil: new Date(Date.parse(limit.observedAt) + cooldownMs).toISOString() }),
+          ...(mapped && limit.usedPercentage !== undefined ? { usedPercentage: limit.usedPercentage } : {}),
+          source: 'runtime-result', observedAt: limit.observedAt,
+        }
+        await meter.resources.observe(reading).catch((error: unknown) => {
+          this.ctx.logger.warn(`agent Workers: a limit reading of ${id} was not recorded: ${(error as Error).message}`)
+        })
       }
-      await meter.resources.observe(reading).catch((error: unknown) => {
-        this.ctx.logger.warn(`agent Workers: a limit reading of ${id} was not recorded: ${(error as Error).message}`)
-      })
     }
   }
 
