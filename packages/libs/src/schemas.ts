@@ -6,6 +6,7 @@ import addFormatsModule from 'ajv-formats'
 
 const addFormats = addFormatsModule as unknown as (ajv: Ajv2020) => Ajv2020
 const TAG = /^([a-z][a-z0-9-]*)@(\d+)\.(\d+)$/
+const DEF = /^[A-Za-z][A-Za-z0-9-]*$/
 
 /** Thrown when a record does not satisfy its schema; carries the Ajv errors. */
 export class SchemaError extends Error {
@@ -61,34 +62,30 @@ export class SchemaRegistry {
   }
 
   /**
-   * Validate `value` against the subschema at a JSON pointer of the schema with `$id` `id`, for a
-   * payload no record tag names: an MCP tool's output, `#/$defs/<tool>-output`. Throws
-   * {@link SchemaError}, naming `<id>#<pointer>`.
+   * Validate `value` against one definition of the schema `tag` names, its `#/$defs/<def>`: an MCP
+   * tool's input or output, for example `assertDef('mcp-board@1.0', 'board-claim-input', args)`.
+   * Throws {@link SchemaError}, also for a definition the schema does not have.
    */
-  assertAt(id: string, pointer: string, value: unknown): void {
-    const ref = `${id}#${pointer}`
-    let validate = this.#cache.get(ref)
-    if (!validate) {
-      if (!pointer.startsWith('/')) throw new SchemaError(ref, [], 'a JSON pointer starts with /')
-      try {
-        validate = this.#ajv.getSchema(ref)
-      } catch (error) {
-        throw new SchemaError(ref, [], (error as Error).message)
-      }
-      if (!validate) throw new SchemaError(ref, [], 'no schema at this id and pointer')
-      this.#cache.set(ref, validate)
+  assertDef(tag: string, def: string, value: unknown): void {
+    const validate = this.#validator(tag, def)
+    if (!validate(value)) {
+      throw new SchemaError(`${tag}#/$defs/${def}`, validate.errors ?? [], this.#ajv.errorsText(validate.errors))
     }
-    if (!validate(value)) throw new SchemaError(ref, validate.errors ?? [], this.#ajv.errorsText(validate.errors))
   }
 
-  #validator(tag: string): ValidateFunction {
-    const cached = this.#cache.get(tag)
+  #validator(tag: string, def?: string): ValidateFunction {
+    const key = def === undefined ? tag : `${tag}#${def}`
+    const cached = this.#cache.get(key)
     if (cached) return cached
     const match = TAG.exec(tag)
     if (!match) throw new SchemaError(tag, [], 'malformed schema tag')
-    const validate = this.#ajv.getSchema(`urn:tsuuanmi:system:schema:${match[1]}:v${match[2]}`)
-    if (!validate) throw new SchemaError(tag, [], 'unknown schema or unsupported major version')
-    this.#cache.set(tag, validate)
+    if (def !== undefined && !DEF.test(def)) throw new SchemaError(tag, [], `malformed definition name ${def.slice(0, 80)}`)
+    const id = `urn:tsuuanmi:system:schema:${match[1]}:v${match[2]}`
+    const whole = this.#ajv.getSchema(id)
+    if (!whole) throw new SchemaError(tag, [], 'unknown schema or unsupported major version')
+    const validate = def === undefined ? whole : this.#ajv.getSchema(`${id}#/$defs/${def}`)
+    if (!validate) throw new SchemaError(tag, [], `no definition ${def} in this schema`)
+    this.#cache.set(key, validate)
     return validate
   }
 }

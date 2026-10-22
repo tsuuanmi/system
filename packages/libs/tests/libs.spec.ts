@@ -58,14 +58,13 @@ describe('SchemaRegistry', () => {
     expect(() => registry.assert('nope', {})).toThrow(/malformed/)
   })
 
-  it('validates a payload no tag names against a subschema by id and JSON pointer, such as an MCP tool output (REQ-ART-4)', () => {
-    const id = 'urn:tsuuanmi:system:schema:mcp-resources:v1'
-    expect(() => registry.assertAt(id, '/$defs/resources-pools-output', { pools: [] })).not.toThrow()
-    expect(() => registry.assertAt(id, '/$defs/resources-pools-output', { pools: [], extra: 1 })).toThrow(SchemaError)
-    expect(() => registry.assertAt(id, '/$defs/resources-usage-output', { records: [] })).toThrow(/totals/)
-    expect(() => registry.assertAt(id, '/$defs/no-such-def', {})).toThrow(SchemaError)
-    expect(() => registry.assertAt('urn:tsuuanmi:system:schema:nope:v1', '/$defs/x', {})).toThrow(SchemaError)
-    expect(() => registry.assertAt(id, '$defs/resources-pools-output', { pools: [] })).toThrow(/pointer/)
+  it('validates against one definition of a schema, such as an MCP tool\'s input, and refuses one the schema does not have', () => {
+    expect(() => registry.assertDef('mcp-board@1.0', 'board-claim-input', { taskId: 'task-1', owner: 'lead' })).not.toThrow()
+    expect(() => registry.assertDef('mcp-board@1.0', 'board-claim-input', { taskId: 'task-1' })).toThrow(SchemaError)
+    expect(() => registry.assertDef('mcp-board@1.0', 'board-claim-input', { taskId: 'task-1', owner: 'lead', extra: 1 })).toThrow(/board-claim-input/)
+    expect(() => registry.assertDef('mcp-board@1.0', 'no-such-tool', {})).toThrow(/no definition/)
+    expect(() => registry.assertDef('mcp-board@1.0', '../x', {})).toThrow(/malformed definition/)
+    expect(() => registry.assertDef('mcp-board@9.0', 'board-claim-input', {})).toThrow(/unsupported major/)
   })
 })
 

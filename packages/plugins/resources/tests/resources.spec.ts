@@ -31,7 +31,6 @@ const POOLS: PoolConfig[] = [
 const T0 = new Date('2026-10-22T09:00:00Z')
 const at = (minutes: number): Date => new Date(T0.getTime() + minutes * 60_000)
 const schemas = new SchemaRegistry()
-const MCP = 'urn:tsuuanmi:system:schema:mcp-resources:v1'
 
 const cleanups: Array<() => unknown> = []
 afterEach(async () => {
@@ -287,7 +286,7 @@ describe('paging and the MCP tools', () => {
     const page = mcp.tools.get('resources_usage')!
     expect([pools.spec.scope, page.spec.scope]).toEqual(['client', 'client'])
     const all = await pools.handler({}, { scope: 'client' })
-    schemas.assertAt(MCP, '/$defs/resources-pools-output', all.structuredContent)
+    schemas.assertDef('mcp-resources@1.0', 'resources-pools-output', all.structuredContent)
     expect((all.structuredContent as { pools: Array<{ pool: string; available: boolean; until?: string }> }).pools.map((p) => [p.pool, p.available, p.until])).toEqual([
       ['a.interactive', false, '2999-01-01T00:00:00Z'], ['a.programmatic', true, undefined], ['local', true, undefined],
     ])
@@ -296,11 +295,11 @@ describe('paging and the MCP tools', () => {
 
     for (let i = 0; i < 25; i++) await ctx.resources.record(usage(`u${String(i).padStart(2, '0')}`, { taskId: i % 2 ? 'odd' : 'even', observedAt: at(i).toISOString(), turns: 1 }))
     const first = (await page.handler({}, { scope: 'client' })).structuredContent as { records: UsageRecord[]; totals: Array<{ records: number; turns: number }>; next?: string }
-    schemas.assertAt(MCP, '/$defs/resources-usage-output', first)
+    schemas.assertDef('mcp-resources@1.0', 'resources-usage-output', first)
     expect(first.records).toHaveLength(20)
     expect(first.totals).toMatchObject([{ pool: 'a.programmatic', records: 25, turns: 25 }])
     const second = (await page.handler({ after: first.next }, { scope: 'client' })).structuredContent as typeof first
-    schemas.assertAt(MCP, '/$defs/resources-usage-output', second)
+    schemas.assertDef('mcp-resources@1.0', 'resources-usage-output', second)
     expect(second.records.map((r) => r.requestId)).toEqual(['u20', 'u21', 'u22', 'u23', 'u24'])
     expect(second.next).toBeUndefined()
     expect(second.totals).toEqual(first.totals)
