@@ -195,6 +195,31 @@ describe('ctx.workflow serves board tasks over the store-backed board and approv
     expect(await refusalOf(() => ctx.workflow.start({ template: 'solo', input: 'again', task: { taskId: task.taskId } }))).toMatch(/is done, not ready/)
   })
 
+  it('serves one attempt with one run: concurrent starts on one claim admit one run, and a repeated clientRequestId returns it (INV-15, INV-4)', async () => {
+    const { ctx, workers } = await boot()
+    await project(ctx)
+    const task = await ready(ctx, 'raced')
+    const claim = await ctx.board.claim(task.taskId, 'lead', 120_000)
+    const input = { template: 'solo', input: 'q', classification: 'public' as const, task: { taskId: task.taskId, holder: 'lead', generation: claim.generation } }
+    const outcomes = await Promise.allSettled([ctx.workflow.start(input), ctx.workflow.start(input)])
+    const admitted = outcomes.filter((o): o is PromiseFulfilledResult<RunView> => o.status === 'fulfilled')
+    expect(admitted).toHaveLength(1)
+    const refused = outcomes.find((o): o is PromiseRejectedResult => o.status === 'rejected')!.reason as WorkflowFailure
+    expect(refused).toBeInstanceOf(WorkflowFailure)
+    expect(refused.kind).toBe('invalid_input')
+    const run = admitted[0]!.value
+    expect((await reported(ctx, run.runId)).task?.outcome).toMatchObject({ status: 'accepted', state: 'done' })
+    expect(workers.started).toHaveLength(1)
+    expect(ctx.workflow.usage()).toHaveLength(1)
+
+    const next = await ready(ctx, 'keyed')
+    const keyed = { template: 'solo', input: 'k', classification: 'public' as const, clientRequestId: 'k-1', task: { taskId: next.taskId } }
+    const first = await ctx.workflow.start(keyed)
+    expect((await ctx.workflow.start(keyed)).runId).toBe(first.runId)
+    expect(await refusalOf(() => ctx.workflow.start({ ...keyed, task: { taskId: task.taskId } }))).toMatch(/clientRequestId was reused/)
+    expect(decisionsOf(ctx, 'admission', 'workflow.task-admission').filter((d) => d.outcome.detail?.['taskId'] === next.taskId)).toHaveLength(1)
+  })
+
   it('renews the task\'s lease while the run lives, at a third of what the board granted, so a long step never loses it', async () => {
     const { ctx, workers } = await boot({ board: 'short' })
     await project(ctx)

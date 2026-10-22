@@ -164,6 +164,9 @@ export class Engine {
       const existing = this.repeated(input, prepared)
       if (existing) return view(this, existing)
       this.bounded()
+      // One live run per board task: a second one racing for the same claim is refused (INV-15).
+      const serving = bound ? db.prepare("SELECT run_id FROM workflow_tasks WHERE task_id = ? AND phase != 'reported'").get(bound.taskId) as { run_id: string } | undefined : undefined
+      if (serving) throw new WorkflowFailure('invalid_input', `run ${serving.run_id} already serves board task ${bound!.taskId}; nothing was started`)
       // Sessions are the engine's: one per run, issued now so its id is returned at once (REQ-SES-8).
       // A run continues an engine session, or a Worker session (a team member's, woken by a message).
       if (input.sessionId && !db.prepare('SELECT 1 FROM workflow_runs WHERE session_id = ?').get(input.sessionId) && !this.ctx.workerSessions.session(input.sessionId)) {

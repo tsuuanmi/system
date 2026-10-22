@@ -141,7 +141,10 @@ export class TaskRuns {
     const runId = newId('run')
     const { option, generation, expiresAt, decision } = await this.take(board, task, claim, runId)
     const bound = { runId, taskId: task.taskId, holder: claim.holder ?? ownerOf(runId), generation, claim: option === 'adopt' ? 'adopted' as const : 'own' as const, writes: task.writes }
-    e.admit(started, prepared, bound)
+    // A concurrent start under the same clientRequestId admitted its own run: this one starts nothing,
+    // and the claim it took lapses back to ready on its own.
+    const admitted = e.admit(started, prepared, bound)
+    if (admitted.runId !== runId) return admitted
     // Run first, then work: the board records the run before any node runs (fail-closed rule 3).
     try {
       await board.start(task.taskId, generation, { runId })
