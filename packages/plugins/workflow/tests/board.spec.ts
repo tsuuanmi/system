@@ -1,4 +1,5 @@
-import { mkdtempSync, rmSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Context, type Fiber } from '@deepseek-ai/cordis'
@@ -10,10 +11,11 @@ import type { ArtifactRef, BoardTask, Subject, TaskInput } from '@tsuuanmi/syste
 import Egress from '@tsuuanmi/system-egress'
 import EventLog from '@tsuuanmi/system-event-log'
 import Leases from '@tsuuanmi/system-leases'
-import { SchemaRegistry } from '@tsuuanmi/system-libs'
+import { captureGitSubject, SchemaRegistry, sha256 } from '@tsuuanmi/system-libs'
 import Store from '@tsuuanmi/system-store'
 import WorkerSessions from '@tsuuanmi/system-worker-sessions'
 import WorkerRouter from '@tsuuanmi/system-workers'
+import type { WorkerExecution } from '@tsuuanmi/system-workers-core'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { CHARTER } from '../../../board-core/conformance/board.ts'
 import { activeProject, CONFIG, readyTask, ScriptedWorkers, TEMPLATES } from '../conformance/workflow.ts'
@@ -30,6 +32,46 @@ const POLICY: AutonomyPolicy = {
   schema: 'autonomy-policy@1.0', id: 'studio', version: 1, scope: 'studio',
   rules: [{ actionClass: 'read', mode: 'auto' }, { actionClass: 'workspace-write', mode: 'auto', requires: ['tests', 'lint'] }],
   default: 'ask', expiry: { defaultSeconds: 3600, maxSeconds: 86400 },
+}
+
+/**
+ * Scripted Workers that answer as an agent in a git working tree: each result is an
+ * `agent-result@1.1` naming the workspace and the subject the tree is at when the engine reads it
+ * (or `stale`, a version the tree never had).
+ */
+class AgentWorkers extends ScriptedWorkers {
+  stale = false
+  private readonly results = new Map<string, ArtifactRef>()
+  constructor(private readonly workspace: string, private readonly artifacts: () => Context['artifacts']) {
+    super()
+  }
+
+  override get(id: string): WorkerExecution | undefined {
+    const execution = super.get(id)
+    if (!execution?.result) return execution
+    if (!this.results.has(id)) {
+      const text = (this.artifacts().get(execution.result)?.body as { text: string }).text
+      const { subject } = captureGitSubject(this.workspace)!
+      this.results.set(id, this.artifacts().put({
+        kind: 'report', bodySchema: 'agent-result@1.1', classification: 'public', producer: { type: 'worker', ref: 'w:standard' },
+        body: { schema: 'agent-result@1.1', worker: 'w:standard', runtime: 'scripted', runId: 'agent-run', promptHash: sha256(text), sandbox: 'workspace-write', text, workspace: this.workspace, subject: this.stale ? { ...subject, version: 'stale' } : subject },
+      }).id as ArtifactRef)
+    }
+    return { ...execution, result: this.results.get(id)! }
+  }
+}
+
+/** A git working tree with a commit and a change on top. */
+function workingTree(): string {
+  const dir = mkdtempSync(join(tmpdir(), 'system-workflow-tree-'))
+  const git = (...args: string[]): void => void execFileSync('git', ['-C', dir, '-c', 'user.name=t', '-c', 'user.email=t@example.test', ...args], { stdio: 'ignore' })
+  git('init', '-q')
+  writeFileSync(join(dir, 'kernel.c'), 'int main(void) { return 0; }\n')
+  git('add', '.')
+  git('commit', '-q', '-m', 'init')
+  writeFileSync(join(dir, 'kernel.c'), 'int main(void) { return 1; }\n')
+  cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+  return dir
 }
 
 /** The store-backed board under a short lease cap (as `leases.maxTtlMs` would set it, without the engine's own run lease), counting renewals. */
@@ -58,10 +100,10 @@ interface Booted {
   restartWorkflow: (between?: () => void | Promise<void>) => Promise<void>
 }
 
-async function boot(options: { workflow?: Config; board?: boolean | 'short' } = {}): Promise<Booted> {
+async function boot(options: { workflow?: Config; board?: boolean | 'short'; workspace?: string } = {}): Promise<Booted> {
   const dir = mkdtempSync(join(tmpdir(), 'system-workflow-board-'))
-  const workers = new ScriptedWorkers()
   const ctx = new Context()
+  const workers = options.workspace ? new AgentWorkers(options.workspace, () => ctx.artifacts) : new ScriptedWorkers()
   const config: Config = { ...CONFIG, ...options.workflow, templates: { ...TEMPLATES, ...options.workflow?.templates } }
   const fibers: Fiber[] = [
     ctx.plugin(Store, { path: join(dir, 'system.db') }), ctx.plugin(Artifacts, {}), ctx.plugin(EventLog, {}), ctx.plugin(Leases, {}), ctx.plugin(Egress, {}),
@@ -339,6 +381,34 @@ describe('ctx.workflow serves board tasks over the store-backed board and approv
     const review = (await ctx.board.task(task.taskId))!
     expect(review).toMatchObject({ state: 'review', result: { artifacts: [view.result] } })
     expect(review.result?.acceptance).toBeUndefined()
+  })
+
+  it('binds the result of a task that writes a working tree to the exact subject the run left it at, and accepts it there (INV-5, INV-15)', async () => {
+    const tree = workingTree()
+    const { ctx } = await boot({ workspace: tree })
+    await project(ctx)
+    const { subject } = captureGitSubject(tree)!
+    const task = await ready(ctx, 'tree', { writes: { type: 'git-head', ref: subject.ref } })
+    const run = await ctx.workflow.start({ template: 'solo', input: 'change it', classification: 'public', task: { taskId: task.taskId } })
+    const done = await settled(ctx, run.runId)
+    expect(done.status).toBe('completed')
+    expect((await reported(ctx, run.runId)).task?.outcome).toMatchObject({ status: 'accepted', state: 'done' })
+    const board = (await ctx.board.task(task.taskId))!
+    expect(board.result).toMatchObject({ artifacts: [done.result], subject: { type: 'git-head', ref: subject.ref, version: subject.version } })
+    expect(decisionOf(ctx, board.result!.acceptance).outcome.detail?.['subject']).toEqual(subject)
+  })
+
+  it('fails a run whose result names a version of the written tree it is no longer at, and reports it failed (INV-5)', async () => {
+    const tree = workingTree()
+    const booted = await boot({ workspace: tree })
+    ;(booted.workers as AgentWorkers).stale = true
+    const { ctx } = booted
+    await project(ctx)
+    const { subject } = captureGitSubject(tree)!
+    const task = await ready(ctx, 'stale tree', { writes: { type: 'git-head', ref: subject.ref } })
+    const run = await ctx.workflow.start({ template: 'solo', input: 'change it', classification: 'public', task: { taskId: task.taskId } })
+    expect(await settled(ctx, run.runId)).toMatchObject({ status: 'failed', error: { kind: 'stale_subject', message: expect.stringMatching(/is no longer git-head/) } })
+    expect((await reported(ctx, run.runId)).task?.outcome).toMatchObject({ status: 'reconciled', state: 'ready' })
   })
 
   it('fails a run whose result is not on the subject its task writes, and reports it failed (INV-5)', async () => {
