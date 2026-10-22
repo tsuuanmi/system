@@ -17,7 +17,10 @@ The **`agents` Worker source**: agent runtimes as Workers
   for metering: `pool` and `account` (set together: a pool id from the
   resources configuration and the account it belongs to), and `windows`, the
   runtime's limit window names mapped to the pool's window ids (for example
-  `five_hour: five-hour`).
+  `five_hour: five-hour`). Optional: `worktreePerRun` (default false; see
+  below). Workers configured with the same workspace must agree on it, or the
+  plugin refuses to load (`config_error`): a reviewer must read the tree it
+  reviews.
 - **Capabilities are what `probe()` proves now** (cached for `probeTtlMs`):
   - `local-data`;
   - `review` only for a read-only sandbox: a review is independent of the
@@ -37,8 +40,46 @@ The **`agents` Worker source**: agent runtimes as Workers
   - each result is a `report` artifact with the requirement's classification:
     `agent-result@1.2` (with `model`, `usage`, and `models`) when the runtime
     reported its token usage, `agent-result@1.1` otherwise. It carries the
-    workspace and, when that is a git working tree, its exact subject after the
-    run, which a review binds to.
+    workspace the run worked in (with `worktreePerRun`, its worktree) and, when that is a git
+    working tree, its exact subject after the run, which a review binds to.
+- **A worktree per workflow run** (`worktreePerRun`, PROP-0010 B3, INV-15):
+  - the Worker's `workspace` must be the top level of a git repository with a
+    commit, outside `worktreeRoot`, with git 2.17 or later. Otherwise the
+    Worker is `unavailable`, the problem is logged once as a `config_error`, and
+    a run started on it fails unsubmitted as `config_error`;
+  - each run that belongs to a workflow run (`WorkerStart.runId`) works in that
+    run's own worktree, `<worktreeRoot>/<repository name>-<hash of its real
+    path>/<runId>` (default root `<DSH_HOME>/system/worktrees`, owner-only), on
+    the branch `system/run/<runId>`. A run that belongs to no workflow run
+    works in the configured workspace;
+  - one worktree per (repository, workflow run): the first agent run creates it
+    from the repository's HEAD (`git worktree add -b`), and every later one of
+    that workflow run on that repository, reviewers included, works in it. So
+    a review reads the developer's tree and binds to its exact subject, and a
+    remediation fix writes there. A run continued after its worktree was
+    removed gets it again from its branch. Creation is one at a time per
+    repository; the mapping is stored, so a restart reuses it. The run's
+    `RunSpec`, its captured subject, and the result's `workspace` are the
+    worktree. A worktree path that holds anything else is never taken over;
+  - the repository's checked-out branch and main working tree are never written,
+    and git always runs with `-C <path>`, fixed arguments, no shell, no hooks,
+    no system or global configuration, and a 60 s bound;
+  - an agent can write the worktree's `.git` file, so git never follows it: a
+    run whose worktree's `.git` file no longer points to the worktree's own
+    directory fails as `reconciliation_failed`, and the worktree is left for
+    the operator (a later run of it fails as `config_error`);
+  - **cleanup** (INV-9), at start and hourly: when every agent run of a
+    workflow run has finished, and the last ended more than
+    `worktreeRetentionHours` ago (default 168; 0 keeps every worktree), a
+    `retention` decision (rule `agent-workers.worktree-retention`, INV-13, one
+    per worktree, under the workflow run) retires the worktree: its changes are
+    committed on its branch (`git add --all`, author `system
+    <system@localhost>`, a message naming the run), then it is removed (`git
+    worktree remove`, never forced). Files the repository
+    ignores go with it. A branch is never deleted. A worktree that cannot be
+    committed or removed (locked, say) stays in place, with the reason logged
+    once and kept on its row, and the next sweep tries again; at most 50 a
+    sweep. A worktree removed by hand is forgotten once git no longer lists it.
 - **Metering** ([resources](../../../docs/design/resources.md)), for a Worker
   with a `pool`, through `ctx.resources` (optional: read when present, never
   injected):
@@ -92,6 +133,7 @@ The **`agents` Worker source**: agent runtimes as Workers
   period; a run already submitted then fails as `reconciliation_failed`, never
   run again (INV-4).
 - **Sessions:** a session id is bound to its Worker (`affinity`). Later runs
-  resume the agent's native session.
+  resume the agent's native session. With `worktreePerRun`, a session resumed
+  by another workflow run resumes in that run's worktree.
 - **Injects:** `store`, `artifacts`, `leases`, `workers`, `agentRuntimes`, `egress`;
   reads `resources` when present.

@@ -362,12 +362,13 @@ second execution path (INV-1).
   daily, except a session's latest run, and then `ctx.artifacts.collect()` takes
   what only expired runs needed.
 - **Conformance.** The seam's suite is [`conformance/workflow.ts`](conformance/workflow.ts),
-  run through the [conformance runner](../../libs/conformance/runner.ts) at contract 1.0 by
+  run through the [conformance runner](../../libs/conformance/runner.ts) at contract 1.1 by
   `tests/conformance.spec.ts`, against this engine and the real plugins it injects, with only
   Worker execution scripted:
   - valid `workflow-node@1.x` records; a node completes only with its input receipt, its
     Worker's result, and the acceptance decision that accepted it;
   - input bound by hash, and the execution keyed by it; a repeated `clientRequestId`;
+  - since 1.1, every execution names its run (`WorkerStart.runId`);
   - admission that fails closed and stays within `maxActiveRuns`; a node no Worker is
     admitted for fails with nothing sent;
   - bounded retries of unsent failures, a sent one never resent, and bounded escalation;

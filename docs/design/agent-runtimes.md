@@ -98,6 +98,29 @@ Each provider maps them onto the agent's own permission or sandbox modes. If a r
 policy cannot be expressed exactly, the run is refused (`config_error`). It never loosens.
 Codex, for example, refuses a tool allow-list or a turn limit, since it cannot express either.
 
+## Workspaces
+
+A run works in its Worker's configured workspace, unless the Worker is configured with
+`worktreePerRun` (PROP-0010 B3). Then each run that belongs to a workflow run (the engine
+names it in `WorkerStart.runId`) works in that run's own git worktree of the repository, on
+the branch `system/run/<runId>`, never in the repository's main working tree
+([INV-15](../architecture/invariants.md#inv-15-one-writer-per-subject)). There is one
+worktree per repository and workflow run: the first agent run creates it from the
+repository's HEAD, and every later one of that run on that repository works in it, reviewers
+included. So exact-subject review and remediation
+([workflow engine](workflow-engine.md#exact-subject-gates)) bind to the tree the writer
+changed. The provider only sees a `RunSpec` whose workspace is the worktree. A worktree under
+the DSH home is bound back like any workspace: writable for `workspace-write`, read-only for
+`read-only`.
+
+Worktrees are bounded ([INV-9](../architecture/invariants.md#inv-9-everything-is-bounded)):
+once every agent run of a workflow run has finished and the retention has passed, a
+`retention` decision ([INV-13](../architecture/invariants.md#inv-13-every-decision-is-an-artifact))
+retires the worktree: its changes are committed on its branch and it is removed. A branch is never
+deleted, nothing is forced, and a worktree that cannot be committed or removed stays for the
+next sweep. The [`agent-workers` README](../../packages/plugins/agent-workers/README.md)
+has the configuration and every rule.
+
 ## Credentials and egress
 
 - **Environment** ([INV-8](../architecture/invariants.md#inv-8-credentials-never-cross-upward)).
@@ -163,7 +186,8 @@ pool is not metered.
 
 The Worker registry admits an agent-runtime Worker only on evidence from `probe()`, never
 because of its name. A Worker whose runtime is missing, cannot enforce the configured
-sandbox, or does not report `readsConfined`, is `unavailable`.
+sandbox, or does not report `readsConfined`, is `unavailable`; so is a `worktreePerRun` Worker
+whose workspace cannot hold a worktree per run (`config_error`).
 
 | Capability | Offered when |
 |---|---|
@@ -190,6 +214,6 @@ An agent Worker never offers plain `reason`, so ordinary asks never spend agent-
   completed before cancel) is reported. An agent subprocess that ignores the cancel is ended:
   SIGTERM after a grace period, then SIGKILL, so it cannot hang a run.
 - **Evidence.** The result artifact carries the final message, the prompt hash, the sandbox,
-  the workspace, and, for a git working tree, its exact subject after the run, which a review
+  the workspace the run worked in (with `worktreePerRun`, its [worktree](#workspaces)), and, for a git working tree, its exact subject after the run, which a review
   binds to; with `@1.2`, the run's main model and token usage, in total and per model. Target: diffs, commands run, and test results stored as artifacts with their
   hashes.

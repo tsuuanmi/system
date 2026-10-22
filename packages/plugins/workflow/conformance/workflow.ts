@@ -16,7 +16,7 @@ import type {} from '@tsuuanmi/system-artifacts'
 import { SchemaRegistry, sha256 } from '@tsuuanmi/system-libs'
 import type { ArtifactRef, CapabilityDescriptor, WorkerExecution, WorkerSource, WorkerStart } from '@tsuuanmi/system-workers-core'
 import { expect } from 'vitest'
-import { defineSuite, type Scenario } from '../../../libs/conformance/runner.ts'
+import { type ContractVersion, defineSuite, type Scenario } from '../../../libs/conformance/runner.ts'
 import { worker } from '../../../workers-core/conformance/workers.ts'
 import type { Config, NodeRecord, NodeTemplate, NodeView, RunView, StartInput } from '../src/index.ts'
 
@@ -180,8 +180,8 @@ interface Harness {
   restart: (between?: () => void | Promise<void>) => Promise<void>
 }
 
-const scenario = (id: string, title: string, run: (h: Harness) => Promise<void>, config: Config = {}): Scenario<Boot> => ({
-  id: `workflow.${id}`, since: '1.0', title,
+const scenario = (id: string, title: string, run: (h: Harness) => Promise<void>, config: Config = {}, since: ContractVersion = '1.0'): Scenario<Boot> => ({
+  id: `workflow.${id}`, since, title,
   run: async (boot) => {
     const workers = new ScriptedWorkers()
     const booted = await boot(workers.source, { ...CONFIG, ...config, templates: { ...TEMPLATES, ...config.templates } })
@@ -293,7 +293,8 @@ const waitingPlan = (view: RunView): ArtifactRef => {
 
 export const workflowSuite = defineSuite<Boot>({
   seam: 'workflow',
-  contract: '1.0',
+  // 1.1: every execution names the run it belongs to (`WorkerStart.runId`).
+  contract: '1.1',
   scenarios: [
     scenario('node-records', 'keeps every node record valid against workflow-node@1.x with a rising revision, and completes a node only with its input receipt, an output receipt binding its Worker\'s result, and the acceptance decision that accepted it (INV-14, INV-13, INV-3)', async ({ ctx, workers }) => {
       workers.reply = () => 'hold'
@@ -340,6 +341,13 @@ export const workflowSuite = defineSuite<Boot>({
       const other = await settled(ctx, start(ctx, 'chain', 'y').runId)
       expect(recordOf(ctx, other.runId, 'a').inputReceipt!.inputHash).not.toBe(a.inputReceipt!.inputHash)
     }),
+
+    scenario('run-id', 'names the run in every execution it requests, so a Worker source can keep state per run, such as a workspace of its own (INV-15)', async ({ ctx, workers }) => {
+      const one = await settled(ctx, start(ctx, 'chain', 'one').runId)
+      const two = await settled(ctx, start(ctx, 'solo', 'two').runId)
+      expect([one.status, two.status]).toEqual(['completed', 'completed'])
+      expect(workers.started.map((s) => [s.prompt, s.runId])).toEqual([['A: one', one.runId], ['B: answer: A: one', one.runId], ['two', two.runId]])
+    }, {}, '1.1'),
 
     scenario('request-key', 'returns the same run for a repeated clientRequestId, starting nothing twice, and refuses the key for a different request (INV-4)', async ({ ctx, workers }) => {
       const first = start(ctx, 'solo', 'once', { clientRequestId: 'req-1' })
