@@ -223,7 +223,7 @@ export const boardSuite = defineSuite<Boot>({
       await ctx.board.sweep(at(11))
       expect(validTask((await ctx.board.task(t.taskId))!)).toMatchObject({ state: 'ready', attempts: { count: 1 } })
     }),
-    scenario('review-to-done', 'takes a result to review, never straight to done, and is done only by an accepting acceptance decision (INV-13)', async (ctx) => {
+    scenario('review-to-done', 'takes a result with its exact subject to review, never straight to done, and is done only by an accepting acceptance decision (INV-5, INV-13)', async (ctx) => {
       await active(ctx)
       const t = await ready(ctx, task('p1', 't', { maxAttempts: 2 }))
       let { generation } = await ctx.board.claim(t.taskId, 'lead', 600_000, at(3))
@@ -240,6 +240,7 @@ export const boardSuite = defineSuite<Boot>({
       const done = validTask(await ctx.board.accept(t.taskId, accepted, at(8)))
       expect(done).toMatchObject({ state: 'done', result: { artifacts: [second], subject: HEAD, acceptance: accepted }, lastDecision: accepted })
       expect(done.holder).toBeUndefined()
+      expect(done.run?.runId).toBe('run-2')
     }),
     scenario('retries-bounded', 'waits for input once review rejected the last attempt allowed (INV-9)', async (ctx) => {
       await active(ctx)
@@ -505,7 +506,7 @@ export class FakeBoard extends Board {
     })
   }
 
-  async submit(taskId: string, generation: number, result: { artifacts: ArtifactRef[]; digest?: ArtifactRef; subject?: Subject; files?: string[]; next?: string }, at: Date = new Date()) {
+  async submit(taskId: string, generation: number, result: { artifacts: ArtifactRef[]; digest?: ArtifactRef; subject: Subject; files?: string[]; next?: string }, at: Date = new Date()) {
     const task = this.taskOf(taskId)
     this.held(task, generation, at)
     this.expect(task, 'running')
@@ -519,8 +520,7 @@ export class FakeBoard extends Board {
     const body = this.ctx.artifacts.get(acceptance)?.body as { decisionType?: string; outcome?: { option?: string } } | undefined
     if (body?.decisionType !== 'acceptance') throw new BoardError('invalid', `${acceptance} is not an acceptance decision`)
     if (body.outcome?.option === 'accept') {
-      if (!task.result?.subject) throw new BoardError('invalid', 'a done task needs its result subject')
-      return this.save(task, at, { state: 'done', result: { ...task.result, acceptance }, holder: undefined, lastDecision: acceptance })
+      return this.save(task, at, { state: 'done', result: { ...task.result!, acceptance }, holder: undefined, lastDecision: acceptance })
     }
     if (task.attempts.count < task.attempts.max) return this.save(task, at, { state: 'ready', holder: undefined, run: undefined, result: undefined, lastDecision: acceptance })
     return this.save(task, at, { state: 'waiting-for-input', holder: undefined, waiting: this.inputWait('retries-spent', at), lastDecision: acceptance })

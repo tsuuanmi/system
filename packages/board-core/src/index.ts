@@ -78,7 +78,7 @@ export interface BoardTask {
   attempts: { count: number; max: number }
   holder?: { owner: string; generation: number; leaseExpiresAt: string }
   run?: { runId: string; brief?: ArtifactRef; startedAt: string }
-  result?: { artifacts: ArtifactRef[]; digest?: ArtifactRef; subject?: Subject; files?: string[]; acceptance?: ArtifactRef; next?: string }
+  result?: { artifacts: ArtifactRef[]; digest?: ArtifactRef; subject: Subject; files?: string[]; acceptance?: ArtifactRef; next?: string }
   waiting?: { reason: WaitReason; approvalRequest?: string; questions?: string[]; since: string; expiresAt: string }
   cancellation?: { reason: CancelReason; note?: string; at: string }
   createdAt: string
@@ -157,8 +157,8 @@ export abstract class Board extends Service {
   /** Record the run before it starts (claimed → running); each start is an attempt. */
   abstract start(taskId: string, generation: number, run: { runId: string; brief?: ArtifactRef }, at?: Date): Promise<BoardTask>
 
-  /** Record the attempt's result (running → review). Never done directly. */
-  abstract submit(taskId: string, generation: number, result: { artifacts: ArtifactRef[]; digest?: ArtifactRef; subject?: Subject; files?: string[]; next?: string }, at?: Date): Promise<BoardTask>
+  /** Record the attempt's result and the exact subject it leaves (running → review). Never done directly. */
+  abstract submit(taskId: string, generation: number, result: { artifacts: ArtifactRef[]; digest?: ArtifactRef; subject: Subject; files?: string[]; next?: string }, at?: Date): Promise<BoardTask>
 
   /** Apply the `acceptance` decision on the result: done when accepted, else another attempt or a wait for input. */
   abstract accept(taskId: string, acceptance: ArtifactRef, at?: Date): Promise<BoardTask>

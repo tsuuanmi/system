@@ -104,10 +104,10 @@ Unlike A2A, every interrupted state has an expiry.
 | ready → claimed | `claim`, by the engine or the lead | a `board` decision; a lease of a new generation | a task not ready, or of a project not active, is refused |
 | claimed → ready | `sweep`, the lease lapsed and no run started | a `board` decision | the old generation is fenced out (`stale-generation`) |
 | claimed → running | `start`, with the holder's generation | a `board` decision; `run` is written before the run starts, and the attempt counted | a stale generation or lapsed lease is refused |
-| running → review | `submit` | a `board` decision; `result` | unknown result artifacts are refused |
+| running → review | `submit`, with the result's exact subject (a commit, or the result artifact) | a `board` decision; `result` | unknown result artifacts are refused |
 | running → waiting-for-approval | `block` (`budget-spent`: action class `funding`), or `sweep` when the holder's lease lapsed mid-run (`reconciliation-failed`: `remediation`) | the `autonomy` decision and an approval request | the run is never started again on its own (INV-4) |
 | running → waiting-for-input | `block` with questions | a `board` decision | a question wait without questions is refused |
-| review → done | `accept` with an `acceptance` decision whose outcome is `accept` | that decision; `result.acceptance` | a decision of another type is refused; a result without its subject cannot be done |
+| review → done | `accept` with an `acceptance` decision whose outcome is `accept` | that decision; `result.acceptance`; the run and subject stay | a decision of another type is refused |
 | review → ready / waiting-for-input | `accept` with a `reject` outcome | that decision; another attempt while `count < max`, else `retries-spent` | — |
 | waiting-for-approval → ready / waiting-for-input | `sweep`, on the request's resolution | the request's `approval` decision | rejection and expiry never start work: the task waits for input (`rejected`) |
 | waiting-for-input → ready | `answer`, every question answered | a `board` decision | partial answers are refused |
