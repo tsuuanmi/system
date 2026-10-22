@@ -5,7 +5,7 @@ status: accepted
 created: 2026-10-22
 summary: Define the Base version as the closed core with Claude Code as the first Worker, every record and seam specified by schema and protocol, proven by one multi-day project; Deep Research, website and API Worker work come after.
 owners: [operator]
-evidence: [research/design-review-2026-10-22]
+evidence: [research/design-review-2026-10-22, research/ecosystem-for-base-2026-10-22]
 related: [PROP-0004, PROP-0008, PROP-0009, ADR-0036]
 decided-by: [ADR-0037]
 implementation: []
@@ -62,6 +62,12 @@ contract change needs an ADR (ADR-0036).
 
 ## Evidence and research
 
+- [Ecosystem for the Base version](../research/ecosystem-for-base-2026-10-22.md): what to
+  adopt, adapt, or avoid for each milestone. Nothing replaces a core component; Anthropic's own
+  primitives (the SDK's result message, the status line's `rate_limits`, `sandbox-runtime`,
+  PreToolUse `defer`) and open standards (A2A task states, OpenTelemetry GenAI usage, MCP
+  manifests and conformance) cover most of the ground. Plan terms for the Agent SDK changed
+  three times in 2026, so pools and windows are configuration.
 - [Design review 2026-10-22](../research/design-review-2026-10-22.md): token economics, the
   waste map, and why operator attention is the scarcest resource.
 - [PROP-0009](0009-core-and-plugin-decomposition.md) and ADR-0036: the six core components and
@@ -95,8 +101,8 @@ names the failure behaviour of every step.
 | ledger of record | `store`, `artifacts`, `eventLog`, `credentials` | new artifact kinds only | existing ([artifacts](../design/artifacts.md)) | built; conformance suites to add |
 | work state machine | `workflow`, `workerSessions`, `leases`, **`board`** | `project@1.0` (charter: intent, criteria, constraints, stop rules, budget), `board-task@1.0` | [task states](#protocol-sketch-a-board-task) | runs and nodes built; board new |
 | runner | `workflow` engine, `turnReceipts` | `workflow-node@1.x` gains a run budget | budget exhausted → the node blocks and asks the gate | built; crash suite at every reconcile point (M6c) |
-| gate | `egress`, `workers` acceptance, **`approvals`** | `autonomy-policy@1.0`, `approval-request@1.0`; verdicts stay `approval@1.x` | [approval requests](#protocol-sketch-an-approval-request) | egress and acceptance built; queue new |
-| resource ledger and metering | **`resources`** | `usage-record@1.0`, `limit-state@1.0`; `agent-result@1.2` adds token usage with cache reads and writes | reserve before a run, record after it from the runtime's own usage fields, cool down on a limit notice | new |
+| gate | `egress`, `workers` acceptance, **`approvals`** | `autonomy-policy@1.0`, `approval-request@1.0`; verdicts stay `approval@1.x` | [approval requests](#protocol-sketch-an-approval-request); on a Claude Code Worker the policy is enforced by a PreToolUse hook (`deny`, `defer`), never by `canUseTool` alone | egress and acceptance built; queue new |
+| resource ledger and metering | **`resources`** | `usage-record@1.0` (fields named after OpenTelemetry GenAI, with account, pool, price version, and request id for deduplication), `limit-state@1.0` (pools and windows as configuration); `agent-result@1.2` adds token usage with cache reads and writes | reserve before a run, record after it from the runtime's own usage fields, cool down on a limit notice; reconcile against session transcripts | new |
 | plugin host | host, bundle, conformance | `plugin-manifest@1.0` (seams provided and consumed with versions, family or core component, lifecycle state) | lifecycle states are recorded as decisions; Base records them and automates nothing | host built; manifest new |
 
 Every guarantee seam fails closed (INV-2): with the resource ledger unavailable no new run
@@ -150,7 +156,7 @@ The autonomy matrix that decides which actions need a person is defined in
 |---|---|---|
 | Composition | agent rows off by default (PROP-0004) | `agent-workers`, `agent-runtimes`, `runtime-claude-agent-sdk` on by default; Codex and ACP stay off |
 | Writing safety | the P1 follow-up: superseded remediation cycles, an unapproved writing step, hidden paths that name one agent's directory | each writing task runs in its own workspace (a git worktree per task); remediation asks the gate; hidden paths cover every agent's credential directory |
-| Validation | no Bash, so no `validate` | commands confined to the workspace with no network, under the same bubblewrap confinement Codex and ACP agents use, proven by `proveConfinement`; decided by its own ADR |
+| Validation | no Bash, so no `validate` | commands confined to the workspace with no network, by `@anthropic-ai/sandbox-runtime` (bubblewrap, Apache-2.0) around the Worker, proven by `proveConfinement`; decided by its own ADR |
 | Metering | `costUsd`, `turns` | `agent-result@1.2`: model, input, output, cache read and cache write tokens, from the SDK's result; one `usage-record` per run |
 | Long work | one run, 15 minutes at most | multi-day work is a chain of board tasks; a task resumes the agent's native session from a `brief` |
 | Brief | prompt text | `brief@1.0`: goal, acceptance criteria, artifact pointers (never copied content), budget, sandbox |
