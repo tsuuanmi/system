@@ -11,10 +11,9 @@
 > [approval queue](../../packages/plugins/approvals/README.md); the
 > [workflow engine](workflow-engine.md#board-tasks) runs a task's attempts. Differs from target:
 > no run blocks its task yet (no budget per task: the ledger counts usage by run, and the engine
-> does not yet reserve per task; no question reaches the board from a run); no surface records
-> the operator's `acceptance` decision yet, so a review left to the operator ends
-> `review-expired` when the reviewer's lease lapses; `TASKS.md` is rendered on request, and
-> nothing writes it into a workspace yet.
+> does not yet reserve per task; no question reaches the board from a run); `TASKS.md` is
+> rendered on request, and nothing writes it into a workspace yet. The operator accepts or
+> rejects a review on `/ui` ([`web-ui`](../../packages/plugins/web-ui/README.md)).
 
 The board holds work that outlives a run: projects with charters, and their tasks. A run of the
 [workflow engine](workflow-engine.md) serves one attempt of one task. Only the board moves a
@@ -93,7 +92,8 @@ stateDiagram-v2
   running --> waiting_for_input: question
   running --> done: owner reports the run completed and accepted
   review --> done: acceptance accepted
-  review --> waiting_for_input: reviewer's lease lapsed, no decision
+  review --> review: only the operator may accept now (held for the operator)
+  review --> waiting_for_input: reviewer's lease lapsed, or the operator's wait expired, no decision
   review --> ready: rejected, attempts left (gate: auto or notify)
   review --> waiting_for_approval: rejected, attempts left (gate: ask)
   review --> waiting_for_input: rejected, no attempt left
@@ -179,7 +179,8 @@ of a wait, and a withdrawn wait kept; the other cases only the store-backed prov
 | running → waiting-for-input (`rejected`) | the same, on any other verdict: `forbid`, and also `auto` or `notify`, since the queue takes a request only on `ask` | a `board` decision naming the `autonomy` decision | a spent or lost run is never readied or cancelled by the policy alone, so it waits for a person; the wait expires (`input-expired`) |
 | running → waiting-for-input | `block` with questions | a `board` decision | a question wait without questions is refused |
 | running or waiting-for-approval (`reconciliation-failed`) → done, ready, or waiting-for-input | `reconcileRun` by the run's owner (the workflow engine), after it reconciled the recorded run | the acceptance decision of a completed run, or a `board` decision for a failed one; the pending approval request is withdrawn once the move committed | an outcome for another run id is refused; an unknown outcome is never reported, so the task keeps waiting for approval |
-| review → waiting-for-input | `sweep`, the reviewer's lease lapsed with no decision | a `board` decision (`review-expired`) | the wait expires and cancels the task |
+| review → review (held for the operator) | `accept` (or a run owner's completed report) with an accepting decision that is not the operator's, while the class's required checks have not passed or the policy forbids the class | a `board` decision naming the acceptance and the `autonomy` decision; the lease released; `waiting` (`operator-review`, the checks still pending, and the policy's wait for the class) | only the operator's acceptance accepts it now: another such decision is refused (`invalid`); a rejection, or one with the checks passed, applies |
+| review → waiting-for-input | `sweep`, the reviewer's lease lapsed with no decision, or a review held for the operator reached `waiting.expiresAt` | a `board` decision (`review-expired`) | the wait expires and cancels the task |
 | review → done | `accept` with an `acceptance` decision whose outcome is `accept` | that decision; `result.acceptance`; the run and subject stay | a decision of another type, or one not bound to the task's exact result, is refused; one not the operator's needs the required checks passed |
 | review → ready / waiting-for-approval / waiting-for-input | `accept` with a `reject` outcome | while `count < max`, another attempt through the gate: a `board` decision naming that decision and the `autonomy` decision (ready, or `approval-needed` with a new request); else that decision and `retries-spent` | an approval of an earlier attempt never covers this one |
 | waiting-for-approval → ready / waiting-for-approval / waiting-for-input | `sweep`, on the request's resolution (an approval to go on after `budget-spent` or `reconciliation-failed` goes through the gate for the next attempt); at `waiting.expiresAt` (or the request's expiry, if earlier) the board applies the expiry itself when the queue has not resolved the request, withdrew it, or no longer knows it | the request's `approval` decision, or the board's own (`board`, cause `expired`), after which it withdraws a request still open | rejection and expiry never start work: the task waits for input (`rejected`) |
@@ -199,7 +200,7 @@ work again as a new task.
 | `question` | `block` with questions | `answer` (`board_update` answers), every question by index: the next attempt, through the gate; with no attempt left, `retries-spent` instead | expires: `input-expired` |
 | `rejected` | an approval refused or expired, or none could be asked | nothing | expires: `input-expired` |
 | `retries-spent` | review rejected the last attempt, a failed run with none left, or an approval to go on or an answered question with none left | nothing | expires: `input-expired` |
-| `review-expired` | the reviewer's lease lapsed with no acceptance decision | nothing | expires: `input-expired` |
+| `review-expired` | the reviewer's lease lapsed, or a review held for the operator expired, with no acceptance decision | nothing | expires: `input-expired` |
 
 ### Required checks bind at acceptance
 
@@ -211,11 +212,15 @@ when the result is accepted:
 - An accepting `acceptance` decision that is not the operator's (its decider and its envelope's
   producer are both `operator`) applies only when `ctx.approvals.check` on the task's action
   class, given the checks the decision reports in `outcome.detail.checks` (check name → passed),
-  gives no `failedChecks` and does not forbid the class. Otherwise `accept` (and a run owner's
-  completed report) is refused (`invalid`) and the task stays in review: the review goes to the
-  operator, whose own acceptance decision is the only one that accepts it. The board opens no
-  approval request for this, since the queue takes a request only on an `ask` verdict; review
-  stays bounded by the reviewer's lease.
+  gives no `failedChecks` and does not forbid the class. Otherwise the board holds the review for
+  the operator, whose own acceptance decision is the only one that accepts it now: `accept` (and a
+  run owner's completed report, which records the result) releases the reviewer's lease and
+  records `waiting` with reason `operator-review`, the checks still pending, and an expiry the
+  policy's wait for the class sets (`waitSeconds`: the shortest applying rule's `expiresSeconds`,
+  else the stricter `expiry.defaultSeconds`, as an approval request's), so the operator's review
+  outlives the run that held the lease. At that expiry the task waits for input
+  (`review-expired`). The board opens no approval request for this, since the queue takes a
+  request only on an `ask` verdict; the operator decides on `/ui`, the human channel (INV-6).
 - A `reject` applies with or without checks: a failed check goes back to the lead as another
   attempt ([approvals](approvals.md#the-autonomy-policy)).
 - A class the policy asks about needs no check here: the operator approved the attempt before it
@@ -233,13 +238,14 @@ when the result is accepted:
    request, an input wait cancels the task (INV-9). The board does not depend on the queue for
    this: it applies an unresolved or unknown request's expiry itself, for a task and a charter.
 5. A task is done only by an accepting `acceptance` decision on a result with its exact subject.
-   The board never accepts by default, and review is bounded by the reviewer's lease.
+   The board never accepts by default, and review is bounded by the reviewer's lease, or, held
+   for the operator, by the policy's wait for the class.
 6. One task at a time holds write authority over a subject (`writes`), and every write presents
    the holder's generation ([INV-15](../architecture/invariants.md#inv-15-one-writer-per-subject)).
 7. With `ctx.approvals` unavailable, every move that needs it fails and nothing moves.
 
 ## Conformance
 
-[`board-core/conformance/board.ts`](../../packages/board-core/conformance/board.ts), 23
+[`board-core/conformance/board.ts`](../../packages/board-core/conformance/board.ts), 24
 scenarios at contract 1.0, run against the fake provider and the store-backed provider, both over
 the approvals fake, and against the store-backed provider over the store-backed approval queue.

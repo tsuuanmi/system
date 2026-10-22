@@ -91,7 +91,7 @@ const DESCRIPTIONS: Record<BoardTool, string> = {
 
 const summary = (t: BoardTask) => ({
   taskId: t.taskId, title: t.title, state: t.state, ...(t.milestone ? { milestone: t.milestone } : {}), ...(t.holder ? { holder: t.holder.owner } : {}),
-  ...(t.run ? { runId: t.run.runId } : {}), ...(t.waiting ? { waitingFor: t.state === 'waiting-for-approval' ? 'approval' : 'input' } : {}), ...(t.updatedAt ? { updatedAt: t.updatedAt } : {}),
+  ...(t.run ? { runId: t.run.runId } : {}), ...(t.waiting ? { waitingFor: t.state === 'waiting-for-approval' ? 'approval' : t.state === 'review' ? 'operator' : 'input' } : {}), ...(t.updatedAt ? { updatedAt: t.updatedAt } : {}),
 })
 /** The milestone being worked on: the first funded one, else the first planned. */
 const currentMilestone = (p: Project) => (p.milestones.find((m) => m.state === 'funded') ?? p.milestones.find((m) => m.state === 'planned'))?.id

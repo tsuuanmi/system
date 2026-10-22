@@ -56,7 +56,13 @@ request that never expires (INV-9).
   The schema refuses a policy that says so (for `remediation`, which the schema predates, a
   load-time rule does), and the provider raises each of them to at least `ask` whatever a rule
   says.
-- A failed required check sends the action back to the lead as work, not to the operator.
+- A failed required check sends the action back to the lead as work, not to the operator. A
+  check nobody reported is not a failure: the board holds such a review for the operator's own
+  acceptance ([board](board.md#required-checks-bind-at-acceptance)).
+- A wait for a person on a class lasts the shortest `expiresSeconds` of the rules that apply to
+  it, else the stricter `expiry.defaultSeconds`, never more than the stricter `expiry.maxSeconds`
+  (`waitSeconds` in `approvals-core`): a request's `expiresAt`, and a review the board holds for
+  the operator.
 - A `command` is judged by its exact argv. An argv equal, word for word and with nothing more,
   to a line on every applying commands list is judged as `workspace-write` (unless `command` is
   `forbid`); any other is the `command` class. An argv with a word that holds a shell

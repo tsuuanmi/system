@@ -506,7 +506,12 @@ guesses.
   waits for input with reason `retries-spent`; `attempts.count` never exceeds `attempts.max`.
   Every new attempt goes through the autonomy policy again, so an approval request's subject
   `board-task:<taskId>:attempt:<n>` (`n`, the attempts already made) covers one attempt only.
-- Only a claimed, running, or reviewed task has a `holder`. A result always names its subject:
+- Only a claimed, running, or reviewed task has a `holder`, and a review the board holds for the
+  operator has none: it has `waiting` instead, with reason `operator-review`, the checks still
+  pending (`pendingChecks`), and the policy's wait for the class as its expiry, after which it
+  waits for input (`review-expired`). Example:
+  [`board-task.operator-review.json`](../../schemas/examples/board-task.operator-review.json).
+  A result always names its subject:
   the worktree's commit, or the result artifact (`{type: artifact}`) for work with no
   repository, so a task is never stuck in review for want of one. A task that `writes` a subject
   leaves its result on that subject (the same type and ref, at its new version).
@@ -519,7 +524,8 @@ guesses.
   the `taskId` and the result's exact `subject` (version included), and may report the `checks`
   it ran (check name → passed); its inputs hold every artifact of the result and its digest. One
   not made by the operator accepts only when the policy finds none of the class's required checks
-  failed ([board](../design/board.md#required-checks-bind-at-acceptance)). A task in review keeps its holder's lease while verification runs; if the lease
+  failed ([board](../design/board.md#required-checks-bind-at-acceptance)); otherwise the board holds the review for the
+  operator. A task in review keeps its holder's lease while verification runs; if the lease
   lapses with no decision, the task waits for input (`review-expired`), which expires in turn.
 - A holder lost mid-run is first reconciled by the run's owner: a completed run's result is
   applied with its `acceptance` decision, as a review's would be, a failed one counts as an

@@ -599,9 +599,11 @@
                 "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
               },
               "waitingFor": {
+                "description": "What the task waits for: input, an approval, or the operator's acceptance of its review.",
                 "enum": [
                   "input",
-                  "approval"
+                  "approval",
+                  "operator"
                 ]
               },
               "updatedAt": {
@@ -653,9 +655,11 @@
                 "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
               },
               "waitingFor": {
+                "description": "What the task waits for: input, an approval, or the operator's acceptance of its review.",
                 "enum": [
                   "input",
-                  "approval"
+                  "approval",
+                  "operator"
                 ]
               },
               "updatedAt": {
@@ -707,9 +711,11 @@
                 "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
               },
               "waitingFor": {
+                "description": "What the task waits for: input, an approval, or the operator's acceptance of its review.",
                 "enum": [
                   "input",
-                  "approval"
+                  "approval",
+                  "operator"
                 ]
               },
               "updatedAt": {
@@ -882,9 +888,11 @@
                 "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
               },
               "waitingFor": {
+                "description": "What the task waits for: input, an approval, or the operator's acceptance of its review.",
                 "enum": [
                   "input",
-                  "approval"
+                  "approval",
+                  "operator"
                 ]
               },
               "updatedAt": {

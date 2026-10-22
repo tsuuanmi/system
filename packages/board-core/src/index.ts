@@ -7,9 +7,9 @@
  * @module @tsuuanmi/system-board-core
  */
 import { type Context, Service } from '@deepseek-ai/cordis'
-import type { ActionClass, ArtifactRef, Classification, Subject } from '@tsuuanmi/system-approvals-core'
+import type { ActionClass, ArtifactRef, Check, Classification, Subject } from '@tsuuanmi/system-approvals-core'
 
-export type { ActionClass, ArtifactRef, Classification, Subject }
+export type { ActionClass, ArtifactRef, Check, Classification, Subject }
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -57,7 +57,8 @@ export interface Project {
 
 export type TaskState = 'proposed' | 'ready' | 'claimed' | 'running' | 'review' | 'waiting-for-input' | 'waiting-for-approval' | 'done' | 'cancelled'
 export const TERMINAL: readonly TaskState[] = ['done', 'cancelled']
-export type WaitReason = 'approval-needed' | 'budget-spent' | 'reconciliation-failed' | 'retries-spent' | 'question' | 'rejected' | 'review-expired'
+/** `operator-review`: a task in review whose acceptance only the operator can give now (a required check not passed); the board holds it, not a lease. */
+export type WaitReason = 'approval-needed' | 'budget-spent' | 'reconciliation-failed' | 'retries-spent' | 'question' | 'rejected' | 'review-expired' | 'operator-review'
 export type CancelReason = 'operator' | 'lead' | 'project-closed' | 'input-expired' | 'superseded' | 'forbidden' | 'dependency-cancelled'
 
 /** `board-task@1.0`. */
@@ -79,7 +80,7 @@ export interface BoardTask {
   holder?: { owner: string; generation: number; leaseExpiresAt: string }
   run?: { runId: string; brief?: ArtifactRef; startedAt: string }
   result?: { artifacts: ArtifactRef[]; digest?: ArtifactRef; subject: Subject; files?: string[]; acceptance?: ArtifactRef; next?: string }
-  waiting?: { reason: WaitReason; approvalRequest?: string; questions?: string[]; since: string; expiresAt: string }
+  waiting?: { reason: WaitReason; approvalRequest?: string; questions?: string[]; pendingChecks?: Check[]; since: string; expiresAt: string }
   cancellation?: { reason: CancelReason; note?: string; at: string }
   createdAt: string
   updatedAt?: string
@@ -179,14 +180,18 @@ export abstract class Board extends Service {
    * (through the gate again) or a wait for input. The decision names the task and the result's
    * exact subject in `outcome.detail` and every result artifact in its inputs; one that is not the
    * operator's accepts only when the policy finds none of the class's required checks failed,
-   * given the checks it reports (`outcome.detail.checks`).
+   * given the checks it reports (`outcome.detail.checks`). Otherwise the board holds the review
+   * for the operator: the lease released, `waiting.reason` `operator-review` with the checks still
+   * pending, until the policy's wait for the class; it returns the task in review. A review held so
+   * refuses such a decision again; the operator's acceptance, or a rejection, applies.
    */
   abstract accept(taskId: string, acceptance: ArtifactRef, at?: Date): Promise<BoardTask>
 
   /**
    * The run's owner reports the outcome of the task's recorded run, even after the holder's lease
-   * lapsed: a completed run's accepted result makes it done (a rejected one, another attempt), a
-   * failed run counts as an attempt. A pending `reconciliation-failed` approval is withdrawn once
+   * lapsed: a completed run's accepted result makes it done (a rejected one, another attempt; one
+   * only the operator may accept now, a review held for the operator, as in `accept`), a failed
+   * run counts as an attempt. A pending `reconciliation-failed` approval is withdrawn once
    * the move committed. Fenced by the run id: an outcome for another run is refused.
    */
   abstract reconcileRun(taskId: string, runId: string, outcome: RunOutcome, at?: Date): Promise<BoardTask>

@@ -344,8 +344,8 @@ is refused (`config_error`), and every other run is unaffected.
   run ran failed, which rejects: the work goes back as another attempt.
 - **The report** is the board's own move, read against the board's record first, so a report
   repeated after a crash moves nothing twice. With its holder, a completed run's result is
-  submitted, then its acceptance applied; a non-operator acceptance the board refuses (a
-  required check not reported) leaves the task in review for the operator
+  submitted, then its acceptance applied; when only the operator may accept it (a required check
+  not reported), the board holds the review for the operator
   ([required checks](board.md#required-checks-bind-at-acceptance)). A failed or stopped run, and
   a completed run whose holder was lost, is reported with `reconcileRun`, after a
   `reconciliation` decision. A task that no longer waits on the run takes no report. A board

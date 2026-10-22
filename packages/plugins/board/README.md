@@ -25,6 +25,12 @@ charters, and their tasks.
     already approved, one a crash left between asking and committing, so a retried move asks the
     operator once and an approval given meanwhile applies. It lists the project's open, batched,
     and approved requests to find it, which grows with the project's history (M5, open).
+  - An accepting decision that is not the operator's, with the class's required checks not
+    passed (or the class forbidden), holds the review for the operator: the lease released,
+    `waiting` `operator-review` with the checks still pending, for the policy's wait for the class
+    (`waitSeconds` over `ctx.approvals.policy`), then `review-expired` on the sweep. Only the
+    operator's acceptance (on `/ui`, [`web-ui`](../web-ui/README.md)) accepts it then; a
+    rejection, or a decision with the checks passed, applies.
   - A move that ends a wait (`reconcileRun`, `cancel`, `close`) reads the request first, commits,
     and withdraws it after; a withdrawal that fails is logged, and the request expires on its
     own. The sweep leaves a task waiting on a withdrawn request as it is (only the board

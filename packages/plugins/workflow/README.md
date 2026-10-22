@@ -242,8 +242,8 @@ second execution path (INV-1).
     `wind-down`), reconciles what is in flight, and fails the rest as `holder_lost`;
   - a completed run's result is bound to the subject the task writes (else `stale_subject`),
     with an `acceptance` decision (`workflow.task-acceptance`) naming the task, the subject, and
-    the checks the run ran (`schema`, `review`), then submitted and accepted; a refused
-    acceptance leaves the task in review. A failed or stopped run, and a run whose holder was
+    the checks the run ran (`schema`, `review`), then submitted and accepted; one only the
+    operator may accept leaves the review held for the operator. A failed or stopped run, and a run whose holder was
     lost, is reported with `reconcileRun` (a `reconciliation` decision). The view's `task`
     shows the claim, the phase, and how the outcome reached the board;
   - such a run is not continued, superseded, deleted, or expired before its outcome is reported.
@@ -414,7 +414,8 @@ second execution path (INV-1).
   adopted, stale claims refused, the lease renewed past its length, a failed and a stopped run
   reported, a restart with the holder lost (reconciled, nothing new started) and one whose work
   finished meanwhile (accepted through `reconcileRun`), a review left to the operator for want
-  of a required check, a result off the written subject, and the refusals with no board.
+  of a required check (held by the board, past the run's lease), a result off the written
+  subject, and the refusals with no board.
 
 ## Source layout
 

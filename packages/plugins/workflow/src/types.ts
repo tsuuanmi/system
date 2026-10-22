@@ -123,8 +123,8 @@ export interface TaskView {
 export interface TaskOutcome {
   /**
    * `accepted` or `rejected`: submitted, and the acceptance decision applied; `review`: submitted,
-   * and the board refused the acceptance (a required check not passed), so the task waits in review
-   * for the operator; `reconciled`: reported with `reconcileRun`; `not-started`: the board never
+   * and only the operator's acceptance accepts it now (a required check not reported), so the board
+   * holds the review for the operator; `reconciled`: reported with `reconcileRun`; `not-started`: the board never
    * recorded the run, so nothing of it ran; `moved-on`: the task no longer waited on this run;
    * `refused`: the board refused the report.
    */

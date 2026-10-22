@@ -12,8 +12,9 @@
  *   nothing new: it reconciles what is in flight and fails what is left (INV-4, INV-15).
  * - **Its outcome** goes through the board's own move: a completed run's result, on the exact
  *   subject the task writes, is submitted and the engine's `acceptance` decision applied; a failed
- *   run, and any run whose holder was lost, is reported with `reconcileRun`. A non-operator
- *   acceptance the board refuses (a required check not passed) leaves the task in review.
+ *   run, and any run whose holder was lost, is reported with `reconcileRun`. When only the
+ *   operator may accept the result (a required check not reported), the board holds the review
+ *   for the operator.
  *
  * Every move goes through `ctx.board`: the engine never writes board state, and each of its own
  * choices is a decision with a reason for every candidate (INV-13). The board is optional: a run
@@ -565,15 +566,21 @@ export class TaskRuns {
     return this.settled(row, { status: 'moved-on', state: task.state, reason: `task ${task.taskId} is ${task.state}, and takes no report of a ${run.status} run` })
   }
 
-  /** Apply the engine's acceptance decision. A refusal leaves the task where the board keeps it: in review for the operator. */
+  /**
+   * Apply the engine's acceptance decision. One the board does not apply because only the
+   * operator's acceptance accepts the result now (a required check not reported) leaves the task
+   * in review, held by the board for the operator.
+   */
   private async accept(row: TaskRow, board: Board, acceptance: ArtifactRef): Promise<void> {
     try {
       const task = await board.accept(row.task_id, acceptance)
+      if (task.state === 'review') {
+        return this.settled(row, { status: 'review', state: task.state, decision: acceptance, reason: `held for the operator until ${task.waiting?.expiresAt ?? '(no expiry)'}${task.waiting?.pendingChecks?.length ? `: ${task.waiting.pendingChecks.join(', ')} pending` : ''}` })
+      }
       return this.settled(row, { status: task.state === 'done' ? 'accepted' : 'rejected', state: task.state, decision: acceptance })
     } catch (error) {
       if (!(error instanceof BoardError)) throw error
-      // `invalid`: not the operator's, and a required check not passed: the review is the operator's.
-      return this.settled(row, { status: error.failure === 'invalid' ? 'review' : 'refused', state: 'review', decision: acceptance, reason: `accept: ${refusal(error)}` })
+      return this.settled(row, { status: 'refused', state: 'review', decision: acceptance, reason: `accept: ${refusal(error)}` })
     }
   }
 

@@ -377,9 +377,12 @@ describe('ctx.workflow serves board tasks over the store-backed board and approv
     expect(await settled(ctx, run.runId)).toMatchObject({ status: 'completed' })
     const view = await reported(ctx, run.runId)
     expect(view.task?.outcome).toMatchObject({ status: 'review', state: 'review' })
-    expect(view.task?.outcome?.reason).toMatch(/tests, lint not passed/)
+    expect(view.task?.outcome?.reason).toMatch(/held for the operator until .*: tests, lint pending/)
     const review = (await ctx.board.task(task.taskId))!
-    expect(review).toMatchObject({ state: 'review', result: { artifacts: [view.result] } })
+    // Held by the board, not by the run's lease: the policy's wait for the class (an hour here).
+    expect(review).toMatchObject({ state: 'review', result: { artifacts: [view.result] }, waiting: { reason: 'operator-review', pendingChecks: ['tests', 'lint'] } })
+    expect(review.holder).toBeUndefined()
+    expect(Date.parse(review.waiting!.expiresAt) - Date.parse(review.waiting!.since)).toBe(3600_000)
     expect(review.result?.acceptance).toBeUndefined()
   })
 

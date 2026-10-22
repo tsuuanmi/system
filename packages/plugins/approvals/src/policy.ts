@@ -4,7 +4,7 @@
  * policy set gives an action. Pure: no store, no clock. Code decides, never a model.
  */
 import type { Action, ActionClass, AutonomyPolicy, Check, Mode } from '@tsuuanmi/system-approvals-core'
-import { ALWAYS_ASK, MODES, SHELL_METACHARACTER } from '@tsuuanmi/system-approvals-core'
+import { ALWAYS_ASK, applyingPolicies as applying, MODES, SHELL_METACHARACTER, waitSeconds as expiryOf } from '@tsuuanmi/system-approvals-core'
 import { contentId, SchemaRegistry } from '@tsuuanmi/system-libs'
 
 /** Every action class (`common@1`'s `actionClass`), in the order `policy()` reports them. */
@@ -41,13 +41,6 @@ export interface Judgement {
 /** The batch rule when no policy names one: every request is its own batch, at once. */
 const NO_BATCHING = { maxSize: 1, maxWaitSeconds: 0 } as const
 
-/** The policies of a set (the studio's, then the project's) that apply to a class: a project policy constrains only the classes it names. */
-function applying(policies: readonly AutonomyPolicy[], actionClass: ActionClass): AutonomyPolicy[] {
-  const [studio, ...narrowing] = policies
-  const names = (p: AutonomyPolicy): boolean => p.rules.some((r) => r.actionClass === actionClass)
-  return [studio!, ...narrowing.filter((p) => !names(studio!) || names(p))]
-}
-
 /**
  * The strictest rule for a class over the policies that apply to it. A class the studio policy
  * does not name takes each policy's rule or default, so the stricter default applies where neither
@@ -65,17 +58,6 @@ function effectiveOf(policies: readonly AutonomyPolicy[], actionClass: ActionCla
   }
   const effective = { ...best!, requires: [...requires] }
   return ALWAYS_ASK.includes(actionClass) && rank(effective.mode) < rank('ask') ? { ...effective, mode: 'ask', raised: effective.mode } : effective
-}
-
-/**
- * How long a request for the class waits: the shortest `expiresSeconds` of the rules that apply
- * to it (the studio's and the project's), else the stricter `expiry.defaultSeconds`, never more
- * than the stricter `expiry.maxSeconds`.
- */
-function expiryOf(policies: readonly AutonomyPolicy[], actionClass: ActionClass): number {
-  const named = applying(policies, actionClass).flatMap((p) => p.rules.filter((r) => r.actionClass === actionClass && r.expiresSeconds !== undefined).map((r) => r.expiresSeconds!))
-  const seconds = named.length ? Math.min(...named) : Math.min(...policies.map((p) => p.expiry.defaultSeconds))
-  return Math.min(seconds, ...policies.map((p) => p.expiry.maxSeconds))
 }
 
 /** The batch rule of a set: the first policy's that names one, the studio's first, and that policy. */
