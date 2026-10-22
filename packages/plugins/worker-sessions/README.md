@@ -56,3 +56,15 @@
   - Config `checkpointEveryTurns` and `compactAtTokens` drive the engine's
     checkpoints and compaction.
 - **Injects:** `store`, `artifacts`; `mcp` is optional.
+- The conformance suite is [`conformance/worker-sessions.ts`](conformance/worker-sessions.ts),
+  run through the [conformance runner](../../libs/conformance/runner.ts) at contract 1.0
+  against this plugin with `SESSIONS_CONFIG`:
+  - a SessionId bound once to its Worker, unchanged across activations and compaction;
+  - a binding generation that advances on re-activation and fences a stale activation's
+    writes (baselined: not kept yet);
+  - an ordered mailbox; redelivery from `mailboxSeq + 1`; deduplication on
+    `(from, messageId)`;
+  - policy refusals (sender, target, budget) as `gate` decisions; barriers hold messages;
+  - a body is data, never authority (INV-6);
+  - one writer per subject (INV-15) and the egress check of `refs` (baselined: not kept yet);
+  - activation needs a conversation and fits the turn and lifetime budgets.
