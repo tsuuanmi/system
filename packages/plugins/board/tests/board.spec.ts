@@ -35,14 +35,16 @@ class FlakyApprovals extends FakeApprovals {
   down = false
   /** Only withdrawals fail, as a crash right after a move committed would leave it. */
   withdrawDown = false
+  /** Requests the queue no longer knows, as a lost row or a restore from an older backup would leave it. */
+  readonly forgotten = new Set<string>()
   private up(): void {
     if (this.down) throw new Error('the approval queue is unavailable')
   }
 
   override async check(action: Action) { this.up(); return super.check(action) }
   override async request(request: NewRequest, when?: Date) { this.up(); return super.request(request, when) }
-  override async get(requestId: string) { this.up(); return super.get(requestId) }
-  override async list(filter?: Parameters<FakeApprovals['list']>[0]) { this.up(); return super.list(filter) }
+  override async get(requestId: string) { this.up(); return this.forgotten.has(requestId) ? undefined : super.get(requestId) }
+  override async list(filter?: Parameters<FakeApprovals['list']>[0]) { this.up(); return (await super.list(filter)).filter((r) => !this.forgotten.has(r.requestId)) }
   override async withdraw(requestId: string, when?: Date) {
     this.up()
     if (this.withdrawDown) throw new Error('the approval queue is unavailable')
@@ -352,6 +354,42 @@ describe('ctx.board (store-backed): the approval queue', () => {
     expect((await ctx.approvals.get(waiting.waiting!.approvalRequest!))?.state).toBe('open')
     expect(await ctx.board.close('p2', 'stopped', at(4))).toMatchObject({ state: 'closed' })
     expect((await ctx.approvals.get(waiting.waiting!.approvalRequest!))?.resolution?.cause).toBe('withdrawn')
+  })
+
+  it('applies a wait\'s expiry itself when the queue no longer knows its request, also across a restart: nothing waits forever (S2, INV-9)', async () => {
+    const b = await boot()
+    const { ctx, approvals } = b
+    await active(ctx)
+    const merge = await ctx.board.propose(task('p2', 'merge', { actionClass: 'merge' }), at(2))
+    await ctx.board.sweep(at(2))
+    const waiting = (await ctx.board.task(merge.taskId))!
+    const founded = await ctx.board.charter({ projectId: 'p4', title: 'Lost', charter: CHARTER }, at(2))
+    const early = await ctx.board.propose(task('p4', 'early', { writes: { type: 'git-head', ref: 'refs/heads/lost' } }), at(2))
+    const charterDue = (await ctx.approvals.get(founded.approvalRequest))!.expiresAt
+    approvals().forgotten.add(waiting.waiting!.approvalRequest!)
+    approvals().forgotten.add(founded.approvalRequest)
+    await b.restartBoard()
+    expect(await ctx.board.sweep(new Date(Date.parse(waiting.waiting!.expiresAt) - 1))).toEqual({ tasks: [], projects: [] })
+    expect(await ctx.board.task(merge.taskId)).toEqual(waiting)
+    const swept = await ctx.board.sweep(new Date(Math.max(Date.parse(waiting.waiting!.expiresAt), Date.parse(charterDue))))
+    expect(swept.tasks.map((t) => t.taskId).sort()).toEqual([merge.taskId, early.taskId].sort())
+    const expired = (await ctx.board.task(merge.taskId))!
+    expect(expired).toMatchObject({ state: 'waiting-for-input', waiting: { reason: 'rejected' } })
+    expect(ctx.artifacts.get(expired.lastDecision!)?.body).toMatchObject({ decisionType: 'board', outcome: { option: 'waiting-for-input', detail: { cause: 'expired', approvalRequest: waiting.waiting!.approvalRequest } } })
+    expect(await ctx.board.project('p4')).toMatchObject({ state: 'closed', closure: { outcome: 'abandoned' } })
+    expect(await ctx.board.task(early.taskId)).toMatchObject({ state: 'cancelled', cancellation: { reason: 'project-closed' } })
+    expect(await ctx.board.sweep(at(60 * 24 * 365))).toMatchObject({ projects: [] })
+  })
+
+  it('withdraws the request of a wait it expired itself, so the operator is not shown it again', async () => {
+    const { ctx } = await boot()
+    await active(ctx)
+    const merge = await ctx.board.propose(task('p2', 'merge', { actionClass: 'merge' }), at(2))
+    await ctx.board.sweep(at(2))
+    const { waiting } = (await ctx.board.task(merge.taskId))!
+    await ctx.board.sweep(new Date(Date.parse(waiting!.expiresAt)))
+    expect((await ctx.approvals.get(waiting!.approvalRequest!))?.resolution?.cause).toBe('withdrawn')
+    expect(await open(ctx, 'p2')).toEqual([])
   })
 
   it('withdraws a pending amendment\'s request when its project closes, and holds one amendment at a time', async () => {

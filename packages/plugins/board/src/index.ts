@@ -77,11 +77,21 @@ const MIGRATIONS = [{
   CREATE TABLE board_client_requests (
     client_request_id TEXT PRIMARY KEY, tool TEXT NOT NULL, project_id TEXT NOT NULL, task_id TEXT, approval_request TEXT, created_at TEXT NOT NULL
   );`,
+}, {
+  // When a pending charter request expires, so the board applies the expiry itself when the queue
+  // never resolves it or no longer knows it (INV-9); the version a retried board_charter asked about.
+  version: 2,
+  sql: `ALTER TABLE board_projects ADD COLUMN charter_expires_at TEXT;
+  ALTER TABLE board_client_requests ADD COLUMN charter_version INTEGER;`,
 }]
 
 type Changes<T> = { [K in keyof T]?: T[K] | undefined }
 /** A task as stored: its record and the holder's lease token, which never leaves the store. */
 interface Stored { task: BoardTask; token?: string; ttlMs?: number }
+/** A project as stored: its record and its pending charter request, with the version it asks about and when it expires. */
+interface StoredProject { project: Project; request?: string; version?: number; expiresAt?: string }
+/** A charter request settled by the sweep: the project as it now is, and the tasks it cancelled. */
+interface Settled { project: Project; cancelled: BoardTask[] }
 /** What a move changes; `lease` is set when it takes or renews the holder's lease. */
 interface Move { changes: Changes<BoardTask>; lease?: { token: string; ttlMs: number } }
 /** Why a decision went one way: the chosen move, and why the task (or project) did not stay where it was. */
@@ -96,6 +106,8 @@ const charterHash = (charter: Charter): string => {
 }
 /** The key of the subject an open task writes; one open task per key (INV-15). */
 const writesKey = (subject: Subject | undefined): string | null => (subject ? JSON.stringify([subject.type, subject.ref]) : null)
+/** The earlier of two instants, either of which may be unknown. */
+const earliest = (a: string | undefined, b: string | undefined): string | undefined => (a === undefined ? b : b === undefined || Date.parse(a) <= Date.parse(b) ? a : b)
 const sameSubject = (a: Subject, b: Subject): boolean => a.type === b.type && a.ref === b.ref && a.version === b.version
 /** At most `max` characters (code points), cut on a whole one. */
 const clamp = (text: string, max: number): string => {
@@ -290,14 +302,14 @@ export class StoreBoard extends Board {
         if (existing) {
           const now = this.projectOf(projectId)
           if (now.project.revision !== existing.project.revision || now.request) throw new BoardError('conflict', `${projectId} changed while its charter was being asked about`)
-          project = this.writeProject(now.project, draft, { request: request.requestId, version })
+          project = this.writeProject(now.project, draft, { request: request.requestId, version, expiresAt: request.expiresAt })
         } else {
           if (this.readProject(projectId)) throw new BoardError('conflict', `${projectId} already exists`)
           // Founding is the move — → proposed; the `autonomy` decision that asked is its decision.
           project = { ...draft, lastDecision: request.policy.decision }
           this.validProject(project)
-          db.prepare('INSERT INTO board_projects (project_id, state, created_at, revision, record, charter_request, charter_version) VALUES (?, ?, ?, ?, ?, ?, ?)')
-            .run(projectId, project.state, project.createdAt, project.revision, JSON.stringify(project), request.requestId, version)
+          db.prepare('INSERT INTO board_projects (project_id, state, created_at, revision, record, charter_request, charter_version, charter_expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+            .run(projectId, project.state, project.createdAt, project.revision, JSON.stringify(project), request.requestId, version, request.expiresAt)
         }
         if (clientRequestId !== undefined) this.recordRequest(clientRequestId, 'board_charter', projectId, undefined, request.requestId, at)
         return { project, approvalRequest: request.requestId }
@@ -612,7 +624,8 @@ export class StoreBoard extends Board {
     for (const { project_id } of this.ctx.store.db.prepare('SELECT project_id FROM board_projects WHERE charter_request IS NOT NULL ORDER BY created_at, project_id').all() as Array<{ project_id: string }>) {
       try {
         const moved = await this.settleCharter(project_id, at)
-        if (moved) projects.set(moved.projectId, moved)
+        if (moved) projects.set(moved.project.projectId, moved.project)
+        for (const t of moved?.cancelled ?? []) tasks.set(t.taskId, t)
       } catch (error) {
         this.skipped(`the charter of ${project_id}`, error)
       }
@@ -638,39 +651,92 @@ export class StoreBoard extends Board {
 
   // --- the sweep's moves ---
 
-  /** An approved charter takes effect; a refused first charter abandons its project, a refused amendment is dropped. */
-  private async settleCharter(projectId: string, at: Date): Promise<Project | undefined> {
+  /**
+   * An approved charter takes effect; a refused first charter abandons its project, cancelling its
+   * open tasks in the same transaction, and a refused amendment is dropped. A charter request the
+   * queue never resolved, or no longer knows, is refused by the board itself once it expired
+   * (INV-9): that decides nothing and starts nothing.
+   */
+  private async settleCharter(projectId: string, at: Date): Promise<Settled | undefined> {
     const before = this.projectOf(projectId)
     if (!before.request) return undefined
     const request = await this.ctx.approvals.get(before.request)
-    if (!request) {
-      this.ctx.logger.warn(`board: the approval queue does not know ${before.request}, the charter request of ${projectId}; it keeps waiting`)
-      return undefined
+    // Only the board withdraws a request, and only once nothing waits on it: a withdrawn one is not a verdict.
+    const resolution = request?.resolution && request.resolution.cause !== 'withdrawn' ? request.resolution : undefined
+    if (!resolution) {
+      const due = earliest(before.expiresAt, request?.expiresAt)
+      if (due === undefined || Date.parse(due) > at.getTime()) {
+        if (!request) this.ctx.logger.warn(`board: the approval queue does not know ${before.request}, the charter request of ${projectId}; it waits until ${due ?? 'an expiry the board does not know'}`)
+        return undefined
+      }
+      return this.expireCharter(before, request, due, at)
     }
-    if (!request.resolution) return undefined
-    const resolution = request.resolution
-    return this.ctx.store.transaction(() => {
+    const settled = this.ctx.store.transaction((): (Settled & { released: string[] }) | undefined => {
       const now = this.projectOf(projectId)
-      if (now.request !== request.requestId) return undefined
+      if (now.request !== before.request) return undefined
       const { project } = now
       const pending = project.state === 'proposed' ? project.charter : project.proposedCharter
       // INV-5: the verdict counts only for the exact charter it was asked about.
-      const bound = pending !== undefined && pending.version === now.version && request.subject.ref === charterRef(projectId, pending.version) && request.subject.version === charterHash(pending)
-      if (request.state === 'approved' && !bound) this.ctx.logger.warn(`board: ${request.requestId} does not bind the stored charter of ${projectId}; it is not applied`)
-      const approval = request.state === 'approved' && bound ? resolution.approval : undefined
+      const bound = pending !== undefined && pending.version === now.version && request!.subject.ref === charterRef(projectId, pending.version) && request!.subject.version === charterHash(pending)
+      if (request!.state === 'approved' && !bound) this.ctx.logger.warn(`board: ${request!.requestId} does not bind the stored charter of ${projectId}; it is not applied`)
+      const approval = request!.state === 'approved' && bound ? resolution.approval : undefined
       if (project.state === 'proposed') {
-        return this.writeProject(project, changed(project, at, approval
-          ? { state: 'active', charter: { ...project.charter, approval }, lastDecision: resolution.decision }
-          : { state: 'closed', closure: { outcome: 'abandoned', decision: resolution.decision, at: at.toISOString() }, lastDecision: resolution.decision }), null)
+        if (approval) return { project: this.writeProject(project, changed(project, at, { state: 'active', charter: { ...project.charter, approval }, lastDecision: resolution.decision }), null), released: [], cancelled: [] }
+        return this.abandon(project, resolution.decision, at)
       }
       if (project.state === 'closed' || !project.proposedCharter) {
         this.writeProject(project, undefined, null)
         return undefined
       }
-      return this.writeProject(project, changed(project, at, approval
-        ? { charter: { ...project.proposedCharter, approval }, proposedCharter: undefined, lastDecision: resolution.decision }
-        : { proposedCharter: undefined, lastDecision: resolution.decision }), null)
+      return {
+        project: this.writeProject(project, changed(project, at, approval
+          ? { charter: { ...project.proposedCharter, approval }, proposedCharter: undefined, lastDecision: resolution.decision }
+          : { proposedCharter: undefined, lastDecision: resolution.decision }), null),
+        released: [], cancelled: [],
+      }
     })
+    if (!settled) return undefined
+    await this.withdrawAll(settled.released, at)
+    return { project: settled.project, cancelled: settled.cancelled }
+  }
+
+  /** Close a proposed project as abandoned with `decision`, and cancel its open tasks, in the caller's transaction. */
+  private abandon(project: Project, decision: ArtifactRef, at: Date): Settled & { released: string[] } {
+    const open = (this.ctx.store.db.prepare(`SELECT task_id FROM board_tasks WHERE project_id = ? AND state IN (${OPEN.map(() => '?').join(', ')}) ORDER BY seq`).all(project.projectId, ...OPEN) as Array<{ task_id: string }>).map((r) => r.task_id)
+    const { released } = this.cancelOpen(project, at)
+    const closed = this.writeProject(project, changed(project, at, { state: 'closed', closure: { outcome: 'abandoned', decision, at: at.toISOString() }, lastDecision: decision }), null)
+    return { project: closed, released, cancelled: open.map((id) => this.taskOf(id).task) }
+  }
+
+  /** The board's own refusal of a charter request that expired unresolved: a first charter abandons its project, an amendment is dropped. */
+  private async expireCharter(before: StoredProject, request: ApprovalRequest | undefined, due: string, at: Date): Promise<Settled | undefined> {
+    const requestId = before.request!
+    const why = `its charter request ${requestId} expired at ${due} with no verdict${request ? '' : ' (the approval queue does not know it)'}`
+    const settled = this.ctx.store.transaction((): (Settled & { released: string[] }) | undefined => {
+      const now = this.projectOf(before.project.projectId)
+      if (now.request !== requestId) return undefined
+      const { project } = now
+      if (project.state === 'proposed') {
+        const decision = this.decision(project, undefined, {
+          from: 'proposed', to: 'closed', why: `abandoned: ${why}`, whyNot: 'an unanswered charter is denied: nothing starts without an approved charter (INV-9)',
+          inputs: request ? [request.policy.decision] : [], detail: { outcome: 'abandoned', approvalRequest: requestId, cause: 'expired' },
+        }, at)
+        return this.abandon(project, decision, at)
+      }
+      if (project.state === 'closed' || !project.proposedCharter) {
+        this.writeProject(project, undefined, null)
+        return undefined
+      }
+      const decision = this.decision(project, undefined, {
+        from: 'amendment-pending', to: 'amendment-dropped', why: `amendment ${project.proposedCharter.version} dropped: ${why}`,
+        whyNot: 'an unanswered amendment is denied, and the approved charter stays (INV-9)', inputs: request ? [request.policy.decision] : [],
+        detail: { approvalRequest: requestId, version: project.proposedCharter.version, cause: 'expired' },
+      }, at)
+      return { project: this.writeProject(project, changed(project, at, { proposedCharter: undefined, lastDecision: decision }), null), released: [], cancelled: [] }
+    })
+    if (!settled) return undefined
+    await this.withdrawAll([...settled.released, ...(request && !request.resolution ? [requestId] : [])], at)
+    return { project: settled.project, cancelled: settled.cancelled }
   }
 
   private async sweepTask(taskId: string, at: Date): Promise<BoardTask | undefined> {
@@ -724,18 +790,33 @@ export class StoreBoard extends Board {
       case 'waiting-for-approval': {
         const requestId = task.waiting!.approvalRequest!
         const request = await this.ctx.approvals.get(requestId)
-        if (!request) {
-          this.ctx.logger.warn(`board: the approval queue does not know ${requestId}, which ${taskId} waits on; it keeps waiting`)
-          return undefined
-        }
-        if (!request.resolution) return undefined
         // Only the board withdraws a request, and only once nothing waits on it: a task still waiting
         // on a withdrawn one is a crash between the two (S7), so it keeps waiting for its owner's report.
-        if (request.resolution.cause === 'withdrawn') return undefined
-        const resolution = request.resolution
+        const resolution = request?.resolution && request.resolution.cause !== 'withdrawn' ? request.resolution : undefined
+        if (!resolution) {
+          // The board applies the wait's expiry itself when the queue has not (INV-9): it starts nothing and decides nothing.
+          const due = earliest(task.waiting!.expiresAt, request?.expiresAt)!
+          if (Date.parse(due) > at.getTime()) {
+            if (!request) this.ctx.logger.warn(`board: the approval queue does not know ${requestId}, which ${taskId} waits on; it waits until ${due}`)
+            return undefined
+          }
+          const moved = this.commitLater(task, at, undefined, (c) => ({
+            changes: {
+              state: 'waiting-for-input', waiting: this.inputWait('rejected', at),
+              lastDecision: this.decision(this.projectOf(task.projectId).project, c.task, {
+                from: 'waiting-for-approval', to: 'waiting-for-input',
+                why: `its approval wait expired at ${due} with no verdict${request ? '' : ` (the approval queue does not know ${requestId})`}`,
+                whyNot: 'an expired approval wait never starts work: it counts as rejected (INV-9)', inputs: request ? [request.policy.decision] : [],
+                detail: { reason: 'rejected', approvalRequest: requestId, cause: 'expired' },
+              }, at),
+            },
+          }))
+          if (request && !request.resolution) await this.withdrawUnheld(requestId, at)
+          return moved
+        }
         return this.commitLater(task, at, undefined, (c) => {
           // An approval counts only from the board's own request for this task (INV-5).
-          const approved = request.state === 'approved' && request.requester.component === 'board' && request.requester.taskId === taskId
+          const approved = request!.state === 'approved' && request!.requester.component === 'board' && request!.requester.taskId === taskId
           if (!approved) return { changes: { state: 'waiting-for-input', waiting: this.inputWait('rejected', at), lastDecision: resolution.decision } }
           // attempts.count never exceeds attempts.max: an approval to go on with no attempt left starts nothing (INV-9).
           if (c.task.attempts.count >= c.task.attempts.max) return { changes: { state: 'waiting-for-input', waiting: this.inputWait('retries-spent', at), lastDecision: resolution.decision } }
@@ -937,14 +1018,15 @@ export class StoreBoard extends Board {
   }
 
   /** Write a project's next revision (revision-checked); `pending` sets or clears (null) its charter request, undefined keeps it. */
-  private writeProject(before: Project, next: Project | undefined, pending?: { request: string; version: number } | null): Project {
+  private writeProject(before: Project, next: Project | undefined, pending?: { request: string; version: number; expiresAt: string } | null): Project {
     const record = next ?? before
     if (next) this.validProject(next)
-    const keep = pending === undefined
+    const keep = pending === undefined ? 1 : 0
     const changes = this.ctx.store.db.prepare(`UPDATE board_projects SET state = ?, revision = ?, record = ?,
-      charter_request = CASE WHEN ? THEN charter_request ELSE ? END, charter_version = CASE WHEN ? THEN charter_version ELSE ? END
+      charter_request = CASE WHEN ? THEN charter_request ELSE ? END, charter_version = CASE WHEN ? THEN charter_version ELSE ? END,
+      charter_expires_at = CASE WHEN ? THEN charter_expires_at ELSE ? END
       WHERE project_id = ? AND revision = ?`)
-      .run(record.state, record.revision, JSON.stringify(record), keep ? 1 : 0, pending?.request ?? null, keep ? 1 : 0, pending?.version ?? null, record.projectId, before.revision).changes
+      .run(record.state, record.revision, JSON.stringify(record), keep, pending?.request ?? null, keep, pending?.version ?? null, keep, pending?.expiresAt ?? null, record.projectId, before.revision).changes
     if (Number(changes) !== 1) throw new BoardError('conflict', `${record.projectId} changed under this move`)
     return record
   }
@@ -961,13 +1043,18 @@ export class StoreBoard extends Board {
     return stored
   }
 
-  private readProject(projectId: string): { project: Project; request?: string; version?: number } | undefined {
-    const row = this.ctx.store.db.prepare('SELECT record, charter_request, charter_version FROM board_projects WHERE project_id = ?').get(projectId) as { record: string; charter_request: string | null; charter_version: number | null } | undefined
+  private readProject(projectId: string): StoredProject | undefined {
+    const row = this.ctx.store.db.prepare('SELECT record, charter_request, charter_version, charter_expires_at FROM board_projects WHERE project_id = ?').get(projectId) as
+      { record: string; charter_request: string | null; charter_version: number | null; charter_expires_at: string | null } | undefined
     if (!row) return undefined
-    return { project: this.loadProject(projectId, row.record), ...(row.charter_request !== null ? { request: row.charter_request, version: Number(row.charter_version) } : {}) }
+    return {
+      project: this.loadProject(projectId, row.record),
+      ...(row.charter_request !== null ? { request: row.charter_request, version: Number(row.charter_version) } : {}),
+      ...(row.charter_request !== null && row.charter_expires_at !== null ? { expiresAt: row.charter_expires_at } : {}),
+    }
   }
 
-  private projectOf(projectId: string): { project: Project; request?: string; version?: number } {
+  private projectOf(projectId: string): StoredProject {
     const stored = this.readProject(projectId)
     if (!stored) throw new BoardError('unknown-project', `no project ${projectId}`)
     return stored

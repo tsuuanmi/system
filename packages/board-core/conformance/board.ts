@@ -134,6 +134,52 @@ export const boardSuite = defineSuite<Boot>({
       expect((await ctx.board.project('p2'))?.closure?.outcome).toBe('abandoned')
       expect((await ctx.approvals.get(second.approvalRequest))?.resolution?.cause).toBe('expired')
     }),
+    scenario('abandoned-cancels-tasks', 'cancels the open tasks of a project whose charter is refused, freeing the subjects they would write (INV-15)', async (ctx) => {
+      const { approvalRequest } = await ctx.board.charter({ projectId: 'p1', title: 'Kernel', charter: CHARTER }, T0)
+      const branch: Subject = { type: 'git-head', ref: 'refs/heads/kernel' }
+      const early = await ctx.board.propose(task('p1', 'early', { actionClass: 'workspace-write', writes: branch }), T0)
+      await decide(ctx, approvalRequest, 'rejected', at(1))
+      const { tasks, projects } = await ctx.board.sweep(at(1))
+      expect(projects.map((p) => p.projectId)).toEqual(['p1'])
+      expect(tasks.map((t) => t.taskId)).toEqual([early.taskId])
+      expect(validProject((await ctx.board.project('p1'))!)).toMatchObject({ state: 'closed', closure: { outcome: 'abandoned' } })
+      expect(validTask((await ctx.board.task(early.taskId))!)).toMatchObject({ state: 'cancelled', cancellation: { reason: 'project-closed' } })
+      await active(ctx, 'p2')
+      expect((await ctx.board.propose(task('p2', 'again', { actionClass: 'workspace-write', writes: branch }), at(2))).state).toBe('proposed')
+    }),
+    scenario('waits-expire-on-their-own', 'applies an approval wait\'s expiry itself when the queue has not: a task waits for input, a first charter abandons its project, an amendment is dropped; nothing starts (INV-9)', async (ctx) => {
+      await active(ctx, 'p2')
+      const merge = await ctx.board.propose(task('p2', 'merge', { actionClass: 'merge' }), at(2))
+      await ctx.board.sweep(at(2))
+      const waiting = (await ctx.board.task(merge.taskId))!
+      const due = Date.parse(waiting.waiting!.expiresAt)
+      await ctx.board.sweep(new Date(due - 1))
+      expect(await stateOf(ctx, merge.taskId)).toBe('waiting-for-approval')
+      // The queue's own sweep never ran: the board does not wait on it forever.
+      await ctx.board.sweep(new Date(due))
+      expect(validTask((await ctx.board.task(merge.taskId))!)).toMatchObject({ state: 'waiting-for-input', waiting: { reason: 'rejected' } })
+      expect(decisionOf(ctx, (await ctx.board.task(merge.taskId))!.lastDecision).outcome.option).toBe('waiting-for-input')
+
+      const founded = await ctx.board.charter({ projectId: 'p3', title: 'Unanswered', charter: CHARTER }, at(2))
+      const amended = await ctx.board.charter({ projectId: 'p2', title: 'project p2', charter: { ...CHARTER, version: 2, intent: 'Twice as fast.' } }, at(2))
+      const late = new Date(Math.max(...await Promise.all([founded, amended].map(async (c) => Date.parse((await ctx.approvals.get(c.approvalRequest))!.expiresAt)))))
+      await ctx.board.sweep(late)
+      expect(validProject((await ctx.board.project('p3'))!)).toMatchObject({ state: 'closed', closure: { outcome: 'abandoned' } })
+      const p2 = validProject((await ctx.board.project('p2'))!)
+      expect(p2).toMatchObject({ state: 'active', charter: { version: 1 } })
+      expect(p2.proposedCharter).toBeUndefined()
+
+      // A task left waiting on a withdrawn request (a crash between a move and its withdrawal) expires the same way.
+      await active(ctx, 'p1')
+      const t = await ready(ctx, task('p1', 't'))
+      const { generation } = await ctx.board.claim(t.taskId, 'lead', 60_000, at(3))
+      await ctx.board.start(t.taskId, generation, { runId: 'run-1' }, at(3))
+      await ctx.board.sweep(at(10))
+      const lost = (await ctx.board.task(t.taskId))!
+      await ctx.approvals.withdraw(lost.waiting!.approvalRequest!, at(11))
+      await ctx.board.sweep(new Date(Date.parse(lost.waiting!.expiresAt)))
+      expect(validTask((await ctx.board.task(t.taskId))!)).toMatchObject({ state: 'waiting-for-input', waiting: { reason: 'rejected' } })
+    }),
     scenario('charter-amendment', 'holds an amended charter until it is approved, keeping the project\'s state, and refuses a wrong version', async (ctx) => {
       await active(ctx)
       expect(await failureOf(ctx.board.charter({ projectId: 'p1', title: 'Kernel', charter: { ...CHARTER, version: 3 } }, at(5)))).toBe('invalid')
@@ -377,8 +423,8 @@ export class FakeBoard extends Board {
   static inject = ['artifacts', 'approvals']
   private readonly projectsById = new Map<string, Project>()
   private readonly tasksById = new Map<string, BoardTask>()
-  /** Pending charter requests: request id → project and the version it would approve. */
-  private readonly charters = new Map<string, { projectId: string; version: number }>()
+  /** Pending charter requests: request id → project, the version it would approve, and when it expires. */
+  private readonly charters = new Map<string, { projectId: string; version: number; expiresAt: string }>()
   private generations = new Map<string, number>()
 
   constructor(ctx: Context, private readonly config: { inputExpirySeconds?: number } = {}) {
@@ -441,7 +487,7 @@ export class FakeBoard extends Board {
       action: { class: 'charter', summary: `${existing ? 'Amend' : 'Found'} ${input.title}: ${input.charter.intent}`.slice(0, 500) },
       requester: { component: 'board', projectId }, verdict, classification: input.classification ?? 'operator-shared',
     }, at)
-    this.charters.set(request.requestId, { projectId, version })
+    this.charters.set(request.requestId, { projectId, version, expiresAt: request.expiresAt })
     if (existing) return { project: this.save(existing, at, { proposedCharter: input.charter }), approvalRequest: request.requestId }
     const project: Project = {
       schema: 'project@1.0', projectId, title: input.title, state: 'proposed', charter: input.charter, milestones: input.milestones ?? [],
@@ -662,21 +708,27 @@ export class FakeBoard extends Board {
   async sweep(at: Date) {
     const moved = new Map<string, BoardTask>()
     const movedProjects = new Map<string, Project>()
-    // Charters: an approved one takes effect; a refused first charter abandons its project.
-    for (const [requestId, { projectId, version }] of this.charters) {
+    // Charters: an approved one takes effect; a refused or expired first charter abandons its project and cancels its tasks.
+    for (const [requestId, { projectId, version, expiresAt }] of this.charters) {
       const request = await this.ctx.approvals.get(requestId)
-      if (!request?.resolution) continue
+      // The board refuses a request itself once it expired unresolved (INV-9); a withdrawn one is no verdict.
+      const resolved = request?.resolution && request.resolution.cause !== 'withdrawn'
+      if (!resolved && Date.parse(expiresAt) > at.getTime()) continue
       this.charters.delete(requestId)
       const project = this.projectOf(projectId)
-      const approved = request.state === 'approved'
+      const approved = resolved && request!.state === 'approved'
+      const decision = resolved ? request!.resolution!.decision : this.decide(projectId, 'charter asked', 'charter refused', at, `request ${requestId} expired at ${expiresAt} with no verdict`)
       if (project.state === 'proposed') {
-        movedProjects.set(projectId, approved
-          ? this.save(project, at, { state: 'active', charter: { ...project.charter, approval: request.resolution.approval! }, lastDecision: request.resolution.decision })
-          : this.save(project, at, { state: 'closed', closure: { outcome: 'abandoned', decision: request.resolution.decision, at: at.toISOString() }, lastDecision: request.resolution.decision }))
+        if (approved) {
+          movedProjects.set(projectId, this.save(project, at, { state: 'active', charter: { ...project.charter, approval: request!.resolution!.approval! }, lastDecision: decision }))
+        } else {
+          for (const t of this.tasksById.values()) if (t.projectId === projectId && !TERMINAL.includes(t.state)) moved.set(t.taskId, await this.cancelTask(t, 'project-closed', at))
+          movedProjects.set(projectId, this.save(project, at, { state: 'closed', closure: { outcome: 'abandoned', decision, at: at.toISOString() }, lastDecision: decision }))
+        }
       } else if (project.proposedCharter?.version === version) {
         movedProjects.set(projectId, this.save(project, at, approved
-          ? { charter: { ...project.proposedCharter, approval: request.resolution.approval! }, proposedCharter: undefined, lastDecision: request.resolution.decision }
-          : { proposedCharter: undefined, lastDecision: request.resolution.decision }))
+          ? { charter: { ...project.proposedCharter, approval: request!.resolution!.approval! }, proposedCharter: undefined, lastDecision: decision }
+          : { proposedCharter: undefined, lastDecision: decision }))
       }
     }
     for (const task of [...this.tasksById.values()].sort((a, b) => a.createdAt.localeCompare(b.createdAt))) {
@@ -701,8 +753,13 @@ export class FakeBoard extends Board {
         moved.set(task.taskId, this.save(task, at, { state: 'waiting-for-input', holder: undefined, waiting: this.inputWait('review-expired', at), lastDecision: this.decide(task.taskId, 'review', 'waiting-for-input', at, 'review-expired') }))
       } else if (task.state === 'waiting-for-approval') {
         const request = await this.ctx.approvals.get(task.waiting!.approvalRequest!)
-        // Only the board withdraws, once nothing waits: a task still waiting on a withdrawn request keeps waiting.
-        if (request?.resolution?.cause === 'withdrawn') continue
+        // Only the board withdraws, once nothing waits: a task still waiting on a withdrawn request keeps waiting,
+        // and the board applies a wait's expiry itself when the queue has not (INV-9).
+        if (!request?.resolution || request.resolution.cause === 'withdrawn') {
+          const due = Math.min(Date.parse(task.waiting!.expiresAt), request ? Date.parse(request.expiresAt) : Infinity)
+          if (due <= now) moved.set(task.taskId, this.save(task, at, { state: 'waiting-for-input', waiting: this.inputWait('rejected', at), lastDecision: this.decide(task.taskId, 'waiting-for-approval', 'waiting-for-input', at, 'the approval wait expired with no verdict') }))
+          continue
+        }
         if (request?.state === 'approved') moved.set(task.taskId, this.save(task, at, { state: 'ready', waiting: undefined, run: undefined, lastDecision: request.resolution!.decision }))
         else if (request?.state === 'rejected') moved.set(task.taskId, this.save(task, at, { state: 'waiting-for-input', waiting: this.inputWait('rejected', at), lastDecision: request.resolution!.decision }))
       } else if (task.state === 'waiting-for-input' && Date.parse(task.waiting!.expiresAt) <= now) {

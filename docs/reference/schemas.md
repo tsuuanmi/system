@@ -455,7 +455,9 @@ guesses.
   charter without approval}`. `board_charter` with an existing `projectId` amends its charter;
   otherwise it founds a project, with that id or a generated one. An amendment is held in
   `proposedCharter` with the next version
-  until approved, and the project keeps its state meanwhile.
+  until approved, and the project keeps its state meanwhile. A first charter that is rejected or
+  expires closes the project as `abandoned` and cancels its open tasks (`project-closed`); a
+  refused or expired amendment is dropped.
 - A milestone is funded (action class `funding`) by an approval on its budget, a funding round.
 - Budget use is computed from the usage records of its tasks, never stored on the project.
 - Stop rules are words: the lead or the operator judges them, and the action a rule names is put
@@ -479,7 +481,8 @@ guesses.
   repository, so a task is never stuck in review for want of one.
 - Every wait expires and never starts work: an approval wait follows its request, which expiry
   rejects, and then waits for input with reason `rejected`; an input wait that expires cancels
-  the task (`input-expired`).
+  the task (`input-expired`). When the queue has not resolved the request by `waiting.expiresAt`,
+  or no longer knows it, the board applies the expiry itself.
 - `done` needs an `acceptance` decision whose outcome is accepted; the schema checks only that
   it is named. A task in review keeps its holder's lease while verification runs; if the lease
   lapses with no decision, the task waits for input (`review-expired`), which expires in turn.

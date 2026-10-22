@@ -60,13 +60,13 @@ stateDiagram-v2
 ```
 
 An amendment (a pivot) does not change the project's state: the new charter waits in
-`proposedCharter` and replaces `charter` once approved, or is dropped when refused.
+`proposedCharter` and replaces `charter` once approved, or is dropped when refused or expired.
 
 | From → to | Who | Records | On failure |
 |---|---|---|---|
 | — → proposed | `charter`, by the lead or the operator | the `autonomy` decision (`charter` always asks) and an approval request on the charter's exact version | a charter carrying an approval, or a wrong version, is refused (`invalid`) |
 | proposed → active | `sweep`, on an approved request | the request's `approval` decision; `charter.approval` names the verdict | none: until approved nothing starts |
-| proposed → closed | `sweep`, on a rejected or expired request | `closure: abandoned` with that decision | — |
+| proposed → closed | `sweep`, on a rejected or expired request; at the request's expiry the board applies it itself when the queue has not resolved it or no longer knows it | `closure: abandoned` with the request's `approval` decision, or the board's own (`board`, cause `expired`); its open tasks are cancelled (`project-closed`) in the same transaction, which frees the subjects they would write | — |
 | active ↔ paused | `pause`, `resume` | a `board` decision | other states refused (`invalid-transition`) |
 | active or paused → closed | `close` | a `board` decision and `closure`; open tasks are cancelled (`project-closed`) in the same transaction, and the requests they and a pending amendment waited on are withdrawn after it | refused while a task runs or is in review |
 
@@ -147,7 +147,7 @@ hold. The fake provider does not check them, and the suite does not test them ye
 | review → waiting-for-input | `sweep`, the reviewer's lease lapsed with no decision | a `board` decision (`review-expired`) | the wait expires and cancels the task |
 | review → done | `accept` with an `acceptance` decision whose outcome is `accept` | that decision; `result.acceptance`; the run and subject stay | a decision of another type is refused |
 | review → ready / waiting-for-input | `accept` with a `reject` outcome | that decision; another attempt while `count < max`, else `retries-spent` | — |
-| waiting-for-approval → ready / waiting-for-input | `sweep`, on the request's resolution | the request's `approval` decision | rejection and expiry never start work: the task waits for input (`rejected`) |
+| waiting-for-approval → ready / waiting-for-input | `sweep`, on the request's resolution; at `waiting.expiresAt` (or the request's expiry, if earlier) the board applies the expiry itself when the queue has not resolved the request, withdrew it, or no longer knows it | the request's `approval` decision, or the board's own (`board`, cause `expired`), after which it withdraws a request still open | rejection and expiry never start work: the task waits for input (`rejected`) |
 | waiting-for-input → ready | `answer`, every question answered | a `board` decision | partial answers are refused |
 | waiting-for-input → cancelled | `sweep`, its wait expired | a `board` decision (`input-expired`) | — |
 | any not running or in review → cancelled | `cancel` (`operator`, `lead`, `superseded`) | a `board` decision; a pending approval request is withdrawn once the move committed; dependents are cancelled on the next sweep | a running task or one in review is refused |
@@ -161,7 +161,8 @@ hold. The fake provider does not check them, and the suite does not test them ye
    again without an approval. Its owner reconciles it first; only an unknown outcome reaches the
    operator.
 4. Every interrupted state expires, and expiry never starts work: an approval wait follows its
-   request, an input wait cancels the task (INV-9).
+   request, an input wait cancels the task (INV-9). The board does not depend on the queue for
+   this: it applies an unresolved or unknown request's expiry itself, for a task and a charter.
 5. A task is done only by an accepting `acceptance` decision on a result with its exact subject.
    The board never accepts by default, and review is bounded by the reviewer's lease.
 6. One task at a time holds write authority over a subject (`writes`), and every write presents

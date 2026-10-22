@@ -36,7 +36,12 @@ charters, and their tasks.
   partial unique index as well as the check in `propose` (INV-15).
 - **Time.** `sweep(at)` is the only time-driven path, and it is idempotent: it settles charter
   requests, then walks the open tasks in insertion order, so a dependency moves before the tasks
-  that depend on it. One item that fails is logged and left for the next sweep. The board sweeps
+  that depend on it. One item that fails is logged and left for the next sweep. A pending
+  request's expiry is applied by the board itself when the queue has not resolved it or no
+  longer knows it: the charter request's expiry is stored with the project
+  (`charter_expires_at`), a task's in its `waiting.expiresAt`, so nothing waits forever when the
+  queue lost a row or never sweeps. A first charter refused or expired abandons its project and
+  cancels its open tasks in the same transaction. The board sweeps
   once at start (a restart is a sweep) and every `sweepSeconds`; `0` leaves sweeping to the
   caller.
 - **Where the protocol's tables leave room**, this provider settles it as
