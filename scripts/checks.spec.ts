@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest'
 import { checkDocs, slugify } from './check-docs.ts'
 import { checkSchemas, loadSchemas, schemaId } from './check-schemas.ts'
 import { scanText } from './check-secrets.ts'
-import { undefinedCitations } from './gen-traceability.ts'
+import { scenarioTitle, testTitle, undefinedCitations } from './gen-traceability.ts'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const schemas = join(root, 'schemas')
@@ -118,5 +118,12 @@ describe('CI workflows', () => {
 describe('traceability', () => {
   it('finds no test citing an id that no requirement, quality attribute, or invariant defines', () => {
     expect(undefinedCitations()).toEqual([])
+  })
+
+  it('reads test titles and conformance scenario titles, which the suites hold as data', () => {
+    expect(testTitle(`  it('refuses a stale lease (INV-15)', async () => {`)).toBe('refuses a stale lease (INV-15)')
+    expect(scenarioTitle(`    scenario('expiry-rejects', 'rejects at expiry (INV-2)', async (ctx) => {`)).toBe('rejects at expiry (INV-2)')
+    expect(scenarioTitle(`  { id: 'meta.gap', since: '1.0', title: 'a known gap (INV-9)', run }`)).toBe('a known gap (INV-9)')
+    expect(scenarioTitle(`const scenario = (id: string, title: string, run: Run) => ({`)).toBeUndefined()
   })
 })
