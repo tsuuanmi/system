@@ -31,12 +31,13 @@ its types is not listed).
 | [workflow](../../packages/plugins/workflow/README.md) | orchestration | `workflow` | `workflow` | `store`, `artifacts`, `eventLog`, `leases`, `egress`, `workers`, `workerSessions`, `mcp` (optional) | `gateway-core`, `leases`, `libs`, `provider-core`, `worker-sessions`, `workers-core` |
 | [approvals-core](../../packages/approvals-core/README.md) | routing | defines `approvals` | — | — | — |
 | [egress](../../packages/plugins/egress/README.md) | routing | `egress` | `egress` | `artifacts` | `libs`, `provider-core` |
+| [resources](../../packages/plugins/resources/README.md) | routing | `resources` | `resources` | `store`, `artifacts`, `mcp` (optional) | `gateway-core`, `libs`, `resources-core` |
 | [resources-core](../../packages/resources-core/README.md) | routing | defines `resources` | — | — | — |
 | [workers](../../packages/plugins/workers/README.md) | routing | `workers` | `workers` | `artifacts` | `libs`, `workers-core` |
 | [workers-core](../../packages/workers-core/README.md) | routing | defines `workers` | — | — | — |
 | [agent-runtime-core](../../packages/agent-runtime-core/README.md) | capabilities | defines `agentRuntimes` | — | — | — |
 | [agent-runtimes](../../packages/plugins/agent-runtimes/README.md) | capabilities | `agentRuntimes` | `agent-runtimes` | — | `agent-runtime-core`, `libs` |
-| [agent-workers](../../packages/plugins/agent-workers/README.md) | capabilities | `agentWorkers` | `agent-workers` | `store`, `artifacts`, `leases`, `workers`, `agentRuntimes`, `egress` | `agent-runtime-core`, `leases`, `libs`, `provider-core`, `workers-core` |
+| [agent-workers](../../packages/plugins/agent-workers/README.md) | capabilities | `agentWorkers` | `agent-workers` | `store`, `artifacts`, `leases`, `workers`, `agentRuntimes`, `egress`, `resources` (optional) | `agent-runtime-core`, `leases`, `libs`, `provider-core`, `resources-core`, `workers-core` |
 | [models](../../packages/plugins/models/README.md) | capabilities | `models` | `models` | `llm`, `store`, `artifacts`, `leases`, `workers`, `egress`, `models`, `credentials` (optional), `eventLog` (optional), `mcp` (optional) | `gateway-core`, `leases`, `libs`, `models-core`, `provider-core`, `workers-core` |
 | [models-core](../../packages/models-core/README.md) | capabilities | defines `models` | — | — | `workers-core` |
 | [runtime-acp](../../packages/plugins/runtime-acp/README.md) | capabilities | — | `runtime-acp` | `agentRuntimes` | `agent-runtime-core`, `provider-core` |
@@ -68,8 +69,8 @@ its types is not listed).
 ## Seam graph
 
 An arrow runs from a consumer to the package that provides the seam; a dotted arrow is an optional
-seam. A seam with no provider yet, which only a row that is off by default may consume, points to
-the package that defines it. Rows of DSH core appear under host and libraries.
+seam. A seam with no provider yet (an optional seam, or one only a row that is off by default
+requires) points to the package that defines it. Rows of DSH core appear under host and libraries.
 
 ```mermaid
 flowchart TB
@@ -89,6 +90,7 @@ flowchart TB
   subgraph routing ["routing"]
     approvals_core["approvals-core<br/>defines approvals"]
     egress["egress<br/>ctx.egress"]
+    resources["resources<br/>ctx.resources"]
     workers["workers<br/>ctx.workers"]
   end
   subgraph capabilities ["capabilities"]
@@ -128,6 +130,7 @@ flowchart TB
   agent_workers --> workers
   agent_workers --> agent_runtimes
   agent_workers --> egress
+  agent_workers -.-> resources
   artifacts --> store
   board --> store
   board --> artifacts
@@ -178,6 +181,9 @@ flowchart TB
   provider_gemini_web --> providers
   provider_gemini_web -.-> artifacts
   provider_gemini_web -.-> event_log
+  resources --> store
+  resources --> artifacts
+  resources -.-> mcp_server
   runtime_acp --> agent_runtimes
   runtime_claude_agent_sdk --> agent_runtimes
   runtime_codex_sdk --> agent_runtimes
@@ -219,12 +225,14 @@ policy above it. Each such edge is listed here so a new one is a visible change.
 | Consumer | Seam | Provider | Kind |
 |---|---|---|---|
 | `agent-workers` (capabilities) | `egress` | `egress` (routing) | required |
+| `agent-workers` (capabilities) | `resources` | `resources` (routing) | optional |
 | `agent-workers` (capabilities) | `workers` | `workers` (routing) | required |
 | `board` (orchestration) | `mcp` | `mcp-server` (gateways) | optional |
 | `login` (provider runtime) | `mcp` | `mcp-server` (gateways) | optional |
 | `models` (capabilities) | `egress` | `egress` (routing) | required |
 | `models` (capabilities) | `mcp` | `mcp-server` (gateways) | optional |
 | `models` (capabilities) | `workers` | `workers` (routing) | required |
+| `resources` (routing) | `mcp` | `mcp-server` (gateways) | optional |
 | `turns` (capabilities) | `egress` | `egress` (routing) | required |
 | `turns` (capabilities) | `mcp` | `mcp-server` (gateways) | optional |
 | `turns` (capabilities) | `workers` | `workers` (routing) | required |
@@ -256,6 +264,8 @@ flowchart TB
   subgraph routing ["routing"]
     approvals_core["approvals-core<br/>defines approvals"]
     egress["egress<br/>ctx.egress"]
+    resources["resources<br/>ctx.resources"]
+    resources_core["resources-core<br/>defines resources"]
     workers["workers<br/>ctx.workers"]
     workers_core["workers-core<br/>defines workers"]
   end
@@ -293,6 +303,7 @@ flowchart TB
   agent_workers --> agent_runtime_core
   agent_workers --> leases
   agent_workers --> provider_core
+  agent_workers --> resources_core
   agent_workers --> workers_core
   board --> approvals_core
   board --> board_core
@@ -324,6 +335,8 @@ flowchart TB
   provider_gemini_web --> provider_core
   provider_gemini_web --> ui_ops
   providers --> provider_core
+  resources --> gateway_core
+  resources --> resources_core
   runtime_acp --> agent_runtime_core
   runtime_acp --> provider_core
   runtime_claude_agent_sdk --> agent_runtime_core

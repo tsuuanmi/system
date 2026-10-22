@@ -61,9 +61,9 @@ from the code in [packages](packages.md); this table names the roles.
 | Routing | `egress` | core: gate | built | `system-egress`: classification policy and credential scan (INV-12) | turns, agent-workers, models, workflow |
 | Orchestration | `workflow` | core: work state machine, runner; templates are the workflow family | built | `system-workflow`; templates through `ctx.workflow.template` | gateways, web-ui, profiles |
 | Orchestration | `workerSessions` | core: work state machine | built | `system-worker-sessions` ([design](../design/sessions-and-messaging.md)) | workflow |
-| Gateways | `mcp` | plugin: surface (its scope check is a gate rule) | built | `McpTools` in `system-gateway-core`; `system-mcp-server` (own: DSH has only an MCP client) | tool contributors: login, turns, workflow, worker-sessions, models, board; mcp-server adds `status`. Each tool declares its scope, `operator` by default ([ADR-0023](../decisions/adr/0023-scoped-control-credentials.md)) |
+| Gateways | `mcp` | plugin: surface (its scope check is a gate rule) | built | `McpTools` in `system-gateway-core`; `system-mcp-server` (own: DSH has only an MCP client) | tool contributors: login, turns, workflow, worker-sessions, models, resources, board; mcp-server adds `status`. Each tool declares its scope, `operator` by default ([ADR-0023](../decisions/adr/0023-scoped-control-credentials.md)) |
 | Host | `webServer` | plugin: surface | built | **DSH** `dsh-host-webserver` (loopback) | mcp-server, gateway-anthropic, gateway-responses, web-ui |
-| Routing | `resources` | core: resource ledger and metering | defined | `Resources` in `system-resources-core` ([resources](../design/resources.md)): configured pools and their windows, limit readings, reservations before a run, deduplicated usage records from objective sources only; provider in B2 | workers (routing by scarcity), workflow (run budgets), surfaces (reports) |
+| Routing | `resources` | core: resource ledger and metering | built | `Resources` in `system-resources-core` ([resources](../design/resources.md)): configured pools and their windows, limit readings, reservations before a run, deduplicated usage records from objective sources only; provider `system-resources` (on `ctx.store`) | agent-workers (reserve, record, observe, for a Worker with a pool), workers (routing by scarcity), workflow (run budgets), surfaces (reports, MCP `resources_*`) |
 | Routing | `approvals` | core: gate | defined | `Approvals` in `system-approvals-core` ([approvals](../design/approvals.md)): the autonomy policy and one batched approval queue for every action that needs a person, expiry denying; provider in B5 | workflow, agent-workers, surfaces |
 | Routing | `decisions` | plugin: decision | planned | typed decisions with probabilities for intake and routing ([PROP-0002](../proposals/0002-decision-assisted-routing.md)) | workers, workflow |
 | Orchestration | `board` | core: work state machine | built | `Board` in `system-board-core` ([board](../design/board.md)): projects (charter, milestones, funding rounds) and board tasks across runs, with leases and expiring waits; provider `system-board` (store-backed, `board_*` MCP tools, projected to `TASKS.md`), its bundle row off until the approval queue has a provider (B5) | workflow, surfaces, the lead through `board_*` tools |
@@ -97,7 +97,7 @@ The `Class` column of the [seam catalog](#seam-catalog) gives each seam's class.
 | work state machine | only valid, complete transitions; one writer per subject ([INV-15](invariants.md#inv-15-one-writer-per-subject)) | `workflow`, `workerSessions`, `leases`, `board` |
 | runner | restart is reconciliation, not replay ([INV-4](invariants.md#inv-4-restart-is-reconciliation-not-replay)); everything is bounded ([INV-9](invariants.md#inv-9-everything-is-bounded)) | `workflow` (the engine), `turnReceipts` |
 | gate | fail closed ([INV-2](invariants.md#inv-2-fail-closed)); explicit egress ([INV-12](invariants.md#inv-12-data-egress-is-explicit)); irreversible actions go to a person; acceptance needs verification | `egress`, `workers` (admission, acceptance), `approvals` (defined) |
-| resource ledger and metering | numbers from objective sources (usage fields, invoices, limit notices), never model self-reports | `resources` (defined) |
+| resource ledger and metering | numbers from objective sources (usage fields, invoices, limit notices), never model self-reports | `resources` |
 | plugin host | a plugin sees only what its seam allows; a failing plugin cannot damage the core | the host: DSH core and Cordis, the `system` bundle, the [plugin rules](#plugin-rules), conformance suites; manifests and a plugin lifecycle (planned) |
 
 | Plugin family | Contract | Seams and providers |
@@ -246,12 +246,12 @@ Consumers depend on definitions only.
 | `models` | `Models` in `@tsuuanmi/system-models-core` | `models-core/conformance/models.ts` | the fake `FakeModels`; `models` (`LlmModels` over `llm` and `llm-pi-ai`, against a fake OpenAI-compatible server) |
 | workflow templates | `ctx.workflow.template(name, nodes)` | `workflow/conformance/profiles.ts` | `profile-software-development`, `profile-scientific-research` |
 | `approvals` | `Approvals` in `@tsuuanmi/system-approvals-core` | `approvals-core/conformance/approvals.ts` (contract 1.0) | the fake `FakeApprovals` |
-| `resources` | `Resources` in `@tsuuanmi/system-resources-core` | `resources-core/conformance/resources.ts` (contract 1.0) | the fake `FakeResources` |
-| `board` | `Board` in `@tsuuanmi/system-board-core` | `board-core/conformance/board.ts` (contract 1.0, over any `ctx.approvals`) | the fake `FakeBoard`; `board` (over a real store, with `FakeApprovals`) |
+| `resources` | `Resources` in `@tsuuanmi/system-resources-core` | `resources-core/conformance/resources.ts` (contract 1.0) | `resources` (store-backed), the fake `FakeResources` |
+| `board` | `Board` in `@tsuuanmi/system-board-core` | `board-core/conformance/board.ts` (contract 1.0, over any `ctx.approvals`) | `board` (over a real store, with `FakeApprovals`), the fake `FakeBoard` |
 | `store` | concrete `Store` in `@tsuuanmi/system-store` | `plugins/store/conformance/store.ts` (contract 1.0) | `store` |
 | `eventLog` | concrete `EventLog` in `@tsuuanmi/system-event-log` | `plugins/event-log/conformance/event-log.ts` (contract 1.0) | `event-log` |
 | `artifacts` | concrete `Artifacts` in `@tsuuanmi/system-artifacts` | `plugins/artifacts/conformance/artifacts.ts` (contract 1.0) | `artifacts` |
-| `turnReceipts` | concrete `TurnReceipts` in `@tsuuanmi/system-turn-receipts` | `plugins/turn-receipts/conformance/turn-receipts.ts` (contract 1.0) | `turn-receipts`, with one known gap baselined (rejected outcomes without reasons) |
+| `turnReceipts` | concrete `TurnReceipts` in `@tsuuanmi/system-turn-receipts` | `plugins/turn-receipts/conformance/turn-receipts.ts` (contract 1.0) | `turn-receipts` |
 | `leases` | concrete `Leases` in `@tsuuanmi/system-leases` | `plugins/leases/conformance/leases.ts` (contract 1.0) | `leases` |
 | `egress` | concrete `Egress` in `@tsuuanmi/system-egress` | `plugins/egress/conformance/egress.ts` (contract 1.0) | `egress` |
 | `workerSessions` | concrete `WorkerSessions` in `@tsuuanmi/system-worker-sessions` | `plugins/worker-sessions/conformance/worker-sessions.ts` (contract 1.0) | `worker-sessions` |

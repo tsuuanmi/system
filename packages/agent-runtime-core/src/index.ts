@@ -55,19 +55,94 @@ export interface RunSpec {
   resume?: string | undefined
 }
 
-export interface RunResult {
+/**
+ * Token counts of a run, normalized as the ledger counts them (the `tokenUsage` definition in
+ * `schemas/common.v1.json`, named after the OpenTelemetry GenAI usage attributes): `inputTokens`
+ * includes cached input, and the two cache counts are parts of it. A provider whose agent reports
+ * input without its cached part adds the cached part before it reports.
+ */
+export interface TokenUsage {
+  inputTokens: number
+  outputTokens: number
+  cacheReadInputTokens?: number
+  cacheCreationInputTokens?: number
+}
+
+/** One model's share of a run's usage, as the runtime reports it. */
+export interface ModelUsage {
+  model: string
+  usage: TokenUsage
+  /** The runtime's own estimate for this model, in USD. */
+  costUsd?: number
+}
+
+/**
+ * A rate-limit observation the agent reported during a run. `window` is the runtime's own name
+ * for the limit window, opaque here: the operator's configuration maps it to a pool's window
+ * (INV-11), and an unmapped one is not read.
+ */
+export interface LimitObservation {
+  window: string
+  /** `allowed`: under the limit; `warning`: near it; `rejected`: hit, no more work until it resets. */
+  status: 'allowed' | 'warning' | 'rejected'
+  /** When the window resets (ISO 8601), when the runtime says. */
+  resetsAt?: string
+  /** How much of the window is used, 0 to 100, when the runtime says. */
+  usedPercentage?: number
+  /** When the observation was made (ISO 8601). */
+  observedAt: string
+}
+
+/**
+ * What a run consumed, from the runtime's own objective numbers (docs/design/resources.md),
+ * never from the model's own report. Every field is optional: a missing number stays missing.
+ * When `usage` and `models` are both present, each count of `usage` is the sum over `models`.
+ */
+export interface RunMetering {
+  /** The runtime's own identity of the result the numbers come from (a deduplication key, opaque). */
+  resultId?: string | undefined
+  /** The model the run's main loop answered with, as the runtime names it. */
+  model?: string | undefined
+  /** The whole run's usage, every model and subagent included. */
+  usage?: TokenUsage | undefined
+  /** The same usage split per model. */
+  models?: ModelUsage[] | undefined
+  turns?: number | undefined
+  /** The runtime's own estimate for the whole run, in USD. */
+  costUsd?: number | undefined
+  /** The rate-limit observations the agent reported during the run, in the order seen. */
+  limits?: LimitObservation[] | undefined
+}
+
+export interface RunResult extends RunMetering {
   /** The agent's final message. */
   text: string
   /** Native session or thread handle, to continue it later. */
   nativeHandle?: string | undefined
-  turns?: number | undefined
-  costUsd?: number | undefined
+}
+
+const METERING = Symbol.for('@tsuuanmi/system-agent-runtime-core/metering')
+
+/**
+ * Attach what a failed or aborted run consumed to the error `run` rejects with, so the run is
+ * metered like a completed one (`usage-record` outcome `failed` or `aborted`). Returns `error`.
+ */
+export function withMetering<E extends Error>(error: E, metering: RunMetering): E {
+  Object.defineProperty(error, METERING, { value: metering, enumerable: false, configurable: true })
+  return error
+}
+
+/** What a failed or aborted run consumed, when its runtime attached it (`withMetering`). */
+export function meteringOf(error: unknown): RunMetering | undefined {
+  return error instanceof Error ? (error as Error & { [METERING]?: RunMetering })[METERING] : undefined
 }
 
 /**
  * One agent runtime. `run` drives the agent's own loop to its terminal event. A policy the
  * runtime cannot enforce exactly is refused (an error of kind `config_error`); it is never
- * loosened. Errors carry a `kind` from the provider failure taxonomy (provider-core).
+ * loosened. Errors carry a `kind` from the provider failure taxonomy (provider-core). A run
+ * reports what it consumed (`RunMetering`) when its agent says, in its result, or attached to the
+ * error it fails with (`withMetering`).
  */
 export interface AgentRuntimeProvider {
   readonly kind: string

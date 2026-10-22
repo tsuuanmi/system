@@ -9,7 +9,7 @@ import { type Context, Service } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import type {} from '@tsuuanmi/system-artifacts'
 import { type ContentId, SchemaRegistry, sha256 } from '@tsuuanmi/system-libs'
-import { ProviderError, promptShown, type Reconciliation, type TurnReceipt, type TurnSnapshot, reconcileTurn, responseHash } from '@tsuuanmi/system-provider-core'
+import { boundaryMissing, ProviderError, promptShown, type Reconciliation, type TurnReceipt, type TurnSnapshot, reconcileTurn, responseHash } from '@tsuuanmi/system-provider-core'
 import type {} from '@tsuuanmi/system-store'
 
 declare module '@deepseek-ai/cordis' {
@@ -140,7 +140,7 @@ export class TurnReceipts extends Service {
         decisionType: 'reconciliation',
         question: `How to continue provider turn ${current.requestId} on ${current.account}?`,
         inputs: [],
-        candidates: OUTCOMES.map((option) => ({ option, selected: option === outcome, reasons: option === outcome ? [this.reason(current, snapshot, outcome, options.prompt)] : [] })),
+        candidates: OUTCOMES.map((option) => ({ option, selected: option === outcome, reasons: [option === outcome ? this.reason(current, snapshot, outcome, options.prompt) : this.rejected(current, snapshot, option, options.prompt)] })),
         decider: { type: 'rule', id: 'provider-turns.reconcile', version: '1' },
         outcome: { option: outcome, detail: { receipt: receiptId(identity), snapshotHash: responseHash(snapshot.text), running: snapshot.running, observable: snapshot.observable !== false } },
         deterministic: true,
@@ -178,6 +178,40 @@ export class TurnReceipts extends Service {
         if (snapshot.observable === false) return 'the conversation cannot be observed (temporary, never bound, or not rendered); the prompt may have been answered'
         if (prompt !== undefined && promptShown(snapshot.lastPrompt, prompt)) return 'the page shows the prompt as the last user turn, without an answer yet; resending would duplicate it'
         return snapshot.running ? 'generating after completion' : 'state does not match the receipt or the bound is reached'
+    }
+  }
+
+  /**
+   * Why `option` is not the outcome: the first condition `reconcileTurn` holds it to that fails
+   * on this receipt and snapshot (INV-13: a rejected candidate carries its reason).
+   */
+  private rejected(receipt: TurnReceipt, snapshot: TurnSnapshot, option: Reconciliation, prompt?: string): string {
+    const text = snapshot.text.trim()
+    const unobservable = snapshot.observable === false
+    const completed = receipt.status === 'COMPLETED'
+    // Whether the page shows what reconcileTurn would adopt: the recorded response, or a new one after the boundary.
+    const adoptable = completed ? text !== '' && receipt.responseHash === responseHash(text) : text !== '' && responseHash(text) !== receipt.previousResponseHash
+    switch (option) {
+      case 'WAIT':
+        if (unobservable) return 'not WAIT: the conversation cannot be observed'
+        return snapshot.running ? 'not WAIT: the provider is generating although the turn was completed' : 'not WAIT: the provider is not generating'
+      case 'RECOVER':
+        if (unobservable) return 'not RECOVER: the conversation cannot be observed, so no response can be adopted'
+        if (snapshot.running) return 'not RECOVER: the provider is still generating'
+        if (completed) return 'not RECOVER: the page does not show the recorded response'
+        return text === '' ? 'not RECOVER: the page shows no response' : 'not RECOVER: the page shows only the response this turn followed'
+      case 'RESUBMIT':
+        if (unobservable) return 'not RESUBMIT: the conversation cannot be observed; the prompt may have been answered'
+        if (snapshot.running) return 'not RESUBMIT: the provider is generating'
+        if (completed) return 'not RESUBMIT: the turn is completed'
+        if (adoptable) return 'not RESUBMIT: a new response follows the boundary'
+        if (boundaryMissing(receipt, snapshot)) return 'not RESUBMIT: the page no longer shows the response this turn followed, so whether the prompt was sent cannot be told'
+        if (prompt !== undefined && promptShown(snapshot.lastPrompt, prompt)) return 'not RESUBMIT: the page shows the prompt as its last user turn'
+        return `not RESUBMIT: the bound of ${this.maxResubmits} resubmits is reached`
+      default:
+        if (snapshot.running) return 'not AMBIGUOUS: a submitted turn still generating agrees with the receipt'
+        if (adoptable) return completed ? 'not AMBIGUOUS: the page shows the recorded response' : 'not AMBIGUOUS: a new response follows the boundary'
+        return `not AMBIGUOUS: the page shows the response this turn followed and nothing after it, not the prompt, and ${this.maxResubmits - receipt.resubmits} resubmit(s) remain`
     }
   }
 }

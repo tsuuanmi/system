@@ -65,13 +65,32 @@ interface RunSpec {
   resume?: string;                          // native handle of a conversation to continue
 }
 
-interface RunResult { text: string; nativeHandle?: string; turns?: number; costUsd?: number }
+interface RunResult extends RunMetering { text: string; nativeHandle?: string }
+
+interface RunMetering {                     // every field optional: a missing number stays missing
+  resultId?: string;                        // the runtime's identity of its result (deduplication)
+  model?: string;                           // the main loop's model
+  usage?: TokenUsage;                       // the whole run; inputTokens includes cached input
+  models?: { model: string; usage: TokenUsage; costUsd?: number }[];  // usage is their sum
+  turns?: number;
+  costUsd?: number;                         // the runtime's own estimate
+  limits?: LimitObservation[];              // rate-limit observations seen during the run
+}
+
+interface LimitObservation {
+  window: string;                           // the runtime's own window name, opaque (INV-11)
+  status: "allowed" | "warning" | "rejected";
+  resetsAt?: string;                        // ISO time
+  usedPercentage?: number;
+  observedAt: string;
+}
 ```
 
 Workers are not providers. The `agents` Worker source
 ([`agent-workers`](../../packages/plugins/agent-workers/README.md)) turns each configured
 Worker into a capability descriptor, a durable run, and a `report` artifact
-(`agent-result@1.1`). The provider only drives the agent.
+(`agent-result@1.2` when the runtime reported its token usage, `@1.1` otherwise). The provider
+only drives the agent.
 
 The workspace, sandbox, tool allow-list, model, and turn limit come only from operator
 configuration ([INV-6](../architecture/invariants.md#inv-6-authority-comes-from-trusted-envelopes)).
@@ -112,6 +131,34 @@ Codex, for example, refuses a tool allow-list or a turn limit, since it cannot e
   receives `public` and `operator-shared` work only, although routing admits `local-private`
   work to a local Worker ([routing](routing.md#data-locality-policy)).
 
+## Metering
+
+What a run consumed comes from the runtime's own objective numbers, never from the model's text
+([resources](resources.md)). A provider reads them from the agent's own messages and reports
+them in provider-neutral names (`RunMetering`); a run that fails attaches them to its error
+(`withMetering`), so a failed or aborted run is metered too. The provider conformance suite
+checks that what a provider reports holds together: input includes its cached part, and
+per-model counts sum to the totals. A provider that reports nothing passes. Today the Claude
+Agent SDK provider reports usage (from the result's `modelUsage`) and rate-limit observations
+([its README](../../packages/plugins/runtime-claude-agent-sdk/README.md)); the Codex and ACP
+providers report none.
+
+The `agents` source meters a Worker whose configuration names a resource `pool` (with its
+`account`) through `ctx.resources`, following [a run's budget](resources.md#a-runs-budget):
+
+1. The Worker is `quota-exhausted` while its pool is unavailable, so routing skips it; with no
+   ledger, or a pool the ledger does not configure, it is `unavailable`.
+2. Before the agent starts, the run reserves one run on the pool. The `budget` decision joins
+   the run's decisions; a refused reservation fails the run unsubmitted, and nothing runs.
+3. After the run, completed or not, one `usage-record` (source `runtime-result`) carries the
+   runtime's numbers, and each limit observation becomes a `limit-state` reading of the pool
+   window the configuration maps the runtime's window name to (`windows`); an unmapped window is
+   skipped. Then the reservation is released.
+
+A run that started before a restart has no result message, so nothing is recorded for it then;
+its usage is reconciled from the agent's session transcript later (planned). A Worker with no
+pool is not metered.
+
 ## Admission evidence
 
 The Worker registry admits an agent-runtime Worker only on evidence from `probe()`, never
@@ -144,5 +191,5 @@ An agent Worker never offers plain `reason`, so ordinary asks never spend agent-
   SIGTERM after a grace period, then SIGKILL, so it cannot hang a run.
 - **Evidence.** The result artifact carries the final message, the prompt hash, the sandbox,
   the workspace, and, for a git working tree, its exact subject after the run, which a review
-  binds to. Target: diffs, commands run, and test results stored as artifacts with their
+  binds to; with `@1.2`, the run's main model and token usage, in total and per model. Target: diffs, commands run, and test results stored as artifacts with their
   hashes.

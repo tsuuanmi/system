@@ -46,6 +46,11 @@ guesses.
 - Exactly one candidate is `selected`, and it equals `outcome.option`. The schema
   checks that only one candidate is selected. The store checks that it equals
   the outcome.
+- Every candidate carries at least one non-blank reason: a rejected one says why
+  it lost, the selected one why it won
+  ([INV-13](../architecture/invariants.md#inv-13-every-decision-is-an-artifact)).
+  The schema allows an empty `reasons`, so decisions stored before the rule stay
+  readable; the store refuses a new decision with a candidate that gives none.
 - `decider.version` changes whenever the policy's behavior changes. `hash` is the
   hash of the effective policy configuration.
 - When `decider.type` is `model`, `deterministic` must be `false`, and
@@ -219,7 +224,8 @@ guesses.
 - `agent-result@1.2` adds `model`, `usage`, and `models`, from the Agent SDK's result
   message. `usage` is the sum of its per-model `modelUsage`, which covers subagents; the
   message's own `usage` covers the main loop only and is not used. `model` is the main
-  loop's model.
+  loop's model. A Worker writes `@1.2` when its runtime reported token usage, and `@1.1`
+  otherwise.
 - Token counts are normalized as in [`usage-record`](#usage-record). The SDK's `modelUsage`
   uses the same field names with another meaning: its `inputTokens` excludes cached input. So
   here `inputTokens` is the SDK's `inputTokens` plus its `cacheReadInputTokens` and

@@ -278,6 +278,9 @@ export class Artifacts extends Service {
     if (selected.length !== 1 || selected[0]?.option !== body.outcome.option) {
       throw new TypeError('decision: exactly one selected candidate must equal outcome.option')
     }
+    // INV-13: every candidate says why, the rejected ones why they lost, not only the winner.
+    const unexplained = body.candidates.find((candidate) => !candidate.reasons.some((reason) => reason.trim() !== ''))
+    if (unexplained) throw new TypeError(`decision: candidate ${unexplained.option} has no reason; every candidate, selected or rejected, needs one`)
     return this.put({
       kind: 'decision', bodySchema: body.schema, body, inputs: body.inputs,
       classification: meta.classification ?? 'operator-shared', producer: meta.producer,

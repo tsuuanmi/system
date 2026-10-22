@@ -92,6 +92,11 @@ export interface ReservationRequest {
   lines: BudgetLine[]
   /** Budgets the run's scope may not exceed (a task's or project's), counted from the usage recorded and the reservations held for that scope. */
   caps?: BudgetLine[]
+  /**
+   * How long the hold lasts if nobody releases it (a crashed run), in seconds, 60 to 604800; the
+   * provider's default otherwise. An expired hold no longer counts against any cap (INV-9).
+   */
+  holdSeconds?: number
 }
 
 export interface Reservation {
@@ -101,6 +106,8 @@ export interface Reservation {
   reasons: string[]
   /** The `budget` decision that records it (INV-13). */
   decision: ArtifactRef
+  /** When a reserved hold stops counting, if it is not released first. */
+  expiresAt?: string
 }
 
 export interface UsageFilter { runId?: string; projectId?: string; taskId?: string; account?: string; pool?: string; since?: string; until?: string }
@@ -129,7 +136,7 @@ export abstract class Resources extends Service {
   /** Reserve before a run, recording a `budget` decision; refused when a pool is unknown or unavailable, or a cap would be exceeded. */
   abstract reserve(request: ReservationRequest, at?: Date): Promise<Reservation>
 
-  /** Release a reservation once its run's usage is recorded or the run did not start. */
+  /** Release a reservation once its run's usage is recorded or the run did not start; an expired one releases quietly. */
   abstract release(reservationId: string): Promise<void>
 
   /** Record one unit's usage as a `receipt` artifact; a second record of the same unit is a duplicate, not counted. */

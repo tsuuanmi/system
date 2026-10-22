@@ -135,6 +135,15 @@ export const resourcesSuite = defineSuite<Boot>({
       expect((await ctx.resources.reserve({ runId: 'r4', taskId: 't1', lines: line(0.5), caps }, T0)).state).toBe('reserved')
       expect(await failureOf(ctx.resources.release('res-unknown'))).toBe('unknown-reservation')
     }),
+    scenario('holds-expire', 'counts a hold against its caps only until it expires, so a crashed run cannot hold a budget forever, and releases an expired hold quietly (INV-9)', async (ctx) => {
+      await ctx.resources.observe(reading('max.programmatic', 'monthly'))
+      const request = (runId: string): ReservationRequest => ({ runId, taskId: 't1', lines: [{ pool: 'max.programmatic', unit: 'usd', amount: 1 }], caps: [{ pool: 'max.programmatic', unit: 'usd', amount: 1 }], holdSeconds: 60 })
+      const first = await ctx.resources.reserve(request('r1'), T0)
+      expect(first).toMatchObject({ state: 'reserved', expiresAt: new Date(T0.getTime() + 60_000).toISOString() })
+      expect((await ctx.resources.reserve(request('r2'), new Date(T0.getTime() + 30_000))).state).toBe('refused')
+      expect((await ctx.resources.reserve(request('r3'), new Date(T0.getTime() + 61_000))).state).toBe('reserved')
+      await ctx.resources.release(first.reservationId)
+    }),
     scenario('record-dedupes', 'counts a unit once: by source and request id, and a transcript record never doubles a runtime result (INV-4)', async (ctx) => {
       const first = await ctx.resources.record(usage('u1', { runId: 'r1' }))
       expect(first.duplicate).toBe(false)
@@ -161,6 +170,9 @@ export const resourcesSuite = defineSuite<Boot>({
   ],
 })
 
+/** A hold nobody releases lasts this long by default (a crashed run's). */
+export const DEFAULT_HOLD_SECONDS = 4 * 3600
+
 const add = (a: TokenUsage | undefined, b: TokenUsage | undefined): TokenUsage | undefined => {
   if (!b) return a
   if (!a) return { ...b }
@@ -186,7 +198,7 @@ export class FakeResources extends Resources {
   static inject = ['artifacts']
   private readonly readings = new Map<string, LimitState>()
   private readonly records: UsageRecord[] = []
-  private readonly holds = new Map<string, ReservationRequest>()
+  private readonly holds = new Map<string, { request: ReservationRequest; expiresAt: number }>()
 
   constructor(ctx: Context, private readonly config: { pools?: readonly PoolConfig[] } = {}) {
     super(ctx)
@@ -229,19 +241,24 @@ export class FakeResources extends Resources {
     const inScope = (r: { projectId?: string; taskId?: string }) => (request.taskId !== undefined ? r.taskId === request.taskId : request.projectId !== undefined ? r.projectId === request.projectId : false)
     for (const cap of request.caps ?? []) {
       const used = this.records.filter((r) => inScope(r) && r.pool === cap.pool).reduce((n, r) => n + amountOf(r, cap.unit), 0)
-      const held = [...this.holds.values()].filter(inScope).flatMap((h) => h.lines).filter((l) => l.pool === cap.pool && l.unit === cap.unit).reduce((n, l) => n + l.amount, 0)
+      const held = [...this.holds.values()].filter((h) => h.expiresAt > at.getTime() && inScope(h.request)).flatMap((h) => h.request.lines)
+        .filter((l) => l.pool === cap.pool && l.unit === cap.unit).reduce((n, l) => n + l.amount, 0)
       const wanted = request.lines.filter((l) => l.pool === cap.pool && l.unit === cap.unit).reduce((n, l) => n + l.amount, 0)
       if (used + held + wanted > cap.amount) reasons.push(`cap ${cap.amount} ${cap.unit} of ${cap.pool} would be exceeded: ${used} used, ${held} held, ${wanted} wanted`)
     }
     const state = reasons.length ? 'refused' : 'reserved'
     const decision = this.ctx.artifacts.recordDecision({
       schema: 'decision@1.4', decisionType: 'budget', question: `May run ${request.runId} draw on its pools?`, inputs: [],
-      candidates: ['reserved', 'refused'].map((o) => ({ option: o, selected: o === state, reasons: o === state ? (reasons.length ? reasons : ['every pool available and within its caps']) : [] })),
+      candidates: [
+        { option: 'reserved', selected: state === 'reserved', reasons: reasons.length ? reasons.map((r) => `not reserved: ${r}`) : ['every pool available and within its caps'] },
+        { option: 'refused', selected: state === 'refused', reasons: reasons.length ? reasons : ['not refused: no pool is missing or unavailable, and no cap would be exceeded'] },
+      ],
       decider: { type: 'rule', id: 'resources.reserve', version: '1' }, outcome: { option: state, detail: { runId: request.runId, lines: request.lines } }, deterministic: true,
     }, { producer: { type: 'system', ref: 'resources' }, runId: request.runId })
     const reservationId = `res-${randomUUID().slice(0, 8)}`
-    if (state === 'reserved') this.holds.set(reservationId, structuredClone(request))
-    return { reservationId, state, reasons, decision: decision.id as ArtifactRef }
+    const expiresAt = at.getTime() + (request.holdSeconds ?? DEFAULT_HOLD_SECONDS) * 1000
+    if (state === 'reserved') this.holds.set(reservationId, { request: structuredClone(request), expiresAt })
+    return { reservationId, state, reasons, decision: decision.id as ArtifactRef, ...(state === 'reserved' ? { expiresAt: new Date(expiresAt).toISOString() } : {}) }
   }
 
   async release(reservationId: string): Promise<void> {

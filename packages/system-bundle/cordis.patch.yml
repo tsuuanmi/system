@@ -21,6 +21,11 @@
       name: '@tsuuanmi/system-leases'
     - id: artifacts
       name: '@tsuuanmi/system-artifacts'
+    # --- resource ledger (core, B2): pools are the operator's configuration; none until configured ---
+    - id: resources
+      name: '@tsuuanmi/system-resources'             # ctx.resources; MCP resources_pools, resources_usage
+      config:
+        pools: []
     # --- provider runtime (M1) ---
     - id: accounts
       name: '@tsuuanmi/system-accounts'              # catalog is configured in the operator's profile patch

@@ -93,7 +93,7 @@ describe('ctx.artifacts', () => {
 })
 
 describe('review fixes (PR #3 kernel review)', () => {
-  const tierOf = (n: number) => ({ ...route, decisionType: 'tier', question: `q${n}`, candidates: [{ option: `t${n}`, selected: true, reasons: [] }], outcome: { option: `t${n}` } })
+  const tierOf = (n: number) => ({ ...route, decisionType: 'tier', question: `q${n}`, candidates: [{ option: `t${n}`, selected: true, reasons: ['the only tier'] }], outcome: { option: `t${n}` } })
 
   it('explains a diamond-shaped graph in linear time with shared nodes', async () => {
     const ctx = await boot()

@@ -41,6 +41,7 @@
     "@tsuuanmi/system-provider-chatgpt-web": "workspace:*",
     "@tsuuanmi/system-provider-gemini-web": "workspace:*",
     "@tsuuanmi/system-providers": "workspace:*",
+    "@tsuuanmi/system-resources": "workspace:*",
     "@tsuuanmi/system-store": "workspace:*",
     "@tsuuanmi/system-turn-receipts": "workspace:*",
     "@tsuuanmi/system-turns": "workspace:*",

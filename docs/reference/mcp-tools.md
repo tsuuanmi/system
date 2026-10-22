@@ -272,6 +272,34 @@ Scope: `client`
 | `classification` | "public" \| "operator-shared" \| "local-private" |  | Data classification of the input; local-private content never leaves the machine (INV-12) |
 | `clientRequestId` | string |  | Retry-safe request key |
 
+## `resources_pools`
+
+Each configured resource pool with the latest reading of each of its windows, and whether new work may draw on it now (a window with no reading or an unknown one fails the pool closed unless it is configured available).
+
+Scope: `client`
+
+| Argument | Type | Required | Description |
+|---|---|---|---|
+| `account` | string |  | Only this account's pools |
+
+## `resources_usage`
+
+Counted usage records that match the filter, oldest first, a page at a time, with totals per pool over every match (not only the page).
+
+Scope: `client`
+
+| Argument | Type | Required | Description |
+|---|---|---|---|
+| `runId` | string |  |  |
+| `projectId` | string |  |  |
+| `taskId` | string |  |  |
+| `account` | string |  |  |
+| `pool` | string |  |  |
+| `since` | string |  | Observed at or after |
+| `until` | string |  | Observed before |
+| `limit` | integer |  | Page size (default 20) |
+| `after` | string |  | The next cursor of the previous page |
+
 ## `result`
 
 Fetch a run (ask, research, brainstorm, review, or run); waits up to waitSeconds for it to finish or to wait on you (a tie's `blocked`).

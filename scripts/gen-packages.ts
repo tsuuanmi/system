@@ -57,6 +57,7 @@ export const LAYER_OF: Record<string, Layer> = {
   'workers-core': 'routing',
   'approvals-core': 'routing',
   'resources-core': 'routing',
+  'resources': 'routing',
   'workers': 'routing',
   'egress': 'routing',
   // orchestration
@@ -232,13 +233,14 @@ export function scan(): Pkg[] {
   const defined = new Set(pkgs.flatMap((p) => p.defines))
   const off = new Set(rows.filter((r) => r.off).map((r) => r.id))
   for (const p of pkgs) {
-    for (const k of [...p.required, ...p.optional]) {
-      if (providerOf.has(k)) continue
-      // A row that is off by default may wait on a seam that is defined but has no provider yet
-      // (the board on the approval queue until B5); a row that is on never does.
-      if (p.mountId && off.has(p.mountId) && defined.has(k)) continue
+    // A seam may be defined before its provider is built: an optional consumer uses it only when
+    // present, and a row that is off by default may wait on it (the board on the approval queue
+    // until B5). A row that is on never requires a seam nobody provides.
+    for (const k of p.required) {
+      if (providerOf.has(k) || (p.mountId && off.has(p.mountId) && defined.has(k))) continue
       problems.push(`${p.dir} consumes ctx.${k}, which no package or bundle row provides${defined.has(k) ? ' (it is only defined): keep its row off until one does' : ''}`)
     }
+    for (const k of p.optional) if (!providerOf.has(k) && !defined.has(k)) problems.push(`${p.dir} consumes ctx.${k}, which no package or bundle row provides or defines`)
   }
   for (const [k, by] of providerOf) if (by.length > 1) problems.push(`ctx.${k} is provided by ${by.join(', ')}`)
   if (problems.length) throw new Error(`gen-packages:\n  ${problems.join('\n  ')}`)
@@ -250,9 +252,9 @@ const seams = (keys: string[], mark = ''): string[] => keys.map((k) => `\`${k}\`
 
 export function render(pkgs: Pkg[] = scan()): string {
   const providerOf = new Map<string, Pkg>()
-  // A seam with no provider yet (its consumer's row is off) points to the package that defines it.
-  for (const p of pkgs) for (const k of p.defines) providerOf.set(k, p)
   for (const p of pkgs) for (const k of p.provides) providerOf.set(k, p)
+  // A seam with no provider yet (only optional consumers are allowed one) points to its definition.
+  for (const p of pkgs) for (const k of p.defines) if (!providerOf.has(k)) providerOf.set(k, p)
   const byLayer = (layer: Layer): Pkg[] => pkgs.filter((p) => p.layer === layer)
   const rank = (p: Pkg): number => LAYERS.indexOf(p.layer)
 
@@ -319,8 +321,8 @@ export function render(pkgs: Pkg[] = scan()): string {
     '## Seam graph',
     '',
     'An arrow runs from a consumer to the package that provides the seam; a dotted arrow is an optional',
-    'seam. A seam with no provider yet, which only a row that is off by default may consume, points to',
-    'the package that defines it. Rows of DSH core appear under host and libraries.',
+    'seam. A seam with no provider yet (an optional seam, or one only a row that is off by default',
+    'requires) points to the package that defines it. Rows of DSH core appear under host and libraries.',
     '',
     ...graph(seamEdges, (p) => inSeamGraph.has(id(p.dir))),
     '',

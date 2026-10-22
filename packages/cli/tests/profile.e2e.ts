@@ -17,7 +17,7 @@ const env = { ...process.env, DSH_HOME: home }
 let child: ChildProcess | undefined
 
 // The MVP composition (PROP-0004): agent Worker and model gateway rows are off.
-const ALLOWED_ROWS = ['timer', 'credentials', 'webserver', 'store', 'event-log', 'leases', 'artifacts', 'accounts', 'turn-receipts', 'display', 'browser', 'providers', 'provider-chatgpt-web', 'provider-gemini-web', 'login', 'egress', 'workers', 'turns', 'llm', 'llm-pi-ai', 'models', 'worker-sessions', 'workflow', 'profile-scientific-research', 'web-ui', 'mcp-server']
+const ALLOWED_ROWS = ['timer', 'credentials', 'webserver', 'store', 'event-log', 'leases', 'artifacts', 'resources', 'accounts', 'turn-receipts', 'display', 'browser', 'providers', 'provider-chatgpt-web', 'provider-gemini-web', 'login', 'egress', 'workers', 'turns', 'llm', 'llm-pi-ai', 'models', 'worker-sessions', 'workflow', 'profile-scientific-research', 'web-ui', 'mcp-server']
 
 async function client2(url: string, token: string): Promise<Client> {
   const client = new Client({ name: 'e2e-2', version: '0' })
@@ -122,7 +122,12 @@ describe('system profile (e2e through dsh)', () => {
       return (await scoped.listTools().finally(() => scoped.close())).tools.map((t) => t.name).sort()
     }
     const clientTools = await toolsOf('client')
-    expect(clientTools).toEqual(['ask', 'brainstorm', 'explain', 'research', 'result', 'review', 'run', 'session_inbox', 'session_send', 'status', 'usage', 'vote'])
+    expect(clientTools).toEqual(['ask', 'brainstorm', 'explain', 'research', 'resources_pools', 'resources_usage', 'result', 'review', 'run', 'session_inbox', 'session_send', 'status', 'usage', 'vote'])
+    // The resource ledger is core and on: with no pool configured it lists none (B2).
+    const ledger = await client2(url, tokenOf('client'))
+    const pools = await ledger.callTool({ name: 'resources_pools', arguments: {} })
+    const usage = await ledger.callTool({ name: 'resources_usage', arguments: {} }).finally(() => ledger.close())
+    expect([pools.structuredContent, usage.structuredContent]).toEqual([{ pools: [] }, { records: [], totals: [] }])
     expect(await toolsOf('operator')).toEqual(expect.arrayContaining([...clientTools, 'approve', 'stop', 'delete', 'drain', 'account_set_credentials', 'account_relogin', 'account_code', 'model_key']))
     const origin = new URL(url).origin
     const send = (path: string, scope: 'operator' | 'client' | 'model', body?: object) => fetch(`${origin}${path}`, {
