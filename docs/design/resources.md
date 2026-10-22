@@ -57,7 +57,8 @@ sequenceDiagram
 | observe | a Worker source or runtime, from a status line, limit notice, response headers, or result | the reading as an `evidence` artifact; the window's latest reading by `observedAt` | a reading for a pool or window not configured is refused (`unknown-pool`) |
 | reserve | the engine before a run, or the board before an attempt | a `budget` decision, `reserved` or `refused` with a reason per pool or cap | refused when a pool is not configured, or unavailable, or a cap would be exceeded |
 | record | the Worker source, after the run | the record as a `receipt` artifact | refused for an unknown pool (`unknown-pool`), a schema violation, or cached input above the input (`invalid`) |
-| release | whoever reserved | the hold is removed | an unknown reservation is refused |
+| release | whoever reserved | the hold is removed | an unknown reservation is refused; an expired one releases quietly |
+| expiry | none: time | a hold nobody released (a crashed run) stops counting at its `expiresAt` (`holdSeconds`, the provider's default 4 hours) | — |
 
 ## Pools and availability
 
@@ -82,7 +83,7 @@ first reading comes from the runtime's result. Every reading field is optional.
 - A unit is counted once across sources: a `transcript` record of a run that has a
   `runtime-result` record is a duplicate.
 - A cap counts, for its scope (a task, else a project), every counted record of its pool in its
-  unit, plus every reservation held for that scope: `tokens` are input plus output, `usd` the
+  unit, plus every unexpired reservation held for that scope: `tokens` are input plus output, `usd` the
   record's cost, `turns` its turns, `runs` one per record, `minutes` its duration.
 
 ## Fail-closed rules
@@ -92,7 +93,7 @@ first reading comes from the runtime's result. Every reading field is optional.
 2. A limited pool admits no new work until its window resets, and a limit hit is never retried
    on the same pool (PROP-0008: switch account or wait).
 3. Usage is never estimated from a model's own report. A missing number stays missing.
-4. Every cap is enforced before the run, never after (INV-9).
+4. Every cap is enforced before the run, never after, and every hold expires (INV-9).
 
 ## Conformance
 

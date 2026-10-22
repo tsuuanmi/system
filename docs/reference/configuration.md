@@ -259,6 +259,7 @@ No options.
 | `pools[].unknown` | "available" \| "unavailable" | `"unavailable"` | Whether a window with no reading, or an unknown one, leaves the pool available (a pool that never reports, such as a local model); unavailable fails closed |
 | `pageSize` | number (1…100) | `20` | Records per resources_usage page when the caller names no limit |
 | `maxRecords` | number (1…1000000) | `10000` | Records usage() returns at most; more matching is refused (narrow the filter or page) |
+| `holdSeconds` | number (60…604800) | `14400` | How long a reservation nobody releases (a crashed run) keeps counting against its caps |
 
 ## `runtime-acp`
 

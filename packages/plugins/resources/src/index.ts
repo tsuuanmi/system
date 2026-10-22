@@ -43,6 +43,8 @@ export interface Config {
   pageSize?: number
   /** Records `usage()` returns at most; more matching is refused, so a caller narrows the filter or pages (default 10000; INV-9). */
   maxRecords?: number
+  /** How long a reservation nobody releases keeps counting against its caps, in seconds (default 4 hours, INV-9). */
+  holdSeconds?: number
 }
 
 /** A usage page: the records after a cursor, the totals over every match, and the next cursor. */
@@ -135,12 +137,14 @@ export class StoreResources extends Resources {
     })).default([]).description(`The resource pools (at most ${MAX_POOLS}, unique ids): operator configuration, never a hardcoded plan`),
     pageSize: z.natural().min(1).max(100).default(20).description('Records per resources_usage page when the caller names no limit'),
     maxRecords: z.natural().min(1).max(1_000_000).default(10_000).description('Records usage() returns at most; more matching is refused (narrow the filter or page)'),
+    holdSeconds: z.natural().min(60).max(604_800).default(14_400).description('How long a reservation nobody releases (a crashed run) keeps counting against its caps'),
   }) as unknown as z<Config>
 
   private readonly schemas = new SchemaRegistry()
   private readonly configured: readonly PoolConfig[]
   private readonly pageSize: number
   private readonly maxRecords: number
+  private readonly holdSeconds: number
 
   constructor(ctx: Context, config: Config = {}) {
     super(ctx)
@@ -148,6 +152,7 @@ export class StoreResources extends Resources {
     this.configured = validatePools(config.pools ?? []).sort((a, b) => (a.pool < b.pool ? -1 : a.pool > b.pool ? 1 : 0))
     this.pageSize = config.pageSize ?? 20
     this.maxRecords = config.maxRecords ?? 10_000
+    this.holdSeconds = config.holdSeconds ?? 14_400
     ctx.store.migrate('resources', [{
       version: 1,
       sql: `CREATE TABLE resource_usage (
@@ -169,12 +174,12 @@ export class StoreResources extends Resources {
       );
       CREATE TABLE resource_reservations (
         reservation_id TEXT PRIMARY KEY, run_id TEXT NOT NULL, project_id TEXT, task_id TEXT,
-        request TEXT NOT NULL, decision TEXT NOT NULL, reserved_at TEXT NOT NULL, released_at TEXT
+        request TEXT NOT NULL, decision TEXT NOT NULL, reserved_at TEXT NOT NULL, expires_at TEXT NOT NULL, released_at TEXT
       );
       CREATE INDEX resource_reservations_run ON resource_reservations (run_id);
       CREATE TABLE resource_holds (
         reservation_id TEXT NOT NULL REFERENCES resource_reservations (reservation_id), pool TEXT NOT NULL, unit TEXT NOT NULL,
-        amount REAL NOT NULL, project_id TEXT, task_id TEXT
+        amount REAL NOT NULL, project_id TEXT, task_id TEXT, expires_ms INTEGER NOT NULL
       );
       CREATE INDEX resource_holds_reservation ON resource_holds (reservation_id);
       CREATE INDEX resource_holds_task ON resource_holds (task_id, pool, unit);
@@ -265,7 +270,7 @@ export class StoreResources extends Resources {
       }
       for (const cap of request.caps ?? []) {
         const used = this.used(db, request, cap)
-        const held = this.held(db, request, cap)
+        const held = this.held(db, request, cap, at)
         const wanted = round6(request.lines.filter((l) => l.pool === cap.pool && l.unit === cap.unit).reduce((n, l) => n + l.amount, 0))
         const total = round6(used + held + wanted)
         const sum = `${used} used, ${held} held, ${wanted} wanted`
@@ -291,13 +296,14 @@ export class StoreResources extends Resources {
         },
         deterministic: true,
       }, { producer: PRODUCER, runId: request.runId })
+      const expiresMs = at.getTime() + (request.holdSeconds ?? this.holdSeconds) * 1000
       if (state === 'reserved') {
-        db.prepare('INSERT INTO resource_reservations (reservation_id, run_id, project_id, task_id, request, decision, reserved_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
-          .run(reservationId, request.runId, request.projectId ?? null, request.taskId ?? null, JSON.stringify(request), decision.id, new Date().toISOString())
-        const hold = db.prepare('INSERT INTO resource_holds (reservation_id, pool, unit, amount, project_id, task_id) VALUES (?, ?, ?, ?, ?, ?)')
-        for (const line of request.lines) hold.run(reservationId, line.pool, line.unit, line.amount, request.projectId ?? null, request.taskId ?? null)
+        db.prepare('INSERT INTO resource_reservations (reservation_id, run_id, project_id, task_id, request, decision, reserved_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+          .run(reservationId, request.runId, request.projectId ?? null, request.taskId ?? null, JSON.stringify(request), decision.id, new Date().toISOString(), new Date(expiresMs).toISOString())
+        const hold = db.prepare('INSERT INTO resource_holds (reservation_id, pool, unit, amount, project_id, task_id, expires_ms) VALUES (?, ?, ?, ?, ?, ?, ?)')
+        for (const line of request.lines) hold.run(reservationId, line.pool, line.unit, line.amount, request.projectId ?? null, request.taskId ?? null, expiresMs)
       }
-      return { reservationId, state, reasons: faults, decision: decision.id as ArtifactRef }
+      return { reservationId, state, reasons: faults, decision: decision.id as ArtifactRef, ...(state === 'reserved' ? { expiresAt: new Date(expiresMs).toISOString() } : {}) }
     })
   }
 
@@ -433,10 +439,12 @@ export class StoreResources extends Resources {
     return round6(row.n ?? 0)
   }
 
-  private held(db: DatabaseSync, request: ReservationRequest, cap: BudgetLine): number {
+  /** What unexpired holds of the request's scope keep of a cap: a hold nobody released stops counting when it expires (INV-9). */
+  private held(db: DatabaseSync, request: ReservationRequest, cap: BudgetLine, at: Date): number {
     const scope = this.scope(request)
     if (!scope) return 0
-    const row = db.prepare(`SELECT SUM(amount) AS n FROM resource_holds WHERE ${scope.column} = ? AND pool = ? AND unit = ?`).get(scope.value, cap.pool, cap.unit) as { n: number | null }
+    const row = db.prepare(`SELECT SUM(amount) AS n FROM resource_holds WHERE ${scope.column} = ? AND pool = ? AND unit = ? AND expires_ms > ?`)
+      .get(scope.value, cap.pool, cap.unit, at.getTime()) as { n: number | null }
     return round6(row.n ?? 0)
   }
 
@@ -506,6 +514,9 @@ export class StoreResources extends Resources {
     // A run draws on at least one pool: a reservation of nothing would admit a run no pool accounts for.
     lines('lines', request.lines, 1)
     if (request.caps !== undefined) lines('caps', request.caps, 0)
+    if (request.holdSeconds !== undefined && (!Number.isInteger(request.holdSeconds) || request.holdSeconds < 60 || request.holdSeconds > 604_800)) {
+      throw invalid(`holdSeconds ${JSON.stringify(request.holdSeconds)} is not a whole number of seconds from 60 to 604800`)
+    }
   }
 }
 
