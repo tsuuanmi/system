@@ -2,7 +2,7 @@
  * The `approvals_*` MCP tools (reference/schemas.md#mcp-tools-board_-approvals_-resources_).
  * `approvals_list`, `approvals_get`, and `approvals_policy` are client scope; `approvals_decide` is
  * operator scope, because a verdict comes only from the operator's channel (INV-6). Each call's
- * input and structured output are validated against `schemas/mcp-approvals.v1.json`
+ * input and structured output are validated against `schemas/mcp-approvals.v1.json` (1.1)
  * `$defs/<tool>-input` and `-output`; a refused input executes nothing.
  */
 import type { Context } from '@deepseek-ai/cordis'
@@ -50,7 +50,7 @@ export const INPUTS: Record<ApprovalTool, ToolSpec['inputSchema']> = {
 const DESCRIPTIONS: Record<ApprovalTool, string> = {
   approvals_list: 'List approval requests (default: open and batched), by batch then expiry; a page at a time.',
   approvals_get: 'Read one approval request: its exact subject, action, requester, policy decision, expiry, and resolution.',
-  approvals_decide: 'Operator only: verdicts for up to 50 requests, each bound to the exact subject shown. A refused verdict (unknown, resolved, expired, or a changed subject) leaves its request unchanged; the others still apply.',
+  approvals_decide: 'Operator only: verdicts for up to 50 requests, each bound to the exact subject shown. A refused verdict (unknown, resolved, expired, a changed subject, or failed) leaves its request unchanged; the others still apply.',
   approvals_policy: 'The studio autonomy policy, the project\'s when it has one, and the effective mode per action class.',
 }
 
@@ -85,7 +85,7 @@ export function handlers(approvals: StoreApprovals): Record<ApprovalTool, Handle
 export function tool(name: ApprovalTool, handler: Handler): ToolHandler {
   return async (args, context) => {
     try {
-      schemas.assertDef('mcp-approvals@1.0', defOf(name, 'input'), args)
+      schemas.assertDef('mcp-approvals@1.1', defOf(name, 'input'), args)
     } catch (error) {
       return refused(`invalid input, nothing done: ${(error as Error).message}`)
     }
@@ -96,7 +96,7 @@ export function tool(name: ApprovalTool, handler: Handler): ToolHandler {
       return refused(error instanceof ApprovalsError ? `${error.failure}: ${error.message}` : `approvals: ${(error as Error).message}`)
     }
     try {
-      schemas.assertDef('mcp-approvals@1.0', defOf(name, 'output'), output)
+      schemas.assertDef('mcp-approvals@1.1', defOf(name, 'output'), output)
     } catch (error) {
       return refused(`approvals: ${name} made an output its schema refuses (a defect; anything it decided is recorded): ${(error as Error).message}`)
     }

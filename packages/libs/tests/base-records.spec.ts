@@ -18,7 +18,7 @@ const valid = (tag: string, value: unknown): boolean => {
 }
 const call = (family: string, value: Json): boolean => valid(`${family}@1.0`, value)
 
-describe('autonomy-policy@1.0', () => {
+describe('autonomy-policy@1.1', () => {
   const policy = example('autonomy-policy.studio')
   const withRule = (rule: Json) => ({ ...policy, rules: [rule] })
 
@@ -29,6 +29,16 @@ describe('autonomy-policy@1.0', () => {
       expect(valid('autonomy-policy@1.0', withRule({ actionClass, mode: 'ask' })), actionClass).toBe(true)
     }
     expect(valid('autonomy-policy@1.0', withRule({ actionClass: 'read', mode: 'auto' }))).toBe(true)
+  })
+
+  it('1.1 adds remediation to the classes that always ask; a 1.0 policy is refused for it when loaded, not by its schema', () => {
+    expect(policy.schema).toBe('autonomy-policy@1.1')
+    for (const mode of ['auto', 'notify']) {
+      expect(valid('autonomy-policy@1.1', withRule({ actionClass: 'remediation', mode })), mode).toBe(false)
+      expect(valid('autonomy-policy@1.1', { ...withRule({ actionClass: 'remediation', mode }), schema: 'autonomy-policy@1.0' }), mode).toBe(true)
+    }
+    expect(valid('autonomy-policy@1.1', withRule({ actionClass: 'remediation', mode: 'ask' }))).toBe(true)
+    expect(valid('autonomy-policy@1.1', { ...policy, schema: 'autonomy-policy@1.2' })).toBe(false)
   })
 
   it('fails closed for an action class no rule names (INV-2)', () => {

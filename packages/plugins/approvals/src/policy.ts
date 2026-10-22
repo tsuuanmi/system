@@ -1,11 +1,11 @@
 /**
  * The autonomy policy as code (docs/design/approvals.md#the-autonomy-policy): the load-time rules
- * `autonomy-policy@1.0` cannot state (docs/reference/schemas.md#autonomy-policy), and the mode a
+ * `autonomy-policy@1.x` cannot state (docs/reference/schemas.md#autonomy-policy), and the mode a
  * policy set gives an action. Pure: no store, no clock. Code decides, never a model.
  */
 import type { Action, ActionClass, AutonomyPolicy, Check, Mode } from '@tsuuanmi/system-approvals-core'
-import { MODES } from '@tsuuanmi/system-approvals-core'
-import { SchemaRegistry } from '@tsuuanmi/system-libs'
+import { ALWAYS_ASK, MODES, SHELL_METACHARACTER } from '@tsuuanmi/system-approvals-core'
+import { contentId, SchemaRegistry } from '@tsuuanmi/system-libs'
 
 /** Every action class (`common@1`'s `actionClass`), in the order `policy()` reports them. */
 export const ACTION_CLASSES: readonly ActionClass[] = ['read', 'workspace-write', 'merge', 'command', 'external-send', 'deploy', 'delete-data', 'spend', 'charter', 'funding', 'remediation', 'policy-change']
@@ -21,8 +21,8 @@ export interface EffectiveRule {
   named: boolean
   /** The checks of every applying policy, together. */
   requires: Check[]
-  /** The strictest rule's own expiry, when it names one. */
-  expiresSeconds?: number
+  /** For a class in `ALWAYS_ASK`: the laxer mode the rules gave, before it was raised to ask. */
+  raised?: Mode
 }
 
 /** How a policy set judges one action: the class it is judged as, its rule, and the checks that failed. */
@@ -34,16 +34,74 @@ export interface Judgement {
   failedChecks: Check[]
   /** The policies the action was judged under: the studio's, then the project's. */
   policies: AutonomyPolicy[]
+  /** Why the action is forbidden whatever a rule says (an argv word with a shell metacharacter). */
+  forbidden?: string
 }
 
 /** The batch rule when no policy names one: every request is its own batch, at once. */
 const NO_BATCHING = { maxSize: 1, maxWaitSeconds: 0 } as const
 
+/** The policies of a set (the studio's, then the project's) that apply to a class: a project policy constrains only the classes it names. */
+function applying(policies: readonly AutonomyPolicy[], actionClass: ActionClass): AutonomyPolicy[] {
+  const [studio, ...narrowing] = policies
+  const names = (p: AutonomyPolicy): boolean => p.rules.some((r) => r.actionClass === actionClass)
+  return [studio!, ...narrowing.filter((p) => !names(studio!) || names(p))]
+}
+
+/**
+ * The strictest rule for a class over the policies that apply to it. A class the studio policy
+ * does not name takes each policy's rule or default, so the stricter default applies where neither
+ * names it. A class in `ALWAYS_ASK` is raised to at least ask, whatever a rule says (defence in
+ * depth: the schema and the load-time rules already refuse a policy that says otherwise).
+ */
+function effectiveOf(policies: readonly AutonomyPolicy[], actionClass: ActionClass): EffectiveRule {
+  let best: EffectiveRule | undefined
+  const requires = new Set<Check>()
+  for (const policy of applying(policies, actionClass)) {
+    const rule = policy.rules.find((r) => r.actionClass === actionClass)
+    const mode = rule?.mode ?? policy.default
+    for (const check of rule?.requires ?? []) requires.add(check)
+    if (!best || rank(mode) > rank(best.mode)) best = { policy, mode, named: rule !== undefined, requires: [] }
+  }
+  const effective = { ...best!, requires: [...requires] }
+  return ALWAYS_ASK.includes(actionClass) && rank(effective.mode) < rank('ask') ? { ...effective, mode: 'ask', raised: effective.mode } : effective
+}
+
+/**
+ * How long a request for the class waits: the shortest `expiresSeconds` of the rules that apply
+ * to it (the studio's and the project's), else the stricter `expiry.defaultSeconds`, never more
+ * than the stricter `expiry.maxSeconds`.
+ */
+function expiryOf(policies: readonly AutonomyPolicy[], actionClass: ActionClass): number {
+  const named = applying(policies, actionClass).flatMap((p) => p.rules.filter((r) => r.actionClass === actionClass && r.expiresSeconds !== undefined).map((r) => r.expiresSeconds!))
+  const seconds = named.length ? Math.min(...named) : Math.min(...policies.map((p) => p.expiry.defaultSeconds))
+  return Math.min(seconds, ...policies.map((p) => p.expiry.maxSeconds))
+}
+
+/** The batch rule of a set: the first policy's that names one, the studio's first, and that policy. */
+function batchOf(policies: readonly AutonomyPolicy[]): { rule: { maxSize: number; maxWaitSeconds: number }; from?: AutonomyPolicy } {
+  const from = policies.find((p) => p.batch !== undefined)
+  return from ? { rule: from.batch!, from } : { rule: NO_BATCHING }
+}
+
+/** The problems of one commands-list entry: a word that is empty (a leading, trailing, or doubled space) or holds a shell metacharacter. */
+function commandProblems(line: string): string[] {
+  const words = line.split(' ')
+  const problems: string[] = []
+  if (words.some((w) => w === '')) problems.push(`the commands entry ${JSON.stringify(line)} has an empty word (a leading, trailing, or doubled space)`)
+  const unsafe = words.find((w) => SHELL_METACHARACTER.test(w))
+  if (unsafe !== undefined) problems.push(`the commands entry ${JSON.stringify(line)} has a shell metacharacter in ${JSON.stringify(unsafe)}`)
+  return problems
+}
+
 /**
  * Every problem of a configured policy set, in order; empty when it loads. Each policy must be a
- * valid `autonomy-policy@1.0` with one rule per action class, `expiry.defaultSeconds` and every
- * rule's `expiresSeconds` within `expiry.maxSeconds`; ids are unique; there is exactly one studio
- * policy; and each project policy, at most one per project, narrows that studio policy.
+ * valid `autonomy-policy@1.x` with one rule per action class, `expiry.defaultSeconds` and every
+ * rule's `expiresSeconds` within `expiry.maxSeconds`, no rule giving a class in `ALWAYS_ASK` auto
+ * or notify, and commands-list entries of non-empty words free of shell metacharacters; ids are
+ * unique; there is exactly one studio policy; each project policy, at most one per project,
+ * narrows that studio policy; and each batch rule's `maxWaitSeconds` is under the shortest expiry
+ * a request it batches can get.
  */
 export function policyProblems(policies: unknown, schemas: SchemaRegistry = new SchemaRegistry()): string[] {
   if (!Array.isArray(policies)) return ['policies must be a list of autonomy-policy@1.0 records']
@@ -68,6 +126,7 @@ export function policyProblems(policies: unknown, schemas: SchemaRegistry = new 
     for (const rule of policy.rules) {
       if (classes.has(rule.actionClass)) problems.push(`${name}: more than one rule for ${rule.actionClass}`)
       classes.add(rule.actionClass)
+      if (ALWAYS_ASK.includes(rule.actionClass) && rank(rule.mode) < rank('ask')) problems.push(`${name}: ${rule.actionClass} always asks; its rule may not say ${rule.mode}`)
       if (rule.expiresSeconds !== undefined && rule.expiresSeconds > policy.expiry.maxSeconds) {
         problems.push(`${name}: the ${rule.actionClass} rule expires after ${rule.expiresSeconds} s, more than expiry.maxSeconds (${policy.expiry.maxSeconds})`)
       }
@@ -75,6 +134,7 @@ export function policyProblems(policies: unknown, schemas: SchemaRegistry = new 
     if (policy.expiry.defaultSeconds > policy.expiry.maxSeconds) {
       problems.push(`${name}: expiry.defaultSeconds (${policy.expiry.defaultSeconds}) is more than expiry.maxSeconds (${policy.expiry.maxSeconds})`)
     }
+    for (const line of policy.commands ?? []) for (const problem of commandProblems(line)) problems.push(`${name}: ${problem}`)
     if (policy.scope === 'project') {
       if (projects.has(policy.projectId!)) problems.push(`${name}: project ${policy.projectId} already has a policy`)
       projects.add(policy.projectId!)
@@ -85,14 +145,26 @@ export function policyProblems(policies: unknown, schemas: SchemaRegistry = new 
   for (const p of valid) {
     if (p.scope === 'project' && !studios.some((s) => s.id === p.narrows)) problems.push(`policy ${p.id}: narrows ${p.narrows}, which is not a configured studio policy`)
   }
+  if (problems.length) return problems
+  // A lone request waits maxWaitSeconds before it is batched: that must be under every expiry it
+  // can get, or it expires before the operator is shown it.
+  const studio = studios[0]!
+  for (const set of [[studio], ...valid.filter((p) => p.scope === 'project').map((p) => [studio, p])]) {
+    const { rule, from } = batchOf(set)
+    const shortest = Math.min(...ACTION_CLASSES.map((c) => expiryOf(set, c)))
+    if (from && rule.maxWaitSeconds >= shortest) {
+      const of = set.length > 1 ? `project ${set[1]!.projectId}'s requests` : 'the studio\'s requests'
+      problems.push(`policy ${from.id}: batch.maxWaitSeconds (${rule.maxWaitSeconds}) is not under the shortest expiry of ${of} (${shortest} s), so a request alone would expire before it is batched`)
+    }
+  }
   return problems
 }
 
-/** Whether a policy's commands list allows an argv: a listed line word for word, alone or followed by more arguments. */
+/** Whether a policy's commands list allows an argv: a listed line, word for word, and nothing more. */
 function allows(policy: AutonomyPolicy, argv: readonly string[]): boolean {
   return (policy.commands ?? []).some((line) => {
     const words = line.split(' ')
-    return words.length <= argv.length && words.every((word, i) => argv[i] === word)
+    return words.length === argv.length && words.every((word, i) => argv[i] === word)
   })
 }
 
@@ -100,6 +172,7 @@ function allows(policy: AutonomyPolicy, argv: readonly string[]): boolean {
 export class PolicySet {
   readonly studio: AutonomyPolicy
   private readonly projects = new Map<string, AutonomyPolicy>()
+  private readonly hashes = new Map<string, `sha256:${string}`>()
 
   private constructor(policies: readonly AutonomyPolicy[]) {
     this.studio = policies.find((p) => p.scope === 'studio')!
@@ -120,33 +193,40 @@ export class PolicySet {
   }
 
   /**
-   * The strictest rule for a class over the policies that apply to it. A project policy constrains
-   * only the classes it names; a class the studio policy does not name takes each policy's rule or
-   * default, so the stricter default applies where neither names it.
+   * A project's effective policy set as loaded, for `decider.hash`: the sha256 of the canonical
+   * JSON of {@link of}, so an edit that keeps a policy's version still shows.
    */
+  hash(projectId?: string): `sha256:${string}` {
+    const policies = this.of(projectId)
+    const key = policies.map((p) => p.id).join('\n')
+    let hash = this.hashes.get(key)
+    if (!hash) this.hashes.set(key, hash = contentId(policies))
+    return hash
+  }
+
+  /** Whether a policy is in a project's set now, at that version. */
+  current(policy: { id: string; version: number }, projectId?: string): boolean {
+    return this.of(projectId).some((p) => p.id === policy.id && p.version === policy.version)
+  }
+
+  /** The strictest rule for a class over the policies that apply to it, at least ask for a class in `ALWAYS_ASK`. */
   effective(actionClass: ActionClass, projectId?: string): EffectiveRule {
-    const [studio, ...narrowing] = this.of(projectId)
-    const names = (p: AutonomyPolicy): boolean => p.rules.some((r) => r.actionClass === actionClass)
-    const named = names(studio!)
-    let best: EffectiveRule | undefined
-    const requires = new Set<Check>()
-    for (const policy of [studio!, ...narrowing.filter((p) => !named || names(p))]) {
-      const rule = policy.rules.find((r) => r.actionClass === actionClass)
-      const mode = rule?.mode ?? policy.default
-      for (const check of rule?.requires ?? []) requires.add(check)
-      if (!best || rank(mode) > rank(best.mode)) best = { policy, mode, named: rule !== undefined, requires: [], ...(rule?.expiresSeconds !== undefined ? { expiresSeconds: rule.expiresSeconds } : {}) }
-    }
-    return { ...best!, requires: [...requires] }
+    return effectiveOf(this.of(projectId), actionClass)
   }
 
   /**
-   * Judge one action. A command whose argv every policy's list allows (the studio's, and the
-   * project's when it has one) is judged by what it does, as `workspace-write`, unless the
-   * `command` class is forbidden; any other command is the `command` class.
+   * Judge one action. An argv with a word holding a shell metacharacter is forbidden. A command
+   * whose argv every policy's list allows exactly (the studio's, and the project's when it has
+   * one) is judged as `workspace-write`, unless the `command` class is forbidden; any other
+   * command is the `command` class.
    */
   judge(action: Action): Judgement {
     const policies = this.of(action.projectId)
     const argv = action.command
+    const unsafe = argv?.findIndex((word) => SHELL_METACHARACTER.test(word)) ?? -1
+    if (unsafe >= 0) {
+      return { actionClass: action.class, rule: { ...this.effective(action.class, action.projectId), mode: 'forbid' }, failedChecks: [], policies, forbidden: `argv word ${unsafe + 1} holds a shell metacharacter` }
+    }
     const listed = action.class === 'command' && argv !== undefined && allows(policies[0]!, argv)
       && policies.slice(1).every((p) => p.commands === undefined || allows(p, argv))
       && this.effective('command', action.projectId).mode !== 'forbid'
@@ -156,15 +236,13 @@ export class PolicySet {
     return { actionClass, rule, failedChecks, policies }
   }
 
-  /** How long a request for the class waits: its rule's expiry, else the stricter default, never more than the stricter maximum. */
+  /** How long a request for the class waits: the shortest applying rule's expiry, else the stricter default, never more than the stricter maximum. */
   expirySeconds(actionClass: ActionClass, projectId?: string): number {
-    const policies = this.of(projectId)
-    const max = Math.min(...policies.map((p) => p.expiry.maxSeconds))
-    return Math.min(this.effective(actionClass, projectId).expiresSeconds ?? Math.min(...policies.map((p) => p.expiry.defaultSeconds)), max)
+    return expiryOf(this.of(projectId), actionClass)
   }
 
   /** The batch rule for a project's requests: the first policy that names one, the studio's first. */
   batchRule(projectId?: string): { maxSize: number; maxWaitSeconds: number } {
-    return this.of(projectId).map((p) => p.batch).find((b) => b !== undefined) ?? NO_BATCHING
+    return batchOf(this.of(projectId)).rule
   }
 }

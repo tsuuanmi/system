@@ -108,7 +108,7 @@ Scope: `operator`
 
 ## `approvals_decide`
 
-Operator only: verdicts for up to 50 requests, each bound to the exact subject shown. A refused verdict (unknown, resolved, expired, or a changed subject) leaves its request unchanged; the others still apply.
+Operator only: verdicts for up to 50 requests, each bound to the exact subject shown. A refused verdict (unknown, resolved, expired, a changed subject, or failed) leaves its request unchanged; the others still apply.
 
 Scope: `operator`
 
