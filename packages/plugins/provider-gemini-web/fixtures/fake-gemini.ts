@@ -308,14 +308,21 @@ function renderLog(turns) {
   }
   render()
 }
+// Like the live site, a running research keeps updating: a failed or slow read never ends it.
+let researching = false
 async function refresh() {
-  const res = await fetch('/_/c/' + conversationId)
-  const state = await res.json()
-  const turns = state.turns
-  // Like the live site, a conversation reopens with Deep research still chosen if it was.
-  deepResearch = state.deepResearch
-  renderLog(turns)
-  if (turns.some((t) => t.role === 'research' && !t.done)) setTimeout(refresh, 200)
+  let again = researching
+  try {
+    const res = await fetch('/_/c/' + conversationId, { signal: AbortSignal.timeout(2000) })
+    const state = await res.json()
+    const turns = state.turns
+    // Like the live site, a conversation reopens with Deep research still chosen if it was.
+    deepResearch = state.deepResearch
+    renderLog(turns)
+    again = researching = turns.some((t) => t.role === 'research' && !t.done)
+  } finally {
+    if (again) setTimeout(refresh, 200)
+  }
 }
 async function startResearch() {
   await fetch('/_/research/' + conversationId, { method: 'POST' })
