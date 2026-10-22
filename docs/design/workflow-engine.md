@@ -175,7 +175,12 @@ comes from two sources, and both are recorded as `graph-growth` decision artifac
   ([teams](teams.md#tally-and-debate)). The other rule is **remediation**: when a node that requires the `review` capability is bound to an exact
   subject, its assessment requests changes with blocking findings, and a step it depends on
   wrote the change (`develop`), the engine appends a fix step (on that step's capabilities) and
-  a re-review bound to the new subject. Whatever waited for the review waits for both. Cycles are bounded by the engine
+  a re-review bound to the new subject. The fix writes, so it waits behind a gate for the
+  operator's approval of exactly that fix (a `plan` artifact), never approved by policy
+  ([ADR-0028](../decisions/adr/0028-local-lead-final-authority.md), INV-15); the approval
+  queue takes this over in B5. Each cycle is grown by the review that asked for it, so
+  superseding an earlier fix retires the later cycles with the review that runs again.
+  Whatever waited for the review waits for all three. Cycles are bounded by the engine
   configuration `maxReviewCycles` (default 3, the first review included).
 
 A profile contributes templates only; it declares no growth rules of its own.

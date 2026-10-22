@@ -368,13 +368,20 @@ describe('ctx.workers source `agents`: agent runtimes as Workers', () => {
       const { ctx } = await boot(agent, { workers: [worker({ id: 'dev', sandbox: 'workspace-write', workspace: ws, tools: [] }), worker({ id: 'reviewer', workspace: ws })] })
       chatWorker(ctx)
       const run = ctx.workflow.start({ template: 'develop', input: 'Fix add()' })
+      // The operator approves the plan, then each remediation fix: every writing step waits for one (ADR-0028).
+      const approvals: string[] = []
       const deadline = Date.now() + 60_000
-      while (!ctx.workflow.get(run.runId)?.blocked) {
-        if (Date.now() > deadline) throw new Error('never blocked')
+      for (;;) {
+        const view = ctx.workflow.get(run.runId)
+        if (view && view.status !== 'running') break
+        if (Date.now() > deadline) throw new Error('never finished')
+        if (view?.blocked?.kind === 'gate') {
+          approvals.push(view.blocked.nodeId)
+          ctx.workflow.approve(run.runId, { verdict: 'approved', plan: view.blocked.plan })
+        }
         await new Promise((resolve) => setTimeout(resolve, 50))
       }
-      ctx.workflow.approve(run.runId, { verdict: 'approved' })
-      return { ctx, agent, done: await ctx.workflow.wait(run.runId, 60_000) }
+      return { ctx, agent, approvals, done: await ctx.workflow.wait(run.runId, 60_000) }
     }
     const subjectOf = (prompt: string): string => /^Subject: (\S+)$/m.exec(prompt)![1]!
     const assessment = (subject: string) => '```json\n' + JSON.stringify({ subject, verdict: 'approve', findings: [{ severity: 'info', title: 'add() now adds' }] }) + '\n```'
@@ -382,9 +389,12 @@ describe('ctx.workers source `agents`: agent runtimes as Workers', () => {
 
     it('remediates blocking findings: a fix, then a review of the new subject; the report waits for both', async () => {
       let reviews = 0
-      const { ctx, agent, done } = await develop((prompt) => (++reviews === 1 ? changes(subjectOf(prompt)) : assessment(subjectOf(prompt))))
+      const { ctx, agent, approvals, done } = await develop((prompt) => (++reviews === 1 ? changes(subjectOf(prompt)) : assessment(subjectOf(prompt))))
       expect(done.status).toBe('completed')
+      // The fix wrote only after the operator approved its exact plan (ADR-0028, INV-15).
+      expect(approvals).toEqual(['plan:1:gate', 'plan:1:review:approve:1'])
       const byId = Object.fromEntries(done.nodes.map((n) => [n.nodeId, n]))
+      expect(byId['plan:1:review:approve:1']).toMatchObject({ state: 'COMPLETED' })
       expect(byId['plan:1:review:fix:1']).toMatchObject({ state: 'COMPLETED', worker: 'agent:dev' })
       expect(byId['plan:1:review:review:2']).toMatchObject({ state: 'COMPLETED', worker: 'agent:reviewer' })
       expect(agent.runs.find((r) => r.prompt.includes('Fix the blocking findings'))!.prompt).toContain('- no test for add() (calc.py)')
@@ -396,11 +406,33 @@ describe('ctx.workers source `agents`: agent runtimes as Workers', () => {
       expect(done.nodes.at(-1)!.nodeId).toBe('report:1')
     })
 
+    it('retires a later remediation cycle with the review that grew it when an earlier fix is superseded, and grows it again under new ids (INV-15)', async () => {
+      let reviews = 0
+      // Reviews 1 and 2 ask for changes, 3 approves; after the supersede, review 2 runs again (4) and asks once more, and 5 approves.
+      const { ctx, done } = await develop((prompt) => ([1, 2, 4].includes(++reviews) ? changes(subjectOf(prompt)) : assessment(subjectOf(prompt))))
+      expect(done.status).toBe('completed')
+      await ctx.workflow.supersede(done.runId, 'plan:1:review:fix:1', { text: 'fixed by hand', note: 'operator fix' })
+      const deadline = Date.now() + 60_000
+      for (;;) {
+        const view = ctx.workflow.get(done.runId)
+        if (view && view.status !== 'running') break
+        if (Date.now() > deadline) throw new Error('never finished')
+        if (view?.blocked?.kind === 'gate') ctx.workflow.approve(done.runId, { verdict: 'approved', plan: view.blocked.plan })
+        await new Promise((resolve) => setTimeout(resolve, 50))
+      }
+      const again = await ctx.workflow.wait(done.runId, 60_000)
+      expect(again.status).toBe('completed')
+      const states = Object.fromEntries(ctx.workflow.records(done.runId).map((r) => [r.nodeId, r.state]))
+      // What review 2 grew before is history; its new growth carries its new generation.
+      expect(states).toMatchObject({ 'plan:1:review:fix:2': 'RETIRED', 'plan:1:review:review:3': 'RETIRED', 'plan:1:review:approve:2': 'RETIRED' })
+      expect(states).toMatchObject({ 'plan:1:review:r2:approve:2': 'COMPLETED', 'plan:1:review:r2:fix:2': 'COMPLETED', 'plan:1:review:r2:review:3': 'COMPLETED' })
+    })
+
     it('stops remediating at the review cycle bound, and says so (QA-8)', async () => {
       const { ctx, done } = await develop((prompt) => changes(subjectOf(prompt)))
       expect(done.status).toBe('completed')
       expect(done.nodes.map((n) => n.nodeId).filter((id) => id.includes(':review'))).toEqual([
-        'plan:1:review', 'plan:1:review:fix:1', 'plan:1:review:review:2', 'plan:1:review:fix:2', 'plan:1:review:review:3',
+        'plan:1:review', 'plan:1:review:approve:1', 'plan:1:review:fix:1', 'plan:1:review:review:2', 'plan:1:review:approve:2', 'plan:1:review:fix:2', 'plan:1:review:review:3',
       ])
       const growth = ctx.artifacts.list({ kind: 'decision' }).map((a) => a.body as { decisionType: string; decider: { id: string }; outcome: { option: string } })
         .filter((d) => d.decider.id === 'workflow.remediation').map((d) => d.outcome.option)
