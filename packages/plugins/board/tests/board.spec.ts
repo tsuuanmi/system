@@ -37,11 +37,13 @@ class FlakyApprovals extends FakeApprovals {
   withdrawDown = false
   /** Requests the queue no longer knows, as a lost row or a restore from an older backup would leave it. */
   readonly forgotten = new Set<string>()
+  /** Classes judged as another action, so a test can give a class a mode the conformance policies do not. */
+  readonly judgeAs = new Map<Action['class'], Action>()
   private up(): void {
     if (this.down) throw new Error('the approval queue is unavailable')
   }
 
-  override async check(action: Action) { this.up(); return super.check(action) }
+  override async check(action: Action) { this.up(); return super.check(this.judgeAs.get(action.class) ?? action) }
   override async request(request: NewRequest, when?: Date) { this.up(); return super.request(request, when) }
   override async get(requestId: string) { this.up(); return this.forgotten.has(requestId) ? undefined : super.get(requestId) }
   override async list(filter?: Parameters<FakeApprovals['list']>[0]) { this.up(); return (await super.list(filter)).filter((r) => !this.forgotten.has(r.requestId)) }
@@ -294,6 +296,28 @@ describe('ctx.board (store-backed): the approval queue', () => {
     await ctx.board.sweep(at(2))
     expect((await ctx.board.task(merge.taskId))?.waiting?.approvalRequest).toBe(orphan.requestId)
     expect(await open(ctx, 'p2')).toHaveLength(1)
+  })
+
+  it('never readies or cancels a lost or blocked run on the policy alone: with no ask verdict it waits for input (S6, INV-4)', async () => {
+    const { ctx, approvals } = await boot()
+    await active(ctx)
+    // remediation judged auto (as the studio's read rule), funding forbidden (as p1's merge rule).
+    approvals().judgeAs.set('remediation', { class: 'read' })
+    approvals().judgeAs.set('funding', { class: 'merge', projectId: 'p1' })
+    const lost = await ready(ctx, task('p2', 'lost'))
+    const held = await ctx.board.claim(lost.taskId, 'lead', 60_000, at(3))
+    await ctx.board.start(lost.taskId, held.generation, { runId: 'run-1' }, at(3))
+    await ctx.board.sweep(at(10))
+    const waiting = (await ctx.board.task(lost.taskId))!
+    expect(waiting).toMatchObject({ state: 'waiting-for-input', waiting: { reason: 'rejected' }, run: { runId: 'run-1' }, attempts: { count: 1 } })
+    expect(ctx.artifacts.get(waiting.lastDecision!)?.body).toMatchObject({ decisionType: 'board', outcome: { option: 'waiting-for-input', detail: { reason: 'reconciliation-failed', mode: 'auto' } } })
+    expect(await failureOf(ctx.board.claim(lost.taskId, 'other', 60_000, at(10)))).toBe('invalid-transition')
+
+    const spent = await ready(ctx, task('p2', 'spent'), at(10))
+    const claim = await ctx.board.claim(spent.taskId, 'lead', 600_000, at(10))
+    await ctx.board.start(spent.taskId, claim.generation, { runId: 'run-2' }, at(10))
+    expect(await ctx.board.block(spent.taskId, claim.generation, { reason: 'budget-spent' }, at(11))).toMatchObject({ state: 'waiting-for-input', waiting: { reason: 'rejected' }, run: { runId: 'run-2' } })
+    expect(await open(ctx, 'p2')).toEqual([])
   })
 
   it('starts nothing with no attempt left, even when the operator approves going on (INV-9)', async () => {

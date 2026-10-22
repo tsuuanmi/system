@@ -489,7 +489,9 @@ guesses.
 - A holder lost mid-run is first reconciled by the run's owner: a completed run's result is
   applied with its `acceptance` decision, as a review's would be, a failed one counts as an
   attempt, and only an unknown outcome waits for approval to run again (`reconciliation-failed`);
-  an outcome reported later withdraws that request.
+  an outcome reported later withdraws that request. When the policy's verdict on `remediation`
+  (or, for a spent budget, `funding`) is not `ask`, no request can be opened, and the task waits
+  for input (`rejected`) instead: it is never readied or cancelled on the policy alone.
 - `lastDecision` is the decision behind the latest move: a `board` decision for moves the board
   makes on its own, otherwise the acceptance, approval, route, or reconciliation decision that
   caused it. Examples: [`board-task.review.json`](../../schemas/examples/board-task.review.json),

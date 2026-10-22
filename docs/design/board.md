@@ -82,7 +82,8 @@ stateDiagram-v2
   claimed --> ready: lease lapsed before a run
   claimed --> running: start (run recorded first)
   running --> review: submit
-  running --> waiting_for_approval: budget spent, or run lost
+  running --> waiting_for_approval: budget spent, or run lost (policy ask)
+  running --> waiting_for_input: budget spent, or run lost (policy not ask)
   running --> waiting_for_input: question
   running --> done: owner reports the run completed and accepted
   review --> done: acceptance accepted
@@ -141,7 +142,8 @@ hold. The fake provider does not check them, and the suite does not test them ye
 | claimed → ready | `sweep`, the lease lapsed and no run started | a `board` decision | the old generation is fenced out (`stale-generation`) |
 | claimed → running | `start`, with the holder's generation | a `board` decision; `run` is written before the run starts, and the attempt counted | a stale generation or lapsed lease is refused |
 | running → review | `submit`, with the result's exact subject (a commit, or the result artifact) | a `board` decision; `result` | unknown result artifacts are refused |
-| running → waiting-for-approval | `block` (`budget-spent`: action class `funding`), or `sweep` when the holder's lease lapsed mid-run (`reconciliation-failed`: `remediation`) | the `autonomy` decision and an approval request | the run is never started again on its own (INV-4) |
+| running → waiting-for-approval | `block` (`budget-spent`: action class `funding`), or `sweep` when the holder's lease lapsed mid-run (`reconciliation-failed`: `remediation`), on an `ask` verdict | the `autonomy` decision and an approval request | the run is never started again on its own (INV-4) |
+| running → waiting-for-input (`rejected`) | the same, on any other verdict: `forbid`, and also `auto` or `notify`, since the queue takes a request only on `ask` | a `board` decision naming the `autonomy` decision | a spent or lost run is never readied or cancelled by the policy alone, so it waits for a person; the wait expires (`input-expired`) |
 | running → waiting-for-input | `block` with questions | a `board` decision | a question wait without questions is refused |
 | running or waiting-for-approval (`reconciliation-failed`) → done, ready, or waiting-for-input | `reconcileRun` by the run's owner (the workflow engine), after it reconciled the recorded run | the acceptance decision of a completed run, or a `board` decision for a failed one; the pending approval request is withdrawn once the move committed | an outcome for another run id is refused; an unknown outcome is never reported, so the task keeps waiting for approval |
 | review → waiting-for-input | `sweep`, the reviewer's lease lapsed with no decision | a `board` decision (`review-expired`) | the wait expires and cancels the task |

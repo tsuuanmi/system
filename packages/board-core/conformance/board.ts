@@ -653,11 +653,16 @@ export class FakeBoard extends Board {
     return { reason, ...(questions ? { questions } : {}), since: at.toISOString(), expiresAt: new Date(at.getTime() + (this.config.inputExpirySeconds ?? TTL_INPUT_SECONDS) * 1000).toISOString() }
   }
 
-  /** Ask the policy about `actionClass` for this task: run, wait for approval, or never run. */
+  /**
+   * Ask the operator about `actionClass` for this task. From running (a spent budget, a lost run)
+   * only an approval goes on: a verdict under which no request can be opened leaves it waiting for
+   * input, never readied or cancelled (INV-4).
+   */
   private async gate(task: BoardTask, actionClass: ActionClass, reason: 'approval-needed' | 'budget-spent' | 'reconciliation-failed', at: Date): Promise<BoardTask> {
     const verdict = await this.ctx.approvals.check({ class: actionClass, projectId: task.projectId })
-    if (verdict.mode === 'forbid') return this.cancelTask(task, 'forbidden', at, verdict.decision)
-    if (verdict.mode === 'auto' || verdict.mode === 'notify') return this.save(task, at, { state: 'ready', holder: undefined, run: undefined, waiting: undefined, lastDecision: verdict.decision })
+    if (verdict.mode !== 'ask') {
+      return this.save(task, at, { state: 'waiting-for-input', holder: undefined, waiting: this.inputWait('rejected', at), lastDecision: this.decide(task.taskId, task.state, 'waiting-for-input', at, `${reason}: the policy gives ${actionClass} ${verdict.mode}, so no approval can be asked`) })
+    }
     const request = await this.ctx.approvals.request({
       subject: { type: 'content', ref: `board-task:${task.taskId}:attempt:${task.attempts.count}`, version: reason },
       action: { class: actionClass, summary: `${reason}: ${task.title}`.slice(0, 500) },

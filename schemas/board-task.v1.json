@@ -127,7 +127,7 @@
       "required": ["reason", "since", "expiresAt"],
       "properties": {
         "reason": {
-          "description": "approval-needed: the policy asks before starting; budget-spent: an attempt spent its budget; reconciliation-failed: a started run could not be reconciled, so running it again needs approval; retries-spent: review rejected the last attempt allowed; question: the lead or operator must answer; rejected: an approval was refused or expired; review-expired: no acceptance decision came before the reviewer's lease lapsed.",
+          "description": "approval-needed: the policy asks before starting; budget-spent: an attempt spent its budget; reconciliation-failed: a started run could not be reconciled, so running it again needs approval; retries-spent: review rejected the last attempt allowed; question: the lead or operator must answer; rejected: an approval was refused or expired, or none could be asked (a spent budget or a lost run under a policy verdict other than ask); review-expired: no acceptance decision came before the reviewer's lease lapsed.",
           "enum": ["approval-needed", "budget-spent", "reconciliation-failed", "retries-spent", "question", "rejected", "review-expired"]
         },
         "approvalRequest": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },

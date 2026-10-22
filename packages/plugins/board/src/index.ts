@@ -832,18 +832,29 @@ export class StoreBoard extends Board {
   }
 
   /**
-   * Ask the policy about `actionClass` for a running task (a spent budget, a lost run): ready when it
-   * allows it, cancelled when it forbids it, otherwise a wait for the operator's approval. A
-   * holder's call presents its `generation` again when the move commits.
+   * Put a running task to the operator after a spent budget or a lost run (`funding`,
+   * `remediation`): one approval request whatever the policy's mode, since such a run is never
+   * readied or cancelled by the policy alone (INV-4, rule 3). The queue takes a request only on an
+   * `ask` verdict, so under any other (forbid, and also auto or notify) the task waits for input
+   * (`rejected`) instead: it never runs again without a person, and is not cancelled while its
+   * run may still be live; the wait expires in turn. A holder's call presents its `generation`
+   * again when the move commits.
    */
   private async gate(task: BoardTask, actionClass: ActionClass, reason: 'budget-spent' | 'reconciliation-failed', at: Date, generation?: number): Promise<BoardTask> {
     const verdict = await this.ctx.approvals.check({ class: actionClass, projectId: task.projectId })
     if (verdict.mode === 'ask') return this.waitForApproval(task, actionClass, reason, verdict, at, generation)
-    return this.commitLater(task, at, generation, (c) => {
-      const { project } = this.projectOf(task.projectId)
-      if (verdict.mode === 'forbid') return this.cancelMove(project, c.task, 'forbidden', at, verdict.decision)
-      return this.readyMove(project, c.task, verdict, at, `${reason}: the policy gives ${actionClass} ${verdict.mode}, so another attempt needs no person`)
-    })
+    return this.commitLater(task, at, generation, (c) => ({
+      changes: {
+        state: 'waiting-for-input', holder: undefined, waiting: this.inputWait('rejected', at),
+        lastDecision: this.decision(this.projectOf(task.projectId).project, c.task, {
+          from: 'running', to: 'waiting-for-input',
+          why: `${reason}: the policy gives ${actionClass} ${verdict.mode}, under which no approval request can be opened, so the run goes on only with a person`,
+          whyNot: verdict.mode === 'forbid' ? 'kept running, or cancelled while its run may still be live: neither, as the policy forbids going on'
+            : `readied on ${verdict.mode}: a ${reason === 'budget-spent' ? 'run past its budget' : 'lost run'} never starts again without an operator's approval (INV-4)`,
+          inputs: [verdict.decision], detail: { reason, actionClass, mode: verdict.mode },
+        }, at),
+      },
+    }))
   }
 
   /** Put the task to the operator: one request on `board-task:<id>:attempt:<n>`, which its wait follows. */
