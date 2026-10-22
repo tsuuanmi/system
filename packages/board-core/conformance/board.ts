@@ -77,7 +77,10 @@ const ready = async (ctx: Context, input: TaskInput): Promise<BoardTask> => {
 }
 const acceptance = (ctx: Context, option: 'accept' | 'reject', result: ArtifactRef): ArtifactRef => ctx.artifacts.recordDecision({
   decisionType: 'acceptance', question: `Does ${result} satisfy the criteria?`, inputs: [result],
-  candidates: [{ option: 'accept', selected: option === 'accept', reasons: [] }, { option: 'reject', selected: option === 'reject', reasons: [] }],
+  candidates: [
+    { option: 'accept', selected: option === 'accept', reasons: [option === 'accept' ? 'the criteria hold' : 'not accept: the criteria fail'] },
+    { option: 'reject', selected: option === 'reject', reasons: [option === 'reject' ? 'the criteria fail' : 'not reject: the criteria hold'] },
+  ],
   decider: { type: 'rule', id: 'acceptance.conformance', version: '1' }, outcome: { option }, deterministic: true,
 }, { producer: { type: 'policy', ref: 'conformance' } }).id as ArtifactRef
 const result = (ctx: Context, text: string): ArtifactRef => ctx.artifacts.put({
@@ -338,7 +341,7 @@ export class FakeBoard extends Board {
   private decide(subject: string, from: string, to: string, at: Date, why: string): ArtifactRef {
     return this.ctx.artifacts.recordDecision({
       schema: 'decision@1.4', decisionType: 'board', question: `Does ${subject} move from ${from} to ${to}?`, inputs: [],
-      candidates: [{ option: to, selected: true, reasons: [why] }, { option: from, selected: false, reasons: [] }],
+      candidates: [{ option: to, selected: true, reasons: [why] }, { option: from, selected: false, reasons: [`not ${from}: ${why}`] }],
       decider: { type: 'rule', id: 'board.transition', version: '1' }, outcome: { option: to, detail: { subject, from, at: at.toISOString() } }, deterministic: true,
     }, { producer: { type: 'system', ref: 'board' } }).id as ArtifactRef
   }

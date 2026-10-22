@@ -32,5 +32,3 @@ It is ported from tsuuanmi/internet's receipt store, and its tests were ported f
     new follows it and the page does not show the prompt; an unobservable page,
     a contradicted completion, or a missing boundary is AMBIGUOUS;
   - `delete` removes one receipt and none of the session's others.
-  - One scenario is baselined as a known failure, with its reason, in
-    [`tests/conformance.spec.ts`](tests/conformance.spec.ts).

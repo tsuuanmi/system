@@ -144,7 +144,7 @@ export function releaseSessions(host: LedgerHost, sessionIds: readonly string[],
     if (!rows.length) return { due: 0 }
     const decision = host.ctx.artifacts.recordDecision({
       schema: 'decision@1.3', decisionType: 'retention', question: `Are the website conversations of ${sessions.length} released session(s) deleted?`, inputs: [],
-      candidates: [{ option: 'delete', selected: true, reasons: [`${reason}: a released session's recorded conversations are deleted on their sites`] }, { option: 'keep', selected: false, reasons: [] }],
+      candidates: [{ option: 'delete', selected: true, reasons: [`${reason}: a released session's recorded conversations are deleted on their sites`] }, { option: 'keep', selected: false, reasons: [`not keep: the session(s) are released (${reason}), and the rule keeps only a live session's conversations`] }],
       decider: { type: 'rule', id: 'turns.conversation-retention', version: '1' },
       outcome: { option: 'delete', detail: { reason, sessions, conversations: rows.map((r) => ({ account: r.account, binding: r.binding })) } },
       deterministic: true,

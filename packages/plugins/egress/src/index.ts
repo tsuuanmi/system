@@ -110,8 +110,8 @@ export class Egress extends Service {
       question: `May this payload leave the machine for a ${request.workerClass} Worker?`,
       inputs: [],
       candidates: [
-        { option: 'allow', selected: allowed, reasons: allowed ? [reason] : [] },
-        { option: 'deny', selected: !allowed, reasons: allowed ? [] : [reason] },
+        { option: 'allow', selected: allowed, reasons: allowed ? [reason] : [`not allow: ${reason}`] },
+        { option: 'deny', selected: !allowed, reasons: allowed ? [`not deny: the policy permits ${classification} content for ${request.workerClass} Workers, and the scan found no credential`] : [reason] },
       ],
       decider: { type: 'policy', id: 'egress.classification-and-secrets', version: '1' },
       outcome: { option: allowed ? 'allow' : 'deny', detail: { workerClass: request.workerClass, classification, payloadHash: sha256(request.payload), findings } },

@@ -226,7 +226,10 @@ export class FakeResources extends Resources {
     const state = reasons.length ? 'refused' : 'reserved'
     const decision = this.ctx.artifacts.recordDecision({
       schema: 'decision@1.4', decisionType: 'budget', question: `May run ${request.runId} draw on its pools?`, inputs: [],
-      candidates: ['reserved', 'refused'].map((o) => ({ option: o, selected: o === state, reasons: o === state ? (reasons.length ? reasons : ['every pool available and within its caps']) : [] })),
+      candidates: [
+        { option: 'reserved', selected: state === 'reserved', reasons: reasons.length ? reasons.map((r) => `not reserved: ${r}`) : ['every pool available and within its caps'] },
+        { option: 'refused', selected: state === 'refused', reasons: reasons.length ? reasons : ['not refused: no pool is missing or unavailable, and no cap would be exceeded'] },
+      ],
       decider: { type: 'rule', id: 'resources.reserve', version: '1' }, outcome: { option: state, detail: { runId: request.runId, lines: request.lines } }, deterministic: true,
     }, { producer: { type: 'system', ref: 'resources' }, runId: request.runId })
     const reservationId = `res-${randomUUID().slice(0, 8)}`

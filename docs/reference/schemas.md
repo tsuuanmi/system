@@ -46,6 +46,11 @@ guesses.
 - Exactly one candidate is `selected`, and it equals `outcome.option`. The schema
   checks that only one candidate is selected. The store checks that it equals
   the outcome.
+- Every candidate carries at least one non-blank reason: a rejected one says why
+  it lost, the selected one why it won
+  ([INV-13](../architecture/invariants.md#inv-13-every-decision-is-an-artifact)).
+  The schema allows an empty `reasons`, so decisions stored before the rule stay
+  readable; the store refuses a new decision with a candidate that gives none.
 - `decider.version` changes whenever the policy's behavior changes. `hash` is the
   hash of the effective policy configuration.
 - When `decider.type` is `model`, `deterministic` must be `false`, and
