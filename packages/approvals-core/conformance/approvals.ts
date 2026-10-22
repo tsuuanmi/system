@@ -364,7 +364,7 @@ export class FakeApprovals extends Approvals {
     if (request.verdict.mode !== 'ask' || recorded?.decisionType !== 'autonomy' || recorded.outcome?.option !== 'ask') throw notAsked('the recorded policy verdict is not ask')
     // The decision is a policy's own, of the verdict's policy, made under the project's policies now.
     const policies = this.policies(projectId)
-    if (envelope!.producer.type !== 'policy' || recorded.decider?.type !== 'policy' || recorded.decider.id !== request.verdict.policy.id || recorded.decider.version !== String(request.verdict.policy.version)) throw notAsked('not this policy\'s decision')
+    if (envelope!.producer.type !== 'policy' || recorded.decider?.type !== 'policy' || recorded.decider.id !== request.verdict.policy?.id || recorded.decider.version !== String(request.verdict.policy?.version)) throw notAsked('not this policy\'s decision')
     if (!policies.some((p) => p.id === recorded.decider!.id && String(p.version) === recorded.decider!.version) || recorded.decider.hash !== contentId(policies)
       || JSON.stringify(recorded.outcome.detail?.policies) !== JSON.stringify(policies.map((p) => p.id))) throw notAsked('decided under other policies')
     // Judged again: the policy still asks, for the class the decision names.

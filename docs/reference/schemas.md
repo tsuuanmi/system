@@ -211,8 +211,8 @@ guesses.
 ### `approval`
 
 - `subject` is the exact artifact approved (INV-5). Today that is a plan.
-- It is written only through an operator channel (CLI or MCP `approve`), never
-  from model output (INV-6).
+- It is written only through an operator channel (the CLI, MCP `approve` or
+  `approvals_decide`, or the web UI), never from model output (INV-6).
 
 ### `agent-result`
 
