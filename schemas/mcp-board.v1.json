@@ -20,7 +20,6 @@
         "board_propose",
         "board_claim",
         "board_update",
-        "board_complete",
         "board_cancel"
       ]
     },
@@ -180,25 +179,6 @@
           },
           "output": {
             "$ref": "#/$defs/board-update-output"
-          }
-        }
-      }
-    },
-    {
-      "if": {
-        "properties": {
-          "tool": {
-            "const": "board_complete"
-          }
-        }
-      },
-      "then": {
-        "properties": {
-          "input": {
-            "$ref": "#/$defs/board-complete-input"
-          },
-          "output": {
-            "$ref": "#/$defs/board-complete-output"
           }
         }
       }
@@ -619,9 +599,11 @@
                 "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
               },
               "waitingFor": {
+                "description": "What the task waits for: input, an approval, or the operator's acceptance of its review.",
                 "enum": [
                   "input",
-                  "approval"
+                  "approval",
+                  "operator"
                 ]
               },
               "updatedAt": {
@@ -673,9 +655,11 @@
                 "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
               },
               "waitingFor": {
+                "description": "What the task waits for: input, an approval, or the operator's acceptance of its review.",
                 "enum": [
                   "input",
-                  "approval"
+                  "approval",
+                  "operator"
                 ]
               },
               "updatedAt": {
@@ -727,9 +711,11 @@
                 "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
               },
               "waitingFor": {
+                "description": "What the task waits for: input, an approval, or the operator's acceptance of its review.",
                 "enum": [
                   "input",
-                  "approval"
+                  "approval",
+                  "operator"
                 ]
               },
               "updatedAt": {
@@ -902,9 +888,11 @@
                 "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
               },
               "waitingFor": {
+                "description": "What the task waits for: input, an approval, or the operator's acceptance of its review.",
                 "enum": [
                   "input",
-                  "approval"
+                  "approval",
+                  "operator"
                 ]
               },
               "updatedAt": {
@@ -1199,73 +1187,6 @@
         },
         "leaseExpiresAt": {
           "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp"
-        }
-      },
-      "additionalProperties": false
-    },
-    "board-complete-input": {
-      "type": "object",
-      "required": [
-        "taskId",
-        "generation",
-        "artifacts",
-        "subject"
-      ],
-      "properties": {
-        "taskId": {
-          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
-        },
-        "generation": {
-          "description": "The lease generation the caller holds (a fence, INV-4).",
-          "type": "integer",
-          "minimum": 1
-        },
-        "artifacts": {
-          "type": "array",
-          "minItems": 1,
-          "maxItems": 32,
-          "uniqueItems": true,
-          "items": {
-            "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/artifactRef"
-          }
-        },
-        "subject": {
-          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/subject"
-        },
-        "files": {
-          "type": "array",
-          "maxItems": 512,
-          "uniqueItems": true,
-          "items": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 1024
-          }
-        },
-        "next": {
-          "type": "string",
-          "maxLength": 2000
-        }
-      },
-      "additionalProperties": false
-    },
-    "board-complete-output": {
-      "type": "object",
-      "required": [
-        "taskId",
-        "state",
-        "revision"
-      ],
-      "properties": {
-        "taskId": {
-          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
-        },
-        "state": {
-          "const": "review"
-        },
-        "revision": {
-          "type": "integer",
-          "minimum": 0
         }
       },
       "additionalProperties": false

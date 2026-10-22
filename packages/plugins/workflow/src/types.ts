@@ -72,6 +72,8 @@ export interface RunView {
    */
   blocked?: { kind: 'gate'; nodeId: string; plan: ArtifactRef; until?: string } | { kind: 'tie'; nodeId: string; decision: ArtifactRef; options: Array<{ option: string; summary: string }>; until: string }
   error?: WorkflowError
+  /** The board task the run serves (one attempt of it), when it serves one. */
+  task?: TaskView
   createdAt: string
   /** The run's last progress: its own last change or any node's, whichever is later. */
   updatedAt: string
@@ -84,6 +86,54 @@ export interface StartInput extends CallerOptions {
   classification?: Classification | undefined
   /** Retry-safe request key: the same key returns the same run. */
   clientRequestId?: string | undefined
+}
+
+/**
+ * The board task a run serves, one attempt of it (docs/design/board.md): its id, and the claim a
+ * lead holds when it hands that claim to the run (`holder` and `generation`, both or neither).
+ * Without a claim, the run claims the ready task itself.
+ */
+export interface TaskClaim {
+  taskId: string
+  holder?: string | undefined
+  generation?: number | undefined
+}
+
+/** A start for a board task: admission is asynchronous, since the board takes the task first. */
+export interface TaskStartInput extends StartInput {
+  task: TaskClaim
+}
+
+/** The board task a run serves, as its view shows it. */
+export interface TaskView {
+  taskId: string
+  /** The holder's generation the run presents on every board write. */
+  generation: number
+  /** `adopted`: a lead's claim handed to the run; `own`: the run claimed the task itself. */
+  claim: 'adopted' | 'own'
+  /** `starting` until the board recorded the run, `started` while it is the task's run, `reported` once its outcome reached the board. */
+  phase: 'starting' | 'started' | 'reported'
+  /** The board no longer held the run's generation: nothing new started after that (the decision says why). */
+  lost?: ArtifactRef
+  /** How the outcome reached the board, once reported. */
+  outcome?: TaskOutcome
+}
+
+/** How a run's outcome reached its board task. */
+export interface TaskOutcome {
+  /**
+   * `accepted` or `rejected`: submitted, and the acceptance decision applied; `review`: submitted,
+   * and only the operator's acceptance accepts it now (a required check not reported), so the board
+   * holds the review for the operator; `reconciled`: reported with `reconcileRun`; `not-started`: the board never
+   * recorded the run, so nothing of it ran; `moved-on`: the task no longer waited on this run;
+   * `refused`: the board refused the report.
+   */
+  status: 'accepted' | 'rejected' | 'review' | 'reconciled' | 'not-started' | 'moved-on' | 'refused'
+  /** The task's state after the report, as the board returned it. */
+  state?: string
+  /** The decision the report applied or recorded (acceptance or reconciliation). */
+  decision?: ArtifactRef
+  reason?: string
 }
 
 export interface ExplainedDecision {
@@ -182,11 +232,38 @@ export interface NodeRow {
   updated_at: string
 }
 
+/** A run that serves a board task (`workflow_tasks`): how it holds the task, and where its report stands. */
+export interface TaskRow {
+  run_id: string
+  task_id: string
+  /** The lease owner: the lead's, when its claim was adopted, else `workflow:<runId>`. */
+  holder: string
+  generation: number
+  claim: 'adopted' | 'own'
+  phase: 'starting' | 'started' | 'reported'
+  /** JSON subject the task writes (type and ref), read at admission: the result binds to it. */
+  writes: string | null
+  /** JSON `{ at, decision, reason }` once the board no longer held the run's generation. */
+  lost: string | null
+  /** JSON `{ artifacts, subject }`: the completed run's result, as it is submitted. */
+  result: string | null
+  /** The engine's `acceptance` decision on that result. */
+  acceptance: string | null
+  /** JSON {@link TaskOutcome}, once reported. */
+  outcome: string | null
+  created_at: string
+  updated_at: string
+}
+
 export interface NodeHelpers {
   dependsOnCompleted: (all: NodeRow[]) => boolean
 }
 
 export const LEASE_TTL_MS = 60_000
+/** The lease a run asks for on its board task; `leases.maxTtlMs` caps it, and the run renews it at a third of what is left. */
+export const TASK_LEASE_TTL_MS = 600_000
+/** How long a run for a board task waits before it looks again for the board, when none is loaded or it did not answer. */
+export const TASK_WAIT_MS = 30_000
 export const newId = (prefix: string): string => `${prefix}_${randomBytes(8).toString('hex')}`
 export const now = (): string => new Date().toISOString()
 

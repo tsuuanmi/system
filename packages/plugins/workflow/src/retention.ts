@@ -42,13 +42,16 @@ export function expireRuns(e: Engine, now: number = Date.now()): { deleted: numb
   const days = e.config.retainRunsDays ?? 30
   if (!days || e.stopped.signal.aborted) return { deleted: 0, conversations: 0 }
   const cutoff = new Date(now - days * 24 * 60 * 60_000).toISOString()
+  // A run whose outcome has not reached its board task yet stays until it has.
   const expired = e.ctx.store.db.prepare(`SELECT run_id, template FROM workflow_runs r WHERE status != 'running' AND updated_at < ?
-    AND (session_id IS NULL OR created_at < (SELECT MAX(created_at) FROM workflow_runs s WHERE s.session_id = r.session_id))`).all(cutoff) as Array<{ run_id: string; template: string }>
+    AND (session_id IS NULL OR created_at < (SELECT MAX(created_at) FROM workflow_runs s WHERE s.session_id = r.session_id))
+    AND NOT EXISTS (SELECT 1 FROM workflow_tasks t WHERE t.run_id = r.run_id AND t.phase != 'reported')`).all(cutoff) as Array<{ run_id: string; template: string }>
   let conversations = 0
   for (const run of expired) {
     e.ctx.store.transaction((db) => {
       const sessions = sessionsOf(db, run.run_id)
       db.prepare('DELETE FROM workflow_nodes WHERE run_id = ?').run(run.run_id)
+      db.prepare('DELETE FROM workflow_tasks WHERE run_id = ?').run(run.run_id)
       db.prepare("DELETE FROM workflow_runs WHERE run_id = ? AND status != 'running'").run(run.run_id)
       e.ctx.eventLog.append({ type: 'workflow.run.expired', runId: run.run_id, data: { template: run.template } })
       conversations += releaseUnused(e, db, sessions, `run ${run.run_id} expired`)
@@ -81,9 +84,12 @@ export function deleteRun(e: Engine, runId: string, updatedAt?: string): { delet
   if (updatedAt === undefined) return { deleted: false, ...preview }
   if (run.status === 'running') throw new WorkflowFailure('invalid_input', `run ${runId} is running; stop it first`)
   if (updatedAt !== run.updated_at) throw new WorkflowFailure('invalid_input', `run ${runId} changed since the preview (now ${run.updated_at}); preview again`)
+  const task = e.tasks.row(runId)
+  if (task && task.phase !== 'reported') throw new WorkflowFailure('invalid_input', `run ${runId}'s outcome has not reached board task ${task.task_id} yet; delete it once it has`)
   e.ctx.store.transaction((db) => {
     const sessions = sessionsOf(db, runId)
     db.prepare('DELETE FROM workflow_nodes WHERE run_id = ?').run(runId)
+    db.prepare('DELETE FROM workflow_tasks WHERE run_id = ?').run(runId)
     db.prepare('DELETE FROM workflow_runs WHERE run_id = ? AND updated_at = ?').run(runId, updatedAt)
     e.ctx.eventLog.append({ type: 'workflow.run.deleted', runId, data: { template: run.template } })
     releaseUnused(e, db, sessions, `run ${runId} deleted`)

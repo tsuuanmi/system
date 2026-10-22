@@ -307,6 +307,53 @@ by its own state or cooldown, and the node fails with that kind. A node never fa
 
 A bare `ask` outside a run has no recovery and fails as before.
 
+## Board tasks
+
+A run may serve one attempt of one [board task](board.md): the start names the task, and the
+claim a lead hands over (holder and generation). The engine is that run's owner on `ctx.board`,
+an optional seam it reaches through the abstract `Board` only; without a board, a run for a task
+is refused (`config_error`), and every other run is unaffected.
+
+- **Taking the task.** Every check that needs no write runs first, and the admission bounds.
+  Then the engine adopts the caller's live claim, proven by a renewal the board fences by
+  generation, or claims the ready task as `workflow:<runId>`. The choice is an `admission`
+  decision (`workflow.task-admission`). A task not ready, a stale claim, or a board refusal is
+  one too (`refuse`), and refuses the start with no run left and nothing sent. A task that names
+  a template runs only that template, and its run is classified at least as strictly as its
+  project ([INV-12](../architecture/invariants.md#inv-12-data-egress-is-explicit)).
+- **Run first, then work.** The run is written `starting`, the board records it (`start`, with
+  the holder's generation), and only then is it opened and scheduled. A restart in between is
+  decided by the board's record: recorded, the run goes on; still claimed under its generation,
+  the start is asked again; otherwise the run is abandoned (`task_not_started`), nothing of it
+  having run.
+- **While it lives**, the engine renews the task's lease at a third of what the board granted
+  (`leases.maxTtlMs` caps it), also while the run waits on a gate or a vote. When the board
+  refuses the generation (the lease lapsed across a restart, say), a `recovery` decision
+  (`workflow.task-holder`, `wind-down`) stops new work: executions in flight are reconciled and
+  their results taken, nothing new is routed or started, and what is left fails as
+  `holder_lost` ([INV-4](../architecture/invariants.md#inv-4-restart-is-reconciliation-not-replay),
+  [INV-15](../architecture/invariants.md#inv-15-one-writer-per-subject)).
+- **The result** of a completed run is bound to the exact subject the task leaves: the subject
+  it `writes`, at the version the latest result on that type and ref names (still current when
+  it names a working tree), else the result artifact itself. A result that binds to none fails
+  the run as `stale_subject` (a `gate` decision, `workflow.task-subject`). The engine's
+  `acceptance` decision (`workflow.task-acceptance`) names the task, the run, the subject, and
+  the checks the run itself ran: `schema` when the final step's answer was checked against its
+  result schema, `review` when an exact-subject review of that subject passed its gate (passed
+  when it approved). Every result artifact is among its inputs. It accepts unless a check the
+  run ran failed, which rejects: the work goes back as another attempt.
+- **The report** is the board's own move, read against the board's record first, so a report
+  repeated after a crash moves nothing twice. With its holder, a completed run's result is
+  submitted, then its acceptance applied; when only the operator may accept it (a required check
+  not reported), the board holds the review for the operator
+  ([required checks](board.md#required-checks-bind-at-acceptance)). A failed or stopped run, and
+  a completed run whose holder was lost, is reported with `reconcileRun`, after a
+  `reconciliation` decision. A task that no longer waits on the run takes no report. A board
+  that does not answer is asked again, with a bounded backoff.
+- A run that served an attempt is that attempt: `continue` and `supersede` refuse it, since the
+  board decides the next attempt, which runs as a new run. It is not deleted or expired before
+  its outcome is reported.
+
 ## Convergence
 
 A run is complete only when it has no blockers. Possible blockers are unmet

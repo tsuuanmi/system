@@ -507,7 +507,12 @@ guesses.
   waits for input with reason `retries-spent`; `attempts.count` never exceeds `attempts.max`.
   Every new attempt goes through the autonomy policy again, so an approval request's subject
   `board-task:<taskId>:attempt:<n>` (`n`, the attempts already made) covers one attempt only.
-- Only a claimed, running, or reviewed task has a `holder`. A result always names its subject:
+- Only a claimed, running, or reviewed task has a `holder`, and a review the board holds for the
+  operator has none: it has `waiting` instead, with reason `operator-review`, the checks still
+  pending (`pendingChecks`), and the policy's wait for the class as its expiry, after which it
+  waits for input (`review-expired`). Example:
+  [`board-task.operator-review.json`](../../schemas/examples/board-task.operator-review.json).
+  A result always names its subject:
   the worktree's commit, or the result artifact (`{type: artifact}`) for work with no
   repository, so a task is never stuck in review for want of one. A task that `writes` a subject
   leaves its result on that subject (the same type and ref, at its new version).
@@ -520,7 +525,8 @@ guesses.
   the `taskId` and the result's exact `subject` (version included), and may report the `checks`
   it ran (check name → passed); its inputs hold every artifact of the result and its digest. One
   not made by the operator accepts only when the policy finds none of the class's required checks
-  failed ([board](../design/board.md#required-checks-bind-at-acceptance)). A task in review keeps its holder's lease while verification runs; if the lease
+  failed ([board](../design/board.md#required-checks-bind-at-acceptance)); otherwise the board holds the review for the
+  operator. A task in review keeps its holder's lease while verification runs; if the lease
   lapses with no decision, the task waits for input (`review-expired`), which expires in turn.
 - A holder lost mid-run is first reconciled by the run's owner: a completed run's result is
   applied with its `acceptance` decision, as a review's would be, a failed one counts as an
@@ -578,9 +584,8 @@ guesses.
 | `board_brief` | client | one page for a new agent: intent, in progress, waiting, next, what to read first |
 | `board_tasks`, `board_task` | client | list tasks; read one |
 | `board_propose` | client | propose a task; the board makes it ready when its dependencies are done and the policy allows |
-| `board_claim` | client | take a ready task's lease; the workflow engine starts a claimed task (not wired to the tools yet) |
+| `board_claim` | client | take a ready task's lease; MCP `run` with the task and this claim starts the attempt, and that run submits and accepts its own result |
 | `board_update` | client | report progress and renew the lease, or answer a waiting task's questions |
-| `board_complete` | client | submit a running task's results; the task goes to review, never straight to done |
 | `board_cancel` | client | cancel a task that is not running or in review |
 | `approvals_list`, `approvals_get` | client | read the queue |
 | `approvals_decide` | operator | verdicts for up to 50 requests, each bound to its exact subject |
@@ -589,6 +594,9 @@ guesses.
 | `resources_usage` | client | usage records, filtered, with totals over every match |
 
 - A page holds at most 100 items; `next` is an opaque cursor.
+- No `board_*` tool starts, submits, accepts, blocks, or reconciles a task: the workflow run that
+  serves an attempt does, as its owner, so one attempt has one writer
+  ([INV-15](../architecture/invariants.md#inv-15-one-writer-per-subject)).
 - A refused verdict (`unknown-request`, `already-resolved`, `expired`, `subject-changed`, or
   `failed`: the provider could not apply it, which it logs) leaves its request unchanged; the
   other verdicts of the call still apply. `mcp-approvals` 1.1 adds `failed`.

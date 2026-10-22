@@ -5,7 +5,7 @@ export const PAGE = `<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>system: runs and approvals</title>
+<title>system: runs, approvals, and reviews</title>
 <link rel="stylesheet" href="/ui/app.css">
 </head>
 <body>
@@ -108,9 +108,37 @@ export const APP_JS = `'use strict'
       }))
   }
 
+  // The board's tasks in review: the operator's Accept or Reject names the exact result shown (INV-5). Absent when no board runs.
+  async function reviews() {
+    let listed
+    try { ({ reviews: listed } = await api('reviews')) } catch (error) { return error.status === 503 ? null : el('p', { class: 'state failed' }, 'Reviews: ' + error.message) }
+    const subject = (s) => s.type + ' ' + s.ref + (s.version ? ' @ ' + s.version : '')
+    const note = el('input', { placeholder: 'note (optional)', 'aria-label': 'Note for a review verdict' })
+    const decide = (r, verdict) => async () => {
+      try {
+        const { task } = await api('reviews/' + encodeURIComponent(r.taskId) + '/decide', { verdict, subject: r.subject, note: note.value })
+        status.textContent = r.taskId + ' is ' + task.state
+        await list()
+      } catch (error) { status.textContent = error.message }
+    }
+    return el('section', { 'aria-label': 'Reviews' }, el('h2', {}, 'Reviews'),
+      listed.length ? null : el('p', { class: 'muted' }, 'No task waits for your review.'),
+      listed.length ? table(['Task', 'Project', 'Subject', 'Result', 'Checks pending', 'Run', 'Until', 'Verdict'], listed.map((r) => el('tr', {},
+        el('td', {}, el('strong', {}, r.title), el('div', { class: 'muted' }, r.taskId + ' · ' + r.actionClass)),
+        el('td', {}, r.project.title || r.project.projectId),
+        el('td', {}, el('code', {}, subject(r.subject))),
+        el('td', {}, r.artifacts.map((a) => el('div', {}, el('code', {}, a)))),
+        el('td', {}, r.pendingChecks.length ? r.pendingChecks.join(', ') : '-'),
+        el('td', {}, r.run ? el('a', { href: '?run=' + encodeURIComponent(r.run.runId), onclick: (e) => { e.preventDefault(); go(r.run.runId) } }, r.run.runId) : '-'),
+        el('td', { class: 'muted' }, (r.heldFor === 'operator' ? 'yours until ' : 'reviewer until ') + (r.expiresAt ? new Date(r.expiresAt).toLocaleString() : '-')),
+        el('td', {}, el('button', { class: 'primary', onclick: decide(r, 'accept'), 'aria-label': 'Accept ' + r.taskId }, 'Accept'), el('button', { onclick: decide(r, 'reject'), 'aria-label': 'Reject ' + r.taskId }, 'Reject')),
+      )), 'queue') : null,
+      listed.length ? note : null)
+  }
+
   async function list() {
     const { runs } = await api('runs')
-    show(await approvals(), el('h2', {}, 'Runs'), table(['Run', 'Template', 'Status', 'Steps', 'Created'], runs.map((run) => el('tr', {},
+    show(await approvals(), await reviews(), el('h2', {}, 'Runs'), table(['Run', 'Template', 'Status', 'Steps', 'Created'], runs.map((run) => el('tr', {},
       el('td', {}, el('a', { href: '?run=' + encodeURIComponent(run.runId), onclick: (e) => { e.preventDefault(); go(run.runId) } }, run.runId)),
       el('td', {}, run.template),
       el('td', { class: 'state ' + run.status }, run.status + (run.blocked ? (run.blocked.kind === 'tie' ? ' (tied: waiting for a deciding vote)' : ' (waiting for approval)') : '')),

@@ -45,6 +45,30 @@ export type Mode = 'auto' | 'notify' | 'ask' | 'forbid'
 export const MODES: readonly Mode[] = ['auto', 'notify', 'ask', 'forbid']
 export type Check = 'tests' | 'typecheck' | 'lint' | 'schema' | 'quote-check' | 'review'
 
+/**
+ * The policies of a set (the studio's, then the project's) that apply to a class: a project policy
+ * constrains only the classes it names. Pure: the vocabulary's semantics, shared by every provider
+ * and by callers that bound a wait by the policy.
+ */
+export function applyingPolicies(policies: readonly AutonomyPolicy[], actionClass: ActionClass): AutonomyPolicy[] {
+  const [studio, ...narrowing] = policies
+  if (!studio) return []
+  const names = (p: AutonomyPolicy): boolean => p.rules.some((r) => r.actionClass === actionClass)
+  return [studio, ...narrowing.filter((p) => !names(studio) || names(p))]
+}
+
+/**
+ * How long a wait for a person on the class lasts, in seconds: the shortest `expiresSeconds` of
+ * the rules that apply to it (the studio's and the project's), else the stricter
+ * `expiry.defaultSeconds`, never more than the stricter `expiry.maxSeconds`. A request in the queue
+ * expires after it; so does the board's review held for the operator.
+ */
+export function waitSeconds(policies: readonly AutonomyPolicy[], actionClass: ActionClass): number {
+  const named = applyingPolicies(policies, actionClass).flatMap((p) => p.rules.filter((r) => r.actionClass === actionClass && r.expiresSeconds !== undefined).map((r) => r.expiresSeconds!))
+  const seconds = named.length ? Math.min(...named) : Math.min(...policies.map((p) => p.expiry.defaultSeconds))
+  return Math.min(seconds, ...policies.map((p) => p.expiry.maxSeconds))
+}
+
 /** `autonomy-policy@1.0`. */
 export interface AutonomyPolicy {
   schema: 'autonomy-policy@1.0'

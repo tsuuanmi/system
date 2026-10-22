@@ -8,7 +8,7 @@ import type { Classification, Tier } from '@tsuuanmi/system-workers-core'
 import { z as zod } from 'zod'
 import type { Workflow } from './index.ts'
 import { DEFAULT_TEMPLATES } from './spec.ts'
-import type { RunView } from './types.ts'
+import type { RunView, TaskClaim } from './types.ts'
 
 /** Contribute the tools on `c` (the context holding `ctx.mcp`); `ctx` explains artifact ids. */
 export function registerTools(c: Context, w: Workflow, ctx: Context): void {
@@ -104,7 +104,7 @@ export function registerTools(c: Context, w: Workflow, ctx: Context): void {
   })
   c.mcp.tool('run', {
     scope: 'client',
-    description: `Start a workflow template by name (built in: ${Object.keys(DEFAULT_TEMPLATES).sort().join(', ')}; profiles add more, such as research); its steps are routed by capability to the Workers that can do them. Waits up to waitSeconds; otherwise returns a runId for \`result\`.`,
+    description: `Start a workflow template by name (built in: ${Object.keys(DEFAULT_TEMPLATES).sort().join(', ')}; profiles add more, such as research); its steps are routed by capability to the Workers that can do them. With \`task\`, the run serves one attempt of that board task: it claims the ready task (or takes the claim you hand it from board_claim), the board records the run before any step runs, the run renews the lease while it lives, and it submits its own result and acceptance to the board, or reports its failure; a task not ready, or a stale claim, refuses the run with nothing started. Waits up to waitSeconds; otherwise returns a runId for \`result\`.`,
     inputSchema: {
       template: zod.string().max(100),
       input: zod.string().min(1).max(32_000),
@@ -112,14 +112,21 @@ export function registerTools(c: Context, w: Workflow, ctx: Context): void {
       sessionId: zod.string().max(200).optional().describe('Continue an existing session'),
       persist: zod.boolean().optional().describe('Start a persistent session'),
       tier: zod.enum(['economy', 'standard', 'frontier']).optional().describe('Minimum tier for the steps that take the caller\'s tier'),
+      task: zod.object({
+        taskId: zod.string().max(200),
+        holder: zod.string().max(200).optional().describe('The owner your board_claim named, to hand your claim to the run (with generation)'),
+        generation: zod.number().int().min(1).optional().describe('The generation board_claim returned (with holder)'),
+      }).optional().describe('Run for this board task, one attempt of it: without holder and generation the run claims the ready task itself'),
       classification, clientRequestId, waitSeconds,
     },
   }, async (args) => {
     try {
-      const run = w.start({
+      const input = {
         template: String(args.template), input: String(args.input), variant: args.variant as string | undefined, sessionId: args.sessionId as string | undefined, persist: args.persist as boolean | undefined,
         tier: args.tier as Tier | undefined, classification: args.classification as Classification | undefined, clientRequestId: args.clientRequestId as string | undefined,
-      })
+      }
+      const task = args.task as TaskClaim | undefined
+      const run = task ? await w.start({ ...input, task }) : w.start(input)
       return shape(await w.wait(run.runId, ((args.waitSeconds as number | undefined) ?? 45) * 1000))
     } catch (error) {
       return failure(error)

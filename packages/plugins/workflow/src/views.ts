@@ -28,8 +28,15 @@ export function view(e: Engine, run: RunRow): RunView {
     nodes,
     ...blockedOf(e, run.run_id),
     ...(run.error ? { error: JSON.parse(run.error) as WorkflowError } : {}),
+    ...taskOf(e, run.run_id),
     createdAt: run.created_at, updatedAt: rows.reduce((latest, n) => (n.updated_at > latest ? n.updated_at : latest), run.updated_at),
   }
+}
+
+/** The board task a run serves, if it serves one. */
+function taskOf(e: Engine, runId: string): Pick<RunView, 'task'> {
+  const task = e.tasks.view(runId)
+  return task ? { task } : {}
 }
 
 /**

@@ -122,19 +122,26 @@
       "additionalProperties": false
     },
     "waiting": {
-      "description": "Why an interrupted task waits, and until when. On expiry it never runs: an approval wait is rejected (fail closed), an input wait cancels the task.",
+      "description": "Why an interrupted task waits, or a review the board holds for the operator, and until when. On expiry it never runs: an approval wait is rejected (fail closed), an input wait cancels the task, a review held for the operator ends review-expired.",
       "type": "object",
       "required": ["reason", "since", "expiresAt"],
       "properties": {
         "reason": {
-          "description": "approval-needed: the policy asks before starting; budget-spent: an attempt spent its budget; reconciliation-failed: a started run could not be reconciled, so running it again needs approval; retries-spent: review rejected the last attempt allowed; question: the lead or operator must answer; rejected: an approval was refused or expired, or none could be asked (a spent budget or a lost run under a policy verdict other than ask); review-expired: no acceptance decision came before the reviewer's lease lapsed.",
-          "enum": ["approval-needed", "budget-spent", "reconciliation-failed", "retries-spent", "question", "rejected", "review-expired"]
+          "description": "approval-needed: the policy asks before starting; budget-spent: an attempt spent its budget; reconciliation-failed: a started run could not be reconciled, so running it again needs approval; retries-spent: review rejected the last attempt allowed; question: the lead or operator must answer; rejected: an approval was refused or expired, or none could be asked (a spent budget or a lost run under a policy verdict other than ask); review-expired: no acceptance decision came before the reviewer's lease lapsed, or before a review held for the operator expired; operator-review: in review, only the operator's acceptance accepts the result now (a required check not passed, or the class forbidden), so the board holds the review for the operator, bounded by the policy's wait for the class.",
+          "enum": ["approval-needed", "budget-spent", "reconciliation-failed", "retries-spent", "question", "rejected", "review-expired", "operator-review"]
         },
         "approvalRequest": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
         "questions": {
           "type": "array",
           "maxItems": 8,
           "items": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/shortText" }
+        },
+        "pendingChecks": {
+          "description": "For operator-review: the class's required checks the acceptance did not report passed.",
+          "type": "array",
+          "maxItems": 6,
+          "uniqueItems": true,
+          "items": { "enum": ["tests", "typecheck", "lint", "schema", "quote-check", "review"] }
         },
         "since": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp" },
         "expiresAt": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp" }
@@ -168,10 +175,19 @@
       "then": { "required": ["lastDecision"], "properties": { "lastDecision": true } }
     },
     {
-      "description": "Only a claimed, running, or reviewed task holds a lease.",
-      "if": { "properties": { "state": { "enum": ["claimed", "running", "review"] } } },
+      "description": "Only a claimed, running, or reviewed task holds a lease; a review the board holds for the operator holds none.",
+      "if": { "properties": { "state": { "enum": ["claimed", "running"] } } },
       "then": { "required": ["holder"], "properties": { "holder": true } },
-      "else": { "properties": { "holder": false } }
+      "else": {
+        "if": { "properties": { "state": { "const": "review" } } },
+        "then": {
+          "oneOf": [
+            { "required": ["holder"], "properties": { "holder": true, "waiting": false } },
+            { "required": ["waiting"], "properties": { "holder": false, "waiting": { "type": "object", "properties": { "reason": { "const": "operator-review" } } } } }
+          ]
+        },
+        "else": { "properties": { "holder": false } }
+      }
     },
     {
       "if": { "properties": { "state": { "enum": ["running", "review"] } } },
@@ -192,7 +208,11 @@
     {
       "if": { "properties": { "state": { "enum": ["waiting-for-input", "waiting-for-approval"] } } },
       "then": { "required": ["waiting"], "properties": { "waiting": true } },
-      "else": { "not": { "required": ["waiting"] } }
+      "else": {
+        "if": { "properties": { "state": { "const": "review" } } },
+        "then": true,
+        "else": { "not": { "required": ["waiting"] } }
+      }
     },
     {
       "if": { "properties": { "state": { "const": "waiting-for-approval" } } },

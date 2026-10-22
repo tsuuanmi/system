@@ -10,7 +10,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
-import type { ApprovalRequest, AutonomyVerdict, Check, NewRequest } from '@tsuuanmi/system-approvals-core'
+import { type ApprovalRequest, type AutonomyVerdict, type Check, type NewRequest, waitSeconds } from '@tsuuanmi/system-approvals-core'
 import type {} from '@tsuuanmi/system-artifacts'
 import {
   type ActionClass, type ArtifactRef, Board, BoardError, type BoardTask, type CancelReason, type Charter, type CharterInput, type Claim, type Project, type ProjectState, type RunOutcome, type Subject, type TaskInput, type TaskState, TERMINAL, type WaitReason,
@@ -94,6 +94,8 @@ interface StoredProject { project: Project; request?: string; version?: number; 
 interface Acceptance { option: 'accept' | 'reject'; operator: boolean; checks?: Partial<Record<Check, boolean>> }
 /** The policy's verdict for a task's next attempt, and the approval request it opened on ask. */
 interface NextAttempt { verdict: AutonomyVerdict; request?: ApprovalRequest }
+/** An accepting decision only the operator's can replace now: the verdict, the checks still pending, and how long the operator has. */
+interface Held { verdict: AutonomyVerdict; pendingChecks: Check[]; seconds: number }
 /** A `board_client_requests` row: what a retry-safe call made. */
 interface PriorRequest { project_id: string; task_id: string | null; approval_request: string | null; charter_version: number | null }
 /** A charter request settled by the sweep: the project as it now is, and the tasks it cancelled. */
@@ -548,7 +550,13 @@ export class StoreBoard extends Board {
     const before = this.taskOf(taskId).task
     this.expectState(before, 'review')
     const read = this.readAcceptance(before, before.result!, acceptance)
-    await this.bindChecks(before, read, acceptance)
+    const held = await this.held(before, read)
+    if (held) {
+      if (before.waiting?.reason === 'operator-review') {
+        throw new BoardError('invalid', `${acceptance} is not the operator's, and the class's required checks have not passed (autonomy decision ${held.verdict.decision}): the review is the operator's`)
+      }
+      return this.commitLater(before, at, undefined, (current) => this.holdMove(current.task, current.task.result!, acceptance, held, at))
+    }
     const next = read.option === 'reject' && attemptLeft(before) ? await this.nextAttempt(before, at) : undefined
     return this.committing(next, at, () => this.commitLater(before, at, undefined, (current) => this.acceptanceMove(current.task, current.task.result!, acceptance, read, next, at)))
   }
@@ -562,16 +570,17 @@ export class StoreBoard extends Board {
     if (outcome.status !== 'completed' && outcome.status !== 'failed') throw new BoardError('invalid', 'a run is reported completed or failed; an unknown outcome is never reported')
     // Checked before anything moves, so a report that is refused changes nothing.
     let read: Acceptance | undefined
+    let held: Held | undefined
     if (outcome.status === 'completed') {
       this.writesWhatItHolds(before, outcome.result.subject)
       read = this.readAcceptance(before, outcome.result, outcome.acceptance)
-      await this.bindChecks(before, read, outcome.acceptance)
+      held = await this.held(before, read)
     }
     const pending = before.waiting?.approvalRequest
     await this.reachable(pending ? [pending] : [])
     const next = (outcome.status === 'failed' || read!.option === 'reject') && attemptLeft(before) ? await this.nextAttempt(before, at) : undefined
     const moved = await this.committing(next, at, () => this.commitLater(before, at, undefined, (current) => {
-      if (outcome.status === 'completed') return this.acceptanceMove(current.task, outcome.result, outcome.acceptance, read!, next, at)
+      if (outcome.status === 'completed') return held ? this.holdMove(current.task, outcome.result, outcome.acceptance, held, at) : this.acceptanceMove(current.task, outcome.result, outcome.acceptance, read!, next, at)
       const { task } = current
       const { project } = this.projectOf(task.projectId)
       const why = `run ${runId} failed, as its owner reconciled it: attempt ${task.attempts.count} of ${task.attempts.max}`
@@ -816,6 +825,19 @@ export class StoreBoard extends Board {
         if (!this.lost(current, at)) return undefined
         return this.gate(task, 'remediation', 'reconciliation-failed', at)
       case 'review':
+        // A review held for the operator is bounded by its wait, the policy's for the class (INV-9).
+        if (task.waiting?.reason === 'operator-review') {
+          if (Date.parse(task.waiting.expiresAt) > at.getTime()) return undefined
+          return this.commitLater(task, at, undefined, (c) => ({
+            changes: {
+              state: 'waiting-for-input', waiting: this.inputWait('review-expired', at),
+              lastDecision: this.decision(this.projectOf(task.projectId).project, c.task, {
+                from: 'review', to: 'waiting-for-input', why: `the operator gave no acceptance decision by ${c.task.waiting!.expiresAt}, the policy's wait for ${c.task.actionClass}`,
+                whyNot: 'the board never accepts by default, and every wait for a person expires (INV-9)', detail: { reason: 'review-expired', heldFor: 'operator' },
+              }, at),
+            },
+          }))
+        }
         // Review is bounded: no acceptance decision came while the reviewer held the task (INV-9).
         if (!this.lost(current, at)) return undefined
         return this.commitLater(task, at, undefined, (c) => ({
@@ -1107,14 +1129,40 @@ export class StoreBoard extends Board {
    * Required checks bind at acceptance, not at readiness (S3): an accepting decision that is not
    * the operator's applies only when the policy, given the checks the decision reports, leaves none
    * of the task's class's required checks failed, and does not forbid the class. Otherwise only the
-   * operator's acceptance accepts the result; a reject applies either way.
+   * operator's acceptance accepts the result now, and the review is held for the operator, for the
+   * policy's wait for the class (undefined when the decision applies); a reject applies either way.
    */
-  private async bindChecks(task: BoardTask, read: Acceptance, acceptance: ArtifactRef): Promise<void> {
-    if (read.option !== 'accept' || read.operator) return
+  private async held(task: BoardTask, read: Acceptance): Promise<Held | undefined> {
+    if (read.option !== 'accept' || read.operator) return undefined
     const verdict = await this.ctx.approvals.check({ class: task.actionClass, projectId: task.projectId, ...(read.checks ? { checks: read.checks } : {}) })
-    if (verdict.mode === 'forbid') throw new BoardError('invalid', `${acceptance}: the policy forbids ${task.actionClass} (autonomy decision ${verdict.decision}), so only the operator's acceptance accepts it`)
-    if (verdict.failedChecks?.length) {
-      throw new BoardError('invalid', `${acceptance} accepts with required check(s) ${verdict.failedChecks.join(', ')} not passed (autonomy decision ${verdict.decision}): it needs them passed, or the operator's acceptance`)
+    if (verdict.mode !== 'forbid' && !verdict.failedChecks?.length) return undefined
+    const { policies } = await this.ctx.approvals.policy(task.projectId)
+    return { verdict, pendingChecks: verdict.mode === 'forbid' ? [] : verdict.failedChecks!, seconds: waitSeconds(policies, task.actionClass) }
+  }
+
+  /**
+   * The review held for the operator: the result recorded, the lease released, and a wait of the
+   * policy's length for the class, which ends `review-expired` (INV-9). Only the operator's
+   * acceptance accepts it now; a rejection, or an accepting decision with the checks passed, still
+   * applies. A `board` decision naming the acceptance and the autonomy verdict records it.
+   */
+  private holdMove(task: BoardTask, result: NonNullable<BoardTask['result']>, acceptance: ArtifactRef, held: Held, at: Date): Move {
+    const { project } = this.projectOf(task.projectId)
+    const expiresAt = new Date(at.getTime() + held.seconds * 1000).toISOString()
+    const why = held.verdict.mode === 'forbid' ? `the policy forbids ${task.actionClass}` : `required check(s) ${held.pendingChecks.join(', ')} not passed`
+    return {
+      changes: {
+        state: 'review', result, holder: undefined,
+        waiting: { reason: 'operator-review', pendingChecks: held.pendingChecks, since: at.toISOString(), expiresAt },
+        lastDecision: this.decision(project, task, {
+          from: task.state, to: 'operator-review',
+          why: `${acceptance} is not the operator's and ${why} (autonomy decision ${held.verdict.decision}): only the operator's acceptance accepts the result, until ${expiresAt}, the policy's wait for ${task.actionClass}`,
+          whyNot: task.state === 'review'
+            ? 'the board never accepts by default, and the reviewer\'s lease would end the operator\'s review when the run that holds it ends'
+            : 'the run\'s owner reported a result the board never accepts by default',
+          inputs: [acceptance, held.verdict.decision], detail: { reason: 'operator-review', pendingChecks: held.pendingChecks, expiresAt },
+        }, at),
+      },
     }
   }
 

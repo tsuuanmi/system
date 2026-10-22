@@ -22,13 +22,13 @@ its types is not listed).
 | [gateway-responses](../../packages/plugins/gateway-responses/README.md) | gateways | — | `gateway-responses` | `webServer`, `workflow`, `store` | `gateway-core`, `gateway-turns`, `libs` |
 | [gateway-turns](../../packages/gateway-turns/README.md) | gateways | — | — | — | `gateway-core`, `libs` |
 | [mcp-server](../../packages/plugins/mcp-server/README.md) | gateways | `mcp` | `mcp-server` | `webServer`, `accounts` (optional), `artifacts` (optional), `credentials` (optional), `eventLog` (optional), `providers` (optional), `store` (optional), `workers` (optional) | `gateway-core`, `libs` |
-| [web-ui](../../packages/plugins/web-ui/README.md) | gateways | — | `web-ui` | `webServer`, `workflow`, `approvals` (optional) | `approvals-core`, `gateway-core`, `libs` |
+| [web-ui](../../packages/plugins/web-ui/README.md) | gateways | — | `web-ui` | `webServer`, `workflow`, `approvals` (optional), `artifacts` (optional), `board` (optional) | `approvals-core`, `board-core`, `gateway-core`, `libs` |
 | [board](../../packages/plugins/board/README.md) | orchestration | `board` | `board` | `store`, `artifacts`, `leases`, `approvals`, `mcp` (optional) | `approvals-core`, `board-core`, `gateway-core`, `leases`, `libs` |
 | [board-core](../../packages/board-core/README.md) | orchestration | defines `board` | — | — | `approvals-core` |
 | [profile-scientific-research](../../packages/plugins/profile-scientific-research/README.md) | orchestration | — | `profile-scientific-research` | `workflow`, `workers`, `artifacts`, `eventLog` | `libs` |
 | [profile-software-development](../../packages/plugins/profile-software-development/README.md) | orchestration | — | `profile-software-development` | `workflow` | — |
 | [worker-sessions](../../packages/plugins/worker-sessions/README.md) | orchestration | `workerSessions` | `worker-sessions` | `store`, `artifacts`, `mcp` (optional) | `gateway-core`, `libs` |
-| [workflow](../../packages/plugins/workflow/README.md) | orchestration | `workflow` | `workflow` | `store`, `artifacts`, `eventLog`, `leases`, `egress`, `workers`, `workerSessions`, `mcp` (optional) | `gateway-core`, `leases`, `libs`, `provider-core`, `worker-sessions`, `workers-core` |
+| [workflow](../../packages/plugins/workflow/README.md) | orchestration | `workflow` | `workflow` | `store`, `artifacts`, `eventLog`, `leases`, `egress`, `workers`, `workerSessions`, `board` (optional), `mcp` (optional) | `board-core`, `gateway-core`, `leases`, `libs`, `provider-core`, `worker-sessions`, `workers-core` |
 | [approvals](../../packages/plugins/approvals/README.md) | routing | `approvals` | `approvals` | `store`, `artifacts`, `eventLog` (optional), `mcp` (optional) | `approvals-core`, `gateway-core`, `libs` |
 | [approvals-core](../../packages/approvals-core/README.md) | routing | defines `approvals` | — | — | — |
 | [egress](../../packages/plugins/egress/README.md) | routing | `egress` | `egress` | `artifacts` | `libs`, `provider-core` |
@@ -211,6 +211,8 @@ flowchart TB
   web_ui --> webserver
   web_ui --> workflow
   web_ui -.-> approvals
+  web_ui -.-> artifacts
+  web_ui -.-> board
   worker_sessions --> store
   worker_sessions --> artifacts
   worker_sessions -.-> mcp_server
@@ -222,6 +224,7 @@ flowchart TB
   workflow --> egress
   workflow --> workers
   workflow --> worker_sessions
+  workflow -.-> board
   workflow -.-> mcp_server
 ```
 
@@ -364,9 +367,11 @@ flowchart TB
   turns --> workers_core
   ui_ops --> provider_core
   web_ui --> approvals_core
+  web_ui --> board_core
   web_ui --> gateway_core
   worker_sessions --> gateway_core
   workers --> workers_core
+  workflow --> board_core
   workflow --> gateway_core
   workflow --> leases
   workflow --> provider_core

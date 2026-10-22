@@ -255,4 +255,4 @@ Consumers depend on definitions only.
 | `leases` | concrete `Leases` in `@tsuuanmi/system-leases` | `plugins/leases/conformance/leases.ts` (contract 1.0) | `leases` |
 | `egress` | concrete `Egress` in `@tsuuanmi/system-egress` | `plugins/egress/conformance/egress.ts` (contract 1.0) | `egress` |
 | `workerSessions` | concrete `WorkerSessions` in `@tsuuanmi/system-worker-sessions` | `plugins/worker-sessions/conformance/worker-sessions.ts` (contract 1.0) | `worker-sessions` |
-| `workflow` | concrete `Workflow` in `@tsuuanmi/system-workflow` | `plugins/workflow/conformance/workflow.ts` (contract 1.1), beside the template suite `profiles.ts` | `workflow` |
+| `workflow` | concrete `Workflow` in `@tsuuanmi/system-workflow` | `plugins/workflow/conformance/workflow.ts` (contract 1.2, over the store-backed `board` and `approvals`), beside the template suite `profiles.ts` | `workflow` |

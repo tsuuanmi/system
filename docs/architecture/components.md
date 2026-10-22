@@ -189,7 +189,8 @@ runs the work the router admitted to them. Callers never reach a source directly
   debate, tie votes; a review's source step, quote checks, and blocking-finding rule), exact-subject
   review and remediation cycles, wake-on-message, operator stop, continue, supersede, and
   delete, drain and resume ([workflow engine](../design/workflow-engine.md),
-  [teams](../design/teams.md)).
+  [teams](../design/teams.md)). A run may serve one attempt of a board task: the engine is that
+  run's owner on `ctx.board` (optional), which it reaches through the abstract `Board` only.
 - **Worker sessions** (`ctx.workerSessions`): durable sessions, each with its own `SessionId`,
   a binding to the native handle, groups, and a mailbox for direct peer messages under
   barriers ([sessions and messaging](../design/sessions-and-messaging.md)).
@@ -197,6 +198,8 @@ runs the work the router admitted to them. Callers never reach a source directly
   records with leases and expiring waits; it asks for approvals through `ctx.approvals`, serves
   the `board_*` MCP tools, and projects a project's board to `TASKS.md`
   ([board](../design/board.md)). Its bundle row is on; it is mounted only with `ctx.approvals`.
+  Its holder and run-owner moves are made by the workflow run that serves an attempt, never by a
+  `board_*` tool.
 - **Profiles:** plugins that contribute templates through `ctx.workflow.template` (`research`,
   with its `deep` variant; `agent-review`, mounted with the agent Workers) and acceptance
   contracts through `ctx.workers`. A profile never names a provider, browser, or account, and
@@ -205,8 +208,8 @@ runs the work the router admitted to them. Callers never reach a source directly
 - **Contracts:** `workflow.start / wait / get / approve / vote / stop / continue / supersede / delete /
   drain / resume / explain / usage`, `workflow.template(name, nodes)`;
   `workerSessions.join / send / inbox / ack / openBarrier / activate / settle`;
-  `board.charter / propose / claim / start / submit / accept / block / answer / cancel / sweep`;
-  MCP `board_*`.
+  `board.charter / propose / claim / renew / start / submit / accept / reconcileRun / block / answer /
+  cancel / sweep`; MCP `board_*`, and `run` with `task`.
 - **Packages:** [workflow](../../packages/plugins/workflow/README.md),
   [worker-sessions](../../packages/plugins/worker-sessions/README.md),
   [profile-software-development](../../packages/plugins/profile-software-development/README.md),

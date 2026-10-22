@@ -41,6 +41,7 @@ export async function stop(e: Engine, runId: string, reason = 'stopped by the op
 export function continueRun(e: Engine, runId: string, nodeId?: string): RunView {
   const run = e.runRow(runId)
   if (!run || run.status !== 'failed') throw new WorkflowFailure('invalid_input', `run ${runId} is not failed`)
+  servesNoTask(e, runId, 'continued')
   const failed = e.nodeRows(runId).filter((n) => n.state === 'FAILED')
   const stopped = (JSON.parse(run.error ?? '{}') as WorkflowError).kind === 'stopped'
   const reopen = nodeId
@@ -164,6 +165,7 @@ function prepare(e: Engine, runId: string, nodeId: string, replacement: { text: 
   const node = nodes.find((n) => n.node_id === nodeId)
   const record = node ? (JSON.parse(node.record) as NodeRecord) : undefined
   if (!node || node.state !== 'COMPLETED' || !record?.outputReceipt) throw new WorkflowFailure('invalid_input', `node ${nodeId} of run ${runId} has no completed result`)
+  servesNoTask(e, runId, 'superseded')
   const spec = specOf(node)
   if (spec.executor === 'gate') throw new WorkflowFailure('invalid_input', `node ${nodeId} is a plan's gate: approve or reject the plan instead`)
   if (spec.executor === 'tally' || spec.executor === 'decide') {
@@ -345,6 +347,16 @@ export function approve(e: Engine, runId: string, input: { verdict: 'approved' |
   }
   e.schedule(runId)
   return e.get(runId)!
+}
+
+/**
+ * A run that served an attempt of a board task is that attempt: its outcome went to the board,
+ * which decides the next attempt, run as a new run. Running it again, or changing its result,
+ * would be a second writer of one attempt (INV-15).
+ */
+function servesNoTask(e: Engine, runId: string, as: 'continued' | 'superseded'): void {
+  const task = e.tasks.row(runId)
+  if (task) throw new WorkflowFailure('invalid_input', `run ${runId} served an attempt of board task ${task.task_id}, so it is not ${as}: the board decides the next attempt, which runs as a new run (run with the task)`)
 }
 
 /** Run `change` under the run's lease, as an operator action; the run must not be advancing elsewhere. */

@@ -6,6 +6,7 @@
  * {@link Workflow} facade in `index.ts`.
  */
 import type { Context } from '@deepseek-ai/cordis'
+import type { Board, Subject } from '@tsuuanmi/system-board-core'
 import { type Lease, LeaseLost, StaleGeneration } from '@tsuuanmi/system-leases'
 import { canonicalJson, SchemaRegistry, sha256 } from '@tsuuanmi/system-libs'
 import { dispositionOf } from '@tsuuanmi/system-provider-core'
@@ -14,10 +15,11 @@ import { block, expireGate, gateDeadline, grow, grownText } from './growth.ts'
 import { admissionKind, escalate, failAttempt, inputHint, routedDecisions } from './recovery.ts'
 import { missingSubject, remediate, reviewSubject, subjectGate } from './review.ts'
 import { recoverWakes, settleWake } from './sessions.ts'
-import { DEFAULT_TEMPLATES, type NodeTemplate, recordExecutor, render, type ResolvedNode, resolve, schemaBlock, variantProblem, variantsOf } from './spec.ts'
+import { DEFAULT_TEMPLATES, type NodeTemplate, recordExecutor, render, type ResolvedNode, type ResolvedSpec, resolve, schemaBlock, variantProblem, variantsOf } from './spec.ts'
 import { runSnapshot } from './sources.ts'
+import { TaskRuns } from './tasks.ts'
 import { decide, expireTie, restriction, runtimeOf, tally, teamGroup, teamPrompt } from './teams.ts'
-import { type Config, errorOf, LEASE_TTL_MS, newId, type NodeHelpers, type NodeRecord, type NodeRow, now, type RunRow, type RunView, type StartInput, type WorkflowError, WorkflowFailure } from './types.ts'
+import { type Config, errorOf, LEASE_TTL_MS, newId, TASK_WAIT_MS, type NodeHelpers, type NodeRecord, type NodeRow, now, type RunRow, type RunView, type StartInput, type WorkflowError, WorkflowFailure } from './types.ts'
 import { view } from './views.ts'
 
 /** Preflight a template and each of its variants, and check that every result schema it names is known. Throws why. */
@@ -30,8 +32,18 @@ export function checkTemplate(name: string, nodes: NodeTemplate[], schemas: Sche
   }
 }
 
+/** A start that passed every check that needs no write: its resolved spec and request key. */
+export interface Prepared { spec: ResolvedSpec; requestKey: string | null }
+
+/** The board task a run is admitted for, as the board granted it. */
+export interface Bound { runId: string; taskId: string; holder: string; generation: number; claim: 'adopted' | 'own'; writes?: Subject | undefined }
+
 export class Engine {
   readonly schemas = new SchemaRegistry()
+  /** `ctx.board` while one is loaded (optional): a run for a board task needs it, every other run does not. */
+  board: Board | undefined
+  /** Runs that serve a board task: taking the task, renewing its lease, reporting the outcome. */
+  readonly tasks: TaskRuns = new TaskRuns(this)
   readonly templates: Record<string, NodeTemplate[]>
   /** Configured templates refused at load, with why (health reports them). */
   readonly refused = new Map<string, string>()
@@ -69,6 +81,7 @@ export class Engine {
     this.stopped.abort()
     for (const timer of this.retries) clearTimeout(timer)
     await Promise.allSettled(this.running.values())
+    await this.tasks.close()
     for (const set of this.waiters.values()) for (const wake of set) wake()
     this.waiters.clear()
   }
@@ -78,6 +91,7 @@ export class Engine {
     if (this.stopped.signal.aborted) return
     const rows = this.ctx.store.db.prepare("SELECT run_id FROM workflow_runs WHERE status = 'running' ORDER BY created_at").all() as Array<{ run_id: string }>
     for (const { run_id } of rows) this.schedule(run_id)
+    this.tasks.recover()
     recoverWakes(this)
   }
 
@@ -88,6 +102,15 @@ export class Engine {
 
   /** Admit a run: validated, hashed, and durable at once; it runs in the background. */
   start(input: StartInput): RunView {
+    return this.admit(input, this.prepare(input))
+  }
+
+  /**
+   * Everything that refuses a start before anything is written: draining, the template, the input,
+   * the variant, the repository, and every acceptance contract (contracts can come from other
+   * plugins, so they are checked per run, before anything is sent).
+   */
+  prepare(input: StartInput): Prepared {
     if (this.draining) throw new WorkflowFailure('overloaded', 'the host is draining for a stop or upgrade; retry after it restarts')
     const nodes = this.templates[input.template]
     if (!nodes) {
@@ -100,30 +123,50 @@ export class Engine {
     if (unknown) throw new WorkflowFailure('invalid_input', unknown)
     const spec = resolve(input.template, nodes, input)
     if (input.repository && !spec.nodes.some((n) => n.executor === 'snapshot')) throw new WorkflowFailure('invalid_input', `template ${input.template} reads no repository`)
-    // Contracts can come from other plugins, so they are checked per run, before anything is sent.
     const known = new Set(this.ctx.workers.contracts())
     for (const node of spec.nodes) {
       if (!known.has(node.acceptance)) throw new WorkflowFailure('config_error', `template ${input.template}, node ${node.nodeId}: unknown acceptance contract ${node.acceptance}`)
     }
-    const started = this.ctx.store.transaction((db) => {
-      if (requestKey) {
-        const existing = db.prepare('SELECT * FROM workflow_runs WHERE request_key = ?').get(requestKey) as RunRow | undefined
-        if (existing) {
-          if (existing.input !== input.input || existing.spec_hash !== spec.specHash) throw new WorkflowFailure('invalid_input', 'clientRequestId was reused with a different request')
-          return view(this, existing)
-        }
-      }
-      // A run that only waits on someone (a gate's approval, a tie's vote) runs nothing: it counts
-      // against its own bound, not against the runs that execute (INV-9).
-      const { total, waiting } = db.prepare(`SELECT COUNT(*) AS total, COALESCE(SUM(
-          EXISTS (SELECT 1 FROM workflow_nodes n WHERE n.run_id = r.run_id AND n.state = 'BLOCKED')
-          AND NOT EXISTS (SELECT 1 FROM workflow_nodes n WHERE n.run_id = r.run_id AND n.state IN ('READY', 'RUNNING'))), 0) AS waiting
-        FROM workflow_runs r WHERE r.status = 'running'`).get() as { total: number; waiting: number }
-      const limit = this.config.maxActiveRuns ?? 16
-      const waitLimit = this.config.maxWaitingRuns ?? 16
-      if (total - waiting >= limit) throw new WorkflowFailure('overloaded', `${total - waiting} runs are already executing (limit ${limit}); retry later`)
-      if (total >= limit + waitLimit) throw new WorkflowFailure('overloaded', `${waiting} runs wait on an approval or a vote (limit ${waitLimit}); answer, stop, or let them time out, then retry`)
-      // One persistent session per run, opened now so its id is returned at once (REQ-SES-8).
+    return { spec, requestKey }
+  }
+
+  /** The run a repeated `clientRequestId` already started, if any; a different request under it is refused. */
+  repeated(input: StartInput, prepared: Prepared): RunRow | undefined {
+    if (!prepared.requestKey) return undefined
+    const existing = this.ctx.store.db.prepare('SELECT * FROM workflow_runs WHERE request_key = ?').get(prepared.requestKey) as RunRow | undefined
+    if (existing && (existing.input !== input.input || existing.spec_hash !== prepared.spec.specHash)) throw new WorkflowFailure('invalid_input', 'clientRequestId was reused with a different request')
+    return existing
+  }
+
+  /**
+   * The two bounds that admit a run (INV-9). A run that only waits on someone (a gate's approval, a
+   * tie's vote) runs nothing: it counts against its own bound, not against the runs that execute.
+   */
+  bounded(): void {
+    const { total, waiting } = this.ctx.store.db.prepare(`SELECT COUNT(*) AS total, COALESCE(SUM(
+        EXISTS (SELECT 1 FROM workflow_nodes n WHERE n.run_id = r.run_id AND n.state = 'BLOCKED')
+        AND NOT EXISTS (SELECT 1 FROM workflow_nodes n WHERE n.run_id = r.run_id AND n.state IN ('READY', 'RUNNING'))), 0) AS waiting
+      FROM workflow_runs r WHERE r.status = 'running'`).get() as { total: number; waiting: number }
+    const limit = this.config.maxActiveRuns ?? 16
+    const waitLimit = this.config.maxWaitingRuns ?? 16
+    if (total - waiting >= limit) throw new WorkflowFailure('overloaded', `${total - waiting} runs are already executing (limit ${limit}); retry later`)
+    if (total >= limit + waitLimit) throw new WorkflowFailure('overloaded', `${waiting} runs wait on an approval or a vote (limit ${waitLimit}); answer, stop, or let them time out, then retry`)
+  }
+
+  /**
+   * Write a prepared run and its nodes in one transaction. A run for a board task (`bound`) is
+   * written `starting` and not scheduled: it is opened only once the board recorded it
+   * ({@link TaskRuns.activate}), so no node runs before the board knows the run (run first, then work).
+   */
+  admit(input: StartInput, prepared: Prepared, bound?: Bound): RunView {
+    const { spec, requestKey } = prepared
+    return this.ctx.store.transaction((db) => {
+      const existing = this.repeated(input, prepared)
+      if (existing) return view(this, existing)
+      this.bounded()
+      // One live run per board task: a second one racing for the same claim is refused (INV-15).
+      const serving = bound ? db.prepare("SELECT run_id FROM workflow_tasks WHERE task_id = ? AND phase != 'reported'").get(bound.taskId) as { run_id: string } | undefined : undefined
+      if (serving) throw new WorkflowFailure('invalid_input', `run ${serving.run_id} already serves board task ${bound!.taskId}; nothing was started`)
       // Sessions are the engine's: one per run, issued now so its id is returned at once (REQ-SES-8).
       // A run continues an engine session, or a Worker session (a team member's, woken by a message).
       if (input.sessionId && !db.prepare('SELECT 1 FROM workflow_runs WHERE session_id = ?').get(input.sessionId) && !this.ctx.workerSessions.session(input.sessionId)) {
@@ -131,7 +174,7 @@ export class Engine {
       }
       const sessionId = input.sessionId ?? (spec.nodes.some((n) => n.session.persist) ? newId('ses') : undefined)
       const run: RunRow = {
-        run_id: newId('run'), request_key: requestKey, template: input.template, spec_hash: spec.specHash, input: input.input,
+        run_id: bound?.runId ?? newId('run'), request_key: requestKey, template: input.template, spec_hash: spec.specHash, input: input.input,
         classification: input.classification ?? null, session_id: sessionId ?? null, status: 'running', result: null, error: null, created_at: now(), updated_at: now(),
       }
       db.prepare(`INSERT INTO workflow_runs (run_id, request_key, template, spec_hash, input, classification, session_id, status, created_at, updated_at)
@@ -151,16 +194,30 @@ export class Engine {
         db.prepare(`INSERT INTO workflow_nodes (run_id, node_id, ordinal, spec, record, state, updated_at) VALUES (?, ?, ?, ?, ?, 'WAITING', ?)`)
           .run(run.run_id, node.nodeId, ordinal, JSON.stringify(resolved), JSON.stringify(record), now())
       })
-      // One session group per team, holding its members' sessions (Model A). Members never message
-      // each other: the engine composes their prompts from sealed records (REQ-TEAM-1).
-      for (const team of new Set(spec.nodes.flatMap((n) => (n.team ? [n.team.id] : [])))) {
-        this.ctx.workerSessions.group(teamGroup(run.run_id, team))
+      if (bound) {
+        db.prepare(`INSERT INTO workflow_tasks (run_id, task_id, holder, generation, claim, phase, writes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'starting', ?, ?, ?)`)
+          .run(run.run_id, bound.taskId, bound.holder, bound.generation, bound.claim, bound.writes ? JSON.stringify(bound.writes) : null, now(), now())
+        return view(this, run)
       }
-      this.ctx.eventLog.append({ type: 'workflow.run.started', runId: run.run_id, ...(sessionId ? { sessionId } : {}), data: { template: input.template, specHash: spec.specHash } })
+      this.open(run.run_id)
       this.ctx.store.afterCommit(() => this.schedule(run.run_id))
       return view(this, run)
     })
-    return started
+  }
+
+  /**
+   * A run's start, inside the transaction that makes it runnable: one session group per team,
+   * holding its members' sessions (Model A; members never message each other, the engine composes
+   * their prompts from sealed records, REQ-TEAM-1), and the `workflow.run.started` event.
+   */
+  open(runId: string): void {
+    const run = this.runRow(runId)!
+    const specs = this.nodeRows(runId).map((n) => JSON.parse(n.spec) as ResolvedNode)
+    for (const team of new Set(specs.flatMap((n) => (n.team ? [n.team.id] : [])))) {
+      this.ctx.workerSessions.group(teamGroup(runId, team))
+    }
+    const task = this.tasks.row(runId)?.task_id
+    this.ctx.eventLog.append({ type: 'workflow.run.started', runId, ...(run.session_id ? { sessionId: run.session_id } : {}), data: { template: run.template, specHash: run.spec_hash, ...(task ? { taskId: task } : {}) } })
   }
 
   get(runId: string): RunView | undefined {
@@ -229,7 +286,7 @@ export class Engine {
     this.running.set(runId, advancing)
   }
 
-  private retryLater(runId: string, delayMs: number): void {
+  retryLater(runId: string, delayMs: number): void {
     if (this.stopped.signal.aborted) return
     // A timer longer than 2^31-1 ms fires at once in Node: a long wait (a tie's) looks again then.
     const timer = setTimeout(() => {
@@ -249,6 +306,14 @@ export class Engine {
       this.runAborts.set(runId, operator)
       const signal = AbortSignal.any([lost, this.stopped.signal, operator.signal])
       try {
+        // A run for a board task advances only once the board recorded it, and while the engine
+        // knows whether it still holds the task (INV-4): without the board, it waits.
+        const gate = this.tasks.bound(runId) ? await this.tasks.gate(runId) : 'go'
+        if (gate === 'wait') {
+          this.retryLater(runId, TASK_WAIT_MS)
+          return
+        }
+        if (gate === 'stop') return
         for (;;) {
           if (signal.aborted) return
           const run = this.runRow(runId)
@@ -258,14 +323,20 @@ export class Engine {
           const failed = nodes.find((n) => n.state === 'FAILED')
           if (failed) return this.finish(run, 'failed', { error: failed.error }, current)
           if (nodes.every((n) => n.state === 'COMPLETED')) {
-            const final = nodes[nodes.length - 1]!
-            return this.finish(run, 'completed', { result: (JSON.parse(final.record) as NodeRecord).outputReceipt!.result }, current)
+            const final = (JSON.parse(nodes[nodes.length - 1]!.record) as NodeRecord).outputReceipt!.result
+            // A board task's result binds to the exact subject it writes (INV-5), or the run fails.
+            const unbound = this.tasks.complete(run, nodes, final)
+            if (unbound) return this.finish(run, 'failed', { error: JSON.stringify(unbound) }, current)
+            return this.finish(run, 'completed', { result: final }, current)
           }
+          // A run that lost its board task's holder starts nothing new: it reconciles what is in
+          // flight, then fails what is left (INV-4, INV-15).
+          const holderLost = this.tasks.lost(runId)
           // A node that must differ from others is promoted with or after them, never before: it then
           // waits for their Workers while they run beside it (ADR-0027).
           const promoted = new Set(nodes.filter((n) => n.state !== 'WAITING').map((n) => n.node_id))
           // Until nothing more can be promoted, so the order nodes are listed in never serializes branches.
-          for (let more = true; more;) {
+          for (let more = !holderLost; more;) {
             more = false
             for (const node of nodes) {
               const differs = (JSON.parse(node.spec) as ResolvedNode).differentFrom ?? []
@@ -284,10 +355,11 @@ export class Engine {
           // A node that must differ from a peer with no Worker yet runs only beside that peer, so
           // it can wait for the peer's routing; otherwise it is parked until the peer is routed.
           const ids = new Set(runnable.map((n) => n.node_id))
-          const active = runnable.filter((n) => !((JSON.parse(n.spec) as ResolvedNode).differentFrom ?? []).some((peer) => {
+          const active = holderLost ? runnable.filter((n) => n.state === 'RUNNING' && n.execution_id) : runnable.filter((n) => !((JSON.parse(n.spec) as ResolvedNode).differentFrom ?? []).some((peer) => {
             const row = current_.find((r) => r.node_id === peer)
             return !row?.worker && row?.state !== 'FAILED' && !ids.has(peer)
           }))
+          if (!active.length && holderLost) return this.tasks.windDown(run, current_, current)
           if (!active.length) {
             // A tie waits a bounded time for a deciding vote, and a plan's gate for its verdict (INV-9):
             // a tie then completes inconclusive, a gate closes and fails the run.
@@ -515,6 +587,11 @@ export class Engine {
         done()
         return
       }
+      // A run that lost its board task's holder while this node routed starts nothing (INV-15).
+      if (this.tasks.lost(run.run_id)) {
+        done()
+        return
+      }
       const source = this.ctx.workers.source(admitted.source)
       if (!source) {
         done()
@@ -685,6 +762,8 @@ export class Engine {
       for (const wake of this.waiters.get(run.run_id) ?? []) wake()
       this.waiters.delete(run.run_id)
       settleWake(this, run.run_id)
+      // A board task's run reports its outcome through the board's own move for it.
+      this.tasks.finished(run.run_id)
     })
   }
 

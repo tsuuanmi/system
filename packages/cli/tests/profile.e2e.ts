@@ -124,7 +124,7 @@ describe('system profile (e2e through dsh)', () => {
     const clientTools = await toolsOf('client')
     expect(clientTools).toEqual([
       'approvals_get', 'approvals_list', 'approvals_policy', 'ask',
-      'board_brief', 'board_cancel', 'board_charter', 'board_claim', 'board_complete', 'board_projects', 'board_propose', 'board_task', 'board_tasks', 'board_update',
+      'board_brief', 'board_cancel', 'board_charter', 'board_claim', 'board_projects', 'board_propose', 'board_task', 'board_tasks', 'board_update',
       'brainstorm', 'explain', 'research', 'resources_pools', 'resources_usage', 'result', 'review', 'run', 'session_inbox', 'session_send', 'status', 'usage', 'vote',
     ])
     // The resource ledger is core and on: with no pool configured it lists none (B2).

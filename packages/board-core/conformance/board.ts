@@ -8,7 +8,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@tsuuanmi/system-artifacts'
 import { canonicalJson, SchemaRegistry } from '@tsuuanmi/system-libs'
 import { expect } from 'vitest'
-import type { Action } from '@tsuuanmi/system-approvals-core'
+import { type Action, waitSeconds } from '@tsuuanmi/system-approvals-core'
 import { defineSuite, type Scenario } from '../../libs/conformance/runner.ts'
 import {
   type ActionClass, type ArtifactRef, Board, BoardError, type BoardTask, type CancelReason, type Charter, type CharterInput, type Claim, type Project, type RunOutcome,
@@ -326,8 +326,14 @@ export const boardSuite = defineSuite<Boot>({
       // A task that writes a subject leaves its result on that subject (INV-15).
       expect(await failureOf(ctx.board.submit(w.taskId, generation, { artifacts: [r], subject: HEAD }, at(4)))).toBe('invalid')
       await ctx.board.submit(w.taskId, generation, { artifacts: [r], subject: at3 }, at(4))
-      expect(await failureOf(ctx.board.accept(w.taskId, acceptance(ctx, 'accept', w.taskId, r, { subject: at3 }), at(5)))).toBe('invalid')
+      // Not the operator's, with required checks not reported: the board holds the review for the operator, lease released, within the policy's wait.
+      const held = validTask(await ctx.board.accept(w.taskId, acceptance(ctx, 'accept', w.taskId, r, { subject: at3 }), at(5)))
+      expect(held).toMatchObject({ state: 'review', waiting: { reason: 'operator-review', pendingChecks: ['tests', 'lint'], expiresAt: new Date(at(5).getTime() + 3600_000).toISOString() } })
+      expect(held.holder).toBeUndefined()
       expect(await failureOf(ctx.board.accept(w.taskId, acceptance(ctx, 'accept', w.taskId, r, { subject: at3, checks: { tests: true, lint: false } }), at(5)))).toBe('invalid')
+      expect(await stateOf(ctx, w.taskId)).toBe('review')
+      // Held, the review outlives any lease, and ends review-expired at its wait's expiry.
+      await ctx.board.sweep(at(5 + 59))
       expect(await stateOf(ctx, w.taskId)).toBe('review')
       expect(validTask(await ctx.board.accept(w.taskId, acceptance(ctx, 'accept', w.taskId, r, { subject: at3, checks: { tests: true, lint: true } }), at(5)))).toMatchObject({ state: 'done' })
 
@@ -343,6 +349,37 @@ export const boardSuite = defineSuite<Boot>({
       await ctx.board.start(o.taskId, claim.generation, { runId: 'run-3' }, at(9))
       await ctx.board.submit(o.taskId, claim.generation, { artifacts: [r2], subject: other }, at(10))
       expect(validTask(await ctx.board.accept(o.taskId, acceptance(ctx, 'accept', o.taskId, r2, { subject: other, by: 'operator' }), at(11)))).toMatchObject({ state: 'done' })
+    }),
+    scenario('review-held-for-operator', 'holds a review only the operator may accept for the operator, not by a lease: the operator\'s acceptance makes it done, a rejection another attempt, and with no decision by the policy\'s wait it ends review-expired (INV-9)', async (ctx) => {
+      await active(ctx, 'p2')
+      const held = async (title: string, start: number): Promise<{ task: BoardTask; r: ArtifactRef }> => {
+        const t = await ready(ctx, task('p2', title, { actionClass: 'workspace-write', maxAttempts: 2 }))
+        const { generation } = await ctx.board.claim(t.taskId, 'lead', 60_000, at(start))
+        await ctx.board.start(t.taskId, generation, { runId: `run-${title}` }, at(start))
+        const r = result(ctx, title)
+        await ctx.board.submit(t.taskId, generation, { artifacts: [r], subject: HEAD }, at(start))
+        const moved = validTask(await ctx.board.accept(t.taskId, acceptance(ctx, 'accept', t.taskId, r), at(start)))
+        expect(moved).toMatchObject({ state: 'review', waiting: { reason: 'operator-review' } })
+        expect(moved.holder).toBeUndefined()
+        return { task: moved, r }
+      }
+      // Past the claim's lease, the held review is still the operator's.
+      const accepted = await held('accepted', 3)
+      await ctx.board.sweep(at(30))
+      expect(await stateOf(ctx, accepted.task.taskId)).toBe('review')
+      const byOperator = acceptance(ctx, 'accept', accepted.task.taskId, accepted.r, { by: 'operator' })
+      expect(validTask(await ctx.board.accept(accepted.task.taskId, byOperator, at(31)))).toMatchObject({ state: 'done', result: { acceptance: byOperator } })
+      // The operator's rejection is another attempt, through the gate.
+      const rejected = await held('rejected', 32)
+      const reject = validTask(await ctx.board.accept(rejected.task.taskId, acceptance(ctx, 'reject', rejected.task.taskId, rejected.r, { by: 'operator' }), at(33)))
+      expect(reject).toMatchObject({ state: 'ready', attempts: { count: 1 } })
+      expect(reject.waiting).toBeUndefined()
+      // No decision within the policy's wait for the class (an hour here): review-expired, which expires in turn.
+      const lapsed = await held('lapsed', 34)
+      await ctx.board.sweep(at(34 + 59))
+      expect(await stateOf(ctx, lapsed.task.taskId)).toBe('review')
+      await ctx.board.sweep(at(34 + 61))
+      expect(validTask((await ctx.board.task(lapsed.task.taskId))!)).toMatchObject({ state: 'waiting-for-input', waiting: { reason: 'review-expired' } })
     }),
     scenario('run-outcome-reconciled', 'takes a lost holder\'s run outcome from the run\'s owner, withdrawing the approval it asked for, and refuses an outcome for another run (INV-4)', async (ctx) => {
       await active(ctx)
@@ -742,7 +779,16 @@ export class FakeBoard extends Board {
     if (body.outcome?.option !== 'accept' && body.outcome?.option !== 'reject') throw new BoardError('invalid', `${acceptance} is neither accept nor reject`)
     if (body.outcome.option === 'accept' && !(body.decider?.type === 'operator' && envelope!.producer.type === 'operator')) {
       const verdict = await this.ctx.approvals.check({ class: task.actionClass, projectId: task.projectId, ...(detail.checks ? { checks: detail.checks } : {}) })
-      if (verdict.mode === 'forbid' || verdict.failedChecks?.length) throw new BoardError('invalid', `${acceptance}: the required checks have not passed; only the operator accepts it`)
+      if (verdict.mode === 'forbid' || verdict.failedChecks?.length) {
+        if (task.waiting?.reason === 'operator-review') throw new BoardError('invalid', `${acceptance}: the required checks have not passed; the review is the operator's`)
+        // Only the operator accepts it now: the board holds the review, bounded by the policy's wait for the class.
+        const { policies } = await this.ctx.approvals.policy(task.projectId)
+        return this.save(stored, at, {
+          state: 'review', result: task.result, holder: undefined,
+          waiting: { reason: 'operator-review', pendingChecks: verdict.failedChecks ?? [], since: at.toISOString(), expiresAt: new Date(at.getTime() + waitSeconds(policies, task.actionClass) * 1000).toISOString() },
+          lastDecision: this.decide(task.taskId, 'review', 'review held for the operator', at, `${acceptance} is not the operator's and required checks have not passed`),
+        })
+      }
     }
     if (body.outcome.option === 'accept') {
       return this.save(stored, at, { state: 'done', result: { ...task.result!, acceptance }, holder: undefined, waiting: undefined, lastDecision: acceptance })
@@ -898,6 +944,11 @@ export class FakeBoard extends Board {
       } else if (task.state === 'running' && Date.parse(task.holder!.leaseExpiresAt) <= now) {
         // The run's outcome is unknown here; its owner may still report it (reconcileRun), which withdraws the request.
         moved.set(task.taskId, await this.gate(task, 'remediation', 'reconciliation-failed', at))
+      } else if (task.state === 'review' && task.waiting) {
+        // A review held for the operator ends at its wait's expiry, as one whose reviewer's lease lapsed does.
+        if (Date.parse(task.waiting.expiresAt) <= now) {
+          moved.set(task.taskId, this.save(task, at, { state: 'waiting-for-input', waiting: this.inputWait('review-expired', at), lastDecision: this.decide(task.taskId, 'review', 'waiting-for-input', at, 'review-expired: the operator gave no acceptance decision in time') }))
+        }
       } else if (task.state === 'review' && Date.parse(task.holder!.leaseExpiresAt) <= now) {
         // Review is bounded: no acceptance decision came while the reviewer held the task (INV-9).
         moved.set(task.taskId, this.save(task, at, { state: 'waiting-for-input', holder: undefined, waiting: this.inputWait('review-expired', at), lastDecision: this.decide(task.taskId, 'review', 'waiting-for-input', at, 'review-expired') }))

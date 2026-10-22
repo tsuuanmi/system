@@ -7,7 +7,7 @@ ADR ([ADR-0036](../../docs/decisions/adr/0036-guarantee-core-and-capability-plug
 
 | Seam | Definition | Provider |
 |---|---|---|
-| `ctx.approvals` | abstract `Approvals` with `policy(projectId?)`, `check(action)`, `request(request, at?)`, `get`, `list(filter?)`, `batch(at?)`, `decide(verdicts, at?)`, `withdraw(requestId, at?)`, `sweep(at)`; `AutonomyPolicy`, `Action`, `AutonomyVerdict`, `ApprovalRequest`, `NewRequest`, `Verdict`, `VerdictResult`, `ApprovalsError`; `ALWAYS_ASK`, `MODES`, `SHELL_METACHARACTER`, `APPROVALS_CONTRACT` (1.0) | [`approvals`](../plugins/approvals/README.md) (store-backed), the fake `FakeApprovals` |
+| `ctx.approvals` | abstract `Approvals` with `policy(projectId?)`, `check(action)`, `request(request, at?)`, `get`, `list(filter?)`, `batch(at?)`, `decide(verdicts, at?)`, `withdraw(requestId, at?)`, `sweep(at)`; `AutonomyPolicy`, `Action`, `AutonomyVerdict`, `ApprovalRequest`, `NewRequest`, `Verdict`, `VerdictResult`, `ApprovalsError`; `ALWAYS_ASK`, `MODES`, `SHELL_METACHARACTER`, `APPROVALS_CONTRACT` (1.0); the pure `applyingPolicies` and `waitSeconds` (how long a wait for a person on a class lasts) | [`approvals`](../plugins/approvals/README.md) (store-backed), the fake `FakeApprovals` |
 
 - The types mirror `autonomy-policy@1.0` and `approval-request@1.0`; the schemas in `schemas/`
   are canonical. It depends on nothing but Cordis.

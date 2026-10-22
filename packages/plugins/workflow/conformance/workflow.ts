@@ -9,15 +9,18 @@
  * the engine starts (on every start, so a restarted engine finds it), and the engine configured
  * with `config` (the suite's {@link TEMPLATES} and {@link CONFIG}, under a scenario's overrides).
  * `restart` stops the engine and everything under it, runs `between` while it is down, and
- * starts it again on the same durable state.
+ * starts it again on the same durable state. Since 1.2 the context also provides `ctx.board` over
+ * `ctx.approvals`, with a policy that runs `read` on auto, and the engine serves board tasks.
  */
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@tsuuanmi/system-artifacts'
+import type { BoardTask, TaskInput } from '@tsuuanmi/system-board-core'
 import { SchemaRegistry, sha256 } from '@tsuuanmi/system-libs'
 import type { ArtifactRef, CapabilityDescriptor, WorkerExecution, WorkerSource, WorkerStart } from '@tsuuanmi/system-workers-core'
 import { expect } from 'vitest'
 import { type ContractVersion, defineSuite, type Scenario } from '../../../libs/conformance/runner.ts'
 import { worker } from '../../../workers-core/conformance/workers.ts'
+import { CHARTER } from '../../../board-core/conformance/board.ts'
 import type { Config, NodeRecord, NodeTemplate, NodeView, RunView, StartInput } from '../src/index.ts'
 
 export interface Booted {
@@ -265,6 +268,31 @@ const refusalOf = async (call: () => Promise<unknown>): Promise<string> => {
 
 const textOf = (ctx: Context, ref: string | undefined): string => (ctx.artifacts.get(ref as ArtifactRef)?.body as { text?: string } | undefined)?.text ?? ''
 
+/** An active project on the board: founded, its charter approved by the operator, swept. */
+export async function activeProject(ctx: Context, projectId = 'p1'): Promise<void> {
+  const { approvalRequest } = await ctx.board.charter({ projectId, title: `project ${projectId}`, charter: CHARTER })
+  const request = await ctx.approvals.get(approvalRequest)
+  const [verdict] = await ctx.approvals.decide([{ requestId: approvalRequest, subject: request!.subject, verdict: 'approved' }])
+  expect(verdict?.refused).toBeUndefined()
+  await ctx.board.sweep(new Date())
+  expect((await ctx.board.project(projectId))?.state).toBe('active')
+}
+
+/** A `read` task of project p1, proposed and made ready by the board's sweep. */
+export async function readyTask(ctx: Context, title: string, extra: Partial<TaskInput> = {}): Promise<BoardTask> {
+  const proposed = await ctx.board.propose({ projectId: 'p1', title, goal: `do ${title}`, acceptance: [{ id: 'a1', statement: 'it answers' }], actionClass: 'read', ...extra })
+  await ctx.board.sweep(new Date())
+  const task = (await ctx.board.task(proposed.taskId))!
+  expect(task.state).toBe('ready')
+  return task
+}
+
+/** The run's outcome reached its board task. */
+const reported = async (ctx: Context, runId: string): Promise<RunView> => {
+  await until(() => ctx.workflow.get(runId)?.task?.phase === 'reported', `run ${runId}'s report`)
+  return ctx.workflow.get(runId)!
+}
+
 /** A planner's answer: a JSON plan of steps, each with prompt `step <id>` on the economy tier. */
 const plan = (steps: Array<{ id: string; capabilities?: string[]; dependsOn?: string[] }>, preface = 'My plan.'): string => `${preface}\n\`\`\`json\n${JSON.stringify({
   confidence: 'high',
@@ -293,8 +321,9 @@ const waitingPlan = (view: RunView): ArtifactRef => {
 
 export const workflowSuite = defineSuite<Boot>({
   seam: 'workflow',
-  // 1.1: every execution names the run it belongs to (`WorkerStart.runId`).
-  contract: '1.1',
+  // 1.1: every execution names the run it belongs to (`WorkerStart.runId`). 1.2: a run serves one
+  // attempt of a board task (`start` with `task`), through `ctx.board` only.
+  contract: '1.2',
   scenarios: [
     scenario('node-records', 'keeps every node record valid against workflow-node@1.x with a rising revision, and completes a node only with its input receipt, an output receipt binding its Worker\'s result, and the acceptance decision that accepted it (INV-14, INV-13, INV-3)', async ({ ctx, workers }) => {
       workers.reply = () => 'hold'
@@ -596,6 +625,60 @@ export const workflowSuite = defineSuite<Boot>({
       expect(ctx.workflow.get(blocked.runId)!.blocked!.until! > deadline).toBe(true)
       expect(workers.started.filter((s) => s.prompt === 'step write')).toHaveLength(0)
     }, { gateTimeoutHours: 0.001 }),
+
+    scenario('task-run', 'serves one attempt of a ready board task: claims it, has the board record the run before any step runs, then submits its result on the task\'s exact subject and applies an acceptance decision that names the task, the subject, and every result artifact: done (INV-4, INV-5, INV-13)', async ({ ctx, workers }) => {
+      await activeProject(ctx)
+      const task = await readyTask(ctx, 'served')
+      workers.reply = () => 'hold'
+      const run = await ctx.workflow.start({ template: 'solo', input: 'q', classification: 'public', task: { taskId: task.taskId } })
+      expect(run.task).toMatchObject({ taskId: task.taskId, claim: 'own', phase: 'started' })
+      await until(() => workers.started.length === 1, 'the step started')
+      expect(await ctx.board.task(task.taskId)).toMatchObject({ state: 'running', run: { runId: run.runId }, attempts: { count: 1 } })
+      workers.release(workers.started[0]!.id, { text: 'served' })
+      const done = await settled(ctx, run.runId)
+      expect(done).toMatchObject({ status: 'completed', answer: 'served' })
+      expect((await reported(ctx, run.runId)).task!.outcome).toMatchObject({ status: 'accepted', state: 'done' })
+      const board = (await ctx.board.task(task.taskId))!
+      expect(board).toMatchObject({ state: 'done', result: { artifacts: [done.result], subject: { type: 'artifact', ref: done.result } } })
+      const acceptance = decisionOf(ctx, board.result!.acceptance)
+      expect(acceptance).toMatchObject({ decisionType: 'acceptance', outcome: { option: 'accept', detail: { taskId: task.taskId, subject: board.result!.subject } } })
+      expect(acceptance.inputs).toEqual(board.result!.artifacts)
+      expect(acceptance.candidates.every((c) => c.reasons.length > 0)).toBe(true)
+    }, {}, '1.2'),
+
+    scenario('task-claim', 'adopts the live claim a caller hands a run, and refuses a stale claim or a task not ready before anything is written or sent, each refusal a decision (INV-2, INV-13, INV-15)', async ({ ctx, workers }) => {
+      await activeProject(ctx)
+      const task = await readyTask(ctx, 'claimed')
+      const claim = await ctx.board.claim(task.taskId, 'lead', 120_000)
+      expect(await refusalOf(() => ctx.workflow.start({ template: 'solo', input: 'q', task: { taskId: task.taskId, holder: 'lead', generation: claim.generation + 1 } }))).toBe('invalid_input')
+      expect(await refusalOf(() => ctx.workflow.start({ template: 'solo', input: 'q', task: { taskId: task.taskId } }))).toBe('invalid_input')
+      expect(workers.started).toHaveLength(0)
+      expect(ctx.workflow.usage()).toHaveLength(0)
+      const refusals = ctx.artifacts.list({ kind: 'decision', decisionType: 'admission', limit: 100 }).map((a) => a.body as Decision).filter((d) => d.outcome.option === 'refuse')
+      expect(refusals).toHaveLength(2)
+      expect(await ctx.board.task(task.taskId)).toMatchObject({ state: 'claimed', holder: { owner: 'lead', generation: claim.generation }, attempts: { count: 0 } })
+      const run = await ctx.workflow.start({ template: 'solo', input: 'q', classification: 'public', task: { taskId: task.taskId, holder: 'lead', generation: claim.generation } })
+      expect(run.task).toMatchObject({ claim: 'adopted', generation: claim.generation })
+      expect((await settled(ctx, run.runId)).status).toBe('completed')
+      expect((await reported(ctx, run.runId)).task!.outcome).toMatchObject({ status: 'accepted', state: 'done' })
+    }, {}, '1.2'),
+
+    scenario('task-failure', 'reports a failed run through the board\'s own move for it (reconcileRun), so the attempt counts and the board decides the next one, and never continues the run that was that attempt (INV-4, INV-15)', async ({ ctx, workers }) => {
+      await activeProject(ctx)
+      const task = await readyTask(ctx, 'fails')
+      workers.reply = () => ({ fail: 'network', disposition: 'BACKOFF', sent: true })
+      const run = await ctx.workflow.start({ template: 'solo', input: 'q', classification: 'public', task: { taskId: task.taskId } })
+      expect((await settled(ctx, run.runId)).status).toBe('failed')
+      const outcome = (await reported(ctx, run.runId)).task!.outcome!
+      expect(outcome).toMatchObject({ status: 'reconciled' })
+      expect(decisionOf(ctx, outcome.decision).decisionType).toBe('reconciliation')
+      const after = (await ctx.board.task(task.taskId))!
+      expect(after).toMatchObject({ attempts: { count: 1 } })
+      expect(after.run).toBeUndefined()
+      expect(refusal(() => ctx.workflow.continue(run.runId))).toBe('invalid_input')
+      await pause(300)
+      expect(workers.started).toHaveLength(1)
+    }, {}, '1.2'),
 
     scenario('drain', 'admits no new run while draining, reports the runs still executing and lets them finish, and admits runs again on resume (REQ-HOST-1)', async ({ ctx, workers }) => {
       workers.reply = () => 'hold'

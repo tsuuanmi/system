@@ -567,8 +567,15 @@ describe('ctx.board (store-backed): the protocol\'s guards', () => {
     await ctx.board.start(t.taskId, generation, { runId: 'run-1' }, at(3))
     const r = result(ctx, 'kernel')
     await ctx.board.submit(t.taskId, generation, { artifacts: [r], subject: branch }, at(4))
-    const refused = await ctx.board.accept(t.taskId, acceptance(ctx, 'accept', t.taskId, r, branch, { tests: true }), at(5)).catch((e: unknown) => e as BoardError)
-    expect(refused).toMatchObject({ failure: 'invalid', message: expect.stringMatching(/required check\(s\) lint not passed/) })
+    // Lint not reported: only the operator accepts it now, so the board holds the review for the operator, lease released.
+    const first = acceptance(ctx, 'accept', t.taskId, r, branch, { tests: true })
+    const held = await ctx.board.accept(t.taskId, first, at(5))
+    expect(held).toMatchObject({ state: 'review', waiting: { reason: 'operator-review', pendingChecks: ['lint'] } })
+    expect(held.holder).toBeUndefined()
+    expect(ctx.leases.current(`board-task:${t.taskId}`)).toBeUndefined()
+    expect(ctx.artifacts.get(held.lastDecision!)?.body).toMatchObject({ decisionType: 'board', inputs: expect.arrayContaining([first]), outcome: { option: 'operator-review', detail: { pendingChecks: ['lint'] } } })
+    const refused = await ctx.board.accept(t.taskId, acceptance(ctx, 'accept', t.taskId, r, branch, { tests: true, lint: false }), at(5)).catch((e: unknown) => e as BoardError)
+    expect(refused).toMatchObject({ failure: 'invalid', message: expect.stringMatching(/the review is the operator's/) })
     expect(await failureOf(ctx.board.accept(t.taskId, acceptance(ctx, 'accept', t.taskId, r, branch, { tests: 'yes' } as unknown as Action['checks']), at(5)))).toBe('invalid')
     expect(await ctx.board.accept(t.taskId, acceptance(ctx, 'accept', t.taskId, r, branch, { tests: true, lint: true }), at(5))).toMatchObject({ state: 'done' })
   })
@@ -733,16 +740,17 @@ describe('ctx.board (store-backed): board_* MCP tools', () => {
     expect(renewed).toMatchObject({ taskId, state: 'claimed' })
     expect(Date.parse(renewed.leaseExpiresAt as string)).toBeGreaterThanOrEqual(Date.parse(claim.leaseExpiresAt as string))
     expect((await call('board_update', { taskId, generation: 2 })).content[0]?.text).toMatch(/^stale-generation/)
+    // The run that serves the attempt starts, submits, and accepts it as its owner: no tool does.
     await ctx.board.start(taskId, 1, { runId: 'run-1' })
     const r = result(ctx, 'kernel')
-    expect(await ok(call('board_complete', { taskId, generation: 1, artifacts: [r], subject: HEAD, files: ['src/kernel.ts'], next: 'vectorize' }))).toMatchObject({ taskId, state: 'review' })
+    expect(await ctx.board.submit(taskId, 1, { artifacts: [r], subject: HEAD, files: ['src/kernel.ts'], next: 'vectorize' })).toMatchObject({ taskId, state: 'review' })
     await ctx.board.accept(taskId, acceptance(ctx, 'accept', taskId, r))
 
     const brief = await ok(call('board_brief', { projectId: 'p2' }))
     expect(brief).toMatchObject({ projectId: 'p2', intent: CHARTER.intent, state: 'active', milestone: 'm1', tasks: { done: 1 }, readFirst: [{ ref: r }] })
   })
 
-  it('claims for 600 s by default, within the leases\' own cap, and says that cap bounds a claim; it says a claimed task is started by the engine', async () => {
+  it('claims for 600 s by default, within the leases\' own cap, and says that cap bounds a claim; it says a run started with the task serves it, and no tool takes a result', async () => {
     const b = await boot()
     const { ctx } = b
     await active(ctx)
@@ -754,8 +762,9 @@ describe('ctx.board (store-backed): board_* MCP tools', () => {
     expect(lease).toBeLessThanOrEqual(Date.now() + 600_000)
     const spec = b.mcp().tools.get('board_claim')!.spec
     expect(spec.description).toMatch(/leases\.maxTtlMs/)
-    expect(spec.description).toMatch(/started by the workflow engine/)
-    expect(b.mcp().tools.get('board_complete')!.spec.description).toMatch(/cannot be completed alone today/)
+    expect(spec.description).toMatch(/with the `run` tool, naming the task with this owner as holder and this generation/)
+    // One attempt, one writer (INV-15): the run that serves it submits its result, never a tool beside it.
+    expect(b.mcp().tools.has('board_complete')).toBe(false)
   })
 
   it('answers questions by index, cancels as whoever calls, and refuses an invalid input without doing anything', async () => {
