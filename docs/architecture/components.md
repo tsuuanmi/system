@@ -132,8 +132,9 @@ runs the work the router admitted to them. Callers never reach a source directly
 ## Routing
 
 - **Owns:** the registry of Worker sources, fail-closed admission, the deterministic router,
-  acceptance contracts, and the egress policy (classification per Worker class and a credential
-  scan of the actual payload, [INV-12](invariants.md#inv-12-data-egress-is-explicit)).
+  acceptance contracts, the egress policy (classification per Worker class and a credential
+  scan of the actual payload, [INV-12](invariants.md#inv-12-data-egress-is-explicit)), and the
+  resource ledger (what each configured pool has left and what every run consumed).
 - **Worker:** an *opaque assignable executable unit with proven current capabilities*. A Worker
   answers only three questions:
   1. Can it accept this work now?
@@ -146,10 +147,11 @@ runs the work the router admitted to them. Callers never reach a source directly
   `workers.accept(result, contract) → Acceptance` (with an `acceptance` decision);
   `workers.register(source)`, `workers.contract(id, check)`, `workers.source(name)`;
   `egress.check({ payload, classification, workerClass }) → allowed + egress decision`.
-- **Gate and resource ledger** (defined; providers in B2 and B5): `ctx.approvals`, the autonomy
+- **Gate and resource ledger:** `ctx.approvals` (defined; provider in B5), the autonomy
   policy and the one batched approval queue, whose expiry denies
-  ([approvals](../design/approvals.md)); `ctx.resources`, configured pools, limit readings,
-  reservations before a run, and deduplicated usage after it
+  ([approvals](../design/approvals.md)); `ctx.resources` (provider `resources`, on the store),
+  configured pools, limit readings, reservations before a run, and deduplicated usage after it,
+  with the MCP tools `resources_pools` and `resources_usage`
   ([resources](../design/resources.md)). Contracts: `approvals.check / request / batch / decide /
   withdraw / sweep`; `resources.pools / observe / reserve / release / record / usage`.
 - **Policy inputs:** proven capabilities, data locality, Worker state, tier, session
@@ -159,7 +161,8 @@ runs the work the router admitted to them. Callers never reach a source directly
   [workers](../../packages/plugins/workers/README.md),
   [egress](../../packages/plugins/egress/README.md),
   [approvals-core](../../packages/approvals-core/README.md),
-  [resources-core](../../packages/resources-core/README.md).
+  [resources-core](../../packages/resources-core/README.md),
+  [resources](../../packages/plugins/resources/README.md).
 
 ## Orchestration
 

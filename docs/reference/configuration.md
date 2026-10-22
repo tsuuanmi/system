@@ -242,6 +242,24 @@ No options.
 
 No options.
 
+## `resources`
+
+[@tsuuanmi/system-resources](../../packages/plugins/resources/README.md)
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `pools` | object[] | `[]` | The resource pools (at most 64, unique ids): operator configuration, never a hardcoded plan |
+| `pools[].pool` (required) | string |  | Pool id, as usage records and readings name it |
+| `pools[].account` (required) | string |  | The account the pool belongs to |
+| `pools[].kind` (required) | "interactive" \| "programmatic" \| "api-key" \| "local" |  | What the pool is: a plan's interactive window, a programmatic credit, an API key, or a local model |
+| `pools[].windows` (required) | object[] | `[]` | The pool's limit windows (1 to 8, unique ids) |
+| `pools[].windows[].id` (required) | string |  | Window id, as readings name it |
+| `pools[].windows[].kind` (required) | "rolling" \| "calendar" \| "credit" \| "rate" |  | rolling: resets a fixed time after use starts; calendar: at fixed dates; credit: a balance drawn down; rate: per interval |
+| `pools[].windows[].seconds` | number (1…31622400) |  | The window's length, when it has one |
+| `pools[].unknown` | "available" \| "unavailable" | `"unavailable"` | Whether a window with no reading, or an unknown one, leaves the pool available (a pool that never reports, such as a local model); unavailable fails closed |
+| `pageSize` | number (1…100) | `20` | Records per resources_usage page when the caller names no limit |
+| `maxRecords` | number (1…1000000) | `10000` | Records usage() returns at most; more matching is refused (narrow the filter or page) |
+
 ## `runtime-acp`
 
 [@tsuuanmi/system-runtime-acp](../../packages/plugins/runtime-acp/README.md)

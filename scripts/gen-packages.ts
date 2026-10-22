@@ -57,6 +57,7 @@ export const LAYER_OF: Record<string, Layer> = {
   'workers-core': 'routing',
   'approvals-core': 'routing',
   'resources-core': 'routing',
+  'resources': 'routing',
   'workers': 'routing',
   'egress': 'routing',
   // orchestration

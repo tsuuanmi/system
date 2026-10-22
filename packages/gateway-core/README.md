@@ -17,6 +17,7 @@ provider-runtime layer never imports the gateway's implementation:
 | `turns` | `account_probe` |
 | `workflow` | `ask`, `research`, `run`, `approve`, `stop`, `drain`, `resume`, `continue`, `delete`, `supersede`, `result`, `usage`, `explain` |
 | `worker-sessions` | `session_send`, `session_inbox` |
+| `resources` | `resources_pools`, `resources_usage` |
 | `mcp-server` itself | `status` |
 
 Each tool declares the scope that may call it; one that declares none is

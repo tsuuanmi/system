@@ -8,9 +8,11 @@
 > Records: [`usage-record@1.0`](../reference/schemas.md#usage-record),
 > [`limit-state@1.0`](../reference/schemas.md#limit-state).
 >
-> Defined in [`resources-core`](../../packages/resources-core/README.md); differs from target:
-> only the fake provider exists, so nothing is stored, no runtime reports usage to it, no run
-> reserves before it starts, and no MCP tool is served (milestone B2).
+> Defined in [`resources-core`](../../packages/resources-core/README.md); provided by
+> [`resources`](../../packages/plugins/resources/README.md) on `ctx.store`, with the MCP tools
+> `resources_pools` and `resources_usage`. Differs from target: no Worker reports usage or
+> readings to it yet (B2 part U2), the engine does not reserve before a run yet, and the bundle
+> configures no pool.
 
 The resource ledger knows what each configured pool has left and what every run consumed. Its
 numbers come from objective sources only: a runtime's result message, a provider's usage
@@ -95,5 +97,5 @@ first reading comes from the runtime's result. Every reading field is optional.
 ## Conformance
 
 [`resources-core/conformance/resources.ts`](../../packages/resources-core/conformance/resources.ts),
-10 scenarios at contract 1.0, run against the fake provider. The metering oracle against
-`ccusage --json` belongs to the real provider (B2).
+10 scenarios at contract 1.0, run against the fake provider and the store-backed one. The
+metering oracle against `ccusage --json` comes with the first Worker that reports usage (B2).
