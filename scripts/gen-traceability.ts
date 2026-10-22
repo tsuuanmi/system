@@ -5,7 +5,7 @@
  * test, and no test may cite it. `--check` fails when the page is stale.
  */
 import { readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
-import { join, relative } from 'node:path'
+import { join, relative, sep } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
@@ -57,13 +57,23 @@ function testFiles(dir: string, out: string[] = []): string[] {
   return out
 }
 
+/** The title of a test on this line: `it(…)`, `it.skip(…)`, and `describe.runIf(cond)(…)` alike. */
+export const testTitle = (text: string): string | undefined => /\b(?:it|describe|test)(?:\.\w+(?:\([^()]*\))?)*\(\s*(['"`])((?:\\.|(?!\1).)*)\1/.exec(text)?.[2]
+
+/**
+ * The title of a conformance scenario on this line (packages/libs/conformance/runner.ts): the
+ * second argument of a `scenario('<id>', '<title>', …)` helper, or a `title: '…'` field.
+ */
+export const scenarioTitle = (text: string): string | undefined =>
+  /\bscenario\(\s*(['"`])(?:\\.|(?!\1).)*\1\s*,\s*(['"`])((?:\\.|(?!\2).)*)\2/.exec(text)?.[3] ?? /\btitle:\s*(['"`])((?:\\.|(?!\1).)+)\1/.exec(text)?.[2]
+
 /** Test and suite titles that cite an id, with where they are. */
 export function evidence(): Map<string, Evidence[]> {
   const found = new Map<string, Evidence[]>()
   for (const file of [...testFiles(join(root, 'packages')), ...testFiles(join(root, 'scripts')), ...testFiles(join(root, 'spikes'))].sort()) {
+    const suite = file.includes(`${sep}conformance${sep}`)
     readFileSync(file, 'utf8').split('\n').forEach((text, index) => {
-      // `it(…)`, `it.skip(…)`, and `describe.runIf(cond)(…)` alike.
-      const title = /\b(?:it|describe|test)(?:\.\w+(?:\([^()]*\))?)*\(\s*(['"`])((?:\\.|(?!\1).)*)\1/.exec(text)?.[2]
+      const title = testTitle(text) ?? (suite ? scenarioTitle(text) : undefined)
       if (!title) return
       for (const id of cited(title)) {
         const list = found.get(id) ?? []

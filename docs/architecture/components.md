@@ -146,12 +146,20 @@ runs the work the router admitted to them. Callers never reach a source directly
   `workers.accept(result, contract) → Acceptance` (with an `acceptance` decision);
   `workers.register(source)`, `workers.contract(id, check)`, `workers.source(name)`;
   `egress.check({ payload, classification, workerClass }) → allowed + egress decision`.
+- **Gate and resource ledger** (defined; providers in B2 and B5): `ctx.approvals`, the autonomy
+  policy and the one batched approval queue, whose expiry denies
+  ([approvals](../design/approvals.md)); `ctx.resources`, configured pools, limit readings,
+  reservations before a run, and deduplicated usage after it
+  ([resources](../design/resources.md)). Contracts: `approvals.check / request / batch / decide /
+  withdraw / sweep`; `resources.pools / observe / reserve / release / record / usage`.
 - **Policy inputs:** proven capabilities, data locality, Worker state, tier, session
   affinity, and provider family, compared only for inequality. This is where the three [purposes](../requirements/purpose.md) become mechanics.
 - **Design:** [routing](../design/routing.md).
 - **Packages:** [workers-core](../../packages/workers-core/README.md),
   [workers](../../packages/plugins/workers/README.md),
-  [egress](../../packages/plugins/egress/README.md).
+  [egress](../../packages/plugins/egress/README.md),
+  [approvals-core](../../packages/approvals-core/README.md),
+  [resources-core](../../packages/resources-core/README.md).
 
 ## Orchestration
 
@@ -166,6 +174,9 @@ runs the work the router admitted to them. Callers never reach a source directly
 - **Worker sessions** (`ctx.workerSessions`): durable sessions, each with its own `SessionId`,
   a binding to the native handle, groups, and a mailbox for direct peer messages under
   barriers ([sessions and messaging](../design/sessions-and-messaging.md)).
+- **Board** (`ctx.board`; defined, provider in B4): projects with charters and board tasks that
+  outlive a run, with leases and expiring waits; it asks for approvals through `ctx.approvals`
+  ([board](../design/board.md)).
 - **Profiles:** plugins that contribute templates through `ctx.workflow.template` (`research`,
   with its `deep` variant; `agent-review`, mounted with the agent Workers) and acceptance
   contracts through `ctx.workers`. A profile never names a provider, browser, or account, and
@@ -173,11 +184,13 @@ runs the work the router admitted to them. Callers never reach a source directly
 - **Does not own:** provider mechanics, Worker admission, or protocol framing.
 - **Contracts:** `workflow.start / wait / get / approve / vote / stop / continue / supersede / delete /
   drain / resume / explain / usage`, `workflow.template(name, nodes)`;
-  `workerSessions.join / send / inbox / ack / openBarrier / activate / settle`.
+  `workerSessions.join / send / inbox / ack / openBarrier / activate / settle`;
+  `board.charter / propose / claim / start / submit / accept / block / answer / cancel / sweep`.
 - **Packages:** [workflow](../../packages/plugins/workflow/README.md),
   [worker-sessions](../../packages/plugins/worker-sessions/README.md),
   [profile-software-development](../../packages/plugins/profile-software-development/README.md),
-  [profile-scientific-research](../../packages/plugins/profile-scientific-research/README.md).
+  [profile-scientific-research](../../packages/plugins/profile-scientific-research/README.md),
+  [board-core](../../packages/board-core/README.md).
 
 ## Host
 

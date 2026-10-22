@@ -1,0 +1,15 @@
+{
+  "name": "@tsuuanmi/system-board-core",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Work state machine seam definition: ctx.board, projects with charters and board tasks across runs, with its conformance suite",
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "exports": { ".": { "types": "./lib/index.d.ts", "default": "./lib/index.js" } },
+  "files": ["lib"],
+  "scripts": { "build": "tsc -p tsconfig.build.json" },
+  "dependencies": { "@tsuuanmi/system-approvals-core": "workspace:*" },
+  "peerDependencies": { "@deepseek-ai/cordis": "4.0.5-alpha.1" },
+  "devDependencies": { "@deepseek-ai/cordis": "4.0.5-alpha.1", "@tsuuanmi/system-artifacts": "workspace:*", "@tsuuanmi/system-libs": "workspace:*", "@tsuuanmi/system-store": "workspace:*" }
+}
