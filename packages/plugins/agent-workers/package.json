@@ -20,8 +20,10 @@
   },
   "dependencies": {
     "@tsuuanmi/system-agent-runtime-core": "workspace:*",
+    "@tsuuanmi/system-approvals-core": "workspace:*",
     "@tsuuanmi/system-artifacts": "workspace:*",
     "@tsuuanmi/system-egress": "workspace:*",
+    "@tsuuanmi/system-event-log": "workspace:*",
     "@tsuuanmi/system-leases": "workspace:*",
     "@tsuuanmi/system-libs": "workspace:*",
     "@tsuuanmi/system-provider-core": "workspace:*",
@@ -37,8 +39,8 @@
     "@deepseek-ai/cordis": "4.0.5-alpha.1",
     "@deepseek-ai/schemastery": "3.18.5-alpha.1",
     "@tsuuanmi/system-agent-runtimes": "workspace:*",
+    "@tsuuanmi/system-approvals": "workspace:*",
     "@tsuuanmi/system-egress": "workspace:*",
-    "@tsuuanmi/system-event-log": "workspace:*",
     "@tsuuanmi/system-worker-sessions": "workspace:*",
     "@tsuuanmi/system-workers": "workspace:*",
     "@tsuuanmi/system-workflow": "workspace:*"
