@@ -9,7 +9,8 @@
 > Implemented in [`board`](../../packages/plugins/board/README.md) (definition
 > [`board-core`](../../packages/board-core/README.md)); its bundle row is on, over the
 > [approval queue](../../packages/plugins/approvals/README.md). Differs from target: no budget
-> use is reported until the resource ledger has a provider; `TASKS.md` is rendered on request,
+> use is reported yet (the ledger counts usage by run, and the engine does not yet reserve per
+> task); `TASKS.md` is rendered on request,
 > and nothing writes it into a workspace yet.
 
 The board holds work that outlives a run: projects with charters, and their tasks. A run of the
