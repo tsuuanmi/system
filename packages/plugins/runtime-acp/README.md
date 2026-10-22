@@ -26,6 +26,8 @@ first-class provider.
     for what it chooses to, so not every tool call could reach a gate: the probe
     reports `gatesToolCalls: false`, and the `agents` source admits none of its
     Workers ([tool gate](../../../docs/design/agent-runtimes.md#tool-gate)).
+    That is why this row stays off in the bundle
+    ([roadmap B5](../../../docs/proposals/roadmap.md)).
 - **Trust:** an agent can still act on the disk without asking. So `read-only`
   is offered only for an agent the operator vouches for (`honoursPermissions`,
   INV-6). Any other agent offers no sandbox, and its Workers stay unavailable.

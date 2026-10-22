@@ -22,10 +22,12 @@ guarantee seam: it fails closed (INV-2). Code decides, never a model.
     `command` class. An argv with a word holding a shell metacharacter (`SHELL_METACHARACTER`) is
     `forbid`, with the reason in the decision. A malformed action is refused (`invalid`).
 
-    > **`mode` is the mode once the required checks pass.** A caller that acts on a verdict
-    > passes the checks it ran (`action.checks`) and treats a non-empty `failedChecks` as not yet
-    > allowed, even when `mode` is `auto` or `notify`; the lead runs the checks first. Reading
-    > `mode` alone fails open.
+    > **`mode` is the mode once the required checks pass.** Required checks are the result's. A
+    > caller that accepts or applies a result passes the checks it ran (`action.checks`) and
+    > treats a non-empty `failedChecks` as not yet allowed, even when `mode` is `auto` or
+    > `notify`; reading `mode` alone there fails open. A caller that gates work while it runs (a
+    > task becoming ready, a Worker's tool call) records them as pending, and they bind at
+    > acceptance ([approvals](../../../docs/design/approvals.md#a-verdict-is-not-yet-a-permission)).
   - `request(request, at?)`: queues an `approval-request@1.0` on the exact subject, in one
     transaction that also checks the verdict it cites (else `not-asked`): a recorded `autonomy`
     decision whose outcome is `ask`, made by a policy (its producer and decider), of the policy

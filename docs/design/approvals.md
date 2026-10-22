@@ -17,7 +17,9 @@
 > (`approval@1.0`); a Worker's tool calls are judged under the studio policy only, since no
 > trusted envelope names an agent run's project yet; a deferred run fails as `config_error`,
 > since the workers seam has no waiting status, and nothing yet starts the later run of its
-> session once its request is approved ([below](#where-a-workers-gate-leaves-room)).
+> session once its request is approved; the workflow engine's acceptance does not yet bind a
+> rule's required checks, which a Worker's calls leave pending
+> ([below](#where-a-workers-gate-leaves-room)).
 
 Every action that needs a person goes through one queue, in batches, and nothing else asks the
 operator. The autonomy policy decides which actions those are; an action that is reversible and
@@ -77,10 +79,21 @@ request that never expires (INV-9).
 
 > **`mode` is the mode once the required checks pass.** `check` returns `auto` or `notify` for an
 > action whose rule allows it, even when its required checks did not pass; `failedChecks` names
-> those. A caller that acts on a verdict must pass the checks it ran (`action.checks`) and treat a
-> non-empty `failedChecks` as **not yet allowed**: the lead runs the checks first, and a failed
-> one is work for the lead, never a reason to run the action or to ask the operator. A caller
-> that reads `mode` alone fails open.
+> those. A rule's `requires` are checks the **result** must pass before it is accepted, never
+> preconditions of each step of the work that produces it:
+>
+> - A caller that **accepts or applies a result** (the board's `accept`, an acceptance gate)
+>   passes the checks it ran (`action.checks`) and treats a non-empty `failedChecks` as **not yet
+>   allowed**: a failed check is work for the lead, never a reason to accept the result or to ask
+>   the operator. Such a caller that reads `mode` alone fails open.
+> - A caller that gates the work **while it runs** (a board task becoming ready, a Worker's tool
+>   call) cannot have run them: it lets the work go on under `auto` or `notify`, records the
+>   checks as pending (the `autonomy` decision's `failedChecks`, and its own record), and they
+>   bind when the result is accepted
+>   ([board](board.md#required-checks-bind-at-acceptance), [below](#a-workers-tool-calls)).
+>
+> Everything else still fails closed: `forbid` denies, `ask` waits for the operator, and a
+> class no rule names takes the stricter `default`.
 
 ## A request
 
@@ -185,7 +198,7 @@ runtime's pre-approvals still bind each tool to the workspace on disk.
 | `forbid` | denied; the agent is told the decision's reason | the `autonomy` decision |
 | `auto` | allowed | the `autonomy` decision |
 | `notify` | allowed, and an `agent-workers.tool.notified` event names the decision, the run, and the tool: the operator reads it in the event log (MCP `events` by type) and the decision itself (`system explain <decision>`, MCP `artifact`) | the `autonomy` decision |
-| `auto` or `notify` with `failedChecks` | denied: a [verdict is not yet a permission](#a-verdict-is-not-yet-a-permission), and the checks of a change cannot have run before the call that makes it. That is work for the lead | the `autonomy` decision |
+| `auto` or `notify` with `failedChecks` | allowed: the rule's required checks are the result's, and no tool call carries them ([a verdict is not yet a permission](#a-verdict-is-not-yet-a-permission)). They stay pending, and bind when the result is accepted. The first such call of a class in a run appends `agent-workers.tool.checks-pending` naming them (a `notify` event names them too); a pending check that no rule can require is a deny | the `autonomy` decision, its `failedChecks` the pending checks |
 | `ask` | one approval request on the exact call, then `defer` | the `autonomy` decision, then the request |
 
 A gate outcome the policy did not give (no `ctx.approvals`, a call the gate does not classify, a
@@ -224,9 +237,11 @@ ids, never the call's input.
   waiting status would change that guarantee seam's contract.
 - **The later run.** Whoever owns the work (the board's `blocked` → `ready` on the verdict, the
   lead) starts the run that continues the session; the gate does not.
-- **Default policy.** The bundle's studio policy lets `workspace-write` run `auto` once `tests`
-  and `lint` pass. No tool call carries checks, so under it every write of a Claude Code
-  Worker is denied until the operator's policy says otherwise.
+- **Where pending checks bind.** The bundle's studio policy gives `workspace-write` `auto` with
+  `tests` and `lint` required, so a Claude Code Worker reads and writes inside its workspace,
+  those checks pending. They bind at the board's acceptance of the task's result. The workflow
+  engine's acceptance does not consult the policy yet, so for a run outside the board they are
+  recorded (the decision, the event) and not yet enforced when its result is accepted.
 
 ## Fail-closed rules
 

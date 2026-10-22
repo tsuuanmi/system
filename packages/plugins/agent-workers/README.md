@@ -133,10 +133,15 @@ The **`agents` Worker source**: agent runtimes as Workers
     workspace, is denied by the gate's own rule;
   - it judges the action with `ctx.approvals.check` under the studio policy
     (no trusted envelope names an agent run's project yet): `forbid` denies
-    with the decision's reason; `auto` and `notify` allow, unless required
-    checks failed (no tool call carries checks, so such a rule denies: that is
-    the lead's work); `notify` also appends `agent-workers.tool.notified`
-    (with `ctx.eventLog`) naming the decision;
+    with the decision's reason; `auto` and `notify` allow. A rule's required
+    checks are the result's, which no tool call carries: they stay pending
+    (the decision's `failedChecks`), the run's first such call of a class
+    appends `agent-workers.tool.checks-pending` naming them, and they bind
+    when the result is accepted (the board's `accept`); a pending check no rule
+    can require denies. `notify` also appends `agent-workers.tool.notified`
+    (with `ctx.eventLog`) naming the decision and any pending checks. So under
+    the bundle's default studio policy a Worker reads and writes inside its
+    workspace, `tests` and `lint` pending;
   - `ask`: in a run with a session, one approval request on the exact call
     (subject `content`, ref `agent-tool-call:<agent run>:<tool>`, version the
     content id of the canonical input; requester `worker` with the agent run,

@@ -93,7 +93,8 @@ guesses.
     is the mode, and `detail` names the action class it was judged as, the effective policies,
     any `failedChecks`, and why it is `forbidden` whatever a rule says (an argv word with a shell
     metacharacter). The mode is the mode once the required checks pass: a non-empty
-    `failedChecks` means not yet allowed.
+    `failedChecks` means the result is not yet accepted, and work in progress goes on with them
+    pending ([approvals](../design/approvals.md#a-verdict-is-not-yet-a-permission)).
   - `approval`: how an approval request was resolved. Options `approved`, `rejected`,
     `denied:expired` (decider rule `approvals.expiry`), and `withdrawn`. Example:
     [`decision.approval-expired.json`](../../schemas/examples/decision.approval-expired.json).
