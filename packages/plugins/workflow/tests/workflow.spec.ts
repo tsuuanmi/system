@@ -136,7 +136,8 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
     const started = ctx.workflow.start({ template: 'deep-research', input: 'Survey the plugin catalog' })
     expect(started).toMatchObject({ template: 'deep-research', status: 'running' })
     expect(started.sessionId).toMatch(/^ses_/)
-    const done = await ctx.workflow.wait(started.runId, 60_000)
+    // The file's first run also starts the browser: a loaded CI runner gets room for that.
+    const done = await ctx.workflow.wait(started.runId, 120_000)
     expect(done).toMatchObject({ status: 'completed', answer: 'Synthesis: plugins matter (https://src.example/catalog).' })
     expect(fake.sent).toHaveLength(2)
     expect(fake.sent[0]).toMatchObject({ prompt: 'Survey the plugin catalog', deepResearch: true, temporary: false, model: 'GPT-6', power: 'High' })
@@ -162,7 +163,7 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
     // Both tiers are visible in the event log (MVP exit criterion 4).
     const completed = ctx.eventLog.query({ type: 'workflow.node.completed', runId: started.runId })
     expect(completed.map((e) => [e.nodeId, e.data?.tier])).toEqual([['research:1', 'frontier'], ['compact:1', 'economy']])
-  }, 120_000)
+  }, 180_000)
 
   it('answers ask as a one-node DAG with the caller\'s tier, and continues a session', async () => {
     const { ctx, fake } = await boot()
