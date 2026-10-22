@@ -219,7 +219,8 @@ guesses.
 - `agent-result@1.2` adds `model`, `usage`, and `models`, from the Agent SDK's result
   message. `usage` is the sum of its per-model `modelUsage`, which covers subagents; the
   message's own `usage` covers the main loop only and is not used. `model` is the main
-  loop's model.
+  loop's model. A Worker writes `@1.2` when its runtime reported token usage, and `@1.1`
+  otherwise.
 - Token counts are normalized as in [`usage-record`](#usage-record). The SDK's `modelUsage`
   uses the same field names with another meaning: its `inputTokens` excludes cached input. So
   here `inputTokens` is the SDK's `inputTokens` plus its `cacheReadInputTokens` and

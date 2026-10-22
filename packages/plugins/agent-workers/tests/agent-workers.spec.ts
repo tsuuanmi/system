@@ -5,17 +5,21 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { Context } from '@deepseek-ai/cordis'
+import { type RunMetering, withMetering } from '@tsuuanmi/system-agent-runtime-core'
 import AgentRuntimeRegistry, { type AgentRuntimeProvider, type RunSpec, type SandboxMode } from '@tsuuanmi/system-agent-runtimes'
 import Artifacts from '@tsuuanmi/system-artifacts'
 import Egress from '@tsuuanmi/system-egress'
 import EventLog from '@tsuuanmi/system-event-log'
 import Leases from '@tsuuanmi/system-leases'
+import { SchemaRegistry } from '@tsuuanmi/system-libs'
 import { ProviderError } from '@tsuuanmi/system-provider-core'
+import type { LimitState, PoolConfig } from '@tsuuanmi/system-resources-core'
 import Store from '@tsuuanmi/system-store'
 import WorkerRouter, { type WorkerExecution, type WorkRequirement } from '@tsuuanmi/system-workers'
 import WorkerSessions from '@tsuuanmi/system-worker-sessions'
 import Workflow from '@tsuuanmi/system-workflow'
 import * as SoftwareDevelopment from '@tsuuanmi/system-profile-software-development'
+import { FakeResources } from '../../../resources-core/conformance/resources.ts'
 import { DEVELOP } from './develop.ts'
 import { afterEach, describe, expect, it } from 'vitest'
 import AgentWorkers, { type Config } from '../src/index.ts'
@@ -29,7 +33,11 @@ afterEach(async () => {
 class ScriptedAgent implements AgentRuntimeProvider {
   readonly kind = 'scripted'
   readonly runs: RunSpec[] = []
-  constructor(private readonly options: { sandboxes?: SandboxMode[]; resume?: boolean; available?: boolean; holdMs?: number; fail?: Error; executes?: boolean; readsConfined?: boolean; act?: (spec: RunSpec) => string | undefined } = {}) {}
+  constructor(private readonly options: {
+    sandboxes?: SandboxMode[]; resume?: boolean; available?: boolean; holdMs?: number; fail?: Error; executes?: boolean; readsConfined?: boolean; act?: (spec: RunSpec) => string | undefined
+    /** What each run reports it consumed. */
+    metering?: RunMetering
+  } = {}) {}
   async probe() {
     return {
       available: this.options.available ?? true, detail: 'scripted 1.0', version: '1.0', sandboxes: this.options.sandboxes ?? ['read-only'],
@@ -46,7 +54,7 @@ class ScriptedAgent implements AgentRuntimeProvider {
       })
     }
     if (this.options.fail) throw this.options.fail
-    return { text: this.options.act?.(spec) ?? `echo: ${spec.prompt}`, nativeHandle: spec.resume ?? `h-${this.runs.length}`, turns: 1 }
+    return { text: this.options.act?.(spec) ?? `echo: ${spec.prompt}`, nativeHandle: spec.resume ?? `h-${this.runs.length}`, turns: 1, ...this.options.metering }
   }
 }
 
@@ -55,10 +63,11 @@ const worker = (overrides: Partial<Config['workers'][number]> = {}): Config['wor
   id: 'reviewer', runtime: 'scripted', workspace: WORKSPACE, sandbox: 'read-only', tier: 'standard', tools: ['Read', 'Grep'], model: 'model-x', ...overrides,
 })
 
-async function boot(agent: AgentRuntimeProvider, config: Config = { workers: [worker()] }, dir = mkdtempSync(join(tmpdir(), 'system-agents-'))) {
+async function boot(agent: AgentRuntimeProvider, config: Config = { workers: [worker()] }, dir = mkdtempSync(join(tmpdir(), 'system-agents-')), ledger?: { pools: readonly PoolConfig[] }) {
   const ctx = new Context()
   const fibers = [
     ctx.plugin(Store, { path: join(dir, 'system.db') }), ctx.plugin(Artifacts, {}), ctx.plugin(EventLog, {}), ctx.plugin(Leases, {}), ctx.plugin(Egress, {}),
+    ...(ledger ? [ctx.plugin(FakeResources, ledger)] : []),
     ctx.plugin(WorkerRouter, {}), ctx.plugin(AgentRuntimeRegistry), ctx.plugin(AgentWorkers, config), ctx.plugin(WorkerSessions, {}), ctx.plugin(Workflow, { retryDelayMs: 100, templates: { develop: DEVELOP } }),
   ]
   await Promise.all(fibers)
@@ -441,5 +450,156 @@ describe('ctx.workers source `agents`: agent runtimes as Workers', () => {
     const { ctx } = await boot(agent)
     const run = await ctx.workflow.wait(ctx.workflow.start({ template: 'agent-review', input: 'Check the diff', classification: 'operator-shared' }).runId, 10_000)
     expect(run).toMatchObject({ status: 'completed', answer: 'echo: Check the diff', nodes: [{ nodeId: 'review:1', source: 'agents', worker: 'agent:reviewer', quotaClass: 'agent-plan' }] })
+  })
+})
+
+/** A pool for agent runs that is available until a reading limits it. */
+const POOL: PoolConfig = {
+  pool: 'max.agents', account: 'max', kind: 'programmatic', unknown: 'available',
+  windows: [{ id: 'five-hour', kind: 'rolling', seconds: 18000 }, { id: 'seven-day', kind: 'rolling', seconds: 604800 }],
+}
+const LEDGER = { pools: [POOL] }
+const metered = (overrides: Partial<Config['workers'][number]> = {}) => worker({ pool: 'max.agents', account: 'max', windows: { five_hour: 'five-hour', seven_day: 'seven-day' }, ...overrides })
+/** What a run reports it consumed, normalized by its runtime (input includes cached input). */
+const METERING: RunMetering = {
+  resultId: 'h-1:r-1', model: 'model-main', turns: 3, costUsd: 0.25,
+  usage: { inputTokens: 36_000, outputTokens: 1900, cacheReadInputTokens: 30_500, cacheCreationInputTokens: 4000 },
+  models: [
+    { model: 'model-main', usage: { inputTokens: 35_200, outputTokens: 900, cacheReadInputTokens: 30_000, cacheCreationInputTokens: 4000 }, costUsd: 0.2 },
+    { model: 'model-small', usage: { inputTokens: 800, outputTokens: 1000, cacheReadInputTokens: 500, cacheCreationInputTokens: 0 }, costUsd: 0.05 },
+  ],
+}
+const inAnHour = (): string => new Date(Date.now() + 3_600_000).toISOString()
+const limitReading = (window: { id: string; kind: 'rolling'; seconds: number }, extra: Partial<LimitState>): LimitState => ({
+  schema: 'limit-state@1.0', pool: 'max.agents', account: 'max', window, state: 'ok', source: 'limit-notice', observedAt: new Date().toISOString(), ...extra,
+})
+
+describe('agents source: metering through ctx.resources (docs/design/resources.md)', () => {
+  const run = async (ctx: Context, key = 'k', prompt = 'look at it') => {
+    const source = ctx.workers.source('agents')!
+    return source.wait(source.start({ key, worker: 'agent:reviewer', prompt, requirement: requirement(), decisions: { tier: 'sha256:0', route: 'sha256:0' } as never }).id, 10_000)
+  }
+
+  it('reserves before a run, records exactly one usage-record with the runtime\'s normalized numbers, releases, and writes agent-result@1.2 (INV-2, INV-13, INV-14)', async () => {
+    const agent = new ScriptedAgent({ metering: METERING })
+    const { ctx } = await boot(agent, { workers: [metered()] }, undefined, LEDGER)
+    expect((await ctx.workers.list())[0]).toMatchObject({ worker: 'agent:reviewer', state: 'ready' })
+    const done = await run(ctx)
+    expect(done).toMatchObject({ status: 'completed', submitted: true })
+    // The egress decision, then the budget decision: the run's decision chain.
+    expect(done.decisions).toHaveLength(2)
+    expect(ctx.artifacts.get(done.decisions[1]!)!.body).toMatchObject({ decisionType: 'budget', outcome: { option: 'reserved', detail: { runId: done.id, lines: [{ pool: 'max.agents', unit: 'runs', amount: 1 }] } } })
+    const { records, totals } = await ctx.resources.usage({ runId: done.id })
+    expect(records).toEqual([{
+      schema: 'usage-record@1.0', requestId: 'scripted:h-1:r-1', source: 'runtime-result', observedAt: expect.any(String), account: 'max', pool: 'max.agents',
+      worker: 'agent:reviewer', runId: done.id, model: { request: 'model-x', response: 'model-main' }, usage: METERING.usage, models: METERING.models,
+      turns: 3, durationMs: expect.any(Number), cost: { amount: 0.25, currency: 'USD', basis: 'runtime-estimate' }, outcome: 'completed',
+    }])
+    expect(totals).toEqual([{ pool: 'max.agents', records: 1, usage: METERING.usage, turns: 3, costUsd: 0.25 }])
+    // Released: the ledger no longer holds it.
+    const { reservation_id } = ctx.store.db.prepare('SELECT reservation_id FROM agent_runs WHERE run_id = ?').get(done.id) as { reservation_id: string }
+    await expect(ctx.resources.release(reservation_id)).rejects.toMatchObject({ failure: 'unknown-reservation' })
+    const result = ctx.artifacts.get(done.result!)!
+    expect(result).toMatchObject({ bodySchema: 'agent-result@1.2', body: { schema: 'agent-result@1.2', model: 'model-main', usage: METERING.usage, models: METERING.models, turns: 3, costUsd: 0.25 } })
+    new SchemaRegistry().assertRecord(result.body as { schema: string })
+  })
+
+  it('runs nothing when the reservation is refused: the run fails unsubmitted as quota_exhausted, with its budget decision (INV-2)', async () => {
+    const agent = new ScriptedAgent({ metering: METERING })
+    const { ctx } = await boot(agent, { workers: [metered()] }, undefined, LEDGER)
+    await ctx.resources.observe(limitReading(POOL.windows[0] as never, { state: 'limited', resetsAt: inAnHour() }))
+    const done = await run(ctx)
+    expect(done).toMatchObject({ status: 'failed', submitted: false, error: { kind: 'quota_exhausted', disposition: 'USER_ACTION' } })
+    expect(done.error!.message).toContain('max.agents')
+    expect(ctx.artifacts.get(done.decisions[1]!)!.body).toMatchObject({ decisionType: 'budget', outcome: { option: 'refused' } })
+    expect(agent.runs).toEqual([])
+    expect((await ctx.resources.usage()).records).toEqual([])
+  })
+
+  it('describes a metered Worker as quota-exhausted while its pool is unavailable, so routing skips it, and ready once it is back (REQ-WRK-8, INV-2)', async () => {
+    const { ctx } = await boot(new ScriptedAgent(), { workers: [metered()] }, undefined, LEDGER)
+    await ctx.resources.observe(limitReading(POOL.windows[1] as never, { state: 'limited', resetsAt: inAnHour() }))
+    expect((await ctx.workers.list())[0]).toMatchObject({ state: 'quota-exhausted' })
+    await expect(ctx.workers.route(requirement())).rejects.toMatchObject({ name: 'AdmissionFailure' })
+    await ctx.resources.observe(limitReading(POOL.windows[1] as never, { state: 'ok', observedAt: new Date(Date.now() + 1000).toISOString() }))
+    expect((await ctx.workers.list())[0]).toMatchObject({ state: 'ready' })
+    expect((await ctx.workers.route(requirement())).worker.worker).toBe('agent:reviewer')
+  })
+
+  it('fails closed when a metered Worker\'s ledger or pool is missing: unavailable, and a run never starts (INV-2)', async () => {
+    const agent = new ScriptedAgent()
+    const unledgered = await boot(agent, { workers: [metered()] })
+    expect((await unledgered.ctx.workers.list())[0]).toMatchObject({ state: 'unavailable', capabilities: [] })
+    expect(await run(unledgered.ctx)).toMatchObject({ status: 'failed', submitted: false, error: { kind: 'config_error', message: expect.stringContaining('ctx.resources') } })
+    const unknown = await boot(agent, { workers: [metered({ pool: 'nope' })] }, undefined, LEDGER)
+    expect((await unknown.ctx.workers.list())[0]).toMatchObject({ state: 'unavailable' })
+    expect(await run(unknown.ctx)).toMatchObject({ status: 'failed', submitted: false, error: { kind: 'config_error' } })
+    expect(agent.runs).toEqual([])
+  })
+
+  it('records the runtime\'s rate-limit observations as readings of the mapped windows; an unmapped window is skipped (INV-11)', async () => {
+    const observedAt = new Date().toISOString()
+    const resetsAt = inAnHour()
+    const agent = new ScriptedAgent({
+      metering: {
+        ...METERING, limits: [
+          { window: 'seven_day', status: 'warning', usedPercentage: 82, resetsAt, observedAt },
+          { window: 'seven_day_other', status: 'rejected', resetsAt, observedAt },
+          { window: 'five_hour', status: 'rejected', resetsAt, observedAt },
+        ],
+      },
+    })
+    const { ctx } = await boot(agent, { workers: [metered()] }, undefined, LEDGER)
+    expect((await run(ctx)).status).toBe('completed')
+    const pool = (await ctx.resources.pools({ account: 'max' })).find((p) => p.pool === 'max.agents')!
+    expect(pool.readings).toEqual([
+      { schema: 'limit-state@1.0', pool: 'max.agents', account: 'max', window: POOL.windows[0], state: 'limited', resetsAt, source: 'runtime-result', observedAt },
+      { schema: 'limit-state@1.0', pool: 'max.agents', account: 'max', window: POOL.windows[1], state: 'ok', resetsAt, usedPercentage: 82, source: 'runtime-result', observedAt },
+    ])
+    // The limit hit closes the pool: the Worker takes no new work until the window resets.
+    expect(pool).toMatchObject({ available: false, until: resetsAt })
+    expect((await ctx.workers.list())[0]).toMatchObject({ state: 'quota-exhausted' })
+  })
+
+  it('reads a limit hit without a reset time as unknown, never as ok (INV-2)', async () => {
+    const agent = new ScriptedAgent({ metering: { limits: [{ window: 'five_hour', status: 'rejected', observedAt: new Date().toISOString() }] } })
+    const { ctx } = await boot(agent, { workers: [metered()] }, undefined, LEDGER)
+    await run(ctx)
+    expect((await ctx.resources.pools({ account: 'max' }))[0]!.readings).toMatchObject([{ window: { id: 'five-hour' }, state: 'unknown', source: 'runtime-result' }])
+  })
+
+  it('meters a failed run from the numbers its error carries, and a run that reported nothing gets no invented record', async () => {
+    const failing = new ScriptedAgent({ fail: withMetering(new ProviderError('session_broken', 'the agent broke'), METERING) })
+    const { ctx } = await boot(failing, { workers: [metered()] }, undefined, LEDGER)
+    const done = await run(ctx)
+    expect(done).toMatchObject({ status: 'failed', submitted: true, error: { kind: 'session_broken' } })
+    expect((await ctx.resources.usage({ runId: done.id })).records).toMatchObject([{ outcome: 'failed', usage: METERING.usage, turns: 3 }])
+    const silent = await boot(new ScriptedAgent({ fail: new ProviderError('session_broken', 'no result') }), { workers: [metered()] }, undefined, LEDGER)
+    expect((await run(silent.ctx)).status).toBe('failed')
+    expect((await silent.ctx.resources.usage()).records).toEqual([])
+  })
+
+  it('meters nothing for a Worker with no pool, even with a ledger loaded; a runtime\'s usage still goes into agent-result@1.2', async () => {
+    const { ctx } = await boot(new ScriptedAgent({ metering: METERING }), { workers: [worker()] }, undefined, LEDGER)
+    const done = await run(ctx)
+    expect(done.decisions).toHaveLength(1)
+    expect((await ctx.resources.usage()).records).toEqual([])
+    expect(ctx.artifacts.get(done.result!)).toMatchObject({ bodySchema: 'agent-result@1.2', body: { model: 'model-main', usage: METERING.usage } })
+  })
+
+  it('never invents the usage of a run that started before a restart: it fails, and its usage is left to transcript reconciliation (INV-4)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'system-agents-'))
+    const first = await boot(new ScriptedAgent({ holdMs: 30_000 }), { workers: [metered()] }, dir, LEDGER)
+    const source = first.ctx.workers.source('agents')!
+    const started = source.start({ key: 'k', worker: 'agent:reviewer', prompt: 'long', requirement: requirement(), decisions: { tier: 'sha256:0', route: 'sha256:0' } as never })
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    // Stopped mid-run: the agent reported nothing, and the run stays started.
+    await first.stop()
+    cleanups.splice(cleanups.indexOf(first.stop), 1)
+    const again = new ScriptedAgent({ metering: METERING })
+    const second = await boot(again, { workers: [metered()] }, dir, LEDGER)
+    expect(await second.ctx.workers.source('agents')!.wait(started.id, 10_000)).toMatchObject({ status: 'failed', submitted: true, error: { kind: 'reconciliation_failed' } })
+    expect(again.runs).toEqual([])
+    expect((await second.ctx.resources.usage()).records).toEqual([])
   })
 })

@@ -397,6 +397,9 @@ importers:
       '@tsuuanmi/system-provider-core':
         specifier: workspace:*
         version: link:../../provider-core
+      '@tsuuanmi/system-resources-core':
+        specifier: workspace:*
+        version: link:../../resources-core
       '@tsuuanmi/system-store':
         specifier: workspace:*
         version: link:../store

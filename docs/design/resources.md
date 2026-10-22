@@ -9,8 +9,10 @@
 > [`limit-state@1.0`](../reference/schemas.md#limit-state).
 >
 > Defined in [`resources-core`](../../packages/resources-core/README.md); differs from target:
-> only the fake provider exists, so nothing is stored, no runtime reports usage to it, no run
-> reserves before it starts, and no MCP tool is served (milestone B2).
+> only the fake provider exists, so nothing is stored and no MCP tool is served (milestone B2).
+> Agent Workers configured with a pool reserve, record, and observe through it
+> ([agent runtimes](agent-runtimes.md#metering)); no other Worker source does yet, and no
+> transcript is reconciled.
 
 The resource ledger knows what each configured pool has left and what every run consumed. Its
 numbers come from objective sources only: a runtime's result message, a provider's usage

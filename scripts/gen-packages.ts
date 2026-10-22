@@ -228,8 +228,11 @@ export function scan(): Pkg[] {
   for (const p of pkgs) if (p.plugin && !p.dsh && !p.mountId) problems.push(`plugin ${p.dir} has no row in packages/system-bundle/cordis.patch.yml`)
   const providerOf = new Map<string, string[]>()
   for (const p of pkgs) for (const k of p.provides) providerOf.set(k, [...(providerOf.get(k) ?? []), p.dir])
+  const defined = new Set(pkgs.flatMap((p) => p.defines))
   for (const p of pkgs) {
-    for (const k of [...p.required, ...p.optional]) if (!providerOf.has(k)) problems.push(`${p.dir} consumes ctx.${k}, which no package or bundle row provides`)
+    for (const k of p.required) if (!providerOf.has(k)) problems.push(`${p.dir} consumes ctx.${k}, which no package or bundle row provides`)
+    // An optional seam may be defined before its provider is built: it is used only when present.
+    for (const k of p.optional) if (!providerOf.has(k) && !defined.has(k)) problems.push(`${p.dir} consumes ctx.${k}, which no package or bundle row provides or defines`)
   }
   for (const [k, by] of providerOf) if (by.length > 1) problems.push(`ctx.${k} is provided by ${by.join(', ')}`)
   if (problems.length) throw new Error(`gen-packages:\n  ${problems.join('\n  ')}`)
@@ -242,6 +245,8 @@ const seams = (keys: string[], mark = ''): string[] => keys.map((k) => `\`${k}\`
 export function render(pkgs: Pkg[] = scan()): string {
   const providerOf = new Map<string, Pkg>()
   for (const p of pkgs) for (const k of p.provides) providerOf.set(k, p)
+  // A seam with no provider yet (only optional consumers are allowed one) points to its definition.
+  for (const p of pkgs) for (const k of p.defines) if (!providerOf.has(k)) providerOf.set(k, p)
   const byLayer = (layer: Layer): Pkg[] => pkgs.filter((p) => p.layer === layer)
   const rank = (p: Pkg): number => LAYERS.indexOf(p.layer)
 
@@ -308,7 +313,8 @@ export function render(pkgs: Pkg[] = scan()): string {
     '## Seam graph',
     '',
     'An arrow runs from a consumer to the package that provides the seam; a dotted arrow is an optional',
-    'seam. Rows of DSH core appear under host and libraries.',
+    'seam, and one whose provider is not built yet points to the package that defines it. Rows of DSH',
+    'core appear under host and libraries.',
     '',
     ...graph(seamEdges, (p) => inSeamGraph.has(id(p.dir))),
     '',

@@ -43,6 +43,9 @@
 | `workers[].maxTurns` | number (1…) |  |  |
 | `workers[].tier` (required) | "economy" \| "standard" \| "frontier" |  |  |
 | `workers[].quotaClass` | "subscription-chat" \| "agent-plan" \| "metered" \| "local" | `"agent-plan"` |  |
+| `workers[].pool` | string |  | The resource pool its runs draw on (a pool id from the resources configuration); unset: not metered |
+| `workers[].account` | string |  | The account the pool belongs to; required with pool |
+| `workers[].windows` | Record<string, string> | `{}` | The runtime's limit window names mapped to the pool's window ids, for example five_hour: five-hour |
 | `probeTtlMs` | number (0…) | `300000` | How long a probe result stands |
 | `runTimeoutMs` | number (1…) | `900000` | Hard deadline per run |
 
