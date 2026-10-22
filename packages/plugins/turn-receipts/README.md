@@ -18,3 +18,19 @@ It is ported from tsuuanmi/internet's receipt store, and its tests were ported f
 - **Records:** validated against [`provider-turn-receipt@1.0`](../../../schemas/provider-turn-receipt.v1.json)
   on every write.
 - **Injects:** `store`, `artifacts`.
+- The conformance suite is [`conformance/turn-receipts.ts`](conformance/turn-receipts.ts):
+  - `submit` persists a schema-valid `SUBMITTED` receipt, keyed by account,
+    session, and request id, and refuses an empty part of that identity;
+  - a reused request id with another prompt or boundary is refused; at most two
+    resubmissions, then no RESUBMIT;
+  - a conversation binds once; completion is idempotent and refuses conflicting
+    content;
+  - every reconciliation is a deterministic `reconciliation` decision naming all
+    four outcomes and the snapshot hash, appended to the receipt; consecutive
+    WAITs are one decision; rejected outcomes carry reasons;
+  - RECOVER adopts a new response after the boundary; RESUBMIT only when nothing
+    new follows it and the page does not show the prompt; an unobservable page,
+    a contradicted completion, or a missing boundary is AMBIGUOUS;
+  - `delete` removes one receipt and none of the session's others.
+  - Two scenarios are baselined as known failures, each with its reason, in
+    [`tests/conformance.spec.ts`](tests/conformance.spec.ts).
