@@ -399,7 +399,7 @@
       ],
       "properties": {
         "projectId": {
-          "description": "Absent to found a project; present to amend its charter (pivot).",
+          "description": "An existing project's id to amend its charter (pivot), or a new project's; generated when absent.",
           "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
         },
         "title": {

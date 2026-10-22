@@ -45,6 +45,12 @@
       "description": "The core component that asked, and the work waiting on the answer. Never a model's own claim (INV-6).",
       "type": "object",
       "required": ["component"],
+      "anyOf": [
+        { "required": ["runId"], "properties": { "runId": true } },
+        { "required": ["sessionId"], "properties": { "sessionId": true } },
+        { "required": ["projectId"], "properties": { "projectId": true } },
+        { "required": ["taskId"], "properties": { "taskId": true } }
+      ],
       "properties": {
         "component": { "enum": ["workflow", "board", "worker", "resources"] },
         "runId": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
@@ -102,7 +108,7 @@
       "else": { "not": { "required": ["approval"] } },
       "additionalProperties": false
     },
-    "revision": { "type": "integer", "minimum": 0 }
+    "revision": { "type": "integer", "minimum": 0, "maximum": 1000000000 }
   },
   "allOf": [
     {

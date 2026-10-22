@@ -89,7 +89,7 @@
               "pool",
               "account",
               "kind",
-              "windows",
+              "readings",
               "available"
             ],
             "properties": {
@@ -108,17 +108,21 @@
                   "local"
                 ]
               },
-              "windows": {
+              "readings": {
                 "type": "array",
-                "description": "The latest observation of each configured window.",
+                "description": "The latest reading of each configured window that has one.",
                 "maxItems": 8,
                 "items": {
                   "$ref": "urn:tsuuanmi:system:schema:limit-state:v1"
                 }
               },
               "available": {
-                "description": "Whether new work may draw on it now; false when a window is limited or unknown and the pool is configured to fail closed.",
+                "description": "Whether new work may draw on it now; false while a window is limited, or reads unknown in a pool configured to fail closed.",
                 "type": "boolean"
+              },
+              "until": {
+                "description": "When an unavailable pool is expected back.",
+                "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp"
               }
             },
             "additionalProperties": false

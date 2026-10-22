@@ -10,7 +10,7 @@
         "account": "claude-max-main",
         "kind": "interactive",
         "available": true,
-        "windows": [
+        "readings": [
           {
             "schema": "limit-state@1.0",
             "pool": "claude-max-main.interactive",
@@ -33,7 +33,7 @@
         "account": "claude-max-main",
         "kind": "programmatic",
         "available": true,
-        "windows": []
+        "readings": []
       }
     ]
   }

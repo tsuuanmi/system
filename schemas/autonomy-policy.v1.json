@@ -31,7 +31,7 @@
       "enum": ["ask", "forbid"]
     },
     "commands": {
-      "description": "Commands a Worker may run without asking, as exact command names or argv prefixes. Anything else is the `command` class.",
+      "description": "Commands classed by what they do rather than as `command`, as exact command lines or prefixes followed by a space. Anything else is the `command` class, and a `command` mode of forbid applies to listed commands too.",
       "type": "array",
       "maxItems": 200,
       "uniqueItems": true,

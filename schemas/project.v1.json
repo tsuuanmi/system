@@ -58,7 +58,7 @@
       "description": "Decision artifact that caused the latest state transition (INV-13).",
       "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/artifactRef"
     },
-    "revision": { "type": "integer", "minimum": 0 }
+    "revision": { "type": "integer", "minimum": 0, "maximum": 1000000000 }
   },
   "allOf": [
     {

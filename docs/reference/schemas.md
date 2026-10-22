@@ -395,14 +395,18 @@ guesses.
 
 ### `autonomy-policy`
 
-- One rule per action class; a policy that names one twice is refused when loaded.
-- The effective mode of an action is the strictest of the studio policy and the project's
-  (`auto` < `notify` < `ask` < `forbid`). A project policy whose rule is looser than the studio
-  policy it `narrows` is refused when loaded.
+- One rule per action class, `expiry.defaultSeconds ≤ expiry.maxSeconds`, and every rule's
+  `expiresSeconds ≤ expiry.maxSeconds`; a policy that breaks one is refused when loaded.
+- A project policy constrains only the classes it names. The effective mode of a class is the
+  strictest of the studio's rule and the project's (`auto` < `notify` < `ask` < `forbid`), so a
+  looser project rule has no effect. For a class neither names, it is the stricter of the two
+  `default`s.
 - `auto` and `notify` hold only while every check in `requires` passes; a failed check goes back
   to the lead as work to fix, never to the operator.
-- A command on the `commands` list is classed by what it does (for example `workspace-write`);
-  any other command is the `command` class.
+- A command on the `commands` list (an exact command line, or a listed prefix followed by a
+  space) is classed by what it does, for example `workspace-write`; a project's list may only
+  narrow the studio's. Any other command is the `command` class. When the `command` class is
+  `forbid`, listed commands are forbidden too.
 - An approval request expires at its creation plus the rule's `expiresSeconds`, else
   `expiry.defaultSeconds`, never more than `expiry.maxSeconds`.
 - A `policy-change` is never made by a Worker: a new policy version takes effect only through an
@@ -414,6 +418,10 @@ guesses.
 
 - Written only by a core component (`requester.component`), never from model text (INV-6). The
   summary may quote a Worker's proposal; it carries no authority.
+- `subject`, `action`, `requester`, `policy`, `classification`, and `expiresAt` never change
+  after the request is created, so what the operator was shown is what the verdict binds to. A
+  changed proposal is a new request. `requester` names the work waiting on it (a run, session,
+  project, or task), so the request is withdrawn when that work ends.
 - One request, one exact subject (INV-5). An operator verdict names the subject it saw; if the
   subject changed since, the verdict is refused and the request is unchanged, so the requester
   must withdraw it and ask anew.
@@ -429,7 +437,9 @@ guesses.
 
 - Its charter is approved by the operator (action class `charter`) on the subject
   `{type: content, ref: project:<projectId>:charter:<version>, version: sha256 of the canonical
-  charter without approval}`. An amendment is held in `proposedCharter` with the next version
+  charter without approval}`. `board_charter` with an existing `projectId` amends its charter;
+  otherwise it founds a project, with that id or a generated one. An amendment is held in
+  `proposedCharter` with the next version
   until approved, and the project keeps its state meanwhile.
 - A milestone is funded (action class `funding`) by an approval on its budget, a funding round.
 - Budget use is computed from the usage records of its tasks, never stored on the project.
@@ -440,7 +450,7 @@ guesses.
 
 ### `board-task`
 
-- `dependsOn` names tasks of the same project and is acyclic. While a task is not terminal, no
+- `dependsOn` names tasks of the same project that exist when it is proposed, so it is acyclic. While a task is not terminal, no
   other task holds write authority over the same `writes` subject (INV-15).
 - `holder` is the lease on resource `board-task:<taskId>`; every write presents its generation
   as a fence.

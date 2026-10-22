@@ -70,6 +70,11 @@ describe('approval-request@1.0', () => {
     const { expiresAt: _, ...unbounded } = open
     expect(valid('approval-request@1.0', unbounded)).toBe(false)
   })
+
+  it('names the work waiting on it, so the request is withdrawn when that work ends', () => {
+    expect(valid('approval-request@1.0', { ...open, requester: { component: 'board' } })).toBe(false)
+    expect(valid('approval-request@1.0', { ...open, requester: { component: 'workflow', runId: 'run-1' } })).toBe(true)
+  })
 })
 
 describe('board-task@1.0', () => {
@@ -102,7 +107,9 @@ describe('board-task@1.0', () => {
   it('names why a cancelled task was cancelled, and every move but the first names its decision (INV-13)', () => {
     expect(valid('board-task@1.0', { ...waiting, state: 'cancelled', waiting: undefined })).toBe(false)
     const { waiting: _, ...rest } = waiting
-    expect(valid('board-task@1.0', { ...rest, state: 'cancelled', cancellation: { reason: 'input-expired', at: '2026-10-23T07:02:00Z' } })).toBe(true)
+    for (const reason of ['input-expired', 'forbidden', 'dependency-cancelled']) {
+      expect(valid('board-task@1.0', { ...rest, state: 'cancelled', cancellation: { reason, at: '2026-10-23T07:02:00Z' } }), reason).toBe(true)
+    }
     const { lastDecision: __, ...undecided } = rest
     expect(valid('board-task@1.0', { ...undecided, state: 'ready' })).toBe(false)
     expect(valid('board-task@1.0', { ...undecided, state: 'proposed' })).toBe(true)
