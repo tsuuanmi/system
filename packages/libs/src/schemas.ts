@@ -6,6 +6,7 @@ import addFormatsModule from 'ajv-formats'
 
 const addFormats = addFormatsModule as unknown as (ajv: Ajv2020) => Ajv2020
 const TAG = /^([a-z][a-z0-9-]*)@(\d+)\.(\d+)$/
+const DEF = /^[A-Za-z][A-Za-z0-9-]*$/
 
 /** Thrown when a record does not satisfy its schema; carries the Ajv errors. */
 export class SchemaError extends Error {
@@ -60,14 +61,31 @@ export class SchemaRegistry {
     this.assert(value.schema, value)
   }
 
-  #validator(tag: string): ValidateFunction {
-    const cached = this.#cache.get(tag)
+  /**
+   * Validate `value` against one definition of the schema `tag` names, its `#/$defs/<def>`: an MCP
+   * tool's input or output, for example `assertDef('mcp-board@1.0', 'board-claim-input', args)`.
+   * Throws {@link SchemaError}, also for a definition the schema does not have.
+   */
+  assertDef(tag: string, def: string, value: unknown): void {
+    const validate = this.#validator(tag, def)
+    if (!validate(value)) {
+      throw new SchemaError(`${tag}#/$defs/${def}`, validate.errors ?? [], this.#ajv.errorsText(validate.errors))
+    }
+  }
+
+  #validator(tag: string, def?: string): ValidateFunction {
+    const key = def === undefined ? tag : `${tag}#${def}`
+    const cached = this.#cache.get(key)
     if (cached) return cached
     const match = TAG.exec(tag)
     if (!match) throw new SchemaError(tag, [], 'malformed schema tag')
-    const validate = this.#ajv.getSchema(`urn:tsuuanmi:system:schema:${match[1]}:v${match[2]}`)
-    if (!validate) throw new SchemaError(tag, [], 'unknown schema or unsupported major version')
-    this.#cache.set(tag, validate)
+    if (def !== undefined && !DEF.test(def)) throw new SchemaError(tag, [], `malformed definition name ${def.slice(0, 80)}`)
+    const id = `urn:tsuuanmi:system:schema:${match[1]}:v${match[2]}`
+    const whole = this.#ajv.getSchema(id)
+    if (!whole) throw new SchemaError(tag, [], 'unknown schema or unsupported major version')
+    const validate = def === undefined ? whole : this.#ajv.getSchema(`${id}#/$defs/${def}`)
+    if (!validate) throw new SchemaError(tag, [], `no definition ${def} in this schema`)
+    this.#cache.set(key, validate)
     return validate
   }
 }

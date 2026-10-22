@@ -57,6 +57,15 @@ describe('SchemaRegistry', () => {
     expect(() => registry.assert('decision@9.0', {})).toThrow(/unsupported major/)
     expect(() => registry.assert('nope', {})).toThrow(/malformed/)
   })
+
+  it('validates against one definition of a schema, such as an MCP tool\'s input, and refuses one the schema does not have', () => {
+    expect(() => registry.assertDef('mcp-board@1.0', 'board-claim-input', { taskId: 'task-1', owner: 'lead' })).not.toThrow()
+    expect(() => registry.assertDef('mcp-board@1.0', 'board-claim-input', { taskId: 'task-1' })).toThrow(SchemaError)
+    expect(() => registry.assertDef('mcp-board@1.0', 'board-claim-input', { taskId: 'task-1', owner: 'lead', extra: 1 })).toThrow(/board-claim-input/)
+    expect(() => registry.assertDef('mcp-board@1.0', 'no-such-tool', {})).toThrow(/no definition/)
+    expect(() => registry.assertDef('mcp-board@1.0', '../x', {})).toThrow(/malformed definition/)
+    expect(() => registry.assertDef('mcp-board@9.0', 'board-claim-input', {})).toThrow(/unsupported major/)
+  })
 })
 
 describe('readOrCreateSecretFile', () => {
