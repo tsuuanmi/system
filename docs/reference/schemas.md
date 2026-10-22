@@ -387,8 +387,10 @@ guesses.
 - Every reading field is optional, because sources omit them (the status line's `rate_limits`
   has been missing in a release). The latest reading of a `(pool, window)` is its current state;
   older ones stay as history.
-- `limited` lasts until the later of `cooldownUntil` and `resetsAt`. `unknown` means no reading
-  says either way; a pool configured to fail closed is then unavailable to new work.
+- `limited` lasts until the later of `cooldownUntil` and `resetsAt`. A window with no reading yet
+  counts as `unknown`, like an explicit `unknown` reading: missing telemetry is not capacity. Each
+  pool's configuration says whether `unknown` leaves it available (a pool that never reports,
+  such as a local model) or not, which is the default (fail closed).
 - `history-estimate` readings are computed by code from recorded usage, conservatively. Examples:
   [`limit-state.five-hour.json`](../../schemas/examples/limit-state.five-hour.json),
   [`limit-state.limited.json`](../../schemas/examples/limit-state.limited.json).
@@ -466,7 +468,11 @@ guesses.
   rejects, and then waits for input with reason `rejected`; an input wait that expires cancels
   the task (`input-expired`).
 - `done` needs an `acceptance` decision whose outcome is accepted; the schema checks only that
-  it is named.
+  it is named. A task in review keeps its holder's lease while verification runs; if the lease
+  lapses with no decision, the task waits for input (`review-expired`), which expires in turn.
+- A holder lost mid-run is first reconciled by the run's owner: a completed run's result goes to
+  review, a failed one counts as an attempt, and only an unknown outcome waits for approval to
+  run again (`reconciliation-failed`); an outcome reported later withdraws that request.
 - `lastDecision` is the decision behind the latest move: a `board` decision for moves the board
   makes on its own, otherwise the acceptance, approval, route, or reconciliation decision that
   caused it. Examples: [`board-task.review.json`](../../schemas/examples/board-task.review.json),
