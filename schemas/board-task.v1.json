@@ -69,7 +69,7 @@
       "required": ["owner", "generation", "leaseExpiresAt"],
       "properties": {
         "owner": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
-        "generation": { "type": "integer", "minimum": 1 },
+        "generation": { "type": "integer", "minimum": 1, "maximum": 1000000000 },
         "leaseExpiresAt": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp" }
       },
       "additionalProperties": false
@@ -86,9 +86,9 @@
       "additionalProperties": false
     },
     "result": {
-      "description": "What the attempt produced, recorded when it enters review.",
+      "description": "What the attempt produced, recorded when it enters review, with the exact subject it leaves (a commit, or the result artifact for work with no repository).",
       "type": "object",
-      "required": ["artifacts"],
+      "required": ["artifacts", "subject"],
       "properties": {
         "artifacts": {
           "type": "array",
@@ -168,8 +168,10 @@
       "then": { "required": ["lastDecision"], "properties": { "lastDecision": true } }
     },
     {
+      "description": "Only a claimed, running, or reviewed task holds a lease.",
       "if": { "properties": { "state": { "enum": ["claimed", "running", "review"] } } },
-      "then": { "required": ["holder"], "properties": { "holder": true } }
+      "then": { "required": ["holder"], "properties": { "holder": true } },
+      "else": { "properties": { "holder": false } }
     },
     {
       "if": { "properties": { "state": { "enum": ["running", "review"] } } },
@@ -180,11 +182,11 @@
       "then": { "required": ["result"], "properties": { "result": true } }
     },
     {
-      "description": "Done needs the result, its subject, and an accepted acceptance decision.",
+      "description": "Done needs the run that produced it, the result with its subject, and an accepted acceptance decision.",
       "if": { "properties": { "state": { "const": "done" } } },
       "then": {
-        "required": ["result"],
-        "properties": { "result": { "type": "object", "required": ["subject", "acceptance"], "properties": { "subject": true, "acceptance": true } } }
+        "required": ["run", "result"],
+        "properties": { "run": true, "result": { "type": "object", "required": ["acceptance"], "properties": { "acceptance": true } } }
       }
     },
     {
