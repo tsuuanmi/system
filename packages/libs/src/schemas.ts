@@ -60,6 +60,27 @@ export class SchemaRegistry {
     this.assert(value.schema, value)
   }
 
+  /**
+   * Validate `value` against the subschema at a JSON pointer of the schema with `$id` `id`, for a
+   * payload no record tag names: an MCP tool's output, `#/$defs/<tool>-output`. Throws
+   * {@link SchemaError}, naming `<id>#<pointer>`.
+   */
+  assertAt(id: string, pointer: string, value: unknown): void {
+    const ref = `${id}#${pointer}`
+    let validate = this.#cache.get(ref)
+    if (!validate) {
+      if (!pointer.startsWith('/')) throw new SchemaError(ref, [], 'a JSON pointer starts with /')
+      try {
+        validate = this.#ajv.getSchema(ref)
+      } catch (error) {
+        throw new SchemaError(ref, [], (error as Error).message)
+      }
+      if (!validate) throw new SchemaError(ref, [], 'no schema at this id and pointer')
+      this.#cache.set(ref, validate)
+    }
+    if (!validate(value)) throw new SchemaError(ref, validate.errors ?? [], this.#ajv.errorsText(validate.errors))
+  }
+
   #validator(tag: string): ValidateFunction {
     const cached = this.#cache.get(tag)
     if (cached) return cached

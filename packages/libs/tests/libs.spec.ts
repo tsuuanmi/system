@@ -57,6 +57,16 @@ describe('SchemaRegistry', () => {
     expect(() => registry.assert('decision@9.0', {})).toThrow(/unsupported major/)
     expect(() => registry.assert('nope', {})).toThrow(/malformed/)
   })
+
+  it('validates a payload no tag names against a subschema by id and JSON pointer, such as an MCP tool output (REQ-ART-4)', () => {
+    const id = 'urn:tsuuanmi:system:schema:mcp-resources:v1'
+    expect(() => registry.assertAt(id, '/$defs/resources-pools-output', { pools: [] })).not.toThrow()
+    expect(() => registry.assertAt(id, '/$defs/resources-pools-output', { pools: [], extra: 1 })).toThrow(SchemaError)
+    expect(() => registry.assertAt(id, '/$defs/resources-usage-output', { records: [] })).toThrow(/totals/)
+    expect(() => registry.assertAt(id, '/$defs/no-such-def', {})).toThrow(SchemaError)
+    expect(() => registry.assertAt('urn:tsuuanmi:system:schema:nope:v1', '/$defs/x', {})).toThrow(SchemaError)
+    expect(() => registry.assertAt(id, '$defs/resources-pools-output', { pools: [] })).toThrow(/pointer/)
+  })
 })
 
 describe('readOrCreateSecretFile', () => {
