@@ -12,7 +12,7 @@ import { dispositionOf } from '@tsuuanmi/system-provider-core'
 import { AdmissionFailure, type AdmittedWorker, type ArtifactRef, type Classification, type RouteOptions, type WorkRequirement, type WorkerExecution } from '@tsuuanmi/system-workers-core'
 import { block, expireGate, gateDeadline, grow, grownText } from './growth.ts'
 import { admissionKind, escalate, failAttempt, inputHint, routedDecisions } from './recovery.ts'
-import { remediate, reviewSubject, subjectGate } from './review.ts'
+import { missingSubject, remediate, reviewSubject, subjectGate } from './review.ts'
 import { recoverWakes, settleWake } from './sessions.ts'
 import { DEFAULT_TEMPLATES, type NodeTemplate, recordExecutor, render, type ResolvedNode, resolve, schemaBlock, variantProblem, variantsOf } from './spec.ts'
 import { runSnapshot } from './sources.ts'
@@ -367,7 +367,15 @@ export class Engine {
     let prompt = spec.literal ? spec.prompt : render(spec.prompt, run.input, texts, extras)
     if (spec.resultSchema) prompt = `${prompt}\n\n${schemaBlock(spec.resultSchema, this.schemas.schemaOf(spec.resultSchema))}`
     // A review of an agent's change binds to the workspace's exact subject now (REQ-TEAM-5, REQ-WF-5).
-    const bound = spec.capabilities.includes('review') ? reviewSubject(this, results, run.input) : undefined
+    const found = spec.capabilities.includes('review') ? reviewSubject(this, results, run.input) : undefined
+    if (found && 'missing' in found) {
+      const decision = missingSubject(this, run, node, found.missing)
+      const error: WorkflowError = { kind: 'stale_subject', disposition: 'NONE', message: `exact-subject gate: the agent's working tree ${found.missing} can no longer be captured` }
+      this.writeNode(node, { state: 'FAILED', error: JSON.stringify(error) }, (r) => ({ ...r, lastDecision: decision }), lease)
+      this.ctx.eventLog.append({ type: 'workflow.node.failed', runId: run.run_id, nodeId: node.node_id, decision, data: { kind: error.kind } })
+      return
+    }
+    const bound = found
     if (bound) prompt = `${prompt}\n\n${bound.block}`
     const inputHash = sha256(canonicalJson({ node: spec, prompt, dependencies: results }))
     this.writeNode(node, { state: 'READY', prompt, ...(bound ? { subject: JSON.stringify({ workspace: bound.workspace, subject: bound.subject }) } : {}) },
@@ -530,7 +538,7 @@ export class Engine {
           }
           const started = source.start({
             key: `workflow:${run.run_id}:${node.node_id}:${attempt}:${node.escalations}:${record.inputReceipt!.inputHash}`,
-            worker: admitted.worker.worker, prompt: node.prompt!, sessionId: spec.session.sessionId,
+            worker: admitted.worker.worker, prompt: node.prompt!, sessionId: spec.session.sessionId, runId: run.run_id,
             requirement: record.requirement, decisions: admitted.decisions,
           })
           this.writeNode(node, { state: 'RUNNING', execution_id: started.id, attempt, not_before: null, ...routed }, (r) => ({

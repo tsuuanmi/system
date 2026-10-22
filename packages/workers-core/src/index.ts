@@ -92,6 +92,11 @@ export interface WorkerStart {
   prompt: string
   /** Continue (or open, on first use) this persistent session. */
   sessionId?: string | undefined
+  /**
+   * The workflow run this execution belongs to, when it belongs to one. A source may keep state
+   * per run by it: the `agents` source gives a run a git worktree of its own.
+   */
+  runId?: string | undefined
   /** The requirement the Worker was admitted for, and the decisions that admitted it. */
   requirement: WorkRequirement
   decisions: { tier: ArtifactRef; route: ArtifactRef }

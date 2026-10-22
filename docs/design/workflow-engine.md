@@ -175,7 +175,12 @@ comes from two sources, and both are recorded as `graph-growth` decision artifac
   ([teams](teams.md#tally-and-debate)). The other rule is **remediation**: when a node that requires the `review` capability is bound to an exact
   subject, its assessment requests changes with blocking findings, and a step it depends on
   wrote the change (`develop`), the engine appends a fix step (on that step's capabilities) and
-  a re-review bound to the new subject. Whatever waited for the review waits for both. Cycles are bounded by the engine
+  a re-review bound to the new subject. The fix writes, so it waits behind a gate for the
+  operator's approval of exactly that fix (a `plan` artifact), never approved by policy
+  ([ADR-0028](../decisions/adr/0028-local-lead-final-authority.md), INV-15); the approval
+  queue takes this over in B5. Each cycle is grown by the review that asked for it, so
+  superseding an earlier fix retires the later cycles with the review that runs again.
+  Whatever waited for the review waits for all three. Cycles are bounded by the engine
   configuration `maxReviewCycles` (default 3, the first review included).
 
 A profile contributes templates only; it declares no growth rules of its own.
@@ -255,7 +260,13 @@ binds to the new version. Mismatches fail the gate.
 For a local agent's change, the subject is the working tree's git subject,
 `git:<HEAD>:<hash of every change on top>`. The `assessment` is stored only when it
 names that subject and the tree is still it, as an exact-subject `gate` decision;
-otherwise the step fails as `stale_subject`.
+otherwise the step fails as `stale_subject`. A tree that can no longer be captured
+(removed, or no longer a repository) fails the review step as `stale_subject` before it
+runs, with an exact-subject `gate` decision of its own: a review never runs unbound.
+The working tree is the one the writer's
+result names: with agent Workers configured `worktreePerRun`, the run's own git worktree,
+which its writers and reviewers share ([workspaces](agent-runtimes.md#workspaces)). Every
+execution the engine starts names its run (`WorkerStart.runId`) for this.
 
 ## Artifacts, lineage, invalidation
 

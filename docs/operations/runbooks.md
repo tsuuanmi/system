@@ -88,9 +88,9 @@ an `agent-workers` row. The agent rows are off by default; turn them on first
   [bubblewrap](https://github.com/containers/bubblewrap)
   ([ADR-0024](../decisions/adr/0024-agent-workers-confined-for-reads.md)). It
   hides `~/.dsh`, your session's runtime directory (`/run/user/<uid>`), `/tmp`,
-  `/var/tmp`, `/dev/shm`, `~/.ssh`, `~/.gnupg`, `~/.aws`, `~/.codex`,
-  `~/.Xauthority`, `~/.config/gh`, `~/.docker/config.json`,
-  `$CREDENTIALS_DIRECTORY`, and wherever you keep the vault, its key, the store,
+  `/var/tmp`, `/dev/shm`, `$CREDENTIALS_DIRECTORY`, the credential stores in your
+  home and every coding agent's login there (the list is in the
+  [agent-runtimes README](../../packages/plugins/agent-runtimes/README.md)), and wherever you keep the vault, its key, the store,
   or login profiles. The agent gets an empty private `/tmp`. Only
   `~/.dsh/system/tools` (read-only), the Worker's own home, and its workspace come
   back; a workspace that holds one of those paths (your home directory, say) is

@@ -51,7 +51,7 @@
       ]
     },
     "workspace": {
-      "description": "Absolute path of the workspace the agent worked in (from operator configuration, never model text).",
+      "description": "Absolute path of the workspace the agent worked in: the configured workspace, or its workflow run's own git worktree of it (worktreePerRun). From operator configuration, never model text.",
       "type": "string",
       "minLength": 1,
       "maxLength": 4096

@@ -31,13 +31,26 @@ export interface Config {
  * directories (the browsers' live profiles, the display cookie, the remote-login socket); the
  * service's credentials; and the usual credential stores in the home directory.
  */
+/**
+ * The operator's credential stores in the home directory: keys and tokens, and every coding
+ * agent's own login, whichever agent runs. An agent runtime runs in a home of its own (Codex in
+ * `<DSH_HOME>/system/codex-home`), bound back, so no agent ever reads another's credentials or
+ * the operator's.
+ */
+export const CREDENTIAL_STORES: readonly string[] = [
+  '.ssh', '.gnupg', '.aws', '.azure', '.kube', '.Xauthority', '.netrc', '.git-credentials', '.npmrc', '.pypirc',
+  join('.config', 'gh'), join('.config', 'gcloud'), join('.docker', 'config.json'), join('.cargo', 'credentials.toml'),
+  // coding agents' logins and settings
+  '.claude', '.claude.json', '.codex', '.gemini', '.cursor', join('.config', 'github-copilot'), join('.config', 'opencode'), join('.local', 'share', 'opencode'),
+]
+
 function alwaysHidden(): string[] {
   const home = homedir()
   const runtime = process.env.XDG_RUNTIME_DIR ?? (typeof process.getuid === 'function' ? `/run/user/${process.getuid()}` : undefined)
   return [
     dshHome(), ...(runtime ? [runtime] : []), ...(process.env.CREDENTIALS_DIRECTORY ? [process.env.CREDENTIALS_DIRECTORY] : []),
     tmpdir(), '/tmp', '/var/tmp', '/dev/shm',
-    ...['.ssh', '.gnupg', '.aws', '.codex', '.Xauthority', join('.config', 'gh'), join('.docker', 'config.json')].map((p) => join(home, p)),
+    ...CREDENTIAL_STORES.map((p) => join(home, p)),
   ]
 }
 
