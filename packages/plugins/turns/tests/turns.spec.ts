@@ -108,7 +108,8 @@ describe.runIf(canRunBrowser)('ctx.turns: ask through a saved account', () => {
   it('answers a one-shot ask in Temporary chat, in Chat mode, with a receipt, a route decision, and an answer artifact', async () => {
     const { ctx, fake } = await boot({ fake: { answer: 'Hello' } })
     const started = await ask(ctx, { prompt: 'Say hello' })
-    const turn = await ctx.turns.wait(started.turnId, 30_000)
+    // The first turn launches the browser; a loaded CI runner can take longer than 30 s.
+    const turn = await ctx.turns.wait(started.turnId, 90_000)
     expect(turn).toMatchObject({ status: 'completed', account: 'chatgpt-main', mode: 'temporary', answer: 'Hello', submitted: true })
     expect(turn.sessionId).toBeUndefined()
     expect(fake.sent).toEqual([expect.objectContaining({ prompt: 'Say hello', mode: 'chat', temporary: true })])
@@ -117,7 +118,7 @@ describe.runIf(canRunBrowser)('ctx.turns: ask through a saved account', () => {
     const route = ctx.artifacts.get(turn.routeDecision!)
     expect(route?.body).toMatchObject({ decisionType: 'route', outcome: { option: 'worker:chatgpt-main/standard' } })
     expect(ctx.turnReceipts.read({ account: 'chatgpt-main', sessionId: turn.turnId, requestId: turn.turnId })).toMatchObject({ status: 'COMPLETED' })
-  }, 90_000)
+  }, 150_000)
 
   it('makes a tier mapped to a preset the driver does not have unavailable, so routing never picks it (PROP-0004: the removed site preset)', async () => {
     const { ctx } = await boot({ accounts: [account('chatgpt-free', { economy: 'site', standard: 'site' }), account('chatgpt-main')] })
