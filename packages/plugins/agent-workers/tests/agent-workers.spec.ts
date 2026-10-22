@@ -537,14 +537,14 @@ describe('agents source: metering through ctx.resources (docs/design/resources.m
     expect(agent.runs).toEqual([])
   })
 
-  it('records the runtime\'s rate-limit observations as readings of the mapped windows; an unmapped window is skipped (INV-11)', async () => {
+  it('records the runtime\'s rate-limit observations as readings of the mapped windows; an unmapped window that is not a limit hit is skipped (INV-11)', async () => {
     const observedAt = new Date().toISOString()
     const resetsAt = inAnHour()
     const agent = new ScriptedAgent({
       metering: {
         ...METERING, limits: [
           { window: 'seven_day', status: 'warning', usedPercentage: 82, resetsAt, observedAt },
-          { window: 'seven_day_other', status: 'rejected', resetsAt, observedAt },
+          { window: 'seven_day_other', status: 'warning', resetsAt, observedAt },
           { window: 'five_hour', status: 'rejected', resetsAt, observedAt },
         ],
       },
@@ -561,11 +561,26 @@ describe('agents source: metering through ctx.resources (docs/design/resources.m
     expect((await ctx.workers.list())[0]).toMatchObject({ state: 'quota-exhausted' })
   })
 
-  it('reads a limit hit without a reset time as unknown, never as ok (INV-2)', async () => {
-    const agent = new ScriptedAgent({ metering: { limits: [{ window: 'five_hour', status: 'rejected', observedAt: new Date().toISOString() }] } })
+  it('reads a limit hit without a reset time as limited for the configured cooldown, never unknown or ok, so even a pool that admits unknown windows closes (INV-2)', async () => {
+    const observedAt = new Date().toISOString()
+    const agent = new ScriptedAgent({ metering: { limits: [{ window: 'five_hour', status: 'rejected', observedAt }] } })
+    const { ctx } = await boot(agent, { workers: [metered({ limitCooldownSeconds: 600 })] }, undefined, LEDGER)
+    await run(ctx)
+    const pool = (await ctx.resources.pools({ account: 'max' }))[0]!
+    const cooldownUntil = new Date(Date.parse(observedAt) + 600_000).toISOString()
+    expect(pool.readings).toMatchObject([{ window: { id: 'five-hour' }, state: 'limited', cooldownUntil, source: 'runtime-result' }])
+    expect(pool).toMatchObject({ available: false, until: cooldownUntil })
+  })
+
+  it('closes every window of the pool on a limit hit it cannot place (an unmapped or unnamed window), so it is never retried there unseen (INV-2)', async () => {
+    const observedAt = new Date().toISOString()
+    const resetsAt = inAnHour()
+    const agent = new ScriptedAgent({ metering: { limits: [{ window: '*', status: 'rejected', resetsAt, observedAt }] } })
     const { ctx } = await boot(agent, { workers: [metered()] }, undefined, LEDGER)
     await run(ctx)
-    expect((await ctx.resources.pools({ account: 'max' }))[0]!.readings).toMatchObject([{ window: { id: 'five-hour' }, state: 'unknown', source: 'runtime-result' }])
+    const pool = (await ctx.resources.pools({ account: 'max' }))[0]!
+    expect(pool.readings.map((r) => [r.window.id, r.state, r.resetsAt])).toEqual(POOL.windows.map((w) => [w.id, 'limited', resetsAt]))
+    expect(pool.available).toBe(false)
   })
 
   it('meters a failed run from the numbers its error carries, and a run that reported nothing gets no invented record', async () => {
