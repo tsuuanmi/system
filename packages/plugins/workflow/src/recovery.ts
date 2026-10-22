@@ -28,7 +28,10 @@ export function escalate(e: Engine, run: RunRow, node: NodeRow, spec: ResolvedNo
     decisionType: 'escalation',
     question: `Does node ${node.node_id} of run ${run.run_id} run again at a higher tier after its result was rejected?`,
     inputs: [acceptance, result],
-    candidates: [{ option: 'escalate', selected: escalate, reasons: escalate ? why : [] }, { option: 'fail', selected: !escalate, reasons: escalate ? [] : why }],
+    candidates: [
+      { option: 'escalate', selected: escalate, reasons: escalate ? why : why.map((w) => `not escalate: ${w}`) },
+      { option: 'fail', selected: !escalate, reasons: escalate ? [`not fail: ${max - node.escalations} escalation(s) of ${max} remain and ${next} is above ${served}`] : why },
+    ],
     decider: { type: 'policy', id: 'workflow.escalation', version: '1' },
     outcome: { option: escalate ? 'escalate' : 'fail', ...(escalate ? { detail: { from: served, to: next } } : {}) },
     deterministic: true,
@@ -91,14 +94,33 @@ export function failAttempt(e: Engine, run: RunRow, node: NodeRow, error: Workfl
   // its team bound to the Worker of its first admission (Model A), never moves.
   const sessionId = (JSON.parse(node.spec) as ResolvedNode).session.sessionId
   const held = sessionId ? e.ctx.workers.affinity(sessionId) ?? e.ctx.workerSessions.session(sessionId) : undefined
-  if (!attempt.sent && node.worker && FAILOVER.has(error.kind) && node.attempt < max && !held) {
+  // Why a failover is not possible: the first of its conditions that does not hold.
+  const noFailover = attempt.sent ? 'the prompt was sent, so the turn stays with its Worker'
+    : !node.worker ? 'no Worker served the attempt'
+    : !FAILOVER.has(error.kind) ? `${error.kind} is not a failure of one Worker (usage limit, challenge, sign-out, or overload)`
+    : node.attempt >= max ? `attempt ${node.attempt} of ${max} failed`
+    : held ? `the node's session is held to ${node.worker}`
+    : undefined
+  // Why the node cannot run again at all: the first of a retry's conditions that does not hold.
+  const noRetry = !RETRYABLE.has(error.disposition) ? `${error.kind} is ${error.disposition}, not retryable`
+    : attempt.sent ? `${error.kind} came after the prompt was sent; resending could duplicate the provider turn`
+    : node.attempt >= max ? `attempt ${node.attempt} of ${max} failed`
+    : undefined
+  if (!noFailover) {
     reasons.failover.push(`${error.kind} on ${node.worker} before anything was sent, and attempt ${node.attempt} of ${max} failed: another Worker takes it`)
-  } else if (!RETRYABLE.has(error.disposition)) reasons.fail.push(`${error.kind} is ${error.disposition}, not retryable`)
-  else if (attempt.sent) reasons.fail.push(`${error.kind} came after the prompt was sent; resending could duplicate the provider turn`)
-  else if (node.attempt >= max) reasons.fail.push(`attempt ${node.attempt} of ${max} failed`)
-  else reasons.retry.push(`${error.kind} is ${error.disposition}, the prompt was never sent, and attempt ${node.attempt} of ${max} failed`)
-  const failover = reasons.failover.length > 0
-  const retry = failover || reasons.retry.length > 0
+    reasons.retry.push(`not retry: ${error.kind} is bound to ${node.worker}, so the next attempt leaves it out`)
+    reasons.fail.push(`not fail: nothing was sent and ${max - node.attempt} attempt(s) of ${max} remain`)
+  } else if (noRetry) {
+    reasons.fail.push(noRetry)
+    reasons.retry.push(`not retry: ${noRetry}`)
+    reasons.failover.push(`not failover: ${noFailover}`)
+  } else {
+    reasons.retry.push(`${error.kind} is ${error.disposition}, the prompt was never sent, and attempt ${node.attempt} of ${max} failed`)
+    reasons.failover.push(`not failover: ${noFailover}`)
+    reasons.fail.push(`not fail: ${error.kind} is ${error.disposition}, the prompt was never sent, and ${max - node.attempt} attempt(s) of ${max} remain`)
+  }
+  const failover = !noFailover
+  const retry = failover || !noRetry
   // What failed, in the decision `explain` shows, so the CLI alone tells why.
   const said = errorLine(error.message)
   if (said) (failover ? reasons.failover : retry ? reasons.retry : reasons.fail).push(`error: ${said}`)

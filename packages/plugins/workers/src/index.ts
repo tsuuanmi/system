@@ -249,8 +249,9 @@ export class WorkerRouter extends Workers {
       question: `Does result ${result} satisfy ${contract}${options.resultSchema ? ` and ${options.resultSchema}` : ''}?`,
       inputs: [result],
       candidates: [
-        { option: 'accept', selected: verdict.accepted, reasons: verdict.accepted ? verdict.reasons : [] },
-        { option: 'reject', selected: !verdict.accepted, reasons: verdict.accepted ? [] : verdict.reasons },
+        // The losing option's reason is the verdict seen from its side: the failed checks, or none failed.
+        { option: 'accept', selected: verdict.accepted, reasons: verdict.accepted ? verdict.reasons : verdict.reasons.map((r) => `not accept: ${r}`) },
+        { option: 'reject', selected: !verdict.accepted, reasons: verdict.accepted ? [`not reject: every check of ${contract}${options.resultSchema ? ` and ${options.resultSchema}` : ''} passed`] : verdict.reasons },
       ],
       decider: { type: 'rule', id: contract, version: '1' },
       outcome: { option: verdict.accepted ? 'accept' : 'reject' },

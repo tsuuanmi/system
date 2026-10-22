@@ -251,7 +251,7 @@ Consumers depend on definitions only.
 | `store` | concrete `Store` in `@tsuuanmi/system-store` | `plugins/store/conformance/store.ts` (contract 1.0) | `store` |
 | `eventLog` | concrete `EventLog` in `@tsuuanmi/system-event-log` | `plugins/event-log/conformance/event-log.ts` (contract 1.0) | `event-log` |
 | `artifacts` | concrete `Artifacts` in `@tsuuanmi/system-artifacts` | `plugins/artifacts/conformance/artifacts.ts` (contract 1.0) | `artifacts` |
-| `turnReceipts` | concrete `TurnReceipts` in `@tsuuanmi/system-turn-receipts` | `plugins/turn-receipts/conformance/turn-receipts.ts` (contract 1.0) | `turn-receipts`, with one known gap baselined (rejected outcomes without reasons) |
+| `turnReceipts` | concrete `TurnReceipts` in `@tsuuanmi/system-turn-receipts` | `plugins/turn-receipts/conformance/turn-receipts.ts` (contract 1.0) | `turn-receipts` |
 | `leases` | concrete `Leases` in `@tsuuanmi/system-leases` | `plugins/leases/conformance/leases.ts` (contract 1.0) | `leases` |
 | `egress` | concrete `Egress` in `@tsuuanmi/system-egress` | `plugins/egress/conformance/egress.ts` (contract 1.0) | `egress` |
 | `workerSessions` | concrete `WorkerSessions` in `@tsuuanmi/system-worker-sessions` | `plugins/worker-sessions/conformance/worker-sessions.ts` (contract 1.0) | `worker-sessions` |

@@ -104,7 +104,10 @@ Rules:
    produces a decision artifact before its effect is committed.** The state
    transition stores the decision's id. A transition without a decision id is
    rejected by the store.
-2. Rejected candidates are recorded with reasons, not only the winner.
+2. Rejected candidates are recorded with reasons, not only the winner. Each
+   rejected candidate's reason comes from the deciding rule's predicate and the
+   recorded inputs: why that candidate lost. The store refuses a decision with a
+   candidate, rejected or selected, that gives no reason.
 3. A decision made by a model also records the model receipt (provider, pinned
    version, answers, confidence). Its `deterministic` flag is `false`, and reuse
    by input hash makes it reproducible.

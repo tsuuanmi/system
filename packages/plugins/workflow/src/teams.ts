@@ -446,8 +446,13 @@ export function tally(e: Engine, run: RunRow, node: NodeRow, spec: ResolvedNode,
       question: `Which option does team ${team.id} of run ${run.run_id} choose in round ${round}?`,
       inputs: [...proposalsOf(team, nodes), ...ballots.map((b) => b.ref)],
       candidates: [
-        ...options.map((o) => ({ option: o.option, selected: o.option === winner, reasons: ballots.filter((b) => b.choice === o.option).map((b) => `${b.member} (${b.confidence}): ${b.rationale}`) })),
-        { option: debate ? 'debate' : 'tie', selected: !winner, reasons: winner ? [] : [why] },
+        ...options.map((o) => {
+          const cast = ballots.filter((b) => b.choice === o.option).map((b) => `${b.member} (${b.confidence}): ${b.rationale}`)
+          if (o.option === winner) return { option: o.option, selected: true, reasons: blocking.length ? [why, ...cast] : cast }
+          const lost = blocking.length ? why : winner ? `${winner} has the strict majority` : `a strict majority needs ${threshold}`
+          return { option: o.option, selected: false, reasons: [`not ${o.option}: ${counts[o.option]} of ${team.members} ballots; ${lost}`, ...cast] }
+        }),
+        { option: debate ? 'debate' : 'tie', selected: !winner, reasons: [winner ? `not tie: ${why}` : why] },
       ],
       // A review's vote carries its quote checks: decision@1.2, always.
       ...(team.kind === 'review' ? { schema: 'decision@1.2' as const } : {}),
@@ -481,7 +486,10 @@ export function tally(e: Engine, run: RunRow, node: NodeRow, spec: ResolvedNode,
         decisionType: 'graph-growth',
         question: `Does team ${team.id} of run ${run.run_id} debate after the split vote of round ${round}?`,
         inputs: [decision],
-        candidates: [{ option: 'append', selected: true, reasons: [why] }, { option: 'refuse', selected: false, reasons: [] }],
+        candidates: [
+          { option: 'append', selected: true, reasons: [why] },
+          { option: 'refuse', selected: false, reasons: [`not refuse: no option has a majority, a member holds an objection, and debate ${round} of ${team.debateRounds} remains`] },
+        ],
         decider: { type: 'rule', id: 'workflow.team-debate', version: '1' },
         outcome: { option: 'append', detail: { steps: added.map((a) => a.nodeId) } },
         deterministic: true,
@@ -636,13 +644,16 @@ function conclude(e: Engine, run: RunRow, node: NodeRow, spec: ResolvedNode, nod
     : how.method === 'team-majority'
     ? `${how.winner} won round ${last.round} by strict majority`
     : how.method === 'caller-tiebreak' ? `the ${how.by} broke the tie for ${how.winner}: ${how.rationale}` : `inconclusive (${how.by === 'rule' ? 'no deciding vote in time' : `the ${how.by} decided so: ${how.rationale}`})`
+  // Why each option the team did not choose lost (the store clamps prose to its bound).
+  const against = how.winner === null || how.method === 'blocking-finding' ? why
+    : how.method === 'team-majority' ? `${how.winner} has the strict majority` : `the ${how.by} broke the tie for ${how.winner}`
   e.ctx.store.transaction(() => {
     const decision = e.ctx.artifacts.recordDecision({
       decisionType: 'vote',
       question: `What does team ${team.id} of run ${run.run_id} decide?`,
       inputs: rounds.map((t) => t.decision),
-      candidates: [...options.map((o) => ({ option: o.option, selected: o.option === how.winner, reasons: o.option === how.winner ? [why.slice(0, 300)] : [] })),
-        { option: 'inconclusive', selected: how.winner === null, reasons: how.winner === null ? [why.slice(0, 300)] : [] }],
+      candidates: [...options.map((o) => ({ option: o.option, selected: o.option === how.winner, reasons: [o.option === how.winner ? why.slice(0, 300) : `not ${o.option}: ${last.counts[o.option] ?? 0} of ${team.members} ballots in round ${last.round}; ${against}`] })),
+        { option: 'inconclusive', selected: how.winner === null, reasons: [how.winner === null ? why.slice(0, 300) : `not inconclusive: ${why}`] }],
       ...(team.kind === 'review' ? { schema: 'decision@1.2' as const } : {}),
       decider: { type: how.by, id: how.id, version: '1' },
       outcome: { option: how.winner ?? 'inconclusive', detail: { method: how.method, ...(sameFamily ? { members: sameFamily === 'shared-account' ? 'same provider family, sharing an account' : 'same provider family, on accounts of their own' } : {}) } },
