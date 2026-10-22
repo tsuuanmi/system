@@ -99,5 +99,5 @@ first reading comes from the runtime's result. Every reading field is optional.
 ## Conformance
 
 [`resources-core/conformance/resources.ts`](../../packages/resources-core/conformance/resources.ts),
-10 scenarios at contract 1.0, run against the fake provider and the store-backed one. The
+13 scenarios at contract 1.0, run against the fake provider and the store-backed one. The
 metering oracle against `ccusage --json` comes with the first Worker that reports usage (B2).

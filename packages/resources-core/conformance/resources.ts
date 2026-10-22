@@ -144,6 +144,22 @@ export const resourcesSuite = defineSuite<Boot>({
       expect((await ctx.resources.reserve(request('r3'), new Date(T0.getTime() + 61_000))).state).toBe('reserved')
       await ctx.resources.release(first.reservationId)
     }),
+    scenario('future-reading-refused', 'refuses a reading from the future, which would stand over every later one and hide a limit (INV-2)', async (ctx) => {
+      const future = new Date(Date.now() + 24 * 3600_000).toISOString()
+      expect(await failureOf(ctx.resources.observe(reading('key', 'minute', { observedAt: future })))).toBe('invalid')
+      expect((await poolOf(ctx, 'key', new Date())).readings).toEqual([])
+    }),
+    scenario('usage-counts-where-reserved', 'counts a run\'s usage against the scope it was reserved for, even when its record names none, so a cap holds after release (INV-9)', async (ctx) => {
+      await ctx.resources.observe(reading('max.programmatic', 'monthly'))
+      const cap: BudgetLine[] = [{ pool: 'max.programmatic', unit: 'usd', amount: 1 }]
+      const line: BudgetLine[] = [{ pool: 'max.programmatic', unit: 'usd', amount: 0.6 }]
+      const first = await ctx.resources.reserve({ runId: 'r1', taskId: 't1', lines: line, caps: cap }, T0)
+      expect(first.state).toBe('reserved')
+      await ctx.resources.record(usage('u1', { runId: 'r1', cost: { amount: 0.6, currency: 'USD', basis: 'runtime-estimate' } }))
+      await ctx.resources.release(first.reservationId)
+      expect((await ctx.resources.reserve({ runId: 'r2', taskId: 't1', lines: line, caps: cap }, T0)).state).toBe('refused')
+      expect((await ctx.resources.usage({ taskId: 't1' })).records.map((r) => r.requestId)).toEqual(['u1'])
+    }),
     scenario('record-dedupes', 'counts a unit once: by source and request id, and a transcript record never doubles a runtime result (INV-4)', async (ctx) => {
       const first = await ctx.resources.record(usage('u1', { runId: 'r1' }))
       expect(first.duplicate).toBe(false)
@@ -199,6 +215,8 @@ export class FakeResources extends Resources {
   private readonly readings = new Map<string, LimitState>()
   private readonly records: UsageRecord[] = []
   private readonly holds = new Map<string, { request: ReservationRequest; expiresAt: number }>()
+  /** The scope each run was reserved for, kept after release, so its usage counts there. */
+  private readonly scopes = new Map<string, { projectId?: string; taskId?: string }>()
 
   constructor(ctx: Context, private readonly config: { pools?: readonly PoolConfig[] } = {}) {
     super(ctx)
@@ -223,6 +241,7 @@ export class FakeResources extends Resources {
   async observe(reading: LimitState): Promise<ArtifactRef> {
     const pool = this.configured.find((p) => p.pool === reading.pool && p.account === reading.account)
     if (!pool?.windows.some((w) => w.id === reading.window.id)) throw new ResourcesError('unknown-pool', `no configured window ${reading.pool}/${reading.window.id}`)
+    if (Date.parse(reading.observedAt) > Date.now() + 5 * 60_000) throw new ResourcesError('invalid', `observedAt ${reading.observedAt} is in the future`)
     const ref = this.ctx.artifacts.put({ kind: 'evidence', bodySchema: 'limit-state@1.0', body: reading, classification: 'operator-shared', producer: { type: 'system', ref: 'resources' } }).id as ArtifactRef
     const key = `${reading.pool}/${reading.window.id}`
     const latest = this.readings.get(key)
@@ -257,7 +276,10 @@ export class FakeResources extends Resources {
     }, { producer: { type: 'system', ref: 'resources' }, runId: request.runId })
     const reservationId = `res-${randomUUID().slice(0, 8)}`
     const expiresAt = at.getTime() + (request.holdSeconds ?? DEFAULT_HOLD_SECONDS) * 1000
-    if (state === 'reserved') this.holds.set(reservationId, { request: structuredClone(request), expiresAt })
+    if (state === 'reserved') {
+      this.holds.set(reservationId, { request: structuredClone(request), expiresAt })
+      this.scopes.set(request.runId, { ...(request.projectId ? { projectId: request.projectId } : {}), ...(request.taskId ? { taskId: request.taskId } : {}) })
+    }
     return { reservationId, state, reasons, decision: decision.id as ArtifactRef, ...(state === 'reserved' ? { expiresAt: new Date(expiresAt).toISOString() } : {}) }
   }
 
@@ -277,7 +299,7 @@ export class FakeResources extends Resources {
     const ref = this.ctx.artifacts.put({ kind: 'receipt', bodySchema: 'usage-record@1.0', body: usage, classification: 'operator-shared', producer: { type: 'system', ref: 'resources' }, ...(usage.runId ? { runId: usage.runId } : {}) }).id as ArtifactRef
     const duplicate = this.records.some((r) => (r.source === usage.source && r.requestId === usage.requestId)
       || (usage.source === 'transcript' && usage.runId !== undefined && r.runId === usage.runId && r.source === 'runtime-result'))
-    if (!duplicate) this.records.push(structuredClone(usage))
+    if (!duplicate) this.records.push({ ...(usage.runId ? this.scopes.get(usage.runId) : {}), ...structuredClone(usage) })
     return { ref, duplicate }
   }
 

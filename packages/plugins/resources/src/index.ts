@@ -29,6 +29,8 @@ export const MAX_POOLS = 64
 export const MAX_WINDOWS = 8
 /** Lines and caps one reservation may name (INV-9). */
 export const MAX_LINES = 64
+/** How far in the future a reading's time may be (clock skew) before it is refused. */
+export const MAX_CLOCK_SKEW_MS = 5 * 60_000
 /** A decision candidate's reasons, at most (`decision@1`). */
 const MAX_REASONS = 32
 const UNITS: readonly Unit[] = ['tokens', 'usd', 'turns', 'runs', 'minutes']
@@ -238,6 +240,8 @@ export class StoreResources extends Resources {
     if (!window) throw new ResourcesError('unknown-pool', `pool ${reading.pool} has no configured window ${reading.window.id}`)
     if (window.kind !== reading.window.kind) throw new ResourcesError('unknown-pool', `window ${reading.pool}/${window.id} is configured ${window.kind}, not ${reading.window.kind}`)
     const observed = epochMs(reading.observedAt, 'observedAt')
+    // A reading from the future would stand over every later one and hide a limit: refused (INV-2).
+    if (observed > Date.now() + MAX_CLOCK_SKEW_MS) throw invalid(`observedAt ${reading.observedAt} is in the future`)
     // A limit's end that does not parse would read as already past: refused, so a limit never fails open.
     for (const key of ['resetsAt', 'cooldownUntil'] as const) if (reading[key] !== undefined) epochMs(reading[key], key)
     return this.ctx.store.transaction((db) => {
@@ -260,6 +264,8 @@ export class StoreResources extends Resources {
     // decision, so two reservations racing for the last of a cap cannot both be held.
     return this.ctx.store.transaction((db) => {
       const pools = this.poolStates({}, at)
+      // Holds that expired are gone for good: dropped here, so the table stays bounded (INV-9).
+      db.prepare('DELETE FROM resource_holds WHERE expires_ms <= ?').run(at.getTime())
       const faults: string[] = []
       const fine: string[] = []
       for (const pool of new Set(request.lines.map((l) => l.pool))) {
@@ -334,11 +340,18 @@ export class StoreResources extends Resources {
         // A unit is counted once across sources: a transcript never doubles a run's runtime result.
         || (usage.source === 'transcript' && usage.runId !== undefined && !!db.prepare('SELECT 1 FROM resource_usage WHERE run_id = ? AND source = \'runtime-result\' LIMIT 1').get(usage.runId))
       if (!duplicate) {
+        // A run's usage counts against the scope it was reserved for, even when its record names none,
+        // so a cap sees what the run spent once its hold is released (INV-9).
+        const reserved = usage.runId !== undefined && (usage.projectId === undefined || usage.taskId === undefined)
+          ? db.prepare('SELECT project_id, task_id FROM resource_reservations WHERE run_id = ? ORDER BY reserved_at DESC LIMIT 1').get(usage.runId) as { project_id: string | null; task_id: string | null } | undefined
+          : undefined
+        const projectId = usage.projectId ?? reserved?.project_id ?? null
+        const taskId = usage.taskId ?? reserved?.task_id ?? null
         const u = usage.usage
         db.prepare(`INSERT INTO resource_usage (source, request_id, observed_ms, account, pool, run_id, project_id, task_id, input_tokens, output_tokens,
           cache_read_tokens, cache_creation_tokens, reasoning_tokens, turns, duration_ms, cost_usd, record, artifact, recorded_at)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
-          usage.source, usage.requestId, observed, usage.account, usage.pool, usage.runId ?? null, usage.projectId ?? null, usage.taskId ?? null,
+          usage.source, usage.requestId, observed, usage.account, usage.pool, usage.runId ?? null, projectId, taskId,
           u?.inputTokens ?? null, u?.outputTokens ?? null, u?.cacheReadInputTokens ?? null, u?.cacheCreationInputTokens ?? null, u?.reasoningOutputTokens ?? null,
           usage.turns ?? null, usage.durationMs ?? null, usage.cost?.amount ?? null, JSON.stringify(usage), ref, new Date().toISOString(),
         )
@@ -350,9 +363,8 @@ export class StoreResources extends Resources {
   async usage(filter: UsageFilter = {}): Promise<{ records: UsageRecord[]; totals: UsageTotal[] }> {
     const { where, params } = this.where(filter)
     const db = this.ctx.store.db
-    const count = (db.prepare(`SELECT COUNT(*) AS n FROM resource_usage ${where}`).get(...params) as { n: number }).n
-    if (count > this.maxRecords) throw invalid(`${count} records match, more than ${this.maxRecords}: narrow the filter, or page through resources_usage`)
-    const rows = db.prepare(`SELECT record FROM resource_usage ${where} ORDER BY observed_ms, seq`).all(...params) as Array<{ record: string }>
+    const rows = db.prepare(`SELECT record FROM resource_usage ${where} ORDER BY observed_ms, seq LIMIT ${this.maxRecords + 1}`).all(...params) as Array<{ record: string }>
+    if (rows.length > this.maxRecords) throw invalid(`more than ${this.maxRecords} records match: narrow the filter, or page through resources_usage`)
     return { records: rows.map((r) => JSON.parse(r.record) as UsageRecord), totals: this.totals(where, params) }
   }
 
@@ -395,7 +407,12 @@ export class StoreResources extends Resources {
     return this.configured.filter((p) => filter.account === undefined || p.account === filter.account).map((p) => {
       const rows = select.all(p.pool) as unknown as ReadingRow[]
       // A reading of another account than the pool's (its configuration changed) is no reading.
-      const latest = p.windows.map((w) => rows.find((r) => r.window_id === w.id && r.account === p.account)).map((r) => (r ? JSON.parse(r.reading) as LimitState : undefined))
+      const latest = p.windows.map((w) => {
+        const row = rows.find((r) => r.window_id === w.id && r.account === p.account)
+        const reading = row ? JSON.parse(row.reading) as LimitState : undefined
+        // A reading of a window configured differently since (another kind) is no reading.
+        return reading && reading.window.kind === w.kind ? reading : undefined
+      })
       const readings = latest.filter((r): r is LimitState => r !== undefined)
       let until: { ms: number; text: string } | undefined
       for (const r of readings) {
@@ -473,7 +490,9 @@ export class StoreResources extends Resources {
     const rows = this.ctx.store.db.prepare(`SELECT pool, COUNT(*) AS records, COUNT(input_tokens) AS with_usage, SUM(input_tokens) AS input, SUM(output_tokens) AS output,
       SUM(cache_read_tokens) AS cache_read, SUM(cache_creation_tokens) AS cache_creation, SUM(reasoning_tokens) AS reasoning, SUM(turns) AS turns, SUM(cost_usd) AS cost
       FROM resource_usage ${where} GROUP BY pool ORDER BY pool`).all(...params) as unknown as TotalRow[]
-    return rows.map((r) => {
+    // Totals name configured pools only, so they stay within the tool's bounds when pools are removed.
+    const configured = new Set(this.configured.map((p) => p.pool))
+    return rows.filter((r) => configured.has(r.pool)).map((r) => {
       const total: UsageTotal = { pool: r.pool, records: r.records }
       if (r.with_usage > 0) {
         const usage: TokenUsage = { inputTokens: r.input ?? 0, outputTokens: r.output ?? 0 }
@@ -506,7 +525,7 @@ export class StoreResources extends Resources {
     const lines = (name: string, value: unknown, min: number): void => {
       if (!Array.isArray(value) || value.length < min || value.length > MAX_LINES) throw invalid(`${name} must hold ${min} to ${MAX_LINES} budget lines`)
       for (const line of value as unknown[]) {
-        if (!isObject(line) || typeof line.pool !== 'string' || !UNITS.includes(line.unit as Unit) || typeof line.amount !== 'number' || !Number.isFinite(line.amount) || line.amount < 0 || line.amount > 1e12) {
+        if (!isObject(line) || typeof line.pool !== 'string' || !ID.test(line.pool) || !UNITS.includes(line.unit as Unit) || typeof line.amount !== 'number' || !Number.isFinite(line.amount) || line.amount < 0 || line.amount > 1e12) {
           throw invalid(`${name}: ${JSON.stringify(line)} is not a budget line (pool, unit of ${UNITS.join(', ')}, amount 0 to 1e12)`)
         }
       }
