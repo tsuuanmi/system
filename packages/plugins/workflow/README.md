@@ -361,6 +361,23 @@ second execution path (INV-1).
   `retainRunsDays` (default 0, off), a finished run older than that is deleted
   daily, except a session's latest run, and then `ctx.artifacts.collect()` takes
   what only expired runs needed.
+- **Conformance.** The seam's suite is [`conformance/workflow.ts`](conformance/workflow.ts),
+  run through the [conformance runner](../../libs/conformance/runner.ts) at contract 1.0 by
+  `tests/conformance.spec.ts`, against this engine and the real plugins it injects, with only
+  Worker execution scripted:
+  - valid `workflow-node@1.x` records; a node completes only with its input receipt, its
+    Worker's result, and the acceptance decision that accepted it;
+  - input bound by hash, and the execution keyed by it; a repeated `clientRequestId`;
+  - admission that fails closed and stays within `maxActiveRuns`; a node no Worker is
+    admitted for fails with nothing sent;
+  - bounded retries of unsent failures, a sent one never resent, and bounded escalation;
+  - a restart that reconciles started executions and starts nothing again;
+  - `stop`, `continue`, and `supersede`;
+  - graph growth only from a valid plan; a gate opened only by an approval of its exact plan,
+    and closed by rule after `gateTimeoutHours`;
+  - `drain` and `resume`;
+  - the decision a refused planner and a blocked gate name (both baselined: neither names one
+    yet).
 - **Injects:** `store`, `artifacts`, `eventLog`, `leases`, `egress`, `workers`, `workerSessions`;
   `mcp` is optional.
 
