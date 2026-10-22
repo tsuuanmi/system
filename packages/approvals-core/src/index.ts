@@ -24,8 +24,21 @@ export interface Subject { type: 'content' | 'git-head' | 'pull-request' | 'arti
 export type ActionClass =
   | 'read' | 'workspace-write' | 'merge' | 'command' | 'external-send' | 'deploy' | 'delete-data' | 'spend'
   | 'charter' | 'funding' | 'remediation' | 'policy-change'
-/** Classes that always ask, even unattended: irreversible effects and the investor's own decisions. */
-export const ALWAYS_ASK: readonly ActionClass[] = ['external-send', 'deploy', 'delete-data', 'spend', 'charter', 'funding', 'policy-change']
+/**
+ * Classes that always ask, even unattended: irreversible effects, the investor's own decisions, and
+ * remediation (the workflow's remediation already waits on an operator gate). A provider gives
+ * them at least `ask` whatever a rule says, and a policy that gives one `auto` or `notify` is
+ * refused when loaded.
+ */
+export const ALWAYS_ASK: readonly ActionClass[] = ['external-send', 'deploy', 'delete-data', 'spend', 'charter', 'funding', 'remediation', 'policy-change']
+
+/**
+ * A shell metacharacter, or a character a shell or a naive split treats specially: `; & | $` and
+ * the backquote, `< > ( )`, `{ } [ ]`, `* ? ~`, quotes, backslash, and newline, carriage return,
+ * tab, and NUL. An argv word holding one is forbidden at `check`, and a commands-list entry holding
+ * one is refused when its policy loads: argv is matched word for word, never through a shell.
+ */
+export const SHELL_METACHARACTER = /[;&|$`<>(){}[\]*?~'"\\\n\r\t\0]/
 
 export type Mode = 'auto' | 'notify' | 'ask' | 'forbid'
 /** Modes from least to most strict; the effective mode is the strictest of the policies. */
@@ -51,13 +64,25 @@ export interface AutonomyPolicy {
 export interface Action {
   class: ActionClass
   projectId?: string
-  /** For `command`: the argv; a command on the policy's list is classed by what it does instead. */
+  /**
+   * For `command`: the argv. An argv equal word for word to a line on every applying commands list
+   * is judged as `workspace-write` (unless the `command` class is forbidden); any other is the
+   * `command` class. Matching is exact, never by prefix. An argv with a word holding a
+   * {@link SHELL_METACHARACTER} is forbidden, whatever its class.
+   */
   command?: string[]
   /** For auto and notify rules: which of their required checks passed. */
   checks?: Partial<Record<Check, boolean>>
 }
 
-/** The mode the policy gives an action, and the `autonomy` decision that records it. */
+/**
+ * The mode the policy gives an action, and the `autonomy` decision that records it.
+ *
+ * **`mode` is the mode once the required checks pass.** An `auto` or `notify` verdict with a
+ * non-empty `failedChecks` is not yet allowed: the action goes back to the lead as work. A caller
+ * that acts on a verdict passes the checks it ran (`Action.checks`) and treats a non-empty
+ * `failedChecks` as not yet allowed; the lead runs the checks first.
+ */
 export interface AutonomyVerdict {
   mode: Mode
   /** For an auto or notify rule whose checks failed: which ones. The action goes back to the lead, not to the operator. */
@@ -89,8 +114,14 @@ export interface NewRequest {
   subject: Subject
   action: ApprovalRequest['action']
   requester: ApprovalRequest['requester']
-  /** The `ask` verdict that requires it; a request without one is refused. */
+  /**
+   * The `ask` verdict that requires it, from `check` under the policies loaded now. `request`
+   * judges the action again (its class, `command`, and `requester.projectId`) and refuses
+   * (`not-asked`) unless the policy still says ask, as the cited decision recorded it.
+   */
   verdict: AutonomyVerdict
+  /** For a `command` action: the argv `check` was given, judged again. */
+  command?: string[]
   classification: Classification
 }
 
@@ -102,7 +133,8 @@ export interface Verdict {
   note?: string
 }
 
-export type Refusal = 'unknown-request' | 'already-resolved' | 'expired' | 'subject-changed'
+/** Why a verdict was not recorded; `failed`: the provider could not apply it (an error, logged), so nothing changed. */
+export type Refusal = 'unknown-request' | 'already-resolved' | 'expired' | 'subject-changed' | 'failed'
 export interface VerdictResult { requestId: string; state: RequestState; approval?: ArtifactRef; refused?: Refusal }
 
 /** Why an approvals call was refused. Nothing changed. */
@@ -122,10 +154,25 @@ export abstract class Approvals extends Service {
   /** The studio policy, the project's when it has one, and the effective mode per action class. */
   abstract policy(projectId?: string): Promise<{ policies: AutonomyPolicy[]; effective: Array<{ actionClass: ActionClass; mode: Mode }> }>
 
-  /** Classify one action under the effective policy, recording an `autonomy` decision. */
+  /**
+   * Classify one action under the effective policy, recording an `autonomy` decision (its decider
+   * the policy, with the policy set's hash).
+   *
+   * **The verdict's `mode` is the mode once the required checks pass.** A caller that acts on a
+   * verdict must pass the checks it ran in `action.checks` and treat a non-empty `failedChecks`
+   * as not yet allowed, even when `mode` is `auto` or `notify`: the lead runs the checks first.
+   */
   abstract check(action: Action): Promise<AutonomyVerdict>
 
-  /** Queue a request for an action whose verdict is `ask`; anything else is refused (`not-asked`). */
+  /**
+   * Queue a request for an action whose verdict is `ask`, judged again under the policies loaded
+   * now; anything else is refused (`not-asked`). The subject carries a `version` unless it is an
+   * `artifact` subject whose ref is a `sha256:` content id (`invalid` otherwise, INV-5).
+   *
+   * `at` (here and in `batch`, `decide`, `withdraw`, `sweep`) is a test seam: the MCP tools, the
+   * web UI, the board, and the queue's own passes fill it from the wall clock. A core caller never
+   * passes another time.
+   */
   abstract request(request: NewRequest, at?: Date): Promise<ApprovalRequest>
 
   abstract get(requestId: string): Promise<ApprovalRequest | undefined>
@@ -136,12 +183,20 @@ export abstract class Approvals extends Service {
   /** Group open requests into batches for the operator, as the policy's batch rule says. Returns the batch ids made. */
   abstract batch(at?: Date): Promise<string[]>
 
-  /** The operator's verdicts, each bound to its request's exact subject. Only an operator channel calls it (INV-6). */
+  /**
+   * The operator's verdicts, each bound to its request's exact subject, each applied or refused on
+   * its own: one result per verdict, in order. Only an operator channel calls it (INV-6).
+   */
   abstract decide(verdicts: Verdict[], at?: Date): Promise<VerdictResult[]>
 
   /** Close a request whose waiting work ended first: it is rejected with cause `withdrawn`. */
   abstract withdraw(requestId: string, at?: Date): Promise<ApprovalRequest>
 
-  /** Reject every request unanswered at `at` (cause `expired`, decision `denied:expired`). Returns those it rejected. */
+  /**
+   * Reject every request unanswered at `at` (cause `expired`, decision `denied:expired`), then
+   * every open one the loaded policy no longer asks for: its policy is not current at its version,
+   * or its class no longer asks (cause `withdrawn`, the decision's reason: the policy changed).
+   * A provider does the second at load too. Returns those it rejected.
+   */
   abstract sweep(at: Date): Promise<ApprovalRequest[]>
 }

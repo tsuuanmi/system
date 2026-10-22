@@ -6,12 +6,12 @@
 import { randomUUID } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@tsuuanmi/system-artifacts'
-import { SchemaRegistry } from '@tsuuanmi/system-libs'
+import { contentId, SchemaRegistry } from '@tsuuanmi/system-libs'
 import { expect } from 'vitest'
 import { defineSuite, type Scenario } from '../../libs/conformance/runner.ts'
 import {
   type Action, type ActionClass, ALWAYS_ASK, type ApprovalRequest, Approvals, ApprovalsError, type ArtifactRef, type AutonomyPolicy, type AutonomyVerdict,
-  type Check, type Mode, MODES, type NewRequest, type RequestState, type Subject, type Verdict, type VerdictResult,
+  type Check, type Mode, MODES, type NewRequest, type RequestState, SHELL_METACHARACTER, type Subject, type Verdict, type VerdictResult,
 } from '../src/index.ts'
 
 export type Boot = () => Promise<{ ctx: Context; dispose: () => Promise<void> }>
@@ -31,7 +31,7 @@ const STUDIO: AutonomyPolicy = {
 }
 const PROJECT: AutonomyPolicy = {
   schema: 'autonomy-policy@1.0', id: 'p1.policy', version: 1, scope: 'project', projectId: 'p1', narrows: 'studio',
-  rules: [{ actionClass: 'merge', mode: 'forbid' }, { actionClass: 'read', mode: 'notify' }],
+  rules: [{ actionClass: 'merge', mode: 'forbid' }, { actionClass: 'read', mode: 'notify' }, { actionClass: 'command', mode: 'ask', expiresSeconds: 400 }],
   default: 'ask', expiry: { defaultSeconds: 1800, maxSeconds: 3600 },
 }
 const NO_COMMANDS: AutonomyPolicy = {
@@ -46,7 +46,10 @@ const after = (seconds: number): Date => new Date(T0.getTime() + seconds * 1000)
 const schemas = new SchemaRegistry()
 const subject = (ref: string, version = 'v1'): Subject => ({ type: 'content', ref, version })
 
-type Decision = { schema: string; decisionType: string; outcome: { option: string; detail?: Record<string, unknown> }; candidates: Array<{ option: string; selected: boolean }> }
+type Decision = {
+  schema: string; decisionType: string; outcome: { option: string; detail?: Record<string, unknown> }; candidates: Array<{ option: string; selected: boolean; reasons: string[] }>
+  decider: { type: string; id: string; version: string; hash?: string }
+}
 const decisionOf = (ctx: Context, ref: ArtifactRef): Decision => {
   const envelope = ctx.artifacts.get(ref)
   expect(envelope?.kind, `${ref} is a decision`).toBe('decision')
@@ -106,12 +109,18 @@ export const approvalsSuite = defineSuite<Boot>({
       expect(mode(project.effective, 'workspace-write')).toBe('auto')
       for (const actionClass of ALWAYS_ASK) expect(['ask', 'forbid'], actionClass).toContain(mode(project.effective, actionClass))
     }),
-    scenario('check-records-decision', 'records every classification as an autonomy decision naming the policy (INV-13)', async (ctx) => {
+    scenario('check-records-decision', 'records every classification as an autonomy decision naming the policy and the hash of the policy set it was judged under (INV-13)', async (ctx) => {
       const verdict = await ctx.approvals.check({ class: 'merge', projectId: 'p1' })
       expect(verdict).toMatchObject({ mode: 'forbid', policy: { id: 'p1.policy', version: 1 } })
       const decision = decisionOf(ctx, verdict.decision)
-      expect(decision).toMatchObject({ schema: 'decision@1.4', decisionType: 'autonomy', outcome: { option: 'forbid' } })
+      expect(decision).toMatchObject({ schema: 'decision@1.4', decisionType: 'autonomy', outcome: { option: 'forbid' }, decider: { type: 'policy', id: 'p1.policy', version: '1' } })
       expect(decision.candidates.map((c) => c.option).sort()).toEqual([...MODES].sort())
+      // decider.hash names the effective policy set (the studio's and the project's), so an edit that keeps a version still shows.
+      expect(decision.decider.hash).toMatch(/^sha256:[0-9a-f]{64}$/)
+      const studio = decisionOf(ctx, (await ctx.approvals.check({ class: 'merge' })).decision)
+      expect(studio.decider.hash).toMatch(/^sha256:[0-9a-f]{64}$/)
+      expect(studio.decider.hash).not.toBe(decision.decider.hash)
+      expect(decisionOf(ctx, (await ctx.approvals.check({ class: 'read' })).decision).decider.hash).toBe(studio.decider.hash)
     }),
     scenario('checks-gate-auto', 'lets an auto action run only while its required checks pass, and sends a failed check back, never to the operator', async (ctx) => {
       const passed = await ctx.approvals.check({ class: 'workspace-write', checks: { tests: true, lint: true } })
@@ -122,12 +131,25 @@ export const approvalsSuite = defineSuite<Boot>({
       expect(failed.failedChecks).toEqual(['lint'] satisfies Check[])
       expect(await failureOf(ctx.approvals.request({ subject: subject('w'), action: { class: 'workspace-write', summary: 'w' }, requester: { component: 'board', runId: 'run-1' }, verdict: failed, classification: 'public' }, T0))).toBe('not-asked')
     }),
-    scenario('commands-allow-list', 'classes a listed command by what it does, any other command as command, and forbids listed ones too where commands are forbidden (INV-2)', async (ctx) => {
-      expect((await ctx.approvals.check({ class: 'command', command: ['pnpm', 'test'], checks: { tests: true, lint: true } })).mode).toBe('auto')
-      expect((await ctx.approvals.check({ class: 'command', command: ['pnpm', 'test', '--watch'], checks: { tests: true, lint: true } })).mode).toBe('auto')
+    scenario('commands-allow-list', 'classes a listed command, its exact argv, by what it does, any other command as command, and forbids listed ones too where commands are forbidden (INV-2)', async (ctx) => {
+      const checks = { tests: true, lint: true }
+      expect((await ctx.approvals.check({ class: 'command', command: ['pnpm', 'test'], checks })).mode).toBe('auto')
+      // Exact, never a prefix: more arguments, or words that only join to the listed line, are the command class.
+      expect((await ctx.approvals.check({ class: 'command', command: ['pnpm', 'test', '--watch'], checks })).mode).toBe('ask')
+      expect((await ctx.approvals.check({ class: 'command', command: ['pnpm test'], checks })).mode).toBe('ask')
       expect((await ctx.approvals.check({ class: 'command', command: ['pnpm', 'testx'] })).mode).toBe('ask')
       expect((await ctx.approvals.check({ class: 'command', command: ['rm', '-rf', '/'] })).mode).toBe('ask')
-      expect((await ctx.approvals.check({ class: 'command', projectId: 'p3', command: ['pnpm', 'test'], checks: { tests: true, lint: true } })).mode).toBe('forbid')
+      expect((await ctx.approvals.check({ class: 'command', projectId: 'p3', command: ['pnpm', 'test'], checks })).mode).toBe('forbid')
+    }),
+    scenario('commands-metacharacters', 'forbids an argv with a word holding a shell metacharacter, listed or not, and records why (INV-2)', async (ctx) => {
+      const checks = { tests: true, lint: true }
+      for (const command of [['pnpm', 'test', '&&', 'curl', 'x'], ['git', '-c', 'core.sshCommand=sh -c "curl x|sh"', 'fetch'], ['pnpm', 'test;'], ['echo', '$HOME'], ['ls', '*'], ['cat', 'a\nb']]) {
+        const verdict = await ctx.approvals.check({ class: 'command', command, checks })
+        expect(verdict.mode, command.join(' ')).toBe('forbid')
+        const forbid = decisionOf(ctx, verdict.decision).candidates.find((c) => c.selected)!
+        expect(forbid.reasons.join(' ')).toMatch(/shell metacharacter/)
+      }
+      expect(SHELL_METACHARACTER.test('--watch')).toBe(false)
     }),
     scenario('request-needs-ask', 'queues a request only for an action whose recorded verdict is ask (INV-2)', async (ctx) => {
       const auto = await ctx.approvals.check({ class: 'read' })
@@ -138,6 +160,31 @@ export const approvalsSuite = defineSuite<Boot>({
       expect(request).toMatchObject({ state: 'open', subject: subject('m'), action: { class: 'merge' }, revision: 0 })
       expect(await ctx.approvals.get(request.requestId)).toEqual(request)
     }),
+    scenario('request-rejudged', 'judges the action again when it is queued: an ask for another class, another project\'s policies, or a class the project forbids is refused (INV-2)', async (ctx) => {
+      const merge = await ctx.approvals.check({ class: 'merge' })
+      expect(merge.mode).toBe('ask')
+      const ask = (action: ApprovalRequest['action'], requester: ApprovalRequest['requester'], verdict: AutonomyVerdict) =>
+        ctx.approvals.request({ subject: subject('x'), action, requester, verdict, classification: 'public' }, T0)
+      // p1 forbids merge: the studio's ask for merge does not reach the operator for p1.
+      expect(await failureOf(ask({ class: 'merge', summary: 'm' }, { component: 'board', projectId: 'p1' }, merge))).toBe('not-asked')
+      // An ask for merge is not an ask for deploy, though the policy asks for both.
+      expect(await failureOf(ask({ class: 'deploy', summary: 'd' }, { component: 'board', runId: 'run-1' }, merge))).toBe('not-asked')
+      // p1's ask for deploy (the studio's rule) was judged under p1's policies, not the studio's alone.
+      const deploy = await ctx.approvals.check({ class: 'deploy', projectId: 'p1' })
+      expect(deploy.mode).toBe('ask')
+      expect(await failureOf(ask({ class: 'deploy', summary: 'd' }, { component: 'board', runId: 'run-1' }, deploy))).toBe('not-asked')
+      expect(await ctx.approvals.list({ states: ['open', 'batched', 'approved', 'rejected'] })).toEqual([])
+      expect(valid(await ask({ class: 'deploy', summary: 'd' }, { component: 'board', projectId: 'p1' }, deploy))).toMatchObject({ state: 'open', policy: { id: 'studio', version: 3, decision: deploy.decision } })
+    }),
+    scenario('request-exact-subject', 'refuses a request whose subject names no version, unless it is an artifact by its content id (INV-5)', async (ctx) => {
+      const verdict = await ctx.approvals.check({ class: 'merge' })
+      const ask = (s: Subject) => ctx.approvals.request({ subject: s, action: { class: 'merge', summary: 'm' }, requester: { component: 'board', runId: 'run-1' }, verdict, classification: 'public' }, T0)
+      expect(await failureOf(ask({ type: 'git-head', ref: 'main' }))).toBe('invalid')
+      expect(await failureOf(ask({ type: 'content', ref: 'plan', version: '' }))).toBe('invalid')
+      expect(await failureOf(ask({ type: 'artifact', ref: 'plan-1' }))).toBe('invalid')
+      const artifact: Subject = { type: 'artifact', ref: `sha256:${'a'.repeat(64)}` }
+      expect(valid(await ask(artifact)).subject).toEqual(artifact)
+    }),
     scenario('expiry-bounded', 'gives every request an expiry from its rule, else the policy default, within the strictest maximum (INV-9)', async (ctx) => {
       const command = await asked(ctx, { class: 'command', command: ['git', 'push'] }, 'c')
       expect(command.expiresAt).toBe(after(600).toISOString())
@@ -145,6 +192,9 @@ export const approvalsSuite = defineSuite<Boot>({
       expect(merge.expiresAt).toBe(after(3600).toISOString())
       const project = await asked(ctx, { class: 'deploy', projectId: 'p1' }, 'd')
       expect(project.expiresAt).toBe(after(1800).toISOString())
+      // Both p1's rule and the studio's name command's expiry: the shorter applies, though the studio's rule wins the tie in mode.
+      const shorter = await asked(ctx, { class: 'command', projectId: 'p1' }, 'p1-command')
+      expect(shorter.expiresAt).toBe(after(400).toISOString())
     }),
     scenario('batches', 'groups open requests into batches by the policy\'s batch rule, and keeps them in the queue', async (ctx) => {
       const first = await asked(ctx, { class: 'merge' }, 'b1')
@@ -223,10 +273,12 @@ export const approvalsSuite = defineSuite<Boot>({
 })
 
 const rank = (mode: Mode): number => MODES.indexOf(mode)
+const sameSubject = (a: Subject, b: Subject) => a.type === b.type && a.ref === b.ref && a.version === b.version
 
 /**
  * A fake provider of `ctx.approvals`: the protocol in memory, over the configured policies, with
- * decisions and approvals recorded through `ctx.artifacts`.
+ * decisions and approvals recorded through `ctx.artifacts`. Its policies never change, so no open
+ * request ever outlives its policy.
  */
 export class FakeApprovals extends Approvals {
   static inject = ['artifacts']
@@ -245,25 +297,39 @@ export class FakeApprovals extends Approvals {
     return project ? [studio, project] : [studio]
   }
 
-  private ruleOf(policy: AutonomyPolicy, actionClass: ActionClass): { mode: Mode; requires: Check[]; expiresSeconds?: number } {
-    const rule = policy.rules.find((r) => r.actionClass === actionClass)
-    return { mode: rule?.mode ?? policy.default, requires: rule?.requires ?? [], ...(rule?.expiresSeconds !== undefined ? { expiresSeconds: rule.expiresSeconds } : {}) }
+  /** The policies that apply to a class: a project policy constrains only the classes it names; its default applies only where neither policy names the class. */
+  private applying(actionClass: ActionClass, projectId?: string): AutonomyPolicy[] {
+    const [studio, ...narrowing] = this.policies(projectId)
+    const named = studio!.rules.some((r) => r.actionClass === actionClass)
+    return [studio!, ...narrowing.filter((p) => !named || p.rules.some((r) => r.actionClass === actionClass))]
   }
 
-  /** The strictest rule over the policies, and the policy it comes from (the studio's on a tie). */
-  private effective(actionClass: ActionClass, projectId?: string) {
-    let best: { policy: AutonomyPolicy; mode: Mode; requires: Check[]; expiresSeconds?: number } | undefined
+  /** The strictest rule over the policies, and the policy it comes from (the studio's on a tie); a class in ALWAYS_ASK at least asks. */
+  private effective(actionClass: ActionClass, projectId?: string): { policy: AutonomyPolicy; mode: Mode; requires: Check[] } {
+    let best: { policy: AutonomyPolicy; mode: Mode } | undefined
     const requires = new Set<Check>()
-    const [studio, ...narrowing] = this.policies(projectId)
-    // A project policy constrains only the classes it names; its default applies only where neither policy names the class.
-    const named = studio!.rules.some((r) => r.actionClass === actionClass)
-    const applying = [studio!, ...narrowing.filter((p) => !named || p.rules.some((r) => r.actionClass === actionClass))]
-    for (const policy of applying) {
-      const rule = this.ruleOf(policy, actionClass)
-      rule.requires.forEach((c) => requires.add(c))
-      if (!best || rank(rule.mode) > rank(best.mode)) best = { policy, ...rule }
+    for (const policy of this.applying(actionClass, projectId)) {
+      const rule = policy.rules.find((r) => r.actionClass === actionClass)
+      rule?.requires?.forEach((c) => requires.add(c))
+      const mode = rule?.mode ?? policy.default
+      if (!best || rank(mode) > rank(best.mode)) best = { policy, mode }
     }
-    return { ...best!, requires: [...requires] }
+    const mode = ALWAYS_ASK.includes(actionClass) && rank(best!.mode) < rank('ask') ? 'ask' : best!.mode
+    return { policy: best!.policy, mode, requires: [...requires] }
+  }
+
+  /** How one action is judged: its class (workspace-write for a listed command), the rule, and why it is forbidden whatever a rule says. */
+  private judge(action: Action) {
+    const policies = this.policies(action.projectId)
+    const argv = action.command
+    const unsafe = argv?.findIndex((w) => SHELL_METACHARACTER.test(w)) ?? -1
+    if (unsafe >= 0) return { actionClass: action.class, ...this.effective(action.class, action.projectId), mode: 'forbid' as Mode, policies, forbidden: `argv word ${unsafe + 1} holds a shell metacharacter` }
+    // A project's list may only narrow the studio's: a command is listed when every policy that has a list has its exact argv.
+    const allows = (p: AutonomyPolicy) => (p.commands ?? []).some((c) => c.split(' ').length === argv!.length && c.split(' ').every((w, i) => argv![i] === w))
+    const listed = action.class === 'command' && argv !== undefined && allows(policies[0]!) && policies.slice(1).every((p) => p.commands === undefined || allows(p))
+      && this.effective('command', action.projectId).mode !== 'forbid'
+    const actionClass: ActionClass = listed ? 'workspace-write' : action.class
+    return { actionClass, ...this.effective(actionClass, action.projectId), policies, forbidden: undefined }
   }
 
   async policy(projectId?: string) {
@@ -272,38 +338,41 @@ export class FakeApprovals extends Approvals {
   }
 
   async check(action: Action): Promise<AutonomyVerdict> {
-    const policies = this.policies(action.projectId)
-    // A project's list may only narrow the studio's: a command is listed when every policy that has a list allows it.
-    const line = action.command?.join(' ')
-    const allows = (p: AutonomyPolicy) => (p.commands ?? []).some((c) => line === c || line!.startsWith(`${c} `))
-    const listed = action.class === 'command' && line !== undefined && allows(policies[0]!) && policies.slice(1).every((p) => p.commands === undefined || allows(p))
-      && this.effective('command', action.projectId).mode !== 'forbid'
-    const actionClass: ActionClass = listed ? 'workspace-write' : action.class
-    const { policy, mode, requires } = this.effective(actionClass, action.projectId)
+    const { actionClass, policy, mode, requires, policies, forbidden } = this.judge(action)
     const failedChecks = mode === 'auto' || mode === 'notify' ? requires.filter((c) => action.checks?.[c] !== true) : []
     const decision = this.ctx.artifacts.recordDecision({
       schema: 'decision@1.4', decisionType: 'autonomy', question: `Which mode does the policy give a ${action.class} action?`, inputs: [],
       candidates: MODES.map((m) => ({
         option: m, selected: m === mode,
-        reasons: [m === mode ? `the strictest rule for ${actionClass} is ${policy.id}'s`
+        reasons: [forbidden ? (m === mode ? `${forbidden}: forbidden whatever a rule says` : `not ${m}: ${forbidden}`)
+          : m === mode ? `the strictest rule for ${actionClass} is ${policy.id}'s`
           : rank(m) < rank(mode) ? `not ${m}: laxer than ${policy.id}'s rule for ${actionClass} (${mode}), the strictest that applies`
           : `not ${m}: no applying policy's rule for ${actionClass} is that strict`],
       })),
-      decider: { type: 'policy', id: policy.id, version: String(policy.version) },
+      decider: { type: 'policy', id: policy.id, version: String(policy.version), hash: contentId(policies) },
       outcome: { option: mode, detail: { actionClass, policies: policies.map((p) => p.id), ...(failedChecks.length ? { failedChecks } : {}) } }, deterministic: true,
     }, { producer: { type: 'policy', ref: policy.id } })
     return { mode, ...(failedChecks.length ? { failedChecks } : {}), policy: { id: policy.id, version: policy.version }, decision: decision.id as ArtifactRef }
   }
 
   async request(request: NewRequest, at: Date = new Date()): Promise<ApprovalRequest> {
-    const recorded = this.ctx.artifacts.get(request.verdict.decision)?.body as { decisionType?: string; outcome?: { option?: string } } | undefined
-    if (request.verdict.mode !== 'ask' || recorded?.decisionType !== 'autonomy' || recorded.outcome?.option !== 'ask') {
-      throw new ApprovalsError('not-asked', `${request.action.class}: the recorded policy verdict is not ask`)
-    }
-    const policies = this.policies(request.requester.projectId)
-    const rule = this.effective(request.action.class, request.requester.projectId)
-    const max = Math.min(...policies.map((p) => p.expiry.maxSeconds))
-    const seconds = Math.min(rule.expiresSeconds ?? Math.min(...policies.map((p) => p.expiry.defaultSeconds)), max)
+    const { subject: s, requester: { projectId } } = request
+    if (!(s?.version || (s?.type === 'artifact' && /^sha256:[0-9a-f]{64}$/.test(s.ref)))) throw new ApprovalsError('invalid', 'the subject names no version (INV-5)')
+    const notAsked = (why: string) => new ApprovalsError('not-asked', `${request.action.class}: ${why}`)
+    const envelope = this.ctx.artifacts.get(request.verdict.decision)
+    const recorded = envelope?.body as { decisionType?: string; outcome?: { option?: string; detail?: { actionClass?: string; policies?: string[] } }; decider?: { type?: string; id?: string; version?: string; hash?: string } } | undefined
+    if (request.verdict.mode !== 'ask' || recorded?.decisionType !== 'autonomy' || recorded.outcome?.option !== 'ask') throw notAsked('the recorded policy verdict is not ask')
+    // The decision is a policy's own, of the verdict's policy, made under the project's policies now.
+    const policies = this.policies(projectId)
+    if (envelope!.producer.type !== 'policy' || recorded.decider?.type !== 'policy' || recorded.decider.id !== request.verdict.policy?.id || recorded.decider.version !== String(request.verdict.policy?.version)) throw notAsked('not this policy\'s decision')
+    if (!policies.some((p) => p.id === recorded.decider!.id && String(p.version) === recorded.decider!.version) || recorded.decider.hash !== contentId(policies)
+      || JSON.stringify(recorded.outcome.detail?.policies) !== JSON.stringify(policies.map((p) => p.id))) throw notAsked('decided under other policies')
+    // Judged again: the policy still asks, for the class the decision names.
+    const judged = this.judge({ class: request.action.class, ...(projectId !== undefined ? { projectId } : {}), ...(request.command ? { command: request.command } : {}) })
+    if (judged.mode !== 'ask' || judged.actionClass !== recorded.outcome.detail?.actionClass || judged.policy.id !== recorded.decider.id) throw notAsked('the policy does not ask for this action')
+    // The shortest expiry of the rules that apply, else the stricter default, within the stricter maximum.
+    const named = this.applying(request.action.class, projectId).flatMap((p) => p.rules.filter((r) => r.actionClass === request.action.class && r.expiresSeconds !== undefined).map((r) => r.expiresSeconds!))
+    const seconds = Math.min(named.length ? Math.min(...named) : Math.min(...policies.map((p) => p.expiry.defaultSeconds)), ...policies.map((p) => p.expiry.maxSeconds))
     const created: ApprovalRequest = {
       schema: 'approval-request@1.0', requestId: `apr-${randomUUID().slice(0, 8)}`, state: 'open',
       subject: request.subject, action: request.action, requester: request.requester,
@@ -366,13 +435,12 @@ export class FakeApprovals extends Approvals {
   }
 
   async decide(verdicts: Verdict[], at: Date = new Date()): Promise<VerdictResult[]> {
-    const same = (a: Subject, b: Subject) => a.type === b.type && a.ref === b.ref && a.version === b.version
     return verdicts.map((v) => {
       const request = this.requests.get(v.requestId)
       if (!request) return { requestId: v.requestId, state: 'rejected', refused: 'unknown-request' }
       if (request.resolution) return { requestId: v.requestId, state: request.state, refused: 'already-resolved' }
       if (Date.parse(request.expiresAt) <= at.getTime()) return { requestId: v.requestId, state: request.state, refused: 'expired' }
-      if (!same(request.subject, v.subject)) return { requestId: v.requestId, state: request.state, refused: 'subject-changed' }
+      if (!sameSubject(request.subject, v.subject)) return { requestId: v.requestId, state: request.state, refused: 'subject-changed' }
       const approval = this.ctx.artifacts.put({
         kind: 'approval', bodySchema: 'approval@1.0', body: { schema: 'approval@1.0', subject: request.subject, verdict: v.verdict, by: 'operator', ...(v.note ? { note: v.note } : {}) },
         classification: request.classification === 'local-private' ? 'local-private' : 'operator-shared', producer: { type: 'operator', ref: 'operator' }, subject: request.subject,

@@ -53,6 +53,15 @@
 | `worktreeRoot` | string |  | Where the worktrees of worktreePerRun Workers go (default <DSH_HOME>/system/worktrees) |
 | `worktreeRetentionHours` | number (0…) | `168` | Hours a workflow run's worktree is kept after its last agent run ended; then its changes are committed on its branch and it is removed (0 keeps them) |
 
+## `approvals`
+
+[@tsuuanmi/system-approvals](../../packages/plugins/approvals/README.md)
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `policies` (required) | any[] | `[]` | autonomy-policy@1.x records: exactly one studio policy, and project policies that narrow it. Checked at load against the schema and its load-time rules (one rule per action class; no auto or notify for a class that always asks; expiry.defaultSeconds and every rule's expiresSeconds within expiry.maxSeconds; commands entries of non-empty words with no shell metacharacter; a batch wait under the shortest expiry it batches; a project policy, one per project, narrowing the studio policy); an invalid set refuses the plugin, so nothing that needs a person runs (INV-2) |
+| `sweepSeconds` | number (1…3600) | `60` | Seconds between the queue's own passes (expired requests rejected, requests the policy no longer asks for withdrawn, then open ones batched), and one at start; never off, so every request expires (INV-9) |
+
 ## `artifacts`
 
 [@tsuuanmi/system-artifacts](../../packages/plugins/artifacts/README.md)
@@ -71,7 +80,7 @@
 | Option | Type | Default | Description |
 |---|---|---|---|
 | `inputExpirySeconds` | number (60…7776000) | `604800` | How long a wait for input lasts before it cancels the task, in seconds |
-| `leaseTtlSeconds` | number (30…3600) | `900` | Lease length when a claim names none, in seconds (leases.maxTtlMs caps it) |
+| `leaseTtlSeconds` | number (30…3600) | `600` | Lease length when a claim names none, in seconds (leases.maxTtlMs caps it) |
 | `maxAttempts` | number (1…10) | `3` | Attempts a task gets when its proposal names none |
 | `pageBound` | number (1…100) | `100` | The most items one page of board_projects or board_tasks holds |
 | `projectionMaxTasks` | number (1…10000) | `200` | The most tasks the TASKS.md projection lists, open ones first |

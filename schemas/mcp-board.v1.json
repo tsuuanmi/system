@@ -399,7 +399,7 @@
       ],
       "properties": {
         "projectId": {
-          "description": "An existing project's id to amend its charter (pivot), or a new project's; generated when absent.",
+          "description": "An existing project's id to amend its charter (pivot), or a new project's; generated when absent, from clientRequestId when one is given, so a retry names the same project.",
           "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
         },
         "title": {
@@ -1084,7 +1084,7 @@
           "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
         },
         "ttlSeconds": {
-          "description": "Lease length (default 900 s); renewed by board_update.",
+          "description": "Lease length in seconds (default 600 s), capped by leases.maxTtlMs; renewed by board_update.",
           "type": "integer",
           "minimum": 30,
           "maximum": 3600

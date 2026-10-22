@@ -31,7 +31,7 @@
       "enum": ["ask", "forbid"]
     },
     "commands": {
-      "description": "Commands classed by what they do rather than as `command`, as exact command lines or prefixes followed by a space. Anything else is the `command` class, and a `command` mode of forbid applies to listed commands too.",
+      "description": "Command lines judged as `workspace-write` rather than as `command`: a command whose argv equals a listed line word for word (words split on single spaces), with no further arguments. Matching is exact, never by prefix; any other command is the `command` class, and a `command` mode of forbid applies to listed commands too. An entry with an empty word or a shell metacharacter is refused when the policy loads, and an argv word holding one is forbidden.",
       "type": "array",
       "maxItems": 200,
       "uniqueItems": true,

@@ -41,6 +41,7 @@ export default defineConfig({
       '@tsuuanmi/system-workflow': src('./packages/plugins/workflow/src/index.ts'),
       '@tsuuanmi/system-workers-core': src('./packages/workers-core/src/index.ts'),
       '@tsuuanmi/system-approvals-core': src('./packages/approvals-core/src/index.ts'),
+      '@tsuuanmi/system-approvals': src('./packages/plugins/approvals/src/index.ts'),
       '@tsuuanmi/system-resources-core': src('./packages/resources-core/src/index.ts'),
       '@tsuuanmi/system-resources': src('./packages/plugins/resources/src/index.ts'),
       '@tsuuanmi/system-board-core': src('./packages/board-core/src/index.ts'),

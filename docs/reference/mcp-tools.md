@@ -106,6 +106,50 @@ Scope: `operator`
 |---|---|---|---|
 | `account` | string | yes |  |
 
+## `approvals_decide`
+
+Operator only: verdicts for up to 50 requests, each bound to the exact subject shown. A refused verdict (unknown, resolved, expired, a changed subject, or failed) leaves its request unchanged; the others still apply.
+
+Scope: `operator`
+
+| Argument | Type | Required | Description |
+|---|---|---|---|
+| `verdicts` | array | yes |  |
+
+## `approvals_get`
+
+Read one approval request: its exact subject, action, requester, policy decision, expiry, and resolution.
+
+Scope: `client`
+
+| Argument | Type | Required | Description |
+|---|---|---|---|
+| `requestId` | string | yes |  |
+
+## `approvals_list`
+
+List approval requests (default: open and batched), by batch then expiry; a page at a time.
+
+Scope: `client`
+
+| Argument | Type | Required | Description |
+|---|---|---|---|
+| `states` | array |  | Default: open and batched |
+| `batchId` | string |  |  |
+| `projectId` | string |  |  |
+| `limit` | integer |  | Page size (default 20) |
+| `after` | string |  | The `next` cursor of the previous page |
+
+## `approvals_policy`
+
+The studio autonomy policy, the project's when it has one, and the effective mode per action class.
+
+Scope: `client`
+
+| Argument | Type | Required | Description |
+|---|---|---|---|
+| `projectId` | string |  | The project whose policy narrows the studio's |
+
 ## `approve`
 
 Approve or reject the plan a run is waiting on (an operator decision, bound to that exact plan).
@@ -146,6 +190,139 @@ Scope: `client`
 | `classification` | "public" \| "operator-shared" \| "local-private" |  | Data classification of the input; local-private content never leaves the machine (INV-12) |
 | `clientRequestId` | string |  | Retry-safe request key |
 | `waitSeconds` | integer |  | How long to wait for the run to finish before returning (default 45 s) |
+
+## `board_brief`
+
+One page for an agent new to a project: its intent, what is in progress, what waits, what is next, and what to read first.
+
+Scope: `client`
+
+| Argument | Type | Required | Description |
+|---|---|---|---|
+| `projectId` | string | yes |  |
+
+## `board_cancel`
+
+Cancel a task that is not running or in review; a pending approval request is withdrawn and the tasks that depend on it are cancelled.
+
+Scope: `client`
+
+| Argument | Type | Required | Description |
+|---|---|---|---|
+| `taskId` | string | yes |  |
+| `note` | string |  |  |
+
+## `board_charter`
+
+Found a project or amend its charter (with an existing projectId). The operator approves every charter version first: the project starts or changes course only then.
+
+Scope: `client`
+
+| Argument | Type | Required | Description |
+|---|---|---|---|
+| `projectId` | string |  | An existing project's id to amend its charter (pivot), or a new project's; generated when absent, from clientRequestId when one is given, so a retry names the same project |
+| `title` | string | yes |  |
+| `template` | string |  |  |
+| `classification` | "public" \| "operator-shared" \| "local-private" |  |  |
+| `charter` | object | yes | Version 1 for a new project, the current one plus 1 for an amendment; never carries its approval |
+| `milestones` | array |  |  |
+| `clientRequestId` | string |  | Retry-safe request key |
+
+## `board_claim`
+
+Take a ready task's lease (ready to claimed); present the returned generation on every later write. The lease is capped by leases.maxTtlMs, and the output gives its real expiry. A claimed task is started by the workflow engine, which records its run first; that start is not wired to these tools yet, so a lead cannot take a claimed task to review alone today.
+
+Scope: `client`
+
+| Argument | Type | Required | Description |
+|---|---|---|---|
+| `taskId` | string | yes |  |
+| `owner` | string | yes | Who works on it, e.g. the lead's session id |
+| `ttlSeconds` | integer |  | Lease length in seconds (default 600 s), capped by leases.maxTtlMs; renewed by board_update |
+
+## `board_complete`
+
+Submit a running task's result with its exact subject (a commit, or the result artifact; the subject a task writes, when it names one): the task goes to review, never straight to done. Only a running task takes a result, and the workflow engine starts a claimed one (not wired to these tools yet), so a task claimed with board_claim cannot be completed alone today.
+
+Scope: `client`
+
+| Argument | Type | Required | Description |
+|---|---|---|---|
+| `taskId` | string | yes |  |
+| `generation` | integer | yes | The lease generation the caller holds (a fence, INV-4) |
+| `artifacts` | array | yes |  |
+| `subject` | object | yes |  |
+| `files` | array |  |  |
+| `next` | string |  |  |
+
+## `board_projects`
+
+List projects on the board, with their tasks per state; a page at a time.
+
+Scope: `client`
+
+| Argument | Type | Required | Description |
+|---|---|---|---|
+| `state` | "proposed" \| "active" \| "paused" \| "closed" |  |  |
+| `limit` | integer |  | Page size (default 20) |
+| `after` | string |  | The `next` cursor of the previous page |
+
+## `board_propose`
+
+Propose a task. The board makes it ready once its dependencies are done and the autonomy policy allows its action class, or asks the operator first.
+
+Scope: `client`
+
+| Argument | Type | Required | Description |
+|---|---|---|---|
+| `projectId` | string | yes |  |
+| `title` | string | yes |  |
+| `goal` | string | yes |  |
+| `acceptance` | array | yes |  |
+| `dependsOn` | array |  |  |
+| `actionClass` | "read" \| "workspace-write" \| "merge" \| "command" \| "external-send" \| "deploy" \| "delete-data" \| "spend" \| "charter" \| "funding" \| "remediation" \| "policy-change" | yes |  |
+| `milestone` | string |  |  |
+| `template` | string |  |  |
+| `writes` | object |  |  |
+| `budget` | array |  |  |
+| `clientRequestId` | string |  | Retry-safe request key |
+
+## `board_task`
+
+Read one task: its goal, acceptance criteria, state, holder, run, result, and why it waits.
+
+Scope: `client`
+
+| Argument | Type | Required | Description |
+|---|---|---|---|
+| `taskId` | string | yes |  |
+
+## `board_tasks`
+
+List a project's tasks, filtered by state or milestone; a page at a time.
+
+Scope: `client`
+
+| Argument | Type | Required | Description |
+|---|---|---|---|
+| `projectId` | string | yes |  |
+| `states` | array |  |  |
+| `milestone` | string |  |  |
+| `limit` | integer |  | Page size (default 20) |
+| `after` | string |  | The `next` cursor of the previous page |
+
+## `board_update`
+
+Renew your lease on a task you hold (with its generation), or answer a waiting task's questions (every one, by index). Only a question wait takes answers: a rejected, retries-spent, or review-expired wait takes no input and only expires to cancelled.
+
+Scope: `client`
+
+| Argument | Type | Required | Description |
+|---|---|---|---|
+| `taskId` | string | yes |  |
+| `generation` | integer |  | The lease generation the caller holds (a fence, INV-4) |
+| `note` | string |  | A progress line; not stored: results go through board_complete |
+| `answers` | array |  | Answers to a waiting-for-input task's questions, by index; answering every one makes it ready again |
 
 ## `brainstorm`
 

@@ -266,12 +266,13 @@
                 "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/artifactRef"
               },
               "refused": {
-                "description": "Why the verdict was not recorded; the request is unchanged.",
+                "description": "Why the verdict was not recorded; the request is unchanged. 1.1 adds failed: the provider could not apply it (an error, logged).",
                 "enum": [
                   "unknown-request",
                   "already-resolved",
                   "expired",
-                  "subject-changed"
+                  "subject-changed",
+                  "failed"
                 ]
               }
             },

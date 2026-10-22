@@ -56,6 +56,7 @@ export const LAYER_OF: Record<string, Layer> = {
   // routing
   'workers-core': 'routing',
   'approvals-core': 'routing',
+  'approvals': 'routing',
   'resources-core': 'routing',
   'resources': 'routing',
   'workers': 'routing',
@@ -234,8 +235,8 @@ export function scan(): Pkg[] {
   const off = new Set(rows.filter((r) => r.off).map((r) => r.id))
   for (const p of pkgs) {
     // A seam may be defined before its provider is built: an optional consumer uses it only when
-    // present, and a row that is off by default may wait on it (the board on the approval queue
-    // until B5). A row that is on never requires a seam nobody provides.
+    // present, and a row that is off by default may wait on it. A row that is on never requires a
+    // seam nobody provides.
     for (const k of p.required) {
       if (providerOf.has(k) || (p.mountId && off.has(p.mountId) && defined.has(k))) continue
       problems.push(`${p.dir} consumes ctx.${k}, which no package or bundle row provides${defined.has(k) ? ' (it is only defined): keep its row off until one does' : ''}`)

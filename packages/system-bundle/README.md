@@ -13,9 +13,13 @@ and the `system` plugins, and it does not use `dsh-base`
   gateways are `disabled: true`, not removed. An operator patch turns one back on
   ([runbook](../../docs/operations/runbooks.md#turn-an-off-row-back-on)); the e2e test
   proves that it mounts again.
-- **Off until the approval queue exists (B5):** the [`board`](../plugins/board/README.md)
-  row. The board asks for every approval through `ctx.approvals`, which no row provides
-  yet, so the row stays `disabled: true`; with it off, runs work as today.
+- **The approval queue and the board (B5):** the [`approvals`](../plugins/approvals/README.md)
+  row carries the default studio policy, conservative: a read runs, a workspace write runs
+  once tests and lint pass, and everything else asks, expiring after a day (at most 14) in
+  batches of up to 10 shown within an hour. A patch that targets the row replaces its whole
+  config, so it carries the policies too; `system check` names a missing or invalid one. The
+  [`board`](../plugins/board/README.md) row asks for every approval through it and is mounted
+  only with it; with the board off, runs work as before.
 - **Presets:** [`presets/`](presets/) holds named bundle layers that `system init
   --preset <name>` adds right after this bundle. [`api-first`](presets/api-first/cordis.patch.yml)
   disables every row that drives a website and both model gateways, turns the agent

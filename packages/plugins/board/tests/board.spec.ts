@@ -33,15 +33,25 @@ class RecordingMcp extends McpTools {
 /** The approvals fake, which can be taken down: every call then throws, as an unavailable queue would. */
 class FlakyApprovals extends FakeApprovals {
   down = false
+  /** Only withdrawals fail, as a crash right after a move committed would leave it. */
+  withdrawDown = false
+  /** Requests the queue no longer knows, as a lost row or a restore from an older backup would leave it. */
+  readonly forgotten = new Set<string>()
+  /** Classes judged as another action, so a test can give a class a mode the conformance policies do not. */
+  readonly judgeAs = new Map<Action['class'], Action>()
   private up(): void {
     if (this.down) throw new Error('the approval queue is unavailable')
   }
 
-  override async check(action: Action) { this.up(); return super.check(action) }
+  override async check(action: Action) { this.up(); return super.check(this.judgeAs.get(action.class) ?? action) }
   override async request(request: NewRequest, when?: Date) { this.up(); return super.request(request, when) }
-  override async get(requestId: string) { this.up(); return super.get(requestId) }
-  override async list(filter?: Parameters<FakeApprovals['list']>[0]) { this.up(); return super.list(filter) }
-  override async withdraw(requestId: string, when?: Date) { this.up(); return super.withdraw(requestId, when) }
+  override async get(requestId: string) { this.up(); return this.forgotten.has(requestId) ? undefined : super.get(requestId) }
+  override async list(filter?: Parameters<FakeApprovals['list']>[0]) { this.up(); return (await super.list(filter)).filter((r) => !this.forgotten.has(r.requestId)) }
+  override async withdraw(requestId: string, when?: Date) {
+    this.up()
+    if (this.withdrawDown) throw new Error('the approval queue is unavailable')
+    return super.withdraw(requestId, when)
+  }
 }
 
 interface Booted {
@@ -122,10 +132,11 @@ const result = (ctx: Context, text: string): ArtifactRef => ctx.artifacts.put({
   kind: 'report', bodySchema: 'agent-result@1.0', classification: 'operator-shared', producer: { type: 'worker', ref: 'test' },
   body: { schema: 'agent-result@1.0', worker: 'w', runtime: 'fake', runId: 'r', promptHash: `sha256:${'0'.repeat(64)}`, sandbox: 'read-only', text },
 }).id as ArtifactRef
-const acceptance = (ctx: Context, option: 'accept' | 'reject', on: ArtifactRef): ArtifactRef => ctx.artifacts.recordDecision({
+/** An `acceptance` decision on `taskId`'s result `on` with `subject` (default HEAD), reporting `checks`. */
+const acceptance = (ctx: Context, option: 'accept' | 'reject', taskId: string, on: ArtifactRef, subject: Subject = HEAD, checks?: Action['checks']): ArtifactRef => ctx.artifacts.recordDecision({
   decisionType: 'acceptance', question: `Does ${on} satisfy the criteria?`, inputs: [on],
   candidates: [{ option: 'accept', selected: option === 'accept', reasons: ['checked'] }, { option: 'reject', selected: option === 'reject', reasons: ['checked'] }],
-  decider: { type: 'rule', id: 'acceptance.test', version: '1' }, outcome: { option }, deterministic: true,
+  decider: { type: 'rule', id: 'acceptance.test', version: '1' }, outcome: { option, detail: { taskId, subject, ...(checks ? { checks } : {}) } }, deterministic: true,
 }, { producer: { type: 'policy', ref: 'test' } }).id as ArtifactRef
 const open = (ctx: Context, projectId: string): Promise<ApprovalRequest[]> => ctx.approvals.list({ projectId, states: ['open', 'batched'] })
 
@@ -288,6 +299,136 @@ describe('ctx.board (store-backed): the approval queue', () => {
     expect(await open(ctx, 'p2')).toHaveLength(1)
   })
 
+  it('never readies or cancels a lost or blocked run on the policy alone: with no ask verdict it waits for input (S6, INV-4)', async () => {
+    const { ctx, approvals } = await boot()
+    await active(ctx)
+    // remediation judged auto (as the studio's read rule), funding forbidden (as p1's merge rule).
+    approvals().judgeAs.set('remediation', { class: 'read' })
+    approvals().judgeAs.set('funding', { class: 'merge', projectId: 'p1' })
+    const lost = await ready(ctx, task('p2', 'lost'))
+    const held = await ctx.board.claim(lost.taskId, 'lead', 60_000, at(3))
+    await ctx.board.start(lost.taskId, held.generation, { runId: 'run-1' }, at(3))
+    await ctx.board.sweep(at(10))
+    const waiting = (await ctx.board.task(lost.taskId))!
+    expect(waiting).toMatchObject({ state: 'waiting-for-input', waiting: { reason: 'rejected' }, run: { runId: 'run-1' }, attempts: { count: 1 } })
+    expect(ctx.artifacts.get(waiting.lastDecision!)?.body).toMatchObject({ decisionType: 'board', outcome: { option: 'waiting-for-input', detail: { reason: 'reconciliation-failed', mode: 'auto' } } })
+    expect(await failureOf(ctx.board.claim(lost.taskId, 'other', 60_000, at(10)))).toBe('invalid-transition')
+
+    const spent = await ready(ctx, task('p2', 'spent'), at(10))
+    const claim = await ctx.board.claim(spent.taskId, 'lead', 600_000, at(10))
+    await ctx.board.start(spent.taskId, claim.generation, { runId: 'run-2' }, at(10))
+    expect(await ctx.board.block(spent.taskId, claim.generation, { reason: 'budget-spent' }, at(11))).toMatchObject({ state: 'waiting-for-input', waiting: { reason: 'rejected' }, run: { runId: 'run-2' } })
+    expect(await open(ctx, 'p2')).toEqual([])
+  })
+
+  it('asks again before the attempt after a lost run, an answered question, or a rejected review, and withdraws a request whose move could not commit (S9)', async () => {
+    const { ctx } = await boot()
+    await active(ctx)
+    const approveCurrent = async (taskId: string, when: Date): Promise<string> => {
+      const requestId = (await ctx.board.task(taskId))!.waiting!.approvalRequest!
+      await decide(ctx, requestId, 'approved', when)
+      await ctx.board.sweep(when)
+      return requestId
+    }
+    const merge = await ctx.board.propose(task('p2', 'merge', { actionClass: 'merge', maxAttempts: 4 }), at(2))
+    await ctx.board.sweep(at(2))
+    const asked = [await approveCurrent(merge.taskId, at(2))]
+
+    // A lost run: the operator approves going on (remediation), then the class is asked about again.
+    let claim = await ctx.board.claim(merge.taskId, 'lead', 60_000, at(3))
+    await ctx.board.start(merge.taskId, claim.generation, { runId: 'run-1' }, at(3))
+    await ctx.board.sweep(at(10))
+    asked.push(await approveCurrent(merge.taskId, at(10)))
+    const regated = (await ctx.board.task(merge.taskId))!
+    expect(regated).toMatchObject({ state: 'waiting-for-approval', waiting: { reason: 'approval-needed' }, attempts: { count: 1 } })
+    expect(ctx.artifacts.get(regated.lastDecision!)?.body).toMatchObject({ decisionType: 'board', inputs: expect.arrayContaining([(await ctx.approvals.get(asked[1]!))!.resolution!.decision]) })
+    asked.push(await approveCurrent(merge.taskId, at(11)))
+    expect(await ctx.board.task(merge.taskId)).toMatchObject({ state: 'ready' })
+
+    // A question: answering it makes another attempt, which is asked about too.
+    claim = await ctx.board.claim(merge.taskId, 'lead', 600_000, at(12))
+    await ctx.board.start(merge.taskId, claim.generation, { runId: 'run-2' }, at(12))
+    await ctx.board.block(merge.taskId, claim.generation, { reason: 'question', questions: ['Squash?'] }, at(12))
+    const answered = await ctx.board.answer(merge.taskId, ['yes'], at(13))
+    expect(answered).toMatchObject({ state: 'waiting-for-approval', waiting: { reason: 'approval-needed' }, attempts: { count: 2 } })
+    expect(ctx.artifacts.get(answered.lastDecision!)?.body).toMatchObject({ outcome: { option: 'waiting-for-approval', detail: { answers: ['yes'], attempt: 3 } } })
+    asked.push(await approveCurrent(merge.taskId, at(13)))
+
+    // A rejected review whose move loses a race: the request it opened is withdrawn.
+    claim = await ctx.board.claim(merge.taskId, 'lead', 600_000, at(14))
+    await ctx.board.start(merge.taskId, claim.generation, { runId: 'run-3' }, at(14))
+    const r = result(ctx, 'merged')
+    await ctx.board.submit(merge.taskId, claim.generation, { artifacts: [r], subject: HEAD }, at(14))
+    const rejecting = ctx.board.accept(merge.taskId, acceptance(ctx, 'reject', merge.taskId, r), at(15))
+    await ctx.board.renew(merge.taskId, claim.generation, 600_000, at(15))
+    expect(await failureOf(rejecting)).toBe('conflict')
+    expect(await open(ctx, 'p2')).toEqual([])
+    const rejected = await ctx.board.accept(merge.taskId, acceptance(ctx, 'reject', merge.taskId, r), at(15))
+    expect(rejected).toMatchObject({ state: 'waiting-for-approval', waiting: { reason: 'approval-needed' }, attempts: { count: 3 } })
+    asked.push(rejected.waiting!.approvalRequest!)
+    const subjects = await Promise.all(asked.map(async (id) => (await ctx.approvals.get(id))!.subject))
+    expect(new Set(subjects.map((x) => `${x.ref}#${x.version}`)).size).toBe(asked.length)
+    expect(subjects.at(-1)).toMatchObject({ ref: `board-task:${merge.taskId}:attempt:3`, version: 'approval-needed' })
+  })
+
+  it('founds a project under a client request key at an id derived from it, so a retry after a crash adopts the request, also one approved meanwhile (M2, M6)', async () => {
+    const b = await boot()
+    const { ctx } = b
+    const call = caller(b)
+    // What a board that crashed after asking, before recording, leaves: an open request on the derived project's charter.
+    const crashed = await ok(call('board_charter', { title: 'Kernel', charter: CHARTER, clientRequestId: 'found-kernel' }))
+    const projectId = crashed.projectId as string
+    expect(projectId).toMatch(/^proj-[0-9a-f]{24}$/)
+    ctx.store.db.prepare('DELETE FROM board_client_requests').run()
+    ctx.store.db.prepare('DELETE FROM board_projects WHERE project_id = ?').run(projectId)
+    await decide(ctx, crashed.approvalRequest as string, 'approved', at(1))
+    const retried = await ok(call('board_charter', { title: 'Kernel', charter: CHARTER, clientRequestId: 'found-kernel' }))
+    expect(retried).toMatchObject({ projectId, approvalRequest: crashed.approvalRequest, charterVersion: 1 })
+    expect(await ctx.approvals.list({ projectId, states: ['open', 'batched', 'approved'] })).toHaveLength(1)
+    await ctx.board.sweep(new Date())
+    expect(await ctx.board.project(projectId)).toMatchObject({ state: 'active' })
+
+    // A retried amendment reports the version that call asked about, not the retry's input.
+    const amended = await ok(call('board_charter', { projectId, title: 'Kernel', charter: { ...CHARTER, version: 2 }, clientRequestId: 'amend-kernel' }))
+    expect(amended.charterVersion).toBe(2)
+    expect(await ok(call('board_charter', { projectId, title: 'Kernel', charter: { ...CHARTER, version: 7 }, clientRequestId: 'amend-kernel' }))).toEqual(amended)
+  })
+
+  it('refuses a result on another subject than the one the task writes (M4, INV-15)', async () => {
+    const { ctx } = await boot()
+    await active(ctx)
+    const branch: Subject = { type: 'git-head', ref: 'refs/heads/kernel' }
+    const t = await ready(ctx, task('p2', 'w', { writes: branch }))
+    const { generation } = await ctx.board.claim(t.taskId, 'lead', 60_000, at(3))
+    await ctx.board.start(t.taskId, generation, { runId: 'run-1' }, at(3))
+    const r = result(ctx, 'kernel')
+    expect(await failureOf(ctx.board.submit(t.taskId, generation, { artifacts: [r], subject: { type: 'git-head', ref: 'refs/heads/main', version: 'abc' } }, at(3.5)))).toBe('invalid')
+    await ctx.board.sweep(at(10))
+    const elsewhere = { type: 'git-head' as const, ref: 'refs/heads/main', version: 'abc' }
+    expect(await failureOf(ctx.board.reconcileRun(t.taskId, 'run-1', { status: 'completed', result: { artifacts: [r], subject: elsewhere }, acceptance: acceptance(ctx, 'accept', t.taskId, r, elsewhere) }, at(11)))).toBe('invalid')
+    const on = { ...branch, version: 'abc' }
+    expect(await ctx.board.reconcileRun(t.taskId, 'run-1', { status: 'completed', result: { artifacts: [r], subject: on }, acceptance: acceptance(ctx, 'accept', t.taskId, r, on) }, at(11))).toMatchObject({ state: 'done' })
+  })
+
+  it('takes no answers for a rejected, retries-spent, or review-expired wait: each only expires to cancelled (S4)', async () => {
+    const b = await boot()
+    const { ctx } = b
+    const call = caller(b)
+    await active(ctx)
+    const merge = await ctx.board.propose(task('p2', 'merge', { actionClass: 'merge' }), at(2))
+    await ctx.board.sweep(at(2))
+    await decide(ctx, (await ctx.board.task(merge.taskId))!.waiting!.approvalRequest!, 'rejected', at(3))
+    await ctx.board.sweep(at(3))
+    const rejected = (await ctx.board.task(merge.taskId))!
+    expect(rejected.waiting?.reason).toBe('rejected')
+    const refused = await call('board_update', { taskId: merge.taskId, answers: [{ question: 0, answer: 'go on' }] })
+    expect(refused.isError).toBe(true)
+    expect(refused.content[0]?.text).toMatch(/^invalid: .*a rejected wait takes no answers and only expires/)
+    expect(await ctx.board.task(merge.taskId)).toEqual(rejected)
+    await ctx.board.sweep(new Date(Date.parse(rejected.waiting!.expiresAt)))
+    expect(await ctx.board.task(merge.taskId)).toMatchObject({ state: 'cancelled', cancellation: { reason: 'input-expired' } })
+  })
+
   it('starts nothing with no attempt left, even when the operator approves going on (INV-9)', async () => {
     const { ctx } = await boot()
     await active(ctx)
@@ -301,6 +442,87 @@ describe('ctx.board (store-backed): the approval queue', () => {
     const stopped = (await ctx.board.task(t.taskId))!
     expect(stopped).toMatchObject({ state: 'waiting-for-input', waiting: { reason: 'retries-spent' }, attempts: { count: 1, max: 1 } })
     expect(ctx.artifacts.get(stopped.lastDecision!)?.body).toMatchObject({ decisionType: 'approval' })
+  })
+
+  it('commits a move before it withdraws the request the task waited on: a withdrawal that fails after it leaves an open request that changes nothing (S7)', async () => {
+    const { ctx, approvals } = await boot()
+    await active(ctx)
+    const t = await ready(ctx, task('p2', 't'))
+    const { generation } = await ctx.board.claim(t.taskId, 'lead', 60_000, at(3))
+    await ctx.board.start(t.taskId, generation, { runId: 'run-1' }, at(3))
+    await ctx.board.sweep(at(10))
+    const requestId = (await ctx.board.task(t.taskId))!.waiting!.approvalRequest!
+    approvals().withdrawDown = true
+    const r = result(ctx, 'finished')
+    expect(await ctx.board.reconcileRun(t.taskId, 'run-1', { status: 'completed', result: { artifacts: [r], subject: HEAD }, acceptance: acceptance(ctx, 'accept', t.taskId, r) }, at(11)))
+      .toMatchObject({ state: 'done', result: { artifacts: [r] } })
+    expect((await ctx.approvals.get(requestId))?.state).toBe('open')
+    // The operator approving the orphan, or its expiry, moves nothing: no task waits on it.
+    await decide(ctx, requestId, 'approved', at(12))
+    expect(await ctx.board.sweep(at(12))).toEqual({ tasks: [], projects: [] })
+    expect((await ctx.board.task(t.taskId))?.state).toBe('done')
+
+    const merge = await ctx.board.propose(task('p2', 'merge', { actionClass: 'merge' }), at(12))
+    approvals().withdrawDown = false
+    await ctx.board.sweep(at(12))
+    const waitedOn = (await ctx.board.task(merge.taskId))!.waiting!.approvalRequest!
+    approvals().withdrawDown = true
+    expect(await ctx.board.cancel(merge.taskId, 'lead', undefined, at(13))).toMatchObject({ state: 'cancelled' })
+    expect((await ctx.approvals.get(waitedOn))?.state).toBe('open')
+    await ctx.approvals.sweep(at(60 * 24 * 30))
+    expect(await ctx.board.sweep(at(60 * 24 * 30))).toEqual({ tasks: [], projects: [] })
+  })
+
+  it('withdraws nothing when a close fails after reading its tasks, so every wait stays as it was (M1)', async () => {
+    const { ctx } = await boot()
+    await active(ctx)
+    const merge = await ctx.board.propose(task('p2', 'merge', { actionClass: 'merge' }), at(2))
+    await ctx.board.sweep(at(2))
+    const waiting = (await ctx.board.task(merge.taskId))!
+    // The close stops at its first await; the project is paused meanwhile, so its transaction refuses.
+    const closing = ctx.board.close('p2', 'stopped', at(3))
+    await ctx.board.pause('p2', at(3))
+    expect(await failureOf(closing)).toBe('conflict')
+    expect(await ctx.board.task(merge.taskId)).toEqual(waiting)
+    expect((await ctx.approvals.get(waiting.waiting!.approvalRequest!))?.state).toBe('open')
+    expect(await ctx.board.close('p2', 'stopped', at(4))).toMatchObject({ state: 'closed' })
+    expect((await ctx.approvals.get(waiting.waiting!.approvalRequest!))?.resolution?.cause).toBe('withdrawn')
+  })
+
+  it('applies a wait\'s expiry itself when the queue no longer knows its request, also across a restart: nothing waits forever (S2, INV-9)', async () => {
+    const b = await boot()
+    const { ctx, approvals } = b
+    await active(ctx)
+    const merge = await ctx.board.propose(task('p2', 'merge', { actionClass: 'merge' }), at(2))
+    await ctx.board.sweep(at(2))
+    const waiting = (await ctx.board.task(merge.taskId))!
+    const founded = await ctx.board.charter({ projectId: 'p4', title: 'Lost', charter: CHARTER }, at(2))
+    const early = await ctx.board.propose(task('p4', 'early', { writes: { type: 'git-head', ref: 'refs/heads/lost' } }), at(2))
+    const charterDue = (await ctx.approvals.get(founded.approvalRequest))!.expiresAt
+    approvals().forgotten.add(waiting.waiting!.approvalRequest!)
+    approvals().forgotten.add(founded.approvalRequest)
+    await b.restartBoard()
+    expect(await ctx.board.sweep(new Date(Date.parse(waiting.waiting!.expiresAt) - 1))).toEqual({ tasks: [], projects: [] })
+    expect(await ctx.board.task(merge.taskId)).toEqual(waiting)
+    const swept = await ctx.board.sweep(new Date(Math.max(Date.parse(waiting.waiting!.expiresAt), Date.parse(charterDue))))
+    expect(swept.tasks.map((t) => t.taskId).sort()).toEqual([merge.taskId, early.taskId].sort())
+    const expired = (await ctx.board.task(merge.taskId))!
+    expect(expired).toMatchObject({ state: 'waiting-for-input', waiting: { reason: 'rejected' } })
+    expect(ctx.artifacts.get(expired.lastDecision!)?.body).toMatchObject({ decisionType: 'board', outcome: { option: 'waiting-for-input', detail: { cause: 'expired', approvalRequest: waiting.waiting!.approvalRequest } } })
+    expect(await ctx.board.project('p4')).toMatchObject({ state: 'closed', closure: { outcome: 'abandoned' } })
+    expect(await ctx.board.task(early.taskId)).toMatchObject({ state: 'cancelled', cancellation: { reason: 'project-closed' } })
+    expect(await ctx.board.sweep(at(60 * 24 * 365))).toMatchObject({ projects: [] })
+  })
+
+  it('withdraws the request of a wait it expired itself, so the operator is not shown it again', async () => {
+    const { ctx } = await boot()
+    await active(ctx)
+    const merge = await ctx.board.propose(task('p2', 'merge', { actionClass: 'merge' }), at(2))
+    await ctx.board.sweep(at(2))
+    const { waiting } = (await ctx.board.task(merge.taskId))!
+    await ctx.board.sweep(new Date(Date.parse(waiting!.expiresAt)))
+    expect((await ctx.approvals.get(waiting!.approvalRequest!))?.resolution?.cause).toBe('withdrawn')
+    expect(await open(ctx, 'p2')).toEqual([])
   })
 
   it('withdraws a pending amendment\'s request when its project closes, and holds one amendment at a time', async () => {
@@ -324,15 +546,31 @@ describe('ctx.board (store-backed): the protocol\'s guards', () => {
     await ctx.board.start(t.taskId, generation, { runId: 'run-1' }, at(3))
     const mine = result(ctx, 'mine')
     await ctx.board.submit(t.taskId, generation, { artifacts: [mine], subject: HEAD }, at(4))
-    expect(await failureOf(ctx.board.accept(t.taskId, acceptance(ctx, 'accept', result(ctx, 'another')), at(5)))).toBe('invalid')
+    expect(await failureOf(ctx.board.accept(t.taskId, acceptance(ctx, 'accept', t.taskId, result(ctx, 'another')), at(5)))).toBe('invalid')
     const odd = ctx.artifacts.recordDecision({
       decisionType: 'acceptance', question: 'q', inputs: [mine], candidates: [{ option: 'maybe', selected: true, reasons: ['unsure'] }],
-      decider: { type: 'rule', id: 'acceptance.test', version: '1' }, outcome: { option: 'maybe' }, deterministic: true,
+      decider: { type: 'rule', id: 'acceptance.test', version: '1' }, outcome: { option: 'maybe', detail: { taskId: t.taskId, subject: HEAD } }, deterministic: true,
     }, { producer: { type: 'policy', ref: 'test' } }).id as ArtifactRef
     expect(await failureOf(ctx.board.accept(t.taskId, odd, at(5)))).toBe('invalid')
     expect((await ctx.board.task(t.taskId))?.state).toBe('review')
     expect(await failureOf(ctx.board.submit(t.taskId, generation, { artifacts: [`sha256:${'9'.repeat(64)}`], subject: HEAD }, at(5)))).toBe('invalid-transition')
-    expect(await ctx.board.accept(t.taskId, acceptance(ctx, 'accept', mine), at(5))).toMatchObject({ state: 'done' })
+    expect(await ctx.board.accept(t.taskId, acceptance(ctx, 'accept', t.taskId, mine), at(5))).toMatchObject({ state: 'done' })
+  })
+
+  it('records the required checks still to run on an auto task\'s readiness decision, and asks the policy with the checks an acceptance reports (S3)', async () => {
+    const { ctx } = await boot()
+    await active(ctx)
+    const branch: Subject = { type: 'git-head', ref: 'refs/heads/kernel', version: 'abc123' }
+    const t = await ready(ctx, task('p2', 'w', { actionClass: 'workspace-write', writes: { type: 'git-head', ref: 'refs/heads/kernel' } }))
+    expect(ctx.artifacts.get(t.lastDecision!)?.body).toMatchObject({ decisionType: 'board', outcome: { option: 'ready', detail: { mode: 'auto', pendingChecks: ['tests', 'lint'] } } })
+    const { generation } = await ctx.board.claim(t.taskId, 'lead', 600_000, at(3))
+    await ctx.board.start(t.taskId, generation, { runId: 'run-1' }, at(3))
+    const r = result(ctx, 'kernel')
+    await ctx.board.submit(t.taskId, generation, { artifacts: [r], subject: branch }, at(4))
+    const refused = await ctx.board.accept(t.taskId, acceptance(ctx, 'accept', t.taskId, r, branch, { tests: true }), at(5)).catch((e: unknown) => e as BoardError)
+    expect(refused).toMatchObject({ failure: 'invalid', message: expect.stringMatching(/required check\(s\) lint not passed/) })
+    expect(await failureOf(ctx.board.accept(t.taskId, acceptance(ctx, 'accept', t.taskId, r, branch, { tests: 'yes' } as unknown as Action['checks']), at(5)))).toBe('invalid')
+    expect(await ctx.board.accept(t.taskId, acceptance(ctx, 'accept', t.taskId, r, branch, { tests: true, lint: true }), at(5))).toMatchObject({ state: 'done' })
   })
 
   it('checks a lost run\'s reported outcome before it withdraws the request the task waits on, so a refused report changes nothing (INV-4)', async () => {
@@ -345,11 +583,11 @@ describe('ctx.board (store-backed): the protocol\'s guards', () => {
     const lost = (await ctx.board.task(t.taskId))!
     expect(lost.waiting).toMatchObject({ reason: 'reconciliation-failed' })
     const r = result(ctx, 'finished')
-    const elsewhere = acceptance(ctx, 'accept', result(ctx, 'another result'))
+    const elsewhere = acceptance(ctx, 'accept', t.taskId, result(ctx, 'another result'))
     expect(await failureOf(ctx.board.reconcileRun(t.taskId, 'run-1', { status: 'completed', result: { artifacts: [r], subject: HEAD }, acceptance: elsewhere }, at(11)))).toBe('invalid')
     expect((await ctx.approvals.get(lost.waiting!.approvalRequest!))?.state).toBe('open')
     expect(await ctx.board.task(t.taskId)).toEqual(lost)
-    expect(await ctx.board.reconcileRun(t.taskId, 'run-1', { status: 'completed', result: { artifacts: [r], subject: HEAD }, acceptance: acceptance(ctx, 'reject', r) }, at(11)))
+    expect(await ctx.board.reconcileRun(t.taskId, 'run-1', { status: 'completed', result: { artifacts: [r], subject: HEAD }, acceptance: acceptance(ctx, 'reject', t.taskId, r) }, at(11)))
       .toMatchObject({ state: 'ready', attempts: { count: 1 } })
     expect(ctx.leases.current(`board-task:${t.taskId}`)).toBeUndefined()
   })
@@ -498,10 +736,26 @@ describe('ctx.board (store-backed): board_* MCP tools', () => {
     await ctx.board.start(taskId, 1, { runId: 'run-1' })
     const r = result(ctx, 'kernel')
     expect(await ok(call('board_complete', { taskId, generation: 1, artifacts: [r], subject: HEAD, files: ['src/kernel.ts'], next: 'vectorize' }))).toMatchObject({ taskId, state: 'review' })
-    await ctx.board.accept(taskId, acceptance(ctx, 'accept', r))
+    await ctx.board.accept(taskId, acceptance(ctx, 'accept', taskId, r))
 
     const brief = await ok(call('board_brief', { projectId: 'p2' }))
     expect(brief).toMatchObject({ projectId: 'p2', intent: CHARTER.intent, state: 'active', milestone: 'm1', tasks: { done: 1 }, readFirst: [{ ref: r }] })
+  })
+
+  it('claims for 600 s by default, within the leases\' own cap, and says that cap bounds a claim; it says a claimed task is started by the engine', async () => {
+    const b = await boot()
+    const { ctx } = b
+    await active(ctx)
+    const t = await ready(ctx, task('p2', 't'))
+    const before = Date.now()
+    const claim = await ok(caller(b)('board_claim', { taskId: t.taskId, owner: 'lead' }))
+    const lease = Date.parse(claim.leaseExpiresAt as string)
+    expect(lease).toBeGreaterThanOrEqual(before + 600_000)
+    expect(lease).toBeLessThanOrEqual(Date.now() + 600_000)
+    const spec = b.mcp().tools.get('board_claim')!.spec
+    expect(spec.description).toMatch(/leases\.maxTtlMs/)
+    expect(spec.description).toMatch(/started by the workflow engine/)
+    expect(b.mcp().tools.get('board_complete')!.spec.description).toMatch(/cannot be completed alone today/)
   })
 
   it('answers questions by index, cancels as whoever calls, and refuses an invalid input without doing anything', async () => {
@@ -516,6 +770,7 @@ describe('ctx.board (store-backed): board_* MCP tools', () => {
     expect((await call('board_update', { taskId: asks.taskId, answers: [{ question: 1, answer: 'yes' }] })).isError).toBe(true)
     expect((await call('board_update', { taskId: asks.taskId, answers: [{ question: 0, answer: '64' }, { question: 0, answer: '32' }] })).isError).toBe(true)
     expect(await ok(call('board_update', { taskId: asks.taskId, answers: [{ question: 1, answer: 'yes' }, { question: 0, answer: '64' }] }))).toMatchObject({ state: 'ready' })
+    expect(b.mcp().tools.get('board_update')!.spec.description).toMatch(/Only a question wait takes answers/)
     const answered = (await ctx.board.task(asks.taskId))!
     expect(ctx.artifacts.get(answered.lastDecision!)?.body).toMatchObject({ outcome: { detail: { answers: ['64', 'yes'] } } })
 
@@ -572,7 +827,7 @@ describe('ctx.board (store-backed): the TASKS.md projection', () => {
     await ctx.board.start(done.taskId, generation, { runId: 'run-1' }, at(3))
     const r = result(ctx, 'baseline')
     await ctx.board.submit(done.taskId, generation, { artifacts: [r], subject: HEAD }, at(3))
-    await ctx.board.accept(done.taskId, acceptance(ctx, 'accept', r), at(3))
+    await ctx.board.accept(done.taskId, acceptance(ctx, 'accept', done.taskId, r), at(3))
     const held = await ready(ctx, task('p2', 'Kernel', { goal: 'Write the kernel.\n## Not a heading of the board', dependsOn: [done.taskId] }), at(4))
     ;({ generation } = await ctx.board.claim(held.taskId, 'lead', 600_000, at(4)))
     const asks = await ready(ctx, task('p2', 'Asks'), at(4))
