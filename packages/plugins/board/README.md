@@ -61,7 +61,7 @@ charters, and their tasks.
   the board's structure, and is never read back; the caller writes it where an agent reads it.
 - **MCP** (when `ctx.mcp` is present, client scope): `board_projects`, `board_charter`,
   `board_brief`, `board_tasks`, `board_task`, `board_propose`, `board_claim`, `board_update`,
-  `board_complete`, `board_cancel`. Each input and structured output is validated against
+  `board_cancel`. Each input and structured output is validated against
   [`schemas/mcp-board.v1.json`](../../../schemas/mcp-board.v1.json) `$defs/<tool>-input` and
   `-output`; a refused input does nothing, a refusal is an MCP error naming the `BoardError`.
   - `board_charter` and `board_propose` are retry-safe under `clientRequestId`, recorded in the
@@ -70,12 +70,13 @@ charters, and their tasks.
     project's id from it, so a retry after a crash adopts the request it left;
   - `board_claim` defaults to `leaseTtlSeconds`; `leases.maxTtlMs` (default 10 minutes) caps
     every lease, and the output gives the real expiry;
-  - a claimed task is started by the workflow engine (`ctx.board.start`, which records the run
-    first), and that start is not wired to the tools yet: no tool starts, accepts, blocks, or
-    reconciles a task. So `board_complete`, which takes only a running task's result, cannot
-    finish a task a lead claimed with `board_claim`; today a lead cannot take a task past
-    `claimed` alone, and its lease lapses back to `ready`;
-  - `board_update` renews the caller's lease for as long as it was claimed, or answers every
+  - no tool starts, submits, accepts, blocks, or reconciles a task: the workflow run that serves
+    an attempt does, as its owner (MCP `run` with `task`;
+    [workflow](../workflow/README.md)), so one attempt has one writer (INV-15). A lead takes a
+    task with `board_claim` and hands the claim to `run` (holder and generation); a claim no run
+    starts lapses back to `ready`;
+  - `board_update` renews the caller's lease for as long as it was claimed (a run that serves
+    the task renews it itself), or answers every
     question of a waiting task by index, not both; its `note` is not stored (no record holds
     progress notes yet). Only a `question` wait takes answers: a `rejected`, `retries-spent`, or
     `review-expired` wait takes no input and only expires to cancelled, and answering the last

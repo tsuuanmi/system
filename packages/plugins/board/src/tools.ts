@@ -2,15 +2,17 @@
  * The `board_*` MCP tools (reference/schemas.md#mcp-tools-board_-approvals_-resources_), client
  * scope. Each call's input and structured output are validated against
  * `schemas/mcp-board.v1.json` `$defs/<tool>-input` and `-output`; a refused input executes nothing.
+ * No tool starts, submits, accepts, blocks, or reconciles a task: the workflow run that serves an
+ * attempt does, as its owner (MCP `run` with `task`), so one attempt has one writer (INV-15).
  */
 import type { Context } from '@deepseek-ai/cordis'
-import { type ArtifactRef, BoardError, type BoardTask, type CharterInput, type Project, type Subject, type TaskInput } from '@tsuuanmi/system-board-core'
+import { BoardError, type BoardTask, type CharterInput, type Project, type TaskInput } from '@tsuuanmi/system-board-core'
 import type { ToolContext, ToolHandler, ToolSpec } from '@tsuuanmi/system-gateway-core'
 import { SchemaRegistry } from '@tsuuanmi/system-libs'
 import { z as zod } from 'zod'
 import type { StoreBoard } from './index.ts'
 
-export const BOARD_TOOLS = ['board_projects', 'board_charter', 'board_brief', 'board_tasks', 'board_task', 'board_propose', 'board_claim', 'board_update', 'board_complete', 'board_cancel'] as const
+export const BOARD_TOOLS = ['board_projects', 'board_charter', 'board_brief', 'board_tasks', 'board_task', 'board_propose', 'board_claim', 'board_update', 'board_cancel'] as const
 export type BoardTool = typeof BOARD_TOOLS[number]
 
 const schemas = new SchemaRegistry()
@@ -68,13 +70,9 @@ export const INPUTS: Record<BoardTool, ToolSpec['inputSchema']> = {
   board_claim: { taskId: id(), owner: id().describe('Who works on it, e.g. the lead\'s session id'), ttlSeconds: zod.number().int().min(30).max(3600).optional().describe('Lease length in seconds (default 600 s), capped by leases.maxTtlMs; renewed by board_update') },
   board_update: {
     taskId: id(), generation: generation().optional(),
-    note: zod.string().min(1).max(2000).optional().describe('A progress line; not stored: results go through board_complete'),
+    note: zod.string().min(1).max(2000).optional().describe('A progress line; not stored: the result comes from the workflow run that serves the task'),
     answers: zod.array(zod.strictObject({ question: zod.number().int().min(0).max(7), answer: zod.string().min(1).max(2000) })).min(1).max(8).optional()
       .describe('Answers to a waiting-for-input task\'s questions, by index; answering every one makes it ready again'),
-  },
-  board_complete: {
-    taskId: id(), generation: generation(), artifacts: zod.array(artifactRef()).min(1).max(32), subject: subject(),
-    files: zod.array(zod.string().min(1).max(1024)).max(512).optional(), next: zod.string().max(2000).optional(),
   },
   board_cancel: { taskId: id(), note: shortText().optional() },
 }
@@ -86,9 +84,8 @@ const DESCRIPTIONS: Record<BoardTool, string> = {
   board_tasks: 'List a project\'s tasks, filtered by state or milestone; a page at a time.',
   board_task: 'Read one task: its goal, acceptance criteria, state, holder, run, result, and why it waits.',
   board_propose: 'Propose a task. The board makes it ready once its dependencies are done and the autonomy policy allows its action class, or asks the operator first.',
-  board_claim: 'Take a ready task\'s lease (ready to claimed); present the returned generation on every later write. The lease is capped by leases.maxTtlMs, and the output gives its real expiry. A claimed task is started by the workflow engine, which records its run first; that start is not wired to these tools yet, so a lead cannot take a claimed task to review alone today.',
-  board_update: 'Renew your lease on a task you hold (with its generation), or answer a waiting task\'s questions (every one, by index). Only a question wait takes answers: a rejected, retries-spent, or review-expired wait takes no input and only expires to cancelled.',
-  board_complete: 'Submit a running task\'s result with its exact subject (a commit, or the result artifact; the subject a task writes, when it names one): the task goes to review, never straight to done. Only a running task takes a result, and the workflow engine starts a claimed one (not wired to these tools yet), so a task claimed with board_claim cannot be completed alone today.',
+  board_claim: 'Take a ready task\'s lease (ready to claimed), capped by leases.maxTtlMs; the output gives its real expiry and the generation. Then start its attempt with the `run` tool, naming the task with this owner as holder and this generation: the run records itself on the board before any step runs, keeps the lease, and submits and accepts its own result. A claim no run starts lapses back to ready.',
+  board_update: 'Renew your lease on a task you hold (with its generation), or answer a waiting task\'s questions (every one, by index). Once a run serves the task, the run renews the lease itself. Only a question wait takes answers: a rejected, retries-spent, or review-expired wait takes no input and only expires to cancelled.',
   board_cancel: 'Cancel a task that is not running or in review; a pending approval request is withdrawn and the tasks that depend on it are cancelled.',
 }
 
@@ -176,13 +173,6 @@ export function handlers(board: StoreBoard, options: { leaseTtlSeconds: number }
       const claim = await board.heartbeat(taskId, args.generation)
       const task = (await board.task(taskId))!
       return { taskId, state: task.state, revision: task.revision, leaseExpiresAt: claim.leaseExpiresAt }
-    },
-    board_complete: async (args) => {
-      const task = await board.submit(String(args.taskId), Number(args.generation), {
-        artifacts: args.artifacts as ArtifactRef[], subject: args.subject as Subject,
-        ...(args.files ? { files: args.files as string[] } : {}), ...(typeof args.next === 'string' ? { next: args.next } : {}),
-      })
-      return { taskId: task.taskId, state: 'review', revision: task.revision }
     },
     board_cancel: async (args, { scope }) => {
       // Who cancelled is who called: the operator's token, else the lead's (a client).

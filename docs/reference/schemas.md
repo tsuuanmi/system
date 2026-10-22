@@ -577,9 +577,8 @@ guesses.
 | `board_brief` | client | one page for a new agent: intent, in progress, waiting, next, what to read first |
 | `board_tasks`, `board_task` | client | list tasks; read one |
 | `board_propose` | client | propose a task; the board makes it ready when its dependencies are done and the policy allows |
-| `board_claim` | client | take a ready task's lease; the workflow engine starts a claimed task (not wired to the tools yet) |
+| `board_claim` | client | take a ready task's lease; MCP `run` with the task and this claim starts the attempt, and that run submits and accepts its own result |
 | `board_update` | client | report progress and renew the lease, or answer a waiting task's questions |
-| `board_complete` | client | submit a running task's results; the task goes to review, never straight to done |
 | `board_cancel` | client | cancel a task that is not running or in review |
 | `approvals_list`, `approvals_get` | client | read the queue |
 | `approvals_decide` | operator | verdicts for up to 50 requests, each bound to its exact subject |
@@ -588,6 +587,9 @@ guesses.
 | `resources_usage` | client | usage records, filtered, with totals over every match |
 
 - A page holds at most 100 items; `next` is an opaque cursor.
+- No `board_*` tool starts, submits, accepts, blocks, or reconciles a task: the workflow run that
+  serves an attempt does, as its owner, so one attempt has one writer
+  ([INV-15](../architecture/invariants.md#inv-15-one-writer-per-subject)).
 - A refused verdict (`unknown-request`, `already-resolved`, `expired`, `subject-changed`, or
   `failed`: the provider could not apply it, which it logs) leaves its request unchanged; the
   other verdicts of the call still apply. `mcp-approvals` 1.1 adds `failed`.
