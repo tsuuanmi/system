@@ -128,6 +128,15 @@
       ],
       "@tsuuanmi/system-gateway-core": [
         "packages/gateway-core/src/index.ts"
+      ],
+      "@tsuuanmi/system-approvals-core": [
+        "packages/approvals-core/src/index.ts"
+      ],
+      "@tsuuanmi/system-resources-core": [
+        "packages/resources-core/src/index.ts"
+      ],
+      "@tsuuanmi/system-board-core": [
+        "packages/board-core/src/index.ts"
       ]
     }
   },

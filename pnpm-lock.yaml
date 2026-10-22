@@ -207,6 +207,40 @@ importers:
         specifier: 4.0.5-alpha.1
         version: 4.0.5-alpha.1(@deepseek-ai/cordis-plugin-include@1.0.10-alpha.1)(@deepseek-ai/cordis-plugin-loader@1.0.6-alpha.1)
 
+  packages/approvals-core:
+    devDependencies:
+      '@deepseek-ai/cordis':
+        specifier: 4.0.5-alpha.1
+        version: 4.0.5-alpha.1(@deepseek-ai/cordis-plugin-include@1.0.10-alpha.1)(@deepseek-ai/cordis-plugin-loader@1.0.6-alpha.1)
+      '@tsuuanmi/system-artifacts':
+        specifier: workspace:*
+        version: link:../plugins/artifacts
+      '@tsuuanmi/system-libs':
+        specifier: workspace:*
+        version: link:../libs
+      '@tsuuanmi/system-store':
+        specifier: workspace:*
+        version: link:../plugins/store
+
+  packages/board-core:
+    dependencies:
+      '@tsuuanmi/system-approvals-core':
+        specifier: workspace:*
+        version: link:../approvals-core
+    devDependencies:
+      '@deepseek-ai/cordis':
+        specifier: 4.0.5-alpha.1
+        version: 4.0.5-alpha.1(@deepseek-ai/cordis-plugin-include@1.0.10-alpha.1)(@deepseek-ai/cordis-plugin-loader@1.0.6-alpha.1)
+      '@tsuuanmi/system-artifacts':
+        specifier: workspace:*
+        version: link:../plugins/artifacts
+      '@tsuuanmi/system-libs':
+        specifier: workspace:*
+        version: link:../libs
+      '@tsuuanmi/system-store':
+        specifier: workspace:*
+        version: link:../plugins/store
+
   packages/cli:
     dependencies:
       '@deepseek-ai/dsh':
@@ -1214,6 +1248,21 @@ importers:
       '@deepseek-ai/cordis':
         specifier: 4.0.5-alpha.1
         version: 4.0.5-alpha.1(@deepseek-ai/cordis-plugin-include@1.0.10-alpha.1)(@deepseek-ai/cordis-plugin-loader@1.0.6-alpha.1)
+
+  packages/resources-core:
+    devDependencies:
+      '@deepseek-ai/cordis':
+        specifier: 4.0.5-alpha.1
+        version: 4.0.5-alpha.1(@deepseek-ai/cordis-plugin-include@1.0.10-alpha.1)(@deepseek-ai/cordis-plugin-loader@1.0.6-alpha.1)
+      '@tsuuanmi/system-artifacts':
+        specifier: workspace:*
+        version: link:../plugins/artifacts
+      '@tsuuanmi/system-libs':
+        specifier: workspace:*
+        version: link:../libs
+      '@tsuuanmi/system-store':
+        specifier: workspace:*
+        version: link:../plugins/store
 
   packages/system-bundle:
     dependencies:

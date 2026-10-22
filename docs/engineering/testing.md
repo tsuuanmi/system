@@ -23,6 +23,18 @@ package's `conformance/` directory. Each provider's tests call the suite with a
 `boot` function, and the test fakes run the same suites. See the
 [seam table](../architecture/plugin-model.md#seam-definitions-and-conformance).
 
+Suites written since [ADR-0037](../decisions/adr/0037-schema-and-protocol-first.md) use the
+[conformance runner](../../packages/libs/conformance/runner.ts), after
+`@modelcontextprotocol/conformance`:
+
+- a suite (`defineSuite`) names its seam and contract version, and lists scenarios with stable
+  ids (`<seam>.<what>`, never reused), each applying from one contract version on;
+- a provider's test (`runSuite`) pins the contract version it implements and runs every scenario
+  that applies to it; another major, or a newer minor than the suite knows, is refused;
+- known failures are a baseline, each with its reason. A baselined scenario must still fail:
+  once it passes, the run fails until the entry is removed. A baseline never hides a new
+  failure.
+
 ## Conventions adopted from DSH
 
 - **Real plugins over mocks.** Plugin tests compose the real plugins they inject

@@ -55,10 +55,13 @@ export const LAYER_OF: Record<string, Layer> = {
   'models': 'capabilities',
   // routing
   'workers-core': 'routing',
+  'approvals-core': 'routing',
+  'resources-core': 'routing',
   'workers': 'routing',
   'egress': 'routing',
   // orchestration
   'workflow': 'orchestration',
+  'board-core': 'orchestration',
   'worker-sessions': 'orchestration',
   'profile-software-development': 'orchestration',
   'profile-scientific-research': 'orchestration',

@@ -23,11 +23,14 @@ its types is not listed).
 | [gateway-turns](../../packages/gateway-turns/README.md) | gateways | — | — | — | `gateway-core`, `libs` |
 | [mcp-server](../../packages/plugins/mcp-server/README.md) | gateways | `mcp` | `mcp-server` | `webServer`, `accounts` (optional), `artifacts` (optional), `credentials` (optional), `eventLog` (optional), `providers` (optional), `store` (optional), `workers` (optional) | `gateway-core`, `libs` |
 | [web-ui](../../packages/plugins/web-ui/README.md) | gateways | — | `web-ui` | `webServer`, `workflow` | `gateway-core`, `libs` |
+| [board-core](../../packages/board-core/README.md) | orchestration | defines `board` | — | — | `approvals-core` |
 | [profile-scientific-research](../../packages/plugins/profile-scientific-research/README.md) | orchestration | — | `profile-scientific-research` | `workflow`, `workers`, `artifacts`, `eventLog` | `libs` |
 | [profile-software-development](../../packages/plugins/profile-software-development/README.md) | orchestration | — | `profile-software-development` | `workflow` | — |
 | [worker-sessions](../../packages/plugins/worker-sessions/README.md) | orchestration | `workerSessions` | `worker-sessions` | `store`, `artifacts`, `mcp` (optional) | `gateway-core`, `libs` |
 | [workflow](../../packages/plugins/workflow/README.md) | orchestration | `workflow` | `workflow` | `store`, `artifacts`, `eventLog`, `leases`, `egress`, `workers`, `workerSessions`, `mcp` (optional) | `gateway-core`, `leases`, `libs`, `provider-core`, `worker-sessions`, `workers-core` |
+| [approvals-core](../../packages/approvals-core/README.md) | routing | defines `approvals` | — | — | — |
 | [egress](../../packages/plugins/egress/README.md) | routing | `egress` | `egress` | `artifacts` | `libs`, `provider-core` |
+| [resources-core](../../packages/resources-core/README.md) | routing | defines `resources` | — | — | — |
 | [workers](../../packages/plugins/workers/README.md) | routing | `workers` | `workers` | `artifacts` | `libs`, `workers-core` |
 | [workers-core](../../packages/workers-core/README.md) | routing | defines `workers` | — | — | — |
 | [agent-runtime-core](../../packages/agent-runtime-core/README.md) | capabilities | defines `agentRuntimes` | — | — | — |
@@ -235,10 +238,12 @@ flowchart TB
     web_ui["web-ui"]
   end
   subgraph orchestration ["orchestration"]
+    board_core["board-core<br/>defines board"]
     worker_sessions["worker-sessions<br/>ctx.workerSessions"]
     workflow["workflow<br/>ctx.workflow"]
   end
   subgraph routing ["routing"]
+    approvals_core["approvals-core<br/>defines approvals"]
     egress["egress<br/>ctx.egress"]
     workers["workers<br/>ctx.workers"]
     workers_core["workers-core<br/>defines workers"]
@@ -278,6 +283,7 @@ flowchart TB
   agent_workers --> leases
   agent_workers --> provider_core
   agent_workers --> workers_core
+  board_core --> approvals_core
   browser_patchright --> provider_core
   cli --> browser_patchright
   cli --> system_bundle

@@ -18,6 +18,9 @@ verified live.
 | [workflow-engine.md](workflow-engine.md) | DAG, durable nodes, graph growth, remediation, exact-subject gates, recovery, lineage | orchestration |
 | [artifacts.md](artifacts.md) | artifact envelope, kinds, decision records, lineage, explain | kernel, orchestration |
 | [routing.md](routing.md) | capability vocabulary, admission, data locality, intelligence tiers, quota-aware deterministic routing | routing |
+| [board.md](board.md) | projects with charters, board tasks across runs, their states, leases, and fail-closed waits | orchestration (work state machine) |
+| [approvals.md](approvals.md) | the autonomy policy and the one batched approval queue; expiry denies | routing (gate) |
+| [resources.md](resources.md) | configured pools, limit readings, reservations before a run, deduplicated usage after it | routing (resource ledger) |
 | [sessions-and-messaging.md](sessions-and-messaging.md) | Worker sessions (SessionId), direct peer messaging, long-running mechanics, A2A alignment | orchestration |
 | [teams.md](teams.md) | the `team` option on a workflow node: Model A members, independent proposals, sealed ballots, tally, bounded debate, tie votes | orchestration |
 | [agent-runtimes.md](agent-runtimes.md) | Claude Code, Codex, ACP agents as Workers | capabilities |
