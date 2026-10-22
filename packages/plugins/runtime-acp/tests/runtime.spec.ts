@@ -42,7 +42,7 @@ describe('acp: the client side enforces the policy', () => {
 
   it('probes by the protocol handshake, and offers read-only only to an agent the operator vouches for', async () => {
     expect(await runtime().probe()).toEqual({
-      available: true, detail: 'ACP agent scripted 1.0.0 (protocol 1); host state hidden', version: '1.0.0', sandboxes: ['read-only'], resume: true, executes: false, readsConfined: true,
+      available: true, detail: 'ACP agent scripted 1.0.0 (protocol 1); host state hidden', version: '1.0.0', sandboxes: ['read-only'], resume: true, executes: false, readsConfined: true, gatesToolCalls: false,
     })
     // An agent can act on its own without asking; unvouched, it is never trusted with a policy.
     expect(await runtime(false).probe()).toMatchObject({ available: true, sandboxes: [] })

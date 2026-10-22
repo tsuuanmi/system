@@ -34,7 +34,7 @@ class ScriptedAgent implements AgentRuntimeProvider {
   readonly kind = 'scripted'
   readonly runs: RunSpec[] = []
   constructor(private readonly options: {
-    sandboxes?: SandboxMode[]; resume?: boolean; available?: boolean; holdMs?: number; fail?: Error; executes?: boolean; readsConfined?: boolean; act?: (spec: RunSpec) => string | undefined
+    sandboxes?: SandboxMode[]; resume?: boolean; available?: boolean; holdMs?: number; fail?: Error; executes?: boolean; readsConfined?: boolean; gatesToolCalls?: boolean; act?: (spec: RunSpec) => string | undefined
     /** What each run reports it consumed. */
     metering?: RunMetering
   } = {}) {}
@@ -42,6 +42,7 @@ class ScriptedAgent implements AgentRuntimeProvider {
     return {
       available: this.options.available ?? true, detail: 'scripted 1.0', version: '1.0', sandboxes: this.options.sandboxes ?? ['read-only'],
       resume: this.options.resume ?? true, executes: this.options.executes ?? false, readsConfined: this.options.readsConfined ?? true,
+      gatesToolCalls: this.options.gatesToolCalls ?? true,
     }
   }
   async run(spec: RunSpec, signal: AbortSignal, onHandle?: (handle: string) => void) {
@@ -137,6 +138,11 @@ describe('ctx.workers source `agents`: agent runtimes as Workers', () => {
     expect((await ctx.workers.list())[0]).toMatchObject({ state: 'unavailable', capabilities: [] })
   })
 
+  it('never admits a Worker whose runtime cannot ask the run\'s gate before each tool call (docs/design/approvals.md)', async () => {
+    const { ctx } = await boot(new ScriptedAgent({ gatesToolCalls: false }), { workers: [worker()] })
+    expect((await ctx.workers.list())[0]).toMatchObject({ state: 'unavailable', capabilities: [] })
+  })
+
   it('checks the proof again before the agent starts: a run admitted while confined never starts once it is not (ADR-0024)', async () => {
     const options = { readsConfined: true }
     const agent = new ScriptedAgent(options)
@@ -169,7 +175,8 @@ describe('ctx.workers source `agents`: agent runtimes as Workers', () => {
     expect(source.start(start).id).toBe(started.id)
     const done = await source.wait(started.id, 10_000)
     expect(done).toMatchObject({ status: 'completed', submitted: true })
-    expect(agent.runs).toEqual([{ prompt: 'look at it', workspace: WORKSPACE, sandbox: 'read-only', tools: ['Read', 'Grep'], model: 'model-x' }])
+    // Every run carries its gate, asked before each tool call (./gate.spec.ts).
+    expect(agent.runs).toEqual([{ prompt: 'look at it', workspace: WORKSPACE, sandbox: 'read-only', tools: ['Read', 'Grep'], model: 'model-x', toolGate: expect.any(Function) }])
     const result = ctx.artifacts.get(done.result!)!
     expect(result).toMatchObject({ kind: 'report', bodySchema: 'agent-result@1.1', classification: 'operator-shared' })
     expect(result.body).toMatchObject({ worker: 'agent:reviewer', runtime: 'scripted', sandbox: 'read-only', workspace: WORKSPACE, text: 'echo: look at it', nativeHandle: 'h-1' })

@@ -6,7 +6,7 @@
  * - every permission request is rejected;
  * - file reads are served inside the workspace only (symlinks resolved); no write and no
  *   terminal capability is advertised; no MCP server is passed;
- * - what ACP cannot express exactly (a tool list, a model, a turn limit) is refused;
+ * - what ACP cannot express exactly (a tool list, a model, a turn limit, a tool gate) is refused;
  * - the agent starts without the daemon's credentials: only the variables the operator forwards
  *   by name (`forwardEnv`) or sets (`env`) reach it (INV-8);
  * - an aborted run cancels the prompt, then ends the agent: SIGTERM, then SIGKILL. Under the
@@ -90,11 +90,13 @@ export class AcpAgentRuntime implements AgentRuntimeProvider {
         resume: init.agentCapabilities?.loadSession === true,
         executes: false,
         readsConfined: reads.confined,
+        // An agent asks the client only for what it chooses to: not every tool call reaches a gate.
+        gatesToolCalls: false,
       }
     } catch (error) {
       return {
         available: false, detail: `${this.kind}: ${(error as Error).message.slice(0, 160)}${session.stderr() ? ` (${session.stderr().slice(0, 120)})` : ''}`,
-        sandboxes: [], resume: false, executes: false, readsConfined: false,
+        sandboxes: [], resume: false, executes: false, readsConfined: false, gatesToolCalls: false,
       }
     } finally {
       session.close()
@@ -105,7 +107,7 @@ export class AcpAgentRuntime implements AgentRuntimeProvider {
     if (!isAbsolute(spec.workspace)) throw new ProviderError('config_error', `${this.kind}: the workspace must be an absolute path`)
     if (spec.sandbox !== 'read-only') throw new ProviderError('config_error', `${this.kind}: only read-only is offered; the client cannot confine an agent's own writes`)
     if (!this.agent.honoursPermissions) throw new ProviderError('config_error', `${this.kind}: no policy can be enforced on an agent the operator has not vouched for (honoursPermissions)`)
-    for (const [field, value] of [['a tool list', spec.tools?.length], ['a model', spec.model], ['a turn limit', spec.maxTurns]] as const) {
+    for (const [field, value] of [['a tool list', spec.tools?.length], ['a model', spec.model], ['a turn limit', spec.maxTurns], ['a tool gate', spec.toolGate]] as const) {
       if (value) throw new ProviderError('config_error', `${this.kind}: ACP cannot express ${field}; refusing instead of ignoring it`)
     }
     if (!this.reads.confine) throw new ProviderError('config_error', `${this.kind}: no read confinement is configured; refusing to run the agent with the host state readable (ADR-0024)`)

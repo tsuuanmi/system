@@ -23,7 +23,12 @@ operator's installed `codex` through the official Codex TypeScript SDK.
     refused. A `-c mcp_servers={}` override would not clear them, because Codex
     merges its configuration, hence the separate home;
   - Codex has no tool allow-list and no turn limit, so a configured `tools` or
-    `maxTurns` is refused, not ignored.
+    `maxTurns` is refused, not ignored. It runs its tools without asking first
+    (approvals `never`), so a run's tool gate is refused too: the probe reports
+    `gatesToolCalls: false`, and the `agents` source admits none of its Workers
+    ([tool gate](../../../docs/design/agent-runtimes.md#tool-gate)). That is
+    why this row stays off in the bundle
+    ([roadmap B5](../../../docs/proposals/roadmap.md)).
 - **Reads are confined** ([ADR-0024](../../../docs/decisions/adr/0024-agent-workers-confined-for-reads.md)). Codex's own
   sandbox confines writes only, so Codex starts under bubblewrap with the
   `ctx.agentRuntimes` confinement: the DSH home is hidden, the Worker home is

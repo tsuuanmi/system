@@ -24,10 +24,10 @@ import Workflow from '@tsuuanmi/system-workflow'
 const [dir, workspace, mode, arg] = process.argv.slice(2)
 const report = (value) => void process.stdout.write(`@@ ${JSON.stringify(value)}\n`)
 
-/** A scripted agent: records each start, then takes 60 s unless aborted. */
+/** A scripted agent: records each start, then takes 60 s unless aborted. It makes no tool calls, so it asks the run's tool gate before every one trivially. */
 const scripted = {
   kind: 'scripted',
-  probe: async () => ({ available: true, detail: 'scripted', sandboxes: ['read-only'], resume: false, executes: false, readsConfined: true }),
+  probe: async () => ({ available: true, detail: 'scripted', sandboxes: ['read-only'], resume: false, executes: false, readsConfined: true, gatesToolCalls: true }),
   run: async (spec, signal) => {
     appendFileSync(join(dir, 'agent-started'), `${spec.prompt.length}\n`)
     await new Promise((resolve, reject) => {

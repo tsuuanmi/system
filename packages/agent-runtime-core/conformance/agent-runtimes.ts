@@ -14,7 +14,7 @@ import type { AgentRuntimeProvider, RunMetering, TokenUsage } from '../src/index
 
 const provider = (kind: string): AgentRuntimeProvider => ({
   kind,
-  probe: async () => ({ available: true, detail: 'test', sandboxes: ['read-only'], resume: false, executes: false, readsConfined: true }),
+  probe: async () => ({ available: true, detail: 'test', sandboxes: ['read-only'], resume: false, executes: false, readsConfined: true, gatesToolCalls: true }),
   run: async () => ({ text: '' }),
 })
 
@@ -118,6 +118,20 @@ export function agentRuntimeProviderConformance(name: string, make: () => AgentR
         await expect(runtime.run({ prompt: 'x', workspace, sandbox }, new AbortController().signal)).rejects.toMatchObject({ kind: 'config_error' })
       }
       await expect(runtime.run({ prompt: 'x', workspace: 'relative/path', sandbox: 'read-only' }, new AbortController().signal)).rejects.toMatchObject({ kind: 'config_error' })
+    })
+
+    it('refuses a run with a tool gate it cannot ask before every tool call, before running anything (never ignores it)', async () => {
+      const runtime = make()
+      const evidence = await runtime.probe()
+      expect(typeof evidence.gatesToolCalls).toBe('boolean')
+      if (evidence.gatesToolCalls) return
+      const asked: string[] = []
+      const toolGate = async (call: { tool: string }) => {
+        asked.push(call.tool)
+        return { decision: 'deny' as const, reason: 'test' }
+      }
+      await expect(runtime.run({ prompt: 'x', workspace, sandbox: 'read-only', toolGate }, new AbortController().signal)).rejects.toMatchObject({ kind: 'config_error' })
+      expect(asked).toEqual([])
     })
 
     it('stops when aborted and reports it as aborted', async () => {

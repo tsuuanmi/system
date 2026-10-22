@@ -58,7 +58,7 @@ agentRuntimeProviderConformance('codex-sdk', () => runtime())
 describe('codex-sdk runtime (REQ-WRK-5, REQ-WRK-6)', () => {
   it('probes the installed codex: both sandboxes, resumable, and able to run confined commands', async () => {
     expect(await runtime().probe()).toMatchObject({
-      available: true, detail: 'Codex 0.162.1; host state hidden by /usr/bin/bwrap', sandboxes: ['read-only', 'workspace-write'], resume: true, executes: true, readsConfined: true,
+      available: true, detail: 'Codex 0.162.1; host state hidden by /usr/bin/bwrap', sandboxes: ['read-only', 'workspace-write'], resume: true, executes: true, readsConfined: true, gatesToolCalls: false,
     })
     expect(await new CodexRuntime({ findExecutable: () => undefined }).probe()).toMatchObject({ available: false, sandboxes: [] })
   })
