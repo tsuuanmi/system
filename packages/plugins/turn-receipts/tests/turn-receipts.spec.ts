@@ -93,6 +93,27 @@ describe('ctx.turnReceipts', () => {
     expect(ctx.turnReceipts.read(id)?.reconciliations).toEqual([decision])
   })
 
+  it('says why each rejected outcome lost, from the rule and the snapshot (INV-13)', async () => {
+    const ctx = await boot()
+    ctx.turnReceipts.submit(submission)
+    const reasons = (decision: string): Record<string, string[]> => Object.fromEntries((ctx.artifacts.get(decision)?.body as { candidates: Array<{ option: string; reasons: string[] }> }).candidates.map((c) => [c.option, c.reasons]))
+    // The page shows only the boundary, and the prompt as its last user turn: resending would duplicate it.
+    const shown = ctx.turnReceipts.reconcile(id, { text: 'old response', running: false, lastPrompt: 'first prompt' }, { prompt: 'first prompt' })
+    expect(shown.outcome).toBe('AMBIGUOUS')
+    expect(reasons(shown.decision)).toEqual({
+      WAIT: ['not WAIT: the provider is not generating'],
+      RECOVER: ['not RECOVER: the page shows only the response this turn followed'],
+      RESUBMIT: ['not RESUBMIT: the page shows the prompt as its last user turn'],
+      AMBIGUOUS: ['the page shows the prompt as the last user turn, without an answer yet; resending would duplicate it'],
+    })
+    const recovered = ctx.turnReceipts.reconcile(id, { text: 'late answer', running: false })
+    expect(recovered.outcome).toBe('RECOVER')
+    expect(reasons(recovered.decision)).toMatchObject({
+      RESUBMIT: ['not RESUBMIT: a new response follows the boundary'],
+      AMBIGUOUS: ['not AMBIGUOUS: a new response follows the boundary'],
+    })
+  })
+
   it('records waiting once: a repeated WAIT reuses its decision, and a change of outcome is recorded (INV-9)', async () => {
     const ctx = await boot()
     ctx.turnReceipts.submit(submission)

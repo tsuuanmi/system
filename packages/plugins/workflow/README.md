@@ -376,8 +376,8 @@ second execution path (INV-1).
   - graph growth only from a valid plan; a gate opened only by an approval of its exact plan,
     and closed by rule after `gateTimeoutHours`;
   - `drain` and `resume`;
-  - the decision a refused planner and a blocked gate name (both baselined: neither names one
-    yet).
+  - the decision a refused planner names (its `graph-growth` refusal), and the `gate` decision a
+    blocked gate records and names (what it waits for, until when).
 - **Injects:** `store`, `artifacts`, `eventLog`, `leases`, `egress`, `workers`, `workerSessions`;
   `mcp` is optional.
 

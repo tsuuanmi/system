@@ -52,8 +52,8 @@ export function subjectGate(e: Engine, run: RunRow, node: NodeRow, result: Artif
     question: `Does the review at node ${node.node_id} of run ${run.run_id} bind to the current subject ${expected}?`,
     inputs: [result, ...(assessment ? [assessment] : [])],
     candidates: [
-      { option: 'pass', selected: !reason, reasons: reason ? [] : [`the assessment names ${expected}, and the working tree is still it (${parsed.ok ? parsed.assessment.verdict : ''})`] },
-      { option: 'fail', selected: !!reason, reasons: reason ? [reason] : [] },
+      { option: 'pass', selected: !reason, reasons: reason ? [`not pass: ${reason}`] : [`the assessment names ${expected}, and the working tree is still it (${parsed.ok ? parsed.assessment.verdict : ''})`] },
+      { option: 'fail', selected: !!reason, reasons: reason ? [reason] : [`not fail: the review parses, names ${expected}, and the working tree has not changed since`] },
     ],
     decider: { type: 'policy', id: 'workflow.exact-subject', version: '1' },
     outcome: { option: reason ? 'fail' : 'pass', detail: { subject: expected, ...(assessment ? { assessment } : {}) } },
@@ -82,8 +82,8 @@ export function remediate(e: Engine, run: RunRow, node: NodeRow, spec: ResolvedN
     question: `Does run ${run.run_id} remediate the blocking findings of review ${node.node_id}?`,
     inputs: [],
     candidates: [
-      { option: 'append', selected: !why, reasons: why ? [] : [`${blocking.length} blocking finding(s) on ${subject}; review cycle ${cycle + 1} of ${max}`] },
-      { option: 'refuse', selected: !!why, reasons: why ? [why] : [] },
+      { option: 'append', selected: !why, reasons: why ? [`not append: ${why}`] : [`${blocking.length} blocking finding(s) on ${subject}; review cycle ${cycle + 1} of ${max}`] },
+      { option: 'refuse', selected: !!why, reasons: why ? [why] : [`not refuse: a writing step produced the change, and review cycle ${cycle} is below the bound ${max}`] },
     ],
     decider: { type: 'policy', id: 'workflow.remediation', version: '1' },
     outcome: { option: why ? 'refuse' : 'append' },

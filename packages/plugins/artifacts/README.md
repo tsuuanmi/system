@@ -6,7 +6,7 @@ records ([design](../../../docs/design/artifacts.md),
 
 - **Owns:** `put` (id computed here, schema-validated, deduplicated, classification
   never below the strictest input), `recordDecision` (enforces that the selected
-  candidate equals the outcome), `get`, `list`, `read` (the operator's bounded
+  candidate equals the outcome and that every candidate gives a reason), `get`, `list`, `read` (the operator's bounded
   read of one artifact, [reading](../../../docs/design/artifacts.md#reading)), `explain` (a "why" walk over
   inputs, bounded by depth and by the number of artifacts visited; a collected
   input shows as `expired`), and `collect`: retention's sweep of the artifacts
@@ -37,6 +37,7 @@ records ([design](../../../docs/design/artifacts.md),
   - a decision needs exactly one selected candidate equal to its outcome (a
     model decision is never deterministic; a later minor's type needs that
     minor), and is `operator-shared` by default;
+  - every candidate of a decision, rejected or selected, gives a reason (INV-13);
   - a decision's prose is clamped to its bounds on whole characters;
   - immutability: nothing changes a stored artifact; a correction supersedes it;
   - `list` filters by kind, decision type, run, and node, within a limit;
@@ -45,6 +46,5 @@ records ([design](../../../docs/design/artifacts.md),
   - `explain` walks inputs once each, within `explainDepth` and `explainBudget`;
   - `collect` takes only what no root reaches, past the grace period, of no
     remaining run; a collected artifact still named reads as `expired`;
-  - an artifact a stored artifact references through its inputs or lineage is
-    never collected (baselined: the inputs of an artifact kept only by its run
-    or by the grace period are collected today).
+  - an artifact that a kept artifact references through its inputs or lineage is
+    never collected: an artifact in the grace period or of a live run is a root.

@@ -7,7 +7,7 @@ Work state machine **seam definition**
 
 | Seam | Definition | Provider |
 |---|---|---|
-| `ctx.board` | abstract `Board` with `charter(input, at?)`, `project`, `projects`, `pause`, `resume`, `close`, `propose(input, at?)`, `task`, `tasks`, `claim`, `renew`, `start`, `submit`, `accept`, `block`, `answer`, `cancel`, `sweep(at)`; `Project`, `Charter`, `Milestone`, `BoardTask`, `CharterInput`, `TaskInput`, `Claim`, `BoardError`; `TERMINAL`, `BOARD_CONTRACT` (1.0) | the fake `FakeBoard` only (B4 adds the real one) |
+| `ctx.board` | abstract `Board` with `charter(input, at?)`, `project`, `projects`, `pause`, `resume`, `close`, `propose(input, at?)`, `task`, `tasks`, `claim`, `renew`, `start`, `submit`, `accept`, `reconcileRun`, `block`, `answer`, `cancel`, `sweep(at)`; `Project`, `Charter`, `Milestone`, `BoardTask`, `CharterInput`, `TaskInput`, `Claim`, `RunOutcome`, `BoardError`; `TERMINAL`, `BOARD_CONTRACT` (1.0) | the fake `FakeBoard` only (B4 adds the real one) |
 
 - The types mirror `project@1.0` and `board-task@1.0`; the schemas in `schemas/` are canonical.
 - Depends on Cordis and the vocabulary of `@tsuuanmi/system-approvals-core`: the board asks
@@ -20,8 +20,9 @@ Work state machine **seam definition**
   - a task ready only once its dependencies are done and the policy allows it; asked about,
     rejected into a wait that expires, or forbidden;
   - one holder at a time, every write fenced by its generation; a run recorded before it starts,
-    never started again when its holder is lost;
-  - review to done only by an accepting `acceptance` decision; bounded attempts;
+    never started again when its holder is lost, its outcome taken from the run's owner;
+  - review to done only by an accepting `acceptance` decision; bounded attempts; review bounded by
+    the reviewer's lease;
   - blocking and answering; cancelling, with the approval withdrawn and dependents cancelled;
     validation of proposals; pausing and closing.
 

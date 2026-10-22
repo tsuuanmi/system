@@ -46,6 +46,11 @@ guesses.
 - Exactly one candidate is `selected`, and it equals `outcome.option`. The schema
   checks that only one candidate is selected. The store checks that it equals
   the outcome.
+- Every candidate carries at least one non-blank reason: a rejected one says why
+  it lost, the selected one why it won
+  ([INV-13](../architecture/invariants.md#inv-13-every-decision-is-an-artifact)).
+  The schema allows an empty `reasons`, so decisions stored before the rule stay
+  readable; the store refuses a new decision with a candidate that gives none.
 - `decider.version` changes whenever the policy's behavior changes. `hash` is the
   hash of the effective policy configuration.
 - When `decider.type` is `model`, `deterministic` must be `false`, and
@@ -114,8 +119,11 @@ guesses.
 
 - `nodeId` is deterministic. Unrolled loops append an ordinal, for example
   `review:cycle:2` ([ADR-0012](../decisions/adr/0012-dag-execution-model.md)).
-- Every state transition updates `lastDecision` to the decision artifact that
-  caused it ([INV-13](../architecture/invariants.md#inv-13-every-decision-is-an-artifact)).
+- Every state transition a decision causes updates `lastDecision` to that decision artifact
+  ([INV-13](../architecture/invariants.md#inv-13-every-decision-is-an-artifact)): a refused plan
+  names its `graph-growth` refusal, and a gate that blocks names its `gate` decision (what it
+  waits for, until when). The promotion `WAITING → READY` decides nothing (it follows from its
+  dependencies' completion decisions) and records none.
 - `workflow-node@1.1` adds the state `RETIRED`: a node a re-plan took out of the
   graph. It stays as history, never runs again, and its `lastDecision` is the
   `graph-growth` decision that retired it. Only a retired node is written as
@@ -140,20 +148,24 @@ guesses.
 
 ### `worker-session`
 
-- `sessionId` never changes for the session's lifetime. `binding.nativeHandle`
-  and `binding.generation` change on re-activation. A write from an activation
-  with a stale generation is rejected.
+- `sessionId` never changes for the session's lifetime. `binding.generation`
+  advances on every activation (and on a compaction's rebind), and `binding.nativeHandle` may
+  change with it. The activation's settle presents its generation; a stale one is refused
+  and changes nothing.
 - `mailboxSeq` is the last delivered inbound sequence number. Redelivery after a
   crash resumes at `mailboxSeq + 1`.
-- `policy.writes` present means this session holds write authority over that
-  subject (INV-15). At most one open session per subject may hold it.
+- `policy.writes` names the subject the session writes under a board task's authority. Write
+  authority itself is the board's: at most one open task writes a subject
+  ([board](../design/board.md), INV-15); a session never claims it on its own.
 
 ### `message`
 
 - `messageId` is unique per sender. Receivers deduplicate on `(from, messageId)`.
 - `body` is untrusted data for the receiver, never authority (INV-6).
   Approvals travel only as `approval` artifacts.
-- `refs` must pass the egress check for the receiver's locality (INV-12).
+- The message artifact is at least as strict as its `refs` (they are its inputs), and the
+  receiver's turn carries the strictest classification of the messages it delivers, so the
+  turn's egress check refuses local-private refs to a remote Worker (INV-12).
 - It maps to A2A `Message`: `messageId`, `referenceTaskIds` ≈ `refs`/`inReplyTo`,
   and `parts` ≈ `body` plus refs.
 

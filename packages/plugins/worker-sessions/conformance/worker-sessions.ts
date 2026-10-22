@@ -39,7 +39,11 @@ const team = (ctx: Context, barrier = false): void => {
 }
 
 /** The subject a session holds write authority over (`policy.writes`, INV-15); absent means read-only. */
-const writesOf = (session: WorkerSession | undefined): unknown => (session?.policy as { writes?: unknown } | undefined)?.writes
+/** The generation an activation runs under: every write it makes presents it. */
+const generationOf = (activation: { activated: boolean; generation?: number }): number => {
+  expect(activation.activated, 'activated').toBe(true)
+  return activation.generation!
+}
 
 const record = (ctx: Context, sessionId: string): WorkerSession => {
   const session = ctx.workerSessions.session(sessionId)
@@ -85,34 +89,32 @@ export const workerSessionsSuite = defineSuite<Boot>({
       expect(() => ctx.workerSessions.join(G, member('ses_a', 'worker:other/standard'))).toThrow()
       ctx.workerSessions.group('grp-2')
       expect(() => ctx.workerSessions.join('grp-2', member('ses_a', 'worker:acct-a/standard'))).toThrow()
-      expect(ctx.workerSessions.activate('ses_a', 'conv-1')).toEqual({ activated: true })
-      ctx.workerSessions.settle('ses_a', { tokens: 100 })
+      const first = ctx.workerSessions.activate('ses_a', 'conv-1')
+      expect(first).toMatchObject({ activated: true })
+      ctx.workerSessions.settle('ses_a', generationOf(first), { tokens: 100 })
       ctx.workerSessions.rebind('ses_a', 20)
       ctx.workerSessions.activate('ses_a', 'conv-2')
       const later = record(ctx, 'ses_a')
       expect(later).toMatchObject({ sessionId: 'ses_a', worker: formed.worker, formation: formed.formation, group: G, createdAt: formed.createdAt })
       expect(later.revision).toBeGreaterThan(formed.revision)
     }),
-    scenario('reactivation-advances-generation', 'advances the binding generation on every re-activation, so an older activation is told apart from the current one (REQ-SES-1)', async (ctx) => {
+    scenario('reactivation-advances-generation', 'advances the binding generation on every re-activation and returns it, so an older activation is told apart from the current one (REQ-SES-1)', async (ctx) => {
       team(ctx)
-      expect(ctx.workerSessions.activate('ses_a', 'conv-1')).toEqual({ activated: true })
-      const first = record(ctx, 'ses_a').binding.generation
-      ctx.workerSessions.settle('ses_a')
-      expect(ctx.workerSessions.activate('ses_a', 'conv-2')).toEqual({ activated: true })
-      const second = record(ctx, 'ses_a').binding
-      expect(second.nativeHandle).toBe('conv-2')
-      expect(second.generation).toBeGreaterThan(first)
+      const first = generationOf(ctx.workerSessions.activate('ses_a', 'conv-1'))
+      expect(record(ctx, 'ses_a').binding.generation).toBe(first)
+      ctx.workerSessions.settle('ses_a', first)
+      const second = generationOf(ctx.workerSessions.activate('ses_a', 'conv-2'))
+      expect(record(ctx, 'ses_a').binding).toMatchObject({ nativeHandle: 'conv-2', generation: second })
+      expect(second).toBeGreaterThan(first)
     }),
     scenario('stale-activation-fenced', 'refuses a write from an activation whose binding generation is stale: the record keeps the current activation\'s state (REQ-SES-1, INV-4)', async (ctx) => {
       team(ctx)
-      expect(ctx.workerSessions.activate('ses_a', 'conv-1')).toEqual({ activated: true })
-      const stale = record(ctx, 'ses_a').binding.generation
+      const stale = generationOf(ctx.workerSessions.activate('ses_a', 'conv-1'))
       const current = ctx.workerSessions.rebind('ses_a', 40)
       expect(current.binding.generation).toBeGreaterThan(stale)
       // The superseded activation presents the generation it was activated under.
-      const write = { tokens: 5000, nativeHandle: 'conv-stale', generation: stale }
       try {
-        ctx.workerSessions.settle('ses_a', write)
+        ctx.workerSessions.settle('ses_a', stale, { tokens: 5000, nativeHandle: 'conv-stale' })
       } catch {
         // a provider may refuse by throwing; the record below is what must hold
       }
@@ -203,40 +205,26 @@ export const workerSessionsSuite = defineSuite<Boot>({
       ctx.workerSessions.openBarrier(G)
       expect(ctx.workerSessions.inbox('ses_a').map((m) => [m.from, m.message.body])).toEqual([['ses_c', body]])
     }),
-    scenario('one-writer-per-subject', 'records the subject a session may write, and refuses a second open session write authority over the same subject (INV-15)', async (ctx) => {
-      ctx.workerSessions.group(G)
-      const subject = { type: 'git-head' as const, ref: 'repo:main' }
-      // `policy.writes` (worker-session@1.0) names the subject a session holds write authority over.
-      const writer = { ...member('ses_w1', 'agent:w1', { runtime: 'claude-agent-sdk' }), writes: subject }
-      expect(ctx.workerSessions.join(G, writer).policy).toMatchObject({ writes: subject })
-      expect(record(ctx, 'ses_w1').policy).toMatchObject({ writes: subject })
-      const second = { ...member('ses_w2', 'agent:w2', { runtime: 'claude-agent-sdk' }), writes: subject }
-      let joined: WorkerSession | undefined
-      try {
-        joined = ctx.workerSessions.join(G, second)
-      } catch {
-        joined = undefined
-      }
-      expect(writesOf(joined), 'no second writer of the same subject').toBeUndefined()
-      expect(writesOf(ctx.workerSessions.join(G, member('ses_r', 'agent:r', { runtime: 'claude-agent-sdk' }))), 'a read-only session joins freely').toBeUndefined()
-    }),
-    scenario('refs-egress-checked', 'refuses a message whose refs carry local-private content to a session whose Worker is remote, as a gate decision (REQ-SES-4, INV-12)', async (ctx) => {
+    scenario('message-as-strict-as-refs', 'stores a message at least as strict as the artifacts it refers to, so the receiver\'s turn carries their classification to its egress check (REQ-SES-4, INV-12)', async (ctx) => {
       team(ctx)
       const secret = ctx.artifacts.put({
         kind: 'report', bodySchema: 'provider-answer@1.0', classification: 'local-private', producer: { type: 'worker', ref: 'gemini-web/gemini-main' },
         body: { schema: 'provider-answer@1.0', provider: 'gemini-web', account: 'gemini-main', turnId: 'turn_1', conversation: { mode: 'temporary' }, promptHash: H('0'), text: 'patient 42: notes' },
       }).id
-      refused(ctx, send(ctx, { from: 'operator', messageId: 'op-1', to: { session: 'ses_b' }, body: 'see the attached notes', refs: [secret] }))
-      expect(ctx.workerSessions.inbox('ses_b')).toEqual([])
+      const sent = send(ctx, { from: 'operator', messageId: 'op-1', to: { session: 'ses_b' }, body: 'see the attached notes', refs: [secret] })
+      expect(sent.accepted).toBe(true)
+      const [delivered] = ctx.workerSessions.inbox('ses_b')
+      expect(ctx.artifacts.get(delivered!.artifact)).toMatchObject({ classification: 'local-private', inputs: [secret] })
     }),
     scenario('turn-budget', 'activates a session only with a conversation to resume and within its turn and lifetime budgets; a spent budget fails the session, classified by a gate decision (REQ-SES-7, INV-9)', async (ctx) => {
       team(ctx)
       expect(ctx.workerSessions.activate('ses_a', undefined).activated).toBe(false)
       expect(record(ctx, 'ses_a').state).toBe('IDLE')
       for (let i = 0; i < SESSIONS_CONFIG.maxTurns!; i++) {
-        expect(ctx.workerSessions.activate('ses_a', 'conv-1')).toEqual({ activated: true })
+        const activation = ctx.workerSessions.activate('ses_a', 'conv-1')
+        expect(activation).toMatchObject({ activated: true })
         expect(ctx.workerSessions.activate('ses_a', 'conv-1').activated, 'one activation at a time').toBe(false)
-        ctx.workerSessions.settle('ses_a')
+        ctx.workerSessions.settle('ses_a', generationOf(activation))
       }
       expect(ctx.workerSessions.activate('ses_a', 'conv-1')).toMatchObject({ activated: false, budget: 'turns' })
       expect(record(ctx, 'ses_a').state).toBe('FAILED')

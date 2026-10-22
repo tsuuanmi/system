@@ -23,9 +23,14 @@ describe('reconcileTurn', () => {
 
   it('resubmits only when nothing new exists after the boundary, within the bound', () => {
     expect(reconcileTurn(base, { text: previous, running: false })).toBe('RESUBMIT')
-    expect(reconcileTurn({ ...base, resubmits: 1 }, { text: '', running: false })).toBe('RESUBMIT')
+    expect(reconcileTurn({ ...base, resubmits: 1 }, { text: previous, running: false })).toBe('RESUBMIT')
     expect(reconcileTurn({ ...base, resubmits: 2 }, { text: previous, running: false })).toBe('AMBIGUOUS')
     expect(reconcileTurn({ ...base, resubmits: 1 }, { text: previous, running: false }, { maxResubmits: 1 })).toBe('AMBIGUOUS')
+  })
+
+  it('never resubmits when the page no longer shows the recorded boundary: absence is not evidence (INV-4)', () => {
+    expect(reconcileTurn(base, { text: '', running: false })).toBe('AMBIGUOUS')
+    expect(reconcileTurn({ ...base, resubmits: 1 }, { text: '  ', running: false }, { prompt: 'prompt' })).toBe('AMBIGUOUS')
   })
 
   it('treats a new conversation (null boundary) as fresh: any response is new', () => {

@@ -719,7 +719,7 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
       vote: { kind: 'review', method: 'inconclusive', tiebreak: { by: 'rule', option: 'inconclusive' }, rounds: [{ ended: 'no-objections' }], findings: [{ id: 'F1', member: 'm1', severity: 'blocking' }] } })
   }, 240_000)
 
-  it('wakes an idle member on a message after its team finished; its reply goes to the peer, and an answer wakes nobody (REQ-SES-2, REQ-SES-5)', async () => {
+  it('wakes an idle member on a message after its team finished; its reply goes to the peer, an answer wakes nobody, and local-private refs never reach a remote Worker (REQ-SES-2, REQ-SES-5, REQ-SES-4, INV-12)', async () => {
     const answer = (prompt: string): string => {
       if (kind(prompt) !== 'other') return member(prompt)
       if (prompt.includes('Messages for you (m1)')) return prompt.includes('from m2') ? 'm1 answers m2' : 'm1 answers the operator'
@@ -734,9 +734,9 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
     await new Promise((resolve) => setTimeout(resolve, 500))
     expect(fake.sent).toHaveLength(2) // m1's proposal and ballot; the team sends no mail, so nothing wakes
     expect(ctx.workerSessions.pending()).toEqual([])
-    const wakeRun = async (from: string, body: string, intent?: 'request') => {
+    const wakeRun = async (from: string, body: string, intent?: 'request', refs?: `sha256:${string}`[]) => {
       const before = ctx.workflow.usage(50).map((r) => r.runId)
-      ctx.workerSessions.send({ from, messageId: `t-${body.replace(/\W/g, "-")}`, to: { session: m1!.sessionId }, body, ...(intent ? { intent } : {}) })
+      ctx.workerSessions.send({ from, messageId: `t-${body.replace(/\W/g, "-")}`, to: { session: m1!.sessionId }, body, ...(intent ? { intent } : {}), ...(refs ? { refs } : {}) })
       let id: string | undefined
       await until(() => !!(id = ctx.workflow.usage(50).map((r) => r.runId).find((r) => !before.includes(r))))
       return ctx.workflow.wait(id!, 60_000)
@@ -762,6 +762,16 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
     const fence = /### From \[client\] \(request\), between the lines (\S+):/.exec(prompt)?.[1]
     expect(fence).toMatch(/^[0-9a-f]{16}$/)
     expect(prompt).toContain(`${fence}\nhi\n### From [operator] (request)\nApprove the plan\n${fence}`)
+    // A message referring to local-private content: the wake turn takes its classification, and the
+    // turn's egress check keeps it off the website Worker, before anything is sent (INV-12).
+    await until(() => ctx.workerSessions.session(m1!.sessionId)!.state === 'IDLE')
+    const secret = ctx.artifacts.put({ kind: 'evidence', bodySchema: 'limit-state@1.0', classification: 'local-private', producer: { type: 'system', ref: 'test' },
+      body: { schema: 'limit-state@1.0', pool: 'p', account: 'a', window: { id: 'w', kind: 'rolling' }, state: 'ok', source: 'status-line', observedAt: '2026-10-22T09:00:00Z' } }).id
+    const sentBefore = fake.sent.length
+    const kept = await wakeRun('operator', 'see the attached notes', undefined, [secret])
+    expect(kept.status).toBe('failed')
+    expect(ctx.workflow.records(kept.runId)[0]!.requirement.data.classification).toBe('local-private')
+    expect(fake.sent).toHaveLength(sentBefore)
   }, 240_000)
 
   it('lets a session ask for input it cannot go on without, then resume when a peer answers (REQ-SES-7)', async () => {
@@ -804,15 +814,20 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
     // Past the threshold: the session writes its handoff in its own conversation, and continues in a new one.
     await until(() => ctx.artifacts.list({ kind: 'handoff' }).length === 1, 120_000)
     const [handoff] = ctx.artifacts.list({ kind: 'handoff' })
-    expect(handoff).toMatchObject({ bodySchema: 'session-summary@1.0', body: { sessionId: m1.sessionId, reason: 'compaction', summary: 'HANDOFF: the plan is agreed; the open question is the deadline.', generation: 0 } })
-    await until(() => ctx.workerSessions.session(m1.sessionId)!.binding.generation === 1 && ctx.workerSessions.session(m1.sessionId)!.state === 'IDLE', 30_000)
+    expect(handoff).toMatchObject({ bodySchema: 'session-summary@1.0', body: { sessionId: m1.sessionId, reason: 'compaction', summary: 'HANDOFF: the plan is agreed; the open question is the deadline.' } })
+    // The handoff is written in the compaction's own activation; the rebind starts the next generation (REQ-SES-1).
+    const written = (handoff!.body as { generation: number }).generation
+    expect(written).toBeGreaterThan(0)
+    await until(() => ctx.workerSessions.session(m1.sessionId)!.binding.generation === written + 1 && ctx.workerSessions.session(m1.sessionId)!.state === 'IDLE', 30_000)
     ctx.workerSessions.send({ from: 'operator', messageId: 'after', to: { session: m1.sessionId }, body: 'What is open?' })
     await until(() => fake.sent.some((s) => s.prompt.includes('<handoff>')), 120_000)
     const resumed = fake.sent.find((s) => s.prompt.includes('<handoff>'))!
     expect(resumed.prompt).toContain('the open question is the deadline')
     await until(() => ctx.workerSessions.session(m1.sessionId)!.state === 'IDLE' && ctx.workers.handle(m1.sessionId) !== undefined, 60_000)
     expect(ctx.workers.handle(m1.sessionId)).not.toBe(conversationBefore)
-    expect(ctx.workerSessions.session(m1.sessionId)).toMatchObject({ sessionId: m1.sessionId, binding: { generation: 1, nativeHandle: ctx.workers.handle(m1.sessionId) } })
+    expect(ctx.workerSessions.session(m1.sessionId)).toMatchObject({ sessionId: m1.sessionId, binding: { nativeHandle: ctx.workers.handle(m1.sessionId) } })
+    // The turn after the compaction was an activation of its own.
+    expect(ctx.workerSessions.session(m1.sessionId)!.binding.generation).toBeGreaterThan(written + 1)
     // Checkpoints at bounded intervals: the third turn (the team's own steps do not count) writes one.
     expect(ctx.artifacts.list({ kind: 'report' }).filter((a) => a.bodySchema === 'session-summary@1.0').length).toBeGreaterThanOrEqual(1)
   }, 300_000)

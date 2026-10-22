@@ -103,6 +103,14 @@ export interface Config {
   compactAtTokens?: number
 }
 
+/** A write from an activation the session has moved past: refused, nothing changed (REQ-SES-1). */
+export class StaleActivation extends Error {
+  constructor(readonly sessionId: string, readonly generation: number, readonly current: number) {
+    super(`session ${sessionId}: activation ${generation} is stale (the binding is at ${current})`)
+    this.name = 'StaleActivation'
+  }
+}
+
 /** A refused activation, classified by the budget it would exceed (REQ-SES-7). */
 export type Refusal = { activated: false; reason: string; budget?: 'turns' | 'lifetime' | 'idle' }
 const now = (): string => new Date().toISOString()
@@ -279,9 +287,10 @@ export class WorkerSessions extends Service {
    * Activate a session for one turn (wake-on-message): from IDLE, or from INPUT_REQUIRED once
    * input arrived. ACTIVE needs the native conversation it resumes. A spent turn, lifetime, or
    * idle budget is a classified failure (REQ-SES-7): the session becomes FAILED and a `gate`
-   * decision names the budget.
+   * decision names the budget. Each activation advances the binding generation, which every
+   * write the activation makes presents ({@link settle}), so a superseded one is fenced (REQ-SES-1).
    */
-  activate(sessionId: string, nativeHandle: string | undefined, now: number = Date.now()): { activated: true } | Refusal {
+  activate(sessionId: string, nativeHandle: string | undefined, now: number = Date.now()): { activated: true; generation: number } | Refusal {
     return this.ctx.store.transaction((db) => {
       const session = this.session(sessionId)
       if (!session) return { activated: false, reason: `no session ${sessionId}` }
@@ -297,7 +306,7 @@ export class WorkerSessions extends Service {
           decisionType: 'gate',
           question: `May session ${sessionId} take another turn?`,
           inputs: [],
-          candidates: [{ option: 'activate', selected: false, reasons: [] }, { option: 'refuse', selected: true, reasons: [exceeded[1]] }],
+          candidates: [{ option: 'activate', selected: false, reasons: [`not activate: its ${exceeded[0]} budget is spent`] }, { option: 'refuse', selected: true, reasons: [exceeded[1]] }],
           decider: { type: 'policy', id: 'sessions.budget', version: '1' },
           outcome: { option: 'refuse', detail: { budget: exceeded[0], turns } },
           deterministic: true,
@@ -306,26 +315,32 @@ export class WorkerSessions extends Service {
         return { activated: false, reason: exceeded[1], budget: exceeded[0] }
       }
       if (!nativeHandle) return { activated: false, reason: `session ${sessionId} has no conversation to resume` }
-      this.update(sessionId, (r) => ({ ...r, state: 'ACTIVE', binding: { ...r.binding, nativeHandle }, usage: { ...r.usage, turns: turns + 1, messagesSent: r.usage?.messagesSent ?? 0 } }))
-      return { activated: true }
+      const next = this.update(sessionId, (r) => ({ ...r, state: 'ACTIVE', binding: { ...r.binding, nativeHandle, generation: r.binding.generation + 1 }, usage: { ...r.usage, turns: turns + 1, messagesSent: r.usage?.messagesSent ?? 0 } }))
+      return { activated: true, generation: next.binding.generation }
     })
   }
 
   /**
    * End an activation: idle again, or INPUT_REQUIRED when the session asked for input it cannot
    * proceed without (REQ-SES-7). The turn's estimated tokens add to the session's context, and the
-   * native handle is the one the turn ran in (a fresh conversation after a compaction).
+   * native handle is the one the turn ran in (a fresh conversation after a compaction). The
+   * activation presents its generation: a superseded one is refused ({@link StaleActivation}) and
+   * changes nothing (REQ-SES-1, INV-4).
    */
-  settle(sessionId: string, turn: { inputRequired?: boolean; tokens?: number; nativeHandle?: string } = {}): WorkerSession {
-    const next = this.update(sessionId, (r) => (r.state === 'ACTIVE'
-      ? {
-        ...r, state: turn.inputRequired ? 'INPUT_REQUIRED' : 'IDLE',
-        binding: { ...r.binding, ...(turn.nativeHandle ? { nativeHandle: turn.nativeHandle } : {}) },
-        usage: { ...r.usage, turns: r.usage?.turns ?? 0, messagesSent: r.usage?.messagesSent ?? 0, estimatedTokens: (r.usage?.estimatedTokens ?? 0) + (turn.tokens ?? 0) },
-      }
-      : r))
-    this.ctx.store.db.prepare('UPDATE worker_sessions SET last_active = ? WHERE session_id = ?').run(now(), sessionId)
-    return next
+  settle(sessionId: string, generation: number, turn: { inputRequired?: boolean; tokens?: number; nativeHandle?: string } = {}): WorkerSession {
+    return this.ctx.store.transaction((db) => {
+      const current = this.session(sessionId)
+      if (current && current.binding.generation !== generation) throw new StaleActivation(sessionId, generation, current.binding.generation)
+      const next = this.update(sessionId, (r) => (r.state === 'ACTIVE'
+        ? {
+          ...r, state: turn.inputRequired ? 'INPUT_REQUIRED' : 'IDLE',
+          binding: { ...r.binding, ...(turn.nativeHandle ? { nativeHandle: turn.nativeHandle } : {}) },
+          usage: { ...r.usage, turns: r.usage?.turns ?? 0, messagesSent: r.usage?.messagesSent ?? 0, estimatedTokens: (r.usage?.estimatedTokens ?? 0) + (turn.tokens ?? 0) },
+        }
+        : r))
+      db.prepare('UPDATE worker_sessions SET last_active = ? WHERE session_id = ?').run(now(), sessionId)
+      return next
+    })
   }
 
   /**
@@ -362,7 +377,7 @@ export class WorkerSessions extends Service {
       decisionType: 'gate',
       question: `May ${message.from} message ${target}?`,
       inputs: [],
-      candidates: [{ option: 'deliver', selected: false, reasons: [] }, { option: 'refuse', selected: true, reasons: [reason] }],
+      candidates: [{ option: 'deliver', selected: false, reasons: [`not deliver: ${reason}`] }, { option: 'refuse', selected: true, reasons: [reason] }],
       decider: { type: 'policy', id: 'sessions.policy', version: '1' },
       outcome: { option: 'refuse', detail: { messageId: message.messageId } },
       deterministic: true,

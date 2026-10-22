@@ -42,4 +42,8 @@ export const MIGRATIONS = [{
   // Workers a node failed over from, unsent (ADR-0034): its next routes leave them out.
   version: 8,
   sql: 'ALTER TABLE workflow_nodes ADD COLUMN excluded TEXT;',
+}, {
+  // The activation a wake runs under (REQ-SES-1): its settle presents it, and a superseded one is fenced.
+  version: 9,
+  sql: 'ALTER TABLE workflow_wakes ADD COLUMN generation INTEGER;',
 }]

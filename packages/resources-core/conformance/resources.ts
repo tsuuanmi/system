@@ -19,8 +19,8 @@ export type Boot = () => Promise<{ ctx: Context; dispose: () => Promise<void> }>
 /** The pools every provider under test is configured with. */
 export const POOLS: readonly PoolConfig[] = [
   { pool: 'max.interactive', account: 'max', kind: 'interactive', windows: [{ id: 'five-hour', kind: 'rolling', seconds: 18000 }, { id: 'seven-day', kind: 'rolling', seconds: 604800 }] },
-  { pool: 'max.programmatic', account: 'max', kind: 'programmatic', windows: [{ id: 'monthly', kind: 'credit' }], unknown: 'unavailable' },
-  { pool: 'key', account: 'api', kind: 'api-key', windows: [{ id: 'minute', kind: 'rate', seconds: 60 }] },
+  { pool: 'max.programmatic', account: 'max', kind: 'programmatic', windows: [{ id: 'monthly', kind: 'credit' }] },
+  { pool: 'key', account: 'api', kind: 'api-key', windows: [{ id: 'minute', kind: 'rate', seconds: 60 }], unknown: 'available' },
 ]
 
 const T0 = new Date('2026-10-22T09:00:00Z')
@@ -67,35 +67,41 @@ export const resourcesSuite = defineSuite<Boot>({
   seam: 'resources',
   contract: '1.0',
   scenarios: [
-    scenario('pools-from-configuration', 'lists every configured pool with its windows, available while nothing says otherwise', async (ctx) => {
+    scenario('pools-from-configuration', 'lists every configured pool with its windows; a window with no reading is unknown, so the pool fails closed unless configured available (INV-2)', async (ctx) => {
       const pools = await ctx.resources.pools({}, T0)
       expect(pools.map((p) => [p.pool, p.account, p.kind, p.windows.map((w) => w.id), p.readings, p.available])).toEqual([
         ['key', 'api', 'api-key', ['minute'], [], true],
-        ['max.interactive', 'max', 'interactive', ['five-hour', 'seven-day'], [], true],
-        ['max.programmatic', 'max', 'programmatic', ['monthly'], [], true],
+        ['max.interactive', 'max', 'interactive', ['five-hour', 'seven-day'], [], false],
+        ['max.programmatic', 'max', 'programmatic', ['monthly'], [], false],
       ])
+      await ctx.resources.observe(reading('max.interactive', 'five-hour'))
+      expect((await poolOf(ctx, 'max.interactive', at(1))).available, 'one window still has no reading').toBe(false)
+      await ctx.resources.observe(reading('max.interactive', 'seven-day'))
+      expect((await poolOf(ctx, 'max.interactive', at(1))).available).toBe(true)
       expect((await ctx.resources.pools({ account: 'api' }, T0)).map((p) => p.pool)).toEqual(['key'])
     }),
     scenario('limit-cools-down', 'makes a pool unavailable while a window is limited, until the later of its cooldown and reset (INV-2)', async (ctx) => {
+      await ctx.resources.observe(reading('max.interactive', 'five-hour'))
       const ref = await ctx.resources.observe(reading('max.interactive', 'seven-day', { state: 'limited', source: 'limit-notice', cooldownUntil: at(60).toISOString(), resetsAt: at(90).toISOString() }))
       expect(ctx.artifacts.get(ref)).toMatchObject({ kind: 'evidence', bodySchema: 'limit-state@1.0' })
       expect(await poolOf(ctx, 'max.interactive', at(1))).toMatchObject({ available: false, until: at(90).toISOString() })
       expect((await poolOf(ctx, 'max.interactive', at(91))).available).toBe(true)
     }),
     scenario('readings-tolerate-gaps', 'takes a reading without its percentage or reset, and keeps the latest reading of a window (an older one never replaces it)', async (ctx) => {
+      await ctx.resources.observe(reading('max.interactive', 'seven-day'))
       await ctx.resources.observe(reading('max.interactive', 'five-hour', { usedPercentage: 20, observedAt: at(10).toISOString() }))
       await ctx.resources.observe(reading('max.interactive', 'five-hour', { usedPercentage: 99, state: 'limited', resetsAt: at(30).toISOString(), observedAt: at(5).toISOString() }))
       const pool = await poolOf(ctx, 'max.interactive', at(11))
-      expect(pool.readings.map((r) => [r.window.id, r.usedPercentage])).toEqual([['five-hour', 20]])
+      expect(pool.readings.map((r) => [r.window.id, r.usedPercentage])).toEqual([['five-hour', 20], ['seven-day', undefined]])
       expect(pool.available).toBe(true)
       await ctx.resources.observe(reading('key', 'minute'))
       expect((await poolOf(ctx, 'key', at(1))).readings).toHaveLength(1)
     }),
-    scenario('unknown-fails-closed', 'leaves a pool configured to fail closed unavailable while a window reads unknown (INV-2)', async (ctx) => {
+    scenario('unknown-fails-closed', 'leaves a pool unavailable while a window reads unknown, unless its configuration makes unknown available (INV-2)', async (ctx) => {
       await ctx.resources.observe(reading('max.programmatic', 'monthly', { state: 'unknown', source: 'runtime-result' }))
       expect((await poolOf(ctx, 'max.programmatic', at(1))).available).toBe(false)
-      await ctx.resources.observe(reading('max.interactive', 'five-hour', { state: 'unknown' }))
-      expect((await poolOf(ctx, 'max.interactive', at(1))).available).toBe(true)
+      await ctx.resources.observe(reading('key', 'minute', { state: 'unknown' }))
+      expect((await poolOf(ctx, 'key', at(1))).available).toBe(true)
     }),
     scenario('unknown-pool-refused', 'refuses a reading or a usage record for a pool not in configuration', async (ctx) => {
       expect(await failureOf(ctx.resources.observe({ ...reading('key', 'minute'), pool: 'nope' }))).toBe('unknown-pool')
@@ -103,6 +109,7 @@ export const resourcesSuite = defineSuite<Boot>({
       expect(await failureOf(ctx.resources.observe({ ...reading('key', 'minute'), window: { id: 'hour', kind: 'rate' } }))).toBe('unknown-pool')
     }),
     scenario('reserve-records-budget', 'reserves before a run and records the budget decision; refuses an unknown or unavailable pool (INV-2, INV-13)', async (ctx) => {
+      await ctx.resources.observe(reading('max.programmatic', 'monthly'))
       const ok = await ctx.resources.reserve({ runId: 'r1', lines: [{ pool: 'max.programmatic', unit: 'usd', amount: 1 }] }, T0)
       expect(ok).toMatchObject({ state: 'reserved', reasons: [] })
       expect(budgetOf(ctx, ok)).toMatchObject({ schema: 'decision@1.4', decisionType: 'budget', outcome: { option: 'reserved' } })
@@ -116,6 +123,7 @@ export const resourcesSuite = defineSuite<Boot>({
     scenario('caps-count-usage-and-holds', 'refuses a reservation that would exceed a cap, counting recorded usage and held reservations; release frees a hold (INV-9)', async (ctx) => {
       const caps: BudgetLine[] = [{ pool: 'max.programmatic', unit: 'usd', amount: 2 }]
       const line = (amount: number): BudgetLine[] => [{ pool: 'max.programmatic', unit: 'usd', amount }]
+      await ctx.resources.observe(reading('max.programmatic', 'monthly'))
       await ctx.resources.record(usage('u1', { taskId: 't1', cost: { amount: 1.2, currency: 'USD', basis: 'runtime-estimate' } }))
       const held = await ctx.resources.reserve({ runId: 'r1', taskId: 't1', lines: line(0.5), caps }, T0)
       expect(held.state).toBe('reserved')
@@ -190,10 +198,12 @@ export class FakeResources extends Resources {
 
   async pools(filter: { account?: string } = {}, at: Date = new Date()): Promise<PoolState[]> {
     return [...this.configured].filter((p) => filter.account === undefined || p.account === filter.account).sort((a, b) => a.pool.localeCompare(b.pool)).map((p) => {
-      const readings = p.windows.map((w) => this.readings.get(`${p.pool}/${w.id}`)).filter((r): r is LimitState => r !== undefined)
+      const latest = p.windows.map((w) => this.readings.get(`${p.pool}/${w.id}`))
+      const readings = latest.filter((r): r is LimitState => r !== undefined)
       const limits = readings.filter((r) => r.state === 'limited').map((r) => [r.cooldownUntil, r.resetsAt].filter((t): t is string => t !== undefined).sort().at(-1)!)
       const until = limits.filter((t) => Date.parse(t) > at.getTime()).sort().at(-1)
-      const unknown = p.unknown === 'unavailable' && readings.some((r) => r.state === 'unknown')
+      // No reading yet is unknown too: missing telemetry is not capacity.
+      const unknown = p.unknown !== 'available' && latest.some((r) => r === undefined || r.state === 'unknown')
       return { ...p, readings: readings.map((r) => structuredClone(r)), available: until === undefined && !unknown, ...(until ? { until } : {}) }
     })
   }
@@ -226,7 +236,10 @@ export class FakeResources extends Resources {
     const state = reasons.length ? 'refused' : 'reserved'
     const decision = this.ctx.artifacts.recordDecision({
       schema: 'decision@1.4', decisionType: 'budget', question: `May run ${request.runId} draw on its pools?`, inputs: [],
-      candidates: ['reserved', 'refused'].map((o) => ({ option: o, selected: o === state, reasons: o === state ? (reasons.length ? reasons : ['every pool available and within its caps']) : [] })),
+      candidates: [
+        { option: 'reserved', selected: state === 'reserved', reasons: reasons.length ? reasons.map((r) => `not reserved: ${r}`) : ['every pool available and within its caps'] },
+        { option: 'refused', selected: state === 'refused', reasons: reasons.length ? reasons : ['not refused: no pool is missing or unavailable, and no cap would be exceeded'] },
+      ],
       decider: { type: 'rule', id: 'resources.reserve', version: '1' }, outcome: { option: state, detail: { runId: request.runId, lines: request.lines } }, deterministic: true,
     }, { producer: { type: 'system', ref: 'resources' }, runId: request.runId })
     const reservationId = `res-${randomUUID().slice(0, 8)}`

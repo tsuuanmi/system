@@ -417,7 +417,10 @@ export class ModelWorkers {
       : `the host stopped after ${row.sends} sends of this call; it is not sent again`
     const decision = this.ctx.artifacts.recordDecision({
       decisionType: 'reconciliation', question: `Is model call ${row.call_id} sent again after the host stopped?`, inputs: [],
-      candidates: [{ option: 'resend', selected: resend, reasons: resend ? [reason] : [] }, { option: 'fail', selected: !resend, reasons: resend ? [] : [reason] }],
+      candidates: [
+        { option: 'resend', selected: resend, reasons: resend ? [reason] : [`not resend: the bound of ${MAX_SENDS} sends is reached`] },
+        { option: 'fail', selected: !resend, reasons: resend ? [`not fail: ${row.sends} of at most ${MAX_SENDS} sends were used`] : [reason] },
+      ],
       decider: { type: 'rule', id: 'models.reconcile', version: '1' }, outcome: { option: resend ? 'resend' : 'fail', detail: { callId: row.call_id, sends: row.sends } }, deterministic: true,
     }, { producer: { type: 'worker', ref: row.worker } }).id
     this.addDecision(row, decision, lease)

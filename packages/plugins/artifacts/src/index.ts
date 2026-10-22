@@ -278,6 +278,9 @@ export class Artifacts extends Service {
     if (selected.length !== 1 || selected[0]?.option !== body.outcome.option) {
       throw new TypeError('decision: exactly one selected candidate must equal outcome.option')
     }
+    // INV-13: every candidate says why, the rejected ones why they lost, not only the winner.
+    const unexplained = body.candidates.find((candidate) => !candidate.reasons.some((reason) => reason.trim() !== ''))
+    if (unexplained) throw new TypeError(`decision: candidate ${unexplained.option} has no reason; every candidate, selected or rejected, needs one`)
     return this.put({
       kind: 'decision', bodySchema: body.schema, body, inputs: body.inputs,
       classification: meta.classification ?? 'operator-shared', producer: meta.producer,
@@ -375,9 +378,9 @@ export class Artifacts extends Service {
    * Retention (docs/design/artifacts.md#storage): delete the artifacts nothing retained needs.
    * The roots are every content id written in any store table except this plugin's own and the
    * event log, so a plugin that keeps an artifact id in its rows keeps the artifact, with no
-   * listener to forget. Marking follows each kept envelope's inputs and lineage. An artifact is
-   * collected only when it is unmarked, older than the grace period, and linked to no run whose
-   * id still appears in any table.
+   * listener to forget. An artifact younger than the grace period, or linked to a run whose id
+   * still appears in any table, is a root too. Marking follows every root's inputs and lineage,
+   * transitively, so nothing a kept artifact references is collected; everything unmarked is.
    *
    * The scan reads the store in pages outside any transaction, yielding between pages, so writers
    * and the event loop keep running. Short write transactions of `collectBatch` then re-check
@@ -411,10 +414,13 @@ export class Artifacts extends Service {
       edges.set(row.id as string, refsOf(envelope))
       created.set(row.id as string, row.created_at as string)
     }
-    const marked = mark(referenced, edges)
     const runsOf = new Map<string, string[]>()
     for await (const row of pages(db, 'artifact_runs', 'id, run_id')) runsOf.set(row.id as string, [...(runsOf.get(row.id as string) ?? []), row.run_id as string])
-    const candidates = new Set([...created].filter(([id, at]) => at < cutoff && !marked.has(id) && !(runsOf.get(id) ?? []).some((run) => values.has(run))).map(([id]) => id))
+    // A kept artifact keeps its whole why-chain: one in the grace period, or of a live run, is a root.
+    const roots = new Set(referenced)
+    for (const [id, at] of created) if (at >= cutoff || (runsOf.get(id) ?? []).some((run) => values.has(run))) roots.add(id)
+    const marked = mark(roots, edges)
+    const candidates = new Set([...created.keys()].filter((id) => !marked.has(id)))
     if (!candidates.size) return { removed: 0, kept: edges.size }
     // Between the scan and the deletion other work writes; tests use this to write there.
     hooks.afterScan?.()
@@ -432,16 +438,19 @@ export class Artifacts extends Service {
           edges.set(row.id, refs)
           for (const ref of refs) fresh.add(ref)
         }
-        const kept = mark(fresh, edges)
+        // A new link since the scan (the same content put again for another run) keeps a candidate,
+        // and with it everything it references.
         const linksOf = tx.prepare('SELECT run_id FROM artifact_runs WHERE id = ?')
+        for (const id of queue.length ? [...chunk, ...queue] : chunk) {
+          const known = new Set(runsOf.get(id) ?? [])
+          if ((linksOf.all(id) as Array<{ run_id: string }>).some((link) => !known.has(link.run_id))) fresh.add(id)
+        }
+        const kept = mark(fresh, edges)
         const removeArtifact = tx.prepare('DELETE FROM artifacts WHERE id = ?')
         const removeRuns = tx.prepare('DELETE FROM artifact_runs WHERE id = ?')
         let count = 0
         for (const id of chunk) {
           if (kept.has(id)) continue
-          // A new link since the scan (the same content put again for another run) keeps it.
-          const known = new Set(runsOf.get(id) ?? [])
-          if ((linksOf.all(id) as Array<{ run_id: string }>).some((link) => !known.has(link.run_id))) continue
           removeArtifact.run(id)
           removeRuns.run(id)
           count++

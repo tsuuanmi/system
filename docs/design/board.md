@@ -32,6 +32,7 @@ the operator itself: every move that needs a person goes through the
 | `start`, `submit` | record the run before it starts; record its result |
 | `accept(taskId, acceptance)` | apply the `acceptance` decision on the result |
 | `block`, `answer` | interrupt a running task; answer a waiting one |
+| `reconcileRun(taskId, runId, outcome)` | the run's owner reports the outcome of a run whose holder was lost |
 | `cancel` | cancel a task that is not running or in review |
 | `sweep(at)` | make every move due at `at`: dependencies met, approvals resolved, leases lost, waits expired |
 
@@ -77,10 +78,13 @@ stateDiagram-v2
   running --> review: submit
   running --> waiting_for_approval: budget spent, or run lost
   running --> waiting_for_input: question
+  running --> done: owner reports the run completed and accepted
   review --> done: acceptance accepted
+  review --> waiting_for_input: reviewer's lease lapsed, no decision
   review --> ready: rejected, attempts left
   review --> waiting_for_input: rejected, no attempt left
-  waiting_for_approval --> ready: approved
+  waiting_for_approval --> ready: approved, or owner reports the run failed
+  waiting_for_approval --> done: owner reports the run completed and accepted
   waiting_for_approval --> waiting_for_input: rejected or expired
   waiting_for_input --> ready: answered
   waiting_for_input --> cancelled: wait expired
@@ -107,6 +111,8 @@ Unlike A2A, every interrupted state has an expiry.
 | running → review | `submit`, with the result's exact subject (a commit, or the result artifact) | a `board` decision; `result` | unknown result artifacts are refused |
 | running → waiting-for-approval | `block` (`budget-spent`: action class `funding`), or `sweep` when the holder's lease lapsed mid-run (`reconciliation-failed`: `remediation`) | the `autonomy` decision and an approval request | the run is never started again on its own (INV-4) |
 | running → waiting-for-input | `block` with questions | a `board` decision | a question wait without questions is refused |
+| running or waiting-for-approval (`reconciliation-failed`) → done, ready, or waiting-for-input | `reconcileRun` by the run's owner (the workflow engine), after it reconciled the recorded run | the acceptance decision of a completed run, or a `board` decision for a failed one; the pending approval request is withdrawn | an outcome for another run id is refused; an unknown outcome is never reported, so the task keeps waiting for approval |
+| review → waiting-for-input | `sweep`, the reviewer's lease lapsed with no decision | a `board` decision (`review-expired`) | the wait expires and cancels the task |
 | review → done | `accept` with an `acceptance` decision whose outcome is `accept` | that decision; `result.acceptance`; the run and subject stay | a decision of another type is refused |
 | review → ready / waiting-for-input | `accept` with a `reject` outcome | that decision; another attempt while `count < max`, else `retries-spent` | — |
 | waiting-for-approval → ready / waiting-for-input | `sweep`, on the request's resolution | the request's `approval` decision | rejection and expiry never start work: the task waits for input (`rejected`) |
@@ -120,11 +126,12 @@ Unlike A2A, every interrupted state has an expiry.
 2. No task starts unless the policy's verdict on its action class allows it, or an operator
    approved it. A rejected or expired approval never starts work.
 3. A started run is recorded before it starts, and a run whose holder was lost is never started
-   again without an approval.
+   again without an approval. Its owner reconciles it first; only an unknown outcome reaches the
+   operator.
 4. Every interrupted state expires, and expiry never starts work: an approval wait follows its
    request, an input wait cancels the task (INV-9).
 5. A task is done only by an accepting `acceptance` decision on a result with its exact subject.
-   The board never accepts by default: with no verification, the task stays in review.
+   The board never accepts by default, and review is bounded by the reviewer's lease.
 6. One task at a time holds write authority over a subject (`writes`), and every write presents
    the holder's generation ([INV-15](../architecture/invariants.md#inv-15-one-writer-per-subject)).
 7. With `ctx.approvals` unavailable, every move that needs it fails and nothing moves.

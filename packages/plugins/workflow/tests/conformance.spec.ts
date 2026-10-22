@@ -57,8 +57,4 @@ runSuite(workflowSuite, {
       },
     }
   },
-  expectedFailures: {
-    'workflow.plan-refusal-names-decision': 'a refused plan fails the planner naming the acceptance decision, not the graph-growth refuse decision (src/engine.ts:640)',
-    'workflow.gate-block-names-decision': 'a gate blocks with no lastDecision (src/growth.ts:128)',
-  },
 })

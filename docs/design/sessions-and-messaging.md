@@ -18,7 +18,7 @@
 |---|---|---|
 | **Session** | one Worker's durable participation, with its own `SessionId`, role, and policy | from formation until it is closed; survives restarts |
 | **Activation** | the live process, browser context, or SDK client currently serving a session | disposable, recreated on demand |
-| **Execution binding** | `SessionId → { nativeHandle, generation }` | updated on every re-activation; the generation fences stale activations |
+| **Execution binding** | `SessionId → { nativeHandle, generation }` | the generation advances on every activation, and the activation's settle presents it, so a stale activation is refused |
 | **Session group** | sessions under one policy, such as a team's members | the lifetime of its DAG node |
 | **Mailbox** | the durable, ordered inbox of a session | the lifetime of the session |
 
@@ -67,8 +67,11 @@ stateDiagram-v2
      `session_inbox`.
 2. **Policy check.** The group policy decides whether the sender may address the
    target, whether a barrier is open, whether the message and turn budgets have
-   room, and whether egress allows it (a remote Worker must not receive
-   local-private refs). A rejection is recorded as a decision artifact.
+   room. A rejection is recorded as a decision artifact. Egress is checked where content leaves
+   for the receiver: a message artifact is at least as strict as its refs, and the receiver's
+   turn carries the strictest classification of the messages it delivers, so the turn's egress
+   check (the one authority, [routing](routing.md)) refuses local-private content to a remote
+   Worker before anything is sent.
 3. **Persist, then deliver.** The message is a `message` artifact, appended to
    the target mailbox with a sequence number. Delivery is at least once, and the
    receiver deduplicates by `messageId`.

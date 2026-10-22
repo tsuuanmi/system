@@ -16,7 +16,10 @@ import { type NodeRecord, type NodeRow, now, type RunRow, type WorkflowError } f
  * appended after the planner; the planner's dependents now wait for them. Steps that need
  * approval run only behind a gate on the exact plan. Returns the reason when refused.
  */
-export function grow(e: Engine, run: RunRow, planner: NodeRow, spec: ResolvedNode, result: ArtifactRef, lease: () => Lease): string | undefined {
+/** A refused plan: why, and the `graph-growth` decision that refused it, which the planner then names (INV-13). */
+export interface Refusal { message: string; decision: ArtifactRef }
+
+export function grow(e: Engine, run: RunRow, planner: NodeRow, spec: ResolvedNode, result: ArtifactRef, lease: () => Lease): Refusal | undefined {
   const policy = { ...DEFAULT_GROWTH, ...spec.grows }
   const generation = spec.generation ?? 1
   const prefix = growthPrefix(planner.node_id, generation)
@@ -42,12 +45,15 @@ export function grow(e: Engine, run: RunRow, planner: NodeRow, spec: ResolvedNod
     decisionType: 'graph-growth',
     question: `Does run ${run.run_id} append the steps planner ${planner.node_id} proposed?`,
     inputs: [plan ? (plan.id as ArtifactRef) : result],
-    candidates: [{ option: 'append', selected: parsed.ok, reasons: parsed.ok ? [reason] : [] }, { option: 'refuse', selected: !parsed.ok, reasons: parsed.ok ? [] : [reason] }],
+    candidates: [
+      { option: 'append', selected: parsed.ok, reasons: parsed.ok ? [reason] : [`not append: ${reason}`] },
+      { option: 'refuse', selected: !parsed.ok, reasons: parsed.ok ? [`not refuse: the plan parses and each of its ${parsed.nodes.length} step(s) is within the growth policy`] : [reason] },
+    ],
     decider: { type: 'policy', id: 'workflow.graph-growth', version: '1' },
     outcome: { option: parsed.ok ? 'append' : 'refuse', ...(parsed.ok ? { detail: { steps: parsed.nodes.map((n) => n.nodeId), gated } } : {}) },
     deterministic: true,
   }, { producer: { type: 'system', ref: 'workflow' }, runId: run.run_id, nodeId: planner.node_id })
-  if (!parsed.ok || !plan) return `${reason} (decision ${decision.id})`
+  if (!parsed.ok || !plan) return { message: `${reason} (decision ${decision.id})`, decision: decision.id as ArtifactRef }
   const gateId = `${prefix}:gate`
   const added: ResolvedNode[] = [
     ...(gated ? [{
@@ -125,8 +131,21 @@ export function block(e: Engine, run: RunRow, node: NodeRow, spec: ResolvedNode,
   const inputHash = sha256(canonicalJson({ node: spec, plan }))
   const until = gateDeadline(e)
   e.ctx.store.transaction(() => {
-    e.writeNode(node, { state: 'BLOCKED', not_before: until }, (record) => ({ ...record, inputReceipt: { inputHash, bundle: [plan] } }), lease)
-    e.ctx.eventLog.append({ type: 'workflow.node.blocked', runId: run.run_id, nodeId: node.node_id, data: { plan, until } })
+    // Blocking is itself decided (INV-13): what the gate waits for, and until when.
+    const waits = e.ctx.artifacts.recordDecision({
+      decisionType: 'gate',
+      question: `Does gate ${node.node_id} let the steps of plan ${plan} run now?`,
+      inputs: [plan],
+      candidates: [
+        { option: 'wait', selected: true, reasons: [`the plan's steps need an approval of this exact plan, until ${until}`] },
+        { option: 'open', selected: false, reasons: ['no approval of this plan is recorded yet'] },
+      ],
+      decider: { type: 'rule', id: 'workflow.gate-wait', version: '1' },
+      outcome: { option: 'wait', detail: { plan, until } },
+      deterministic: true,
+    }, { producer: { type: 'system', ref: 'workflow' }, runId: run.run_id, nodeId: node.node_id }).id as ArtifactRef
+    e.writeNode(node, { state: 'BLOCKED', not_before: until }, (record) => ({ ...record, inputReceipt: { inputHash, bundle: [plan] }, lastDecision: waits }), lease)
+    e.ctx.eventLog.append({ type: 'workflow.node.blocked', runId: run.run_id, nodeId: node.node_id, decision: waits, data: { plan, until } })
   })
   const body = e.ctx.artifacts.get(plan)?.body as { confidence?: string } | undefined
   if (e.config.autoApprovePlans && body?.confidence === 'high' && !spec.operatorApproval) {
@@ -147,7 +166,7 @@ export function expireGate(e: Engine, run: RunRow, gate: NodeRow, lease: () => L
       decisionType: 'gate',
       question: `May the steps of plan ${plan} run in run ${run.run_id}?`,
       inputs: [plan],
-      candidates: [{ option: 'open', selected: false, reasons: [] }, { option: 'closed', selected: true, reasons: [reason] }],
+      candidates: [{ option: 'open', selected: false, reasons: [`not open: plan ${plan} has no approval`] }, { option: 'closed', selected: true, reasons: [reason] }],
       decider: { type: 'rule', id: 'workflow.gate-timeout', version: '1' },
       outcome: { option: 'closed' },
       deterministic: true,
@@ -174,7 +193,10 @@ export function decideGate(e: Engine, run: RunRow, gate: NodeRow, verdict: { ver
       decisionType: 'gate',
       question: `May the steps of plan ${plan} run in run ${run.run_id}?`,
       inputs: [approval.id],
-      candidates: [{ option: 'open', selected: approved, reasons: approved ? [reason] : [] }, { option: 'closed', selected: !approved, reasons: approved ? [] : [reason] }],
+      candidates: [
+        { option: 'open', selected: approved, reasons: approved ? [reason] : [`not open: the ${verdict.by}'s verdict on the plan is rejected`] },
+        { option: 'closed', selected: !approved, reasons: approved ? [`not closed: the ${verdict.by}'s verdict on the plan is approved`] : [reason] },
+      ],
       decider: { type: verdict.by === 'operator' ? 'operator' : 'policy', id: verdict.by === 'operator' ? 'operator.approval' : 'workflow.auto-approve', version: '1' },
       outcome: { option: approved ? 'open' : 'closed' },
       deterministic: verdict.by === 'policy',

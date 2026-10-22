@@ -155,8 +155,9 @@ a provider snapshot and decides:
 | provider is still generating after the boundary | **WAIT**: resume observing; a cancel or a stop ends the wait, and consecutive WAITs are one decision |
 | a new completed response exists after the boundary | **RECOVER**: adopt it, do not resend |
 | the page shows the prompt as its last user turn, with no answer yet | **AMBIGUOUS**: the provider has it, so resending would duplicate it |
-| no trace of the prompt after the boundary | **RESUBMIT**: at most `maxResubmits` (default 2) per receipt |
-| anything else (boundary missing, conflicting turns, a page that rendered no user turn) | **AMBIGUOUS**: fail closed (`reconciliation_failed`) |
+| the boundary is still shown, with no trace of the prompt after it | **RESUBMIT**: at most `maxResubmits` (default 2) per receipt |
+| the page loaded but no longer shows the boundary (no response at all) | **AMBIGUOUS**: absence is not evidence that the prompt was not sent. The runtime looks again three times, 5 s apart, in case the page was still loading, then fails closed |
+| anything else (conflicting turns, a page that rendered no user turn) | **AMBIGUOUS**: fail closed (`reconciliation_failed`) |
 
 A snapshot counts only on positive evidence. A conversation that has not
 rendered a user turn was not observed, and it is never read as "nothing new".

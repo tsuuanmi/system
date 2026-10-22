@@ -484,13 +484,13 @@ export class Engine {
           const kept = exclude && distinctAccounts ? await route(restricted).catch(() => undefined) : undefined
           if (kept) {
             admitted = kept
-            sameFamily = this.sameFamilyDecision(run, node, error.decision, [exclude!.reason], admitted, 'same-family')
+            sameFamily = this.sameFamilyDecision(run, node, error.decision, [exclude!.reason], admitted, 'same-family', { family: true, accounts: true })
           } else {
             admitted = await route(distinctAccounts ? {} : restricted).catch(() => {
               throw error
             })
             const rules = [exclude?.reason, distinctAccounts ? restricted.restrict?.reason : undefined].filter((r): r is string => !!r)
-            sameFamily = this.sameFamilyDecision(run, node, error.decision, rules, admitted, distinctAccounts ? 'same-family-shared-account' : 'same-family')
+            sameFamily = this.sameFamilyDecision(run, node, error.decision, rules, admitted, distinctAccounts ? 'same-family-shared-account' : 'same-family', { family: !!exclude, accounts: !!distinctAccounts })
           }
         }
       } catch (error) {
@@ -583,19 +583,23 @@ export class Engine {
    * choice is a decision that says so, never "independent", and its node stays in its own session.
    * Its outcome is `same-family` when only the family rule was lifted (a team member keeps an
    * account of its own, ADR-0035), `same-family-shared-account` when the team's distinct-account
-   * rule was lifted too.
+   * rule was lifted too. `held` names the rules the node was routed under, so each option not
+   * taken says why.
    */
-  private sameFamilyDecision(run: RunRow, node: NodeRow, refused: ArtifactRef, rules: string[], admitted: AdmittedWorker, option: 'same-family' | 'same-family-shared-account'): ArtifactRef {
+  private sameFamilyDecision(run: RunRow, node: NodeRow, refused: ArtifactRef, rules: string[], admitted: AdmittedWorker, option: 'same-family' | 'same-family-shared-account', held: { family: boolean; accounts: boolean }): ArtifactRef {
     const why = `no admitted Worker satisfies: ${rules.join('; ')}`
     const shared = option === 'same-family-shared-account'
+    const worker = admitted.worker.worker
+    const notSame = held.family ? 'not same-family: lifting the family rule alone admits no Worker' : 'not same-family: no family rule refused it; the distinct-account rule did'
+    const notShared = held.accounts ? `not same-family-shared-account: lifting the family rule alone admits ${worker}, so the member keeps an account of its own` : 'not same-family-shared-account: the node has no distinct-account rule to lift'
     return this.ctx.artifacts.recordDecision({
       decisionType: 'admission',
       question: `Does node ${node.node_id} of run ${run.run_id} run on the same provider family, for want of another?`,
       inputs: [refused, admitted.decisions.route],
       candidates: [
-        { option: 'same-family', selected: !shared, reasons: shared ? [] : [why, 'the operator allows it (workflow.allowSameFamily)', 'same provider family: its work is not judged by another provider'] },
-        { option: 'same-family-shared-account', selected: shared, reasons: shared ? [why, 'the operator allows it (workflow.allowSameFamily)', 'same provider family, on an account another member holds: each member keeps its own conversation'] : [] },
-        { option: 'fail', selected: false, reasons: [] },
+        { option: 'same-family', selected: !shared, reasons: shared ? [notSame] : [why, 'the operator allows it (workflow.allowSameFamily)', 'same provider family: its work is not judged by another provider'] },
+        { option: 'same-family-shared-account', selected: shared, reasons: shared ? [why, 'the operator allows it (workflow.allowSameFamily)', 'same provider family, on an account another member holds: each member keeps its own conversation'] : [notShared] },
+        { option: 'fail', selected: false, reasons: [`not fail: the operator allows the same family (workflow.allowSameFamily) and ${worker} is admitted once ${rules.length > 1 ? 'those rules are' : 'that rule is'} lifted`] },
       ],
       decider: { type: 'policy', id: 'workflow.same-family', version: '1' },
       outcome: { option, detail: { worker: admitted.worker.worker, sameProviderFamily: true, sharedAccount: shared, rules } },
@@ -636,9 +640,9 @@ export class Engine {
     this.ctx.store.transaction(() => {
       const refused = acceptance.accepted && spec.grows ? grow(this, run, node, spec, result, lease) : undefined
       if (refused) {
-        const error: WorkflowError = { kind: 'plan_rejected', disposition: 'NONE', message: refused }
-        this.writeNode(node, { state: 'FAILED', error: JSON.stringify(error), ...decisions }, (r) => ({ ...r, lastDecision: acceptance.decision }), lease)
-        this.ctx.eventLog.append({ type: 'workflow.node.failed', runId: run.run_id, nodeId: node.node_id, decision: acceptance.decision, data: { ...data, kind: error.kind } })
+        const error: WorkflowError = { kind: 'plan_rejected', disposition: 'NONE', message: refused.message }
+        this.writeNode(node, { state: 'FAILED', error: JSON.stringify(error), ...decisions }, (r) => ({ ...r, lastDecision: refused.decision }), lease)
+        this.ctx.eventLog.append({ type: 'workflow.node.failed', runId: run.run_id, nodeId: node.node_id, decision: refused.decision, data: { ...data, kind: error.kind } })
       } else if (acceptance.accepted && node.subject && !(gate = subjectGate(this, run, node, result)).passed) {
         const error: WorkflowError = { kind: 'stale_subject', disposition: 'NONE', message: `exact-subject gate: ${gate.reason}` }
         this.writeNode(node, { state: 'FAILED', error: JSON.stringify(error), ...decisions }, (r) => ({ ...r, lastDecision: gate!.decision }), lease)
