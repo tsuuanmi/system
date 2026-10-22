@@ -222,9 +222,11 @@ Responses and Messages gateways), so they are unaffected by the host choice
 
 ## Seam definitions and conformance
 
-A seam with one provider may stay a concrete service until a second provider appears; it then
-gets an abstract definition and a conformance suite (plugin rule 2). Consumers depend on
-definitions only.
+Every new seam ships, with its first provider, an abstract definition, schemas for its records
+and payloads, a written protocol, and a conformance suite
+([ADR-0037](../decisions/adr/0037-schema-and-protocol-first.md)). Older seams with one provider
+may still be concrete services; the guarantee seams among them get suites in the Base release.
+Consumers depend on definitions only.
 
 | Seam | Definition (abstract `Service`) | Conformance suite | Providers that run it |
 |---|---|---|---|

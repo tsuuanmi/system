@@ -70,6 +70,12 @@ accepted/implemented -> superseded
   decision, verification, digest, context, workflow, knowledge, surface) are replaceable behind
   versioned seams.
 
+- [PROP-0010: The Base version](0010-base-version.md), **accepted**
+  ([ADR-0037](../decisions/adr/0037-schema-and-protocol-first.md)). The next release: the six
+  core components closed and specified by schema and protocol, Claude Code as the first Worker,
+  and one multi-day pilot project measured against a baseline. Deep Research is future work;
+  website and API Worker work follows Base.
+
 Use [0000-template.md](0000-template.md) for new proposals. The
 [roadmap](roadmap.md) is a non-normative queue of milestones, not a substitute for
 a reviewed proposal.

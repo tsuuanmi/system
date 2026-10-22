@@ -1,4 +1,4 @@
-# Release scope: MVP → Beta → Production-ready
+# Release scope: MVP → Beta → Base → Production-ready
 
 This document is the canonical definition of **what each release stage must
 deliver** and how its exit is judged. The order of the work lives in the
@@ -17,6 +17,7 @@ the directories under `packages/` and `packages/plugins/`.
 |---|---|---|
 | **MVP** (v0.1) | prove the four [purposes](purpose.md) end to end with the thinnest durable slice | Claude Code and Codex call `system` **tools over MCP**; operator CLI |
 | **Beta** (v0.5) | durable multi-Worker workflows and teams; Claude Code and Codex also as Workers | MCP + CLI + Web UI |
+| **Base** (v0.8) | the closed core ([ADR-0036](../decisions/adr/0036-guarantee-core-and-capability-plugins.md)), Claude Code as the first Worker, every record and seam specified ([ADR-0037](../decisions/adr/0037-schema-and-protocol-first.md)), proven on one multi-day project | MCP (board, approvals, resources) + CLI + Web UI |
 | **Production-ready** (v1.0) | the full target architecture, operated, hardened, and validated | Responses and Anthropic Messages gateways + MCP + CLI + Web UI + DSH bundle |
 
 ## MVP (v0.1)
@@ -175,6 +176,53 @@ Beta exit criteria:
 4. Agent-runtime Workers pass probe, run, resume, cancel, and sandbox-enforcement
    smoke tests.
 
+## Base (v0.8)
+
+Proposed in [PROP-0010](../proposals/0010-base-version.md), which gives the design. Base is the
+version after which `system` evolves by plugins only.
+
+### Goal
+
+The operator hands a multi-day project to `system` with a charter, follows it on a board and
+in digests, answers approvals in batches, and sees what every run cost. The work runs on
+Claude Code Workers under the operator's Claude Max plan.
+
+### Adds, as plugins
+
+| Area | Adds |
+|---|---|
+| Specification | a schema for every new record and payload, MCP tool input and output included; a definition, a protocol, and a conformance suite for every new seam; conformance suites for the existing guarantee seams (ADR-0037) |
+| Core | `resources` (usage records, limit states), `board` (projects with charters, board tasks), `approvals` (autonomy policy, batched queue), plugin manifests with a recorded lifecycle state, run budgets, the crash suite at every reconcile point |
+| Workers | Claude Code Workers on by default: a workspace per writing task, remediation through the gate, every agent's credential directories hidden, commands confined to the workspace (`validate`), token usage in `agent-result@1.2`, briefs (`brief@1.0`) |
+| Families | `digest@1.0` by a read-only Claude Code Worker; the `algorithm-development` template |
+| Surface | MCP tools `board_*`, `approvals_*`, `resources_*`; the board and the queue on `/ui`; a weekly investor report |
+
+### Not in Base
+
+Deep Research, which is future work; new work on website Workers and on API or local model
+Workers, which follows Base; Codex and ACP Workers; decision-assisted routing (PROP-0002); the
+knowledge family; RTK, Serena, context-mode; automated shadow and canary runs.
+
+### Base exit criteria
+
+1. **Core.** Each core component has its seam definition, schemas with valid examples, a
+   protocol document, and a conformance suite that passes in CI, with a fake provider and the
+   real one.
+2. **Crash.** Killing the host at every reconcile point, including board transitions, approval
+   verdicts, and the start of an agent run, produces no duplicate effect.
+3. **Pilot.** One algorithm-development project chosen by the operator runs from charter to
+   close over at least five working days, through at least one restart, on Claude Code Workers
+   only. The board shows progress without reading a transcript.
+4. **Attention.** Every approval goes through the queue, in batches, and interruptions stay
+   under the threshold set in the charter.
+5. **Resources.** Every run has a usage record taken from the runtime's own usage fields. The
+   Claude Max windows are tracked, and every limit hit is recorded with its cooldown.
+6. **Evolution.** The digest provider is replaced (for example by another model) through its
+   manifest without a core change, with metrics before and after.
+7. **Baseline.** The same kind of task done by Claude Code alone and through `system` is
+   reported: cost per accepted result and operator interventions
+   ([PROP-0008](../proposals/0008-studio-operating-model.md#validation-plan)).
+
 ## Production-ready (v1.0)
 
 Production-ready means **the complete target architecture**
@@ -219,4 +267,6 @@ operational readiness.
    streaming, tool round trip, cancel, interrupt, and drain.
 3. The scientific-research profile ships without any change to engine packages.
 4. The manual release checklist passes on live accounts, and a skipped item
-   blocks the release.
+   blocks the release. Deep Research checks are future work and do not gate
+   v1.0 ([PROP-0010](../proposals/0010-base-version.md#non-goals)).
+5. The Base exit criteria still hold.
