@@ -76,7 +76,7 @@ async function scenario(options: Partial<FakeOptions>, conversation: 'persist' |
   await fake.start()
   cleanups.push(() => fake.stop())
   const dir = mkdtempSync(join(tmpdir(), 'system-crash-'))
-  cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+  cleanups.push(() => rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }))
   const first = engine(dir, fake, ['start', conversation, 'survive a crash'])
   const runId = await first.runId
   await until(() => crashWhen(fake, dir), 90_000)
@@ -142,7 +142,7 @@ describe.runIf(canRunBrowser)('crash injection at every reconcile point of a web
     await fake.start()
     cleanups.push(() => fake.stop())
     const dir = mkdtempSync(join(tmpdir(), 'system-crash-'))
-    cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+    cleanups.push(() => rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }))
     const first = engine(dir, fake, ['delete', 'a chat to delete'])
     await first.runId
     // The site took the deletion; the ledger still says it is due.
@@ -169,7 +169,7 @@ describe.runIf(canRunBrowser)('crash injection at every reconcile point of a web
     await fake.start()
     cleanups.push(() => fake.stop())
     const dir = mkdtempSync(join(tmpdir(), 'system-crash-'))
-    cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+    cleanups.push(() => rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }))
     const first = engine(dir, fake, ['fan-out', 'a question'])
     const runId = await first.runId
     const slow = (context: string) => fake.sent.filter((s) => s.prompt.startsWith(`Slow step on: ${context}`))
@@ -198,7 +198,7 @@ describe.runIf(canRunBrowser)('crash injection at every reconcile point of a web
     await fake.start()
     cleanups.push(() => fake.stop())
     const dir = mkdtempSync(join(tmpdir(), 'system-crash-'))
-    cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+    cleanups.push(() => rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }))
     const first = engine(dir, fake, ['start', 'survive a crash in the profile'], PROFILE_HARNESS)
     const runId = await first.runId
     await until(() => fake.sent.length === 1 && bound(dir), 120_000)
