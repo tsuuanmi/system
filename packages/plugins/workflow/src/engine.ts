@@ -636,9 +636,9 @@ export class Engine {
     this.ctx.store.transaction(() => {
       const refused = acceptance.accepted && spec.grows ? grow(this, run, node, spec, result, lease) : undefined
       if (refused) {
-        const error: WorkflowError = { kind: 'plan_rejected', disposition: 'NONE', message: refused }
-        this.writeNode(node, { state: 'FAILED', error: JSON.stringify(error), ...decisions }, (r) => ({ ...r, lastDecision: acceptance.decision }), lease)
-        this.ctx.eventLog.append({ type: 'workflow.node.failed', runId: run.run_id, nodeId: node.node_id, decision: acceptance.decision, data: { ...data, kind: error.kind } })
+        const error: WorkflowError = { kind: 'plan_rejected', disposition: 'NONE', message: refused.message }
+        this.writeNode(node, { state: 'FAILED', error: JSON.stringify(error), ...decisions }, (r) => ({ ...r, lastDecision: refused.decision }), lease)
+        this.ctx.eventLog.append({ type: 'workflow.node.failed', runId: run.run_id, nodeId: node.node_id, decision: refused.decision, data: { ...data, kind: error.kind } })
       } else if (acceptance.accepted && node.subject && !(gate = subjectGate(this, run, node, result)).passed) {
         const error: WorkflowError = { kind: 'stale_subject', disposition: 'NONE', message: `exact-subject gate: ${gate.reason}` }
         this.writeNode(node, { state: 'FAILED', error: JSON.stringify(error), ...decisions }, (r) => ({ ...r, lastDecision: gate!.decision }), lease)

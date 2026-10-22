@@ -114,8 +114,11 @@ guesses.
 
 - `nodeId` is deterministic. Unrolled loops append an ordinal, for example
   `review:cycle:2` ([ADR-0012](../decisions/adr/0012-dag-execution-model.md)).
-- Every state transition updates `lastDecision` to the decision artifact that
-  caused it ([INV-13](../architecture/invariants.md#inv-13-every-decision-is-an-artifact)).
+- Every state transition a decision causes updates `lastDecision` to that decision artifact
+  ([INV-13](../architecture/invariants.md#inv-13-every-decision-is-an-artifact)): a refused plan
+  names its `graph-growth` refusal, and a gate that blocks names its `gate` decision (what it
+  waits for, until when). The promotion `WAITING → READY` decides nothing (it follows from its
+  dependencies' completion decisions) and records none.
 - `workflow-node@1.1` adds the state `RETIRED`: a node a re-plan took out of the
   graph. It stays as history, never runs again, and its `lastDecision` is the
   `graph-growth` decision that retired it. Only a retired node is written as

@@ -130,7 +130,7 @@ export async function supersede(e: Engine, runId: string, nodeId: string, replac
       if (spec.grows) {
         const planner = e.nodeRow(runId, nodeId)!
         const refused = grow(e, run, planner, specOf(planner), result, lease)
-        if (refused) throw new WorkflowFailure('invalid_input', `the replacement plan is refused: ${refused}`)
+        if (refused) throw new WorkflowFailure('invalid_input', `the replacement plan is refused: ${refused.message}`)
       }
       e.ctx.leases.fence(lease())
       if (schedule) {
