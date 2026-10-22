@@ -125,7 +125,11 @@
   ([INV-5](../architecture/invariants.md#inv-5-exact-subject-binding)). An
   approval names the plan the operator read (CLI `--plan`, MCP `plan`, the web UI
   sends the plan it shows); with several plans waiting, a verdict naming none is
-  refused, so a plan that arrived later is never approved unseen.
+  refused, so a plan that arrived later is never approved unseen. A verdict on the
+  approval queue names the subject the operator was shown (the web UI sends each
+  request's subject, MCP `approvals_decide` its `subject`); one for a changed subject
+  is refused, and a batch verdict names its batch, so it never reaches a request
+  outside it.
 - **A review's repository read reaches an internal host, or is rebound to one (SSRF, DNS
   rebinding).** A repository read is an inbound read of public data: `system` fetches only what
   a public URL makes public, and sends only git's own requests

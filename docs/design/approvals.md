@@ -9,9 +9,10 @@
 > [`approval@1.0`](../reference/schemas.md#approval).
 >
 > Implemented in [`approvals`](../../packages/plugins/approvals/README.md) (definition
-> [`approvals-core`](../../packages/approvals-core/README.md)); differs from target: no
-> Worker-side hook enforces verdicts yet (the PreToolUse hook), and remediation still uses the
-> plan gate (`approval@1.0`).
+> [`approvals-core`](../../packages/approvals-core/README.md)); the operator's queue is on `/ui`
+> ([`web-ui`](../../packages/plugins/web-ui/README.md), [API](../reference/web-ui.md)). Differs
+> from target: no Worker-side hook enforces verdicts yet (the PreToolUse hook), and remediation
+> still uses the plan gate (`approval@1.0`).
 
 Every action that needs a person goes through one queue, in batches, and nothing else asks the
 operator. The autonomy policy decides which actions those are; an action that is reversible and
@@ -97,7 +98,7 @@ the request becomes `rejected` with cause `expired`, and the decision's outcome 
 |---|---|---|---|
 | — → open | `request`, by a core component (board, workflow, a Worker's hook, resources) | the request, with the `autonomy` decision that said ask and `expiresAt` | refused (`not-asked`) unless the verdict cites an `autonomy` decision a policy made that says ask, of the policy the verdict names (the request takes its policy from the decision), under the project's policies as loaded now (each policy at its current version, the set's `decider.hash`), and judging the action again (its class, `command`, and project) says ask for the class the decision names; an invalid request, or a subject with no `version` (except an `artifact` subject by its `sha256:` id), is refused (`invalid`) |
 | open → batched | `batch`, when the group (one per project) reaches `maxSize` or its oldest request waited `maxWaitSeconds` | `batchId`; an `approvals.batched` event | — |
-| open or batched → approved | `decide`, from the operator's channel only (MCP `approvals_decide`, operator scope) | an `approval@1.0` artifact by `operator` on the request's subject, and an `approval` decision (`approved`) | a verdict for a changed subject, an expired or resolved request, or an unknown one is refused and changes nothing; one the provider cannot apply (an error) is refused as `failed`, logged; the other verdicts of the call apply |
+| open or batched → approved | `decide`, from the operator's channel only: the queue on the web UI (`/ui`, operator token) or MCP `approvals_decide` (operator scope) | an `approval@1.0` artifact by `operator` on the request's subject, and an `approval` decision (`approved`) | a verdict for a changed subject, an expired or resolved request, or an unknown one is refused and changes nothing; one the provider cannot apply (an error) is refused as `failed`, logged; the other verdicts of the call apply |
 | open or batched → rejected (verdict) | `decide` | the same, with `rejected` | as above |
 | open or batched → rejected (expired) | `sweep`, at `expiresAt` | an `approval` decision `denied:expired` (decider rule `approvals.expiry`) | — |
 | open or batched → rejected (withdrawn) | `withdraw`, by the requester, when its work ended | an `approval` decision `withdrawn` (decider rule `approvals.withdraw`) | a resolved request is returned unchanged |

@@ -1183,6 +1183,9 @@ importers:
 
   packages/plugins/web-ui:
     dependencies:
+      '@tsuuanmi/system-approvals-core':
+        specifier: workspace:*
+        version: link:../../approvals-core
       '@tsuuanmi/system-gateway-core':
         specifier: workspace:*
         version: link:../../gateway-core

@@ -6,7 +6,14 @@ The **operator's web UI**, on the DSH webserver under `/ui` (loopback only):
 - each step's Worker, tier, quota class, and decision chain (egress, tier,
   route, acceptance, recovery);
 - the answer;
-- the operator's **Approve / Reject plan**, **Vote** on a team's tie, **Stop run**, and **Continue run**.
+- the operator's **Approve / Reject plan**, **Vote** on a team's tie, **Stop run**, and **Continue run**;
+- when `ctx.approvals` is present, the **approval queue**
+  ([approvals](../../../docs/design/approvals.md)) above the runs: open requests by batch, each
+  with its class, exact subject, summary, consequences, and expiry, and the operator's
+  **Approve / Deny** for one request or a whole batch, with an optional note. Without it the
+  page shows the runs alone and the queue routes answer `503`.
+
+The routes are in the [web UI API](../../../docs/reference/web-ui.md).
 
 ## Use
 
@@ -39,9 +46,20 @@ the host, or over `ssh -L <port>:127.0.0.1:<port> host` like the login desktop.
   the page shows (`plan`, a `sha256:` id), so the engine decides only that plan
   (INV-5). A vote sends the tie decision the page shows, an option or
   `inconclusive`, and a rationale; it is recorded as the operator's.
+- **Queue verdicts** go to `ctx.approvals.decide` as the operator's (INV-6), at
+  the server's clock, each with the exact subject of the request the page
+  shows (INV-5); a batch verdict names its batch, and a request outside it
+  refuses the whole call. This is the operator's human channel for verdicts:
+  MCP clients get no new path (`approvals_decide` stays operator scope).
 - **Rendering:** the page is built with DOM methods and `textContent` only.
   Model output is never parsed as HTML.
 - **Scope:** only the operator scope reaches `/ui`
   ([scopes](../mcp-server/README.md#scopes)).
 
-**Injects:** `webServer`, `workflow`.
+**Injects:** `webServer`, `workflow`; `approvals` is optional (`ctx.get`), so the
+UI works without the queue.
+
+**Tests:** [`tests/web-ui.spec.ts`](tests/web-ui.spec.ts): the shell and its
+headers, the guard, the run actions, the queue's routes (listing by batch,
+verdicts bound to the subjects shown, a batch verdict bound to its batch, each
+refusal, `503` without a queue), and, with a browser, both pages.

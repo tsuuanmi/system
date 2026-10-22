@@ -5,7 +5,7 @@ export const PAGE = `<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>system: runs</title>
+<title>system: runs and approvals</title>
 <link rel="stylesheet" href="/ui/app.css">
 </head>
 <body>
@@ -35,7 +35,8 @@ button { font: inherit; padding: 6px 12px; border-radius: 6px; border: 1px solid
 button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
 input { font: inherit; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--line); background: transparent; color: inherit; min-width: 240px; }
 .muted { color: var(--muted); } code { font-size: 12px; } .answer { white-space: pre-wrap; }
-@media (max-width: 640px) { th:nth-child(n+4), td:nth-child(n+4) { display: none; } }
+table.queue td:last-child { white-space: nowrap; }
+@media (max-width: 640px) { table:not(.queue) th:nth-child(n+4), table:not(.queue) td:nth-child(n+4) { display: none; } table.queue th:nth-child(4), table.queue td:nth-child(4) { display: none; } }
 `
 
 export const APP_JS = `'use strict'
@@ -65,16 +66,51 @@ export const APP_JS = `'use strict'
       ? { headers: { authorization: 'Bearer ' + token } }
       : { method: 'POST', headers: { authorization: 'Bearer ' + token, 'content-type': 'application/json' }, body: JSON.stringify(body) })
     const value = await response.json().catch(() => ({}))
-    if (!response.ok) throw new Error(value.error || response.statusText)
+    if (!response.ok) throw Object.assign(new Error(value.error || response.statusText), { status: response.status })
     return value
   }
   // replaceChildren turns null into the text "null": absent sections are dropped first.
   const show = (...parts) => main.replaceChildren(...parts.filter((part) => part !== null && part !== undefined))
-  const table = (head, rows) => el('table', {}, el('thead', {}, el('tr', {}, head.map((h) => el('th', {}, h)))), el('tbody', {}, rows))
+  const table = (head, rows, cls) => el('table', cls ? { class: cls } : {}, el('thead', {}, el('tr', {}, head.map((h) => el('th', {}, h)))), el('tbody', {}, rows))
+
+  // The approval queue, by batch: each verdict names the exact subject shown (INV-5). Absent when no queue runs.
+  async function approvals() {
+    let batches
+    try { ({ batches } = await api('approvals')) } catch (error) { return error.status === 503 ? null : el('p', { class: 'state failed' }, 'Approval queue: ' + error.message) }
+    const decide = (verdicts, note, batchId) => async () => {
+      try {
+        const { results } = await api('approvals/decide', { verdicts, note: note.value, ...(batchId ? { batchId } : {}) })
+        const refused = results.filter((r) => r.refused).map((r) => r.requestId + ' (' + r.refused + ')')
+        status.textContent = 'decided ' + (results.length - refused.length) + (refused.length ? '; refused: ' + refused.join(', ') : '')
+        await list()
+      } catch (error) { status.textContent = error.message }
+    }
+    const subject = (s) => s.type + ' ' + s.ref + (s.version ? ' @ ' + s.version : '')
+    return el('section', { 'aria-label': 'Approval queue' }, el('h2', {}, 'Approvals'),
+      batches.length ? null : el('p', { class: 'muted' }, 'Nothing waits for your verdict.'),
+      batches.map((batch) => {
+        const note = el('input', { placeholder: 'note (optional)', 'aria-label': 'Note for ' + (batch.batchId || 'unbatched requests') })
+        const one = (r, verdict) => decide([{ requestId: r.requestId, subject: r.subject, verdict }], note)
+        const all = (verdict) => decide(batch.requests.map((r) => ({ requestId: r.requestId, subject: r.subject, verdict })), note, batch.batchId)
+        return el('div', { class: 'panel' },
+          el('h3', {}, batch.batchId ? 'Batch ' + batch.batchId : 'Not yet batched'),
+          table(['Class', 'Subject', 'Summary', 'Consequences', 'Expires', 'Verdict'], batch.requests.map((r) => el('tr', {},
+            el('td', {}, r.action.class),
+            el('td', {}, el('code', {}, subject(r.subject))),
+            el('td', {}, r.action.summary),
+            el('td', {}, r.action.consequences || '-'),
+            el('td', { class: 'muted' }, new Date(r.expiresAt).toLocaleString()),
+            el('td', {}, el('button', { onclick: one(r, 'approved'), 'aria-label': 'Approve ' + r.requestId }, 'Approve'), el('button', { onclick: one(r, 'rejected'), 'aria-label': 'Deny ' + r.requestId }, 'Deny')),
+          )), 'queue'),
+          note,
+          batch.batchId ? el('button', { class: 'primary', onclick: all('approved') }, 'Approve batch') : null,
+          batch.batchId ? el('button', { onclick: all('rejected') }, 'Deny batch') : null)
+      }))
+  }
 
   async function list() {
     const { runs } = await api('runs')
-    show(el('h2', {}, 'Runs'), table(['Run', 'Template', 'Status', 'Steps', 'Created'], runs.map((run) => el('tr', {},
+    show(await approvals(), el('h2', {}, 'Runs'), table(['Run', 'Template', 'Status', 'Steps', 'Created'], runs.map((run) => el('tr', {},
       el('td', {}, el('a', { href: '?run=' + encodeURIComponent(run.runId), onclick: (e) => { e.preventDefault(); go(run.runId) } }, run.runId)),
       el('td', {}, run.template),
       el('td', { class: 'state ' + run.status }, run.status + (run.blocked ? (run.blocked.kind === 'tie' ? ' (tied: waiting for a deciding vote)' : ' (waiting for approval)') : '')),
