@@ -12,7 +12,11 @@
  *   (verified live against traversal, symlinks, and home paths); `Bash` is not offered, as
  *   commands cannot be confined yet, so the runtime does not `validate`;
  * - Claude Code starts without the daemon's credentials: only the variables the operator
- *   forwards by name (`forwardEnv`) or sets (`env`) reach it (INV-8).
+ *   forwards by name (`forwardEnv`) or sets (`env`) reach it (INV-8);
+ * - a run's tool gate (`RunSpec.toolGate`) compiles to a PreToolUse hook on every tool: `deny`
+ *   and `defer` are the hook's own decisions, and `allow` leaves the call to the pre-approvals
+ *   above (a hook's `allow` would skip them); a deferred run stops there and never completes.
+ *   `canUseTool` is never the gate: a pre-approved tool never reaches it.
  * The SDK's session stays native; only its id crosses as the run's handle (INV-7). What a run
  * consumed is read from the SDK's own messages (the result's `modelUsage`, `rate_limit_event`),
  * never from the model's text, and reported for a failed run too.
@@ -22,11 +26,12 @@ import { execFile } from 'node:child_process'
 import { accessSync, constants } from 'node:fs'
 import { delimiter, isAbsolute, join } from 'node:path'
 import { promisify } from 'node:util'
-import { query } from '@anthropic-ai/claude-agent-sdk'
+import { type HookCallback, type HookJSONOutput, query } from '@anthropic-ai/claude-agent-sdk'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import {
-  type AgentRuntimeProvider, type LimitObservation, type ModelUsage, type RunMetering, type RunResult, type RunSpec, type RuntimeEvidence, type TokenUsage, childEnvironment, withMetering,
+  type AgentRuntimeProvider, type LimitObservation, type ModelUsage, type RunMetering, type RunResult, type RunSpec, type RuntimeEvidence, type TokenUsage, type ToolCall, type ToolGate, type ToolVerdict,
+  childEnvironment, withMetering,
 } from '@tsuuanmi/system-agent-runtime-core'
 import { ProviderError, type ProviderErrorKind } from '@tsuuanmi/system-provider-core'
 
@@ -46,6 +51,11 @@ const ALLOWED: Record<'read-only' | 'workspace-write', string[]> = { 'read-only'
  * the workspace, and a home path; anything else is denied without a prompt (`dontAsk`).
  */
 const rule = (tool: string): string => `${tool}(./**)`
+
+/** How long the gate may take over one tool call; past it the call is denied. */
+const GATE_MS = 30_000
+/** The hook's own timeout, in the SDK's unit (seconds): above `GATE_MS`, so the hook always answers itself. */
+const HOOK_TIMEOUT_S = 60
 
 export interface RuntimeOptions {
   /** The `claude` executable; found on PATH when absent. */
@@ -74,10 +84,11 @@ export class ClaudeAgentRuntime implements AgentRuntimeProvider {
       const version = await (this.options.version ?? claudeVersion)(executable)
       // No Bash: commands cannot be confined to the workspace yet, so it cannot validate. Every
       // pre-approved tool is scoped to the workspace, reads included, and nothing else is
-      // allowed, so the host state stays unreadable (ADR-0024; verified live 2026-10-13).
+      // allowed, so the host state stays unreadable (ADR-0024; verified live 2026-10-13). A run's
+      // tool gate is a PreToolUse hook on every tool, which holds in every permission mode.
       return {
         available: true, detail: `Claude Code ${version}; reads scoped to the workspace`, version, sandboxes: ['read-only', 'workspace-write'], resume: true, executes: false, readsConfined: true,
-        gatesToolCalls: false,
+        gatesToolCalls: true,
       }
     } catch (error) {
       return { available: false, detail: `claude --version failed: ${(error as Error).message.slice(0, 160)}`, sandboxes: [], resume: false, executes: false, readsConfined: false, gatesToolCalls: false }
@@ -94,7 +105,6 @@ export class ClaudeAgentRuntime implements AgentRuntimeProvider {
     if (refused.length) {
       throw new ProviderError('config_error', `claude-agent-sdk: a ${spec.sandbox} run allows only ${allowed.join(', ')}; refusing ${refused.join(', ')}`)
     }
-    if (spec.toolGate) throw new ProviderError('config_error', 'claude-agent-sdk: a tool gate is not asked yet; refusing it instead of ignoring it')
     const executable = this.executable()
     if (!executable) throw new ProviderError('config_error', 'claude-agent-sdk: Claude Code is not installed')
     if (signal.aborted) throw new ProviderError('aborted', 'claude-agent-sdk: aborted before starting')
@@ -106,6 +116,7 @@ export class ClaudeAgentRuntime implements AgentRuntimeProvider {
     let mainModel: string | undefined
     const limits: LimitObservation[] = []
     let rejected = false
+    const deferral: { current?: Deferral } = {}
     const metering = (): RunMetering => meteringFrom(result, mainModel, limits)
     try {
       const messages = this.query({
@@ -118,6 +129,8 @@ export class ClaudeAgentRuntime implements AgentRuntimeProvider {
           // Without the daemon's credentials (INV-8); its own sign-in lives in ~/.claude.
           env: childEnvironment(this.options.forwardEnv, this.options.env),
           ...(spec.model ? { model: spec.model } : {}), ...(spec.maxTurns ? { maxTurns: spec.maxTurns } : {}), ...(spec.resume ? { resume: spec.resume } : {}),
+          // No matcher: every tool call, subagents' included, passes the gate before it runs.
+          ...(spec.toolGate ? { hooks: { PreToolUse: [{ hooks: [gateHook(spec.toolGate, deferral)], timeout: HOOK_TIMEOUT_S }] } } : {}),
         },
       })
       for await (const message of messages as AsyncIterable<Record<string, unknown>>) {
@@ -138,11 +151,17 @@ export class ClaudeAgentRuntime implements AgentRuntimeProvider {
       }
     } catch (error) {
       if (signal.aborted) throw withMetering(new ProviderError('aborted', 'claude-agent-sdk: aborted'), metering())
+      if (deferral.current) throw withMetering(deferredError(deferral.current), metering())
       throw withMetering(new ProviderError(rejected ? 'quota_exhausted' : 'session_broken', `claude-agent-sdk: ${(error as Error).message.slice(0, 300)}`, { cause: error }), metering())
     } finally {
       signal.removeEventListener('abort', abort)
     }
     if (signal.aborted) throw withMetering(new ProviderError('aborted', 'claude-agent-sdk: aborted'), metering())
+    // A deferred run did not finish, whatever its result says: the call it stopped at never ran.
+    if (deferral.current) throw withMetering(deferredError(deferral.current), metering())
+    if (result && (DEFERRED.includes(String(result.terminal_reason)) || result.deferred_tool_use !== undefined)) {
+      throw withMetering(new ProviderError('config_error', `claude-agent-sdk: the run stopped at a deferred tool call its gate did not defer (${String(result.terminal_reason)})`), metering())
+    }
     if (!result) throw withMetering(new ProviderError(rejected ? 'quota_exhausted' : 'session_broken', 'claude-agent-sdk: the session ended without a result'), metering())
     if (result.subtype !== 'success' || result.is_error === true) {
       const errors = Array.isArray(result.errors) ? (result.errors as unknown[]).map(String).join('; ') : String(result.result ?? '')
@@ -159,6 +178,81 @@ export class ClaudeAgentRuntime implements AgentRuntimeProvider {
 
   private executable(): string | undefined {
     return this.options.executable ?? (this.options.findExecutable ?? (() => onPath('claude')))()
+  }
+}
+
+/** The tool call a run's gate deferred: the run stops there. */
+interface Deferral {
+  tool: string
+  callId?: string | undefined
+  requestId: string
+  reason: string
+}
+
+/** Result terminal reasons for a run that stopped at a deferred tool call. */
+const DEFERRED = ['tool_deferred', 'tool_deferred_unavailable']
+
+const deferredError = (d: Deferral): ProviderError => new ProviderError('config_error',
+  `claude-agent-sdk: the run stopped at tool call ${d.tool}${d.callId ? ` (${d.callId})` : ''} without running it: ${d.reason.slice(0, 300)} (approval request ${d.requestId})`)
+
+const hookDecision = (decision: 'deny' | 'defer', reason: string): HookJSONOutput => ({
+  hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: decision, permissionDecisionReason: reason.slice(0, 1000) },
+})
+
+/** A verdict the gate's contract allows; anything else is a deny. */
+function known(verdict: unknown): verdict is ToolVerdict {
+  const v = verdict as Partial<{ decision: string; reason: unknown; requestId: unknown }> | null
+  if (!v || typeof v !== 'object') return false
+  if (v.decision === 'allow') return true
+  if (v.decision === 'deny') return typeof v.reason === 'string'
+  return v.decision === 'defer' && typeof v.reason === 'string' && typeof v.requestId === 'string' && v.requestId.length > 0
+}
+
+/**
+ * Ask the gate about one call, bounded: a gate that throws, gives an unknown verdict, or does not
+ * answer within `GATE_MS` is a deny, never a pass (INV-2).
+ */
+async function ask(gate: ToolGate, call: ToolCall, signal: AbortSignal): Promise<ToolVerdict> {
+  const controller = new AbortController()
+  const abort = (): void => controller.abort()
+  signal.addEventListener('abort', abort, { once: true })
+  let timer: NodeJS.Timeout | undefined
+  try {
+    const late = new Promise<ToolVerdict>((resolve) => {
+      timer = setTimeout(() => {
+        controller.abort()
+        resolve({ decision: 'deny', reason: `the tool gate did not answer within ${GATE_MS / 1000} s` })
+      }, GATE_MS)
+    })
+    const verdict = await Promise.race([gate(call, controller.signal), late])
+    return known(verdict) ? verdict : { decision: 'deny', reason: 'the tool gate gave a verdict it does not define' }
+  } catch (error) {
+    return { decision: 'deny', reason: `the tool gate failed: ${(error as Error)?.message?.slice(0, 200) ?? String(error)}` }
+  } finally {
+    clearTimeout(timer)
+    signal.removeEventListener('abort', abort)
+  }
+}
+
+/**
+ * The run's gate as a PreToolUse hook. `deny` and `defer` are the hook's decisions, which hold in
+ * every permission mode; `allow` returns no decision, so the workspace-scoped pre-approvals still
+ * decide (a hook's `allow` would skip them, and with them the workspace bound). Once a call is
+ * deferred, every later call is denied: the run stops at the deferred one.
+ */
+function gateHook(gate: ToolGate, deferral: { current?: Deferral }): HookCallback {
+  return async (input, toolUseId, { signal }) => {
+    if (input.hook_event_name !== 'PreToolUse') return {}
+    const stopped = deferral.current
+    if (stopped) return hookDecision('deny', `the run stopped at tool call ${stopped.tool}, which waits for approval request ${stopped.requestId}; no further tool call runs`)
+    const callId = input.tool_use_id || toolUseId
+    const verdict = await ask(gate, { tool: input.tool_name, input: input.tool_input, ...(callId ? { callId } : {}) }, signal)
+    if (verdict.decision === 'allow') return {}
+    if (verdict.decision === 'defer') {
+      deferral.current = { tool: input.tool_name, callId, requestId: verdict.requestId, reason: verdict.reason }
+      return hookDecision('defer', verdict.reason)
+    }
+    return hookDecision('deny', verdict.reason)
   }
 }
 
