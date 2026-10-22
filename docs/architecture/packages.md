@@ -23,6 +23,7 @@ its types is not listed).
 | [gateway-turns](../../packages/gateway-turns/README.md) | gateways | — | — | — | `gateway-core`, `libs` |
 | [mcp-server](../../packages/plugins/mcp-server/README.md) | gateways | `mcp` | `mcp-server` | `webServer`, `accounts` (optional), `artifacts` (optional), `credentials` (optional), `eventLog` (optional), `providers` (optional), `store` (optional), `workers` (optional) | `gateway-core`, `libs` |
 | [web-ui](../../packages/plugins/web-ui/README.md) | gateways | — | `web-ui` | `webServer`, `workflow` | `gateway-core`, `libs` |
+| [board](../../packages/plugins/board/README.md) | orchestration | `board` | `board` | `store`, `artifacts`, `leases`, `approvals`, `mcp` (optional) | `approvals-core`, `board-core`, `gateway-core`, `leases`, `libs` |
 | [board-core](../../packages/board-core/README.md) | orchestration | defines `board` | — | — | `approvals-core` |
 | [profile-scientific-research](../../packages/plugins/profile-scientific-research/README.md) | orchestration | — | `profile-scientific-research` | `workflow`, `workers`, `artifacts`, `eventLog` | `libs` |
 | [profile-software-development](../../packages/plugins/profile-software-development/README.md) | orchestration | — | `profile-software-development` | `workflow` | — |
@@ -67,7 +68,8 @@ its types is not listed).
 ## Seam graph
 
 An arrow runs from a consumer to the package that provides the seam; a dotted arrow is an optional
-seam. Rows of DSH core appear under host and libraries.
+seam. A seam with no provider yet, which only a row that is off by default may consume, points to
+the package that defines it. Rows of DSH core appear under host and libraries.
 
 ```mermaid
 flowchart TB
@@ -78,12 +80,14 @@ flowchart TB
     web_ui["web-ui"]
   end
   subgraph orchestration ["orchestration"]
+    board["board<br/>ctx.board"]
     profile_scientific_research["profile-scientific-research"]
     profile_software_development["profile-software-development"]
     worker_sessions["worker-sessions<br/>ctx.workerSessions"]
     workflow["workflow<br/>ctx.workflow"]
   end
   subgraph routing ["routing"]
+    approvals_core["approvals-core<br/>defines approvals"]
     egress["egress<br/>ctx.egress"]
     workers["workers<br/>ctx.workers"]
   end
@@ -125,6 +129,11 @@ flowchart TB
   agent_workers --> agent_runtimes
   agent_workers --> egress
   artifacts --> store
+  board --> store
+  board --> artifacts
+  board --> leases
+  board --> approvals_core
+  board -.-> mcp_server
   browser_patchright --> display_virtual
   browser_patchright -.-> event_log
   egress --> artifacts
@@ -211,6 +220,7 @@ policy above it. Each such edge is listed here so a new one is a visible change.
 |---|---|---|---|
 | `agent-workers` (capabilities) | `egress` | `egress` (routing) | required |
 | `agent-workers` (capabilities) | `workers` | `workers` (routing) | required |
+| `board` (orchestration) | `mcp` | `mcp-server` (gateways) | optional |
 | `login` (provider runtime) | `mcp` | `mcp-server` (gateways) | optional |
 | `models` (capabilities) | `egress` | `egress` (routing) | required |
 | `models` (capabilities) | `mcp` | `mcp-server` (gateways) | optional |
@@ -238,6 +248,7 @@ flowchart TB
     web_ui["web-ui"]
   end
   subgraph orchestration ["orchestration"]
+    board["board<br/>ctx.board"]
     board_core["board-core<br/>defines board"]
     worker_sessions["worker-sessions<br/>ctx.workerSessions"]
     workflow["workflow<br/>ctx.workflow"]
@@ -283,6 +294,10 @@ flowchart TB
   agent_workers --> leases
   agent_workers --> provider_core
   agent_workers --> workers_core
+  board --> approvals_core
+  board --> board_core
+  board --> gateway_core
+  board --> leases
   board_core --> approvals_core
   browser_patchright --> provider_core
   cli --> browser_patchright

@@ -62,6 +62,7 @@ export const LAYER_OF: Record<string, Layer> = {
   // orchestration
   'workflow': 'orchestration',
   'board-core': 'orchestration',
+  'board': 'orchestration',
   'worker-sessions': 'orchestration',
   'profile-software-development': 'orchestration',
   'profile-scientific-research': 'orchestration',
@@ -130,10 +131,10 @@ function importsOf(text: string): Map<string, [string, string]> {
   return out
 }
 
-/** Bundle rows in order: `- id: x` followed by `name: '…'`. */
-export function bundleRows(): Array<{ id: string; name: string }> {
+/** Bundle rows in order: `- id: x` followed by `name: '…'`, and whether the row is `disabled: true` (off by default). */
+export function bundleRows(): Array<{ id: string; name: string; off: boolean }> {
   const text = readFileSync(join(BUNDLE, 'cordis.patch.yml'), 'utf8')
-  return [...text.matchAll(/- id: ([\w-]+)\n\s+name: '([^']+)'/g)].map((m) => ({ id: m[1]!, name: m[2]! }))
+  return [...text.matchAll(/- id: ([\w-]+)\n\s+name: '([^']+)'[^\n]*(\n\s+disabled: true\b)?/g)].map((m) => ({ id: m[1]!, name: m[2]!, off: m[3] !== undefined }))
 }
 
 /** The service keys a non-workspace package (a DSH row) registers, read from its entry file. */
@@ -228,8 +229,16 @@ export function scan(): Pkg[] {
   for (const p of pkgs) if (p.plugin && !p.dsh && !p.mountId) problems.push(`plugin ${p.dir} has no row in packages/system-bundle/cordis.patch.yml`)
   const providerOf = new Map<string, string[]>()
   for (const p of pkgs) for (const k of p.provides) providerOf.set(k, [...(providerOf.get(k) ?? []), p.dir])
+  const defined = new Set(pkgs.flatMap((p) => p.defines))
+  const off = new Set(rows.filter((r) => r.off).map((r) => r.id))
   for (const p of pkgs) {
-    for (const k of [...p.required, ...p.optional]) if (!providerOf.has(k)) problems.push(`${p.dir} consumes ctx.${k}, which no package or bundle row provides`)
+    for (const k of [...p.required, ...p.optional]) {
+      if (providerOf.has(k)) continue
+      // A row that is off by default may wait on a seam that is defined but has no provider yet
+      // (the board on the approval queue until B5); a row that is on never does.
+      if (p.mountId && off.has(p.mountId) && defined.has(k)) continue
+      problems.push(`${p.dir} consumes ctx.${k}, which no package or bundle row provides${defined.has(k) ? ' (it is only defined): keep its row off until one does' : ''}`)
+    }
   }
   for (const [k, by] of providerOf) if (by.length > 1) problems.push(`ctx.${k} is provided by ${by.join(', ')}`)
   if (problems.length) throw new Error(`gen-packages:\n  ${problems.join('\n  ')}`)
@@ -241,6 +250,8 @@ const seams = (keys: string[], mark = ''): string[] => keys.map((k) => `\`${k}\`
 
 export function render(pkgs: Pkg[] = scan()): string {
   const providerOf = new Map<string, Pkg>()
+  // A seam with no provider yet (its consumer's row is off) points to the package that defines it.
+  for (const p of pkgs) for (const k of p.defines) providerOf.set(k, p)
   for (const p of pkgs) for (const k of p.provides) providerOf.set(k, p)
   const byLayer = (layer: Layer): Pkg[] => pkgs.filter((p) => p.layer === layer)
   const rank = (p: Pkg): number => LAYERS.indexOf(p.layer)
@@ -308,7 +319,8 @@ export function render(pkgs: Pkg[] = scan()): string {
     '## Seam graph',
     '',
     'An arrow runs from a consumer to the package that provides the seam; a dotted arrow is an optional',
-    'seam. Rows of DSH core appear under host and libraries.',
+    'seam. A seam with no provider yet, which only a row that is off by default may consume, points to',
+    'the package that defines it. Rows of DSH core appear under host and libraries.',
     '',
     ...graph(seamEdges, (p) => inSeamGraph.has(id(p.dir))),
     '',

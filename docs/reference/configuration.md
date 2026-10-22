@@ -57,6 +57,19 @@
 | `collectGraceHours` | number (1…) | `24` | Hours a new artifact is kept before collection may take it, referenced or not |
 | `collectBatch` | number (1…) | `1000` | Artifacts deleted per write transaction (the pass continues in further ones) |
 
+## `board`
+
+[@tsuuanmi/system-board](../../packages/plugins/board/README.md)
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `inputExpirySeconds` | number (60…7776000) | `604800` | How long a wait for input lasts before it cancels the task, in seconds |
+| `leaseTtlSeconds` | number (30…3600) | `900` | Lease length when a claim names none, in seconds (leases.maxTtlMs caps it) |
+| `maxAttempts` | number (1…10) | `3` | Attempts a task gets when its proposal names none |
+| `pageBound` | number (1…100) | `100` | The most items one page of board_projects or board_tasks holds |
+| `projectionMaxTasks` | number (1…10000) | `200` | The most tasks the TASKS.md projection lists, open ones first |
+| `sweepSeconds` | number (0…3600) | `60` | Seconds between the board's own sweeps, and one at start; 0 sweeps only when called |
+
 ## `browser-patchright`
 
 [@tsuuanmi/system-browser-patchright](../../packages/plugins/browser-patchright/README.md)

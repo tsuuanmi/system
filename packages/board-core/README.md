@@ -7,7 +7,7 @@ Work state machine **seam definition**
 
 | Seam | Definition | Provider |
 |---|---|---|
-| `ctx.board` | abstract `Board` with `charter(input, at?)`, `project`, `projects`, `pause`, `resume`, `close`, `propose(input, at?)`, `task`, `tasks`, `claim`, `renew`, `start`, `submit`, `accept`, `reconcileRun`, `block`, `answer`, `cancel`, `sweep(at)`; `Project`, `Charter`, `Milestone`, `BoardTask`, `CharterInput`, `TaskInput`, `Claim`, `RunOutcome`, `BoardError`; `TERMINAL`, `BOARD_CONTRACT` (1.0) | the fake `FakeBoard` only (B4 adds the real one) |
+| `ctx.board` | abstract `Board` with `charter(input, at?)`, `project`, `projects`, `pause`, `resume`, `close`, `propose(input, at?)`, `task`, `tasks`, `claim`, `renew`, `start`, `submit`, `accept`, `reconcileRun`, `block`, `answer`, `cancel`, `sweep(at)`; `Project`, `Charter`, `Milestone`, `BoardTask`, `CharterInput`, `TaskInput`, `Claim`, `RunOutcome`, `BoardError`; `TERMINAL`, `BOARD_CONTRACT` (1.0) | the fake `FakeBoard`; the store-backed [`board`](../plugins/board/README.md) |
 
 - The types mirror `project@1.0` and `board-task@1.0`; the schemas in `schemas/` are canonical.
 - Depends on Cordis and the vocabulary of `@tsuuanmi/system-approvals-core`: the board asks

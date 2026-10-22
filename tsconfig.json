@@ -137,6 +137,9 @@
       ],
       "@tsuuanmi/system-board-core": [
         "packages/board-core/src/index.ts"
+      ],
+      "@tsuuanmi/system-board": [
+        "packages/plugins/board/src/index.ts"
       ]
     }
   },

@@ -1,0 +1,79 @@
+# @tsuuanmi/system-board
+
+**`ctx.board`**: the store-backed provider of the work state machine seam
+([board](../../../docs/design/board.md); definition
+[`board-core`](../../board-core/README.md)). It holds work that outlives a run: projects with
+charters, and their tasks.
+
+- **Records.** Projects are `project@1.0` and tasks `board-task@1.0` records, one row each in
+  `board_projects` and `board_tasks`, indexed by project and state. Every record is validated
+  before it is written and after it is read: one that fails on read is never acted on. Every
+  write is revision-checked.
+- **Moves.** Each move is one store transaction with the decision it names (INV-13): a `board`
+  decision (`decision@1.4`) for a move the board makes on its own, in which every candidate says
+  why it was or was not chosen; otherwise the `autonomy`, `approval`, or `acceptance` decision
+  that caused it. A move that awaits the approval queue first commits only if the record is still
+  the revision it read (else `conflict`), and withdraws the request it opened when it cannot.
+- **Approvals.** Only through `ctx.approvals` (`check`, `request`, `get`, `list`, `withdraw`); the
+  board never decides one. With the queue unavailable, every move that needs it fails and
+  nothing moves; the sweep still applies the moves that do not (a lapsed claim).
+  - A request is on the exact subject: `project:<id>:charter:<version>` with the charter's hash,
+    or `board-task:<id>:attempt:<n>` with the wait's reason. A verdict counts only for that
+    subject and that task.
+  - Before it opens a request, the board adopts its own open request on the same subject, one a
+    crash left between asking and committing, so a retried move asks the operator once.
+- **Leases.** A task's holder is a `ctx.leases` lease on `board-task:<taskId>`; its generation is
+  the holder's generation. The lease token stays in the store, never in the record. Every write a
+  holder makes (`start`, `submit`, `block`, `renew`) presents the generation and passes the
+  lease's own fence inside the committing transaction, so a stale generation is refused across a
+  restart too (INV-4, INV-15). A move that drops the holder releases the lease. A lease is lost
+  when it lapsed or no longer holds the resource.
+- **One writer per subject.** An open task's `writes` subject (type and ref) is unique, by a
+  partial unique index as well as the check in `propose` (INV-15).
+- **Time.** `sweep(at)` is the only time-driven path, and it is idempotent: it settles charter
+  requests, then walks the open tasks in insertion order, so a dependency moves before the tasks
+  that depend on it. One item that fails is logged and left for the next sweep. The board sweeps
+  once at start (a restart is a sweep) and every `sweepSeconds`; `0` leaves sweeping to the
+  caller.
+- **Where the protocol's tables leave room**, this provider settles it as
+  [board](../../../docs/design/board.md#where-the-tables-leave-room) says.
+- **Reads beyond the seam:** `projectPage` and `taskPage` (20 items by default, never more than
+  `pageBound`, with an opaque cursor), `counts`, `latest`, and `tasksMarkdown`. `projects` and
+  `tasks`, the seam's own reads, return every match.
+- **`TASKS.md`:** `tasksMarkdown(projectId)` renders one project's board as Markdown in
+  Backlog.md's spirit, for native agents without MCP: per task its id, title, state, action
+  class, attempts, dependencies, holder, run, why it waits (with its questions), result, and
+  acceptance criteria as checkboxes (checked once done). Tasks are grouped in progress, waiting,
+  ready, proposed, done, cancelled; at most `projectionMaxTasks`, open ones first, the rest
+  counted. The output depends on the stored records only, quotes each goal so it cannot read as
+  the board's structure, and is never read back; the caller writes it where an agent reads it.
+- **MCP** (when `ctx.mcp` is present, client scope): `board_projects`, `board_charter`,
+  `board_brief`, `board_tasks`, `board_task`, `board_propose`, `board_claim`, `board_update`,
+  `board_complete`, `board_cancel`. Each input and structured output is validated against
+  [`schemas/mcp-board.v1.json`](../../../schemas/mcp-board.v1.json) `$defs/<tool>-input` and
+  `-output`; a refused input does nothing, a refusal is an MCP error naming the `BoardError`.
+  - `board_charter` and `board_propose` are retry-safe under `clientRequestId`, recorded in the
+    same transaction as the write;
+  - `board_claim` defaults to `leaseTtlSeconds`; `leases.maxTtlMs` (default 10 minutes) caps
+    every lease, and the output gives the real expiry;
+  - `board_update` renews the caller's lease for as long as it was claimed, or answers every
+    question of a waiting task by index, not both; its `note` is not stored (no record holds
+    progress notes yet);
+  - `board_cancel` cancels as `operator` for an operator token and as `lead` for a client one;
+  - `board_projects` and `board_brief` give no `budget`: use comes from the resource ledger,
+    which has no provider yet;
+  - `board_brief`'s `readFirst` lists the closed project's lessons and the accepted results of
+    its latest done tasks (their digest, else their first artifact); `conventions` are the
+    charter's constraint notes.
+- **Injects:** `store`, `artifacts`, `leases`, `approvals`; `mcp` is optional.
+- **Config:** `inputExpirySeconds` (default 7 days), `leaseTtlSeconds` (900), `maxAttempts` (3),
+  `pageBound` (100), `projectionMaxTasks` (200), `sweepSeconds` (60).
+- **Bundle:** the `board` row is `disabled: true` until a real `ctx.approvals` provider exists
+  (the approval queue, B5).
+- **Tests:** [`tests/conformance.spec.ts`](tests/conformance.spec.ts) runs the seam's suite
+  ([`board-core/conformance/board.ts`](../../board-core/conformance/board.ts)) at contract 1.0
+  over `FakeApprovals`, with no expected failures.
+  [`tests/board.spec.ts`](tests/board.spec.ts) covers what the suite does not: restart (in place
+  and as a new process over the same file), fencing across a restart, concurrent claims and
+  racing sweeps, the queue unavailable, adoption of an orphaned request, paging bounds, invalid
+  records refused, the tools' outputs against their schema definitions, and the projection.

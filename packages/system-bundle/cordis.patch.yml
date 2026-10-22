@@ -72,6 +72,12 @@
       name: '@tsuuanmi/system-worker-sessions'       # sessions, mailboxes, peer messages; MCP session_send/session_inbox
     - id: workflow
       name: '@tsuuanmi/system-workflow'              # the single engine; MCP ask/research/result/usage/explain
+    # --- the board (B4): ctx.board and the board_* MCP tools. Off until a real ctx.approvals provider
+    # exists (the approval queue, B5): the board asks through it and never decides an approval itself,
+    # so without one the row would wait forever on its `approvals` inject. With it off, runs work as today. ---
+    - id: board
+      name: '@tsuuanmi/system-board'
+      disabled: true
     - id: profile-software-development
       name: '@tsuuanmi/system-profile-software-development'  # agent-review, for agent Workers (off with them)
       disabled: true
