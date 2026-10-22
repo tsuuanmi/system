@@ -1,8 +1,8 @@
 import { execFileSync } from 'node:child_process'
 import { generateKeyPairSync } from 'node:crypto'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { Context } from '@deepseek-ai/cordis'
 import { type RunMetering, withMetering } from '@tsuuanmi/system-agent-runtime-core'
@@ -11,7 +11,7 @@ import Artifacts from '@tsuuanmi/system-artifacts'
 import Egress from '@tsuuanmi/system-egress'
 import EventLog from '@tsuuanmi/system-event-log'
 import Leases from '@tsuuanmi/system-leases'
-import { SchemaRegistry } from '@tsuuanmi/system-libs'
+import { captureGitSubject, SchemaRegistry, subjectId } from '@tsuuanmi/system-libs'
 import { ProviderError } from '@tsuuanmi/system-provider-core'
 import type { LimitState, PoolConfig } from '@tsuuanmi/system-resources-core'
 import Store from '@tsuuanmi/system-store'
@@ -633,5 +633,305 @@ describe('agents source: metering through ctx.resources (docs/design/resources.m
     expect(await second.ctx.workers.source('agents')!.wait(started.id, 10_000)).toMatchObject({ status: 'failed', submitted: true, error: { kind: 'reconciliation_failed' } })
     expect(again.runs).toEqual([])
     expect((await second.ctx.resources.usage()).records).toEqual([])
+  })
+})
+
+// Real git repositories, worktrees, and a workflow run end to end: slower than the 5 s default on CI runners.
+describe('agents source: a git worktree per workflow run (worktreePerRun; PROP-0010 B3)', { timeout: 60_000 }, () => {
+  const ORIGINAL = 'def add(a, b):\n    return a - b\n'
+  const FIXED = 'def add(a, b):\n    return a + b\n'
+  const git = (dir: string, ...args: string[]): string => execFileSync('git', ['-C', dir, '-c', 'user.name=t', '-c', 'user.email=t@example.test', ...args], { encoding: 'utf8' }).trim()
+  const temp = (prefix: string): string => {
+    const dir = mkdtempSync(join(tmpdir(), prefix))
+    cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+    return dir
+  }
+  /** A repository on `main` with one commit; never one of the operator's. */
+  const repository = (): string => {
+    const dir = temp('system-wt-repo-')
+    git(dir, 'init', '-q', '-b', 'main')
+    writeFileSync(join(dir, 'calc.py'), ORIGINAL)
+    git(dir, 'add', '.')
+    git(dir, 'commit', '-q', '-m', 'init')
+    return dir
+  }
+  /** The main working tree as the operator left it: on `main`, at `head`, clean, with its own calc.py. */
+  const untouched = (dir: string, head: string): void => {
+    expect(git(dir, 'symbolic-ref', '--short', 'HEAD')).toBe('main')
+    expect(git(dir, 'rev-parse', 'HEAD')).toBe(head)
+    expect(git(dir, 'status', '--porcelain')).toBe('')
+    expect(readFileSync(join(dir, 'calc.py'), 'utf8')).toBe(ORIGINAL)
+  }
+  const writer = (workspace: string) => worker({ id: 'dev', sandbox: 'workspace-write', workspace, tools: [], worktreePerRun: true })
+  const reviewer = (workspace: string) => worker({ id: 'reviewer', workspace, worktreePerRun: true })
+  /** What a writing run does: it fixes calc.py and leaves a note named after the directory it works in. */
+  const writes = (spec: RunSpec): string => {
+    if (spec.sandbox !== 'workspace-write') return 'read'
+    writeFileSync(join(spec.workspace, 'calc.py'), FIXED)
+    writeFileSync(join(spec.workspace, `note-${basename(spec.workspace)}.txt`), `${spec.prompt}\n`)
+    return 'done'
+  }
+  const SANDBOXES: SandboxMode[] = ['read-only', 'workspace-write']
+  const developer = (options: ConstructorParameters<typeof ScriptedAgent>[0] = {}) => new ScriptedAgent({ sandboxes: SANDBOXES, act: writes, ...options })
+  const run = async (ctx: Context, id: string, key: string, runId?: string): Promise<WorkerExecution> => {
+    const source = ctx.workers.source('agents')!
+    const capabilities = id === 'agent:dev' ? ['develop'] : ['review']
+    return source.wait(source.start({ key, worker: id, prompt: key, ...(runId ? { runId } : {}), requirement: requirement({ capabilities }), decisions: { tier: 'sha256:0', route: 'sha256:0' } as never }).id, 30_000)
+  }
+  const LATER = (): number => Date.now() + 169 * 60 * 60_000
+
+  it('runs a writing run of a workflow run in that run\'s own worktree, on branch system/run/<runId>, and never touches the main working tree (INV-15, REQ-WF-5)', async () => {
+    const repo = repository()
+    const head = git(repo, 'rev-parse', 'HEAD')
+    const root = temp('system-worktrees-')
+    const agent = developer()
+    const { ctx } = await boot(agent, { workers: [writer(repo)], worktreeRoot: root })
+    expect((await ctx.workers.list())[0]).toMatchObject({ worker: 'agent:dev', state: 'ready' })
+    const done = await run(ctx, 'agent:dev', 'k-1', 'run_one')
+    expect(done).toMatchObject({ status: 'completed', submitted: true })
+    // <worktreeRoot>/<repository name>-<hash of its real path>/<runId>
+    const workspace = agent.runs[0]!.workspace
+    expect(dirname(dirname(workspace))).toBe(realpathSync(root))
+    expect(basename(dirname(workspace))).toMatch(new RegExp(`^${basename(repo)}-[0-9a-f]{12}$`))
+    expect(basename(workspace)).toBe('run_one')
+    expect(agent.runs[0]).toMatchObject({ sandbox: 'workspace-write' })
+    expect(git(workspace, 'symbolic-ref', '--short', 'HEAD')).toBe('system/run/run_one')
+    // Branched from the repository's HEAD; the agent's change is in the worktree only.
+    expect(git(workspace, 'rev-parse', 'HEAD')).toBe(head)
+    expect(readFileSync(join(workspace, 'calc.py'), 'utf8')).toBe(FIXED)
+    untouched(repo, head)
+    // The result names the worktree and its exact subject, which a review binds to.
+    const body = ctx.artifacts.get(done.result!)!.body as { workspace: string; subject: unknown }
+    expect(body.workspace).toBe(workspace)
+    expect(body.subject).toEqual(captureGitSubject(workspace)!.subject)
+    expect(body.subject).toMatchObject({ type: 'git-head', ref: head })
+    // A run that belongs to no workflow run works in the configured workspace, as before.
+    await run(ctx, 'agent:dev', 'k-alone')
+    expect(agent.runs[1]!.workspace).toBe(repo)
+  })
+
+  it('gives a reviewer of the same workflow run the writer\'s worktree, and binds its review to that subject (REQ-WF-5, REQ-TEAM-5, INV-15)', async () => {
+    const repo = repository()
+    const head = git(repo, 'rev-parse', 'HEAD')
+    const subjectOf = (prompt: string): string => /^Subject: (\S+)$/m.exec(prompt)![1]!
+    const read: string[] = []
+    const agent = developer({
+      act: (spec) => {
+        if (spec.sandbox === 'workspace-write') return writes(spec)
+        read.push(readFileSync(join(spec.workspace, 'calc.py'), 'utf8'))
+        return '```json\n' + JSON.stringify({ subject: subjectOf(spec.prompt), verdict: 'approve', findings: [{ severity: 'info', title: 'add() now adds' }] }) + '\n```'
+      },
+    })
+    const { ctx } = await boot(agent, { workers: [writer(repo), reviewer(repo)], worktreeRoot: temp('system-worktrees-') })
+    chatWorker(ctx)
+    const started = ctx.workflow.start({ template: 'develop', input: 'Fix add()' })
+    const deadline = Date.now() + 30_000
+    for (;;) {
+      const view = ctx.workflow.get(started.runId)
+      if (view && view.status !== 'running') break
+      if (Date.now() > deadline) throw new Error('never finished')
+      if (view?.blocked?.kind === 'gate') ctx.workflow.approve(started.runId, { verdict: 'approved', plan: view.blocked.plan })
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    }
+    const done = await ctx.workflow.wait(started.runId, 30_000)
+    expect(done.status).toBe('completed')
+    const [develop, review] = agent.runs
+    expect([develop!.sandbox, review!.sandbox]).toEqual(['workspace-write', 'read-only'])
+    // One worktree per (repository, workflow run): the writer's, read by the reviewer.
+    expect(basename(develop!.workspace)).toBe(started.runId)
+    expect(review!.workspace).toBe(develop!.workspace)
+    expect(read).toEqual([FIXED])
+    expect(git(develop!.workspace, 'symbolic-ref', '--short', 'HEAD')).toBe(`system/run/${started.runId}`)
+    expect(subjectOf(review!.prompt)).toBe(subjectId(captureGitSubject(develop!.workspace)!.subject))
+    expect(review!.prompt).toContain('+    return a + b')
+    const [stored] = ctx.artifacts.list({ kind: 'assessment' })
+    expect(stored!.body).toMatchObject({ verdict: 'approve', reviewer: 'agent:reviewer' })
+    expect(`git:${(stored!.body as { subject: { ref: string } }).subject.ref}:${(stored!.body as { subject: { version: string } }).subject.version}`).toBe(subjectOf(review!.prompt))
+    untouched(repo, head)
+  })
+
+  it('gives two workflow runs two worktrees on two branches, each with only its own change (INV-15)', async () => {
+    const repo = repository()
+    const head = git(repo, 'rev-parse', 'HEAD')
+    const agent = developer()
+    const { ctx } = await boot(agent, { workers: [writer(repo), reviewer(repo)], worktreeRoot: temp('system-worktrees-') })
+    expect((await run(ctx, 'agent:dev', 'k-a', 'run_a')).status).toBe('completed')
+    expect((await run(ctx, 'agent:dev', 'k-b', 'run_b')).status).toBe('completed')
+    const [a, b] = agent.runs.map((r) => r.workspace) as [string, string]
+    expect(a).not.toBe(b)
+    expect([basename(a), basename(b)]).toEqual(['run_a', 'run_b'])
+    expect([git(a, 'symbolic-ref', '--short', 'HEAD'), git(b, 'symbolic-ref', '--short', 'HEAD')]).toEqual(['system/run/run_a', 'system/run/run_b'])
+    expect(readdirSync(a).sort()).toEqual(['.git', 'calc.py', 'note-run_a.txt'])
+    expect(readdirSync(b).sort()).toEqual(['.git', 'calc.py', 'note-run_b.txt'])
+    // A reviewer of run_b reads run_b's tree; of no workflow run, the configured workspace.
+    await run(ctx, 'agent:reviewer', 'k-review-b', 'run_b')
+    await run(ctx, 'agent:reviewer', 'k-review-alone')
+    expect(agent.runs.slice(2).map((r) => r.workspace)).toEqual([b, repo])
+    untouched(repo, head)
+  })
+
+  it('reuses the stored worktree of a workflow run after a restart, wherever the worktree root now is', async () => {
+    const repo = repository()
+    const dir = temp('system-agents-')
+    const first = developer()
+    const before = await boot(first, { workers: [writer(repo)], worktreeRoot: temp('system-worktrees-') }, dir)
+    expect((await run(before.ctx, 'agent:dev', 'k-1', 'run_keep')).status).toBe('completed')
+    await before.stop()
+    cleanups.splice(cleanups.indexOf(before.stop), 1)
+    const elsewhere = temp('system-worktrees-')
+    const second = developer({ act: () => 'looked again' })
+    const after = await boot(second, { workers: [writer(repo)], worktreeRoot: elsewhere }, dir)
+    expect((await run(after.ctx, 'agent:dev', 'k-2', 'run_keep')).status).toBe('completed')
+    expect(second.runs[0]!.workspace).toBe(first.runs[0]!.workspace)
+    expect(readFileSync(join(second.runs[0]!.workspace, 'note-run_keep.txt'), 'utf8')).toBe('k-1\n')
+    expect(readdirSync(elsewhere)).toEqual([])
+  })
+
+  it('commits a finished workflow run\'s pending changes on its branch, then removes its worktree after the retention, by a recorded decision; a later run of it adds the worktree again from that branch (INV-9, INV-13)', async () => {
+    const repo = repository()
+    const head = git(repo, 'rev-parse', 'HEAD')
+    // What each run found in its tree before it wrote.
+    const found: Array<string | undefined> = []
+    const agent = developer({
+      act: (spec) => {
+        const note = join(spec.workspace, 'note-run_done.txt')
+        found.push(existsSync(note) ? readFileSync(note, 'utf8') : undefined)
+        return writes(spec)
+      },
+    })
+    const { ctx } = await boot(agent, { workers: [writer(repo)], worktreeRoot: temp('system-worktrees-') })
+    expect((await run(ctx, 'agent:dev', 'k-1', 'run_done')).status).toBe('completed')
+    const workspace = agent.runs[0]!.workspace
+    // Within the retention it stays.
+    expect(await ctx.agentWorkers.sweepWorktrees()).toEqual({ removed: [], kept: [] })
+    expect(existsSync(workspace)).toBe(true)
+    expect(await ctx.agentWorkers.sweepWorktrees(LATER())).toEqual({ removed: [workspace], kept: [] })
+    expect(existsSync(workspace)).toBe(false)
+    expect(git(repo, 'worktree', 'list', '--porcelain')).not.toContain(workspace)
+    // The work is kept: one commit by the system, naming the run, on top of where the branch began.
+    expect(git(repo, 'log', '-1', '--format=%an <%ae>|%cn <%ce>|%s', 'system/run/run_done')).toBe('system <system@localhost>|system <system@localhost>|system: keep the uncommitted work of workflow run run_done')
+    expect(git(repo, 'rev-parse', 'system/run/run_done^')).toBe(head)
+    expect(git(repo, 'show', 'system/run/run_done:calc.py')).toBe(FIXED.trim())
+    expect(git(repo, 'show', 'system/run/run_done:note-run_done.txt')).toBe('k-1')
+    untouched(repo, head)
+    expect(git(repo, 'branch', '--list', '--format=%(refname:short)').split('\n').sort()).toEqual(['main', 'system/run/run_done'])
+    // The rule's decision is an artifact of the workflow run (INV-13).
+    const [decision, ...more] = ctx.artifacts.list({ kind: 'decision', decisionType: 'retention', runId: 'run_done' })
+    expect(more).toEqual([])
+    new SchemaRegistry().assertRecord(decision!.body as { schema: string })
+    expect(decision!.body).toMatchObject({
+      decider: { type: 'rule', id: 'agent-workers.worktree-retention' },
+      outcome: { option: 'remove', detail: { runId: 'run_done', path: workspace, branch: 'system/run/run_done', retentionHours: 168 } },
+    })
+    // A later run of the same workflow run works in it again, from its branch, with that work.
+    expect((await run(ctx, 'agent:dev', 'k-2', 'run_done')).status).toBe('completed')
+    expect(agent.runs[1]!.workspace).toBe(workspace)
+    expect(found).toEqual([undefined, 'k-1\n'])
+    expect(git(workspace, 'symbolic-ref', '--short', 'HEAD')).toBe('system/run/run_done')
+    expect(git(workspace, 'rev-parse', 'HEAD')).toBe(git(repo, 'rev-parse', 'system/run/run_done'))
+    untouched(repo, head)
+  })
+
+  it('keeps a worktree while its workflow run has an agent run to finish, and leaves one it cannot remove in place, committed, for the next sweep (INV-9)', async () => {
+    const repo = repository()
+    const options = { sandboxes: SANDBOXES, act: writes, holdMs: 0 }
+    const agent = new ScriptedAgent(options)
+    const { ctx } = await boot(agent, { workers: [writer(repo)], worktreeRoot: temp('system-worktrees-') })
+    expect((await run(ctx, 'agent:dev', 'k-1', 'run_busy')).status).toBe('completed')
+    // A second agent run of the workflow run is still running: the worktree is not looked at.
+    options.holdMs = 30_000
+    const source = ctx.workers.source('agents')!
+    const busy = source.start({ key: 'k-2', worker: 'agent:dev', prompt: 'more', runId: 'run_busy', requirement: requirement({ capabilities: ['develop'] }), decisions: { tier: 'sha256:0', route: 'sha256:0' } as never })
+    while (agent.runs.length < 2) await new Promise((resolve) => setTimeout(resolve, 20))
+    const workspace = agent.runs[0]!.workspace
+    expect(await ctx.agentWorkers.sweepWorktrees(LATER())).toEqual({ removed: [], kept: [] })
+    expect(source.cancel!(busy.id)).toBe(true)
+    await source.wait(busy.id, 10_000)
+    // Locked by the operator: its changes are committed, the removal is refused, and it stays.
+    git(repo, 'worktree', 'lock', workspace)
+    expect(await ctx.agentWorkers.sweepWorktrees(LATER())).toEqual({ removed: [], kept: [workspace] })
+    expect(existsSync(join(workspace, 'note-run_busy.txt'))).toBe(true)
+    expect(git(repo, 'log', '-1', '--format=%s', 'system/run/run_busy')).toBe('system: keep the uncommitted work of workflow run run_busy')
+    git(repo, 'worktree', 'unlock', workspace)
+    expect(await ctx.agentWorkers.sweepWorktrees(LATER())).toEqual({ removed: [workspace], kept: [] })
+    expect(git(repo, 'rev-list', '--count', 'main..system/run/run_busy')).toBe('1')
+    // Retried under the one decision that retires it.
+    expect(ctx.artifacts.list({ kind: 'decision', decisionType: 'retention', runId: 'run_busy' })).toHaveLength(1)
+  })
+
+  it('forgets a worktree the operator removed by hand, and adds it again from its branch for a later run (INV-9)', async () => {
+    const repo = repository()
+    const agent = developer()
+    const { ctx } = await boot(agent, { workers: [writer(repo)], worktreeRoot: temp('system-worktrees-') })
+    expect((await run(ctx, 'agent:dev', 'k-1', 'run_hand')).status).toBe('completed')
+    const workspace = agent.runs[0]!.workspace
+    git(workspace, 'add', '--all')
+    git(workspace, 'commit', '-q', '-m', 'by hand')
+    git(repo, 'worktree', 'remove', workspace)
+    expect(await ctx.agentWorkers.sweepWorktrees(LATER())).toEqual({ removed: [workspace], kept: [] })
+    expect(git(repo, 'log', '-1', '--format=%s', 'system/run/run_hand')).toBe('by hand')
+    expect((await run(ctx, 'agent:dev', 'k-2', 'run_hand')).status).toBe('completed')
+    expect(agent.runs[1]!.workspace).toBe(workspace)
+    expect(git(workspace, 'log', '-1', '--format=%s')).toBe('by hand')
+  })
+
+  it('keeps every worktree with worktreeRetentionHours 0', async () => {
+    const repo = repository()
+    const agent = developer()
+    const { ctx } = await boot(agent, { workers: [writer(repo)], worktreeRoot: temp('system-worktrees-'), worktreeRetentionHours: 0 })
+    expect((await run(ctx, 'agent:dev', 'k-1', 'run_kept')).status).toBe('completed')
+    expect(await ctx.agentWorkers.sweepWorktrees(LATER())).toEqual({ removed: [], kept: [] })
+    expect(existsSync(agent.runs[0]!.workspace)).toBe(true)
+  })
+
+  it('distrusts a worktree whose .git file the agent pointed elsewhere: the run fails, and git never runs there again', async () => {
+    const repo = repository()
+    const decoy = repository()
+    const agent = developer({
+      act: (spec) => {
+        writeFileSync(join(spec.workspace, '.git'), `gitdir: ${join(decoy, '.git')}\n`)
+        return 'done'
+      },
+    })
+    const { ctx } = await boot(agent, { workers: [writer(repo)], worktreeRoot: temp('system-worktrees-') })
+    const done = await run(ctx, 'agent:dev', 'k-1', 'run_moved')
+    expect(done).toMatchObject({ status: 'failed', submitted: true, error: { kind: 'reconciliation_failed', message: expect.stringContaining('.git file') } })
+    // A later run of the workflow run and the sweep both refuse it, and leave it for the operator.
+    expect(await run(ctx, 'agent:dev', 'k-2', 'run_moved')).toMatchObject({ status: 'failed', submitted: false, error: { kind: 'config_error', message: expect.stringContaining('no longer points') } })
+    expect(await ctx.agentWorkers.sweepWorktrees(LATER())).toEqual({ removed: [], kept: [agent.runs[0]!.workspace] })
+    expect(agent.runs).toHaveLength(1)
+    expect(git(decoy, 'branch', '--list', '--format=%(refname:short)')).toBe('main')
+    expect(git(decoy, 'status', '--porcelain')).toBe('')
+  })
+
+  it('refuses worktreePerRun on a workspace that is not the top level of a git repository: the Worker takes no work, and a run fails as config_error before the agent starts', async () => {
+    const plain = temp('system-plain-')
+    const agent = developer()
+    const root = temp('system-worktrees-')
+    const { ctx } = await boot(agent, { workers: [writer(plain)], worktreeRoot: root })
+    expect((await ctx.workers.list())[0]).toMatchObject({ worker: 'agent:dev', state: 'unavailable', capabilities: [] })
+    expect(await run(ctx, 'agent:dev', 'k-1', 'run_x')).toMatchObject({ status: 'failed', submitted: false, error: { kind: 'config_error', message: expect.stringContaining('not a git working tree') } })
+    // A directory inside a repository is not one either: a worktree is of the whole repository.
+    const inside = join(repository(), 'pkg')
+    mkdirSync(inside)
+    const nested = await boot(agent, { workers: [writer(inside)], worktreeRoot: root })
+    expect((await nested.ctx.workers.list())[0]).toMatchObject({ state: 'unavailable' })
+    expect(await run(nested.ctx, 'agent:dev', 'k-2', 'run_x')).toMatchObject({ status: 'failed', error: { kind: 'config_error', message: expect.stringContaining('not the top level') } })
+    // Nor is a repository that holds the worktree root: its worktrees would be files of its main working tree.
+    const holder = repository()
+    const holding = await boot(agent, { workers: [writer(holder)], worktreeRoot: join(holder, 'worktrees') })
+    expect((await holding.ctx.workers.list())[0]).toMatchObject({ state: 'unavailable' })
+    expect(await run(holding.ctx, 'agent:dev', 'k-4', 'run_x')).toMatchObject({ status: 'failed', error: { kind: 'config_error', message: expect.stringContaining('lies inside') } })
+    expect(existsSync(join(holder, 'worktrees'))).toBe(false)
+    expect(agent.runs).toEqual([])
+    expect(readdirSync(root)).toEqual([])
+    // A run id is a branch and a directory name: anything else is refused at once.
+    expect(() => ctx.workers.source('agents')!.start({ key: 'k-3', worker: 'agent:dev', prompt: 'x', runId: '../escape', requirement: requirement({ capabilities: ['develop'] }), decisions: { tier: 'sha256:0', route: 'sha256:0' } as never }))
+      .toThrow(/run id/)
+  })
+
+  it('refuses at load Workers that share a workspace and disagree on worktreePerRun: a reviewer must read the writer\'s tree', () => {
+    const repo = repository()
+    expect(() => new AgentWorkers(new Context(), { workers: [writer(repo), worker({ id: 'reviewer', workspace: repo })] })).toThrow(/share the workspace/)
   })
 })

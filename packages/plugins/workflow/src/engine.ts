@@ -530,7 +530,7 @@ export class Engine {
           }
           const started = source.start({
             key: `workflow:${run.run_id}:${node.node_id}:${attempt}:${node.escalations}:${record.inputReceipt!.inputHash}`,
-            worker: admitted.worker.worker, prompt: node.prompt!, sessionId: spec.session.sessionId,
+            worker: admitted.worker.worker, prompt: node.prompt!, sessionId: spec.session.sessionId, runId: run.run_id,
             requirement: record.requirement, decisions: admitted.decisions,
           })
           this.writeNode(node, { state: 'RUNNING', execution_id: started.id, attempt, not_before: null, ...routed }, (r) => ({
