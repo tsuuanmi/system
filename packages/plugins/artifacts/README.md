@@ -21,3 +21,30 @@ records ([design](../../../docs/design/artifacts.md),
 - **Config:** `explainDepth` (default 16), `explainBudget` (default 1000),
   `collectGraceHours` (default 24), `collectBatch` (default 1000: artifacts
   deleted per write transaction; the scan itself runs outside any).
+- The conformance suite is [`conformance/artifacts.ts`](conformance/artifacts.ts)
+  (contract 1.0), run against this plugin over a real store:
+  - the id is computed from the canonical content alone (a blob by its ref and
+    media type), never from the producer's id or time;
+  - identical content is stored once and listed under every run that produced
+    it; inputs are a sorted set;
+  - the body is validated against its `bodySchema` and the envelope against
+    `artifact-envelope@1.0`; an invalid one, an unknown schema or major, or an
+    artifact with both or neither of body and blob is refused, storing nothing;
+  - the classification floor over inputs and lineage; an unknown reference is
+    refused;
+  - no downgrade: deduplication refuses a stricter classification and keeps the
+    stored one over a laxer request;
+  - a decision needs exactly one selected candidate equal to its outcome (a
+    model decision is never deterministic; a later minor's type needs that
+    minor), and is `operator-shared` by default;
+  - a decision's prose is clamped to its bounds on whole characters;
+  - immutability: nothing changes a stored artifact; a correction supersedes it;
+  - `list` filters by kind, decision type, run, and node, within a limit;
+  - `read`: the header, a bounded window of text or JSON in whole characters,
+    and only content ids;
+  - `explain` walks inputs once each, within `explainDepth` and `explainBudget`;
+  - `collect` takes only what no root reaches, past the grace period, of no
+    remaining run; a collected artifact still named reads as `expired`;
+  - an artifact a stored artifact references through its inputs or lineage is
+    never collected (baselined: the inputs of an artifact kept only by its run
+    or by the grace period are collected today).
