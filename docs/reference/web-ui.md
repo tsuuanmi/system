@@ -23,6 +23,25 @@ Every route is under `/ui/api` and passes the shared request guard first
 
 A refused action is `400` (a malformed body) or `409` (the engine refused it).
 
+## Reviews
+
+Served when `ctx.board` is present; without it, both routes answer `503`
+([board](../design/board.md#required-checks-bind-at-acceptance)).
+
+| Route | Body | Answer |
+|---|---|---|
+| `GET reviews` | — | `{reviews}`: every task in review, those held for the operator first, by expiry: `taskId`, `title`, `goal`, `actionClass`, `acceptance`, `attempts`, `project {projectId, title}`, the result's exact `subject`, `artifacts` (and `digest`, `files`), `pendingChecks`, `run`, `heldFor` (`operator`, or `reviewer` while a run's lease holds it), `since`, `expiresAt`, `lastDecision` |
+| `POST reviews/<taskId>/decide` | `{verdict: accept \| reject, subject, note?}` | `{task, decision}`: the task after `ctx.board.accept`, and the `acceptance` decision recorded |
+
+- `subject` is the exact subject of the result the page showed (INV-5): a result on another
+  subject is refused (`409`), and so is a task no longer in review. Nothing is decided then.
+- The verdict is an `acceptance` decision made by the operator (decider `operator`, producer
+  `operator`), naming the task and the result's subject in `outcome.detail`, with every result
+  artifact (and the digest) among its inputs and the note as its rationale; then
+  `ctx.board.accept` applies it. This is the operator's channel for it (INV-6): no MCP tool
+  accepts a review.
+- A refusal by the board is `409`, with its failure (`invalid`, `invalid-transition`, …).
+
 ## Approval queue
 
 Served when `ctx.approvals` is present; without it, both routes answer `503`

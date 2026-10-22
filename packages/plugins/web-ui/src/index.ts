@@ -2,7 +2,8 @@
  * The operator's web UI (REQ-HOST "Web UI: status, watch"): runs, their steps, and each
  * step's decision chain, plus the operator's approve, deciding vote on a tie, stop, and continue;
  * and, when `ctx.approvals` is present, the approval queue by batch with the operator's verdicts
- * (docs/design/approvals.md). It is served on the DSH webserver under `/ui`, which is loopback-only:
+ * (docs/design/approvals.md); and, when `ctx.board` is present, the board's tasks in review with the
+ * operator's acceptance (docs/design/board.md). It is served on the DSH webserver under `/ui`, which is loopback-only:
  * - the page and script carry no data, under a strict content security policy;
  * - the token arrives in the URL fragment (never sent to a server), and the script sends it as
  *   a bearer token to `/ui/api`;
@@ -16,6 +17,8 @@ import type {} from '@deepseek-ai/dsh-host-webserver'
 import z from '@deepseek-ai/schemastery'
 import { assertSafeBind, guardRequest, LOOPBACK_HOSTS, readJsonBody, scopeToken, tokenFile } from '@tsuuanmi/system-gateway-core'
 import { type ApprovalRequest, ApprovalsError, type Subject, type Verdict } from '@tsuuanmi/system-approvals-core'
+import type {} from '@tsuuanmi/system-artifacts'
+import { type ArtifactRef, BoardError, type BoardTask } from '@tsuuanmi/system-board-core'
 import { dshHome, registerSecretPath } from '@tsuuanmi/system-libs'
 import type {} from '@tsuuanmi/system-workflow'
 import { APP_CSS, APP_JS, PAGE } from './assets.ts'
@@ -49,13 +52,35 @@ const noteOf = (value: unknown): string | undefined => typeof value === 'string'
  */
 function verdictOf(value: unknown, note: string | undefined): Verdict | string {
   if (!isObject(value)) return 'a verdict is {requestId, subject, verdict, note?}'
-  const { requestId, subject, verdict } = value
+  const { requestId, verdict } = value
   if (typeof requestId !== 'string' || !ID.test(requestId)) return 'requestId is not a request id'
   if (verdict !== 'approved' && verdict !== 'rejected') return 'verdict must be approved or rejected'
-  if (!isObject(subject) || !SUBJECT_TYPES.includes(subject.type as Subject['type']) || typeof subject.ref !== 'string' || !subject.ref || subject.ref.length > 512
-    || (subject.version !== undefined && (typeof subject.version !== 'string' || subject.version.length > 128))) return 'subject must be the exact subject the page showed'
+  const subject = subjectOf(value.subject)
+  if (!subject) return 'subject must be the exact subject the page showed'
   const own = noteOf(value.note) ?? note
-  return { requestId, subject: { type: subject.type as Subject['type'], ref: subject.ref, ...(subject.version !== undefined ? { version: subject.version as string } : {}) }, verdict, ...(own ? { note: own } : {}) }
+  return { requestId, subject, verdict, ...(own ? { note: own } : {}) }
+}
+
+/** A subject as the page sent it back, or undefined when it is not one. */
+function subjectOf(subject: unknown): Subject | undefined {
+  if (!isObject(subject) || !SUBJECT_TYPES.includes(subject.type as Subject['type']) || typeof subject.ref !== 'string' || !subject.ref || subject.ref.length > 512
+    || (subject.version !== undefined && (typeof subject.version !== 'string' || subject.version.length > 128))) return undefined
+  return { type: subject.type as Subject['type'], ref: subject.ref, ...(subject.version !== undefined ? { version: subject.version as string } : {}) }
+}
+
+const sameSubject = (a: Subject, b: Subject): boolean => a.type === b.type && a.ref === b.ref && a.version === b.version
+
+/** A task in review as the page shows it: what it is, its exact result, what is still pending, and until when the operator has it. */
+export function reviewOf(task: BoardTask, project: { projectId: string; title: string } | undefined): Record<string, unknown> {
+  const result = task.result!
+  return {
+    taskId: task.taskId, title: task.title, goal: task.goal, actionClass: task.actionClass, acceptance: task.acceptance, attempts: task.attempts,
+    project: project ?? { projectId: task.projectId }, subject: result.subject, artifacts: result.artifacts, ...(result.digest ? { digest: result.digest } : {}),
+    ...(result.files ? { files: result.files } : {}), pendingChecks: task.waiting?.pendingChecks ?? [], run: task.run,
+    heldFor: task.waiting?.reason === 'operator-review' ? 'operator' : 'reviewer',
+    ...(task.waiting ? { since: task.waiting.since, expiresAt: task.waiting.expiresAt } : task.holder ? { expiresAt: task.holder.leaseExpiresAt } : {}),
+    ...(task.lastDecision ? { lastDecision: task.lastDecision } : {}),
+  }
 }
 
 /** Open and batched requests in listing order (by batch, then expiry), grouped by batch; the unbatched last. */
@@ -134,10 +159,69 @@ export function apply(ctx: Context, config: Config = {}): void {
     }
   }
 
+  /**
+   * The board's tasks in review, when `ctx.board` is present (else 503): `GET reviews` lists them,
+   * those held for the operator first; `POST reviews/<taskId>/decide` takes the operator's
+   * acceptance or rejection of the exact result the page showed (its subject, INV-5). The verdict is
+   * an `acceptance` decision made by the operator, through this channel only (INV-6): its decider
+   * and producer are the operator's, it names the task and the result's subject, and every result
+   * artifact is among its inputs, as the board requires; then `ctx.board.accept` applies it.
+   */
+  const reviews = async (req: IncomingMessage, res: ServerResponse, path: string): Promise<void> => {
+    const board = ctx.get('board')
+    const artifacts = ctx.get('artifacts')
+    if (!board || !artifacts) return json(res, 503, { error: 'the board is not running' })
+    if (path === 'reviews') {
+      if (req.method !== 'GET') return json(res, 405, { error: 'method not allowed' })
+      const listed: Array<Record<string, unknown>> = []
+      for (const project of await board.projects()) {
+        for (const task of await board.tasks({ projectId: project.projectId, states: ['review'] })) listed.push(reviewOf(task, { projectId: project.projectId, title: project.title }))
+      }
+      listed.sort((a, b) => (a.heldFor === b.heldFor ? String(a.expiresAt ?? '').localeCompare(String(b.expiresAt ?? '')) : a.heldFor === 'operator' ? -1 : 1))
+      return json(res, 200, { reviews: listed })
+    }
+    const match = /^reviews\/([A-Za-z0-9][A-Za-z0-9._:-]{0,199})\/decide$/.exec(path)
+    if (!match) return json(res, 404, { error: 'not found' })
+    if (req.method !== 'POST') return json(res, 405, { error: 'method not allowed' })
+    const taskId = match[1]!
+    try {
+      const body = await readJson(req)
+      if (body.verdict !== 'accept' && body.verdict !== 'reject') return json(res, 400, { error: 'verdict must be accept or reject' })
+      const subject = subjectOf(body.subject)
+      if (!subject) return json(res, 400, { error: 'subject must be the exact subject of the result the page showed' })
+      const note = noteOf(body.note)
+      const task = await board.task(taskId)
+      if (!task) return json(res, 404, { error: `unknown task ${taskId}` })
+      if (task.state !== 'review' || !task.result) return json(res, 409, { error: `task ${taskId} is ${task.state}, not in review; nothing was decided` })
+      // The verdict binds to the result the operator was shown: a result changed since is refused (INV-5).
+      if (!sameSubject(subject, task.result.subject)) return json(res, 409, { error: `task ${taskId}'s result is on another subject than the page showed; nothing was decided` })
+      const option = body.verdict
+      const other = option === 'accept' ? 'reject' : 'accept'
+      const decision = artifacts.recordDecision({
+        decisionType: 'acceptance',
+        question: `Does the operator accept the result of board task ${taskId}, attempt ${task.attempts.count}?`,
+        inputs: [...task.result.artifacts, ...(task.result.digest ? [task.result.digest] : [])],
+        candidates: [
+          { option, selected: true, reasons: [`the operator ${option}s the result on ${task.result.subject.type} ${task.result.subject.ref}${task.result.subject.version ? ` at ${task.result.subject.version}` : ''}, on the web UI${note ? `: ${note}` : ''}`] },
+          { option: other, selected: false, reasons: [`not ${other}: the operator chose ${option}`] },
+        ],
+        decider: { type: 'operator', id: 'operator.review', version: '1' },
+        outcome: { option, detail: { taskId, subject: task.result.subject } },
+        ...(note ? { rationale: note } : {}),
+        deterministic: false,
+      }, { producer: { type: 'operator', ref: 'operator' } }).id as ArtifactRef
+      return json(res, 200, { task: await board.accept(taskId, decision, new Date()), decision })
+    } catch (error) {
+      if (error instanceof BoardError) return json(res, error.failure === 'unknown-task' ? 404 : 409, { error: `${error.failure}: ${error.message}` })
+      return json(res, (error as { status?: number }).status ?? 409, { error: (error as Error).message })
+    }
+  }
+
   const api = async (req: IncomingMessage, res: ServerResponse, path: string): Promise<void> => {
     const refused = refuse(req)
     if (refused) return json(res, refused[0], { error: refused[1] })
     if (path === 'approvals' || path.startsWith('approvals/')) return queue(req, res, path)
+    if (path === 'reviews' || path.startsWith('reviews/')) return reviews(req, res, path)
     const workflow = ctx.workflow
     if (req.method === 'GET' && path === 'runs') return json(res, 200, { runs: workflow.usage(100) })
     const match = /^runs\/([A-Za-z0-9_-]{1,100})(?:\/(approve|vote|stop|continue))?$/.exec(path)

@@ -22,7 +22,7 @@ its types is not listed).
 | [gateway-responses](../../packages/plugins/gateway-responses/README.md) | gateways | — | `gateway-responses` | `webServer`, `workflow`, `store` | `gateway-core`, `gateway-turns`, `libs` |
 | [gateway-turns](../../packages/gateway-turns/README.md) | gateways | — | — | — | `gateway-core`, `libs` |
 | [mcp-server](../../packages/plugins/mcp-server/README.md) | gateways | `mcp` | `mcp-server` | `webServer`, `accounts` (optional), `artifacts` (optional), `credentials` (optional), `eventLog` (optional), `providers` (optional), `store` (optional), `workers` (optional) | `gateway-core`, `libs` |
-| [web-ui](../../packages/plugins/web-ui/README.md) | gateways | — | `web-ui` | `webServer`, `workflow`, `approvals` (optional) | `approvals-core`, `gateway-core`, `libs` |
+| [web-ui](../../packages/plugins/web-ui/README.md) | gateways | — | `web-ui` | `webServer`, `workflow`, `approvals` (optional), `artifacts` (optional), `board` (optional) | `approvals-core`, `board-core`, `gateway-core`, `libs` |
 | [board](../../packages/plugins/board/README.md) | orchestration | `board` | `board` | `store`, `artifacts`, `leases`, `approvals`, `mcp` (optional) | `approvals-core`, `board-core`, `gateway-core`, `leases`, `libs` |
 | [board-core](../../packages/board-core/README.md) | orchestration | defines `board` | — | — | `approvals-core` |
 | [profile-scientific-research](../../packages/plugins/profile-scientific-research/README.md) | orchestration | — | `profile-scientific-research` | `workflow`, `workers`, `artifacts`, `eventLog` | `libs` |
@@ -209,6 +209,8 @@ flowchart TB
   web_ui --> webserver
   web_ui --> workflow
   web_ui -.-> approvals
+  web_ui -.-> artifacts
+  web_ui -.-> board
   worker_sessions --> store
   worker_sessions --> artifacts
   worker_sessions -.-> mcp_server
@@ -361,6 +363,7 @@ flowchart TB
   turns --> workers_core
   ui_ops --> provider_core
   web_ui --> approvals_core
+  web_ui --> board_core
   web_ui --> gateway_core
   worker_sessions --> gateway_core
   workers --> workers_core

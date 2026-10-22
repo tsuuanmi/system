@@ -1186,6 +1186,12 @@ importers:
       '@tsuuanmi/system-approvals-core':
         specifier: workspace:*
         version: link:../../approvals-core
+      '@tsuuanmi/system-artifacts':
+        specifier: workspace:*
+        version: link:../artifacts
+      '@tsuuanmi/system-board-core':
+        specifier: workspace:*
+        version: link:../../board-core
       '@tsuuanmi/system-gateway-core':
         specifier: workspace:*
         version: link:../../gateway-core
@@ -1205,12 +1211,42 @@ importers:
       '@deepseek-ai/schemastery':
         specifier: 3.18.5-alpha.1
         version: 3.18.5-alpha.1
+      '@tsuuanmi/system-approvals':
+        specifier: workspace:*
+        version: link:../approvals
+      '@tsuuanmi/system-board':
+        specifier: workspace:*
+        version: link:../board
       '@tsuuanmi/system-browser-patchright':
         specifier: workspace:*
         version: link:../browser-patchright
+      '@tsuuanmi/system-egress':
+        specifier: workspace:*
+        version: link:../egress
+      '@tsuuanmi/system-event-log':
+        specifier: workspace:*
+        version: link:../event-log
+      '@tsuuanmi/system-leases':
+        specifier: workspace:*
+        version: link:../leases
+      '@tsuuanmi/system-store':
+        specifier: workspace:*
+        version: link:../store
+      '@tsuuanmi/system-worker-sessions':
+        specifier: workspace:*
+        version: link:../worker-sessions
+      '@tsuuanmi/system-workers':
+        specifier: workspace:*
+        version: link:../workers
+      '@tsuuanmi/system-workers-core':
+        specifier: workspace:*
+        version: link:../../workers-core
       patchright-core:
         specifier: 1.63.0
         version: 1.63.0
+      yaml:
+        specifier: 2.9.1
+        version: 2.9.1
 
   packages/plugins/worker-sessions:
     dependencies:
