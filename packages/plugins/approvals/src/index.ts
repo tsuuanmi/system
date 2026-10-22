@@ -26,7 +26,7 @@ import { registerTools } from './tools.ts'
 export { ACTION_CLASSES, PolicySet, policyProblems } from './policy.ts'
 
 export interface Config {
-  /** `autonomy-policy@1.0` records: exactly one studio policy, and project policies that narrow it. */
+  /** `autonomy-policy@1.x` records: exactly one studio policy, and project policies that narrow it. */
   policies: readonly AutonomyPolicy[]
   /** How often the queue sweeps expired requests and batches open ones on its own, in seconds, and once at start (1 to 3600, default 60). */
   sweepSeconds?: number
@@ -107,9 +107,10 @@ export function checkConfig(config: Partial<Config> = {}): string[] {
 export class StoreApprovals extends Approvals {
   static inject = ['store', 'artifacts']
   static Config: z<Config> = z.object({
-    policies: z.array(z.any()).required().description('autonomy-policy@1.0 records: exactly one studio policy, and project policies that narrow it. '
-      + 'Checked at load against the schema and its load-time rules (one rule per action class; expiry.defaultSeconds and every rule\'s expiresSeconds within expiry.maxSeconds; '
-      + 'a project policy, one per project, narrowing the studio policy); an invalid set refuses the plugin, so nothing that needs a person runs (INV-2)'),
+    policies: z.array(z.any()).required().description('autonomy-policy@1.x records: exactly one studio policy, and project policies that narrow it. '
+      + 'Checked at load against the schema and its load-time rules (one rule per action class; no auto or notify for a class that always asks; '
+      + 'expiry.defaultSeconds and every rule\'s expiresSeconds within expiry.maxSeconds; commands entries of non-empty words with no shell metacharacter; '
+      + 'a batch wait under the shortest expiry it batches; a project policy, one per project, narrowing the studio policy); an invalid set refuses the plugin, so nothing that needs a person runs (INV-2)'),
     sweepSeconds: z.natural().min(1).max(3600).default(60).description('Seconds between the queue\'s own passes (expired requests rejected, requests the policy no longer asks for withdrawn, then open ones batched), and one at start; never off, so every request expires (INV-9)'),
   }) as unknown as z<Config>
 

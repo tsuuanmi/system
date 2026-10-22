@@ -40,7 +40,7 @@ each field, which a schema cannot fully express, is documented in
 | [project.v1.json](project.v1.json) | durable state of a project on the board: its charter (intent, measurable criteria, constraints, stop and pivot rules, budget by resource pool) and milestones |
 | [board-task.v1.json](board-task.v1.json) | durable state of a board task, work that outlives a run, with its lease, run, result, and expiring waits |
 | [approval-request.v1.json](approval-request.v1.json) | durable state of a request in the approval queue, bound to its exact subject; expiry rejects it |
-| [autonomy-policy.v1.json](autonomy-policy.v1.json) | which action classes run (`auto`, `notify`) and which need a person (`ask`) or are denied (`forbid`) |
+| [autonomy-policy.v1.json](autonomy-policy.v1.json) | which action classes run (`auto`, `notify`) and which need a person (`ask`) or are denied (`forbid`); 1.1 adds `remediation` to the classes that always ask |
 | [usage-record.v1.json](usage-record.v1.json) | body of a `receipt` artifact: what one run, call, or turn consumed, from an objective source, deduplicated by request id |
 | [limit-state.v1.json](limit-state.v1.json) | body of an `evidence` artifact: one observation of one configured window of a resource pool |
 | [brief.v1.json](brief.v1.json) | body of an `objective` artifact: what one Worker run is given, with artifacts by content id, never their content |

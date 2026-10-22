@@ -90,7 +90,7 @@
       "required": ["cause", "decision", "at"],
       "properties": {
         "cause": {
-          "description": "verdict: the operator answered; expired: no answer by expiresAt (denied:expired); withdrawn: the waiting work ended first (its task cancelled, its run stopped).",
+          "description": "verdict: the operator answered; expired: no answer by expiresAt (denied:expired); withdrawn: the waiting work ended first (its task cancelled, its run stopped), or the loaded policy no longer asks for it (decider rule approvals.policy).",
           "enum": ["verdict", "expired", "withdrawn"]
         },
         "approval": {
