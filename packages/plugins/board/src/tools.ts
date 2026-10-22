@@ -52,7 +52,7 @@ const generation = () => zod.number().int().min(1).describe('The lease generatio
 export const INPUTS: Record<BoardTool, ToolSpec['inputSchema']> = {
   board_projects: { state: projectState().optional(), ...page },
   board_charter: {
-    projectId: id().optional().describe('An existing project\'s id to amend its charter (pivot), or a new project\'s; generated when absent'),
+    projectId: id().optional().describe('An existing project\'s id to amend its charter (pivot), or a new project\'s; generated when absent, from clientRequestId when one is given, so a retry names the same project'),
     title: zod.string().min(1).max(200), template: id().optional(), classification: zod.enum(['public', 'operator-shared', 'local-private']).optional(),
     charter: charter(), milestones: zod.array(milestone()).max(64).optional(), clientRequestId: zod.string().min(1).max(200).optional().describe('Retry-safe request key'),
   },
@@ -65,7 +65,7 @@ export const INPUTS: Record<BoardTool, ToolSpec['inputSchema']> = {
     dependsOn: zod.array(id()).max(64).optional(), actionClass: actionClass(), milestone: id().optional(), template: id().optional(),
     writes: subject().optional(), budget: zod.array(budgetLine()).max(16).optional(), clientRequestId: zod.string().min(1).max(200).optional().describe('Retry-safe request key'),
   },
-  board_claim: { taskId: id(), owner: id().describe('Who works on it, e.g. the lead\'s session id'), ttlSeconds: zod.number().int().min(30).max(3600).optional().describe('Lease length (default 900 s); renewed by board_update') },
+  board_claim: { taskId: id(), owner: id().describe('Who works on it, e.g. the lead\'s session id'), ttlSeconds: zod.number().int().min(30).max(3600).optional().describe('Lease length in seconds (default 600 s), capped by leases.maxTtlMs; renewed by board_update') },
   board_update: {
     taskId: id(), generation: generation().optional(),
     note: zod.string().min(1).max(2000).optional().describe('A progress line; not stored: results go through board_complete'),
@@ -86,9 +86,9 @@ const DESCRIPTIONS: Record<BoardTool, string> = {
   board_tasks: 'List a project\'s tasks, filtered by state or milestone; a page at a time.',
   board_task: 'Read one task: its goal, acceptance criteria, state, holder, run, result, and why it waits.',
   board_propose: 'Propose a task. The board makes it ready once its dependencies are done and the autonomy policy allows its action class, or asks the operator first.',
-  board_claim: 'Take a ready task\'s lease to work on it yourself; present the returned generation on every later write.',
-  board_update: 'Renew your lease on a task you hold (with its generation), or answer a waiting task\'s questions (every one, by index).',
-  board_complete: 'Submit a running task\'s result with its exact subject (a commit, or the result artifact): the task goes to review, never straight to done.',
+  board_claim: 'Take a ready task\'s lease (ready to claimed); present the returned generation on every later write. The lease is capped by leases.maxTtlMs, and the output gives its real expiry. A claimed task is started by the workflow engine, which records its run first; that start is not wired to these tools yet, so a lead cannot take a claimed task to review alone today.',
+  board_update: 'Renew your lease on a task you hold (with its generation), or answer a waiting task\'s questions (every one, by index). Only a question wait takes answers: a rejected, retries-spent, or review-expired wait takes no input and only expires to cancelled.',
+  board_complete: 'Submit a running task\'s result with its exact subject (a commit, or the result artifact; the subject a task writes, when it names one): the task goes to review, never straight to done. Only a running task takes a result, and the workflow engine starts a claimed one (not wired to these tools yet), so a task claimed with board_claim cannot be completed alone today.',
   board_cancel: 'Cancel a task that is not running or in review; a pending approval request is withdrawn and the tasks that depend on it are cancelled.',
 }
 
@@ -117,8 +117,8 @@ export function handlers(board: StoreBoard, options: { leaseTtlSeconds: number }
     board_charter: async (args) => {
       const input = args as unknown as CharterInput & { clientRequestId?: string }
       const { clientRequestId, ...charter } = input
-      const { project, approvalRequest } = await board.charterProject(charter, new Date(), clientRequestId)
-      return { projectId: project.projectId, state: project.state, charterVersion: input.charter.version, approvalRequest }
+      const { project, approvalRequest, charterVersion } = await board.charterProject(charter, new Date(), clientRequestId)
+      return { projectId: project.projectId, state: project.state, charterVersion, approvalRequest }
     },
     board_brief: async (args) => {
       const projectId = String(args.projectId)

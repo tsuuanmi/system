@@ -453,10 +453,17 @@ guesses.
 - Its charter is approved by the operator (action class `charter`) on the subject
   `{type: content, ref: project:<projectId>:charter:<version>, version: sha256 of the canonical
   charter without approval}`. `board_charter` with an existing `projectId` amends its charter;
-  otherwise it founds a project, with that id or a generated one. An amendment is held in
+  otherwise it founds a project, with that id or a generated one (derived from its
+  `clientRequestId` when it has one, so a retry after a crash asks about the same subject and
+  adopts that request, also when it was approved meanwhile). A retry under the same key returns
+  the charter version that call asked about. An amendment is held in
   `proposedCharter` with the next version
-  until approved, and the project keeps its state meanwhile.
+  until approved, and the project keeps its state meanwhile. A first charter that is rejected or
+  expires closes the project as `abandoned` and cancels its open tasks (`project-closed`); a
+  refused or expired amendment is dropped.
 - A milestone is funded (action class `funding`) by an approval on its budget, a funding round.
+  A founding call declares every milestone `planned`, with no `funding`: the charter's approval
+  does not cover a funding round.
 - Budget use is computed from the usage records of its tasks, never stored on the project.
 - Stop rules are words: the lead or the operator judges them, and the action a rule names is put
   to the operator through the approval queue.
@@ -474,19 +481,29 @@ guesses.
   approval with reason `reconciliation-failed`.
 - A rejected review starts another attempt while `attempts.count < attempts.max`, and otherwise
   waits for input with reason `retries-spent`; `attempts.count` never exceeds `attempts.max`.
+  Every new attempt goes through the autonomy policy again, so an approval request's subject
+  `board-task:<taskId>:attempt:<n>` (`n`, the attempts already made) covers one attempt only.
 - Only a claimed, running, or reviewed task has a `holder`. A result always names its subject:
   the worktree's commit, or the result artifact (`{type: artifact}`) for work with no
-  repository, so a task is never stuck in review for want of one.
+  repository, so a task is never stuck in review for want of one. A task that `writes` a subject
+  leaves its result on that subject (the same type and ref, at its new version).
 - Every wait expires and never starts work: an approval wait follows its request, which expiry
   rejects, and then waits for input with reason `rejected`; an input wait that expires cancels
-  the task (`input-expired`).
+  the task (`input-expired`). When the queue has not resolved the request by `waiting.expiresAt`,
+  or no longer knows it, the board applies the expiry itself.
 - `done` needs an `acceptance` decision whose outcome is accepted; the schema checks only that
-  it is named. A task in review keeps its holder's lease while verification runs; if the lease
+  it is named. The board takes one only on the task's exact result: its `outcome.detail` names
+  the `taskId` and the result's exact `subject` (version included), and may report the `checks`
+  it ran (check name → passed); its inputs hold every artifact of the result and its digest. One
+  not made by the operator accepts only when the policy finds none of the class's required checks
+  failed ([board](../design/board.md#required-checks-bind-at-acceptance)). A task in review keeps its holder's lease while verification runs; if the lease
   lapses with no decision, the task waits for input (`review-expired`), which expires in turn.
 - A holder lost mid-run is first reconciled by the run's owner: a completed run's result is
   applied with its `acceptance` decision, as a review's would be, a failed one counts as an
   attempt, and only an unknown outcome waits for approval to run again (`reconciliation-failed`);
-  an outcome reported later withdraws that request.
+  an outcome reported later withdraws that request. When the policy's verdict on `remediation`
+  (or, for a spent budget, `funding`) is not `ask`, no request can be opened, and the task waits
+  for input (`rejected`) instead: it is never readied or cancelled on the policy alone.
 - `lastDecision` is the decision behind the latest move: a `board` decision for moves the board
   makes on its own, otherwise the acceptance, approval, route, or reconciliation decision that
   caused it. Examples: [`board-task.review.json`](../../schemas/examples/board-task.review.json),
@@ -537,9 +554,9 @@ guesses.
 | `board_brief` | client | one page for a new agent: intent, in progress, waiting, next, what to read first |
 | `board_tasks`, `board_task` | client | list tasks; read one |
 | `board_propose` | client | propose a task; the board makes it ready when its dependencies are done and the policy allows |
-| `board_claim` | client | take a ready task's lease (the lead working on it itself) |
+| `board_claim` | client | take a ready task's lease; the workflow engine starts a claimed task (not wired to the tools yet) |
 | `board_update` | client | report progress and renew the lease, or answer a waiting task's questions |
-| `board_complete` | client | submit results; the task goes to review, never straight to done |
+| `board_complete` | client | submit a running task's results; the task goes to review, never straight to done |
 | `board_cancel` | client | cancel a task that is not running or in review |
 | `approvals_list`, `approvals_get` | client | read the queue |
 | `approvals_decide` | operator | verdicts for up to 50 requests, each bound to its exact subject |

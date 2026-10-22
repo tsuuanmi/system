@@ -7,10 +7,10 @@
  * `ctx.approvals` only: the board never decides one. `sweep(at)` is the only time-driven path.
  * @module @tsuuanmi/system-board
  */
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
-import type { ApprovalRequest, AutonomyVerdict, NewRequest } from '@tsuuanmi/system-approvals-core'
+import type { ApprovalRequest, AutonomyVerdict, Check, NewRequest } from '@tsuuanmi/system-approvals-core'
 import type {} from '@tsuuanmi/system-artifacts'
 import {
   type ActionClass, type ArtifactRef, Board, BoardError, type BoardTask, type CancelReason, type Charter, type CharterInput, type Claim, type Project, type ProjectState, type RunOutcome, type Subject, type TaskInput, type TaskState, TERMINAL, type WaitReason,
@@ -27,7 +27,7 @@ export { renderTasks } from './projection.ts'
 export interface Config {
   /** How long a wait for input lasts before it cancels the task, in seconds (default 7 days). */
   inputExpirySeconds?: number
-  /** Lease length when a claim names none (`board_claim` without `ttlSeconds`), in seconds (default 900); `leases.maxTtlMs` caps it. */
+  /** Lease length when a claim names none (`board_claim` without `ttlSeconds`), in seconds (default 600, the leases' own default cap); `leases.maxTtlMs` caps it. */
   leaseTtlSeconds?: number
   /** Attempts a task gets when its proposal names none (default 3, at most 10). */
   maxAttempts?: number
@@ -77,16 +77,39 @@ const MIGRATIONS = [{
   CREATE TABLE board_client_requests (
     client_request_id TEXT PRIMARY KEY, tool TEXT NOT NULL, project_id TEXT NOT NULL, task_id TEXT, approval_request TEXT, created_at TEXT NOT NULL
   );`,
+}, {
+  // When a pending charter request expires, so the board applies the expiry itself when the queue
+  // never resolves it or no longer knows it (INV-9); the version a retried board_charter asked about.
+  version: 2,
+  sql: `ALTER TABLE board_projects ADD COLUMN charter_expires_at TEXT;
+  ALTER TABLE board_client_requests ADD COLUMN charter_version INTEGER;`,
 }]
 
 type Changes<T> = { [K in keyof T]?: T[K] | undefined }
 /** A task as stored: its record and the holder's lease token, which never leaves the store. */
 interface Stored { task: BoardTask; token?: string; ttlMs?: number }
+/** A project as stored: its record and its pending charter request, with the version it asks about and when it expires. */
+interface StoredProject { project: Project; request?: string; version?: number; expiresAt?: string }
+/** An `acceptance` decision bound to a task's result: its outcome, whether the operator made it, and the checks it reports. */
+interface Acceptance { option: 'accept' | 'reject'; operator: boolean; checks?: Partial<Record<Check, boolean>> }
+/** The policy's verdict for a task's next attempt, and the approval request it opened on ask. */
+interface NextAttempt { verdict: AutonomyVerdict; request?: ApprovalRequest }
+/** A `board_client_requests` row: what a retry-safe call made. */
+interface PriorRequest { project_id: string; task_id: string | null; approval_request: string | null; charter_version: number | null }
+/** A charter request settled by the sweep: the project as it now is, and the tasks it cancelled. */
+interface Settled { project: Project; cancelled: BoardTask[] }
 /** What a move changes; `lease` is set when it takes or renews the holder's lease. */
 interface Move { changes: Changes<BoardTask>; lease?: { token: string; ttlMs: number } }
 /** Why a decision went one way: the chosen move, and why the task (or project) did not stay where it was. */
-interface Why { from: string; to: string; why: string; whyNot: string; inputs?: ArtifactRef[]; detail?: Record<string, unknown> }
+interface Why {
+  from: string; to: string; why: string; whyNot: string; inputs?: ArtifactRef[]; detail?: Record<string, unknown>
+  /** The move it declined, when that is not staying where it was (`from`): the rejected candidate. */
+  instead?: string
+}
 
+/** The checks a policy rule can require (`autonomy-policy@1.0`). */
+const CHECKS: readonly Check[] = ['tests', 'typecheck', 'lint', 'schema', 'quote-check', 'review']
+const isObject = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value)
 const resourceOf = (taskId: string): string => `board-task:${taskId}`
 const charterRef = (projectId: string, version: number): string => `project:${projectId}:charter:${version}`
 /** The charter's subject version: the sha256 of its canonical JSON without its approval (reference/schemas.md#project). */
@@ -96,6 +119,10 @@ const charterHash = (charter: Charter): string => {
 }
 /** The key of the subject an open task writes; one open task per key (INV-15). */
 const writesKey = (subject: Subject | undefined): string | null => (subject ? JSON.stringify([subject.type, subject.ref]) : null)
+/** Whether the task may make another attempt: `attempts.count` never exceeds `attempts.max`. */
+const attemptLeft = (task: BoardTask): boolean => task.attempts.count < task.attempts.max
+/** The earlier of two instants, either of which may be unknown. */
+const earliest = (a: string | undefined, b: string | undefined): string | undefined => (a === undefined ? b : b === undefined || Date.parse(a) <= Date.parse(b) ? a : b)
 const sameSubject = (a: Subject, b: Subject): boolean => a.type === b.type && a.ref === b.ref && a.version === b.version
 /** At most `max` characters (code points), cut on a whole one. */
 const clamp = (text: string, max: number): string => {
@@ -103,6 +130,8 @@ const clamp = (text: string, max: number): string => {
   return chars.length <= max ? text : `${chars.slice(0, max - 1).join('')}…`
 }
 const newId = (prefix: string): string => `${prefix}-${randomUUID().replaceAll('-', '').slice(0, 12)}`
+/** An id derived from a client's request key, so a retry of the same call names the same record. */
+const derivedId = (prefix: string, key: string): string => `${prefix}-${createHash('sha256').update(key).digest('hex').slice(0, 24)}`
 const encodeCursor = (createdAt: string, id: string): string => Buffer.from(JSON.stringify([createdAt, id])).toString('base64url')
 const decodeCursor = (cursor: string): [string, string] => {
   try {
@@ -130,7 +159,7 @@ export class StoreBoard extends Board {
   static inject = ['store', 'artifacts', 'leases', 'approvals']
   static Config: z<Config> = z.object({
     inputExpirySeconds: z.natural().min(60).max(90 * 24 * 3600).default(7 * 24 * 3600).description('How long a wait for input lasts before it cancels the task, in seconds'),
-    leaseTtlSeconds: z.natural().min(30).max(3600).default(900).description('Lease length when a claim names none, in seconds (leases.maxTtlMs caps it)'),
+    leaseTtlSeconds: z.natural().min(30).max(3600).default(600).description('Lease length when a claim names none, in seconds (leases.maxTtlMs caps it)'),
     maxAttempts: z.natural().min(1).max(10).default(3).description('Attempts a task gets when its proposal names none'),
     pageBound: z.natural().min(1).max(100).default(100).description('The most items one page of board_projects or board_tasks holds'),
     projectionMaxTasks: z.natural().min(1).max(10_000).default(200).description('The most tasks the TASKS.md projection lists, open ones first'),
@@ -166,7 +195,7 @@ export class StoreBoard extends Board {
         await sweeping
       }
     })
-    ctx.inject(['mcp'], (c) => registerTools(c, this, { leaseTtlSeconds: config.leaseTtlSeconds ?? 900 }))
+    ctx.inject(['mcp'], (c) => registerTools(c, this, { leaseTtlSeconds: config.leaseTtlSeconds ?? 600 }))
   }
 
   // --- reads ---
@@ -249,19 +278,26 @@ export class StoreBoard extends Board {
   // --- projects ---
 
   async charter(input: CharterInput, at: Date = new Date()) {
-    return this.charterProject(input, at)
+    const { project, approvalRequest } = await this.charterProject(input, at)
+    return { project, approvalRequest }
   }
 
   /**
    * Found a project or amend its charter (`charter`), retry-safe under `clientRequestId`: a call
-   * with a key already used returns what that call made, and changes nothing.
+   * with a key already used returns what that call made, with the charter version it asked about,
+   * and changes nothing. Founding under a key derives the project's id from it, so a retry after a
+   * crash between asking and recording asks about the same subject and adopts that request (M2).
    */
-  async charterProject(input: CharterInput, at: Date = new Date(), clientRequestId?: string): Promise<{ project: Project; approvalRequest: string }> {
+  async charterProject(input: CharterInput, at: Date = new Date(), clientRequestId?: string): Promise<{ project: Project; approvalRequest: string; charterVersion: number }> {
     const prior = clientRequestId === undefined ? undefined : this.priorRequest(clientRequestId, 'board_charter', input.projectId)
-    if (prior) return { project: this.projectOf(prior.project_id).project, approvalRequest: prior.approval_request! }
+    if (prior) return this.priorCharter(prior)
     if (input.charter.approval !== undefined) throw new BoardError('invalid', 'a charter never carries its approval in: the operator gives it')
     const existing = input.projectId === undefined ? undefined : this.readProject(input.projectId)
-    const projectId = input.projectId ?? newId('proj')
+    // A founding call declares milestones only as planned: funding one is the operator's decision, which a charter approval does not cover (M3).
+    if (!existing && (input.milestones ?? []).some((m) => m.state !== 'planned' || m.funding !== undefined)) {
+      throw new BoardError('invalid', 'a new project\'s milestones are planned, with no funding: a milestone is funded by its own approval')
+    }
+    const projectId = input.projectId ?? (clientRequestId !== undefined ? derivedId('proj', clientRequestId) : newId('proj'))
     const version = existing ? existing.project.charter.version + 1 : 1
     if (input.charter.version !== version) throw new BoardError('invalid', `the charter version must be ${version}`)
     if (existing && existing.project.state !== 'active' && existing.project.state !== 'paused') throw new BoardError('invalid-transition', `${projectId} is ${existing.project.state}: only an active or paused project amends its charter`)
@@ -285,22 +321,22 @@ export class StoreBoard extends Board {
     try {
       return this.ctx.store.transaction((db) => {
         const again = clientRequestId === undefined ? undefined : this.priorRequest(clientRequestId, 'board_charter', input.projectId)
-        if (again) return { project: this.projectOf(again.project_id).project, approvalRequest: again.approval_request! }
+        if (again) return this.priorCharter(again)
         let project: Project
         if (existing) {
           const now = this.projectOf(projectId)
           if (now.project.revision !== existing.project.revision || now.request) throw new BoardError('conflict', `${projectId} changed while its charter was being asked about`)
-          project = this.writeProject(now.project, draft, { request: request.requestId, version })
+          project = this.writeProject(now.project, draft, { request: request.requestId, version, expiresAt: request.expiresAt })
         } else {
           if (this.readProject(projectId)) throw new BoardError('conflict', `${projectId} already exists`)
           // Founding is the move — → proposed; the `autonomy` decision that asked is its decision.
           project = { ...draft, lastDecision: request.policy.decision }
           this.validProject(project)
-          db.prepare('INSERT INTO board_projects (project_id, state, created_at, revision, record, charter_request, charter_version) VALUES (?, ?, ?, ?, ?, ?, ?)')
-            .run(projectId, project.state, project.createdAt, project.revision, JSON.stringify(project), request.requestId, version)
+          db.prepare('INSERT INTO board_projects (project_id, state, created_at, revision, record, charter_request, charter_version, charter_expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+            .run(projectId, project.state, project.createdAt, project.revision, JSON.stringify(project), request.requestId, version, request.expiresAt)
         }
-        if (clientRequestId !== undefined) this.recordRequest(clientRequestId, 'board_charter', projectId, undefined, request.requestId, at)
-        return { project, approvalRequest: request.requestId }
+        if (clientRequestId !== undefined) this.recordRequest(clientRequestId, 'board_charter', projectId, undefined, request.requestId, at, version)
+        return { project, approvalRequest: request.requestId, charterVersion: version }
       })
     } catch (error) {
       await this.withdrawUnheld(request.requestId, at)
@@ -334,33 +370,42 @@ export class StoreBoard extends Board {
     if (before.project.state !== 'active' && before.project.state !== 'paused') throw new BoardError('invalid-transition', `${projectId} is ${before.project.state}`)
     const open = await this.tasks({ projectId, states: [...OPEN] })
     if (open.some((t) => t.state === 'running' || t.state === 'review')) throw new BoardError('invalid-transition', `${projectId} has a task running or in review`)
-    // What waits on the operator for this project is withdrawn first: with the queue unavailable, nothing closes.
-    for (const t of open) if (t.waiting?.approvalRequest) await this.ctx.approvals.withdraw(t.waiting.approvalRequest, at)
-    if (before.request) await this.ctx.approvals.withdraw(before.request, at)
-    const revisions = new Map(open.map((t) => [t.taskId, t.revision]))
-    return this.ctx.store.transaction(() => {
+    // With the queue unavailable nothing closes (rule 7): what waits on it is read before anything moves.
+    await this.reachable([...open.flatMap((t) => (t.waiting?.approvalRequest ? [t.waiting.approvalRequest] : [])), ...(before.request ? [before.request] : [])])
+    const { project, released } = this.ctx.store.transaction(() => {
       const now = this.projectOf(projectId)
       if (now.project.revision !== before.project.revision) throw new BoardError('conflict', `${projectId} changed while it was being closed`)
-      const cancelled: string[] = []
-      for (const t of this.ctx.store.db.prepare(`SELECT task_id FROM board_tasks WHERE project_id = ? AND state IN (${OPEN.map(() => '?').join(', ')}) ORDER BY seq`).all(projectId, ...OPEN) as Array<{ task_id: string }>) {
-        const current = this.taskOf(t.task_id)
-        const seen = revisions.get(t.task_id)
-        if (current.task.state === 'running' || current.task.state === 'review') throw new BoardError('invalid-transition', `${projectId} has a task running or in review`)
-        // A task that moved meanwhile, or a new one waiting on a request not withdrawn above.
-        if ((seen !== undefined && seen !== current.task.revision) || (seen === undefined && current.task.waiting?.approvalRequest)) {
-          throw new BoardError('conflict', `${t.task_id} changed while ${projectId} was being closed`)
-        }
-        this.commit(current, this.cancelMove(now.project, current.task, 'project-closed', at), at)
-        cancelled.push(t.task_id)
-      }
+      const { cancelled, released } = this.cancelOpen(now.project, at)
       const decision = this.decision(now.project, undefined, {
-        from: now.project.state, to: 'closed', why: `closed as ${outcome}`, whyNot: `the lead or the operator closed it; ${cancelled.length} open task(s) cancelled`,
-        detail: { outcome, cancelled: cancelled.length },
+        from: now.project.state, to: 'closed', why: `closed as ${outcome}`, whyNot: `the lead or the operator closed it; ${cancelled} open task(s) cancelled`,
+        detail: { outcome, cancelled },
       }, at)
-      return this.writeProject(now.project, changed(now.project, at, {
+      const closed = this.writeProject(now.project, changed(now.project, at, {
         state: 'closed', closure: { outcome, decision, at: at.toISOString() }, lastDecision: decision, proposedCharter: undefined,
       }), null)
+      return { project: closed, released: [...released, ...(now.request ? [now.request] : [])] }
     })
+    // Withdrawn only once the move committed (S7): a crash or a failed transaction leaves every wait as it was.
+    await this.withdrawAll(released, at)
+    return project
+  }
+
+  /**
+   * Cancel every open task of `project` (`project-closed`) inside the caller's transaction; refused
+   * while one runs or is in review. Returns how many it cancelled and the requests they waited on,
+   * which the caller withdraws once the transaction committed.
+   */
+  private cancelOpen(project: Project, at: Date): { cancelled: number; released: string[] } {
+    const released: string[] = []
+    let cancelled = 0
+    for (const t of this.ctx.store.db.prepare(`SELECT task_id FROM board_tasks WHERE project_id = ? AND state IN (${OPEN.map(() => '?').join(', ')}) ORDER BY seq`).all(project.projectId, ...OPEN) as Array<{ task_id: string }>) {
+      const current = this.taskOf(t.task_id)
+      if (current.task.state === 'running' || current.task.state === 'review') throw new BoardError('invalid-transition', `${project.projectId} has a task running or in review`)
+      if (current.task.waiting?.approvalRequest) released.push(current.task.waiting.approvalRequest)
+      this.commit(current, this.cancelMove(project, current.task, 'project-closed', at), at)
+      cancelled += 1
+    }
+    return { cancelled, released }
   }
 
   // --- tasks ---
@@ -485,6 +530,7 @@ export class StoreBoard extends Board {
       this.fenced(current, generation, at)
       this.expectState(current.task, 'running')
       this.knownResult(result)
+      this.writesWhatItHolds(current.task, result.subject)
       const { project } = this.projectOf(current.task.projectId)
       return this.commit(current, {
         changes: {
@@ -499,11 +545,12 @@ export class StoreBoard extends Board {
   }
 
   async accept(taskId: string, acceptance: ArtifactRef, at: Date = new Date()) {
-    return this.ctx.store.transaction(() => {
-      const current = this.taskOf(taskId)
-      this.expectState(current.task, 'review')
-      return this.commit(current, this.acceptanceMove(current.task, current.task.result!, acceptance, at), at)
-    })
+    const before = this.taskOf(taskId).task
+    this.expectState(before, 'review')
+    const read = this.readAcceptance(before, before.result!, acceptance)
+    await this.bindChecks(before, read, acceptance)
+    const next = read.option === 'reject' && attemptLeft(before) ? await this.nextAttempt(before, at) : undefined
+    return this.committing(next, at, () => this.commitLater(before, at, undefined, (current) => this.acceptanceMove(current.task, current.task.result!, acceptance, read, next, at)))
   }
 
   async reconcileRun(taskId: string, runId: string, outcome: RunOutcome, at: Date = new Date()) {
@@ -513,22 +560,31 @@ export class StoreBoard extends Board {
     }
     if (before.run?.runId !== runId) throw new BoardError('invalid', `${taskId} recorded run ${before.run?.runId ?? '(none)'}, not ${runId}`)
     if (outcome.status !== 'completed' && outcome.status !== 'failed') throw new BoardError('invalid', 'a run is reported completed or failed; an unknown outcome is never reported')
-    // Checked before the pending request is withdrawn, so a report that is refused changes nothing.
-    if (outcome.status === 'completed') this.acceptanceMove(before, outcome.result, outcome.acceptance, at, false)
-    if (before.waiting?.approvalRequest) await this.ctx.approvals.withdraw(before.waiting.approvalRequest, at)
-    return this.commitLater(before, at, undefined, (current) => {
-      if (outcome.status === 'completed') return this.acceptanceMove(current.task, outcome.result, outcome.acceptance, at)
+    // Checked before anything moves, so a report that is refused changes nothing.
+    let read: Acceptance | undefined
+    if (outcome.status === 'completed') {
+      this.writesWhatItHolds(before, outcome.result.subject)
+      read = this.readAcceptance(before, outcome.result, outcome.acceptance)
+      await this.bindChecks(before, read, outcome.acceptance)
+    }
+    const pending = before.waiting?.approvalRequest
+    await this.reachable(pending ? [pending] : [])
+    const next = (outcome.status === 'failed' || read!.option === 'reject') && attemptLeft(before) ? await this.nextAttempt(before, at) : undefined
+    const moved = await this.committing(next, at, () => this.commitLater(before, at, undefined, (current) => {
+      if (outcome.status === 'completed') return this.acceptanceMove(current.task, outcome.result, outcome.acceptance, read!, next, at)
       const { task } = current
       const { project } = this.projectOf(task.projectId)
-      const left = task.attempts.count < task.attempts.max
+      const why = `run ${runId} failed, as its owner reconciled it: attempt ${task.attempts.count} of ${task.attempts.max}`
+      if (next) return this.nextAttemptMove(project, task, next, { why, detail: { runId, outcome: 'failed' } }, at)
       const decision = this.decision(project, task, {
-        from: task.state, to: left ? 'ready' : 'waiting-for-input', why: `run ${runId} failed, as its owner reconciled it: attempt ${task.attempts.count} of ${task.attempts.max}`,
-        whyNot: 'the run\'s owner reported its outcome, so nothing waits on it', detail: { runId, outcome: 'failed' },
+        from: task.state, to: 'waiting-for-input', why, whyNot: 'the run\'s owner reported its outcome, so nothing waits on it', detail: { runId, outcome: 'failed' },
       }, at)
-      return left
-        ? { changes: { state: 'ready', holder: undefined, run: undefined, waiting: undefined, lastDecision: decision } }
-        : { changes: { state: 'waiting-for-input', holder: undefined, waiting: this.inputWait('retries-spent', at), lastDecision: decision } }
-    })
+      return { changes: { state: 'waiting-for-input', holder: undefined, waiting: this.inputWait('retries-spent', at), lastDecision: decision } }
+    }))
+    // The move commits first and the request is withdrawn after (S7): a crash between them leaves an
+    // open request nothing waits on, which expires on its own; the accepted result is kept.
+    if (pending) await this.withdrawUnheld(pending, at)
+    return moved
   }
 
   async block(taskId: string, generation: number, wait: { reason: 'budget-spent' | 'reconciliation-failed' | 'question'; questions?: string[] }, at: Date = new Date()) {
@@ -558,25 +614,35 @@ export class StoreBoard extends Board {
   }
 
   async answer(taskId: string, answers: string[], at: Date = new Date()) {
-    return this.ctx.store.transaction(() => {
-      const current = this.taskOf(taskId)
+    const before = this.taskOf(taskId).task
+    this.expectState(before, 'waiting-for-input')
+    const questions = before.waiting?.questions ?? []
+    if (before.waiting?.reason !== 'question' || answers.length !== questions.length) {
+      throw new BoardError('invalid', `answer every question of a question wait (${questions.length}); a ${before.waiting?.reason ?? 'missing'} wait takes no answers and only expires`)
+    }
+    if (answers.some((a) => typeof a !== 'string' || a.length === 0 || [...a].length > ANSWER_MAX)) throw new BoardError('invalid', `an answer is 1 to ${ANSWER_MAX} characters`)
+    // The next run is another attempt, so the policy is asked again (S9).
+    const next = attemptLeft(before) ? await this.nextAttempt(before, at) : undefined
+    return this.committing(next, at, () => this.commitLater(before, at, undefined, (current) => {
       const { task } = current
-      this.expectState(task, 'waiting-for-input')
-      const questions = task.waiting?.questions ?? []
-      if (task.waiting?.reason !== 'question' || answers.length !== questions.length) throw new BoardError('invalid', `answer every question of a question wait (${questions.length})`)
-      if (answers.some((a) => typeof a !== 'string' || a.length === 0 || [...a].length > ANSWER_MAX)) throw new BoardError('invalid', `an answer is 1 to ${ANSWER_MAX} characters`)
       const { project } = this.projectOf(task.projectId)
       // The answers are the decision's detail, so the next attempt's brief can point to them.
-      return this.commit(current, {
+      const detail = { questions, answers, ...(task.run ? { runId: task.run.runId } : {}) }
+      const why = `every one of its ${questions.length} question(s) answered`
+      if (next) return this.nextAttemptMove(project, task, next, { why, detail }, at)
+      // A ready task with no attempt left could never start and would never expire (INV-9): it waits for input, which expires.
+      return {
         changes: {
-          state: 'ready', waiting: undefined, run: undefined,
+          state: 'waiting-for-input', waiting: this.inputWait('retries-spent', at), run: undefined,
           lastDecision: this.decision(project, task, {
-            from: 'waiting-for-input', to: 'ready', why: `every one of its ${questions.length} question(s) answered`, whyNot: 'nothing it waited for is missing',
-            detail: { questions, answers, ...(task.run ? { runId: task.run.runId } : {}) },
+            from: 'waiting-for-input', to: 'waiting-for-input', instead: 'ready',
+            why: `${why}, but all ${task.attempts.max} attempt(s) are spent: it waits for input (retries-spent), which expires`,
+            whyNot: `no attempt is left to start (${task.attempts.count} of ${task.attempts.max}), and a ready task never expires`,
+            detail: { ...detail, reason: 'retries-spent' },
           }, at),
         },
-      }, at)
-    })
+      }
+    }))
   }
 
   async cancel(taskId: string, reason: 'operator' | 'lead' | 'superseded', note?: string, at: Date = new Date()) {
@@ -584,8 +650,12 @@ export class StoreBoard extends Board {
     if (note !== undefined && (note.length === 0 || [...note].length > 500)) throw new BoardError('invalid', 'a cancellation note is 1 to 500 characters')
     const before = this.taskOf(taskId).task
     this.expectState(before, ...CANCELLABLE)
-    if (before.waiting?.approvalRequest) await this.ctx.approvals.withdraw(before.waiting.approvalRequest, at)
-    return this.commitLater(before, at, undefined, (current) => this.cancelMove(this.projectOf(current.task.projectId).project, current.task, reason, at, undefined, note))
+    const pending = before.waiting?.approvalRequest
+    await this.reachable(pending ? [pending] : [])
+    const cancelled = this.commitLater(before, at, undefined, (current) => this.cancelMove(this.projectOf(current.task.projectId).project, current.task, reason, at, undefined, note))
+    // Withdrawn after the move committed (S7), as in reconcileRun.
+    if (pending) await this.withdrawUnheld(pending, at)
+    return cancelled
   }
 
   async sweep(at: Date) {
@@ -594,7 +664,8 @@ export class StoreBoard extends Board {
     for (const { project_id } of this.ctx.store.db.prepare('SELECT project_id FROM board_projects WHERE charter_request IS NOT NULL ORDER BY created_at, project_id').all() as Array<{ project_id: string }>) {
       try {
         const moved = await this.settleCharter(project_id, at)
-        if (moved) projects.set(moved.projectId, moved)
+        if (moved) projects.set(moved.project.projectId, moved.project)
+        for (const t of moved?.cancelled ?? []) tasks.set(t.taskId, t)
       } catch (error) {
         this.skipped(`the charter of ${project_id}`, error)
       }
@@ -620,39 +691,92 @@ export class StoreBoard extends Board {
 
   // --- the sweep's moves ---
 
-  /** An approved charter takes effect; a refused first charter abandons its project, a refused amendment is dropped. */
-  private async settleCharter(projectId: string, at: Date): Promise<Project | undefined> {
+  /**
+   * An approved charter takes effect; a refused first charter abandons its project, cancelling its
+   * open tasks in the same transaction, and a refused amendment is dropped. A charter request the
+   * queue never resolved, or no longer knows, is refused by the board itself once it expired
+   * (INV-9): that decides nothing and starts nothing.
+   */
+  private async settleCharter(projectId: string, at: Date): Promise<Settled | undefined> {
     const before = this.projectOf(projectId)
     if (!before.request) return undefined
     const request = await this.ctx.approvals.get(before.request)
-    if (!request) {
-      this.ctx.logger.warn(`board: the approval queue does not know ${before.request}, the charter request of ${projectId}; it keeps waiting`)
-      return undefined
+    // Only the board withdraws a request, and only once nothing waits on it: a withdrawn one is not a verdict.
+    const resolution = request?.resolution && request.resolution.cause !== 'withdrawn' ? request.resolution : undefined
+    if (!resolution) {
+      const due = earliest(before.expiresAt, request?.expiresAt)
+      if (due === undefined || Date.parse(due) > at.getTime()) {
+        if (!request) this.ctx.logger.warn(`board: the approval queue does not know ${before.request}, the charter request of ${projectId}; it waits until ${due ?? 'an expiry the board does not know'}`)
+        return undefined
+      }
+      return this.expireCharter(before, request, due, at)
     }
-    if (!request.resolution) return undefined
-    const resolution = request.resolution
-    return this.ctx.store.transaction(() => {
+    const settled = this.ctx.store.transaction((): (Settled & { released: string[] }) | undefined => {
       const now = this.projectOf(projectId)
-      if (now.request !== request.requestId) return undefined
+      if (now.request !== before.request) return undefined
       const { project } = now
       const pending = project.state === 'proposed' ? project.charter : project.proposedCharter
       // INV-5: the verdict counts only for the exact charter it was asked about.
-      const bound = pending !== undefined && pending.version === now.version && request.subject.ref === charterRef(projectId, pending.version) && request.subject.version === charterHash(pending)
-      if (request.state === 'approved' && !bound) this.ctx.logger.warn(`board: ${request.requestId} does not bind the stored charter of ${projectId}; it is not applied`)
-      const approval = request.state === 'approved' && bound ? resolution.approval : undefined
+      const bound = pending !== undefined && pending.version === now.version && request!.subject.ref === charterRef(projectId, pending.version) && request!.subject.version === charterHash(pending)
+      if (request!.state === 'approved' && !bound) this.ctx.logger.warn(`board: ${request!.requestId} does not bind the stored charter of ${projectId}; it is not applied`)
+      const approval = request!.state === 'approved' && bound ? resolution.approval : undefined
       if (project.state === 'proposed') {
-        return this.writeProject(project, changed(project, at, approval
-          ? { state: 'active', charter: { ...project.charter, approval }, lastDecision: resolution.decision }
-          : { state: 'closed', closure: { outcome: 'abandoned', decision: resolution.decision, at: at.toISOString() }, lastDecision: resolution.decision }), null)
+        if (approval) return { project: this.writeProject(project, changed(project, at, { state: 'active', charter: { ...project.charter, approval }, lastDecision: resolution.decision }), null), released: [], cancelled: [] }
+        return this.abandon(project, resolution.decision, at)
       }
       if (project.state === 'closed' || !project.proposedCharter) {
         this.writeProject(project, undefined, null)
         return undefined
       }
-      return this.writeProject(project, changed(project, at, approval
-        ? { charter: { ...project.proposedCharter, approval }, proposedCharter: undefined, lastDecision: resolution.decision }
-        : { proposedCharter: undefined, lastDecision: resolution.decision }), null)
+      return {
+        project: this.writeProject(project, changed(project, at, approval
+          ? { charter: { ...project.proposedCharter, approval }, proposedCharter: undefined, lastDecision: resolution.decision }
+          : { proposedCharter: undefined, lastDecision: resolution.decision }), null),
+        released: [], cancelled: [],
+      }
     })
+    if (!settled) return undefined
+    await this.withdrawAll(settled.released, at)
+    return { project: settled.project, cancelled: settled.cancelled }
+  }
+
+  /** Close a proposed project as abandoned with `decision`, and cancel its open tasks, in the caller's transaction. */
+  private abandon(project: Project, decision: ArtifactRef, at: Date): Settled & { released: string[] } {
+    const open = (this.ctx.store.db.prepare(`SELECT task_id FROM board_tasks WHERE project_id = ? AND state IN (${OPEN.map(() => '?').join(', ')}) ORDER BY seq`).all(project.projectId, ...OPEN) as Array<{ task_id: string }>).map((r) => r.task_id)
+    const { released } = this.cancelOpen(project, at)
+    const closed = this.writeProject(project, changed(project, at, { state: 'closed', closure: { outcome: 'abandoned', decision, at: at.toISOString() }, lastDecision: decision }), null)
+    return { project: closed, released, cancelled: open.map((id) => this.taskOf(id).task) }
+  }
+
+  /** The board's own refusal of a charter request that expired unresolved: a first charter abandons its project, an amendment is dropped. */
+  private async expireCharter(before: StoredProject, request: ApprovalRequest | undefined, due: string, at: Date): Promise<Settled | undefined> {
+    const requestId = before.request!
+    const why = `its charter request ${requestId} expired at ${due} with no verdict${request ? '' : ' (the approval queue does not know it)'}`
+    const settled = this.ctx.store.transaction((): (Settled & { released: string[] }) | undefined => {
+      const now = this.projectOf(before.project.projectId)
+      if (now.request !== requestId) return undefined
+      const { project } = now
+      if (project.state === 'proposed') {
+        const decision = this.decision(project, undefined, {
+          from: 'proposed', to: 'closed', why: `abandoned: ${why}`, whyNot: 'an unanswered charter is denied: nothing starts without an approved charter (INV-9)',
+          inputs: request ? [request.policy.decision] : [], detail: { outcome: 'abandoned', approvalRequest: requestId, cause: 'expired' },
+        }, at)
+        return this.abandon(project, decision, at)
+      }
+      if (project.state === 'closed' || !project.proposedCharter) {
+        this.writeProject(project, undefined, null)
+        return undefined
+      }
+      const decision = this.decision(project, undefined, {
+        from: 'amendment-pending', to: 'amendment-dropped', why: `amendment ${project.proposedCharter.version} dropped: ${why}`,
+        whyNot: 'an unanswered amendment is denied, and the approved charter stays (INV-9)', inputs: request ? [request.policy.decision] : [],
+        detail: { approvalRequest: requestId, version: project.proposedCharter.version, cause: 'expired' },
+      }, at)
+      return { project: this.writeProject(project, changed(project, at, { proposedCharter: undefined, lastDecision: decision }), null), released: [], cancelled: [] }
+    })
+    if (!settled) return undefined
+    await this.withdrawAll([...settled.released, ...(request && !request.resolution ? [requestId] : [])], at)
+    return { project: settled.project, cancelled: settled.cancelled }
   }
 
   private async sweepTask(taskId: string, at: Date): Promise<BoardTask | undefined> {
@@ -706,15 +830,40 @@ export class StoreBoard extends Board {
       case 'waiting-for-approval': {
         const requestId = task.waiting!.approvalRequest!
         const request = await this.ctx.approvals.get(requestId)
-        if (!request) {
-          this.ctx.logger.warn(`board: the approval queue does not know ${requestId}, which ${taskId} waits on; it keeps waiting`)
-          return undefined
+        // Only the board withdraws a request, and only once nothing waits on it: a task still waiting
+        // on a withdrawn one is a crash between the two (S7), so it keeps waiting for its owner's report.
+        const resolution = request?.resolution && request.resolution.cause !== 'withdrawn' ? request.resolution : undefined
+        if (!resolution) {
+          // The board applies the wait's expiry itself when the queue has not (INV-9): it starts nothing and decides nothing.
+          const due = earliest(task.waiting!.expiresAt, request?.expiresAt)!
+          if (Date.parse(due) > at.getTime()) {
+            if (!request) this.ctx.logger.warn(`board: the approval queue does not know ${requestId}, which ${taskId} waits on; it waits until ${due}`)
+            return undefined
+          }
+          const moved = this.commitLater(task, at, undefined, (c) => ({
+            changes: {
+              state: 'waiting-for-input', waiting: this.inputWait('rejected', at),
+              lastDecision: this.decision(this.projectOf(task.projectId).project, c.task, {
+                from: 'waiting-for-approval', to: 'waiting-for-input',
+                why: `its approval wait expired at ${due} with no verdict${request ? '' : ` (the approval queue does not know ${requestId})`}`,
+                whyNot: 'an expired approval wait never starts work: it counts as rejected (INV-9)', inputs: request ? [request.policy.decision] : [],
+                detail: { reason: 'rejected', approvalRequest: requestId, cause: 'expired' },
+              }, at),
+            },
+          }))
+          if (request && !request.resolution) await this.withdrawUnheld(requestId, at)
+          return moved
         }
-        if (!request.resolution) return undefined
-        const resolution = request.resolution
+        // An approval counts only from the board's own request for this task (INV-5).
+        const approved = request!.state === 'approved' && request!.requester.component === 'board' && request!.requester.taskId === taskId
+        // Going on after a spent budget or a lost run is another attempt: the policy is asked about the task's class again (S9).
+        if (approved && task.waiting!.reason !== 'approval-needed' && attemptLeft(task)) {
+          const next = await this.nextAttempt(task, at)
+          return this.committing(next, at, () => this.commitLater(task, at, undefined, (c) => this.nextAttemptMove(this.projectOf(task.projectId).project, c.task, next, {
+            decision: resolution.decision, why: `the operator approved going on after ${task.waiting!.reason} (request ${requestId})`,
+          }, at)))
+        }
         return this.commitLater(task, at, undefined, (c) => {
-          // An approval counts only from the board's own request for this task (INV-5).
-          const approved = request.state === 'approved' && request.requester.component === 'board' && request.requester.taskId === taskId
           if (!approved) return { changes: { state: 'waiting-for-input', waiting: this.inputWait('rejected', at), lastDecision: resolution.decision } }
           // attempts.count never exceeds attempts.max: an approval to go on with no attempt left starts nothing (INV-9).
           if (c.task.attempts.count >= c.task.attempts.max) return { changes: { state: 'waiting-for-input', waiting: this.inputWait('retries-spent', at), lastDecision: resolution.decision } }
@@ -730,29 +879,99 @@ export class StoreBoard extends Board {
   }
 
   /**
-   * Ask the policy about `actionClass` for a running task (a spent budget, a lost run): ready when it
-   * allows it, cancelled when it forbids it, otherwise a wait for the operator's approval. A
-   * holder's call presents its `generation` again when the move commits.
+   * Put a running task to the operator after a spent budget or a lost run (`funding`,
+   * `remediation`): one approval request whatever the policy's mode, since such a run is never
+   * readied or cancelled by the policy alone (INV-4, rule 3). The queue takes a request only on an
+   * `ask` verdict, so under any other (forbid, and also auto or notify) the task waits for input
+   * (`rejected`) instead: it never runs again without a person, and is not cancelled while its
+   * run may still be live; the wait expires in turn. A holder's call presents its `generation`
+   * again when the move commits.
    */
   private async gate(task: BoardTask, actionClass: ActionClass, reason: 'budget-spent' | 'reconciliation-failed', at: Date, generation?: number): Promise<BoardTask> {
     const verdict = await this.ctx.approvals.check({ class: actionClass, projectId: task.projectId })
     if (verdict.mode === 'ask') return this.waitForApproval(task, actionClass, reason, verdict, at, generation)
-    return this.commitLater(task, at, generation, (c) => {
-      const { project } = this.projectOf(task.projectId)
-      if (verdict.mode === 'forbid') return this.cancelMove(project, c.task, 'forbidden', at, verdict.decision)
-      return this.readyMove(project, c.task, verdict, at, `${reason}: the policy gives ${actionClass} ${verdict.mode}, so another attempt needs no person`)
-    })
+    return this.commitLater(task, at, generation, (c) => ({
+      changes: {
+        state: 'waiting-for-input', holder: undefined, waiting: this.inputWait('rejected', at),
+        lastDecision: this.decision(this.projectOf(task.projectId).project, c.task, {
+          from: 'running', to: 'waiting-for-input',
+          why: `${reason}: the policy gives ${actionClass} ${verdict.mode}, under which no approval request can be opened, so the run goes on only with a person`,
+          whyNot: verdict.mode === 'forbid' ? 'kept running, or cancelled while its run may still be live: neither, as the policy forbids going on'
+            : `readied on ${verdict.mode}: a ${reason === 'budget-spent' ? 'run past its budget' : 'lost run'} never starts again without an operator's approval (INV-4)`,
+          inputs: [verdict.decision], detail: { reason, actionClass, mode: verdict.mode },
+        }, at),
+      },
+    }))
   }
 
-  /** Put the task to the operator: one request on `board-task:<id>:attempt:<n>`, which its wait follows. */
-  private async waitForApproval(task: BoardTask, actionClass: ActionClass, reason: 'approval-needed' | 'budget-spent' | 'reconciliation-failed', verdict: AutonomyVerdict, at: Date, generation?: number): Promise<BoardTask> {
+  /**
+   * The request that puts `task` to the operator, on `board-task:<id>:attempt:<n>` with the wait's
+   * reason, where n is the attempts it already made: one request, and one approval, per attempt.
+   */
+  private taskRequest(task: BoardTask, actionClass: ActionClass, reason: 'approval-needed' | 'budget-spent' | 'reconciliation-failed', verdict: AutonomyVerdict): NewRequest {
     const { project } = this.projectOf(task.projectId)
-    const request = await this.ask({
+    return {
       subject: { type: 'content', ref: `board-task:${task.taskId}:attempt:${task.attempts.count}`, version: reason },
       action: { class: actionClass, summary: clamp(`${reason}: ${task.title}`, 500) },
       requester: { component: 'board', projectId: task.projectId, taskId: task.taskId, ...(task.run ? { runId: task.run.runId } : {}) },
       verdict, classification: project.classification ?? 'operator-shared',
-    }, at)
+    }
+  }
+
+  /**
+   * The policy's verdict on the task's class for its next attempt, and the request it opened when
+   * the verdict asks (S9): every return to ready for a new attempt goes through the gate again, so
+   * one approval never covers a later attempt.
+   */
+  private async nextAttempt(task: BoardTask, at: Date): Promise<NextAttempt> {
+    const verdict = await this.ctx.approvals.check({ class: task.actionClass, projectId: task.projectId })
+    if (verdict.mode !== 'ask') return { verdict }
+    return { verdict, request: await this.ask(this.taskRequest(task, task.actionClass, 'approval-needed', verdict), at) }
+  }
+
+  /** Run `commit`; when it fails, withdraw the request `next` opened for it, unless something already waits on it. */
+  private async committing<T>(next: NextAttempt | undefined, at: Date, commit: () => T): Promise<T> {
+    try {
+      return commit()
+    } catch (error) {
+      if (next?.request) await this.withdrawUnheld(next.request.requestId, at)
+      throw error
+    }
+  }
+
+  /**
+   * The move back for a new attempt, by the verdict {@link nextAttempt} got: ready on auto or
+   * notify, waiting for the operator's approval (`approval-needed`) on ask, cancelled on forbid.
+   * Its `board` decision names the decision that caused it (if any) and the `autonomy` decision.
+   */
+  private nextAttemptMove(project: Project, task: BoardTask, next: NextAttempt, cause: { decision?: ArtifactRef; why: string; detail?: Record<string, unknown> }, at: Date): Move {
+    const { verdict, request } = next
+    const inputs = [...(cause.decision ? [cause.decision] : []), verdict.decision]
+    const attempt = task.attempts.count + 1
+    if (verdict.mode === 'forbid') {
+      return this.cancelMove(project, task, 'forbidden', at, this.decision(project, task, {
+        from: task.state, to: 'cancelled', why: `${cause.why}; the policy now forbids ${task.actionClass}, so no attempt ${attempt} runs`,
+        whyNot: `another attempt would run an action the policy forbids (autonomy decision ${verdict.decision})`, inputs, detail: { ...cause.detail, reason: 'forbidden' },
+      }, at))
+    }
+    if (request) {
+      return {
+        changes: {
+          state: 'waiting-for-approval', holder: undefined, run: undefined, result: undefined,
+          waiting: { reason: 'approval-needed', approvalRequest: request.requestId, since: at.toISOString(), expiresAt: request.expiresAt },
+          lastDecision: this.decision(project, task, {
+            from: task.state, to: 'waiting-for-approval', why: `${cause.why}; the policy asks about ${task.actionClass} before attempt ${attempt}`,
+            whyNot: 'an approval covers one attempt only, never a later one', inputs, detail: { ...cause.detail, approvalRequest: request.requestId, attempt },
+          }, at),
+        },
+      }
+    }
+    return this.readyMove(project, task, verdict, at, `${cause.why}; the policy gives ${task.actionClass} ${verdict.mode} for attempt ${attempt}`, { inputs: cause.decision ? [cause.decision] : [], ...(cause.detail ? { detail: cause.detail } : {}) })
+  }
+
+  /** Put the task to the operator: one request on `board-task:<id>:attempt:<n>`, which its wait follows. */
+  private async waitForApproval(task: BoardTask, actionClass: ActionClass, reason: 'approval-needed' | 'budget-spent' | 'reconciliation-failed', verdict: AutonomyVerdict, at: Date, generation?: number): Promise<BoardTask> {
+    const request = await this.ask(this.taskRequest(task, actionClass, reason, verdict), at)
     try {
       return this.commitLater(task, at, generation, () => ({
         changes: {
@@ -767,18 +986,34 @@ export class StoreBoard extends Board {
   }
 
   /**
-   * Open a request, or adopt the board's open request on the same exact subject: one a crash
-   * left between asking and committing, so a retried move asks the operator once (INV-4).
+   * Open a request, or adopt the board's own request on the same exact subject that is open or
+   * already approved: one a crash left between asking and committing, so a retried move asks the
+   * operator once, and an approval given while the board was down still applies (INV-4, M2). The
+   * subject is per attempt and per charter version, so an approval never adopts across them.
    */
   private async ask(request: NewRequest, at: Date): Promise<ApprovalRequest> {
-    const open = await this.ctx.approvals.list({ states: ['open', 'batched'], ...(request.requester.projectId ? { projectId: request.requester.projectId } : {}) })
-    const orphan = open.find((r) => r.requester.component === 'board' && r.action.class === request.action.class && sameSubject(r.subject, request.subject))
+    const open = await this.ctx.approvals.list({ states: ['open', 'batched', 'approved'], ...(request.requester.projectId ? { projectId: request.requester.projectId } : {}) })
+    const orphan = open.find((r) => r.requester.component === 'board' && r.requester.taskId === request.requester.taskId
+      && r.action.class === request.action.class && sameSubject(r.subject, request.subject))
     return orphan ?? this.ctx.approvals.request(request, at)
   }
 
   /**
-   * Withdraw a request a move opened (or adopted) but could not commit, unless a stored project or
-   * task waits on it: a concurrent move adopted it first. If this fails too, it expires on its own.
+   * Read each request before a move that will withdraw it commits, so that with the queue
+   * unavailable the move fails and nothing moves (rule 7). Unknown ones are fine: nothing to withdraw.
+   */
+  private async reachable(requestIds: string[]): Promise<void> {
+    for (const requestId of requestIds) await this.ctx.approvals.get(requestId)
+  }
+
+  private async withdrawAll(requestIds: string[], at: Date): Promise<void> {
+    for (const requestId of requestIds) await this.withdrawUnheld(requestId, at)
+  }
+
+  /**
+   * Withdraw a request nothing waits on: one a move ended (after that move committed), or one a move
+   * opened (or adopted) but could not commit, unless a stored project or task waits on it: a
+   * concurrent move adopted it first. If this fails, it expires on its own.
    */
   private async withdrawUnheld(requestId: string, at: Date): Promise<void> {
     const held = this.ctx.store.db.prepare('SELECT 1 FROM board_projects WHERE charter_request = ?').get(requestId)
@@ -801,13 +1036,16 @@ export class StoreBoard extends Board {
 
   // --- moves ---
 
-  private readyMove(project: Project, task: BoardTask, verdict: AutonomyVerdict, at: Date, why: string): Move {
+  /** Ready on an auto or notify verdict; its required checks that have not run yet bind at acceptance (S3), so they are recorded as pending. */
+  private readyMove(project: Project, task: BoardTask, verdict: AutonomyVerdict, at: Date, why: string, cause: { inputs?: ArtifactRef[]; detail?: Record<string, unknown> } = {}): Move {
+    const pending = verdict.failedChecks ?? []
     return {
       changes: {
         state: 'ready', holder: undefined, run: undefined, waiting: undefined,
         lastDecision: this.decision(project, task, {
-          from: task.state, to: 'ready', why, whyNot: `the autonomy decision ${verdict.decision} says ${verdict.mode}, which needs no person`,
-          inputs: [verdict.decision], detail: { actionClass: task.actionClass, mode: verdict.mode },
+          from: task.state, to: 'ready', why: pending.length ? `${why}; its required checks (${pending.join(', ')}) have not run yet and bind at acceptance` : why,
+          whyNot: `the autonomy decision ${verdict.decision} says ${verdict.mode}, which needs no person`,
+          inputs: [...(cause.inputs ?? []), verdict.decision], detail: { ...cause.detail, actionClass: task.actionClass, mode: verdict.mode, ...(pending.length ? { pendingChecks: pending } : {}) },
         }, at),
       },
     }
@@ -831,22 +1069,63 @@ export class StoreBoard extends Board {
   }
 
   /**
-   * The move an `acceptance` decision makes on a result: done when it accepts, else another attempt
-   * or a wait for input. Refused (`invalid`) unless it is an `acceptance` decision on that result.
-   * With `apply` false it only checks.
+   * Read an `acceptance` decision on `result`, refused (`invalid`) unless it binds to this task's
+   * exact result (rule 5, INV-5): an `acceptance` decision whose `outcome.detail` names the task
+   * (`taskId`) and the result's exact subject (`subject`, version included), whose inputs hold every
+   * artifact of the result (and its digest), and whose outcome is `accept` or `reject`. The checks
+   * it reports are `outcome.detail.checks`; it is the operator's when both its decider and its
+   * envelope's producer are the operator.
    */
-  private acceptanceMove(task: BoardTask, result: NonNullable<BoardTask['result']>, acceptance: ArtifactRef, at: Date, apply = true): Move {
+  private readAcceptance(task: BoardTask, result: NonNullable<BoardTask['result']>, acceptance: ArtifactRef): Acceptance {
     this.knownResult(result)
     const envelope = this.ctx.artifacts.get(acceptance)
-    const body = envelope?.kind === 'decision' ? envelope.body as { decisionType?: string; inputs?: string[]; outcome?: { option?: string } } : undefined
+    const body = envelope?.kind === 'decision'
+      ? envelope.body as { decisionType?: string; inputs?: string[]; decider?: { type?: string }; outcome?: { option?: string; detail?: Record<string, unknown> } }
+      : undefined
     if (body?.decisionType !== 'acceptance') throw new BoardError('invalid', `${acceptance} is not an acceptance decision`)
-    // Fail-closed rule 5: the decision is on this result, not another.
-    if (!result.artifacts.some((a) => body.inputs?.includes(a))) throw new BoardError('invalid', `${acceptance} does not decide on the task's result`)
+    const detail = body.outcome?.detail ?? {}
+    if (detail['taskId'] !== task.taskId) throw new BoardError('invalid', `${acceptance} does not name task ${task.taskId} (outcome.detail.taskId)`)
+    const subject = detail['subject'] as Subject | undefined
+    if (!isObject(subject) || !sameSubject(subject, result.subject)) {
+      throw new BoardError('invalid', `${acceptance} does not name the result's exact subject ${result.subject.type} ${result.subject.ref}${result.subject.version ? ` at ${result.subject.version}` : ''} (outcome.detail.subject)`)
+    }
+    const missing = [...result.artifacts, ...(result.digest ? [result.digest] : [])].filter((a) => !body.inputs?.includes(a))
+    if (missing.length) throw new BoardError('invalid', `${acceptance} does not decide on the whole result: ${missing.join(', ')} not among its inputs`)
     const option = body.outcome?.option
     if (option !== 'accept' && option !== 'reject') throw new BoardError('invalid', `${acceptance} decides ${String(option)}, neither accept nor reject`)
-    if (!apply) return { changes: {} }
-    if (option === 'accept') return { changes: { state: 'done', result: { ...result, acceptance }, holder: undefined, waiting: undefined, lastDecision: acceptance } }
-    if (task.attempts.count < task.attempts.max) return { changes: { state: 'ready', holder: undefined, run: undefined, result: undefined, waiting: undefined, lastDecision: acceptance } }
+    const checks = detail['checks']
+    if (checks !== undefined && (!isObject(checks) || Object.entries(checks).some(([k, v]) => !CHECKS.includes(k as Check) || typeof v !== 'boolean'))) {
+      throw new BoardError('invalid', `${acceptance} reports checks that are not ${CHECKS.join(', ')} with true or false (outcome.detail.checks)`)
+    }
+    return {
+      option, operator: body.decider?.type === 'operator' && envelope!.producer.type === 'operator',
+      ...(checks !== undefined ? { checks: checks as Partial<Record<Check, boolean>> } : {}),
+    }
+  }
+
+  /**
+   * Required checks bind at acceptance, not at readiness (S3): an accepting decision that is not
+   * the operator's applies only when the policy, given the checks the decision reports, leaves none
+   * of the task's class's required checks failed, and does not forbid the class. Otherwise only the
+   * operator's acceptance accepts the result; a reject applies either way.
+   */
+  private async bindChecks(task: BoardTask, read: Acceptance, acceptance: ArtifactRef): Promise<void> {
+    if (read.option !== 'accept' || read.operator) return
+    const verdict = await this.ctx.approvals.check({ class: task.actionClass, projectId: task.projectId, ...(read.checks ? { checks: read.checks } : {}) })
+    if (verdict.mode === 'forbid') throw new BoardError('invalid', `${acceptance}: the policy forbids ${task.actionClass} (autonomy decision ${verdict.decision}), so only the operator's acceptance accepts it`)
+    if (verdict.failedChecks?.length) {
+      throw new BoardError('invalid', `${acceptance} accepts with required check(s) ${verdict.failedChecks.join(', ')} not passed (autonomy decision ${verdict.decision}): it needs them passed, or the operator's acceptance`)
+    }
+  }
+
+  /** The move an `acceptance` decision read by {@link readAcceptance} makes: done when it accepts, else another attempt or a wait for input. */
+  private acceptanceMove(task: BoardTask, result: NonNullable<BoardTask['result']>, acceptance: ArtifactRef, read: Acceptance, next: NextAttempt | undefined, at: Date): Move {
+    if (read.option === 'accept') return { changes: { state: 'done', result: { ...result, acceptance }, holder: undefined, waiting: undefined, lastDecision: acceptance } }
+    if (attemptLeft(task)) {
+      return this.nextAttemptMove(this.projectOf(task.projectId).project, task, next!, {
+        decision: acceptance, why: `the acceptance decision ${acceptance} rejected attempt ${task.attempts.count} of ${task.attempts.max}`,
+      }, at)
+    }
     return { changes: { state: 'waiting-for-input', holder: undefined, result, waiting: this.inputWait('retries-spent', at), lastDecision: acceptance } }
   }
 
@@ -859,8 +1138,12 @@ export class StoreBoard extends Board {
   private decision(project: Project, task: BoardTask | undefined, move: Why, at: Date): ArtifactRef {
     const subject = task ? `task ${task.taskId} of ${project.projectId}` : `project ${project.projectId}`
     return this.ctx.artifacts.recordDecision({
-      schema: 'decision@1.4', decisionType: 'board', question: `Does ${subject} move from ${move.from} to ${move.to}?`, inputs: move.inputs ?? [],
-      candidates: [{ option: move.to, selected: true, reasons: [move.why] }, { option: move.from, selected: false, reasons: [`not kept ${move.from}: ${move.whyNot}`] }],
+      schema: 'decision@1.4', decisionType: 'board', inputs: move.inputs ?? [],
+      question: move.instead ? `Does ${subject} go from ${move.from} to ${move.instead} or to ${move.to}?` : `Does ${subject} move from ${move.from} to ${move.to}?`,
+      candidates: [
+        { option: move.to, selected: true, reasons: [move.why] },
+        move.instead ? { option: move.instead, selected: false, reasons: [`not ${move.instead}: ${move.whyNot}`] } : { option: move.from, selected: false, reasons: [`not kept ${move.from}: ${move.whyNot}`] },
+      ],
       decider: { type: 'rule', id: 'board.transition', version: '1' },
       outcome: { option: move.to, detail: { projectId: project.projectId, ...(task ? { taskId: task.taskId } : {}), from: move.from, at: at.toISOString(), ...move.detail } },
       deterministic: true,
@@ -903,14 +1186,15 @@ export class StoreBoard extends Board {
   }
 
   /** Write a project's next revision (revision-checked); `pending` sets or clears (null) its charter request, undefined keeps it. */
-  private writeProject(before: Project, next: Project | undefined, pending?: { request: string; version: number } | null): Project {
+  private writeProject(before: Project, next: Project | undefined, pending?: { request: string; version: number; expiresAt: string } | null): Project {
     const record = next ?? before
     if (next) this.validProject(next)
-    const keep = pending === undefined
+    const keep = pending === undefined ? 1 : 0
     const changes = this.ctx.store.db.prepare(`UPDATE board_projects SET state = ?, revision = ?, record = ?,
-      charter_request = CASE WHEN ? THEN charter_request ELSE ? END, charter_version = CASE WHEN ? THEN charter_version ELSE ? END
+      charter_request = CASE WHEN ? THEN charter_request ELSE ? END, charter_version = CASE WHEN ? THEN charter_version ELSE ? END,
+      charter_expires_at = CASE WHEN ? THEN charter_expires_at ELSE ? END
       WHERE project_id = ? AND revision = ?`)
-      .run(record.state, record.revision, JSON.stringify(record), keep ? 1 : 0, pending?.request ?? null, keep ? 1 : 0, pending?.version ?? null, record.projectId, before.revision).changes
+      .run(record.state, record.revision, JSON.stringify(record), keep, pending?.request ?? null, keep, pending?.version ?? null, keep, pending?.expiresAt ?? null, record.projectId, before.revision).changes
     if (Number(changes) !== 1) throw new BoardError('conflict', `${record.projectId} changed under this move`)
     return record
   }
@@ -927,13 +1211,18 @@ export class StoreBoard extends Board {
     return stored
   }
 
-  private readProject(projectId: string): { project: Project; request?: string; version?: number } | undefined {
-    const row = this.ctx.store.db.prepare('SELECT record, charter_request, charter_version FROM board_projects WHERE project_id = ?').get(projectId) as { record: string; charter_request: string | null; charter_version: number | null } | undefined
+  private readProject(projectId: string): StoredProject | undefined {
+    const row = this.ctx.store.db.prepare('SELECT record, charter_request, charter_version, charter_expires_at FROM board_projects WHERE project_id = ?').get(projectId) as
+      { record: string; charter_request: string | null; charter_version: number | null; charter_expires_at: string | null } | undefined
     if (!row) return undefined
-    return { project: this.loadProject(projectId, row.record), ...(row.charter_request !== null ? { request: row.charter_request, version: Number(row.charter_version) } : {}) }
+    return {
+      project: this.loadProject(projectId, row.record),
+      ...(row.charter_request !== null ? { request: row.charter_request, version: Number(row.charter_version) } : {}),
+      ...(row.charter_request !== null && row.charter_expires_at !== null ? { expiresAt: row.charter_expires_at } : {}),
+    }
   }
 
-  private projectOf(projectId: string): { project: Project; request?: string; version?: number } {
+  private projectOf(projectId: string): StoredProject {
     const stored = this.readProject(projectId)
     if (!stored) throw new BoardError('unknown-project', `no project ${projectId}`)
     return stored
@@ -977,16 +1266,25 @@ export class StoreBoard extends Board {
     }
   }
 
-  private priorRequest(clientRequestId: string, tool: 'board_charter' | 'board_propose', projectId: string | undefined): { project_id: string; task_id: string | null; approval_request: string | null } | undefined {
-    const row = this.ctx.store.db.prepare('SELECT tool, project_id, task_id, approval_request FROM board_client_requests WHERE client_request_id = ?').get(clientRequestId) as { tool: string; project_id: string; task_id: string | null; approval_request: string | null } | undefined
+  private priorRequest(clientRequestId: string, tool: 'board_charter' | 'board_propose', projectId: string | undefined): PriorRequest | undefined {
+    const row = this.ctx.store.db.prepare('SELECT tool, project_id, task_id, approval_request, charter_version FROM board_client_requests WHERE client_request_id = ?').get(clientRequestId) as (PriorRequest & { tool: string }) | undefined
     if (!row) return undefined
     if (row.tool !== tool || (projectId !== undefined && row.project_id !== projectId)) throw new BoardError('conflict', `client request ${clientRequestId} was used for another call`)
     return row
   }
 
-  private recordRequest(clientRequestId: string, tool: 'board_charter' | 'board_propose', projectId: string, taskId: string | undefined, approvalRequest: string | undefined, at: Date): void {
-    this.ctx.store.db.prepare('INSERT INTO board_client_requests (client_request_id, tool, project_id, task_id, approval_request, created_at) VALUES (?, ?, ?, ?, ?, ?)')
-      .run(clientRequestId, tool, projectId, taskId ?? null, approvalRequest ?? null, at.toISOString())
+  private recordRequest(clientRequestId: string, tool: 'board_charter' | 'board_propose', projectId: string, taskId: string | undefined, approvalRequest: string | undefined, at: Date, charterVersion?: number): void {
+    this.ctx.store.db.prepare('INSERT INTO board_client_requests (client_request_id, tool, project_id, task_id, approval_request, created_at, charter_version) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .run(clientRequestId, tool, projectId, taskId ?? null, approvalRequest ?? null, at.toISOString(), charterVersion ?? null)
+  }
+
+  /** What a board_charter call already made returns on a retry: the project as it now is, the request, and the version that call asked about (M6). */
+  private priorCharter(prior: PriorRequest): { project: Project; approvalRequest: string; charterVersion: number } {
+    const stored = this.projectOf(prior.project_id)
+    // A key recorded before migration 2 has no version: the pending one while its request still waits, else the charter's.
+    const charterVersion = prior.charter_version !== null ? Number(prior.charter_version)
+      : stored.request === prior.approval_request && stored.version !== undefined ? stored.version : stored.project.charter.version
+    return { project: stored.project, approvalRequest: prior.approval_request!, charterVersion }
   }
 
   // --- leases ---
@@ -1029,6 +1327,13 @@ export class StoreBoard extends Board {
 
   private expectState(task: BoardTask, ...states: TaskState[]): void {
     if (!states.includes(task.state)) throw new BoardError('invalid-transition', `${task.taskId} is ${task.state}, not ${states.join(' or ')}`)
+  }
+
+  /** A task that writes a subject leaves a result on that subject (type and ref), at its new version (INV-15, M4). */
+  private writesWhatItHolds(task: BoardTask, subject: Subject): void {
+    if (task.writes && (subject.type !== task.writes.type || subject.ref !== task.writes.ref)) {
+      throw new BoardError('invalid', `${task.taskId} writes ${task.writes.type} ${task.writes.ref}, so its result is on that subject, not ${subject.type} ${subject.ref}`)
+    }
   }
 
   private knownResult(result: { artifacts: ArtifactRef[]; digest?: ArtifactRef }): void {
