@@ -117,7 +117,7 @@
                 }
               },
               "available": {
-                "description": "Whether new work may draw on it now; false while a window is limited, or reads unknown in a pool configured to fail closed.",
+                "description": "Whether new work may draw on it now; false while a window is limited, or is unknown (no reading yet, or an unknown one) in a pool that fails closed, the default.",
                 "type": "boolean"
               },
               "until": {
