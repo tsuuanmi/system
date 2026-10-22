@@ -144,7 +144,17 @@ hold. The fake provider does not check them, and the suite does not test them ye
   charter only.
 - Answering a question wait records the questions and answers in the `board` decision's detail,
   which becomes the task's `lastDecision`. Every move back to `ready` clears `run`.
-- A task's `milestone` is one of its project's milestones.
+- A task's `milestone` is one of its project's milestones. A founding call declares every
+  milestone `planned` with no `funding` (`invalid` otherwise): the charter's approval does not
+  fund one.
+- A task that `writes` a subject takes a result (`submit`, or a run owner's completed report)
+  only on that subject's type and ref (`invalid` otherwise), so the result it leaves is the
+  subject it held (INV-15).
+- The board adopts its own request on the exact subject when it is open or already approved, so
+  a move retried after a crash asks the operator once, and an approval given while the board was
+  down still applies; the subject is per attempt and per charter version, so this never carries
+  an approval across them. Founding under a `clientRequestId` derives the project's id from it
+  for the same reason.
 
 | From → to | Who | Records | On failure |
 |---|---|---|---|

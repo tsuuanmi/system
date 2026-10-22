@@ -453,12 +453,17 @@ guesses.
 - Its charter is approved by the operator (action class `charter`) on the subject
   `{type: content, ref: project:<projectId>:charter:<version>, version: sha256 of the canonical
   charter without approval}`. `board_charter` with an existing `projectId` amends its charter;
-  otherwise it founds a project, with that id or a generated one. An amendment is held in
+  otherwise it founds a project, with that id or a generated one (derived from its
+  `clientRequestId` when it has one, so a retry after a crash asks about the same subject and
+  adopts that request, also when it was approved meanwhile). A retry under the same key returns
+  the charter version that call asked about. An amendment is held in
   `proposedCharter` with the next version
   until approved, and the project keeps its state meanwhile. A first charter that is rejected or
   expires closes the project as `abandoned` and cancels its open tasks (`project-closed`); a
   refused or expired amendment is dropped.
 - A milestone is funded (action class `funding`) by an approval on its budget, a funding round.
+  A founding call declares every milestone `planned`, with no `funding`: the charter's approval
+  does not cover a funding round.
 - Budget use is computed from the usage records of its tasks, never stored on the project.
 - Stop rules are words: the lead or the operator judges them, and the action a rule names is put
   to the operator through the approval queue.
@@ -480,7 +485,8 @@ guesses.
   `board-task:<taskId>:attempt:<n>` (`n`, the attempts already made) covers one attempt only.
 - Only a claimed, running, or reviewed task has a `holder`. A result always names its subject:
   the worktree's commit, or the result artifact (`{type: artifact}`) for work with no
-  repository, so a task is never stuck in review for want of one.
+  repository, so a task is never stuck in review for want of one. A task that `writes` a subject
+  leaves its result on that subject (the same type and ref, at its new version).
 - Every wait expires and never starts work: an approval wait follows its request, which expiry
   rejects, and then waits for input with reason `rejected`; an input wait that expires cancels
   the task (`input-expired`). When the queue has not resolved the request by `waiting.expiresAt`,

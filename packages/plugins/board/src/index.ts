@@ -7,7 +7,7 @@
  * `ctx.approvals` only: the board never decides one. `sweep(at)` is the only time-driven path.
  * @module @tsuuanmi/system-board
  */
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import type { ApprovalRequest, AutonomyVerdict, Check, NewRequest } from '@tsuuanmi/system-approvals-core'
@@ -94,6 +94,8 @@ interface StoredProject { project: Project; request?: string; version?: number; 
 interface Acceptance { option: 'accept' | 'reject'; operator: boolean; checks?: Partial<Record<Check, boolean>> }
 /** The policy's verdict for a task's next attempt, and the approval request it opened on ask. */
 interface NextAttempt { verdict: AutonomyVerdict; request?: ApprovalRequest }
+/** A `board_client_requests` row: what a retry-safe call made. */
+interface PriorRequest { project_id: string; task_id: string | null; approval_request: string | null; charter_version: number | null }
 /** A charter request settled by the sweep: the project as it now is, and the tasks it cancelled. */
 interface Settled { project: Project; cancelled: BoardTask[] }
 /** What a move changes; `lease` is set when it takes or renews the holder's lease. */
@@ -124,6 +126,8 @@ const clamp = (text: string, max: number): string => {
   return chars.length <= max ? text : `${chars.slice(0, max - 1).join('')}…`
 }
 const newId = (prefix: string): string => `${prefix}-${randomUUID().replaceAll('-', '').slice(0, 12)}`
+/** An id derived from a client's request key, so a retry of the same call names the same record. */
+const derivedId = (prefix: string, key: string): string => `${prefix}-${createHash('sha256').update(key).digest('hex').slice(0, 24)}`
 const encodeCursor = (createdAt: string, id: string): string => Buffer.from(JSON.stringify([createdAt, id])).toString('base64url')
 const decodeCursor = (cursor: string): [string, string] => {
   try {
@@ -270,19 +274,26 @@ export class StoreBoard extends Board {
   // --- projects ---
 
   async charter(input: CharterInput, at: Date = new Date()) {
-    return this.charterProject(input, at)
+    const { project, approvalRequest } = await this.charterProject(input, at)
+    return { project, approvalRequest }
   }
 
   /**
    * Found a project or amend its charter (`charter`), retry-safe under `clientRequestId`: a call
-   * with a key already used returns what that call made, and changes nothing.
+   * with a key already used returns what that call made, with the charter version it asked about,
+   * and changes nothing. Founding under a key derives the project's id from it, so a retry after a
+   * crash between asking and recording asks about the same subject and adopts that request (M2).
    */
-  async charterProject(input: CharterInput, at: Date = new Date(), clientRequestId?: string): Promise<{ project: Project; approvalRequest: string }> {
+  async charterProject(input: CharterInput, at: Date = new Date(), clientRequestId?: string): Promise<{ project: Project; approvalRequest: string; charterVersion: number }> {
     const prior = clientRequestId === undefined ? undefined : this.priorRequest(clientRequestId, 'board_charter', input.projectId)
-    if (prior) return { project: this.projectOf(prior.project_id).project, approvalRequest: prior.approval_request! }
+    if (prior) return this.priorCharter(prior)
     if (input.charter.approval !== undefined) throw new BoardError('invalid', 'a charter never carries its approval in: the operator gives it')
     const existing = input.projectId === undefined ? undefined : this.readProject(input.projectId)
-    const projectId = input.projectId ?? newId('proj')
+    // A founding call declares milestones only as planned: funding one is the operator's decision, which a charter approval does not cover (M3).
+    if (!existing && (input.milestones ?? []).some((m) => m.state !== 'planned' || m.funding !== undefined)) {
+      throw new BoardError('invalid', 'a new project\'s milestones are planned, with no funding: a milestone is funded by its own approval')
+    }
+    const projectId = input.projectId ?? (clientRequestId !== undefined ? derivedId('proj', clientRequestId) : newId('proj'))
     const version = existing ? existing.project.charter.version + 1 : 1
     if (input.charter.version !== version) throw new BoardError('invalid', `the charter version must be ${version}`)
     if (existing && existing.project.state !== 'active' && existing.project.state !== 'paused') throw new BoardError('invalid-transition', `${projectId} is ${existing.project.state}: only an active or paused project amends its charter`)
@@ -306,7 +317,7 @@ export class StoreBoard extends Board {
     try {
       return this.ctx.store.transaction((db) => {
         const again = clientRequestId === undefined ? undefined : this.priorRequest(clientRequestId, 'board_charter', input.projectId)
-        if (again) return { project: this.projectOf(again.project_id).project, approvalRequest: again.approval_request! }
+        if (again) return this.priorCharter(again)
         let project: Project
         if (existing) {
           const now = this.projectOf(projectId)
@@ -320,8 +331,8 @@ export class StoreBoard extends Board {
           db.prepare('INSERT INTO board_projects (project_id, state, created_at, revision, record, charter_request, charter_version, charter_expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
             .run(projectId, project.state, project.createdAt, project.revision, JSON.stringify(project), request.requestId, version, request.expiresAt)
         }
-        if (clientRequestId !== undefined) this.recordRequest(clientRequestId, 'board_charter', projectId, undefined, request.requestId, at)
-        return { project, approvalRequest: request.requestId }
+        if (clientRequestId !== undefined) this.recordRequest(clientRequestId, 'board_charter', projectId, undefined, request.requestId, at, version)
+        return { project, approvalRequest: request.requestId, charterVersion: version }
       })
     } catch (error) {
       await this.withdrawUnheld(request.requestId, at)
@@ -515,6 +526,7 @@ export class StoreBoard extends Board {
       this.fenced(current, generation, at)
       this.expectState(current.task, 'running')
       this.knownResult(result)
+      this.writesWhatItHolds(current.task, result.subject)
       const { project } = this.projectOf(current.task.projectId)
       return this.commit(current, {
         changes: {
@@ -545,6 +557,7 @@ export class StoreBoard extends Board {
     if (before.run?.runId !== runId) throw new BoardError('invalid', `${taskId} recorded run ${before.run?.runId ?? '(none)'}, not ${runId}`)
     if (outcome.status !== 'completed' && outcome.status !== 'failed') throw new BoardError('invalid', 'a run is reported completed or failed; an unknown outcome is never reported')
     // Checked before anything moves, so a report that is refused changes nothing.
+    if (outcome.status === 'completed') this.writesWhatItHolds(before, outcome.result.subject)
     const read = outcome.status === 'completed' ? this.readAcceptance(before, outcome.result, outcome.acceptance) : undefined
     if (outcome.status === 'completed') await this.bindChecks(before, read!, outcome.acceptance)
     const pending = before.waiting?.approvalRequest
@@ -960,12 +973,15 @@ export class StoreBoard extends Board {
   }
 
   /**
-   * Open a request, or adopt the board's open request on the same exact subject: one a crash
-   * left between asking and committing, so a retried move asks the operator once (INV-4).
+   * Open a request, or adopt the board's own request on the same exact subject that is open or
+   * already approved: one a crash left between asking and committing, so a retried move asks the
+   * operator once, and an approval given while the board was down still applies (INV-4, M2). The
+   * subject is per attempt and per charter version, so an approval never adopts across them.
    */
   private async ask(request: NewRequest, at: Date): Promise<ApprovalRequest> {
-    const open = await this.ctx.approvals.list({ states: ['open', 'batched'], ...(request.requester.projectId ? { projectId: request.requester.projectId } : {}) })
-    const orphan = open.find((r) => r.requester.component === 'board' && r.action.class === request.action.class && sameSubject(r.subject, request.subject))
+    const open = await this.ctx.approvals.list({ states: ['open', 'batched', 'approved'], ...(request.requester.projectId ? { projectId: request.requester.projectId } : {}) })
+    const orphan = open.find((r) => r.requester.component === 'board' && r.requester.taskId === request.requester.taskId
+      && r.action.class === request.action.class && sameSubject(r.subject, request.subject))
     return orphan ?? this.ctx.approvals.request(request, at)
   }
 
@@ -1233,16 +1249,25 @@ export class StoreBoard extends Board {
     }
   }
 
-  private priorRequest(clientRequestId: string, tool: 'board_charter' | 'board_propose', projectId: string | undefined): { project_id: string; task_id: string | null; approval_request: string | null } | undefined {
-    const row = this.ctx.store.db.prepare('SELECT tool, project_id, task_id, approval_request FROM board_client_requests WHERE client_request_id = ?').get(clientRequestId) as { tool: string; project_id: string; task_id: string | null; approval_request: string | null } | undefined
+  private priorRequest(clientRequestId: string, tool: 'board_charter' | 'board_propose', projectId: string | undefined): PriorRequest | undefined {
+    const row = this.ctx.store.db.prepare('SELECT tool, project_id, task_id, approval_request, charter_version FROM board_client_requests WHERE client_request_id = ?').get(clientRequestId) as (PriorRequest & { tool: string }) | undefined
     if (!row) return undefined
     if (row.tool !== tool || (projectId !== undefined && row.project_id !== projectId)) throw new BoardError('conflict', `client request ${clientRequestId} was used for another call`)
     return row
   }
 
-  private recordRequest(clientRequestId: string, tool: 'board_charter' | 'board_propose', projectId: string, taskId: string | undefined, approvalRequest: string | undefined, at: Date): void {
-    this.ctx.store.db.prepare('INSERT INTO board_client_requests (client_request_id, tool, project_id, task_id, approval_request, created_at) VALUES (?, ?, ?, ?, ?, ?)')
-      .run(clientRequestId, tool, projectId, taskId ?? null, approvalRequest ?? null, at.toISOString())
+  private recordRequest(clientRequestId: string, tool: 'board_charter' | 'board_propose', projectId: string, taskId: string | undefined, approvalRequest: string | undefined, at: Date, charterVersion?: number): void {
+    this.ctx.store.db.prepare('INSERT INTO board_client_requests (client_request_id, tool, project_id, task_id, approval_request, created_at, charter_version) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .run(clientRequestId, tool, projectId, taskId ?? null, approvalRequest ?? null, at.toISOString(), charterVersion ?? null)
+  }
+
+  /** What a board_charter call already made returns on a retry: the project as it now is, the request, and the version that call asked about (M6). */
+  private priorCharter(prior: PriorRequest): { project: Project; approvalRequest: string; charterVersion: number } {
+    const stored = this.projectOf(prior.project_id)
+    // A key recorded before migration 2 has no version: the pending one while its request still waits, else the charter's.
+    const charterVersion = prior.charter_version !== null ? Number(prior.charter_version)
+      : stored.request === prior.approval_request && stored.version !== undefined ? stored.version : stored.project.charter.version
+    return { project: stored.project, approvalRequest: prior.approval_request!, charterVersion }
   }
 
   // --- leases ---
@@ -1285,6 +1310,13 @@ export class StoreBoard extends Board {
 
   private expectState(task: BoardTask, ...states: TaskState[]): void {
     if (!states.includes(task.state)) throw new BoardError('invalid-transition', `${task.taskId} is ${task.state}, not ${states.join(' or ')}`)
+  }
+
+  /** A task that writes a subject leaves a result on that subject (type and ref), at its new version (INV-15, M4). */
+  private writesWhatItHolds(task: BoardTask, subject: Subject): void {
+    if (task.writes && (subject.type !== task.writes.type || subject.ref !== task.writes.ref)) {
+      throw new BoardError('invalid', `${task.taskId} writes ${task.writes.type} ${task.writes.ref}, so its result is on that subject, not ${subject.type} ${subject.ref}`)
+    }
   }
 
   private knownResult(result: { artifacts: ArtifactRef[]; digest?: ArtifactRef }): void {

@@ -52,7 +52,7 @@ const generation = () => zod.number().int().min(1).describe('The lease generatio
 export const INPUTS: Record<BoardTool, ToolSpec['inputSchema']> = {
   board_projects: { state: projectState().optional(), ...page },
   board_charter: {
-    projectId: id().optional().describe('An existing project\'s id to amend its charter (pivot), or a new project\'s; generated when absent'),
+    projectId: id().optional().describe('An existing project\'s id to amend its charter (pivot), or a new project\'s; generated when absent, from clientRequestId when one is given, so a retry names the same project'),
     title: zod.string().min(1).max(200), template: id().optional(), classification: zod.enum(['public', 'operator-shared', 'local-private']).optional(),
     charter: charter(), milestones: zod.array(milestone()).max(64).optional(), clientRequestId: zod.string().min(1).max(200).optional().describe('Retry-safe request key'),
   },
@@ -117,8 +117,8 @@ export function handlers(board: StoreBoard, options: { leaseTtlSeconds: number }
     board_charter: async (args) => {
       const input = args as unknown as CharterInput & { clientRequestId?: string }
       const { clientRequestId, ...charter } = input
-      const { project, approvalRequest } = await board.charterProject(charter, new Date(), clientRequestId)
-      return { projectId: project.projectId, state: project.state, charterVersion: input.charter.version, approvalRequest }
+      const { project, approvalRequest, charterVersion } = await board.charterProject(charter, new Date(), clientRequestId)
+      return { projectId: project.projectId, state: project.state, charterVersion, approvalRequest }
     },
     board_brief: async (args) => {
       const projectId = String(args.projectId)

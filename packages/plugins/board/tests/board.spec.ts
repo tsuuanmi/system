@@ -371,6 +371,45 @@ describe('ctx.board (store-backed): the approval queue', () => {
     expect(subjects.at(-1)).toMatchObject({ ref: `board-task:${merge.taskId}:attempt:3`, version: 'approval-needed' })
   })
 
+  it('founds a project under a client request key at an id derived from it, so a retry after a crash adopts the request, also one approved meanwhile (M2, M6)', async () => {
+    const b = await boot()
+    const { ctx } = b
+    const call = caller(b)
+    // What a board that crashed after asking, before recording, leaves: an open request on the derived project's charter.
+    const crashed = await ok(call('board_charter', { title: 'Kernel', charter: CHARTER, clientRequestId: 'found-kernel' }))
+    const projectId = crashed.projectId as string
+    expect(projectId).toMatch(/^proj-[0-9a-f]{24}$/)
+    ctx.store.db.prepare('DELETE FROM board_client_requests').run()
+    ctx.store.db.prepare('DELETE FROM board_projects WHERE project_id = ?').run(projectId)
+    await decide(ctx, crashed.approvalRequest as string, 'approved', at(1))
+    const retried = await ok(call('board_charter', { title: 'Kernel', charter: CHARTER, clientRequestId: 'found-kernel' }))
+    expect(retried).toMatchObject({ projectId, approvalRequest: crashed.approvalRequest, charterVersion: 1 })
+    expect(await ctx.approvals.list({ projectId, states: ['open', 'batched', 'approved'] })).toHaveLength(1)
+    await ctx.board.sweep(new Date())
+    expect(await ctx.board.project(projectId)).toMatchObject({ state: 'active' })
+
+    // A retried amendment reports the version that call asked about, not the retry's input.
+    const amended = await ok(call('board_charter', { projectId, title: 'Kernel', charter: { ...CHARTER, version: 2 }, clientRequestId: 'amend-kernel' }))
+    expect(amended.charterVersion).toBe(2)
+    expect(await ok(call('board_charter', { projectId, title: 'Kernel', charter: { ...CHARTER, version: 7 }, clientRequestId: 'amend-kernel' }))).toEqual(amended)
+  })
+
+  it('refuses a result on another subject than the one the task writes (M4, INV-15)', async () => {
+    const { ctx } = await boot()
+    await active(ctx)
+    const branch: Subject = { type: 'git-head', ref: 'refs/heads/kernel' }
+    const t = await ready(ctx, task('p2', 'w', { writes: branch }))
+    const { generation } = await ctx.board.claim(t.taskId, 'lead', 60_000, at(3))
+    await ctx.board.start(t.taskId, generation, { runId: 'run-1' }, at(3))
+    const r = result(ctx, 'kernel')
+    expect(await failureOf(ctx.board.submit(t.taskId, generation, { artifacts: [r], subject: { type: 'git-head', ref: 'refs/heads/main', version: 'abc' } }, at(3.5)))).toBe('invalid')
+    await ctx.board.sweep(at(10))
+    const elsewhere = { type: 'git-head' as const, ref: 'refs/heads/main', version: 'abc' }
+    expect(await failureOf(ctx.board.reconcileRun(t.taskId, 'run-1', { status: 'completed', result: { artifacts: [r], subject: elsewhere }, acceptance: acceptance(ctx, 'accept', t.taskId, r, elsewhere) }, at(11)))).toBe('invalid')
+    const on = { ...branch, version: 'abc' }
+    expect(await ctx.board.reconcileRun(t.taskId, 'run-1', { status: 'completed', result: { artifacts: [r], subject: on }, acceptance: acceptance(ctx, 'accept', t.taskId, r, on) }, at(11))).toMatchObject({ state: 'done' })
+  })
+
   it('starts nothing with no attempt left, even when the operator approves going on (INV-9)', async () => {
     const { ctx } = await boot()
     await active(ctx)

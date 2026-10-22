@@ -220,7 +220,7 @@ Scope: `client`
 
 | Argument | Type | Required | Description |
 |---|---|---|---|
-| `projectId` | string |  | An existing project's id to amend its charter (pivot), or a new project's; generated when absent |
+| `projectId` | string |  | An existing project's id to amend its charter (pivot), or a new project's; generated when absent, from clientRequestId when one is given, so a retry names the same project |
 | `title` | string | yes |  |
 | `template` | string |  |  |
 | `classification` | "public" \| "operator-shared" \| "local-private" |  |  |

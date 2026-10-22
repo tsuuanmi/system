@@ -117,7 +117,10 @@ export const boardSuite = defineSuite<Boot>({
   seam: 'board',
   contract: '1.0',
   scenarios: [
-    scenario('charter-approved-activates', 'starts work only under a charter the operator approved, bound to that charter version (INV-5, INV-6)', async (ctx) => {
+    scenario('charter-approved-activates', 'starts work only under a charter the operator approved, bound to that charter version, with every milestone planned (INV-5, INV-6)', async (ctx) => {
+      expect(await failureOf(ctx.board.charter({ projectId: 'p1', title: 'Kernel', charter: CHARTER, milestones: [{ id: 'm1', title: 'First', state: 'funded', funding: `sha256:${'1'.repeat(64)}` }] }, T0))).toBe('invalid')
+      expect(await failureOf(ctx.board.charter({ projectId: 'p1', title: 'Kernel', charter: CHARTER, milestones: [{ id: 'm1', title: 'First', state: 'done' }] }, T0))).toBe('invalid')
+      expect(await ctx.board.project('p1')).toBeUndefined()
       const { project, approvalRequest } = await ctx.board.charter({ projectId: 'p1', title: 'Kernel', charter: CHARTER }, T0)
       expect(validProject(project)).toMatchObject({ projectId: 'p1', state: 'proposed', charter: { version: 1 }, revision: 0 })
       const request = await ctx.approvals.get(approvalRequest)
@@ -317,6 +320,8 @@ export const boardSuite = defineSuite<Boot>({
       const { generation } = await ctx.board.claim(w.taskId, 'lead', 600_000, at(3))
       await ctx.board.start(w.taskId, generation, { runId: 'run-1' }, at(3))
       const r = result(ctx, 'kernel')
+      // A task that writes a subject leaves its result on that subject (INV-15).
+      expect(await failureOf(ctx.board.submit(w.taskId, generation, { artifacts: [r], subject: HEAD }, at(4)))).toBe('invalid')
       await ctx.board.submit(w.taskId, generation, { artifacts: [r], subject: at3 }, at(4))
       expect(await failureOf(ctx.board.accept(w.taskId, acceptance(ctx, 'accept', w.taskId, r, { subject: at3 }), at(5)))).toBe('invalid')
       expect(await failureOf(ctx.board.accept(w.taskId, acceptance(ctx, 'accept', w.taskId, r, { subject: at3, checks: { tests: true, lint: false } }), at(5)))).toBe('invalid')
@@ -534,6 +539,11 @@ export class FakeBoard extends Board {
     }
   }
 
+  /** A task that writes a subject leaves its result on it. */
+  private writes(task: BoardTask, subject: Subject): void {
+    if (task.writes && (task.writes.type !== subject.type || task.writes.ref !== subject.ref)) throw new BoardError('invalid', `${task.taskId} writes ${task.writes.ref}, not ${subject.ref}`)
+  }
+
   private expect(task: BoardTask, ...states: TaskState[]): void {
     if (!states.includes(task.state)) throw new BoardError('invalid-transition', `${task.taskId} is ${task.state}, not ${states.join(' or ')}`)
   }
@@ -545,6 +555,7 @@ export class FakeBoard extends Board {
     const version = existing ? existing.charter.version + 1 : 1
     if (input.charter.version !== version) throw new BoardError('invalid', `the charter version must be ${version}`)
     if (existing && existing.state !== 'active' && existing.state !== 'paused') throw new BoardError('invalid-transition', `${projectId} is ${existing.state}`)
+    if (!existing && (input.milestones ?? []).some((m) => m.state !== 'planned' || m.funding !== undefined)) throw new BoardError('invalid', 'a new project\'s milestones are planned, with no funding')
     const verdict = await this.ctx.approvals.check({ class: 'charter', projectId })
     if (verdict.mode !== 'ask') throw new BoardError('invalid', `a charter is always asked about; the policy says ${verdict.mode}`)
     const hash = `sha256:${createHash('sha256').update(canonicalJson(input.charter)).digest('hex')}`
@@ -673,6 +684,7 @@ export class FakeBoard extends Board {
     this.held(task, generation, at)
     this.expect(task, 'running')
     if (result.artifacts.some((a) => !this.ctx.artifacts.get(a))) throw new BoardError('invalid', 'a result artifact is unknown')
+    this.writes(task, result.subject)
     return this.save(task, at, { state: 'review', result, lastDecision: this.decide(taskId, 'running', 'review', at, 'result recorded') })
   }
 
@@ -720,6 +732,7 @@ export class FakeBoard extends Board {
     let moved: BoardTask
     if (outcome.status === 'completed') {
       if (outcome.result.artifacts.some((a) => !this.ctx.artifacts.get(a))) throw new BoardError('invalid', 'a result artifact is unknown')
+      this.writes(task, outcome.result.subject)
       moved = await this.applyAcceptance({ ...task, result: outcome.result }, outcome.acceptance, at, task)
     } else {
       const failed = this.decide(taskId, task.state, task.attempts.count < task.attempts.max ? 'ready' : 'waiting-for-input', at, `run ${runId} failed`)

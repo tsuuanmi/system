@@ -21,8 +21,10 @@ charters, and their tasks.
     or `board-task:<id>:attempt:<n>` with the wait's reason. A verdict counts only for that
     subject and that task, and every return to ready for a new attempt asks the policy again,
     so one approval never covers a later attempt.
-  - Before it opens a request, the board adopts its own open request on the same subject, one a
-    crash left between asking and committing, so a retried move asks the operator once.
+  - Before it opens a request, the board adopts its own request on the same subject, open or
+    already approved, one a crash left between asking and committing, so a retried move asks the
+    operator once and an approval given meanwhile applies. It lists the project's open, batched,
+    and approved requests to find it, which grows with the project's history (M5, open).
   - A move that ends a wait (`reconcileRun`, `cancel`, `close`) reads the request first, commits,
     and withdraws it after; a withdrawal that fails is logged, and the request expires on its
     own. The sweep leaves a task waiting on a withdrawn request as it is (only the board
@@ -63,7 +65,9 @@ charters, and their tasks.
   [`schemas/mcp-board.v1.json`](../../../schemas/mcp-board.v1.json) `$defs/<tool>-input` and
   `-output`; a refused input does nothing, a refusal is an MCP error naming the `BoardError`.
   - `board_charter` and `board_propose` are retry-safe under `clientRequestId`, recorded in the
-    same transaction as the write;
+    same transaction as the write (the table is never pruned: M5, open); a `board_charter` retry
+    reports the charter version that call asked about, and founding under a key derives the
+    project's id from it, so a retry after a crash adopts the request it left;
   - `board_claim` defaults to `leaseTtlSeconds`; `leases.maxTtlMs` (default 10 minutes) caps
     every lease, and the output gives the real expiry;
   - a claimed task is started by the workflow engine (`ctx.board.start`, which records the run
