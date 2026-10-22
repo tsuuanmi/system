@@ -8,7 +8,9 @@
 > plugins below; differs from target: `persistent-conversation` rests on the probe's `resume`
 > flag, not on a resume conformance test (planned); a started run is never reconciled from the
 > agent's own records (it fails as `reconciliation_failed`); evidence beyond the final message
-> and the workspace's git subject is not stored.
+> and the workspace's git subject is not stored; Codex and ACP agents cannot ask a
+> [tool gate](#tool-gate) before each tool call, so the `agents` source admits none of their
+> Workers.
 
 An **agent runtime** is an external coding agent that `system` drives as a Worker. It is the
 counterpart of the [gateways](gateways.md), where the same agents act as clients. The agent
@@ -20,9 +22,9 @@ preset does.
 
 | Provider plugin | Kind | Backed by | Policy holder |
 |---|---|---|---|
-| [`runtime-claude-agent-sdk`](../../packages/plugins/runtime-claude-agent-sdk/README.md) | `claude-agent-sdk` | official Claude Agent SDK, on the operator's installed `claude` | exact built-in tools, pre-approved inside the workspace only; no settings files, hooks, or MCP servers |
-| [`runtime-codex-sdk`](../../packages/plugins/runtime-codex-sdk/README.md) | `codex-sdk` | official Codex SDK, on the operator's installed `codex` | Codex's own sandbox (read-only or workspace-write); approvals `never`; network and web search off; its own Codex home, with no MCP server |
-| [`runtime-acp`](../../packages/plugins/runtime-acp/README.md) | `acp:<name>` | official ACP SDK, with an agent subprocess | the client side: permission requests refused, reads confined to the workspace, no writes or terminals advertised |
+| [`runtime-claude-agent-sdk`](../../packages/plugins/runtime-claude-agent-sdk/README.md) | `claude-agent-sdk` | official Claude Agent SDK, on the operator's installed `claude` | exact built-in tools, pre-approved inside the workspace only; no settings files, hooks from disk, or MCP servers; the run's tool gate as its one PreToolUse hook |
+| [`runtime-codex-sdk`](../../packages/plugins/runtime-codex-sdk/README.md) | `codex-sdk` | official Codex SDK, on the operator's installed `codex` | Codex's own sandbox (read-only or workspace-write); approvals `never`; network and web search off; its own Codex home, with no MCP server; no tool gate (refused) |
+| [`runtime-acp`](../../packages/plugins/runtime-acp/README.md) | `acp:<name>` | official ACP SDK, with an agent subprocess | the client side: permission requests refused, reads confined to the workspace, no writes or terminals advertised; no tool gate (refused) |
 
 ACP is the generic path for any ACP-speaking agent, not the primary path for Claude or Codex.
 
@@ -53,6 +55,8 @@ interface RuntimeEvidence {
   sandboxes: ("read-only" | "workspace-write")[];  // policies it can enforce exactly
   resume: boolean;                          // a finished run can be continued by its handle
   executes: boolean;                        // runs commands confined to the workspace
+  readsConfined: boolean;                   // host state unreadable to the agent, proven now
+  gatesToolCalls: boolean;                  // asks RunSpec.toolGate before every tool call
 }
 
 interface RunSpec {
@@ -63,7 +67,12 @@ interface RunSpec {
   model?: string;                           // operator configuration, never a routing input
   maxTurns?: number;
   resume?: string;                          // native handle of a conversation to continue
+  toolGate?: ToolGate;                      // asked before every tool call (below)
 }
+
+type ToolGate = (call: { tool: string; input: unknown; callId?: string }, signal: AbortSignal) =>
+  Promise<{ decision: "allow" } | { decision: "deny"; reason: string }
+        | { decision: "defer"; reason: string; requestId: string }>;
 
 interface RunResult extends RunMetering { text: string; nativeHandle?: string }
 
@@ -97,6 +106,22 @@ configuration ([INV-6](../architecture/invariants.md#inv-6-authority-comes-from-
 Each provider maps them onto the agent's own permission or sandbox modes. If a requested
 policy cannot be expressed exactly, the run is refused (`config_error`). It never loosens.
 Codex, for example, refuses a tool allow-list or a turn limit, since it cannot express either.
+
+## Tool gate
+
+The `agents` source gives every run a gate, built from the autonomy policy (`ctx.approvals`), and
+the runtime asks it before each tool call the agent makes
+([approvals](approvals.md#a-workers-tool-calls): how a call is classified, what each verdict
+does, and how a deferred call resumes). The gate comes from the source, never from the agent
+(INV-6), and its verdict narrows, never widens, what the runtime's own policy allows: `allow`
+passes the call on to that policy, `deny` refuses it with a reason the agent is told, and
+`defer` stops the run at the call until the operator answers. A run a gate deferred fails as
+`config_error`, naming the request, and a later run of its session makes the call once approved.
+
+A runtime that can ask the gate before every tool call reports `gatesToolCalls`; one that cannot
+refuses a run that carries a gate (`config_error`), and its Workers are not admitted. Claude Code
+compiles the gate to one PreToolUse hook on every tool. Codex runs its tools with approvals
+`never`, and an ACP agent asks the client only for what it chooses to, so neither gates.
 
 ## Workspaces
 
@@ -186,7 +211,7 @@ pool is not metered.
 
 The Worker registry admits an agent-runtime Worker only on evidence from `probe()`, never
 because of its name. A Worker whose runtime is missing, cannot enforce the configured
-sandbox, or does not report `readsConfined`, is `unavailable`; so is a `worktreePerRun` Worker
+sandbox, or does not report `readsConfined` and `gatesToolCalls`, is `unavailable`; so is a `worktreePerRun` Worker
 whose workspace cannot hold a worktree per run (`config_error`).
 
 | Capability | Offered when |

@@ -21,8 +21,11 @@ first-class provider.
     symlinks and `..` cannot leave it;
   - no write and no terminal capability is advertised, and no MCP server is
     passed;
-  - what ACP cannot express exactly (a tool list, a model, a turn limit) is
-    refused, never ignored.
+  - what ACP cannot express exactly (a tool list, a model, a turn limit, a
+    run's tool gate) is refused, never ignored. An agent asks the client only
+    for what it chooses to, so not every tool call could reach a gate: the probe
+    reports `gatesToolCalls: false`, and the `agents` source admits none of its
+    Workers ([tool gate](../../../docs/design/agent-runtimes.md#tool-gate)).
 - **Trust:** an agent can still act on the disk without asking. So `read-only`
   is offered only for an agent the operator vouches for (`honoursPermissions`,
   INV-6). Any other agent offers no sandbox, and its Workers stay unavailable.

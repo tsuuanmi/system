@@ -11,6 +11,8 @@ installed.
   wrapper: every pre-approved tool is scoped to the workspace, reads included,
   and nothing else is allowed
   ([ADR-0024](../../../docs/decisions/adr/0024-agent-workers-confined-for-reads.md)).
+  It reports `gatesToolCalls: true`: a run's tool gate is a PreToolUse hook on
+  every tool.
 - **Policy, exactly or refused:**
   - only the listed built-in tools exist (`tools`) and are pre-approved
     (`allowedTools`). The defaults are `Read`, `Grep`, `Glob` for `read-only`;
@@ -28,6 +30,21 @@ installed.
     denied without a prompt;
   - `settingSources: []`: the operator's own Claude Code settings and hooks
     never widen a Worker;
+  - **the run's tool gate** (`RunSpec.toolGate`,
+    [approvals](../../../docs/design/approvals.md#a-workers-tool-calls)) is the
+    one PreToolUse hook, with no matcher, so every tool call, subagents'
+    included, is asked first with its tool name, input, and `tool_use_id`.
+    `deny` and `defer` are the hook's `permissionDecision`, with the reason;
+    `allow` returns no decision, because a hook's `allow` would skip the
+    workspace-scoped pre-approvals above, and with them the workspace bound. A
+    gate that throws, answers an unknown verdict, or takes longer than 30 s (the
+    hook's own timeout is 60 s) is a deny. After a `defer`, every later call is
+    denied, and the run rejects with a `config_error` naming the request,
+    whatever the result says (a headless query ends with `terminal_reason:
+    tool_deferred`); a result that reports a deferred call the gate never
+    deferred fails the same way. On resume, the hook runs again on the deferred
+    call. `canUseTool` is never set: a pre-approved tool never reaches it, so it
+    cannot be the gate. Without a gate, no hook is registered;
   - no MCP server at all (`strictMcpConfig` with none given). Without this, the
     live check of 2026-10-12 showed the account's claude.ai connectors attached;
   - **no daemon credentials** (INV-8): Claude Code starts with

@@ -31,8 +31,9 @@ The **`agents` Worker source**: agent runtimes as Workers
 
   A Worker never offers plain `reason`, so ordinary asks never spend agent-plan
   quota (P1). If the runtime is missing, cannot enforce the configured sandbox,
-  or does not prove `readsConfined` (ADR-0024), the Worker is `unavailable`:
-  its policy is never loosened.
+  does not prove `readsConfined` (ADR-0024), or cannot ask a tool gate before
+  each tool call (`gatesToolCalls`), the Worker is `unavailable`: its policy is
+  never loosened. The same proof is checked again before each run starts.
 - **Runs** (`start`, `get`, `wait`):
   - durable at once, and idempotent by key;
   - one at a time per Worker (one writer per workspace, INV-15);
@@ -117,6 +118,47 @@ The **`agents` Worker source**: agent runtimes as Workers
   never submitted. By default `local-private` work is refused here, although
   routing admits it (the Worker is local); see the egress plugin's
   `workerClasses`.
+- **Tool gate** ([approvals](../../../docs/design/approvals.md#a-workers-tool-calls),
+  [`src/gate.ts`](src/gate.ts)): every run carries a gate (`RunSpec.toolGate`)
+  that its runtime asks before each tool call. It reads `ctx.approvals` when a
+  call comes (optional, never injected); with none loaded, every call is
+  denied, reads included (fail-closed rule 5). Otherwise:
+  - it classifies the call by its tool and input only: `Read`, `NotebookRead`,
+    `LS`, `Glob`, `Grep` inside the run's workspace → `read`; `Write`, `Edit`,
+    `MultiEdit`, `NotebookEdit` of a file inside it → `workspace-write`; `Bash`
+    → `command`, the argv the command split on single spaces (the policy's
+    exact-argv rule, so a metacharacter is `forbid`), with no input field beyond
+    `command`, `description`, `timeout`, `run_in_background`; `WebFetch`,
+    `WebSearch` → `external-send`. Anything else, or a path outside the
+    workspace, is denied by the gate's own rule;
+  - it judges the action with `ctx.approvals.check` under the studio policy
+    (no trusted envelope names an agent run's project yet): `forbid` denies
+    with the decision's reason; `auto` and `notify` allow, unless required
+    checks failed (no tool call carries checks, so such a rule denies: that is
+    the lead's work); `notify` also appends `agent-workers.tool.notified`
+    (with `ctx.eventLog`) naming the decision;
+  - `ask`: in a run with a session, one approval request on the exact call
+    (subject `content`, ref `agent-tool-call:<agent run>:<tool>`, version the
+    content id of the canonical input; requester `worker` with the agent run,
+    the session, and the call id), then `defer`. The run stops there: every
+    later call is denied, and the run fails as `config_error` naming the
+    request, whatever the runtime reported (the workers seam has no waiting
+    status). A later run of the same session that makes the same exact call
+    defers again on the same request while it is open, runs it once approved
+    (one approval, one call: the same call again asks anew), and is denied when
+    it was rejected, expired, or withdrawn, with nothing new queued. A run with
+    no session cannot wait, so an `ask` there is denied and nothing is queued;
+  - every outcome is a recorded decision: the `autonomy` decision of `check`,
+    the queue's own decision for a resolved request, or a `gate` decision (rule
+    `agent-workers.tool-gate`) where the gate decided without the policy; denied
+    and deferred calls also append `agent-workers.tool.denied` and
+    `agent-workers.tool.deferred` (ids only, never the input). A gate that fails
+    denies the call.
+
+  The requests a gate opened are kept in `agent_tool_requests`: the session and
+  exact call each is for, and when an approved one was used. Starting the later
+  run once a request is approved is the work's owner's (the board, the lead),
+  not this source's.
 - **Cancel (REQ-WRK-4):** a running agent is stopped, and a queued run never
   starts. Both fail as `aborted`.
 - **Deadline:** a run longer than `runTimeoutMs` (15 min) is stopped and fails
@@ -136,4 +178,4 @@ The **`agents` Worker source**: agent runtimes as Workers
   resume the agent's native session. With `worktreePerRun`, a session resumed
   by another workflow run resumes in that run's worktree.
 - **Injects:** `store`, `artifacts`, `leases`, `workers`, `agentRuntimes`, `egress`;
-  reads `resources` when present.
+  reads `resources`, `approvals`, and `eventLog` when present.

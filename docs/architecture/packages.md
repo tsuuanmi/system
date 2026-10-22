@@ -38,7 +38,7 @@ its types is not listed).
 | [workers-core](../../packages/workers-core/README.md) | routing | defines `workers` | — | — | — |
 | [agent-runtime-core](../../packages/agent-runtime-core/README.md) | capabilities | defines `agentRuntimes` | — | — | — |
 | [agent-runtimes](../../packages/plugins/agent-runtimes/README.md) | capabilities | `agentRuntimes` | `agent-runtimes` | — | `agent-runtime-core`, `libs` |
-| [agent-workers](../../packages/plugins/agent-workers/README.md) | capabilities | `agentWorkers` | `agent-workers` | `store`, `artifacts`, `leases`, `workers`, `agentRuntimes`, `egress`, `resources` (optional) | `agent-runtime-core`, `leases`, `libs`, `provider-core`, `resources-core`, `workers-core` |
+| [agent-workers](../../packages/plugins/agent-workers/README.md) | capabilities | `agentWorkers` | `agent-workers` | `store`, `artifacts`, `leases`, `workers`, `agentRuntimes`, `egress`, `approvals` (optional), `eventLog` (optional), `resources` (optional) | `agent-runtime-core`, `approvals-core`, `leases`, `libs`, `provider-core`, `resources-core`, `workers-core` |
 | [models](../../packages/plugins/models/README.md) | capabilities | `models` | `models` | `llm`, `store`, `artifacts`, `leases`, `workers`, `egress`, `models`, `credentials` (optional), `eventLog` (optional), `mcp` (optional) | `gateway-core`, `leases`, `libs`, `models-core`, `provider-core`, `workers-core` |
 | [models-core](../../packages/models-core/README.md) | capabilities | defines `models` | — | — | `workers-core` |
 | [runtime-acp](../../packages/plugins/runtime-acp/README.md) | capabilities | — | `runtime-acp` | `agentRuntimes` | `agent-runtime-core`, `provider-core` |
@@ -131,6 +131,8 @@ flowchart TB
   agent_workers --> workers
   agent_workers --> agent_runtimes
   agent_workers --> egress
+  agent_workers -.-> approvals
+  agent_workers -.-> event_log
   agent_workers -.-> resources
   approvals --> store
   approvals --> artifacts
@@ -230,6 +232,7 @@ policy above it. Each such edge is listed here so a new one is a visible change.
 
 | Consumer | Seam | Provider | Kind |
 |---|---|---|---|
+| `agent-workers` (capabilities) | `approvals` | `approvals` (routing) | optional |
 | `agent-workers` (capabilities) | `egress` | `egress` (routing) | required |
 | `agent-workers` (capabilities) | `resources` | `resources` (routing) | optional |
 | `agent-workers` (capabilities) | `workers` | `workers` (routing) | required |
@@ -309,6 +312,7 @@ flowchart TB
   accounts --> provider_core
   agent_runtimes --> agent_runtime_core
   agent_workers --> agent_runtime_core
+  agent_workers --> approvals_core
   agent_workers --> leases
   agent_workers --> provider_core
   agent_workers --> resources_core

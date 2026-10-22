@@ -5,7 +5,7 @@ Capability **seam definition** for agent runtimes
 
 | Seam | Definition | Provider |
 |---|---|---|
-| `ctx.agentRuntimes` | abstract `AgentRuntimes` with `register`, `get`, `list`; `AgentRuntimeProvider` (`probe`, `run`), `RunSpec`, `RunResult`, `RunMetering`, `TokenUsage`, `ModelUsage`, `LimitObservation`, `RuntimeEvidence`, `SandboxMode`; `withMetering`, `meteringOf` | `@tsuuanmi/system-agent-runtimes` |
+| `ctx.agentRuntimes` | abstract `AgentRuntimes` with `register`, `get`, `list`; `AgentRuntimeProvider` (`probe`, `run`), `RunSpec`, `RunResult`, `RunMetering`, `TokenUsage`, `ModelUsage`, `LimitObservation`, `RuntimeEvidence`, `SandboxMode`, `ToolGate`, `ToolCall`, `ToolVerdict`; `withMetering`, `meteringOf` | `@tsuuanmi/system-agent-runtimes` |
 
 - A provider adapts one agent (Claude Code, Codex, an ACP agent) to `run(spec)`.
   Only the agent's native handle crosses the seam (INV-7).
@@ -21,6 +21,20 @@ Capability **seam definition** for agent runtimes
   [`agent-workers`](../plugins/agent-workers/README.md) source maps them into the ledger.
 - A provider refuses a policy it cannot enforce exactly, with a `config_error`.
   It never loosens a policy.
+- **Tool gate** ([approvals](../../docs/design/approvals.md#a-workers-tool-calls)):
+  `RunSpec.toolGate` is a per-tool-call gate from the Worker source that owns
+  the run (trusted, INV-6): given a `ToolCall` (`tool`, `input`, and the
+  runtime's opaque `callId`), it answers a `ToolVerdict`: `allow` (the call
+  goes on to the runtime's own policy, which still holds), `deny` with a
+  `reason` the agent is told, or `defer` with a `reason` and the approval
+  `requestId` it waits for. A provider that gates (`RuntimeEvidence.gatesToolCalls`)
+  asks it before every tool call, subagents' included; a gate that throws, gives
+  an unknown verdict, or does not answer within the provider's bound is a deny.
+  After a `defer` it runs no further tool call and ends the run with a
+  `config_error` naming the request: a deferred run never completes. A provider
+  that cannot ask it before every call reports `gatesToolCalls: false` and
+  refuses a run that carries one (`config_error`), never ignores it. The
+  contract names no tool: the gate's owner classifies tool names.
 - **`childEnvironment(forward, explicit)`** is the environment every runtime's
   child process starts with (INV-8):
   1. DSH's own `scrubbedParentEnv()` (`@deepseek-ai/dsh-subprocess`): every name
@@ -55,8 +69,9 @@ Capability **seam definition** for agent runtimes
 - Conformance:
   - `conformance/agent-runtimes.ts` has `agentRuntimesConformance` for the
     registry;
-  - `agentRuntimeProviderConformance` covers probe, run, handle, refusal, and
-    abort, against a scripted agent the provider's own test supplies, and that
+  - `agentRuntimeProviderConformance` covers probe, run, handle, refusal (a
+    tool gate refused by a provider that does not gate, before anything runs),
+    and abort, against a scripted agent the provider's own test supplies, and that
     what a run reports it consumed holds together, or is absent
     (`expectConsistentMetering`: whole counts, input including its cached part,
     per-model counts summing to the totals, limits with an opaque window and ISO
