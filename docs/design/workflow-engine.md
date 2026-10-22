@@ -260,7 +260,10 @@ binds to the new version. Mismatches fail the gate.
 For a local agent's change, the subject is the working tree's git subject,
 `git:<HEAD>:<hash of every change on top>`. The `assessment` is stored only when it
 names that subject and the tree is still it, as an exact-subject `gate` decision;
-otherwise the step fails as `stale_subject`. The working tree is the one the writer's
+otherwise the step fails as `stale_subject`. A tree that can no longer be captured
+(removed, or no longer a repository) fails the review step as `stale_subject` before it
+runs, with an exact-subject `gate` decision of its own: a review never runs unbound.
+The working tree is the one the writer's
 result names: with agent Workers configured `worktreePerRun`, the run's own git worktree,
 which its writers and reviewers share ([workspaces](agent-runtimes.md#workspaces)). Every
 execution the engine starts names its run (`WorkerStart.runId`) for this.

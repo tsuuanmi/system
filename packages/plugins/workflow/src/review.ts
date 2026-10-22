@@ -13,17 +13,37 @@ import type { NodeRow, RunRow } from './types.ts'
 
 export type SubjectGate = { passed: true; decision: ArtifactRef; assessment: Assessment; subject: string } | { passed: false; decision: ArtifactRef; reason: string }
 
-/** The working tree a dependency's agent worked in, captured as it is now, with its verbatim change. */
-export function reviewSubject(e: Engine, results: ArtifactRef[], request: string): { workspace: string; subject: GitSubject; block: string } | undefined {
+/**
+ * The working tree a dependency's agent worked in, captured as it is now, with its verbatim change;
+ * `missing` when an agent worked in a tree that can no longer be captured (its worktree was
+ * cleaned up, say): the review is then never run unbound (INV-2, INV-5).
+ */
+export function reviewSubject(e: Engine, results: ArtifactRef[], request: string): { workspace: string; subject: GitSubject; block: string } | { missing: string } | undefined {
   const workspace = results
     .map((r) => e.ctx.artifacts.get(r)?.body as { schema?: string; workspace?: string; subject?: unknown } | undefined)
     .filter((b) => b?.schema?.startsWith('agent-result@') && b.workspace && b.subject)
     .at(-1)?.workspace
   if (!workspace) return undefined
   const captured = captureGitSubject(workspace)
-  if (!captured) return undefined
+  if (!captured) return { missing: workspace }
   const id = subjectId(captured.subject)
   return { workspace, subject: captured.subject, block: subjectBlock(id, workspace, captured.subject.ref, captured.diff, request) }
+}
+
+/** The `gate` decision that fails a review whose agent's working tree can no longer be captured. */
+export function missingSubject(e: Engine, run: RunRow, node: NodeRow, workspace: string): ArtifactRef {
+  return e.ctx.artifacts.recordDecision({
+    decisionType: 'gate',
+    question: `May review ${node.node_id} of run ${run.run_id} run on the change it is bound to?`,
+    inputs: [],
+    candidates: [
+      { option: 'fail', selected: true, reasons: [`the agent's working tree ${workspace} can no longer be captured, so there is no exact subject to review`] },
+      { option: 'pass', selected: false, reasons: ['not pass: a review is never run without the exact subject it binds to (REQ-WF-5)'] },
+    ],
+    decider: { type: 'rule', id: 'workflow.exact-subject', version: '1' },
+    outcome: { option: 'fail', detail: { workspace } },
+    deterministic: true,
+  }, { producer: { type: 'system', ref: 'workflow' }, runId: run.run_id, nodeId: node.node_id }).id as ArtifactRef
 }
 
 /**
