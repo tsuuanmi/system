@@ -1,6 +1,8 @@
 # Plugin model
 
 > Target state. Decisions: [ADR-0007](../decisions/adr/0007-everything-is-a-plugin.md),
+> [ADR-0036](../decisions/adr/0036-guarantee-core-and-capability-plugins.md) (guarantee core and
+> capability plugins),
 > [ADR-0018](../decisions/adr/0018-build-on-dsh-core.md) (build on DSH core),
 > [ADR-0019](../decisions/adr/0019-explicit-minimal-dsh-core.md) (only the DSH core rows we use).
 > Invariants: [INV-10](invariants.md#inv-10-everything-is-a-plugin),
@@ -13,6 +15,12 @@ core rows it uses (no `dsh-base`), running on the same plugin runtime,
 store, the provider drivers, the router, the workflow engine, and each gateway. There is no
 privileged core to patch. You extend `system` by mounting a plugin beside the others, and every
 registration is an effect that unwinds when its plugin unloads.
+
+Plugins are not all equal, though. A **guarantee seam** carries a correctness or safety
+guarantee and belongs to one of six core components; a **capability seam** only carries
+capability and belongs to one of eight plugin families
+([core and plugin classes](#core-and-plugin-classes)). Both are ordinary plugins; what differs
+is how their contracts may change and how they fail.
 
 ## Vocabulary
 
@@ -31,40 +39,88 @@ Each architectural boundary in [components](components.md) is published as one o
 Status is one word: **built**, **planned**, or **not planned**. Who injects what is generated
 from the code in [packages](packages.md); this table names the roles.
 
-| Layer | Seam (`ctx.*`) | Status | Definition and providers | Main consumers |
-|---|---|---|---|---|
-| Kernel | `store` | built | `system-store` (`node:sqlite`, WAL) | every stateful plugin |
-| Kernel | `artifacts` | built | `system-artifacts`: envelope, ids, lineage, schema validation, decisions | every producer of results or decisions |
-| Kernel | `eventLog` | built | `system-event-log` (named so because Cordis owns `ctx.events`) | append: workflow, turns, provider-chatgpt-web; listen: profile-scientific-research |
-| Kernel | `leases` | built | `system-leases` (generations, fencing) | workflow, turns, agent-workers |
-| Kernel | `credentials` | built | definition: **DSH** `dsh-credentials`; provider: `system-credentials-vault` (encrypted at rest) | accounts, `llm-pi-ai` (route keys by reference), models (`model_key`) |
-| Provider runtime | `display` | built | `Display` in `system-provider-core`; `system-display-virtual` (Xvfb) | browser |
-| Provider runtime | `browser` | built | `Browser` in `system-provider-core`; `system-browser-patchright` | turns, login |
-| Provider runtime | `providers` | built | `ProviderRegistry` in `system-provider-core`; registry `system-providers`; drivers `provider-chatgpt-web`, `provider-gemini-web` register into it | turns, login |
-| Provider runtime | `accounts` | built | `system-accounts` (records and grants in `ctx.credentials`) | turns, login |
-| Provider runtime | `login` | built | `system-login`: login profiles, Save, remote login, credential sign-in | operators (MCP `account_*`), turns |
-| Provider runtime | `turnReceipts` | built | `system-turn-receipts` | turns |
-| Capabilities | `turns` | built | `system-turns`: the `website` Worker source | `ctx.workers`, through the source it registers |
-| Capabilities | `agentRuntimes` | built | `AgentRuntimes` in `system-agent-runtime-core`; registry `system-agent-runtimes`; providers `runtime-claude-agent-sdk`, `runtime-codex-sdk`, `runtime-acp` | agent-workers |
-| Capabilities | `agentWorkers` | built | `system-agent-workers`: the `agents` Worker source | `ctx.workers`, through the source it registers |
-| Capabilities | `models` | built | `Models` in `system-models-core`; provider `system-models` over **DSH** `ctx.llm` (`llm`, `llm-pi-ai`) ([models](../design/models.md)) | the `models` Worker source in `system-models` |
-| Routing | `workers` | built | `Workers` in `system-workers-core`; `system-workers` | workflow; profile-scientific-research adds acceptance contracts |
-| Routing | `egress` | built | `system-egress`: classification policy and credential scan (INV-12) | turns, agent-workers, models, workflow |
-| Orchestration | `workflow` | built | `system-workflow`; templates through `ctx.workflow.template` | gateways, web-ui, profiles |
-| Orchestration | `workerSessions` | built | `system-worker-sessions` ([design](../design/sessions-and-messaging.md)) | workflow |
-| Gateways | `mcp` | built | `McpTools` in `system-gateway-core`; `system-mcp-server` (own: DSH has only an MCP client) | tool contributors: login, turns, workflow, worker-sessions, models; mcp-server adds `status`. Each tool declares its scope, `operator` by default ([ADR-0023](../decisions/adr/0023-scoped-control-credentials.md)) |
-| Host | `webServer` | built | **DSH** `dsh-host-webserver` (loopback) | mcp-server, gateway-anthropic, gateway-responses, web-ui |
-| — | `website` (Website Core) | not planned | replaced by `ctx.turns` and the engine's request keys and result reuse | — |
-| — | `exec` (local tools) | not planned | agent runtimes run commands inside their own sandbox | — |
-| — | `teams` | not planned | the `team` option of workflow nodes, unrolled by the engine; members are Worker sessions ([teams](../design/teams.md)) | — |
-| — | `profiles` | not planned | profile plugins contribute templates through `ctx.workflow.template` | — |
-| — | `clientProtocols` (turn broker) | not planned | gateways are plain plugins that share the `gateway-turns` library ([ADR-0022](../decisions/adr/0022-text-protocol-tool-calls-for-website-models.md)) | — |
+| Layer | Seam (`ctx.*`) | Class | Status | Definition and providers | Main consumers |
+|---|---|---|---|---|---|
+| Kernel | `store` | core: ledger of record | built | `system-store` (`node:sqlite`, WAL) | every stateful plugin |
+| Kernel | `artifacts` | core: ledger of record | built | `system-artifacts`: envelope, ids, lineage, schema validation, decisions | every producer of results or decisions |
+| Kernel | `eventLog` | core: ledger of record | built | `system-event-log` (named so because Cordis owns `ctx.events`) | append: workflow, turns, provider-chatgpt-web; listen: profile-scientific-research |
+| Kernel | `leases` | core: work state machine | built | `system-leases` (generations, fencing) | workflow, turns, agent-workers |
+| Kernel | `credentials` | core: ledger of record (secrets) | built | definition: **DSH** `dsh-credentials`; provider: `system-credentials-vault` (encrypted at rest) | accounts, `llm-pi-ai` (route keys by reference), models (`model_key`) |
+| Provider runtime | `display` | plugin: Worker | built | `Display` in `system-provider-core`; `system-display-virtual` (Xvfb) | browser |
+| Provider runtime | `browser` | plugin: Worker | built | `Browser` in `system-provider-core`; `system-browser-patchright` | turns, login |
+| Provider runtime | `providers` | plugin: Worker | built | `ProviderRegistry` in `system-provider-core`; registry `system-providers`; drivers `provider-chatgpt-web`, `provider-gemini-web` register into it | turns, login |
+| Provider runtime | `accounts` | plugin: Worker | built | `system-accounts` (records and grants in `ctx.credentials`) | turns, login |
+| Provider runtime | `login` | plugin: Worker | built | `system-login`: login profiles, Save, remote login, credential sign-in | operators (MCP `account_*`), turns |
+| Provider runtime | `turnReceipts` | core: runner | built | `system-turn-receipts` | turns |
+| Capabilities | `turns` | plugin: Worker | built | `system-turns`: the `website` Worker source | `ctx.workers`, through the source it registers |
+| Capabilities | `agentRuntimes` | plugin: Worker | built | `AgentRuntimes` in `system-agent-runtime-core`; registry `system-agent-runtimes`; providers `runtime-claude-agent-sdk`, `runtime-codex-sdk`, `runtime-acp` | agent-workers |
+| Capabilities | `agentWorkers` | plugin: Worker | built | `system-agent-workers`: the `agents` Worker source | `ctx.workers`, through the source it registers |
+| Capabilities | `models` | plugin: Worker | built | `Models` in `system-models-core`; provider `system-models` over **DSH** `ctx.llm` (`llm`, `llm-pi-ai`) ([models](../design/models.md)) | the `models` Worker source in `system-models` |
+| Routing | `workers` | core: gate (admission, acceptance); its routing policy is a decision input | built | `Workers` in `system-workers-core`; `system-workers` | workflow; profile-scientific-research adds acceptance contracts |
+| Routing | `egress` | core: gate | built | `system-egress`: classification policy and credential scan (INV-12) | turns, agent-workers, models, workflow |
+| Orchestration | `workflow` | core: work state machine, runner; templates are the workflow family | built | `system-workflow`; templates through `ctx.workflow.template` | gateways, web-ui, profiles |
+| Orchestration | `workerSessions` | core: work state machine | built | `system-worker-sessions` ([design](../design/sessions-and-messaging.md)) | workflow |
+| Gateways | `mcp` | plugin: surface (its scope check is a gate rule) | built | `McpTools` in `system-gateway-core`; `system-mcp-server` (own: DSH has only an MCP client) | tool contributors: login, turns, workflow, worker-sessions, models; mcp-server adds `status`. Each tool declares its scope, `operator` by default ([ADR-0023](../decisions/adr/0023-scoped-control-credentials.md)) |
+| Host | `webServer` | plugin: surface | built | **DSH** `dsh-host-webserver` (loopback) | mcp-server, gateway-anthropic, gateway-responses, web-ui |
+| Routing | `resources` | core: resource ledger and metering | planned | the resource ledger: limits per account, feature, and tier; reset windows and cooldowns; tokens, cache use, acceptance rate, interventions, from objective sources only ([PROP-0008](../proposals/0008-studio-operating-model.md#resource-management-and-token-optimization)) | workers (routing by scarcity), workflow (run budgets), surfaces (reports) |
+| Routing | `approvals` | core: gate | planned | the autonomy policy and one batched approval queue for every action that needs a person ([PROP-0008](../proposals/0008-studio-operating-model.md#fewer-approvals-reliable-results)) | workflow, agent-workers, surfaces |
+| Routing | `decisions` | plugin: decision | planned | typed decisions with probabilities for intake and routing ([PROP-0002](../proposals/0002-decision-assisted-routing.md)) | workers, workflow |
+| Orchestration | `board` | core: work state machine | planned | projects (charter, milestones, funding rounds) and board tasks across runs, with leases; projected to `TASKS.md` ([PROP-0008](../proposals/0008-studio-operating-model.md#mechanism-2-the-task-board)) | workflow, surfaces, the lead through `board_*` tools |
+| Orchestration | `digests` | plugin: digest | planned | cited `digest@1.0` summaries of raw artifacts, quote-checked ([PROP-0008](../proposals/0008-studio-operating-model.md#mechanism-1-the-digest-layer)) | workflow, board, the lead |
+| Capabilities | `context` | plugin: context | planned | context plugins attached to an agent Worker at launch (tool search, output filters, symbol retrieval), each with a manifest | agent-workers |
+| Kernel | `knowledge` | plugin: knowledge | planned | indexing and retrieval over artifacts (full text, local embeddings, re-check dates) | intake, research templates |
+| — | `website` (Website Core) | — | not planned | replaced by `ctx.turns` and the engine's request keys and result reuse | — |
+| — | `exec` (local tools) | — | not planned | agent runtimes run commands inside their own sandbox | — |
+| — | `teams` | — | not planned | the `team` option of workflow nodes, unrolled by the engine; members are Worker sessions ([teams](../design/teams.md)) | — |
+| — | `profiles` | — | not planned | profile plugins contribute templates through `ctx.workflow.template` | — |
+| — | `clientProtocols` (turn broker) | — | not planned | gateways are plain plugins that share the `gateway-turns` library ([ADR-0022](../decisions/adr/0022-text-protocol-tool-calls-for-website-models.md)) | — |
 
 Gateways (`gateway-anthropic`, `gateway-responses`, `web-ui`, the CLI) only consume services,
 so they are plain plugins with no seam of their own. The two client-protocol gateways share
 the library `gateway-turns`: the text tool protocol and threads bound to provider
 conversations ([gateways](../design/gateways.md)). Every client endpoint, MCP included, shares
 the request guard in the library part of `system-gateway-core`.
+
+## Core and plugin classes
+
+[ADR-0036](../decisions/adr/0036-guarantee-core-and-capability-plugins.md) classifies every
+seam. A seam is a **guarantee seam** if a worse provider could make `system` incorrect (wrong
+results, lost data, work done twice), unsafe (an unapproved irreversible action, leaked data),
+or change every other component. Otherwise it is a **capability seam**: a worse provider only
+makes `system` less efficient. The core decides *that* something happens; plugins decide *how*.
+The `Class` column of the [seam catalog](#seam-catalog) gives each seam's class.
+
+| Core component | Guarantees | Seams |
+|---|---|---|
+| ledger of record | append-only artifacts and events, provenance, every decision an artifact ([INV-13](invariants.md#inv-13-every-decision-is-an-artifact)) | `store`, `artifacts`, `eventLog`, `credentials` |
+| work state machine | only valid, complete transitions; one writer per subject ([INV-15](invariants.md#inv-15-one-writer-per-subject)) | `workflow`, `workerSessions`, `leases`, `board` (planned) |
+| runner | restart is reconciliation, not replay ([INV-4](invariants.md#inv-4-restart-is-reconciliation-not-replay)); everything is bounded ([INV-9](invariants.md#inv-9-everything-is-bounded)) | `workflow` (the engine), `turnReceipts` |
+| gate | fail closed ([INV-2](invariants.md#inv-2-fail-closed)); explicit egress ([INV-12](invariants.md#inv-12-data-egress-is-explicit)); irreversible actions go to a person; acceptance needs verification | `egress`, `workers` (admission, acceptance), `approvals` (planned) |
+| resource ledger and metering | numbers from objective sources (usage fields, invoices, limit notices), never model self-reports | `resources` (planned) |
+| plugin host | a plugin sees only what its seam allows; a failing plugin cannot damage the core | the host: DSH core and Cordis, the `system` bundle, the [plugin rules](#plugin-rules), conformance suites; manifests and a plugin lifecycle (planned) |
+
+| Plugin family | Contract | Seams and providers |
+|---|---|---|
+| Worker | takes a brief and artifact pointers; returns result artifacts with usage | Worker sources `turns`, `agentWorkers`, `models`; their runtimes `agentRuntimes`, `providers`, `browser`, `display`, `accounts`, `login` |
+| decision | takes state and typed questions; returns typed answers with probabilities | the routing policy inside `workers`; model healing in `ui-ops`; `decisions` (planned) |
+| verification | takes an artifact and criteria; returns pass or fail with evidence | acceptance contracts registered through `workers.contract`; quote checks and tallies in team review |
+| digest | takes raw artifacts; returns a cited summary | `digests` (planned) |
+| context | attached to a Worker at launch; reduces tokens entering context without changing results | `context` (planned) |
+| workflow | template: job graph, team kind, milestones, default criteria | profiles through `workflow.template` |
+| knowledge | indexing and retrieval over the ledger of record | `knowledge` (planned) |
+| surface | reads from the core and presents it to the operator and the lead | `mcp`, `webServer`, `gateway-anthropic`, `gateway-responses`, `web-ui`, the CLI |
+
+Rules for the two classes:
+
+1. **Dependencies.** A capability plugin depends on seam definitions, never on another plugin's
+   implementation. Across families it cooperates only through the core, by artifacts or events.
+   Within one family, providers may build on each other's seams.
+2. **Failure.** Capability plugins fail open: a context or digest plugin that fails is bypassed
+   and the event recorded; a decision plugin that fails yields the deterministic default for the
+   work kind; a Worker that fails is reconciled by the runner. Guarantee seams fail closed. A
+   verification plugin that fails means no automatic acceptance.
+3. **Change.** A guarantee seam's contract changes only through an ADR, as an invariant does. A
+   capability seam's contract changes through a versioned definition and its conformance suite.
 
 ## What is not a plugin
 
@@ -166,9 +222,11 @@ Responses and Messages gateways), so they are unaffected by the host choice
 
 ## Seam definitions and conformance
 
-A seam with one provider may stay a concrete service until a second provider appears; it then
-gets an abstract definition and a conformance suite (plugin rule 2). Consumers depend on
-definitions only.
+Every new seam ships, with its first provider, an abstract definition, schemas for its records
+and payloads, a written protocol, and a conformance suite
+([ADR-0037](../decisions/adr/0037-schema-and-protocol-first.md)). Older seams with one provider
+may still be concrete services; the guarantee seams among them get suites in the Base release.
+Consumers depend on definitions only.
 
 | Seam | Definition (abstract `Service`) | Conformance suite | Providers that run it |
 |---|---|---|---|

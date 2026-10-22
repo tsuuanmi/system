@@ -56,6 +56,26 @@ accepted/implemented -> superseded
   sent moves to a sibling account, and one-provider teams keep distinct accounts before sharing
   one. Page opens are spaced per provider, background checks spread, browsers capped.
 
+- [PROP-0008: `system` as a startup template](0008-studio-operating-model.md), **draft**.
+  Purpose restated around five goals: use paid plans fully, fit existing workflows, delegate with
+  confidence, evolve, and optimize accepted results per unit of operator attention. Projects run as
+  startups from one template (charter, funding rounds, investor report). Adds the digest layer, a
+  task board across runs, intake, tiers `none` and `reflex`, an autonomy matrix with batched
+  approvals, a resource ledger with shadow prices, an optimization plugin bundle with a measured
+  lifecycle, and an evolution loop.
+
+- [PROP-0009: Core and plugin decomposition](0009-core-and-plugin-decomposition.md), **accepted** ([ADR-0036](../decisions/adr/0036-guarantee-core-and-capability-plugins.md)).
+  From first principles, a six-component core (ledger of record, work state machine, runner, gate,
+  resource ledger and metering, plugin host) holds every guarantee; eight plugin families (Worker,
+  decision, verification, digest, context, workflow, knowledge, surface) are replaceable behind
+  versioned seams.
+
+- [PROP-0010: The Base version](0010-base-version.md), **accepted**
+  ([ADR-0037](../decisions/adr/0037-schema-and-protocol-first.md)). The next release: the six
+  core components closed and specified by schema and protocol, Claude Code as the first Worker,
+  and one multi-day pilot project measured against a baseline. Deep Research is future work;
+  website and API Worker work follows Base.
+
 Use [0000-template.md](0000-template.md) for new proposals. The
 [roadmap](roadmap.md) is a non-normative queue of milestones, not a substitute for
 a reviewed proposal.

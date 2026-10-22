@@ -39,8 +39,12 @@ each field, which a schema cannot fully express, is documented in
 | [ui-map.v1.json](ui-map.v1.json) | a provider website's UI operations as data: elements, actions, network signals, states ([ADR-0021](../docs/decisions/adr/0021-ui-operations-as-data.md)) |
 
 Schemas still to come, added with their milestone: the domain artifact bodies
-(`report`, `handoff`, `plan`, `assessment`, …), MCP tool input and output, and the
-decision question sets.
+(`report`, `handoff`, …), MCP tool input and output, and the decision question sets.
+The Base release adds, first of all, the records of its new seams (`project`,
+`board-task`, `approval-request`, `autonomy-policy`, `usage-record`, `limit-state`,
+`plugin-manifest`, `brief`, `digest`) and the MCP tools' input and output
+([ADR-0037](../docs/decisions/adr/0037-schema-and-protocol-first.md),
+[PROP-0010](../docs/proposals/0010-base-version.md)).
 
 ## Conventions
 
