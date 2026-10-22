@@ -92,6 +92,8 @@ interface Stored { task: BoardTask; token?: string; ttlMs?: number }
 interface StoredProject { project: Project; request?: string; version?: number; expiresAt?: string }
 /** An `acceptance` decision bound to a task's result: its outcome, whether the operator made it, and the checks it reports. */
 interface Acceptance { option: 'accept' | 'reject'; operator: boolean; checks?: Partial<Record<Check, boolean>> }
+/** The policy's verdict for a task's next attempt, and the approval request it opened on ask. */
+interface NextAttempt { verdict: AutonomyVerdict; request?: ApprovalRequest }
 /** A charter request settled by the sweep: the project as it now is, and the tasks it cancelled. */
 interface Settled { project: Project; cancelled: BoardTask[] }
 /** What a move changes; `lease` is set when it takes or renews the holder's lease. */
@@ -111,6 +113,8 @@ const charterHash = (charter: Charter): string => {
 }
 /** The key of the subject an open task writes; one open task per key (INV-15). */
 const writesKey = (subject: Subject | undefined): string | null => (subject ? JSON.stringify([subject.type, subject.ref]) : null)
+/** Whether the task may make another attempt: `attempts.count` never exceeds `attempts.max`. */
+const attemptLeft = (task: BoardTask): boolean => task.attempts.count < task.attempts.max
 /** The earlier of two instants, either of which may be unknown. */
 const earliest = (a: string | undefined, b: string | undefined): string | undefined => (a === undefined ? b : b === undefined || Date.parse(a) <= Date.parse(b) ? a : b)
 const sameSubject = (a: Subject, b: Subject): boolean => a.type === b.type && a.ref === b.ref && a.version === b.version
@@ -529,7 +533,8 @@ export class StoreBoard extends Board {
     this.expectState(before, 'review')
     const read = this.readAcceptance(before, before.result!, acceptance)
     await this.bindChecks(before, read, acceptance)
-    return this.commitLater(before, at, undefined, (current) => this.acceptanceMove(current.task, current.task.result!, acceptance, read, at))
+    const next = read.option === 'reject' && attemptLeft(before) ? await this.nextAttempt(before, at) : undefined
+    return this.committing(next, at, () => this.commitLater(before, at, undefined, (current) => this.acceptanceMove(current.task, current.task.result!, acceptance, read, next, at)))
   }
 
   async reconcileRun(taskId: string, runId: string, outcome: RunOutcome, at: Date = new Date()) {
@@ -544,19 +549,18 @@ export class StoreBoard extends Board {
     if (outcome.status === 'completed') await this.bindChecks(before, read!, outcome.acceptance)
     const pending = before.waiting?.approvalRequest
     await this.reachable(pending ? [pending] : [])
-    const moved = this.commitLater(before, at, undefined, (current) => {
-      if (outcome.status === 'completed') return this.acceptanceMove(current.task, outcome.result, outcome.acceptance, read!, at)
+    const next = (outcome.status === 'failed' || read!.option === 'reject') && attemptLeft(before) ? await this.nextAttempt(before, at) : undefined
+    const moved = await this.committing(next, at, () => this.commitLater(before, at, undefined, (current) => {
+      if (outcome.status === 'completed') return this.acceptanceMove(current.task, outcome.result, outcome.acceptance, read!, next, at)
       const { task } = current
       const { project } = this.projectOf(task.projectId)
-      const left = task.attempts.count < task.attempts.max
+      const why = `run ${runId} failed, as its owner reconciled it: attempt ${task.attempts.count} of ${task.attempts.max}`
+      if (next) return this.nextAttemptMove(project, task, next, { why, detail: { runId, outcome: 'failed' } }, at)
       const decision = this.decision(project, task, {
-        from: task.state, to: left ? 'ready' : 'waiting-for-input', why: `run ${runId} failed, as its owner reconciled it: attempt ${task.attempts.count} of ${task.attempts.max}`,
-        whyNot: 'the run\'s owner reported its outcome, so nothing waits on it', detail: { runId, outcome: 'failed' },
+        from: task.state, to: 'waiting-for-input', why, whyNot: 'the run\'s owner reported its outcome, so nothing waits on it', detail: { runId, outcome: 'failed' },
       }, at)
-      return left
-        ? { changes: { state: 'ready', holder: undefined, run: undefined, waiting: undefined, lastDecision: decision } }
-        : { changes: { state: 'waiting-for-input', holder: undefined, waiting: this.inputWait('retries-spent', at), lastDecision: decision } }
-    })
+      return { changes: { state: 'waiting-for-input', holder: undefined, waiting: this.inputWait('retries-spent', at), lastDecision: decision } }
+    }))
     // The move commits first and the request is withdrawn after (S7): a crash between them leaves an
     // open request nothing waits on, which expires on its own; the accepted result is kept.
     if (pending) await this.withdrawUnheld(pending, at)
@@ -590,25 +594,29 @@ export class StoreBoard extends Board {
   }
 
   async answer(taskId: string, answers: string[], at: Date = new Date()) {
-    return this.ctx.store.transaction(() => {
-      const current = this.taskOf(taskId)
+    const before = this.taskOf(taskId).task
+    this.expectState(before, 'waiting-for-input')
+    const questions = before.waiting?.questions ?? []
+    if (before.waiting?.reason !== 'question' || answers.length !== questions.length) {
+      throw new BoardError('invalid', `answer every question of a question wait (${questions.length}); a ${before.waiting?.reason ?? 'missing'} wait takes no answers and only expires`)
+    }
+    if (answers.some((a) => typeof a !== 'string' || a.length === 0 || [...a].length > ANSWER_MAX)) throw new BoardError('invalid', `an answer is 1 to ${ANSWER_MAX} characters`)
+    // The next run is another attempt, so the policy is asked again (S9).
+    const next = attemptLeft(before) ? await this.nextAttempt(before, at) : undefined
+    return this.committing(next, at, () => this.commitLater(before, at, undefined, (current) => {
       const { task } = current
-      this.expectState(task, 'waiting-for-input')
-      const questions = task.waiting?.questions ?? []
-      if (task.waiting?.reason !== 'question' || answers.length !== questions.length) throw new BoardError('invalid', `answer every question of a question wait (${questions.length})`)
-      if (answers.some((a) => typeof a !== 'string' || a.length === 0 || [...a].length > ANSWER_MAX)) throw new BoardError('invalid', `an answer is 1 to ${ANSWER_MAX} characters`)
       const { project } = this.projectOf(task.projectId)
       // The answers are the decision's detail, so the next attempt's brief can point to them.
-      return this.commit(current, {
+      const detail = { questions, answers, ...(task.run ? { runId: task.run.runId } : {}) }
+      const why = `every one of its ${questions.length} question(s) answered`
+      if (next) return this.nextAttemptMove(project, task, next, { why, detail }, at)
+      return {
         changes: {
           state: 'ready', waiting: undefined, run: undefined,
-          lastDecision: this.decision(project, task, {
-            from: 'waiting-for-input', to: 'ready', why: `every one of its ${questions.length} question(s) answered`, whyNot: 'nothing it waited for is missing',
-            detail: { questions, answers, ...(task.run ? { runId: task.run.runId } : {}) },
-          }, at),
+          lastDecision: this.decision(project, task, { from: 'waiting-for-input', to: 'ready', why, whyNot: 'nothing it waited for is missing', detail }, at),
         },
-      }, at)
-    })
+      }
+    }))
   }
 
   async cancel(taskId: string, reason: 'operator' | 'lead' | 'superseded', note?: string, at: Date = new Date()) {
@@ -820,9 +828,16 @@ export class StoreBoard extends Board {
           if (request && !request.resolution) await this.withdrawUnheld(requestId, at)
           return moved
         }
+        // An approval counts only from the board's own request for this task (INV-5).
+        const approved = request!.state === 'approved' && request!.requester.component === 'board' && request!.requester.taskId === taskId
+        // Going on after a spent budget or a lost run is another attempt: the policy is asked about the task's class again (S9).
+        if (approved && task.waiting!.reason !== 'approval-needed' && attemptLeft(task)) {
+          const next = await this.nextAttempt(task, at)
+          return this.committing(next, at, () => this.commitLater(task, at, undefined, (c) => this.nextAttemptMove(this.projectOf(task.projectId).project, c.task, next, {
+            decision: resolution.decision, why: `the operator approved going on after ${task.waiting!.reason} (request ${requestId})`,
+          }, at)))
+        }
         return this.commitLater(task, at, undefined, (c) => {
-          // An approval counts only from the board's own request for this task (INV-5).
-          const approved = request!.state === 'approved' && request!.requester.component === 'board' && request!.requester.taskId === taskId
           if (!approved) return { changes: { state: 'waiting-for-input', waiting: this.inputWait('rejected', at), lastDecision: resolution.decision } }
           // attempts.count never exceeds attempts.max: an approval to go on with no attempt left starts nothing (INV-9).
           if (c.task.attempts.count >= c.task.attempts.max) return { changes: { state: 'waiting-for-input', waiting: this.inputWait('retries-spent', at), lastDecision: resolution.decision } }
@@ -863,15 +878,74 @@ export class StoreBoard extends Board {
     }))
   }
 
-  /** Put the task to the operator: one request on `board-task:<id>:attempt:<n>`, which its wait follows. */
-  private async waitForApproval(task: BoardTask, actionClass: ActionClass, reason: 'approval-needed' | 'budget-spent' | 'reconciliation-failed', verdict: AutonomyVerdict, at: Date, generation?: number): Promise<BoardTask> {
+  /**
+   * The request that puts `task` to the operator, on `board-task:<id>:attempt:<n>` with the wait's
+   * reason, where n is the attempts it already made: one request, and one approval, per attempt.
+   */
+  private taskRequest(task: BoardTask, actionClass: ActionClass, reason: 'approval-needed' | 'budget-spent' | 'reconciliation-failed', verdict: AutonomyVerdict): NewRequest {
     const { project } = this.projectOf(task.projectId)
-    const request = await this.ask({
+    return {
       subject: { type: 'content', ref: `board-task:${task.taskId}:attempt:${task.attempts.count}`, version: reason },
       action: { class: actionClass, summary: clamp(`${reason}: ${task.title}`, 500) },
       requester: { component: 'board', projectId: task.projectId, taskId: task.taskId, ...(task.run ? { runId: task.run.runId } : {}) },
       verdict, classification: project.classification ?? 'operator-shared',
-    }, at)
+    }
+  }
+
+  /**
+   * The policy's verdict on the task's class for its next attempt, and the request it opened when
+   * the verdict asks (S9): every return to ready for a new attempt goes through the gate again, so
+   * one approval never covers a later attempt.
+   */
+  private async nextAttempt(task: BoardTask, at: Date): Promise<NextAttempt> {
+    const verdict = await this.ctx.approvals.check({ class: task.actionClass, projectId: task.projectId })
+    if (verdict.mode !== 'ask') return { verdict }
+    return { verdict, request: await this.ask(this.taskRequest(task, task.actionClass, 'approval-needed', verdict), at) }
+  }
+
+  /** Run `commit`; when it fails, withdraw the request `next` opened for it, unless something already waits on it. */
+  private async committing<T>(next: NextAttempt | undefined, at: Date, commit: () => T): Promise<T> {
+    try {
+      return commit()
+    } catch (error) {
+      if (next?.request) await this.withdrawUnheld(next.request.requestId, at)
+      throw error
+    }
+  }
+
+  /**
+   * The move back for a new attempt, by the verdict {@link nextAttempt} got: ready on auto or
+   * notify, waiting for the operator's approval (`approval-needed`) on ask, cancelled on forbid.
+   * Its `board` decision names the decision that caused it (if any) and the `autonomy` decision.
+   */
+  private nextAttemptMove(project: Project, task: BoardTask, next: NextAttempt, cause: { decision?: ArtifactRef; why: string; detail?: Record<string, unknown> }, at: Date): Move {
+    const { verdict, request } = next
+    const inputs = [...(cause.decision ? [cause.decision] : []), verdict.decision]
+    const attempt = task.attempts.count + 1
+    if (verdict.mode === 'forbid') {
+      return this.cancelMove(project, task, 'forbidden', at, this.decision(project, task, {
+        from: task.state, to: 'cancelled', why: `${cause.why}; the policy now forbids ${task.actionClass}, so no attempt ${attempt} runs`,
+        whyNot: `another attempt would run an action the policy forbids (autonomy decision ${verdict.decision})`, inputs, detail: { ...cause.detail, reason: 'forbidden' },
+      }, at))
+    }
+    if (request) {
+      return {
+        changes: {
+          state: 'waiting-for-approval', holder: undefined, run: undefined, result: undefined,
+          waiting: { reason: 'approval-needed', approvalRequest: request.requestId, since: at.toISOString(), expiresAt: request.expiresAt },
+          lastDecision: this.decision(project, task, {
+            from: task.state, to: 'waiting-for-approval', why: `${cause.why}; the policy asks about ${task.actionClass} before attempt ${attempt}`,
+            whyNot: 'an approval covers one attempt only, never a later one', inputs, detail: { ...cause.detail, approvalRequest: request.requestId, attempt },
+          }, at),
+        },
+      }
+    }
+    return this.readyMove(project, task, verdict, at, `${cause.why}; the policy gives ${task.actionClass} ${verdict.mode} for attempt ${attempt}`, { inputs: cause.decision ? [cause.decision] : [], ...(cause.detail ? { detail: cause.detail } : {}) })
+  }
+
+  /** Put the task to the operator: one request on `board-task:<id>:attempt:<n>`, which its wait follows. */
+  private async waitForApproval(task: BoardTask, actionClass: ActionClass, reason: 'approval-needed' | 'budget-spent' | 'reconciliation-failed', verdict: AutonomyVerdict, at: Date, generation?: number): Promise<BoardTask> {
+    const request = await this.ask(this.taskRequest(task, actionClass, reason, verdict), at)
     try {
       return this.commitLater(task, at, generation, () => ({
         changes: {
@@ -934,7 +1008,7 @@ export class StoreBoard extends Board {
   // --- moves ---
 
   /** Ready on an auto or notify verdict; its required checks that have not run yet bind at acceptance (S3), so they are recorded as pending. */
-  private readyMove(project: Project, task: BoardTask, verdict: AutonomyVerdict, at: Date, why: string): Move {
+  private readyMove(project: Project, task: BoardTask, verdict: AutonomyVerdict, at: Date, why: string, cause: { inputs?: ArtifactRef[]; detail?: Record<string, unknown> } = {}): Move {
     const pending = verdict.failedChecks ?? []
     return {
       changes: {
@@ -942,7 +1016,7 @@ export class StoreBoard extends Board {
         lastDecision: this.decision(project, task, {
           from: task.state, to: 'ready', why: pending.length ? `${why}; its required checks (${pending.join(', ')}) have not run yet and bind at acceptance` : why,
           whyNot: `the autonomy decision ${verdict.decision} says ${verdict.mode}, which needs no person`,
-          inputs: [verdict.decision], detail: { actionClass: task.actionClass, mode: verdict.mode, ...(pending.length ? { pendingChecks: pending } : {}) },
+          inputs: [...(cause.inputs ?? []), verdict.decision], detail: { ...cause.detail, actionClass: task.actionClass, mode: verdict.mode, ...(pending.length ? { pendingChecks: pending } : {}) },
         }, at),
       },
     }
@@ -1016,9 +1090,13 @@ export class StoreBoard extends Board {
   }
 
   /** The move an `acceptance` decision read by {@link readAcceptance} makes: done when it accepts, else another attempt or a wait for input. */
-  private acceptanceMove(task: BoardTask, result: NonNullable<BoardTask['result']>, acceptance: ArtifactRef, read: Acceptance, at: Date): Move {
+  private acceptanceMove(task: BoardTask, result: NonNullable<BoardTask['result']>, acceptance: ArtifactRef, read: Acceptance, next: NextAttempt | undefined, at: Date): Move {
     if (read.option === 'accept') return { changes: { state: 'done', result: { ...result, acceptance }, holder: undefined, waiting: undefined, lastDecision: acceptance } }
-    if (task.attempts.count < task.attempts.max) return { changes: { state: 'ready', holder: undefined, run: undefined, result: undefined, waiting: undefined, lastDecision: acceptance } }
+    if (attemptLeft(task)) {
+      return this.nextAttemptMove(this.projectOf(task.projectId).project, task, next!, {
+        decision: acceptance, why: `the acceptance decision ${acceptance} rejected attempt ${task.attempts.count} of ${task.attempts.max}`,
+      }, at)
+    }
     return { changes: { state: 'waiting-for-input', holder: undefined, result, waiting: this.inputWait('retries-spent', at), lastDecision: acceptance } }
   }
 

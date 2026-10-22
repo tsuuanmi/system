@@ -321,6 +321,56 @@ describe('ctx.board (store-backed): the approval queue', () => {
     expect(await open(ctx, 'p2')).toEqual([])
   })
 
+  it('asks again before the attempt after a lost run, an answered question, or a rejected review, and withdraws a request whose move could not commit (S9)', async () => {
+    const { ctx } = await boot()
+    await active(ctx)
+    const approveCurrent = async (taskId: string, when: Date): Promise<string> => {
+      const requestId = (await ctx.board.task(taskId))!.waiting!.approvalRequest!
+      await decide(ctx, requestId, 'approved', when)
+      await ctx.board.sweep(when)
+      return requestId
+    }
+    const merge = await ctx.board.propose(task('p2', 'merge', { actionClass: 'merge', maxAttempts: 4 }), at(2))
+    await ctx.board.sweep(at(2))
+    const asked = [await approveCurrent(merge.taskId, at(2))]
+
+    // A lost run: the operator approves going on (remediation), then the class is asked about again.
+    let claim = await ctx.board.claim(merge.taskId, 'lead', 60_000, at(3))
+    await ctx.board.start(merge.taskId, claim.generation, { runId: 'run-1' }, at(3))
+    await ctx.board.sweep(at(10))
+    asked.push(await approveCurrent(merge.taskId, at(10)))
+    const regated = (await ctx.board.task(merge.taskId))!
+    expect(regated).toMatchObject({ state: 'waiting-for-approval', waiting: { reason: 'approval-needed' }, attempts: { count: 1 } })
+    expect(ctx.artifacts.get(regated.lastDecision!)?.body).toMatchObject({ decisionType: 'board', inputs: expect.arrayContaining([(await ctx.approvals.get(asked[1]!))!.resolution!.decision]) })
+    asked.push(await approveCurrent(merge.taskId, at(11)))
+    expect(await ctx.board.task(merge.taskId)).toMatchObject({ state: 'ready' })
+
+    // A question: answering it makes another attempt, which is asked about too.
+    claim = await ctx.board.claim(merge.taskId, 'lead', 600_000, at(12))
+    await ctx.board.start(merge.taskId, claim.generation, { runId: 'run-2' }, at(12))
+    await ctx.board.block(merge.taskId, claim.generation, { reason: 'question', questions: ['Squash?'] }, at(12))
+    const answered = await ctx.board.answer(merge.taskId, ['yes'], at(13))
+    expect(answered).toMatchObject({ state: 'waiting-for-approval', waiting: { reason: 'approval-needed' }, attempts: { count: 2 } })
+    expect(ctx.artifacts.get(answered.lastDecision!)?.body).toMatchObject({ outcome: { option: 'waiting-for-approval', detail: { answers: ['yes'], attempt: 3 } } })
+    asked.push(await approveCurrent(merge.taskId, at(13)))
+
+    // A rejected review whose move loses a race: the request it opened is withdrawn.
+    claim = await ctx.board.claim(merge.taskId, 'lead', 600_000, at(14))
+    await ctx.board.start(merge.taskId, claim.generation, { runId: 'run-3' }, at(14))
+    const r = result(ctx, 'merged')
+    await ctx.board.submit(merge.taskId, claim.generation, { artifacts: [r], subject: HEAD }, at(14))
+    const rejecting = ctx.board.accept(merge.taskId, acceptance(ctx, 'reject', merge.taskId, r), at(15))
+    await ctx.board.renew(merge.taskId, claim.generation, 600_000, at(15))
+    expect(await failureOf(rejecting)).toBe('conflict')
+    expect(await open(ctx, 'p2')).toEqual([])
+    const rejected = await ctx.board.accept(merge.taskId, acceptance(ctx, 'reject', merge.taskId, r), at(15))
+    expect(rejected).toMatchObject({ state: 'waiting-for-approval', waiting: { reason: 'approval-needed' }, attempts: { count: 3 } })
+    asked.push(rejected.waiting!.approvalRequest!)
+    const subjects = await Promise.all(asked.map(async (id) => (await ctx.approvals.get(id))!.subject))
+    expect(new Set(subjects.map((x) => `${x.ref}#${x.version}`)).size).toBe(asked.length)
+    expect(subjects.at(-1)).toMatchObject({ ref: `board-task:${merge.taskId}:attempt:3`, version: 'approval-needed' })
+  })
+
   it('starts nothing with no attempt left, even when the operator approves going on (INV-9)', async () => {
     const { ctx } = await boot()
     await active(ctx)

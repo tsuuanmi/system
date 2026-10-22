@@ -476,6 +476,8 @@ guesses.
   approval with reason `reconciliation-failed`.
 - A rejected review starts another attempt while `attempts.count < attempts.max`, and otherwise
   waits for input with reason `retries-spent`; `attempts.count` never exceeds `attempts.max`.
+  Every new attempt goes through the autonomy policy again, so an approval request's subject
+  `board-task:<taskId>:attempt:<n>` (`n`, the attempts already made) covers one attempt only.
 - Only a claimed, running, or reviewed task has a `holder`. A result always names its subject:
   the worktree's commit, or the result artifact (`{type: artifact}`) for work with no
   repository, so a task is never stuck in review for want of one.

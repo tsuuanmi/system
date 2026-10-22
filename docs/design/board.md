@@ -88,12 +88,15 @@ stateDiagram-v2
   running --> done: owner reports the run completed and accepted
   review --> done: acceptance accepted
   review --> waiting_for_input: reviewer's lease lapsed, no decision
-  review --> ready: rejected, attempts left
+  review --> ready: rejected, attempts left (gate: auto or notify)
+  review --> waiting_for_approval: rejected, attempts left (gate: ask)
   review --> waiting_for_input: rejected, no attempt left
-  waiting_for_approval --> ready: approved, or owner reports the run failed
+  waiting_for_approval --> ready: approved, or owner reports the run failed (gate)
+  waiting_for_approval --> waiting_for_approval: approved to go on, the gate asks for the next attempt
   waiting_for_approval --> done: owner reports the run completed and accepted
   waiting_for_approval --> waiting_for_input: rejected or expired
-  waiting_for_input --> ready: answered
+  waiting_for_input --> ready: answered (gate)
+  waiting_for_input --> waiting_for_approval: answered (gate: ask)
   waiting_for_input --> cancelled: wait expired
   ready --> cancelled: cancel
   claimed --> cancelled: cancel
@@ -120,6 +123,14 @@ hold. The fake provider does not check them, and the suite does not test them ye
   outcome is `accept` or `reject`; anything else is refused (`invalid`, rule 5). A run owner's
   report is checked the same way before anything moves, so a refused report changes nothing.
 - [Required checks bind at acceptance](#required-checks-bind-at-acceptance).
+- One approval covers one attempt. Every return to ready for a new attempt goes through the
+  gate again: after a rejected review, a run its owner reports failed or rejected, an approval to
+  go on after a spent budget or a lost run, and an answered question, the board asks the policy
+  about the task's action class for the next attempt. `ask` opens a new request on
+  `board-task:<id>:attempt:<n>` (`n`, the attempts already made) and the task waits for approval
+  (`approval-needed`); `forbid` cancels it (`forbidden`); `auto` or `notify` makes it ready. The
+  move's `board` decision names the decision that caused it and the `autonomy` decision. A claim
+  whose lease lapsed before any run returns to ready without asking: it made no attempt.
 - A move that ends a wait on an approval request (`reconcileRun`, `cancel`, `close`) reads the
   request first, so with the queue unavailable nothing moves (rule 7), then commits, and
   withdraws the request only after: a crash between the two leaves an open request that nothing
@@ -150,9 +161,9 @@ hold. The fake provider does not check them, and the suite does not test them ye
 | running or waiting-for-approval (`reconciliation-failed`) → done, ready, or waiting-for-input | `reconcileRun` by the run's owner (the workflow engine), after it reconciled the recorded run | the acceptance decision of a completed run, or a `board` decision for a failed one; the pending approval request is withdrawn once the move committed | an outcome for another run id is refused; an unknown outcome is never reported, so the task keeps waiting for approval |
 | review → waiting-for-input | `sweep`, the reviewer's lease lapsed with no decision | a `board` decision (`review-expired`) | the wait expires and cancels the task |
 | review → done | `accept` with an `acceptance` decision whose outcome is `accept` | that decision; `result.acceptance`; the run and subject stay | a decision of another type, or one not bound to the task's exact result, is refused; one not the operator's needs the required checks passed |
-| review → ready / waiting-for-input | `accept` with a `reject` outcome | that decision; another attempt while `count < max`, else `retries-spent` | — |
-| waiting-for-approval → ready / waiting-for-input | `sweep`, on the request's resolution; at `waiting.expiresAt` (or the request's expiry, if earlier) the board applies the expiry itself when the queue has not resolved the request, withdrew it, or no longer knows it | the request's `approval` decision, or the board's own (`board`, cause `expired`), after which it withdraws a request still open | rejection and expiry never start work: the task waits for input (`rejected`) |
-| waiting-for-input → ready | `answer`, every question answered | a `board` decision | partial answers are refused |
+| review → ready / waiting-for-approval / waiting-for-input | `accept` with a `reject` outcome | while `count < max`, another attempt through the gate: a `board` decision naming that decision and the `autonomy` decision (ready, or `approval-needed` with a new request); else that decision and `retries-spent` | an approval of an earlier attempt never covers this one |
+| waiting-for-approval → ready / waiting-for-approval / waiting-for-input | `sweep`, on the request's resolution (an approval to go on after `budget-spent` or `reconciliation-failed` goes through the gate for the next attempt); at `waiting.expiresAt` (or the request's expiry, if earlier) the board applies the expiry itself when the queue has not resolved the request, withdrew it, or no longer knows it | the request's `approval` decision, or the board's own (`board`, cause `expired`), after which it withdraws a request still open | rejection and expiry never start work: the task waits for input (`rejected`) |
+| waiting-for-input → ready / waiting-for-approval | `answer`, every question of a `question` wait answered; the next attempt goes through the gate | a `board` decision with the questions and answers | partial answers, and answers to any other wait, are refused |
 | waiting-for-input → cancelled | `sweep`, its wait expired | a `board` decision (`input-expired`) | — |
 | any not running or in review → cancelled | `cancel` (`operator`, `lead`, `superseded`) | a `board` decision; a pending approval request is withdrawn once the move committed; dependents are cancelled on the next sweep | a running task or one in review is refused |
 

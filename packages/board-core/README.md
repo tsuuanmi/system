@@ -17,7 +17,8 @@ Work state machine **seam definition**
   provider:
   - a charter approved by the operator before anything starts; rejection or expiry abandons the
     project and cancels its open tasks; amendments held until approved;
-  - a task ready only once its dependencies are done and the policy allows it; asked about,
+  - a task ready only once its dependencies are done and the policy allows it, and asked about
+    again before every new attempt; asked about,
     rejected into a wait that expires, or forbidden; a wait the queue never resolves expired by
     the board itself;
   - one holder at a time, every write fenced by its generation; a run recorded before it starts,

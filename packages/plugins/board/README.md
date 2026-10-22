@@ -19,7 +19,8 @@ charters, and their tasks.
   nothing moves; the sweep still applies the moves that do not (a lapsed claim).
   - A request is on the exact subject: `project:<id>:charter:<version>` with the charter's hash,
     or `board-task:<id>:attempt:<n>` with the wait's reason. A verdict counts only for that
-    subject and that task.
+    subject and that task, and every return to ready for a new attempt asks the policy again,
+    so one approval never covers a later attempt.
   - Before it opens a request, the board adopts its own open request on the same subject, one a
     crash left between asking and committing, so a retried move asks the operator once.
   - A move that ends a wait (`reconcileRun`, `cancel`, `close`) reads the request first, commits,

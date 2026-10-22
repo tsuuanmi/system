@@ -392,6 +392,27 @@ export const boardSuite = defineSuite<Boot>({
       await ctx.board.submit(t.taskId, generation, { artifacts: [r], subject: HEAD }, at(4))
       expect(validTask(await ctx.board.accept(t.taskId, acceptance(ctx, 'reject', t.taskId, r), at(5)))).toMatchObject({ state: 'waiting-for-input', waiting: { reason: 'retries-spent' } })
     }),
+    scenario('approval-per-attempt', 'asks the operator again before every new attempt of a task the policy asks about: one approval never covers a later attempt (INV-2)', async (ctx) => {
+      await active(ctx, 'p2')
+      const merge = await ctx.board.propose(task('p2', 'merge', { actionClass: 'merge', maxAttempts: 2 }), at(2))
+      await ctx.board.sweep(at(2))
+      const first = (await ctx.board.task(merge.taskId))!.waiting!.approvalRequest!
+      await decide(ctx, first, 'approved', at(3))
+      await ctx.board.sweep(at(3))
+      const { generation } = await ctx.board.claim(merge.taskId, 'lead', 600_000, at(3))
+      await ctx.board.start(merge.taskId, generation, { runId: 'run-1' }, at(3))
+      const r = result(ctx, 'merged')
+      await ctx.board.submit(merge.taskId, generation, { artifacts: [r], subject: HEAD }, at(4))
+      const rejected = validTask(await ctx.board.accept(merge.taskId, acceptance(ctx, 'reject', merge.taskId, r), at(5)))
+      expect(rejected).toMatchObject({ state: 'waiting-for-approval', waiting: { reason: 'approval-needed' }, attempts: { count: 1 } })
+      const second = await ctx.approvals.get(rejected.waiting!.approvalRequest!)
+      expect(second?.requestId).not.toBe(first)
+      expect(second).toMatchObject({ state: 'open', subject: { ref: `board-task:${merge.taskId}:attempt:1` } })
+      expect(await failureOf(ctx.board.claim(merge.taskId, 'lead', 600_000, at(5)))).toBe('invalid-transition')
+      await decide(ctx, second!.requestId, 'approved', at(6))
+      await ctx.board.sweep(at(6))
+      expect(await stateOf(ctx, merge.taskId)).toBe('ready')
+    }),
     scenario('block-and-answer', 'interrupts a running task: spent budget waits for approval, a question for input; answering every question makes it ready', async (ctx) => {
       await active(ctx)
       const spent = await ready(ctx, task('p1', 'spent'))
@@ -685,7 +706,7 @@ export class FakeBoard extends Board {
     if (body.outcome.option === 'accept') {
       return this.save(stored, at, { state: 'done', result: { ...task.result!, acceptance }, holder: undefined, waiting: undefined, lastDecision: acceptance })
     }
-    if (task.attempts.count < task.attempts.max) return this.save(stored, at, { state: 'ready', holder: undefined, run: undefined, result: undefined, waiting: undefined, lastDecision: acceptance })
+    if (task.attempts.count < task.attempts.max) return this.again(stored, at, 'review rejected the attempt')
     return this.save(stored, at, { state: 'waiting-for-input', holder: undefined, result: task.result, waiting: this.inputWait('retries-spent', at), lastDecision: acceptance })
   }
 
@@ -703,7 +724,7 @@ export class FakeBoard extends Board {
     } else {
       const failed = this.decide(taskId, task.state, task.attempts.count < task.attempts.max ? 'ready' : 'waiting-for-input', at, `run ${runId} failed`)
       moved = task.attempts.count < task.attempts.max
-        ? this.save(task, at, { state: 'ready', holder: undefined, run: undefined, waiting: undefined, lastDecision: failed })
+        ? await this.again(task, at, `run ${runId} failed`)
         : this.save(task, at, { state: 'waiting-for-input', holder: undefined, waiting: this.inputWait('retries-spent', at), lastDecision: failed })
     }
     // The move first, the request withdrawn after: nothing waits on it any more.
@@ -737,6 +758,24 @@ export class FakeBoard extends Board {
     })
   }
 
+  /** Back for a new attempt, through the gate again: one approval never covers a later attempt. */
+  private async again(task: BoardTask, at: Date, why: string): Promise<BoardTask> {
+    const verdict = await this.ctx.approvals.check({ class: task.actionClass, projectId: task.projectId })
+    if (verdict.mode === 'forbid') return this.cancelTask(task, 'forbidden', at, verdict.decision)
+    if (verdict.mode === 'ask') {
+      const request = await this.ctx.approvals.request({
+        subject: { type: 'content', ref: `board-task:${task.taskId}:attempt:${task.attempts.count}`, version: 'approval-needed' },
+        action: { class: task.actionClass, summary: `approval-needed: ${task.title}`.slice(0, 500) },
+        requester: { component: 'board', projectId: task.projectId, taskId: task.taskId }, verdict, classification: this.projectOf(task.projectId).classification ?? 'operator-shared',
+      }, at)
+      return this.save(task, at, {
+        state: 'waiting-for-approval', holder: undefined, run: undefined, result: undefined,
+        waiting: { reason: 'approval-needed', approvalRequest: request.requestId, since: at.toISOString(), expiresAt: request.expiresAt }, lastDecision: verdict.decision,
+      })
+    }
+    return this.save(task, at, { state: 'ready', holder: undefined, run: undefined, result: undefined, waiting: undefined, lastDecision: this.decide(task.taskId, task.state, 'ready', at, `${why}; policy ${verdict.mode}`) })
+  }
+
   async block(taskId: string, generation: number, wait: { reason: 'budget-spent' | 'reconciliation-failed' | 'question'; questions?: string[] }, at: Date = new Date()) {
     const task = this.taskOf(taskId)
     this.held(task, generation, at)
@@ -752,6 +791,7 @@ export class FakeBoard extends Board {
     const task = this.taskOf(taskId)
     this.expect(task, 'waiting-for-input')
     if (task.waiting?.reason !== 'question' || answers.length !== (task.waiting.questions?.length ?? 0)) throw new BoardError('invalid', 'answer every question of a question wait')
+    if (task.attempts.count < task.attempts.max) return this.again(task, at, 'answered')
     return this.save(task, at, { state: 'ready', waiting: undefined, lastDecision: this.decide(taskId, 'waiting-for-input', 'ready', at, 'answered') })
   }
 
@@ -827,7 +867,8 @@ export class FakeBoard extends Board {
           if (due <= now) moved.set(task.taskId, this.save(task, at, { state: 'waiting-for-input', waiting: this.inputWait('rejected', at), lastDecision: this.decide(task.taskId, 'waiting-for-approval', 'waiting-for-input', at, 'the approval wait expired with no verdict') }))
           continue
         }
-        if (request?.state === 'approved') moved.set(task.taskId, this.save(task, at, { state: 'ready', waiting: undefined, run: undefined, lastDecision: request.resolution!.decision }))
+        if (request.state === 'approved' && task.waiting!.reason !== 'approval-needed' && task.attempts.count < task.attempts.max) moved.set(task.taskId, await this.again(task, at, 'the operator approved going on'))
+        else if (request?.state === 'approved') moved.set(task.taskId, this.save(task, at, { state: 'ready', waiting: undefined, run: undefined, lastDecision: request.resolution!.decision }))
         else if (request?.state === 'rejected') moved.set(task.taskId, this.save(task, at, { state: 'waiting-for-input', waiting: this.inputWait('rejected', at), lastDecision: request.resolution!.decision }))
       } else if (task.state === 'waiting-for-input' && Date.parse(task.waiting!.expiresAt) <= now) {
         moved.set(task.taskId, await this.cancelTask(task, 'input-expired', at))
