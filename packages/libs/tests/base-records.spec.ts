@@ -81,9 +81,16 @@ describe('board-task@1.0', () => {
   const review = example('board-task.review')
   const waiting = example('board-task.waiting-for-approval')
 
-  it('is done only with its result subject and an acceptance decision', () => {
-    expect(valid('board-task@1.0', { ...review, state: 'done' })).toBe(false)
-    expect(valid('board-task@1.0', { ...review, state: 'done', result: { ...review.result, acceptance: review.lastDecision } })).toBe(true)
+  it('is done only with its run, its result subject, and an acceptance decision, and holds no lease once done', () => {
+    const { holder: _, ...released } = review
+    const accepted: Json = { ...released, state: 'done', result: { ...review.result, acceptance: review.lastDecision } }
+    expect(valid('board-task@1.0', { ...released, state: 'done' })).toBe(false)
+    expect(valid('board-task@1.0', accepted)).toBe(true)
+    expect(valid('board-task@1.0', { ...accepted, holder: review.holder })).toBe(false)
+    const { run: __, ...runless } = accepted
+    expect(valid('board-task@1.0', runless)).toBe(false)
+    const { subject: ___, ...unbound } = review.result
+    expect(valid('board-task@1.0', { ...review, result: unbound })).toBe(false)
   })
 
   it('records the run before running, and the holder while claimed (INV-4, INV-15)', () => {

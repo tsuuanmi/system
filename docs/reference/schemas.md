@@ -458,7 +458,10 @@ guesses.
   reconciled and its run is never started again (INV-4); one that cannot be reconciled waits for
   approval with reason `reconciliation-failed`.
 - A rejected review starts another attempt while `attempts.count < attempts.max`, and otherwise
-  waits for input with reason `retries-spent`.
+  waits for input with reason `retries-spent`; `attempts.count` never exceeds `attempts.max`.
+- Only a claimed, running, or reviewed task has a `holder`. A result always names its subject:
+  the worktree's commit, or the result artifact (`{type: artifact}`) for work with no
+  repository, so a task is never stuck in review for want of one.
 - Every wait expires and never starts work: an approval wait follows its request, which expiry
   rejects, and then waits for input with reason `rejected`; an input wait that expires cancels
   the task (`input-expired`).
