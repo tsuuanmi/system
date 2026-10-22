@@ -1,0 +1,111 @@
+/**
+ * The `approvals_*` MCP tools (reference/schemas.md#mcp-tools-board_-approvals_-resources_).
+ * `approvals_list`, `approvals_get`, and `approvals_policy` are client scope; `approvals_decide` is
+ * operator scope, because a verdict comes only from the operator's channel (INV-6). Each call's
+ * input and structured output are validated against `schemas/mcp-approvals.v1.json`
+ * `$defs/<tool>-input` and `-output`; a refused input executes nothing.
+ */
+import type { Context } from '@deepseek-ai/cordis'
+import { ApprovalsError, type RequestState, type Verdict } from '@tsuuanmi/system-approvals-core'
+import type { ToolContext, ToolHandler, ToolScope, ToolSpec } from '@tsuuanmi/system-gateway-core'
+import { SchemaRegistry } from '@tsuuanmi/system-libs'
+import { z as zod } from 'zod'
+import type { StoreApprovals } from './index.ts'
+
+export const APPROVAL_TOOLS = ['approvals_list', 'approvals_get', 'approvals_decide', 'approvals_policy'] as const
+export type ApprovalTool = typeof APPROVAL_TOOLS[number]
+
+/** Who may call each tool: verdicts are the operator's alone (INV-6). */
+export const SCOPES: Record<ApprovalTool, ToolScope> = { approvals_list: 'client', approvals_get: 'client', approvals_decide: 'operator', approvals_policy: 'client' }
+
+const schemas = new SchemaRegistry()
+/** The `$defs` name of a tool's input or output: underscores written as hyphens. */
+const defOf = (tool: ApprovalTool, part: 'input' | 'output'): string => `${tool.replaceAll('_', '-')}-${part}`
+
+// The vocabulary of schemas/common.v1.json, for the shapes clients see; Ajv checks the schema itself.
+const id = () => zod.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$/)
+const requestState = () => zod.enum(['open', 'batched', 'approved', 'rejected'])
+const subject = () => zod.strictObject({ type: zod.enum(['content', 'git-head', 'pull-request', 'artifact', 'external']), ref: zod.string().min(1).max(512), version: zod.string().max(128).optional() })
+
+/** Input shapes, matching `$defs/<tool>-input`. */
+export const INPUTS: Record<ApprovalTool, ToolSpec['inputSchema']> = {
+  approvals_list: {
+    states: zod.array(requestState()).min(1).max(4).optional().describe('Default: open and batched'),
+    batchId: id().optional(), projectId: id().optional(),
+    limit: zod.number().int().min(1).max(100).optional().describe('Page size (default 20)'),
+    after: zod.string().min(1).max(200).optional().describe('The `next` cursor of the previous page'),
+  },
+  approvals_get: { requestId: id() },
+  approvals_decide: {
+    verdicts: zod.array(zod.strictObject({
+      requestId: id(),
+      subject: subject().describe('The exact subject the operator saw; a request whose subject changed since is refused (INV-5)'),
+      verdict: zod.enum(['approved', 'rejected']),
+      note: zod.string().max(2000).optional(),
+    })).min(1).max(50),
+  },
+  approvals_policy: { projectId: id().optional().describe('The project whose policy narrows the studio\'s') },
+}
+
+const DESCRIPTIONS: Record<ApprovalTool, string> = {
+  approvals_list: 'List approval requests (default: open and batched), by batch then expiry; a page at a time.',
+  approvals_get: 'Read one approval request: its exact subject, action, requester, policy decision, expiry, and resolution.',
+  approvals_decide: 'Operator only: verdicts for up to 50 requests, each bound to the exact subject shown. A refused verdict (unknown, resolved, expired, or a changed subject) leaves its request unchanged; the others still apply.',
+  approvals_policy: 'The studio autonomy policy, the project\'s when it has one, and the effective mode per action class.',
+}
+
+const refused = (text: string) => ({ isError: true, content: [{ type: 'text' as const, text }] })
+
+type Args = Record<string, unknown>
+type Handler = (args: Args, context: ToolContext) => Promise<object>
+
+/** The tools' behavior, over a queue; exported so tests call it as a client would. */
+export function handlers(approvals: StoreApprovals): Record<ApprovalTool, Handler> {
+  return {
+    approvals_list: async (args) => approvals.page(
+      { ...(args.states ? { states: args.states as RequestState[] } : {}), ...(typeof args.batchId === 'string' ? { batchId: args.batchId } : {}), ...(typeof args.projectId === 'string' ? { projectId: args.projectId } : {}) },
+      { ...(typeof args.limit === 'number' ? { limit: args.limit } : {}), ...(typeof args.after === 'string' ? { after: args.after } : {}) },
+    ),
+    approvals_get: async (args) => {
+      const request = await approvals.get(String(args.requestId))
+      if (!request) throw new ApprovalsError('unknown-request', `no approval request ${String(args.requestId)}`)
+      return { request }
+    },
+    approvals_decide: async (args, { scope }) => {
+      // The host lists and serves this tool to the operator only; a verdict from any other caller is never taken (INV-6).
+      if (scope !== 'operator') throw new ApprovalsError('invalid', 'verdicts come only from the operator')
+      const results = await approvals.decide(args.verdicts as Verdict[], new Date())
+      return { results: results.map((r) => ({ requestId: r.requestId, state: r.state, ...(r.approval ? { approval: r.approval } : {}), ...(r.refused ? { refused: r.refused } : {}) })) }
+    },
+    approvals_policy: async (args) => approvals.policy(typeof args.projectId === 'string' ? args.projectId : undefined),
+  }
+}
+
+/** Wrap a handler: validate the input first and the structured output last, and report a refusal as an MCP error. */
+export function tool(name: ApprovalTool, handler: Handler): ToolHandler {
+  return async (args, context) => {
+    try {
+      schemas.assertDef('mcp-approvals@1.0', defOf(name, 'input'), args)
+    } catch (error) {
+      return refused(`invalid input, nothing done: ${(error as Error).message}`)
+    }
+    let output: object
+    try {
+      output = await handler(args, context)
+    } catch (error) {
+      return refused(error instanceof ApprovalsError ? `${error.failure}: ${error.message}` : `approvals: ${(error as Error).message}`)
+    }
+    try {
+      schemas.assertDef('mcp-approvals@1.0', defOf(name, 'output'), output)
+    } catch (error) {
+      return refused(`approvals: ${name} made an output its schema refuses (a defect; anything it decided is recorded): ${(error as Error).message}`)
+    }
+    return { content: [{ type: 'text' as const, text: JSON.stringify(output) }], structuredContent: { ...output } }
+  }
+}
+
+/** Contribute the tools to `ctx.mcp` for the queue's lifetime. */
+export function registerTools(ctx: Context, approvals: StoreApprovals): void {
+  const behavior = handlers(approvals)
+  for (const name of APPROVAL_TOOLS) ctx.mcp.tool(name, { scope: SCOPES[name], description: DESCRIPTIONS[name], inputSchema: INPUTS[name] }, tool(name, behavior[name]))
+}

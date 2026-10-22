@@ -68,11 +68,13 @@ charters, and their tasks.
 - **Injects:** `store`, `artifacts`, `leases`, `approvals`; `mcp` is optional.
 - **Config:** `inputExpirySeconds` (default 7 days), `leaseTtlSeconds` (900), `maxAttempts` (3),
   `pageBound` (100), `projectionMaxTasks` (200), `sweepSeconds` (60).
-- **Bundle:** the `board` row is `disabled: true` until a real `ctx.approvals` provider exists
-  (the approval queue, B5).
+- **Bundle:** the `board` row is on, over the `approvals` row
+  ([`system-approvals`](../approvals/README.md)); with that row off or refused, the board waits
+  on its `approvals` inject and is not mounted.
 - **Tests:** [`tests/conformance.spec.ts`](tests/conformance.spec.ts) runs the seam's suite
   ([`board-core/conformance/board.ts`](../../board-core/conformance/board.ts)) at contract 1.0
-  over `FakeApprovals`, with no expected failures.
+  over `FakeApprovals`, with no expected failures; the approval queue's own tests run it over the
+  store-backed queue too.
   [`tests/board.spec.ts`](tests/board.spec.ts) covers what the suite does not: restart (in place
   and as a new process over the same file), fencing across a restart, concurrent claims and
   racing sweeps, the queue unavailable, adoption of an orphaned request, paging bounds, invalid

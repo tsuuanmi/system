@@ -132,6 +132,9 @@
       "@tsuuanmi/system-approvals-core": [
         "packages/approvals-core/src/index.ts"
       ],
+      "@tsuuanmi/system-approvals": [
+        "packages/plugins/approvals/src/index.ts"
+      ],
       "@tsuuanmi/system-resources-core": [
         "packages/resources-core/src/index.ts"
       ],

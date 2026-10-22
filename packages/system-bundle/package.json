@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@tsuuanmi/system-accounts": "workspace:*",
+    "@tsuuanmi/system-approvals": "workspace:*",
     "@tsuuanmi/system-artifacts": "workspace:*",
     "@tsuuanmi/system-board": "workspace:*",
     "@tsuuanmi/system-browser-patchright": "workspace:*",

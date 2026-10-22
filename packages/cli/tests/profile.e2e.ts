@@ -17,7 +17,7 @@ const env = { ...process.env, DSH_HOME: home }
 let child: ChildProcess | undefined
 
 // The MVP composition (PROP-0004): agent Worker and model gateway rows are off.
-const ALLOWED_ROWS = ['timer', 'credentials', 'webserver', 'store', 'event-log', 'leases', 'artifacts', 'resources', 'accounts', 'turn-receipts', 'display', 'browser', 'providers', 'provider-chatgpt-web', 'provider-gemini-web', 'login', 'egress', 'workers', 'turns', 'llm', 'llm-pi-ai', 'models', 'worker-sessions', 'workflow', 'profile-scientific-research', 'web-ui', 'mcp-server']
+const ALLOWED_ROWS = ['timer', 'credentials', 'webserver', 'store', 'event-log', 'leases', 'artifacts', 'resources', 'approvals', 'accounts', 'turn-receipts', 'display', 'browser', 'providers', 'provider-chatgpt-web', 'provider-gemini-web', 'login', 'egress', 'workers', 'turns', 'llm', 'llm-pi-ai', 'models', 'worker-sessions', 'workflow', 'board', 'profile-scientific-research', 'web-ui', 'mcp-server']
 
 async function client2(url: string, token: string): Promise<Client> {
   const client = new Client({ name: 'e2e-2', version: '0' })
@@ -122,20 +122,30 @@ describe('system profile (e2e through dsh)', () => {
       return (await scoped.listTools().finally(() => scoped.close())).tools.map((t) => t.name).sort()
     }
     const clientTools = await toolsOf('client')
-    expect(clientTools).toEqual(['ask', 'brainstorm', 'explain', 'research', 'resources_pools', 'resources_usage', 'result', 'review', 'run', 'session_inbox', 'session_send', 'status', 'usage', 'vote'])
+    expect(clientTools).toEqual([
+      'approvals_get', 'approvals_list', 'approvals_policy', 'ask',
+      'board_brief', 'board_cancel', 'board_charter', 'board_claim', 'board_complete', 'board_projects', 'board_propose', 'board_task', 'board_tasks', 'board_update',
+      'brainstorm', 'explain', 'research', 'resources_pools', 'resources_usage', 'result', 'review', 'run', 'session_inbox', 'session_send', 'status', 'usage', 'vote',
+    ])
     // The resource ledger is core and on: with no pool configured it lists none (B2).
     const ledger = await client2(url, tokenOf('client'))
     const pools = await ledger.callTool({ name: 'resources_pools', arguments: {} })
     const usage = await ledger.callTool({ name: 'resources_usage', arguments: {} }).finally(() => ledger.close())
     expect([pools.structuredContent, usage.structuredContent]).toEqual([{ pools: [] }, { records: [], totals: [] }])
-    expect(await toolsOf('operator')).toEqual(expect.arrayContaining([...clientTools, 'approve', 'stop', 'delete', 'drain', 'account_set_credentials', 'account_relogin', 'account_code', 'model_key']))
+    // The approval queue is core and on, with the bundle's default studio policy; the board asks through it (B5).
+    const queue = await client2(url, tokenOf('client'))
+    const policy = await queue.callTool({ name: 'approvals_policy', arguments: {} })
+    const queued = await queue.callTool({ name: 'approvals_list', arguments: {} }).finally(() => queue.close())
+    expect(policy.structuredContent).toMatchObject({ policies: [{ id: 'studio-default', scope: 'studio' }], effective: expect.arrayContaining([{ actionClass: 'read', mode: 'auto' }, { actionClass: 'deploy', mode: 'ask' }]) })
+    expect(queued.structuredContent).toEqual({ requests: [] })
+    expect(await toolsOf('operator')).toEqual(expect.arrayContaining([...clientTools, 'approve', 'approvals_decide', 'stop', 'delete', 'drain', 'account_set_credentials', 'account_relogin', 'account_code', 'model_key']))
     const origin = new URL(url).origin
     const send = (path: string, scope: 'operator' | 'client' | 'model', body?: object) => fetch(`${origin}${path}`, {
       method: body ? 'POST' : 'GET', ...(body ? { body: JSON.stringify(body) } : {}),
       headers: { authorization: `Bearer ${tokenOf(scope)}`, 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
     })
     const call = (name: string) => ({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: {} } })
-    for (const tool of ['approve', 'account_set_credentials', 'model_key']) expect((await send('/mcp', 'client', call(tool))).status).toBe(403)
+    for (const tool of ['approve', 'approvals_decide', 'account_set_credentials', 'model_key']) expect((await send('/mcp', 'client', call(tool))).status).toBe(403)
     expect((await send('/mcp', 'model', call('status'))).status).toBe(401)
     // The model gateways are off in this composition (PROP-0004): no route answers, whatever the token.
     for (const gateway of ['/anthropic/v1/models', '/openai/v1/models']) expect((await send(gateway, 'model')).status).toBe(404)

@@ -49,6 +49,15 @@
 | `probeTtlMs` | number (0…) | `300000` | How long a probe result stands |
 | `runTimeoutMs` | number (1…) | `900000` | Hard deadline per run |
 
+## `approvals`
+
+[@tsuuanmi/system-approvals](../../packages/plugins/approvals/README.md)
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `policies` (required) | any[] | `[]` | autonomy-policy@1.0 records: exactly one studio policy, and project policies that narrow it. Checked at load against the schema and its load-time rules (one rule per action class; expiry.defaultSeconds and every rule's expiresSeconds within expiry.maxSeconds; a project policy, one per project, narrowing the studio policy); an invalid set refuses the plugin, so nothing that needs a person runs (INV-2) |
+| `sweepSeconds` | number (0…3600) | `60` | Seconds between the queue's own passes (expired requests rejected, then open ones batched), and one at start; 0 leaves both to the caller |
+
 ## `artifacts`
 
 [@tsuuanmi/system-artifacts](../../packages/plugins/artifacts/README.md)

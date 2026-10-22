@@ -29,6 +29,7 @@ its types is not listed).
 | [profile-software-development](../../packages/plugins/profile-software-development/README.md) | orchestration | — | `profile-software-development` | `workflow` | — |
 | [worker-sessions](../../packages/plugins/worker-sessions/README.md) | orchestration | `workerSessions` | `worker-sessions` | `store`, `artifacts`, `mcp` (optional) | `gateway-core`, `libs` |
 | [workflow](../../packages/plugins/workflow/README.md) | orchestration | `workflow` | `workflow` | `store`, `artifacts`, `eventLog`, `leases`, `egress`, `workers`, `workerSessions`, `mcp` (optional) | `gateway-core`, `leases`, `libs`, `provider-core`, `worker-sessions`, `workers-core` |
+| [approvals](../../packages/plugins/approvals/README.md) | routing | `approvals` | `approvals` | `store`, `artifacts`, `eventLog` (optional), `mcp` (optional) | `approvals-core`, `gateway-core`, `libs` |
 | [approvals-core](../../packages/approvals-core/README.md) | routing | defines `approvals` | — | — | — |
 | [egress](../../packages/plugins/egress/README.md) | routing | `egress` | `egress` | `artifacts` | `libs`, `provider-core` |
 | [resources](../../packages/plugins/resources/README.md) | routing | `resources` | `resources` | `store`, `artifacts`, `mcp` (optional) | `gateway-core`, `libs`, `resources-core` |
@@ -88,7 +89,7 @@ flowchart TB
     workflow["workflow<br/>ctx.workflow"]
   end
   subgraph routing ["routing"]
-    approvals_core["approvals-core<br/>defines approvals"]
+    approvals["approvals<br/>ctx.approvals"]
     egress["egress<br/>ctx.egress"]
     resources["resources<br/>ctx.resources"]
     workers["workers<br/>ctx.workers"]
@@ -131,11 +132,15 @@ flowchart TB
   agent_workers --> agent_runtimes
   agent_workers --> egress
   agent_workers -.-> resources
+  approvals --> store
+  approvals --> artifacts
+  approvals -.-> event_log
+  approvals -.-> mcp_server
   artifacts --> store
   board --> store
   board --> artifacts
   board --> leases
-  board --> approvals_core
+  board --> approvals
   board -.-> mcp_server
   browser_patchright --> display_virtual
   browser_patchright -.-> event_log
@@ -227,6 +232,7 @@ policy above it. Each such edge is listed here so a new one is a visible change.
 | `agent-workers` (capabilities) | `egress` | `egress` (routing) | required |
 | `agent-workers` (capabilities) | `resources` | `resources` (routing) | optional |
 | `agent-workers` (capabilities) | `workers` | `workers` (routing) | required |
+| `approvals` (routing) | `mcp` | `mcp-server` (gateways) | optional |
 | `board` (orchestration) | `mcp` | `mcp-server` (gateways) | optional |
 | `login` (provider runtime) | `mcp` | `mcp-server` (gateways) | optional |
 | `models` (capabilities) | `egress` | `egress` (routing) | required |
@@ -262,6 +268,7 @@ flowchart TB
     workflow["workflow<br/>ctx.workflow"]
   end
   subgraph routing ["routing"]
+    approvals["approvals<br/>ctx.approvals"]
     approvals_core["approvals-core<br/>defines approvals"]
     egress["egress<br/>ctx.egress"]
     resources["resources<br/>ctx.resources"]
@@ -305,6 +312,8 @@ flowchart TB
   agent_workers --> provider_core
   agent_workers --> resources_core
   agent_workers --> workers_core
+  approvals --> approvals_core
+  approvals --> gateway_core
   board --> approvals_core
   board --> board_core
   board --> gateway_core

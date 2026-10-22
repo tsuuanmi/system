@@ -26,6 +26,35 @@
       name: '@tsuuanmi/system-resources'             # ctx.resources; MCP resources_pools, resources_usage
       config:
         pools: []
+    # --- approval queue (core, B5): the autonomy policy and the one batched queue; expiry denies ---
+    - id: approvals
+      name: '@tsuuanmi/system-approvals'             # ctx.approvals; MCP approvals_list/get/policy, approvals_decide (operator)
+      config:
+        # The default studio policy, conservative: a read runs; a workspace write runs once tests
+        # and lint pass; every other action asks, and so does any class no rule names. A patch
+        # that targets this row replaces its whole config, so it carries the policies too
+        # (`system check` names a missing or invalid one; with none valid, nothing is approved).
+        policies:
+          - schema: 'autonomy-policy@1.0'
+            id: studio-default
+            version: 1
+            scope: studio
+            rules:
+              - { actionClass: read, mode: auto }
+              - { actionClass: workspace-write, mode: auto, requires: [tests, lint] }
+              - { actionClass: merge, mode: ask }
+              - { actionClass: command, mode: ask }
+              - { actionClass: external-send, mode: ask }
+              - { actionClass: deploy, mode: ask }
+              - { actionClass: delete-data, mode: ask }
+              - { actionClass: spend, mode: ask }
+              - { actionClass: charter, mode: ask }
+              - { actionClass: funding, mode: ask }
+              - { actionClass: remediation, mode: ask }
+              - { actionClass: policy-change, mode: ask }
+            default: ask
+            expiry: { defaultSeconds: 86400, maxSeconds: 1209600 }    # a day; at most 14 days
+            batch: { maxSize: 10, maxWaitSeconds: 3600 }
     # --- provider runtime (M1) ---
     - id: accounts
       name: '@tsuuanmi/system-accounts'              # catalog is configured in the operator's profile patch
@@ -77,12 +106,11 @@
       name: '@tsuuanmi/system-worker-sessions'       # sessions, mailboxes, peer messages; MCP session_send/session_inbox
     - id: workflow
       name: '@tsuuanmi/system-workflow'              # the single engine; MCP ask/research/result/usage/explain
-    # --- the board (B4): ctx.board and the board_* MCP tools. Off until a real ctx.approvals provider
-    # exists (the approval queue, B5): the board asks through it and never decides an approval itself,
-    # so without one the row would wait forever on its `approvals` inject. With it off, runs work as today. ---
+    # --- the board (B4): ctx.board and the board_* MCP tools. It asks for every approval through
+    # ctx.approvals (the `approvals` row) and never decides one itself; with that row off or refused,
+    # the board waits on its inject and is not mounted. Turned off on its own, runs work as before. ---
     - id: board
       name: '@tsuuanmi/system-board'
-      disabled: true
     - id: profile-software-development
       name: '@tsuuanmi/system-profile-software-development'  # agent-review, for agent Workers (off with them)
       disabled: true
