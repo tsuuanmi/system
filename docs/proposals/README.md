@@ -64,7 +64,7 @@ accepted/implemented -> superseded
   approvals, a resource ledger with shadow prices, an optimization plugin bundle with a measured
   lifecycle, and an evolution loop.
 
-- [PROP-0009: Core and plugin decomposition](0009-core-and-plugin-decomposition.md), **draft**.
+- [PROP-0009: Core and plugin decomposition](0009-core-and-plugin-decomposition.md), **accepted** ([ADR-0036](../decisions/adr/0036-guarantee-core-and-capability-plugins.md)).
   From first principles, a six-component core (ledger of record, work state machine, runner, gate,
   resource ledger and metering, plugin host) holds every guarantee; eight plugin families (Worker,
   decision, verification, digest, context, workflow, knowledge, surface) are replaceable behind

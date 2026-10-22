@@ -1,12 +1,13 @@
 ---
 id: PROP-0009
 type: proposal
-status: draft
+status: accepted
 created: 2026-10-22
 summary: Derive from first principles a six-component core that holds every guarantee, with eight replaceable plugin families behind versioned seams.
 owners: [operator]
 evidence: [research/design-review-2026-10-22, research/dsh-analysis]
 related: [ADR-0018, PROP-0008]
+decided-by: [ADR-0036]
 implementation: []
 ---
 
@@ -321,7 +322,11 @@ across contract changes.
 
 ## Decision
 
-Pending review.
+Accepted on 2026-10-22 as
+[ADR-0036](../decisions/adr/0036-guarantee-core-and-capability-plugins.md). The ADR refines
+dependency rule 1: within one family, providers may build on each other's seams (a website
+Worker uses `ctx.browser`); across families, plugins cooperate only through the core. The
+classification is applied in the [plugin model](../architecture/plugin-model.md#core-and-plugin-classes).
 
 ## Implementation
 

@@ -8,6 +8,12 @@ Each boundary below states what it **owns**, what it **does not own**, and its *
 the layers above. Each contract is published as one or more Cordis seams
 ([seam catalog](plugin-model.md#seam-catalog)).
 
+Boundaries are cut by layer; the [core and plugin classes](plugin-model.md#core-and-plugin-classes)
+cut the same seams by guarantee. Most boundaries hold both: Routing holds the gate (admission,
+acceptance, egress) beside the routing policy, a decision input; Orchestration holds the work
+state machine and the runner beside the workflow templates. A change to a guarantee seam's
+contract needs an ADR ([ADR-0036](../decisions/adr/0036-guarantee-core-and-capability-plugins.md)).
+
 ## Kernel
 
 - **Owns:**

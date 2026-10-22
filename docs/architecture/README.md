@@ -4,7 +4,9 @@ This area owns the **structure** of `system`: its context, layers, plugin seams,
 direction, data flow, deployment, and cross-cutting invariants. It says *where* behavior lives
 and under which constraints. *How* each mechanism works belongs in [design](../design/README.md).
 
-> Target state, proposed in [PROP-0001](../proposals/0001-unified-system-architecture.md).
+> Target state, proposed in [PROP-0001](../proposals/0001-unified-system-architecture.md); the
+> core and plugin classes are decided in
+> [ADR-0036](../decisions/adr/0036-guarantee-core-and-capability-plugins.md).
 > Diagrams mark what is **planned**; everything else is built. What each package does now is in
 > its own `README.md`.
 
@@ -12,11 +14,11 @@ and under which constraints. *How* each mechanism works belongs in [design](../d
 
 | Document | Owns |
 |---|---|
-| this README | system context, the layer map, and the deployment view (canonical diagrams) |
+| this README | system context, the layer map, core and plugins, and the deployment view (canonical diagrams) |
 | [invariants.md](invariants.md) | system-wide invariants (binding on all code) |
-| [plugin-model.md](plugin-model.md) | everything-is-a-plugin: seam catalog, DSH reuse map, composition, plugin rules |
+| [plugin-model.md](plugin-model.md) | everything-is-a-plugin: seam catalog, core and plugin classes, DSH reuse map, composition, plugin rules |
 | [components.md](components.md) | each boundary: what it owns, what it does not own, its contracts |
-| [data-flow.md](data-flow.md) | end-to-end flows across boundaries: turn, restart, gateway round trip, node lifecycle |
+| [data-flow.md](data-flow.md) | end-to-end flows across boundaries: job, turn, restart, gateway round trip, node lifecycle |
 | [packages.md](packages.md) | every package, its layer, seams, and dependencies (generated from the code) |
 
 ## System context
@@ -137,6 +139,47 @@ rows, with no `dsh-base`, plus the `system` bundle, launched as the `system` pro
 they are the `team` option of workflow nodes, unrolled by the engine, whose members are Worker
 sessions. Profiles are plugins that contribute templates through `ctx.workflow.template`.
 Which plugins run, and whether a gateway is enabled at all, is decided by configuration.
+
+## Core and plugins
+
+The layer map shows *where* each seam sits; this view shows *what it is for*. Every seam is
+either a **guarantee seam**, part of one of six core components, or a **capability seam**, part
+of one of eight plugin families
+([ADR-0036](../decisions/adr/0036-guarantee-core-and-capability-plugins.md)). Both kinds are
+plugins; the core's contracts are fixed by the [invariants](invariants.md) and change only by
+ADR. Capability plugins talk to the core, never to each other across families. The
+[plugin model](plugin-model.md#core-and-plugin-classes) assigns every seam and gives the rules;
+[PROP-0009](../proposals/0009-core-and-plugin-decomposition.md) derives the split.
+
+```mermaid
+flowchart TB
+  subgraph SURF["surface family"]
+    direction LR
+    s1["ctx.mcp, gateway-anthropic,<br/>gateway-responses, web-ui, CLI"]
+  end
+  subgraph CORE["core: guarantee seams"]
+    direction LR
+    led["ledger of record<br/>ctx.store, ctx.artifacts,<br/>ctx.eventLog, ctx.credentials"]
+    sm["work state machine<br/>ctx.workflow, ctx.workerSessions,<br/>ctx.leases, board (planned)"]
+    run["runner<br/>workflow engine, ctx.turnReceipts"]
+    gate["gate<br/>ctx.egress, workers admission<br/>and acceptance, approvals (planned)"]
+    res["resource ledger and metering<br/>resources (planned)"]
+    host["plugin host<br/>DSH core, Cordis, system bundle"]
+  end
+  subgraph CAPF["capability plugin families"]
+    direction LR
+    wkr["Worker<br/>ctx.turns, ctx.agentWorkers, ctx.models<br/>and their provider runtimes"]
+    dec["decision<br/>router policy, decisions (planned)"]
+    ver["verification<br/>acceptance contracts, quote checks"]
+    dig["digest (planned)"]
+    ctxp["context (planned)"]
+    wfl["workflow<br/>templates, profiles"]
+    kn["knowledge (planned)"]
+  end
+  SURF -->|"read state, submit intents"| CORE
+  CORE -->|"dispatch through seams"| CAPF
+  CAPF -->|"artifacts, events, usage"| CORE
+```
 
 ## Deployment view
 
