@@ -102,6 +102,10 @@ runs the work the router admitted to them. Callers never reach a source directly
   A Worker configured with a resource pool is metered through `ctx.resources`: it reserves
   before a run, records one usage record from the runtime's own numbers after it, and records
   the runtime's limit observations ([agent runtimes](../design/agent-runtimes.md#metering)).
+  A Worker configured with `worktreePerRun` works, per workflow run, in that run's own git
+  worktree of its repository, and the source removes the worktree, its changes committed on
+  the run's branch, once the run has been idle past a retention
+  ([workspaces](../design/agent-runtimes.md#workspaces)).
 - **Agent runtimes** (`ctx.agentRuntimes`): providers for Claude Code (Claude Agent SDK), Codex
   (Codex SDK), and ACP agents ([agent runtimes](../design/agent-runtimes.md)). Each agent
   process starts without the daemon's credentials, and cannot read host state (the DSH home,
@@ -119,7 +123,8 @@ runs the work the router admitted to them. Callers never reach a source directly
 - **Does not own:** routing decisions, acceptance, or the steps of a workflow.
 - **Contracts:** the `WorkerSource` interface in `@tsuuanmi/system-workers-core`:
   `describe` (capability descriptors with evidence), `start` (durable at once, idempotent by
-  `key`), `get`, `wait`, and optional `affinity`, `handle`, `reset`, `cancel`. An agent runtime
+  `key`; `runId` names the workflow run the execution belongs to), `get`, `wait`, and optional
+  `affinity`, `handle`, `reset`, `cancel`. An agent runtime
   provides `kind`, `probe()` (`RuntimeEvidence`), and `run(spec, signal, onHandle)`, whose
   result may carry what the run consumed (`RunMetering`). `ctx.models`
   provides `list()` (catalog entries with availability) and `complete(request, signal)`.

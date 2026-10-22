@@ -13,17 +13,37 @@ import type { NodeRow, RunRow } from './types.ts'
 
 export type SubjectGate = { passed: true; decision: ArtifactRef; assessment: Assessment; subject: string } | { passed: false; decision: ArtifactRef; reason: string }
 
-/** The working tree a dependency's agent worked in, captured as it is now, with its verbatim change. */
-export function reviewSubject(e: Engine, results: ArtifactRef[], request: string): { workspace: string; subject: GitSubject; block: string } | undefined {
+/**
+ * The working tree a dependency's agent worked in, captured as it is now, with its verbatim change;
+ * `missing` when an agent worked in a tree that can no longer be captured (its worktree was
+ * cleaned up, say): the review is then never run unbound (INV-2, INV-5).
+ */
+export function reviewSubject(e: Engine, results: ArtifactRef[], request: string): { workspace: string; subject: GitSubject; block: string } | { missing: string } | undefined {
   const workspace = results
     .map((r) => e.ctx.artifacts.get(r)?.body as { schema?: string; workspace?: string; subject?: unknown } | undefined)
     .filter((b) => b?.schema?.startsWith('agent-result@') && b.workspace && b.subject)
     .at(-1)?.workspace
   if (!workspace) return undefined
   const captured = captureGitSubject(workspace)
-  if (!captured) return undefined
+  if (!captured) return { missing: workspace }
   const id = subjectId(captured.subject)
   return { workspace, subject: captured.subject, block: subjectBlock(id, workspace, captured.subject.ref, captured.diff, request) }
+}
+
+/** The `gate` decision that fails a review whose agent's working tree can no longer be captured. */
+export function missingSubject(e: Engine, run: RunRow, node: NodeRow, workspace: string): ArtifactRef {
+  return e.ctx.artifacts.recordDecision({
+    decisionType: 'gate',
+    question: `May review ${node.node_id} of run ${run.run_id} run on the change it is bound to?`,
+    inputs: [],
+    candidates: [
+      { option: 'fail', selected: true, reasons: [`the agent's working tree ${workspace} can no longer be captured, so there is no exact subject to review`] },
+      { option: 'pass', selected: false, reasons: ['not pass: a review is never run without the exact subject it binds to (REQ-WF-5)'] },
+    ],
+    decider: { type: 'rule', id: 'workflow.exact-subject', version: '1' },
+    outcome: { option: 'fail', detail: { workspace } },
+    deterministic: true,
+  }, { producer: { type: 'system', ref: 'workflow' }, runId: run.run_id, nodeId: node.node_id }).id as ArtifactRef
 }
 
 /**
@@ -91,17 +111,36 @@ export function remediate(e: Engine, run: RunRow, node: NodeRow, spec: ResolvedN
   }, { producer: { type: 'system', ref: 'workflow' }, runId: run.run_id, nodeId: node.node_id }).id as ArtifactRef
   if (why) return
   const base = spec.reviewOf ?? node.node_id
-  // After a re-plan retired this review's earlier cycles, the new ones get new ids.
-  const generation = (JSON.parse(nodes.find((n) => n.node_id === base)?.spec ?? '{}') as ResolvedNode).generation ?? 1
-  const prefix = growthPrefix(base, generation)
+  // This cycle is grown by the review that found the blocking findings, never by the first review:
+  // superseding an earlier fix then retires this cycle with the review it reran, and nothing it
+  // grew stays live to collide with the next growth. After a re-plan, ids carry the new generation
+  // (the base's for its own cycles, the reviewer's suffix for a later one).
+  const baseGeneration = (JSON.parse(nodes.find((n) => n.node_id === base)?.spec ?? '{}') as ResolvedNode).generation ?? 1
+  const generation = spec.generation ?? 1
+  const prefix = `${growthPrefix(base, baseGeneration)}${node.node_id !== base && generation > 1 ? `:r${generation}` : ''}`
+  const gateId = `${prefix}:approve:${cycle}`
   const fixId = `${prefix}:fix:${cycle}`
   const recheckId = `${prefix}:review:${cycle + 1}`
-  const step = { literal: true, tierSource: 'decision' as const, tierDecision: decision, session: {}, grownBy: { node: base, generation } }
+  const grownBy = { node: node.node_id, generation }
+  const prompt = remediationPrompt(run.input, subject, blocking)
+  // The fix writes, so it waits for the operator's approval of exactly this plan (ADR-0028, INV-15):
+  // never approved by policy, until the approval queue (B5) decides by the autonomy policy.
+  const plan = e.ctx.artifacts.put({
+    kind: 'plan', bodySchema: 'plan@1.0',
+    body: {
+      schema: 'plan@1.0', runId: run.run_id, planner: node.node_id, confidence: 'medium',
+      nodes: [{ nodeId: fixId, objective: `Fix the blocking findings of review cycle ${cycle}`, prompt, capabilities: producer!.capabilities, tier: producer!.tier, dependsOn: [gateId] }],
+    },
+    classification: run.classification ?? e.ctx.egress.defaultClassification, producer: { type: 'node', ref: node.node_id }, inputs: [decision], runId: run.run_id, nodeId: node.node_id,
+  }).id as ArtifactRef
+  const step = { literal: true, tierSource: 'decision' as const, tierDecision: decision, session: {}, grownBy }
   append(e, run, node, [
-    { ...step, nodeId: fixId, objective: `Fix the blocking findings of review cycle ${cycle}`, prompt: remediationPrompt(run.input, subject, blocking),
-      capabilities: producer!.capabilities, tier: producer!.tier, acceptance: 'acceptance.answer', dependsOn: [node.node_id] },
+    { ...step, nodeId: gateId, objective: `Approve the fix of review cycle ${cycle}`, executor: 'gate' as const, plan, prompt: '', capabilities: ['review'],
+      tier: 'economy' as const, tierSource: 'profile' as const, acceptance: 'acceptance.answer', dependsOn: [node.node_id], operatorApproval: true as const },
+    { ...step, nodeId: fixId, objective: `Fix the blocking findings of review cycle ${cycle}`, prompt,
+      capabilities: producer!.capabilities, tier: producer!.tier, acceptance: 'acceptance.answer', dependsOn: [gateId] },
     { ...step, nodeId: recheckId, objective: `Review cycle ${cycle + 1}: review the fixed change`, prompt: spec.prompt,
       capabilities: spec.capabilities, tier: spec.tier, acceptance: spec.acceptance, dependsOn: [fixId], cycle: cycle + 1, reviewOf: base },
-  ], [fixId, recheckId], lease)
-  e.ctx.eventLog.append({ type: 'workflow.graph.grown', runId: run.run_id, nodeId: node.node_id, decision, data: { steps: [fixId, recheckId], cycle: cycle + 1 } })
+  ], [gateId, fixId, recheckId], lease)
+  e.ctx.eventLog.append({ type: 'workflow.graph.grown', runId: run.run_id, nodeId: node.node_id, decision, data: { steps: [gateId, fixId, recheckId], plan, cycle: cycle + 1 } })
 }

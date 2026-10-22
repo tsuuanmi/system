@@ -8,10 +8,12 @@
  * A Worker configured with a resource pool meters its runs through `ctx.resources`
  * (docs/design/resources.md): a reservation before the run (none, nothing runs), one
  * `usage-record` from the runtime's own numbers after it, and its limit observations as readings.
+ * A Worker configured with `worktreePerRun` works in a git worktree of its own per workflow run
+ * (./worktrees.ts).
  * @module @tsuuanmi/system-agent-workers
  */
 import { randomBytes } from 'node:crypto'
-import { isAbsolute } from 'node:path'
+import { isAbsolute, join, resolve } from 'node:path'
 import { type Context, Service } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import {
@@ -20,11 +22,12 @@ import {
 import type {} from '@tsuuanmi/system-artifacts'
 import type { Classification } from '@tsuuanmi/system-egress'
 import { type Lease, LeaseLost, StaleGeneration } from '@tsuuanmi/system-leases'
-import { captureGitSubject, type ContentId, sha256 } from '@tsuuanmi/system-libs'
+import { captureGitSubject, type ContentId, dshHome, sha256 } from '@tsuuanmi/system-libs'
 import { ProviderError, ProviderScheduler, dispositionOf, toProviderError } from '@tsuuanmi/system-provider-core'
 import { type LimitState, type Resources, ResourcesError, type UsageRecord } from '@tsuuanmi/system-resources-core'
 import type {} from '@tsuuanmi/system-store'
 import type { ArtifactRef, CapabilityDescriptor, ExecutionStatus, QuotaClass, Tier, WorkerExecution, WorkerStart } from '@tsuuanmi/system-workers-core'
+import { RUN_ID, type RepositoryCheck, type SweepOutcome, Worktrees } from './worktrees.ts'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -58,6 +61,12 @@ export interface AgentWorkerConfig {
    * `five_hour: five-hour`). An observation of a window not mapped here is not recorded.
    */
   windows?: Record<string, string>
+  /**
+   * Each run that belongs to a workflow run works in that run's own git worktree of `workspace`
+   * (which must then be the top level of a git repository with a commit), on the branch
+   * `system/run/<runId>`, never in the repository's main working tree. Default false.
+   */
+  worktreePerRun?: boolean
   /** How long a limit hit with no reset time keeps the pool closed, in seconds (default 3600). */
   limitCooldownSeconds?: number
 }
@@ -68,6 +77,13 @@ export interface Config {
   probeTtlMs?: number
   /** Hard deadline per run; the agent is stopped and the run fails as `timeout` (default 15 min). */
   runTimeoutMs?: number
+  /** Where the worktrees of `worktreePerRun` Workers go (default `<DSH_HOME>/system/worktrees`). */
+  worktreeRoot?: string
+  /**
+   * Hours a workflow run's worktree is kept after its last agent run ended, every one finished;
+   * then its changes are committed on its branch and it is removed (default 168; 0 keeps them).
+   */
+  worktreeRetentionHours?: number
 }
 
 interface RunRow {
@@ -88,6 +104,8 @@ interface RunRow {
   budget_decision?: string | null
   /** The reservation the run holds while it runs, released once its usage is recorded. */
   reservation_id?: string | null
+  /** The workflow run the run belongs to, when it belongs to one (`WorkerStart.runId`). */
+  workflow_run_id?: string | null
   created_at: string
   updated_at: string
 }
@@ -98,6 +116,8 @@ const PREFIX = 'agent:'
 const newId = (): string => `arun_${randomBytes(8).toString('hex')}`
 /** At most this many per-model entries go into a record (`agent-result@1.2`, `usage-record@1.0`). */
 const MAX_MODELS = 16
+/** How often finished workflow runs' worktrees are looked at for removal. */
+const SWEEP_MS = 60 * 60_000
 const now = (): string => new Date().toISOString()
 
 export class AgentWorkers extends Service {
@@ -117,10 +137,13 @@ export class AgentWorkers extends Service {
       pool: z.string().description('The resource pool its runs draw on (a pool id from the resources configuration); unset: not metered'),
       account: z.string().description('The account the pool belongs to; required with pool'),
       windows: z.dict(z.string()).description('The runtime\'s limit window names mapped to the pool\'s window ids, for example five_hour: five-hour'),
+      worktreePerRun: z.boolean().default(false).description('Each run of a workflow run works in that run\'s own git worktree of the workspace (the top level of a git repository), on branch system/run/<runId>'),
       limitCooldownSeconds: z.natural().min(60).max(604_800).default(3600).description('How long a limit hit with no reset time keeps the pool closed'),
     })).default([]).description('Agent-runtime Workers; each policy comes from here only (INV-6)'),
     probeTtlMs: z.natural().default(5 * 60_000).description('How long a probe result stands'),
     runTimeoutMs: z.natural().min(1).default(15 * 60_000).description('Hard deadline per run'),
+    worktreeRoot: z.string().description('Where the worktrees of worktreePerRun Workers go (default <DSH_HOME>/system/worktrees)'),
+    worktreeRetentionHours: z.natural().default(168).description('Hours a workflow run\'s worktree is kept after its last agent run ended; then its changes are committed on its branch and it is removed (0 keeps them)'),
   }) as unknown as z<Config>
 
   private readonly workers = new Map<string, AgentWorkerConfig>()
@@ -132,6 +155,10 @@ export class AgentWorkers extends Service {
   private readonly stopped = new AbortController()
   private readonly retries = new Set<NodeJS.Timeout>()
   private readonly warned = new Set<string>()
+  /** Whether each `worktreePerRun` Worker's workspace can hold a worktree per run, as last checked. */
+  private readonly repositories = new Map<string, { at: number; check: RepositoryCheck }>()
+  private readonly worktrees: Worktrees
+  private sweeping: Promise<SweepOutcome> | undefined
 
   constructor(ctx: Context, private readonly config: Config = { workers: [] }) {
     super(ctx, 'agentWorkers')
@@ -141,8 +168,13 @@ export class AgentWorkers extends Service {
       if (this.workers.has(PREFIX + worker.id)) throw new ProviderError('config_error', `duplicate agent Worker ${worker.id}`)
       if ((worker.pool === undefined) !== (worker.account === undefined)) throw new ProviderError('config_error', `agent Worker ${worker.id}: pool and account are set together`)
       if (worker.pool === undefined && Object.keys(worker.windows ?? {}).length) throw new ProviderError('config_error', `agent Worker ${worker.id}: windows map limit windows to a pool, and no pool is set`)
+      // Workers of one workspace agree on worktreePerRun: a reviewer must read the tree it reviews, the writer's worktree.
+      const other = [...this.workers.values()].find((w) => resolve(w.workspace) === resolve(worker.workspace) && !!w.worktreePerRun !== !!worker.worktreePerRun)
+      if (other) throw new ProviderError('config_error', `agent Workers ${other.id} and ${worker.id} share the workspace ${worker.workspace}, and only one of them works in a worktree per run (worktreePerRun): set it on both`)
       this.workers.set(PREFIX + worker.id, worker)
     }
+    if (config.worktreeRoot !== undefined && !isAbsolute(config.worktreeRoot)) throw new ProviderError('config_error', 'agent Workers: worktreeRoot must be an absolute path')
+    this.worktrees = new Worktrees(ctx, config.worktreeRoot ?? join(dshHome(), 'system', 'worktrees'))
     ctx.store.migrate('agent-workers', [{
       version: 1,
       sql: `CREATE TABLE agent_runs (
@@ -160,6 +192,16 @@ export class AgentWorkers extends Service {
       // Metering (docs/design/resources.md): the run's budget decision, and the reservation it holds.
       version: 3,
       sql: 'ALTER TABLE agent_runs ADD COLUMN budget_decision TEXT; ALTER TABLE agent_runs ADD COLUMN reservation_id TEXT;',
+    }, {
+      // A worktree per workflow run (./worktrees.ts): the run each agent run belongs to, and each run's worktree of a repository.
+      version: 4,
+      sql: `ALTER TABLE agent_runs ADD COLUMN workflow_run_id TEXT;
+      CREATE INDEX agent_runs_workflow_run ON agent_runs (workflow_run_id);
+      CREATE TABLE agent_worktrees (
+        repository TEXT NOT NULL, workflow_run_id TEXT NOT NULL, path TEXT NOT NULL, branch TEXT NOT NULL, gitdir TEXT NOT NULL,
+        created_at TEXT NOT NULL, removed_at TEXT, decision TEXT, failure TEXT, failed_at TEXT,
+        PRIMARY KEY (repository, workflow_run_id)
+      );`,
     }])
     ctx.workers.register({
       name: 'agents',
@@ -180,8 +222,14 @@ export class AgentWorkers extends Service {
       reset: (sessionId) => Number(this.ctx.store.db.prepare('UPDATE agent_sessions SET native_handle = NULL WHERE session_id = ?').run(sessionId).changes) > 0,
     })
     ctx.effect(() => {
-      queueMicrotask(() => this.recover())
+      queueMicrotask(() => {
+        this.recover()
+        this.sweepSafely()
+      })
+      const hourly = setInterval(() => this.sweepSafely(), SWEEP_MS)
+      hourly.unref()
       return async () => {
+        clearInterval(hourly)
         // A stop is not a failure: a started run stays as it is, and the next start reconciles it.
         this.stopped.abort()
         for (const timer of this.retries) clearTimeout(timer)
@@ -198,8 +246,10 @@ export class AgentWorkers extends Service {
     const observedAt = now()
     return Promise.all([...this.workers].map(async ([id, worker]): Promise<CapabilityDescriptor> => {
       const evidence = await this.evidence(worker)
+      // A Worker that works in a worktree per run takes no work while its workspace cannot hold one.
+      const repository = worker.worktreePerRun ? await this.repository(id, worker) : undefined
       // A Worker whose runtime cannot keep the host state unreadable is never admitted (ADR-0024).
-      const proof = evidence.available && evidence.readsConfined && evidence.sandboxes.includes(worker.sandbox)
+      const proof = evidence.available && evidence.readsConfined && evidence.sandboxes.includes(worker.sandbox) && (!repository || 'repository' in repository)
       // A metered Worker takes work only while its pool is available (INV-2).
       const pool = proof ? await this.poolGate(id, worker) : 'ready'
       const ready = proof && pool !== 'unavailable'
@@ -246,6 +296,62 @@ export class AgentWorkers extends Service {
     }
   }
 
+  /**
+   * Whether a `worktreePerRun` Worker's workspace can hold a worktree per run (the top level of a
+   * git repository with a commit), checked at most once per `probeTtlMs`. A problem is a
+   * configuration error: logged once, and the Worker takes no work.
+   */
+  private async repository(id: string, worker: AgentWorkerConfig): Promise<RepositoryCheck> {
+    const cached = this.repositories.get(id)
+    if (cached && Date.now() - cached.at < (this.config.probeTtlMs ?? 5 * 60_000)) return cached.check
+    const check = await this.worktrees.check(worker.workspace)
+    this.repositories.set(id, { at: Date.now(), check })
+    if ('problem' in check) this.warnOnce(`agent Workers: ${id} works in a worktree per run, and ${check.problem} (config_error); it takes no work`)
+    return check
+  }
+
+  /**
+   * Where a run works: the configured workspace, or, for a run of a `worktreePerRun` Worker that
+   * belongs to a workflow run, that run's own worktree, created on first use. Nothing has reached
+   * the agent yet: a workspace that cannot be prepared fails the run unsubmitted.
+   */
+  private async workspaceOf(row: RunRow, worker: AgentWorkerConfig): Promise<string> {
+    if (!worker.worktreePerRun) return worker.workspace
+    const check = await this.repository(row.worker, worker)
+    if ('problem' in check) throw new ProviderError('config_error', `${row.worker} works in a worktree per run, and ${check.problem}; nothing was run`)
+    if (!row.workflow_run_id) return worker.workspace
+    return this.worktrees.acquire(check.repository, row.workflow_run_id).catch((error: unknown) => {
+      throw new ProviderError('config_error', `${row.worker}: the worktree of run ${row.workflow_run_id} cannot be prepared: ${(error as Error).message}; nothing was run`, { cause: error })
+    })
+  }
+
+  /**
+   * Retire the worktrees of finished workflow runs (INV-9): those whose agent runs have all
+   * finished, the last more than `worktreeRetentionHours` before `at`, have their changes committed
+   * on their branch and are removed; one that cannot be is left in place and tried again next
+   * time. Runs hourly; a sweep already running is returned.
+   */
+  sweepWorktrees(at: number = Date.now()): Promise<SweepOutcome> {
+    const hours = this.config.worktreeRetentionHours ?? 168
+    if (!hours || this.stopped.signal.aborted) return Promise.resolve({ removed: [], kept: [] })
+    if (this.sweeping) return this.sweeping
+    const sweeping = this.worktrees.sweep(hours, at, this.stopped.signal).finally(() => {
+      this.sweeping = undefined
+    })
+    this.sweeping = sweeping
+    // A stop waits for it: a git command it started is bounded.
+    const tracked = sweeping.then(() => undefined, () => undefined)
+    this.inflight.add(tracked)
+    void tracked.finally(() => this.inflight.delete(tracked))
+    return sweeping
+  }
+
+  private sweepSafely(): void {
+    this.sweepWorktrees().catch((error: unknown) => {
+      this.ctx.logger.warn(`agent Workers: the worktree sweep failed; the next one tries again: ${(error as Error).message}`)
+    })
+  }
+
   /** `describe` runs on every route: a standing problem is logged once. */
   private warnOnce(message: string): void {
     if (this.warned.has(message)) return
@@ -268,6 +374,8 @@ export class AgentWorkers extends Service {
     const worker = this.workers.get(request.worker)
     if (!worker) throw new ProviderError('invalid_input', `${request.worker} is not an agent Worker`)
     if (!request.prompt.trim()) throw new ProviderError('invalid_input', 'prompt must not be empty')
+    // It may name a branch and a directory (a worktree per run): letters, digits, `_`, and `-` only.
+    if (request.runId !== undefined && !RUN_ID.test(request.runId)) throw new ProviderError('invalid_input', `run id ${JSON.stringify(request.runId)} must match ${RUN_ID}`)
     const key = sha256(`agent\0${request.key}`)
     return this.ctx.store.transaction((db) => {
       const existing = db.prepare('SELECT * FROM agent_runs WHERE request_key = ?').get(key) as RunRow | undefined
@@ -283,10 +391,10 @@ export class AgentWorkers extends Service {
       const row: RunRow = {
         run_id: newId(), request_key: key, worker: request.worker, session_id: request.sessionId ?? null, prompt: request.prompt,
         classification: request.requirement.data.classification, status: 'queued', submitted_at: null, native_handle: null, result: null, error: null,
-        created_at: now(), updated_at: now(),
+        workflow_run_id: request.runId ?? null, created_at: now(), updated_at: now(),
       }
-      db.prepare(`INSERT INTO agent_runs (run_id, request_key, worker, session_id, prompt, classification, status, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, 'queued', ?, ?)`).run(row.run_id, key, row.worker, row.session_id, row.prompt, row.classification, row.created_at, row.updated_at)
+      db.prepare(`INSERT INTO agent_runs (run_id, request_key, worker, session_id, prompt, classification, status, workflow_run_id, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?)`).run(row.run_id, key, row.worker, row.session_id, row.prompt, row.classification, row.workflow_run_id ?? null, row.created_at, row.updated_at)
       this.ctx.store.afterCommit(() => this.schedule(row.run_id))
       return execution(row)
     })
@@ -409,11 +517,12 @@ export class AgentWorkers extends Service {
     if (!evidence.available || !evidence.readsConfined || !evidence.sandboxes.includes(worker.sandbox)) {
       throw new ProviderError('config_error', `${worker.runtime} cannot run this Worker now: ${evidence.detail}`)
     }
+    const workspace = await this.workspaceOf(row, worker)
     const session = row.session_id
       ? this.ctx.store.db.prepare('SELECT native_handle FROM agent_sessions WHERE session_id = ?').get(row.session_id) as { native_handle: string | null } | undefined
       : undefined
     const spec: RunSpec = {
-      prompt: row.prompt, workspace: worker.workspace, sandbox: worker.sandbox,
+      prompt: row.prompt, workspace, sandbox: worker.sandbox,
       // Omitted or empty means the runtime's minimal set: the config schema turns an omitted list into [].
       ...(worker.tools?.length ? { tools: worker.tools } : {}), ...(worker.model ? { model: worker.model } : {}), ...(worker.maxTurns ? { maxTurns: worker.maxTurns } : {}),
       ...(session?.native_handle ? { resume: session.native_handle } : {}),
@@ -423,7 +532,7 @@ export class AgentWorkers extends Service {
     const reservation = meter ? await this.reserve(row, meter, lease) : undefined
     try {
       const result = await this.submit(row, worker, provider, spec, signal, lease, meter)
-      this.complete(row, worker, result, lease)
+      this.complete(row, worker, workspace, result, lease)
     } finally {
       if (reservation) await this.release(row.worker, reservation)
     }
@@ -456,10 +565,14 @@ export class AgentWorkers extends Service {
   }
 
   /** Store the result as a `report` artifact and complete the run. */
-  private complete(row: RunRow, worker: AgentWorkerConfig, result: RunResult, lease: () => Lease): void {
+  private complete(row: RunRow, worker: AgentWorkerConfig, workspace: string, result: RunResult, lease: () => Lease): void {
     const handle = result.nativeHandle ?? this.row(row.run_id)?.native_handle ?? undefined
+    // A worktree whose .git file the agent pointed elsewhere is not read by git: its result is not trusted.
+    if (workspace !== worker.workspace && !this.worktrees.intact(workspace)) {
+      throw new ProviderError('reconciliation_failed', `${row.worker} changed the .git file of its worktree ${workspace}; the result is not trusted, and the worktree is left for the operator`)
+    }
     // The workspace's exact subject after the run, so a review can bind to it (REQ-WF-5).
-    const captured = captureGitSubject(worker.workspace)
+    const captured = captureGitSubject(workspace)
     this.ctx.store.transaction((db) => {
       this.ctx.leases.fence(lease())
       if (handle && row.session_id) db.prepare('UPDATE agent_sessions SET native_handle = ? WHERE session_id = ?').run(handle, row.session_id)
@@ -471,7 +584,7 @@ export class AgentWorkers extends Service {
         body: {
           schema, worker: row.worker, runtime: worker.runtime, runId: row.run_id,
           ...(row.session_id ? { sessionId: row.session_id } : {}), ...(handle ? { nativeHandle: handle } : {}),
-          promptHash: sha256(row.prompt), sandbox: worker.sandbox, workspace: worker.workspace,
+          promptHash: sha256(row.prompt), sandbox: worker.sandbox, workspace,
           ...(captured ? { subject: captured.subject } : {}),
           ...(result.turns !== undefined ? { turns: result.turns } : {}), ...(result.costUsd !== undefined ? { costUsd: result.costUsd } : {}),
           ...(usage.usage && result.model ? { model: result.model } : {}), ...usage,
@@ -635,4 +748,5 @@ function usageOf(metering: RunMetering | undefined): Pick<UsageRecord, 'usage' |
   return { usage: { ...metering.usage }, ...(models ? { models: models.map((m) => ({ model: m.model, usage: { ...m.usage }, ...(m.costUsd !== undefined ? { costUsd: m.costUsd } : {}) })) } : {}) }
 }
 
+export type { SweepOutcome } from './worktrees.ts'
 export default AgentWorkers
