@@ -99,6 +99,9 @@ runs the work the router admitted to them. Callers never reach a source directly
   runtime's `probe()` proves now; a policy the runtime cannot enforce leaves it unavailable.
   Runs are durable, one at a time per Worker, and a run that started is never rerun by itself.
   The agent runs here but its model is remote, so each prompt passes the egress check first.
+  A Worker configured with a resource pool is metered through `ctx.resources`: it reserves
+  before a run, records one usage record from the runtime's own numbers after it, and records
+  the runtime's limit observations ([agent runtimes](../design/agent-runtimes.md#metering)).
 - **Agent runtimes** (`ctx.agentRuntimes`): providers for Claude Code (Claude Agent SDK), Codex
   (Codex SDK), and ACP agents ([agent runtimes](../design/agent-runtimes.md)). Each agent
   process starts without the daemon's credentials, and cannot read host state (the DSH home,
@@ -117,7 +120,8 @@ runs the work the router admitted to them. Callers never reach a source directly
 - **Contracts:** the `WorkerSource` interface in `@tsuuanmi/system-workers-core`:
   `describe` (capability descriptors with evidence), `start` (durable at once, idempotent by
   `key`), `get`, `wait`, and optional `affinity`, `handle`, `reset`, `cancel`. An agent runtime
-  provides `kind`, `probe()` (`RuntimeEvidence`), and `run(spec, signal, onHandle)`. `ctx.models`
+  provides `kind`, `probe()` (`RuntimeEvidence`), and `run(spec, signal, onHandle)`, whose
+  result may carry what the run consumed (`RunMetering`). `ctx.models`
   provides `list()` (catalog entries with availability) and `complete(request, signal)`.
 - **Packages:** [turns](../../packages/plugins/turns/README.md),
   [agent-workers](../../packages/plugins/agent-workers/README.md),

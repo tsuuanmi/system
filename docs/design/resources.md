@@ -10,9 +10,10 @@
 >
 > Defined in [`resources-core`](../../packages/resources-core/README.md); provided by
 > [`resources`](../../packages/plugins/resources/README.md) on `ctx.store`, with the MCP tools
-> `resources_pools` and `resources_usage`. Differs from target: no Worker reports usage or
-> readings to it yet (B2 part U2), the engine does not reserve before a run yet, and the bundle
-> configures no pool.
+> `resources_pools` and `resources_usage`. Agent Workers configured with a pool reserve, record,
+> and observe through it ([agent runtimes](agent-runtimes.md#metering)). Differs from target: no
+> other Worker source reports yet, no transcript is reconciled, the engine does not reserve
+> before a run, and the bundle configures no pool.
 
 The resource ledger knows what each configured pool has left and what every run consumed. Its
 numbers come from objective sources only: a runtime's result message, a provider's usage
