@@ -1,11 +1,11 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { homedir, tmpdir } from 'node:os'
 import { isAbsolute, join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import { dshHome, registerSecretPath } from '@tsuuanmi/system-libs'
 import { afterEach, describe, expect, it } from 'vitest'
 import { agentRuntimesConformance } from '../../../agent-runtime-core/conformance/agent-runtimes.ts'
-import AgentRuntimeRegistry, { type Config, confinedCommand, proveConfinement } from '../src/index.ts'
+import AgentRuntimeRegistry, { type Config, confinedCommand, CREDENTIAL_STORES, proveConfinement } from '../src/index.ts'
 
 agentRuntimesConformance('@tsuuanmi/system-agent-runtimes', AgentRuntimeRegistry)
 
@@ -34,6 +34,14 @@ describe('the read confinement of agent children (ADR-0024, INV-8)', () => {
     expect(c.writable).toEqual(['/work/home'])
     // Resolved once, to an absolute path, when bubblewrap is installed.
     expect(c.bwrap === 'bwrap' || isAbsolute(c.bwrap)).toBe(true)
+  })
+
+  it('hides every coding agent\'s login and the operator\'s credential stores from every agent child, whichever agent runs (INV-8)', async () => {
+    const ctx = await boot()
+    const hide = ctx.agentRuntimes.confinement().hide
+    for (const login of ['.claude', '.claude.json', '.codex', '.gemini', '.cursor', '.ssh', '.netrc', '.git-credentials', '.npmrc']) expect(CREDENTIAL_STORES, login).toContain(login)
+    // Each is hidden when present on this host.
+    for (const store of CREDENTIAL_STORES) if (existsSync(join(homedir(), store))) expect(hide, store).toContain(join(homedir(), store))
   })
 
   it('hides every registered secret path while it is registered, and keeps operator entries as given', async () => {
