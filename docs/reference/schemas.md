@@ -87,8 +87,13 @@ guesses.
   must be `@1.4`; every other decision keeps its version, so earlier decisions keep their
   ids.
   - `autonomy`: the mode the autonomy policy gives one action. Candidates are `auto`, `notify`,
-    `ask`, and `forbid`; the decider is the policy (`policy`, its id and version); the outcome is
-    the mode, and `detail` names the action class and the effective policies.
+    `ask`, and `forbid`; the decider is the policy (`policy`, its id and version), and
+    `decider.hash` is the sha256 of the canonical JSON of the effective policy set as loaded (the
+    studio policy, then the project's), so an edit that keeps a version still shows; the outcome
+    is the mode, and `detail` names the action class it was judged as, the effective policies,
+    any `failedChecks`, and why it is `forbidden` whatever a rule says (an argv word with a shell
+    metacharacter). The mode is the mode once the required checks pass: a non-empty
+    `failedChecks` means not yet allowed.
   - `approval`: how an approval request was resolved. Options `approved`, `rejected`,
     `denied:expired` (decider rule `approvals.expiry`), and `withdrawn`. Example:
     [`decision.approval-expired.json`](../../schemas/examples/decision.approval-expired.json).
@@ -206,8 +211,8 @@ guesses.
 ### `approval`
 
 - `subject` is the exact artifact approved (INV-5). Today that is a plan.
-- It is written only through an operator channel (CLI or MCP `approve`), never
-  from model output (INV-6).
+- It is written only through an operator channel (the CLI, MCP `approve` or
+  `approvals_decide`, or the web UI), never from model output (INV-6).
 
 ### `agent-result`
 
@@ -410,20 +415,31 @@ guesses.
 
 ### `autonomy-policy`
 
-- One rule per action class, `expiry.defaultSeconds ≤ expiry.maxSeconds`, and every rule's
-  `expiresSeconds ≤ expiry.maxSeconds`; a policy that breaks one is refused when loaded.
+- One rule per action class, `expiry.defaultSeconds ≤ expiry.maxSeconds`, every rule's
+  `expiresSeconds ≤ expiry.maxSeconds`, no rule giving a class that always asks `auto` or
+  `notify`, commands-list entries of non-empty words with no shell metacharacter, and a batch
+  rule whose `maxWaitSeconds` is under the shortest expiry a request it batches can get; a
+  policy that breaks one is refused when loaded.
+- The classes that always ask are the irreversible effects (`external-send`, `deploy`,
+  `delete-data`, `spend`), the investor's decisions (`charter`, `funding`, `policy-change`), and
+  `remediation`. The schema refuses `auto` and `notify` for them; for `remediation` from
+  `autonomy-policy@1.1`, which adds it. A `1.0` policy is still read, and refused when loaded if
+  it gives `remediation` either. Readers accept 1.0 and 1.1.
 - A project policy constrains only the classes it names. The effective mode of a class is the
   strictest of the studio's rule and the project's (`auto` < `notify` < `ask` < `forbid`), so a
   looser project rule has no effect. For a class neither names, it is the stricter of the two
   `default`s.
 - `auto` and `notify` hold only while every check in `requires` passes; a failed check goes back
   to the lead as work to fix, never to the operator.
-- A command on the `commands` list (an exact command line, or a listed prefix followed by a
-  space) is classed by what it does, for example `workspace-write`; a project's list may only
-  narrow the studio's. Any other command is the `command` class. When the `command` class is
-  `forbid`, listed commands are forbidden too.
-- An approval request expires at its creation plus the rule's `expiresSeconds`, else
-  `expiry.defaultSeconds`, never more than `expiry.maxSeconds`.
+- A command whose argv equals a line of the `commands` list word for word (the line split on
+  single spaces), with no further arguments, is judged as `workspace-write`; a project's list may
+  only narrow the studio's. Matching is exact, never by prefix. Any other command is the
+  `command` class. When the `command` class is `forbid`, listed commands are forbidden too. An
+  argv word holding a shell metacharacter (`; & | $`, the backquote, `< > ( ) { } [ ] * ? ~`,
+  quotes, backslash, newline, carriage return, tab, NUL) is forbidden, listed or not.
+- An approval request expires at its creation plus the shortest `expiresSeconds` of the rules
+  that apply to its class (the studio's and the project's), else the stricter
+  `expiry.defaultSeconds`, never more than the stricter `expiry.maxSeconds`.
 - A `policy-change` is never made by a Worker: a new policy version takes effect only through an
   operator approval, so the safety layer never changes itself. Examples:
   [`autonomy-policy.studio.json`](../../schemas/examples/autonomy-policy.studio.json),
@@ -437,14 +453,22 @@ guesses.
   after the request is created, so what the operator was shown is what the verdict binds to. A
   changed proposal is a new request. `requester` names the work waiting on it (a run, session,
   project, or task), so the request is withdrawn when that work ends.
-- One request, one exact subject (INV-5). An operator verdict names the subject it saw; if the
-  subject changed since, the verdict is refused and the request is unchanged, so the requester
-  must withdraw it and ask anew.
+- One request, one exact subject (INV-5). Its subject names a `version`, unless it is an
+  `artifact` subject whose `ref` is a `sha256:` content id; the queue refuses another (the schema
+  cannot say so, as `common@1`'s subject keeps `version` optional). An operator verdict names the
+  subject it saw; if the subject changed since, the verdict is refused and the request is
+  unchanged, so the requester must withdraw it and ask anew.
+- It is queued only on an `ask` the policies loaded now give: `policy` names the `autonomy`
+  decision, which a policy made under the project's policy set as loaded, for the class the
+  action is judged as again when it is queued.
 - An approving verdict writes an `approval@1.x` artifact by `operator` on the same subject,
   referenced from `resolution.approval`.
 - Expiry is one transaction: the state becomes `rejected`, `resolution.cause` is `expired`, and an
   `approval` decision with outcome `denied:expired` is recorded. The waiting work resumes as
-  denied. A request is `withdrawn` (also `rejected`) when the work waiting on it ends first.
+  denied. A request is `withdrawn` (also `rejected`) when the work waiting on it ends first, or
+  when the loaded policies no longer ask for it: its policy is not current at its version, or its
+  class no longer asks (checked at load and on every sweep; the decision's decider is the rule
+  `approvals.policy` and its reason says what changed).
   Examples: [`approval-request.batched.json`](../../schemas/examples/approval-request.batched.json),
   [`approval-request.expired.json`](../../schemas/examples/approval-request.expired.json).
 
@@ -565,8 +589,9 @@ guesses.
 | `resources_usage` | client | usage records, filtered, with totals over every match |
 
 - A page holds at most 100 items; `next` is an opaque cursor.
-- A refused verdict (`unknown-request`, `already-resolved`, `expired`, `subject-changed`)
-  leaves its request unchanged; the other verdicts of the call still apply.
+- A refused verdict (`unknown-request`, `already-resolved`, `expired`, `subject-changed`, or
+  `failed`: the provider could not apply it, which it logs) leaves its request unchanged; the
+  other verdicts of the call still apply. `mcp-approvals` 1.1 adds `failed`.
 - Examples: [`mcp-board.claim.json`](../../schemas/examples/mcp-board.claim.json),
   [`mcp-board.charter.json`](../../schemas/examples/mcp-board.charter.json),
   [`mcp-approvals.decide.json`](../../schemas/examples/mcp-approvals.decide.json),

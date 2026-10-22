@@ -35,7 +35,7 @@
         # that targets this row replaces its whole config, so it carries the policies too
         # (`system check` names a missing or invalid one; with none valid, nothing is approved).
         policies:
-          - schema: 'autonomy-policy@1.0'
+          - schema: 'autonomy-policy@1.1'
             id: studio-default
             version: 1
             scope: studio

@@ -3,11 +3,11 @@
 import { Context } from '@deepseek-ai/cordis'
 import Artifacts from '@tsuuanmi/system-artifacts'
 import Store from '@tsuuanmi/system-store'
-import StoreApprovals from '../src/index.ts'
+import { ManualApprovals } from './manual.ts'
 
 const [path, requestId, subject, verdict, policies] = process.argv.slice(2) as [string, string, string, 'approved' | 'rejected', string]
 const ctx = new Context()
-const fibers = [ctx.plugin(Store, { path, busyTimeoutMs: 30_000 }), ctx.plugin(Artifacts, {}), ctx.plugin(StoreApprovals, { policies: JSON.parse(policies), sweepSeconds: 0 })]
+const fibers = [ctx.plugin(Store, { path, busyTimeoutMs: 30_000 }), ctx.plugin(Artifacts, {}), ctx.plugin(ManualApprovals, { policies: JSON.parse(policies) })]
 await Promise.all(fibers)
 process.on('message', (message) => {
   if (message !== 'go') return

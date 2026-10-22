@@ -3,15 +3,17 @@
  * ADR-0036). The autonomy policies are the operator's configuration, checked at load; requests are
  * `approval-request@1.0` records in the store, validated before every write and after every read,
  * and each change to one is one store transaction with the decision it names (INV-13). Only an
- * operator verdict approves; expiry and withdrawal only reject (INV-2, INV-5, INV-6).
+ * operator verdict approves; expiry and withdrawal only reject (INV-2, INV-5, INV-6). A request is
+ * queued only on an `ask` the loaded policies give again when it is made, and one they no longer
+ * ask for is withdrawn at load and on every sweep.
  * @module @tsuuanmi/system-approvals
  */
 import { randomUUID } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import {
-  type Action, type ApprovalRequest, Approvals, ApprovalsError, type ArtifactRef, type AutonomyPolicy, type AutonomyVerdict, MODES, type NewRequest,
-  type RequestState, type Subject, type Verdict, type VerdictResult,
+  type Action, type ActionClass, type ApprovalRequest, Approvals, ApprovalsError, type ArtifactRef, type AutonomyPolicy, type AutonomyVerdict, MODES,
+  type NewRequest, type RequestState, type Subject, type Verdict, type VerdictResult,
 } from '@tsuuanmi/system-approvals-core'
 import type {} from '@tsuuanmi/system-artifacts'
 import type {} from '@tsuuanmi/system-event-log'
@@ -24,9 +26,9 @@ import { registerTools } from './tools.ts'
 export { ACTION_CLASSES, PolicySet, policyProblems } from './policy.ts'
 
 export interface Config {
-  /** `autonomy-policy@1.0` records: exactly one studio policy, and project policies that narrow it. */
+  /** `autonomy-policy@1.x` records: exactly one studio policy, and project policies that narrow it. */
   policies: readonly AutonomyPolicy[]
-  /** How often the queue sweeps expired requests and batches open ones on its own, in seconds, and once at start; 0: only when called (default 60). */
+  /** How often the queue sweeps expired requests and batches open ones on its own, in seconds, and once at start (1 to 3600, default 60). */
   sweepSeconds?: number
 }
 
@@ -43,6 +45,7 @@ export const MAX_PAGE = 100
 /** Requests the sweep reads per statement; a protocol constant, not a deployment value. */
 const SWEEP_PAGE = 500
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$/
+const CONTENT_ID = /^sha256:[0-9a-f]{64}$/
 const OPEN: readonly RequestState[] = ['open', 'batched']
 /** Listing order: batched requests by batch, then the rest; within each, by expiry, then by insertion. */
 const ORDER = "batch_id IS NULL, COALESCE(batch_id, ''), expires_ms, seq"
@@ -64,6 +67,22 @@ const MIGRATIONS = [{
 const invalid = (message: string): ApprovalsError => new ApprovalsError('invalid', message)
 const isObject = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value)
 const sameSubject = (a: Subject, b: Subject): boolean => a.type === b.type && a.ref === b.ref && a.version === b.version
+/** INV-5: a request's subject is exact: it names a version, unless it is an artifact by its content id. */
+const exactSubject = (subject: unknown): boolean => isObject(subject)
+  && ((typeof subject.version === 'string' && subject.version !== '') || (subject.type === 'artifact' && typeof subject.ref === 'string' && CONTENT_ID.test(subject.ref)))
+const sameList = (a: unknown, b: readonly string[]): boolean => Array.isArray(a) && a.length === b.length && a.every((x, i) => x === b[i])
+
+/** The fields of a recorded `autonomy` decision that `request` checks. */
+interface AutonomyDecision {
+  decisionType?: string
+  outcome?: { option?: string; detail?: { actionClass?: unknown; policies?: unknown } }
+  decider?: { type?: string; id?: string; version?: string; hash?: string }
+}
+
+/** Who resolved a request that no verdict resolved, and why: the decider rule and the reason it records. */
+interface Withdrawal { rule: 'approvals.expiry' | 'approvals.withdraw' | 'approvals.policy'; why: string; before: string }
+const EXPIRED: Withdrawal = { rule: 'approvals.expiry', why: 'expired', before: 'it expired' }
+const WITHDRAWN: Withdrawal = { rule: 'approvals.withdraw', why: 'withdrawn', before: 'it was withdrawn' }
 const newId = (prefix: string): string => `${prefix}-${randomUUID().replaceAll('-', '').slice(0, 16)}`
 const encodeCursor = (key: [number, string, number, number]): string => Buffer.from(JSON.stringify(key)).toString('base64url')
 const decodeCursor = (cursor: string): [number, string, number, number] => {
@@ -88,10 +107,11 @@ export function checkConfig(config: Partial<Config> = {}): string[] {
 export class StoreApprovals extends Approvals {
   static inject = ['store', 'artifacts']
   static Config: z<Config> = z.object({
-    policies: z.array(z.any()).required().description('autonomy-policy@1.0 records: exactly one studio policy, and project policies that narrow it. '
-      + 'Checked at load against the schema and its load-time rules (one rule per action class; expiry.defaultSeconds and every rule\'s expiresSeconds within expiry.maxSeconds; '
-      + 'a project policy, one per project, narrowing the studio policy); an invalid set refuses the plugin, so nothing that needs a person runs (INV-2)'),
-    sweepSeconds: z.natural().max(3600).default(60).description('Seconds between the queue\'s own passes (expired requests rejected, then open ones batched), and one at start; 0 leaves both to the caller'),
+    policies: z.array(z.any()).required().description('autonomy-policy@1.x records: exactly one studio policy, and project policies that narrow it. '
+      + 'Checked at load against the schema and its load-time rules (one rule per action class; no auto or notify for a class that always asks; '
+      + 'expiry.defaultSeconds and every rule\'s expiresSeconds within expiry.maxSeconds; commands entries of non-empty words with no shell metacharacter; '
+      + 'a batch wait under the shortest expiry it batches; a project policy, one per project, narrowing the studio policy); an invalid set refuses the plugin, so nothing that needs a person runs (INV-2)'),
+    sweepSeconds: z.natural().min(1).max(3600).default(60).description('Seconds between the queue\'s own passes (expired requests rejected, requests the policy no longer asks for withdrawn, then open ones batched), and one at start; never off, so every request expires (INV-9)'),
   }) as unknown as z<Config>
 
   private readonly schemas = new SchemaRegistry()
@@ -102,10 +122,23 @@ export class StoreApprovals extends Approvals {
     // Checked before anything is written: an invalid set refuses the plugin, so no ctx.approvals
     // is provided, and an action that needs a person waits (fail-closed rule 5).
     this.set = PolicySet.load(config.policies, this.schemas)
+    const seconds = config.sweepSeconds ?? 60
+    if (!Number.isInteger(seconds) || seconds < 1 || seconds > 3600) throw new Error(`approvals: sweepSeconds must be a whole number of seconds from 1 to 3600, not ${seconds}: expiry is never off (INV-9)`)
     ctx.store.migrate('approvals', MIGRATIONS)
+    // At load, before any verdict: a request this policy set no longer asks for is withdrawn (S1).
+    this.withdrawStale(new Date())
+    this.clock(seconds)
+    ctx.inject(['mcp'], (c) => registerTools(c, this))
+  }
+
+  /**
+   * The queue's own clock: a sweep, then a batch, once at start (a restart is a sweep, INV-4) and
+   * every `seconds`, from the wall clock. Nothing else calls them in production; a test that names
+   * the times itself replaces this.
+   */
+  protected clock(seconds: number): void {
+    const ctx = this.ctx
     ctx.effect(() => {
-      const seconds = config.sweepSeconds ?? 60
-      if (!seconds) return () => {}
       let running: Promise<unknown> | undefined
       const tick = (): void => {
         if (running) return
@@ -128,7 +161,6 @@ export class StoreApprovals extends Approvals {
         await running
       }
     })
-    ctx.inject(['mcp'], (c) => registerTools(c, this))
   }
 
   // --- the policy ---
@@ -143,18 +175,18 @@ export class StoreApprovals extends Approvals {
 
   async check(action: Action): Promise<AutonomyVerdict> {
     this.validAction(action)
-    const { actionClass, rule: { policy, mode, named }, failedChecks, policies } = this.set.judge(action)
+    const { actionClass, rule: { policy, mode, named, raised }, failedChecks, policies, forbidden } = this.set.judge(action)
     const source = named ? `${policy.id}'s rule for ${actionClass}` : `${policy.id}'s default, as no rule of it names ${actionClass}`
+    const reason = (m: typeof mode): string => forbidden ? (m === mode ? `${forbidden}: forbidden whatever a rule says` : `not ${m}: ${forbidden}`)
+      : raised ? (m === mode ? `${source} says ${raised}, raised to ask: ${actionClass} always asks` : rank(m) < rank(mode) ? `not ${m}: ${actionClass} always asks` : `not ${m}: nothing that applies to ${actionClass} is that strict`)
+      : m === mode ? `the strictest that applies is ${source}`
+      : rank(m) < rank(mode) ? `not ${m}: laxer than ${source} (${mode}), the strictest that applies`
+      : `not ${m}: nothing that applies to ${actionClass} is that strict`
     const decision = this.ctx.artifacts.recordDecision({
       schema: 'decision@1.4', decisionType: 'autonomy', question: `Which mode does the policy give a ${action.class} action?`, inputs: [],
-      candidates: MODES.map((m) => ({
-        option: m, selected: m === mode,
-        reasons: [m === mode ? `the strictest that applies is ${source}`
-          : rank(m) < rank(mode) ? `not ${m}: laxer than ${source} (${mode}), the strictest that applies`
-          : `not ${m}: nothing that applies to ${actionClass} is that strict`],
-      })),
-      decider: { type: 'policy', id: policy.id, version: String(policy.version) },
-      outcome: { option: mode, detail: { actionClass, policies: policies.map((p) => p.id), ...(failedChecks.length ? { failedChecks } : {}) } }, deterministic: true,
+      candidates: MODES.map((m) => ({ option: m, selected: m === mode, reasons: [reason(m)] })),
+      decider: { type: 'policy', id: policy.id, version: String(policy.version), hash: this.set.hash(action.projectId) },
+      outcome: { option: mode, detail: { actionClass, policies: policies.map((p) => p.id), ...(failedChecks.length ? { failedChecks } : {}), ...(forbidden ? { forbidden } : {}) } }, deterministic: true,
     }, { producer: { type: 'policy', ref: policy.id } })
     return { mode, ...(failedChecks.length ? { failedChecks } : {}), policy: { id: policy.id, version: policy.version }, decision: decision.id as ArtifactRef }
   }
@@ -166,9 +198,13 @@ export class StoreApprovals extends Approvals {
     if (!isObject(request) || !isObject(request.verdict) || !isObject(request.action) || !isObject(request.requester)) throw invalid('a request has a subject, an action, a requester, and the verdict that asked')
     const projectId = request.requester.projectId
     if (projectId !== undefined && typeof projectId !== 'string') throw invalid('requester.projectId is not a string')
+    if (!ACTION_CLASSES.includes(request.action.class)) throw invalid(`${String(request.action.class)} is not an action class`)
+    if (request.command !== undefined && (!Array.isArray(request.command) || request.command.some((word) => typeof word !== 'string'))) throw invalid('command must be an argv: a list of strings')
+    if (!exactSubject(request.subject)) throw invalid('the subject names no version: a request binds to an exact subject (INV-5), a version, or an artifact subject by its sha256 content id')
     return this.ctx.store.transaction(() => {
-      // Inside the transaction that writes the request: the decision it names is recorded and says ask.
-      const policy = this.askedBy(request.verdict, request.action.class)
+      // Inside the transaction that writes the request: the decision it names is this provider's,
+      // under the policies loaded now, and judging the action again says ask (INV-2).
+      const policy = this.askedBy(request, projectId)
       const expiresMs = when.getTime() + this.set.expirySeconds(request.action.class, projectId) * 1000
       const created: ApprovalRequest = {
         schema: 'approval-request@1.0', requestId: newId('apr'), state: 'open',
@@ -245,21 +281,31 @@ export class StoreApprovals extends Approvals {
     verdicts.forEach((v, i) => this.validVerdict(v, i))
     // A stored record that fails its schema refuses the whole call before any verdict applies.
     for (const v of verdicts) this.read(v.requestId)
-    // Each verdict is its own transaction: a refused one changes nothing, and the others still apply.
-    return verdicts.map((v) => this.ctx.store.transaction((): VerdictResult => {
-      const request = this.read(v.requestId)?.request
-      if (!request) return { requestId: v.requestId, state: 'rejected', refused: 'unknown-request' }
-      if (request.resolution) return { requestId: v.requestId, state: request.state, refused: 'already-resolved' }
-      if (Date.parse(request.expiresAt) <= when.getTime()) return { requestId: v.requestId, state: request.state, refused: 'expired' }
-      if (!sameSubject(request.subject, v.subject)) return { requestId: v.requestId, state: request.state, refused: 'subject-changed' }
-      // INV-5: the verdict is written on the request's own subject, the one the operator saw.
-      const approval = this.ctx.artifacts.put({
-        kind: 'approval', bodySchema: 'approval@1.0', body: { schema: 'approval@1.0', subject: request.subject, verdict: v.verdict, by: 'operator', ...(v.note ? { note: v.note } : {}) },
-        classification: request.classification === 'local-private' ? 'local-private' : 'operator-shared', producer: { type: 'operator', ref: 'operator' }, subject: request.subject,
-      }).id as ArtifactRef
-      const resolved = this.resolve(request, 'verdict', v.verdict, when, approval)
-      return { requestId: v.requestId, state: resolved.state, approval }
-    }))
+    // Each verdict is its own transaction: a refused one changes nothing, and the others still
+    // apply. One that fails (a busy store, a write that went stale) is reported as failed, never
+    // hidden behind an error that drops the outcomes of the others.
+    return verdicts.map((v) => {
+      try {
+        return this.ctx.store.transaction((): VerdictResult => {
+          const request = this.read(v.requestId)?.request
+          if (!request) return { requestId: v.requestId, state: 'rejected', refused: 'unknown-request' }
+          if (request.resolution) return { requestId: v.requestId, state: request.state, refused: 'already-resolved' }
+          if (Date.parse(request.expiresAt) <= when.getTime()) return { requestId: v.requestId, state: request.state, refused: 'expired' }
+          if (!sameSubject(request.subject, v.subject)) return { requestId: v.requestId, state: request.state, refused: 'subject-changed' }
+          // INV-5: the verdict is written on the request's own subject, the one the operator saw.
+          const approval = this.ctx.artifacts.put({
+            kind: 'approval', bodySchema: 'approval@1.0', body: { schema: 'approval@1.0', subject: request.subject, verdict: v.verdict, by: 'operator', ...(v.note ? { note: v.note } : {}) },
+            classification: request.classification === 'local-private' ? 'local-private' : 'operator-shared', producer: { type: 'operator', ref: 'operator' }, subject: request.subject,
+          }).id as ArtifactRef
+          const resolved = this.resolve(request, 'verdict', v.verdict, when, approval)
+          return { requestId: v.requestId, state: resolved.state, approval }
+        })
+      } catch (error) {
+        this.ctx.logger.warn(`approvals: the verdict on ${v.requestId} was not applied, and nothing of it changed`)
+        this.ctx.logger.warn(error)
+        return { requestId: v.requestId, state: this.storedState(v.requestId), refused: 'failed' }
+      }
+    })
   }
 
   async withdraw(requestId: string, at: Date = new Date()): Promise<ApprovalRequest> {
@@ -267,26 +313,41 @@ export class StoreApprovals extends Approvals {
     return this.ctx.store.transaction(() => {
       const request = typeof requestId === 'string' ? this.read(requestId)?.request : undefined
       if (!request) throw new ApprovalsError('unknown-request', `no approval request ${String(requestId)}`)
-      return request.resolution ? request : this.resolve(request, 'withdrawn', 'withdrawn', when)
+      return request.resolution ? request : this.resolve(request, 'withdrawn', 'withdrawn', when, undefined, WITHDRAWN)
     })
   }
 
-  /** Reject every request unanswered at `at`, each in its own transaction; one that fails is logged and left for the next sweep. Idempotent. */
+  /**
+   * Reject every request unanswered at `at`, then withdraw every open one the loaded policy no
+   * longer asks for ({@link withdrawStale}), each in its own transaction; one that fails is logged
+   * and left for the next sweep. Idempotent.
+   */
   async sweep(at: Date): Promise<ApprovalRequest[]> {
     const when = this.instant(at)
-    const expired: ApprovalRequest[] = []
+    const expired = this.pass('expires_ms <= ?', when, (request) => Date.parse(request.expiresAt) > when.getTime() ? undefined : this.resolve(request, 'expired', 'denied:expired', when, undefined, EXPIRED))
+    return [...expired, ...this.withdrawStale(when)]
+  }
+
+  // --- writes ---
+
+  /**
+   * Run `move` on every unresolved request matching `where` (one `?`, bound to `at`), a page at a
+   * time, each in its own transaction that re-reads the request first; one that fails is logged and
+   * left for the next pass.
+   */
+  private pass(where: string, at: Date, move: (request: ApprovalRequest) => ApprovalRequest | undefined): ApprovalRequest[] {
+    const moved: ApprovalRequest[] = []
     let after = 0
     for (;;) {
-      const page = this.ctx.store.db.prepare(`SELECT seq, request_id FROM approval_requests WHERE state IN ('open', 'batched') AND expires_ms <= ? AND seq > ? ORDER BY seq LIMIT ${SWEEP_PAGE}`)
-        .all(when.getTime(), after) as Array<{ seq: number; request_id: string }>
+      const page = this.ctx.store.db.prepare(`SELECT seq, request_id FROM approval_requests WHERE state IN ('open', 'batched') AND ${where} AND seq > ? ORDER BY seq LIMIT ${SWEEP_PAGE}`)
+        .all(at.getTime(), after) as Array<{ seq: number; request_id: string }>
       for (const { request_id: requestId } of page) {
         try {
-          const rejected = this.ctx.store.transaction(() => {
+          const done = this.ctx.store.transaction(() => {
             const request = this.read(requestId)?.request
-            if (!request || request.resolution || Date.parse(request.expiresAt) > when.getTime()) return undefined
-            return this.resolve(request, 'expired', 'denied:expired', when)
+            return !request || request.resolution ? undefined : move(request)
           })
-          if (rejected) expired.push(rejected)
+          if (done) moved.push(done)
         } catch (error) {
           this.skipped(requestId, error)
         }
@@ -294,10 +355,21 @@ export class StoreApprovals extends Approvals {
       if (page.length < SWEEP_PAGE) break
       after = Number(page.at(-1)!.seq)
     }
-    return expired
+    return moved
   }
 
-  // --- writes ---
+  /**
+   * Withdraw every unexpired open request the loaded policy set no longer asks for (cause
+   * `withdrawn`, decider rule `approvals.policy`, the reason: the policy changed): at load and on
+   * every sweep, so a verdict never approves what the policy now forbids or lets run (S1).
+   */
+  private withdrawStale(at: Date): ApprovalRequest[] {
+    return this.pass('expires_ms > ?', at, (request) => {
+      if (Date.parse(request.expiresAt) <= at.getTime()) return undefined
+      const why = this.staleness(request)
+      return why ? this.resolve(request, 'withdrawn', 'withdrawn', at, undefined, { rule: 'approvals.policy', why: `the policy changed: ${why}`, before: 'the policy changed' }) : undefined
+    })
+  }
 
   /** Batch one project's open requests, in one transaction with the `approvals.batched` events. */
   private batchGroup(projectId: string | null, at: Date): string[] {
@@ -320,16 +392,20 @@ export class StoreApprovals extends Approvals {
     })
   }
 
-  /** Resolve a request with its `approval` decision (inside the caller's transaction): every candidate says why it was or was not the outcome. */
-  private resolve(request: ApprovalRequest, cause: 'verdict' | 'expired' | 'withdrawn', option: string, at: Date, approval?: ArtifactRef): ApprovalRequest {
+  /**
+   * Resolve a request with its `approval` decision (inside the caller's transaction): every
+   * candidate says why it was or was not the outcome. A resolution no verdict made names its
+   * decider rule and reason (`by`).
+   */
+  private resolve(request: ApprovalRequest, cause: 'verdict' | 'expired' | 'withdrawn', option: string, at: Date, approval?: ArtifactRef, by?: Withdrawal): ApprovalRequest {
     const verdicts = ['approved', 'rejected']
     const lost = (o: string): string => cause === 'verdict' ? (verdicts.includes(o) ? `the operator's verdict is ${option}` : 'a verdict came first')
       : cause === 'expired' ? (o === 'withdrawn' ? 'it was not withdrawn before it expired' : 'no verdict came before it expired')
-      : o === 'denied:expired' ? 'it was withdrawn before it expired' : 'it was withdrawn before a verdict'
+      : o === 'denied:expired' ? `${by!.before} before it expired` : `${by!.before} before a verdict`
     const decision = this.ctx.artifacts.recordDecision({
       schema: 'decision@1.4', decisionType: 'approval', question: `Is approval request ${request.requestId} approved?`, inputs: [request.policy.decision, ...(approval ? [approval] : [])],
-      candidates: ['approved', 'rejected', 'denied:expired', 'withdrawn'].map((o) => ({ option: o, selected: o === option, reasons: [o === option ? cause : `not ${o}: ${lost(o)}`] })),
-      decider: cause === 'verdict' ? { type: 'operator', id: 'operator', version: '1' } : { type: 'rule', id: cause === 'expired' ? 'approvals.expiry' : 'approvals.withdraw', version: '1' },
+      candidates: ['approved', 'rejected', 'denied:expired', 'withdrawn'].map((o) => ({ option: o, selected: o === option, reasons: [o === option ? (by?.why ?? cause) : `not ${o}: ${lost(o)}`] })),
+      decider: cause === 'verdict' ? { type: 'operator', id: 'operator', version: '1' } : { type: 'rule', id: by!.rule, version: '1' },
       outcome: { option, detail: { requestId: request.requestId } }, deterministic: cause !== 'verdict',
     }, { producer: { type: cause === 'verdict' ? 'operator' : 'system', ref: 'approvals' }, classification: request.classification === 'local-private' ? 'local-private' : 'operator-shared' })
     const next: ApprovalRequest = {
@@ -367,18 +443,62 @@ export class StoreApprovals extends Approvals {
   }
 
   /**
-   * The policy of the recorded `autonomy` decision a verdict names, when that decision says ask;
-   * otherwise `not-asked`. The policy comes from the decision, never from the caller's word for it.
+   * The policy of the recorded `autonomy` decision a request's verdict cites, when the policies
+   * loaded now still ask for its action; otherwise `not-asked`. The decision must be a policy's own
+   * (`producer` and `decider` a policy), say ask, name the verdict's policy, be made under the
+   * project's policy set as loaded (each policy current at its version, the set's hash, its
+   * policies), and judging the action again (its class, `command`, and project) must say ask for
+   * the class the decision names (B1, S1). The policy comes from the decision, never from the
+   * caller's word for it.
    */
-  private askedBy(verdict: AutonomyVerdict, actionClass: unknown): ApprovalRequest['policy'] {
-    const notAsked = (why: string) => new ApprovalsError('not-asked', `${String(actionClass)}: ${why}`)
+  private askedBy(request: NewRequest, projectId: string | undefined): ApprovalRequest['policy'] {
+    const { verdict } = request
+    const notAsked = (why: string) => new ApprovalsError('not-asked', `${String(request.action.class)}: ${why}`)
     if (verdict.mode !== 'ask') throw notAsked(`the policy verdict is ${String(verdict.mode)}, not ask`)
     const envelope = typeof verdict.decision === 'string' ? this.ctx.artifacts.get(verdict.decision) : undefined
-    const body = envelope?.kind === 'decision' ? envelope.body as { decisionType?: string; outcome?: { option?: string }; decider?: { id?: string; version?: string } } : undefined
+    const body = envelope?.kind === 'decision' ? envelope.body as AutonomyDecision : undefined
     if (body?.decisionType !== 'autonomy' || body.outcome?.option !== 'ask') throw notAsked('the verdict is not a recorded autonomy decision that says ask')
     const policy = { id: String(body.decider?.id), version: Number(body.decider?.version) }
+    if (body.decider?.type !== 'policy' || envelope!.producer?.type !== 'policy' || envelope!.producer.ref !== policy.id) throw notAsked('the decision it cites was not made by a policy')
     if (!isObject(verdict.policy) || verdict.policy.id !== policy.id || verdict.policy.version !== policy.version) throw notAsked('the verdict names another policy than the decision it cites')
+    const of = projectId === undefined ? 'the studio' : `project ${projectId}`
+    if (!this.set.current(policy, projectId)) throw notAsked(`the decision it cites is ${policy.id}'s at version ${policy.version}, which is not a policy of ${of} now`)
+    if (!sameList(body.outcome.detail?.policies, this.set.of(projectId).map((p) => p.id)) || body.decider.hash !== this.set.hash(projectId)) {
+      throw notAsked(`the decision it cites was made under other policies than ${of}'s, as loaded now`)
+    }
+    const judged = this.set.judge({ class: request.action.class, ...(projectId !== undefined ? { projectId } : {}), ...(request.command !== undefined ? { command: request.command } : {}) })
+    if (judged.rule.mode !== 'ask') throw notAsked(`the policy now says ${judged.rule.mode}${judged.forbidden ? ` (${judged.forbidden})` : ''}`)
+    if (body.outcome.detail?.actionClass !== judged.actionClass || judged.rule.policy.id !== policy.id) {
+      throw notAsked(`the decision it cites is for ${String(body.outcome.detail?.actionClass)} by ${policy.id}, but the action is judged as ${judged.actionClass} by ${judged.rule.policy.id}`)
+    }
     return { ...policy, decision: verdict.decision }
+  }
+
+  /**
+   * Why the loaded policy set no longer asks for an open request, or undefined while it does: its
+   * policy is not current at its version, or its class, or the class its decision judged it as (a
+   * listed command's, whose argv the record does not keep), no longer asks.
+   */
+  private staleness(request: ApprovalRequest): string | undefined {
+    const projectId = request.requester.projectId
+    if (!this.set.current(request.policy, projectId)) return `${request.policy.id} at version ${request.policy.version} is not a policy of ${projectId === undefined ? 'the studio' : `project ${projectId}`} now`
+    const judgedAs = (this.ctx.artifacts.get(request.policy.decision)?.body as AutonomyDecision | undefined)?.outcome?.detail?.actionClass
+    const classes = new Set<ActionClass>([request.action.class, ...(ACTION_CLASSES.includes(judgedAs as ActionClass) ? [judgedAs as ActionClass] : [])])
+    for (const actionClass of classes) {
+      const { mode } = this.set.effective(actionClass, projectId)
+      if (mode !== 'ask') return `it now gives ${actionClass} ${mode}`
+    }
+    return undefined
+  }
+
+  /** A request's stored state, without reading its record; `open` when even that fails. */
+  private storedState(requestId: string): RequestState {
+    try {
+      const row = this.ctx.store.db.prepare('SELECT state FROM approval_requests WHERE request_id = ?').get(requestId) as { state: RequestState } | undefined
+      return row ? row.state : 'rejected'
+    } catch {
+      return 'open'
+    }
   }
 
   private where(filter: ListFilter): { where: string; params: Array<string | null> } {
