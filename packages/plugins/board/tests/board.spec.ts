@@ -132,10 +132,11 @@ const result = (ctx: Context, text: string): ArtifactRef => ctx.artifacts.put({
   kind: 'report', bodySchema: 'agent-result@1.0', classification: 'operator-shared', producer: { type: 'worker', ref: 'test' },
   body: { schema: 'agent-result@1.0', worker: 'w', runtime: 'fake', runId: 'r', promptHash: `sha256:${'0'.repeat(64)}`, sandbox: 'read-only', text },
 }).id as ArtifactRef
-const acceptance = (ctx: Context, option: 'accept' | 'reject', on: ArtifactRef): ArtifactRef => ctx.artifacts.recordDecision({
+/** An `acceptance` decision on `taskId`'s result `on` with `subject` (default HEAD), reporting `checks`. */
+const acceptance = (ctx: Context, option: 'accept' | 'reject', taskId: string, on: ArtifactRef, subject: Subject = HEAD, checks?: Action['checks']): ArtifactRef => ctx.artifacts.recordDecision({
   decisionType: 'acceptance', question: `Does ${on} satisfy the criteria?`, inputs: [on],
   candidates: [{ option: 'accept', selected: option === 'accept', reasons: ['checked'] }, { option: 'reject', selected: option === 'reject', reasons: ['checked'] }],
-  decider: { type: 'rule', id: 'acceptance.test', version: '1' }, outcome: { option }, deterministic: true,
+  decider: { type: 'rule', id: 'acceptance.test', version: '1' }, outcome: { option, detail: { taskId, subject, ...(checks ? { checks } : {}) } }, deterministic: true,
 }, { producer: { type: 'policy', ref: 'test' } }).id as ArtifactRef
 const open = (ctx: Context, projectId: string): Promise<ApprovalRequest[]> => ctx.approvals.list({ projectId, states: ['open', 'batched'] })
 
@@ -345,7 +346,7 @@ describe('ctx.board (store-backed): the approval queue', () => {
     const requestId = (await ctx.board.task(t.taskId))!.waiting!.approvalRequest!
     approvals().withdrawDown = true
     const r = result(ctx, 'finished')
-    expect(await ctx.board.reconcileRun(t.taskId, 'run-1', { status: 'completed', result: { artifacts: [r], subject: HEAD }, acceptance: acceptance(ctx, 'accept', r) }, at(11)))
+    expect(await ctx.board.reconcileRun(t.taskId, 'run-1', { status: 'completed', result: { artifacts: [r], subject: HEAD }, acceptance: acceptance(ctx, 'accept', t.taskId, r) }, at(11)))
       .toMatchObject({ state: 'done', result: { artifacts: [r] } })
     expect((await ctx.approvals.get(requestId))?.state).toBe('open')
     // The operator approving the orphan, or its expiry, moves nothing: no task waits on it.
@@ -437,15 +438,31 @@ describe('ctx.board (store-backed): the protocol\'s guards', () => {
     await ctx.board.start(t.taskId, generation, { runId: 'run-1' }, at(3))
     const mine = result(ctx, 'mine')
     await ctx.board.submit(t.taskId, generation, { artifacts: [mine], subject: HEAD }, at(4))
-    expect(await failureOf(ctx.board.accept(t.taskId, acceptance(ctx, 'accept', result(ctx, 'another')), at(5)))).toBe('invalid')
+    expect(await failureOf(ctx.board.accept(t.taskId, acceptance(ctx, 'accept', t.taskId, result(ctx, 'another')), at(5)))).toBe('invalid')
     const odd = ctx.artifacts.recordDecision({
       decisionType: 'acceptance', question: 'q', inputs: [mine], candidates: [{ option: 'maybe', selected: true, reasons: ['unsure'] }],
-      decider: { type: 'rule', id: 'acceptance.test', version: '1' }, outcome: { option: 'maybe' }, deterministic: true,
+      decider: { type: 'rule', id: 'acceptance.test', version: '1' }, outcome: { option: 'maybe', detail: { taskId: t.taskId, subject: HEAD } }, deterministic: true,
     }, { producer: { type: 'policy', ref: 'test' } }).id as ArtifactRef
     expect(await failureOf(ctx.board.accept(t.taskId, odd, at(5)))).toBe('invalid')
     expect((await ctx.board.task(t.taskId))?.state).toBe('review')
     expect(await failureOf(ctx.board.submit(t.taskId, generation, { artifacts: [`sha256:${'9'.repeat(64)}`], subject: HEAD }, at(5)))).toBe('invalid-transition')
-    expect(await ctx.board.accept(t.taskId, acceptance(ctx, 'accept', mine), at(5))).toMatchObject({ state: 'done' })
+    expect(await ctx.board.accept(t.taskId, acceptance(ctx, 'accept', t.taskId, mine), at(5))).toMatchObject({ state: 'done' })
+  })
+
+  it('records the required checks still to run on an auto task\'s readiness decision, and asks the policy with the checks an acceptance reports (S3)', async () => {
+    const { ctx } = await boot()
+    await active(ctx)
+    const branch: Subject = { type: 'git-head', ref: 'refs/heads/kernel', version: 'abc123' }
+    const t = await ready(ctx, task('p2', 'w', { actionClass: 'workspace-write', writes: { type: 'git-head', ref: 'refs/heads/kernel' } }))
+    expect(ctx.artifacts.get(t.lastDecision!)?.body).toMatchObject({ decisionType: 'board', outcome: { option: 'ready', detail: { mode: 'auto', pendingChecks: ['tests', 'lint'] } } })
+    const { generation } = await ctx.board.claim(t.taskId, 'lead', 600_000, at(3))
+    await ctx.board.start(t.taskId, generation, { runId: 'run-1' }, at(3))
+    const r = result(ctx, 'kernel')
+    await ctx.board.submit(t.taskId, generation, { artifacts: [r], subject: branch }, at(4))
+    const refused = await ctx.board.accept(t.taskId, acceptance(ctx, 'accept', t.taskId, r, branch, { tests: true }), at(5)).catch((e: unknown) => e as BoardError)
+    expect(refused).toMatchObject({ failure: 'invalid', message: expect.stringMatching(/required check\(s\) lint not passed/) })
+    expect(await failureOf(ctx.board.accept(t.taskId, acceptance(ctx, 'accept', t.taskId, r, branch, { tests: 'yes' } as unknown as Action['checks']), at(5)))).toBe('invalid')
+    expect(await ctx.board.accept(t.taskId, acceptance(ctx, 'accept', t.taskId, r, branch, { tests: true, lint: true }), at(5))).toMatchObject({ state: 'done' })
   })
 
   it('checks a lost run\'s reported outcome before it withdraws the request the task waits on, so a refused report changes nothing (INV-4)', async () => {
@@ -458,11 +475,11 @@ describe('ctx.board (store-backed): the protocol\'s guards', () => {
     const lost = (await ctx.board.task(t.taskId))!
     expect(lost.waiting).toMatchObject({ reason: 'reconciliation-failed' })
     const r = result(ctx, 'finished')
-    const elsewhere = acceptance(ctx, 'accept', result(ctx, 'another result'))
+    const elsewhere = acceptance(ctx, 'accept', t.taskId, result(ctx, 'another result'))
     expect(await failureOf(ctx.board.reconcileRun(t.taskId, 'run-1', { status: 'completed', result: { artifacts: [r], subject: HEAD }, acceptance: elsewhere }, at(11)))).toBe('invalid')
     expect((await ctx.approvals.get(lost.waiting!.approvalRequest!))?.state).toBe('open')
     expect(await ctx.board.task(t.taskId)).toEqual(lost)
-    expect(await ctx.board.reconcileRun(t.taskId, 'run-1', { status: 'completed', result: { artifacts: [r], subject: HEAD }, acceptance: acceptance(ctx, 'reject', r) }, at(11)))
+    expect(await ctx.board.reconcileRun(t.taskId, 'run-1', { status: 'completed', result: { artifacts: [r], subject: HEAD }, acceptance: acceptance(ctx, 'reject', t.taskId, r) }, at(11)))
       .toMatchObject({ state: 'ready', attempts: { count: 1 } })
     expect(ctx.leases.current(`board-task:${t.taskId}`)).toBeUndefined()
   })
@@ -611,7 +628,7 @@ describe('ctx.board (store-backed): board_* MCP tools', () => {
     await ctx.board.start(taskId, 1, { runId: 'run-1' })
     const r = result(ctx, 'kernel')
     expect(await ok(call('board_complete', { taskId, generation: 1, artifacts: [r], subject: HEAD, files: ['src/kernel.ts'], next: 'vectorize' }))).toMatchObject({ taskId, state: 'review' })
-    await ctx.board.accept(taskId, acceptance(ctx, 'accept', r))
+    await ctx.board.accept(taskId, acceptance(ctx, 'accept', taskId, r))
 
     const brief = await ok(call('board_brief', { projectId: 'p2' }))
     expect(brief).toMatchObject({ projectId: 'p2', intent: CHARTER.intent, state: 'active', milestone: 'm1', tasks: { done: 1 }, readFirst: [{ ref: r }] })
@@ -701,7 +718,7 @@ describe('ctx.board (store-backed): the TASKS.md projection', () => {
     await ctx.board.start(done.taskId, generation, { runId: 'run-1' }, at(3))
     const r = result(ctx, 'baseline')
     await ctx.board.submit(done.taskId, generation, { artifacts: [r], subject: HEAD }, at(3))
-    await ctx.board.accept(done.taskId, acceptance(ctx, 'accept', r), at(3))
+    await ctx.board.accept(done.taskId, acceptance(ctx, 'accept', done.taskId, r), at(3))
     const held = await ready(ctx, task('p2', 'Kernel', { goal: 'Write the kernel.\n## Not a heading of the board', dependsOn: [done.taskId] }), at(4))
     ;({ generation } = await ctx.board.claim(held.taskId, 'lead', 600_000, at(4)))
     const asks = await ready(ctx, task('p2', 'Asks'), at(4))

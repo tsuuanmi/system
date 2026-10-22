@@ -10,7 +10,7 @@
 import { randomUUID } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
-import type { ApprovalRequest, AutonomyVerdict, NewRequest } from '@tsuuanmi/system-approvals-core'
+import type { ApprovalRequest, AutonomyVerdict, Check, NewRequest } from '@tsuuanmi/system-approvals-core'
 import type {} from '@tsuuanmi/system-artifacts'
 import {
   type ActionClass, type ArtifactRef, Board, BoardError, type BoardTask, type CancelReason, type Charter, type CharterInput, type Claim, type Project, type ProjectState, type RunOutcome, type Subject, type TaskInput, type TaskState, TERMINAL, type WaitReason,
@@ -90,6 +90,8 @@ type Changes<T> = { [K in keyof T]?: T[K] | undefined }
 interface Stored { task: BoardTask; token?: string; ttlMs?: number }
 /** A project as stored: its record and its pending charter request, with the version it asks about and when it expires. */
 interface StoredProject { project: Project; request?: string; version?: number; expiresAt?: string }
+/** An `acceptance` decision bound to a task's result: its outcome, whether the operator made it, and the checks it reports. */
+interface Acceptance { option: 'accept' | 'reject'; operator: boolean; checks?: Partial<Record<Check, boolean>> }
 /** A charter request settled by the sweep: the project as it now is, and the tasks it cancelled. */
 interface Settled { project: Project; cancelled: BoardTask[] }
 /** What a move changes; `lease` is set when it takes or renews the holder's lease. */
@@ -97,6 +99,9 @@ interface Move { changes: Changes<BoardTask>; lease?: { token: string; ttlMs: nu
 /** Why a decision went one way: the chosen move, and why the task (or project) did not stay where it was. */
 interface Why { from: string; to: string; why: string; whyNot: string; inputs?: ArtifactRef[]; detail?: Record<string, unknown> }
 
+/** The checks a policy rule can require (`autonomy-policy@1.0`). */
+const CHECKS: readonly Check[] = ['tests', 'typecheck', 'lint', 'schema', 'quote-check', 'review']
+const isObject = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value)
 const resourceOf = (taskId: string): string => `board-task:${taskId}`
 const charterRef = (projectId: string, version: number): string => `project:${projectId}:charter:${version}`
 /** The charter's subject version: the sha256 of its canonical JSON without its approval (reference/schemas.md#project). */
@@ -520,11 +525,11 @@ export class StoreBoard extends Board {
   }
 
   async accept(taskId: string, acceptance: ArtifactRef, at: Date = new Date()) {
-    return this.ctx.store.transaction(() => {
-      const current = this.taskOf(taskId)
-      this.expectState(current.task, 'review')
-      return this.commit(current, this.acceptanceMove(current.task, current.task.result!, acceptance, at), at)
-    })
+    const before = this.taskOf(taskId).task
+    this.expectState(before, 'review')
+    const read = this.readAcceptance(before, before.result!, acceptance)
+    await this.bindChecks(before, read, acceptance)
+    return this.commitLater(before, at, undefined, (current) => this.acceptanceMove(current.task, current.task.result!, acceptance, read, at))
   }
 
   async reconcileRun(taskId: string, runId: string, outcome: RunOutcome, at: Date = new Date()) {
@@ -535,11 +540,12 @@ export class StoreBoard extends Board {
     if (before.run?.runId !== runId) throw new BoardError('invalid', `${taskId} recorded run ${before.run?.runId ?? '(none)'}, not ${runId}`)
     if (outcome.status !== 'completed' && outcome.status !== 'failed') throw new BoardError('invalid', 'a run is reported completed or failed; an unknown outcome is never reported')
     // Checked before anything moves, so a report that is refused changes nothing.
-    if (outcome.status === 'completed') this.acceptanceMove(before, outcome.result, outcome.acceptance, at, false)
+    const read = outcome.status === 'completed' ? this.readAcceptance(before, outcome.result, outcome.acceptance) : undefined
+    if (outcome.status === 'completed') await this.bindChecks(before, read!, outcome.acceptance)
     const pending = before.waiting?.approvalRequest
     await this.reachable(pending ? [pending] : [])
     const moved = this.commitLater(before, at, undefined, (current) => {
-      if (outcome.status === 'completed') return this.acceptanceMove(current.task, outcome.result, outcome.acceptance, at)
+      if (outcome.status === 'completed') return this.acceptanceMove(current.task, outcome.result, outcome.acceptance, read!, at)
       const { task } = current
       const { project } = this.projectOf(task.projectId)
       const left = task.attempts.count < task.attempts.max
@@ -927,13 +933,16 @@ export class StoreBoard extends Board {
 
   // --- moves ---
 
+  /** Ready on an auto or notify verdict; its required checks that have not run yet bind at acceptance (S3), so they are recorded as pending. */
   private readyMove(project: Project, task: BoardTask, verdict: AutonomyVerdict, at: Date, why: string): Move {
+    const pending = verdict.failedChecks ?? []
     return {
       changes: {
         state: 'ready', holder: undefined, run: undefined, waiting: undefined,
         lastDecision: this.decision(project, task, {
-          from: task.state, to: 'ready', why, whyNot: `the autonomy decision ${verdict.decision} says ${verdict.mode}, which needs no person`,
-          inputs: [verdict.decision], detail: { actionClass: task.actionClass, mode: verdict.mode },
+          from: task.state, to: 'ready', why: pending.length ? `${why}; its required checks (${pending.join(', ')}) have not run yet and bind at acceptance` : why,
+          whyNot: `the autonomy decision ${verdict.decision} says ${verdict.mode}, which needs no person`,
+          inputs: [verdict.decision], detail: { actionClass: task.actionClass, mode: verdict.mode, ...(pending.length ? { pendingChecks: pending } : {}) },
         }, at),
       },
     }
@@ -957,21 +966,58 @@ export class StoreBoard extends Board {
   }
 
   /**
-   * The move an `acceptance` decision makes on a result: done when it accepts, else another attempt
-   * or a wait for input. Refused (`invalid`) unless it is an `acceptance` decision on that result.
-   * With `apply` false it only checks.
+   * Read an `acceptance` decision on `result`, refused (`invalid`) unless it binds to this task's
+   * exact result (rule 5, INV-5): an `acceptance` decision whose `outcome.detail` names the task
+   * (`taskId`) and the result's exact subject (`subject`, version included), whose inputs hold every
+   * artifact of the result (and its digest), and whose outcome is `accept` or `reject`. The checks
+   * it reports are `outcome.detail.checks`; it is the operator's when both its decider and its
+   * envelope's producer are the operator.
    */
-  private acceptanceMove(task: BoardTask, result: NonNullable<BoardTask['result']>, acceptance: ArtifactRef, at: Date, apply = true): Move {
+  private readAcceptance(task: BoardTask, result: NonNullable<BoardTask['result']>, acceptance: ArtifactRef): Acceptance {
     this.knownResult(result)
     const envelope = this.ctx.artifacts.get(acceptance)
-    const body = envelope?.kind === 'decision' ? envelope.body as { decisionType?: string; inputs?: string[]; outcome?: { option?: string } } : undefined
+    const body = envelope?.kind === 'decision'
+      ? envelope.body as { decisionType?: string; inputs?: string[]; decider?: { type?: string }; outcome?: { option?: string; detail?: Record<string, unknown> } }
+      : undefined
     if (body?.decisionType !== 'acceptance') throw new BoardError('invalid', `${acceptance} is not an acceptance decision`)
-    // Fail-closed rule 5: the decision is on this result, not another.
-    if (!result.artifacts.some((a) => body.inputs?.includes(a))) throw new BoardError('invalid', `${acceptance} does not decide on the task's result`)
+    const detail = body.outcome?.detail ?? {}
+    if (detail['taskId'] !== task.taskId) throw new BoardError('invalid', `${acceptance} does not name task ${task.taskId} (outcome.detail.taskId)`)
+    const subject = detail['subject'] as Subject | undefined
+    if (!isObject(subject) || !sameSubject(subject, result.subject)) {
+      throw new BoardError('invalid', `${acceptance} does not name the result's exact subject ${result.subject.type} ${result.subject.ref}${result.subject.version ? ` at ${result.subject.version}` : ''} (outcome.detail.subject)`)
+    }
+    const missing = [...result.artifacts, ...(result.digest ? [result.digest] : [])].filter((a) => !body.inputs?.includes(a))
+    if (missing.length) throw new BoardError('invalid', `${acceptance} does not decide on the whole result: ${missing.join(', ')} not among its inputs`)
     const option = body.outcome?.option
     if (option !== 'accept' && option !== 'reject') throw new BoardError('invalid', `${acceptance} decides ${String(option)}, neither accept nor reject`)
-    if (!apply) return { changes: {} }
-    if (option === 'accept') return { changes: { state: 'done', result: { ...result, acceptance }, holder: undefined, waiting: undefined, lastDecision: acceptance } }
+    const checks = detail['checks']
+    if (checks !== undefined && (!isObject(checks) || Object.entries(checks).some(([k, v]) => !CHECKS.includes(k as Check) || typeof v !== 'boolean'))) {
+      throw new BoardError('invalid', `${acceptance} reports checks that are not ${CHECKS.join(', ')} with true or false (outcome.detail.checks)`)
+    }
+    return {
+      option, operator: body.decider?.type === 'operator' && envelope!.producer.type === 'operator',
+      ...(checks !== undefined ? { checks: checks as Partial<Record<Check, boolean>> } : {}),
+    }
+  }
+
+  /**
+   * Required checks bind at acceptance, not at readiness (S3): an accepting decision that is not
+   * the operator's applies only when the policy, given the checks the decision reports, leaves none
+   * of the task's class's required checks failed, and does not forbid the class. Otherwise only the
+   * operator's acceptance accepts the result; a reject applies either way.
+   */
+  private async bindChecks(task: BoardTask, read: Acceptance, acceptance: ArtifactRef): Promise<void> {
+    if (read.option !== 'accept' || read.operator) return
+    const verdict = await this.ctx.approvals.check({ class: task.actionClass, projectId: task.projectId, ...(read.checks ? { checks: read.checks } : {}) })
+    if (verdict.mode === 'forbid') throw new BoardError('invalid', `${acceptance}: the policy forbids ${task.actionClass} (autonomy decision ${verdict.decision}), so only the operator's acceptance accepts it`)
+    if (verdict.failedChecks?.length) {
+      throw new BoardError('invalid', `${acceptance} accepts with required check(s) ${verdict.failedChecks.join(', ')} not passed (autonomy decision ${verdict.decision}): it needs them passed, or the operator's acceptance`)
+    }
+  }
+
+  /** The move an `acceptance` decision read by {@link readAcceptance} makes: done when it accepts, else another attempt or a wait for input. */
+  private acceptanceMove(task: BoardTask, result: NonNullable<BoardTask['result']>, acceptance: ArtifactRef, read: Acceptance, at: Date): Move {
+    if (read.option === 'accept') return { changes: { state: 'done', result: { ...result, acceptance }, holder: undefined, waiting: undefined, lastDecision: acceptance } }
     if (task.attempts.count < task.attempts.max) return { changes: { state: 'ready', holder: undefined, run: undefined, result: undefined, waiting: undefined, lastDecision: acceptance } }
     return { changes: { state: 'waiting-for-input', holder: undefined, result, waiting: this.inputWait('retries-spent', at), lastDecision: acceptance } }
   }

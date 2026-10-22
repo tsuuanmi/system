@@ -484,7 +484,11 @@ guesses.
   the task (`input-expired`). When the queue has not resolved the request by `waiting.expiresAt`,
   or no longer knows it, the board applies the expiry itself.
 - `done` needs an `acceptance` decision whose outcome is accepted; the schema checks only that
-  it is named. A task in review keeps its holder's lease while verification runs; if the lease
+  it is named. The board takes one only on the task's exact result: its `outcome.detail` names
+  the `taskId` and the result's exact `subject` (version included), and may report the `checks`
+  it ran (check name → passed); its inputs hold every artifact of the result and its digest. One
+  not made by the operator accepts only when the policy finds none of the class's required checks
+  failed ([board](../design/board.md#required-checks-bind-at-acceptance)). A task in review keeps its holder's lease while verification runs; if the lease
   lapses with no decision, the task waits for input (`review-expired`), which expires in turn.
 - A holder lost mid-run is first reconciled by the run's owner: a completed run's result is
   applied with its `acceptance` decision, as a review's would be, a failed one counts as an

@@ -8,7 +8,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@tsuuanmi/system-artifacts'
 import { canonicalJson, SchemaRegistry } from '@tsuuanmi/system-libs'
 import { expect } from 'vitest'
-import type {} from '@tsuuanmi/system-approvals-core'
+import type { Action } from '@tsuuanmi/system-approvals-core'
 import { defineSuite, type Scenario } from '../../libs/conformance/runner.ts'
 import {
   type ActionClass, type ArtifactRef, Board, BoardError, type BoardTask, type CancelReason, type Charter, type CharterInput, type Claim, type Project, type RunOutcome,
@@ -75,14 +75,26 @@ const ready = async (ctx: Context, input: TaskInput): Promise<BoardTask> => {
   expect(await stateOf(ctx, proposed.taskId)).toBe('ready')
   return (await ctx.board.task(proposed.taskId))!
 }
-const acceptance = (ctx: Context, option: 'accept' | 'reject', result: ArtifactRef): ArtifactRef => ctx.artifacts.recordDecision({
-  decisionType: 'acceptance', question: `Does ${result} satisfy the criteria?`, inputs: [result],
-  candidates: [
-    { option: 'accept', selected: option === 'accept', reasons: [option === 'accept' ? 'the criteria hold' : 'not accept: the criteria fail'] },
-    { option: 'reject', selected: option === 'reject', reasons: [option === 'reject' ? 'the criteria fail' : 'not reject: the criteria hold'] },
-  ],
-  decider: { type: 'rule', id: 'acceptance.conformance', version: '1' }, outcome: { option }, deterministic: true,
-}, { producer: { type: 'policy', ref: 'conformance' } }).id as ArtifactRef
+/**
+ * An `acceptance` decision on one task's result: it names the task and the result's exact subject,
+ * lists the result's artifacts as inputs, and reports the checks it ran; by a rule unless `by` is the operator.
+ */
+const acceptance = (
+  ctx: Context, option: 'accept' | 'reject', taskId: string, results: ArtifactRef | ArtifactRef[],
+  extra: { subject?: Subject; checks?: Action['checks']; by?: 'rule' | 'operator' } = {},
+): ArtifactRef => {
+  const inputs = Array.isArray(results) ? results : [results]
+  const operator = extra.by === 'operator'
+  return ctx.artifacts.recordDecision({
+    decisionType: 'acceptance', question: `Does the result of ${taskId} satisfy the criteria?`, inputs,
+    candidates: [
+      { option: 'accept', selected: option === 'accept', reasons: [option === 'accept' ? 'the criteria hold' : 'not accept: the criteria fail'] },
+      { option: 'reject', selected: option === 'reject', reasons: [option === 'reject' ? 'the criteria fail' : 'not reject: the criteria hold'] },
+    ],
+    decider: operator ? { type: 'operator', id: 'operator', version: '1' } : { type: 'rule', id: 'acceptance.conformance', version: '1' },
+    outcome: { option, detail: { taskId, subject: extra.subject ?? HEAD, ...(extra.checks ? { checks: extra.checks } : {}) } }, deterministic: !operator,
+  }, { producer: operator ? { type: 'operator', ref: 'operator' } : { type: 'policy', ref: 'conformance' } }).id as ArtifactRef
+}
 const result = (ctx: Context, text: string): ArtifactRef => ctx.artifacts.put({
   kind: 'report', bodySchema: 'agent-result@1.0', classification: 'operator-shared', producer: { type: 'worker', ref: 'conformance' },
   body: { schema: 'agent-result@1.0', worker: 'w', runtime: 'fake', runId: 'r', promptHash: `sha256:${'0'.repeat(64)}`, sandbox: 'read-only', text },
@@ -280,16 +292,49 @@ export const boardSuite = defineSuite<Boot>({
       const first = result(ctx, 'attempt 1')
       expect(validTask(await ctx.board.submit(t.taskId, generation, { artifacts: [first], subject: HEAD, files: ['src/a.ts'] }, at(4)))).toMatchObject({ state: 'review', result: { artifacts: [first] } })
       expect(await failureOf(ctx.board.accept(t.taskId, first, at(5)))).toBe('invalid')
-      expect(validTask(await ctx.board.accept(t.taskId, acceptance(ctx, 'reject', first), at(5)))).toMatchObject({ state: 'ready', attempts: { count: 1, max: 2 } })
+      expect(validTask(await ctx.board.accept(t.taskId, acceptance(ctx, 'reject', t.taskId, first), at(5)))).toMatchObject({ state: 'ready', attempts: { count: 1, max: 2 } })
       ;({ generation } = await ctx.board.claim(t.taskId, 'lead', 600_000, at(6)))
       await ctx.board.start(t.taskId, generation, { runId: 'run-2' }, at(6))
       const second = result(ctx, 'attempt 2')
-      await ctx.board.submit(t.taskId, generation, { artifacts: [second], subject: HEAD }, at(7))
-      const accepted = acceptance(ctx, 'accept', second)
+      const notes = result(ctx, 'attempt 2 notes')
+      await ctx.board.submit(t.taskId, generation, { artifacts: [second, notes], subject: HEAD }, at(7))
+      // The decision binds to this task, the result's exact subject, and every artifact of it (INV-5).
+      expect(await failureOf(ctx.board.accept(t.taskId, acceptance(ctx, 'accept', 'task-another', [second, notes]), at(8)))).toBe('invalid')
+      expect(await failureOf(ctx.board.accept(t.taskId, acceptance(ctx, 'accept', t.taskId, [second, notes], { subject: { ...HEAD, version: 'def456' } }), at(8)))).toBe('invalid')
+      expect(await failureOf(ctx.board.accept(t.taskId, acceptance(ctx, 'accept', t.taskId, [second]), at(8)))).toBe('invalid')
+      expect(await stateOf(ctx, t.taskId)).toBe('review')
+      const accepted = acceptance(ctx, 'accept', t.taskId, [second, notes])
       const done = validTask(await ctx.board.accept(t.taskId, accepted, at(8)))
-      expect(done).toMatchObject({ state: 'done', result: { artifacts: [second], subject: HEAD, acceptance: accepted }, lastDecision: accepted })
+      expect(done).toMatchObject({ state: 'done', result: { artifacts: [second, notes], subject: HEAD, acceptance: accepted }, lastDecision: accepted })
       expect(done.holder).toBeUndefined()
       expect(done.run?.runId).toBe('run-2')
+    }),
+    scenario('checks-bind-at-acceptance', 'readies an auto task before its required checks run, and accepts it without the operator only once the acceptance reports them passed', async (ctx) => {
+      await active(ctx, 'p2')
+      const branch: Subject = { type: 'git-head', ref: 'refs/heads/kernel' }
+      const at3 = { ...branch, version: 'abc123' }
+      const w = await ready(ctx, task('p2', 'w', { actionClass: 'workspace-write', writes: branch }))
+      const { generation } = await ctx.board.claim(w.taskId, 'lead', 600_000, at(3))
+      await ctx.board.start(w.taskId, generation, { runId: 'run-1' }, at(3))
+      const r = result(ctx, 'kernel')
+      await ctx.board.submit(w.taskId, generation, { artifacts: [r], subject: at3 }, at(4))
+      expect(await failureOf(ctx.board.accept(w.taskId, acceptance(ctx, 'accept', w.taskId, r, { subject: at3 }), at(5)))).toBe('invalid')
+      expect(await failureOf(ctx.board.accept(w.taskId, acceptance(ctx, 'accept', w.taskId, r, { subject: at3, checks: { tests: true, lint: false } }), at(5)))).toBe('invalid')
+      expect(await stateOf(ctx, w.taskId)).toBe('review')
+      expect(validTask(await ctx.board.accept(w.taskId, acceptance(ctx, 'accept', w.taskId, r, { subject: at3, checks: { tests: true, lint: true } }), at(5)))).toMatchObject({ state: 'done' })
+
+      // The operator's own acceptance needs no check; a rejection applies without one too.
+      const other: Subject = { type: 'git-head', ref: 'refs/heads/other', version: 'abc123' }
+      const o = await ready(ctx, task('p2', 'o', { actionClass: 'workspace-write', writes: { type: 'git-head', ref: 'refs/heads/other' }, maxAttempts: 2 }))
+      let claim = await ctx.board.claim(o.taskId, 'lead', 600_000, at(6))
+      await ctx.board.start(o.taskId, claim.generation, { runId: 'run-2' }, at(6))
+      const r2 = result(ctx, 'other')
+      await ctx.board.submit(o.taskId, claim.generation, { artifacts: [r2], subject: other }, at(7))
+      expect(await ctx.board.accept(o.taskId, acceptance(ctx, 'reject', o.taskId, r2, { subject: other }), at(8))).toMatchObject({ state: 'ready' })
+      claim = await ctx.board.claim(o.taskId, 'lead', 600_000, at(9))
+      await ctx.board.start(o.taskId, claim.generation, { runId: 'run-3' }, at(9))
+      await ctx.board.submit(o.taskId, claim.generation, { artifacts: [r2], subject: other }, at(10))
+      expect(validTask(await ctx.board.accept(o.taskId, acceptance(ctx, 'accept', o.taskId, r2, { subject: other, by: 'operator' }), at(11)))).toMatchObject({ state: 'done' })
     }),
     scenario('run-outcome-reconciled', 'takes a lost holder\'s run outcome from the run\'s owner, withdrawing the approval it asked for, and refuses an outcome for another run (INV-4)', async (ctx) => {
       await active(ctx)
@@ -300,7 +345,7 @@ export const boardSuite = defineSuite<Boot>({
       const lost = (await ctx.board.task(t.taskId))!
       expect(lost.waiting?.reason).toBe('reconciliation-failed')
       const r = result(ctx, 'finished while the holder was gone')
-      const outcome: RunOutcome = { status: 'completed', result: { artifacts: [r], subject: HEAD }, acceptance: acceptance(ctx, 'accept', r) }
+      const outcome: RunOutcome = { status: 'completed', result: { artifacts: [r], subject: HEAD }, acceptance: acceptance(ctx, 'accept', t.taskId, r) }
       expect(await failureOf(ctx.board.reconcileRun(t.taskId, 'run-other', outcome, at(11)))).toBe('invalid')
       expect(validTask(await ctx.board.reconcileRun(t.taskId, 'run-1', outcome, at(11)))).toMatchObject({ state: 'done', result: { artifacts: [r], subject: HEAD }, run: { runId: 'run-1' } })
       expect((await ctx.approvals.get(lost.waiting!.approvalRequest!))?.resolution?.cause).toBe('withdrawn')
@@ -321,7 +366,7 @@ export const boardSuite = defineSuite<Boot>({
       expect((await ctx.board.sweep(at(11))).tasks).toEqual([])
       expect(await ctx.board.task(t.taskId)).toEqual(lost)
       const r = result(ctx, 'finished while the holder was gone')
-      const outcome: RunOutcome = { status: 'completed', result: { artifacts: [r], subject: HEAD }, acceptance: acceptance(ctx, 'accept', r) }
+      const outcome: RunOutcome = { status: 'completed', result: { artifacts: [r], subject: HEAD }, acceptance: acceptance(ctx, 'accept', t.taskId, r) }
       expect(validTask(await ctx.board.reconcileRun(t.taskId, 'run-1', outcome, at(12)))).toMatchObject({ state: 'done', result: { artifacts: [r] } })
     }),
     scenario('review-expires', 'bounds review: a reviewer whose lease lapses with no decision leaves the task waiting for input, which expires in turn (INV-9)', async (ctx) => {
@@ -334,7 +379,7 @@ export const boardSuite = defineSuite<Boot>({
       const expired = validTask((await ctx.board.task(t.taskId))!)
       expect(expired).toMatchObject({ state: 'waiting-for-input', waiting: { reason: 'review-expired' } })
       expect(expired.holder).toBeUndefined()
-      expect(await failureOf(ctx.board.accept(t.taskId, acceptance(ctx, 'accept', result(ctx, 'r')), at(11)))).toBe('invalid-transition')
+      expect(await failureOf(ctx.board.accept(t.taskId, acceptance(ctx, 'accept', t.taskId, result(ctx, 'r')), at(11)))).toBe('invalid-transition')
       await ctx.board.sweep(new Date(Date.parse(expired.waiting!.expiresAt)))
       expect((await ctx.board.task(t.taskId))?.cancellation?.reason).toBe('input-expired')
     }),
@@ -345,7 +390,7 @@ export const boardSuite = defineSuite<Boot>({
       await ctx.board.start(t.taskId, generation, { runId: 'run-1' }, at(3))
       const r = result(ctx, 'only attempt')
       await ctx.board.submit(t.taskId, generation, { artifacts: [r], subject: HEAD }, at(4))
-      expect(validTask(await ctx.board.accept(t.taskId, acceptance(ctx, 'reject', r), at(5)))).toMatchObject({ state: 'waiting-for-input', waiting: { reason: 'retries-spent' } })
+      expect(validTask(await ctx.board.accept(t.taskId, acceptance(ctx, 'reject', t.taskId, r), at(5)))).toMatchObject({ state: 'waiting-for-input', waiting: { reason: 'retries-spent' } })
     }),
     scenario('block-and-answer', 'interrupts a running task: spent budget waits for approval, a question for input; answering every question makes it ready', async (ctx) => {
       await active(ctx)
@@ -404,7 +449,7 @@ export const boardSuite = defineSuite<Boot>({
       const open = await ctx.board.propose(task('p1', 'open'), at(3))
       expect(await failureOf(ctx.board.close('p1', 'stopped', at(4)))).toBe('invalid-transition')
       await ctx.board.submit(t.taskId, generation, { artifacts: [result(ctx, 'r')], subject: HEAD }, at(4))
-      await ctx.board.accept(t.taskId, acceptance(ctx, 'accept', result(ctx, 'r')), at(5))
+      await ctx.board.accept(t.taskId, acceptance(ctx, 'accept', t.taskId, result(ctx, 'r')), at(5))
       const closed = validProject(await ctx.board.close('p1', 'achieved', at(6)))
       expect(closed).toMatchObject({ state: 'closed', closure: { outcome: 'achieved' } })
       expect((await ctx.board.task(open.taskId))?.cancellation?.reason).toBe('project-closed')
@@ -616,11 +661,28 @@ export class FakeBoard extends Board {
     return this.applyAcceptance(task, acceptance, at)
   }
 
-  /** Done when the decision accepts the result, else another attempt or a wait for input; saved to `stored` (default the task itself). */
-  private applyAcceptance(task: BoardTask, acceptance: ArtifactRef, at: Date, stored: BoardTask = task): BoardTask {
-    const body = this.ctx.artifacts.get(acceptance)?.body as { decisionType?: string; outcome?: { option?: string } } | undefined
+  /**
+   * Done when the decision accepts the result, else another attempt or a wait for input; saved to
+   * `stored` (default the task itself). The decision binds to this task's exact result, and one
+   * that is not the operator's accepts only with the class's required checks passed.
+   */
+  private async applyAcceptance(task: BoardTask, acceptance: ArtifactRef, at: Date, stored: BoardTask = task): Promise<BoardTask> {
+    const envelope = this.ctx.artifacts.get(acceptance)
+    const body = envelope?.body as { decisionType?: string; inputs?: string[]; decider?: { type?: string }; outcome?: { option?: string; detail?: { taskId?: string; subject?: Subject; checks?: Action['checks'] } } } | undefined
     if (body?.decisionType !== 'acceptance') throw new BoardError('invalid', `${acceptance} is not an acceptance decision`)
-    if (body.outcome?.option === 'accept') {
+    const result = task.result!
+    const detail = body.outcome?.detail
+    const subject = detail?.subject
+    if (detail?.taskId !== task.taskId || subject?.type !== result.subject.type || subject.ref !== result.subject.ref || subject.version !== result.subject.version
+      || [...result.artifacts, ...(result.digest ? [result.digest] : [])].some((a) => !body.inputs?.includes(a))) {
+      throw new BoardError('invalid', `${acceptance} does not decide on this task's exact result`)
+    }
+    if (body.outcome?.option !== 'accept' && body.outcome?.option !== 'reject') throw new BoardError('invalid', `${acceptance} is neither accept nor reject`)
+    if (body.outcome.option === 'accept' && !(body.decider?.type === 'operator' && envelope!.producer.type === 'operator')) {
+      const verdict = await this.ctx.approvals.check({ class: task.actionClass, projectId: task.projectId, ...(detail.checks ? { checks: detail.checks } : {}) })
+      if (verdict.mode === 'forbid' || verdict.failedChecks?.length) throw new BoardError('invalid', `${acceptance}: the required checks have not passed; only the operator accepts it`)
+    }
+    if (body.outcome.option === 'accept') {
       return this.save(stored, at, { state: 'done', result: { ...task.result!, acceptance }, holder: undefined, waiting: undefined, lastDecision: acceptance })
     }
     if (task.attempts.count < task.attempts.max) return this.save(stored, at, { state: 'ready', holder: undefined, run: undefined, result: undefined, waiting: undefined, lastDecision: acceptance })
@@ -637,7 +699,7 @@ export class FakeBoard extends Board {
     let moved: BoardTask
     if (outcome.status === 'completed') {
       if (outcome.result.artifacts.some((a) => !this.ctx.artifacts.get(a))) throw new BoardError('invalid', 'a result artifact is unknown')
-      moved = this.applyAcceptance({ ...task, result: outcome.result }, outcome.acceptance, at, task)
+      moved = await this.applyAcceptance({ ...task, result: outcome.result }, outcome.acceptance, at, task)
     } else {
       const failed = this.decide(taskId, task.state, task.attempts.count < task.attempts.max ? 'ready' : 'waiting-for-input', at, `run ${runId} failed`)
       moved = task.attempts.count < task.attempts.max

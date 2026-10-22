@@ -16,13 +16,16 @@ Work state machine **seam definition**
   [conformance runner](../libs/conformance/runner.ts) at contract 1.0 over any `ctx.approvals`
   provider:
   - a charter approved by the operator before anything starts; rejection or expiry abandons the
-    project; amendments held until approved;
+    project and cancels its open tasks; amendments held until approved;
   - a task ready only once its dependencies are done and the policy allows it; asked about,
-    rejected into a wait that expires, or forbidden;
+    rejected into a wait that expires, or forbidden; a wait the queue never resolves expired by
+    the board itself;
   - one holder at a time, every write fenced by its generation; a run recorded before it starts,
-    never started again when its holder is lost, its outcome taken from the run's owner;
-  - review to done only by an accepting `acceptance` decision; bounded attempts; review bounded by
-    the reviewer's lease;
+    never started again when its holder is lost, its outcome taken from the run's owner, also
+    when its request was withdrawn before the owner's move committed;
+  - review to done only by an accepting `acceptance` decision bound to the task's exact result,
+    with the class's required checks passed unless the operator made it; bounded attempts;
+    review bounded by the reviewer's lease;
   - blocking and answering; cancelling, with the approval withdrawn and dependents cancelled;
     validation of proposals; pausing and closing.
 

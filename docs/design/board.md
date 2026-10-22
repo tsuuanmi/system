@@ -114,10 +114,12 @@ hold. The fake provider does not check them, and the suite does not test them ye
 
 - `start` outside an active project is refused (`invalid-transition`), also for a task claimed
   before a pause (rule 1).
-- An `acceptance` decision applies only when one of its inputs is an artifact of the result it
-  decides on, and its outcome is `accept` or `reject`; anything else is refused (`invalid`,
-  rule 5). A run owner's report is checked the same way before anything moves, so a refused
-  report changes nothing.
+- An `acceptance` decision applies only when it binds to the task's exact result: its
+  `outcome.detail` names the task (`taskId`) and the result's exact subject (`subject`, its
+  version included), its inputs hold every artifact of the result and its digest, and its
+  outcome is `accept` or `reject`; anything else is refused (`invalid`, rule 5). A run owner's
+  report is checked the same way before anything moves, so a refused report changes nothing.
+- [Required checks bind at acceptance](#required-checks-bind-at-acceptance).
 - A move that ends a wait on an approval request (`reconcileRun`, `cancel`, `close`) reads the
   request first, so with the queue unavailable nothing moves (rule 7), then commits, and
   withdraws the request only after: a crash between the two leaves an open request that nothing
@@ -147,12 +149,32 @@ hold. The fake provider does not check them, and the suite does not test them ye
 | running → waiting-for-input | `block` with questions | a `board` decision | a question wait without questions is refused |
 | running or waiting-for-approval (`reconciliation-failed`) → done, ready, or waiting-for-input | `reconcileRun` by the run's owner (the workflow engine), after it reconciled the recorded run | the acceptance decision of a completed run, or a `board` decision for a failed one; the pending approval request is withdrawn once the move committed | an outcome for another run id is refused; an unknown outcome is never reported, so the task keeps waiting for approval |
 | review → waiting-for-input | `sweep`, the reviewer's lease lapsed with no decision | a `board` decision (`review-expired`) | the wait expires and cancels the task |
-| review → done | `accept` with an `acceptance` decision whose outcome is `accept` | that decision; `result.acceptance`; the run and subject stay | a decision of another type is refused |
+| review → done | `accept` with an `acceptance` decision whose outcome is `accept` | that decision; `result.acceptance`; the run and subject stay | a decision of another type, or one not bound to the task's exact result, is refused; one not the operator's needs the required checks passed |
 | review → ready / waiting-for-input | `accept` with a `reject` outcome | that decision; another attempt while `count < max`, else `retries-spent` | — |
 | waiting-for-approval → ready / waiting-for-input | `sweep`, on the request's resolution; at `waiting.expiresAt` (or the request's expiry, if earlier) the board applies the expiry itself when the queue has not resolved the request, withdrew it, or no longer knows it | the request's `approval` decision, or the board's own (`board`, cause `expired`), after which it withdraws a request still open | rejection and expiry never start work: the task waits for input (`rejected`) |
 | waiting-for-input → ready | `answer`, every question answered | a `board` decision | partial answers are refused |
 | waiting-for-input → cancelled | `sweep`, its wait expired | a `board` decision (`input-expired`) | — |
 | any not running or in review → cancelled | `cancel` (`operator`, `lead`, `superseded`) | a `board` decision; a pending approval request is withdrawn once the move committed; dependents are cancelled on the next sweep | a running task or one in review is refused |
+
+### Required checks bind at acceptance
+
+A policy rule `auto` or `notify` may require checks (`requires`, for example tests and lint for
+`workspace-write`). Nothing has run when a task becomes ready, so readiness does not wait on
+them: the readiness decision records the rule's checks still to run (`pendingChecks`). They bind
+when the result is accepted:
+
+- An accepting `acceptance` decision that is not the operator's (its decider and its envelope's
+  producer are both `operator`) applies only when `ctx.approvals.check` on the task's action
+  class, given the checks the decision reports in `outcome.detail.checks` (check name → passed),
+  gives no `failedChecks` and does not forbid the class. Otherwise `accept` (and a run owner's
+  completed report) is refused (`invalid`) and the task stays in review: the review goes to the
+  operator, whose own acceptance decision is the only one that accepts it. The board opens no
+  approval request for this, since the queue takes a request only on an `ask` verdict; review
+  stays bounded by the reviewer's lease.
+- A `reject` applies with or without checks: a failed check goes back to the lead as another
+  attempt ([approvals](approvals.md#the-autonomy-policy)).
+- A class the policy asks about needs no check here: the operator approved the attempt before it
+  started.
 
 ## Fail-closed rules
 
