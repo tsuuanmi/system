@@ -69,7 +69,7 @@ export class ClaudeAgentRuntime implements AgentRuntimeProvider {
 
   async probe(): Promise<RuntimeEvidence> {
     const executable = this.executable()
-    if (!executable) return { available: false, detail: 'Claude Code is not installed (no claude executable on PATH)', sandboxes: [], resume: false, executes: false, readsConfined: false }
+    if (!executable) return { available: false, detail: 'Claude Code is not installed (no claude executable on PATH)', sandboxes: [], resume: false, executes: false, readsConfined: false, gatesToolCalls: false }
     try {
       const version = await (this.options.version ?? claudeVersion)(executable)
       // No Bash: commands cannot be confined to the workspace yet, so it cannot validate. Every
@@ -77,9 +77,10 @@ export class ClaudeAgentRuntime implements AgentRuntimeProvider {
       // allowed, so the host state stays unreadable (ADR-0024; verified live 2026-10-13).
       return {
         available: true, detail: `Claude Code ${version}; reads scoped to the workspace`, version, sandboxes: ['read-only', 'workspace-write'], resume: true, executes: false, readsConfined: true,
+        gatesToolCalls: false,
       }
     } catch (error) {
-      return { available: false, detail: `claude --version failed: ${(error as Error).message.slice(0, 160)}`, sandboxes: [], resume: false, executes: false, readsConfined: false }
+      return { available: false, detail: `claude --version failed: ${(error as Error).message.slice(0, 160)}`, sandboxes: [], resume: false, executes: false, readsConfined: false, gatesToolCalls: false }
     }
   }
 
@@ -93,6 +94,7 @@ export class ClaudeAgentRuntime implements AgentRuntimeProvider {
     if (refused.length) {
       throw new ProviderError('config_error', `claude-agent-sdk: a ${spec.sandbox} run allows only ${allowed.join(', ')}; refusing ${refused.join(', ')}`)
     }
+    if (spec.toolGate) throw new ProviderError('config_error', 'claude-agent-sdk: a tool gate is not asked yet; refusing it instead of ignoring it')
     const executable = this.executable()
     if (!executable) throw new ProviderError('config_error', 'claude-agent-sdk: Claude Code is not installed')
     if (signal.aborted) throw new ProviderError('aborted', 'claude-agent-sdk: aborted before starting')

@@ -361,10 +361,10 @@ export class AgentWorkers extends Service {
 
   private async evidence(worker: AgentWorkerConfig): Promise<RuntimeEvidence> {
     const provider = this.ctx.agentRuntimes.get(worker.runtime)
-    if (!provider) return { available: false, detail: `no ${worker.runtime} runtime is registered`, sandboxes: [], resume: false, executes: false, readsConfined: false }
+    if (!provider) return { available: false, detail: `no ${worker.runtime} runtime is registered`, sandboxes: [], resume: false, executes: false, readsConfined: false, gatesToolCalls: false }
     const cached = this.probes.get(worker.runtime)
     if (cached && Date.now() - cached.at < (this.config.probeTtlMs ?? 5 * 60_000)) return cached.evidence
-    const evidence = await provider.probe().catch((error: unknown): RuntimeEvidence => ({ available: false, detail: (error as Error).message.slice(0, 200), sandboxes: [], resume: false, executes: false, readsConfined: false }))
+    const evidence = await provider.probe().catch((error: unknown): RuntimeEvidence => ({ available: false, detail: (error as Error).message.slice(0, 200), sandboxes: [], resume: false, executes: false, readsConfined: false, gatesToolCalls: false }))
     this.probes.set(worker.runtime, { at: Date.now(), evidence })
     return evidence
   }

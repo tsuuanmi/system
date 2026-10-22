@@ -34,7 +34,7 @@ class ScriptedAgent implements AgentRuntimeProvider {
   readonly kind = 'scripted'
   readonly runs: RunSpec[] = []
   constructor(private readonly options: {
-    sandboxes?: SandboxMode[]; resume?: boolean; available?: boolean; holdMs?: number; fail?: Error; executes?: boolean; readsConfined?: boolean; act?: (spec: RunSpec) => string | undefined
+    sandboxes?: SandboxMode[]; resume?: boolean; available?: boolean; holdMs?: number; fail?: Error; executes?: boolean; readsConfined?: boolean; gatesToolCalls?: boolean; act?: (spec: RunSpec) => string | undefined
     /** What each run reports it consumed. */
     metering?: RunMetering
   } = {}) {}
@@ -42,6 +42,7 @@ class ScriptedAgent implements AgentRuntimeProvider {
     return {
       available: this.options.available ?? true, detail: 'scripted 1.0', version: '1.0', sandboxes: this.options.sandboxes ?? ['read-only'],
       resume: this.options.resume ?? true, executes: this.options.executes ?? false, readsConfined: this.options.readsConfined ?? true,
+      gatesToolCalls: this.options.gatesToolCalls ?? true,
     }
   }
   async run(spec: RunSpec, signal: AbortSignal, onHandle?: (handle: string) => void) {

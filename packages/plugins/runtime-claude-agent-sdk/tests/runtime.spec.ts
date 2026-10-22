@@ -56,7 +56,7 @@ describe('claude-agent-sdk: the configured policy, exactly', () => {
 
   it('probes the installed Claude Code without running a task, and offers only what it can confine', async () => {
     expect(await runtime(scripted()).probe()).toEqual({
-      available: true, detail: 'Claude Code 2.1.294; reads scoped to the workspace', version: '2.1.294', sandboxes: ['read-only', 'workspace-write'], resume: true, executes: false, readsConfined: true,
+      available: true, detail: 'Claude Code 2.1.294; reads scoped to the workspace', version: '2.1.294', sandboxes: ['read-only', 'workspace-write'], resume: true, executes: false, readsConfined: true, gatesToolCalls: false,
     })
     expect(await runtime(scripted(), null).probe()).toMatchObject({ available: false, detail: expect.stringMatching(/not installed/) })
   })
