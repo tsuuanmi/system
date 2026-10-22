@@ -12,7 +12,7 @@ import { setTimeout as sleep } from 'node:timers/promises'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
-import { SchemaRegistry } from '@tsuuanmi/system-libs'
+import { ensurePrivateDir, SchemaRegistry } from '@tsuuanmi/system-libs'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { Manifest } from './generate.ts'
 
@@ -55,6 +55,10 @@ describe('upgrade: seeded store fixtures migrate to the current code (INV-14)', 
       homes.push(home)
       const env = { ...process.env, DSH_HOME: home }
       execFileSync(process.execPath, [bin, 'init'], { env, stdio: 'pipe' })
+      // init creates <DSH_HOME>/system only when it installs the managed Chrome; with a usable
+      // system Chrome (as on CI) it does not, and the store makes it only on start. Seed into the
+      // directory the store would make.
+      ensurePrivateDir(join(home, 'system'))
       const store = join(home, 'system', 'system.db')
       rmSync(store, { force: true })
       const seeded = new DatabaseSync(store)
