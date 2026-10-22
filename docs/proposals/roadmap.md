@@ -30,7 +30,7 @@ What Base must deliver, and its exit criteria, are in
 
 | Milestone | State | Delivers | Depends on |
 |---|---|---|---|
-| **B1** Specification | started | schemas for the new records (`project`, `board-task`, `approval-request`, `autonomy-policy`, `usage-record`, `limit-state`, `plugin-manifest`, `brief`, `digest`) and for MCP tool input and output; seam definitions and protocol documents; conformance suites for the existing guarantee seams | — |
+| **B1** Specification | mostly done | schemas for the new records (`project`, `board-task`, `approval-request`, `autonomy-policy`, `usage-record`, `limit-state`, `plugin-manifest`, `brief`, `digest`) and for MCP tool input and output; seam definitions and protocol documents; conformance suites for the existing guarantee seams | — |
 | **B2** Resource ledger and metering | not started | `ctx.resources`; `agent-result@1.2` with token usage; Claude Max windows; usage and limit reports | B1 |
 | **B3** Claude Code Worker first-class | not started | agent rows on by default (Claude Code only); the P1 follow-up fixed (a workspace per writing task, remediation through approval, every agent's credential directories hidden); confined commands for `validate`, with its own ADR | B1 |
 | **B4** Board and charter | not started | `ctx.board`: projects with charters, board tasks across runs, `board_*` MCP tools, `TASKS.md` projection; resume of a blocked task from a brief | B2, B3 |

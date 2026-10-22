@@ -120,6 +120,20 @@ describe('architecture rules', () => {
     expect(existsSync(join(plugins, 'workflow', 'conformance', 'profiles.ts'))).toBe(true)
   })
 
+  it('holds every guarantee seam to a conformance suite at a pinned contract, so a worse provider cannot pass unnoticed (ADR-0036, ADR-0037)', () => {
+    const suites: Record<string, string> = {
+      store: 'plugins/store/conformance/store.ts', eventLog: 'plugins/event-log/conformance/event-log.ts', artifacts: 'plugins/artifacts/conformance/artifacts.ts',
+      turnReceipts: 'plugins/turn-receipts/conformance/turn-receipts.ts', leases: 'plugins/leases/conformance/leases.ts', egress: 'plugins/egress/conformance/egress.ts',
+      workerSessions: 'plugins/worker-sessions/conformance/worker-sessions.ts', workflow: 'plugins/workflow/conformance/workflow.ts', workers: 'workers-core/conformance/workers.ts',
+      board: 'board-core/conformance/board.ts', approvals: 'approvals-core/conformance/approvals.ts', resources: 'resources-core/conformance/resources.ts',
+    }
+    for (const [seam, file] of Object.entries(suites)) {
+      const source = readFileSync(join(packages, file), 'utf8')
+      // `workers` predates the runner; every other guarantee suite is defined through it, for its seam.
+      if (seam !== 'workers') expect(source, seam).toMatch(new RegExp(`defineSuite<\\w+>\\(\\{\\s*seam: '${seam}'`))
+    }
+  })
+
   it('never lets a provider name select an account: a work requirement names capabilities, and has no provider field (REQ-ACC-2)', async () => {
     const { SchemaRegistry } = await import('../packages/libs/src/index.ts')
     const schemas = new SchemaRegistry()

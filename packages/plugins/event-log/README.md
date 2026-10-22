@@ -19,3 +19,15 @@
   `profile-scientific-research` listens to `system/event`.
 - **Injects:** `store`.
 - **Config:** `maxDataBytes`, `retainDays` (default 0: keep every entry).
+- The conformance suite is [`conformance/event-log.ts`](conformance/event-log.ts):
+  - `append` assigns the next `seq` and a UTC `at`, and what is read back is the
+    `event@1.0` record appended, unchanged by later appends;
+  - an invalid record is refused and nothing stored; `data` is accepted up to
+    `maxDataBytes` serialized (bytes, not characters) and refused one byte over;
+  - `system/event` fires only after the outermost commit, never for a rolled-back
+    entry, and a throwing listener cannot veto or fail the append;
+  - `query` filters by type, run, node, session, and turn in `seq` order, pages
+    after a cursor with no gap or repeat and at most 1000 a call, and reads since
+    a time in any UTC offset, refusing one that is not a time;
+  - `trim` removes every entry older than `retainDays`, a backlog larger than a
+    batch included, and keeps younger ones; a `seq` is never reused.
