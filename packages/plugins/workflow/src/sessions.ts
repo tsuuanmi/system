@@ -39,7 +39,8 @@ export function wake(e: Engine, sessionId: string): RunView | undefined {
     const inbox = sessions.inbox(sessionId)
     if (!inbox.length) return undefined
     // After a compaction the next turn opens a fresh conversation; until it binds, the last handle stands.
-    if (!sessions.activate(sessionId, e.ctx.workers.handle(sessionId) ?? session.binding.nativeHandle).activated) return undefined
+    const activation = sessions.activate(sessionId, e.ctx.workers.handle(sessionId) ?? session.binding.nativeHandle)
+    if (!activation.activated) return undefined
     const through = inbox.at(-1)!.seq
     const replyTo = [...new Set(inbox.map((m) => m.from).filter((from) => !EXTERNAL_SENDERS.includes(from) && from !== sessionId))]
     const handoff = db.prepare('SELECT artifact FROM session_handoffs WHERE session_id = ?').get(sessionId) as { artifact: string } | undefined
@@ -51,8 +52,13 @@ export function wake(e: Engine, sessionId: string): RunView | undefined {
       replyTo.length ? 'Reply to them. Your reply is sent to each peer who wrote.' : 'Reply to them.',
       'If you cannot go on without input from the operator or a peer, start your reply with a line `INPUT_REQUIRED: <your question>`.',
     ].join('\n\n')
-    const run = e.start({ template: 'ask', input: prompt, sessionId, clientRequestId: `wake:${sessionId}:${through}`, classification: 'operator-shared' })
-    db.prepare("INSERT OR IGNORE INTO workflow_wakes (run_id, session_id, through_seq, reply_to, kind) VALUES (?, ?, ?, ?, 'wake')").run(run.runId, sessionId, through, JSON.stringify(replyTo))
+    // The turn is as strict as the strictest message it delivers (each at least as strict as its
+    // refs), so the turn's egress check keeps local-private content off a remote Worker (INV-12).
+    const rank = ['public', 'operator-shared', 'local-private'] as const
+    const classification = inbox.map((m) => e.ctx.artifacts.get(m.artifact)?.classification ?? 'local-private')
+      .reduce<(typeof rank)[number]>((a, b) => (rank.indexOf(b) > rank.indexOf(a) ? b : a), 'operator-shared')
+    const run = e.start({ template: 'ask', input: prompt, sessionId, clientRequestId: `wake:${sessionId}:${through}`, classification })
+    db.prepare("INSERT OR IGNORE INTO workflow_wakes (run_id, session_id, through_seq, reply_to, kind, generation) VALUES (?, ?, ?, ?, 'wake', ?)").run(run.runId, sessionId, through, JSON.stringify(replyTo), activation.generation)
     if (handoff) db.prepare('DELETE FROM session_handoffs WHERE session_id = ?').run(sessionId)
     return run
   })
@@ -74,9 +80,17 @@ export function wakeSafely(e: Engine, sessionId: string): void {
  * session in a fresh conversation from it.
  */
 export function settleWake(e: Engine, runId: string): void {
-  const wake = e.ctx.store.db.prepare('SELECT session_id, through_seq, reply_to, kind FROM workflow_wakes WHERE run_id = ? AND done = 0').get(runId) as { session_id: string; through_seq: number; reply_to: string; kind: string } | undefined
+  const wake = e.ctx.store.db.prepare('SELECT session_id, through_seq, reply_to, kind, generation FROM workflow_wakes WHERE run_id = ? AND done = 0').get(runId) as { session_id: string; through_seq: number; reply_to: string; kind: string; generation: number | null } | undefined
   if (!wake) return
   const sessions = e.ctx.workerSessions
+  // The activation this wake ran under; a wake recorded before generations were kept settles the current one.
+  const generation = wake.generation ?? sessions.session(wake.session_id)?.binding.generation ?? 0
+  if (sessions.session(wake.session_id)?.binding.generation !== generation) {
+    // A superseded activation writes nothing to the session (REQ-SES-1); its wake is done.
+    e.ctx.logger.warn(`workflow: wake ${runId} of session ${wake.session_id} ran under activation ${generation}, which is superseded; not settled`)
+    e.ctx.store.db.prepare('UPDATE workflow_wakes SET done = 1 WHERE run_id = ?').run(runId)
+    return
+  }
   const run = e.get(runId)
   const answer = run?.status === 'completed' ? run.answer?.trim() ?? '' : ''
   const result = run?.status === 'completed' ? e.records(runId).at(-1)?.outputReceipt?.result : undefined
@@ -90,12 +104,12 @@ export function settleWake(e: Engine, runId: string): void {
           body: { schema: 'session-summary@1.0', sessionId: wake.session_id, reason: 'compaction', turns: session.usage?.turns ?? 0, generation: session.binding.generation,
             estimatedTokens: session.usage?.estimatedTokens ?? 0, summary: answer.slice(0, 32_000), refs: [result] },
         }).id
-        sessions.settle(wake.session_id)
+        sessions.settle(wake.session_id, generation)
         e.ctx.workers.reset(wake.session_id)
         sessions.rebind(wake.session_id, estimateTokens(answer))
         db.prepare('INSERT OR REPLACE INTO session_handoffs (session_id, artifact) VALUES (?, ?)').run(wake.session_id, handoff)
       } else {
-        sessions.settle(wake.session_id)
+        sessions.settle(wake.session_id, generation)
       }
     } else {
       const inputRequired = /^\s*INPUT_REQUIRED:/m.test(answer)
@@ -107,7 +121,7 @@ export function settleWake(e: Engine, runId: string): void {
       // A failed wake is acknowledged too: the failure is the run's, and the message is not retried in a loop.
       sessions.ack(wake.session_id, wake.through_seq)
       const handle = e.ctx.workers.handle(wake.session_id)
-      const settled = sessions.settle(wake.session_id, { inputRequired, tokens: estimateTokens(`${e.runRow(runId)?.input ?? ''}${answer}`), ...(handle ? { nativeHandle: handle } : {}) })
+      const settled = sessions.settle(wake.session_id, generation, { inputRequired, tokens: estimateTokens(`${e.runRow(runId)?.input ?? ''}${answer}`), ...(handle ? { nativeHandle: handle } : {}) })
       const turns = settled.usage?.turns ?? 0
       if (answer && result && settled.budgets.checkpointEveryTurns && turns % settled.budgets.checkpointEveryTurns === 0) {
         e.ctx.artifacts.put({
@@ -130,12 +144,13 @@ function compact(e: Engine, sessionId: string): void {
     e.ctx.store.transaction((db) => {
       const session = e.ctx.workerSessions.session(sessionId)
       if (!session || e.draining || e.stopped.signal.aborted) return
-      if (!e.ctx.workerSessions.activate(sessionId, e.ctx.workers.handle(sessionId) ?? session.binding.nativeHandle).activated) return
+      const activation = e.ctx.workerSessions.activate(sessionId, e.ctx.workers.handle(sessionId) ?? session.binding.nativeHandle)
+      if (!activation.activated) return
       const run = e.start({
         template: 'ask', sessionId, classification: 'operator-shared', clientRequestId: `compact:${sessionId}:${session.binding.generation}`,
         input: 'Your context is getting long. Write a handoff summary for yourself to continue from: the decisions made, the open questions, the current state, and anything a peer is waiting on. Be complete but concise; this summary replaces the conversation.',
       })
-      db.prepare("INSERT OR IGNORE INTO workflow_wakes (run_id, session_id, through_seq, reply_to, kind) VALUES (?, ?, 0, '[]', 'compaction')").run(run.runId, sessionId)
+      db.prepare("INSERT OR IGNORE INTO workflow_wakes (run_id, session_id, through_seq, reply_to, kind, generation) VALUES (?, ?, 0, '[]', 'compaction', ?)").run(run.runId, sessionId, activation.generation)
     })
   } catch (error) {
     e.ctx.logger.warn(`workflow: could not compact session ${sessionId}: ${(error as Error).message}`)

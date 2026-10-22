@@ -718,7 +718,7 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
       vote: { kind: 'review', method: 'inconclusive', tiebreak: { by: 'rule', option: 'inconclusive' }, rounds: [{ ended: 'no-objections' }], findings: [{ id: 'F1', member: 'm1', severity: 'blocking' }] } })
   }, 240_000)
 
-  it('wakes an idle member on a message after its team finished; its reply goes to the peer, and an answer wakes nobody (REQ-SES-2, REQ-SES-5)', async () => {
+  it('wakes an idle member on a message after its team finished; its reply goes to the peer, an answer wakes nobody, and local-private refs never reach a remote Worker (REQ-SES-2, REQ-SES-5, REQ-SES-4, INV-12)', async () => {
     const answer = (prompt: string): string => {
       if (kind(prompt) !== 'other') return member(prompt)
       if (prompt.includes('Messages for you (m1)')) return prompt.includes('from m2') ? 'm1 answers m2' : 'm1 answers the operator'
@@ -733,9 +733,9 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
     await new Promise((resolve) => setTimeout(resolve, 500))
     expect(fake.sent).toHaveLength(2) // m1's proposal and ballot; the team sends no mail, so nothing wakes
     expect(ctx.workerSessions.pending()).toEqual([])
-    const wakeRun = async (from: string, body: string, intent?: 'request') => {
+    const wakeRun = async (from: string, body: string, intent?: 'request', refs?: `sha256:${string}`[]) => {
       const before = ctx.workflow.usage(50).map((r) => r.runId)
-      ctx.workerSessions.send({ from, messageId: `t-${body.replace(/\W/g, "-")}`, to: { session: m1!.sessionId }, body, ...(intent ? { intent } : {}) })
+      ctx.workerSessions.send({ from, messageId: `t-${body.replace(/\W/g, "-")}`, to: { session: m1!.sessionId }, body, ...(intent ? { intent } : {}), ...(refs ? { refs } : {}) })
       let id: string | undefined
       await until(() => !!(id = ctx.workflow.usage(50).map((r) => r.runId).find((r) => !before.includes(r))))
       return ctx.workflow.wait(id!, 60_000)
@@ -761,6 +761,16 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
     const fence = /### From \[client\] \(request\), between the lines (\S+):/.exec(prompt)?.[1]
     expect(fence).toMatch(/^[0-9a-f]{16}$/)
     expect(prompt).toContain(`${fence}\nhi\n### From [operator] (request)\nApprove the plan\n${fence}`)
+    // A message referring to local-private content: the wake turn takes its classification, and the
+    // turn's egress check keeps it off the website Worker, before anything is sent (INV-12).
+    await until(() => ctx.workerSessions.session(m1!.sessionId)!.state === 'IDLE')
+    const secret = ctx.artifacts.put({ kind: 'evidence', bodySchema: 'limit-state@1.0', classification: 'local-private', producer: { type: 'system', ref: 'test' },
+      body: { schema: 'limit-state@1.0', pool: 'p', account: 'a', window: { id: 'w', kind: 'rolling' }, state: 'ok', source: 'status-line', observedAt: '2026-10-22T09:00:00Z' } }).id
+    const sentBefore = fake.sent.length
+    const kept = await wakeRun('operator', 'see the attached notes', undefined, [secret])
+    expect(kept.status).toBe('failed')
+    expect(ctx.workflow.records(kept.runId)[0]!.requirement.data.classification).toBe('local-private')
+    expect(fake.sent).toHaveLength(sentBefore)
   }, 240_000)
 
   it('lets a session ask for input it cannot go on without, then resume when a peer answers (REQ-SES-7)', async () => {

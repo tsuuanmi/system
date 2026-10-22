@@ -60,11 +60,12 @@
   run through the [conformance runner](../../libs/conformance/runner.ts) at contract 1.0
   against this plugin with `SESSIONS_CONFIG`:
   - a SessionId bound once to its Worker, unchanged across activations and compaction;
-  - a binding generation that advances on re-activation and fences a stale activation's
-    writes (baselined: not kept yet);
+  - a binding generation that advances on every activation, which `settle` presents, so a
+    stale activation's write is refused;
   - an ordered mailbox; redelivery from `mailboxSeq + 1`; deduplication on
     `(from, messageId)`;
   - policy refusals (sender, target, budget) as `gate` decisions; barriers hold messages;
   - a body is data, never authority (INV-6);
-  - one writer per subject (INV-15) and the egress check of `refs` (baselined: not kept yet);
+  - a message at least as strict as its `refs`, so the receiver's turn carries their
+    classification to its egress check (write authority over a subject is the board's);
   - activation needs a conversation and fits the turn and lifetime budgets.

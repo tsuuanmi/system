@@ -11,9 +11,6 @@ import Artifacts from '../src/index.ts'
 runSuite(artifactsSuite, {
   name: '@tsuuanmi/system-artifacts',
   contract: '1.0',
-  expectedFailures: {
-    'artifacts.collect-keeps-referenced': 'collect marks only from store-row roots, so the inputs and lineage of an artifact kept by a live run or the grace period are collected (src/index.ts:414-417)',
-  },
   boot: async () => {
     const dir = mkdtempSync(join(tmpdir(), 'system-artifacts-conformance-'))
     const ctx = new Context()

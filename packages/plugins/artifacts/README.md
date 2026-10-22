@@ -45,6 +45,5 @@ records ([design](../../../docs/design/artifacts.md),
   - `explain` walks inputs once each, within `explainDepth` and `explainBudget`;
   - `collect` takes only what no root reaches, past the grace period, of no
     remaining run; a collected artifact still named reads as `expired`;
-  - an artifact a stored artifact references through its inputs or lineage is
-    never collected (baselined: the inputs of an artifact kept only by its run
-    or by the grace period are collected today).
+  - an artifact that a kept artifact references through its inputs or lineage is
+    never collected: an artifact in the grace period or of a live run is a root.

@@ -50,9 +50,21 @@ export function reconcileTurn(receipt: TurnReceipt, snapshot: TurnSnapshot, opti
   if (snapshot.running) return receipt.status === 'SUBMITTED' ? 'WAIT' : 'AMBIGUOUS'
   if (receipt.status === 'COMPLETED') return text !== '' && receipt.responseHash === current ? 'RECOVER' : 'AMBIGUOUS'
   if (text !== '' && current !== receipt.previousResponseHash) return 'RECOVER'
+  // The page loaded but no longer shows the response this turn followed: it contradicts the
+  // receipt, so whether the prompt was sent cannot be told. Absence is not evidence of non-submission.
+  if (boundaryMissing(receipt, snapshot)) return 'AMBIGUOUS'
   // The provider shows our prompt as the last user turn: it has it, so resending would duplicate it.
   if (options.prompt !== undefined && promptShown(snapshot.lastPrompt, options.prompt)) return 'AMBIGUOUS'
   return receipt.resubmits < (options.maxResubmits ?? 2) ? 'RESUBMIT' : 'AMBIGUOUS'
+}
+
+/**
+ * Whether an observed page shows no response although the receipt recorded one before this turn.
+ * A page still hydrating looks the same, so a caller may observe it again, a bounded number of
+ * times, before it fails closed.
+ */
+export function boundaryMissing(receipt: TurnReceipt, snapshot: TurnSnapshot): boolean {
+  return receipt.previousResponseHash !== null && snapshot.observable !== false && !snapshot.running && snapshot.text.trim() === ''
 }
 
 const flat = (text: string): string => text.replace(/\s+/g, ' ').trim()

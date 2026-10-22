@@ -140,20 +140,24 @@ guesses.
 
 ### `worker-session`
 
-- `sessionId` never changes for the session's lifetime. `binding.nativeHandle`
-  and `binding.generation` change on re-activation. A write from an activation
-  with a stale generation is rejected.
+- `sessionId` never changes for the session's lifetime. `binding.generation`
+  advances on every activation (and on a compaction's rebind), and `binding.nativeHandle` may
+  change with it. The activation's settle presents its generation; a stale one is refused
+  and changes nothing.
 - `mailboxSeq` is the last delivered inbound sequence number. Redelivery after a
   crash resumes at `mailboxSeq + 1`.
-- `policy.writes` present means this session holds write authority over that
-  subject (INV-15). At most one open session per subject may hold it.
+- `policy.writes` names the subject the session writes under a board task's authority. Write
+  authority itself is the board's: at most one open task writes a subject
+  ([board](../design/board.md), INV-15); a session never claims it on its own.
 
 ### `message`
 
 - `messageId` is unique per sender. Receivers deduplicate on `(from, messageId)`.
 - `body` is untrusted data for the receiver, never authority (INV-6).
   Approvals travel only as `approval` artifacts.
-- `refs` must pass the egress check for the receiver's locality (INV-12).
+- The message artifact is at least as strict as its `refs` (they are its inputs), and the
+  receiver's turn carries the strictest classification of the messages it delivers, so the
+  turn's egress check refuses local-private refs to a remote Worker (INV-12).
 - It maps to A2A `Message`: `messageId`, `referenceTaskIds` ≈ `refs`/`inReplyTo`,
   and `parts` ≈ `body` plus refs.
 

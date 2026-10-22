@@ -20,12 +20,15 @@ import type {} from '@tsuuanmi/system-login'
 import type {} from '@tsuuanmi/system-artifacts'
 import { type Lease, LeaseLost, StaleGeneration } from '@tsuuanmi/system-leases'
 import { type ContentId, contentId, sha256 } from '@tsuuanmi/system-libs'
-import { type BrowserTurn, type ConversationMode, type Disposition, type PortableState, type ProviderDriver, ProviderError, type ProviderFeature, ProviderScheduler, type Tier, type TurnReceipt, type TurnSnapshot, dispositionOf, toProviderError } from '@tsuuanmi/system-provider-core'
+import { type BrowserTurn, type ConversationMode, type Disposition, type PortableState, type ProviderDriver, ProviderError, type ProviderFeature, ProviderScheduler, type Tier, type TurnReceipt, type TurnSnapshot, boundaryMissing, dispositionOf, toProviderError } from '@tsuuanmi/system-provider-core'
 import type {} from '@tsuuanmi/system-store'
 import type {} from '@tsuuanmi/system-turn-receipts'
 import type { CapabilityDescriptor, WorkerExecution, WorkerStart, WorkerState } from '@tsuuanmi/system-workers-core'
 import { z as zod } from 'zod'
 import { type ConversationView, deleteDue, LEDGER_MIGRATION, type LedgerHost, type LedgerState, listConversations, recordConversation, releaseSessions, sessionReleased } from './ledger.ts'
+
+/** Extra looks at a page that no longer shows a turn's boundary, 5 s apart, before it fails closed. */
+const BOUNDARY_LOOKS = 3
 
 export type { ConversationView, LedgerState } from './ledger.ts'
 
@@ -1150,6 +1153,8 @@ export class Turns extends Service {
     const deadline = Date.now() + (row.feature === 'deep-research' ? this.config.researchTimeoutMs ?? 60 * 60_000 : this.config.turnTimeoutMs ?? 15 * 60_000)
     let snapshot: TurnSnapshot = { text: '', running: false, observable: false }
     let provider = ''
+    // A page that no longer shows the boundary may still be hydrating: look again, a few times, before failing closed.
+    let missingLooks = 0
     for (;;) {
       if (row.mode === 'persistent' && binding) {
         const view = await this.ctx.accounts.get(accountId)
@@ -1171,6 +1176,11 @@ export class Turns extends Service {
         return 'done'
       }
       if (outcome === 'RESUBMIT') return 'resubmit'
+      if (outcome === 'AMBIGUOUS' && boundaryMissing(receipt, snapshot) && missingLooks < BOUNDARY_LOOKS && Date.now() <= deadline) {
+        missingLooks += 1
+        await sleep(5000, undefined, { signal })
+        continue
+      }
       if (outcome === 'AMBIGUOUS' || Date.now() > deadline) {
         this.fail(row.turn_id, new ProviderError('reconciliation_failed',
           `the host stopped after this prompt was sent and the outcome cannot be established (decision ${decision}); it is not resent automatically`), lease)

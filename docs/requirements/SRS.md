@@ -191,8 +191,9 @@
   rewrite their content.
 - **REQ-SES-3** Messages are durable `message` artifacts, delivered at least once,
   in order per mailbox, and deduplicated by `messageId`.
-- **REQ-SES-4** The group policy (who may message whom, barriers, budgets, egress)
-  is enforced on every message. A rejected message produces a decision artifact.
+- **REQ-SES-4** The group policy (who may message whom, barriers, budgets) is
+  enforced on every message, and egress on every delivery into the receiver's turn. A
+  rejected message produces a decision artifact.
 - **REQ-SES-5** An idle session is woken by an incoming message, cold-resumed
   when needed. Peers never poll each other.
 - **REQ-SES-6** Long-running sessions emit checkpoint artifacts at bounded

@@ -117,11 +117,11 @@ describe('ctx.workerSessions: sessions, mailboxes, direct messages (ADR-0015)', 
     expect(ctx.workerSessions.pending()).toEqual(['ses_a'])
     // ACTIVE needs the native conversation to resume (worker-session@1.0).
     expect(ctx.workerSessions.activate('ses_a', undefined)).toMatchObject({ activated: false, reason: expect.stringMatching(/no conversation/) })
-    expect(ctx.workerSessions.activate('ses_a', 'https://chatgpt.test/c/1')).toEqual({ activated: true })
+    expect(ctx.workerSessions.activate('ses_a', 'https://chatgpt.test/c/1')).toEqual({ activated: true, generation: 1 })
     expect(ctx.workerSessions.session('ses_a')).toMatchObject({ state: 'ACTIVE', binding: { nativeHandle: 'https://chatgpt.test/c/1' }, usage: { turns: 1 } })
     new SchemaRegistry().assertRecord(ctx.workerSessions.session('ses_a')!)
     expect(ctx.workerSessions.activate('ses_a', 'https://chatgpt.test/c/1')).toMatchObject({ activated: false, reason: expect.stringMatching(/ACTIVE/) })
-    ctx.workerSessions.settle('ses_a')
+    ctx.workerSessions.settle('ses_a', 1)
     expect(ctx.workerSessions.session('ses_a')!.state).toBe('IDLE')
     expect(ctx.workerSessions.ofRun('run_1').map((s) => s.sessionId)).toEqual(['ses_a'])
   })
@@ -144,8 +144,8 @@ describe('ctx.workerSessions: sessions, mailboxes, direct messages (ADR-0015)', 
     const turns = await boot()
     team(turns, false)
     for (let i = 0; i < 100; i++) {
-      expect(turns.workerSessions.activate('ses_a', 'h')).toEqual({ activated: true })
-      turns.workerSessions.settle('ses_a')
+      expect(turns.workerSessions.activate('ses_a', 'h')).toEqual({ activated: true, generation: i + 1 })
+      turns.workerSessions.settle('ses_a', i + 1)
     }
     expect(turns.workerSessions.activate('ses_a', 'h')).toMatchObject({ activated: false, budget: 'turns' })
     expect(turns.workerSessions.session('ses_a')!.state).toBe('FAILED')
@@ -153,25 +153,26 @@ describe('ctx.workerSessions: sessions, mailboxes, direct messages (ADR-0015)', 
     const old = await boot()
     team(old, false)
     expect(old.workerSessions.activate('ses_a', 'h', Date.now() + 1441 * 60_000)).toMatchObject({ activated: false, budget: 'lifetime' })
-    expect(old.workerSessions.activate('ses_b', 'h')).toEqual({ activated: true })
-    old.workerSessions.settle('ses_b')
+    expect(old.workerSessions.activate('ses_b', 'h')).toEqual({ activated: true, generation: 1 })
+    old.workerSessions.settle('ses_b', 1)
     expect(old.workerSessions.activate('ses_b', 'h', Date.now() + 721 * 60_000)).toMatchObject({ activated: false, budget: 'idle' })
     expect(decisions(old).sort()).toEqual(['idle', 'lifetime'])
   })
 
-  it('waits in INPUT_REQUIRED until input arrives, then any reply wakes it; a compaction advances the generation (REQ-SES-7, REQ-SES-6)', async () => {
+  it('waits in INPUT_REQUIRED until input arrives, then any reply wakes it; every activation and a compaction advance the generation (REQ-SES-7, REQ-SES-6, REQ-SES-1)', async () => {
     const ctx = await boot()
     team(ctx, false)
     const woken: string[][] = []
     ctx.on('worker-sessions/delivered', (ids) => void woken.push(ids))
     ctx.workerSessions.activate('ses_a', 'h-1')
-    expect(ctx.workerSessions.settle('ses_a', { inputRequired: true, tokens: 120, nativeHandle: 'h-1' })).toMatchObject({ state: 'INPUT_REQUIRED', usage: { estimatedTokens: 120 } })
+    expect(ctx.workerSessions.settle('ses_a', 1, { inputRequired: true, tokens: 120, nativeHandle: 'h-1' })).toMatchObject({ state: 'INPUT_REQUIRED', usage: { estimatedTokens: 120 } })
     new SchemaRegistry().assertRecord(ctx.workerSessions.session('ses_a')!)
     ctx.workerSessions.send({ from: 'ses_b', messageId: 'a1', to: { session: 'ses_a' }, intent: 'answer', body: 'metres' })
     expect(woken).toEqual([['ses_a']])
-    expect(ctx.workerSessions.activate('ses_a', 'h-1')).toEqual({ activated: true })
-    ctx.workerSessions.settle('ses_a', { tokens: 80 })
-    expect(ctx.workerSessions.rebind('ses_a', 30)).toMatchObject({ state: 'IDLE', binding: { generation: 1, nativeHandle: 'h-1' }, usage: { estimatedTokens: 30 } })
+    expect(ctx.workerSessions.activate('ses_a', 'h-1')).toEqual({ activated: true, generation: 2 })
+    expect(() => ctx.workerSessions.settle('ses_a', 1, { tokens: 9999 })).toThrow(/stale/)
+    ctx.workerSessions.settle('ses_a', 2, { tokens: 80 })
+    expect(ctx.workerSessions.rebind('ses_a', 30)).toMatchObject({ state: 'IDLE', binding: { generation: 3, nativeHandle: 'h-1' }, usage: { estimatedTokens: 30 } })
   })
 })
 
