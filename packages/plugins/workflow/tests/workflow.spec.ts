@@ -813,15 +813,20 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
     // Past the threshold: the session writes its handoff in its own conversation, and continues in a new one.
     await until(() => ctx.artifacts.list({ kind: 'handoff' }).length === 1, 120_000)
     const [handoff] = ctx.artifacts.list({ kind: 'handoff' })
-    expect(handoff).toMatchObject({ bodySchema: 'session-summary@1.0', body: { sessionId: m1.sessionId, reason: 'compaction', summary: 'HANDOFF: the plan is agreed; the open question is the deadline.', generation: 0 } })
-    await until(() => ctx.workerSessions.session(m1.sessionId)!.binding.generation === 1 && ctx.workerSessions.session(m1.sessionId)!.state === 'IDLE', 30_000)
+    expect(handoff).toMatchObject({ bodySchema: 'session-summary@1.0', body: { sessionId: m1.sessionId, reason: 'compaction', summary: 'HANDOFF: the plan is agreed; the open question is the deadline.' } })
+    // The handoff is written in the compaction's own activation; the rebind starts the next generation (REQ-SES-1).
+    const written = (handoff!.body as { generation: number }).generation
+    expect(written).toBeGreaterThan(0)
+    await until(() => ctx.workerSessions.session(m1.sessionId)!.binding.generation === written + 1 && ctx.workerSessions.session(m1.sessionId)!.state === 'IDLE', 30_000)
     ctx.workerSessions.send({ from: 'operator', messageId: 'after', to: { session: m1.sessionId }, body: 'What is open?' })
     await until(() => fake.sent.some((s) => s.prompt.includes('<handoff>')), 120_000)
     const resumed = fake.sent.find((s) => s.prompt.includes('<handoff>'))!
     expect(resumed.prompt).toContain('the open question is the deadline')
     await until(() => ctx.workerSessions.session(m1.sessionId)!.state === 'IDLE' && ctx.workers.handle(m1.sessionId) !== undefined, 60_000)
     expect(ctx.workers.handle(m1.sessionId)).not.toBe(conversationBefore)
-    expect(ctx.workerSessions.session(m1.sessionId)).toMatchObject({ sessionId: m1.sessionId, binding: { generation: 1, nativeHandle: ctx.workers.handle(m1.sessionId) } })
+    expect(ctx.workerSessions.session(m1.sessionId)).toMatchObject({ sessionId: m1.sessionId, binding: { nativeHandle: ctx.workers.handle(m1.sessionId) } })
+    // The turn after the compaction was an activation of its own.
+    expect(ctx.workerSessions.session(m1.sessionId)!.binding.generation).toBeGreaterThan(written + 1)
     // Checkpoints at bounded intervals: the third turn (the team's own steps do not count) writes one.
     expect(ctx.artifacts.list({ kind: 'report' }).filter((a) => a.bodySchema === 'session-summary@1.0').length).toBeGreaterThanOrEqual(1)
   }, 300_000)
