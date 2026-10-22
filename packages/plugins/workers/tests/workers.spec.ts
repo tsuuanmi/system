@@ -67,9 +67,21 @@ describe('ctx.workers: configured preferences', () => {
         body: { schema: 'provider-answer@1.0', provider: 'p', account: 'a', turnId: 't', conversation: { mode: 'temporary' }, promptHash: `sha256:${'0'.repeat(64)}`, text },
       }).id as `sha256:${string}`
       expect(ctx.workers.accept(put('fine'), 'acceptance.answer').accepted).toBe(true)
-      expect(ctx.workers.accept(put('fine'), 'acceptance.cited')).toMatchObject({ accepted: false, reasons: ['the answer cites no source link'] })
+      const uncited = ctx.workers.accept(put('fine'), 'acceptance.cited')
+      expect(uncited).toMatchObject({ accepted: false, reasons: ['the answer cites no source link'] })
       const cited = 'See [A](https://a.example/x) and https://b.example/y, again https://a.example/x.'
-      expect(ctx.workers.accept(put(cited), 'acceptance.cited')).toMatchObject({ accepted: true, reasons: ['the answer cites 2 source link(s)'] })
+      const accepted = ctx.workers.accept(put(cited), 'acceptance.cited')
+      expect(accepted).toMatchObject({ accepted: true, reasons: ['the answer cites 2 source link(s)'] })
+      // The losing option says why it lost (INV-13): the failed check, or that every check passed.
+      const candidates = (decision: string) => (ctx.artifacts.get(decision)?.body as { candidates: unknown[] }).candidates
+      expect(candidates(uncited.decision)).toEqual([
+        { option: 'accept', selected: false, reasons: ['not accept: the answer cites no source link'] },
+        { option: 'reject', selected: true, reasons: ['the answer cites no source link'] },
+      ])
+      expect(candidates(accepted.decision)).toEqual([
+        { option: 'accept', selected: true, reasons: ['the answer cites 2 source link(s)'] },
+        { option: 'reject', selected: false, reasons: ['not reject: every check of acceptance.cited passed'] },
+      ])
     } finally {
       await dispose()
     }

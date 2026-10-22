@@ -283,7 +283,12 @@ export class FakeApprovals extends Approvals {
     const failedChecks = mode === 'auto' || mode === 'notify' ? requires.filter((c) => action.checks?.[c] !== true) : []
     const decision = this.ctx.artifacts.recordDecision({
       schema: 'decision@1.4', decisionType: 'autonomy', question: `Which mode does the policy give a ${action.class} action?`, inputs: [],
-      candidates: MODES.map((m) => ({ option: m, selected: m === mode, reasons: m === mode ? [`the strictest rule for ${actionClass} is ${policy.id}'s`] : [] })),
+      candidates: MODES.map((m) => ({
+        option: m, selected: m === mode,
+        reasons: [m === mode ? `the strictest rule for ${actionClass} is ${policy.id}'s`
+          : rank(m) < rank(mode) ? `not ${m}: laxer than ${policy.id}'s rule for ${actionClass} (${mode}), the strictest that applies`
+          : `not ${m}: no applying policy's rule for ${actionClass} is that strict`],
+      })),
       decider: { type: 'policy', id: policy.id, version: String(policy.version) },
       outcome: { option: mode, detail: { actionClass, policies: policies.map((p) => p.id), ...(failedChecks.length ? { failedChecks } : {}) } }, deterministic: true,
     }, { producer: { type: 'policy', ref: policy.id } })
@@ -343,9 +348,14 @@ export class FakeApprovals extends Approvals {
   }
 
   private resolve(request: ApprovalRequest, cause: 'verdict' | 'expired' | 'withdrawn', option: string, at: Date, approval?: ArtifactRef): void {
+    // Why each other resolution lost: what happened first.
+    const verdicts = ['approved', 'rejected']
+    const lost = (o: string): string => cause === 'verdict' ? (verdicts.includes(o) ? `the operator's verdict is ${option}` : 'a verdict came first')
+      : cause === 'expired' ? (o === 'withdrawn' ? 'it was not withdrawn before it expired' : 'no verdict came before it expired')
+      : o === 'denied:expired' ? 'it was withdrawn before it expired' : 'it was withdrawn before a verdict'
     const decision = this.ctx.artifacts.recordDecision({
       schema: 'decision@1.4', decisionType: 'approval', question: `Is approval request ${request.requestId} approved?`, inputs: [request.policy.decision, ...(approval ? [approval] : [])],
-      candidates: ['approved', 'rejected', 'denied:expired', 'withdrawn'].map((o) => ({ option: o, selected: o === option, reasons: o === option ? [cause] : [] })),
+      candidates: ['approved', 'rejected', 'denied:expired', 'withdrawn'].map((o) => ({ option: o, selected: o === option, reasons: [o === option ? cause : `not ${o}: ${lost(o)}`] })),
       decider: cause === 'verdict' ? { type: 'operator', id: 'operator', version: '1' } : { type: 'rule', id: cause === 'expired' ? 'approvals.expiry' : 'approvals.withdraw', version: '1' },
       outcome: { option, detail: { requestId: request.requestId } }, deterministic: cause !== 'verdict',
     }, { producer: { type: cause === 'verdict' ? 'operator' : 'system', ref: 'approvals' }, classification: request.classification === 'local-private' ? 'local-private' : 'operator-shared' })

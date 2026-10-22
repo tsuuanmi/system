@@ -202,6 +202,21 @@ export const artifactsSuite = defineSuite<Boot>({
       expect((ab.body as Decision).inputs).toEqual([a, b].sort())
       expect(ab.inputs).toEqual([a, b].sort())
     }),
+    scenario('decision-reasons', 'refuses a decision with a candidate that gives no reason: every rejected candidate says why it lost, and the selected one why it won, not only the winner (INV-13)', async (ctx) => {
+      const base = route('Which Worker runs research:2?')
+      const without = (option: string, reasons: string[]) => ({ ...base, candidates: base.candidates.map((c) => (c.option === option ? { ...c, reasons } : c)) })
+      const wrong = [
+        without('worker:b', []), // a rejected candidate without a reason
+        without('worker:b', ['', '  ']), // only blank reasons
+        without('worker:a', []), // the selected candidate without a reason
+        { ...base, candidates: [...base.candidates, { option: 'worker:c', selected: false, reasons: [] }] },
+      ]
+      for (const decision of wrong) expect(refused(() => ctx.artifacts.recordDecision(decision, { producer: policy })), JSON.stringify(decision.candidates)).toBe(true)
+      expect(ctx.artifacts.list({ kind: 'decision' })).toEqual([])
+      // With a reason on every candidate it is recorded, the reasons as given.
+      const body = ctx.artifacts.recordDecision(base, { producer: policy }).body as Decision
+      expect(body.candidates).toEqual(base.candidates)
+    }),
     scenario('decision-prose-clamped', 'clamps a decision\'s question (500), reasons (300), and rationale (1000) to whole characters ending in an ellipsis, so long prose never fails its decision (INV-13, INV-9)', async (ctx) => {
       // The 300th character of the reason is an emoji (a surrogate pair): it is never split.
       const reason = `${'r'.repeat(298)}😀😀 and more`
@@ -242,7 +257,7 @@ export const artifactsSuite = defineSuite<Boot>({
       const report = ctx.artifacts.put(answer('r', { runId: 'run-1', nodeId: 'n1' }))
       const finding = ctx.artifacts.put(answer('f', { kind: 'finding', runId: 'run-1', nodeId: 'n2' }))
       const routed = ctx.artifacts.recordDecision(route('route?'), { producer: policy, runId: 'run-2', nodeId: 'n1' })
-      const tier = ctx.artifacts.recordDecision({ ...route('tier?'), decisionType: 'tier', candidates: [{ option: 'frontier', selected: true, reasons: [] }], outcome: { option: 'frontier' } }, { producer: policy, runId: 'run-1', nodeId: 'n1' })
+      const tier = ctx.artifacts.recordDecision({ ...route('tier?'), decisionType: 'tier', candidates: [{ option: 'frontier', selected: true, reasons: ['lowest admitted tier'] }], outcome: { option: 'frontier' } }, { producer: policy, runId: 'run-1', nodeId: 'n1' })
       const ids = (filter: Parameters<Context['artifacts']['list']>[0]) => ctx.artifacts.list(filter).map((e) => e.id).sort()
       expect(ids({})).toEqual([report.id, finding.id, routed.id, tier.id].sort())
       expect(ids({ kind: 'finding' })).toEqual([finding.id])
@@ -311,7 +326,7 @@ export const artifactsSuite = defineSuite<Boot>({
       const orphan = ctx.artifacts.put(answer('referenced by nothing')).id
       // Named in another artifact's body only: not a reference that keeps it.
       const named = ctx.artifacts.put(answer('named in a body only')).id
-      const naming = ctx.artifacts.recordDecision({ ...route('acceptance?'), decisionType: 'acceptance', candidates: [{ option: 'accepted', selected: true, reasons: [] }], outcome: { option: 'accepted', detail: { result: named } } }, { producer: policy })
+      const naming = ctx.artifacts.recordDecision({ ...route('acceptance?'), decisionType: 'acceptance', candidates: [{ option: 'accepted', selected: true, reasons: ['every check passed'] }], outcome: { option: 'accepted', detail: { result: named } } }, { producer: policy })
       ownerRows(ctx, JSON.stringify({ result: kept }), 'run-live', naming.id)
       // Inside the grace period nothing goes, referenced or not.
       expect((await ctx.artifacts.collect()).removed).toBe(0)

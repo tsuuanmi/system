@@ -22,7 +22,7 @@ export async function stop(e: Engine, runId: string, reason = 'stopped by the op
   e.runAborts.get(runId)?.abort()
   await e.running.get(runId)?.catch(() => undefined)
   return asOperator(e, runId, (lease) => {
-    const decision = operatorDecision(e, run, 'stop', ['stop', 'keep'], reason)
+    const decision = operatorDecision(e, run, 'stop', ['stop', 'keep'], reason, 'not keep: the operator asked to stop the run, which cancels its running executions')
     const error: WorkflowError = { kind: 'stopped', disposition: 'NONE', message: reason }
     for (const node of e.nodeRows(runId)) {
       if (node.state === 'COMPLETED' || node.state === 'FAILED' || node.state === 'RETIRED') continue
@@ -53,7 +53,7 @@ export function continueRun(e: Engine, runId: string, nodeId?: string): RunView 
     throw new WorkflowFailure('invalid_input', `run ${runId} is a team procedure that was removed (PROP-0004); its record stays readable with explain and result, and it cannot run again`)
   }
   const view = asOperator(e, runId, (lease) => {
-    const decision = operatorDecision(e, run, 'continue', ['continue', 'leave'], `reopen ${reopen.map((n) => n.node_id).join(', ')}`)
+    const decision = operatorDecision(e, run, 'continue', ['continue', 'leave'], `reopen ${reopen.map((n) => n.node_id).join(', ')}`, `not leave: the operator asked to continue the run, and ${reopen.map((n) => n.node_id).join(', ')} failed and can run again`)
     for (const node of reopen) {
       const record = JSON.parse(node.record) as NodeRecord
       const spec = JSON.parse(node.spec) as ResolvedNode
@@ -114,7 +114,10 @@ export async function supersede(e: Engine, runId: string, nodeId: string, replac
           question: `Does node ${dependent.node_id} of run ${runId} run again on the superseding input?`,
           // An execution that had already finished keeps its result as history: it is never taken, nor resent.
           inputs: [old.id, result, ...(stopped?.result ? [stopped.result] : [])],
-          candidates: [{ option: 'rerun', selected: true, reasons: [why, ...(stopped ? [stopped.reason] : [])] }, { option: 'keep', selected: false, reasons: [] }],
+          candidates: [
+            { option: 'rerun', selected: true, reasons: [why, ...(stopped ? [stopped.reason] : [])] },
+            { option: 'keep', selected: false, reasons: [`not keep: its input derives from ${nodeId}'s result ${old.id}, which is superseded`] },
+          ],
           decider: { type: 'policy', id: 'workflow.lineage-invalidation', version: '1' },
           outcome: { option: 'rerun' },
           deterministic: true,
@@ -280,7 +283,7 @@ function retireGrowth(e: Engine, run: RunRow, grower: string, grown: NodeRow[], 
     inputs: [...new Set([...inputs, ...plans])],
     candidates: [
       { option: 'retire', selected: true, reasons: [`${why}; ${grower} runs again`, ...(wrote.length ? [`${wrote.join(', ')} had started: the next plan needs the operator's approval`] : [])] },
-      { option: 'keep', selected: false, reasons: [] },
+      { option: 'keep', selected: false, reasons: [`not keep: ${grower} runs again, so what it grew from its superseded input is stale`] },
     ],
     decider: { type: 'policy', id: 'workflow.re-plan', version: '1' },
     outcome: { option: 'retire', detail: { retired: listed, wrote } },
@@ -356,12 +359,13 @@ function asOperator(e: Engine, runId: string, change: (lease: () => Lease) => vo
   return e.get(runId)!
 }
 
-function operatorDecision(e: Engine, run: RunRow, option: string, options: [string, string], reason: string): ArtifactRef {
+/** `reason` says why the operator chose `option`; `against`, why the other option lost. */
+function operatorDecision(e: Engine, run: RunRow, option: string, options: [string, string], reason: string, against: string): ArtifactRef {
   return e.ctx.artifacts.recordDecision({
     decisionType: 'recovery',
     question: `Does the operator ${option} run ${run.run_id}?`,
     inputs: [],
-    candidates: [{ option: options[0], selected: true, reasons: [reason] }, { option: options[1], selected: false, reasons: [] }],
+    candidates: [{ option: options[0], selected: true, reasons: [reason] }, { option: options[1], selected: false, reasons: [against] }],
     decider: { type: 'operator', id: `operator.${option}`, version: '1' },
     outcome: { option },
     deterministic: false,
