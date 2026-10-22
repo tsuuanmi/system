@@ -1,0 +1,55 @@
+{
+  "schema": "plugin-manifest@1.0",
+  "name": "@tsuuanmi/system-digest-claude",
+  "renames": [
+    "@tsuuanmi/system-digester"
+  ],
+  "version": "0.8.0",
+  "description": "Digests raw artifacts with a read-only Claude Code Worker on the economy tier.",
+  "class": {
+    "kind": "family",
+    "family": "digest"
+  },
+  "provides": [
+    {
+      "seam": "digests",
+      "version": "1.0.0"
+    }
+  ],
+  "consumes": [
+    {
+      "seam": "artifacts",
+      "range": "^1.0.0"
+    },
+    {
+      "seam": "workers",
+      "range": "^1.0.0"
+    },
+    {
+      "seam": "eventLog",
+      "range": "^1.0.0",
+      "optional": true
+    }
+  ],
+  "config": [
+    {
+      "key": "tier",
+      "sensitive": false,
+      "description": "Tier to digest on"
+    },
+    {
+      "key": "maxClaims",
+      "sensitive": false
+    }
+  ],
+  "license": "Apache-2.0",
+  "egress": "operator-shared",
+  "_meta": {
+    "lifecycle": {
+      "state": "canary",
+      "share": 0.2,
+      "since": "2026-10-22T00:00:00Z",
+      "decision": "sha256:f834253c898715368e5c041f0efbe9b77897f303489fa3b4865c61e0cc26fdb0"
+    }
+  }
+}

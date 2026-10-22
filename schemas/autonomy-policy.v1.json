@@ -1,0 +1,100 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:tsuuanmi:system:schema:autonomy-policy:v1",
+  "title": "Autonomy policy",
+  "description": "Which actions run on their own and which need a person (PROP-0008, design/approvals.md). Each action class maps to auto, notify, ask, or forbid. A project policy may only be stricter than the studio policy it narrows.",
+  "type": "object",
+  "required": ["schema", "id", "version", "scope", "rules", "default", "expiry"],
+  "properties": {
+    "schema": { "const": "autonomy-policy@1.0" },
+    "id": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+    "version": {
+      "description": "Changes whenever the policy's effect changes; decisions name it.",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 1000000
+    },
+    "scope": { "enum": ["studio", "project"] },
+    "projectId": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+    "narrows": {
+      "description": "The studio policy a project policy narrows, by id.",
+      "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+    },
+    "rules": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 64,
+      "items": { "$ref": "#/$defs/rule" }
+    },
+    "default": {
+      "description": "The mode of an action class no rule names. Fail closed: never auto or notify.",
+      "enum": ["ask", "forbid"]
+    },
+    "commands": {
+      "description": "Commands a Worker may run without asking, as exact command names or argv prefixes. Anything else is the `command` class.",
+      "type": "array",
+      "maxItems": 200,
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1, "maxLength": 200 }
+    },
+    "expiry": {
+      "description": "How long an approval request waits before it is denied (fail closed).",
+      "type": "object",
+      "required": ["defaultSeconds", "maxSeconds"],
+      "properties": {
+        "defaultSeconds": { "type": "integer", "minimum": 60, "maximum": 2592000 },
+        "maxSeconds": { "type": "integer", "minimum": 60, "maximum": 2592000 }
+      },
+      "additionalProperties": false
+    },
+    "batch": {
+      "description": "How open requests are grouped for the operator: at most `maxSize` per batch, and a batch is presented once its oldest request has waited `maxWaitSeconds`.",
+      "type": "object",
+      "required": ["maxSize", "maxWaitSeconds"],
+      "properties": {
+        "maxSize": { "type": "integer", "minimum": 1, "maximum": 50 },
+        "maxWaitSeconds": { "type": "integer", "minimum": 0, "maximum": 86400 }
+      },
+      "additionalProperties": false
+    }
+  },
+  "if": { "properties": { "scope": { "const": "project" } } },
+  "then": { "required": ["projectId", "narrows"], "properties": { "projectId": true, "narrows": true } },
+  "else": { "not": { "anyOf": [{ "required": ["projectId"] }, { "required": ["narrows"] }] } },
+  "$defs": {
+    "rule": {
+      "type": "object",
+      "required": ["actionClass", "mode"],
+      "properties": {
+        "actionClass": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/actionClass" },
+        "mode": {
+          "description": "auto: run, recorded; notify: run, recorded, and shown to the operator after; ask: an approval request, the action waits; forbid: denied.",
+          "enum": ["auto", "notify", "ask", "forbid"]
+        },
+        "requires": {
+          "description": "Deterministic checks that must pass before an auto or notify action counts as allowed; a failed check goes back to the lead, not to the operator.",
+          "type": "array",
+          "maxItems": 8,
+          "uniqueItems": true,
+          "items": { "enum": ["tests", "typecheck", "lint", "schema", "quote-check", "review"] }
+        },
+        "expiresSeconds": {
+          "description": "For ask: this class's expiry, within expiry.maxSeconds.",
+          "type": "integer",
+          "minimum": 60,
+          "maximum": 2592000
+        },
+        "note": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/shortText" }
+      },
+      "allOf": [
+        {
+          "description": "Irreversible actions and the investor's own decisions always ask, even unattended.",
+          "if": { "properties": { "actionClass": { "enum": ["external-send", "deploy", "delete-data", "spend", "charter", "funding", "policy-change"] } } },
+          "then": { "properties": { "mode": { "enum": ["ask", "forbid"] } } }
+        }
+      ],
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

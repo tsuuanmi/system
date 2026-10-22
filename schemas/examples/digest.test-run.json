@@ -1,0 +1,43 @@
+{
+  "schema": "digest@1.0",
+  "sources": [
+    "sha256:27906a522c6a493b9c27ae732c8e7d9fa4b5d97e6a5054103f3d3954e6438dd1",
+    "sha256:8118a3e5e3964accb3dc9f3ff143334dfb25e88b942f92cf6ddb65d7d1a5431a"
+  ],
+  "status": "partial",
+  "summary": "The banded kernel is in place and 41 of 43 alignment tests pass. Two tests with gaps at the sequence ends fail. The benchmark shows a 2.4x median speed-up.",
+  "claims": [
+    {
+      "id": "C1",
+      "kind": "failure",
+      "text": "Two end-gap tests fail.",
+      "citation": {
+        "artifact": "sha256:8118a3e5e3964accb3dc9f3ff143334dfb25e88b942f92cf6ddb65d7d1a5431a",
+        "quote": "FAIL tests/align/end-gaps.spec.ts (2 failed)",
+        "offset": 18234
+      }
+    },
+    {
+      "id": "C2",
+      "kind": "finding",
+      "text": "The median speed-up is 2.4x.",
+      "citation": {
+        "artifact": "sha256:27906a522c6a493b9c27ae732c8e7d9fa4b5d97e6a5054103f3d3954e6438dd1",
+        "quote": "median speed-up 2.4x over the reference"
+      }
+    }
+  ],
+  "openQuestions": [
+    "Should end gaps be scored like the reference, or penalized less?"
+  ],
+  "nextActions": [
+    "Fix end-gap scoring, then re-run the benchmark"
+  ],
+  "dropped": [
+    {
+      "what": "Per-test timings",
+      "why": "not needed for the decision"
+    }
+  ],
+  "confidence": 0.8
+}

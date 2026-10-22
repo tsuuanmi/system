@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:tsuuanmi:system:schema:digest:v1",
+  "title": "Digest",
+  "description": "Body of a `report` artifact: a cited summary of raw artifacts for the lead (PROP-0008, mechanism 1). Every claim cites one artifact and quotes it verbatim, so code can check the quote before the digest is accepted.",
+  "type": "object",
+  "required": ["schema", "sources", "status", "summary", "claims"],
+  "properties": {
+    "schema": { "const": "digest@1.0" },
+    "sources": {
+      "description": "The artifacts digested; every citation names one of them.",
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 64,
+      "uniqueItems": true,
+      "items": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/artifactRef" }
+    },
+    "status": {
+      "description": "What the digested work came to.",
+      "enum": ["passed", "failed", "partial", "blocked"]
+    },
+    "summary": {
+      "description": "The situation in a few sentences (SBAR: situation and background).",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2000
+    },
+    "claims": {
+      "type": "array",
+      "maxItems": 50,
+      "items": {
+        "type": "object",
+        "required": ["id", "kind", "text", "citation"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^C[1-9][0-9]{0,2}$" },
+          "kind": { "enum": ["finding", "failure", "decision", "risk"] },
+          "text": { "type": "string", "minLength": 1, "maxLength": 1000 },
+          "citation": {
+            "type": "object",
+            "required": ["artifact", "quote"],
+            "properties": {
+              "artifact": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/artifactRef" },
+              "quote": {
+                "description": "Verbatim text of the cited artifact's body.",
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 500
+              },
+              "offset": {
+                "description": "Where the quote starts in the body's text, in characters (code points), when known.",
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 4000000
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "openQuestions": {
+      "type": "array",
+      "maxItems": 16,
+      "items": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/shortText" }
+    },
+    "nextActions": {
+      "description": "Recommended next steps (SBAR: recommendation).",
+      "type": "array",
+      "maxItems": 16,
+      "items": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/shortText" }
+    },
+    "dropped": {
+      "description": "What was left out, and why.",
+      "type": "array",
+      "maxItems": 32,
+      "items": {
+        "type": "object",
+        "required": ["what", "why"],
+        "properties": {
+          "what": { "type": "string", "minLength": 1, "maxLength": 300 },
+          "why": { "type": "string", "minLength": 1, "maxLength": 300 }
+        },
+        "additionalProperties": false
+      }
+    },
+    "confidence": {
+      "description": "The summarizer's own confidence. Informational: escalation follows the quote check, not this.",
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    }
+  },
+  "additionalProperties": false
+}

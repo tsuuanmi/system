@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:tsuuanmi:system:schema:usage-record:v1",
+  "title": "Usage record",
+  "description": "Body of a `receipt` artifact holding what one accounting unit (a Worker run, a model call, a website turn) consumed, taken from an objective source (design/resources.md). Field names follow the OpenTelemetry GenAI usage attributes. Never a model's self-report.",
+  "type": "object",
+  "required": ["schema", "requestId", "source", "account", "pool", "observedAt"],
+  "properties": {
+    "schema": { "const": "usage-record@1.0" },
+    "requestId": {
+      "description": "Deduplication key: the source's own id for the unit counted (an Agent SDK result message's session and uuid, an API response id). The ledger keeps one record per (source, requestId).",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "source": {
+      "description": "Where the numbers come from: the runtime's result message, the provider's usage fields in a response, an agent's session transcript (reconciliation), system's own turn count, or an invoice.",
+      "enum": ["runtime-result", "provider-usage", "transcript", "turn-count", "invoice"]
+    },
+    "observedAt": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp" },
+    "account": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+    "pool": {
+      "description": "The configured resource pool the usage is drawn from, e.g. an account's interactive window, its programmatic credit, or an API key.",
+      "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+    },
+    "worker": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+    "runId": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+    "nodeId": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+    "sessionId": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+    "projectId": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+    "taskId": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+    "providerName": {
+      "description": "gen_ai.provider.name. Informational: routing never branches on it (INV-11).",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "model": {
+      "type": "object",
+      "properties": {
+        "request": { "description": "gen_ai.request.model", "type": "string", "minLength": 1, "maxLength": 128 },
+        "response": { "description": "gen_ai.response.model", "type": "string", "minLength": 1, "maxLength": 128 }
+      },
+      "additionalProperties": false
+    },
+    "usage": {
+      "description": "Totals of the unit, every model included.",
+      "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/tokenUsage"
+    },
+    "models": {
+      "description": "The same totals split per model, when the source gives them (the Agent SDK's modelUsage covers subagents too).",
+      "type": "array",
+      "maxItems": 16,
+      "items": {
+        "type": "object",
+        "required": ["model", "usage"],
+        "properties": {
+          "model": { "type": "string", "minLength": 1, "maxLength": 128 },
+          "usage": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/tokenUsage" },
+          "costUsd": { "type": "number", "minimum": 0, "maximum": 1000000 }
+        },
+        "additionalProperties": false
+      }
+    },
+    "turns": {
+      "description": "Website turns or agent turns counted, for pools metered in turns.",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100000
+    },
+    "durationMs": { "type": "integer", "minimum": 0, "maximum": 604800000 },
+    "cost": {
+      "type": "object",
+      "required": ["amount", "currency", "basis"],
+      "properties": {
+        "amount": { "type": "number", "minimum": 0, "maximum": 1000000 },
+        "currency": { "const": "USD" },
+        "basis": {
+          "description": "runtime-estimate: the runtime's own client-side figure; price-table: computed from the usage and a versioned price table; invoice: billed.",
+          "enum": ["runtime-estimate", "price-table", "invoice"]
+        },
+        "priceVersion": {
+          "description": "The price table the amount was computed with, so history is never repriced.",
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+        }
+      },
+      "if": { "properties": { "basis": { "const": "price-table" } } },
+      "then": { "required": ["priceVersion"], "properties": { "priceVersion": true } },
+      "additionalProperties": false
+    },
+    "outcome": {
+      "description": "How the unit ended. A failed run is metered too.",
+      "enum": ["completed", "failed", "aborted"]
+    }
+  },
+  "anyOf": [
+    { "required": ["usage"], "properties": { "usage": true } },
+    { "required": ["turns"], "properties": { "turns": true } }
+  ],
+  "additionalProperties": false
+}

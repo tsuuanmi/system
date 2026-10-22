@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:tsuuanmi:system:schema:limit-state:v1",
+  "title": "Limit state",
+  "description": "Body of an `evidence` artifact: one observation of one window of a resource pool (design/resources.md). Pools and windows are operator configuration, never a hardcoded plan. Every reading field is optional, because sources omit them.",
+  "type": "object",
+  "required": ["schema", "pool", "account", "window", "source", "observedAt", "state"],
+  "properties": {
+    "schema": { "const": "limit-state@1.0" },
+    "pool": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+    "account": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+    "window": {
+      "description": "The configured window observed, e.g. five-hour or seven-day for an interactive plan, monthly for a programmatic credit, minute for an API rate limit.",
+      "type": "object",
+      "required": ["id", "kind"],
+      "properties": {
+        "id": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+        "kind": {
+          "description": "rolling: resets a fixed time after use starts; calendar: resets at fixed dates; credit: a balance drawn down; rate: requests or tokens per interval.",
+          "enum": ["rolling", "calendar", "credit", "rate"]
+        },
+        "seconds": { "description": "The window's length, when it has one.", "type": "integer", "minimum": 1, "maximum": 31622400 }
+      },
+      "additionalProperties": false
+    },
+    "state": {
+      "description": "ok: work may draw on it; limited: a limit was hit and it cools down until `cooldownUntil` or `resetsAt`; unknown: no reading says either.",
+      "enum": ["ok", "limited", "unknown"]
+    },
+    "usedPercentage": { "type": "number", "minimum": 0, "maximum": 100 },
+    "used": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/budgetLine" },
+    "remaining": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/budgetLine" },
+    "resetsAt": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp" },
+    "cooldownUntil": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp" },
+    "source": {
+      "description": "status-line: the agent CLI's rate_limits; limit-notice: a provider's usage-limit message or error; response-headers: an API's rate-limit headers; runtime-result: a runtime's result message; invoice; history-estimate: computed by code from recorded usage, conservatively.",
+      "enum": ["status-line", "limit-notice", "response-headers", "runtime-result", "invoice", "history-estimate"]
+    },
+    "observedAt": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp" },
+    "evidence": {
+      "description": "The artifact or event the reading was taken from, when there is one.",
+      "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/artifactRef"
+    }
+  },
+  "if": { "properties": { "state": { "const": "limited" } } },
+  "then": {
+    "anyOf": [
+      { "required": ["cooldownUntil"], "properties": { "cooldownUntil": true } },
+      { "required": ["resetsAt"], "properties": { "resetsAt": true } }
+    ]
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,47 @@
+{
+  "schema": "agent-result@1.2",
+  "worker": "agent:claude-code:standard",
+  "runtime": "claude-agent-sdk",
+  "runId": "run_01JB8Y4K2M",
+  "nativeHandle": "5b0c7c1e-3f7a-4f43-9d1e-7f8a2c1b9e40",
+  "promptHash": "sha256:bf3acfd191a57cd645aedc8a34bb78d47296acbf90480b855b582740ac5e7813",
+  "sandbox": "workspace-write",
+  "workspace": "/home/operator/.dsh/system/workspaces/task-0007",
+  "subject": {
+    "type": "git-head",
+    "ref": "HEAD",
+    "version": "9c1f2e7b4a3d5c6e8f0a1b2c3d4e5f6a7b8c9d0e"
+  },
+  "turns": 23,
+  "costUsd": 0.4184,
+  "model": "claude-sonnet-5-5",
+  "usage": {
+    "inputTokens": 412880,
+    "outputTokens": 18342,
+    "cacheReadInputTokens": 371204,
+    "cacheCreationInputTokens": 30110
+  },
+  "models": [
+    {
+      "model": "claude-sonnet-5-5",
+      "usage": {
+        "inputTokens": 398120,
+        "outputTokens": 17020,
+        "cacheReadInputTokens": 361004,
+        "cacheCreationInputTokens": 28412
+      },
+      "costUsd": 0.4123
+    },
+    {
+      "model": "claude-haiku-5-5",
+      "usage": {
+        "inputTokens": 14760,
+        "outputTokens": 1322,
+        "cacheReadInputTokens": 10200,
+        "cacheCreationInputTokens": 1698
+      },
+      "costUsd": 0.0061
+    }
+  ],
+  "text": "Implemented the banded kernel in src/align/banded.ts; 41 of 43 tests pass, median speed-up 2.4x over the reference."
+}

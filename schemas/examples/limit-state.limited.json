@@ -1,0 +1,15 @@
+{
+  "schema": "limit-state@1.0",
+  "pool": "claude-max-main.interactive",
+  "account": "claude-max-main",
+  "window": {
+    "id": "seven-day",
+    "kind": "rolling",
+    "seconds": 604800
+  },
+  "state": "limited",
+  "cooldownUntil": "2026-10-24T08:00:00Z",
+  "source": "limit-notice",
+  "observedAt": "2026-10-22T15:12:03Z",
+  "evidence": "sha256:05f7adbb0852c756d7cb1e7b370cbe86023800c6d14dfae4bff7f1a21b17a51f"
+}

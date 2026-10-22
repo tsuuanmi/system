@@ -1,0 +1,35 @@
+{
+  "schema": "approval-request@1.0",
+  "requestId": "apr-0042",
+  "state": "batched",
+  "subject": {
+    "type": "git-head",
+    "ref": "refs/heads/task-0007",
+    "version": "9c1f2e7b4a3d5c6e8f0a1b2c3d4e5f6a7b8c9d0e"
+  },
+  "action": {
+    "class": "merge",
+    "summary": "Merge task-0007 (banded alignment kernel) into main",
+    "consequences": "If approved, main gains the kernel and its benchmark; if not, the branch stays for review and task-0008 waits.",
+    "recommendation": "approve",
+    "refs": [
+      "sha256:3fa984fd8beb6992b465d08f0444f6c27323d18c6de12a881b5c0262d344b2e4",
+      "sha256:abeda3380009bcfff7b9e6b92f1133a73a9abb61f5a9b7fcf96297e54d7120a9"
+    ]
+  },
+  "requester": {
+    "component": "board",
+    "projectId": "proj-sparse-align",
+    "taskId": "task-0007"
+  },
+  "policy": {
+    "id": "studio-default",
+    "version": 1,
+    "decision": "sha256:f58df59bbd9d2011d552ca96520f5f16773a361ea2199b4927487f0ab0e24a8b"
+  },
+  "classification": "operator-shared",
+  "batchId": "batch-2026-10-22-am",
+  "createdAt": "2026-10-22T09:45:00Z",
+  "expiresAt": "2026-10-23T09:45:00Z",
+  "revision": 1
+}

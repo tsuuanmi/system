@@ -17,9 +17,10 @@
     "schema": {
       "enum": [
         "agent-result@1.0",
-        "agent-result@1.1"
+        "agent-result@1.1",
+        "agent-result@1.2"
       ],
-      "description": "1.1 adds `workspace` and `subject`."
+      "description": "1.1 adds `workspace` and `subject`; 1.2 adds `model`, `usage`, and `models`."
     },
     "worker": {
       "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
@@ -67,10 +68,93 @@
       "type": "number",
       "minimum": 0
     },
+    "model": {
+      "description": "The model the run's main loop answered with, as the runtime reports it.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "usage": {
+      "description": "Token usage of the whole run, every model and subagent included, from the runtime's own result (the Agent SDK's modelUsage).",
+      "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/tokenUsage"
+    },
+    "models": {
+      "description": "The same usage split per model.",
+      "type": "array",
+      "maxItems": 16,
+      "items": {
+        "type": "object",
+        "required": [
+          "model",
+          "usage"
+        ],
+        "properties": {
+          "model": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "usage": {
+            "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/tokenUsage"
+          },
+          "costUsd": {
+            "type": "number",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      }
+    },
     "text": {
       "type": "string",
       "maxLength": 4000000
     }
   },
+  "allOf": [
+    {
+      "description": "@1.2 fields (model and token usage) are refused before @1.2.",
+      "if": {
+        "anyOf": [
+          {
+            "properties": {
+              "model": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "model"
+            ]
+          },
+          {
+            "properties": {
+              "usage": {
+                "type": "object"
+              }
+            },
+            "required": [
+              "usage"
+            ]
+          },
+          {
+            "properties": {
+              "models": {
+                "type": "array"
+              }
+            },
+            "required": [
+              "models"
+            ]
+          }
+        ]
+      },
+      "then": {
+        "properties": {
+          "schema": {
+            "const": "agent-result@1.2"
+          }
+        }
+      }
+    }
+  ],
   "additionalProperties": false
 }

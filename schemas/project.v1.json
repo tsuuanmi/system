@@ -1,0 +1,217 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:tsuuanmi:system:schema:project:v1",
+  "title": "Project",
+  "description": "Durable state of one project on the board (ctx.board, design/board.md): its charter (intent, measurable criteria, constraints, stop and pivot rules, budget by resource pool) and its milestones. Mutable state that points at immutable artifacts.",
+  "type": "object",
+  "required": ["schema", "projectId", "title", "state", "charter", "milestones", "createdAt", "revision"],
+  "properties": {
+    "schema": { "const": "project@1.0" },
+    "projectId": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+    "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "state": {
+      "description": "proposed: a charter waits for the operator's approval; active: work may start; paused: no new task starts; closed: terminal.",
+      "enum": ["proposed", "active", "paused", "closed"]
+    },
+    "template": {
+      "description": "The workflow template the project's tasks run by default.",
+      "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+    },
+    "classification": {
+      "description": "The strictest data the project may hold; its tasks inherit it as a floor (INV-12).",
+      "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/classification"
+    },
+    "charter": { "$ref": "#/$defs/charter" },
+    "proposedCharter": {
+      "description": "A charter amendment (a pivot) waiting for the operator's approval; it replaces `charter` once approved.",
+      "$ref": "#/$defs/charter"
+    },
+    "policy": {
+      "description": "The project's autonomy policy, which may only narrow the studio policy.",
+      "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+    },
+    "milestones": {
+      "type": "array",
+      "maxItems": 64,
+      "items": { "$ref": "#/$defs/milestone" }
+    },
+    "closure": {
+      "type": "object",
+      "required": ["outcome", "decision", "at"],
+      "properties": {
+        "outcome": {
+          "description": "achieved: the criteria were met; stopped: a stop rule or the operator ended it; abandoned: its charter was never approved.",
+          "enum": ["achieved", "stopped", "abandoned"]
+        },
+        "decision": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/artifactRef" },
+        "lessons": {
+          "description": "A report artifact of lessons for the template.",
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/artifactRef"
+        },
+        "at": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp" }
+      },
+      "additionalProperties": false
+    },
+    "createdAt": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp" },
+    "updatedAt": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp" },
+    "lastDecision": {
+      "description": "Decision artifact that caused the latest state transition (INV-13).",
+      "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/artifactRef"
+    },
+    "revision": { "type": "integer", "minimum": 0 }
+  },
+  "allOf": [
+    {
+      "description": "Work starts only under an approved charter.",
+      "if": { "properties": { "state": { "enum": ["active", "paused"] } } },
+      "then": {
+        "required": ["lastDecision"],
+        "properties": { "lastDecision": true, "charter": { "type": "object", "required": ["approval"], "properties": { "approval": true } } }
+      }
+    },
+    {
+      "if": { "properties": { "state": { "const": "closed" } } },
+      "then": { "required": ["closure", "lastDecision"], "properties": { "closure": true, "lastDecision": true } },
+      "else": { "not": { "required": ["closure"] } }
+    },
+    {
+      "description": "Only a chartered project amends its charter.",
+      "if": { "properties": { "state": { "enum": ["proposed", "closed"] } } },
+      "then": { "properties": { "proposedCharter": false } }
+    }
+  ],
+  "$defs": {
+    "charter": {
+      "description": "The four parts of a charter (PROP-0008) and its budget. Amending it makes a new version, approved again.",
+      "type": "object",
+      "required": ["version", "intent", "criteria", "constraints", "stopRules", "budget"],
+      "properties": {
+        "version": { "type": "integer", "minimum": 1, "maximum": 1000 },
+        "intent": { "description": "What the project exists to achieve, in words.", "type": "string", "minLength": 1, "maxLength": 4000 },
+        "criteria": {
+          "description": "Measurable success criteria, tied to accepted results, not to activity.",
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 32,
+          "items": { "$ref": "#/$defs/criterion" }
+        },
+        "constraints": {
+          "type": "object",
+          "properties": {
+            "deadline": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp" },
+            "egressPolicy": {
+              "description": "The egress policy id every task of the project runs under (INV-12).",
+              "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+            },
+            "notes": {
+              "type": "array",
+              "maxItems": 16,
+              "items": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/shortText" }
+            }
+          },
+          "additionalProperties": false
+        },
+        "stopRules": {
+          "description": "Stop or pivot criteria, set before funds are released.",
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "items": {
+            "type": "object",
+            "required": ["id", "condition", "action"],
+            "properties": {
+              "id": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+              "condition": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/shortText" },
+              "action": {
+                "description": "What the rule asks of the operator when it holds: stop the project, pivot (amend the charter), or pause it.",
+                "enum": ["stop", "pivot", "pause"]
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "budget": {
+          "type": "object",
+          "required": ["pools"],
+          "properties": {
+            "pools": {
+              "description": "The most the project may draw from each resource pool over its life.",
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 16,
+              "items": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/budgetLine" }
+            },
+            "attention": {
+              "description": "The operator's attention the project may take: approval batches and interruptions per day.",
+              "type": "object",
+              "properties": {
+                "maxBatchesPerDay": { "type": "integer", "minimum": 0, "maximum": 100 },
+                "maxInterruptionsPerDay": { "type": "integer", "minimum": 0, "maximum": 100 }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        "approval": {
+          "description": "The `approval` artifact by which the operator approved this charter version.",
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/artifactRef"
+        }
+      },
+      "additionalProperties": false
+    },
+    "criterion": {
+      "type": "object",
+      "required": ["id", "statement", "measure"],
+      "properties": {
+        "id": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+        "statement": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/shortText" },
+        "measure": {
+          "description": "How it is checked: by accepted results, a test suite, a benchmark or metric against a target, or the operator.",
+          "type": "object",
+          "required": ["kind"],
+          "properties": {
+            "kind": { "enum": ["accepted-results", "tests", "benchmark", "metric", "operator"] },
+            "target": { "type": "number", "minimum": -1000000000000, "maximum": 1000000000000 },
+            "comparison": { "enum": ["at-least", "at-most"] },
+            "unit": { "type": "string", "minLength": 1, "maxLength": 32 }
+          },
+          "dependentRequired": { "target": ["comparison"] },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "milestone": {
+      "description": "A milestone and its funding round: its budget is released when the operator approves it.",
+      "type": "object",
+      "required": ["id", "title", "state"],
+      "properties": {
+        "id": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+        "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "criteria": {
+          "description": "The charter criteria this milestone advances, by id.",
+          "type": "array",
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" }
+        },
+        "state": { "enum": ["planned", "funded", "done", "dropped"] },
+        "due": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp" },
+        "budget": {
+          "type": "array",
+          "maxItems": 16,
+          "items": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/budgetLine" }
+        },
+        "funding": {
+          "description": "The `approval` artifact that released the milestone's budget.",
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/artifactRef"
+        }
+      },
+      "if": { "properties": { "state": { "enum": ["funded", "done"] } } },
+      "then": { "required": ["budget", "funding"], "properties": { "budget": true, "funding": true } },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

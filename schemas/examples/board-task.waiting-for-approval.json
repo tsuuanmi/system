@@ -1,0 +1,32 @@
+{
+  "schema": "board-task@1.0",
+  "taskId": "task-0005",
+  "projectId": "proj-sparse-align",
+  "milestone": "m2",
+  "title": "Profile the scoring loop",
+  "goal": "Find where the reference kernel spends its time on bench/align.",
+  "acceptance": [
+    {
+      "id": "a1",
+      "statement": "A profile artifact names the three hottest functions",
+      "check": "review"
+    }
+  ],
+  "dependsOn": [],
+  "actionClass": "workspace-write",
+  "state": "waiting-for-approval",
+  "attempts": {
+    "count": 1,
+    "max": 2
+  },
+  "waiting": {
+    "reason": "reconciliation-failed",
+    "approvalRequest": "apr-0041",
+    "since": "2026-10-22T07:02:00Z",
+    "expiresAt": "2026-10-23T07:02:00Z"
+  },
+  "createdAt": "2026-10-21T09:00:00Z",
+  "updatedAt": "2026-10-22T07:02:00Z",
+  "lastDecision": "sha256:665c48f93d1004703633c1c36d29ebda6b26cd7d338db3105ee76a59de6c445a",
+  "revision": 7
+}

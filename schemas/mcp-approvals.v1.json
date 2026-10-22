@@ -1,0 +1,339 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:tsuuanmi:system:schema:mcp-approvals:v1",
+  "title": "MCP approval tools",
+  "description": "Input and output of the `approvals_*` MCP tools (design/approvals.md). `approvals_decide` is operator scope: verdicts come only from the operator's channel (INV-6). The root describes one call (tool, input, structured output); a provider validates input and output against `#/$defs/<tool>-input` and `#/$defs/<tool>-output`, with underscores written as hyphens.",
+  "type": "object",
+  "required": [
+    "tool",
+    "input",
+    "output"
+  ],
+  "properties": {
+    "tool": {
+      "enum": [
+        "approvals_list",
+        "approvals_get",
+        "approvals_decide",
+        "approvals_policy"
+      ]
+    },
+    "input": {
+      "type": "object"
+    },
+    "output": {
+      "type": "object"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "tool": {
+            "const": "approvals_list"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "input": {
+            "$ref": "#/$defs/approvals-list-input"
+          },
+          "output": {
+            "$ref": "#/$defs/approvals-list-output"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "tool": {
+            "const": "approvals_get"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "input": {
+            "$ref": "#/$defs/approvals-get-input"
+          },
+          "output": {
+            "$ref": "#/$defs/approvals-get-output"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "tool": {
+            "const": "approvals_decide"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "input": {
+            "$ref": "#/$defs/approvals-decide-input"
+          },
+          "output": {
+            "$ref": "#/$defs/approvals-decide-output"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "tool": {
+            "const": "approvals_policy"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "input": {
+            "$ref": "#/$defs/approvals-policy-input"
+          },
+          "output": {
+            "$ref": "#/$defs/approvals-policy-output"
+          }
+        }
+      }
+    }
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "approvals-list-input": {
+      "type": "object",
+      "properties": {
+        "states": {
+          "type": "array",
+          "description": "Default: open and batched.",
+          "minItems": 1,
+          "maxItems": 4,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "open",
+              "batched",
+              "approved",
+              "rejected"
+            ]
+          }
+        },
+        "batchId": {
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+        },
+        "projectId": {
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+        },
+        "limit": {
+          "description": "Page size (default 20).",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        },
+        "after": {
+          "description": "The `next` cursor of the previous page.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        }
+      },
+      "additionalProperties": false
+    },
+    "approvals-list-output": {
+      "type": "object",
+      "required": [
+        "requests"
+      ],
+      "properties": {
+        "requests": {
+          "type": "array",
+          "description": "Ordered by batch, then by expiry.",
+          "maxItems": 100,
+          "items": {
+            "$ref": "urn:tsuuanmi:system:schema:approval-request:v1"
+          }
+        },
+        "next": {
+          "description": "Cursor for the next page; absent on the last.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        }
+      },
+      "additionalProperties": false
+    },
+    "approvals-get-input": {
+      "type": "object",
+      "required": [
+        "requestId"
+      ],
+      "properties": {
+        "requestId": {
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+        }
+      },
+      "additionalProperties": false
+    },
+    "approvals-get-output": {
+      "type": "object",
+      "required": [
+        "request"
+      ],
+      "properties": {
+        "request": {
+          "$ref": "urn:tsuuanmi:system:schema:approval-request:v1"
+        }
+      },
+      "additionalProperties": false
+    },
+    "approvals-decide-input": {
+      "type": "object",
+      "required": [
+        "verdicts"
+      ],
+      "properties": {
+        "verdicts": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 50,
+          "items": {
+            "type": "object",
+            "required": [
+              "requestId",
+              "subject",
+              "verdict"
+            ],
+            "properties": {
+              "requestId": {
+                "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+              },
+              "subject": {
+                "description": "The exact subject the operator saw; a request whose subject changed since is refused (INV-5).",
+                "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/subject"
+              },
+              "verdict": {
+                "enum": [
+                  "approved",
+                  "rejected"
+                ]
+              },
+              "note": {
+                "type": "string",
+                "maxLength": 2000
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "approvals-decide-output": {
+      "type": "object",
+      "required": [
+        "results"
+      ],
+      "properties": {
+        "results": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 50,
+          "items": {
+            "type": "object",
+            "required": [
+              "requestId",
+              "state"
+            ],
+            "properties": {
+              "requestId": {
+                "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+              },
+              "state": {
+                "enum": [
+                  "open",
+                  "batched",
+                  "approved",
+                  "rejected"
+                ]
+              },
+              "approval": {
+                "description": "The approval artifact written for the verdict.",
+                "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/artifactRef"
+              },
+              "refused": {
+                "description": "Why the verdict was not recorded; the request is unchanged.",
+                "enum": [
+                  "unknown-request",
+                  "already-resolved",
+                  "expired",
+                  "subject-changed"
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "approvals-policy-input": {
+      "type": "object",
+      "properties": {
+        "projectId": {
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+        }
+      },
+      "additionalProperties": false
+    },
+    "approvals-policy-output": {
+      "type": "object",
+      "required": [
+        "policies",
+        "effective"
+      ],
+      "properties": {
+        "policies": {
+          "type": "array",
+          "description": "The studio policy, then the project's when it has one.",
+          "minItems": 1,
+          "maxItems": 2,
+          "items": {
+            "$ref": "urn:tsuuanmi:system:schema:autonomy-policy:v1"
+          }
+        },
+        "effective": {
+          "type": "array",
+          "description": "The strictest mode of the policies, per action class.",
+          "maxItems": 32,
+          "items": {
+            "type": "object",
+            "required": [
+              "actionClass",
+              "mode"
+            ],
+            "properties": {
+              "actionClass": {
+                "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/actionClass"
+              },
+              "mode": {
+                "enum": [
+                  "auto",
+                  "notify",
+                  "ask",
+                  "forbid"
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

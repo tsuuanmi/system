@@ -1,0 +1,40 @@
+{
+  "tool": "approvals_decide",
+  "input": {
+    "verdicts": [
+      {
+        "requestId": "apr-0042",
+        "subject": {
+          "type": "git-head",
+          "ref": "refs/heads/task-0007",
+          "version": "9c1f2e7b4a3d5c6e8f0a1b2c3d4e5f6a7b8c9d0e"
+        },
+        "verdict": "approved",
+        "note": "benchmark looks right"
+      },
+      {
+        "requestId": "apr-0039",
+        "subject": {
+          "type": "content",
+          "ref": "command:git push --force origin main",
+          "version": "sha256:4eecce38c062b41e98b38c42b033ae94c115a13a1b687806fcc9e593a97b118e"
+        },
+        "verdict": "rejected"
+      }
+    ]
+  },
+  "output": {
+    "results": [
+      {
+        "requestId": "apr-0042",
+        "state": "approved",
+        "approval": "sha256:67d746282fb5312dda08bd3f441c040e39d5fb7ccb01e3b722c43f2a8bb9c10b"
+      },
+      {
+        "requestId": "apr-0039",
+        "state": "rejected",
+        "refused": "already-resolved"
+      }
+    ]
+  }
+}

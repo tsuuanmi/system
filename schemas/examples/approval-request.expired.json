@@ -1,0 +1,36 @@
+{
+  "schema": "approval-request@1.0",
+  "requestId": "apr-0039",
+  "state": "rejected",
+  "subject": {
+    "type": "content",
+    "ref": "command:git push --force origin main",
+    "version": "sha256:4eecce38c062b41e98b38c42b033ae94c115a13a1b687806fcc9e593a97b118e"
+  },
+  "action": {
+    "class": "command",
+    "summary": "Run `git push --force origin main` in the task-0005 workspace",
+    "recommendation": "reject"
+  },
+  "requester": {
+    "component": "worker",
+    "runId": "run_01JB7X2P0Q",
+    "nodeId": "develop",
+    "toolUseId": "toolu_01ABCDEF"
+  },
+  "policy": {
+    "id": "studio-default",
+    "version": 1,
+    "decision": "sha256:9f3018a1535ee75522e0f968b73f3064d739c7bb7afeb41e060feb49f4ed468e"
+  },
+  "classification": "operator-shared",
+  "batchId": "batch-2026-10-21-pm",
+  "createdAt": "2026-10-21T16:00:00Z",
+  "expiresAt": "2026-10-22T16:00:00Z",
+  "resolution": {
+    "cause": "expired",
+    "decision": "sha256:60996d357319a897fa24aa17d1875473dc8d03be001327d892b992108d2d11fb",
+    "at": "2026-10-22T16:00:00Z"
+  },
+  "revision": 3
+}

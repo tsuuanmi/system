@@ -1,0 +1,79 @@
+{
+  "schema": "autonomy-policy@1.0",
+  "id": "studio-default",
+  "version": 1,
+  "scope": "studio",
+  "rules": [
+    {
+      "actionClass": "read",
+      "mode": "auto"
+    },
+    {
+      "actionClass": "workspace-write",
+      "mode": "auto",
+      "requires": [
+        "tests",
+        "lint",
+        "review"
+      ]
+    },
+    {
+      "actionClass": "merge",
+      "mode": "ask",
+      "note": "batched; auto-merge only once a project policy allows it"
+    },
+    {
+      "actionClass": "command",
+      "mode": "ask"
+    },
+    {
+      "actionClass": "remediation",
+      "mode": "ask"
+    },
+    {
+      "actionClass": "external-send",
+      "mode": "ask"
+    },
+    {
+      "actionClass": "deploy",
+      "mode": "ask"
+    },
+    {
+      "actionClass": "delete-data",
+      "mode": "ask"
+    },
+    {
+      "actionClass": "spend",
+      "mode": "ask"
+    },
+    {
+      "actionClass": "charter",
+      "mode": "ask",
+      "expiresSeconds": 604800
+    },
+    {
+      "actionClass": "funding",
+      "mode": "ask",
+      "expiresSeconds": 604800
+    },
+    {
+      "actionClass": "policy-change",
+      "mode": "ask"
+    }
+  ],
+  "default": "ask",
+  "commands": [
+    "pnpm test",
+    "pnpm check",
+    "git status",
+    "git diff"
+  ],
+  "expiry": {
+    "defaultSeconds": 86400,
+    "maxSeconds": 1209600
+  },
+  "batch": {
+    "maxSize": 10,
+    "maxWaitSeconds": 3600
+  }
+}

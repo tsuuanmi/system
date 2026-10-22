@@ -1,0 +1,40 @@
+{
+  "tool": "resources_pools",
+  "input": {
+    "account": "claude-max-main"
+  },
+  "output": {
+    "pools": [
+      {
+        "pool": "claude-max-main.interactive",
+        "account": "claude-max-main",
+        "kind": "interactive",
+        "available": true,
+        "windows": [
+          {
+            "schema": "limit-state@1.0",
+            "pool": "claude-max-main.interactive",
+            "account": "claude-max-main",
+            "window": {
+              "id": "five-hour",
+              "kind": "rolling",
+              "seconds": 18000
+            },
+            "state": "ok",
+            "usedPercentage": 37.5,
+            "resetsAt": "2026-10-22T13:00:00Z",
+            "source": "status-line",
+            "observedAt": "2026-10-22T09:41:10Z"
+          }
+        ]
+      },
+      {
+        "pool": "claude-max-main.programmatic",
+        "account": "claude-max-main",
+        "kind": "programmatic",
+        "available": true,
+        "windows": []
+      }
+    ]
+  }
+}

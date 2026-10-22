@@ -1,0 +1,77 @@
+{
+  "tool": "resources_usage",
+  "input": {
+    "taskId": "task-0007"
+  },
+  "output": {
+    "records": [
+      {
+        "schema": "usage-record@1.0",
+        "requestId": "sdk:5b0c7c1e-3f7a-4f43-9d1e-7f8a2c1b9e40:result",
+        "source": "runtime-result",
+        "observedAt": "2026-10-22T09:41:07Z",
+        "account": "claude-max-main",
+        "pool": "claude-max-main.programmatic",
+        "worker": "agent:claude-code:standard",
+        "runId": "run_01JB8Y4K2M",
+        "nodeId": "develop",
+        "projectId": "proj-sparse-align",
+        "taskId": "task-0007",
+        "providerName": "anthropic",
+        "model": {
+          "response": "claude-sonnet-5-5"
+        },
+        "usage": {
+          "inputTokens": 412880,
+          "outputTokens": 18342,
+          "cacheReadInputTokens": 371204,
+          "cacheCreationInputTokens": 30110
+        },
+        "models": [
+          {
+            "model": "claude-sonnet-5-5",
+            "usage": {
+              "inputTokens": 398120,
+              "outputTokens": 17020,
+              "cacheReadInputTokens": 361004,
+              "cacheCreationInputTokens": 28412
+            },
+            "costUsd": 0.4123
+          },
+          {
+            "model": "claude-haiku-5-5",
+            "usage": {
+              "inputTokens": 14760,
+              "outputTokens": 1322,
+              "cacheReadInputTokens": 10200,
+              "cacheCreationInputTokens": 1698
+            },
+            "costUsd": 0.0061
+          }
+        ],
+        "turns": 23,
+        "durationMs": 612000,
+        "cost": {
+          "amount": 0.4184,
+          "currency": "USD",
+          "basis": "runtime-estimate"
+        },
+        "outcome": "completed"
+      }
+    ],
+    "totals": [
+      {
+        "pool": "claude-max-main.programmatic",
+        "records": 1,
+        "turns": 23,
+        "costUsd": 0.4184,
+        "usage": {
+          "inputTokens": 412880,
+          "outputTokens": 18342,
+          "cacheReadInputTokens": 371204,
+          "cacheCreationInputTokens": 30110
+        }
+      }
+    ]
+  }
+}

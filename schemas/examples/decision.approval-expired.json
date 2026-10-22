@@ -1,0 +1,36 @@
+{
+  "schema": "decision@1.4",
+  "decisionType": "approval",
+  "question": "Is approval request apr-0039 (command: git push --force origin main) approved?",
+  "inputs": [
+    "sha256:9f3018a1535ee75522e0f968b73f3064d739c7bb7afeb41e060feb49f4ed468e"
+  ],
+  "candidates": [
+    {
+      "option": "approved",
+      "selected": false,
+      "reasons": [
+        "no operator verdict"
+      ]
+    },
+    {
+      "option": "denied:expired",
+      "selected": true,
+      "reasons": [
+        "no verdict by 2026-10-22T16:00:00Z; expiry fails closed"
+      ]
+    }
+  ],
+  "decider": {
+    "type": "rule",
+    "id": "approvals.expiry",
+    "version": "1"
+  },
+  "outcome": {
+    "option": "denied:expired",
+    "detail": {
+      "requestId": "apr-0039"
+    }
+  },
+  "deterministic": true
+}

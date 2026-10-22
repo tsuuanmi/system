@@ -1,0 +1,22 @@
+{
+  "schema": "usage-record@1.0",
+  "requestId": "msg_01HZXQ4Y7T6G2V9K3N5P8R1S0A",
+  "source": "provider-usage",
+  "observedAt": "2026-10-22T10:02:44Z",
+  "account": "api-key-research",
+  "pool": "api-key-research",
+  "worker": "model:economy",
+  "runId": "run_01JB8Z0A1C",
+  "usage": {
+    "inputTokens": 5120,
+    "outputTokens": 610,
+    "cacheReadInputTokens": 4096
+  },
+  "cost": {
+    "amount": 0.0021,
+    "currency": "USD",
+    "basis": "price-table",
+    "priceVersion": "prices-2026-10-01"
+  },
+  "outcome": "completed"
+}

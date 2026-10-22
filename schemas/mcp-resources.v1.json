@@ -1,0 +1,226 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:tsuuanmi:system:schema:mcp-resources:v1",
+  "title": "MCP resource tools",
+  "description": "Input and output of the `resources_*` MCP tools (design/resources.md). The root describes one call (tool, input, structured output); a provider validates input and output against `#/$defs/<tool>-input` and `#/$defs/<tool>-output`, with underscores written as hyphens.",
+  "type": "object",
+  "required": [
+    "tool",
+    "input",
+    "output"
+  ],
+  "properties": {
+    "tool": {
+      "enum": [
+        "resources_pools",
+        "resources_usage"
+      ]
+    },
+    "input": {
+      "type": "object"
+    },
+    "output": {
+      "type": "object"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "tool": {
+            "const": "resources_pools"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "input": {
+            "$ref": "#/$defs/resources-pools-input"
+          },
+          "output": {
+            "$ref": "#/$defs/resources-pools-output"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "tool": {
+            "const": "resources_usage"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "input": {
+            "$ref": "#/$defs/resources-usage-input"
+          },
+          "output": {
+            "$ref": "#/$defs/resources-usage-output"
+          }
+        }
+      }
+    }
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "resources-pools-input": {
+      "type": "object",
+      "properties": {
+        "account": {
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+        }
+      },
+      "additionalProperties": false
+    },
+    "resources-pools-output": {
+      "type": "object",
+      "required": [
+        "pools"
+      ],
+      "properties": {
+        "pools": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "type": "object",
+            "required": [
+              "pool",
+              "account",
+              "kind",
+              "windows",
+              "available"
+            ],
+            "properties": {
+              "pool": {
+                "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+              },
+              "account": {
+                "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+              },
+              "kind": {
+                "description": "From the operator's configuration.",
+                "enum": [
+                  "interactive",
+                  "programmatic",
+                  "api-key",
+                  "local"
+                ]
+              },
+              "windows": {
+                "type": "array",
+                "description": "The latest observation of each configured window.",
+                "maxItems": 8,
+                "items": {
+                  "$ref": "urn:tsuuanmi:system:schema:limit-state:v1"
+                }
+              },
+              "available": {
+                "description": "Whether new work may draw on it now; false when a window is limited or unknown and the pool is configured to fail closed.",
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "resources-usage-input": {
+      "type": "object",
+      "properties": {
+        "runId": {
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+        },
+        "projectId": {
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+        },
+        "taskId": {
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+        },
+        "account": {
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+        },
+        "pool": {
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+        },
+        "since": {
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp"
+        },
+        "until": {
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp"
+        },
+        "limit": {
+          "description": "Page size (default 20).",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        },
+        "after": {
+          "description": "The `next` cursor of the previous page.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        }
+      },
+      "additionalProperties": false
+    },
+    "resources-usage-output": {
+      "type": "object",
+      "required": [
+        "records",
+        "totals"
+      ],
+      "properties": {
+        "records": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "$ref": "urn:tsuuanmi:system:schema:usage-record:v1"
+          }
+        },
+        "totals": {
+          "type": "array",
+          "description": "Totals over every record that matches, not only this page.",
+          "maxItems": 64,
+          "items": {
+            "type": "object",
+            "required": [
+              "pool",
+              "records"
+            ],
+            "properties": {
+              "pool": {
+                "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+              },
+              "usage": {
+                "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/tokenUsage"
+              },
+              "turns": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "costUsd": {
+                "type": "number",
+                "minimum": 0
+              },
+              "records": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "next": {
+          "description": "Cursor for the next page; absent on the last.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

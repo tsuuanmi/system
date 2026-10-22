@@ -14,7 +14,7 @@ each field, which a schema cannot fully express, is documented in
 |---|---|
 | [common.v1.json](common.v1.json) | shared value types: content address, ids, classification, tier, quota class, capability, subject |
 | [artifact-envelope.v1.json](artifact-envelope.v1.json) | immutable envelope of every artifact |
-| [decision.v1.json](decision.v1.json) | body of a `decision` artifact ([INV-13](../docs/architecture/invariants.md#inv-13-every-decision-is-an-artifact)); 1.1 adds team votes and the `client` decider; 1.2 adds a review's quote checks and the `blocking-finding` method |
+| [decision.v1.json](decision.v1.json) | body of a `decision` artifact ([INV-13](../docs/architecture/invariants.md#inv-13-every-decision-is-an-artifact)); 1.1 adds team votes and the `client` decider; 1.2 adds a review's quote checks and the `blocking-finding` method; 1.3 adds `retention`; 1.4 adds `autonomy`, `approval`, `board`, and `budget` |
 | [work-requirement.v1.json](work-requirement.v1.json) | input to routing |
 | [capability-descriptor.v1.json](capability-descriptor.v1.json) | a Worker's currently proven capabilities |
 | [workflow-node.v1.json](workflow-node.v1.json) | durable state of one DAG node |
@@ -30,26 +30,36 @@ each field, which a schema cannot fully express, is documented in
 | [plan.v1.json](plan.v1.json) | body of a `plan` artifact: nodes a planner proposes to append to its run's DAG |
 | [approval.v1.json](approval.v1.json) | body of an `approval` artifact: an operator's verdict bound to one exact subject |
 | [model-answer.v1.json](model-answer.v1.json) | body of a `report` artifact holding one API or local model Worker's answer (the prompt by hash only), with its finish, output bound, and token usage |
-| [agent-result.v1.json](agent-result.v1.json) | body of a `report` artifact holding one agent-runtime Worker run's final message (the prompt by hash only); 1.1 adds its workspace and exact subject |
+| [agent-result.v1.json](agent-result.v1.json) | body of a `report` artifact holding one agent-runtime Worker run's final message (the prompt by hash only); 1.1 adds its workspace and exact subject; 1.2 adds the model and token usage with cache reads and writes |
 | [hypothesis-set.v1.json](hypothesis-set.v1.json) | body of a `criteria` artifact: a research question framed as testable hypotheses (scientific-research profile) |
 | [evidence-table.v1.json](evidence-table.v1.json) | body of an `evidence` artifact: cited claims and how each bears on each hypothesis (scientific-research profile) |
 | [team-result.v1.json](team-result.v1.json) | body of a `report` artifact holding a team's answer, composed from its final `vote` decision; its text starts with a machine-readable outcome line; 1.1 adds the method `blocking-finding` |
 | [source-snapshot.v1.json](source-snapshot.v1.json) | body of an `evidence` artifact: what a review's members read, a public repository at one pinned commit or the caller's text, with the files not read |
 | [assessment.v1.json](assessment.v1.json) | body of an `assessment` artifact: an independent review's verdict and findings, bound to the exact subject reviewed |
 | [ui-map.v1.json](ui-map.v1.json) | a provider website's UI operations as data: elements, actions, network signals, states ([ADR-0021](../docs/decisions/adr/0021-ui-operations-as-data.md)) |
+| [project.v1.json](project.v1.json) | durable state of a project on the board: its charter (intent, measurable criteria, constraints, stop and pivot rules, budget by resource pool) and milestones |
+| [board-task.v1.json](board-task.v1.json) | durable state of a board task, work that outlives a run, with its lease, run, result, and expiring waits |
+| [approval-request.v1.json](approval-request.v1.json) | durable state of a request in the approval queue, bound to its exact subject; expiry rejects it |
+| [autonomy-policy.v1.json](autonomy-policy.v1.json) | which action classes run (`auto`, `notify`) and which need a person (`ask`) or are denied (`forbid`) |
+| [usage-record.v1.json](usage-record.v1.json) | body of a `receipt` artifact: what one run, call, or turn consumed, from an objective source, deduplicated by request id |
+| [limit-state.v1.json](limit-state.v1.json) | body of an `evidence` artifact: one observation of one configured window of a resource pool |
+| [brief.v1.json](brief.v1.json) | body of an `objective` artifact: what one Worker run is given, with artifacts by content id, never their content |
+| [digest.v1.json](digest.v1.json) | body of a `report` artifact: a cited summary of raw artifacts, every claim with a verbatim quote |
+| [plugin-manifest.v1.json](plugin-manifest.v1.json) | what a plugin declares (name and renames, seams provided and consumed, class, config keys with a sensitive flag), with the host-owned lifecycle state under `_meta` |
+| [mcp-board.v1.json](mcp-board.v1.json), [mcp-approvals.v1.json](mcp-approvals.v1.json), [mcp-resources.v1.json](mcp-resources.v1.json) | input and output of the `board_*`, `approvals_*`, and `resources_*` MCP tools |
 
 Schemas still to come, added with their milestone: the domain artifact bodies
-(`report`, `handoff`, …), MCP tool input and output, and the decision question sets.
-The Base release adds, first of all, the records of its new seams (`project`,
-`board-task`, `approval-request`, `autonomy-policy`, `usage-record`, `limit-state`,
-`plugin-manifest`, `brief`, `digest`) and the MCP tools' input and output
-([ADR-0037](../docs/decisions/adr/0037-schema-and-protocol-first.md),
-[PROP-0010](../docs/proposals/0010-base-version.md)).
+(`report`, `handoff`, …), the input and output of the MCP tools built before Base, and the
+decision question sets.
 
 ## Conventions
 
 - File name `<name>.v<major>.json`; `$id` is `urn:tsuuanmi:system:schema:<name>:v<major>`.
 - Every record carries `"schema": "<name>@<major>.<minor>"`.
+- MCP tool payloads are not records and carry no tag. One file per tool family,
+  `mcp-<family>.v<major>.json`, holds each tool's input and output under
+  `$defs/<tool>-input` and `$defs/<tool>-output` (the tool name with hyphens); its root
+  describes one call (`tool`, `input`, `output`), which is what its examples are.
 - `additionalProperties: false` unless a field is explicitly open.
 - Everything is bounded: string lengths, array sizes, retry counts (INV-9).
 - The files must compile under Ajv with `strict: true`, and every file in

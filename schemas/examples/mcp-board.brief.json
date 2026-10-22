@@ -1,0 +1,70 @@
+{
+  "tool": "board_brief",
+  "input": {
+    "projectId": "proj-sparse-align"
+  },
+  "output": {
+    "projectId": "proj-sparse-align",
+    "title": "Banded alignment kernel",
+    "intent": "A banded sequence alignment kernel that is at least 3x faster than the current one on the operator's benchmark, with identical scores.",
+    "state": "active",
+    "milestone": "m2",
+    "tasks": {
+      "proposed": 1,
+      "ready": 1,
+      "claimed": 0,
+      "running": 0,
+      "review": 1,
+      "waiting-for-input": 0,
+      "waiting-for-approval": 1,
+      "done": 4,
+      "cancelled": 0
+    },
+    "inProgress": [
+      {
+        "taskId": "task-0007",
+        "title": "Banded kernel, first version",
+        "state": "review",
+        "milestone": "m2",
+        "runId": "run_01JB8Y4K2M"
+      }
+    ],
+    "waiting": [
+      {
+        "taskId": "task-0005",
+        "title": "Profile the scoring loop",
+        "state": "waiting-for-approval",
+        "waitingFor": "approval"
+      }
+    ],
+    "next": [
+      {
+        "taskId": "task-0008",
+        "title": "End-gap scoring",
+        "state": "ready",
+        "milestone": "m2"
+      }
+    ],
+    "readFirst": [
+      {
+        "ref": "sha256:58788f76c2412563cda86105dcde093748838fcfb984ea33424608eb5beab988",
+        "why": "the charter: intent, criteria, stop rules"
+      },
+      {
+        "ref": "sha256:abeda3380009bcfff7b9e6b92f1133a73a9abb61f5a9b7fcf96297e54d7120a9",
+        "why": "where the kernel stands"
+      }
+    ],
+    "conventions": [
+      "One task, one worktree, one branch"
+    ],
+    "budget": [
+      {
+        "pool": "claude-max-main.programmatic",
+        "unit": "usd",
+        "limit": 120,
+        "used": 31.4
+      }
+    ]
+  }
+}

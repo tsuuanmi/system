@@ -1,0 +1,215 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:tsuuanmi:system:schema:board-task:v1",
+  "title": "Board task",
+  "description": "Durable state of one task on a project's board (ctx.board, design/board.md): work that outlives a run. Only the work state machine moves it, and each move names the decision behind it (INV-13). Mutable state that points at immutable artifacts.",
+  "type": "object",
+  "required": ["schema", "taskId", "projectId", "title", "goal", "acceptance", "dependsOn", "actionClass", "state", "attempts", "createdAt", "revision"],
+  "properties": {
+    "schema": { "const": "board-task@1.0" },
+    "taskId": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+    "projectId": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+    "milestone": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+    "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "goal": { "type": "string", "minLength": 1, "maxLength": 4000 },
+    "acceptance": {
+      "description": "Acceptance criteria, each checked before the task is done.",
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 32,
+      "items": {
+        "type": "object",
+        "required": ["id", "statement"],
+        "properties": {
+          "id": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+          "statement": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/shortText" },
+          "check": { "enum": ["tests", "typecheck", "lint", "schema", "quote-check", "review", "operator"] }
+        },
+        "additionalProperties": false
+      }
+    },
+    "dependsOn": {
+      "description": "Tasks of the same project that must be done first.",
+      "type": "array",
+      "maxItems": 64,
+      "uniqueItems": true,
+      "items": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" }
+    },
+    "actionClass": {
+      "description": "What running the task does, as the autonomy policy classifies it; it decides whether starting it needs a person.",
+      "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/actionClass"
+    },
+    "template": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+    "writes": {
+      "description": "The subject the task writes; one task holds write authority over it at a time (INV-15).",
+      "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/subject"
+    },
+    "budget": {
+      "description": "The most one attempt may draw from each pool; spending it blocks the task (INV-9).",
+      "type": "array",
+      "maxItems": 16,
+      "items": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/budgetLine" }
+    },
+    "state": {
+      "description": "Active: ready, claimed, running, review. Interrupted: waiting-for-input, waiting-for-approval. Terminal: done, cancelled. proposed waits for its dependencies and the policy.",
+      "enum": ["proposed", "ready", "claimed", "running", "review", "waiting-for-input", "waiting-for-approval", "done", "cancelled"]
+    },
+    "attempts": {
+      "type": "object",
+      "required": ["count", "max"],
+      "properties": {
+        "count": { "type": "integer", "minimum": 0, "maximum": 10 },
+        "max": { "type": "integer", "minimum": 1, "maximum": 10 }
+      },
+      "additionalProperties": false
+    },
+    "holder": {
+      "description": "The lease on the task (resource board-task:<taskId>); a write presents its generation as a fence (INV-4, INV-15).",
+      "type": "object",
+      "required": ["owner", "generation", "leaseExpiresAt"],
+      "properties": {
+        "owner": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+        "generation": { "type": "integer", "minimum": 1 },
+        "leaseExpiresAt": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp" }
+      },
+      "additionalProperties": false
+    },
+    "run": {
+      "description": "The run of the current attempt. Recorded before the run starts, so a restart reconciles it and never starts it again (INV-4).",
+      "type": "object",
+      "required": ["runId", "startedAt"],
+      "properties": {
+        "runId": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+        "brief": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/artifactRef" },
+        "startedAt": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp" }
+      },
+      "additionalProperties": false
+    },
+    "result": {
+      "description": "What the attempt produced, recorded when it enters review.",
+      "type": "object",
+      "required": ["artifacts"],
+      "properties": {
+        "artifacts": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/artifactRef" }
+        },
+        "digest": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/artifactRef" },
+        "subject": {
+          "description": "The exact subject after the attempt, e.g. the worktree's commit.",
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/subject"
+        },
+        "files": {
+          "description": "Paths touched, relative to the workspace.",
+          "type": "array",
+          "maxItems": 512,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1, "maxLength": 1024 }
+        },
+        "acceptance": {
+          "description": "The `acceptance` decision on the result; required to be done.",
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/artifactRef"
+        },
+        "next": {
+          "description": "A proposed next task, in words.",
+          "type": "string",
+          "maxLength": 2000
+        }
+      },
+      "additionalProperties": false
+    },
+    "waiting": {
+      "description": "Why an interrupted task waits, and until when. On expiry it never runs: an approval wait is rejected (fail closed), an input wait cancels the task.",
+      "type": "object",
+      "required": ["reason", "since", "expiresAt"],
+      "properties": {
+        "reason": {
+          "description": "approval-needed: the policy asks before starting; budget-spent: an attempt spent its budget; reconciliation-failed: a started run could not be reconciled, so running it again needs approval; retries-spent: review rejected the last attempt allowed; question: the lead or operator must answer; rejected: an approval was refused or expired.",
+          "enum": ["approval-needed", "budget-spent", "reconciliation-failed", "retries-spent", "question", "rejected"]
+        },
+        "approvalRequest": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+        "questions": {
+          "type": "array",
+          "maxItems": 8,
+          "items": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/shortText" }
+        },
+        "since": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp" },
+        "expiresAt": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp" }
+      },
+      "additionalProperties": false
+    },
+    "cancellation": {
+      "type": "object",
+      "required": ["reason", "at"],
+      "properties": {
+        "reason": { "enum": ["operator", "lead", "project-closed", "input-expired", "superseded"] },
+        "note": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/shortText" },
+        "at": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp" }
+      },
+      "additionalProperties": false
+    },
+    "createdAt": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp" },
+    "updatedAt": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp" },
+    "lastDecision": {
+      "description": "Decision artifact that caused the latest state transition (INV-13).",
+      "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/artifactRef"
+    },
+    "revision": { "type": "integer", "minimum": 0 }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "state": { "not": { "const": "proposed" } } } },
+      "then": { "required": ["lastDecision"], "properties": { "lastDecision": true } }
+    },
+    {
+      "if": { "properties": { "state": { "enum": ["claimed", "running", "review"] } } },
+      "then": { "required": ["holder"], "properties": { "holder": true } }
+    },
+    {
+      "if": { "properties": { "state": { "enum": ["running", "review"] } } },
+      "then": { "required": ["run"], "properties": { "run": true } }
+    },
+    {
+      "if": { "properties": { "state": { "const": "review" } } },
+      "then": { "required": ["result"], "properties": { "result": true } }
+    },
+    {
+      "description": "Done needs the result, its subject, and an accepted acceptance decision.",
+      "if": { "properties": { "state": { "const": "done" } } },
+      "then": {
+        "required": ["result"],
+        "properties": { "result": { "type": "object", "required": ["subject", "acceptance"], "properties": { "subject": true, "acceptance": true } } }
+      }
+    },
+    {
+      "if": { "properties": { "state": { "enum": ["waiting-for-input", "waiting-for-approval"] } } },
+      "then": { "required": ["waiting"], "properties": { "waiting": true } },
+      "else": { "not": { "required": ["waiting"] } }
+    },
+    {
+      "if": { "properties": { "state": { "const": "waiting-for-approval" } } },
+      "then": {
+        "properties": {
+          "waiting": {
+            "type": "object",
+            "required": ["approvalRequest"],
+            "properties": { "approvalRequest": true, "reason": { "enum": ["approval-needed", "budget-spent", "reconciliation-failed"] } }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "state": { "const": "waiting-for-input" } } },
+      "then": { "properties": { "waiting": { "type": "object", "properties": { "reason": { "enum": ["retries-spent", "question", "rejected"] } } } } }
+    },
+    {
+      "if": { "properties": { "state": { "const": "cancelled" } } },
+      "then": { "required": ["cancellation"], "properties": { "cancellation": true } },
+      "else": { "not": { "required": ["cancellation"] } }
+    }
+  ],
+  "additionalProperties": false
+}

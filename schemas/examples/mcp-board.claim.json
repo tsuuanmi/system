@@ -1,0 +1,15 @@
+{
+  "tool": "board_claim",
+  "input": {
+    "taskId": "task-0008",
+    "owner": "lead-session-01",
+    "ttlSeconds": 900
+  },
+  "output": {
+    "taskId": "task-0008",
+    "state": "claimed",
+    "generation": 1,
+    "leaseExpiresAt": "2026-10-22T10:30:00Z",
+    "brief": "sha256:31b0ddbcb96c2b901173d6bbd82f6feef5005c67c18b315a5bbaa3ff31c020f7"
+  }
+}

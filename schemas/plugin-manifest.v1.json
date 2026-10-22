@@ -1,0 +1,138 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:tsuuanmi:system:schema:plugin-manifest:v1",
+  "title": "Plugin manifest",
+  "description": "What one plugin declares: its immutable name and former names, the seams it provides and consumes with versions, its class (a core component or a plugin family), and its configuration keys with a sensitive flag. The lifecycle state is the host's, kept apart under `_meta` as the MCP registry does; a plugin never declares it.",
+  "type": "object",
+  "required": ["schema", "name", "version", "class", "provides", "consumes", "license"],
+  "properties": {
+    "schema": { "const": "plugin-manifest@1.0" },
+    "name": {
+      "description": "The package name. Immutable: a new name lists the old one in `renames`.",
+      "type": "string",
+      "pattern": "^(@[a-z0-9-~][a-z0-9-._~]*/)?[a-z0-9-~][a-z0-9-._~]*$",
+      "maxLength": 214
+    },
+    "renames": {
+      "description": "Names this plugin was published under before, oldest first.",
+      "type": "array",
+      "maxItems": 16,
+      "uniqueItems": true,
+      "items": { "type": "string", "pattern": "^(@[a-z0-9-~][a-z0-9-._~]*/)?[a-z0-9-~][a-z0-9-._~]*$", "maxLength": 214 }
+    },
+    "version": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/semver" },
+    "description": { "type": "string", "maxLength": 500 },
+    "class": {
+      "description": "core: provides a guarantee seam of one core component, and fails closed; family: provides capability for one plugin family, and fails open (ADR-0036).",
+      "type": "object",
+      "required": ["kind"],
+      "properties": {
+        "kind": { "enum": ["core", "family"] },
+        "component": { "enum": ["ledger-of-record", "work-state-machine", "runner", "gate", "resource-ledger", "plugin-host"] },
+        "family": { "enum": ["worker", "decision", "verification", "digest", "context", "workflow", "knowledge", "surface"] }
+      },
+      "if": { "properties": { "kind": { "const": "core" } } },
+      "then": { "required": ["component"], "properties": { "component": true, "family": false } },
+      "else": { "required": ["family"], "properties": { "family": true, "component": false } },
+      "additionalProperties": false
+    },
+    "provides": {
+      "description": "Seams this plugin provides (its ctx keys), each at the contract version its conformance suite was run at.",
+      "type": "array",
+      "maxItems": 16,
+      "items": {
+        "type": "object",
+        "required": ["seam", "version"],
+        "properties": {
+          "seam": { "$ref": "#/$defs/seam" },
+          "version": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/semver" }
+        },
+        "additionalProperties": false
+      }
+    },
+    "consumes": {
+      "description": "Seams it injects, each with the contract versions it accepts.",
+      "type": "array",
+      "maxItems": 32,
+      "items": {
+        "type": "object",
+        "required": ["seam", "range"],
+        "properties": {
+          "seam": { "$ref": "#/$defs/seam" },
+          "range": {
+            "description": "A semver range, e.g. ^1.0.0.",
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "optional": { "type": "boolean" }
+        },
+        "additionalProperties": false
+      }
+    },
+    "config": {
+      "description": "Its configuration keys. A sensitive one holds a secret: the host keeps it in the credential vault and never logs or shows it.",
+      "type": "array",
+      "maxItems": 64,
+      "items": {
+        "type": "object",
+        "required": ["key", "sensitive"],
+        "properties": {
+          "key": { "type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_.]*$", "maxLength": 100 },
+          "sensitive": { "type": "boolean" },
+          "description": { "type": "string", "maxLength": 500 }
+        },
+        "additionalProperties": false
+      }
+    },
+    "license": {
+      "description": "An SPDX license expression.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 100
+    },
+    "egress": {
+      "description": "The strictest data classification the plugin may send off the machine.",
+      "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/classification"
+    },
+    "cacheStable": {
+      "description": "For a context plugin: it never puts changing content in the prompt prefix.",
+      "type": "boolean"
+    },
+    "_meta": {
+      "description": "Owned by the host, never declared: the plugin's lifecycle state, each change recorded as a decision.",
+      "type": "object",
+      "required": ["lifecycle"],
+      "properties": {
+        "lifecycle": {
+          "type": "object",
+          "required": ["state", "since", "decision"],
+          "properties": {
+            "state": { "enum": ["candidate", "shadow", "canary", "default", "retired"] },
+            "share": {
+              "description": "For canary: the share of eligible jobs it serves.",
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "exclusiveMaximum": 1
+            },
+            "since": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp" },
+            "decision": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/artifactRef" }
+          },
+          "if": { "properties": { "state": { "const": "canary" } } },
+          "then": { "required": ["share"], "properties": { "share": true } },
+          "else": { "not": { "required": ["share"] } },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "$defs": {
+    "seam": {
+      "description": "A ctx key, such as board or agentRuntimes.",
+      "type": "string",
+      "pattern": "^[a-z][A-Za-z0-9]{0,63}$"
+    }
+  },
+  "additionalProperties": false
+}

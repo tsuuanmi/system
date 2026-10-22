@@ -1,0 +1,76 @@
+{
+  "schema": "board-task@1.0",
+  "taskId": "task-0007",
+  "projectId": "proj-sparse-align",
+  "milestone": "m2",
+  "title": "Banded kernel, first version",
+  "goal": "Implement the banded alignment kernel behind the existing interface, with a benchmark run recorded.",
+  "acceptance": [
+    {
+      "id": "a1",
+      "statement": "Every existing alignment test passes",
+      "check": "tests"
+    },
+    {
+      "id": "a2",
+      "statement": "bench/align records a median speed-up",
+      "check": "tests"
+    },
+    {
+      "id": "a3",
+      "statement": "An independent review finds no blocking issue",
+      "check": "review"
+    }
+  ],
+  "dependsOn": [
+    "task-0004"
+  ],
+  "actionClass": "workspace-write",
+  "template": "algorithm-development",
+  "writes": {
+    "type": "git-head",
+    "ref": "refs/heads/task-0007"
+  },
+  "budget": [
+    {
+      "pool": "claude-max-main.programmatic",
+      "unit": "usd",
+      "amount": 8
+    }
+  ],
+  "state": "review",
+  "attempts": {
+    "count": 1,
+    "max": 3
+  },
+  "holder": {
+    "owner": "board",
+    "generation": 4,
+    "leaseExpiresAt": "2026-10-22T10:15:00Z"
+  },
+  "run": {
+    "runId": "run_01JB8Y4K2M",
+    "brief": "sha256:bf3acfd191a57cd645aedc8a34bb78d47296acbf90480b855b582740ac5e7813",
+    "startedAt": "2026-10-22T09:30:57Z"
+  },
+  "result": {
+    "artifacts": [
+      "sha256:27906a522c6a493b9c27ae732c8e7d9fa4b5d97e6a5054103f3d3954e6438dd1"
+    ],
+    "subject": {
+      "type": "git-head",
+      "ref": "HEAD",
+      "version": "9c1f2e7b4a3d5c6e8f0a1b2c3d4e5f6a7b8c9d0e"
+    },
+    "files": [
+      "src/align/banded.ts",
+      "src/align/index.ts",
+      "bench/align.bench.ts"
+    ],
+    "next": "Vectorize the inner loop (milestone m3)."
+  },
+  "createdAt": "2026-10-21T11:00:00Z",
+  "updatedAt": "2026-10-22T09:41:12Z",
+  "lastDecision": "sha256:0df169bc9e62d2d87b650210ca5b0aa184f32f8350938e6ac7ebc8319ef26750",
+  "revision": 9
+}

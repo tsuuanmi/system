@@ -1,0 +1,124 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:tsuuanmi:system:schema:approval-request:v1",
+  "title": "Approval request",
+  "description": "Durable state of one request in the approval queue (ctx.approvals, design/approvals.md): an action the autonomy policy says needs a person, bound to its exact subject. The verdict itself is an `approval@1.x` artifact; expiry resolves to rejected (fail closed).",
+  "type": "object",
+  "required": ["schema", "requestId", "state", "subject", "action", "requester", "policy", "classification", "createdAt", "expiresAt", "revision"],
+  "properties": {
+    "schema": { "const": "approval-request@1.0" },
+    "requestId": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+    "state": {
+      "description": "open: waiting to be batched; batched: shown to the operator in a batch; approved and rejected are terminal.",
+      "enum": ["open", "batched", "approved", "rejected"]
+    },
+    "subject": {
+      "description": "The exact thing the verdict binds to (INV-5): a plan, a charter version, a commit, a command.",
+      "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/subject"
+    },
+    "action": {
+      "type": "object",
+      "required": ["class", "summary"],
+      "properties": {
+        "class": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/actionClass" },
+        "summary": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/shortText" },
+        "consequences": {
+          "description": "What happens if approved, and what happens if not.",
+          "type": "string",
+          "maxLength": 2000
+        },
+        "recommendation": {
+          "description": "The requester's recommended verdict. A request unanswered by expiresAt is rejected, whatever is recommended.",
+          "enum": ["approve", "reject"]
+        },
+        "refs": {
+          "description": "Artifacts the operator may read to decide (a diff, a plan, a digest).",
+          "type": "array",
+          "maxItems": 16,
+          "uniqueItems": true,
+          "items": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/artifactRef" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "requester": {
+      "description": "The core component that asked, and the work waiting on the answer. Never a model's own claim (INV-6).",
+      "type": "object",
+      "required": ["component"],
+      "properties": {
+        "component": { "enum": ["workflow", "board", "worker", "resources"] },
+        "runId": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+        "nodeId": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+        "sessionId": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+        "projectId": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+        "taskId": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+        "toolUseId": {
+          "description": "The agent's tool call a deferred PreToolUse hook holds, when the request came from one.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      },
+      "additionalProperties": false
+    },
+    "policy": {
+      "description": "The autonomy decision that required asking: the policy and version, and the `autonomy` decision artifact.",
+      "type": "object",
+      "required": ["id", "version", "decision"],
+      "properties": {
+        "id": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+        "version": { "type": "integer", "minimum": 1, "maximum": 1000000 },
+        "decision": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/artifactRef" }
+      },
+      "additionalProperties": false
+    },
+    "classification": {
+      "description": "Of the summary and consequences; they are shown only where this classification may go (INV-12).",
+      "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/classification"
+    },
+    "batchId": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+    "createdAt": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp" },
+    "expiresAt": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp" },
+    "resolution": {
+      "type": "object",
+      "required": ["cause", "decision", "at"],
+      "properties": {
+        "cause": {
+          "description": "verdict: the operator answered; expired: no answer by expiresAt (denied:expired); withdrawn: the waiting work ended first (its task cancelled, its run stopped).",
+          "enum": ["verdict", "expired", "withdrawn"]
+        },
+        "approval": {
+          "description": "The `approval` artifact holding the operator's verdict.",
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/artifactRef"
+        },
+        "decision": {
+          "description": "The `approval` decision artifact that resolved the request (INV-13).",
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/artifactRef"
+        },
+        "at": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp" }
+      },
+      "if": { "properties": { "cause": { "const": "verdict" } } },
+      "then": { "required": ["approval"], "properties": { "approval": true } },
+      "else": { "not": { "required": ["approval"] } },
+      "additionalProperties": false
+    },
+    "revision": { "type": "integer", "minimum": 0 }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "state": { "const": "batched" } } },
+      "then": { "required": ["batchId"], "properties": { "batchId": true } }
+    },
+    {
+      "if": { "properties": { "state": { "enum": ["approved", "rejected"] } } },
+      "then": { "required": ["resolution"], "properties": { "resolution": true } },
+      "else": { "not": { "required": ["resolution"] } }
+    },
+    {
+      "description": "Only an operator verdict approves.",
+      "if": { "properties": { "state": { "const": "approved" } } },
+      "then": { "properties": { "resolution": { "type": "object", "properties": { "cause": { "const": "verdict" } } } } }
+    }
+  ],
+  "additionalProperties": false
+}

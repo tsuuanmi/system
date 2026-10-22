@@ -1,0 +1,20 @@
+{
+  "schema": "autonomy-policy@1.0",
+  "id": "proj-sparse-align.policy",
+  "version": 2,
+  "scope": "project",
+  "projectId": "proj-sparse-align",
+  "narrows": "studio-default",
+  "rules": [
+    {
+      "actionClass": "merge",
+      "mode": "forbid",
+      "note": "the operator merges this project's branches by hand"
+    }
+  ],
+  "default": "ask",
+  "expiry": {
+    "defaultSeconds": 43200,
+    "maxSeconds": 604800
+  }
+}

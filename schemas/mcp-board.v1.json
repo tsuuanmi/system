@@ -1,0 +1,1309 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:tsuuanmi:system:schema:mcp-board:v1",
+  "title": "MCP board tools",
+  "description": "Input and output of the `board_*` MCP tools (design/board.md). The root describes one call (tool, input, structured output); a provider validates input and output against `#/$defs/<tool>-input` and `#/$defs/<tool>-output`, with underscores written as hyphens.",
+  "type": "object",
+  "required": [
+    "tool",
+    "input",
+    "output"
+  ],
+  "properties": {
+    "tool": {
+      "enum": [
+        "board_projects",
+        "board_charter",
+        "board_brief",
+        "board_tasks",
+        "board_task",
+        "board_propose",
+        "board_claim",
+        "board_update",
+        "board_complete",
+        "board_cancel"
+      ]
+    },
+    "input": {
+      "type": "object"
+    },
+    "output": {
+      "type": "object"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "tool": {
+            "const": "board_projects"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "input": {
+            "$ref": "#/$defs/board-projects-input"
+          },
+          "output": {
+            "$ref": "#/$defs/board-projects-output"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "tool": {
+            "const": "board_charter"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "input": {
+            "$ref": "#/$defs/board-charter-input"
+          },
+          "output": {
+            "$ref": "#/$defs/board-charter-output"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "tool": {
+            "const": "board_brief"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "input": {
+            "$ref": "#/$defs/board-brief-input"
+          },
+          "output": {
+            "$ref": "#/$defs/board-brief-output"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "tool": {
+            "const": "board_tasks"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "input": {
+            "$ref": "#/$defs/board-tasks-input"
+          },
+          "output": {
+            "$ref": "#/$defs/board-tasks-output"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "tool": {
+            "const": "board_task"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "input": {
+            "$ref": "#/$defs/board-task-input"
+          },
+          "output": {
+            "$ref": "#/$defs/board-task-output"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "tool": {
+            "const": "board_propose"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "input": {
+            "$ref": "#/$defs/board-propose-input"
+          },
+          "output": {
+            "$ref": "#/$defs/board-propose-output"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "tool": {
+            "const": "board_claim"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "input": {
+            "$ref": "#/$defs/board-claim-input"
+          },
+          "output": {
+            "$ref": "#/$defs/board-claim-output"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "tool": {
+            "const": "board_update"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "input": {
+            "$ref": "#/$defs/board-update-input"
+          },
+          "output": {
+            "$ref": "#/$defs/board-update-output"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "tool": {
+            "const": "board_complete"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "input": {
+            "$ref": "#/$defs/board-complete-input"
+          },
+          "output": {
+            "$ref": "#/$defs/board-complete-output"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "tool": {
+            "const": "board_cancel"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "input": {
+            "$ref": "#/$defs/board-cancel-input"
+          },
+          "output": {
+            "$ref": "#/$defs/board-cancel-output"
+          }
+        }
+      }
+    }
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "board-projects-input": {
+      "type": "object",
+      "properties": {
+        "state": {
+          "enum": [
+            "proposed",
+            "active",
+            "paused",
+            "closed"
+          ]
+        },
+        "limit": {
+          "description": "Page size (default 20).",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        },
+        "after": {
+          "description": "The `next` cursor of the previous page.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        }
+      },
+      "additionalProperties": false
+    },
+    "board-projects-output": {
+      "type": "object",
+      "required": [
+        "projects"
+      ],
+      "properties": {
+        "projects": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "type": "object",
+            "required": [
+              "projectId",
+              "title",
+              "state",
+              "tasks"
+            ],
+            "properties": {
+              "projectId": {
+                "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+              },
+              "title": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "state": {
+                "enum": [
+                  "proposed",
+                  "active",
+                  "paused",
+                  "closed"
+                ]
+              },
+              "milestone": {
+                "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+              },
+              "tasks": {
+                "type": "object",
+                "description": "Tasks per state.",
+                "properties": {
+                  "proposed": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 100000
+                  },
+                  "ready": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 100000
+                  },
+                  "claimed": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 100000
+                  },
+                  "running": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 100000
+                  },
+                  "review": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 100000
+                  },
+                  "waiting-for-input": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 100000
+                  },
+                  "waiting-for-approval": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 100000
+                  },
+                  "done": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 100000
+                  },
+                  "cancelled": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 100000
+                  }
+                },
+                "additionalProperties": false
+              },
+              "budget": {
+                "type": "array",
+                "maxItems": 16,
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "pool",
+                    "unit",
+                    "limit",
+                    "used"
+                  ],
+                  "properties": {
+                    "pool": {
+                      "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+                    },
+                    "unit": {
+                      "enum": [
+                        "tokens",
+                        "usd",
+                        "turns",
+                        "runs",
+                        "minutes"
+                      ]
+                    },
+                    "limit": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1000000000000.0
+                    },
+                    "used": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1000000000000.0
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "next": {
+          "description": "Cursor for the next page; absent on the last.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        }
+      },
+      "additionalProperties": false
+    },
+    "board-charter-input": {
+      "type": "object",
+      "required": [
+        "title",
+        "charter"
+      ],
+      "properties": {
+        "projectId": {
+          "description": "Absent to found a project; present to amend its charter (pivot).",
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "template": {
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+        },
+        "classification": {
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/classification"
+        },
+        "charter": {
+          "description": "The charter to approve. Its version is 1 for a new project and the current one plus 1 for an amendment; approval is never given here.",
+          "allOf": [
+            {
+              "$ref": "urn:tsuuanmi:system:schema:project:v1#/$defs/charter"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "approval": false
+              }
+            }
+          ]
+        },
+        "milestones": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "$ref": "urn:tsuuanmi:system:schema:project:v1#/$defs/milestone"
+          }
+        },
+        "clientRequestId": {
+          "description": "Retry-safe request key.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        }
+      },
+      "additionalProperties": false
+    },
+    "board-charter-output": {
+      "type": "object",
+      "required": [
+        "projectId",
+        "state",
+        "charterVersion",
+        "approvalRequest"
+      ],
+      "properties": {
+        "projectId": {
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+        },
+        "state": {
+          "enum": [
+            "proposed",
+            "active",
+            "paused",
+            "closed"
+          ]
+        },
+        "charterVersion": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000
+        },
+        "approvalRequest": {
+          "description": "The charter's approval request; the project starts or changes course only once it is approved.",
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+        }
+      },
+      "additionalProperties": false
+    },
+    "board-brief-input": {
+      "type": "object",
+      "required": [
+        "projectId"
+      ],
+      "properties": {
+        "projectId": {
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+        }
+      },
+      "additionalProperties": false
+    },
+    "board-brief-output": {
+      "type": "object",
+      "required": [
+        "projectId",
+        "title",
+        "intent",
+        "state",
+        "tasks",
+        "inProgress",
+        "waiting",
+        "next",
+        "readFirst"
+      ],
+      "properties": {
+        "projectId": {
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "intent": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000
+        },
+        "state": {
+          "enum": [
+            "proposed",
+            "active",
+            "paused",
+            "closed"
+          ]
+        },
+        "milestone": {
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+        },
+        "tasks": {
+          "type": "object",
+          "description": "Tasks per state.",
+          "properties": {
+            "proposed": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100000
+            },
+            "ready": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100000
+            },
+            "claimed": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100000
+            },
+            "running": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100000
+            },
+            "review": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100000
+            },
+            "waiting-for-input": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100000
+            },
+            "waiting-for-approval": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100000
+            },
+            "done": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100000
+            },
+            "cancelled": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100000
+            }
+          },
+          "additionalProperties": false
+        },
+        "inProgress": {
+          "type": "array",
+          "maxItems": 20,
+          "items": {
+            "type": "object",
+            "required": [
+              "taskId",
+              "title",
+              "state"
+            ],
+            "properties": {
+              "taskId": {
+                "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+              },
+              "title": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "state": {
+                "enum": [
+                  "proposed",
+                  "ready",
+                  "claimed",
+                  "running",
+                  "review",
+                  "waiting-for-input",
+                  "waiting-for-approval",
+                  "done",
+                  "cancelled"
+                ]
+              },
+              "milestone": {
+                "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+              },
+              "holder": {
+                "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+              },
+              "runId": {
+                "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+              },
+              "waitingFor": {
+                "enum": [
+                  "input",
+                  "approval"
+                ]
+              },
+              "updatedAt": {
+                "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "waiting": {
+          "type": "array",
+          "maxItems": 20,
+          "items": {
+            "type": "object",
+            "required": [
+              "taskId",
+              "title",
+              "state"
+            ],
+            "properties": {
+              "taskId": {
+                "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+              },
+              "title": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "state": {
+                "enum": [
+                  "proposed",
+                  "ready",
+                  "claimed",
+                  "running",
+                  "review",
+                  "waiting-for-input",
+                  "waiting-for-approval",
+                  "done",
+                  "cancelled"
+                ]
+              },
+              "milestone": {
+                "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+              },
+              "holder": {
+                "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+              },
+              "runId": {
+                "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+              },
+              "waitingFor": {
+                "enum": [
+                  "input",
+                  "approval"
+                ]
+              },
+              "updatedAt": {
+                "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "next": {
+          "type": "array",
+          "maxItems": 20,
+          "items": {
+            "type": "object",
+            "required": [
+              "taskId",
+              "title",
+              "state"
+            ],
+            "properties": {
+              "taskId": {
+                "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+              },
+              "title": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "state": {
+                "enum": [
+                  "proposed",
+                  "ready",
+                  "claimed",
+                  "running",
+                  "review",
+                  "waiting-for-input",
+                  "waiting-for-approval",
+                  "done",
+                  "cancelled"
+                ]
+              },
+              "milestone": {
+                "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+              },
+              "holder": {
+                "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+              },
+              "runId": {
+                "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+              },
+              "waitingFor": {
+                "enum": [
+                  "input",
+                  "approval"
+                ]
+              },
+              "updatedAt": {
+                "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "readFirst": {
+          "type": "array",
+          "description": "Artifacts a new agent should read first, by content id.",
+          "maxItems": 16,
+          "items": {
+            "type": "object",
+            "required": [
+              "ref",
+              "why"
+            ],
+            "properties": {
+              "ref": {
+                "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/artifactRef"
+              },
+              "why": {
+                "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/shortText"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "conventions": {
+          "type": "array",
+          "maxItems": 16,
+          "items": {
+            "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/shortText"
+          }
+        },
+        "budget": {
+          "type": "array",
+          "maxItems": 16,
+          "items": {
+            "type": "object",
+            "required": [
+              "pool",
+              "unit",
+              "limit",
+              "used"
+            ],
+            "properties": {
+              "pool": {
+                "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+              },
+              "unit": {
+                "enum": [
+                  "tokens",
+                  "usd",
+                  "turns",
+                  "runs",
+                  "minutes"
+                ]
+              },
+              "limit": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1000000000000.0
+              },
+              "used": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1000000000000.0
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "board-tasks-input": {
+      "type": "object",
+      "required": [
+        "projectId"
+      ],
+      "properties": {
+        "projectId": {
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+        },
+        "states": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 9,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "proposed",
+              "ready",
+              "claimed",
+              "running",
+              "review",
+              "waiting-for-input",
+              "waiting-for-approval",
+              "done",
+              "cancelled"
+            ]
+          }
+        },
+        "milestone": {
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+        },
+        "limit": {
+          "description": "Page size (default 20).",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        },
+        "after": {
+          "description": "The `next` cursor of the previous page.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        }
+      },
+      "additionalProperties": false
+    },
+    "board-tasks-output": {
+      "type": "object",
+      "required": [
+        "tasks"
+      ],
+      "properties": {
+        "tasks": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "type": "object",
+            "required": [
+              "taskId",
+              "title",
+              "state"
+            ],
+            "properties": {
+              "taskId": {
+                "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+              },
+              "title": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "state": {
+                "enum": [
+                  "proposed",
+                  "ready",
+                  "claimed",
+                  "running",
+                  "review",
+                  "waiting-for-input",
+                  "waiting-for-approval",
+                  "done",
+                  "cancelled"
+                ]
+              },
+              "milestone": {
+                "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+              },
+              "holder": {
+                "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+              },
+              "runId": {
+                "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+              },
+              "waitingFor": {
+                "enum": [
+                  "input",
+                  "approval"
+                ]
+              },
+              "updatedAt": {
+                "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "next": {
+          "description": "Cursor for the next page; absent on the last.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        }
+      },
+      "additionalProperties": false
+    },
+    "board-task-input": {
+      "type": "object",
+      "required": [
+        "taskId"
+      ],
+      "properties": {
+        "taskId": {
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+        }
+      },
+      "additionalProperties": false
+    },
+    "board-task-output": {
+      "type": "object",
+      "required": [
+        "task"
+      ],
+      "properties": {
+        "task": {
+          "$ref": "urn:tsuuanmi:system:schema:board-task:v1"
+        }
+      },
+      "additionalProperties": false
+    },
+    "board-propose-input": {
+      "type": "object",
+      "required": [
+        "projectId",
+        "title",
+        "goal",
+        "acceptance",
+        "actionClass"
+      ],
+      "properties": {
+        "projectId": {
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "goal": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000
+        },
+        "acceptance": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 32,
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "statement"
+            ],
+            "properties": {
+              "id": {
+                "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+              },
+              "statement": {
+                "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/shortText"
+              },
+              "check": {
+                "enum": [
+                  "tests",
+                  "typecheck",
+                  "lint",
+                  "schema",
+                  "quote-check",
+                  "review",
+                  "operator"
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "dependsOn": {
+          "type": "array",
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+          }
+        },
+        "actionClass": {
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/actionClass"
+        },
+        "milestone": {
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+        },
+        "template": {
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+        },
+        "writes": {
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/subject"
+        },
+        "budget": {
+          "type": "array",
+          "maxItems": 16,
+          "items": {
+            "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/budgetLine"
+          }
+        },
+        "clientRequestId": {
+          "description": "Retry-safe request key.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        }
+      },
+      "additionalProperties": false
+    },
+    "board-propose-output": {
+      "type": "object",
+      "required": [
+        "taskId",
+        "state",
+        "revision"
+      ],
+      "properties": {
+        "taskId": {
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+        },
+        "state": {
+          "enum": [
+            "proposed",
+            "ready",
+            "claimed",
+            "running",
+            "review",
+            "waiting-for-input",
+            "waiting-for-approval",
+            "done",
+            "cancelled"
+          ]
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "board-claim-input": {
+      "type": "object",
+      "required": [
+        "taskId",
+        "owner"
+      ],
+      "properties": {
+        "taskId": {
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+        },
+        "owner": {
+          "description": "Who works on it, e.g. the lead's session id.",
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+        },
+        "ttlSeconds": {
+          "description": "Lease length (default 900 s); renewed by board_update.",
+          "type": "integer",
+          "minimum": 30,
+          "maximum": 3600
+        }
+      },
+      "additionalProperties": false
+    },
+    "board-claim-output": {
+      "type": "object",
+      "required": [
+        "taskId",
+        "state",
+        "generation",
+        "leaseExpiresAt"
+      ],
+      "properties": {
+        "taskId": {
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+        },
+        "state": {
+          "const": "claimed"
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "leaseExpiresAt": {
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp"
+        },
+        "brief": {
+          "description": "The brief artifact to start from.",
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/artifactRef"
+        }
+      },
+      "additionalProperties": false
+    },
+    "board-update-input": {
+      "type": "object",
+      "required": [
+        "taskId"
+      ],
+      "properties": {
+        "taskId": {
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+        },
+        "generation": {
+          "description": "The lease generation the caller holds (a fence, INV-4).",
+          "type": "integer",
+          "minimum": 1
+        },
+        "note": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        },
+        "answers": {
+          "type": "array",
+          "description": "Answers to a waiting-for-input task's questions, by index; answering every one makes it ready again.",
+          "minItems": 1,
+          "maxItems": 8,
+          "items": {
+            "type": "object",
+            "required": [
+              "question",
+              "answer"
+            ],
+            "properties": {
+              "question": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 7
+              },
+              "answer": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 2000
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "board-update-output": {
+      "type": "object",
+      "required": [
+        "taskId",
+        "state",
+        "revision"
+      ],
+      "properties": {
+        "taskId": {
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+        },
+        "state": {
+          "enum": [
+            "proposed",
+            "ready",
+            "claimed",
+            "running",
+            "review",
+            "waiting-for-input",
+            "waiting-for-approval",
+            "done",
+            "cancelled"
+          ]
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "leaseExpiresAt": {
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp"
+        }
+      },
+      "additionalProperties": false
+    },
+    "board-complete-input": {
+      "type": "object",
+      "required": [
+        "taskId",
+        "generation",
+        "artifacts"
+      ],
+      "properties": {
+        "taskId": {
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+        },
+        "generation": {
+          "description": "The lease generation the caller holds (a fence, INV-4).",
+          "type": "integer",
+          "minimum": 1
+        },
+        "artifacts": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/artifactRef"
+          }
+        },
+        "subject": {
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/subject"
+        },
+        "files": {
+          "type": "array",
+          "maxItems": 512,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024
+          }
+        },
+        "next": {
+          "type": "string",
+          "maxLength": 2000
+        }
+      },
+      "additionalProperties": false
+    },
+    "board-complete-output": {
+      "type": "object",
+      "required": [
+        "taskId",
+        "state",
+        "revision"
+      ],
+      "properties": {
+        "taskId": {
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+        },
+        "state": {
+          "const": "review"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "board-cancel-input": {
+      "type": "object",
+      "required": [
+        "taskId"
+      ],
+      "properties": {
+        "taskId": {
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+        },
+        "note": {
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/shortText"
+        }
+      },
+      "additionalProperties": false
+    },
+    "board-cancel-output": {
+      "type": "object",
+      "required": [
+        "taskId",
+        "state",
+        "revision"
+      ],
+      "properties": {
+        "taskId": {
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+        },
+        "state": {
+          "const": "cancelled"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

@@ -56,7 +56,7 @@ guesses.
 - `decision@1.1` adds the decision type `vote`, the decider type `client`, and
   the `vote` object ([teams](../design/teams.md#the-record)). A record with any
   of them must be `@1.1` and carry `vote`; every other decision stays `@1.0`,
-  so earlier decisions keep their ids. Readers accept 1.0 through 1.3.
+  so earlier decisions keep their ids. Readers accept 1.0 through 1.4.
 - `decision@1.2` adds a review's quote checks ([teams](../design/teams.md#review)):
   - the method and the round end `blocking-finding` (decider rule
     `workflow.blocking-finding`);
@@ -78,6 +78,20 @@ guesses.
   [conversation ledger](../design/provider-turns.md#conversation-ledger)). A
   `retention` decision must be `@1.3`. Example:
   [`decision.retention.json`](../../schemas/examples/decision.retention.json).
+- `decision@1.4` adds four decision types for the Base core. A decision of one of them
+  must be `@1.4`; every other decision keeps its version, so earlier decisions keep their
+  ids.
+  - `autonomy`: the mode the autonomy policy gives one action. Candidates are `auto`, `notify`,
+    `ask`, and `forbid`; the decider is the policy (`policy`, its id and version); the outcome is
+    the mode, and `detail` names the action class and the effective policies.
+  - `approval`: how an approval request was resolved. Options `approved`, `rejected`,
+    `denied:expired` (decider rule `approvals.expiry`), and `withdrawn`. Example:
+    [`decision.approval-expired.json`](../../schemas/examples/decision.approval-expired.json).
+  - `board`: a move the board makes on its own (dependencies met, a lease lost, a wait expired,
+    a retry). The outcome is the target state; `detail` names the task or project and the state
+    it left.
+  - `budget`: a reservation before a run. Options `reserved` and `refused`; `detail` names each
+    pool, the amount, and what remained.
 - A tally's `vote` holds one round; the team's final `vote` holds every round,
   its `method`, the `dissent`, any `revisions` and `tiebreak`, and a review's
   `findings`. `threshold` is a strict majority of every member, never of the
@@ -195,6 +209,18 @@ guesses.
   subject is the workspace's exact git subject after the run:
   `{type: git-head, ref: HEAD, version: hash of every change on top}`. A
   review binds to it.
+- `agent-result@1.2` adds `model`, `usage`, and `models`, from the Agent SDK's result
+  message. `usage` is the sum of its per-model `modelUsage`, which covers subagents; the
+  message's own `usage` covers the main loop only and is not used. `model` is the main
+  loop's model.
+- Token counts are normalized as in [`usage-record`](#usage-record). The SDK's `modelUsage`
+  uses the same field names with another meaning: its `inputTokens` excludes cached input. So
+  here `inputTokens` is the SDK's `inputTokens` plus its `cacheReadInputTokens` and
+  `cacheCreationInputTokens`.
+- A crashed process writes no result message and so no `agent-result`; its usage is reconciled
+  from the session transcript into a `usage-record`. A record carrying any of the three fields
+  below `@1.2` is refused. Readers accept 1.0 to 1.2. Example:
+  [`agent-result.usage.json`](../../schemas/examples/agent-result.usage.json).
 
 ### `model-answer`
 
@@ -331,3 +357,167 @@ guesses.
   (`external`, another site over http(s); `site`; or `none`). An outline that
   holds one names `@1.1`; readers accept 1.0 and 1.1.
 - Example: [ui-outline.composer.json](../../schemas/examples/ui-outline.composer.json).
+
+### `usage-record`
+
+- The body of a `receipt` artifact, one per accounting unit: an agent run, a model call, or a
+  website turn. Numbers come from objective sources only, never from a model's self-report.
+- The ledger keeps one record per `(source, requestId)`; another with the same key is a
+  duplicate and is not counted. A unit is counted once across sources: a `transcript` record is
+  written only for a run that has no `runtime-result` record, the case of a crashed process.
+- `inputTokens` includes cached input, and `cacheReadInputTokens` and
+  `cacheCreationInputTokens` are subsets of it (OpenTelemetry GenAI). So
+  `inputTokens ≥ cacheReadInputTokens + cacheCreationInputTokens`, and when `models` is present
+  each count of `usage` is the sum over `models`. A source that reports input without its cached
+  part (the Anthropic API, the Agent SDK) is normalized before the record is written.
+- `pool` must be a pool the account has in configuration; a record for an unknown pool is
+  refused. A failed or aborted unit is metered like a completed one.
+- `cost.basis`: `runtime-estimate` is the runtime's own client-side figure; `price-table` is
+  computed from the usage with the table `priceVersion` names, so history is never repriced
+  when prices change. Examples:
+  [`usage-record.agent-run.json`](../../schemas/examples/usage-record.agent-run.json),
+  [`usage-record.api-call.json`](../../schemas/examples/usage-record.api-call.json).
+
+### `limit-state`
+
+- The body of an `evidence` artifact: one reading of one window of a resource pool. Pools and
+  their windows are the operator's configuration of the resource ledger (an account can have an
+  interactive window, a programmatic credit, an API key), never a hardcoded plan; `window.id`
+  names a configured window.
+- Every reading field is optional, because sources omit them (the status line's `rate_limits`
+  has been missing in a release). The latest reading of a `(pool, window)` is its current state;
+  older ones stay as history.
+- `limited` lasts until the later of `cooldownUntil` and `resetsAt`. `unknown` means no reading
+  says either way; a pool configured to fail closed is then unavailable to new work.
+- `history-estimate` readings are computed by code from recorded usage, conservatively. Examples:
+  [`limit-state.five-hour.json`](../../schemas/examples/limit-state.five-hour.json),
+  [`limit-state.limited.json`](../../schemas/examples/limit-state.limited.json).
+
+### `autonomy-policy`
+
+- One rule per action class; a policy that names one twice is refused when loaded.
+- The effective mode of an action is the strictest of the studio policy and the project's
+  (`auto` < `notify` < `ask` < `forbid`). A project policy whose rule is looser than the studio
+  policy it `narrows` is refused when loaded.
+- `auto` and `notify` hold only while every check in `requires` passes; a failed check goes back
+  to the lead as work to fix, never to the operator.
+- A command on the `commands` list is classed by what it does (for example `workspace-write`);
+  any other command is the `command` class.
+- An approval request expires at its creation plus the rule's `expiresSeconds`, else
+  `expiry.defaultSeconds`, never more than `expiry.maxSeconds`.
+- A `policy-change` is never made by a Worker: a new policy version takes effect only through an
+  operator approval, so the safety layer never changes itself. Examples:
+  [`autonomy-policy.studio.json`](../../schemas/examples/autonomy-policy.studio.json),
+  [`autonomy-policy.project.json`](../../schemas/examples/autonomy-policy.project.json).
+
+### `approval-request`
+
+- Written only by a core component (`requester.component`), never from model text (INV-6). The
+  summary may quote a Worker's proposal; it carries no authority.
+- One request, one exact subject (INV-5). An operator verdict names the subject it saw; if the
+  subject changed since, the verdict is refused and the request is unchanged, so the requester
+  must withdraw it and ask anew.
+- An approving verdict writes an `approval@1.x` artifact by `operator` on the same subject,
+  referenced from `resolution.approval`.
+- Expiry is one transaction: the state becomes `rejected`, `resolution.cause` is `expired`, and an
+  `approval` decision with outcome `denied:expired` is recorded. The waiting work resumes as
+  denied. A request is `withdrawn` (also `rejected`) when the work waiting on it ends first.
+  Examples: [`approval-request.batched.json`](../../schemas/examples/approval-request.batched.json),
+  [`approval-request.expired.json`](../../schemas/examples/approval-request.expired.json).
+
+### `project`
+
+- Its charter is approved by the operator (action class `charter`) on the subject
+  `{type: content, ref: project:<projectId>:charter:<version>, version: sha256 of the canonical
+  charter without approval}`. An amendment is held in `proposedCharter` with the next version
+  until approved, and the project keeps its state meanwhile.
+- A milestone is funded (action class `funding`) by an approval on its budget, a funding round.
+- Budget use is computed from the usage records of its tasks, never stored on the project.
+- Stop rules are words: the lead or the operator judges them, and the action a rule names is put
+  to the operator through the approval queue.
+- `classification` is a floor for its tasks and briefs. Example:
+  [`project.active.json`](../../schemas/examples/project.active.json).
+
+### `board-task`
+
+- `dependsOn` names tasks of the same project and is acyclic. While a task is not terminal, no
+  other task holds write authority over the same `writes` subject (INV-15).
+- `holder` is the lease on resource `board-task:<taskId>`; every write presents its generation
+  as a fence.
+- `run` is recorded before the run starts. After a restart, a task with a run and no result is
+  reconciled and its run is never started again (INV-4); one that cannot be reconciled waits for
+  approval with reason `reconciliation-failed`.
+- A rejected review starts another attempt while `attempts.count < attempts.max`, and otherwise
+  waits for input with reason `retries-spent`.
+- Every wait expires and never starts work: an approval wait follows its request, which expiry
+  rejects, and then waits for input with reason `rejected`; an input wait that expires cancels
+  the task (`input-expired`).
+- `done` needs an `acceptance` decision whose outcome is accepted; the schema checks only that
+  it is named.
+- `lastDecision` is the decision behind the latest move: a `board` decision for moves the board
+  makes on its own, otherwise the acceptance, approval, route, or reconciliation decision that
+  caused it. Examples: [`board-task.review.json`](../../schemas/examples/board-task.review.json),
+  [`board-task.waiting-for-approval.json`](../../schemas/examples/board-task.waiting-for-approval.json).
+
+### `brief`
+
+- The body of an `objective` artifact. Every `artifacts[].ref` is also an input of its envelope,
+  so unknown references are refused and the classification floor applies (INV-12).
+- It carries pointers, never content: the Worker reads each artifact in windows through the
+  `artifact` tool.
+- `sandbox` comes from trusted configuration, and `budget.remaining` is computed from the
+  ledger when the brief is written. Example:
+  [`brief.task.json`](../../schemas/examples/brief.task.json).
+
+### `digest`
+
+- The body of a `report` artifact whose envelope inputs are its `sources`. Every
+  `citation.artifact` is one of them, and claim ids are unique.
+- The quote check: each quote must occur verbatim in the cited artifact's text (its body's `text`
+  field when it has one, otherwise its canonical JSON), at `offset` when one is given. A digest
+  that fails is not accepted and is written again at the next tier.
+- Its classification is at least its sources'. A digest of `local-private` sources is written by
+  a local Worker or one the egress policy allows. Example:
+  [`digest.test-run.json`](../../schemas/examples/digest.test-run.json).
+
+### `plugin-manifest`
+
+- `name` never changes; a renamed plugin lists its old names in `renames`, so the host matches
+  its old configuration and records.
+- Each `provides` version is the contract version of the seam's conformance suite that the
+  plugin passed.
+- A `core` plugin fails closed and a `family` plugin fails open
+  ([ADR-0036](../decisions/adr/0036-guarantee-core-and-capability-plugins.md)).
+- A `sensitive` configuration key holds a secret: the host keeps it in `ctx.credentials`, and
+  the plugin's configuration holds only its reference.
+- `_meta` belongs to the host: a declared manifest that carries it is refused. Each lifecycle
+  change is recorded as a decision; Base records the state and automates nothing. Examples:
+  [`plugin-manifest.digest-provider.json`](../../schemas/examples/plugin-manifest.digest-provider.json),
+  [`plugin-manifest.core.json`](../../schemas/examples/plugin-manifest.core.json).
+
+### MCP tools: `board_*`, `approvals_*`, `resources_*`
+
+| Tool | Scope | Does |
+|---|---|---|
+| `board_projects` | client | list projects with task counts and budget use |
+| `board_charter` | client | found a project or amend its charter; opens a `charter` approval request |
+| `board_brief` | client | one page for a new agent: intent, in progress, waiting, next, what to read first |
+| `board_tasks`, `board_task` | client | list tasks; read one |
+| `board_propose` | client | propose a task; the board makes it ready when its dependencies are done and the policy allows |
+| `board_claim` | client | take a ready task's lease (the lead working on it itself) |
+| `board_update` | client | report progress and renew the lease, or answer a waiting task's questions |
+| `board_complete` | client | submit results; the task goes to review, never straight to done |
+| `board_cancel` | client | cancel a task that is not running or in review |
+| `approvals_list`, `approvals_get` | client | read the queue |
+| `approvals_decide` | operator | verdicts for up to 50 requests, each bound to its exact subject |
+| `approvals_policy` | client | the studio and project policies, and the effective mode per action class |
+| `resources_pools` | client | each pool with the latest reading of each window, and whether it is available |
+| `resources_usage` | client | usage records, filtered, with totals over every match |
+
+- A page holds at most 100 items; `next` is an opaque cursor.
+- A refused verdict (`unknown-request`, `already-resolved`, `expired`, `subject-changed`)
+  leaves its request unchanged; the other verdicts of the call still apply.
+- Examples: [`mcp-board.claim.json`](../../schemas/examples/mcp-board.claim.json),
+  [`mcp-board.charter.json`](../../schemas/examples/mcp-board.charter.json),
+  [`mcp-approvals.decide.json`](../../schemas/examples/mcp-approvals.decide.json),
+  [`mcp-resources.usage.json`](../../schemas/examples/mcp-resources.usage.json).

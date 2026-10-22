@@ -52,6 +52,42 @@
         "version": { "type": "string", "maxLength": 128 }
       },
       "additionalProperties": false
+    },
+    "semver": {
+      "description": "Semantic version MAJOR.MINOR.PATCH, with an optional pre-release.",
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]{1,64})?$",
+      "maxLength": 100
+    },
+    "shortText": { "type": "string", "minLength": 1, "maxLength": 500 },
+    "actionClass": {
+      "description": "What an action does, as the autonomy policy classifies it (design/approvals.md).",
+      "enum": ["read", "workspace-write", "merge", "command", "external-send", "deploy", "delete-data", "spend", "charter", "funding", "remediation", "policy-change"]
+    },
+    "budgetLine": {
+      "description": "An amount of one resource pool (design/resources.md). Pools are operator configuration, never a hardcoded plan.",
+      "type": "object",
+      "required": ["pool", "unit", "amount"],
+      "properties": {
+        "pool": { "$ref": "#/$defs/id" },
+        "unit": { "enum": ["tokens", "usd", "turns", "runs", "minutes"] },
+        "amount": { "type": "number", "minimum": 0, "maximum": 1000000000000 }
+      },
+      "additionalProperties": false
+    },
+    "tokenCount": { "type": "integer", "minimum": 0, "maximum": 1000000000000 },
+    "tokenUsage": {
+      "description": "Token counts named after the OpenTelemetry GenAI usage attributes. inputTokens includes cached input; cacheReadInputTokens and cacheCreationInputTokens are subsets of it.",
+      "type": "object",
+      "required": ["inputTokens", "outputTokens"],
+      "properties": {
+        "inputTokens": { "$ref": "#/$defs/tokenCount" },
+        "outputTokens": { "$ref": "#/$defs/tokenCount" },
+        "cacheReadInputTokens": { "$ref": "#/$defs/tokenCount" },
+        "cacheCreationInputTokens": { "$ref": "#/$defs/tokenCount" },
+        "reasoningOutputTokens": { "$ref": "#/$defs/tokenCount" }
+      },
+      "additionalProperties": false
     }
   }
 }

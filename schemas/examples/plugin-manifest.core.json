@@ -1,0 +1,28 @@
+{
+  "schema": "plugin-manifest@1.0",
+  "name": "@tsuuanmi/system-store",
+  "version": "0.8.0",
+  "class": {
+    "kind": "core",
+    "component": "ledger-of-record"
+  },
+  "provides": [
+    {
+      "seam": "store",
+      "version": "1.0.0"
+    }
+  ],
+  "consumes": [],
+  "config": [
+    {
+      "key": "path",
+      "sensitive": false,
+      "description": "Database file"
+    },
+    {
+      "key": "busyTimeoutMs",
+      "sensitive": false
+    }
+  ],
+  "license": "UNLICENSED"
+}

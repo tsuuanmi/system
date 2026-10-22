@@ -1,0 +1,119 @@
+{
+  "schema": "project@1.0",
+  "projectId": "proj-sparse-align",
+  "title": "Banded alignment kernel",
+  "state": "active",
+  "template": "algorithm-development",
+  "classification": "operator-shared",
+  "charter": {
+    "version": 1,
+    "intent": "A banded sequence alignment kernel that is at least 3x faster than the current one on the operator's benchmark, with identical scores.",
+    "criteria": [
+      {
+        "id": "speed",
+        "statement": "Median speed-up on bench/align at least 3x",
+        "measure": {
+          "kind": "benchmark",
+          "target": 3,
+          "comparison": "at-least",
+          "unit": "x"
+        }
+      },
+      {
+        "id": "exact",
+        "statement": "Scores identical to the reference on every test case",
+        "measure": {
+          "kind": "tests"
+        }
+      }
+    ],
+    "constraints": {
+      "deadline": "2026-11-05T17:00:00Z",
+      "egressPolicy": "operator-shared",
+      "notes": [
+        "No new runtime dependencies"
+      ]
+    },
+    "stopRules": [
+      {
+        "id": "no-gain",
+        "condition": "Below 1.5x after two milestones",
+        "action": "pivot"
+      },
+      {
+        "id": "budget",
+        "condition": "80% of the programmatic pool spent before milestone m2",
+        "action": "pause"
+      }
+    ],
+    "budget": {
+      "pools": [
+        {
+          "pool": "claude-max-main.programmatic",
+          "unit": "usd",
+          "amount": 120
+        },
+        {
+          "pool": "claude-max-main.interactive",
+          "unit": "tokens",
+          "amount": 40000000
+        }
+      ],
+      "attention": {
+        "maxBatchesPerDay": 2,
+        "maxInterruptionsPerDay": 3
+      }
+    },
+    "approval": "sha256:dbeaec20b53016d660831eba5c9b4f173e204d8bc69c11eb1796f1a8db0f8bf6"
+  },
+  "policy": "proj-sparse-align.policy",
+  "milestones": [
+    {
+      "id": "m1",
+      "title": "Baseline benchmark and correctness harness",
+      "criteria": [
+        "exact"
+      ],
+      "state": "done",
+      "budget": [
+        {
+          "pool": "claude-max-main.programmatic",
+          "unit": "usd",
+          "amount": 20
+        }
+      ],
+      "funding": "sha256:0bddd2d50f86739c9cbf945be52499fe82d303166a26c7bda3d1bbe103c5f233"
+    },
+    {
+      "id": "m2",
+      "title": "Banded kernel at 2x",
+      "criteria": [
+        "speed",
+        "exact"
+      ],
+      "state": "funded",
+      "due": "2026-10-29T17:00:00Z",
+      "budget": [
+        {
+          "pool": "claude-max-main.programmatic",
+          "unit": "usd",
+          "amount": 50
+        }
+      ],
+      "funding": "sha256:1edeba3edea8dc788b63247f35e7c430e994204c310ab6065ff571e5723dac2f"
+    },
+    {
+      "id": "m3",
+      "title": "Vectorized kernel at 3x",
+      "criteria": [
+        "speed",
+        "exact"
+      ],
+      "state": "planned"
+    }
+  ],
+  "createdAt": "2026-10-20T08:00:00Z",
+  "updatedAt": "2026-10-22T08:30:00Z",
+  "lastDecision": "sha256:b677ff5e33e76cc1dacdf53e598823105b520922de350d68f23716c9c02bfc6e",
+  "revision": 6
+}

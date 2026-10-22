@@ -1,0 +1,57 @@
+{
+  "tool": "board_charter",
+  "input": {
+    "title": "Banded alignment kernel",
+    "template": "algorithm-development",
+    "classification": "operator-shared",
+    "charter": {
+      "version": 1,
+      "intent": "A banded sequence alignment kernel that is at least 3x faster than the current one, with identical scores.",
+      "criteria": [
+        {
+          "id": "speed",
+          "statement": "Median speed-up on bench/align at least 3x",
+          "measure": {
+            "kind": "benchmark",
+            "target": 3,
+            "comparison": "at-least",
+            "unit": "x"
+          }
+        }
+      ],
+      "constraints": {
+        "deadline": "2026-11-05T17:00:00Z"
+      },
+      "stopRules": [
+        {
+          "id": "no-gain",
+          "condition": "Below 1.5x after two milestones",
+          "action": "pivot"
+        }
+      ],
+      "budget": {
+        "pools": [
+          {
+            "pool": "claude-max-main.programmatic",
+            "unit": "usd",
+            "amount": 120
+          }
+        ]
+      }
+    },
+    "milestones": [
+      {
+        "id": "m1",
+        "title": "Baseline benchmark and correctness harness",
+        "state": "planned"
+      }
+    ],
+    "clientRequestId": "found-sparse-align"
+  },
+  "output": {
+    "projectId": "proj-sparse-align",
+    "state": "proposed",
+    "charterVersion": 1,
+    "approvalRequest": "apr-0001"
+  }
+}
