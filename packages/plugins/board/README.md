@@ -98,5 +98,9 @@ charters, and their tasks.
   store-backed queue too.
   [`tests/board.spec.ts`](tests/board.spec.ts) covers what the suite does not: restart (in place
   and as a new process over the same file), fencing across a restart, concurrent claims and
-  racing sweeps, the queue unavailable, adoption of an orphaned request, paging bounds, invalid
-  records refused, the tools' outputs against their schema definitions, and the projection.
+  racing sweeps, the queue unavailable, adoption of an orphaned request (open, or approved while
+  a founding call crashed), both crash windows around a withdrawal and a close that fails after
+  reading, a wait whose request the queue no longer knows, a spent or lost run under a policy
+  that does not ask, the gate before every attempt, the checks an acceptance reports, results
+  on the written subject, paging bounds, invalid records refused, the tools' outputs against
+  their schema definitions, and the projection.
