@@ -63,6 +63,7 @@ export const LAYER_OF: Record<string, Layer> = {
   // orchestration
   'workflow': 'orchestration',
   'board-core': 'orchestration',
+  'board': 'orchestration',
   'worker-sessions': 'orchestration',
   'profile-software-development': 'orchestration',
   'profile-scientific-research': 'orchestration',
@@ -131,10 +132,10 @@ function importsOf(text: string): Map<string, [string, string]> {
   return out
 }
 
-/** Bundle rows in order: `- id: x` followed by `name: '…'`. */
-export function bundleRows(): Array<{ id: string; name: string }> {
+/** Bundle rows in order: `- id: x` followed by `name: '…'`, and whether the row is `disabled: true` (off by default). */
+export function bundleRows(): Array<{ id: string; name: string; off: boolean }> {
   const text = readFileSync(join(BUNDLE, 'cordis.patch.yml'), 'utf8')
-  return [...text.matchAll(/- id: ([\w-]+)\n\s+name: '([^']+)'/g)].map((m) => ({ id: m[1]!, name: m[2]! }))
+  return [...text.matchAll(/- id: ([\w-]+)\n\s+name: '([^']+)'[^\n]*(\n\s+disabled: true\b)?/g)].map((m) => ({ id: m[1]!, name: m[2]!, off: m[3] !== undefined }))
 }
 
 /** The service keys a non-workspace package (a DSH row) registers, read from its entry file. */
@@ -230,9 +231,15 @@ export function scan(): Pkg[] {
   const providerOf = new Map<string, string[]>()
   for (const p of pkgs) for (const k of p.provides) providerOf.set(k, [...(providerOf.get(k) ?? []), p.dir])
   const defined = new Set(pkgs.flatMap((p) => p.defines))
+  const off = new Set(rows.filter((r) => r.off).map((r) => r.id))
   for (const p of pkgs) {
-    for (const k of p.required) if (!providerOf.has(k)) problems.push(`${p.dir} consumes ctx.${k}, which no package or bundle row provides`)
-    // An optional seam may be defined before its provider is built: it is used only when present.
+    // A seam may be defined before its provider is built: an optional consumer uses it only when
+    // present, and a row that is off by default may wait on it (the board on the approval queue
+    // until B5). A row that is on never requires a seam nobody provides.
+    for (const k of p.required) {
+      if (providerOf.has(k) || (p.mountId && off.has(p.mountId) && defined.has(k))) continue
+      problems.push(`${p.dir} consumes ctx.${k}, which no package or bundle row provides${defined.has(k) ? ' (it is only defined): keep its row off until one does' : ''}`)
+    }
     for (const k of p.optional) if (!providerOf.has(k) && !defined.has(k)) problems.push(`${p.dir} consumes ctx.${k}, which no package or bundle row provides or defines`)
   }
   for (const [k, by] of providerOf) if (by.length > 1) problems.push(`ctx.${k} is provided by ${by.join(', ')}`)
@@ -314,8 +321,8 @@ export function render(pkgs: Pkg[] = scan()): string {
     '## Seam graph',
     '',
     'An arrow runs from a consumer to the package that provides the seam; a dotted arrow is an optional',
-    'seam, and one whose provider is not built yet points to the package that defines it. Rows of DSH',
-    'core appear under host and libraries.',
+    'seam. A seam with no provider yet (an optional seam, or one only a row that is off by default',
+    'requires) points to the package that defines it. Rows of DSH core appear under host and libraries.',
     '',
     ...graph(seamEdges, (p) => inSeamGraph.has(id(p.dir))),
     '',

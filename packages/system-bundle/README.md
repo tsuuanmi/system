@@ -13,6 +13,9 @@ and the `system` plugins, and it does not use `dsh-base`
   gateways are `disabled: true`, not removed. An operator patch turns one back on
   ([runbook](../../docs/operations/runbooks.md#turn-an-off-row-back-on)); the e2e test
   proves that it mounts again.
+- **Off until the approval queue exists (B5):** the [`board`](../plugins/board/README.md)
+  row. The board asks for every approval through `ctx.approvals`, which no row provides
+  yet, so the row stays `disabled: true`; with it off, runs work as today.
 - **Presets:** [`presets/`](presets/) holds named bundle layers that `system init
   --preset <name>` adds right after this bundle. [`api-first`](presets/api-first/cordis.patch.yml)
   disables every row that drives a website and both model gateways, turns the agent

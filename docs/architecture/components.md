@@ -186,9 +186,11 @@ runs the work the router admitted to them. Callers never reach a source directly
 - **Worker sessions** (`ctx.workerSessions`): durable sessions, each with its own `SessionId`,
   a binding to the native handle, groups, and a mailbox for direct peer messages under
   barriers ([sessions and messaging](../design/sessions-and-messaging.md)).
-- **Board** (`ctx.board`; defined, provider in B4): projects with charters and board tasks that
-  outlive a run, with leases and expiring waits; it asks for approvals through `ctx.approvals`
-  ([board](../design/board.md)).
+- **Board** (`ctx.board`): projects with charters and board tasks that outlive a run, stored as
+  records with leases and expiring waits; it asks for approvals through `ctx.approvals`, serves
+  the `board_*` MCP tools, and projects a project's board to `TASKS.md`
+  ([board](../design/board.md)). Its bundle row is off until the approval queue has a provider
+  (B5).
 - **Profiles:** plugins that contribute templates through `ctx.workflow.template` (`research`,
   with its `deep` variant; `agent-review`, mounted with the agent Workers) and acceptance
   contracts through `ctx.workers`. A profile never names a provider, browser, or account, and
@@ -197,12 +199,13 @@ runs the work the router admitted to them. Callers never reach a source directly
 - **Contracts:** `workflow.start / wait / get / approve / vote / stop / continue / supersede / delete /
   drain / resume / explain / usage`, `workflow.template(name, nodes)`;
   `workerSessions.join / send / inbox / ack / openBarrier / activate / settle`;
-  `board.charter / propose / claim / start / submit / accept / block / answer / cancel / sweep`.
+  `board.charter / propose / claim / start / submit / accept / block / answer / cancel / sweep`;
+  MCP `board_*`.
 - **Packages:** [workflow](../../packages/plugins/workflow/README.md),
   [worker-sessions](../../packages/plugins/worker-sessions/README.md),
   [profile-software-development](../../packages/plugins/profile-software-development/README.md),
   [profile-scientific-research](../../packages/plugins/profile-scientific-research/README.md),
-  [board-core](../../packages/board-core/README.md).
+  [board-core](../../packages/board-core/README.md), [board](../../packages/plugins/board/README.md).
 
 ## Host
 

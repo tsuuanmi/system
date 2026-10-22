@@ -6,9 +6,11 @@
 > [PROP-0010](../proposals/0010-base-version.md). Records: [`project@1.0`](../reference/schemas.md#project),
 > [`board-task@1.0`](../reference/schemas.md#board-task).
 >
-> Defined in [`board-core`](../../packages/board-core/README.md); differs from target: only the
-> fake provider exists, so nothing is stored, no MCP tool is served, and no `TASKS.md` is
-> projected (milestone B4).
+> Implemented in [`board`](../../packages/plugins/board/README.md) (definition
+> [`board-core`](../../packages/board-core/README.md)); differs from target: off by default until
+> the approval queue (B5) exists, so it runs only over the approvals fake; no budget use is
+> reported until the resource ledger has a provider; `TASKS.md` is rendered on request, and
+> nothing writes it into a workspace yet.
 
 The board holds work that outlives a run: projects with charters, and their tasks. A run of the
 [workflow engine](workflow-engine.md) serves one attempt of one task. Only the board moves a
@@ -100,6 +102,26 @@ The states follow A2A's split into active (`ready`, `claimed`, `running`, `revie
 interrupted (`waiting-for-input`, `waiting-for-approval`), and terminal (`done`, `cancelled`).
 Unlike A2A, every interrupted state has an expiry.
 
+### Where the tables leave room
+
+The store-backed provider settles these cases so that the [fail-closed rules](#fail-closed-rules)
+hold. The fake provider does not check them, and the suite does not test them yet.
+
+- `start` outside an active project is refused (`invalid-transition`), also for a task claimed
+  before a pause (rule 1).
+- An `acceptance` decision applies only when one of its inputs is an artifact of the result it
+  decides on, and its outcome is `accept` or `reject`; anything else is refused (`invalid`,
+  rule 5). A run owner's report is checked the same way before the pending request is withdrawn,
+  so a refused report changes nothing.
+- An approval to go on with no attempt left starts nothing: the task waits for input
+  (`retries-spent`), so `attempts.count` never exceeds `attempts.max`.
+- One amendment waits at a time: another is refused (`invalid-transition`) until it is approved,
+  refused, or expired, so a verdict binds the charter it was asked about. An amendment changes the
+  charter only.
+- Answering a question wait records the questions and answers in the `board` decision's detail,
+  which becomes the task's `lastDecision`. Every move back to `ready` clears `run`.
+- A task's `milestone` is one of its project's milestones.
+
 | From → to | Who | Records | On failure |
 |---|---|---|---|
 | proposed → ready | `sweep`, when every dependency is done and the project is active | a `board` decision (outcome `ready`), after the `autonomy` decision for the task's action class | a paused or proposed project starts nothing |
@@ -138,5 +160,6 @@ Unlike A2A, every interrupted state has an expiry.
 
 ## Conformance
 
-[`board-core/conformance/board.ts`](../../packages/board-core/conformance/board.ts), 15
-scenarios at contract 1.0, run against the fake provider over the approvals fake.
+[`board-core/conformance/board.ts`](../../packages/board-core/conformance/board.ts), 17
+scenarios at contract 1.0, run against the fake provider and the store-backed provider, both over
+the approvals fake.

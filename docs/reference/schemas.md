@@ -483,9 +483,10 @@ guesses.
 - `done` needs an `acceptance` decision whose outcome is accepted; the schema checks only that
   it is named. A task in review keeps its holder's lease while verification runs; if the lease
   lapses with no decision, the task waits for input (`review-expired`), which expires in turn.
-- A holder lost mid-run is first reconciled by the run's owner: a completed run's result goes to
-  review, a failed one counts as an attempt, and only an unknown outcome waits for approval to
-  run again (`reconciliation-failed`); an outcome reported later withdraws that request.
+- A holder lost mid-run is first reconciled by the run's owner: a completed run's result is
+  applied with its `acceptance` decision, as a review's would be, a failed one counts as an
+  attempt, and only an unknown outcome waits for approval to run again (`reconciliation-failed`);
+  an outcome reported later withdraws that request.
 - `lastDecision` is the decision behind the latest move: a `board` decision for moves the board
   makes on its own, otherwise the acceptance, approval, route, or reconciliation decision that
   caused it. Examples: [`board-task.review.json`](../../schemas/examples/board-task.review.json),
