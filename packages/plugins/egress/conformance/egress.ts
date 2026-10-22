@@ -35,7 +35,7 @@ export const EGRESS_CONFIG: Config = {
 
 // Credentials made at run time, never committed (scanners ignore documented example keys, and the
 // repository's secret scan would refuse a literal one).
-const PRIVATE_KEY = String(generateKeyPairSync('rsa', { modulusLength: 1024 }).privateKey.export({ type: 'pkcs1', format: 'pem' }))
+const PRIVATE_KEY = String(generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey.export({ type: 'pkcs1', format: 'pem' }))
 const AWS_KEY = `AKIA${Array.from(randomBytes(16), (b) => 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'[b % 32]).join('')}`
 const AWS_PAIR = `aws_access_key_id = ${AWS_KEY}\naws_secret_access_key = ${randomBytes(30).toString('base64').slice(0, 40)}`
 /** One line of each secret's body, which must never reach a verdict or a decision. */
