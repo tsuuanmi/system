@@ -28,7 +28,10 @@ export interface PoolConfig {
   account: string
   kind: 'interactive' | 'programmatic' | 'api-key' | 'local'
   windows: Array<{ id: string; kind: 'rolling' | 'calendar' | 'credit' | 'rate'; seconds?: number }>
-  /** Whether a window whose latest reading is `unknown` leaves the pool available (default) or not. */
+  /**
+   * Whether a window that is `unknown` (no reading yet, or an `unknown` reading) leaves the pool
+   * available, for a pool that never reports (a local model), or not: the default, fail closed.
+   */
   unknown?: 'available' | 'unavailable'
 }
 

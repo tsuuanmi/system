@@ -61,16 +61,18 @@ sequenceDiagram
 
 ```mermaid
 stateDiagram-v2
-  [*] --> available
   available --> limited: a window reads limited
   limited --> available: past the later of cooldownUntil and resetsAt
-  available --> unknown: a window reads unknown (pool configured to fail closed)
-  unknown --> available: a reading ok
+  [*] --> unknown: no reading yet
+  unknown --> available: every window reads ok (or the pool is configured unknown: available)
+  available --> unknown: a window reads unknown
 ```
 
-A pool with no reading is available: the status line's windows appear only after a first
-response, so waiting for a reading would never start the first run. A pool configured with
-`unknown: unavailable` fails closed on an `unknown` reading. Every reading field is optional.
+A window with no reading yet is `unknown`, like an explicit `unknown` reading: missing telemetry
+is not capacity. A pool with an unknown window is unavailable unless its configuration says
+`unknown: available` (a pool that never reports, such as a local model). For a plan window that
+reports only after a first response, the operator configures the pool as available, or the
+first reading comes from the runtime's result. Every reading field is optional.
 
 ## Counting
 

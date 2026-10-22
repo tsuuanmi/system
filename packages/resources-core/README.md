@@ -16,7 +16,8 @@ ADR ([ADR-0036](../../docs/decisions/adr/0036-guarantee-core-and-capability-plug
 - The conformance suite is [`conformance/resources.ts`](conformance/resources.ts), run through
   the [conformance runner](../libs/conformance/runner.ts) at contract 1.0:
   - pools from configuration; a limited window cools a pool down until its reset; readings with
-    missing fields, the latest one kept; `unknown` failing closed where configured;
+    missing fields, the latest one kept; a window with no reading, or an `unknown` one, fails the
+    pool closed unless its configuration makes unknown available;
   - unknown pools refused;
   - reservations with a `budget` decision, refused for an unavailable pool or a cap that recorded
     usage and held reservations would exceed;

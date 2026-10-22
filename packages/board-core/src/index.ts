@@ -57,7 +57,7 @@ export interface Project {
 
 export type TaskState = 'proposed' | 'ready' | 'claimed' | 'running' | 'review' | 'waiting-for-input' | 'waiting-for-approval' | 'done' | 'cancelled'
 export const TERMINAL: readonly TaskState[] = ['done', 'cancelled']
-export type WaitReason = 'approval-needed' | 'budget-spent' | 'reconciliation-failed' | 'retries-spent' | 'question' | 'rejected'
+export type WaitReason = 'approval-needed' | 'budget-spent' | 'reconciliation-failed' | 'retries-spent' | 'question' | 'rejected' | 'review-expired'
 export type CancelReason = 'operator' | 'lead' | 'project-closed' | 'input-expired' | 'superseded' | 'forbidden' | 'dependency-cancelled'
 
 /** `board-task@1.0`. */
@@ -115,6 +115,14 @@ export interface TaskInput {
 
 export interface Claim { taskId: string; generation: number; leaseExpiresAt: string }
 
+/**
+ * A run's outcome as its owner (the workflow engine) reconciled it: completed, with its result and
+ * the `acceptance` decision on it, or failed. An unknown outcome is never reported.
+ */
+export type RunOutcome =
+  | { status: 'completed'; result: { artifacts: ArtifactRef[]; digest?: ArtifactRef; subject: Subject; files?: string[]; next?: string }; acceptance: ArtifactRef }
+  | { status: 'failed' }
+
 /** Why a board call was refused. Nothing changed. */
 export type BoardFailure = 'unknown-project' | 'unknown-task' | 'invalid' | 'invalid-transition' | 'stale-generation' | 'conflict'
 export class BoardError extends Error {
@@ -162,6 +170,14 @@ export abstract class Board extends Service {
 
   /** Apply the `acceptance` decision on the result: done when accepted, else another attempt or a wait for input. */
   abstract accept(taskId: string, acceptance: ArtifactRef, at?: Date): Promise<BoardTask>
+
+  /**
+   * The run's owner reports the outcome of the task's recorded run, even after the holder's lease
+   * lapsed: a completed run's accepted result makes it done (a rejected one, another attempt), a
+   * failed run counts as an attempt. A pending `reconciliation-failed` approval is withdrawn.
+   * Fenced by the run id: an outcome for another run is refused.
+   */
+  abstract reconcileRun(taskId: string, runId: string, outcome: RunOutcome, at?: Date): Promise<BoardTask>
 
   /** Interrupt a running task: budget spent or a failed reconciliation waits for approval, a question waits for input. */
   abstract block(taskId: string, generation: number, wait: { reason: 'budget-spent' | 'reconciliation-failed' | 'question'; questions?: string[] }, at?: Date): Promise<BoardTask>
