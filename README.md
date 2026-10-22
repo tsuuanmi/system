@@ -97,8 +97,9 @@ system mcp-config codex >> ~/.codex/config.toml   # Codex: runs the stdio shim (
 
 - **MCP tools:** `ask` (one turn on a website Worker), `research`,
   `brainstorm`, `review`, `vote` (break a team's tie), `run` (any workflow
-  template), `result`, `usage`, `explain`, `status`, and sessions
-  (`session_send`, `session_inbox`); operator tools for runs (`approve`,
+  template), `result`, `usage`, `explain`, `status`, sessions
+  (`session_send`, `session_inbox`), and the resource ledger (`resources_pools`,
+  `resources_usage`); operator tools for runs (`approve`,
   `stop`, `continue`, `supersede`, `delete`, `drain`, `resume`) and accounts
   (`account_*`). The full contracts are generated in
   [docs/reference/mcp-tools.md](docs/reference/mcp-tools.md).

@@ -7,7 +7,7 @@ ADR ([ADR-0036](../../docs/decisions/adr/0036-guarantee-core-and-capability-plug
 
 | Seam | Definition | Provider |
 |---|---|---|
-| `ctx.resources` | abstract `Resources` with `pools(filter?, at?)`, `observe(reading)`, `reserve(request, at?)`, `release(reservationId)`, `record(usage)`, `usage(filter?)`; `PoolConfig`, `PoolState`, `LimitState`, `UsageRecord`, `TokenUsage`, `BudgetLine`, `ReservationRequest`, `Reservation`, `UsageTotal`, `ResourcesError`; `RESOURCES_CONTRACT` (1.0) | the fake `FakeResources` only (B2 adds the real one) |
+| `ctx.resources` | abstract `Resources` with `pools(filter?, at?)`, `observe(reading)`, `reserve(request, at?)`, `release(reservationId)`, `record(usage)`, `usage(filter?)`; `PoolConfig`, `PoolState`, `LimitState`, `UsageRecord`, `TokenUsage`, `BudgetLine`, `ReservationRequest`, `Reservation`, `UsageTotal`, `ResourcesError`; `RESOURCES_CONTRACT` (1.0) | [`resources`](../plugins/resources/README.md) (on `ctx.store`); the fake `FakeResources` |
 
 - The types mirror `usage-record@1.0` and `limit-state@1.0`; the schemas in `schemas/` are
   canonical. Pools are configuration (`PoolConfig`), never a plan named in code

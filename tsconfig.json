@@ -135,6 +135,9 @@
       "@tsuuanmi/system-resources-core": [
         "packages/resources-core/src/index.ts"
       ],
+      "@tsuuanmi/system-resources": [
+        "packages/plugins/resources/src/index.ts"
+      ],
       "@tsuuanmi/system-board-core": [
         "packages/board-core/src/index.ts"
       ]
