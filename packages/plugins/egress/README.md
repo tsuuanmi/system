@@ -34,3 +34,15 @@
   `website`, `agent`, or `model` Worker by default. Setting `workerClasses`
   replaces the whole default, so list every class.
 - **Injects:** `artifacts`.
+- The conformance suite is [`conformance/egress.ts`](conformance/egress.ts), run through the
+  [conformance runner](../../libs/conformance/runner.ts) at contract 1.0 against this plugin
+  with `EGRESS_CONFIG`:
+  - public and operator-shared content to every default Worker class;
+  - local-private kept on the machine for every default class, `model-local` included, and
+    let out only to a class the operator widened;
+  - an unknown Worker class or classification denied (fail closed); an unstated
+    classification judged as the configured default;
+  - a credential refused anywhere in the actual payload, at its offset; operator deny
+    patterns;
+  - findings as rule ids and offsets plus a payload hash, never the secret;
+  - every check one schema-valid `egress` decision whose selected candidate is the verdict.
