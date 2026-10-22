@@ -137,7 +137,10 @@ export abstract class Board extends Service {
     super(ctx, 'board')
   }
 
-  /** Found a project or amend its charter; either asks the operator (action class `charter`) and returns the request. */
+  /**
+   * Found a project or amend its charter; either asks the operator (action class `charter`) and
+   * returns the request. A new project's milestones are all planned, with no funding.
+   */
   abstract charter(input: CharterInput, at?: Date): Promise<{ project: Project; approvalRequest: string }>
 
   abstract project(projectId: string): Promise<Project | undefined>
@@ -165,24 +168,37 @@ export abstract class Board extends Service {
   /** Record the run before it starts (claimed → running); each start is an attempt. */
   abstract start(taskId: string, generation: number, run: { runId: string; brief?: ArtifactRef }, at?: Date): Promise<BoardTask>
 
-  /** Record the attempt's result and the exact subject it leaves (running → review). Never done directly. */
+  /**
+   * Record the attempt's result and the exact subject it leaves (running → review), which is the
+   * subject the task writes when it names one. Never done directly.
+   */
   abstract submit(taskId: string, generation: number, result: { artifacts: ArtifactRef[]; digest?: ArtifactRef; subject: Subject; files?: string[]; next?: string }, at?: Date): Promise<BoardTask>
 
-  /** Apply the `acceptance` decision on the result: done when accepted, else another attempt or a wait for input. */
+  /**
+   * Apply the `acceptance` decision on the result: done when accepted, else another attempt
+   * (through the gate again) or a wait for input. The decision names the task and the result's
+   * exact subject in `outcome.detail` and every result artifact in its inputs; one that is not the
+   * operator's accepts only when the policy finds none of the class's required checks failed,
+   * given the checks it reports (`outcome.detail.checks`).
+   */
   abstract accept(taskId: string, acceptance: ArtifactRef, at?: Date): Promise<BoardTask>
 
   /**
    * The run's owner reports the outcome of the task's recorded run, even after the holder's lease
    * lapsed: a completed run's accepted result makes it done (a rejected one, another attempt), a
-   * failed run counts as an attempt. A pending `reconciliation-failed` approval is withdrawn.
-   * Fenced by the run id: an outcome for another run is refused.
+   * failed run counts as an attempt. A pending `reconciliation-failed` approval is withdrawn once
+   * the move committed. Fenced by the run id: an outcome for another run is refused.
    */
   abstract reconcileRun(taskId: string, runId: string, outcome: RunOutcome, at?: Date): Promise<BoardTask>
 
-  /** Interrupt a running task: budget spent or a failed reconciliation waits for approval, a question waits for input. */
+  /**
+   * Interrupt a running task: budget spent or a failed reconciliation waits for approval (or, when
+   * the policy's verdict is not ask, for input: it is never readied or cancelled on the policy
+   * alone), a question waits for input.
+   */
   abstract block(taskId: string, generation: number, wait: { reason: 'budget-spent' | 'reconciliation-failed' | 'question'; questions?: string[] }, at?: Date): Promise<BoardTask>
 
-  /** Answer a waiting task's questions (waiting-for-input → ready). */
+  /** Answer a question wait's questions, every one (waiting-for-input → ready, through the gate again); no other wait takes answers. */
   abstract answer(taskId: string, answers: string[], at?: Date): Promise<BoardTask>
 
   /** Cancel a task that is not running or in review. */
@@ -191,7 +207,8 @@ export abstract class Board extends Service {
   /**
    * Make every move that is due at `at`: tasks whose dependencies are done become ready or wait
    * for approval; resolved approvals release or stop what waits on them; lost leases and expired
-   * waits are applied. Returns the tasks and projects it moved.
+   * waits are applied, including the expiry of a request the queue never resolved or no longer
+   * knows; an abandoned project's open tasks are cancelled. Returns the tasks and projects it moved.
    */
   abstract sweep(at: Date): Promise<{ tasks: BoardTask[]; projects: Project[] }>
 }

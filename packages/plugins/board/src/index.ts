@@ -557,9 +557,12 @@ export class StoreBoard extends Board {
     if (before.run?.runId !== runId) throw new BoardError('invalid', `${taskId} recorded run ${before.run?.runId ?? '(none)'}, not ${runId}`)
     if (outcome.status !== 'completed' && outcome.status !== 'failed') throw new BoardError('invalid', 'a run is reported completed or failed; an unknown outcome is never reported')
     // Checked before anything moves, so a report that is refused changes nothing.
-    if (outcome.status === 'completed') this.writesWhatItHolds(before, outcome.result.subject)
-    const read = outcome.status === 'completed' ? this.readAcceptance(before, outcome.result, outcome.acceptance) : undefined
-    if (outcome.status === 'completed') await this.bindChecks(before, read!, outcome.acceptance)
+    let read: Acceptance | undefined
+    if (outcome.status === 'completed') {
+      this.writesWhatItHolds(before, outcome.result.subject)
+      read = this.readAcceptance(before, outcome.result, outcome.acceptance)
+      await this.bindChecks(before, read, outcome.acceptance)
+    }
     const pending = before.waiting?.approvalRequest
     await this.reachable(pending ? [pending] : [])
     const next = (outcome.status === 'failed' || read!.option === 'reject') && attemptLeft(before) ? await this.nextAttempt(before, at) : undefined
