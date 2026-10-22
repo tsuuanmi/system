@@ -5,10 +5,20 @@ Capability **seam definition** for agent runtimes
 
 | Seam | Definition | Provider |
 |---|---|---|
-| `ctx.agentRuntimes` | abstract `AgentRuntimes` with `register`, `get`, `list`; `AgentRuntimeProvider` (`probe`, `run`), `RunSpec`, `RunResult`, `RuntimeEvidence`, `SandboxMode` | `@tsuuanmi/system-agent-runtimes` |
+| `ctx.agentRuntimes` | abstract `AgentRuntimes` with `register`, `get`, `list`; `AgentRuntimeProvider` (`probe`, `run`), `RunSpec`, `RunResult`, `RunMetering`, `TokenUsage`, `ModelUsage`, `LimitObservation`, `RuntimeEvidence`, `SandboxMode`; `withMetering`, `meteringOf` | `@tsuuanmi/system-agent-runtimes` |
 
 - A provider adapts one agent (Claude Code, Codex, an ACP agent) to `run(spec)`.
   Only the agent's native handle crosses the seam (INV-7).
+- **Metering** ([resources](../../docs/design/resources.md)): a `RunResult` may carry what the
+  run consumed (`RunMetering`), from the agent's own objective numbers, never the model's
+  text: `resultId` (the runtime's identity of its result, for deduplication), `model` (the main
+  loop's), `usage` (normalized: `inputTokens` includes cached input), `models` (per model, with
+  `costUsd`; each count of `usage` is their sum), `turns`, `costUsd`, and `limits` (rate-limit
+  observations: the runtime's own window name, kept opaque (INV-11), `allowed`, `warning`, or
+  `rejected`, `resetsAt` and `observedAt` in ISO time, `usedPercentage`). Every field is
+  optional: a missing number stays missing. A run that fails attaches what it consumed to its
+  error (`withMetering`), read back with `meteringOf`. Names are provider-neutral; the
+  [`agent-workers`](../plugins/agent-workers/README.md) source maps them into the ledger.
 - A provider refuses a policy it cannot enforce exactly, with a `config_error`.
   It never loosens a policy.
 - **`childEnvironment(forward, explicit)`** is the environment every runtime's
@@ -46,6 +56,10 @@ Capability **seam definition** for agent runtimes
   - `conformance/agent-runtimes.ts` has `agentRuntimesConformance` for the
     registry;
   - `agentRuntimeProviderConformance` covers probe, run, handle, refusal, and
-    abort, against a scripted agent the provider's own test supplies.
+    abort, against a scripted agent the provider's own test supplies, and that
+    what a run reports it consumed holds together, or is absent
+    (`expectConsistentMetering`: whole counts, input including its cached part,
+    per-model counts summing to the totals, limits with an opaque window and ISO
+    times). A provider that reports nothing passes as it is.
 - **Dependencies:** `@deepseek-ai/dsh-subprocess` and its peer
   `@deepseek-ai/dsh-http-proxy`, for the scrub only.

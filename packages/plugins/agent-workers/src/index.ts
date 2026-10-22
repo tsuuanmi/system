@@ -5,18 +5,24 @@
  * the runtime cannot enforce leaves the Worker unavailable, never loosened. Runs are durable
  * and run one at a time per Worker (one writer per workspace, INV-15). A run that started
  * and did not finish is never run again by itself: the agent may already have acted (INV-4).
+ * A Worker configured with a resource pool meters its runs through `ctx.resources`
+ * (docs/design/resources.md): a reservation before the run (none, nothing runs), one
+ * `usage-record` from the runtime's own numbers after it, and its limit observations as readings.
  * @module @tsuuanmi/system-agent-workers
  */
 import { randomBytes } from 'node:crypto'
 import { isAbsolute } from 'node:path'
 import { type Context, Service } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
-import type { RunSpec, RuntimeEvidence, SandboxMode } from '@tsuuanmi/system-agent-runtime-core'
+import {
+  type AgentRuntimeProvider, type LimitObservation, type RunMetering, type RunResult, type RunSpec, type RuntimeEvidence, type SandboxMode, meteringOf,
+} from '@tsuuanmi/system-agent-runtime-core'
 import type {} from '@tsuuanmi/system-artifacts'
 import type { Classification } from '@tsuuanmi/system-egress'
 import { type Lease, LeaseLost, StaleGeneration } from '@tsuuanmi/system-leases'
 import { captureGitSubject, type ContentId, sha256 } from '@tsuuanmi/system-libs'
 import { ProviderError, ProviderScheduler, dispositionOf, toProviderError } from '@tsuuanmi/system-provider-core'
+import { type LimitState, type Resources, ResourcesError, type UsageRecord } from '@tsuuanmi/system-resources-core'
 import type {} from '@tsuuanmi/system-store'
 import type { ArtifactRef, CapabilityDescriptor, ExecutionStatus, QuotaClass, Tier, WorkerExecution, WorkerStart } from '@tsuuanmi/system-workers-core'
 
@@ -40,6 +46,20 @@ export interface AgentWorkerConfig {
   tier: Tier
   /** Default `agent-plan` (purpose P1). */
   quotaClass?: QuotaClass
+  /**
+   * The resource pool its runs draw on: a pool id from the resources configuration, with the
+   * `account` it belongs to. Set, the Worker's runs are metered through `ctx.resources` and fail
+   * closed without it (INV-2); unset, they are not metered.
+   */
+  pool?: string
+  account?: string
+  /**
+   * The runtime's own limit window names mapped to the pool's window ids (for example
+   * `five_hour: five-hour`). An observation of a window not mapped here is not recorded.
+   */
+  windows?: Record<string, string>
+  /** How long a limit hit with no reset time keeps the pool closed, in seconds (default 3600). */
+  limitCooldownSeconds?: number
 }
 
 export interface Config {
@@ -64,6 +84,10 @@ interface RunRow {
   error: string | null
   /** The run's egress decision (INV-12), part of its decision chain. */
   egress_decision?: string | null
+  /** The run's `budget` decision, when its Worker is metered (INV-13). */
+  budget_decision?: string | null
+  /** The reservation the run holds while it runs, released once its usage is recorded. */
+  reservation_id?: string | null
   created_at: string
   updated_at: string
 }
@@ -72,6 +96,8 @@ const ID = /^[a-z][a-z0-9-]*$/
 const LEASE_TTL_MS = 60_000
 const PREFIX = 'agent:'
 const newId = (): string => `arun_${randomBytes(8).toString('hex')}`
+/** At most this many per-model entries go into a record (`agent-result@1.2`, `usage-record@1.0`). */
+const MAX_MODELS = 16
 const now = (): string => new Date().toISOString()
 
 export class AgentWorkers extends Service {
@@ -88,6 +114,10 @@ export class AgentWorkers extends Service {
       maxTurns: z.natural().min(1),
       tier: z.union(['economy', 'standard', 'frontier']).required(),
       quotaClass: z.union(['subscription-chat', 'agent-plan', 'metered', 'local']).default('agent-plan'),
+      pool: z.string().description('The resource pool its runs draw on (a pool id from the resources configuration); unset: not metered'),
+      account: z.string().description('The account the pool belongs to; required with pool'),
+      windows: z.dict(z.string()).description('The runtime\'s limit window names mapped to the pool\'s window ids, for example five_hour: five-hour'),
+      limitCooldownSeconds: z.natural().min(60).max(604_800).default(3600).description('How long a limit hit with no reset time keeps the pool closed'),
     })).default([]).description('Agent-runtime Workers; each policy comes from here only (INV-6)'),
     probeTtlMs: z.natural().default(5 * 60_000).description('How long a probe result stands'),
     runTimeoutMs: z.natural().min(1).default(15 * 60_000).description('Hard deadline per run'),
@@ -101,6 +131,7 @@ export class AgentWorkers extends Service {
   private readonly cancels = new Map<string, AbortController>()
   private readonly stopped = new AbortController()
   private readonly retries = new Set<NodeJS.Timeout>()
+  private readonly warned = new Set<string>()
 
   constructor(ctx: Context, private readonly config: Config = { workers: [] }) {
     super(ctx, 'agentWorkers')
@@ -108,6 +139,8 @@ export class AgentWorkers extends Service {
       if (!ID.test(worker.id)) throw new ProviderError('config_error', `agent Worker id ${worker.id} must match ${ID}`)
       if (!isAbsolute(worker.workspace)) throw new ProviderError('config_error', `agent Worker ${worker.id}: workspace must be an absolute path`)
       if (this.workers.has(PREFIX + worker.id)) throw new ProviderError('config_error', `duplicate agent Worker ${worker.id}`)
+      if ((worker.pool === undefined) !== (worker.account === undefined)) throw new ProviderError('config_error', `agent Worker ${worker.id}: pool and account are set together`)
+      if (worker.pool === undefined && Object.keys(worker.windows ?? {}).length) throw new ProviderError('config_error', `agent Worker ${worker.id}: windows map limit windows to a pool, and no pool is set`)
       this.workers.set(PREFIX + worker.id, worker)
     }
     ctx.store.migrate('agent-workers', [{
@@ -123,6 +156,10 @@ export class AgentWorkers extends Service {
       // The egress decision of each run (INV-12): the agent runs here, but its model is remote.
       version: 2,
       sql: 'ALTER TABLE agent_runs ADD COLUMN egress_decision TEXT;',
+    }, {
+      // Metering (docs/design/resources.md): the run's budget decision, and the reservation it holds.
+      version: 3,
+      sql: 'ALTER TABLE agent_runs ADD COLUMN budget_decision TEXT; ALTER TABLE agent_runs ADD COLUMN reservation_id TEXT;',
     }])
     ctx.workers.register({
       name: 'agents',
@@ -162,7 +199,10 @@ export class AgentWorkers extends Service {
     return Promise.all([...this.workers].map(async ([id, worker]): Promise<CapabilityDescriptor> => {
       const evidence = await this.evidence(worker)
       // A Worker whose runtime cannot keep the host state unreadable is never admitted (ADR-0024).
-      const ready = evidence.available && evidence.readsConfined && evidence.sandboxes.includes(worker.sandbox)
+      const proof = evidence.available && evidence.readsConfined && evidence.sandboxes.includes(worker.sandbox)
+      // A metered Worker takes work only while its pool is available (INV-2).
+      const pool = proof ? await this.poolGate(id, worker) : 'ready'
+      const ready = proof && pool !== 'unavailable'
       const proven = ready
         ? [
             'local-data',
@@ -175,9 +215,42 @@ export class AgentWorkers extends Service {
         // The runtime is who serves the work, so it is the Worker's family (ADR-0027).
         schema: 'capability-descriptor@1.1', worker: id, provider: worker.runtime, family: worker.runtime, tier: worker.tier, quotaClass: worker.quotaClass ?? 'agent-plan',
         locality: 'local', capabilities: proven.map((capability) => ({ capability, evidence: { kind: 'probe', at: observedAt } })),
-        state: ready ? 'ready' : 'unavailable', observedAt,
+        state: ready ? pool : 'unavailable', observedAt,
       }
     }))
+  }
+
+  /** The ledger a metered Worker's runs go through, or undefined for a Worker with no pool. */
+  private meter(id: string, worker: AgentWorkerConfig): Meter | undefined {
+    if (worker.pool === undefined || worker.account === undefined) return undefined
+    const resources = this.ctx.get('resources')
+    // Configured to be metered, and no ledger: no run starts (INV-2; docs/design/resources.md).
+    if (!resources) throw new ProviderError('config_error', `${id} draws on pool ${worker.pool}, and no resource ledger (ctx.resources) is loaded`)
+    return { resources, pool: worker.pool, account: worker.account }
+  }
+
+  /** Whether a metered Worker's pool takes work now: `ready`, `quota-exhausted` while it is unavailable, or `unavailable` when it cannot be read. */
+  private async poolGate(id: string, worker: AgentWorkerConfig): Promise<'ready' | 'quota-exhausted' | 'unavailable'> {
+    try {
+      const meter = this.meter(id, worker)
+      if (!meter) return 'ready'
+      const pool = (await meter.resources.pools({ account: meter.account })).find((p) => p.pool === meter.pool)
+      if (!pool) {
+        this.warnOnce(`agent Workers: ${id} draws on pool ${meter.pool} of ${meter.account}, which the resource ledger does not configure`)
+        return 'unavailable'
+      }
+      return pool.available ? 'ready' : 'quota-exhausted'
+    } catch (error) {
+      this.warnOnce(`agent Workers: the pool of ${id} cannot be read: ${(error as Error).message}`)
+      return 'unavailable'
+    }
+  }
+
+  /** `describe` runs on every route: a standing problem is logged once. */
+  private warnOnce(message: string): void {
+    if (this.warned.has(message)) return
+    this.warned.add(message)
+    this.ctx.logger.warn(message)
   }
 
   private async evidence(worker: AgentWorkerConfig): Promise<RuntimeEvidence> {
@@ -293,6 +366,8 @@ export class AgentWorkers extends Service {
           // Started before a stop: the agent may already have acted in its workspace.
           this.fail(row, new ProviderError('reconciliation_failed',
             `the host stopped while ${row.worker} was running this task${row.native_handle ? ` (native session ${row.native_handle})` : ''}; it is not run again automatically`), current)
+          // Its usage is not invented: it comes from the agent's transcript, reconciled later.
+          if (row.reservation_id) await this.release(row.worker, row.reservation_id)
           return
         }
         const worker = this.workers.get(row.worker)
@@ -343,33 +418,63 @@ export class AgentWorkers extends Service {
       ...(worker.tools?.length ? { tools: worker.tools } : {}), ...(worker.model ? { model: worker.model } : {}), ...(worker.maxTurns ? { maxTurns: worker.maxTurns } : {}),
       ...(session?.native_handle ? { resume: session.native_handle } : {}),
     }
+    // Metered: nothing runs without a reservation (INV-2, INV-9).
+    const meter = this.meter(row.worker, worker)
+    const reservation = meter ? await this.reserve(row, meter, lease) : undefined
+    try {
+      const result = await this.submit(row, worker, provider, spec, signal, lease, meter)
+      this.complete(row, worker, result, lease)
+    } finally {
+      if (reservation) await this.release(row.worker, reservation)
+    }
+  }
+
+  /** Run the agent, and meter what it consumed, completed or not. */
+  private async submit(row: RunRow, worker: AgentWorkerConfig, provider: AgentRuntimeProvider, spec: RunSpec, signal: AbortSignal, lease: () => Lease, meter: Meter | undefined): Promise<RunResult> {
     // Submitted from here on: the agent may act as soon as it starts.
     this.update(row.run_id, { status: 'running', submitted_at: now() }, lease)
+    const startedAt = Date.now()
     const deadline = AbortSignal.timeout(this.config.runTimeoutMs ?? 15 * 60_000)
-    const result = await provider.run(spec, AbortSignal.any([signal, deadline]), (handle) => {
-      this.ctx.store.transaction((db) => {
-        this.ctx.leases.fence(lease())
-        db.prepare('UPDATE agent_runs SET native_handle = ?, updated_at = ? WHERE run_id = ?').run(handle, now(), row.run_id)
-        if (row.session_id) db.prepare('UPDATE agent_sessions SET native_handle = ? WHERE session_id = ?').run(handle, row.session_id)
+    let result: RunResult
+    try {
+      result = await provider.run(spec, AbortSignal.any([signal, deadline]), (handle) => {
+        this.ctx.store.transaction((db) => {
+          this.ctx.leases.fence(lease())
+          db.prepare('UPDATE agent_runs SET native_handle = ?, updated_at = ? WHERE run_id = ?').run(handle, now(), row.run_id)
+          if (row.session_id) db.prepare('UPDATE agent_sessions SET native_handle = ? WHERE session_id = ?').run(handle, row.session_id)
+        })
       })
-    }).catch((error: unknown) => {
-      if (deadline.aborted && !signal.aborted) throw new ProviderError('timeout', `${row.worker} did not finish within ${this.config.runTimeoutMs ?? 15 * 60_000} ms; it was stopped`, { cause: error })
-      throw error
-    })
+    } catch (error) {
+      const failure = deadline.aborted && !signal.aborted
+        ? new ProviderError('timeout', `${row.worker} did not finish within ${this.config.runTimeoutMs ?? 15 * 60_000} ms; it was stopped`, { cause: error })
+        : error
+      if (meter) await this.account(row, worker, meter, meteringOf(error), toProviderError(failure).kind === 'aborted' ? 'aborted' : 'failed', Date.now() - startedAt)
+      throw failure
+    }
+    if (meter) await this.account(row, worker, meter, result, 'completed', Date.now() - startedAt)
+    return result
+  }
+
+  /** Store the result as a `report` artifact and complete the run. */
+  private complete(row: RunRow, worker: AgentWorkerConfig, result: RunResult, lease: () => Lease): void {
     const handle = result.nativeHandle ?? this.row(row.run_id)?.native_handle ?? undefined
     // The workspace's exact subject after the run, so a review can bind to it (REQ-WF-5).
     const captured = captureGitSubject(worker.workspace)
     this.ctx.store.transaction((db) => {
       this.ctx.leases.fence(lease())
       if (handle && row.session_id) db.prepare('UPDATE agent_sessions SET native_handle = ? WHERE session_id = ?').run(handle, row.session_id)
+      // `agent-result@1.2` when the runtime reported its token usage, `@1.1` otherwise.
+      const usage = usageOf(result)
+      const schema = usage.usage ? 'agent-result@1.2' : 'agent-result@1.1'
       const artifact = this.ctx.artifacts.put({
-        kind: 'report', bodySchema: 'agent-result@1.1',
+        kind: 'report', bodySchema: schema,
         body: {
-          schema: 'agent-result@1.1', worker: row.worker, runtime: worker.runtime, runId: row.run_id,
+          schema, worker: row.worker, runtime: worker.runtime, runId: row.run_id,
           ...(row.session_id ? { sessionId: row.session_id } : {}), ...(handle ? { nativeHandle: handle } : {}),
           promptHash: sha256(row.prompt), sandbox: worker.sandbox, workspace: worker.workspace,
           ...(captured ? { subject: captured.subject } : {}),
           ...(result.turns !== undefined ? { turns: result.turns } : {}), ...(result.costUsd !== undefined ? { costUsd: result.costUsd } : {}),
+          ...(usage.usage && result.model ? { model: result.model } : {}), ...usage,
           text: result.text,
         },
         classification: row.classification as 'public' | 'operator-shared' | 'local-private',
@@ -377,6 +482,100 @@ export class AgentWorkers extends Service {
       })
       this.update(row.run_id, { status: 'completed', result: artifact.id, ...(handle ? { native_handle: handle } : {}) }, lease)
     })
+  }
+
+  /**
+   * Reserve the run's draw on its pool, recording the `budget` decision on the run. A refusal fails
+   * the run before anything reaches the agent: `quota_exhausted` while the pool is unavailable,
+   * `config_error` when the ledger does not configure it. Returns the reservation id.
+   */
+  private async reserve(row: RunRow, meter: Meter, lease: () => Lease): Promise<string> {
+    const reserved = await meter.resources.reserve({ runId: row.run_id, lines: [{ pool: meter.pool, unit: 'runs', amount: 1 }] }).catch((error: unknown) => {
+      throw error instanceof ResourcesError ? new ProviderError('config_error', `the resource ledger refused to reserve for ${row.worker}: ${error.message}`, { cause: error }) : error
+    })
+    try {
+      this.update(row.run_id, { budget_decision: reserved.decision, ...(reserved.state === 'reserved' ? { reservation_id: reserved.reservationId } : {}) }, lease)
+    } catch (error) {
+      if (reserved.state === 'reserved') await this.release(row.worker, reserved.reservationId)
+      throw error
+    }
+    if (reserved.state === 'reserved') return reserved.reservationId
+    const configured = await meter.resources.pools({ account: meter.account }).then((pools) => pools.some((p) => p.pool === meter.pool), () => true)
+    const reasons = reserved.reasons.join('; ')
+    throw new ProviderError(configured ? 'quota_exhausted' : 'config_error', `${row.worker} may not draw on pool ${meter.pool} now: ${reasons} (budget decision ${reserved.decision}); nothing was run`)
+  }
+
+  private async release(worker: string, reservationId: string): Promise<void> {
+    const resources = this.ctx.get('resources')
+    if (!resources) return
+    await resources.release(reservationId).catch((error: unknown) => {
+      // Released already (the run's own release, before a restart), or the ledger forgot it.
+      if (error instanceof ResourcesError && error.failure === 'unknown-reservation') return
+      this.ctx.logger.warn(`agent Workers: the reservation ${reservationId} of ${worker} could not be released: ${(error as Error).message}`)
+    })
+  }
+
+  /**
+   * Meter a run from what its runtime reported: each limit observation as a `limit-state`
+   * reading, then one `usage-record` (source `runtime-result`). Numbers the runtime did not report
+   * stay missing; a run that reported neither tokens nor turns gets no record here (its transcript
+   * is reconciled later). The run's own outcome never depends on the ledger: a refusal is logged.
+   */
+  private async account(row: RunRow, worker: AgentWorkerConfig, meter: Meter, metering: RunMetering | undefined, outcome: 'completed' | 'failed' | 'aborted', durationMs: number): Promise<void> {
+    if (metering?.limits?.length) await this.observe(row.worker, worker, meter, metering.limits)
+    const usage = usageOf(metering)
+    if (!usage.usage && metering?.turns === undefined) {
+      this.ctx.logger.warn(`agent Workers: ${row.run_id} on ${row.worker} reported no usage; it is left to transcript reconciliation`)
+      return
+    }
+    const model = { ...(worker.model ? { request: worker.model } : {}), ...(metering?.model ? { response: metering.model } : {}) }
+    const record: UsageRecord = {
+      schema: 'usage-record@1.0',
+      // The runtime's own identity of its result, so another source of the same unit is a duplicate.
+      requestId: `${worker.runtime}:${metering?.resultId ?? row.run_id}`,
+      source: 'runtime-result', observedAt: now(), account: meter.account, pool: meter.pool, worker: row.worker, runId: row.run_id,
+      ...(row.session_id ? { sessionId: row.session_id } : {}),
+      ...(Object.keys(model).length ? { model } : {}), ...usage,
+      ...(metering?.turns !== undefined ? { turns: metering.turns } : {}), durationMs: Math.max(0, Math.round(durationMs)),
+      ...(metering?.costUsd !== undefined ? { cost: { amount: metering.costUsd, currency: 'USD' as const, basis: 'runtime-estimate' as const } } : {}),
+      outcome,
+    }
+    await meter.resources.record(record).catch((error: unknown) => {
+      this.ctx.logger.warn(`agent Workers: the usage of ${row.run_id} on ${row.worker} was not recorded: ${(error as Error).message}`)
+    })
+  }
+
+  /** Record the runtime's limit observations as readings of the pool's mapped windows. */
+  private async observe(id: string, worker: AgentWorkerConfig, meter: Meter, limits: LimitObservation[]): Promise<void> {
+    const pool = await meter.resources.pools({ account: meter.account }).then((pools) => pools.find((p) => p.pool === meter.pool), () => undefined)
+    const cooldownMs = (worker.limitCooldownSeconds ?? 3600) * 1000
+    for (const limit of limits) {
+      const windowId = worker.windows?.[limit.window]
+      const mapped = windowId === undefined ? undefined : pool?.windows.find((w) => w.id === windowId)
+      // A limit hit the ledger cannot place (an unmapped or unnamed window) closes every window of
+      // the pool: it is never retried on the same pool unseen (INV-2). Anything else unmapped is skipped.
+      const windows = mapped ? [mapped] : limit.status === 'rejected' ? pool?.windows ?? [] : []
+      if (!windows.length) {
+        this.ctx.logger.warn(`agent Workers: ${id} observed limit window ${limit.window}, which ${windowId === undefined ? 'its windows do not map' : `maps to ${windowId}, not a window of pool ${meter.pool}`}; not recorded`)
+        continue
+      }
+      for (const window of windows) {
+        const reading: LimitState = {
+          schema: 'limit-state@1.0', pool: meter.pool, account: meter.account,
+          window: { id: window.id, kind: window.kind, ...(window.seconds !== undefined ? { seconds: window.seconds } : {}) },
+          // A limit hit is limited until its reset, or, with none given, for the configured cooldown:
+          // never unknown, which a pool configured to admit unknown windows would ignore.
+          ...(limit.status !== 'rejected' ? { state: 'ok' as const, ...(limit.resetsAt ? { resetsAt: limit.resetsAt } : {}) }
+            : limit.resetsAt ? { state: 'limited' as const, resetsAt: limit.resetsAt }
+              : { state: 'limited' as const, cooldownUntil: new Date(Date.parse(limit.observedAt) + cooldownMs).toISOString() }),
+          ...(mapped && limit.usedPercentage !== undefined ? { usedPercentage: limit.usedPercentage } : {}),
+          source: 'runtime-result', observedAt: limit.observedAt,
+        }
+        await meter.resources.observe(reading).catch((error: unknown) => {
+          this.ctx.logger.warn(`agent Workers: a limit reading of ${id} was not recorded: ${(error as Error).message}`)
+        })
+      }
+    }
   }
 
   private scheduler(worker: string): ProviderScheduler {
@@ -415,8 +614,25 @@ function execution(row: RunRow): WorkerExecution {
     id: row.run_id, status: row.status, submitted: row.submitted_at !== null,
     ...(row.result ? { result: row.result as ArtifactRef } : {}),
     ...(row.error ? { error: JSON.parse(row.error) as WorkerExecution['error'] & object } : {}),
-    decisions: row.egress_decision ? [row.egress_decision as ContentId] : [],
+    decisions: [row.egress_decision, row.budget_decision].filter((d): d is string => typeof d === 'string').map((d) => d as ContentId),
   }
+}
+
+/** The ledger a metered Worker draws on. */
+interface Meter {
+  resources: Resources
+  pool: string
+  account: string
+}
+
+/**
+ * The token usage of a run as records carry it: totals, and the per-model split when it fits
+ * (at most `MAX_MODELS`, or the totals alone).
+ */
+function usageOf(metering: RunMetering | undefined): Pick<UsageRecord, 'usage' | 'models'> {
+  if (!metering?.usage) return {}
+  const models = metering.models && metering.models.length <= MAX_MODELS ? metering.models : undefined
+  return { usage: { ...metering.usage }, ...(models ? { models: models.map((m) => ({ model: m.model, usage: { ...m.usage }, ...(m.costUsd !== undefined ? { costUsd: m.costUsd } : {}) })) } : {}) }
 }
 
 export default AgentWorkers
