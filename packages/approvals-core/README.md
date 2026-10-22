@@ -11,8 +11,11 @@ ADR ([ADR-0036](../../docs/decisions/adr/0036-guarantee-core-and-capability-plug
 
 - The types mirror `autonomy-policy@1.0` and `approval-request@1.0`; the schemas in `schemas/`
   are canonical. It depends on nothing but Cordis.
-- `check`'s `mode` is the mode once the required checks pass: a caller that acts on a verdict
-  passes the checks it ran and treats a non-empty `failedChecks` as not yet allowed. `at` on
+- `check`'s `mode` is the mode once the required checks pass. Required checks are the result's:
+  a caller that accepts or applies a result passes the checks it ran and treats a non-empty
+  `failedChecks` as not yet allowed; one that gates work while it runs (readiness, a Worker's
+  tool call) records them as pending, and they bind at acceptance
+  ([approvals](../../docs/design/approvals.md#a-verdict-is-not-yet-a-permission)). `at` on
   the queue methods is a test seam; production callers fill it from the wall clock.
 - The conformance suite is [`conformance/approvals.ts`](conformance/approvals.ts), run through
   the [conformance runner](../libs/conformance/runner.ts) at contract 1.0:

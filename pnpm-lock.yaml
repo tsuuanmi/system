@@ -382,12 +382,18 @@ importers:
       '@tsuuanmi/system-agent-runtime-core':
         specifier: workspace:*
         version: link:../../agent-runtime-core
+      '@tsuuanmi/system-approvals-core':
+        specifier: workspace:*
+        version: link:../../approvals-core
       '@tsuuanmi/system-artifacts':
         specifier: workspace:*
         version: link:../artifacts
       '@tsuuanmi/system-egress':
         specifier: workspace:*
         version: link:../egress
+      '@tsuuanmi/system-event-log':
+        specifier: workspace:*
+        version: link:../event-log
       '@tsuuanmi/system-leases':
         specifier: workspace:*
         version: link:../leases
@@ -416,9 +422,12 @@ importers:
       '@tsuuanmi/system-agent-runtimes':
         specifier: workspace:*
         version: link:../agent-runtimes
-      '@tsuuanmi/system-event-log':
+      '@tsuuanmi/system-approvals':
         specifier: workspace:*
-        version: link:../event-log
+        version: link:../approvals
+      '@tsuuanmi/system-runtime-claude-agent-sdk':
+        specifier: workspace:*
+        version: link:../runtime-claude-agent-sdk
       '@tsuuanmi/system-worker-sessions':
         specifier: workspace:*
         version: link:../worker-sessions
@@ -428,6 +437,9 @@ importers:
       '@tsuuanmi/system-workflow':
         specifier: workspace:*
         version: link:../workflow
+      yaml:
+        specifier: 2.9.1
+        version: 2.9.1
 
   packages/plugins/approvals:
     dependencies:

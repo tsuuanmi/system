@@ -39,7 +39,44 @@ export interface RuntimeEvidence {
    * proven on this host now (ADR-0024). A Worker is unavailable without it.
    */
   readsConfined: boolean
+  /**
+   * Every tool call the agent makes passes the run's {@link RunSpec.toolGate} before it runs, and a
+   * `defer` stops the run at that call. A Worker source that gates its runs admits no Worker
+   * without it.
+   */
+  gatesToolCalls: boolean
 }
+
+/** One tool call an agent is about to make, as its runtime reports it. */
+export interface ToolCall {
+  /** The tool's name, as the runtime names it. */
+  tool: string
+  /** The tool's input, as the agent gave it. */
+  input: unknown
+  /** The runtime's own id of this call, when it has one (opaque). */
+  callId?: string | undefined
+}
+
+/**
+ * What a run's gate says about one tool call. `allow` lets the call through to the runtime's own
+ * policy, which still holds (an allowed call outside the workspace stays refused); `deny` refuses
+ * it, and the agent is told `reason`; `defer` stops the run at the call without running it, until
+ * the approval request `requestId` is answered.
+ */
+export type ToolVerdict =
+  | { decision: 'allow' }
+  | { decision: 'deny'; reason: string }
+  | { decision: 'defer'; reason: string; requestId: string }
+
+/**
+ * A per-tool-call gate, from the Worker source that owns the run (trusted, INV-6). A provider that
+ * gates (`gatesToolCalls`) asks it before every tool call, subagents' included, and treats a gate
+ * that throws, or does not answer within the provider's own bound, as `deny`. After a `defer`, the
+ * provider runs no further tool call and ends the run, rejecting with a `config_error` that names
+ * the request: a deferred run never completes. A provider that cannot ask it before every tool
+ * call refuses a run that carries one (`config_error`), never ignores it.
+ */
+export type ToolGate = (call: ToolCall, signal: AbortSignal) => Promise<ToolVerdict>
 
 export interface RunSpec {
   prompt: string
@@ -53,6 +90,8 @@ export interface RunSpec {
   maxTurns?: number | undefined
   /** Native handle of a conversation to continue. */
   resume?: string | undefined
+  /** Asked before every tool call the agent makes ({@link ToolGate}). */
+  toolGate?: ToolGate | undefined
 }
 
 /**

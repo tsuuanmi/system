@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { meteringOf } from '@tsuuanmi/system-agent-runtime-core'
+import { meteringOf, type ToolCall } from '@tsuuanmi/system-agent-runtime-core'
 import { afterAll, describe, expect, it } from 'vitest'
 import { agentRuntimeProviderConformance, expectConsistentMetering } from '../../../agent-runtime-core/conformance/agent-runtimes.ts'
 import { ClaudeAgentRuntime, type QueryFn } from '../src/index.ts'
@@ -56,7 +56,7 @@ describe('claude-agent-sdk: the configured policy, exactly', () => {
 
   it('probes the installed Claude Code without running a task, and offers only what it can confine', async () => {
     expect(await runtime(scripted()).probe()).toEqual({
-      available: true, detail: 'Claude Code 2.1.294; reads scoped to the workspace', version: '2.1.294', sandboxes: ['read-only', 'workspace-write'], resume: true, executes: false, readsConfined: true,
+      available: true, detail: 'Claude Code 2.1.294; reads scoped to the workspace', version: '2.1.294', sandboxes: ['read-only', 'workspace-write'], resume: true, executes: false, readsConfined: true, gatesToolCalls: true,
     })
     expect(await runtime(scripted(), null).probe()).toMatchObject({ available: false, detail: expect.stringMatching(/not installed/) })
   })
@@ -208,5 +208,139 @@ describe('claude-agent-sdk: what a run consumed, from the SDK\'s own numbers (do
     const error = await failure(query, controller.signal)
     expect(error.kind).toBe('aborted')
     expect(meteringOf(error)).toEqual({ model: 'model-main', limits: [expect.objectContaining({ window: 'five_hour', status: 'allowed' })] })
+  })
+})
+
+describe('claude-agent-sdk: the run\'s tool gate is a PreToolUse hook on every tool (docs/design/approvals.md)', () => {
+  const workspace = mkdtempSync(join(tmpdir(), 'system-claude-gate-'))
+  afterAll(() => rmSync(workspace, { recursive: true, force: true }))
+  type Hook = (input: Record<string, unknown>, toolUseId: string | undefined, options: { signal: AbortSignal }) => Promise<Record<string, unknown>>
+  type Matcher = { matcher?: string; hooks: Hook[]; timeout?: number }
+
+  /**
+   * A scripted Claude Code that makes `tools` calls in order, each through the PreToolUse hooks the
+   * run registered, as the CLI does; a `defer` ends the run there, as a headless query does
+   * (result `success`, `terminal_reason: tool_deferred`).
+   */
+  function calling(tools: Array<{ name: string; input: unknown }>, seen: Array<Record<string, unknown>>, matchers: Matcher[][] = []): QueryFn {
+    return ((params: { prompt: string; options?: Record<string, unknown> }) => {
+      const registered = ((params.options?.hooks as Record<string, Matcher[]> | undefined)?.PreToolUse ?? [])
+      matchers.push(registered)
+      return (async function* () {
+        yield { type: 'system', subtype: 'init', session_id: 'h-1', model: 'model-main' }
+        let deferred: { id: string; name: string; input: unknown } | undefined
+        for (const [i, call] of tools.entries()) {
+          const id = `toolu_${i + 1}`
+          let output: Record<string, unknown> = {}
+          for (const matcher of registered) {
+            for (const hook of matcher.hooks) {
+              output = await hook({ hook_event_name: 'PreToolUse', session_id: 'h-1', transcript_path: '/t', cwd: workspace, tool_name: call.name, tool_input: call.input, tool_use_id: id }, id, { signal: new AbortController().signal })
+            }
+          }
+          seen.push(output)
+          if ((output.hookSpecificOutput as { permissionDecision?: string } | undefined)?.permissionDecision === 'defer') {
+            deferred = { id, name: call.name, input: call.input }
+            break
+          }
+        }
+        yield {
+          type: 'result', subtype: 'success', is_error: false, result: deferred ? '' : `echo: ${params.prompt}`, session_id: 'h-1', uuid: 'r-1', num_turns: 1, total_cost_usd: 0.01,
+          usage: { input_tokens: 1, output_tokens: 1 }, modelUsage: MODEL_USAGE,
+          ...(deferred ? { terminal_reason: 'tool_deferred', deferred_tool_use: deferred } : { terminal_reason: 'completed' }),
+        }
+      })()
+    }) as unknown as QueryFn
+  }
+  const decision = (output: Record<string, unknown>) => output.hookSpecificOutput as { hookEventName?: string; permissionDecision?: string; permissionDecisionReason?: string } | undefined
+
+  it('registers one PreToolUse hook with no matcher (every tool), and no other hook; canUseTool stays unset (REQ-WRK-6)', async () => {
+    const matchers: Matcher[][] = []
+    const calls: Call[] = []
+    await runtime(calling([], [], matchers)).run({ prompt: 'x', workspace, sandbox: 'read-only', toolGate: async () => ({ decision: 'allow' }) }, new AbortController().signal)
+    expect(matchers[0]).toHaveLength(1)
+    expect(matchers[0]![0]!.matcher).toBeUndefined()
+    expect(matchers[0]![0]!.hooks).toHaveLength(1)
+    expect(matchers[0]![0]!.timeout).toBeGreaterThan(30)
+    await runtime(scripted(calls)).run({ prompt: 'x', workspace, sandbox: 'read-only', toolGate: async () => ({ decision: 'allow' }) }, new AbortController().signal)
+    expect(Object.keys(calls[0]!.options.hooks as object)).toEqual(['PreToolUse'])
+    expect(calls[0]!.options).not.toHaveProperty('canUseTool')
+    // No gate, no hook: the run is held to its pre-approvals alone.
+    const ungated: Call[] = []
+    await runtime(scripted(ungated)).run({ prompt: 'x', workspace, sandbox: 'read-only' }, new AbortController().signal)
+    expect(ungated[0]!.options).not.toHaveProperty('hooks')
+  })
+
+  it('asks the gate with the tool, its input, and the call id; allow leaves the call to the workspace-scoped pre-approvals, deny is the hook\'s deny with the reason', async () => {
+    const asked: unknown[] = []
+    const seen: Array<Record<string, unknown>> = []
+    const toolGate = async (call: ToolCall) => {
+      asked.push(call)
+      return call.tool === 'Read' ? { decision: 'allow' as const } : { decision: 'deny' as const, reason: 'the policy forbids it' }
+    }
+    const result = await runtime(calling([{ name: 'Read', input: { file_path: 'a.txt' } }, { name: 'Write', input: { file_path: 'b.txt', content: 'x' } }], seen))
+      .run({ prompt: 'go', workspace, sandbox: 'workspace-write', toolGate }, new AbortController().signal)
+    expect(result.text).toBe('echo: go')
+    expect(asked).toEqual([{ tool: 'Read', input: { file_path: 'a.txt' }, callId: 'toolu_1' }, { tool: 'Write', input: { file_path: 'b.txt', content: 'x' }, callId: 'toolu_2' }])
+    // A hook's allow would skip the pre-approvals, and with them the workspace bound: no decision instead.
+    expect(seen[0]).toEqual({})
+    expect(decision(seen[1]!)).toEqual({ hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: 'the policy forbids it' })
+  })
+
+  it('defers with the hook\'s defer, runs no further call, and ends the run as a config_error naming the request, though the result says success', async () => {
+    const seen: Array<Record<string, unknown>> = []
+    const asked: string[] = []
+    const toolGate = async (call: { tool: string }) => {
+      asked.push(call.tool)
+      return call.tool === 'Bash' ? { decision: 'defer' as const, reason: 'waits for the operator', requestId: 'apr-1' } : { decision: 'allow' as const }
+    }
+    const failure = await runtime(calling([{ name: 'Read', input: { file_path: 'a' } }, { name: 'Bash', input: { command: 'npm test' } }, { name: 'Read', input: { file_path: 'b' } }], seen))
+      .run({ prompt: 'go', workspace, sandbox: 'workspace-write', toolGate }, new AbortController().signal).then(() => { throw new Error('the run completed') }, (error: unknown) => error as Error & { kind: string })
+    expect(failure).toMatchObject({ kind: 'config_error', message: expect.stringContaining('apr-1') })
+    expect(failure.message).toContain('Bash (toolu_2)')
+    expect(decision(seen[1]!)).toMatchObject({ permissionDecision: 'defer', permissionDecisionReason: 'waits for the operator' })
+    expect(asked).toEqual(['Read', 'Bash'])
+    // What the run consumed is still reported.
+    expectConsistentMetering(meteringOf(failure)!)
+    expect(meteringOf(failure)).toMatchObject({ turns: 1 })
+  })
+
+  it('denies every call after a defer, without asking the gate again, should the agent go on', async () => {
+    const asked: string[] = []
+    const seen: Array<Record<string, unknown>> = []
+    const toolGate = async (call: { tool: string }) => {
+      asked.push(call.tool)
+      return { decision: 'defer' as const, reason: 'waits', requestId: 'apr-2' }
+    }
+    // A CLI that cannot defer here goes on with the next call.
+    const query = ((params: { prompt: string; options?: Record<string, unknown> }) => {
+      const hooks = (params.options!.hooks as Record<string, Matcher[]>).PreToolUse!
+      return (async function* () {
+        yield { type: 'system', subtype: 'init', session_id: 'h-1' }
+        for (const tool of ['Bash', 'Read']) seen.push(await hooks[0]!.hooks[0]!({ hook_event_name: 'PreToolUse', tool_name: tool, tool_input: {}, tool_use_id: tool, session_id: 'h-1', transcript_path: '/t', cwd: workspace }, tool, { signal: new AbortController().signal }))
+        yield { type: 'result', subtype: 'success', is_error: false, result: 'done anyway', session_id: 'h-1', uuid: 'r-1', num_turns: 1, terminal_reason: 'tool_deferred_unavailable' }
+      })()
+    }) as unknown as QueryFn
+    await expect(runtime(query).run({ prompt: 'go', workspace, sandbox: 'workspace-write', toolGate }, new AbortController().signal)).rejects.toMatchObject({ kind: 'config_error', message: expect.stringContaining('apr-2') })
+    expect(asked).toEqual(['Bash'])
+    expect(decision(seen[1]!)).toMatchObject({ permissionDecision: 'deny', permissionDecisionReason: expect.stringContaining('apr-2') })
+  })
+
+  it('denies a call when the gate throws, gives a verdict it does not define, or a defer without a request', async () => {
+    for (const toolGate of [
+      async () => { throw new Error('store busy') },
+      async () => ({ decision: 'maybe' }) as never,
+      async () => ({ decision: 'defer', reason: 'x', requestId: '' }) as never,
+      async () => ({ decision: 'deny' }) as never,
+    ]) {
+      const seen: Array<Record<string, unknown>> = []
+      await runtime(calling([{ name: 'Read', input: { file_path: 'a' } }], seen)).run({ prompt: 'go', workspace, sandbox: 'read-only', toolGate }, new AbortController().signal)
+      expect(decision(seen[0]!)).toMatchObject({ permissionDecision: 'deny', permissionDecisionReason: expect.stringMatching(/the tool gate/) })
+    }
+  })
+
+  it('fails a run whose result says a tool call was deferred that its gate never deferred (INV-2)', async () => {
+    const query = scripted([], { terminal_reason: 'tool_deferred', deferred_tool_use: { id: 't', name: 'Bash', input: {} } })
+    await expect(runtime(query).run({ prompt: 'x', workspace, sandbox: 'read-only', toolGate: async () => ({ decision: 'allow' }) }, new AbortController().signal))
+      .rejects.toMatchObject({ kind: 'config_error', message: expect.stringContaining('did not defer') })
   })
 })

@@ -9,7 +9,10 @@
  * (docs/design/resources.md): a reservation before the run (none, nothing runs), one
  * `usage-record` from the runtime's own numbers after it, and its limit observations as readings.
  * A Worker configured with `worktreePerRun` works in a git worktree of its own per workflow run
- * (./worktrees.ts).
+ * (./worktrees.ts). Every tool call of a run passes the run's gate first (./gate.ts): the autonomy
+ * policy through `ctx.approvals` (optional; none, and no tool call runs), so a Worker whose runtime
+ * cannot ask a gate before each tool call is unavailable. A run that a gate deferred fails, naming
+ * the approval request it waits for; a later run of its session makes the call once approved.
  * @module @tsuuanmi/system-agent-workers
  */
 import { randomBytes } from 'node:crypto'
@@ -27,6 +30,7 @@ import { ProviderError, ProviderScheduler, dispositionOf, toProviderError } from
 import { type LimitState, type Resources, ResourcesError, type UsageRecord } from '@tsuuanmi/system-resources-core'
 import type {} from '@tsuuanmi/system-store'
 import type { ArtifactRef, CapabilityDescriptor, ExecutionStatus, QuotaClass, Tier, WorkerExecution, WorkerStart } from '@tsuuanmi/system-workers-core'
+import { GATE_MIGRATION, type Deferral, runGate } from './gate.ts'
 import { RUN_ID, type RepositoryCheck, type SweepOutcome, Worktrees } from './worktrees.ts'
 
 declare module '@deepseek-ai/cordis' {
@@ -202,7 +206,7 @@ export class AgentWorkers extends Service {
         created_at TEXT NOT NULL, removed_at TEXT, decision TEXT, failure TEXT, failed_at TEXT,
         PRIMARY KEY (repository, workflow_run_id)
       );`,
-    }])
+    }, GATE_MIGRATION])
     ctx.workers.register({
       name: 'agents',
       describe: () => this.describe(),
@@ -248,8 +252,9 @@ export class AgentWorkers extends Service {
       const evidence = await this.evidence(worker)
       // A Worker that works in a worktree per run takes no work while its workspace cannot hold one.
       const repository = worker.worktreePerRun ? await this.repository(id, worker) : undefined
-      // A Worker whose runtime cannot keep the host state unreadable is never admitted (ADR-0024).
-      const proof = evidence.available && evidence.readsConfined && evidence.sandboxes.includes(worker.sandbox) && (!repository || 'repository' in repository)
+      // A Worker whose runtime cannot keep the host state unreadable (ADR-0024), or cannot ask the
+      // run's gate before each tool call, is never admitted.
+      const proof = admits(evidence, worker) && (!repository || 'repository' in repository)
       // A metered Worker takes work only while its pool is available (INV-2).
       const pool = proof ? await this.poolGate(id, worker) : 'ready'
       const ready = proof && pool !== 'unavailable'
@@ -361,10 +366,10 @@ export class AgentWorkers extends Service {
 
   private async evidence(worker: AgentWorkerConfig): Promise<RuntimeEvidence> {
     const provider = this.ctx.agentRuntimes.get(worker.runtime)
-    if (!provider) return { available: false, detail: `no ${worker.runtime} runtime is registered`, sandboxes: [], resume: false, executes: false, readsConfined: false }
+    if (!provider) return { available: false, detail: `no ${worker.runtime} runtime is registered`, sandboxes: [], resume: false, executes: false, readsConfined: false, gatesToolCalls: false }
     const cached = this.probes.get(worker.runtime)
     if (cached && Date.now() - cached.at < (this.config.probeTtlMs ?? 5 * 60_000)) return cached.evidence
-    const evidence = await provider.probe().catch((error: unknown): RuntimeEvidence => ({ available: false, detail: (error as Error).message.slice(0, 200), sandboxes: [], resume: false, executes: false, readsConfined: false }))
+    const evidence = await provider.probe().catch((error: unknown): RuntimeEvidence => ({ available: false, detail: (error as Error).message.slice(0, 200), sandboxes: [], resume: false, executes: false, readsConfined: false, gatesToolCalls: false }))
     this.probes.set(worker.runtime, { at: Date.now(), evidence })
     return evidence
   }
@@ -514,10 +519,15 @@ export class AgentWorkers extends Service {
     // Admission proved it once; a queued run, or one taken up after a restart, runs only on
     // proof that still holds (ADR-0024). Nothing has reached the agent yet.
     const evidence = await this.evidence(worker)
-    if (!evidence.available || !evidence.readsConfined || !evidence.sandboxes.includes(worker.sandbox)) {
-      throw new ProviderError('config_error', `${worker.runtime} cannot run this Worker now: ${evidence.detail}`)
+    if (!admits(evidence, worker)) {
+      throw new ProviderError('config_error', `${worker.runtime} cannot run this Worker now: ${evidence.gatesToolCalls ? evidence.detail : `${evidence.detail}; it cannot ask the run's gate before each tool call`}`)
     }
     const workspace = await this.workspaceOf(row, worker)
+    // Every tool call passes the run's gate before it runs; the runtime's own policy still holds.
+    const gate = runGate(this.ctx, {
+      runId: row.run_id, worker: row.worker, workspace, sessionId: row.session_id ?? undefined, workflowRunId: row.workflow_run_id ?? undefined,
+      classification: row.classification as 'public' | 'operator-shared' | 'local-private',
+    })
     const session = row.session_id
       ? this.ctx.store.db.prepare('SELECT native_handle FROM agent_sessions WHERE session_id = ?').get(row.session_id) as { native_handle: string | null } | undefined
       : undefined
@@ -526,12 +536,13 @@ export class AgentWorkers extends Service {
       // Omitted or empty means the runtime's minimal set: the config schema turns an omitted list into [].
       ...(worker.tools?.length ? { tools: worker.tools } : {}), ...(worker.model ? { model: worker.model } : {}), ...(worker.maxTurns ? { maxTurns: worker.maxTurns } : {}),
       ...(session?.native_handle ? { resume: session.native_handle } : {}),
+      toolGate: gate.gate,
     }
     // Metered: nothing runs without a reservation (INV-2, INV-9).
     const meter = this.meter(row.worker, worker)
     const reservation = meter ? await this.reserve(row, meter, lease) : undefined
     try {
-      const result = await this.submit(row, worker, provider, spec, signal, lease, meter)
+      const result = await this.submit(row, worker, provider, spec, signal, lease, meter, gate.deferral)
       this.complete(row, worker, workspace, result, lease)
     } finally {
       if (reservation) await this.release(row.worker, reservation)
@@ -539,7 +550,7 @@ export class AgentWorkers extends Service {
   }
 
   /** Run the agent, and meter what it consumed, completed or not. */
-  private async submit(row: RunRow, worker: AgentWorkerConfig, provider: AgentRuntimeProvider, spec: RunSpec, signal: AbortSignal, lease: () => Lease, meter: Meter | undefined): Promise<RunResult> {
+  private async submit(row: RunRow, worker: AgentWorkerConfig, provider: AgentRuntimeProvider, spec: RunSpec, signal: AbortSignal, lease: () => Lease, meter: Meter | undefined, deferral: () => Deferral | undefined): Promise<RunResult> {
     // Submitted from here on: the agent may act as soon as it starts.
     this.update(row.run_id, { status: 'running', submitted_at: now() }, lease)
     const startedAt = Date.now()
@@ -554,11 +565,18 @@ export class AgentWorkers extends Service {
         })
       })
     } catch (error) {
+      const deferred = deferral()
       const failure = deadline.aborted && !signal.aborted
         ? new ProviderError('timeout', `${row.worker} did not finish within ${this.config.runTimeoutMs ?? 15 * 60_000} ms; it was stopped`, { cause: error })
-        : error
+        : deferred && !signal.aborted ? waiting(row, deferred, error) : error
       if (meter) await this.account(row, worker, meter, meteringOf(error), toProviderError(failure).kind === 'aborted' ? 'aborted' : 'failed', Date.now() - startedAt)
       throw failure
+    }
+    // A run whose gate deferred a call did not finish, whatever its runtime reported (INV-2).
+    const deferred = deferral()
+    if (deferred) {
+      if (meter) await this.account(row, worker, meter, result, 'failed', Date.now() - startedAt)
+      throw waiting(row, deferred)
     }
     if (meter) await this.account(row, worker, meter, result, 'completed', Date.now() - startedAt)
     return result
@@ -720,6 +738,21 @@ export class AgentWorkers extends Service {
   private row(runId: string): RunRow | undefined {
     return this.ctx.store.db.prepare('SELECT * FROM agent_runs WHERE run_id = ?').get(runId) as RunRow | undefined
   }
+}
+
+/** Whether a runtime's evidence admits a Worker: available, reads confined, its sandbox enforced, and a gate asked before each tool call. */
+function admits(evidence: RuntimeEvidence, worker: AgentWorkerConfig): boolean {
+  return evidence.available && evidence.readsConfined && evidence.gatesToolCalls === true && evidence.sandboxes.includes(worker.sandbox)
+}
+
+/**
+ * The failure of a run that stopped at a deferred tool call. The workers seam has no waiting
+ * status, so it fails as `config_error` (never retried), naming the request; a later run of its
+ * session makes the call once the operator approved it.
+ */
+function waiting(row: RunRow, deferred: Deferral, cause?: unknown): ProviderError {
+  return new ProviderError('config_error', `${row.worker} stopped at its ${deferred.tool} call, which waits for the operator's approval (approval request ${deferred.requestId}); nothing of that call ran. `
+    + `Once it is approved, a later run of session ${row.session_id ?? '(none)'} makes exactly that call`, cause === undefined ? undefined : { cause })
 }
 
 function execution(row: RunRow): WorkerExecution {

@@ -22,10 +22,12 @@ guarantee seam: it fails closed (INV-2). Code decides, never a model.
     `command` class. An argv with a word holding a shell metacharacter (`SHELL_METACHARACTER`) is
     `forbid`, with the reason in the decision. A malformed action is refused (`invalid`).
 
-    > **`mode` is the mode once the required checks pass.** A caller that acts on a verdict
-    > passes the checks it ran (`action.checks`) and treats a non-empty `failedChecks` as not yet
-    > allowed, even when `mode` is `auto` or `notify`; the lead runs the checks first. Reading
-    > `mode` alone fails open.
+    > **`mode` is the mode once the required checks pass.** Required checks are the result's. A
+    > caller that accepts or applies a result passes the checks it ran (`action.checks`) and
+    > treats a non-empty `failedChecks` as not yet allowed, even when `mode` is `auto` or
+    > `notify`; reading `mode` alone there fails open. A caller that gates work while it runs (a
+    > task becoming ready, a Worker's tool call) records them as pending, and they bind at
+    > acceptance ([approvals](../../../docs/design/approvals.md#a-verdict-is-not-yet-a-permission)).
   - `request(request, at?)`: queues an `approval-request@1.0` on the exact subject, in one
     transaction that also checks the verdict it cites (else `not-asked`): a recorded `autonomy`
     decision whose outcome is `ask`, made by a policy (its producer and decider), of the policy
@@ -95,9 +97,11 @@ guarantee seam: it fails closed (INV-2). Code decides, never a model.
   The bundle row carries the default studio policy; a patch that targets the row replaces its
   whole config, so it carries the policies too.
 - **Injects:** `store`, `artifacts`; `mcp` and `eventLog` are optional.
-- **Not yet:** no Worker-side hook enforces a verdict (the PreToolUse hook, B5), and
-  remediation still uses the workflow's plan gate (`approval@1.0`). A new policy version takes
-  effect by configuration and a restart, not through a `policy-change` approval.
+- **Consumers:** the board; the web UI's queue; and the `agents` Worker source, whose
+  per-run tool gate calls `check`, `request`, and `get` for every tool call of an agent run
+  ([a Worker's tool calls](../../../docs/design/approvals.md#a-workers-tool-calls)).
+- **Not yet:** remediation still uses the workflow's plan gate (`approval@1.0`). A new policy
+  version takes effect by configuration and a restart, not through a `policy-change` approval.
 - **Tests:** [`tests/conformance.spec.ts`](tests/conformance.spec.ts) runs the seam's suite,
   [`approvals-core/conformance/approvals.ts`](../../approvals-core/conformance/approvals.ts), at
   contract 1.0 with no known failure; [`tests/board.spec.ts`](tests/board.spec.ts) runs the

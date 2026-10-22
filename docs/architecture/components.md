@@ -99,6 +99,10 @@ runs the work the router admitted to them. Callers never reach a source directly
   runtime's `probe()` proves now; a policy the runtime cannot enforce leaves it unavailable.
   Runs are durable, one at a time per Worker, and a run that started is never rerun by itself.
   The agent runs here but its model is remote, so each prompt passes the egress check first.
+  Every tool call passes the run's gate, the autonomy policy through `ctx.approvals`, before it
+  runs; a runtime that cannot ask a gate first is not admitted, and a call the policy asks
+  about stops the run until the operator's verdict
+  ([a Worker's tool calls](../design/approvals.md#a-workers-tool-calls)).
   A Worker configured with a resource pool is metered through `ctx.resources`: it reserves
   before a run, records one usage record from the runtime's own numbers after it, and records
   the runtime's limit observations ([agent runtimes](../design/agent-runtimes.md#metering)).
@@ -126,7 +130,8 @@ runs the work the router admitted to them. Callers never reach a source directly
   `key`; `runId` names the workflow run the execution belongs to), `get`, `wait`, and optional
   `affinity`, `handle`, `reset`, `cancel`. An agent runtime
   provides `kind`, `probe()` (`RuntimeEvidence`), and `run(spec, signal, onHandle)`, whose
-  result may carry what the run consumed (`RunMetering`). `ctx.models`
+  result may carry what the run consumed (`RunMetering`) and whose `spec.toolGate` it asks
+  before each tool call (`allow`, `deny`, `defer`). `ctx.models`
   provides `list()` (catalog entries with availability) and `complete(request, signal)`.
 - **Packages:** [turns](../../packages/plugins/turns/README.md),
   [agent-workers](../../packages/plugins/agent-workers/README.md),

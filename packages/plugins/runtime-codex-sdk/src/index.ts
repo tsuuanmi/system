@@ -12,8 +12,9 @@
  * - it runs in its own Codex home (`home`, never the operator's `~/.codex`), which must configure
  *   no MCP server: Codex starts those outside its sandbox, so a Worker would reach their tools
  *   (the system MCP server among them). Probe and every run check, and fail closed;
- * - Codex has no per-tool allow-list and no turn limit: a configured `tools` or `maxTurns` is
- *   refused, not ignored;
+ * - Codex has no per-tool allow-list, no turn limit, and runs its tools without asking first: a
+ *   configured `tools` or `maxTurns`, or a run's tool gate, is refused, not ignored
+ *   (`gatesToolCalls: false`);
  * - Codex's sandbox confines writes only, so Codex starts under the read confinement of
  *   `ctx.agentRuntimes` (ADR-0024): bubblewrap hides the DSH home, its own home bound back,
  *   through an owner-only launcher (the SDK takes a program path, not arguments). The probe
@@ -100,9 +101,11 @@ export class CodexRuntime implements AgentRuntimeProvider {
       const reads = this.options.confine
         ? await this.proveReads(executable, this.options.confine({ writable: [this.home] }))
         : { confined: false, detail: 'no read confinement is configured' }
-      // Codex confines commands in the same OS sandbox as its file writes, so it can validate.
+      // Codex confines commands in the same OS sandbox as its file writes, so it can validate. It
+      // runs its tools without asking anyone (approvals never), so no gate can be asked first.
       return {
         available: true, detail: `Codex ${version}; ${reads.detail}`, version, sandboxes: ['read-only', 'workspace-write'], resume: true, executes: true, readsConfined: reads.confined,
+        gatesToolCalls: false,
       }
     } catch (error) {
       return unavailable(`codex --version failed: ${(error as Error).message.slice(0, 160)}`)
@@ -115,6 +118,7 @@ export class CodexRuntime implements AgentRuntimeProvider {
     if (spec.sandbox !== 'read-only' && spec.sandbox !== 'workspace-write') throw new ProviderError('config_error', `codex-sdk: unknown sandbox ${String(spec.sandbox)}`)
     if (spec.tools?.length) throw new ProviderError('config_error', 'codex-sdk: Codex has no tool allow-list; refusing a configured tools list instead of ignoring it')
     if (spec.maxTurns !== undefined) throw new ProviderError('config_error', 'codex-sdk: Codex has no turn limit; refusing a configured maxTurns instead of ignoring it')
+    if (spec.toolGate) throw new ProviderError('config_error', 'codex-sdk: Codex runs its tools without asking first; refusing a tool gate instead of ignoring it')
     const executable = this.executable()
     if (!executable) throw new ProviderError('config_error', 'codex-sdk: Codex is not installed (no codex executable on PATH)')
     const servers = await this.mcpServers(executable)
@@ -172,7 +176,7 @@ export class CodexRuntime implements AgentRuntimeProvider {
   }
 }
 
-const unavailable = (detail: string): RuntimeEvidence => ({ available: false, detail, sandboxes: [], resume: false, executes: false, readsConfined: false })
+const unavailable = (detail: string): RuntimeEvidence => ({ available: false, detail, sandboxes: [], resume: false, executes: false, readsConfined: false, gatesToolCalls: false })
 
 /** An owner-only launcher under `<DSH_HOME>/system/run`, which the confinement then hides from Codex. */
 function defaultLauncher(command: { command: string; args: string[] }): string {

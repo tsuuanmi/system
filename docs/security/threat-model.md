@@ -187,7 +187,16 @@
     adds `Edit(./**)` and `Write(./**)`). A bare rule reaches the whole disk,
     including the daemon's `vault.key` and token files. `permissionMode: dontAsk`
     denies anything else without a prompt; `settingSources: []` keeps the
-    operator's own settings and hooks out; no MCP server is attached;
+    operator's own settings and hooks out; no MCP server is attached; the run's
+    tool gate is its one PreToolUse hook, which asks the autonomy policy before
+    every tool call: `deny` and `defer` hold in every permission mode, and an
+    allowed call still meets the workspace-scoped pre-approvals (a hook's
+    `allow` would skip them, so the gate never gives one)
+    ([a Worker's tool calls](../design/approvals.md#a-workers-tool-calls));
+  - Codex and ACP agents cannot ask a tool gate before each tool call
+    (`gatesToolCalls: false`), so they refuse a gated run and the `agents`
+    source admits none of their Workers; the policies below hold for them
+    still;
   - Codex (`runtime-codex-sdk`): its own `sandboxMode` (`read-only`, or
     `workspace-write` confined to the workspace) and working directory,
     approvals `never`, network access and web search off. It runs in its own
