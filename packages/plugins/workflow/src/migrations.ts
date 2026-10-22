@@ -46,4 +46,13 @@ export const MIGRATIONS = [{
   // The activation a wake runs under (REQ-SES-1): its settle presents it, and a superseded one is fenced.
   version: 9,
   sql: 'ALTER TABLE workflow_wakes ADD COLUMN generation INTEGER;',
+}, {
+  // A run that serves one attempt of a board task (docs/design/board.md): at most one live run per task.
+  version: 10,
+  sql: `CREATE TABLE workflow_tasks (
+    run_id TEXT PRIMARY KEY, task_id TEXT NOT NULL, holder TEXT NOT NULL, generation INTEGER NOT NULL, claim TEXT NOT NULL, phase TEXT NOT NULL,
+    writes TEXT, lost TEXT, result TEXT, acceptance TEXT, outcome TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+  );
+  CREATE UNIQUE INDEX workflow_tasks_live ON workflow_tasks (task_id) WHERE phase != 'reported';
+  CREATE INDEX workflow_tasks_phase ON workflow_tasks (phase);`,
 }]

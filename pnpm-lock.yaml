@@ -1264,6 +1264,9 @@ importers:
       '@tsuuanmi/system-artifacts':
         specifier: workspace:*
         version: link:../artifacts
+      '@tsuuanmi/system-board-core':
+        specifier: workspace:*
+        version: link:../../board-core
       '@tsuuanmi/system-egress':
         specifier: workspace:*
         version: link:../egress
@@ -1307,6 +1310,15 @@ importers:
       '@tsuuanmi/system-accounts':
         specifier: workspace:*
         version: link:../accounts
+      '@tsuuanmi/system-approvals':
+        specifier: workspace:*
+        version: link:../approvals
+      '@tsuuanmi/system-approvals-core':
+        specifier: workspace:*
+        version: link:../../approvals-core
+      '@tsuuanmi/system-board':
+        specifier: workspace:*
+        version: link:../board
       '@tsuuanmi/system-browser-patchright':
         specifier: workspace:*
         version: link:../browser-patchright

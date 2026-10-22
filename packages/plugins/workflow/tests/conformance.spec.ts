@@ -2,7 +2,10 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
+import StoreApprovals from '@tsuuanmi/system-approvals'
+import type { AutonomyPolicy } from '@tsuuanmi/system-approvals-core'
 import Artifacts from '@tsuuanmi/system-artifacts'
+import StoreBoard from '@tsuuanmi/system-board'
 import Egress from '@tsuuanmi/system-egress'
 import EventLog from '@tsuuanmi/system-event-log'
 import Leases from '@tsuuanmi/system-leases'
@@ -18,7 +21,16 @@ import Workflow, { type Config } from '../src/index.ts'
 // Each scenario runs the engine end to end on a durable store; a loaded host needs time.
 vi.setConfig({ testTimeout: 120_000 })
 
-/** The engine composed with the real plugins it injects, over `dir`; only Worker execution is scripted. */
+/** The suite's policy since 1.2: `read` runs on auto, everything else asks. */
+const POLICY: AutonomyPolicy = {
+  schema: 'autonomy-policy@1.0', id: 'studio', version: 1, scope: 'studio', rules: [{ actionClass: 'read', mode: 'auto' }],
+  default: 'ask', expiry: { defaultSeconds: 3600, maxSeconds: 86400 },
+}
+
+/**
+ * The engine composed with the real plugins it injects, over `dir`, the store-backed board and
+ * approval queue among them (the board's own sweep off: the suite sweeps); only Worker execution is scripted.
+ */
 async function compose(dir: string, source: (ctx: Context) => WorkerSource, config: Config): Promise<{ ctx: Context; stop: () => Promise<void> }> {
   const ctx = new Context()
   const fibers = [
@@ -26,6 +38,7 @@ async function compose(dir: string, source: (ctx: Context) => WorkerSource, conf
     ctx.plugin(WorkerRouter, {}), ctx.plugin(WorkerSessions, {}),
     // Registered before the engine starts, so a restarted engine reconciles against it.
     ctx.plugin({ name: 'scripted-workers', inject: ['workers', 'artifacts'], apply: (c: Context) => void c.workers.register(source(c)) }),
+    ctx.plugin(StoreApprovals, { policies: [POLICY], sweepSeconds: 3600 }), ctx.plugin(StoreBoard, { sweepSeconds: 0 }),
     ctx.plugin(Workflow, config),
   ]
   await Promise.all(fibers)
@@ -39,7 +52,7 @@ async function compose(dir: string, source: (ctx: Context) => WorkerSource, conf
 
 runSuite(workflowSuite, {
   name: '@tsuuanmi/system-workflow',
-  contract: '1.1',
+  contract: '1.2',
   boot: async (source, config) => {
     const dir = mkdtempSync(join(tmpdir(), 'system-workflow-conformance-'))
     let current = await compose(dir, source, config)

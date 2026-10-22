@@ -11,6 +11,7 @@
  */
 import { type Context, Service } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
+import type {} from '@tsuuanmi/system-board-core'
 import type {} from '@tsuuanmi/system-egress'
 import type {} from '@tsuuanmi/system-event-log'
 import type {} from '@tsuuanmi/system-gateway-core'
@@ -24,13 +25,13 @@ import { wake, wakeSafely } from './sessions.ts'
 import type { NodeTemplate } from './spec.ts'
 import { teamContracts, vote } from './teams.ts'
 import { registerTools } from './tools.ts'
-import type { Config, Explanation, NodeRecord, RunStatus, RunView, StartInput } from './types.ts'
+import type { Config, Explanation, NodeRecord, RunStatus, RunView, StartInput, TaskStartInput } from './types.ts'
 import { explain, usage } from './views.ts'
 
 export { DEFAULT_TEMPLATES, preflight, render, resolve } from './spec.ts'
 export type { NodeTemplate, ResolvedNode, ResolvedSpec } from './spec.ts'
 export { WorkflowFailure } from './types.ts'
-export type { Config, ExplainedDecision, Explanation, NodeRecord, NodeState, NodeView, RunStatus, RunView, StartInput, WorkflowError } from './types.ts'
+export type { Config, ExplainedDecision, Explanation, NodeRecord, NodeState, NodeView, RunStatus, RunView, StartInput, TaskClaim, TaskOutcome, TaskStartInput, TaskView, WorkflowError } from './types.ts'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -116,6 +117,12 @@ export class Workflow extends Service {
       }
     })
     ctx.inject(['mcp'], (c) => registerTools(c, this, ctx))
+    // The board is optional (docs/design/board.md): a run for a board task needs it, every other run does not.
+    ctx.inject(['board'], (c) => {
+      const board = c.board
+      engine.tasks.attach(board)
+      c.effect(() => () => engine.tasks.detach(board))
+    })
     ctx.on('worker-sessions/delivered', (sessionIds) => {
       for (const id of sessionIds) wakeSafely(engine, id)
     })
@@ -164,8 +171,16 @@ export class Workflow extends Service {
     return Object.keys(this.engine.templates).sort()
   }
 
-  /** Admit a run: validated, hashed, and durable at once; it runs in the background. */
-  start(input: StartInput): RunView {
+  /**
+   * Admit a run: validated, hashed, and durable at once; it runs in the background. A run for a
+   * board task (`task`) is admitted once the engine took the task (adopting the caller's live
+   * claim, or claiming the ready task) and the board recorded the run, so it is asynchronous; a
+   * task not ready, or a stale claim, refuses it before anything runs (docs/design/board.md).
+   */
+  start(input: TaskStartInput): Promise<RunView>
+  start(input: StartInput): RunView
+  start(input: StartInput | TaskStartInput): RunView | Promise<RunView> {
+    if ('task' in input && input.task !== undefined) return this.engine.tasks.start(input)
     return this.engine.start(input)
   }
 
