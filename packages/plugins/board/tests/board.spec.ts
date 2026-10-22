@@ -504,6 +504,22 @@ describe('ctx.board (store-backed): board_* MCP tools', () => {
     expect(brief).toMatchObject({ projectId: 'p2', intent: CHARTER.intent, state: 'active', milestone: 'm1', tasks: { done: 1 }, readFirst: [{ ref: r }] })
   })
 
+  it('claims for 600 s by default, within the leases\' own cap, and says that cap bounds a claim; it says a claimed task is started by the engine', async () => {
+    const b = await boot()
+    const { ctx } = b
+    await active(ctx)
+    const t = await ready(ctx, task('p2', 't'))
+    const before = Date.now()
+    const claim = await ok(caller(b)('board_claim', { taskId: t.taskId, owner: 'lead' }))
+    const lease = Date.parse(claim.leaseExpiresAt as string)
+    expect(lease).toBeGreaterThanOrEqual(before + 600_000)
+    expect(lease).toBeLessThanOrEqual(Date.now() + 600_000)
+    const spec = b.mcp().tools.get('board_claim')!.spec
+    expect(spec.description).toMatch(/leases\.maxTtlMs/)
+    expect(spec.description).toMatch(/started by the workflow engine/)
+    expect(b.mcp().tools.get('board_complete')!.spec.description).toMatch(/cannot be completed alone today/)
+  })
+
   it('answers questions by index, cancels as whoever calls, and refuses an invalid input without doing anything', async () => {
     const b = await boot()
     const { ctx } = b

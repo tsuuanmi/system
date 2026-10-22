@@ -1084,7 +1084,7 @@
           "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
         },
         "ttlSeconds": {
-          "description": "Lease length (default 900 s); renewed by board_update.",
+          "description": "Lease length in seconds (default 600 s), capped by leases.maxTtlMs; renewed by board_update.",
           "type": "integer",
           "minimum": 30,
           "maximum": 3600

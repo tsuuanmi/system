@@ -56,6 +56,11 @@ charters, and their tasks.
     same transaction as the write;
   - `board_claim` defaults to `leaseTtlSeconds`; `leases.maxTtlMs` (default 10 minutes) caps
     every lease, and the output gives the real expiry;
+  - a claimed task is started by the workflow engine (`ctx.board.start`, which records the run
+    first), and that start is not wired to the tools yet: no tool starts, accepts, blocks, or
+    reconciles a task. So `board_complete`, which takes only a running task's result, cannot
+    finish a task a lead claimed with `board_claim`; today a lead cannot take a task past
+    `claimed` alone, and its lease lapses back to `ready`;
   - `board_update` renews the caller's lease for as long as it was claimed, or answers every
     question of a waiting task by index, not both; its `note` is not stored (no record holds
     progress notes yet);
@@ -66,7 +71,7 @@ charters, and their tasks.
     its latest done tasks (their digest, else their first artifact); `conventions` are the
     charter's constraint notes.
 - **Injects:** `store`, `artifacts`, `leases`, `approvals`; `mcp` is optional.
-- **Config:** `inputExpirySeconds` (default 7 days), `leaseTtlSeconds` (900), `maxAttempts` (3),
+- **Config:** `inputExpirySeconds` (default 7 days), `leaseTtlSeconds` (600), `maxAttempts` (3),
   `pageBound` (100), `projectionMaxTasks` (200), `sweepSeconds` (60).
 - **Bundle:** the `board` row is on, over the `approvals` row
   ([`system-approvals`](../approvals/README.md)); with that row off or refused, the board waits

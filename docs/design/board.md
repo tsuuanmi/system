@@ -8,7 +8,10 @@
 >
 > Implemented in [`board`](../../packages/plugins/board/README.md) (definition
 > [`board-core`](../../packages/board-core/README.md)); its bundle row is on, over the
-> [approval queue](../../packages/plugins/approvals/README.md). Differs from target: no budget
+> [approval queue](../../packages/plugins/approvals/README.md). Differs from target: the
+> workflow engine does not call `ctx.board` yet, so nothing starts, accepts, blocks, or
+> reconciles a task outside tests, and a task a lead claims through `board_claim` cannot reach
+> review (`board_complete` takes a running task's result only); no budget
 > use is reported yet (the ledger counts usage by run, and the engine does not yet reserve per
 > task); `TASKS.md` is rendered on request,
 > and nothing writes it into a workspace yet.

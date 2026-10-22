@@ -27,7 +27,7 @@ export { renderTasks } from './projection.ts'
 export interface Config {
   /** How long a wait for input lasts before it cancels the task, in seconds (default 7 days). */
   inputExpirySeconds?: number
-  /** Lease length when a claim names none (`board_claim` without `ttlSeconds`), in seconds (default 900); `leases.maxTtlMs` caps it. */
+  /** Lease length when a claim names none (`board_claim` without `ttlSeconds`), in seconds (default 600, the leases' own default cap); `leases.maxTtlMs` caps it. */
   leaseTtlSeconds?: number
   /** Attempts a task gets when its proposal names none (default 3, at most 10). */
   maxAttempts?: number
@@ -130,7 +130,7 @@ export class StoreBoard extends Board {
   static inject = ['store', 'artifacts', 'leases', 'approvals']
   static Config: z<Config> = z.object({
     inputExpirySeconds: z.natural().min(60).max(90 * 24 * 3600).default(7 * 24 * 3600).description('How long a wait for input lasts before it cancels the task, in seconds'),
-    leaseTtlSeconds: z.natural().min(30).max(3600).default(900).description('Lease length when a claim names none, in seconds (leases.maxTtlMs caps it)'),
+    leaseTtlSeconds: z.natural().min(30).max(3600).default(600).description('Lease length when a claim names none, in seconds (leases.maxTtlMs caps it)'),
     maxAttempts: z.natural().min(1).max(10).default(3).description('Attempts a task gets when its proposal names none'),
     pageBound: z.natural().min(1).max(100).default(100).description('The most items one page of board_projects or board_tasks holds'),
     projectionMaxTasks: z.natural().min(1).max(10_000).default(200).description('The most tasks the TASKS.md projection lists, open ones first'),
@@ -166,7 +166,7 @@ export class StoreBoard extends Board {
         await sweeping
       }
     })
-    ctx.inject(['mcp'], (c) => registerTools(c, this, { leaseTtlSeconds: config.leaseTtlSeconds ?? 900 }))
+    ctx.inject(['mcp'], (c) => registerTools(c, this, { leaseTtlSeconds: config.leaseTtlSeconds ?? 600 }))
   }
 
   // --- reads ---

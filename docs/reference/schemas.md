@@ -537,9 +537,9 @@ guesses.
 | `board_brief` | client | one page for a new agent: intent, in progress, waiting, next, what to read first |
 | `board_tasks`, `board_task` | client | list tasks; read one |
 | `board_propose` | client | propose a task; the board makes it ready when its dependencies are done and the policy allows |
-| `board_claim` | client | take a ready task's lease (the lead working on it itself) |
+| `board_claim` | client | take a ready task's lease; the workflow engine starts a claimed task (not wired to the tools yet) |
 | `board_update` | client | report progress and renew the lease, or answer a waiting task's questions |
-| `board_complete` | client | submit results; the task goes to review, never straight to done |
+| `board_complete` | client | submit a running task's results; the task goes to review, never straight to done |
 | `board_cancel` | client | cancel a task that is not running or in review |
 | `approvals_list`, `approvals_get` | client | read the queue |
 | `approvals_decide` | operator | verdicts for up to 50 requests, each bound to its exact subject |

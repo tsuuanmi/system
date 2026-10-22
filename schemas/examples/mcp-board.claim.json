@@ -3,7 +3,7 @@
   "input": {
     "taskId": "task-0008",
     "owner": "lead-session-01",
-    "ttlSeconds": 900
+    "ttlSeconds": 600
   },
   "output": {
     "taskId": "task-0008",

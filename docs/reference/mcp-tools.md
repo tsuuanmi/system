@@ -230,7 +230,7 @@ Scope: `client`
 
 ## `board_claim`
 
-Take a ready task's lease to work on it yourself; present the returned generation on every later write.
+Take a ready task's lease (ready to claimed); present the returned generation on every later write. The lease is capped by leases.maxTtlMs, and the output gives its real expiry. A claimed task is started by the workflow engine, which records its run first; that start is not wired to these tools yet, so a lead cannot take a claimed task to review alone today.
 
 Scope: `client`
 
@@ -238,11 +238,11 @@ Scope: `client`
 |---|---|---|---|
 | `taskId` | string | yes |  |
 | `owner` | string | yes | Who works on it, e.g. the lead's session id |
-| `ttlSeconds` | integer |  | Lease length (default 900 s); renewed by board_update |
+| `ttlSeconds` | integer |  | Lease length in seconds (default 600 s), capped by leases.maxTtlMs; renewed by board_update |
 
 ## `board_complete`
 
-Submit a running task's result with its exact subject (a commit, or the result artifact): the task goes to review, never straight to done.
+Submit a running task's result with its exact subject (a commit, or the result artifact; the subject a task writes, when it names one): the task goes to review, never straight to done. Only a running task takes a result, and the workflow engine starts a claimed one (not wired to these tools yet), so a task claimed with board_claim cannot be completed alone today.
 
 Scope: `client`
 
