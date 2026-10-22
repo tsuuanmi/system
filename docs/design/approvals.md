@@ -8,9 +8,10 @@
 > [`approval-request@1.0`](../reference/schemas.md#approval-request); verdicts stay
 > [`approval@1.0`](../reference/schemas.md#approval).
 >
-> Defined in [`approvals-core`](../../packages/approvals-core/README.md); differs from target:
-> only the fake provider exists, so nothing is stored, no MCP tool is served, and no Worker hook
-> enforces a verdict (milestone B5). Plans are still approved by `approval@1.0` alone.
+> Implemented in [`approvals`](../../packages/plugins/approvals/README.md) (definition
+> [`approvals-core`](../../packages/approvals-core/README.md)); differs from target: no
+> Worker-side hook enforces verdicts yet (the PreToolUse hook), and remediation still uses the
+> plan gate (`approval@1.0`).
 
 Every action that needs a person goes through one queue, in batches, and nothing else asks the
 operator. The autonomy policy decides which actions those are; an action that is reversible and
@@ -78,6 +79,27 @@ the request becomes `rejected` with cause `expired`, and the decision's outcome 
 | open or batched → rejected (expired) | `sweep`, at `expiresAt` | an `approval` decision `denied:expired` (decider rule `approvals.expiry`) | — |
 | open or batched → rejected (withdrawn) | `withdraw`, by the requester, when its work ended | an `approval` decision `withdrawn` | a resolved request is returned unchanged |
 
+### Where the tables leave room
+
+The store-backed provider settles these cases so that the [fail-closed rules](#fail-closed-rules)
+hold. The fake provider does not check them, and the suite does not test them.
+
+- A batch holds at most the batch rule's `maxSize` requests, oldest first: a group with more
+  open requests makes several batches, and only its last, smaller one waits for
+  `maxWaitSeconds`. An open request already expired is not batched; the sweep rejects it.
+- The batch rule of a project's requests is the first policy's that names one, the studio's
+  first; with none, each request is its own batch at once.
+- A command is on a commands list when its argv starts with the listed line word for word. An
+  argv whose words only join to a listed line (`["pnpm test"]`, `["pnpm", "test; rm -rf /"]`)
+  is the `command` class.
+- `request` takes the policy and version from the `autonomy` decision the verdict cites, and
+  refuses (`not-asked`) a verdict that names another.
+- A malformed verdict, or a named request whose stored record fails its schema, refuses the
+  whole `decide` call before any verdict applies.
+- At load, two policies with one id, or two for one project, are refused too.
+- The queue sweeps, then batches, once at start and every `sweepSeconds`; nothing else calls
+  them in production.
+
 ## Fail-closed rules
 
 1. Only an operator verdict approves. Expiry and withdrawal only reject.
@@ -93,4 +115,5 @@ the request becomes `rejected` with cause `expired`, and the decision's outcome 
 ## Conformance
 
 [`approvals-core/conformance/approvals.ts`](../../packages/approvals-core/conformance/approvals.ts),
-12 scenarios at contract 1.0, run against the fake provider.
+12 scenarios at contract 1.0, run against the fake provider and the store-backed provider. The
+board's suite also runs over the store-backed provider, as the bundle composes them.

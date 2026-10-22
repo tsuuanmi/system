@@ -7,10 +7,10 @@
 > [`board-task@1.0`](../reference/schemas.md#board-task).
 >
 > Implemented in [`board`](../../packages/plugins/board/README.md) (definition
-> [`board-core`](../../packages/board-core/README.md)); differs from target: off by default until
-> the approval queue (B5) exists, so it runs only over the approvals fake; no budget use is
-> reported until the resource ledger has a provider; `TASKS.md` is rendered on request, and
-> nothing writes it into a workspace yet.
+> [`board-core`](../../packages/board-core/README.md)); its bundle row is on, over the
+> [approval queue](../../packages/plugins/approvals/README.md). Differs from target: no budget
+> use is reported until the resource ledger has a provider; `TASKS.md` is rendered on request,
+> and nothing writes it into a workspace yet.
 
 The board holds work that outlives a run: projects with charters, and their tasks. A run of the
 [workflow engine](workflow-engine.md) serves one attempt of one task. Only the board moves a
@@ -162,4 +162,4 @@ hold. The fake provider does not check them, and the suite does not test them ye
 
 [`board-core/conformance/board.ts`](../../packages/board-core/conformance/board.ts), 17
 scenarios at contract 1.0, run against the fake provider and the store-backed provider, both over
-the approvals fake.
+the approvals fake, and against the store-backed provider over the store-backed approval queue.

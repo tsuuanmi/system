@@ -151,10 +151,11 @@ runs the work the router admitted to them. Callers never reach a source directly
   `workers.accept(result, contract) → Acceptance` (with an `acceptance` decision);
   `workers.register(source)`, `workers.contract(id, check)`, `workers.source(name)`;
   `egress.check({ payload, classification, workerClass }) → allowed + egress decision`.
-- **Gate and resource ledger:** `ctx.approvals` (defined; provider in B5), the autonomy
-  policy and the one batched approval queue, whose expiry denies
-  ([approvals](../design/approvals.md)); `ctx.resources` (provider `resources`, on the store),
-  configured pools, limit readings, reservations before a run, and deduplicated usage after it,
+- **Gate and resource ledger:** `ctx.approvals` (provider `approvals`, on the store), the
+  autonomy policy from configuration and the one batched approval queue, whose expiry denies,
+  with the MCP tools `approvals_list`, `approvals_get`, `approvals_policy`, and the operator's
+  `approvals_decide` ([approvals](../design/approvals.md)); `ctx.resources` (provider
+  `resources`, on the store), configured pools, limit readings, reservations before a run, and deduplicated usage after it,
   with the MCP tools `resources_pools` and `resources_usage`
   ([resources](../design/resources.md)). Contracts: `approvals.check / request / batch / decide /
   withdraw / sweep`; `resources.pools / observe / reserve / release / record / usage`.
@@ -165,6 +166,7 @@ runs the work the router admitted to them. Callers never reach a source directly
   [workers](../../packages/plugins/workers/README.md),
   [egress](../../packages/plugins/egress/README.md),
   [approvals-core](../../packages/approvals-core/README.md),
+  [approvals](../../packages/plugins/approvals/README.md),
   [resources-core](../../packages/resources-core/README.md),
   [resources](../../packages/plugins/resources/README.md).
 
@@ -184,8 +186,7 @@ runs the work the router admitted to them. Callers never reach a source directly
 - **Board** (`ctx.board`): projects with charters and board tasks that outlive a run, stored as
   records with leases and expiring waits; it asks for approvals through `ctx.approvals`, serves
   the `board_*` MCP tools, and projects a project's board to `TASKS.md`
-  ([board](../design/board.md)). Its bundle row is off until the approval queue has a provider
-  (B5).
+  ([board](../design/board.md)). Its bundle row is on; it is mounted only with `ctx.approvals`.
 - **Profiles:** plugins that contribute templates through `ctx.workflow.template` (`research`,
   with its `deep` variant; `agent-review`, mounted with the agent Workers) and acceptance
   contracts through `ctx.workers`. A profile never names a provider, browser, or account, and
