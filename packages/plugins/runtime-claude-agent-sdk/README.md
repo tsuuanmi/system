@@ -40,7 +40,32 @@ installed.
     and `resume` continues it;
   - terminal errors map to the failure taxonomy: `error_max_turns` → `timeout`,
     `error_max_budget_usd` → `quota_exhausted`, anything else →
-    `session_broken`; an abort → `aborted`.
+    `session_broken`; an abort → `aborted`. A run that failed after a
+    `rate_limit_event` with status `rejected` fails as `quota_exhausted`, so it
+    is never retried on the same account.
+- **Metering** (`RunMetering`, from the SDK's own messages, never the model's
+  text; a failed or aborted run attaches the same to its error):
+  - `usage` and `models` from the result's `modelUsage`, which covers every
+    model and subagent (the result's own `usage` covers the main loop only and
+    is not read). The SDK's `inputTokens` excludes cached input, so each
+    model's `inputTokens` is the SDK's `inputTokens` + `cacheReadInputTokens` +
+    `cacheCreationInputTokens`; `usage` is the sum over models, and each
+    model keeps its `costUSD` as `costUsd`. If any entry lacks whole input and
+    output counts, no usage is reported (a partial sum would undercount);
+  - `model`: the main loop's, as the session's `system`/`init` message names it
+    (the result message has no model field); without one, the model with the
+    most output tokens;
+  - `turns` (`num_turns`), `costUsd` (`total_cost_usd`), and `resultId`
+    (`<session_id>:<uuid>` of the result message);
+  - `limits` from each `rate_limit_event`: the window is the SDK's
+    `rateLimitType` (for example `five_hour`), kept opaque; `allowed_warning`
+    → `warning`; `resetsAt` is Unix time in **seconds** (the CLI fills it from
+    the `anthropic-ratelimit-unified-reset` header and compares it with
+    `Date.now() / 1000`, Claude Code 2.1.308), reported in ISO time and
+    dropped when it is more than 400 days from now; `utilization` is a
+    fraction, reported as `usedPercentage`. An event without a
+    `rateLimitType` names no window and is not reported; overage fields are
+    not read.
 - **Config:** `executable` (default: `claude` on PATH); `forwardEnv`, daemon
   variables passed by name; `env`, explicit values, never a secret.
 - **License:** the SDK is © Anthropic, under Anthropic's legal agreements
