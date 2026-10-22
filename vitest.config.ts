@@ -51,5 +51,8 @@ export default defineConfig({
     include: ['scripts/**/*.spec.ts', 'spikes/**/*.spec.ts', 'packages/**/tests/**/*.spec.ts'],
     // One temporary parent per run, removed at its end (and a killed run's, at the next start).
     globalSetup: ['./scripts/test-tmp.ts'],
+    // Setup starts real displays and browsers: on a loaded 4-vCPU CI runner that can pass the
+    // 10 s default, which fails a whole suite before any of its tests runs.
+    hookTimeout: 60_000,
   },
 })
