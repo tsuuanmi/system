@@ -4,7 +4,7 @@
 > *gate* ([ADR-0036](../decisions/adr/0036-guarantee-core-and-capability-plugins.md)). Proposals:
 > [PROP-0010](../proposals/0010-base-version.md),
 > [PROP-0008](../proposals/0008-studio-operating-model.md#fewer-approvals-reliable-results).
-> Records: [`autonomy-policy@1.1`](../reference/schemas.md#autonomy-policy),
+> Records: [`autonomy-policy@1.0`](../reference/schemas.md#autonomy-policy),
 > [`approval-request@1.0`](../reference/schemas.md#approval-request); verdicts stay
 > [`approval@1.0`](../reference/schemas.md#approval).
 >
@@ -53,9 +53,9 @@ request that never expires (INV-9).
 - Irreversible effects (`external-send`, `deploy`, `delete-data`, `spend`), the investor's
   decisions (`charter`, `funding`, `policy-change`), and `remediation` (the workflow's
   remediation already waits on an operator gate) are never `auto` or `notify` (`ALWAYS_ASK`).
-  The schema refuses a policy that says so (`remediation` from `autonomy-policy@1.1`; a `1.0`
-  policy that says so is refused when it loads), and the provider raises each of them to at least
-  `ask` whatever a rule says.
+  The schema refuses a policy that says so (for `remediation`, which the schema predates, a
+  load-time rule does), and the provider raises each of them to at least `ask` whatever a rule
+  says.
 - A failed required check sends the action back to the lead as work, not to the operator.
 - A `command` is judged by its exact argv. An argv equal, word for word and with nothing more,
   to a line on every applying commands list is judged as `workspace-write` (unless `command` is

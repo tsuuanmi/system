@@ -17,7 +17,7 @@ import {
 export type Boot = () => Promise<{ ctx: Context; dispose: () => Promise<void> }>
 
 const STUDIO: AutonomyPolicy = {
-  schema: 'autonomy-policy@1.1', id: 'studio', version: 3, scope: 'studio',
+  schema: 'autonomy-policy@1.0', id: 'studio', version: 3, scope: 'studio',
   rules: [
     { actionClass: 'read', mode: 'auto' },
     { actionClass: 'workspace-write', mode: 'auto', requires: ['tests', 'lint'] },

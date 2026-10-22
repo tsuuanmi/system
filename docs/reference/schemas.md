@@ -422,9 +422,8 @@ guesses.
   policy that breaks one is refused when loaded.
 - The classes that always ask are the irreversible effects (`external-send`, `deploy`,
   `delete-data`, `spend`), the investor's decisions (`charter`, `funding`, `policy-change`), and
-  `remediation`. The schema refuses `auto` and `notify` for them; for `remediation` from
-  `autonomy-policy@1.1`, which adds it. A `1.0` policy is still read, and refused when loaded if
-  it gives `remediation` either. Readers accept 1.0 and 1.1.
+  `remediation`. The schema refuses `auto` and `notify` for them, except `remediation`,
+  which it predates: a policy that gives `remediation` either is refused when loaded.
 - A project policy constrains only the classes it names. The effective mode of a class is the
   strictest of the studio's rule and the project's (`auto` < `notify` < `ask` < `forbid`), so a
   looser project rule has no effect. For a class neither names, it is the stricter of the two

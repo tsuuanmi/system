@@ -112,9 +112,9 @@ describe('configuration', () => {
       [[{ ...STUDIO, default: 'auto' }], /^policy studio: autonomy-policy@1\.0: /],
       [[{ ...PROJECT, scope: 'studio' }], /^policy p1\.policy: autonomy-policy@1\.0: /],
       ['studio', /^policies must be a list of autonomy-policy@1\.0 records$/],
-      // Remediation always asks: a 1.1 policy that says otherwise fails its schema, a 1.0 one a load-time rule.
-      [[{ ...STUDIO, schema: 'autonomy-policy@1.1', rules: [{ actionClass: 'remediation', mode: 'auto' }] }], /^policy studio: autonomy-policy@1\.0: /],
-      [[{ ...STUDIO, schema: 'autonomy-policy@1.0', rules: [{ actionClass: 'remediation', mode: 'notify' }] }], /^policy studio: remediation always asks; its rule may not say notify$/],
+      // Remediation always asks: a load-time rule, since the record's schema predates it.
+      [[{ ...STUDIO, rules: [{ actionClass: 'remediation', mode: 'auto' }] }], /^policy studio: remediation always asks; its rule may not say auto$/],
+      [[{ ...STUDIO, rules: [{ actionClass: 'remediation', mode: 'notify' }] }], /^policy studio: remediation always asks; its rule may not say notify$/],
       // A commands entry is whole words, none empty, none with a shell metacharacter.
       [[{ ...STUDIO, commands: [' '] }], /^policy studio: the commands entry " " has an empty word/],
       [[{ ...STUDIO, commands: ['pnpm  test'] }], /^policy studio: the commands entry "pnpm  test" has an empty word/],

@@ -1,5 +1,5 @@
 {
-  "schema": "autonomy-policy@1.1",
+  "schema": "autonomy-policy@1.0",
   "id": "studio-default",
   "version": 1,
   "scope": "studio",

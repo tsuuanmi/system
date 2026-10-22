@@ -2,11 +2,11 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:tsuuanmi:system:schema:autonomy-policy:v1",
   "title": "Autonomy policy",
-  "description": "Which actions run on their own and which need a person (PROP-0008, design/approvals.md). Each action class maps to auto, notify, ask, or forbid. A project policy may only be stricter than the studio policy it narrows. @1.1 adds remediation to the classes that always ask.",
+  "description": "Which actions run on their own and which need a person (PROP-0008, design/approvals.md). Each action class maps to auto, notify, ask, or forbid. A project policy may only be stricter than the studio policy it narrows.",
   "type": "object",
   "required": ["schema", "id", "version", "scope", "rules", "default", "expiry"],
   "properties": {
-    "schema": { "enum": ["autonomy-policy@1.0", "autonomy-policy@1.1"] },
+    "schema": { "const": "autonomy-policy@1.0" },
     "id": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
     "version": {
       "description": "Changes whenever the policy's effect changes; decisions name it.",
@@ -58,24 +58,6 @@
       "additionalProperties": false
     }
   },
-  "allOf": [
-    {
-      "description": "@1.1: remediation always asks too (the workflow's remediation already waits on an operator gate).",
-      "if": { "properties": { "schema": { "const": "autonomy-policy@1.1" } }, "required": ["schema"] },
-      "then": {
-        "properties": {
-          "rules": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "if": { "properties": { "actionClass": { "const": "remediation" } }, "required": ["actionClass"] },
-              "then": { "properties": { "mode": { "enum": ["ask", "forbid"] } } }
-            }
-          }
-        }
-      }
-    }
-  ],
   "if": { "properties": { "scope": { "const": "project" } } },
   "then": { "required": ["projectId", "narrows"], "properties": { "projectId": true, "narrows": true } },
   "else": { "not": { "anyOf": [{ "required": ["projectId"] }, { "required": ["narrows"] }] } },

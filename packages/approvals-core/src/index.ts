@@ -45,9 +45,9 @@ export type Mode = 'auto' | 'notify' | 'ask' | 'forbid'
 export const MODES: readonly Mode[] = ['auto', 'notify', 'ask', 'forbid']
 export type Check = 'tests' | 'typecheck' | 'lint' | 'schema' | 'quote-check' | 'review'
 
-/** `autonomy-policy@1.1` (`@1.0` is read too: 1.1 refuses `auto` and `notify` for `remediation`). */
+/** `autonomy-policy@1.0`. */
 export interface AutonomyPolicy {
-  schema: 'autonomy-policy@1.0' | 'autonomy-policy@1.1'
+  schema: 'autonomy-policy@1.0'
   id: string
   version: number
   scope: 'studio' | 'project'
