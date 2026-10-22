@@ -409,10 +409,17 @@ describe.runIf(canRunBrowser)('GeminiWebDriver against the fake site', { timeout
   }, 60_000)
 
   it('takes a run whose activity keeps growing past the stall deadline for progress, and one that shows none for a stall (live 2026-10-18)', async () => {
-    const { page, fake } = await open({ researchMs: 10_000, researchActivity: true })
-    const patient = new GeminiWebDriver({ origin: fake.origin, modes: PRESETS, defaultMode: 'flash', timeouts: { readyMs: 5000, stableMs: 300, pollMs: 100, turnMs: 45_000, stallMs: 3000 } })
-    // Ten seconds of research, more than three times the stall deadline: its thoughts grow, so it is not a stall.
-    expect((await patient.ask(page, 'A long survey', { conversation: 'persistent', feature: 'deep-research' })).text).toMatch(/^HTTP\/3 runs over QUIC/)
+    // The deadline leaves room for the click on Start research to render its card on a loaded CI
+    // runner: until the card shows, no snapshot can show progress (production waits 3 minutes).
+    const { page, fake } = await open({ researchMs: 20_000, researchActivity: true })
+    const patient = new GeminiWebDriver({ origin: fake.origin, modes: PRESETS, defaultMode: 'flash', timeouts: { readyMs: 5000, stableMs: 300, pollMs: 100, turnMs: 45_000, stallMs: 6000 } })
+    const stalls: unknown[] = []
+    patient.onStall = (event) => void stalls.push(event)
+    // Twenty seconds of research, more than three times the stall deadline: its thoughts grow, so it is not a stall.
+    const growing = await patient.ask(page, 'A long survey', { conversation: 'persistent', feature: 'deep-research' }).catch((error: Error) => {
+      throw new Error(`${error.message}; the page as it stalled: ${JSON.stringify(stalls).slice(0, 4000)}`)
+    })
+    expect(growing.text).toMatch(/^HTTP\/3 runs over QUIC/)
     fake.options.researchActivity = false
     await expect(patient.ask(page, 'Another long survey', { conversation: 'persistent', feature: 'deep-research' })).rejects.toMatchObject({ kind: 'provider_stalled' })
   }, 90_000)
