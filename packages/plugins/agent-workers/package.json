@@ -41,8 +41,10 @@
     "@tsuuanmi/system-agent-runtimes": "workspace:*",
     "@tsuuanmi/system-approvals": "workspace:*",
     "@tsuuanmi/system-egress": "workspace:*",
+    "@tsuuanmi/system-runtime-claude-agent-sdk": "workspace:*",
     "@tsuuanmi/system-worker-sessions": "workspace:*",
     "@tsuuanmi/system-workers": "workspace:*",
-    "@tsuuanmi/system-workflow": "workspace:*"
+    "@tsuuanmi/system-workflow": "workspace:*",
+    "yaml": "2.9.1"
   }
 }

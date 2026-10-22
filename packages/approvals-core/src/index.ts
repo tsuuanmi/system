@@ -78,10 +78,12 @@ export interface Action {
 /**
  * The mode the policy gives an action, and the `autonomy` decision that records it.
  *
- * **`mode` is the mode once the required checks pass.** An `auto` or `notify` verdict with a
- * non-empty `failedChecks` is not yet allowed: the action goes back to the lead as work. A caller
- * that acts on a verdict passes the checks it ran (`Action.checks`) and treats a non-empty
- * `failedChecks` as not yet allowed; the lead runs the checks first.
+ * **`mode` is the mode once the required checks pass.** A rule's required checks are checks the
+ * result must pass before it is accepted. A caller that accepts or applies a result passes the
+ * checks it ran (`Action.checks`) and treats a non-empty `failedChecks` as not yet allowed: the
+ * result goes back to the lead as work. A caller that gates work while it runs (readiness, a
+ * Worker's tool call) cannot have run them: it lets the work go on and records them as pending,
+ * and they bind at acceptance (docs/design/approvals.md#a-verdict-is-not-yet-a-permission).
  */
 export interface AutonomyVerdict {
   mode: Mode
@@ -158,9 +160,10 @@ export abstract class Approvals extends Service {
    * Classify one action under the effective policy, recording an `autonomy` decision (its decider
    * the policy, with the policy set's hash).
    *
-   * **The verdict's `mode` is the mode once the required checks pass.** A caller that acts on a
-   * verdict must pass the checks it ran in `action.checks` and treat a non-empty `failedChecks`
-   * as not yet allowed, even when `mode` is `auto` or `notify`: the lead runs the checks first.
+   * **The verdict's `mode` is the mode once the required checks pass.** A caller that accepts or
+   * applies a result must pass the checks it ran in `action.checks` and treat a non-empty
+   * `failedChecks` as not yet allowed, even when `mode` is `auto` or `notify`; one that gates work
+   * while it runs records them as pending, and they bind at acceptance ({@link AutonomyVerdict}).
    */
   abstract check(action: Action): Promise<AutonomyVerdict>
 

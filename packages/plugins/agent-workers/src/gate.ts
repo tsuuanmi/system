@@ -2,15 +2,16 @@
  * The tool gate of an agent run (docs/design/approvals.md#a-workers-tool-calls): before each tool
  * call runs, it is classified into an action and judged by the autonomy policy (`ctx.approvals`).
  * Code decides, never a model: a call is classified by its tool's name and input only, and a call
- * it cannot classify is denied (INV-2). `forbid` denies; `auto` and `notify` allow once no required
- * check failed; `ask` opens one approval request on the exact call (INV-5) and defers it, and the
- * same exact call in a later run of the same session runs once the operator approved it.
+ * it cannot classify is denied (INV-2). `forbid` denies; `auto` and `notify` allow, their rule's
+ * required checks still pending (they bind when the result is accepted, not per call); `ask` opens
+ * one approval request on the exact call (INV-5) and defers it, and the same exact call in a later
+ * run of the same session runs once the operator approved it.
  * @module @tsuuanmi/system-agent-workers/gate
  */
 import { resolve, sep } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import type { ToolCall, ToolGate, ToolVerdict } from '@tsuuanmi/system-agent-runtime-core'
-import type { ActionClass, ApprovalRequest, Approvals, ArtifactRef, AutonomyVerdict } from '@tsuuanmi/system-approvals-core'
+import type { ActionClass, ApprovalRequest, Approvals, ArtifactRef, AutonomyVerdict, Check } from '@tsuuanmi/system-approvals-core'
 import type {} from '@tsuuanmi/system-artifacts'
 import type {} from '@tsuuanmi/system-event-log'
 import { contentId } from '@tsuuanmi/system-libs'
@@ -152,6 +153,8 @@ export const GATE_MIGRATION = {
 }
 
 const RULE = { type: 'rule', id: 'agent-workers.tool-gate', version: '1' } as const
+/** The checks a policy rule can require (`autonomy-policy@1.0`): the only ones a verdict may leave pending. */
+const CHECKS: readonly Check[] = ['tests', 'typecheck', 'lint', 'schema', 'quote-check', 'review']
 
 /**
  * The gate of one run. `ctx.approvals` is read when a call comes (optional: none, and every call is
@@ -163,8 +166,10 @@ const RULE = { type: 'rule', id: 'agent-workers.tool-gate', version: '1' } as co
  */
 export function runGate(ctx: Context, run: GateRun): RunGate {
   let deferred: Deferral | undefined
+  /** The action classes this run already showed pending checks for: one event per class and run. */
+  const pendingShown = new Set<ActionClass>()
 
-  const event = (kind: 'notified' | 'denied' | 'deferred', call: ToolCall, decision: ArtifactRef | undefined, data: Record<string, unknown> = {}): void => {
+  const event = (kind: 'notified' | 'checks-pending' | 'denied' | 'deferred', call: ToolCall, decision: ArtifactRef | undefined, data: Record<string, unknown> = {}): void => {
     try {
       ctx.get('eventLog')?.append({
         type: `agent-workers.tool.${kind}`, ...(run.workflowRunId ? { runId: run.workflowRunId } : {}), ...(run.sessionId ? { sessionId: run.sessionId } : {}),
@@ -265,12 +270,20 @@ export function runGate(ctx: Context, run: GateRun): RunGate {
         return denied(call, action, verdict, forbidden(action, verdict))
       case 'auto':
       case 'notify':
-        // A verdict is not yet a permission: the checks its rule requires have not run for this call.
-        if (verdict.failedChecks?.length) {
-          return denied(call, action, verdict, `this ${action.class} call runs only once ${verdict.failedChecks.join(', ')} pass, and they have not run for it: that is work for the lead, not the operator`)
-        }
-        if (verdict.mode === 'notify') event('notified', call, verdict.decision, { actionClass: action.class })
+      {
+        // A rule's required checks are checks the result must pass before it is accepted, never
+        // preconditions of one tool call, which cannot carry them: they stay pending, named in the
+        // autonomy decision (`failedChecks`) and the run's events, and bind at acceptance
+        // (docs/design/approvals.md#a-verdict-is-not-yet-a-permission). Only a check a rule can
+        // require may be pending; anything else is not a verdict this gate knows.
+        const pending = verdict.failedChecks ?? []
+        if (pending.some((c) => !CHECKS.includes(c))) return refuse(call, `the autonomy policy left checks pending that no rule can require (${pending.join(', ')})`, [verdict.decision])
+        const shown = pending.length ? { pendingChecks: pending } : {}
+        if (verdict.mode === 'notify') event('notified', call, verdict.decision, { actionClass: action.class, ...shown })
+        else if (pending.length && !pendingShown.has(action.class)) event('checks-pending', call, verdict.decision, { actionClass: action.class, ...shown })
+        if (pending.length) pendingShown.add(action.class)
         return { decision: 'allow' }
+      }
       case 'ask':
         return ask(approvals, call, action, verdict)
       default:

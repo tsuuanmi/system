@@ -425,6 +425,9 @@ importers:
       '@tsuuanmi/system-approvals':
         specifier: workspace:*
         version: link:../approvals
+      '@tsuuanmi/system-runtime-claude-agent-sdk':
+        specifier: workspace:*
+        version: link:../runtime-claude-agent-sdk
       '@tsuuanmi/system-worker-sessions':
         specifier: workspace:*
         version: link:../worker-sessions
@@ -434,6 +437,9 @@ importers:
       '@tsuuanmi/system-workflow':
         specifier: workspace:*
         version: link:../workflow
+      yaml:
+        specifier: 2.9.1
+        version: 2.9.1
 
   packages/plugins/approvals:
     dependencies:

@@ -2,9 +2,10 @@
 // runtime that asks the gate before each tool call as a gating runtime does: forbid denies, auto
 // allows, ask opens one request on the exact call and defers, a later run of the session makes an
 // approved call once, a rejected or expired one stays denied, and every other case fails closed.
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { Context } from '@deepseek-ai/cordis'
 import AgentRuntimeRegistry, { type AgentRuntimeProvider, type RunSpec, type ToolCall, type ToolVerdict } from '@tsuuanmi/system-agent-runtimes'
 import StoreApprovals from '@tsuuanmi/system-approvals'
@@ -15,9 +16,11 @@ import EventLog from '@tsuuanmi/system-event-log'
 import Leases from '@tsuuanmi/system-leases'
 import { contentId } from '@tsuuanmi/system-libs'
 import { ProviderError } from '@tsuuanmi/system-provider-core'
+import { ClaudeAgentRuntime, type QueryFn } from '@tsuuanmi/system-runtime-claude-agent-sdk'
 import Store from '@tsuuanmi/system-store'
 import WorkerRouter, { type WorkerExecution, type WorkRequirement } from '@tsuuanmi/system-workers'
 import { afterAll, afterEach, describe, expect, it } from 'vitest'
+import { parse as parseYaml } from 'yaml'
 import AgentWorkers from '../src/index.ts'
 import { classify } from '../src/gate.ts'
 
@@ -85,7 +88,7 @@ async function boot(agent: AgentRuntimeProvider, approvals: AutonomyPolicy | nul
     ctx.plugin(Store, { path: join(dir, 'system.db') }), ctx.plugin(Artifacts, {}), ctx.plugin(EventLog, {}), ctx.plugin(Leases, {}), ctx.plugin(Egress, {}),
     ...(approvals ? [ctx.plugin(StoreApprovals, { policies: [approvals] })] : []),
     ctx.plugin(WorkerRouter, {}), ctx.plugin(AgentRuntimeRegistry),
-    ctx.plugin(AgentWorkers, { workers: [{ id: 'dev', runtime: 'gated', workspace: WORKSPACE, sandbox: 'workspace-write', tier: 'standard' }] }),
+    ctx.plugin(AgentWorkers, { workers: [{ id: 'dev', runtime: agent.kind, workspace: WORKSPACE, sandbox: 'workspace-write', tier: 'standard' }] }),
   ]
   await Promise.all(fibers)
   ctx.agentRuntimes.register(agent)
@@ -104,6 +107,14 @@ async function boot(agent: AgentRuntimeProvider, approvals: AutonomyPolicy | nul
     return { ...(await source.wait(started.id, 10_000)), runId: started.id }
   }
   return { ctx, run }
+}
+
+/** The studio policy the bundle's `approvals` row carries by default (packages/system-bundle/cordis.patch.yml). */
+function bundlePolicies(): AutonomyPolicy[] {
+  const patch = parseYaml(readFileSync(fileURLToPath(new URL('../../../system-bundle/cordis.patch.yml', import.meta.url)), 'utf8')) as Array<{ insert?: Array<{ id: string; config?: { policies?: AutonomyPolicy[] } }> }>
+  const row = patch.flatMap((p) => p.insert ?? []).find((r) => r.id === 'approvals')
+  expect(row?.config?.policies?.length, 'the bundle row carries its default studio policy').toBe(1)
+  return row!.config!.policies!
 }
 
 const decisionOf = (ctx: Context, reason: string) => {
@@ -253,7 +264,7 @@ describe('the tool gate of an agent run (docs/design/approvals.md#a-workers-tool
     }
   })
 
-  it('lets a notify call run and shows it as an event naming its autonomy decision; denies an auto call whose required checks have not run', async () => {
+  it('lets a notify call run and shows it as an event naming its autonomy decision; lets an auto call run with its rule\'s required checks pending, named once per run, to bind at acceptance', async () => {
     const write = { tool: 'Write', input: { file_path: 'b.txt', content: 'x' } }
     const notified = new GatedAgent([[write]])
     const shown = await boot(notified, policy({ 'workspace-write': { mode: 'notify' } }))
@@ -262,10 +273,37 @@ describe('the tool gate of an agent run (docs/design/approvals.md#a-workers-tool
     const [event] = shown.ctx.eventLog.query({ type: 'agent-workers.tool.notified' })
     expect(event).toMatchObject({ data: { tool: 'Write', actionClass: 'workspace-write' } })
     expect(shown.ctx.artifacts.get(event!.decision!)!.body).toMatchObject({ decisionType: 'autonomy', outcome: { option: 'notify' } })
-    const checked = new GatedAgent([[write]])
-    const { run } = await boot(checked, policy({ 'workspace-write': { mode: 'auto', requires: ['tests', 'lint'] } }))
-    await run()
-    expect(checked.verdicts[0]![0]).toMatchObject({ decision: 'deny', reason: expect.stringContaining('runs only once tests, lint pass') })
+    const checked = new GatedAgent([[write, { tool: 'Edit', input: { file_path: 'b.txt', old_string: 'x', new_string: 'y' } }]])
+    const pending = await boot(checked, policy({ 'workspace-write': { mode: 'auto', requires: ['tests', 'lint'] } }))
+    expect((await pending.run()).status).toBe('completed')
+    expect(checked.verdicts[0]).toEqual([{ decision: 'allow' }, { decision: 'allow' }])
+    const events = pending.ctx.eventLog.query({ type: 'agent-workers.tool.checks-pending' })
+    expect(events).toHaveLength(1)
+    expect(events[0]).toMatchObject({ data: { actionClass: 'workspace-write', pendingChecks: ['tests', 'lint'] } })
+    // The autonomy decision names them too: they bind when the result is accepted.
+    expect(pending.ctx.artifacts.get(events[0]!.decision!)!.body).toMatchObject({ decisionType: 'autonomy', outcome: { option: 'auto', detail: { failedChecks: ['tests', 'lint'] } } })
+    // A notify rule with required checks names them in its event.
+    const both = new GatedAgent([[write]])
+    const named = await boot(both, policy({ 'workspace-write': { mode: 'notify', requires: ['tests'] } }))
+    await named.run()
+    expect(both.verdicts[0]).toEqual([{ decision: 'allow' }])
+    expect(named.ctx.eventLog.query({ type: 'agent-workers.tool.notified' })[0]).toMatchObject({ data: { pendingChecks: ['tests'] } })
+  })
+
+  it('under the bundle\'s default studio policy: a workspace write runs with tests and lint pending, a command still defers, and an outside write is still denied', async () => {
+    const agent = new GatedAgent([[
+      { tool: 'Read', input: { file_path: 'src/a.ts' } }, { tool: 'Write', input: { file_path: 'src/b.ts', content: 'x' } },
+      { tool: 'Write', input: { file_path: '/etc/b.ts', content: 'x' } }, bash('npm test'),
+    ]])
+    const { ctx, run } = await boot(agent, bundlePolicies()[0]!)
+    const done = await run()
+    const [read, write, outside, command] = agent.verdicts[0]!
+    expect(read).toEqual({ decision: 'allow' })
+    expect(write).toEqual({ decision: 'allow' })
+    expect(outside).toMatchObject({ decision: 'deny', reason: expect.stringContaining('not inside the workspace') })
+    expect(command).toMatchObject({ decision: 'defer' })
+    expect(done).toMatchObject({ status: 'failed', error: { kind: 'config_error' } })
+    expect((await ctx.approvals.list())[0]).toMatchObject({ action: { class: 'command' }, policy: { id: 'studio-default' } })
   })
 
   it('sends a web fetch to the operator as an external send, which always asks', async () => {
@@ -304,5 +342,36 @@ describe('classify: a tool call as the action the policy judges', () => {
     for (const call of [{ tool: 'mcp__x__y', input: {} }, { tool: 'Agent', input: {} }, { tool: 'Read', input: 'a' }, { tool: 'Read', input: null }]) {
       expect(classify(call, ws)).toHaveProperty('refused')
     }
+  })
+})
+
+describe('a Claude Code Worker under the bundle\'s default policy, end to end (docs/design/approvals.md#a-workers-tool-calls)', () => {
+  it('reads and writes inside its workspace through the runtime\'s PreToolUse hook, and its pre-approvals still bind it there', async () => {
+    const outputs: Array<Record<string, unknown>> = []
+    const optionsSeen: Array<Record<string, unknown>> = []
+    type Hook = (input: Record<string, unknown>, id: string, options: { signal: AbortSignal }) => Promise<Record<string, unknown>>
+    // The SDK's stream as a scripted Claude Code makes it: each tool call through the hooks the run registered.
+    const query = ((params: { prompt: string; options: Record<string, unknown> }) => {
+      optionsSeen.push(params.options)
+      const hooks = (params.options.hooks as { PreToolUse: Array<{ hooks: Hook[] }> }).PreToolUse
+      return (async function* () {
+        yield { type: 'system', subtype: 'init', session_id: 'h-claude', model: 'model-main' }
+        const calls = [['Read', { file_path: 'src/a.ts' }], ['Grep', { pattern: 'x' }], ['Write', { file_path: 'src/b.ts', content: 'x' }], ['Edit', { file_path: 'src/b.ts', old_string: 'x', new_string: 'y' }]] as const
+        for (const [i, [tool, input]] of calls.entries()) {
+          outputs.push(await hooks[0]!.hooks[0]!({ hook_event_name: 'PreToolUse', session_id: 'h-claude', transcript_path: '/t', cwd: WORKSPACE, tool_name: tool, tool_input: input, tool_use_id: `toolu_${i}` }, `toolu_${i}`, { signal: new AbortController().signal }))
+        }
+        yield { type: 'result', subtype: 'success', is_error: false, result: 'changed b.ts', session_id: 'h-claude', uuid: 'r-1', num_turns: 3, total_cost_usd: 0.01, usage: { input_tokens: 1, output_tokens: 1 }, modelUsage: {}, terminal_reason: 'completed' }
+      })()
+    }) as unknown as QueryFn
+    const claude = new ClaudeAgentRuntime({ query, executable: '/usr/bin/claude', findExecutable: () => undefined, version: async () => '2.1.300' })
+    const { ctx, run } = await boot(claude, bundlePolicies()[0]!)
+    const done = await run()
+    expect(done.status).toBe('completed')
+    expect(ctx.artifacts.get(done.result!)!.body).toMatchObject({ runtime: 'claude-agent-sdk', text: 'changed b.ts' })
+    // Every call allowed: no hook decision, so the workspace-scoped pre-approvals decide.
+    expect(outputs).toEqual([{}, {}, {}, {}])
+    expect(optionsSeen[0]).toMatchObject({ permissionMode: 'dontAsk', allowedTools: ['Read(./**)', 'Grep(./**)', 'Glob(./**)', 'Edit(./**)', 'Write(./**)'] })
+    expect(ctx.eventLog.query({ type: 'agent-workers.tool.checks-pending' })).toEqual([expect.objectContaining({ data: expect.objectContaining({ pendingChecks: ['tests', 'lint'] }) })])
+    expect(await ctx.approvals.list()).toEqual([])
   })
 })
