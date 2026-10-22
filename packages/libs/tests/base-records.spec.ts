@@ -83,7 +83,7 @@ describe('board-task@1.0', () => {
 
   it('is done only with its run, its result subject, and an acceptance decision, and holds no lease once done', () => {
     const { holder: _, ...released } = review
-    const accepted = { ...released, state: 'done', result: { ...review.result, acceptance: review.lastDecision } }
+    const accepted: Json = { ...released, state: 'done', result: { ...review.result, acceptance: review.lastDecision } }
     expect(valid('board-task@1.0', { ...released, state: 'done' })).toBe(false)
     expect(valid('board-task@1.0', accepted)).toBe(true)
     expect(valid('board-task@1.0', { ...accepted, holder: review.holder })).toBe(false)
