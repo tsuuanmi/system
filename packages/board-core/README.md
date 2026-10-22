@@ -26,8 +26,8 @@ Work state machine **seam definition**
     when its request was withdrawn before the owner's move committed;
   - review to done only by an accepting `acceptance` decision bound to the task's exact result,
     with the class's required checks passed unless the operator made it; bounded attempts,
-    ending in a wait no input revives; review bounded by the reviewer's lease; a result on the
-    subject the task writes;
+    ending in a wait no input revives, never ready once spent; review bounded by the
+    reviewer's lease; a result on the subject the task writes;
   - blocking and answering; cancelling, with the approval withdrawn and dependents cancelled;
     validation of proposals and of founding milestones; pausing and closing.
 

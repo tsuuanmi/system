@@ -101,7 +101,11 @@ interface Settled { project: Project; cancelled: BoardTask[] }
 /** What a move changes; `lease` is set when it takes or renews the holder's lease. */
 interface Move { changes: Changes<BoardTask>; lease?: { token: string; ttlMs: number } }
 /** Why a decision went one way: the chosen move, and why the task (or project) did not stay where it was. */
-interface Why { from: string; to: string; why: string; whyNot: string; inputs?: ArtifactRef[]; detail?: Record<string, unknown> }
+interface Why {
+  from: string; to: string; why: string; whyNot: string; inputs?: ArtifactRef[]; detail?: Record<string, unknown>
+  /** The move it declined, when that is not staying where it was (`from`): the rejected candidate. */
+  instead?: string
+}
 
 /** The checks a policy rule can require (`autonomy-policy@1.0`). */
 const CHECKS: readonly Check[] = ['tests', 'typecheck', 'lint', 'schema', 'quote-check', 'review']
@@ -626,10 +630,16 @@ export class StoreBoard extends Board {
       const detail = { questions, answers, ...(task.run ? { runId: task.run.runId } : {}) }
       const why = `every one of its ${questions.length} question(s) answered`
       if (next) return this.nextAttemptMove(project, task, next, { why, detail }, at)
+      // A ready task with no attempt left could never start and would never expire (INV-9): it waits for input, which expires.
       return {
         changes: {
-          state: 'ready', waiting: undefined, run: undefined,
-          lastDecision: this.decision(project, task, { from: 'waiting-for-input', to: 'ready', why, whyNot: 'nothing it waited for is missing', detail }, at),
+          state: 'waiting-for-input', waiting: this.inputWait('retries-spent', at), run: undefined,
+          lastDecision: this.decision(project, task, {
+            from: 'waiting-for-input', to: 'waiting-for-input', instead: 'ready',
+            why: `${why}, but all ${task.attempts.max} attempt(s) are spent: it waits for input (retries-spent), which expires`,
+            whyNot: `no attempt is left to start (${task.attempts.count} of ${task.attempts.max}), and a ready task never expires`,
+            detail: { ...detail, reason: 'retries-spent' },
+          }, at),
         },
       }
     }))
@@ -1128,8 +1138,12 @@ export class StoreBoard extends Board {
   private decision(project: Project, task: BoardTask | undefined, move: Why, at: Date): ArtifactRef {
     const subject = task ? `task ${task.taskId} of ${project.projectId}` : `project ${project.projectId}`
     return this.ctx.artifacts.recordDecision({
-      schema: 'decision@1.4', decisionType: 'board', question: `Does ${subject} move from ${move.from} to ${move.to}?`, inputs: move.inputs ?? [],
-      candidates: [{ option: move.to, selected: true, reasons: [move.why] }, { option: move.from, selected: false, reasons: [`not kept ${move.from}: ${move.whyNot}`] }],
+      schema: 'decision@1.4', decisionType: 'board', inputs: move.inputs ?? [],
+      question: move.instead ? `Does ${subject} go from ${move.from} to ${move.instead} or to ${move.to}?` : `Does ${subject} move from ${move.from} to ${move.to}?`,
+      candidates: [
+        { option: move.to, selected: true, reasons: [move.why] },
+        move.instead ? { option: move.instead, selected: false, reasons: [`not ${move.instead}: ${move.whyNot}`] } : { option: move.from, selected: false, reasons: [`not kept ${move.from}: ${move.whyNot}`] },
+      ],
       decider: { type: 'rule', id: 'board.transition', version: '1' },
       outcome: { option: move.to, detail: { projectId: project.projectId, ...(task ? { taskId: task.taskId } : {}), from: move.from, at: at.toISOString(), ...move.detail } },
       deterministic: true,

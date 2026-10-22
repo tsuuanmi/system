@@ -139,8 +139,10 @@ of a wait, and a withdrawn wait kept; the other cases only the store-backed prov
   waits on, which expires on its own and moves nothing if approved. Only the board withdraws its
   requests, so the sweep leaves a task waiting on a withdrawn request as it is: that is the same
   crash the other way round, and the run's owner may still report.
-- An approval to go on with no attempt left starts nothing: the task waits for input
-  (`retries-spent`), so `attempts.count` never exceeds `attempts.max`.
+- No move makes a task ready once its attempts are spent: an approval to go on, or an answered
+  question, with no attempt left leaves it waiting for input (`retries-spent`, with a `board`
+  decision whose candidates both say why), so `attempts.count` never exceeds `attempts.max` and a
+  task that can never start never sits in `ready`, which does not expire (INV-9).
 - One amendment waits at a time: another is refused (`invalid-transition`) until it is approved,
   refused, or expired, so a verdict binds the charter it was asked about. An amendment changes the
   charter only.
@@ -175,7 +177,7 @@ of a wait, and a withdrawn wait kept; the other cases only the store-backed prov
 | review → done | `accept` with an `acceptance` decision whose outcome is `accept` | that decision; `result.acceptance`; the run and subject stay | a decision of another type, or one not bound to the task's exact result, is refused; one not the operator's needs the required checks passed |
 | review → ready / waiting-for-approval / waiting-for-input | `accept` with a `reject` outcome | while `count < max`, another attempt through the gate: a `board` decision naming that decision and the `autonomy` decision (ready, or `approval-needed` with a new request); else that decision and `retries-spent` | an approval of an earlier attempt never covers this one |
 | waiting-for-approval → ready / waiting-for-approval / waiting-for-input | `sweep`, on the request's resolution (an approval to go on after `budget-spent` or `reconciliation-failed` goes through the gate for the next attempt); at `waiting.expiresAt` (or the request's expiry, if earlier) the board applies the expiry itself when the queue has not resolved the request, withdrew it, or no longer knows it | the request's `approval` decision, or the board's own (`board`, cause `expired`), after which it withdraws a request still open | rejection and expiry never start work: the task waits for input (`rejected`) |
-| waiting-for-input → ready / waiting-for-approval | `answer`, every question of a `question` wait answered; the next attempt goes through the gate | a `board` decision with the questions and answers | partial answers, and answers to any other wait, are refused |
+| waiting-for-input → ready / waiting-for-approval | `answer`, every question of a `question` wait answered; the next attempt goes through the gate, and with no attempt left the task waits for input (`retries-spent`) instead | a `board` decision with the questions and answers | partial answers, and answers to any other wait, are refused |
 | waiting-for-input → cancelled | `sweep`, its wait expired | a `board` decision (`input-expired`) | — |
 | any not running or in review → cancelled | `cancel` (`operator`, `lead`, `superseded`) | a `board` decision; a pending approval request is withdrawn once the move committed; dependents are cancelled on the next sweep | a running task or one in review is refused |
 
@@ -188,9 +190,9 @@ work again as a new task.
 
 | `waiting.reason` | From | Revived by | Otherwise |
 |---|---|---|---|
-| `question` | `block` with questions | `answer` (`board_update` answers), every question by index: the next attempt, through the gate | expires: `input-expired` |
+| `question` | `block` with questions | `answer` (`board_update` answers), every question by index: the next attempt, through the gate; with no attempt left, `retries-spent` instead | expires: `input-expired` |
 | `rejected` | an approval refused or expired, or none could be asked | nothing | expires: `input-expired` |
-| `retries-spent` | review rejected the last attempt, a failed run with none left, or an approval to go on with none left | nothing | expires: `input-expired` |
+| `retries-spent` | review rejected the last attempt, a failed run with none left, or an approval to go on or an answered question with none left | nothing | expires: `input-expired` |
 | `review-expired` | the reviewer's lease lapsed with no acceptance decision | nothing | expires: `input-expired` |
 
 ### Required checks bind at acceptance
@@ -232,6 +234,6 @@ when the result is accepted:
 
 ## Conformance
 
-[`board-core/conformance/board.ts`](../../packages/board-core/conformance/board.ts), 22
+[`board-core/conformance/board.ts`](../../packages/board-core/conformance/board.ts), 23
 scenarios at contract 1.0, run against the fake provider and the store-backed provider, both over
 the approvals fake, and against the store-backed provider over the store-backed approval queue.

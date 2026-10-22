@@ -426,6 +426,27 @@ export const boardSuite = defineSuite<Boot>({
       await ctx.board.sweep(at(6))
       expect(await stateOf(ctx, merge.taskId)).toBe('ready')
     }),
+    scenario('spent-never-ready', 'never makes a task ready once its attempts are spent: an answer or an approval to go on leaves it waiting for input, which expires (INV-9)', async (ctx) => {
+      await active(ctx)
+      const asks = await ready(ctx, task('p1', 'asks', { maxAttempts: 1 }))
+      let claim = await ctx.board.claim(asks.taskId, 'lead', 600_000, at(3))
+      await ctx.board.start(asks.taskId, claim.generation, { runId: 'run-1' }, at(3))
+      await ctx.board.block(asks.taskId, claim.generation, { reason: 'question', questions: ['Keep the API?'] }, at(4))
+      const answered = validTask(await ctx.board.answer(asks.taskId, ['yes'], at(5)))
+      expect(answered).toMatchObject({ state: 'waiting-for-input', waiting: { reason: 'retries-spent' }, attempts: { count: 1, max: 1 } })
+      const decision = ctx.artifacts.get(answered.lastDecision!)?.body as { candidates: Array<{ reasons: string[] }> }
+      for (const candidate of decision.candidates) expect(candidate.reasons.some((r) => r.trim() !== '')).toBe(true)
+      await ctx.board.sweep(new Date(Date.parse(answered.waiting!.expiresAt)))
+      expect((await ctx.board.task(asks.taskId))?.cancellation?.reason).toBe('input-expired')
+
+      const spent = await ready(ctx, task('p1', 'spent', { maxAttempts: 1 }))
+      claim = await ctx.board.claim(spent.taskId, 'lead', 600_000, at(3))
+      await ctx.board.start(spent.taskId, claim.generation, { runId: 'run-2' }, at(3))
+      const blocked = await ctx.board.block(spent.taskId, claim.generation, { reason: 'budget-spent' }, at(4))
+      await decide(ctx, blocked.waiting!.approvalRequest!, 'approved', at(5))
+      await ctx.board.sweep(at(5))
+      expect(validTask((await ctx.board.task(spent.taskId))!)).toMatchObject({ state: 'waiting-for-input', waiting: { reason: 'retries-spent' } })
+    }),
     scenario('block-and-answer', 'interrupts a running task: spent budget waits for approval, a question for input; answering every question makes it ready', async (ctx) => {
       await active(ctx)
       const spent = await ready(ctx, task('p1', 'spent'))
@@ -813,7 +834,8 @@ export class FakeBoard extends Board {
     this.expect(task, 'waiting-for-input')
     if (task.waiting?.reason !== 'question' || answers.length !== (task.waiting.questions?.length ?? 0)) throw new BoardError('invalid', 'answer every question of a question wait')
     if (task.attempts.count < task.attempts.max) return this.again(task, at, 'answered')
-    return this.save(task, at, { state: 'ready', waiting: undefined, lastDecision: this.decide(taskId, 'waiting-for-input', 'ready', at, 'answered') })
+    // No attempt left: a ready task could never start and would never expire, so it waits for input (INV-9).
+    return this.save(task, at, { state: 'waiting-for-input', run: undefined, waiting: this.inputWait('retries-spent', at), lastDecision: this.decide(taskId, 'ready', 'waiting-for-input', at, 'answered, but no attempt is left') })
   }
 
   private async cancelTask(task: BoardTask, reason: CancelReason, at: Date, decision?: ArtifactRef, note?: string): Promise<BoardTask> {
@@ -889,7 +911,9 @@ export class FakeBoard extends Board {
           continue
         }
         if (request.state === 'approved' && task.waiting!.reason !== 'approval-needed' && task.attempts.count < task.attempts.max) moved.set(task.taskId, await this.again(task, at, 'the operator approved going on'))
-        else if (request?.state === 'approved') moved.set(task.taskId, this.save(task, at, { state: 'ready', waiting: undefined, run: undefined, lastDecision: request.resolution!.decision }))
+        else if (request.state === 'approved' && task.attempts.count >= task.attempts.max) {
+          moved.set(task.taskId, this.save(task, at, { state: 'waiting-for-input', waiting: this.inputWait('retries-spent', at), lastDecision: request.resolution.decision }))
+        } else if (request?.state === 'approved') moved.set(task.taskId, this.save(task, at, { state: 'ready', waiting: undefined, run: undefined, lastDecision: request.resolution!.decision }))
         else if (request?.state === 'rejected') moved.set(task.taskId, this.save(task, at, { state: 'waiting-for-input', waiting: this.inputWait('rejected', at), lastDecision: request.resolution!.decision }))
       } else if (task.state === 'waiting-for-input' && Date.parse(task.waiting!.expiresAt) <= now) {
         moved.set(task.taskId, await this.cancelTask(task, 'input-expired', at))
