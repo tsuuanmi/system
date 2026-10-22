@@ -8,13 +8,13 @@
 >
 > Implemented in [`board`](../../packages/plugins/board/README.md) (definition
 > [`board-core`](../../packages/board-core/README.md)); its bundle row is on, over the
-> [approval queue](../../packages/plugins/approvals/README.md). Differs from target: the
-> workflow engine does not call `ctx.board` yet, so nothing starts, accepts, blocks, or
-> reconciles a task outside tests, and a task a lead claims through `board_claim` cannot reach
-> review (`board_complete` takes a running task's result only); no budget
-> use is reported yet (the ledger counts usage by run, and the engine does not yet reserve per
-> task); `TASKS.md` is rendered on request,
-> and nothing writes it into a workspace yet.
+> [approval queue](../../packages/plugins/approvals/README.md); the
+> [workflow engine](workflow-engine.md#board-tasks) runs a task's attempts. Differs from target:
+> no run blocks its task yet (no budget per task: the ledger counts usage by run, and the engine
+> does not yet reserve per task; no question reaches the board from a run); no surface records
+> the operator's `acceptance` decision yet, so a review left to the operator ends
+> `review-expired` when the reviewer's lease lapses; `TASKS.md` is rendered on request, and
+> nothing writes it into a workspace yet.
 
 The board holds work that outlives a run: projects with charters, and their tasks. A run of the
 [workflow engine](workflow-engine.md) serves one attempt of one task. Only the board moves a
@@ -44,6 +44,12 @@ the operator itself: every move that needs a person goes through the
 
 Time-driven moves happen only in `sweep(at)`, so a restart is a sweep, not a replay
 ([INV-4](../architecture/invariants.md#inv-4-restart-is-reconciliation-not-replay)).
+
+The holder's moves (`start`, `renew`, `submit`, `block`) and the run owner's (`accept` of its
+result, `reconcileRun`) belong to the run that serves the attempt: the
+[workflow engine](workflow-engine.md#board-tasks) makes them, as that run's owner, so one attempt
+has one writer ([INV-15](../architecture/invariants.md#inv-15-one-writer-per-subject)). A lead
+takes a task with `board_claim` and hands that claim to the run; no MCP tool makes those moves.
 
 ## Project
 

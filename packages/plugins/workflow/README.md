@@ -226,6 +226,29 @@ second execution path (INV-1).
   - A run of the removed procedure (critique rounds, a lead, a synthesis) stays
     readable with `explain` and `result`; `continue` and `supersede` refuse it
     (`invalid_input`).
+- **Board tasks ([design](../../../docs/design/workflow-engine.md#board-tasks)).** A run started
+  with `task` (MCP `run` `task: { taskId, holder?, generation? }`) serves one attempt of that
+  board task, as the run's owner on `ctx.board`:
+  - it adopts the claim its caller hands it (renewed, so the board fences a stale one) or claims
+    the ready task as `workflow:<runId>`; a task not ready, a stale claim, or a refusal refuses
+    the start before anything is written or sent. Each is an `admission` decision
+    (`workflow.task-admission`). A task's template, and its project's classification as a
+    floor, bind the run;
+  - the run is written `starting` (`workflow_tasks`, at most one live run per task), the board
+    records it (`start`), and only then is it opened and scheduled; a restart in between is
+    decided by the board's record;
+  - the engine renews the lease at a third of what the board granted, while the run lives; when
+    the board refuses the generation, the run starts nothing new (`workflow.task-holder`
+    `wind-down`), reconciles what is in flight, and fails the rest as `holder_lost`;
+  - a completed run's result is bound to the subject the task writes (else `stale_subject`),
+    with an `acceptance` decision (`workflow.task-acceptance`) naming the task, the subject, and
+    the checks the run ran (`schema`, `review`), then submitted and accepted; a refused
+    acceptance leaves the task in review. A failed or stopped run, and a run whose holder was
+    lost, is reported with `reconcileRun` (a `reconciliation` decision). The view's `task`
+    shows the claim, the phase, and how the outcome reached the board;
+  - such a run is not continued, superseded, deleted, or expired before its outcome is reported.
+  - The board is optional: with none loaded, a task's run is refused (`config_error`) and every
+    other run is unchanged.
 - **Wake-on-message ([design](../../../docs/design/sessions-and-messaging.md)).**
   - A message to an idle Worker session wakes it once its own run is no
     longer running. The message must ask for a reply: any intent but `answer`
@@ -279,8 +302,8 @@ second execution path (INV-1).
     loops.
 - **Events:** `workflow.run.started|completed|failed|continued|deleted|expired`,
   `workflow.node.started|retry|completed|failed|blocked|escalated|superseded`,
-  `workflow.graph.grown|retired`, `workflow.gate.opened|closed`, and
-  `workflow.team.tallied|decided`. A completed node's
+  `workflow.graph.grown|retired`, `workflow.gate.opened|closed`,
+  `workflow.team.tallied|decided`, and `workflow.task.lost|reported`. A completed node's
   event carries the Worker, tier, and quota class that served it.
 - **Read side:**
   - `get`, `wait`, and `records` read a run and its node records.
@@ -298,7 +321,8 @@ second execution path (INV-1).
     `profile` for template tiers, `caller` when the caller's tier replaced one.
 - **MCP tools** (they replace the built-in placeholders):
   - `ask` waits up to `waitSeconds` (≤ 55 s);
-  - `run { template, input, variant?, … }` starts any template, and waits like `ask`;
+  - `run { template, input, variant?, task?, … }` starts any template, and waits like `ask`;
+    with `task`, for one attempt of that board task (above);
   - `approve { runId, verdict, note?, plan? }` gives the operator's verdict on a
     waiting plan (`plan` is required when several plans wait);
   - `stop`, `continue`, `delete`, and `supersede` are the operator controls above;
@@ -362,13 +386,17 @@ second execution path (INV-1).
   daily, except a session's latest run, and then `ctx.artifacts.collect()` takes
   what only expired runs needed.
 - **Conformance.** The seam's suite is [`conformance/workflow.ts`](conformance/workflow.ts),
-  run through the [conformance runner](../../libs/conformance/runner.ts) at contract 1.1 by
-  `tests/conformance.spec.ts`, against this engine and the real plugins it injects, with only
-  Worker execution scripted:
+  run through the [conformance runner](../../libs/conformance/runner.ts) at contract 1.2 by
+  `tests/conformance.spec.ts`, against this engine and the real plugins it injects (the
+  store-backed board and approval queue among them), with only Worker execution scripted:
   - valid `workflow-node@1.x` records; a node completes only with its input receipt, its
     Worker's result, and the acceptance decision that accepted it;
   - input bound by hash, and the execution keyed by it; a repeated `clientRequestId`;
   - since 1.1, every execution names its run (`WorkerStart.runId`);
+  - since 1.2, a run for a board task: claimed, recorded before it runs, its result submitted and
+    accepted on its exact subject; a lead's claim adopted, a stale claim or a task not ready
+    refused before anything is written; a failed run reported with `reconcileRun`, never
+    continued;
   - admission that fails closed and stays within `maxActiveRuns`; a node no Worker is
     admitted for fails with nothing sent;
   - bounded retries of unsent failures, a sent one never resent, and bounded escalation;
@@ -380,7 +408,13 @@ second execution path (INV-1).
   - the decision a refused planner names (its `graph-growth` refusal), and the `gate` decision a
     blocked gate records and names (what it waits for, until when).
 - **Injects:** `store`, `artifacts`, `eventLog`, `leases`, `egress`, `workers`, `workerSessions`;
-  `mcp` is optional.
+  `mcp` and `board` (the abstract `Board` of `board-core`, never the board plugin) are optional.
+- **Tests** beyond the suite: [`tests/board.spec.ts`](tests/board.spec.ts) runs the engine over
+  the store-backed board and approval queue end to end: a task claimed and done, a lead's claim
+  adopted, stale claims refused, the lease renewed past its length, a failed and a stopped run
+  reported, a restart with the holder lost (reconciled, nothing new started) and one whose work
+  finished meanwhile (accepted through `reconcileRun`), a review left to the operator for want
+  of a required check, a result off the written subject, and the refusals with no board.
 
 ## Source layout
 
@@ -402,5 +436,6 @@ in `engine.ts`:
 | `sessions.ts` | wake-on-message, checkpoints, compaction |
 | `operator.ts` | `stop`, `continue`, `supersede`, `approve` |
 | `retention.ts` | `delete` and the expiry of private text and runs; a deleted run releases the Worker sessions no other run uses |
+| `tasks.ts` | runs that serve a board task: taking the task, run first then work, lease renewal, the holder lost, the result's subject and acceptance, the report through the board's moves |
 | `views.ts` | run views, `usage`, `explain` |
 | `tools.ts` | the MCP tools |

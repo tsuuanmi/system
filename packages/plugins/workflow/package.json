@@ -2,7 +2,7 @@
   "name": "@tsuuanmi/system-workflow",
   "version": "0.0.0",
   "private": true,
-  "description": "ctx.workflow: the single workflow engine (MVP subset: static DAGs, durable nodes, routing by capability, acceptance, recovery, teams that vote); contributes MCP ask, research, brainstorm, review, vote, run, result, usage, explain",
+  "description": "ctx.workflow: the single workflow engine (MVP subset: static DAGs, durable nodes, routing by capability, acceptance, recovery, teams that vote, runs that serve board tasks); contributes MCP ask, research, brainstorm, review, vote, run, result, usage, explain",
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",
