@@ -226,7 +226,8 @@ Responses and Messages gateways), so they are unaffected by the host choice
 Every new seam ships, with its first provider, an abstract definition, schemas for its records
 and payloads, a written protocol, and a conformance suite
 ([ADR-0037](../decisions/adr/0037-schema-and-protocol-first.md)). Older seams with one provider
-may still be concrete services; the guarantee seams among them get suites in the Base release.
+may still be concrete services; the guarantee seams among them have suites in the plugin that
+provides them, run against that provider, with the documented contract's known gaps baselined.
 Suites written since ADR-0037 run through the
 [conformance runner](../../packages/libs/conformance/runner.ts), modelled on
 `@modelcontextprotocol/conformance`: scenarios with stable ids, each applying from one contract
@@ -247,3 +248,11 @@ Consumers depend on definitions only.
 | `approvals` | `Approvals` in `@tsuuanmi/system-approvals-core` | `approvals-core/conformance/approvals.ts` (contract 1.0) | the fake `FakeApprovals` |
 | `resources` | `Resources` in `@tsuuanmi/system-resources-core` | `resources-core/conformance/resources.ts` (contract 1.0) | the fake `FakeResources` |
 | `board` | `Board` in `@tsuuanmi/system-board-core` | `board-core/conformance/board.ts` (contract 1.0, over any `ctx.approvals`) | the fake `FakeBoard` |
+| `store` | concrete `Store` in `@tsuuanmi/system-store` | `plugins/store/conformance/store.ts` (contract 1.0) | `store` |
+| `eventLog` | concrete `EventLog` in `@tsuuanmi/system-event-log` | `plugins/event-log/conformance/event-log.ts` (contract 1.0) | `event-log` |
+| `artifacts` | concrete `Artifacts` in `@tsuuanmi/system-artifacts` | `plugins/artifacts/conformance/artifacts.ts` (contract 1.0) | `artifacts`, with one known gap baselined (collection does not mark through a run-kept artifact's inputs) |
+| `turnReceipts` | concrete `TurnReceipts` in `@tsuuanmi/system-turn-receipts` | `plugins/turn-receipts/conformance/turn-receipts.ts` (contract 1.0) | `turn-receipts`, with two known gaps baselined (rejected outcomes without reasons; a missing boundary answered RESUBMIT) |
+| `leases` | concrete `Leases` in `@tsuuanmi/system-leases` | `plugins/leases/conformance/leases.ts` (contract 1.0) | `leases` |
+| `egress` | concrete `Egress` in `@tsuuanmi/system-egress` | `plugins/egress/conformance/egress.ts` (contract 1.0) | `egress` |
+| `workerSessions` | concrete `WorkerSessions` in `@tsuuanmi/system-worker-sessions` | `plugins/worker-sessions/conformance/worker-sessions.ts` (contract 1.0) | `worker-sessions`, with four known gaps baselined (re-activation generation, its fence, one writer per subject, egress on message refs) |
+| `workflow` | concrete `Workflow` in `@tsuuanmi/system-workflow` | `plugins/workflow/conformance/workflow.ts` (contract 1.0), beside the template suite `profiles.ts` | `workflow`, with two known gaps baselined (a refused plan and a blocked gate do not name their decision) |
