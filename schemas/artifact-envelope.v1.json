@@ -21,7 +21,7 @@
     },
     "id": {
       "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/sha256",
-      "description": "sha256 of canonical JSON of {kind, body|blob, inputs, lineage, subject}."
+      "description": "sha256 of canonical JSON of {kind, bodySchema, body|blob{ref, mediaType}, inputs, lineage, subject}."
     },
     "kind": {
       "enum": [

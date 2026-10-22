@@ -22,7 +22,7 @@ Every artifact shares one envelope
 | Field | Meaning |
 |---|---|
 | `schema` | `"<name>@<major>.<minor>"` of the envelope |
-| `id` | `sha256:` of the canonical JSON of `{kind, body, inputs, lineage, subject}`; equal content means an equal id |
+| `id` | computed by the store from the content ([formula](../reference/schemas.md#artifact-envelope)); equal content means an equal id |
 | `kind` | one of the kinds below |
 | `bodySchema` | schema of the body, e.g. `decision@1.0` |
 | `body` or `blob` | inline body, or a SHA-256 ref to a large body (planned) |
