@@ -583,7 +583,7 @@ export class FakeBoard extends Board {
     const moved = new Map<string, BoardTask>()
     const movedProjects = new Map<string, Project>()
     // Charters: an approved one takes effect; a refused first charter abandons its project.
-    for (const [requestId, { projectId, version }] of [...this.charters]) {
+    for (const [requestId, { projectId, version }] of this.charters) {
       const request = await this.ctx.approvals.get(requestId)
       if (!request?.resolution) continue
       this.charters.delete(requestId)
