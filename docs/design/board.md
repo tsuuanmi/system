@@ -113,7 +113,9 @@ Unlike A2A, every interrupted state has an expiry.
 ### Where the tables leave room
 
 The store-backed provider settles these cases so that the [fail-closed rules](#fail-closed-rules)
-hold. The fake provider does not check them, and the suite does not test them yet.
+hold. The suite tests, and the fake provider checks too, the acceptance binding, the required
+checks, the gate per attempt, founding milestones, the written subject, the board's own expiry
+of a wait, and a withdrawn wait kept; the other cases only the store-backed provider checks.
 
 - `start` outside an active project is refused (`invalid-transition`), also for a task claimed
   before a pause (rule 1).
@@ -177,6 +179,20 @@ hold. The fake provider does not check them, and the suite does not test them ye
 | waiting-for-input → cancelled | `sweep`, its wait expired | a `board` decision (`input-expired`) | — |
 | any not running or in review → cancelled | `cancel` (`operator`, `lead`, `superseded`) | a `board` decision; a pending approval request is withdrawn once the move committed; dependents are cancelled on the next sweep | a running task or one in review is refused |
 
+### What ends an input wait
+
+Only a question wait takes input. The other input waits record why a person is needed, and no
+input revives them: `answer` refuses them (`invalid`), and they only expire to `cancelled`
+(`input-expired`), or end earlier by `cancel`. To go on, the lead or the operator proposes the
+work again as a new task.
+
+| `waiting.reason` | From | Revived by | Otherwise |
+|---|---|---|---|
+| `question` | `block` with questions | `answer` (`board_update` answers), every question by index: the next attempt, through the gate | expires: `input-expired` |
+| `rejected` | an approval refused or expired, or none could be asked | nothing | expires: `input-expired` |
+| `retries-spent` | review rejected the last attempt, a failed run with none left, or an approval to go on with none left | nothing | expires: `input-expired` |
+| `review-expired` | the reviewer's lease lapsed with no acceptance decision | nothing | expires: `input-expired` |
+
 ### Required checks bind at acceptance
 
 A policy rule `auto` or `notify` may require checks (`requires`, for example tests and lint for
@@ -216,6 +232,6 @@ when the result is accepted:
 
 ## Conformance
 
-[`board-core/conformance/board.ts`](../../packages/board-core/conformance/board.ts), 17
+[`board-core/conformance/board.ts`](../../packages/board-core/conformance/board.ts), 22
 scenarios at contract 1.0, run against the fake provider and the store-backed provider, both over
 the approvals fake, and against the store-backed provider over the store-backed approval queue.

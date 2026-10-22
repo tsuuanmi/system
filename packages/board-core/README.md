@@ -25,9 +25,10 @@ Work state machine **seam definition**
     never started again when its holder is lost, its outcome taken from the run's owner, also
     when its request was withdrawn before the owner's move committed;
   - review to done only by an accepting `acceptance` decision bound to the task's exact result,
-    with the class's required checks passed unless the operator made it; bounded attempts;
-    review bounded by the reviewer's lease;
+    with the class's required checks passed unless the operator made it; bounded attempts,
+    ending in a wait no input revives; review bounded by the reviewer's lease; a result on the
+    subject the task writes;
   - blocking and answering; cancelling, with the approval withdrawn and dependents cancelled;
-    validation of proposals; pausing and closing.
+    validation of proposals and of founding milestones; pausing and closing.
 
   It also exports `FakeBoard`, which passes it.

@@ -313,7 +313,7 @@ Scope: `client`
 
 ## `board_update`
 
-Renew your lease on a task you hold (with its generation), or answer a waiting task's questions (every one, by index).
+Renew your lease on a task you hold (with its generation), or answer a waiting task's questions (every one, by index). Only a question wait takes answers: a rejected, retries-spent, or review-expired wait takes no input and only expires to cancelled.
 
 Scope: `client`
 

@@ -242,6 +242,9 @@ export const boardSuite = defineSuite<Boot>({
       await ctx.board.sweep(new Date(Date.parse(waiting!.expiresAt)))
       const rejected = validTask((await ctx.board.task(merge.taskId))!)
       expect(rejected).toMatchObject({ state: 'waiting-for-input', waiting: { reason: 'rejected' } })
+      // No input revives a rejected wait: it takes no answers and only expires.
+      expect(await failureOf(ctx.board.answer(merge.taskId, [], at(3)))).toBe('invalid')
+      expect(await failureOf(ctx.board.answer(merge.taskId, ['go on'], at(3)))).toBe('invalid')
       await ctx.board.sweep(new Date(Date.parse(rejected.waiting!.expiresAt) - 1))
       expect(await stateOf(ctx, merge.taskId)).toBe('waiting-for-input')
       await ctx.board.sweep(new Date(Date.parse(rejected.waiting!.expiresAt)))
@@ -384,18 +387,23 @@ export const boardSuite = defineSuite<Boot>({
       const expired = validTask((await ctx.board.task(t.taskId))!)
       expect(expired).toMatchObject({ state: 'waiting-for-input', waiting: { reason: 'review-expired' } })
       expect(expired.holder).toBeUndefined()
+      expect(await failureOf(ctx.board.answer(t.taskId, [], at(11)))).toBe('invalid')
       expect(await failureOf(ctx.board.accept(t.taskId, acceptance(ctx, 'accept', t.taskId, result(ctx, 'r')), at(11)))).toBe('invalid-transition')
       await ctx.board.sweep(new Date(Date.parse(expired.waiting!.expiresAt)))
       expect((await ctx.board.task(t.taskId))?.cancellation?.reason).toBe('input-expired')
     }),
-    scenario('retries-bounded', 'waits for input once review rejected the last attempt allowed (INV-9)', async (ctx) => {
+    scenario('retries-bounded', 'waits for input once review rejected the last attempt allowed, a wait no input revives, which expires (INV-9)', async (ctx) => {
       await active(ctx)
       const t = await ready(ctx, task('p1', 't', { maxAttempts: 1 }))
       const { generation } = await ctx.board.claim(t.taskId, 'lead', 600_000, at(3))
       await ctx.board.start(t.taskId, generation, { runId: 'run-1' }, at(3))
       const r = result(ctx, 'only attempt')
       await ctx.board.submit(t.taskId, generation, { artifacts: [r], subject: HEAD }, at(4))
-      expect(validTask(await ctx.board.accept(t.taskId, acceptance(ctx, 'reject', t.taskId, r), at(5)))).toMatchObject({ state: 'waiting-for-input', waiting: { reason: 'retries-spent' } })
+      const spent = validTask(await ctx.board.accept(t.taskId, acceptance(ctx, 'reject', t.taskId, r), at(5)))
+      expect(spent).toMatchObject({ state: 'waiting-for-input', waiting: { reason: 'retries-spent' } })
+      expect(await failureOf(ctx.board.answer(t.taskId, [], at(6)))).toBe('invalid')
+      await ctx.board.sweep(new Date(Date.parse(spent.waiting!.expiresAt)))
+      expect((await ctx.board.task(t.taskId))?.cancellation?.reason).toBe('input-expired')
     }),
     scenario('approval-per-attempt', 'asks the operator again before every new attempt of a task the policy asks about: one approval never covers a later attempt (INV-2)', async (ctx) => {
       await active(ctx, 'p2')

@@ -410,6 +410,25 @@ describe('ctx.board (store-backed): the approval queue', () => {
     expect(await ctx.board.reconcileRun(t.taskId, 'run-1', { status: 'completed', result: { artifacts: [r], subject: on }, acceptance: acceptance(ctx, 'accept', t.taskId, r, on) }, at(11))).toMatchObject({ state: 'done' })
   })
 
+  it('takes no answers for a rejected, retries-spent, or review-expired wait: each only expires to cancelled (S4)', async () => {
+    const b = await boot()
+    const { ctx } = b
+    const call = caller(b)
+    await active(ctx)
+    const merge = await ctx.board.propose(task('p2', 'merge', { actionClass: 'merge' }), at(2))
+    await ctx.board.sweep(at(2))
+    await decide(ctx, (await ctx.board.task(merge.taskId))!.waiting!.approvalRequest!, 'rejected', at(3))
+    await ctx.board.sweep(at(3))
+    const rejected = (await ctx.board.task(merge.taskId))!
+    expect(rejected.waiting?.reason).toBe('rejected')
+    const refused = await call('board_update', { taskId: merge.taskId, answers: [{ question: 0, answer: 'go on' }] })
+    expect(refused.isError).toBe(true)
+    expect(refused.content[0]?.text).toMatch(/^invalid: .*a rejected wait takes no answers and only expires/)
+    expect(await ctx.board.task(merge.taskId)).toEqual(rejected)
+    await ctx.board.sweep(new Date(Date.parse(rejected.waiting!.expiresAt)))
+    expect(await ctx.board.task(merge.taskId)).toMatchObject({ state: 'cancelled', cancellation: { reason: 'input-expired' } })
+  })
+
   it('starts nothing with no attempt left, even when the operator approves going on (INV-9)', async () => {
     const { ctx } = await boot()
     await active(ctx)
@@ -751,6 +770,7 @@ describe('ctx.board (store-backed): board_* MCP tools', () => {
     expect((await call('board_update', { taskId: asks.taskId, answers: [{ question: 1, answer: 'yes' }] })).isError).toBe(true)
     expect((await call('board_update', { taskId: asks.taskId, answers: [{ question: 0, answer: '64' }, { question: 0, answer: '32' }] })).isError).toBe(true)
     expect(await ok(call('board_update', { taskId: asks.taskId, answers: [{ question: 1, answer: 'yes' }, { question: 0, answer: '64' }] }))).toMatchObject({ state: 'ready' })
+    expect(b.mcp().tools.get('board_update')!.spec.description).toMatch(/Only a question wait takes answers/)
     const answered = (await ctx.board.task(asks.taskId))!
     expect(ctx.artifacts.get(answered.lastDecision!)?.body).toMatchObject({ outcome: { detail: { answers: ['64', 'yes'] } } })
 

@@ -87,7 +87,7 @@ const DESCRIPTIONS: Record<BoardTool, string> = {
   board_task: 'Read one task: its goal, acceptance criteria, state, holder, run, result, and why it waits.',
   board_propose: 'Propose a task. The board makes it ready once its dependencies are done and the autonomy policy allows its action class, or asks the operator first.',
   board_claim: 'Take a ready task\'s lease (ready to claimed); present the returned generation on every later write. The lease is capped by leases.maxTtlMs, and the output gives its real expiry. A claimed task is started by the workflow engine, which records its run first; that start is not wired to these tools yet, so a lead cannot take a claimed task to review alone today.',
-  board_update: 'Renew your lease on a task you hold (with its generation), or answer a waiting task\'s questions (every one, by index).',
+  board_update: 'Renew your lease on a task you hold (with its generation), or answer a waiting task\'s questions (every one, by index). Only a question wait takes answers: a rejected, retries-spent, or review-expired wait takes no input and only expires to cancelled.',
   board_complete: 'Submit a running task\'s result with its exact subject (a commit, or the result artifact; the subject a task writes, when it names one): the task goes to review, never straight to done. Only a running task takes a result, and the workflow engine starts a claimed one (not wired to these tools yet), so a task claimed with board_claim cannot be completed alone today.',
   board_cancel: 'Cancel a task that is not running or in review; a pending approval request is withdrawn and the tasks that depend on it are cancelled.',
 }

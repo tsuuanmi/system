@@ -77,7 +77,9 @@ charters, and their tasks.
     `claimed` alone, and its lease lapses back to `ready`;
   - `board_update` renews the caller's lease for as long as it was claimed, or answers every
     question of a waiting task by index, not both; its `note` is not stored (no record holds
-    progress notes yet);
+    progress notes yet). Only a `question` wait takes answers: a `rejected`, `retries-spent`, or
+    `review-expired` wait takes no input and only expires to cancelled
+    ([what ends an input wait](../../../docs/design/board.md#what-ends-an-input-wait));
   - `board_cancel` cancels as `operator` for an operator token and as `lead` for a client one;
   - `board_projects` and `board_brief` give no `budget`: use comes from the resource ledger,
     which has no provider yet;
