@@ -68,7 +68,7 @@ An amendment (a pivot) does not change the project's state: the new charter wait
 | proposed → active | `sweep`, on an approved request | the request's `approval` decision; `charter.approval` names the verdict | none: until approved nothing starts |
 | proposed → closed | `sweep`, on a rejected or expired request | `closure: abandoned` with that decision | — |
 | active ↔ paused | `pause`, `resume` | a `board` decision | other states refused (`invalid-transition`) |
-| active or paused → closed | `close` | a `board` decision and `closure`; open tasks are cancelled (`project-closed`) | refused while a task runs or is in review |
+| active or paused → closed | `close` | a `board` decision and `closure`; open tasks are cancelled (`project-closed`) in the same transaction, and the requests they and a pending amendment waited on are withdrawn after it | refused while a task runs or is in review |
 
 ## Task
 
@@ -115,8 +115,14 @@ hold. The fake provider does not check them, and the suite does not test them ye
   before a pause (rule 1).
 - An `acceptance` decision applies only when one of its inputs is an artifact of the result it
   decides on, and its outcome is `accept` or `reject`; anything else is refused (`invalid`,
-  rule 5). A run owner's report is checked the same way before the pending request is withdrawn,
-  so a refused report changes nothing.
+  rule 5). A run owner's report is checked the same way before anything moves, so a refused
+  report changes nothing.
+- A move that ends a wait on an approval request (`reconcileRun`, `cancel`, `close`) reads the
+  request first, so with the queue unavailable nothing moves (rule 7), then commits, and
+  withdraws the request only after: a crash between the two leaves an open request that nothing
+  waits on, which expires on its own and moves nothing if approved. Only the board withdraws its
+  requests, so the sweep leaves a task waiting on a withdrawn request as it is: that is the same
+  crash the other way round, and the run's owner may still report.
 - An approval to go on with no attempt left starts nothing: the task waits for input
   (`retries-spent`), so `attempts.count` never exceeds `attempts.max`.
 - One amendment waits at a time: another is refused (`invalid-transition`) until it is approved,
@@ -137,14 +143,14 @@ hold. The fake provider does not check them, and the suite does not test them ye
 | running → review | `submit`, with the result's exact subject (a commit, or the result artifact) | a `board` decision; `result` | unknown result artifacts are refused |
 | running → waiting-for-approval | `block` (`budget-spent`: action class `funding`), or `sweep` when the holder's lease lapsed mid-run (`reconciliation-failed`: `remediation`) | the `autonomy` decision and an approval request | the run is never started again on its own (INV-4) |
 | running → waiting-for-input | `block` with questions | a `board` decision | a question wait without questions is refused |
-| running or waiting-for-approval (`reconciliation-failed`) → done, ready, or waiting-for-input | `reconcileRun` by the run's owner (the workflow engine), after it reconciled the recorded run | the acceptance decision of a completed run, or a `board` decision for a failed one; the pending approval request is withdrawn | an outcome for another run id is refused; an unknown outcome is never reported, so the task keeps waiting for approval |
+| running or waiting-for-approval (`reconciliation-failed`) → done, ready, or waiting-for-input | `reconcileRun` by the run's owner (the workflow engine), after it reconciled the recorded run | the acceptance decision of a completed run, or a `board` decision for a failed one; the pending approval request is withdrawn once the move committed | an outcome for another run id is refused; an unknown outcome is never reported, so the task keeps waiting for approval |
 | review → waiting-for-input | `sweep`, the reviewer's lease lapsed with no decision | a `board` decision (`review-expired`) | the wait expires and cancels the task |
 | review → done | `accept` with an `acceptance` decision whose outcome is `accept` | that decision; `result.acceptance`; the run and subject stay | a decision of another type is refused |
 | review → ready / waiting-for-input | `accept` with a `reject` outcome | that decision; another attempt while `count < max`, else `retries-spent` | — |
 | waiting-for-approval → ready / waiting-for-input | `sweep`, on the request's resolution | the request's `approval` decision | rejection and expiry never start work: the task waits for input (`rejected`) |
 | waiting-for-input → ready | `answer`, every question answered | a `board` decision | partial answers are refused |
 | waiting-for-input → cancelled | `sweep`, its wait expired | a `board` decision (`input-expired`) | — |
-| any not running or in review → cancelled | `cancel` (`operator`, `lead`, `superseded`) | a `board` decision; a pending approval request is withdrawn; dependents are cancelled on the next sweep | a running task or one in review is refused |
+| any not running or in review → cancelled | `cancel` (`operator`, `lead`, `superseded`) | a `board` decision; a pending approval request is withdrawn once the move committed; dependents are cancelled on the next sweep | a running task or one in review is refused |
 
 ## Fail-closed rules
 

@@ -334,33 +334,42 @@ export class StoreBoard extends Board {
     if (before.project.state !== 'active' && before.project.state !== 'paused') throw new BoardError('invalid-transition', `${projectId} is ${before.project.state}`)
     const open = await this.tasks({ projectId, states: [...OPEN] })
     if (open.some((t) => t.state === 'running' || t.state === 'review')) throw new BoardError('invalid-transition', `${projectId} has a task running or in review`)
-    // What waits on the operator for this project is withdrawn first: with the queue unavailable, nothing closes.
-    for (const t of open) if (t.waiting?.approvalRequest) await this.ctx.approvals.withdraw(t.waiting.approvalRequest, at)
-    if (before.request) await this.ctx.approvals.withdraw(before.request, at)
-    const revisions = new Map(open.map((t) => [t.taskId, t.revision]))
-    return this.ctx.store.transaction(() => {
+    // With the queue unavailable nothing closes (rule 7): what waits on it is read before anything moves.
+    await this.reachable([...open.flatMap((t) => (t.waiting?.approvalRequest ? [t.waiting.approvalRequest] : [])), ...(before.request ? [before.request] : [])])
+    const { project, released } = this.ctx.store.transaction(() => {
       const now = this.projectOf(projectId)
       if (now.project.revision !== before.project.revision) throw new BoardError('conflict', `${projectId} changed while it was being closed`)
-      const cancelled: string[] = []
-      for (const t of this.ctx.store.db.prepare(`SELECT task_id FROM board_tasks WHERE project_id = ? AND state IN (${OPEN.map(() => '?').join(', ')}) ORDER BY seq`).all(projectId, ...OPEN) as Array<{ task_id: string }>) {
-        const current = this.taskOf(t.task_id)
-        const seen = revisions.get(t.task_id)
-        if (current.task.state === 'running' || current.task.state === 'review') throw new BoardError('invalid-transition', `${projectId} has a task running or in review`)
-        // A task that moved meanwhile, or a new one waiting on a request not withdrawn above.
-        if ((seen !== undefined && seen !== current.task.revision) || (seen === undefined && current.task.waiting?.approvalRequest)) {
-          throw new BoardError('conflict', `${t.task_id} changed while ${projectId} was being closed`)
-        }
-        this.commit(current, this.cancelMove(now.project, current.task, 'project-closed', at), at)
-        cancelled.push(t.task_id)
-      }
+      const { cancelled, released } = this.cancelOpen(now.project, at)
       const decision = this.decision(now.project, undefined, {
-        from: now.project.state, to: 'closed', why: `closed as ${outcome}`, whyNot: `the lead or the operator closed it; ${cancelled.length} open task(s) cancelled`,
-        detail: { outcome, cancelled: cancelled.length },
+        from: now.project.state, to: 'closed', why: `closed as ${outcome}`, whyNot: `the lead or the operator closed it; ${cancelled} open task(s) cancelled`,
+        detail: { outcome, cancelled },
       }, at)
-      return this.writeProject(now.project, changed(now.project, at, {
+      const closed = this.writeProject(now.project, changed(now.project, at, {
         state: 'closed', closure: { outcome, decision, at: at.toISOString() }, lastDecision: decision, proposedCharter: undefined,
       }), null)
+      return { project: closed, released: [...released, ...(now.request ? [now.request] : [])] }
     })
+    // Withdrawn only once the move committed (S7): a crash or a failed transaction leaves every wait as it was.
+    await this.withdrawAll(released, at)
+    return project
+  }
+
+  /**
+   * Cancel every open task of `project` (`project-closed`) inside the caller's transaction; refused
+   * while one runs or is in review. Returns how many it cancelled and the requests they waited on,
+   * which the caller withdraws once the transaction committed.
+   */
+  private cancelOpen(project: Project, at: Date): { cancelled: number; released: string[] } {
+    const released: string[] = []
+    let cancelled = 0
+    for (const t of this.ctx.store.db.prepare(`SELECT task_id FROM board_tasks WHERE project_id = ? AND state IN (${OPEN.map(() => '?').join(', ')}) ORDER BY seq`).all(project.projectId, ...OPEN) as Array<{ task_id: string }>) {
+      const current = this.taskOf(t.task_id)
+      if (current.task.state === 'running' || current.task.state === 'review') throw new BoardError('invalid-transition', `${project.projectId} has a task running or in review`)
+      if (current.task.waiting?.approvalRequest) released.push(current.task.waiting.approvalRequest)
+      this.commit(current, this.cancelMove(project, current.task, 'project-closed', at), at)
+      cancelled += 1
+    }
+    return { cancelled, released }
   }
 
   // --- tasks ---
@@ -513,10 +522,11 @@ export class StoreBoard extends Board {
     }
     if (before.run?.runId !== runId) throw new BoardError('invalid', `${taskId} recorded run ${before.run?.runId ?? '(none)'}, not ${runId}`)
     if (outcome.status !== 'completed' && outcome.status !== 'failed') throw new BoardError('invalid', 'a run is reported completed or failed; an unknown outcome is never reported')
-    // Checked before the pending request is withdrawn, so a report that is refused changes nothing.
+    // Checked before anything moves, so a report that is refused changes nothing.
     if (outcome.status === 'completed') this.acceptanceMove(before, outcome.result, outcome.acceptance, at, false)
-    if (before.waiting?.approvalRequest) await this.ctx.approvals.withdraw(before.waiting.approvalRequest, at)
-    return this.commitLater(before, at, undefined, (current) => {
+    const pending = before.waiting?.approvalRequest
+    await this.reachable(pending ? [pending] : [])
+    const moved = this.commitLater(before, at, undefined, (current) => {
       if (outcome.status === 'completed') return this.acceptanceMove(current.task, outcome.result, outcome.acceptance, at)
       const { task } = current
       const { project } = this.projectOf(task.projectId)
@@ -529,6 +539,10 @@ export class StoreBoard extends Board {
         ? { changes: { state: 'ready', holder: undefined, run: undefined, waiting: undefined, lastDecision: decision } }
         : { changes: { state: 'waiting-for-input', holder: undefined, waiting: this.inputWait('retries-spent', at), lastDecision: decision } }
     })
+    // The move commits first and the request is withdrawn after (S7): a crash between them leaves an
+    // open request nothing waits on, which expires on its own; the accepted result is kept.
+    if (pending) await this.withdrawUnheld(pending, at)
+    return moved
   }
 
   async block(taskId: string, generation: number, wait: { reason: 'budget-spent' | 'reconciliation-failed' | 'question'; questions?: string[] }, at: Date = new Date()) {
@@ -584,8 +598,12 @@ export class StoreBoard extends Board {
     if (note !== undefined && (note.length === 0 || [...note].length > 500)) throw new BoardError('invalid', 'a cancellation note is 1 to 500 characters')
     const before = this.taskOf(taskId).task
     this.expectState(before, ...CANCELLABLE)
-    if (before.waiting?.approvalRequest) await this.ctx.approvals.withdraw(before.waiting.approvalRequest, at)
-    return this.commitLater(before, at, undefined, (current) => this.cancelMove(this.projectOf(current.task.projectId).project, current.task, reason, at, undefined, note))
+    const pending = before.waiting?.approvalRequest
+    await this.reachable(pending ? [pending] : [])
+    const cancelled = this.commitLater(before, at, undefined, (current) => this.cancelMove(this.projectOf(current.task.projectId).project, current.task, reason, at, undefined, note))
+    // Withdrawn after the move committed (S7), as in reconcileRun.
+    if (pending) await this.withdrawUnheld(pending, at)
+    return cancelled
   }
 
   async sweep(at: Date) {
@@ -711,6 +729,9 @@ export class StoreBoard extends Board {
           return undefined
         }
         if (!request.resolution) return undefined
+        // Only the board withdraws a request, and only once nothing waits on it: a task still waiting
+        // on a withdrawn one is a crash between the two (S7), so it keeps waiting for its owner's report.
+        if (request.resolution.cause === 'withdrawn') return undefined
         const resolution = request.resolution
         return this.commitLater(task, at, undefined, (c) => {
           // An approval counts only from the board's own request for this task (INV-5).
@@ -777,8 +798,21 @@ export class StoreBoard extends Board {
   }
 
   /**
-   * Withdraw a request a move opened (or adopted) but could not commit, unless a stored project or
-   * task waits on it: a concurrent move adopted it first. If this fails too, it expires on its own.
+   * Read each request before a move that will withdraw it commits, so that with the queue
+   * unavailable the move fails and nothing moves (rule 7). Unknown ones are fine: nothing to withdraw.
+   */
+  private async reachable(requestIds: string[]): Promise<void> {
+    for (const requestId of requestIds) await this.ctx.approvals.get(requestId)
+  }
+
+  private async withdrawAll(requestIds: string[], at: Date): Promise<void> {
+    for (const requestId of requestIds) await this.withdrawUnheld(requestId, at)
+  }
+
+  /**
+   * Withdraw a request nothing waits on: one a move ended (after that move committed), or one a move
+   * opened (or adopted) but could not commit, unless a stored project or task waits on it: a
+   * concurrent move adopted it first. If this fails, it expires on its own.
    */
   private async withdrawUnheld(requestId: string, at: Date): Promise<void> {
     const held = this.ctx.store.db.prepare('SELECT 1 FROM board_projects WHERE charter_request = ?').get(requestId)

@@ -33,6 +33,8 @@ class RecordingMcp extends McpTools {
 /** The approvals fake, which can be taken down: every call then throws, as an unavailable queue would. */
 class FlakyApprovals extends FakeApprovals {
   down = false
+  /** Only withdrawals fail, as a crash right after a move committed would leave it. */
+  withdrawDown = false
   private up(): void {
     if (this.down) throw new Error('the approval queue is unavailable')
   }
@@ -41,7 +43,11 @@ class FlakyApprovals extends FakeApprovals {
   override async request(request: NewRequest, when?: Date) { this.up(); return super.request(request, when) }
   override async get(requestId: string) { this.up(); return super.get(requestId) }
   override async list(filter?: Parameters<FakeApprovals['list']>[0]) { this.up(); return super.list(filter) }
-  override async withdraw(requestId: string, when?: Date) { this.up(); return super.withdraw(requestId, when) }
+  override async withdraw(requestId: string, when?: Date) {
+    this.up()
+    if (this.withdrawDown) throw new Error('the approval queue is unavailable')
+    return super.withdraw(requestId, when)
+  }
 }
 
 interface Booted {
@@ -301,6 +307,51 @@ describe('ctx.board (store-backed): the approval queue', () => {
     const stopped = (await ctx.board.task(t.taskId))!
     expect(stopped).toMatchObject({ state: 'waiting-for-input', waiting: { reason: 'retries-spent' }, attempts: { count: 1, max: 1 } })
     expect(ctx.artifacts.get(stopped.lastDecision!)?.body).toMatchObject({ decisionType: 'approval' })
+  })
+
+  it('commits a move before it withdraws the request the task waited on: a withdrawal that fails after it leaves an open request that changes nothing (S7)', async () => {
+    const { ctx, approvals } = await boot()
+    await active(ctx)
+    const t = await ready(ctx, task('p2', 't'))
+    const { generation } = await ctx.board.claim(t.taskId, 'lead', 60_000, at(3))
+    await ctx.board.start(t.taskId, generation, { runId: 'run-1' }, at(3))
+    await ctx.board.sweep(at(10))
+    const requestId = (await ctx.board.task(t.taskId))!.waiting!.approvalRequest!
+    approvals().withdrawDown = true
+    const r = result(ctx, 'finished')
+    expect(await ctx.board.reconcileRun(t.taskId, 'run-1', { status: 'completed', result: { artifacts: [r], subject: HEAD }, acceptance: acceptance(ctx, 'accept', r) }, at(11)))
+      .toMatchObject({ state: 'done', result: { artifacts: [r] } })
+    expect((await ctx.approvals.get(requestId))?.state).toBe('open')
+    // The operator approving the orphan, or its expiry, moves nothing: no task waits on it.
+    await decide(ctx, requestId, 'approved', at(12))
+    expect(await ctx.board.sweep(at(12))).toEqual({ tasks: [], projects: [] })
+    expect((await ctx.board.task(t.taskId))?.state).toBe('done')
+
+    const merge = await ctx.board.propose(task('p2', 'merge', { actionClass: 'merge' }), at(12))
+    approvals().withdrawDown = false
+    await ctx.board.sweep(at(12))
+    const waitedOn = (await ctx.board.task(merge.taskId))!.waiting!.approvalRequest!
+    approvals().withdrawDown = true
+    expect(await ctx.board.cancel(merge.taskId, 'lead', undefined, at(13))).toMatchObject({ state: 'cancelled' })
+    expect((await ctx.approvals.get(waitedOn))?.state).toBe('open')
+    await ctx.approvals.sweep(at(60 * 24 * 30))
+    expect(await ctx.board.sweep(at(60 * 24 * 30))).toEqual({ tasks: [], projects: [] })
+  })
+
+  it('withdraws nothing when a close fails after reading its tasks, so every wait stays as it was (M1)', async () => {
+    const { ctx } = await boot()
+    await active(ctx)
+    const merge = await ctx.board.propose(task('p2', 'merge', { actionClass: 'merge' }), at(2))
+    await ctx.board.sweep(at(2))
+    const waiting = (await ctx.board.task(merge.taskId))!
+    // The close stops at its first await; the project is paused meanwhile, so its transaction refuses.
+    const closing = ctx.board.close('p2', 'stopped', at(3))
+    await ctx.board.pause('p2', at(3))
+    expect(await failureOf(closing)).toBe('conflict')
+    expect(await ctx.board.task(merge.taskId)).toEqual(waiting)
+    expect((await ctx.approvals.get(waiting.waiting!.approvalRequest!))?.state).toBe('open')
+    expect(await ctx.board.close('p2', 'stopped', at(4))).toMatchObject({ state: 'closed' })
+    expect((await ctx.approvals.get(waiting.waiting!.approvalRequest!))?.resolution?.cause).toBe('withdrawn')
   })
 
   it('withdraws a pending amendment\'s request when its project closes, and holds one amendment at a time', async () => {

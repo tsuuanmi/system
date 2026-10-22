@@ -22,6 +22,10 @@ charters, and their tasks.
     subject and that task.
   - Before it opens a request, the board adopts its own open request on the same subject, one a
     crash left between asking and committing, so a retried move asks the operator once.
+  - A move that ends a wait (`reconcileRun`, `cancel`, `close`) reads the request first, commits,
+    and withdraws it after; a withdrawal that fails is logged, and the request expires on its
+    own. The sweep leaves a task waiting on a withdrawn request as it is (only the board
+    withdraws).
 - **Leases.** A task's holder is a `ctx.leases` lease on `board-task:<taskId>`; its generation is
   the holder's generation. The lease token stays in the store, never in the record. Every write a
   holder makes (`start`, `submit`, `block`, `renew`) presents the generation and passes the
