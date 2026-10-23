@@ -22,7 +22,8 @@
 > projection (`renderTasks` in [`board-core`](../../packages/board-core/README.md)) is written
 > into a task run's own worktree ([TASKS.md in a run's workspace](workflow-engine.md#tasksmd-in-a-runs-workspace)).
 > Differs from target: a budget is enforced before a run, never during it, so a run can overdraw
-> its last lines; only a Worker source with a worktree per run writes `TASKS.md`. The operator
+> its last lines ([ADR-0047](../decisions/adr/0047-a-run-stops-at-a-boundary-once-its-task-budget-is-spent.md),
+> proposed); only a Worker source with a worktree per run writes `TASKS.md`. The operator
 > accepts or rejects a review, and pauses, resumes, or closes a project, on `/ui`
 > ([`web-ui`](../../packages/plugins/web-ui/README.md)).
 

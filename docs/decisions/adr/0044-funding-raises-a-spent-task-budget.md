@@ -116,3 +116,6 @@ chosen, and only the workflow engine changes.
 - **Crash suite.** `budget.crash.ts` kills the engine inside that transaction (the restart decides
   again, once) and as the report reaches the board (the restart reports once). Either way the task
   ends as `retries-spent`, and nothing is put to the operator.
+
+Still open: stopping a run that overdraws its lines while it runs
+([ADR-0047](0047-a-run-stops-at-a-boundary-once-its-task-budget-is-spent.md), proposed).

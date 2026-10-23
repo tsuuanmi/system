@@ -584,7 +584,10 @@ stateDiagram-v2
 
 - **Before, never after** (resources rule 4): a run that overdraws its lines while it runs is
   not stopped mid-run; what it drew is recorded under the task, so the task's next attempt is
-  refused, and the brief tells each Worker what is left.
+  refused, and the brief tells each Worker what is left. Stopping it at its next step, then at an
+  agent run's next turn or tool boundary, is proposed in
+  [ADR-0047](../decisions/adr/0047-a-run-stops-at-a-boundary-once-its-task-budget-is-spent.md):
+  the ledger records no usage while a run is in flight, and no seam stops one at a boundary yet.
 - **Restart** (INV-4): the reservation's state is on the run's row, and the ledger's decision is
   recorded before the effect; a run left `due` reserves when it advances again, one left `spent`
   asks and blocks again (or ends again on the last attempt: its decision, its row, and its failure
