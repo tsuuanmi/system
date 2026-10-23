@@ -17,6 +17,10 @@
  * policy through `ctx.approvals` (optional; none, and no tool call runs), so a Worker whose runtime
  * cannot ask a gate before each tool call is unavailable. A run that a gate deferred fails, naming
  * the approval request it waits for; a later run of its session makes the call once approved.
+ * Each runtime's enrollment slots and the agent accounts in them, identified by their verified
+ * login, are kept by ./accounts.ts (ADR-0051), with the operator's tools in ./tools.ts: while the
+ * account enrolled in a runtime's own home is not `ready` (nor `unverified` for want of a reader),
+ * that runtime's Workers take no work.
  * @module @tsuuanmi/system-agent-workers
  */
 import { randomBytes } from 'node:crypto'
@@ -866,7 +870,7 @@ export class AgentWorkers extends Service {
     }
     // The account enrolled in its home is read again before the run: a principal changed since the
     // probe quarantines it, and the gate below fails the run unsubmitted (ADR-0051, INV-2).
-    await this.agentAccounts.recheck(worker.runtime, provider.home)
+    if (provider.home !== undefined) await this.agentAccounts.recheck(worker.runtime, provider.home)
     // Queued before its account hit a limit (its runtime's cooldown, or another of its Workers' pools):
     // it would hit it again (INV-2). Its own pool is its reservation's to check.
     const held = await this.accountGate(worker, false)
