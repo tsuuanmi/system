@@ -292,6 +292,10 @@ count, never from a model.
   subject's version is their hash, so what the operator approved is what is added.
 - A `budget-spent` block without `funding` asks only to go on, as at 1.1. The engine sends none when
   the ledger cannot count the task's usage.
+- The workflow engine makes no `budget-spent` block on a task's last attempt, since no approval
+  could serve it: it reports the run failed (`reconcileRun`), and the task waits for input
+  (`retries-spent`) with nothing asked ([funding a spent task](workflow-engine.md#funding-a-spent-task)).
+  A block another holder makes then is approved to no effect, as the "not funded" row says.
 
 ### A digest on a result
 

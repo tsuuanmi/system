@@ -562,8 +562,10 @@ stateDiagram-v2
   due --> failed: ledger refuses, a pool not configured or unavailable now
   reserved --> released: the run finished
   spent --> asked: the funding ask fixed on the run's row
+  spent --> ended: the run was the task's last attempt (gate decision)
   asked --> blocked: board.block budget-spent with it
   blocked --> [*]: the run ends with nothing run
+  ended --> [*]: the run fails with nothing run; its report leaves the task retries-spent
   failed --> [*]: the run fails, an attempt the board counts
   released --> [*]
   refused_start --> [*]
@@ -575,6 +577,7 @@ stateDiagram-v2
 | due → reserved | after the board recorded the run and before any step runs: `ctx.resources.reserve` for the run and its task (and project), the task's lines as `caps`, and as `lines` the least the run draws on each (one token, turn, or run; a millionth of a dollar or a minute), so a line the task already reached refuses it; the ledger's `budget` decision, and where it stands on the run's `workflow_tasks` row; `workflow.task.budget` | no ledger loaded, or one that does not answer: the run waits and asks again (nothing runs without a reservation) |
 | due → spent | the ledger refused it while every pool is configured and available: a cap is reached | — |
 | spent → asked | the funding ask ([below](#funding-a-spent-task)), on the run's row (`budget.funding`, the run's view) before the block | a board or ledger that does not answer: the run waits and asks again |
+| spent → ended | the board shows the run as the task's last attempt (`attempts.count` is `attempts.max`): no funding is asked, since an approval could raise nothing and start no attempt; a `gate` decision (`workflow.task-funding`, `end`, its input the ledger's refusal), and in one transaction with it the decision on the run's row (`budget.lastAttempt`, the run's view) and the run failed as `budget_spent` (`USER_ACTION`) with nothing of it run, its message saying it was the last attempt; its report is a failed run (`reconcileRun`), which leaves the task waiting for input (`retries-spent`), and nothing is put to the operator | a board that does not answer: the run waits and reads it again |
 | asked → blocked | the holder blocks the task (`board.block`, `budget-spent`, with the ask as `funding` unless it is empty), so the board asks the policy about `funding` and the operator decides whether the budget is raised by those lines and the task goes on ([board](board.md#funding-a-spent-budget)); then the run fails as `budget_spent` (`USER_ACTION`) with nothing of it run, its message naming the ask; its outcome is `blocked` | a board that does not answer is asked again; one that refuses the block (the holder lapsed, say) ends the run all the same, and its report reconciles it as a failed run |
 | due → failed | the ledger refused it for want of a pool (not configured, or unavailable since the start), or refused the request itself: the run fails as `quota_exhausted` with nothing of it run | its report is a failed attempt (`reconcileRun`), through the board's gate |
 | reserved → released | when the run finishes, completed or not; a reservation a stop left held is released at the next start | a ledger that does not release it: the hold expires on its own (`holdSeconds`, INV-9) |
@@ -584,9 +587,11 @@ stateDiagram-v2
   refused, and the brief tells each Worker what is left.
 - **Restart** (INV-4): the reservation's state is on the run's row, and the ledger's decision is
   recorded before the effect; a run left `due` reserves when it advances again, one left `spent`
-  asks and blocks again, one left `asked` blocks again with the same lines (a block the board
-  already took is refused, and the run then ends), and a hold a crash left unrecorded expires on
-  its own.
+  asks and blocks again (or ends again on the last attempt: its decision, its row, and its failure
+  commit together, so a crash leaves all three or none), one left `asked` blocks again with the
+  same lines (a block the board already took is refused, and the run then ends), an `ended` run
+  is reported once, read against the board's record first, and a hold a crash left unrecorded
+  expires on its own.
 
 #### Funding a spent task
 
@@ -604,7 +609,11 @@ and each pool, the records a cap counts), never from a model:
   attempt reserves, and its brief gives it 1 run and 1 usd;
 - empty when no line is reached by recorded usage (holds that expire refused the run), or when the
   ledger cannot count the task's usage (more records than `usage` returns): the block then names no
-  `funding`, and the request asks only to go on.
+  `funding`, and the request asks only to go on;
+- never made for the task's last attempt: with no attempt left, an approval could raise nothing and
+  start nothing (the board never makes a task ready past `attempts.max`), so the run blocks
+  nothing, and its report leaves the task waiting for input (`retries-spent`)
+  ([above](#a-tasks-budget); [ADR-0044, amended](../decisions/adr/0044-funding-raises-a-spent-task-budget.md#amendment-2026-10-23-no-funding-asked-on-a-tasks-last-attempt)).
 
 The board bounds the ask (`fundingMaxPercent`): one past it opens no request, and the task waits
 for input. The board adds an approved ask to the task's budget before it gates the next attempt,
