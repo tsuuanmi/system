@@ -150,7 +150,10 @@ exists: before then, nothing could reconcile such a run, and its scope would sta
 1. No run starts without a reservation; with `ctx.resources` unavailable, none is made and no
    run starts (INV-2).
 2. A limited pool admits no new work until its window resets, and a limit hit is never retried
-   on the same pool (PROP-0008: switch account or wait).
+   on the same pool (PROP-0008: switch account or wait). The wait lasts until the reset its
+   runtime read from the agent's own report
+   ([limit readings](agent-runtimes.md#limit-readings)), else for the Worker's cooldown; a
+   reading that cannot be read never opens a pool.
 3. Usage is never estimated from a model's own report. A missing number stays missing: a cap
    counts it as 0, and it is recorded and shown ([above](#usage-the-ledger-cannot-count)).
 4. Every cap is enforced before the run, never after, and every hold expires (INV-9).

@@ -7,7 +7,7 @@ import { type Confinement, meteringOf, proveConfinement, type ToolCall, type Too
 import { afterAll, beforeEach, describe, expect, it } from 'vitest'
 import { agentRuntimeProviderConformance, expectConsistentMetering } from '../../../agent-runtime-core/conformance/agent-runtimes.ts'
 import { HOOK_COMMAND, HOOK_ENV, HOOK_NAME, HOOKS_JSON, openChannel, TOKEN_ENV } from '../src/bridge.ts'
-import { AntigravityRuntime, type HookProof, refusal, type RuntimeOptions, usageFrom, VERIFIED_HOOK_VERSIONS, workspaceCustomizations } from '../src/index.ts'
+import { AntigravityRuntime, type HookProof, limitsFromUsage, refusal, type RuntimeOptions, USAGE_ARGS, usageFrom, VERIFIED_HOOK_VERSIONS, VERIFIED_LIMIT_VERSIONS, workspaceCustomizations } from '../src/index.ts'
 
 const PASSTHROUGH = fileURLToPath(new URL('../../../agent-runtime-core/conformance/passthrough-bwrap.sh', import.meta.url))
 const FAKE = fileURLToPath(new URL('./fake-agy.mjs', import.meta.url))
@@ -551,6 +551,95 @@ function findBwrap(): string | undefined {
 const BWRAP = findBwrap()
 // CI requires the real bubblewrap, so a missing one fails instead of skipping silently.
 const REQUIRED = process.env.SYSTEM_REQUIRE_BWRAP === '1'
+
+describe('antigravity-cli: a quota\'s reset time, from agy\'s own usage report (docs/design/agent-runtimes.md#metering)', () => {
+  const fixture = JSON.parse(readFileSync(fileURLToPath(new URL('./fixtures/agy-1.4.6-usage.json', import.meta.url)), 'utf8')) as {
+    observedAt: string; cases: Array<{ case: string; stdout: unknown; limits?: unknown[]; unreadable?: string }>
+  }
+  const text = (stdout: unknown): string => (typeof stdout === 'string' ? stdout : JSON.stringify(stdout))
+  const workspace = join(root, 'limited')
+  mkdirSync(workspace, { recursive: true })
+  const spec = { prompt: 'x', workspace, sandbox: 'read-only' as const }
+  const quota = { result: { status: 'ERROR', error: 'You have exhausted your quota on this model.' }, exitCode: 1 }
+  let reports = 0
+  /** A run on the scripted agy whose usage report prints `stdout`; its error, and agy's log. */
+  const fail = async (s: Record<string, unknown>, extra: { stdout?: unknown; env?: Record<string, string>; version?: string } = {}) => {
+    const sc = scenario(s)
+    const env: Record<string, string> = { ...sc.env, ...extra.env }
+    if (extra.stdout !== undefined) {
+      reports += 1
+      env.FAKE_AGY_USAGE = join(root, `usage-${reports}.json`)
+      writeFileSync(env.FAKE_AGY_USAGE, `${text(extra.stdout)}\n`)
+    }
+    const version = extra.version
+    const error = await runtime({ env, ...(version ? { version: async () => version } : {}) }).run(spec, new AbortController().signal)
+      .then(() => { throw new Error('the run did not fail') }, (e: unknown) => e as Error & { kind: string })
+    return { error, log: sc.log() }
+  }
+
+  it('reads each 1.4.6 report shape, and nothing from one it cannot read (fail closed)', () => {
+    expect(VERIFIED_LIMIT_VERSIONS).toEqual(['1.4.6'])
+    expect(USAGE_ARGS).toEqual(['--print=/usage', '--output-format', 'json'])
+    const observedAt = Date.parse(fixture.observedAt)
+    for (const c of fixture.cases) {
+      const read = limitsFromUsage(text(c.stdout), observedAt)
+      if (c.unreadable !== undefined) expect(read, c.case).toEqual({ unreadable: c.unreadable })
+      else {
+        expect(read, c.case).toEqual({ limits: c.limits })
+        expectConsistentMetering({ limits: (read as { limits: [] }).limits })
+      }
+    }
+  })
+
+  it('a run that hits a quota carries the report\'s limits, read after the run under the home\'s confinement, with no gate and no slash command off', async () => {
+    const before = Date.now()
+    const { error, log } = await fail(quota, { stdout: fixture.cases[0]!.stdout })
+    expect(error.kind).toBe('quota_exhausted')
+    const metering = meteringOf(error)!
+    expect(metering).toMatchObject({ model: 'model-main', turns: 2 })
+    expect(metering.limits).toEqual((fixture.cases[0]!.limits as Array<Record<string, unknown>>).map((l) => ({ ...l, observedAt: expect.any(String) })))
+    expect(Date.parse(metering.limits![0]!.observedAt)).toBeGreaterThanOrEqual(before)
+    expectConsistentMetering(metering)
+    const usage = log.filter((e) => e.command === 'usage') as Array<{ argv: string[]; cwd: string; env: Record<string, string> }>
+    expect(usage).toHaveLength(1)
+    expect(usage[0]!.argv).toEqual([...USAGE_ARGS])
+    expect(usage[0]!.cwd).toBe(HOME)
+    expect(usage[0]!.env).toMatchObject({ HOME, AGY_CLI_DISABLE_AUTO_UPDATE: 'true' })
+    expect(Object.keys(usage[0]!.env).filter((k) => k.startsWith('SYSTEM_'))).toEqual([])
+    // After the run's own print, never before it.
+    expect(log.map((e) => e.command)).toEqual(['print', 'usage'])
+    expect(binds.at(-1)).toEqual({ writable: [HOME] })
+  })
+
+  it('a run without a result that hit a rate limit reads the report too; any other failure never asks for it', async () => {
+    const none = await fail({ result: null, stderr: 'Error: RESOURCE_EXHAUSTED: rate limit' }, { stdout: fixture.cases[1]!.stdout })
+    expect(none.error.kind).toBe('quota_exhausted')
+    expect(meteringOf(none.error)!.limits).toEqual([expect.objectContaining({ window: '*', status: 'rejected', resetsAt: '2026-10-24T10:15:30.250Z' })])
+    const broken = await fail({ result: { status: 'ERROR', error: 'Agent execution terminated due to error.' }, exitCode: 1 }, { stdout: fixture.cases[0]!.stdout })
+    expect(broken.error.kind).toBe('session_broken')
+    expect(broken.log.map((e) => e.command)).toEqual(['print'])
+  })
+
+  it('a report it cannot read, or that fails, gives no limit, and the error says why', async () => {
+    const garbled = await fail(quota, { stdout: fixture.cases.find((c) => c.case.startsWith('not JSON'))!.stdout })
+    expect(garbled.error).toMatchObject({ kind: 'quota_exhausted', message: expect.stringContaining('(its reset time is not read: agy\'s usage report cannot be read: it is not one JSON object)') })
+    expect(meteringOf(garbled.error)!.limits).toBeUndefined()
+    const failing = await fail(quota, { env: { FAKE_AGY_USAGE_FAIL: 'Error: Please sign in.' } })
+    expect(failing.error).toMatchObject({ kind: 'quota_exhausted', message: expect.stringContaining('(its reset time is not read: agy\'s usage report failed: Error: Please sign in. (exit 1))') })
+    expect(meteringOf(failing.error)!.limits).toBeUndefined()
+    // A report with no bucket is read: no limit is known, and the error says nothing more.
+    const empty = await fail(quota)
+    expect(empty.error.message).not.toContain('not read')
+    expect(meteringOf(empty.error)!.limits).toBeUndefined()
+  })
+
+  it('never asks an agy version whose report is not verified, and says so', async () => {
+    const { error, log } = await fail(quota, { stdout: fixture.cases[0]!.stdout, version: '1.4.7' })
+    expect(error).toMatchObject({ kind: 'quota_exhausted', message: expect.stringContaining('(its reset time is not read: the usage report of agy 1.4.7 is not verified)') })
+    expect(meteringOf(error)!.limits).toBeUndefined()
+    expect(log.map((e) => e.command)).toEqual(['print'])
+  })
+})
 
 describe.skipIf(!BWRAP && !REQUIRED)('antigravity-cli under the real bubblewrap: the hook reaches the run\'s gate from inside the confinement', () => {
   const host = mkdtempSync(join(tmpdir(), 'system-agy-host-'))
