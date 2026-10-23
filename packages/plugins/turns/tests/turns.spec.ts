@@ -787,6 +787,28 @@ describe.runIf(canRunBrowser)('ctx.turns: the conversation ledger (PROP-0004 Pha
     expect(fake.deleteRequests).toEqual([])
   }, 120_000)
 
+  it('keeps a due conversation due while its account cannot be read, and keeps it only once the account is removed (INV-2)', async () => {
+    const { ctx, fake } = await boot()
+    liveChecked(ctx)
+    const turn = await ctx.turns.wait((await ask(ctx, { prompt: 'unreadable account', persist: true })).turnId, 30_000)
+    const accounts = ctx.accounts as unknown as { get: (id: string) => Promise<unknown> }
+    const get = accounts.get
+    try {
+      // The vault cannot be read now: the account is unknown, not removed.
+      accounts.get = async () => { throw new Error('vault: authentication failed (wrong key or modified file)') }
+      ctx.turns.release([turn.sessionId!], 'run run_v deleted')
+      await ctx.turns.deleteConversations()
+      await expect.poll(() => ctx.turns.conversations({ sessionId: turn.sessionId! })[0], { timeout: 30_000 }).toMatchObject({ state: 'due', reason: expect.stringMatching(/^the account cannot be read: vault: authentication failed/) })
+      // The catalog no longer has it: removed, so the conversation is kept, and says why.
+      accounts.get = async (id: string) => { throw new ProviderError('invalid_input', `unknown account ${id}`) }
+      await ctx.turns.deleteConversations()
+      await expect.poll(() => ctx.turns.conversations({ sessionId: turn.sessionId! })[0], { timeout: 30_000 }).toMatchObject({ state: 'kept', reason: 'the account was removed' })
+    } finally {
+      accounts.get = get
+    }
+    expect(fake.deleteRequests).toEqual([])
+  }, 120_000)
+
   it('checks the site before deleting again: a deletion a crash interrupted counts as gone, and nothing is clicked', async () => {
     const { ctx, fake } = await boot()
     liveChecked(ctx)

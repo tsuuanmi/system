@@ -12,7 +12,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { DatabaseSync } from 'node:sqlite'
 import type { Lease } from '@tsuuanmi/system-leases'
 import type { ContentId } from '@tsuuanmi/system-libs'
-import { type BrowserTurn, type ConversationMode, type ProviderDriver, type ProviderFeature, type ProviderScheduler, toProviderError } from '@tsuuanmi/system-provider-core'
+import { type BrowserTurn, type ConversationMode, type ProviderDriver, ProviderError, type ProviderFeature, type ProviderScheduler, toProviderError } from '@tsuuanmi/system-provider-core'
 
 export type LedgerState = 'live' | 'due' | 'deleted' | 'kept' | 'failed'
 
@@ -202,10 +202,18 @@ async function deleteOne(host: LedgerHost, row: LedgerRow, lease: () => Lease, l
         .run(...entries.map(([, v]) => v as string | number | null), now(), row.account, row.binding)
     })
   }
-  const account = await ctx.accounts.get(row.account).catch(() => undefined)
-  if (!account) {
-    set({ state: 'kept', reason: 'the account was removed' })
-    return 'kept'
+  let account: Awaited<ReturnType<typeof ctx.accounts.get>>
+  try {
+    account = await ctx.accounts.get(row.account)
+  } catch (error) {
+    // Only an account the catalog no longer has is removed; one that cannot be read now (its
+    // record unreadable, say) is unknown, and the conversation stays due for the next pass.
+    if (error instanceof ProviderError && error.kind === 'invalid_input') {
+      set({ state: 'kept', reason: 'the account was removed' })
+      return 'kept'
+    }
+    set({ reason: `the account cannot be read: ${(error as Error).message.slice(0, 200)}` })
+    return 'waiting'
   }
   const driver = ctx.providers.list().includes(account.provider) ? ctx.providers.get(account.provider) : undefined
   if (!driver?.deleteConversation) {

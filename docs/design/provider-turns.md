@@ -266,7 +266,8 @@ the session that owns it, the turn that opened it, its feature and mode, and its
 - **Kept, and why.** A temporary chat leaves the history on its own (the provider keeps it up to
   30 days on ChatGPT, 72 hours on Gemini) and is never deleted by `system`. A conversation of a
   feature its driver is not proven to delete (`deletes`; Deep research until a live check) is
-  kept, as is one on a site with no deletion or of a removed account.
+  kept, as is one on a site with no deletion or of a removed account (one the catalog no longer
+  has; an account whose record cannot be read now leaves its conversations due, saying why).
 - **Failures** are retried on the next pass; after three attempts the conversation is `failed`,
   and `system health` reports it. A signed-out account leaves its conversations due.
 - **Evidence without the operator's browser:** `system conversation inspect <account> <binding>`
