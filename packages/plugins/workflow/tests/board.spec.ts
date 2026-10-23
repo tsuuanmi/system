@@ -509,7 +509,7 @@ describe('ctx.workflow serves board tasks over the store-backed board and approv
     ] } })
   })
 
-  it('reserves a task\'s budget lines on the ledger before its run starts work, for the task, and releases the reservation when the run finishes (PROP-0010)', async () => {
+  it('reserves a task\'s budget lines on the ledger before its run\'s step starts work, for the task, and releases the reservation when the step and the run finish (PROP-0010)', async () => {
     const { ctx, workers } = await boot({ resources: true })
     await project(ctx)
     await poolOpen(ctx)
@@ -523,7 +523,10 @@ describe('ctx.workflow serves board tasks over the store-backed board and approv
     expect(held).toMatchObject({ state: 'reserved' })
     const reserved = decisionOf(ctx, held.decision)
     expect(reserved).toMatchObject({ decisionType: 'budget', outcome: { option: 'reserved', detail: { runId: run.runId, lines: [{ pool: 'max.programmatic', unit: 'usd', amount: 0.000001 }, { pool: 'max.programmatic', unit: 'runs', amount: 1 }] } } })
-    const { reservationId } = JSON.parse((ctx.store.db.prepare('SELECT budget FROM workflow_tasks WHERE run_id = ?').get(run.runId) as { budget: string }).budget) as { reservationId: string }
+    // Recorded on the run's row under its step before the step started (ADR-0047, step 1).
+    const { holds } = JSON.parse((ctx.store.db.prepare('SELECT budget FROM workflow_tasks WHERE run_id = ?').get(run.runId) as { budget: string }).budget) as { holds: Array<{ step: string; reservationId: string; decision: string }> }
+    expect(holds).toEqual([{ step: 'solo:1:0', nodeId: 'solo', reservationId: expect.any(String), decision: held.decision }])
+    const { reservationId } = holds[0]!
     workers.release(workers.started[0]!.id, { text: 'within budget' })
     expect((await reported(ctx, run.runId)).task?.outcome).toMatchObject({ status: 'accepted', state: 'done' })
     await until(() => ctx.workflow.get(run.runId)!.task!.budget!.state === 'released', 'the reservation released')
@@ -676,6 +679,95 @@ describe('ctx.workflow serves board tasks over the store-backed board and approv
     expect(decisionOf(ctx, ended.lastDecision)).toMatchObject({ decisionType: 'board', outcome: { option: 'waiting-for-input', detail: { runId: run.runId, outcome: 'failed' } } })
     expect((await ctx.approvals.list({ states: ['open', 'batched', 'approved', 'rejected'] })).filter((r) => r.requester.taskId === task.taskId)).toEqual([])
     expect(decisionsOf(ctx, 'gate', 'workflow.task-funding')).toHaveLength(1)
+  })
+
+  it('reserves before each step of a task\'s run: a run whose first step spent the task\'s lines is refused before its second step starts, asks for funding from the ledger\'s count, and the funded attempt is pointed at the completed step (ADR-0047, INV-2, INV-13)', async () => {
+    const { ctx, workers } = await boot({ resources: 'store' })
+    await project(ctx)
+    await poolOpen(ctx)
+    const budget: BudgetLine[] = [{ pool: 'max.programmatic', unit: 'runs', amount: 1 }]
+    const task = await ready(ctx, 'two steps', { budget })
+    workers.reply = () => 'hold'
+    const run = await ctx.workflow.start({ template: 'chain', input: 'q', classification: 'public', task: { taskId: task.taskId } })
+    await until(() => workers.started.length === 1, 'the first step started')
+    expect(ctx.workflow.get(run.runId)!.task!.budget).toMatchObject({ state: 'reserved' })
+    // The first step's Worker run draws the task's one run, as the ledger counts it.
+    await drew(ctx, task.taskId, 'step-a', { runId: workers.started[0]!.id })
+    workers.release(workers.started[0]!.id, { text: 'the first half' })
+
+    const failed = await settled(ctx, run.runId)
+    expect(failed).toMatchObject({ status: 'failed', error: { kind: 'budget_spent', disposition: 'USER_ACTION' } })
+    expect(failed.error!.message).toMatch(/cap 1 runs of max.programmatic would be exceeded/)
+    expect(failed.error!.message).toMatch(/no step of this run started after the 1 that ran before the refusal/)
+    expect(failed.error!.message).toMatch(/asking to raise the budget by \+1 runs of max.programmatic/)
+    // The second step was refused before it was routed or sent: it never started.
+    expect(workers.started).toHaveLength(1)
+    expect(ctx.workflow.records(run.runId).map((r) => [r.nodeId, r.state])).toEqual([['a', 'COMPLETED'], ['b', 'READY']])
+    const view = await reported(ctx, run.runId)
+    expect(view.task?.budget).toMatchObject({ state: 'refused', spent: true, blocked: true, funding: [{ pool: 'max.programmatic', unit: 'runs', amount: 1 }] })
+    expect(view.task?.outcome).toMatchObject({ status: 'blocked', state: 'waiting-for-approval' })
+    // Each step's reservation is the ledger's own decision, recorded before its effect; the first step's hold is released.
+    const budgets = ctx.artifacts.list({ kind: 'decision', decisionType: 'budget', limit: 100 }).map((a) => a.body as Decision).filter((d) => d.outcome.detail?.['runId'] === run.runId)
+    expect(budgets.map((d) => d.outcome.option)).toEqual(['reserved', 'refused'])
+    expect(decisionOf(ctx, view.task!.budget!.decision).outcome.option).toBe('refused')
+    const events = ctx.eventLog.query({ runId: run.runId, type: 'workflow.task.budget', limit: 10 })
+    expect(events.map((e) => [e.nodeId, e.data?.['state']])).toEqual([['a', 'reserved'], ['b', 'refused']])
+    const row = JSON.parse((ctx.store.db.prepare('SELECT budget FROM workflow_tasks WHERE run_id = ?').get(run.runId) as { budget: string }).budget) as { holds?: unknown[] }
+    expect(row.holds).toBeUndefined()
+    expect((await ctx.board.task(task.taskId))!).toMatchObject({ state: 'waiting-for-approval', waiting: { reason: 'budget-spent', funding: [{ amount: 1 }] }, attempts: { count: 1 } })
+
+    // Funded, the next attempt reserves within the raised line, runs both steps, and its brief points at the step the spent budget stopped after.
+    const blocked = (await ctx.board.task(task.taskId))!
+    const request = (await ctx.approvals.get(blocked.waiting!.approvalRequest!))!
+    await ctx.approvals.decide([{ requestId: request.requestId, subject: request.subject, verdict: 'approved' }])
+    await ctx.board.sweep(new Date())
+    workers.reply = (request) => ({ text: `answer: ${request.prompt.length}` })
+    const second = await ctx.workflow.start({ template: 'chain', input: 'q', classification: 'public', task: { taskId: task.taskId } })
+    expect(await settled(ctx, second.runId)).toMatchObject({ status: 'completed' })
+    expect(workers.started).toHaveLength(3)
+    const stepA = ctx.workflow.records(run.runId)[0]!.outputReceipt!.result
+    const brief = ctx.artifacts.get(workers.started[1]!.brief!)!.body as { attempt: number; artifacts: Array<{ ref: string; role: string; note: string }> }
+    expect(brief.attempt).toBe(2)
+    expect(brief.artifacts).toContainEqual({ ref: stepA, role: 'prior', note: 'the result of step a of attempt 1, which the task\'s spent budget stopped before its next step' })
+    expect(ctx.eventLog.query({ runId: second.runId, type: 'workflow.task.budget', limit: 10 }).map((e) => [e.nodeId, e.data?.['state']])).toEqual([['a', 'reserved'], ['b', 'reserved']])
+  })
+
+  it('refuses the next step on a spent budget across a restart of the engine while the first step runs: its reservation is kept, never made twice, and on the task\'s last attempt the run ends with no funding asked (retries-spent) (ADR-0047, ADR-0044, INV-4)', async () => {
+    const { ctx, workers, restartWorkflow } = await boot({ resources: 'store' })
+    await project(ctx)
+    await poolOpen(ctx)
+    const budget: BudgetLine[] = [{ pool: 'max.programmatic', unit: 'runs', amount: 1 }]
+    const task = await ready(ctx, 'last two steps', { budget, maxAttempts: 1 })
+    workers.reply = () => 'hold'
+    const run = await ctx.workflow.start({ template: 'chain', input: 'q', classification: 'public', task: { taskId: task.taskId } })
+    await until(() => workers.started.length === 1, 'the first step started')
+    const holdsOf = (): Array<{ step: string; reservationId: string }> | undefined => (JSON.parse((ctx.store.db.prepare('SELECT budget FROM workflow_tasks WHERE run_id = ?').get(run.runId) as { budget: string }).budget) as { holds?: Array<{ step: string; reservationId: string }> }).holds
+    const before = holdsOf()
+    expect(before).toEqual([expect.objectContaining({ step: 'a:1:0', nodeId: 'a' })])
+    const budgets = (): string[] => ctx.artifacts.list({ kind: 'decision', decisionType: 'budget', limit: 100 }).map((a) => a.body as Decision).filter((d) => d.outcome.detail?.['runId'] === run.runId).map((d) => d.outcome.option)
+
+    // The engine stops while the step runs and starts again: the step is still in flight, so its hold stays, and nothing is reserved again.
+    await restartWorkflow(async () => {
+      await drew(ctx, task.taskId, 'step-a', { runId: workers.started[0]!.id })
+    })
+    await until(async () => (await ctx.workflow.wait(run.runId, 50)).status === 'running' && ctx.workflow.get(run.runId)!.task!.phase === 'started', 'the run resumed')
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    expect(holdsOf()).toEqual(before)
+    expect(budgets()).toEqual(['reserved'])
+    workers.release(workers.started[0]!.id, { text: 'the first half' })
+
+    const failed = await settled(ctx, run.runId)
+    expect(failed).toMatchObject({ status: 'failed', error: { kind: 'budget_spent', disposition: 'USER_ACTION' } })
+    expect(failed.error!.message).toMatch(/no step of this run started after the 1 that ran before the refusal; it was the task's last attempt \(attempt 1 of 1\), so no funding was asked/)
+    expect(workers.started).toHaveLength(1)
+    expect(budgets()).toEqual(['reserved', 'refused'])
+    await expect(ctx.resources.release(before![0]!.reservationId)).rejects.toMatchObject({ failure: 'unknown-reservation' })
+    const view = await reported(ctx, run.runId)
+    expect(view.task?.budget).toMatchObject({ state: 'refused', spent: true, lastAttempt: expect.any(String) })
+    expect(view.task?.budget).not.toHaveProperty('blocked')
+    expect(view.task?.outcome).toMatchObject({ status: 'reconciled', state: 'waiting-for-input' })
+    expect((await ctx.board.task(task.taskId))!).toMatchObject({ state: 'waiting-for-input', waiting: { reason: 'retries-spent' }, attempts: { count: 1, max: 1 } })
+    expect((await ctx.approvals.list({ states: ['open', 'batched', 'approved', 'rejected'] })).filter((r) => r.requester.taskId === task.taskId)).toEqual([])
   })
 
   it('reconciles a crash between the operator\'s approval and the board\'s move: the raise is applied once, adopting the request the dead move left, and the next attempt reserves and runs (INV-4)', async () => {
