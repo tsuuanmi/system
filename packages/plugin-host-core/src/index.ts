@@ -8,7 +8,7 @@
  * need a split of work between plugins that nothing in Base makes, so no Base host records them.
  * Contract 1.1 adds the manifest check: each plugin a row mounts is checked against its manifest and
  * its providers' manifests at start, and what the check finds is recorded as a `gate` decision and
- * listed (ADR-0045). The vocabulary, the reading of a declared manifest, the check, and the
+ * listed (ADR-0048). The vocabulary, the reading of a declared manifest, the check, and the
  * reconciliations every provider applies live here; `schemas/plugin-manifest.v1.json` and
  * `schemas/decision.v1.json` are canonical.
  * @module @tsuuanmi/system-plugin-host-core
@@ -448,7 +448,7 @@ function checkDecision(name: string, plugin: { rows: string[]; mounted: boolean 
       },
     },
     deterministic: true,
-    rationale: 'The plugin host checks each plugin a row mounts against its manifest and its providers\' manifests at start; a finding makes health down until it is cleared. Base cannot keep a row from running (ADR-0045).',
+    rationale: 'The plugin host checks each plugin a row mounts against its manifest and its providers\' manifests at start; a finding makes health down until it is cleared. Base cannot keep a row from running (ADR-0048).',
   }
 }
 

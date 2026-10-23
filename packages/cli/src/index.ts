@@ -420,7 +420,7 @@ export interface PluginView {
   version?: string
   class?: { kind: 'core'; component: string } | { kind: 'family'; family: string }
   lifecycle?: { state: string; since: string; decision: string }
-  /** What the manifest check found in a plugin a row mounts, and the decision that recorded it (ADR-0045). */
+  /** What the manifest check found in a plugin a row mounts, and the decision that recorded it (ADR-0048). */
   findings?: Array<{ kind: string; reason: string }>
   checked?: { since: string; decision: string }
 }

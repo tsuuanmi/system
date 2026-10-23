@@ -80,7 +80,7 @@ export async function healthReport(sources: HealthSources): Promise<HealthReport
     }))
   }
   // A finding of the manifest check fails closed: the host cannot keep that plugin from running, so it
-  // cannot vouch for what runs (ADR-0045). A refused manifest of a row that is off leaves only its
+  // cannot vouch for what runs (ADR-0048). A refused manifest of a row that is off leaves only its
   // lifecycle unrecorded.
   if (sources.manifests) {
     checks.push(await guarded('manifests', () => {

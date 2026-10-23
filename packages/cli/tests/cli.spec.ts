@@ -103,7 +103,7 @@ describe('system CLI (PR #3 kernel review)', () => {
     await expect(hostPlugins(async () => ({ isError: false, text: '', structured: { health: {} } }))).rejects.toThrow(/plugin-host row is off or not running/)
   })
 
-  it('prints each finding of the manifest check under its plugin, with the decision that recorded it (ADR-0045)', () => {
+  it('prints each finding of the manifest check under its plugin, with the decision that recorded it (ADR-0048)', () => {
     const decision = `sha256:${'3'.repeat(64)}`
     expect(formatPlugins([
       { name: '@x/third-party', rows: ['third'], mounted: true, manifest: 'absent', reason: '@x/third-party ships no plugin-manifest.json', findings: [{ kind: 'no-manifest', reason: 'it runs with no manifest: @x/third-party ships no plugin-manifest.json' }], checked: { since: '2026-10-23T00:00:00.000Z', decision } },

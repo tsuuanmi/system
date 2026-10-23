@@ -349,7 +349,7 @@ manifest check found in it at start
   or no mounted plugin declares a seam it requires and contract 1.0 does not satisfy it.
 
 The host cannot keep the row from running
-([ADR-0045](../decisions/adr/0045-the-plugin-host-checks-the-composition-at-start.md)): treat the
+([ADR-0048](../decisions/adr/0048-the-plugin-host-checks-the-composition-at-start.md)): treat the
 plugin as unchecked until the finding is cleared.
 
 1. `system plugins` shows each finding under its plugin, and the `gate` decision that recorded it

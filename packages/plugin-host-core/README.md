@@ -4,7 +4,7 @@ Plugin host **seam definition**
 ([plugin model](../../docs/architecture/plugin-model.md#seam-catalog), plugin rule 2;
 [plugin host](../../docs/design/plugin-host.md)). A guarantee seam: its contract changes only by an
 ADR ([ADR-0036](../../docs/decisions/adr/0036-guarantee-core-and-capability-plugins.md); 1.1 by
-[ADR-0045](../../docs/decisions/adr/0045-the-plugin-host-checks-the-composition-at-start.md)).
+[ADR-0048](../../docs/decisions/adr/0048-the-plugin-host-checks-the-composition-at-start.md)).
 
 | Seam | Definition | Provider |
 |---|---|---|

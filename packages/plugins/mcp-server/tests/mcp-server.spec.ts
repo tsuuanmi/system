@@ -88,7 +88,7 @@ describe('system MCP server on ctx.webServer', () => {
     expect(client.checks).toEqual(operator.checks.map(({ name, state }) => ({ name, state })))
   })
 
-  it('lists every plugin of the composition with its manifest, recorded lifecycle, and what the manifest check found, for the operator only, and fails health on a finding (REQ-HOST-7, ADR-0023, ADR-0045)', async () => {
+  it('lists every plugin of the composition with its manifest, recorded lifecycle, and what the manifest check found, for the operator only, and fails health on a finding (REQ-HOST-7, ADR-0023, ADR-0048)', async () => {
     const { url, tokens, ctx } = await boot()
     const composition = {
       rows: [{ id: 'a', name: '@x/a', mounted: true }, { id: 'b', name: '@x/b', mounted: false }, { id: 'c', name: '@x/c', mounted: true }, { id: 'dsh', name: '@x/dsh', mounted: true }, { id: 'allowed', name: '@x/allowed', mounted: true }],

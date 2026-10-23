@@ -55,7 +55,7 @@ Claude Code and Codex, and the `system` CLI. It is the primary client interface
     service this composition never supplies) is not a plugin of the composition. `manifests` is
     down while the plugin host's manifest check found something in a plugin a row mounts (no
     manifest it allows, or a consumed seam its providers do not satisfy), naming each finding:
-    the host cannot keep that row from running (ADR-0045). It is degraded when the host refused
+    the host cannot keep that row from running (ADR-0048). It is degraded when the host refused
     the manifest of a row that is off, and notes the packages that run with none as the host's
     configuration allows. `templates` is degraded when the
     workflow engine refused a configured template at load (with why); every

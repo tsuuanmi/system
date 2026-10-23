@@ -129,7 +129,7 @@ describe('system profile (e2e through dsh)', () => {
     expect(plugins.filter((p) => DSH_PACKAGES.includes(p.name)).map((p) => [p.name, p.manifest, p.lifecycle])).toEqual(DSH_PACKAGES.map((name) => [name, 'absent', undefined]))
     for (const p of ours) expect([p.name, p.manifest, p.lifecycle?.state]).toEqual([p.name, 'valid', p.mounted ? 'default' : 'candidate'])
     expect(artifacts).toBe(ours.length)
-    // Every mounted row passes the manifest check, the DSH rows as the bundle's allowance names them (ADR-0045).
+    // Every mounted row passes the manifest check, the DSH rows as the bundle's allowance names them (ADR-0048).
     expect(plugins.filter((p) => p.findings)).toEqual([])
     expect(health.checks.find((c) => c.name === 'manifests')).toMatchObject({ state: 'ok', detail: expect.stringContaining(`4 of them run with no manifest, as the plugin host's configuration allows: ${DSH_PACKAGES.join(', ')}`) })
     firstBoot = plugins
@@ -250,7 +250,7 @@ describe('system profile (e2e through dsh)', () => {
     }
   }, 120_000)
 
-  it('finds each DSH row once a patch drops the plugin host\'s allowance: recorded as a gate decision, health down, and nothing stopped (REQ-HOST-7, INV-2, ADR-0045)', async () => {
+  it('finds each DSH row once a patch drops the plugin host\'s allowance: recorded as a gate decision, health down, and nothing stopped (REQ-HOST-7, INV-2, ADR-0048)', async () => {
     const patch = join(home, 'no-allowance.yml')
     writeFileSync(patch, `${readFileSync(join(home, 'port0.yml'), 'utf8').trimEnd()}\n- id: plugin-host\n  config: {}\n`)
     child = spawn(process.execPath, [bin, 'start', '--patch', patch], { env, stdio: 'pipe', detached: true })

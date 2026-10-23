@@ -2,7 +2,7 @@
 
 > Target state. Boundary: [host](../architecture/components.md#host), core component *plugin host*
 > ([ADR-0036](../decisions/adr/0036-guarantee-core-and-capability-plugins.md),
-> [ADR-0045](../decisions/adr/0045-the-plugin-host-checks-the-composition-at-start.md)). Proposals:
+> [ADR-0048](../decisions/adr/0048-the-plugin-host-checks-the-composition-at-start.md)). Proposals:
 > [PROP-0010](../proposals/0010-base-version.md),
 > [PROP-0008](../proposals/0008-studio-operating-model.md) (the lifecycle). Records:
 > [`plugin-manifest@1.x`](../reference/schemas.md#plugin-manifest),
@@ -14,7 +14,7 @@
 > Differs from target: Base records the lifecycle and automates nothing (no shadow run, no canary
 > split, no promotion); a plugin the manifest check finds something in (no manifest, or a consumed
 > seam version its providers do not satisfy) is recorded and makes health down, but still runs: the
-> host cannot refuse a row ([ADR-0045](../decisions/adr/0045-the-plugin-host-checks-the-composition-at-start.md));
+> host cannot refuse a row ([ADR-0048](../decisions/adr/0048-the-plugin-host-checks-the-composition-at-start.md));
 > a row turned on or off while the host runs is recorded at its next start.
 
 Every plugin package says what it is in a manifest: the seams it provides and consumes, at which
@@ -134,7 +134,7 @@ any more, is one `pass`. A plugin never found records no check at all.
 **Fail closed, as far as the host can.** The host cannot keep a row from running: DSH starts the
 rows of a group at once, before the store the decision needs exists, and stopping a running row
 from outside rewrites the operator's configuration
-([ADR-0045](../decisions/adr/0045-the-plugin-host-checks-the-composition-at-start.md)). So a finding
+([ADR-0048](../decisions/adr/0048-the-plugin-host-checks-the-composition-at-start.md)). So a finding
 makes health `manifests` **down**, naming each finding and what to do: the host cannot vouch for
 what runs. MCP `status` and `system plugins` list each finding under its plugin
 ([runbook](../operations/runbooks.md#the-manifest-check-found-a-plugin)).
@@ -191,7 +191,7 @@ commits leaves nothing half-recorded: the next start records it.
   the operator's configuration ([runbook](../operations/runbooks.md#turn-an-off-row-back-on)).
   Refusing a row the check finds something in needs a veto point in the DSH loader and a further
   change to this contract, by its own ADR
-  ([ADR-0045](../decisions/adr/0045-the-plugin-host-checks-the-composition-at-start.md)).
+  ([ADR-0048](../decisions/adr/0048-the-plugin-host-checks-the-composition-at-start.md)).
 - Surfaces: MCP `status` lists the plugins and their findings to the operator (a client sees none)
   and checks the manifests in its health; `system plugins` prints the list.
 

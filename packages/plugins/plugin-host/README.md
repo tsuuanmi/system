@@ -13,7 +13,7 @@ on.
 - **Does not own:** what runs. It never mounts, stops, or gates a plugin; the composition is the
   operator's configuration, and Base automates no lifecycle step. A finding of its check makes
   health down, but the row still runs: the DSH loader offers no point to refuse it
-  ([ADR-0045](../../../docs/decisions/adr/0045-the-plugin-host-checks-the-composition-at-start.md)).
+  ([ADR-0048](../../../docs/decisions/adr/0048-the-plugin-host-checks-the-composition-at-start.md)).
 - **The composition:** every entry of the DSH loader (`ctx.loader`), mounted or not; a group or an
   include is not a row. It is the only `system` plugin that reads the loader
   ([ADR-0018](../../../docs/decisions/adr/0018-build-on-dsh-core.md)). A row's package is found as

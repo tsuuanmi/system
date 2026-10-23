@@ -50,5 +50,5 @@
     }
   },
   "deterministic": true,
-  "rationale": "The plugin host checks each plugin a row mounts against its manifest and its providers' manifests at start; a finding makes health down until it is cleared. Base cannot keep a row from running (ADR-0045)."
+  "rationale": "The plugin host checks each plugin a row mounts against its manifest and its providers' manifests at start; a finding makes health down until it is cleared. Base cannot keep a row from running (ADR-0048)."
 }

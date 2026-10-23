@@ -59,7 +59,7 @@ describe('host health (REQ-HOST-6)', () => {
       .toMatchObject({ state: 'degraded', detail: '1 configured template(s) refused, every other one works: panel-led (node panel: team must be {kind: …})' })
   })
 
-  it('is down while the manifest check found something in a plugin a row mounts, naming each finding and what to do (REQ-HOST-7, INV-2, ADR-0045)', async () => {
+  it('is down while the manifest check found something in a plugin a row mounts, naming each finding and what to do (REQ-HOST-7, INV-2, ADR-0048)', async () => {
     const valid = { name: '@x/b', mounted: true, state: 'valid' as const, findings: [] }
     expect(await check({ manifests: () => [{ name: '@x/a', mounted: true, state: 'absent', reason: '@x/a ships no plugin-manifest.json', findings: ['it runs with no manifest: @x/a ships no plugin-manifest.json'] }, valid, { name: '@x/c', mounted: true, state: 'valid', findings: ['it consumes ctx.thing in the range ^2.0.0, which @x/p does not satisfy: it provides 1.0.0', 'another'] }] }, 'manifests'))
       .toMatchObject({ state: 'down', detail: expect.stringMatching(/^@x\/a: it runs with no manifest: @x\/a ships no plugin-manifest\.json; @x\/c: it consumes ctx\.thing .*; another\. The plugin host cannot keep a row from running: turn the row off, or fix or allow its package, and restart \(docs\/operations\/runbooks\.md#the-manifest-check-found-a-plugin\)$/) })

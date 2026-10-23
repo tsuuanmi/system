@@ -6,7 +6,7 @@
  * decision) and then the plugin's new record, in one store transaction (INV-13), and lists the
  * plugins from then on. It is the one adapter between the DSH loader and a `system` seam
  * (ADR-0018). It records and automates nothing: it never mounts, stops, or gates a plugin; what its
- * check finds makes health down (ADR-0045).
+ * check finds makes health down (ADR-0048).
  * @module @tsuuanmi/system-plugin-host
  */
 import { closeSync, fstatSync, openSync, readFileSync, readSync, realpathSync } from 'node:fs'

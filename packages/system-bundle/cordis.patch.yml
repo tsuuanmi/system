@@ -25,7 +25,7 @@
     # plugin's lifecycle state, every change a decision. It reads the rows from the DSH loader at start,
     # records, and automates nothing: a row turned off is recorded `candidate`, never stopped by it.
     # Its manifest check finds a mounted row with no manifest, or a seam its provider does not
-    # satisfy, and health is down until it is cleared (ADR-0045). ---
+    # satisfy, and health is down until it is cleared (ADR-0048). ---
     - id: plugin-host
       name: '@tsuuanmi/system-plugin-host'           # ctx.pluginHost; MCP status lists the plugins
       config:

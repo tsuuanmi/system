@@ -1,4 +1,4 @@
-# ADR-0045: The plugin host checks the composition at start, and a finding makes health down
+# ADR-0048: The plugin host checks the composition at start, and a finding makes health down
 
 - **Status:** Proposed
 - **Date:** 2026-10-23
