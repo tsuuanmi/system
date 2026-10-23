@@ -637,7 +637,9 @@ export class GeminiWebDriver implements ProviderDriver<Page> {
     const completed = await engine.findIn('research.completed', answer)
     if (completed) return { running: false, done: true, text: await this.reportText(engine, completed.locator.last()) }
     // Its activity in the panel, while it works: it grows, so a long run is not taken for a stall.
-    const activity = await engine.resolve('research.activity', 0).then((found) => found.locator.first().evaluate((e) => (e.textContent ?? '').length), () => 0).catch(() => 0)
+    // Read at once, never waited for: a panel gone since it was found (its report took its place)
+    // is no activity this time.
+    const activity = await engine.resolve('research.activity', 0).then((found) => found.locator.evaluateAll((panels) => (panels[0]?.textContent ?? '').length), () => 0).catch(() => 0)
     return { running: (await engine.findIn('research.running', answer)) !== undefined, done: false, text: '', ...(activity ? { progress: String(activity) } : {}) }
   }
 

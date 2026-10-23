@@ -8,11 +8,11 @@ import Artifacts from '@tsuuanmi/system-artifacts'
 import EventLog from '@tsuuanmi/system-event-log'
 import Providers from '@tsuuanmi/system-providers'
 import Store from '@tsuuanmi/system-store'
-import type { DriftEvent } from '@tsuuanmi/system-ui-ops'
+import { type DriftEvent, UiEngine } from '@tsuuanmi/system-ui-ops'
 import { SchemaRegistry } from '@tsuuanmi/system-libs'
 import { ProviderError, type ProviderDriver } from '@tsuuanmi/system-provider-core'
 import type { Browser, BrowserContext, Page } from 'patchright-core'
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { canRunBrowser, launchTestBrowser } from '../../browser-patchright/tests/support.ts'
 import { FakeGemini, type FakeOptions } from '../fixtures/fake-gemini.ts'
 import { GeminiWebDriver, shippedMap } from '../src/index.ts'
@@ -423,6 +423,29 @@ describe.runIf(canRunBrowser)('GeminiWebDriver against the fake site', { timeout
     fake.options.researchActivity = false
     await expect(patient.ask(page, 'Another long survey', { conversation: 'persistent', feature: 'deep-research' })).rejects.toMatchObject({ kind: 'provider_stalled' })
   }, 90_000)
+
+  it('reads Deep research\'s activity at once: a run that completes between finding its activity and reading it is not waited on', async () => {
+    const { page, driver, fake } = await open({ researchMs: 60_000, researchActivity: true }, { timeouts: { readyMs: 5000, stableMs: 300, pollMs: 100, turnMs: 20_000, stallMs: 15_000 } })
+    const resolve = UiEngine.prototype.resolve
+    let completed = false
+    const spy = vi.spyOn(UiEngine.prototype, 'resolve').mockImplementation(async function (this: UiEngine, id: string, timeoutMs?: number) {
+      const found = await resolve.call(this, id, timeoutMs)
+      if (id === 'research.activity' && !completed) {
+        completed = true
+        // The research completes now: its report takes the panel, and no activity is left to read.
+        fake.options.researchMs = 0
+        await page.waitForFunction(() => !document.querySelector('thinking-panel'))
+      }
+      return found
+    })
+    try {
+      // A read that waited for the activity to come back (30 s) would take the completed run for a stall.
+      expect((await driver.ask(page, 'A long survey', { conversation: 'persistent', feature: 'deep-research' })).text).toMatch(/^HTTP\/3 runs over QUIC/)
+      expect(completed).toBe(true)
+    } finally {
+      spy.mockRestore()
+    }
+  })
 
   it('applies no mode preset to Deep research: the picker stays as the site has it, and the mode is recorded as the site\'s (live 2026-10-18)', async () => {
     const { page, driver, fake } = await open()
