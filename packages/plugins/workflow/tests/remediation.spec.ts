@@ -61,6 +61,26 @@ class TreeWorkers extends ScriptedWorkers {
   }
 }
 
+/**
+ * The store-backed queue, with a test's hand on what the engine reads from it: a forged record (as
+ * a faulty or tampered provider would return it), or a queue that cannot be read at all.
+ */
+class TestApprovals extends StoreApprovals {
+  forge?: (request: ApprovalRequest) => ApprovalRequest
+  unreadable = false
+
+  override async get(requestId: string): Promise<ApprovalRequest | undefined> {
+    if (this.unreadable) throw new Error('the approval queue cannot be read')
+    const request = await super.get(requestId)
+    return request && this.forge ? this.forge(request) : request
+  }
+
+  override async list(filter?: Parameters<StoreApprovals['list']>[0]): Promise<ApprovalRequest[]> {
+    if (this.unreadable) throw new Error('the approval queue cannot be read')
+    return super.list(filter)
+  }
+}
+
 /** A git working tree with a commit. */
 function workingTree(): string {
   const dir = mkdtempSync(join(tmpdir(), 'system-workflow-remediation-'))
@@ -82,6 +102,8 @@ interface Booted {
   ctx: Context
   workers: TreeWorkers
   dir: string
+  /** The git working tree the run's agents work in. */
+  tree: string
   /** Stop the engine alone, run `between` while it is down (the queue and the store stay), then start it again. */
   restartWorkflow: (between?: () => void | Promise<void>) => Promise<void>
 }
@@ -112,7 +134,7 @@ async function boot(options: { queue?: boolean; policy?: AutonomyPolicy; reviews
     ctx.plugin(Store, { path: join(dir, 'system.db') }), ctx.plugin(Artifacts, {}), ctx.plugin(EventLog, {}), ctx.plugin(Leases, {}), ctx.plugin(Egress, {}),
     ctx.plugin(WorkerRouter, {}), ctx.plugin(WorkerSessions, {}),
     ctx.plugin({ name: 'scripted-workers', inject: ['workers', 'artifacts'], apply: (c: Context) => void c.workers.register(workers.source(c)) }),
-    ...(options.queue === false ? [] : [ctx.plugin(StoreApprovals, { policies: [options.policy ?? POLICY], sweepSeconds: 3600 })]),
+    ...(options.queue === false ? [] : [ctx.plugin(TestApprovals, { policies: [options.policy ?? POLICY], sweepSeconds: 3600 })]),
   ]
   await Promise.all(fibers)
   let engine = ctx.plugin(Workflow, config)
@@ -122,7 +144,7 @@ async function boot(options: { queue?: boolean; policy?: AutonomyPolicy; reviews
     for (const fiber of [...fibers].reverse()) await fiber.dispose()
   })
   return {
-    ctx, workers, dir,
+    ctx, workers, dir, tree,
     restartWorkflow: async (between) => {
       await engine.dispose()
       await between?.()
@@ -157,6 +179,28 @@ const finished = (ctx: Context, runId: string): Promise<RunView> => until(() => 
 const decide = async (ctx: Context, request: ApprovalRequest, verdict: 'approved' | 'rejected'): Promise<void> => {
   const [result] = await ctx.approvals.decide([{ requestId: request.requestId, subject: request.subject, verdict }])
   expect(result!.refused).toBeUndefined()
+}
+
+const queueOf = (ctx: Context): TestApprovals => ctx.approvals as TestApprovals
+
+/** The `gate` decision the remediation gate of a run closed or opened on, last. */
+const gateDecision = (ctx: Context, runId: string) => {
+  const record = ctx.workflow.records(runId).find((r) => r.nodeId === 'review:approve:1')!
+  return ctx.artifacts.get(record.lastDecision!)!.body as { decisionType: string; decider: { id: string }; outcome: { option: string; detail: Record<string, unknown> } }
+}
+
+/**
+ * As if the engine crashed after the queue took the gate's request and before the transaction that
+ * stores its id on the gate, with the `wait` decision naming it, committed: neither is there.
+ */
+function unstore(ctx: Context, dir: string, runId: string): void {
+  const waits = ctx.artifacts.list({ kind: 'decision', decisionType: 'gate', runId, nodeId: 'review:approve:1' })
+    .filter((a) => (a.body as { outcome: { option: string; detail?: { approvalRequest?: string } } }).outcome.detail?.approvalRequest && (a.body as { outcome: { option: string } }).outcome.option === 'wait')
+  expect(waits).toHaveLength(1)
+  const db = new DatabaseSync(join(dir, 'system.db'))
+  db.prepare("UPDATE workflow_nodes SET approval_request = NULL WHERE run_id = ? AND node_id = 'review:approve:1'").run(runId)
+  for (const wait of waits) for (const table of ['artifact_runs', 'artifacts']) db.prepare(`DELETE FROM ${table} WHERE id = ?`).run(wait.id)
+  db.close()
 }
 
 const fixes = (workers: ScriptedWorkers): number => workers.started.filter((s) => s.prompt.includes('Fix the blocking findings')).length
@@ -254,16 +298,106 @@ describe('remediation on the approval queue', () => {
     const run = ctx.workflow.start({ template: 'change', input: 'Fix add()', classification: 'public' })
     const request = (await ctx.approvals.get((await queued(ctx, run.runId)).blocked.approvalRequest))!
     await restartWorkflow(async () => {
-      // As if the engine crashed after the queue took the request and before the gate stored its id.
-      const db = new DatabaseSync(join(dir, 'system.db'))
-      db.prepare("UPDATE workflow_nodes SET approval_request = NULL WHERE run_id = ? AND node_id = 'review:approve:1'").run(run.runId)
-      db.close()
+      unstore(ctx, dir, run.runId)
       await decide(ctx, request, 'approved')
     })
     const done = await finished(ctx, run.runId)
     expect(done.status).toBe('completed')
     expect(fixes(workers)).toBe(1)
     expect((await ctx.approvals.list({ states: ['open', 'batched', 'approved', 'rejected'] })).map((r) => r.requestId)).toEqual([request.requestId])
+  })
+
+  it('reconciles on restart: a request whose id was never stored and that was rejected meanwhile is adopted and applied, never asked again (INV-4)', async () => {
+    const { ctx, workers, dir, restartWorkflow } = await boot()
+    const run = ctx.workflow.start({ template: 'change', input: 'Fix add()', classification: 'public' })
+    const request = (await ctx.approvals.get((await queued(ctx, run.runId)).blocked.approvalRequest))!
+    await restartWorkflow(async () => {
+      unstore(ctx, dir, run.runId)
+      await decide(ctx, request, 'rejected')
+    })
+    const failed = await finished(ctx, run.runId)
+    expect(failed).toMatchObject({ status: 'failed', error: { kind: 'plan_rejected' } })
+    expect(failed.error!.message).toContain('the operator rejected it')
+    expect(fixes(workers)).toBe(0)
+    const all = ['open', 'batched', 'approved', 'rejected'] as const
+    expect((await ctx.approvals.list({ states: [...all] })).map((r) => r.requestId)).toEqual([request.requestId])
+    expect(gateDecision(ctx, run.runId)).toMatchObject({ decider: { id: 'workflow.remediation-approval' }, outcome: { option: 'closed', detail: { approvalRequest: request.requestId } } })
+    // The adopted request is the gate's now: continue asks again on a new one, never adopting the spent one.
+    ctx.workflow.continue(run.runId, 'review:approve:1')
+    const again = await queued(ctx, run.runId)
+    expect(again.blocked.approvalRequest).not.toBe(request.requestId)
+    expect(await ctx.approvals.list({ states: [...all] })).toHaveLength(2)
+  })
+
+  it('does not open on an approval when the working tree moved since the review: the fix never runs on another tree (INV-5)', async () => {
+    const { ctx, workers, tree } = await boot()
+    const run = ctx.workflow.start({ template: 'change', input: 'Fix add()', classification: 'public' })
+    const waiting = await queued(ctx, run.runId)
+    const request = (await ctx.approvals.get(waiting.blocked.approvalRequest))!
+    const reviewed = /Subject: (\S+)/.exec(workers.started.find((s) => s.prompt.startsWith('Review'))!.prompt)![1]!
+    writeFileSync(join(tree, 'calc.py'), 'def add(a, b):\n    return b + a\n')
+    await decide(ctx, request, 'approved')
+    const failed = await finished(ctx, run.runId)
+    expect(failed).toMatchObject({ status: 'failed', error: { kind: 'stale_subject' } })
+    expect(failed.error!.message).toContain('changed since the review')
+    expect(fixes(workers)).toBe(0)
+    const { subject: now } = captureGitSubject(tree)!
+    expect(gateDecision(ctx, run.runId)).toMatchObject({
+      decisionType: 'gate', decider: { id: 'workflow.exact-subject' },
+      outcome: { option: 'closed', detail: { kind: 'stale_subject', approvalRequest: request.requestId, subject: reviewed, now: `git:${now.ref}:${now.version}` } },
+    })
+    // The operator's verdict stands as given: nothing resolved is withdrawn.
+    expect(await ctx.approvals.get(request.requestId)).toMatchObject({ state: 'approved', resolution: { cause: 'verdict' } })
+  })
+
+  it('does not open on an approval resolved after the request expired, as a provider might forge it (defence in depth)', async () => {
+    const { ctx, workers } = await boot()
+    const run = ctx.workflow.start({ template: 'change', input: 'Fix add()', classification: 'public' })
+    const request = (await ctx.approvals.get((await queued(ctx, run.runId)).blocked.approvalRequest))!
+    queueOf(ctx).forge = (r) => r.resolution ? { ...r, resolution: { ...r.resolution, at: new Date(Date.parse(r.expiresAt) + 1000).toISOString() } } : r
+    await decide(ctx, request, 'approved')
+    const failed = await finished(ctx, run.runId)
+    expect(failed).toMatchObject({ status: 'failed', error: { kind: 'gate_timeout' } })
+    expect(failed.error!.message).toContain(`not by its expiry ${request.expiresAt}`)
+    expect(fixes(workers)).toBe(0)
+    expect(gateDecision(ctx, run.runId)).toMatchObject({ decider: { id: 'workflow.remediation-approval' }, outcome: { option: 'closed', detail: { kind: 'gate_timeout', approvalRequest: request.requestId } } })
+  })
+
+  it('does not open on an approved request whose approval is not the operator\'s approval of exactly the gate\'s subject (INV-5)', async () => {
+    const { ctx, workers } = await boot()
+    const run = ctx.workflow.start({ template: 'change', input: 'Fix add()', classification: 'public' })
+    const request = (await ctx.approvals.get((await queued(ctx, run.runId)).blocked.approvalRequest))!
+    const other = { ...request.subject, version: 'git:0000000:other' }
+    const foreign = ctx.artifacts.put({
+      kind: 'approval', bodySchema: 'approval@1.0', body: { schema: 'approval@1.0', subject: other, verdict: 'approved', by: 'operator' },
+      classification: 'operator-shared', producer: { type: 'operator', ref: 'operator' }, subject: other,
+    }).id as ArtifactRef
+    queueOf(ctx).forge = (r) => r.resolution ? { ...r, resolution: { ...r.resolution, approval: foreign } } : r
+    await decide(ctx, request, 'approved')
+    const failed = await finished(ctx, run.runId)
+    expect(failed).toMatchObject({ status: 'failed', error: { kind: 'plan_rejected' } })
+    expect(failed.error!.message).toContain(`its approval ${foreign} is not the operator's approval of exactly plan`)
+    expect(fixes(workers)).toBe(0)
+  })
+
+  it('closes the gate as gate_timeout by its deadline when the queue cannot be read, naming and withdrawing its request (INV-9)', async () => {
+    const { ctx, workers, dir, restartWorkflow } = await boot()
+    const run = ctx.workflow.start({ template: 'change', input: 'Fix add()', classification: 'public' })
+    const requestId = (await queued(ctx, run.runId)).blocked.approvalRequest
+    queueOf(ctx).unreadable = true
+    await restartWorkflow(() => {
+      // The request's expiry, the gate's deadline, has passed while the engine was down.
+      const db = new DatabaseSync(join(dir, 'system.db'))
+      db.prepare("UPDATE workflow_nodes SET not_before = ? WHERE run_id = ? AND node_id = 'review:approve:1'").run(new Date(Date.now() - 1000).toISOString(), run.runId)
+      db.close()
+    })
+    const failed = await finished(ctx, run.runId)
+    expect(failed).toMatchObject({ status: 'failed', error: { kind: 'gate_timeout' } })
+    expect(failed.error!.message).toContain(`could be read from the approval queue`)
+    expect(fixes(workers)).toBe(0)
+    expect(gateDecision(ctx, run.runId)).toMatchObject({ decider: { id: 'workflow.remediation-approval' }, outcome: { option: 'closed', detail: { kind: 'gate_timeout', approvalRequest: requestId } } })
+    queueOf(ctx).unreadable = false
+    expect(await ctx.approvals.get(requestId)).toMatchObject({ state: 'rejected', resolution: { cause: 'withdrawn' } })
   })
 
   it('without an approval queue, the fix waits for the operator\'s plan gate, never for a policy (INV-2)', async () => {

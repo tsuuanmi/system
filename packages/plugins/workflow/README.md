@@ -51,11 +51,15 @@ second execution path (INV-1).
       subject `git:<HEAD>:<hash>`; requester `workflow`, the run, the gate),
       stores its id on the gate, and waits until it expires, reading it every
       `approvalPollSeconds` (default 15). An operator approval bound to that
-      plan and subject opens the gate (its result is the `approval@1.0`); a
-      rejection or withdrawal closes it as `plan_rejected`, an expiry as
+      plan and subject, given before the request expired, opens the gate (its
+      result is the `approval@1.0`) once the working tree is captured again
+      and is still the reviewed subject (else `stale_subject`, an
+      exact-subject decision); a rejection or withdrawal closes it as
+      `plan_rejected`, an expiry, or a queue unreadable past the deadline, as
       `gate_timeout`; `forbid` closes it without asking. Each is a `gate`
       decision (`workflow.remediation-approval`). A restart reads the request
-      again, and adopts one whose id a crash lost, never asking twice.
+      again, and adopts the gate's own request whose id a crash lost, in any
+      state, applying its outcome, never asking twice.
       `approve` refuses such a gate (the queue decides it); `continue` asks
       again on a new request; `stop` withdraws it. With no queue loaded, the
       gate is the operator's plan gate below.
