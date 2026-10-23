@@ -158,7 +158,7 @@ describe('a review member kept off a website by its input bound (live 2026-10-23
     for (const tier of ['economy', 'standard', 'frontier']) expect(candidates.find((c) => c.option === `web:gem/${tier}`)!.reasons.join('; ')).toMatch(/the input has \d+ characters; it takes at most 5000/)
   }, 60_000)
 
-  it('fails a member whose rejected answer its session cannot take to a higher tier, naming the rejection and why, never a family shortage (run A)', async () => {
+  it('fails a member whose rejected answer its session cannot take to a higher tier, naming the rejection and why, never a family shortage (run A; REQ-WRK-9, REQ-TEAM-2)', async () => {
     const { ctx } = await boot()
     // As live: the second site refuses the input; its API model takes the member at the step's tier, alone in its family.
     const workers = [website('chat', 'site-a', 'standard'), ...(['economy', 'standard', 'frontier'] as const).map((t) => website('gem', 'site-b', t, 5000)), model('api', 'site-b-api', 'standard')]
@@ -180,7 +180,7 @@ describe('a review member kept off a website by its input bound (live 2026-10-23
     expect(chain).not.toContain('admission')
   }, 60_000)
 
-  it('escalates such a member onto its session\'s Worker at the next tier when its source has one', async () => {
+  it('escalates such a member onto its session\'s Worker at the next tier when its source has one (REQ-WRK-9, REQ-TEAM-2)', async () => {
     const { ctx } = await boot()
     const workers = [website('chat', 'site-a', 'standard'), website('gem', 'site-b', 'standard', 5000), model('api', 'site-b-api', 'standard'), model('api-pro', 'site-b-api', 'frontier')]
     // Only its proposal at the standard tier is rejected.

@@ -122,7 +122,7 @@ describe.runIf(canRunBrowser)('GeminiWebDriver against the fake site', { timeout
     expect(stalls[0]!.outline!.nodes.length).toBeGreaterThan(0)
   })
 
-  it('takes a long think whose thinking the answer shows for progress, past the stall deadline (live 2026-10-23: a review member stalled at 5 min)', async () => {
+  it('takes a long think whose thinking the answer shows for progress, past the stall deadline (REQ-PRV-4; live 2026-10-23: a review member stalled at 5 min)', async () => {
     // Four seconds of thinking with no answer text, nearly three times the stall deadline: its summary changes, so it is not a stall.
     const { page, fake } = await open({ startOnSpark: false, thinkMs: 4000, answer: 'Reviewed: no blocking defect.' })
     const driver = new GeminiWebDriver({ origin: fake.origin, modes: PRESETS, defaultMode: 'flash', timeouts: { readyMs: 5000, stableMs: 300, pollMs: 100, turnMs: 30_000, stallMs: 1500 } })
