@@ -407,8 +407,13 @@ describe('claude-agent-sdk: two confinements, reads by the host and commands by 
     for (const status of [failing('Command failed: claude auth status'), async () => '{"loggedIn": false}']) {
       expect(await runtime(scripted(), '/usr/bin/claude', { status }).probe()).toMatchObject({ available: false, executes: false, readsConfined: false, detail: expect.stringContaining(`not signed in inside its home ${HOME}`) })
     }
-    // Output it cannot read, from a command that succeeded, says nothing against the sign-in.
-    expect(await runtime(scripted(), '/usr/bin/claude', { status: async () => 'Logged in.' }).probe()).toMatchObject({ available: true })
+    // Output that does not say `"loggedIn": true`, even from a command that succeeded, is no
+    // sign-in: an unknown state is never taken for one (INV-2).
+    for (const output of ['Logged in.', '{"apiProvider": "firstParty"}', '{"loggedIn": "yes"}', 'null']) {
+      expect(await runtime(scripted(), '/usr/bin/claude', { status: async () => output }).probe()).toMatchObject({
+        available: false, detail: expect.stringContaining('claude auth status: its output does not say who is signed in'),
+      })
+    }
   })
 
   it('enables the SDK\'s sandbox in a workspace-write run with exactly ADR-0038\'s settings, and offers Bash there', async () => {

@@ -95,7 +95,7 @@ driver, its operations are data: a UI map,
   click: the chat's own menu (in its pane, `conversation.pane`, never a history row) → **Delete** → **Delete chat?** → **Delete**. After
   the site leaves the URL, the chat is reopened and counts as `deleted` only
   when it shows that it no longer exists (map element `conversation.missing`);
-  one that already shows it, on two loads in a row, is `gone`, with nothing clicked. While it runs, from the first click on, no RPC request leaves the page if any of its calls names a chat but this one (`namesOnly`), `beforeConfirm` lets the ledger record the confirm first, and `confirmed` only checks a chat whose confirm was recorded. The map entries
+  one that already shows it, on two loads in a row, is `gone`, with nothing clicked. While it runs, from the first click on, no RPC request leaves the page if any of its calls names a chat but this one, or its calls cannot be read (`namesOnly`), `beforeConfirm` lets the ledger record the confirm first, and `confirmed` only checks a chat whose confirm was recorded. The map entries
   are not yet verified live: they are marked `unverified`, and `deletionUnverified()` names them, so the turn runtime deletes nothing until the live check lifts them.
 - **`inspectConversation(page, binding)`:** read-only evidence for those
   entries: the chat's page and its own menu outlined (structure, never text),

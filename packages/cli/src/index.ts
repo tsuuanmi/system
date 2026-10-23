@@ -164,17 +164,39 @@ export async function checkProfile(home: string = dshHome()): Promise<{ rows: nu
   const dump = spawnSync(process.execPath, [dshBin(), '--profile', PROFILE, '--dump-config'], { env: dshEnv({ ...process.env, DSH_HOME: home }), encoding: 'utf8' })
   if (dump.error) throw dump.error
   if (dump.status !== 0) return { rows: 0, problems: [`the profile does not compose: ${dump.stderr.trim().slice(0, 500)}`] }
-  const rows = (parseYaml(dump.stdout) ?? []) as Array<{ id: string; name?: string; config?: unknown; disabled?: boolean }>
-  const fromBundle = createRequire(require.resolve('@tsuuanmi/system-bundle/package.json'))
+  const rows = (parseYaml(dump.stdout) ?? []) as ProfileRow[]
+  return checkRows(rows, createRequire(require.resolve('@tsuuanmi/system-bundle/package.json')))
+}
+
+export interface ProfileRow { id: string; name?: string; config?: unknown; disabled?: boolean }
+
+/**
+ * The preflight's check of composed rows against the plugins `fromBundle` resolves. Only a row whose
+ * package the bundle does not ship (DSH's own, or a third party's) is passed over: a plugin the bundle
+ * ships that cannot be resolved or loaded (an entry file missing, a module that throws) is a problem,
+ * never a row with nothing to check.
+ */
+export async function checkRows(rows: readonly ProfileRow[], fromBundle: Pick<NodeJS.Require, 'resolve'>): Promise<{ rows: number; problems: string[] }> {
   const problems: string[] = []
   let checked = 0
   for (const row of rows) {
     if (row.disabled || !row.name) continue
+    const named = `row ${row.id} (${row.name})`
+    let resolved: string
+    try {
+      resolved = fromBundle.resolve(row.name)
+    } catch (error) {
+      // Node's answer that no package of this name is reachable from the bundle: not ours to check.
+      if ((error as NodeJS.ErrnoException).code === 'MODULE_NOT_FOUND' && (error as Error).message.startsWith(`Cannot find module '${row.name}'`)) continue
+      problems.push(`${named}: its plugin cannot be resolved: ${(error as Error).message.split('\n')[0]!.slice(0, 300)}`)
+      continue
+    }
     let mod: Record<string, unknown>
     try {
-      mod = (await import(pathToFileURL(fromBundle.resolve(row.name)).href)) as Record<string, unknown>
-    } catch {
-      continue // a plugin this install does not ship (DSH's own, or a third party's): not ours to check
+      mod = (await import(pathToFileURL(resolved).href)) as Record<string, unknown>
+    } catch (error) {
+      problems.push(`${named}: its plugin does not load: ${(error as Error).message.split('\n')[0]!.slice(0, 300)}`)
+      continue
     }
     checked++
     const plugin = (mod.default ?? mod) as Record<string, unknown>
@@ -182,11 +204,11 @@ export async function checkProfile(home: string = dshHome()): Promise<{ rows: nu
     try {
       if (typeof schema === 'function') schema(row.config ?? {})
     } catch (error) {
-      problems.push(`row ${row.id} (${row.name}): ${(error as Error).message}`)
+      problems.push(`${named}: ${(error as Error).message}`)
       continue
     }
     const check = (mod.checkConfig ?? plugin.checkConfig) as ((config: unknown) => string[]) | undefined
-    if (typeof check === 'function') for (const problem of check(row.config ?? {})) problems.push(`row ${row.id} (${row.name}): ${problem}`)
+    if (typeof check === 'function') for (const problem of check(row.config ?? {})) problems.push(`${named}: ${problem}`)
   }
   return { rows: checked, problems }
 }

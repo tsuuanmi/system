@@ -822,8 +822,14 @@ export class AgentWorkers extends Service {
     if (workspace !== worker.workspace && !this.worktrees.intact(workspace)) {
       throw new ProviderError('reconciliation_failed', `${row.worker} changed the .git file of its worktree ${workspace}; the result is not trusted, and the worktree is left for the operator`)
     }
-    // The workspace's exact subject after the run, so a review can bind to it (REQ-WF-5).
-    const captured = captureGitSubject(workspace)
+    // The workspace's exact subject after the run, so a review can bind to it (REQ-WF-5). One git
+    // cannot read is unknown: the result is never stored as if the workspace had no subject.
+    let captured: ReturnType<typeof captureGitSubject>
+    try {
+      captured = captureGitSubject(workspace)
+    } catch (error) {
+      throw new ProviderError('reconciliation_failed', `${row.worker}: ${(error as Error).message}; the result is not stored without its subject, and the workspace is left for the operator`, { cause: error })
+    }
     this.ctx.store.transaction((db) => {
       this.ctx.leases.fence(lease())
       if (handle && row.session_id && native) db.prepare('UPDATE agent_sessions SET native_handle = ? WHERE session_id = ?').run(handle, row.session_id)

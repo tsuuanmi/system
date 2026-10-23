@@ -1361,7 +1361,8 @@ and the DSH home is hidden from agents.
    `supersedes` (the hash the policy page shows as in force): at start the change is retired,
    recorded as a `policy-change` decision, and the configuration is in force. Copying the stored
    set itself into the patch also agrees with it.
-4. **Check it before stopping anything:** `system check`. It loads every row against the code and
+4. **Check it before stopping anything:** `system check`. It loads every row against the code (a
+   plugin the install ships that does not load is a problem, not a row with nothing to check) and
    names each problem of the policy set (a rule twice, an expiry above its maximum, a batch wait
    not under the shortest expiry, a listed command with a shell metacharacter); fix the patch until
    it says `ok`. It cannot see the store, so it does not report a mismatch with a stored set. A set

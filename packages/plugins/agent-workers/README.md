@@ -57,7 +57,9 @@ The **`agents` Worker source**: agent runtimes as Workers
     `agent-result@1.2` (with `model`, `usage`, and `models`) when the runtime
     reported its token usage, `agent-result@1.1` otherwise. It carries the
     workspace the run worked in (with `worktreePerRun`, its worktree) and, when that is a git
-    working tree, its exact subject after the run, which a review binds to.
+    working tree, its exact subject after the run, which a review binds to. A working tree git
+    cannot read then (any failure but git's answer that it is no repository with a commit) fails
+    the run as `reconciliation_failed`: its result is never stored as if it had no subject.
 - **A worktree per workflow run** (`worktreePerRun`, PROP-0010 B3, INV-15):
   - the Worker's `workspace` must be the top level of a git repository with a
     commit, outside `worktreeRoot`, with git 2.17 or later. Otherwise the

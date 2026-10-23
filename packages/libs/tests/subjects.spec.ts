@@ -1,8 +1,8 @@
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { captureGitSubject, subjectId } from '../src/index.ts'
 
 const dirs: string[] = []
@@ -56,5 +56,35 @@ describe('exact git subjects (REQ-WF-5)', () => {
     const dir = mkdtempSync(join(tmpdir(), 'system-nosubject-'))
     dirs.push(dir)
     expect(captureGitSubject(dir)).toBeUndefined()
+  })
+
+  it('is undefined for a directory that is gone, so a removed worktree is no subject rather than a failure', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'system-gone-'))
+    rmSync(dir, { recursive: true })
+    expect(captureGitSubject(dir)).toBeUndefined()
+  })
+
+  it('throws when git fails otherwise: a subject it cannot read is unknown, never "no subject" (INV-2, INV-5)', async () => {
+    const dir = repo()
+    const bin = mkdtempSync(join(tmpdir(), 'system-fake-git-'))
+    dirs.push(bin)
+    // A git that refuses the repository (as for one of another owner), and one that answers it is none.
+    const fake = (stderr: string): void => {
+      mkdirSync(bin, { recursive: true })
+      writeFileSync(join(bin, 'git'), `#!/bin/sh\necho "${stderr}" >&2\nexit 128\n`, { mode: 0o755 })
+    }
+    const path = process.env.PATH
+    process.env.PATH = `${bin}:${path ?? ''}`
+    try {
+      vi.resetModules()
+      const { captureGitSubject: capture } = await import('../src/subjects.ts')
+      fake(`fatal: detected dubious ownership in repository at '${dir}'`)
+      expect(() => capture(dir)).toThrow(/cannot be read: git rev-parse failed \(fatal: detected dubious ownership/)
+      fake('fatal: not a git repository (or any of the parent directories): .git')
+      expect(capture(dir)).toBeUndefined()
+    } finally {
+      process.env.PATH = path
+      vi.resetModules()
+    }
   })
 })
