@@ -21,6 +21,10 @@
    `--reject`.
 5. `system stop <runId>` cancels running work and resends nothing.
    `system continue <runId>` then reopens the failed step as a new attempt.
+6. A run that serves a board task, or stopped at a tool call the policy asks about, waits on the
+   approval queue or the board, not on a plan: see [a waiting board
+   task](runbooks.md#a-board-task-is-blocked-or-waiting-for-input) and [a deferred tool
+   call](runbooks.md#a-workers-tool-call-is-deferred-on-an-approval).
 
 ## An AMBIGUOUS reconciliation
 
