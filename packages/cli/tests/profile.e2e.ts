@@ -132,6 +132,8 @@ describe('system profile (e2e through dsh)', () => {
     // Every mounted row passes the manifest check, the DSH rows as the bundle's allowance names them (ADR-0048).
     expect(plugins.filter((p) => p.findings)).toEqual([])
     expect(health.checks.find((c) => c.name === 'manifests')).toMatchObject({ state: 'ok', detail: expect.stringContaining(`4 of them run with no manifest, as the plugin host's configuration allows: ${DSH_PACKAGES.join(', ')}`) })
+    // The ledger and the event log are mounted, so health reads usage the ledger could not count (D25); the bundle configures no pool.
+    expect(health.checks.find((c) => c.name === 'usage')).toEqual({ name: 'usage', state: 'ok', detail: 'no resource pool is configured' })
     firstBoot = plugins
     await client.close()
 

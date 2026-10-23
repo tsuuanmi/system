@@ -12,6 +12,7 @@ import Store from '@tsuuanmi/system-store'
 import { afterEach, describe, expect, it } from 'vitest'
 import { z as zod } from 'zod'
 import { FakePluginHost, manifestText } from '../../../plugin-host-core/conformance/plugin-host.ts'
+import { FakeResources } from '../../../resources-core/conformance/resources.ts'
 import McpEndpoint from '../src/index.ts'
 
 const cleanups: Array<() => unknown> = []
@@ -86,6 +87,25 @@ describe('system MCP server on ctx.webServer', () => {
     expect(client.state).toBe(operator.state)
     // A client sees which checks are ok, never versions, paths, sizes, or names.
     expect(client.checks).toEqual(operator.checks.map(({ name, state }) => ({ name, state })))
+  })
+
+  it('is degraded by a run whose usage the ledger could not count in its pool\'s current window, until the ledger counts a record of it (D25)', async () => {
+    const { url, tokens, ctx } = await boot()
+    const pool = { pool: 'max.agents', account: 'max', kind: 'programmatic' as const, unknown: 'available' as const, windows: [{ id: 'five-hour', kind: 'rolling' as const, seconds: 18_000 }] }
+    const fibers = [ctx.plugin(EventLog, {}), ctx.plugin(FakeResources, { pools: [pool] })]
+    await Promise.all(fibers)
+    cleanups.push(async () => {
+      for (const fiber of fibers.reverse()) await fiber.dispose()
+    })
+    type Check = { name: string; state: string; detail: string }
+    const usage = async () => ((await (await connect(url, tokens.operator)).callTool({ name: 'status', arguments: {} })).structuredContent as { health: { checks: Check[] } }).health.checks.find((c) => c.name === 'usage')
+    expect(await usage()).toMatchObject({ state: 'ok' })
+    const observedAt = new Date().toISOString()
+    ctx.eventLog.append({ type: 'usage.unknown', runId: 'run_wf', data: { schema: 'usage-unknown@1.0', runId: 'arun_1', kind: 'not-reported', account: 'max', pool: 'max.agents', observedAt, reason: 'its runtime reported neither tokens nor turns' } })
+    expect(await usage()).toMatchObject({ state: 'degraded', detail: expect.stringMatching(/^max\.agents: 1 run\(s\) in its current window \(the last 5h\) whose usage the ledger could not count \(1 not-reported\)\. A cap counts each as 0/) })
+    // Reconciled: the ledger now counts a record of the run.
+    await ctx.resources.record({ schema: 'usage-record@1.0', requestId: 'transcript:arun_1', source: 'transcript', observedAt, account: 'max', pool: 'max.agents', runId: 'arun_1', turns: 4 })
+    expect(await usage()).toMatchObject({ state: 'ok' })
   })
 
   it('lists every plugin of the composition with its manifest, recorded lifecycle, and what the manifest check found, for the operator only, and fails health on a finding (REQ-HOST-7, ADR-0023, ADR-0048)', async () => {

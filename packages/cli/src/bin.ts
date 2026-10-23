@@ -70,7 +70,8 @@ const USAGE = `Usage: system <command>
          [--after <seq>] [--limit <n>] [--json]
                             the event log in order (operator); --after the printed next for more
   health [--json]           each check (plugins, manifests, runtime, store, disk, vault key, accounts,
-                            Workers, UI drift) and what to do; exit 0 healthy, 1 degraded, 2 down or not running
+                            Workers, UI drift, uncounted usage) and what to do; exit 0 healthy, 1 degraded,
+                            2 down or not running
   plugins [--json]          every plugin of the composition: its recorded lifecycle state, on or off, version,
                             class, rows, why a manifest is absent or refused, and what the manifest check found
   shutdown [--deadline <s>] drain, then stop the running profile (unfinished runs resume on start)
