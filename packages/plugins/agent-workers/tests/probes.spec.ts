@@ -208,6 +208,34 @@ describe('agent runtime probes: refreshed in the background, never waited for by
     expect(runtime.probes).toBe(2)
   })
 
+  it('bounds a probe\'s accounts\' re-read with it: one that never settles is refused as timed out, naming the home, and no success stands without it', async () => {
+    const runtime: AgentRuntimeProvider = {
+      kind: 'homes',
+      probe: async (options) => ({ ...READY, homes: true, detail: options?.home ? `in ${options.home}` : 'its own home' }),
+      run: async () => { throw new Error('the probe tests run nothing') },
+    }
+    const stopped = new AbortController()
+    const tracked: Array<Promise<unknown>> = []
+    let hang = true
+    const probes = new Probes({
+      ttlMs: 600, provider: (kind) => (kind === 'homes' ? runtime : undefined), stopped: stopped.signal, track: (probe) => tracked.push(probe), warn: () => undefined,
+      // The home's accounts are read again, and that read never settles.
+      after: (_kind, home) => (hang && home !== undefined ? new Promise<void>(() => undefined) : Promise.resolve()),
+    })
+    try {
+      // The runtime proved itself in the home, but its accounts were not read again: it admits nothing.
+      expect(await atOnce(probes.described('homes', '/accounts/2'))).toMatchObject({ available: false, detail: 'probe timed out: the probe of homes in /accounts/2 did not finish within probeTtlMs (600 ms)' })
+      // A stop waits for it no longer than the bound.
+      expect(await atOnce(Promise.allSettled(tracked))).not.toBe('waited')
+      // Once the accounts are read again, the next probe brings the home back.
+      hang = false
+      await expect.poll(async () => (await atOnce(probes.described('homes', '/accounts/2'))), { timeout: 5000, interval: 20 }).toMatchObject({ available: true, detail: 'in /accounts/2' })
+    } finally {
+      stopped.abort()
+      probes.close()
+    }
+  })
+
   it('keeps no result with probeTtlMs 0: every read waits for a probe, and nothing probes in the background', async () => {
     const { probes, runtime } = setup(0)
     expect(await probes.described('gated')).toEqual(READY)
