@@ -37,7 +37,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import {
   type AgentRuntimeProvider, type Confinement, type LimitObservation, type ModelUsage, type RunMetering, type RunResult, type RunSpec, type RuntimeEvidence, type SandboxMode, type TokenUsage,
-  type ToolCall, type ToolGate, type ToolVerdict, childEnvironment, confinedCommand, proveConfinement, withMetering,
+  type ToolGate, askToolGate, childEnvironment, confinedCommand, proveConfinement, withMetering,
 } from '@tsuuanmi/system-agent-runtime-core'
 import { dshHome, ensurePrivateDir } from '@tsuuanmi/system-libs'
 import { ProviderError, type ProviderErrorKind } from '@tsuuanmi/system-provider-core'
@@ -356,41 +356,6 @@ const hookDecision = (decision: 'deny' | 'defer', reason: string): HookJSONOutpu
   hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: decision, permissionDecisionReason: reason.slice(0, 1000) },
 })
 
-/** A verdict the gate's contract allows; anything else is a deny. */
-function known(verdict: unknown): verdict is ToolVerdict {
-  const v = verdict as Partial<{ decision: string; reason: unknown; requestId: unknown }> | null
-  if (!v || typeof v !== 'object') return false
-  if (v.decision === 'allow') return true
-  if (v.decision === 'deny') return typeof v.reason === 'string'
-  return v.decision === 'defer' && typeof v.reason === 'string' && typeof v.requestId === 'string' && v.requestId.length > 0
-}
-
-/**
- * Ask the gate about one call, bounded: a gate that throws, gives an unknown verdict, or does not
- * answer within `GATE_MS` is a deny, never a pass (INV-2).
- */
-async function ask(gate: ToolGate, call: ToolCall, signal: AbortSignal): Promise<ToolVerdict> {
-  const controller = new AbortController()
-  const abort = (): void => controller.abort()
-  signal.addEventListener('abort', abort, { once: true })
-  let timer: NodeJS.Timeout | undefined
-  try {
-    const late = new Promise<ToolVerdict>((resolve) => {
-      timer = setTimeout(() => {
-        controller.abort()
-        resolve({ decision: 'deny', reason: `the tool gate did not answer within ${GATE_MS / 1000} s` })
-      }, GATE_MS)
-    })
-    const verdict = await Promise.race([gate(call, controller.signal), late])
-    return known(verdict) ? verdict : { decision: 'deny', reason: 'the tool gate gave a verdict it does not define' }
-  } catch (error) {
-    return { decision: 'deny', reason: `the tool gate failed: ${(error as Error)?.message?.slice(0, 200) ?? String(error)}` }
-  } finally {
-    clearTimeout(timer)
-    signal.removeEventListener('abort', abort)
-  }
-}
-
 /**
  * The run's gate as a PreToolUse hook. `deny` and `defer` are the hook's decisions, which hold in
  * every permission mode; `allow` returns no decision, so the workspace-scoped pre-approvals still
@@ -403,7 +368,8 @@ function gateHook(gate: ToolGate, deferral: { current?: Deferral }): HookCallbac
     const stopped = deferral.current
     if (stopped) return hookDecision('deny', `the run stopped at tool call ${stopped.tool}, which waits for approval request ${stopped.requestId}; no further tool call runs`)
     const callId = input.tool_use_id || toolUseId
-    const verdict = await ask(gate, { tool: input.tool_name, input: input.tool_input, ...(callId ? { callId } : {}) }, signal)
+    // Bounded: a gate that throws, gives an unknown verdict, or does not answer within GATE_MS is a deny (INV-2).
+    const verdict = await askToolGate(gate, { tool: input.tool_name, input: input.tool_input, ...(callId ? { callId } : {}) }, signal, GATE_MS)
     if (verdict.decision === 'allow') return {}
     if (verdict.decision === 'defer') {
       deferral.current = { tool: input.tool_name, callId, requestId: verdict.requestId, reason: verdict.reason }

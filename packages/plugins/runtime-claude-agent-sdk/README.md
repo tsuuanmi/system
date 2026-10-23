@@ -141,6 +141,6 @@ installed.
   ([dependency register](../../../docs/engineering/dependencies.md)). Its
   sandbox ships in Claude Code itself; nothing new is depended on.
 - **Dependencies:** `@anthropic-ai/claude-agent-sdk`, `agent-runtime-core`
-  (`childEnvironment`, `confinedCommand`, `proveConfinement`), `system-libs`
+  (`askToolGate`, `childEnvironment`, `confinedCommand`, `proveConfinement`), `system-libs`
   (`dshHome`, `ensurePrivateDir`), `provider-core`.
 - **Injects:** `agentRuntimes`.
