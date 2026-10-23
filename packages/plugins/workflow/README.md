@@ -521,9 +521,10 @@ second execution path (INV-1).
   daily, except a session's latest run, and then `ctx.artifacts.collect()` takes
   what only expired runs needed.
 - **Conformance.** The seam's suite is [`conformance/workflow.ts`](conformance/workflow.ts),
-  run through the [conformance runner](../../libs/conformance/runner.ts) at contract 1.3 by
+  run through the [conformance runner](../../libs/conformance/runner.ts) at contract 1.4 by
   `tests/conformance.spec.ts`, against this engine and the real plugins it injects (the
-  store-backed board and approval queue among them), with only Worker execution scripted:
+  store-backed board, approval queue, and resource ledger among them), with only Worker execution
+  scripted:
   - valid `workflow-node@1.x` records; a node completes only with its input receipt, its
     Worker's result, and the acceptance decision that accepted it;
   - input bound by hash, and the execution keyed by it; a repeated `clientRequestId`;
@@ -536,6 +537,15 @@ second execution path (INV-1).
     pointing at its dependencies' results and never carrying them, which renders to the
     template's prompt; a board task's brief from the task; a task's next attempt resuming the
     session before it when its Worker can, fresh otherwise;
+  - since 1.4 ([ADR-0053](../../../docs/decisions/adr/0053-workflow-contract-states-task-budget-question-and-tasks-file.md)),
+    a task's budget: refused before the task is taken when the ledger cannot hold it, reserved
+    before each step, a spent line starting no further step and blocking the task with a funding
+    request from the ledger's count, the funded attempt pointed at the completed steps, and no
+    funding asked on the last attempt (`retries-spent`); a step's questions blocking its task, the
+    answers briefing the next attempt, and none offered outside a board task; the board's
+    `TASKS.md` in every brief, written git-ignored into the run's own worktree by a scripted source
+    with one, the result bound to the worktree's subject without it, nothing committed, nothing
+    read back;
   - admission that fails closed and stays within `maxActiveRuns`; a node no Worker is
     admitted for fails with nothing sent;
   - bounded retries of unsent failures, a sent one never resent, and bounded escalation;
