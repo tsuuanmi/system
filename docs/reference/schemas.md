@@ -800,8 +800,8 @@ guesses.
   [`hypothesis-set`](#hypothesis-set-and-evidence-table), which frames one study.
 - `fingerprint` is computed by the registry, never taken from the caller: version 1 of the
   [semantic key](../design/experiments.md#two-keys), each tag normalized to the vocabulary's
-  canonical tag (a tag or one of its aliases, trimmed and lowercased). A tag the vocabulary does
-  not hold is refused.
+  canonical tag (the tag itself or one of its aliases). A tag the vocabulary does not hold is
+  refused. The record keeps each tag as its author gave it.
 - `priorEvidence.experiments` names earlier experiments by id; naming one links it by hand, so the
   registry treats it as related. `source.ref` names the research run, brainstorm decision, or
   retrospective the claim came from; only the operator's own claim has none. Example:
