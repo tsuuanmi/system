@@ -1,7 +1,7 @@
 # ADR-0039: Base B3 to B5 extend the workers, workflow, board, and approvals contracts
 
-- **Status:** Proposed
-- **Date:** 2026-10-23
+- **Status:** Accepted
+- **Date:** 2026-10-23 (accepted 2026-10-23, by the operator)
 - **Related:** [ADR-0036](0036-guarantee-core-and-capability-plugins.md),
   [ADR-0037](0037-schema-and-protocol-first.md), [PROP-0010](../../proposals/0010-base-version.md),
   [INV-2](../../architecture/invariants.md#inv-2-fail-closed),
