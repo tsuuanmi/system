@@ -86,7 +86,7 @@ describe('the worker-agnosticism records', () => {
       const defectLines = new Set(c.labels.filter((l) => l.kind === 'defect').flatMap((l) => l.lines))
       expect(c.labels.filter((l) => l.kind === 'non-defect').flatMap((l) => l.lines).filter((n) => defectLines.has(n))).toEqual([])
     }
-    expect(cases.flatMap((c) => c.labels).filter((l) => l.severity === 'blocking').map((l) => l.id)).toEqual(['G1', 'G2', 'G4', 'Q1', 'Q3', 'Q4'])
+    expect(cases.flatMap((c) => c.labels).filter((l) => l.severity === 'blocking').map((l) => l.id)).toEqual(['G1', 'G2', 'G4', 'Q1', 'Q2', 'Q3', 'Q4'])
   })
 
   it('schedules every case in every arm once per round, in blocks of one arm, the same way every time', () => {
