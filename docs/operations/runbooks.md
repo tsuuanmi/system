@@ -704,7 +704,10 @@ the configured agent Workers run in slot 1's home only: an account in a later sl
 watched, and runs nothing yet.
 
 Before you start: the vault is loaded (the key of the ids lives there, and is backed up with it),
-the runtime's row is on, and you are at a terminal on the host.
+the runtime's row is on, and you are at a terminal on the host. Do not enroll a runtime whose
+Workers sign in by a forwarded API key or through the gateway (`forwardEnv`, a configured model
+provider): no person is behind it, so its home reads `ambiguous` or `signed-out`, and once enrolled
+its Workers stop (PROP-0012 open question 4).
 
 1. **More than one slot:** give the runtime its slots on the `agent-workers` row (default 1), and
    restart:
