@@ -848,7 +848,8 @@ state), `board_tasks` (`states`: `waiting-for-input`, `waiting-for-approval`, `r
 `board_task`: its `waiting` gives the `reason`, `since`, and `expiresAt` (and `questions`,
 `pendingChecks`, or `approvalRequest`), and `lastDecision` is the `board` decision behind the move
 (`system artifact <id>` shows its reasons). The CLI has no board command: ask the Lead, since the
-`board_*` tools are client scope. `/ui` shows only the approval queue and the reviews.
+lead's `board_*` tools are client scope. `/ui` shows the approval queue, the reviews, and the
+projects with their open tasks per state (the **Board** page), not each task.
 
 | `waiting.reason` | What it means | What you can do |
 |---|---|---|
@@ -904,6 +905,40 @@ rejected by the engine as another attempt, also without you.
      attempt yet, so tell the Lead.
    - **No verdict:** at `yours until` the task waits for input (`review-expired`) and the row
      leaves the list. The wait is the policy's for the class: a day in the bundle's studio policy.
+
+## Pause, resume, or close a project
+
+A project's state is yours alone to move: no Lead or Worker pauses, resumes, or closes it
+([the operator's project moves](../design/board.md#the-operators-project-moves)). Use the
+**Board** page on `/ui` (`system ui` prints the link). It lists every project, the closed ones
+last, with its state, its charter version, an amendment waiting in the queue, and its open tasks
+per state. The operator-scope MCP tools `board_pause`, `board_resume`, and `board_close` do the
+same from an operator MCP client; a client token is refused (`403` on `/mcp`, `401` on `/ui`).
+
+Each move opens a confirmation of what it does to that project; nothing moves until **Confirm**,
+and **Cancel** leaves it as it was. The page sends the project's revision as it showed it: if the
+project changed meanwhile (another move, an amendment approved or dropped), the move is refused
+(`409`) and nothing moves; read the page again and decide again. Each move is recorded as a
+`board` decision: `system artifact <id>` (the project's `lastDecision`) shows its reasons.
+
+- **Pause** an `active` project to hold its work: a stop rule that says pause, a budget to
+  rethink, time away. Until you resume it, no task of it is claimed or started (the Lead's `run`
+  with `task` is refused, nothing started) and no proposed task is put to the policy. What already
+  runs goes on to its outcome: a run finishes, its result reaches review, and you still decide
+  reviews held for you. Every wait keeps its expiry, and a request you answer meanwhile still
+  applies, but a task it readies waits unclaimed.
+- **Resume** a `paused` project: on the board's next sweep (a minute) its proposed tasks whose
+  dependencies are done go through the gate (ready, or a request in the queue), and the Lead may
+  start its ready tasks again.
+- **Close** an `active` or `paused` project for good, `achieved` (its criteria are met) or
+  `stopped` (it ends without them). It is refused while a task runs or is in review: let the run
+  finish or stop it (`system stop <runId>`), and decide the reviews held for you
+  ([review](#accept-or-reject-a-review)); the confirmation says so when it applies. Otherwise every
+  open task is cancelled (`project-closed`), a claimed one's lease released; then the approval
+  requests its waiting tasks and an amendment were on are withdrawn, and leave the queue. Merge
+  the accepted work you want first ([worktree](#a-runs-worktree)): the close removes no worktree
+  or result, and a closed project takes no task or amendment again. To go on with the work, found
+  a new project (`board_charter`).
 
 ## A remediation fix waits on the queue
 

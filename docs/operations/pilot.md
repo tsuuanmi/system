@@ -10,7 +10,7 @@ template, the board, the approval queue, the resource ledger, digests, and the
 [runbooks](runbooks.md).
 
 Roles: you are the investor (the operator): you approve the charter, answer the queue, accept or
-reject results, and merge them. The lead is your own Claude Code session connected to `system`
+reject results, merge them, and pause or close the project. The lead is your own Claude Code session connected to `system`
 over MCP (`system mcp-config claude`): it proposes tasks and starts their runs with the client
 tools. The Workers are Claude Code Workers that `system` runs, each in a run's own worktree.
 
@@ -187,10 +187,28 @@ attempt reported once, one usage record per agent run).
 Run at least five working days, the restart among them. Each week, `system report --project <id>`
 is the investor report: progress per milestone, accepted results, what asked for you, usage, and
 cost per accepted result; amend the charter (`board_charter` with the next version) when the
-evidence says pivot, as its stop rules do.
+evidence says pivot, as its stop rules do. When one says pause, or you are away, pause the project
+on the **Board** page of `/ui` and resume it there later
+([pause, resume, or close](runbooks.md#pause-resume-or-close-a-project)).
 
-Closing the project (achieved or stopped) is a board move with no surface yet: `board_cancel`
-ends the open tasks, and the project stays `active` until a close tool exists.
+Then close the project, on `/ui`:
+
+1. **Let nothing be in flight.** A close is refused while a task of the project is `running` or in
+   `review`; the **Board** page counts them. Let a running attempt finish, or stop its run
+   (`system stop <runId>`: the task is ready again or waits, and the close cancels it); decide
+   every review held for you (Accept or Reject).
+2. **Take what you accepted.** Merge each accepted result's branch
+   ([recover work](runbooks.md#a-runs-worktree)) before you close: the close removes no worktree
+   or result, but it cancels every open task, so no further attempt runs.
+3. **Close it.** On the **Board** page, press **Close** on the project and pick the outcome:
+   `achieved` when its criteria are met, `stopped` when it ends without them (a stop rule fired,
+   or you stop it). The confirmation says how many open tasks it cancels, which claims it
+   releases, and which approval requests it withdraws (a waiting task's, a pending amendment's);
+   **Confirm** closes it. MCP `board_close` (operator scope) does the same with
+   `{projectId, outcome}`. The close is recorded as a `board` decision, the project's
+   `closure.decision`.
+4. **Check:** the project shows `closed (<outcome>)`, last on the page, and the queue on `/ui` no
+   longer lists its requests. The closed project stays on the board: its report reads it.
 
 ## Read the baseline
 
@@ -199,7 +217,8 @@ well-configured Claude Code session alone and through `system`
 ([validation plan](../proposals/0008-studio-operating-model.md#validation-plan)).
 
 1. **`system`'s side:** `system report --project <id> --since <the charter's approval>` covers
-   the whole pilot. Its baseline section gives the accepted results, the interruptions (every
+   the whole pilot, the tasks the close cancelled and the requests it withdrew included. Its
+   baseline section gives the accepted results, the interruptions (every
    approval request and every review held for you), the attempts, and, per accepted result, the
    tokens, cost, turns, attempts, and interruptions; `--json` gives the same as data
    ([what each figure counts](../design/reports.md#what-it-counts)). Its notes say what it could
