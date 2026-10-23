@@ -17,6 +17,7 @@ import Leases from '@tsuuanmi/system-leases'
 import { contentId } from '@tsuuanmi/system-libs'
 import { ProviderError } from '@tsuuanmi/system-provider-core'
 import { ClaudeAgentRuntime, type QueryFn } from '@tsuuanmi/system-runtime-claude-agent-sdk'
+import { CodexRuntime } from '@tsuuanmi/system-runtime-codex-sdk'
 import Store from '@tsuuanmi/system-store'
 import WorkerRouter, { type WorkerExecution, type WorkRequirement } from '@tsuuanmi/system-workers'
 import WorkerSessions from '@tsuuanmi/system-worker-sessions'
@@ -25,6 +26,7 @@ import { afterAll, afterEach, describe, expect, it, vi } from 'vitest'
 import { parse as parseYaml } from 'yaml'
 import AgentWorkers from '../src/index.ts'
 import { classify } from '../src/gate.ts'
+import { probeExec, scripted as scriptedCodex } from '../../runtime-codex-sdk/tests/fake-codex.ts'
 
 const cleanups: Array<() => unknown> = []
 afterEach(async () => {
@@ -562,6 +564,51 @@ describe('a Claude Code Worker under the bundle\'s default policy, end to end (d
     expect(decisionOf(ctx, (outputs[0]!.hookSpecificOutput as { permissionDecisionReason: string }).permissionDecisionReason)).toMatchObject({ decisionType: 'gate', outcome: { option: 'deny' } })
     expect(done).toMatchObject({ status: 'failed', error: { kind: 'config_error' } })
     expect(await ctx.approvals.list()).toEqual([expect.objectContaining({ action: expect.objectContaining({ class: 'command', summary: 'Bash: npm test' }), requester: expect.objectContaining({ toolUseId: 'toolu_1' }) })])
+  })
+})
+
+describe('a Codex Worker under the bundle\'s default policy, end to end (docs/design/agent-runtimes.md#tool-gate)', () => {
+  const root = mkdtempSync(join(tmpdir(), 'cxw-'))
+  afterAll(() => rmSync(root, { recursive: true, force: true }))
+
+  /**
+   * Codex on a host where its confinement and its gate are proven, its stream scripted: each tool
+   * call goes through the real gate hook the run installs (as Codex 0.164 runs it), and an allowed
+   * one produces its item.
+   */
+  function codex(calls: Array<{ tool: string; input: Record<string, unknown>; item?: string }>) {
+    const s = scriptedCodex(() => [
+      { type: 'thread.started', thread_id: 'h-codex' }, { type: 'turn.started' },
+      ...calls.map((call, i) => ({ call: { tool: call.tool, input: call.input }, ...(call.item ? { item: { id: `i${i}`, type: call.item, command: '', aggregated_output: '', status: 'completed' } } : {}) }) as never),
+      { type: 'item.completed', item: { id: 'msg', type: 'agent_message', text: 'changed it' } },
+      { type: 'turn.completed', usage: { input_tokens: 1, cached_input_tokens: 0, cache_write_input_tokens: 0, output_tokens: 1, reasoning_output_tokens: 0 } },
+    ])
+    const runtime = new CodexRuntime({
+      executable: '/usr/bin/codex', home: join(root, 'home'), runDir: join(root, 'run'), hook: fileURLToPath(new URL('../../runtime-codex-sdk/src/gate-hook.ts', import.meta.url)),
+      client: s.client, version: async () => '0.164.0', mcpServers: async () => [], exec: probeExec(),
+      confine: (bind) => ({ bwrap: '/usr/bin/bwrap', hide: [], readOnly: [...(bind.readOnly ?? [])], writable: [...(bind.writable ?? [])] }),
+      prove: async () => ({ confined: true, detail: 'host state hidden' }), nested: async () => undefined, status: async () => undefined, launcher: () => '/launcher',
+    })
+    return { runtime, hooks: () => s.calls.flatMap((c) => c.hooks) }
+  }
+
+  it('is admitted on its probe, patches its workspace through the hook, is denied outside it, and waits for the operator on a command', async () => {
+    const patch = (path: string) => ({ command: `*** Begin Patch\n*** Add File: ${path}\n+x\n*** End Patch\n` })
+    const { runtime, hooks } = codex([
+      { tool: 'apply_patch', input: patch('src/new.ts'), item: 'file_change' },
+      { tool: 'view_image', input: { path: '/etc/hostname' } },
+      { tool: 'apply_patch', input: patch('/etc/cron.d/x'), item: 'file_change' },
+      { tool: 'Bash', input: { command: 'npm test' }, item: 'command_execution' },
+    ])
+    const { ctx, run } = await boot(runtime, bundlePolicies()[0]!)
+    const done = await run()
+    // A workspace patch runs (tests and lint pending); a read or a patch outside is denied by the gate's own rule; a command asks.
+    expect(hooks().map((h) => h.blocked)).toEqual([false, true, true, true])
+    expect(decisionOf(ctx, hooks()[1]!.reason)).toMatchObject({ decisionType: 'gate', outcome: { option: 'deny' } })
+    expect(hooks()[2]!.reason).toContain('/etc/cron.d/x, which is not inside the workspace')
+    expect(done).toMatchObject({ status: 'failed', error: { kind: 'config_error', message: expect.stringContaining('stopped at its Bash call, which waits for the operator') } })
+    expect(await ctx.approvals.list()).toEqual([expect.objectContaining({ action: expect.objectContaining({ class: 'command', summary: 'Bash: npm test' }), requester: expect.objectContaining({ toolUseId: 'call_4' }) })])
+    expect(ctx.eventLog.query({ type: 'agent-workers.tool.checks-pending' })).toEqual([expect.objectContaining({ data: expect.objectContaining({ tool: 'apply_patch', pendingChecks: ['tests', 'lint'] }) })])
   })
 })
 

@@ -43,6 +43,7 @@
     "@tsuuanmi/system-approvals": "workspace:*",
     "@tsuuanmi/system-egress": "workspace:*",
     "@tsuuanmi/system-runtime-claude-agent-sdk": "workspace:*",
+    "@tsuuanmi/system-runtime-codex-sdk": "workspace:*",
     "@tsuuanmi/system-worker-sessions": "workspace:*",
     "@tsuuanmi/system-workers": "workspace:*",
     "@tsuuanmi/system-workflow": "workspace:*",
