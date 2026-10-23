@@ -64,7 +64,8 @@ Claude Code and Codex, and the `system` CLI. It is the primary client interface
     usage the ledger could not count (a valid `usage.unknown` entry,
     [resources](../../../docs/design/resources.md#usage-the-ledger-cannot-count)) in its current
     window that the ledger has not counted a record of since (`resources.usage` by run and pool),
-    naming each pool, its count, and the kinds: each run once, by its first entry. A pool's current
+    naming each pool, its count, and the kinds: each run once, by its first entry; an entry that is
+    not a valid `usage-unknown@1.0` record is counted and said, never skipped. A pool's current
     window is its longest one, back from now; a pool with a window of no length (a credit
     balance) reads every entry the log keeps. It reads at most 1000 entries and says so when it
     reaches them. A cap still counts such a run as 0 (D25).

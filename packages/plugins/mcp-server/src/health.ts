@@ -197,10 +197,13 @@ export async function healthReport(sources: HealthSources): Promise<HealthReport
       if (!windows.size) return ok('usage', 'no resource pool is configured')
       const starts = [...windows.values()].map((seconds) => (seconds === undefined ? 0 : now - seconds * 1000))
       const entries = unknownUsage.entries(new Date(Math.min(...starts)).toISOString())
-      // Each run once per pool, by its first fact; an entry that is not a valid record is skipped.
+      // Each run once per pool, by its first fact. An entry that is not a valid record names no pool
+      // to count it under, so it is said, never skipped silently (INV-14).
       const runs = new Map<string, Map<string, string>>()
+      let unreadable = 0
       for (const entry of entries) {
         const fact = usageUnknownOf(entry.data)
+        if (!fact) unreadable += 1
         if (!fact || !windows.has(fact.pool)) continue
         const seconds = windows.get(fact.pool)
         if (seconds !== undefined && Date.parse(entry.at) < now - seconds * 1000) continue
@@ -215,6 +218,7 @@ export async function healthReport(sources: HealthSources): Promise<HealthReport
         const seconds = windows.get(pool)
         if (count) open.push(`${pool}: ${count} run(s) in its current window (${seconds === undefined ? 'it has a window that never resets' : `the last ${span(seconds)}`}) whose usage the ledger could not count (${[...kinds].sort().map(([k, n]) => `${n} ${k}`).join(', ')})`)
       }
+      if (unreadable) open.push(`${unreadable} usage.unknown entr${unreadable === 1 ? 'y is' : 'ies are'} not a valid usage-unknown@1.0 record, so no pool counts ${unreadable === 1 ? 'it' : 'them'}`)
       const partial = entries.length >= MAX_UNKNOWN_ENTRIES ? ` (counted from the first ${MAX_UNKNOWN_ENTRIES} entries only)` : ''
       return open.length
         ? { name: 'usage', state: 'degraded', detail: `${open.join('; ')}${partial}. A cap counts each as 0 until the ledger counts a record of it: see system events --type usage.unknown (docs/operations/runbooks.md#usage-the-ledger-could-not-count)` }

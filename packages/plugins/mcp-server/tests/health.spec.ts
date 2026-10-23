@@ -51,7 +51,7 @@ describe('host health (REQ-HOST-6)', () => {
       fact('arun_4', 'max.agents', 'failed', '2026-10-23T11:00:00.000Z'),
       // A credit balance never resets: every unreconciled run counts.
       fact('arun_5', 'api.key', 'not-reported', '2026-09-01T00:00:00.000Z'),
-      // A pool no longer configured, and an entry that is no record, are skipped.
+      // A pool no longer configured is skipped; an entry that is no record is said, never skipped silently.
       fact('arun_6', 'gone.pool', 'not-reported', '2026-10-23T11:00:00.000Z'),
       { at: '2026-10-23T11:00:00.000Z', data: { kind: 'not-reported', pool: 'max.agents' } },
     ]
@@ -66,7 +66,8 @@ describe('host health (REQ-HOST-6)', () => {
     expect(report.checks.find((c) => c.name === 'usage')).toEqual({
       name: 'usage', state: 'degraded',
       detail: 'api.key: 1 run(s) in its current window (it has a window that never resets) whose usage the ledger could not count (1 not-reported); '
-        + 'max.agents: 2 run(s) in its current window (the last 5h) whose usage the ledger could not count (1 not-reported, 1 refused). '
+        + 'max.agents: 2 run(s) in its current window (the last 5h) whose usage the ledger could not count (1 not-reported, 1 refused); '
+        + '1 usage.unknown entry is not a valid usage-unknown@1.0 record, so no pool counts it. '
         + 'A cap counts each as 0 until the ledger counts a record of it: see system events --type usage.unknown (docs/operations/runbooks.md#usage-the-ledger-could-not-count)',
     })
     // Read once, back to the earliest window's start: the start of time for a window that never resets.
