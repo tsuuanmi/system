@@ -23,6 +23,10 @@
     {
       "key": "accounts",
       "sensitive": false
+    },
+    {
+      "key": "providers",
+      "sensitive": false
     }
   ],
   "license": "UNLICENSED"

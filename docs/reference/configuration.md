@@ -16,6 +16,10 @@
 | `accounts[].label` | string |  |  |
 | `accounts[].quotaClass` (required) | "subscription-chat" \| "agent-plan" \| "metered" \| "local" |  |  |
 | `accounts[].tiers` | Record<string, string> | `{}` | Tier → provider mode preset; each mapped tier is one Worker, an unmapped tier is never served |
+| `providers` | object[] | `[]` | How each website provider's accounts are used; a provider not listed is assigned (ADR-0052) |
+| `providers[].provider` (required) | string |  | The website provider (its driver kind), for example chatgpt-web |
+| `providers[].accounts` | "assigned" \| "pooled" | `"assigned"` | assigned (the default; personal subscriptions): a limit on one account never moves its work to another account of this provider, the work waits; pooled: only with pooledTerms |
+| `providers[].pooledTerms` | any |  | {confirmedBy, confirmedAt, terms}: who confirmed that this provider's terms allow pooling its accounts, when (ISO time), and which terms; required for pooled (ADR-0052) |
 
 ## `agent-runtimes`
 
@@ -50,6 +54,10 @@
 | `workers[].limitCooldownSeconds` | number (60…604800) | `3600` | How long a limit hit with no reset time keeps the pool closed |
 | `workers[].family` | string (1…128) |  | Its provider family (ADR-0027; default: the runtime): the same as other Workers' of the vendor whose models it runs, so team members of one vendor stay apart. Required for a review member |
 | `workers[].reviewMember` | boolean | `false` | Its review team member steps run under the enforced review-member profile (ADR-0049): no tool call runs, its workspace is an empty directory outside any repository, and the profile grants reason for those steps only; a runtime that cannot resume keeps the member's conversation by replay. Read-only Workers with a family only |
+| `providers` | object[] | `[]` | How each agent runtime's accounts are used; a runtime not listed is assigned (ADR-0052) |
+| `providers[].provider` (required) | string |  | The agent runtime kind, for example claude-agent-sdk |
+| `providers[].accounts` | "assigned" \| "pooled" | `"assigned"` | assigned (the default; personal subscriptions): a limit on one account never moves its work to another account of this runtime, the work waits; pooled: only with pooledTerms |
+| `providers[].pooledTerms` | any |  | {confirmedBy, confirmedAt, terms}: who confirmed that this runtime's plan terms allow pooling its accounts, when (ISO time), and which terms; required for pooled (ADR-0052) |
 | `maxReplayChars` | number (1…2000000) | `200000` | Characters of earlier turns a review member's replayed conversation holds, at most; a turn past it fails, never cut |
 | `probeTtlMs` | number (0…) | `300000` | How long a probe result stands |
 | `runTimeoutMs` | number (1…) | `900000` | Hard deadline per run |
@@ -451,6 +459,7 @@ No options.
 | `retainDays` | number (1…) | `30` | Days a finished run keeps its input text and prompts |
 | `allowSameFamily` | boolean | `false` | When no Worker of another provider family (or, for a team member, another account) is admitted, run on the same family instead of failing: a team member first on an account of its own, then sharing one, recorded as a same-family decision; its work is then not judged by another provider (ADR-0029, ADR-0035) |
 | `retainRunsDays` | number (0…) | `30` | Days a finished run is kept, then deleted with the artifacts only it needed and the website chats only it used (0: every run is kept); a session's latest run always stays |
+| `maxLimitWaitHours` | number (0…720) | `24` | Hours a node refused only because the assigned accounts that could take it are at their limit may wait for the earliest reset, in all from its first wait, spending no attempt; past it, or with no known reset, it fails quota_exhausted (ADR-0052, INV-9); 0 never waits |
 | `autoApprovePlans` | boolean | `false` | Approve a high-confidence plan by policy instead of waiting for the operator |
 | `maxReviewCycles` | number (1…5) | `3` | Reviews of one change, the first included, before remediation stops |
 | `tieTimeoutHours` | number (0.0001…720) | `24` | Hours a tied team waits for a deciding vote, then completes inconclusive (INV-9) |

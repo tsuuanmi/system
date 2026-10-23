@@ -90,7 +90,7 @@ export class Accounts extends Service {
       tiers: z.dict(z.string()).default({}).description('Tier → provider mode preset; each mapped tier is one Worker, an unmapped tier is never served'),
     })).default([]).description('Account catalog: any number of accounts per provider'),
     providers: z.array(z.object({
-      provider: z.string().pattern(ID).required(),
+      provider: z.string().pattern(ID).required().description('The website provider (its driver kind), for example chatgpt-web'),
       accounts: z.union(['assigned', 'pooled']).default('assigned').description('assigned (the default; personal subscriptions): a limit on one account never moves its work to another account of this provider, the work waits; pooled: only with pooledTerms'),
       // Not z.object: an omitted object would come back as {}; checked when loaded.
       pooledTerms: z.any().description('{confirmedBy, confirmedAt, terms}: who confirmed that this provider\'s terms allow pooling its accounts, when (ISO time), and which terms; required for pooled (ADR-0052)'),
