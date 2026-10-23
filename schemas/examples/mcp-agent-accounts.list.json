@@ -1,0 +1,32 @@
+{
+  "tool": "account_agents",
+  "input": {},
+  "output": {
+    "accounts": [
+      {
+        "account": {
+          "schema": "agent-account@1.0",
+          "accountId": "codex-sdk:04aa5c1e9b7d3f20",
+          "provider": "codex-sdk",
+          "slot": 1,
+          "home": "/home/operator/.dsh/system/codex-home",
+          "status": "ready",
+          "identity": {
+            "hmac": "04aa5c1e9b7d3f2010a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708",
+            "reader": "codex-auth-json",
+            "runtimeVersion": "0.164.0",
+            "verifiedAt": "2026-10-24T08:00:00Z"
+          },
+          "revision": 1,
+          "updatedAt": "2026-10-24T08:00:00Z"
+        },
+        "workers": ["agent:codex-review"]
+      }
+    ],
+    "providers": [
+      { "provider": "antigravity-cli", "slots": 1, "taken": 0, "identity": false, "login": true },
+      { "provider": "claude-agent-sdk", "slots": 3, "taken": 0, "identity": true, "login": true },
+      { "provider": "codex-sdk", "slots": 2, "taken": 1, "identity": true, "login": true }
+    ]
+  }
+}
