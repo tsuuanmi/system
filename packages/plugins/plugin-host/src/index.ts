@@ -1,20 +1,23 @@
 /**
  * `ctx.pluginHost`: the plugin host's record of the composition (docs/design/plugin-host.md). When
  * it starts, it reads every row of the composition from the DSH loader, mounted or not, the manifest
- * each row's package declares, and the lifecycle states recorded before; it records each change as a
- * `lifecycle` decision and then the plugin's new state, in one store transaction (INV-13), and lists
- * the plugins from then on. It is the one adapter between the DSH loader and a `system` seam
- * (ADR-0018). It records and automates nothing: it never mounts, stops, or gates a plugin.
+ * each row's package declares, and the lifecycle states and manifest checks recorded before; it
+ * records each change as a decision (a `lifecycle` decision, or the manifest check's `gate`
+ * decision) and then the plugin's new record, in one store transaction (INV-13), and lists the
+ * plugins from then on. It is the one adapter between the DSH loader and a `system` seam
+ * (ADR-0018). It records and automates nothing: it never mounts, stops, or gates a plugin; what its
+ * check finds makes health down (ADR-0048).
  * @module @tsuuanmi/system-plugin-host
  */
 import { closeSync, fstatSync, openSync, readFileSync, readSync, realpathSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Context } from '@deepseek-ai/cordis'
+import z from '@deepseek-ai/schemastery'
 import type {} from '@tsuuanmi/system-artifacts'
 import {
-  type ArtifactRef, type CompositionRow, findPlugin, MANIFEST_FILE, MANIFEST_MAX_BYTES, type ManifestRead, PluginHost, type PluginRecord, pluginRecords, pluginsOf,
-  readManifest, reconcile, type RecordedLifecycle,
+  type ArtifactRef, type CompositionRow, findPlugin, MANIFEST_FILE, MANIFEST_MAX_BYTES, type ManifestFinding, type ManifestRead, PluginHost, type PluginRecord,
+  pluginRecords, pluginsOf, readManifest, reconcile, reconcileChecks, type RecordedCheck, type RecordedLifecycle,
 } from '@tsuuanmi/system-plugin-host-core'
 import type {} from '@tsuuanmi/system-store'
 
@@ -108,13 +111,24 @@ export function packageManifest(name: string, bases: readonly string[]): Manifes
 }
 
 interface LifecycleRow { name: string; state: RecordedLifecycle['state']; since: string; decision: string; version: string; rows: string }
+interface CheckRow { name: string; findings: string; since: string; decision: string }
+
+export interface Config {
+  /** Packages a row may load with no `plugin-manifest.json`: the DSH rows the bundle composes. */
+  allowWithoutManifest?: string[]
+}
 
 export class StorePluginHost extends PluginHost {
   static inject = ['store', 'artifacts', 'loader']
 
+  static Config: z<Config> = z.object({
+    allowWithoutManifest: z.array(z.string().pattern(PACKAGE_NAME)).default([])
+      .description('Packages a row may load with no plugin-manifest.json (the DSH rows the bundle composes); anything else that ships none is a finding of the manifest check'),
+  })
+
   private readonly records: PluginRecord[]
 
-  constructor(ctx: Context) {
+  constructor(ctx: Context, config: Config = {}) {
     super(ctx)
     ctx.store.migrate('plugin-host', [{
       version: 1,
@@ -123,28 +137,45 @@ export class StorePluginHost extends PluginHost {
         since TEXT NOT NULL, decision TEXT NOT NULL,
         version TEXT NOT NULL, rows TEXT NOT NULL
       );`,
+    }, {
+      // Contract 1.1: each plugin's manifest check as last recorded (none once cleared), and its decision.
+      version: 2,
+      sql: 'CREATE TABLE plugin_check (name TEXT PRIMARY KEY, findings TEXT NOT NULL, since TEXT NOT NULL, decision TEXT NOT NULL);',
     }])
     const loader = (ctx as unknown as { loader: LoaderView }).loader
     const rows = compositionOf(loader)
     const bases = packageBases(loader, ctx.get('profileContext' as never) as ProfileView | undefined)
     const manifests = new Map(pluginsOf(rows).map((plugin) => [plugin.name, packageManifest(plugin.name, bases)]))
-    // Every decision before the state it sets, and both or neither (INV-13): a decision that cannot
-    // be recorded leaves every record as it was, and the host does not start.
+    const allowWithoutManifest = config.allowWithoutManifest ?? []
+    let findings = new Map<string, ManifestFinding[]>()
+    // Every decision before the record it sets, and all or none (INV-13): a decision that cannot be
+    // recorded leaves every record as it was, and the host does not start.
     ctx.store.transaction((db) => {
       const { changes, moves } = reconcile(rows, manifests, this.recorded())
+      const check = reconcileChecks(rows, manifests, allowWithoutManifest, this.checks())
+      findings = check.findings
       const since = new Date().toISOString()
+      const producer = { producer: { type: 'system', ref: 'plugin-host' } } as const
       for (const { from, to } of moves) db.prepare('UPDATE plugin_lifecycle SET name = ? WHERE name = ?').run(to, from)
       for (const change of changes) {
-        const decision = ctx.artifacts.recordDecision(change.decision, { producer: { type: 'system', ref: 'plugin-host' } })
+        const decision = ctx.artifacts.recordDecision(change.decision, producer)
         if (change.previous && change.previous.name !== change.name) db.prepare('DELETE FROM plugin_lifecycle WHERE name = ?').run(change.previous.name)
         db.prepare(`INSERT INTO plugin_lifecycle (name, state, since, decision, version, rows) VALUES (?, ?, ?, ?, ?, ?)
           ON CONFLICT (name) DO UPDATE SET state = excluded.state, since = excluded.since, decision = excluded.decision, version = excluded.version, rows = excluded.rows`)
           .run(change.name, change.state, since, decision.id, change.version, JSON.stringify(change.rows))
         ctx.store.afterCommit(() => ctx.logger.info('plugin %s: %s → %s (decision %s)', change.name, change.previous?.state ?? 'unrecorded', change.state, decision.id))
       }
+      for (const change of check.changes) {
+        const decision = ctx.artifacts.recordDecision(change.decision, producer)
+        db.prepare(`INSERT INTO plugin_check (name, findings, since, decision) VALUES (?, ?, ?, ?)
+          ON CONFLICT (name) DO UPDATE SET findings = excluded.findings, since = excluded.since, decision = excluded.decision`)
+          .run(change.name, JSON.stringify(change.findings), since, decision.id)
+        ctx.store.afterCommit(() => ctx.logger.info('plugin %s: manifest check %s (decision %s)', change.name, change.findings.length ? 'failed' : 'passed again', decision.id))
+      }
     })
-    this.records = pluginRecords(rows, manifests, this.recorded())
+    this.records = pluginRecords(rows, manifests, this.recorded(), { findings, recorded: this.checks() })
     for (const plugin of this.records.filter((p) => p.manifestState === 'refused')) ctx.logger.warn('plugin %s: manifest refused: %s', plugin.name, plugin.reason)
+    for (const plugin of this.records.filter((p) => p.findings?.length)) ctx.logger.warn('plugin %s: the manifest check found: %s', plugin.name, plugin.findings!.map((f) => f.reason).join('; '))
   }
 
   list(): PluginRecord[] {
@@ -159,6 +190,12 @@ export class StorePluginHost extends PluginHost {
   private recorded(): Map<string, RecordedLifecycle> {
     const rows = this.ctx.store.db.prepare('SELECT name, state, since, decision, version, rows FROM plugin_lifecycle').all() as unknown as LifecycleRow[]
     return new Map(rows.map((r) => [r.name, { name: r.name, state: r.state, since: r.since, decision: r.decision as ArtifactRef, version: r.version, rows: JSON.parse(r.rows) as string[] }]))
+  }
+
+  /** The manifest check of every plugin as last recorded. */
+  private checks(): Map<string, RecordedCheck> {
+    const rows = this.ctx.store.db.prepare('SELECT name, findings, since, decision FROM plugin_check').all() as unknown as CheckRow[]
+    return new Map(rows.map((r) => [r.name, { name: r.name, findings: JSON.parse(r.findings) as ManifestFinding[], since: r.since, decision: r.decision as ArtifactRef }]))
   }
 }
 

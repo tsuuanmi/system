@@ -19,5 +19,11 @@
       "range": "^1.0.0"
     }
   ],
+  "config": [
+    {
+      "key": "maxTtlMs",
+      "sensitive": false
+    }
+  ],
   "license": "UNLICENSED"
 }

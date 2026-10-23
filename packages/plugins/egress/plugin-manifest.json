@@ -19,5 +19,23 @@
       "range": "^1.0.0"
     }
   ],
+  "config": [
+    {
+      "key": "workerClasses",
+      "sensitive": false
+    },
+    {
+      "key": "defaultClassification",
+      "sensitive": false
+    },
+    {
+      "key": "scanSecrets",
+      "sensitive": false
+    },
+    {
+      "key": "denyPatterns",
+      "sensitive": false
+    }
+  ],
   "license": "UNLICENSED"
 }

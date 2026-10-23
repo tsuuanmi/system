@@ -33,8 +33,9 @@ Claude Code and Codex, and the `system` CLI. It is the primary client interface
     page and `next`, the cursor for the following one.
   - `status` reports the store, artifacts, kernel seams, registered providers,
     for the operator only `plugins` (every plugin of the composition with its rows, whether one
-    is on, its manifest's state, version, and class, and its recorded lifecycle, from
-    `ctx.pluginHost` when mounted; REQ-HOST-7), and **health** (REQ-HOST-6, `src/health.ts`):
+    is on, its manifest's state, version, and class, its recorded lifecycle, and what the manifest
+    check found in it with the decision that recorded it, from `ctx.pluginHost` when mounted;
+    REQ-HOST-7), and **health** (REQ-HOST-6, `src/health.ts`):
     each check (plugins of the composition, their manifests, refused workflow templates, runtime, store integrity, free
     disk, vault key custody, accounts to sign in again, Worker availability,
     login profiles held for a login, open with their kept tabs, or blocked by a
@@ -52,8 +53,11 @@ Claude Code and Codex, and the `system` CLI. It is the primary client interface
     Cordis registry's own fiber states. Only named plugins count: an anonymous
     `ctx.inject` callback inside a running plugin (DSH waiting for a `settings`
     service this composition never supplies) is not a plugin of the composition. `manifests` is
-    degraded when the plugin host refused a plugin's manifest (its lifecycle is not recorded),
-    and notes the plugins that ship none. `templates` is degraded when the
+    down while the plugin host's manifest check found something in a plugin a row mounts (no
+    manifest it allows, or a consumed seam its providers do not satisfy), naming each finding:
+    the host cannot keep that row from running (ADR-0048). It is degraded when the host refused
+    the manifest of a row that is off, and notes the packages that run with none as the host's
+    configuration allows. `templates` is degraded when the
     workflow engine refused a configured template at load (with why); every
     other template still works.
 - **`GET /healthz`:** liveness for a supervisor, with no token and no data

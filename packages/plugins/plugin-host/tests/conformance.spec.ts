@@ -31,7 +31,7 @@ runSuite(pluginHostSuite, {
         fibers = [
           ctx.plugin(Store, { path: join(dir, 'system.db') }), ctx.plugin(Artifacts, {}),
           ctx.plugin({ name: 'loader', apply: (c: Context) => void c.provide('loader', loader) }),
-          ctx.plugin(StorePluginHost),
+          ctx.plugin(StorePluginHost, { allowWithoutManifest: composition.allowWithoutManifest ?? [] }),
         ]
         await Promise.all(fibers)
         return ctx

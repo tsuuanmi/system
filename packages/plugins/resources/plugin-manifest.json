@@ -28,5 +28,23 @@
       "optional": true
     }
   ],
+  "config": [
+    {
+      "key": "pools",
+      "sensitive": false
+    },
+    {
+      "key": "pageSize",
+      "sensitive": false
+    },
+    {
+      "key": "maxRecords",
+      "sensitive": false
+    },
+    {
+      "key": "holdSeconds",
+      "sensitive": false
+    }
+  ],
   "license": "UNLICENSED"
 }

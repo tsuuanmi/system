@@ -33,5 +33,19 @@
       "optional": true
     }
   ],
+  "config": [
+    {
+      "key": "policies",
+      "sensitive": false
+    },
+    {
+      "key": "sweepSeconds",
+      "sensitive": false
+    },
+    {
+      "key": "supersedes",
+      "sensitive": false
+    }
+  ],
   "license": "UNLICENSED"
 }

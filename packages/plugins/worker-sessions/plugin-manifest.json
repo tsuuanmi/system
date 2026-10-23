@@ -28,5 +28,31 @@
       "optional": true
     }
   ],
+  "config": [
+    {
+      "key": "maxMessages",
+      "sensitive": false
+    },
+    {
+      "key": "maxTurns",
+      "sensitive": false
+    },
+    {
+      "key": "maxLifetimeMinutes",
+      "sensitive": false
+    },
+    {
+      "key": "maxIdleMinutes",
+      "sensitive": false
+    },
+    {
+      "key": "checkpointEveryTurns",
+      "sensitive": false
+    },
+    {
+      "key": "compactAtTokens",
+      "sensitive": false
+    }
+  ],
   "license": "UNLICENSED"
 }

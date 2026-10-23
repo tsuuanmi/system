@@ -7,9 +7,10 @@ import { readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
-interface Schema {
+/** The part of a Schemastery schema the generators read. */
+export interface Schema {
   type: string
-  meta?: { default?: unknown; description?: string | Record<string, string>; required?: boolean; min?: number; max?: number }
+  meta?: { default?: unknown; description?: string | Record<string, string>; required?: boolean; min?: number; max?: number; role?: string }
   dict?: Record<string, Schema>
   inner?: Schema
   list?: Schema[]
@@ -61,13 +62,26 @@ export function rows(schema: Schema, prefix = ''): string[] {
   return out
 }
 
+/**
+ * Each plugin's `Config` schema, by directory, read from its source entry (a `Config` export, or
+ * the default export's); undefined for a plugin with none. The workspace resolves from source, by
+ * the root tsconfig's paths, so nothing needs building first. `gen:manifests` reads it too.
+ */
+export async function pluginConfigs(): Promise<Map<string, Schema | undefined>> {
+  const plugins = join(root, 'packages', 'plugins')
+  const out = new Map<string, Schema | undefined>()
+  for (const dir of readdirSync(plugins).sort()) {
+    const mod = await import(pathToFileURL(join(plugins, dir, 'src', 'index.ts')).href) as { Config?: Schema; default?: { Config?: Schema } }
+    out.set(dir, mod.Config ?? mod.default?.Config)
+  }
+  return out
+}
+
 export async function render(): Promise<string> {
   const sections: string[] = []
   const plugins = join(root, 'packages', 'plugins')
-  for (const dir of readdirSync(plugins).sort()) {
+  for (const [dir, config] of await pluginConfigs()) {
     const pkg = JSON.parse(readFileSync(join(plugins, dir, 'package.json'), 'utf8')) as { name: string }
-    const mod = await import(pathToFileURL(join(plugins, dir, 'src', 'index.ts')).href) as { Config?: Schema; default?: { Config?: Schema } }
-    const config = mod.Config ?? mod.default?.Config
     const options = config?.dict && Object.keys(config.dict).length ? rows(config) : []
     sections.push(`## \`${dir}\`\n\n[${pkg.name}](../../packages/plugins/${dir}/README.md)\n\n${options.length
       ? `| Option | Type | Default | Description |\n|---|---|---|---|\n${options.join('\n')}`

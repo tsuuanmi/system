@@ -45,7 +45,7 @@
     },
     {
       "seam": "pluginHost",
-      "range": "^1.0.0",
+      "range": "^1.1.0",
       "optional": true
     },
     {
@@ -72,6 +72,40 @@
       "seam": "workflow",
       "range": "^1.3.0",
       "optional": true
+    }
+  ],
+  "config": [
+    {
+      "key": "path",
+      "sensitive": false
+    },
+    {
+      "key": "tokenDir",
+      "sensitive": false
+    },
+    {
+      "key": "discoveryFile",
+      "sensitive": false
+    },
+    {
+      "key": "allowedHosts",
+      "sensitive": false
+    },
+    {
+      "key": "maxBodyBytes",
+      "sensitive": false
+    },
+    {
+      "key": "minFreeBytes",
+      "sensitive": false
+    },
+    {
+      "key": "driftWindowHours",
+      "sensitive": false
+    },
+    {
+      "key": "storeCheckMinutes",
+      "sensitive": false
     }
   ],
   "license": "UNLICENSED"

@@ -246,4 +246,7 @@
   plugin family. The host lists every plugin of the composition with its
   manifest, and records each plugin's lifecycle state, every change as a
   decision before the state. It records the state the configuration gives and
-  automates nothing.
+  automates nothing. At start it checks each plugin a row mounts: one with no
+  manifest its configuration allows, or that consumes a seam its providers'
+  manifests do not satisfy, is recorded once as a decision, listed with what
+  was found, and makes health down.

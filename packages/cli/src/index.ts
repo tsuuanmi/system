@@ -420,6 +420,9 @@ export interface PluginView {
   version?: string
   class?: { kind: 'core'; component: string } | { kind: 'family'; family: string }
   lifecycle?: { state: string; since: string; decision: string }
+  /** What the manifest check found in a plugin a row mounts, and the decision that recorded it (ADR-0048). */
+  findings?: Array<{ kind: string; reason: string }>
+  checked?: { since: string; decision: string }
 }
 
 /** The plugins of the running profile, from `status` as the operator; refused when its plugin host lists none. */
@@ -431,13 +434,23 @@ export async function hostPlugins(call: typeof callTool = callTool): Promise<Plu
   return plugins
 }
 
-/** One line per plugin: its recorded lifecycle state, whether a row runs it, name and version, class, rows; why its manifest is absent or refused. */
+/**
+ * One line per plugin: its recorded lifecycle state, whether a row runs it, name and version, class,
+ * rows; why its manifest is absent or refused; and each finding of the manifest check, with the
+ * decision that recorded it.
+ */
 export function formatPlugins(plugins: readonly PluginView[]): string[] {
   const width = Math.max(0, ...plugins.map((p) => p.name.length + (p.version ? p.version.length + 1 : 0)))
+  const indent = ' '.repeat(14)
   return plugins.flatMap((p) => {
     const cls = !p.class ? '' : p.class.kind === 'core' ? `core: ${p.class.component}` : `family: ${p.class.family}`
     const line = [(p.lifecycle?.state ?? '—').padEnd(9), (p.mounted ? 'on' : 'off').padEnd(3), `${p.name}${p.version ? `@${p.version}` : ''}`.padEnd(width), cls.padEnd(24), p.rows.length ? `row ${p.rows.join(', ')}` : 'no row'].join(' ')
-    return p.manifest === 'valid' ? [line] : [line, `${' '.repeat(14)}manifest ${p.manifest}: ${p.reason ?? ''}`.trimEnd()]
+    return [
+      line,
+      ...(p.manifest === 'valid' ? [] : [`${indent}manifest ${p.manifest}: ${p.reason ?? ''}`.trimEnd()]),
+      ...(p.findings ?? []).map((f) => `${indent}finding: ${f.reason}`),
+      ...(p.findings?.length && p.checked ? [`${indent}recorded by ${p.checked.decision} (system artifact)`] : []),
+    ]
   })
 }
 

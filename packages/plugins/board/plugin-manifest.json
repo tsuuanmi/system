@@ -36,5 +36,35 @@
       "optional": true
     }
   ],
+  "config": [
+    {
+      "key": "fundingMaxPercent",
+      "sensitive": false
+    },
+    {
+      "key": "inputExpirySeconds",
+      "sensitive": false
+    },
+    {
+      "key": "leaseTtlSeconds",
+      "sensitive": false
+    },
+    {
+      "key": "maxAttempts",
+      "sensitive": false
+    },
+    {
+      "key": "pageBound",
+      "sensitive": false
+    },
+    {
+      "key": "projectionMaxTasks",
+      "sensitive": false
+    },
+    {
+      "key": "sweepSeconds",
+      "sensitive": false
+    }
+  ],
   "license": "UNLICENSED"
 }

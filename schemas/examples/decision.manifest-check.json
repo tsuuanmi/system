@@ -1,0 +1,54 @@
+{
+  "schema": "decision@1.0",
+  "decisionType": "gate",
+  "question": "Does plugin @tsuuanmi/system-web-ui run as its manifest declares, on seams its providers satisfy?",
+  "inputs": [
+    "sha256:7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c"
+  ],
+  "candidates": [
+    {
+      "option": "pass",
+      "selected": false,
+      "reasons": [
+        "not pass: the check found 1 finding(s), each a reason under fail"
+      ]
+    },
+    {
+      "option": "fail",
+      "selected": true,
+      "reasons": [
+        "it consumes ctx.workflow in the range ^1.4.0, which @tsuuanmi/system-workflow does not satisfy: it provides 1.3.0"
+      ]
+    }
+  ],
+  "decider": {
+    "type": "rule",
+    "id": "plugin-host.manifest-check",
+    "version": "1",
+    "hash": "sha256:08ccdb1df511ab236be81d28eb99d0eaeac4fbcba4576f2fe1ffe6132224205b"
+  },
+  "outcome": {
+    "option": "fail",
+    "detail": {
+      "plugin": "@tsuuanmi/system-web-ui",
+      "rows": [
+        "web-ui"
+      ],
+      "findings": [
+        {
+          "kind": "unsatisfied",
+          "seam": "workflow",
+          "range": "^1.4.0",
+          "provider": "@tsuuanmi/system-workflow",
+          "version": "1.3.0",
+          "reason": "it consumes ctx.workflow in the range ^1.4.0, which @tsuuanmi/system-workflow does not satisfy: it provides 1.3.0"
+        }
+      ],
+      "from": "pass",
+      "version": "0.9.0",
+      "manifestDigest": "sha256:7ef79596f1dbb8bbe1286d891d24084494ae42fce56e421775aafac62913bd56"
+    }
+  },
+  "deterministic": true,
+  "rationale": "The plugin host checks each plugin a row mounts against its manifest and its providers' manifests at start; a finding makes health down until it is cleared. Base cannot keep a row from running (ADR-0048)."
+}

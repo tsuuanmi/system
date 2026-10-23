@@ -7,13 +7,15 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { readManifest } from '../packages/plugin-host-core/src/index.ts'
-import { check, checkAll, type Derived, derive, familyNames, render, satisfies, seamClasses } from './gen-manifests.ts'
+import { bundleAllowance, check, checkAll, type CodeFacts, codeFacts, configKeys, type Derived, derive, familyNames, render, satisfies, seamClasses } from './gen-manifests.ts'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
+let facts: CodeFacts
 let derived: Derived[]
-beforeAll(() => {
-  derived = derive()
-})
+beforeAll(async () => {
+  facts = await codeFacts()
+  derived = derive(facts)
+}, 120_000)
 const of = (dir: string): Derived => derived.find((d) => d.dir === dir)!
 /** The package's manifest as generated, changed by `edit`, as the text a package would ship. */
 const shipped = (dir: string, edit: (m: Record<string, any>) => void): string => {
@@ -44,6 +46,27 @@ describe('the manifests the workspace ships (REQ-HOST-7)', () => {
     expect(of('plugin-host').manifest).toMatchObject({ class: { kind: 'core', component: 'plugin-host' }, consumes: expect.arrayContaining([{ seam: 'loader', range: '^1.0.0' }, { seam: 'profileContext', range: '^1.0.0', optional: true }]) })
     expect(seamClasses().get('mcp')).toEqual({ kind: 'family', family: 'surface' })
     expect(familyNames().get('profile-scientific-research')).toEqual(['workflow'])
+  })
+
+  it('derives each plugin\'s configuration keys from its Config, and holds no secret in any (INV-8)', () => {
+    expect(of('plugin-host').manifest.config).toEqual([{ key: 'allowWithoutManifest', sensitive: false }])
+    expect(of('store').manifest.config?.map((c) => c.key)).toEqual(['path', 'busyTimeoutMs', 'synchronous'])
+    expect(of('report').manifest.config).toBeUndefined()
+    expect(derived.filter((d) => d.manifest.config).length).toBe(33)
+    // Secrets live in the credential vault; a plugin's configuration holds paths and references only.
+    expect(derived.flatMap((d) => (d.manifest.config ?? []).filter((c) => c.sensitive).map((c) => `${d.dir}.${c.key}`))).toEqual([])
+  })
+
+  it('derives egress from each Worker source\'s egress check and the default policy, and keeps the one its drivers and runtimes declare (INV-12)', () => {
+    expect([of('turns').egressClasses, of('agent-workers').egressClasses, of('models').egressClasses]).toEqual([['website'], ['agent'], ['model', 'model-local']])
+    expect(derived.filter((d) => d.manifest.egress).map((d) => [d.dir, d.manifest.egress, d.egressClasses.length ? 'derived' : 'declared'])).toEqual([
+      ['agent-workers', 'operator-shared', 'derived'], ['models', 'operator-shared', 'derived'],
+      ['provider-chatgpt-web', 'operator-shared', 'declared'], ['provider-gemini-web', 'operator-shared', 'declared'],
+      ['runtime-acp', 'operator-shared', 'declared'], ['runtime-antigravity-cli', 'operator-shared', 'declared'],
+      ['runtime-claude-agent-sdk', 'operator-shared', 'declared'], ['runtime-codex-sdk', 'operator-shared', 'declared'],
+      ['turns', 'operator-shared', 'derived'],
+    ])
+    expect(derived.filter((d) => d.manifest.cacheStable !== undefined)).toEqual([])
   })
 })
 
@@ -95,16 +118,49 @@ describe('the check catches each kind of disagreement', () => {
     expect(check(of('board'), shipped('board', (m) => { m.license = 'MIT' }))).toEqual([expect.stringMatching(/license "MIT" disagrees with package\.json \("UNLICENSED"\)/)])
     expect(check(of('board'), shipped('board', (m) => { m.consumes.reverse() }))).toEqual([expect.stringMatching(/differs from the generated manifest/)])
   })
+
+  it('a configuration key its Config does not have, one it has that is not declared, or a sensitive flag other than its Config\'s', () => {
+    expect(check(of('board'), shipped('board', (m) => { m.config.push({ key: 'extra', sensitive: false }) }))).toEqual([expect.stringMatching(/config declares the key extra, which its Config does not have/)])
+    expect(check(of('board'), shipped('board', (m) => { m.config = m.config.filter((c: { key: string }) => c.key !== 'sweepSeconds') }))).toEqual([expect.stringMatching(/its Config has the key sweepSeconds, which config does not declare/)])
+    expect(check(of('board'), shipped('board', (m) => { m.config[0].sensitive = true }))).toEqual([expect.stringMatching(/config key fundingMaxPercent is sensitive, but its Config does not mark it a secret/)])
+    const secretive = { ...of('board'), manifest: { ...of('board').manifest, config: of('board').manifest.config!.map((c, i) => ({ ...c, sensitive: i === 0 })) } }
+    expect(check(secretive, render(of('board').manifest))).toEqual([expect.stringMatching(/config key fundingMaxPercent is not sensitive, but its Config marks it a secret \(\.role\('secret'\)\)/)])
+  })
+
+  it('an egress other than a Worker source\'s check gives, one declared off the Worker family or past what any Worker class may receive, and cacheStable off the context family (INV-12)', () => {
+    expect(check(of('turns'), shipped('turns', (m) => { delete m.egress }))).toEqual([expect.stringMatching(/egress none, but its code checks egress for the Worker class website, whose default policy lets operator-shared leave the machine at most/)])
+    expect(check(of('board'), shipped('board', (m) => { m.egress = 'public' }))).toEqual([expect.stringMatching(/egress public is declared, but only a Worker-family plugin carries content to a remote provider/)])
+    expect(check(of('runtime-acp'), shipped('runtime-acp', (m) => { m.egress = 'local-private' }))).toEqual([expect.stringMatching(/egress local-private is declared, but no Worker class's default policy lets it leave the machine \(INV-12\): at most operator-shared/)])
+    expect(check(of('board'), shipped('board', (m) => { m.cacheStable = true }))).toEqual([expect.stringMatching(/cacheStable is declared, but only a context-family plugin/)])
+  })
+
+  it('a bundle whose plugin-host row allows other packages without a manifest than its DSH rows, or none', () => {
+    const bundle = readFileSync(join(root, 'packages', 'system-bundle', 'cordis.patch.yml'), 'utf8')
+    expect(bundleAllowance(bundle)).toEqual(['@deepseek-ai/cordis-plugin-timer', '@deepseek-ai/dsh-host-webserver', '@deepseek-ai/dsh-llm', '@deepseek-ai/dsh-llm-pi-ai'])
+    const problems = (text: string): string[] => checkAll(derived, undefined, text).filter((p) => p.includes('cordis.patch.yml'))
+    expect(problems(bundle.replace("          - '@deepseek-ai/dsh-llm'\n", ''))).toEqual([expect.stringMatching(/leaves out the DSH row package @deepseek-ai\/dsh-llm, which ships no manifest/)])
+    expect(problems(bundle.replace("          - '@deepseek-ai/dsh-llm'\n", "          - '@deepseek-ai/dsh-llm'\n          - '@tsuuanmi/system-board'\n")))
+      .toEqual([expect.stringMatching(/names @tsuuanmi\/system-board, which is not a DSH row of the bundle/)])
+    expect(problems(bundle.replace(/ {6}config:\n(?: {8}#.*\n)+ {8}allowWithoutManifest:\n(?: {10}- '.*'\n)+/, ''))).toEqual([expect.stringMatching(/the plugin-host row allows no package without a manifest/)])
+  })
 })
 
 describe('the generator', () => {
   it('names a seam missing from the catalog, and a plugin with no seam the family table does not name, instead of guessing a class', () => {
     const model = readFileSync(join(root, 'docs', 'architecture', 'plugin-model.md'), 'utf8')
-    expect(() => derive(undefined, model.replace(/^\| Orchestration \| `board` .*$/m, ''))).toThrow(/packages\/plugins\/board: ctx\.board is not in the seam catalog/)
-    expect(() => derive(undefined, model.replace(', `profile-scientific-research`', ''))).toThrow(/profile-scientific-research: provides no seam, so the family table .* must name it once/)
+    expect(() => derive(facts, undefined, model.replace(/^\| Orchestration \| `board` .*$/m, ''))).toThrow(/packages\/plugins\/board: ctx\.board is not in the seam catalog/)
+    expect(() => derive(facts, undefined, model.replace(', `profile-scientific-research`', ''))).toThrow(/profile-scientific-research: provides no seam, so the family table .* must name it once/)
   })
 
-  it('matches a caret range as semver does for a major above zero', () => {
+  it('matches a caret range as semver does for a major above zero (the plugin host\'s own rule)', () => {
     expect([satisfies('1.3.0', '^1.0.0'), satisfies('1.3.0', '^1.3.1'), satisfies('2.0.0', '^1.0.0'), satisfies('1.0.0', '1.0.0')]).toEqual([true, false, false, undefined])
+  })
+
+  it('takes a Config\'s top-level keys, each sensitive when it or a schema within it is marked a secret', () => {
+    const string = (role?: string) => ({ type: 'string', ...(role ? { meta: { role } } : {}) })
+    expect(configKeys({
+      type: 'object',
+      dict: { token: string('secret'), routes: { type: 'array', inner: { type: 'object', dict: { key: string('secret') } } }, either: { type: 'union', list: [string(), string('secret')] }, path: string('link') },
+    })).toEqual([{ key: 'token', sensitive: true }, { key: 'routes', sensitive: true }, { key: 'either', sensitive: true }, { key: 'path', sensitive: false }])
   })
 })

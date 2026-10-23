@@ -245,7 +245,9 @@
 
 [@tsuuanmi/system-plugin-host](../../packages/plugins/plugin-host/README.md)
 
-No options.
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `allowWithoutManifest` | string[] | `[]` | Packages a row may load with no plugin-manifest.json (the DSH rows the bundle composes); anything else that ships none is a finding of the manifest check |
 
 ## `profile-scientific-research`
 

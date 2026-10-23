@@ -33,8 +33,11 @@ export interface HealthSources {
   events?: (type: string, sinceIso: string) => Array<{ data?: Record<string, unknown> | undefined }>
   /** Plugins of the composition that failed to activate or wait for a service no one supplies. */
   plugins?: () => Array<{ name: string; state: 'failed' | 'pending'; detail: string }>
-  /** Plugins of the composition whose manifest the plugin host could not take: none in their package, or one it refused (REQ-HOST-7). */
-  manifests?: () => Array<{ name: string; state: 'absent' | 'refused'; reason: string }>
+  /**
+   * The plugins of the composition as the plugin host read them (REQ-HOST-7): whether a row mounts
+   * each, its manifest's state and why it is not valid, and what the manifest check found in it.
+   */
+  manifests?: () => Array<{ name: string; mounted: boolean; state: 'valid' | 'absent' | 'refused'; reason?: string; findings: string[] }>
   /** Configured workflow templates refused at load, with why. */
   templates?: () => Array<{ name: string; reason: string }>
   /** Website conversations whose deletion failed every attempt (the conversation ledger). */
@@ -76,15 +79,27 @@ export async function healthReport(sources: HealthSources): Promise<HealthReport
         : ok('plugins', 'every plugin of the composition is active')
     }))
   }
-  // A refused manifest leaves its plugin running, but its lifecycle unrecorded until the package is fixed.
+  // A finding of the manifest check fails closed: the host cannot keep that plugin from running, so it
+  // cannot vouch for what runs (ADR-0048). A refused manifest of a row that is off leaves only its
+  // lifecycle unrecorded.
   if (sources.manifests) {
     checks.push(await guarded('manifests', () => {
-      const unread = sources.manifests!()
-      const refused = unread.filter((p) => p.state === 'refused')
-      const absent = unread.filter((p) => p.state === 'absent').map((p) => p.name)
-      return refused.length
-        ? { name: 'manifests', state: 'degraded', detail: `${refused.map((p) => `${p.name}: ${p.reason}`).join('; ')}: its lifecycle is not recorded until its package ships a valid manifest (docs/operations/runbooks.md#a-plugins-manifest-is-refused)` }
-        : ok('manifests', absent.length ? `every other plugin declares a valid manifest; ${absent.length} have none, so their lifecycle is not recorded: ${absent.join(', ')}` : 'every plugin declares a valid manifest')
+      const plugins = sources.manifests!()
+      const found = plugins.filter((p) => p.findings.length)
+      if (found.length) {
+        return { name: 'manifests', state: 'down', detail: `${found.map((p) => `${p.name}: ${p.findings.join('; ')}`).join('; ')}. The plugin host cannot keep a row from running: turn the row off, or fix or allow its package, and restart (docs/operations/runbooks.md#the-manifest-check-found-a-plugin)` }
+      }
+      const refused = plugins.filter((p) => p.state === 'refused')
+      if (refused.length) {
+        return { name: 'manifests', state: 'degraded', detail: `${refused.map((p) => `${p.name}: ${p.reason ?? ''}`).join('; ')}: its row is off, and its lifecycle is not recorded until its package ships a valid manifest (docs/operations/runbooks.md#the-manifest-check-found-a-plugin)` }
+      }
+      const allowed = plugins.filter((p) => p.mounted && p.state === 'absent').map((p) => p.name)
+      const off = plugins.filter((p) => !p.mounted && p.state === 'absent').map((p) => p.name)
+      return ok('manifests', [
+        'every plugin a row mounts passes the manifest check',
+        ...(allowed.length ? [`${allowed.length} of them run with no manifest, as the plugin host's configuration allows: ${allowed.join(', ')}`] : []),
+        ...(off.length ? [`${off.length} row(s) that are off have none: ${off.join(', ')}`] : []),
+      ].join('; '))
     }))
   }
   if (sources.templates) {

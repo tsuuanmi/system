@@ -14,5 +14,19 @@
     }
   ],
   "consumes": [],
+  "config": [
+    {
+      "key": "xvfbPath",
+      "sensitive": false
+    },
+    {
+      "key": "startupTimeoutMs",
+      "sensitive": false
+    },
+    {
+      "key": "shutdownTimeoutMs",
+      "sensitive": false
+    }
+  ],
   "license": "UNLICENSED"
 }

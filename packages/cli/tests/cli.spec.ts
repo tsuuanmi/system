@@ -103,6 +103,22 @@ describe('system CLI (PR #3 kernel review)', () => {
     await expect(hostPlugins(async () => ({ isError: false, text: '', structured: { health: {} } }))).rejects.toThrow(/plugin-host row is off or not running/)
   })
 
+  it('prints each finding of the manifest check under its plugin, with the decision that recorded it (ADR-0048)', () => {
+    const decision = `sha256:${'3'.repeat(64)}`
+    expect(formatPlugins([
+      { name: '@x/third-party', rows: ['third'], mounted: true, manifest: 'absent', reason: '@x/third-party ships no plugin-manifest.json', findings: [{ kind: 'no-manifest', reason: 'it runs with no manifest: @x/third-party ships no plugin-manifest.json' }], checked: { since: '2026-10-23T00:00:00.000Z', decision } },
+      { name: '@x/c', rows: ['c'], mounted: true, manifest: 'valid', version: '1.0.0', class: { kind: 'family', family: 'surface' }, lifecycle: { state: 'default', since: '2026-10-23T00:00:00.000Z', decision }, findings: [{ kind: 'unsatisfied', reason: 'it consumes ctx.workflow in the range ^2.0.0, which @tsuuanmi/system-workflow does not satisfy: it provides 1.3.0' }], checked: { since: '2026-10-23T00:00:00.000Z', decision } },
+    ])).toEqual([
+      '—         on  @x/third-party                          row third',
+      '              manifest absent: @x/third-party ships no plugin-manifest.json',
+      '              finding: it runs with no manifest: @x/third-party ships no plugin-manifest.json',
+      `              recorded by ${decision} (system artifact)`,
+      'default   on  @x/c@1.0.0     family: surface          row c',
+      '              finding: it consumes ctx.workflow in the range ^2.0.0, which @tsuuanmi/system-workflow does not satisfy: it provides 1.3.0',
+      `              recorded by ${decision} (system artifact)`,
+    ])
+  })
+
   it('maps a signal death to 128 + signal number', () => {
     expect(exitCode(null, 'SIGTERM')).toBe(143)
     expect(exitCode(null, 'SIGINT')).toBe(130)

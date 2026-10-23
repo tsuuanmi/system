@@ -88,28 +88,32 @@ describe('system MCP server on ctx.webServer', () => {
     expect(client.checks).toEqual(operator.checks.map(({ name, state }) => ({ name, state })))
   })
 
-  it('lists every plugin of the composition with its manifest and recorded lifecycle for the operator only, and checks the manifests in health (REQ-HOST-7, ADR-0023)', async () => {
+  it('lists every plugin of the composition with its manifest, recorded lifecycle, and what the manifest check found, for the operator only, and fails health on a finding (REQ-HOST-7, ADR-0023, ADR-0048)', async () => {
     const { url, tokens, ctx } = await boot()
     const composition = {
-      rows: [{ id: 'a', name: '@x/a', mounted: true }, { id: 'b', name: '@x/b', mounted: false }, { id: 'c', name: '@x/c', mounted: true }, { id: 'dsh', name: '@x/dsh', mounted: true }],
-      packages: { '@x/a': manifestText('@x/a', { version: '2.1.0' }), '@x/b': manifestText('@x/b'), '@x/c': manifestText('@x/c', { _meta: {} }), '@x/dsh': undefined },
+      rows: [{ id: 'a', name: '@x/a', mounted: true }, { id: 'b', name: '@x/b', mounted: false }, { id: 'c', name: '@x/c', mounted: true }, { id: 'dsh', name: '@x/dsh', mounted: true }, { id: 'allowed', name: '@x/allowed', mounted: true }],
+      packages: { '@x/a': manifestText('@x/a', { version: '2.1.0' }), '@x/b': manifestText('@x/b'), '@x/c': manifestText('@x/c', { _meta: {} }), '@x/dsh': undefined, '@x/allowed': undefined },
+      allowWithoutManifest: ['@x/allowed'],
     }
     const host = ctx.plugin(FakePluginHost, { composition, ledger: new Map() })
     await host
     cleanups.push(() => host.dispose())
-    type Status = { plugins?: Array<Record<string, unknown>>; health: { checks: Array<{ name: string; state: string; detail?: string }> } }
+    type Status = { plugins?: Array<Record<string, unknown>>; health: { state: string; checks: Array<{ name: string; state: string; detail?: string }> } }
     const status = async (token: string) => (await (await connect(url, token)).callTool({ name: 'status', arguments: {} })).structuredContent as Status
     const operator = await status(tokens.operator)
+    const checked = { since: expect.any(String), decision: expect.stringMatching(/^sha256:/) }
     expect(operator.plugins).toEqual([
       { name: '@x/a', rows: ['a'], mounted: true, manifest: 'valid', version: '2.1.0', class: { kind: 'family', family: 'surface' }, lifecycle: { state: 'default', since: expect.any(String), decision: expect.stringMatching(/^sha256:/) } },
       { name: '@x/b', rows: ['b'], mounted: false, manifest: 'valid', version: '1.0.0', class: { kind: 'family', family: 'surface' }, lifecycle: expect.objectContaining({ state: 'candidate' }) },
-      { name: '@x/c', rows: ['c'], mounted: true, manifest: 'refused', reason: expect.stringMatching(/_meta/) },
-      { name: '@x/dsh', rows: ['dsh'], mounted: true, manifest: 'absent', reason: expect.stringMatching(/ships no plugin-manifest\.json/) },
+      { name: '@x/c', rows: ['c'], mounted: true, manifest: 'refused', reason: expect.stringMatching(/_meta/), findings: [{ kind: 'no-manifest', manifest: 'refused', reason: expect.stringMatching(/refused: it declares _meta/) }], checked },
+      { name: '@x/dsh', rows: ['dsh'], mounted: true, manifest: 'absent', reason: expect.stringMatching(/ships no plugin-manifest\.json/), findings: [{ kind: 'no-manifest', manifest: 'absent', reason: expect.stringMatching(/no manifest/) }], checked },
+      { name: '@x/allowed', rows: ['allowed'], mounted: true, manifest: 'absent', reason: expect.stringMatching(/ships no plugin-manifest\.json/) },
     ])
-    expect(operator.health.checks.find((c) => c.name === 'manifests')).toMatchObject({ state: 'degraded', detail: expect.stringMatching(/^@x\/c: it declares _meta/) })
+    expect(operator.health.checks.find((c) => c.name === 'manifests')).toMatchObject({ state: 'down', detail: expect.stringMatching(/^@x\/c: it runs with a manifest the host refused: it declares _meta.*; @x\/dsh: it runs with no manifest/) })
+    expect(operator.health.state).toBe('down')
     const client = await status(tokens.client)
     expect(client.plugins).toBeUndefined()
-    expect(client.health.checks.find((c) => c.name === 'manifests')).toEqual({ name: 'manifests', state: 'degraded' })
+    expect(client.health.checks.find((c) => c.name === 'manifests')).toEqual({ name: 'manifests', state: 'down' })
   })
 
   it('reads the event log for the operator only, in order, a page at a time (QA-7, ADR-0023)', async () => {

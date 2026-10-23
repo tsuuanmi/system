@@ -210,7 +210,7 @@ export class McpEndpoint extends McpTools {
     const host = this.ctx.get('pluginHost')
     const report = await healthReport({
       plugins: () => brokenPlugins(this.ctx),
-      ...(host ? { manifests: () => host.list().filter((p) => p.rows.length && p.manifestState !== 'valid').map((p) => ({ name: p.name, state: p.manifestState as 'absent' | 'refused', reason: p.reason ?? '' })) } : {}),
+      ...(host ? { manifests: () => host.list().filter((p) => p.rows.length).map((p) => ({ name: p.name, mounted: p.mounted, state: p.manifestState, ...(p.reason ? { reason: p.reason } : {}), findings: (p.findings ?? []).map((f) => f.reason) })) } : {}),
       ...(workflow?.refusedTemplates ? { templates: () => workflow.refusedTemplates!() } : {}),
       ...(turns?.conversations ? { undeleted: () => turns.conversations!({ state: 'failed' }) } : {}),
       ...(browser?.profileStates ? { profiles: () => browser.profileStates!() } : {}),
@@ -323,7 +323,7 @@ export class McpEndpoint extends McpTools {
     })
     this.tools.set('status', {
       placeholder: false,
-      spec: { scope: 'client', description: 'Health of the system harness: each check (plugins and their manifests, runtime, store, disk, vault key, accounts, Workers, provider UI drift) and the worst of them, with what to do for operator callers; plus the kernel services and installed providers, and, for the operator, every plugin of the composition with its manifest and its recorded lifecycle state.', inputSchema: {} },
+      spec: { scope: 'client', description: 'Health of the system harness: each check (plugins and their manifests, runtime, store, disk, vault key, accounts, Workers, provider UI drift) and the worst of them, with what to do for operator callers; plus the kernel services and installed providers, and, for the operator, every plugin of the composition with its manifest, its recorded lifecycle state, and what the manifest check found in it.', inputSchema: {} },
       handler: async (_args, { scope }) => {
         const artifacts = this.ctx.get('artifacts')
         const providers = this.ctx.get('providers')
@@ -346,13 +346,18 @@ export class McpEndpoint extends McpTools {
 
 export default McpEndpoint
 
-/** A plugin as `status` lists it: its rows, whether one is on, its manifest's state, version, and class, and its recorded lifecycle (REQ-HOST-7). */
+/**
+ * A plugin as `status` lists it: its rows, whether one is on, its manifest's state, version, and
+ * class, its recorded lifecycle, and what the manifest check found, with the decision that recorded
+ * it (REQ-HOST-7).
+ */
 export function pluginView(p: PluginRecord): Record<string, unknown> {
   return {
     name: p.name, rows: p.rows, mounted: p.mounted, manifest: p.manifestState,
     ...(p.reason ? { reason: p.reason } : {}),
     ...(p.manifest ? { version: p.manifest.version, class: p.manifest.class } : {}),
     ...(p.lifecycle ? { lifecycle: p.lifecycle } : {}),
+    ...(p.findings?.length ? { findings: p.findings, ...(p.checked ? { checked: p.checked } : {}) } : {}),
   }
 }
 

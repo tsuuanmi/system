@@ -14,5 +14,19 @@
     }
   ],
   "consumes": [],
+  "config": [
+    {
+      "key": "bwrap",
+      "sensitive": false
+    },
+    {
+      "key": "hide",
+      "sensitive": false
+    },
+    {
+      "key": "readOnly",
+      "sensitive": false
+    }
+  ],
   "license": "UNLICENSED"
 }

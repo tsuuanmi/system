@@ -72,7 +72,7 @@ const USAGE = `Usage: system <command>
   health [--json]           each check (plugins, manifests, runtime, store, disk, vault key, accounts,
                             Workers, UI drift) and what to do; exit 0 healthy, 1 degraded, 2 down or not running
   plugins [--json]          every plugin of the composition: its recorded lifecycle state, on or off, version,
-                            class, rows, and why a manifest is absent or refused
+                            class, rows, why a manifest is absent or refused, and what the manifest check found
   shutdown [--deadline <s>] drain, then stop the running profile (unfinished runs resume on start)
   check                     check the profile against this install's code before starting it (an update's preflight)
   mcp-config <claude|codex> print client configuration for the running MCP server

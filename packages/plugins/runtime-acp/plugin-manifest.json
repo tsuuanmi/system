@@ -14,5 +14,12 @@
       "range": "^1.0.0"
     }
   ],
-  "license": "UNLICENSED"
+  "config": [
+    {
+      "key": "agents",
+      "sensitive": false
+    }
+  ],
+  "license": "UNLICENSED",
+  "egress": "operator-shared"
 }

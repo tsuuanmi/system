@@ -59,12 +59,19 @@ describe('host health (REQ-HOST-6)', () => {
       .toMatchObject({ state: 'degraded', detail: '1 configured template(s) refused, every other one works: panel-led (node panel: team must be {kind: …})' })
   })
 
-  it('is degraded by a manifest the plugin host refused, naming the plugin and why, and notes the plugins that ship none (REQ-HOST-7)', async () => {
-    expect(await check({ manifests: () => [{ name: '@x/a', state: 'refused', reason: 'it declares _meta, which belongs to the host' }, { name: '@deepseek-ai/dsh-llm', state: 'absent', reason: 'ships none' }] }, 'manifests'))
-      .toMatchObject({ state: 'degraded', detail: expect.stringMatching(/^@x\/a: it declares _meta, which belongs to the host: its lifecycle is not recorded/) })
-    expect(await check({ manifests: () => [{ name: '@deepseek-ai/dsh-llm', state: 'absent', reason: 'ships none' }] }, 'manifests'))
-      .toMatchObject({ state: 'ok', detail: expect.stringMatching(/1 have none, so their lifecycle is not recorded: @deepseek-ai\/dsh-llm$/) })
-    expect(await check({ manifests: () => [] }, 'manifests')).toMatchObject({ state: 'ok', detail: 'every plugin declares a valid manifest' })
+  it('is down while the manifest check found something in a plugin a row mounts, naming each finding and what to do (REQ-HOST-7, INV-2, ADR-0048)', async () => {
+    const valid = { name: '@x/b', mounted: true, state: 'valid' as const, findings: [] }
+    expect(await check({ manifests: () => [{ name: '@x/a', mounted: true, state: 'absent', reason: '@x/a ships no plugin-manifest.json', findings: ['it runs with no manifest: @x/a ships no plugin-manifest.json'] }, valid, { name: '@x/c', mounted: true, state: 'valid', findings: ['it consumes ctx.thing in the range ^2.0.0, which @x/p does not satisfy: it provides 1.0.0', 'another'] }] }, 'manifests'))
+      .toMatchObject({ state: 'down', detail: expect.stringMatching(/^@x\/a: it runs with no manifest: @x\/a ships no plugin-manifest\.json; @x\/c: it consumes ctx\.thing .*; another\. The plugin host cannot keep a row from running: turn the row off, or fix or allow its package, and restart \(docs\/operations\/runbooks\.md#the-manifest-check-found-a-plugin\)$/) })
+  })
+
+  it('is degraded by a manifest the plugin host refused in a row that is off, and notes the packages that run with none as its configuration allows (REQ-HOST-7)', async () => {
+    const allowed = { name: '@deepseek-ai/dsh-llm', mounted: true, state: 'absent' as const, reason: 'ships none', findings: [] }
+    expect(await check({ manifests: () => [{ name: '@x/a', mounted: false, state: 'refused', reason: 'it declares _meta, which belongs to the host', findings: [] }, allowed] }, 'manifests'))
+      .toMatchObject({ state: 'degraded', detail: expect.stringMatching(/^@x\/a: it declares _meta, which belongs to the host: its row is off, and its lifecycle is not recorded/) })
+    expect(await check({ manifests: () => [allowed, { name: '@x/off', mounted: false, state: 'absent', reason: 'ships none', findings: [] }] }, 'manifests'))
+      .toMatchObject({ state: 'ok', detail: 'every plugin a row mounts passes the manifest check; 1 of them run with no manifest, as the plugin host\'s configuration allows: @deepseek-ai/dsh-llm; 1 row(s) that are off have none: @x/off' })
+    expect(await check({ manifests: () => [] }, 'manifests')).toMatchObject({ state: 'ok', detail: 'every plugin a row mounts passes the manifest check' })
     expect(await check({}, 'manifests')).toBeUndefined()
   })
 

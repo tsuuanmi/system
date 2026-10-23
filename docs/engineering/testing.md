@@ -142,7 +142,9 @@ Chrome installed. Each gate is a root [`package.json`](../../package.json) scrip
    - `check:manifests` ([`scripts/gen-manifests.ts`](../../scripts/gen-manifests.ts)): every plugin
      and seam definition ships a `plugin-manifest.json` the plugin host would take, and it agrees
      with the code: the seams provided, consumed, and defined, their conformance contract
-     versions, the class in the seam catalog, and `package.json`
+     versions, the class in the seam catalog, `package.json`, the configuration keys of its
+     `Config`, and a Worker source's egress; a declared egress and `cacheStable` only where they
+     can apply; and the bundle's plugin-host allowance names exactly its DSH rows
      ([plugin host](../design/plugin-host.md#manifests));
    - `lint` (oxlint) and `typecheck` (`tsc --noEmit`).
 2. `pnpm test`, with `SYSTEM_REQUIRE_BROWSER=1` and `SYSTEM_REQUIRE_BWRAP=1`:

@@ -18,7 +18,9 @@ and the `system` plugins, and it does not use `dsh-base`
   reads every row of the composition and the manifest its package declares, and records each
   plugin's lifecycle state (a row on `default`, a row off `candidate`), every change a decision;
   it never turns a row on or off ([plugin host](../../docs/design/plugin-host.md)). Each plugin
-  package ships its `plugin-manifest.json`.
+  package ships its `plugin-manifest.json`; the row allows exactly the DSH rows to run with none
+  (`allowWithoutManifest`), and its manifest check finds any other row that does, and health is
+  down.
 - **Off by default (PROP-0004):** `runtime-codex-sdk` (its Workers are admitted where the
   probe proves its tool gate on the host, [Codex Workers](../../docs/operations/runbooks.md#codex-workers)),
   `runtime-acp` (it cannot ask a tool gate before each tool call, so no Worker of its is

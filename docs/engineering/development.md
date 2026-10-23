@@ -62,7 +62,7 @@ pnpm build              # tsc → lib/ for every package
 pnpm check              # docs, schemas, reference, packages, manifests, and traceability freshness, oxlint, typecheck
 pnpm gen:reference      # regenerate docs/reference/configuration.md after changing a plugin Config
 pnpm gen:packages       # regenerate docs/architecture/packages.md after changing a package or its seams
-pnpm gen:manifests      # regenerate every plugin-manifest.json after changing a plugin's seams or package.json
+pnpm gen:manifests      # regenerate every plugin-manifest.json after changing a plugin's seams, Config, egress check, or package.json
 pnpm gen:traceability   # regenerate docs/validation/traceability.md from test titles
 pnpm test               # unit, contract, driver, and integration tests
 pnpm test:e2e           # build, then boot the real profile through dsh (packages/cli/tests)

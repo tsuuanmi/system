@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { Context } from '@deepseek-ai/cordis'
 import Artifacts from '@tsuuanmi/system-artifacts'
-import { MANIFEST_MAX_BYTES } from '@tsuuanmi/system-plugin-host-core'
+import { type CompositionRow, MANIFEST_MAX_BYTES } from '@tsuuanmi/system-plugin-host-core'
 import Store from '@tsuuanmi/system-store'
 import { afterEach, describe, expect, it } from 'vitest'
 import { manifestText } from '../../../plugin-host-core/conformance/plugin-host.ts'
@@ -92,6 +92,83 @@ describe('recording', () => {
     expect(ctx.pluginHost.list().map((p) => p.lifecycle?.state)).toEqual(['default', 'default'])
     expect(ctx.artifacts.list({ kind: 'decision', decisionType: 'lifecycle' })).toHaveLength(2)
     for (const fiber of [again, provided, ...kernel.reverse()]) await fiber.dispose()
+  })
+
+  it('records a manifest check\'s decision with the lifecycle decisions, all or none: one that cannot be recorded leaves every record as it was (INV-13, INV-2)', async () => {
+    const dir = temp()
+    const profile = join(dir, 'profile')
+    install(profile, { '@x/a': manifestText('@x/a'), '@x/dsh': undefined })
+    const ctx = new Context()
+    const kernel = [ctx.plugin(Store, { path: join(dir, 'system.db') }), ctx.plugin(Artifacts, {})]
+    await Promise.all(kernel)
+    const loader = stubLoader(profile, [{ id: 'a', name: '@x/a', mounted: true }, { id: 'dsh', name: '@x/dsh', mounted: true }])
+    const provided = ctx.plugin({ name: 'loader', apply: (c: Context) => void c.provide('loader', loader) })
+    await provided
+    const record = ctx.artifacts.recordDecision.bind(ctx.artifacts)
+    ctx.artifacts.recordDecision = (decision, meta) => {
+      if ((decision as { decisionType?: string }).decisionType === 'gate') throw new TypeError('the store refused the check')
+      return record(decision, meta)
+    }
+    const host = ctx.plugin(StorePluginHost)
+    await expect((async () => host)()).rejects.toThrow(/the store refused the check/)
+    expect(ctx.artifacts.list({ kind: 'decision' })).toEqual([])
+    expect(ctx.store.db.prepare('SELECT (SELECT COUNT(*) FROM plugin_lifecycle) + (SELECT COUNT(*) FROM plugin_check) AS n').get()).toEqual({ n: 0 })
+    ctx.artifacts.recordDecision = record
+    await host.dispose()
+    const again = ctx.plugin(StorePluginHost)
+    await again
+    expect(ctx.pluginHost.get('@x/dsh')).toMatchObject({ findings: [{ kind: 'no-manifest', manifest: 'absent' }], checked: { decision: expect.stringMatching(/^sha256:/) } })
+    expect(ctx.artifacts.list({ kind: 'decision', decisionType: 'gate' })).toHaveLength(1)
+    for (const fiber of [again, provided, ...kernel.reverse()]) await fiber.dispose()
+  })
+
+  it('takes the packages its configuration allows without a manifest, and refuses a name that is not a package name (INV-6)', async () => {
+    const dir = temp()
+    const profile = join(dir, 'profile')
+    install(profile, { '@x/dsh': undefined })
+    const ctx = new Context()
+    const fibers = [ctx.plugin(Store, { path: join(dir, 'system.db') }), ctx.plugin(Artifacts, {})]
+    await Promise.all(fibers)
+    const loader = ctx.plugin({ name: 'loader', apply: (c: Context) => void c.provide('loader', stubLoader(profile, [{ id: 'dsh', name: '@x/dsh', mounted: true }])) })
+    await loader
+    expect(() => StorePluginHost.Config({ allowWithoutManifest: ['../not a package'] })).toThrow()
+    const host = ctx.plugin(StorePluginHost, { allowWithoutManifest: ['@x/dsh'] })
+    await host
+    expect(ctx.pluginHost.get('@x/dsh')).toMatchObject({ manifestState: 'absent', mounted: true })
+    expect(ctx.pluginHost.get('@x/dsh')!.findings).toBeUndefined()
+    expect(ctx.artifacts.list({ kind: 'decision' })).toEqual([])
+    for (const fiber of [host, loader, ...fibers.reverse()]) await fiber.dispose()
+  })
+
+  it('adds the check to a store recorded before it, and records the findings at the next start only once (INV-4)', async () => {
+    const dir = temp()
+    const profile = join(dir, 'profile')
+    install(profile, { '@x/a': manifestText('@x/a'), '@x/dsh': undefined })
+    const a = { id: 'a', name: '@x/a', mounted: true }
+    const boot = async (rows: CompositionRow[]): Promise<{ ctx: Context; stop: () => Promise<void> }> => {
+      const ctx = new Context()
+      const fibers = [
+        ctx.plugin(Store, { path: join(dir, 'system.db') }), ctx.plugin(Artifacts, {}),
+        ctx.plugin({ name: 'loader', apply: (c: Context) => void c.provide('loader', stubLoader(profile, rows)) }), ctx.plugin(StorePluginHost),
+      ]
+      await Promise.all(fibers)
+      return { ctx, stop: async () => { for (const fiber of fibers.reverse()) await fiber.dispose() } }
+    }
+    let { ctx, stop } = await boot([a])
+    // As a host before contract 1.1 left it: its lifecycle records, at migration 1, with no check table.
+    expect(ctx.artifacts.list({ kind: 'decision', decisionType: 'gate' })).toEqual([])
+    ctx.store.db.exec('DROP TABLE plugin_check')
+    ctx.store.db.prepare('DELETE FROM system_migrations WHERE owner = ? AND version = 2').run('plugin-host')
+    await stop()
+    const rows = [a, { id: 'dsh', name: '@x/dsh', mounted: true }]
+    ;({ ctx, stop } = await boot(rows))
+    expect(ctx.artifacts.list({ kind: 'decision', decisionType: 'lifecycle' })).toHaveLength(1)
+    expect(ctx.artifacts.list({ kind: 'decision', decisionType: 'gate' })).toHaveLength(1)
+    await stop()
+    ;({ ctx, stop } = await boot(rows))
+    expect(ctx.artifacts.list({ kind: 'decision', decisionType: 'gate' })).toHaveLength(1)
+    expect(ctx.pluginHost.get('@x/dsh')!.findings).toHaveLength(1)
+    await stop()
   })
 
   it('keeps every lifecycle decision through the artifacts\' retention: the record names the latest, and each decision the one before it (INV-13)', async () => {

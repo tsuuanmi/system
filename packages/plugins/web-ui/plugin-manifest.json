@@ -33,5 +33,15 @@
       "optional": true
     }
   ],
+  "config": [
+    {
+      "key": "tokenDir",
+      "sensitive": false
+    },
+    {
+      "key": "allowedHosts",
+      "sensitive": false
+    }
+  ],
   "license": "UNLICENSED"
 }
