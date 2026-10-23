@@ -1,8 +1,10 @@
 /**
- * The operator's agent account tools (PROP-0012 phase E, ADR-0051), operator scope: `account_enroll`
- * (take a slot and get its sign-in command, then verify who signed in), `account_remove` (free a
- * slot), and `account_agents` (every slot and what it holds). Input and output are checked against
- * `mcp-agent-accounts@1.0` (ADR-0037); nothing in them holds a principal or a token (INV-8).
+ * The operator's agent account tools (PROP-0012 phases E and F, ADR-0051), operator scope:
+ * `account_enroll` (take a slot and get its sign-in command, then verify who signed in),
+ * `account_remove` (free a slot), `account_agents` (every slot and what it holds), and
+ * `account_migrate` (plan, apply, or undo the move from hand-named Workers to account × role). Input
+ * and output are checked against `mcp-agent-accounts@1.1` (ADR-0037); nothing in them holds a
+ * principal or a token (INV-8).
  * @module
  */
 import type { Context } from '@deepseek-ai/cordis'
@@ -11,7 +13,7 @@ import { SchemaRegistry } from '@tsuuanmi/system-libs'
 import zod from 'zod'
 import type { AgentAccounts, SlotRef } from './accounts.ts'
 
-const TAG = 'mcp-agent-accounts@1.0'
+const TAG = 'mcp-agent-accounts@1.1'
 const schemas = new SchemaRegistry()
 
 const refused = (text: string) => ({ isError: true, content: [{ type: 'text' as const, text }] })
@@ -43,7 +45,12 @@ const refOf = (args: Record<string, unknown>): SlotRef => (typeof args.accountId
   ? { accountId: args.accountId }
   : { provider: String(args.provider), ...(typeof args.slot === 'number' ? { slot: args.slot } : {}) })
 
-export function registerAccountTools(ctx: Context, accounts: AgentAccounts): void {
+/** The move from hand-named rows to derived Workers, as the `agents` source runs it. */
+export interface Migrator {
+  migrate(options: { apply?: boolean; rollback?: boolean; stop?: readonly string[] }): Promise<Record<string, unknown>>
+}
+
+export function registerAccountTools(ctx: Context, accounts: AgentAccounts, migrator: Migrator): void {
   const slotShape = {
     provider: zod.string().max(64).optional().describe('An agent runtime kind, as its provider registers it'),
     slot: zod.number().int().min(1).max(64).optional().describe('One slot of the provider'),
@@ -83,4 +90,22 @@ export function registerAccountTools(ctx: Context, accounts: AgentAccounts): voi
     accounts: accounts.list().map((account) => ({ account, workers: accounts.workersIn(account) })),
     providers: accounts.providers(),
   }), (out) => JSON.stringify(out)))
+  ctx.mcp.tool('account_migrate', {
+    scope: 'operator',
+    description: 'Operator tool: the move from hand-named agent Workers to Workers derived as account × role (PROP-0012 phase F). By default it only plans: the roles, assignments, and provider settings of the new agent-workers row, the pool templates for the resources row, each old Worker\'s new id, and what stops the move. apply records each move and the cutover as enrollment decisions and moves the old Workers\' agent sessions and runs to their new ids; from then on the hand-named rows are refused at load (drain first: refused while one of their runs is queued or running). rollback undoes it. stop: runtimes whose Workers stop at the cutover because their account is not ready.',
+    inputSchema: {
+      apply: zod.boolean().optional().describe('Apply the move (recorded; the hand-named rows are refused from then on)'),
+      rollback: zod.boolean().optional().describe('Undo an applied move: sessions and runs moved back, the hand-named rows load again'),
+      stop: zod.array(zod.string().max(64)).max(64).optional().describe('Runtimes whose Workers stop at the cutover, their account not ready'),
+    },
+  }, async (args) => call('account_migrate', args, async () => migrator.migrate({
+    apply: args.apply === true, rollback: args.rollback === true, stop: Array.isArray(args.stop) ? args.stop.map(String) : [],
+  }), (out) => {
+    const plan = out.plan as { workers: Array<{ from: string; to?: string; why: string }>; blockers: string[] }
+    return [
+      `${out.outcome}:`,
+      ...plan.workers.map((w) => `  ${w.from} -> ${w.to ?? 'stops'} (${w.why})`),
+      ...plan.blockers.map((b) => `  refused: ${b}`),
+    ].join('\n')
+  }))
 }

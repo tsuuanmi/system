@@ -7,11 +7,12 @@
  * `enrollment` decision recorded before the record changes (INV-13). The principal itself never
  * reaches this module: only the runtime's keyed hash and a masked hint do (INV-8).
  *
- * Until Workers are account × role (phase F), the configured Workers run in their runtime's own
- * home, which slot 1 adopts without moving it: the account enrolled there is the one they run on, so
- * they take work only while it is `ready`, or while it is `unverified` because the runtime has no
- * verified reader (as before enrollment, and never beyond slot 1); a home no slot holds keeps today's
- * behaviour.
+ * Workers derived as account × role (phase F) take work only while their account is `ready`
+ * ({@link AgentAccounts.accountGate}). Hand-named Workers, until the operator moves them, run in their
+ * runtime's own home, which slot 1 adopts without moving it: the account enrolled there is the one
+ * they run on, so they take work only while it is `ready`, or while it is `unverified` because the
+ * runtime has no verified reader (as before enrollment, and never beyond slot 1); a home no slot
+ * holds keeps the behaviour before enrollment.
  * @module
  */
 import { randomBytes } from 'node:crypto'
@@ -54,6 +55,8 @@ export interface Begun {
 
 /** Whether the Workers that run in a home take work, as its enrolled account says. */
 export type HomeGate = { state: 'ready' } | { state: 'unavailable'; why: string }
+/** Whether an account's Workers take work: ready, with its record, or not, with why. */
+export type AccountGate = { state: 'ready'; account: AgentAccount } | { state: 'unavailable'; why: string }
 
 /** The store table of the slots (agent-workers migration 10). */
 export const ACCOUNTS_MIGRATION = {
@@ -89,8 +92,8 @@ export interface AccountsOptions {
   slots: (provider: string) => number
   /** Where homes of slot 2 and later go: `<root>/<provider>/<n>`. */
   root: string
-  /** The configured Workers that run in a runtime's own home, for the listing. */
-  workersOf: (provider: string) => string[]
+  /** The configured Workers that run on a slot's account, for the listing. */
+  workersIn: (account: AgentAccount) => string[]
 }
 
 /** What one reading makes of a slot: its next status and why, and what it makes of the slots it collides with. */
@@ -122,9 +125,35 @@ export class AgentAccounts {
     })
   }
 
-  /** The configured Workers that run in this slot's home: its runtime's, when it is the runtime's own home (until phase F). */
+  /** The configured Workers that run on this slot's account: those assigned to it, or, with hand-named rows, its runtime's when it is the runtime's own home. */
   workersIn(account: AgentAccount): string[] {
-    return this.ctx.agentRuntimes.get(account.provider)?.home === account.home ? this.options.workersOf(account.provider) : []
+    return this.options.workersIn(account)
+  }
+
+  /**
+   * Whether the Workers derived for an account take work (PROP-0012 phase F, REQ-ACC-11): only while
+   * one slot holds it and it is `ready`; otherwise not, with why, as health and `status` show it.
+   */
+  accountGate(accountId: string): AccountGate {
+    const held = this.list().filter((a) => a.accountId === accountId)
+    if (!held.length) return { state: 'unavailable', why: `the account ${accountId} is assigned, and no slot holds it: enroll it (system account login ${accountId.split(':')[0]}), or change its assignment` }
+    const account = held[0]!
+    if (held.length === 1 && account.status === 'ready') return { state: 'ready', account }
+    const named = `${accountId} (slot ${held.map((a) => a.slot).join(' and ')} of ${account.provider})`
+    const why = held.length > 1 || account.status === 'quarantined'
+      ? `the account ${named} is quarantined (${account.quarantine?.reason ?? 'duplicate'}): its Workers take no work until the operator resolves it (docs/operations/runbooks.md#resolve-a-quarantined-agent-account)`
+      : account.status === 'signed-out'
+        ? `the account ${named} is signed out: sign it in again (system account login ${accountId})`
+        : `the account ${named} is ${account.status} and not verified: finish its sign-in (system account verify ${accountId})`
+    return { state: 'unavailable', why }
+  }
+
+  /** The latest `enrollment` decision of the slot that holds an account, when one does. */
+  decisionOf(accountId: string): ContentId | undefined {
+    const row = this.list().find((a) => a.accountId === accountId)
+    if (!row) return undefined
+    const decision = this.ctx.store.db.prepare('SELECT decision FROM agent_accounts WHERE provider = ? AND slot = ?').get(row.provider, row.slot) as { decision: string | null } | undefined
+    return (decision?.decision ?? undefined) as ContentId | undefined
   }
 
   /**
@@ -234,7 +263,7 @@ export class AgentAccounts {
   }
 
   /**
-   * Whether the configured Workers of a runtime, which run in its own home, take work as the account
+   * Whether the hand-named Workers of a runtime, which run in its own home, take work as the account
    * enrolled there says: yes when no slot holds that home (as before enrollment), when it is `ready`,
    * or when it is `unverified` (the runtime has no verified reader, so nothing better was known before
    * enrollment either); otherwise not, with why.
