@@ -616,7 +616,11 @@ describe('antigravity-cli: a quota\'s reset time, from agy\'s own usage report (
     expect(usage[0]!.argv).toEqual([...USAGE_ARGS])
     expect(usage[0]!.cwd).toBe(HOME)
     expect(usage[0]!.env).toMatchObject({ HOME, AGY_CLI_DISABLE_AUTO_UPDATE: 'true' })
-    expect(Object.keys(usage[0]!.env).filter((k) => k.startsWith('SYSTEM_'))).toEqual([])
+    // agy's environment, exactly as the run's print had it, without the run's gate. Whatever the
+    // scrubbed daemon environment carries (CI sets SYSTEM_REQUIRE_*) reaches both alike.
+    const [print] = prints(log)
+    expect(Object.keys(print!.env)).toEqual(expect.arrayContaining([HOOK_ENV, TOKEN_ENV]))
+    expect(usage[0]!.env).toEqual(Object.fromEntries(Object.entries(print!.env).filter(([k]) => k !== HOOK_ENV && k !== TOKEN_ENV)))
     // After the run's own print, never before it.
     expect(log.map((e) => e.command)).toEqual(['print', 'usage'])
     expect(binds.at(-1)).toEqual({ writable: [HOME] })
