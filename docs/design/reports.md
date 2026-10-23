@@ -73,8 +73,8 @@ is a digest provider that is not loaded.
 PROP-0008 asks whether `system` deserves to exist: the same kind of task done by a well-configured
 Claude Code session alone and through `system`, compared on accepted results per operator
 intervention, tokens per accepted result, and quota lost at reset. The report gives `system`'s side
-of the first two from its records. The other side is measured by the operator outside `system`,
-as the pilot runbook says; the third is not reported yet.
+of the first two from its records. The other side is measured by the operator outside `system`
+([pilot](../operations/pilot.md#read-the-baseline)); the third is not reported yet.
 
 ## Failure
 

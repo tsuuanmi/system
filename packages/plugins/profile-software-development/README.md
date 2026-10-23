@@ -30,7 +30,7 @@ holds no engine code and no rules of its own.
   - A validation's report is evidence, not a check the engine reports: under a
     policy that requires `tests`, the board holds each result for the operator.
     A command the policy does not list exactly is denied (the step has no session
-    to defer it on) and reported not run.
+    to defer it on) and reported not run ([pilot](../../../docs/operations/pilot.md)).
 - **Off by default:** the row is off in the default composition (PROP-0004),
   though the Claude Code agent rows it needs are on (PROP-0010 B3); the
   `api-first` preset turns it on
