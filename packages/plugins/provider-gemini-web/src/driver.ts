@@ -602,7 +602,10 @@ export class GeminiWebDriver implements ProviderDriver<Page> {
   private async waitForAnswer(page: Page, engine: UiEngine, before: number, signal: AbortSignal | undefined, deadlines: AskOptions['deadlines'], onBinding?: (binding: string) => void, phase = 'answer'): Promise<string> {
     const reportBinding = bindingReporter(() => this.bindingOf(page), onBinding)
     // What the whole answer shows, as a digest: its thinking too, which the site shows (and
-    // changes) before any answer text. A read that fails keeps the last one, so it never flickers.
+    // changes) before any answer text. Its digits are left out, so a count that only goes up (a
+    // timer, "Thinking for 12s") is no progress; the answer's own text is read apart. The live
+    // thinking summary's element is not known, so the whole answer is read, not a part of it. A
+    // read that fails keeps the last one, so it never flickers.
     let activity: string | undefined
     const completed = await waitForStableCompletion(async () => {
       reportBinding()
@@ -610,7 +613,7 @@ export class GeminiWebDriver implements ProviderDriver<Page> {
       const text = await this.answerText(engine)
       const answer = (await engine.resolve('turn.assistant', 1000)).locator.last()
       const finished = (await engine.findIn('turn.assistant.done', answer)) !== undefined
-      activity = await answer.evaluate((a) => a.textContent ?? '').then((shown) => createHash('sha256').update(shown).digest('hex'), () => activity)
+      activity = await answer.evaluate((a) => a.textContent ?? '').then((shown) => createHash('sha256').update(shown.replace(/\p{Nd}/gu, '')).digest('hex'), () => activity)
       return { responsePresent: text !== '', text, html: '', running: (await engine.state('turn.running')) || !finished, ...(activity !== undefined ? { progress: activity } : {}) }
     }, completionOptions(this.timeouts, deadlines, signal)).catch(async (error: unknown) => {
       await this.stalled(engine, phase, error)
