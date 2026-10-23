@@ -57,7 +57,8 @@ A tie counts as at least as extreme in both directions, which only ever raises a
 sign-flip null distribution, which is symmetric about zero, the two-sided p-value equals the share of
 sign vectors with `|T(s)| ≥ |T|`.
 
-**Zero differences** are kept, not dropped (as the Wilcoxon test's `wilcox` method would). Flipping a
+**Zero differences** are kept, not dropped (as the Wilcoxon signed-rank test's `wilcox` zero method
+drops them). Flipping a
 zero leaves every statistic unchanged, so each zero doubles every count and no p-value changes; the
 estimate and the interval average over all `n` cases.
 
@@ -98,8 +99,9 @@ The interval of the mean difference at confidence `c` is every shift `δ` that t
 level `α = 1 − c` does not reject when `δ` is subtracted from each difference. With the differences
 shifted, flipping a non-empty subset `F` gives a statistic at least as large as the observed one
 exactly when the mean of the differences in `F`, `m_F`, is at most `δ`. So the `greater` p-value at
-`δ` is `(1 + #{F : m_F ≤ δ}) / 2ⁿ`, which grows with `δ`, and the test rejects `δ` from below exactly
-when fewer than `K` subset means lie at or below it, with
+`δ` is `(1 + #{F ≠ ∅ : m_F ≤ δ}) / 2ⁿ` (the 1 is the observed sign vector), which grows with `δ`, and
+the test rejects `δ` from below, at `α / 2` on each side, exactly when fewer than `K` subset means lie
+at or below it, with
 
 ```text
 K = floor((1 − c) × 2ⁿ⁻¹)
@@ -147,8 +149,8 @@ per case, as `analysisInput` gathers them ([an evaluation](evaluations.md#an-eva
   ratio metric is a ratio of sums over cases, analysed by a paired bootstrap in
   [PROP-0011](../proposals/0011-feedback-loop.md#evaluation), not a mean of paired differences),
   `unpaired` (no case, or an arm with no value), `too-many-pairs` (more than 20 cases), `not-finite`,
-  and `confidence` (not above 0.5 and below 1). A metric the method refuses has no analysis, which
-  the verdict rule makes `invalid`.
+  and `confidence` (not above 0.5 and below 1). The engine gets no interval for that metric, and an
+  evaluation whose judged metric has no analysis is `invalid` under the verdict rule.
 
 ### Pinning
 
@@ -218,6 +220,7 @@ reference is SciPy 1.18.1 (NumPy 2.5.4, Python 3.14.2), `scipy.stats.permutation
 - **Checks before the first trial.** The case count against `MAX_PAIRS`, a ratio metric or a floor
   under `sign-flip`, and a horizon below `fewestPairs` are known before any trial is spent. The
   seam's `AnalysisMethod` has no member that says so, so the engine (F4) or the registry (F3) reads
-  them from this library; refusing a start on them is theirs to define.
+  them from this library; refusing a start on them is theirs to define, as is how the engine
+  records an analysis the method refused.
 - **Open evidence from the research run:** the coverage and Type I error of any sequential procedure
   (none is offered), and a benchmark of this library against a Python subprocess or sidecar.
