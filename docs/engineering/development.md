@@ -37,7 +37,7 @@ pnpm workspaces ([`pnpm-workspace.yaml`](../../pnpm-workspace.yaml)):
 | `packages/plugins/*` | every Cordis plugin, one package each |
 | `packages/system-bundle` | the bundle that mounts the plugins ([`cordis.patch.yml`](../../packages/system-bundle/cordis.patch.yml)) |
 | `packages/cli` | the `system` command |
-| `scripts/`, `spikes/` | repository checks and generators; the M0 spike |
+| `scripts/`, `spikes/` | repository checks and generators; the live install's update ([runbook](../operations/runbooks.md#update-the-live-install-from-e218ae7-to-the-base-release)); the M0 spike |
 
 Each package has a colocated `README.md` that says what it owns, what it does not
 own, its entry points, and its dependency direction, and links back to

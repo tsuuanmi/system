@@ -1,0 +1,54 @@
+# The rows the live install's profile patch (~/.dsh/profiles/system/cordis.patch.yml) changes for
+# the Base release: two reviewer Workers beside the Claude Code one
+# (docs/operations/runbooks.md#update-the-live-install-from-e218ae7-to-the-base-release).
+#
+# Merge by row id: the `agent-workers` row here replaces the live patch's row of that id (a patch
+# that targets a row replaces its whole config), and the two runtime rows are added. Every other
+# row of the live patch stays as it is: accounts, login, workers, provider-gemini-web, workflow,
+# turns, llm-pi-ai, models. The new rows of the bundle (plugin-host, resources, approvals, board,
+# digest, report) need nothing here: their defaults hold.
+
+# Codex as a Worker: its row is off in the bundle. Its executable is the npm install under the
+# Workers' tools directory, which the read confinement binds back read-only (runbook: Codex
+# Workers, step 1, the first option). Install the release the runtime's gate is built against
+# first: npm i --prefix ~/.dsh/system/tools/codex @openai/codex@0.164.0
+- id: runtime-codex-sdk
+  disabled: false
+  config:
+    executable: /home/tan/.dsh/system/tools/codex/node_modules/.bin/codex
+
+# The Antigravity CLI as a Worker: its row is off in the bundle. Named here rather than found on
+# the daemon's PATH; only a verified agy version is admitted (1.4.6, ADR-0043).
+- id: runtime-antigravity-cli
+  disabled: false
+  config:
+    executable: /home/tan/.local/bin/agy
+
+# The agent Workers. This list replaces the whole list, so it keeps claude-review as the live patch
+# has it. All three read the same checkout and never write, so none needs a worktree per run; give
+# every Worker on the workspace `worktreePerRun: true` once a writing Worker joins them.
+- id: agent-workers
+  config:
+    workers:
+      - id: claude-review
+        runtime: claude-agent-sdk
+        workspace: /home/tan/workspaces/system
+        sandbox: read-only
+        tier: standard
+        maxTurns: 4
+      - id: codex-review
+        runtime: codex-sdk
+        workspace: /home/tan/workspaces/system
+        sandbox: read-only
+        tier: standard
+      - id: agy-review
+        runtime: antigravity-cli
+        workspace: /home/tan/workspaces/system
+        sandbox: read-only
+        model: gemini-3.8-flash-high
+        tier: standard
+
+# Optional, not part of the update: the agent-review and algorithm-development templates, which
+# give these Workers their reviews (runbook: Turn an off row back on).
+# - id: profile-software-development
+#   disabled: false
