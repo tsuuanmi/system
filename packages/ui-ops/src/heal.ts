@@ -20,7 +20,12 @@ export interface Scored {
   score: number
 }
 
-const LINE = /^(\s*)- ([a-z][a-z-]*)(?: "((?:[^"\\]|\\.)*)")?[^\n]*?\[ref=(e\d+)\]/
+/**
+ * A node line, `- role "name" [attribute]… [ref=eN]`: the role, and its name when it has one, end
+ * at a space, so the role cannot give characters back to the rest of the line (a run of `-` after
+ * a role would otherwise take quadratic time to refuse).
+ */
+const LINE = /^(\s*)- ([a-z][a-z-]*)(?: "((?:[^"\\]|\\.)*)")? [^\n]*?\[ref=(e\d+)\]/
 
 /** Parse `ariaSnapshot({ mode: 'ai' })` output into nodes with refs and parents. */
 export function parseAiSnapshot(snapshot: string): SnapshotNode[] {

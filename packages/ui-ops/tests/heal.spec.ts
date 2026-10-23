@@ -17,6 +17,14 @@ describe('self-heal matcher', () => {
     ])
   })
 
+  it('refuses a line of a long run after its role, or an unclosed name, in linear time (no polynomial backtracking)', () => {
+    const started = performance.now()
+    expect(parseAiSnapshot(`- a${'-'.repeat(100_000)}`)).toEqual([])
+    expect(parseAiSnapshot(`- button "${'\\"'.repeat(100_000)}`)).toEqual([])
+    expect(parseAiSnapshot(`- button "${'a'.repeat(100_000)}" [ref=e9]`).map((n) => [n.ref, n.name.length])).toEqual([['e9', 100_000]])
+    expect(performance.now() - started).toBeLessThan(1000)
+  })
+
   it('prefers the role and name match next to the composer, and needs a clear lead', () => {
     const scored = scoreNodes(parseAiSnapshot(SNAPSHOT), { role: 'button', name: { en: 'send' }, nearRole: 'textbox' }, ['en'])
     expect(scored[0]).toMatchObject({ ref: 'e4', score: 1 })
