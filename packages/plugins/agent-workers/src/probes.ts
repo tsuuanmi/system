@@ -10,6 +10,9 @@
  * - The latest result wins, failed or not: a probe that throws, or proves less, replaces an older
  *   success at once, so no Worker is admitted on evidence a later probe contradicts.
  * - One probe at a time per runtime: concurrent reads share it.
+ * - Each probe is bounded by `ttlMs` ({@link UNBOUNDED_TTL_PROBE_MS} with `ttlMs` 0): its result could
+ *   stand no longer, so one that has not settled by then is refused as timed out (its late answer
+ *   is dropped), no longer counts as running, and a stop never waits for it past the bound.
  *
  * `described` (a describe) waits only for a runtime's first probe; past the bound it answers at
  * once with evidence that admits nothing, and the background probe brings the runtime back.
@@ -39,6 +42,9 @@ export interface ProbeOptions {
   /** A standing problem, logged once. */
   warn: (message: string) => void
 }
+
+/** How long one probe may take with `ttlMs` 0, where no result stands to bound it: the default `probeTtlMs`. */
+export const UNBOUNDED_TTL_PROBE_MS = 5 * 60_000
 
 /** Evidence that admits no Worker, with why. */
 export const refused = (detail: string): RuntimeEvidence => ({ available: false, detail, sandboxes: [], resume: false, executes: false, readsConfined: false, gatesToolCalls: false })
@@ -108,10 +114,16 @@ export class Probes {
     clearTimeout(state.timer)
     state.timer = undefined
     const at = Date.now()
-    const running = Promise.resolve()
-      .then(() => provider.probe())
+    const boundMs = this.options.ttlMs || UNBOUNDED_TTL_PROBE_MS
+    let bound: NodeJS.Timeout | undefined
+    const timedOut = new Promise<RuntimeEvidence>((resolve) => {
+      bound = setTimeout(() => resolve(refused(`probe timed out: the probe of ${runtime} did not finish within ${this.options.ttlMs ? 'probeTtlMs' : 'its bound'} (${boundMs} ms)`)), boundMs)
+      bound.unref()
+    })
+    const running = Promise.race([Promise.resolve().then(() => provider.probe()), timedOut])
       .catch((error: unknown): RuntimeEvidence => refused((error instanceof Error ? error.message : String(error)).slice(0, 200)))
       .then((evidence) => {
+        clearTimeout(bound)
         state.latest = { at, evidence }
         state.running = undefined
         this.schedule(runtime, state, at)

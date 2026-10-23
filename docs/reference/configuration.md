@@ -59,7 +59,7 @@
 | `providers[].accounts` | "assigned" \| "pooled" | `"assigned"` | assigned (the default; personal subscriptions): a limit on one account never moves its work to another account of this runtime, the work waits; pooled: only with pooledTerms |
 | `providers[].pooledTerms` | any |  | {confirmedBy, confirmedAt, terms}: who confirmed that this runtime's plan terms allow pooling its accounts, when (ISO time), and which terms; required for pooled (ADR-0052) |
 | `maxReplayChars` | number (1…2000000) | `200000` | Characters of earlier turns a review member's replayed conversation holds, at most; a turn past it fails, never cut |
-| `probeTtlMs` | number (0…) | `300000` | How long a runtime's probe result stands, from when its probe started: the next probe starts in the background at half of it, and a result past it admits no Worker until one finishes (0: every read waits for a probe) |
+| `probeTtlMs` | number (0…) | `300000` | How long a runtime's probe result stands, from when its probe started: the next probe starts in the background at half of it, a result past it admits no Worker until one finishes, and a probe not settled within it is refused as timed out (0: every read waits for a probe, bounded at 5 min) |
 | `runTimeoutMs` | number (1…) | `900000` | Hard deadline per run |
 | `worktreeRoot` | string |  | Where the worktrees of worktreePerRun Workers go (default <DSH_HOME>/system/worktrees) |
 | `worktreeRetentionHours` | number (0…) | `168` | Hours a workflow run's worktree is kept after its last agent run ended; then its changes are committed on its branch and it is removed (0 keeps them) |

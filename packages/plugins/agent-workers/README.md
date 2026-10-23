@@ -70,6 +70,9 @@ The **`agents` Worker source**: agent runtimes as Workers
     `unavailable` at once, never outlived by an older success;
   - a probe slower than half of `probeTtlMs` is logged once, and the next starts at once;
   - a run's own check before the agent starts waits for a result within `probeTtlMs`;
+  - a probe not settled within `probeTtlMs` of its start (5 min with `probeTtlMs: 0`) is refused
+    as `probe timed out`, its late answer dropped, and the next one starts; a stop waits for a
+    probe in flight no longer than that;
   - `probeTtlMs: 0` keeps none: every read waits for a probe.
 
   The capabilities:
