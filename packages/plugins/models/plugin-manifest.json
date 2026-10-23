@@ -76,6 +76,10 @@
       "sensitive": false
     },
     {
+      "key": "idleTimeoutMs",
+      "sensitive": false
+    },
+    {
       "key": "retainDays",
       "sensitive": false
     },

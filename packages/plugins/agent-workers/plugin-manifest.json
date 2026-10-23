@@ -60,6 +60,10 @@
       "sensitive": false
     },
     {
+      "key": "maxReplayChars",
+      "sensitive": false
+    },
+    {
       "key": "probeTtlMs",
       "sensitive": false
     },
