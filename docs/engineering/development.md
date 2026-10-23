@@ -78,7 +78,10 @@ never a `pnpm` looked up on `PATH`. So every step of `pnpm check` runs on the sa
 pnpm, and on a host whose pnpm comes from corepack alone `corepack pnpm check`
 works with no `pnpm` on `PATH`. A new root script that runs pnpm does the same.
 Run the scripts through pnpm: started any other way, `npm_execpath` does not
-name pnpm and the script fails.
+name pnpm and the script fails. The product itself still needs one there:
+`system init` installs the profile through DSH's plugin manager, which runs the
+`pnpm` on `PATH`, so `test:e2e` (every suite of it boots `system init`) needs
+one too (`corepack enable` puts it there).
 
 Run it locally on Linux:
 
