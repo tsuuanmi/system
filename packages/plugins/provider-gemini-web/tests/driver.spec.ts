@@ -122,6 +122,33 @@ describe.runIf(canRunBrowser)('GeminiWebDriver against the fake site', { timeout
     expect(stalls[0]!.outline!.nodes.length).toBeGreaterThan(0)
   })
 
+  it('takes a long think whose thinking the answer shows for progress, past the stall deadline (REQ-PRV-4; live 2026-10-23: a review member stalled at 5 min)', async () => {
+    // Four seconds of thinking with no answer text, nearly three times the stall deadline: its summary changes, so it is not a stall.
+    const { page, fake } = await open({ startOnSpark: false, thinkMs: 4000, answer: 'Reviewed: no blocking defect.' })
+    const driver = new GeminiWebDriver({ origin: fake.origin, modes: PRESETS, defaultMode: 'flash', timeouts: { readyMs: 5000, stableMs: 300, pollMs: 100, turnMs: 30_000, stallMs: 1500 } })
+    const stalls: unknown[] = []
+    driver.onStall = (event) => void stalls.push(event)
+    expect((await driver.ask(page, 'review this', { conversation: 'persistent' })).text).toBe('Reviewed: no blocking defect.')
+    expect(stalls).toEqual([])
+  }, 60_000)
+
+  it('still fails a think that shows nothing new as provider_stalled, before the turn\'s hard deadline', async () => {
+    const { page, fake } = await open({ startOnSpark: false, thinkMs: 6000, thoughts: false, answer: 'too late' })
+    const driver = new GeminiWebDriver({ origin: fake.origin, modes: PRESETS, defaultMode: 'flash', timeouts: { readyMs: 5000, stableMs: 300, pollMs: 100, turnMs: 30_000, stallMs: 1500 } })
+    const started = Date.now()
+    await expect(driver.ask(page, 'review this', { conversation: 'persistent' })).rejects.toMatchObject({ kind: 'provider_stalled' })
+    expect(Date.now() - started).toBeLessThan(6000)
+  }, 60_000)
+
+  it('counts the prompt in code points against its input bound, as admission does (ADR-0032)', async () => {
+    const { page, fake } = await open({ startOnSpark: false, answer: 'OK' })
+    const limited = new GeminiWebDriver({ origin: fake.origin, modes: PRESETS, defaultMode: 'flash', maxPromptChars: 40, timeouts: { readyMs: 5000, stableMs: 300, pollMs: 100, turnMs: 30_000, stallMs: 15_000 } })
+    // Thirty emoji: 60 UTF-16 units, 30 characters as admission counts them.
+    expect((await limited.ask(page, '🙂'.repeat(30), { conversation: 'temporary' })).text).toBe('OK')
+    await expect(limited.ask(page, '🙂'.repeat(41), { conversation: 'temporary' })).rejects.toMatchObject({ kind: 'invalid_input', message: expect.stringMatching(/41 characters, over the 40 /) })
+    expect(fake.sent).toHaveLength(1)
+  }, 60_000)
+
   it('keeps a page that already shows its conversation as it is, and reports it idle only with nothing open (kept tabs, ADR-0030)', async () => {
     const { page, driver, fake } = await open({ startOnSpark: false })
     const first = await driver.ask(page, 'hello', { conversation: 'persistent' })

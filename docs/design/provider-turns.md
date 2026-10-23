@@ -188,7 +188,13 @@ Completion is observed with two independent deadlines:
 - **hard deadline:** the absolute upper bound for the turn;
 - **stall deadline:** reset only by *meaningful* transitions, meaning response text
   changed, generation started or stopped, or the work a driver reports before any
-  text changed (its `progress`, such as Deep research's growing activity).
+  text changed (its `progress`, such as Deep research's growing activity, or a Gemini
+  answer's thinking, which the answer shows and changes before its text: live
+  2026-10-23, a review member's answer on Gemini failed `provider_stalled` at five
+  minutes). A stall's error names the bound that ended it (`turns.stallTimeoutMs`,
+  `turns.researchStallTimeoutMs`) and points at the page's outline (`provider.stall`):
+  a site that keeps working with nothing a driver can see change is told from one
+  that stopped only there.
 
 **Generating** is read from the composer's action slot. While the website
 generates, the slot shows **Stop**. When it is idle, the slot shows **Send** again

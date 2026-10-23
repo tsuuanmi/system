@@ -676,7 +676,10 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
     const material = 'Review this change:\n' + 'a line of the change to review\n'.repeat(1100)
     const done = await ctx.workflow.wait(ctx.workflow.start({ template: 'review', input: material }).runId, 120_000)
     expect(done.status).toBe('failed')
-    expect(done.error).toMatchObject({ kind: 'invalid_input', message: expect.stringMatching(/it takes at most 30000.*The input is \d+ characters, most of it the source shown \(repositories\.maxSourceChars, 60000\): lower that bound or narrow the focus$/s) })
+    // Text, not a repository: the text itself is what to shorten, shown once (no focus to narrow).
+    expect(done.error).toMatchObject({ kind: 'invalid_input', message: expect.stringMatching(/no Worker can take this work: .*it takes at most 30000.*The input is \d+ characters, most of it the caller's text, shown once as the file material \(at most repositories\.maxSourceChars, 60000\): review a smaller part of it, or lower that bound so a text this long is refused before any member is asked$/s) })
+    // Two provider families are ready: a shortage of them is not why it failed.
+    expect(done.error!.message).not.toMatch(/provider families/)
     expect(gemini!.sent).toEqual([])
     expect(fake.sent.filter((s) => isProposal(s.prompt))).toHaveLength(1)
   }, 240_000)

@@ -215,8 +215,18 @@ without naming a provider ([INV-11](../architecture/invariants.md#inv-11-no-tool
 - **Escalation:** if acceptance rejects a result, the workflow engine opens a
   *new* execution of the node at the next tier above the one that served it, at
   most `maxEscalations` times (per node, default 1, at most 3). The rejected
-  result stays as evidence. The choice is an `escalation` decision either way,
-  and it is never applied to a running turn.
+  result stays as evidence. The choice is an `escalation` decision either way
+  (`workflow.escalation` version 2), and it is never applied to a running turn.
+  A node its session holds to its Workers (a team member, which keeps one logical
+  Worker, REQ-TEAM-2) escalates only when one of them, as listed now, serves the
+  next tier or above: routing would refuse every other Worker, so the decision is
+  `fail`, and the node fails as `acceptance_rejected` with the contract's reasons
+  and why it was not escalated, never as an admission failure. A rejected answer
+  its Worker cut at its output bound (`model-answer` `finish: max-tokens`) says so
+  among the reasons, since a higher tier is not what a cut answer lacked.
+  Escalation is only ever for a rejected result: a Worker refused at admission
+  (its input bound, say) never raises the tier; routing takes the lowest
+  admissible tier at or above the node's own.
 - Planning may use a higher tier than the steps it coordinates,
   in line with "spend intelligence where intelligence matters".
 

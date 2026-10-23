@@ -598,6 +598,58 @@ Two team members then share one account, each in its own conversation. The team'
 two families, turn the row back on and sign the account in; `allowSameFamily` can stay on, since
 a second family is used whenever one is admitted.
 
+## A review member fails on a website
+
+A team member's step (`review:m<k>:propose`, a ballot, or a debate) fails on a website Worker, or
+for want of one. `system explain <runId>` shows the step's decisions, and its error says which
+case it is (seen live on 2026-10-23, with a ChatGPT and a Gemini member):
+
+- **Over a website's input bound** (`invalid_input`: `no Worker can take this work: … the input
+  has N characters; it takes at most M`). A website Worker takes at most what its driver
+  declares: the Gemini site 30,000 characters (`maxPromptChars` on the `provider-gemini-web`
+  row). That bound is the site's, not the code's: Gemini drops a longer paste without an error
+  (observed 2026-10-16), so raising it only turns the refusal into a lost prompt
+  (`input_dropped`). A member's input is the source it is shown plus about 1,500 characters of
+  instructions; a text review's text is shown once (before 2026-10-24 it was shown twice, so a
+  17,000-character text made a 36,064-character input). Such a member routes to a Worker of a
+  family no earlier member has that takes it, at the step's tier or the lowest above (an API model
+  Worker, or an agent Worker under the review-member profile); with none, it fails unsent and the
+  message names what to shorten. For a text review, review a smaller part of the text, or lower
+  `repositories.maxSourceChars` on the `workflow` row so a text that long is refused before any
+  member is asked; for a repository, lower that bound or narrow `focus`. Then start the review
+  again: `continue` would compose the same input.
+- **A dropped prompt** (`input_dropped`): the site emptied the composer and took nothing. When the
+  prompt was near `maxPromptChars`, the site's limit is lower now: lower `maxPromptChars` (a
+  targeted patch on the `provider-gemini-web` row, listing its other settings too), restart, then
+  `system continue <runId>`.
+- **A stall** (`provider_stalled`: `… no meaningful progress for 300000ms (turns.stallTimeoutMs):
+  …`). Nothing the driver reads changed for the stall bound: no answer text, no activity, no
+  start or stop of generation. Read the page as it stood: `system events --type provider.stall`
+  names its outline, and `system evidence <id>` shows it. A Gemini answer's thinking counts as
+  progress while the answer shows it changing; a think that shows nothing new still stalls.
+  - If the outline shows the answer still thinking or writing (Stop shown), the site was working
+    past the bound: raise `stallTimeoutMs` on the `turns` row (below `turnTimeoutMs`, 15 min by
+    default), or map the account's tier to a faster mode in the account catalog.
+  - The prompt was sent, so nothing resends it on its own. If the site's conversation shows the
+    answer finished meanwhile, take it with `system supersede <runId> <nodeId> -` (the answer on
+    stdin): `system continue <runId>` sends the prompt again, into the same conversation.
+  - A finished answer with no Copy, or the site's own error, is the site or its map, not the
+    bound ([a provider UI change](playbooks.md#a-provider-ui-change)).
+- **Rejected and not escalated** (`acceptance_rejected`: `…; not escalated: session … stays on its
+  Worker model:… (standard), none at tier frontier or above, …`). The member's answer failed its
+  contract, and its session, which keeps one Worker for the team's lifetime, has none at the next
+  tier, so escalating could only fail admission. Read the answer
+  ([why a step's answer was rejected](#why-a-steps-answer-was-rejected)). When the reasons say
+  `the answer stopped at its Worker's output bound (N tokens)`, the answer was cut: raise that
+  catalog entry's `maxTokens` on the `models` row ([API and local models](#api-and-local-models);
+  a route's reasoning tokens count toward it), restart, then `system continue <runId>`. Otherwise
+  `continue` runs the step again on the same Worker; to escalate a member of that family, give it
+  a Worker at the next tier (a catalog entry of the same `family` at that tier).
+- **`team review needs N provider families, one per member; M is ready`**: fewer families are ready
+  than the team has members (Workers ready or busy that prove the step): see
+  [one provider family](#one-provider-family). With enough of them the message does not say this,
+  and the admission's own reasons are why.
+
 ## Account re-auth
 
 A turn that fails with `reauth_required` or `challenge` (disposition

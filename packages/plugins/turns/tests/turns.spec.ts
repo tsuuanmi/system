@@ -988,6 +988,17 @@ describe.runIf(canRunBrowser)('ctx.turns: a ChatGPT account works in its own log
     // Sent once, never again on a sign-in (INV-4).
     expect(fake.sent).toHaveLength(1)
   }, 180_000)
+
+  it('fails a stalled turn naming the bound that ended it, where the page is outlined, and what to change (live 2026-10-23)', async () => {
+    const { ctx, fake } = await bootBoundChatGpt({ fake: { thinkMs: 60_000 }, turns: { stallTimeoutMs: 4000 } })
+    const done = await ctx.turns.wait((await ask(ctx, { prompt: 'Think long' })).turnId, 60_000)
+    expect(done).toMatchObject({
+      status: 'failed', submitted: true,
+      error: { kind: 'provider_stalled', message: expect.stringMatching(/no meaningful progress for 4000ms \(turns\.stallTimeoutMs\): .*system events --type provider\.stall.*raise turns\.stallTimeoutMs/) },
+    })
+    expect(ctx.eventLog.query({ type: 'provider.stall' })).toHaveLength(1)
+    expect(fake.sent).toHaveLength(1)
+  }, 180_000)
 })
 
 describe.runIf(canRunBrowser)('ctx.turns: a session-bound account works in its own login profile (ADR-0030)', () => {

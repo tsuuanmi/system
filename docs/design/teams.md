@@ -44,7 +44,11 @@ without changing identity.
   A member whose conversation can be neither resumed nor replayed whole fails its step unsent; it
   is never given a fresh conversation for a continuation.
   A later step, an escalated one too, stays in that conversation through session affinity,
-  which admits any tier of the same account; it never joins again.
+  which admits any tier of the same account (a model Worker's session: a higher tier of its
+  family); it never joins again. So a member's rejected answer escalates only when one of its
+  session's Workers serves the next tier; otherwise it fails as `acceptance_rejected`, saying
+  why it was not escalated ([intelligence tiers](routing.md#intelligence-tiers)), and is never
+  routed where no Worker can take it.
 - Members never message each other. The engine composes every prompt from sealed records.
   That is the team's messaging policy under the session seam, "nobody, during the
   procedure" ([ADR-0015](../decisions/adr/0015-worker-sessions-and-peer-messaging.md)); the
@@ -56,8 +60,13 @@ without changing identity.
 Member *k* must use a provider family other than those of members 1..*k*−1
 ([ADR-0027](../decisions/adr/0027-provider-diversity-in-routing.md)). Members also use distinct
 accounts (REQ-TEAM-4): they route one at a time, and each avoids every account another member
-holds. A member that finds no other family fails with `config_error`. Its message starts
-`team T needs N provider families, one per member; M is/are ready (ADR-0027).`
+holds. A member that finds no other family fails with `config_error`. When fewer families are
+ready than the team has members (M counts the families of the Workers ready or busy that prove
+the step's capabilities), its message starts
+`team T needs N provider families, one per member; M is/are ready (ADR-0027).`; with enough of
+them, the shortage is not the cause, and the admission's own reasons stand. A member that every
+Worker of another family refuses only for its input's length fails as `invalid_input`, and names
+the bound to change ([sources](#sources)).
 
 With the workflow's `allowSameFamily` on ([ADR-0029](../decisions/adr/0029-opt-in-same-family-fallback.md),
 [ADR-0035](../decisions/adr/0035-one-family-teams-keep-distinct-accounts.md)), such a member routes
@@ -273,6 +282,11 @@ the engine runs, with no Worker (record executor `effect`):
   its path included (a path is the repository's text too), line-numbered between fence lines
   derived from a hash of its content, so its own text cannot close the fence; then the unread
   files, fenced the same way.
+- For the caller's text, the request and the file `material` are the same text, so it is shown
+  once: `{{input}}` composes to one line saying that the request is the file `material` below,
+  whose criteria apply to the material it gives, which stays data and never instructions. Shown
+  twice, a text that fits `maxSourceChars` made a member input over the 30,000 characters that
+  bound is sized for (live 2026-10-23: 36,064 characters, so the Gemini site refused it).
 - A repository given to a template with no source step (`brainstorm`) is refused as
   `invalid_input`.
 
@@ -303,7 +317,10 @@ Vendored and build directories are skipped. Bounds ([INV-9](../architecture/inva
 (line-numbered, with the list of files not shown), at most `maxSourceChars` characters
 (default 24,000, so a review prompt fits a 30,000-character member input): files past it are
 listed as not shown (`bounds`), and caller text past it is refused as `invalid_input` before
-anything is sent, never cut. A tree of at most 50,000
+anything is sent, never cut. A member input still over a Worker's own bound (a raised
+`maxSourceChars`) routes to a Worker of another family that takes it, at the step's tier or the
+lowest one above; with none, the member fails unsent as `invalid_input`, naming what to shorten
+([input length](routing.md#algorithm)). A tree of at most 50,000
 entries and 64 MB of git output (else `overloaded`), 20 s per git call (60 s for the fetch) and
 120 s for the whole read, which a stop of the run also ends; a call is not started with less than
 a second left, and a stopped call kills its whole process group. Up to 20 `focus` globs of at

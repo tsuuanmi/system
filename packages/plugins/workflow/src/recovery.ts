@@ -4,40 +4,70 @@
  */
 import type { Lease } from '@tsuuanmi/system-leases'
 import type { ProviderErrorKind } from '@tsuuanmi/system-provider-core'
-import { type AdmissionFailure, type ArtifactRef, TIERS, type WorkerExecution } from '@tsuuanmi/system-workers-core'
+import { type AdmissionFailure, type ArtifactRef, type CapabilityDescriptor, TIERS, type WorkerExecution } from '@tsuuanmi/system-workers-core'
 import { noteDeferral } from './continuations.ts'
 import type { Engine } from './engine.ts'
+import { MATERIAL, type SourceSnapshot } from './sources.ts'
 import type { ResolvedNode } from './spec.ts'
 import type { NodeRecord, NodeRow, RunRow, WorkflowError } from './types.ts'
 
 const RETRYABLE = new Set(['IMMEDIATE', 'BACKOFF', 'RECREATE_SESSION'])
 
+/** The Workers a node's session holds it to (Model A: a team member keeps one logical Worker), as listed now. */
+export interface Held {
+  session: string
+  workers: CapabilityDescriptor[]
+}
+
+/**
+ * The Workers a node's session holds it to, as listed now, read before a rejected result's
+ * escalation is decided (that runs in a transaction, which cannot wait for the listing).
+ * Undefined when its session holds it to none, or none of them is listed now: routing then decides.
+ */
+export async function heldWorkers(e: Engine, spec: ResolvedNode): Promise<Held | undefined> {
+  const session = spec.session.sessionId
+  const own = session ? e.ctx.workers.affinity(session) : undefined
+  if (!session || !own?.length) return undefined
+  const workers = (await e.ctx.workers.list()).filter((w) => own.includes(w.worker))
+  return workers.length ? { session, workers } : undefined
+}
+
 /**
  * A rejected result may run again at the next tier above the one that served it, at most
- * `maxEscalations` times (REQ-WRK-9, routing.md#intelligence-tiers). The rejected result stays
- * as evidence; the choice is an `escalation` decision either way. True when it escalated.
+ * `maxEscalations` times (REQ-WRK-9, routing.md#intelligence-tiers), and only onto a Worker it
+ * may take: a node its session holds to its Workers (`held`) escalates only when one of them
+ * serves that tier or above, since routing would refuse every other one. The rejected result
+ * stays as evidence; the choice is an `escalation` decision either way. `why` says why it
+ * escalated, or why not.
  */
-export function escalate(e: Engine, run: RunRow, node: NodeRow, spec: ResolvedNode, result: ArtifactRef, acceptance: ArtifactRef, reasons: string[], decisions: { decisions: string }, lease: () => Lease): boolean {
+export function escalate(e: Engine, run: RunRow, node: NodeRow, spec: ResolvedNode, result: ArtifactRef, acceptance: ArtifactRef, reasons: string[], decisions: { decisions: string }, lease: () => Lease, held?: Held): { escalated: boolean; why: string } {
   const max = spec.maxEscalations ?? 1
   const served = node.served_tier ?? spec.tier
   const next = TIERS[TIERS.indexOf(served) + 1]
-  const escalate = node.escalations < max && next !== undefined
+  const reachable = next === undefined || !held || held.workers.some((w) => TIERS.indexOf(w.tier) >= TIERS.indexOf(next))
+  const escalate = node.escalations < max && next !== undefined && reachable
   const why = escalate
-    ? [`escalation ${node.escalations + 1} of ${max} to ${next}: ${spec.acceptance} rejected the ${served} result (${reasons.join('; ')})`]
-    : [next === undefined ? `no tier above ${served}` : `escalation bound reached (${max})`]
+    ? `escalation ${node.escalations + 1} of ${max} to ${next}: ${spec.acceptance} rejected the ${served} result (${reasons.join('; ')})`
+    : next === undefined ? `no tier above ${served}`
+    : node.escalations >= max ? `escalation bound reached (${max})`
+    : `session ${held!.session} stays on its Worker${held!.workers.length > 1 ? 's' : ''} ${held!.workers.map((w) => `${w.worker} (${w.tier})`).join(', ')}, none at tier ${next} or above, so no Worker could take it there`
   const decision = e.ctx.artifacts.recordDecision({
     decisionType: 'escalation',
     question: `Does node ${node.node_id} of run ${run.run_id} run again at a higher tier after its result was rejected?`,
     inputs: [acceptance, result],
     candidates: [
-      { option: 'escalate', selected: escalate, reasons: escalate ? why : why.map((w) => `not escalate: ${w}`) },
-      { option: 'fail', selected: !escalate, reasons: escalate ? [`not fail: ${max - node.escalations} escalation(s) of ${max} remain and ${next} is above ${served}`] : why },
+      { option: 'escalate', selected: escalate, reasons: [escalate ? why : `not escalate: ${why}`] },
+      {
+        option: 'fail', selected: !escalate,
+        reasons: escalate ? [`not fail: ${max - node.escalations} escalation(s) of ${max} remain and ${next} is above ${served}${held ? `, which ${held.session}'s Workers serve` : ''}`] : [why],
+      },
     ],
-    decider: { type: 'policy', id: 'workflow.escalation', version: '1' },
+    // Version 2: an escalation the node's session cannot take is not chosen.
+    decider: { type: 'policy', id: 'workflow.escalation', version: '2' },
     outcome: { option: escalate ? 'escalate' : 'fail', ...(escalate ? { detail: { from: served, to: next } } : {}) },
     deterministic: true,
   }, { producer: { type: 'system', ref: 'workflow' }, runId: run.run_id, nodeId: node.node_id })
-  if (!escalate) return false
+  if (!escalate) return { escalated: false, why }
   // The node routes again, so its old Worker no longer speaks for it (a peer's diversity reads it, ADR-0027).
   e.writeNode(node, { state: 'READY', execution_id: null, worker: null, escalations: node.escalations + 1, error: null, ...decisions }, (r) => {
     const next_: NodeRecord = {
@@ -47,7 +77,17 @@ export function escalate(e: Engine, run: RunRow, node: NodeRow, spec: ResolvedNo
     return next_
   }, lease)
   e.ctx.eventLog.append({ type: 'workflow.node.escalated', runId: run.run_id, nodeId: node.node_id, decision: decision.id, data: { from: served, to: next, escalation: node.escalations + 1 } })
-  return true
+  return { escalated: true, why }
+}
+
+/**
+ * Why a rejected answer may have failed for want of room, not of intelligence: it stopped at its
+ * Worker's output bound (a model answer's `finish: max-tokens`). Undefined for any other result.
+ */
+export function cutShort(e: Engine, result: ArtifactRef): string | undefined {
+  const body = e.ctx.artifacts.get(result)?.body as { finish?: unknown; maxTokens?: unknown } | undefined
+  if (body?.finish !== 'max-tokens') return undefined
+  return `the answer stopped at its Worker's output bound${typeof body.maxTokens === 'number' ? ` (${body.maxTokens} tokens)` : ''}: a longer answer needs a higher bound in that Worker's configuration`
 }
 
 /** Whether a decision is the opt-in same-family admission of ADR-0029. */
@@ -200,13 +240,18 @@ export function admissionKind(failure: AdmissionFailure): ProviderErrorKind {
 
 /**
  * When the input was too long for a Worker that could otherwise take it, the bound to change
- * (ADR-0032): a review member's input is sized by the source it is shown, so that bound is named;
- * any other input is the caller's to shorten, or a Worker's own bound to raise. Empty otherwise.
+ * (ADR-0032): a review member's input is sized by the source it is shown (`source`, its source
+ * step's snapshot), so that bound is named, and for the caller's own text, the text; any other
+ * input is the caller's to shorten, or a Worker's own bound to raise. Empty otherwise.
  */
-export function inputHint(e: Engine, spec: ResolvedNode, failure: AdmissionFailure, chars: number): string {
+export function inputHint(e: Engine, spec: ResolvedNode, failure: AdmissionFailure, chars: number, source?: SourceSnapshot): string {
   if (!failure.rejections.some((r) => r.failed.length && r.failed.every((f) => f.check === 'input'))) return ''
+  const bound = `repositories.maxSourceChars, ${e.config.repositories?.maxSourceChars ?? 24_000}`
+  if (spec.team?.kind === 'review' && source && !source.repository) {
+    return `. The input is ${chars} characters, most of it the caller's text, shown once as the file ${MATERIAL} (at most ${bound}): review a smaller part of it, or lower that bound so a text this long is refused before any member is asked`
+  }
   if (spec.team?.kind === 'review') {
-    return `. The input is ${chars} characters, most of it the source shown (repositories.maxSourceChars, ${e.config.repositories?.maxSourceChars ?? 24_000}): lower that bound or narrow the focus`
+    return `. The input is ${chars} characters, most of it the source shown (${bound}): lower that bound or narrow the focus`
   }
   return `. The input is ${chars} characters: shorten it, or raise the Worker's own input bound in its configuration if its site or model takes more`
 }
