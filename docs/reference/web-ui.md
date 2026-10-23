@@ -7,8 +7,8 @@ Every route is under `/ui/api` and passes the shared request guard first
 ([gateway-core](../../packages/gateway-core/README.md#the-request-guard)): a loopback `Host`
 (else `421`), no `Origin` but the UI's own (else `403`), and the operator token as
 `Authorization: Bearer` (else `401`). A `POST` takes a JSON object only
-(`content-type: application/json`, else `415`), of at most 16 KiB (else `413`). Errors are
-`{error}`.
+(`content-type: application/json`, else `415`), of at most 16 KiB (else `413`; 128 KiB for
+`policy/propose`). Errors are `{error}`.
 
 ## Runs
 
@@ -49,7 +49,7 @@ Served when `ctx.approvals` is present; without it, both routes answer `503`
 
 | Route | Body | Answer |
 |---|---|---|
-| `GET approvals` | — | `{batches: [{batchId?, requests}]}`: the open and batched `approval-request@1.0` records, by batch then expiry, the unbatched last (no `batchId`) |
+| `GET approvals` | — | `{batches: [{batchId?, requests}]}`: the open and batched `approval-request@1.x` records, by batch then expiry, the unbatched last (no `batchId`) |
 | `POST approvals/decide` | `{verdicts, note?, batchId?}` | `{results}`: one `{requestId, state, approval?, refused?}` per verdict, in order |
 
 - `verdicts` holds 1 to 50 `{requestId, subject, verdict: approved | rejected, note?}`. `subject`
@@ -64,3 +64,23 @@ Served when `ctx.approvals` is present; without it, both routes answer `503`
   the verdicts go to `ctx.approvals.decide` as the operator's (INV-6), at the server's clock:
   each applies or is refused on its own (`unknown-request`, `already-resolved`, `expired`,
   `subject-changed`, `failed`).
+
+## Autonomy policy
+
+Served when `ctx.approvals` is present; without it, both routes answer `503`
+([a policy change](../design/approvals.md#a-policy-change)).
+
+| Route | Body | Answer |
+|---|---|---|
+| `GET policy` | — | `{set?, policies, effective, proposals, changes?}`: the set in force (`hash`, `source` `configuration` or `store`, `configHash`, `changeId`, `projects`), every policy of it (the studio's first), the effective mode per action class for the studio and each project (`[{projectId?, effective}]`), whether the queue takes proposals (contract 1.1), and its latest 20 `policy-change@1.0` records, newest first |
+| `POST policy/propose` | `{policy, note?}`: one `autonomy-policy@1.0` record | `{change, request}`: the `policy-change@1.0` record (`asked`) and the `policy-change` request that asks for it |
+
+- The proposal goes to `ctx.approvals.proposePolicy` as the operator's (INV-6), at the server's
+  clock. It applies nothing: the change comes into force only when the operator approves its
+  request in the queue (`POST approvals/decide`, on the request's subject, the proposed set's
+  hash), while the set it was proposed on is still in force.
+- A proposal the queue refuses is `400` (`invalid`: the record, the version rule, or a load-time
+  rule of the set it makes) or `409` (`not-asked`: the policy forbids `policy-change`), and
+  nothing is stored. A queue at contract 1.0 answers `501`: its policy changes by configuration
+  and a restart only.
+- `note` is trimmed to 2000 characters and shown with the request.

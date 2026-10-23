@@ -89,7 +89,7 @@ one scope another's rights).
 
 - **Tool scope:** a tool declares `scope: 'client' | 'operator'` in its
   `ToolSpec`. A tool that declares none is the operator's (fail closed), so
-  `approve`, `approvals_decide`, `stop`, `continue`, `delete`, `supersede`, `drain`, `resume`,
+  `approve`, `approvals_decide`, `approvals_policy_propose`, `stop`, `continue`, `delete`, `supersede`, `drain`, `resume`,
   `events`, `artifact`, `evidence`, `conversation_list`, `conversation_inspect`, `model_key`, and
   every `account_*` tool, `account_probe` included, are operator-only.
 - **Listing:** `tools/list` returns only the tools the caller's scope may use,

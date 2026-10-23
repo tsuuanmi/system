@@ -1,22 +1,23 @@
 /**
  * The `approvals_*` MCP tools (reference/schemas.md#mcp-tools-board_-approvals_-resources_).
- * `approvals_list`, `approvals_get`, and `approvals_policy` are client scope; `approvals_decide` is
- * operator scope, because a verdict comes only from the operator's channel (INV-6). Each call's
- * input and structured output are validated against `schemas/mcp-approvals.v1.json` (1.1)
- * `$defs/<tool>-input` and `-output`; a refused input executes nothing.
+ * `approvals_list`, `approvals_get`, and `approvals_policy` are client scope; `approvals_decide` and
+ * `approvals_policy_propose` are operator scope, because a verdict or a policy change comes only
+ * from the operator's channel (INV-6). Each call's input and structured output are validated
+ * against `schemas/mcp-approvals.v1.json` (1.2) `$defs/<tool>-input` and `-output`; a refused input
+ * executes nothing.
  */
 import type { Context } from '@deepseek-ai/cordis'
-import { ApprovalsError, type RequestState, type Verdict } from '@tsuuanmi/system-approvals-core'
+import { ApprovalsError, type AutonomyPolicy, type RequestState, type Verdict } from '@tsuuanmi/system-approvals-core'
 import type { ToolContext, ToolHandler, ToolScope, ToolSpec } from '@tsuuanmi/system-gateway-core'
 import { SchemaRegistry } from '@tsuuanmi/system-libs'
 import { z as zod } from 'zod'
 import type { StoreApprovals } from './index.ts'
 
-export const APPROVAL_TOOLS = ['approvals_list', 'approvals_get', 'approvals_decide', 'approvals_policy'] as const
+export const APPROVAL_TOOLS = ['approvals_list', 'approvals_get', 'approvals_decide', 'approvals_policy', 'approvals_policy_propose'] as const
 export type ApprovalTool = typeof APPROVAL_TOOLS[number]
 
-/** Who may call each tool: verdicts are the operator's alone (INV-6). */
-export const SCOPES: Record<ApprovalTool, ToolScope> = { approvals_list: 'client', approvals_get: 'client', approvals_decide: 'operator', approvals_policy: 'client' }
+/** Who may call each tool: verdicts and policy changes are the operator's alone (INV-6). */
+export const SCOPES: Record<ApprovalTool, ToolScope> = { approvals_list: 'client', approvals_get: 'client', approvals_decide: 'operator', approvals_policy: 'client', approvals_policy_propose: 'operator' }
 
 const schemas = new SchemaRegistry()
 /** The `$defs` name of a tool's input or output: underscores written as hyphens. */
@@ -45,13 +46,18 @@ export const INPUTS: Record<ApprovalTool, ToolSpec['inputSchema']> = {
     })).min(1).max(50),
   },
   approvals_policy: { projectId: id().optional().describe('The project whose policy narrows the studio\'s') },
+  approvals_policy_propose: {
+    policy: zod.record(zod.string(), zod.unknown()).describe('One autonomy-policy@1.0 record: a policy of the set at a higher version, or a policy for a project that has none'),
+    note: zod.string().max(2000).optional().describe('Why, shown with the request'),
+  },
 }
 
 const DESCRIPTIONS: Record<ApprovalTool, string> = {
   approvals_list: 'List approval requests (default: open and batched), by batch then expiry; a page at a time.',
   approvals_get: 'Read one approval request: its exact subject, action, requester, policy decision, expiry, and resolution.',
   approvals_decide: 'Operator only: verdicts for up to 50 requests, each bound to the exact subject shown. A refused verdict (unknown, resolved, expired, a changed subject, or failed) leaves its request unchanged; the others still apply.',
-  approvals_policy: 'The studio autonomy policy, the project\'s when it has one, and the effective mode per action class.',
+  approvals_policy: 'The studio autonomy policy, the project\'s when it has one, the effective mode per action class, and the policy set in force.',
+  approvals_policy_propose: 'Operator only: propose one autonomy policy record (a higher version of a policy, or a project\'s first). The set it makes must load; it is asked as a policy-change approval on its exact hash and applies only once the operator approves it in the queue.',
 }
 
 const refused = (text: string) => ({ isError: true, content: [{ type: 'text' as const, text }] })
@@ -78,6 +84,11 @@ export function handlers(approvals: StoreApprovals): Record<ApprovalTool, Handle
       return { results: results.map((r) => ({ requestId: r.requestId, state: r.state, ...(r.approval ? { approval: r.approval } : {}), ...(r.refused ? { refused: r.refused } : {}) })) }
     },
     approvals_policy: async (args) => approvals.policy(typeof args.projectId === 'string' ? args.projectId : undefined),
+    approvals_policy_propose: async (args, { scope }) => {
+      // Listed and served to the operator only; a policy change from any other caller is never taken (INV-6).
+      if (scope !== 'operator') throw new ApprovalsError('invalid', 'policy changes come only from the operator')
+      return approvals.proposePolicy({ policy: args.policy as AutonomyPolicy, ...(typeof args.note === 'string' ? { note: args.note } : {}) }, new Date())
+    },
   }
 }
 
@@ -85,7 +96,7 @@ export function handlers(approvals: StoreApprovals): Record<ApprovalTool, Handle
 export function tool(name: ApprovalTool, handler: Handler): ToolHandler {
   return async (args, context) => {
     try {
-      schemas.assertDef('mcp-approvals@1.1', defOf(name, 'input'), args)
+      schemas.assertDef('mcp-approvals@1.2', defOf(name, 'input'), args)
     } catch (error) {
       return refused(`invalid input, nothing done: ${(error as Error).message}`)
     }
@@ -96,7 +107,7 @@ export function tool(name: ApprovalTool, handler: Handler): ToolHandler {
       return refused(error instanceof ApprovalsError ? `${error.failure}: ${error.message}` : `approvals: ${(error as Error).message}`)
     }
     try {
-      schemas.assertDef('mcp-approvals@1.1', defOf(name, 'output'), output)
+      schemas.assertDef('mcp-approvals@1.2', defOf(name, 'output'), output)
     } catch (error) {
       return refused(`approvals: ${name} made an output its schema refuses (a defect; anything it decided is recorded): ${(error as Error).message}`)
     }

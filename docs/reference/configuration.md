@@ -59,8 +59,9 @@
 
 | Option | Type | Default | Description |
 |---|---|---|---|
-| `policies` (required) | any[] | `[]` | autonomy-policy@1.x records: exactly one studio policy, and project policies that narrow it. Checked at load against the schema and its load-time rules (one rule per action class; no auto or notify for a class that always asks; expiry.defaultSeconds and every rule's expiresSeconds within expiry.maxSeconds; commands entries of non-empty words with no shell metacharacter; a batch wait under the shortest expiry it batches; a project policy, one per project, narrowing the studio policy); an invalid set refuses the plugin, so nothing that needs a person runs (INV-2) |
+| `policies` (required) | any[] | `[]` | autonomy-policy@1.x records: exactly one studio policy, and project policies that narrow it. Checked at load against the schema and its load-time rules (one rule per action class; no auto or notify for a class that always asks; expiry.defaultSeconds and every rule's expiresSeconds within expiry.maxSeconds; commands entries of non-empty words with no shell metacharacter; a batch wait under the shortest expiry it batches; a project policy, one per project, narrowing the studio policy; at most 101 policies); an invalid set refuses the plugin, so nothing that needs a person runs (INV-2) |
 | `sweepSeconds` | number (1…3600) | `60` | Seconds between the queue's own passes (expired requests rejected, requests the policy no longer asks for withdrawn, then open ones batched), and one at start; never off, so every request expires (INV-9) |
+| `supersedes` | string |  | The sha256:… hash of the applied policy set in the store that this configuration replaces. Read only at a start where that set no longer matches the configuration it was derived from: then the configuration takes over and the stored change is retired, recorded; without it the plugin is refused, so nothing that needs a person runs (INV-2) |
 
 ## `artifacts`
 

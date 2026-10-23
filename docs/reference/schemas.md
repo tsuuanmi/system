@@ -61,7 +61,7 @@ guesses.
 - `decision@1.1` adds the decision type `vote`, the decider type `client`, and
   the `vote` object ([teams](../design/teams.md#the-record)). A record with any
   of them must be `@1.1` and carry `vote`; every other decision stays `@1.0`,
-  so earlier decisions keep their ids. Readers accept 1.0 through 1.5.
+  so earlier decisions keep their ids. Readers accept 1.0 through 1.6.
 - `decision@1.2` adds a review's quote checks ([teams](../design/teams.md#review)):
   - the method and the round end `blocking-finding` (decider rule
     `workflow.blocking-finding`);
@@ -113,6 +113,16 @@ guesses.
   `from` (`null` the first time), `renamedFrom` when it took a former name's record, and the
   `manifestDigest` (the sha256 of the manifest's canonical JSON; not an artifact). Example:
   [`decision.lifecycle.json`](../../schemas/examples/decision.lifecycle.json).
+- `decision@1.6` adds the decision type `policy-change`: which autonomy policy set is in force
+  ([approvals](../design/approvals.md#a-policy-change)). A `policy-change` decision must be `@1.6`;
+  every other decision keeps its version. Its two candidates are the old and the new set's
+  hashes, the new one selected; the decider is the rule `approvals.policy-change` (an approved
+  change, its inputs the request's `autonomy` decision, the operator's `approval` artifact, and its
+  `approval` decision) or `approvals.configuration` (a configuration that names the stored set in
+  `supersedes` replaced it at a start), its `hash` the new set's. `detail` names the `cause`
+  (`approved` or `configuration`), the `changeId`, the `requestId` when approved, `from` and `to`,
+  the `configHash`, and the proposed `policy` by id and version. Example:
+  [`decision.policy-change.json`](../../schemas/examples/decision.policy-change.json).
 - A tally's `vote` holds one round; the team's final `vote` holds every round,
   its `method`, the `dissent`, any `revisions` and `tiebreak`, and a review's
   `findings`. `threshold` is a strict majority of every member, never of the
@@ -435,7 +445,8 @@ guesses.
   `expiresSeconds ≤ expiry.maxSeconds`, no rule giving a class that always asks `auto` or
   `notify`, commands-list entries of non-empty words with no shell metacharacter, and a batch
   rule whose `maxWaitSeconds` is under the shortest expiry a request it batches can get; a
-  policy that breaks one is refused when loaded.
+  policy that breaks one is refused when loaded. A set holds at most 101 policies: the studio's
+  and 100 projects'.
 - The classes that always ask are the irreversible effects (`external-send`, `deploy`,
   `delete-data`, `spend`), the investor's decisions (`charter`, `funding`, `policy-change`), and
   `remediation`. The schema refuses `auto` and `notify` for them, except `remediation`,
@@ -455,8 +466,11 @@ guesses.
 - An approval request expires at its creation plus the shortest `expiresSeconds` of the rules
   that apply to its class (the studio's and the project's), else the stricter
   `expiry.defaultSeconds`, never more than the stricter `expiry.maxSeconds`.
-- A `policy-change` is never made by a Worker: a new policy version takes effect only through an
-  operator approval, so the safety layer never changes itself. Examples:
+- A `policy-change` is never made by a Worker. While `system` runs, a new policy version takes
+  effect only through the operator's approval of a `policy-change` request
+  ([`policy-change`](#policy-change)), so the safety layer never changes itself; at a start, the
+  configured set applies unless an applied change derived from that same configuration is
+  kept in the store. Examples:
   [`autonomy-policy.studio.json`](../../schemas/examples/autonomy-policy.studio.json),
   [`autonomy-policy.project.json`](../../schemas/examples/autonomy-policy.project.json).
 
@@ -484,8 +498,33 @@ guesses.
   when the loaded policies no longer ask for it: its policy is not current at its version, or its
   class no longer asks (checked at load and on every sweep; the decision's decider is the rule
   `approvals.policy` and its reason says what changed).
+- `approval-request@1.1` adds the queue's own requests: a `policy-change` the operator proposed,
+  requested by `approvals` and naming its `policyChangeId`. Such a request must be `@1.1`, of
+  class `policy-change`; every other request stays `@1.0`. Only the queue writes one: `request`
+  refuses the requester `approvals` (`invalid`). Its subject is
+  `{type: content, ref: autonomy-policy-set, version: <the proposed set's hash>}`.
   Examples: [`approval-request.batched.json`](../../schemas/examples/approval-request.batched.json),
-  [`approval-request.expired.json`](../../schemas/examples/approval-request.expired.json).
+  [`approval-request.expired.json`](../../schemas/examples/approval-request.expired.json),
+  [`approval-request.policy-change.json`](../../schemas/examples/approval-request.policy-change.json).
+
+### `policy-change`
+
+- One change of the autonomy policy set: the operator proposes one `autonomy-policy@1.0` record
+  (a policy of the set at a higher version, or a policy for a project that has none), and the
+  queue keeps the whole set it makes (`policies`: the studio policy, then the project policies
+  by project id), its `hash` (the sha256 of their canonical JSON), the `baseHash` of the set in
+  force when proposed, the `configHash` of the configured set that base derives from, and its
+  `effect`: every effective mode it moves, per project. The proposed set loads under the same
+  rules as a configured one, or nothing is stored.
+- `asked` → `applied` only on the operator's approval of its request, while its base is still
+  the set in force, in the transaction of the verdict, with a `policy-change` decision
+  (`decision@1.6`). `asked` → `declined` when its request is rejected, expires, or is withdrawn
+  (its base no longer in force, or the policy no longer asks). `applied` → `retired` when a
+  configuration names its hash in `supersedes` at a start.
+- The set in force is the latest applied change's while it is not retired and its `configHash`
+  is the configured set's hash, else the configured set
+  ([approvals](../design/approvals.md#the-configuration-and-the-stored-set)).
+  Example: [`policy-change.applied.json`](../../schemas/examples/policy-change.applied.json).
 
 ### `project`
 
@@ -659,7 +698,8 @@ guesses.
 | `board_cancel` | client | cancel a task that is not running or in review |
 | `approvals_list`, `approvals_get` | client | read the queue |
 | `approvals_decide` | operator | verdicts for up to 50 requests, each bound to its exact subject |
-| `approvals_policy` | client | the studio and project policies, and the effective mode per action class |
+| `approvals_policy` | client | the studio and project policies, the effective mode per action class, and the set in force (`set`: its hash, whether it comes from the configuration or the store, and the projects with a policy) |
+| `approvals_policy_propose` | operator | propose one policy record; the queue asks the operator with a `policy-change` request on the proposed set's hash, and applies it only on approval |
 | `resources_pools` | client | each pool with the latest reading of each window, and whether it is available |
 | `resources_usage` | client | usage records, filtered, with totals over every match |
 
@@ -669,8 +709,10 @@ guesses.
   ([INV-15](../architecture/invariants.md#inv-15-one-writer-per-subject)).
 - A refused verdict (`unknown-request`, `already-resolved`, `expired`, `subject-changed`, or
   `failed`: the provider could not apply it, which it logs) leaves its request unchanged; the
-  other verdicts of the call still apply. `mcp-approvals` 1.1 adds `failed`.
+  other verdicts of the call still apply. `mcp-approvals` 1.1 adds `failed`; 1.2 adds
+  `approvals_policy_propose` and `set`.
 - Examples: [`mcp-board.claim.json`](../../schemas/examples/mcp-board.claim.json),
   [`mcp-board.charter.json`](../../schemas/examples/mcp-board.charter.json),
   [`mcp-approvals.decide.json`](../../schemas/examples/mcp-approvals.decide.json),
+  [`mcp-approvals.policy-propose.json`](../../schemas/examples/mcp-approvals.policy-propose.json),
   [`mcp-resources.usage.json`](../../schemas/examples/mcp-resources.usage.json).

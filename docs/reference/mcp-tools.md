@@ -142,13 +142,24 @@ Scope: `client`
 
 ## `approvals_policy`
 
-The studio autonomy policy, the project's when it has one, and the effective mode per action class.
+The studio autonomy policy, the project's when it has one, the effective mode per action class, and the policy set in force.
 
 Scope: `client`
 
 | Argument | Type | Required | Description |
 |---|---|---|---|
 | `projectId` | string |  | The project whose policy narrows the studio's |
+
+## `approvals_policy_propose`
+
+Operator only: propose one autonomy policy record (a higher version of a policy, or a project's first). The set it makes must load; it is asked as a policy-change approval on its exact hash and applies only once the operator approves it in the queue.
+
+Scope: `operator`
+
+| Argument | Type | Required | Description |
+|---|---|---|---|
+| `policy` | object | yes | One autonomy-policy@1.0 record: a policy of the set at a higher version, or a policy for a project that has none |
+| `note` | string |  | Why, shown with the request |
 
 ## `approve`
 

@@ -11,7 +11,8 @@ import { expect } from 'vitest'
 import { defineSuite, type Scenario } from '../../libs/conformance/runner.ts'
 import {
   type Action, type ActionClass, ALWAYS_ASK, type ApprovalRequest, Approvals, ApprovalsError, type ArtifactRef, type AutonomyPolicy, type AutonomyVerdict,
-  type Check, type Mode, MODES, type NewRequest, type RequestState, SHELL_METACHARACTER, type Subject, type Verdict, type VerdictResult,
+  type Check, type Mode, type ModeChange, MODES, type NewRequest, POLICY_SET_REF, type PolicyChange, type RequestState, SHELL_METACHARACTER, type Subject, type Verdict,
+  type VerdictResult,
 } from '../src/index.ts'
 
 export type Boot = () => Promise<{ ctx: Context; dispose: () => Promise<void> }>
@@ -80,8 +81,8 @@ const failureOf = async (call: Promise<unknown>): Promise<string> => {
   }
 }
 
-const scenario = (id: string, title: string, run: (ctx: Context) => Promise<void>): Scenario<Boot> => ({
-  id: `approvals.${id}`, since: '1.0', title,
+const scenario = (id: string, title: string, run: (ctx: Context) => Promise<void>, since: '1.0' | '1.1' = '1.0'): Scenario<Boot> => ({
+  id: `approvals.${id}`, since, title,
   run: async (boot) => {
     const { ctx, dispose } = await boot()
     try {
@@ -92,9 +93,16 @@ const scenario = (id: string, title: string, run: (ctx: Context) => Promise<void
   },
 })
 
+/** A provider at contract 1.1 takes policy changes. */
+const proposing = (ctx: Context): Approvals => {
+  expect(ctx.approvals.proposePolicy, 'a provider at contract 1.1 takes policy changes').toBeTypeOf('function')
+  expect(ctx.approvals.policyChanges, 'a provider at contract 1.1 lists policy changes').toBeTypeOf('function')
+  return ctx.approvals
+}
+
 export const approvalsSuite = defineSuite<Boot>({
   seam: 'approvals',
-  contract: '1.0',
+  contract: '1.1',
   scenarios: [
     scenario('policy-strictest', 'gives each action class the strictest mode of the studio and project policies, and fails closed for a class no rule names (INV-2)', async (ctx) => {
       const studio = await ctx.approvals.policy()
@@ -269,6 +277,87 @@ export const approvalsSuite = defineSuite<Boot>({
       expect((await ctx.approvals.list({ states: ['rejected'] })).map((r) => r.requestId)).toEqual([other.requestId])
       expect((await ctx.approvals.list({ states: ['open', 'rejected'], projectId: 'p1' })).map((r) => r.requestId)).toEqual([mine.requestId])
     }),
+    scenario('policy-change-asks', 'asks the operator about a proposed policy record through one policy-change request on the exact hash of the set it makes, and changes nothing until approved (INV-5, INV-6)', async (ctx) => {
+      const approvals = proposing(ctx)
+      const proposed = { ...STUDIO, version: 4, rules: STUDIO.rules.map((r) => (r.actionClass === 'merge' ? { ...r, mode: 'forbid' as Mode } : r)) }
+      const { change, request } = await approvals.proposePolicy!({ policy: proposed, note: 'no merges for now' }, T0)
+      schemas.assertRecord(change as unknown as { schema: string })
+      valid(request)
+      expect(change).toMatchObject({ state: 'asked', policy: { id: 'studio', version: 4 }, previous: { id: 'studio', version: 3 }, requestId: request.requestId, note: 'no merges for now' })
+      expect(change.policies.map((p) => p.id)).toEqual(['studio', 'p1.policy', 'p3.policy'])
+      expect(change.effect).toContainEqual({ actionClass: 'merge', from: 'ask', to: 'forbid' })
+      expect(change.hash).not.toBe(change.baseHash)
+      expect(request).toMatchObject({
+        schema: 'approval-request@1.1', state: 'open', subject: { type: 'content', ref: POLICY_SET_REF, version: change.hash },
+        action: { class: 'policy-change' }, requester: { component: 'approvals', policyChangeId: change.changeId },
+      })
+      expect(decisionOf(ctx, request.policy.decision)).toMatchObject({ decisionType: 'autonomy', outcome: { option: 'ask', detail: { actionClass: 'policy-change' } } })
+      // Nothing changes until the operator approves; nobody else asks for a policy change of the queue's own.
+      const before = await ctx.approvals.policy()
+      expect(before.policies[0]!.version).toBe(3)
+      expect(before.set).toMatchObject({ hash: change.baseHash, source: 'configuration' })
+      expect((await ctx.approvals.check({ class: 'merge' })).mode).toBe('ask')
+      const verdict = await ctx.approvals.check({ class: 'policy-change' })
+      expect(await failureOf(ctx.approvals.request({ subject: subject('policies', change.hash), action: { class: 'policy-change', summary: 'p' }, requester: { component: 'approvals', policyChangeId: change.changeId }, verdict, classification: 'operator-shared' }, T0))).toBe('invalid')
+      expect((await approvals.policyChanges!()).map((c) => c.changeId)).toEqual([change.changeId])
+    }, '1.1'),
+    scenario('policy-change-applies', 'applies a proposed set only on the operator\'s approval, atomically, as a policy-change decision naming the old and new hashes, then withdraws the open requests it no longer asks for (INV-2, INV-13)', async (ctx) => {
+      const approvals = proposing(ctx)
+      const merge = await asked(ctx, { class: 'merge' }, 'merge-1')
+      const proposed = { ...STUDIO, version: 4, rules: STUDIO.rules.map((r) => (r.actionClass === 'merge' ? { ...r, mode: 'forbid' as Mode } : r)) }
+      const { change, request } = await approvals.proposePolicy!({ policy: proposed }, T0)
+      const [result] = await ctx.approvals.decide([{ requestId: request.requestId, subject: request.subject, verdict: 'approved' }], after(10))
+      expect(result).toMatchObject({ requestId: request.requestId, state: 'approved' })
+      const now = await ctx.approvals.policy()
+      expect(now.policies[0]).toMatchObject({ id: 'studio', version: 4 })
+      expect(now.set).toMatchObject({ hash: change.hash, source: 'store', changeId: change.changeId })
+      expect((await ctx.approvals.check({ class: 'merge' })).mode).toBe('forbid')
+      const [applied] = await approvals.policyChanges!()
+      expect(applied).toMatchObject({ changeId: change.changeId, state: 'applied' })
+      const decision = decisionOf(ctx, applied!.applied!.decision)
+      expect(decision).toMatchObject({ schema: 'decision@1.6', decisionType: 'policy-change', outcome: { option: change.hash, detail: { from: change.baseHash, to: change.hash, changeId: change.changeId } } })
+      expect(decision.candidates.map((c) => c.option).sort()).toEqual([change.baseHash, change.hash].sort())
+      // The open merge request is withdrawn at once under the new set, by the policy rule.
+      const withdrawn = await ctx.approvals.get(merge.requestId)
+      expect(withdrawn).toMatchObject({ state: 'rejected', resolution: { cause: 'withdrawn' } })
+      expect(decisionOf(ctx, withdrawn!.resolution!.decision).decider.id).toBe('approvals.policy')
+    }, '1.1'),
+    scenario('policy-change-declined', 'leaves the policy as it is when the operator rejects a change or lets it expire (INV-2)', async (ctx) => {
+      const approvals = proposing(ctx)
+      const before = await ctx.approvals.policy()
+      const rejected = await approvals.proposePolicy!({ policy: { ...STUDIO, version: 4, default: 'forbid' } }, T0)
+      const expiring = await approvals.proposePolicy!({ policy: { ...PROJECT, version: 2, rules: [...PROJECT.rules, { actionClass: 'deploy', mode: 'forbid' }] } }, T0)
+      await ctx.approvals.decide([{ requestId: rejected.request.requestId, subject: rejected.request.subject, verdict: 'rejected' }], after(10))
+      await ctx.approvals.sweep(new Date(Date.parse(expiring.request.expiresAt)))
+      expect(await ctx.approvals.policy()).toEqual(before)
+      expect((await ctx.approvals.policy('p1')).policies[1]!.version).toBe(1)
+      const states = Object.fromEntries((await approvals.policyChanges!()).map((c) => [c.changeId, [c.state, c.declined?.cause]]))
+      expect(states).toEqual({ [rejected.change.changeId]: ['declined', 'rejected'], [expiring.change.changeId]: ['declined', 'expired'] })
+    }, '1.1'),
+    scenario('policy-change-refused', 'refuses a proposal the configured set\'s rules would refuse, one that does not raise its policy\'s version, and a second studio policy, queueing nothing (INV-2)', async (ctx) => {
+      const approvals = proposing(ctx)
+      const proposals: AutonomyPolicy[] = [
+        { ...STUDIO, version: 4, default: 'auto' as 'ask' },
+        { ...STUDIO, rules: STUDIO.rules.filter((r) => r.actionClass !== 'deploy') },
+        { ...STUDIO, id: 'studio-2', version: 1 },
+        { ...PROJECT, version: 2, scope: 'project', projectId: 'p9' },
+      ]
+      for (const policy of proposals) expect(await failureOf(approvals.proposePolicy!({ policy }, T0)), `${policy.id} v${policy.version}`).toBe('invalid')
+      expect(await ctx.approvals.list({ states: ['open', 'batched', 'approved', 'rejected'] })).toEqual([])
+      expect(await approvals.policyChanges!()).toEqual([])
+    }, '1.1'),
+    scenario('policy-change-stale-base', 'withdraws a proposed change once another set comes into force, and never applies it onto a set it was not proposed on (INV-5)', async (ctx) => {
+      const approvals = proposing(ctx)
+      const first = await approvals.proposePolicy!({ policy: { ...PROJECT, version: 2, rules: [...PROJECT.rules, { actionClass: 'deploy', mode: 'forbid' }] } }, T0)
+      const second = await approvals.proposePolicy!({ policy: { ...NO_COMMANDS, version: 2, rules: [...NO_COMMANDS.rules, { actionClass: 'spend', mode: 'forbid' }] } }, T0)
+      expect(second.change.baseHash).toBe(first.change.baseHash)
+      await ctx.approvals.decide([{ requestId: first.request.requestId, subject: first.request.subject, verdict: 'approved' }], after(10))
+      expect(await ctx.approvals.get(second.request.requestId)).toMatchObject({ state: 'rejected', resolution: { cause: 'withdrawn' } })
+      const [late] = await ctx.approvals.decide([{ requestId: second.request.requestId, subject: second.request.subject, verdict: 'approved' }], after(20))
+      expect(late).toMatchObject({ state: 'rejected', refused: 'already-resolved' })
+      expect((await ctx.approvals.policy('p3')).policies[1]!.version).toBe(1)
+      expect((await approvals.policyChanges!({ states: ['declined'] })).map((c) => [c.changeId, c.declined?.cause])).toEqual([[second.change.changeId, 'withdrawn']])
+    }, '1.1'),
   ],
 })
 
@@ -284,12 +373,16 @@ const sameSubject = (a: Subject, b: Subject) => a.type === b.type && a.ref === b
 export class FakeApprovals extends Approvals {
   static inject = ['artifacts']
   private readonly requests = new Map<string, ApprovalRequest>()
+  private readonly changes = new Map<string, PolicyChange>()
   private batches = 0
   private configured: readonly AutonomyPolicy[]
+  /** The configuration's own set, and the applied change in force over it, if any. */
+  private fromConfig: readonly AutonomyPolicy[]
+  private applied: string | undefined
 
   constructor(ctx: Context, config: { policies?: readonly AutonomyPolicy[] } = {}) {
     super(ctx)
-    this.configured = config.policies ?? POLICIES
+    this.configured = this.fromConfig = config.policies ?? POLICIES
   }
 
   /**
@@ -297,7 +390,8 @@ export class FakeApprovals extends Approvals {
    * and withdraw at `at` every unexpired open request they no longer ask for (as the next sweeps do).
    */
   reload(policies: readonly AutonomyPolicy[], at: Date = new Date()): ApprovalRequest[] {
-    this.configured = policies
+    this.configured = this.fromConfig = policies
+    this.applied = undefined
     return this.withdrawStale(at)
   }
 
@@ -346,7 +440,77 @@ export class FakeApprovals extends Approvals {
 
   async policy(projectId?: string) {
     const classes: ActionClass[] = ['read', 'workspace-write', 'merge', 'command', 'external-send', 'deploy', 'delete-data', 'spend', 'charter', 'funding', 'remediation', 'policy-change']
-    return { policies: this.policies(projectId), effective: classes.map((actionClass) => ({ actionClass, mode: this.effective(actionClass, projectId).mode })) }
+    const all = this.all()
+    return {
+      policies: this.policies(projectId), effective: classes.map((actionClass) => ({ actionClass, mode: this.effective(actionClass, projectId).mode })),
+      set: { hash: contentId(all), source: this.applied ? 'store' as const : 'configuration' as const, configHash: contentId(this.canonical(this.fromConfig)), ...(this.applied ? { changeId: this.applied } : {}), projects: all.slice(1).map((p) => p.projectId!) },
+    }
+  }
+
+  /** The whole set in its canonical order: the studio policy, then the project policies by project id. */
+  private canonical(policies: readonly AutonomyPolicy[]): AutonomyPolicy[] {
+    return [...policies.filter((p) => p.scope === 'studio'), ...policies.filter((p) => p.scope === 'project').sort((a, b) => (a.projectId! < b.projectId! ? -1 : 1))]
+  }
+
+  private all(): AutonomyPolicy[] {
+    return this.canonical(this.configured)
+  }
+
+  /**
+   * Contract 1.1: a proposed record replaces the policy with its id at a higher version (same scope
+   * and project), or adds a project's policy; every record of the set it makes must be valid. One
+   * `policy-change` request on the set's hash asks the operator; {@link decide} applies it.
+   */
+  async proposePolicy(proposal: { policy: AutonomyPolicy; note?: string }, at: Date = new Date()): Promise<{ change: PolicyChange; request: ApprovalRequest }> {
+    const invalid = (why: string) => new ApprovalsError('invalid', why)
+    try {
+      schemas.assert('autonomy-policy@1.0', proposal.policy)
+    } catch (error) {
+      throw invalid((error as Error).message)
+    }
+    const policy = structuredClone(proposal.policy)
+    const base = this.all()
+    const previous = base.find((p) => p.id === policy.id)
+    if (previous && (!(policy.version > previous.version) || policy.scope !== previous.scope || policy.projectId !== previous.projectId)) throw invalid('a change raises the version of a policy and keeps its scope and project')
+    if (!previous && (policy.scope !== 'project' || base.some((p) => p.projectId === policy.projectId))) throw invalid('a new policy is the policy of a project that has none')
+    const policies = this.canonical(previous ? base.map((p) => (p.id === policy.id ? policy : p)) : [...base, policy])
+    const hash = contentId(policies)
+    const projectId = policy.scope === 'project' ? policy.projectId : undefined
+    const verdict = await this.check({ class: 'policy-change', ...(projectId !== undefined ? { projectId } : {}) })
+    if (verdict.mode !== 'ask') throw new ApprovalsError('not-asked', `policy-change: the policy says ${verdict.mode}`)
+    const before = this.configured
+    const classes = (await this.policy()).effective.map((e) => e.actionClass)
+    const effect: ModeChange[] = []
+    for (const p of [undefined, ...new Set(policies.slice(1).map((x) => x.projectId!))]) {
+      for (const actionClass of classes) {
+        const from = this.effective(actionClass, p).mode
+        this.configured = policies
+        const to = this.effective(actionClass, p).mode
+        this.configured = before
+        if (from !== to) effect.push({ ...(p !== undefined ? { projectId: p } : {}), actionClass, from, to })
+      }
+    }
+    const changeId = `pch-${randomUUID().slice(0, 8)}`
+    const request = this.queue({
+      subject: { type: 'content', ref: POLICY_SET_REF, version: hash }, action: { class: 'policy-change', summary: `Change the autonomy policy ${policy.id} to version ${policy.version}` },
+      requester: { component: 'approvals', policyChangeId: changeId, ...(projectId !== undefined ? { projectId } : {}) }, verdict, classification: 'operator-shared',
+    }, at, 'approval-request@1.1')
+    const change: PolicyChange = {
+      schema: 'policy-change@1.0', changeId, state: 'asked', policy, ...(previous ? { previous } : {}), policies, hash, baseHash: contentId(base),
+      configHash: contentId(this.canonical(this.fromConfig)), effect, requestId: request.requestId, ...(proposal.note ? { note: proposal.note } : {}), proposedAt: at.toISOString(), revision: 0,
+    }
+    schemas.assertRecord(change)
+    this.changes.set(changeId, change)
+    return { change: structuredClone(change), request }
+  }
+
+  async policyChanges(filter: { states?: Array<PolicyChange['state']>; limit?: number } = {}): Promise<PolicyChange[]> {
+    return [...this.changes.values()].filter((c) => !filter.states || filter.states.includes(c.state)).reverse().slice(0, filter.limit ?? 20).map((c) => structuredClone(c))
+  }
+
+  /** The queue's own policy-change request's change. */
+  private changeOf(request: ApprovalRequest): PolicyChange | undefined {
+    return request.requester.component === 'approvals' ? this.changes.get(request.requester.policyChangeId!) : undefined
   }
 
   async check(action: Action): Promise<AutonomyVerdict> {
@@ -368,6 +532,11 @@ export class FakeApprovals extends Approvals {
   }
 
   async request(request: NewRequest, at: Date = new Date()): Promise<ApprovalRequest> {
+    if (request.requester.component === 'approvals' || request.requester.policyChangeId !== undefined) throw new ApprovalsError('invalid', 'only the queue requests a policy change of its own')
+    return this.queue(request, at, 'approval-request@1.0')
+  }
+
+  private queue(request: NewRequest, at: Date, schema: ApprovalRequest['schema']): ApprovalRequest {
     const { subject: s, requester: { projectId } } = request
     if (!(s?.version || (s?.type === 'artifact' && /^sha256:[0-9a-f]{64}$/.test(s.ref)))) throw new ApprovalsError('invalid', 'the subject names no version (INV-5)')
     const notAsked = (why: string) => new ApprovalsError('not-asked', `${request.action.class}: ${why}`)
@@ -386,7 +555,7 @@ export class FakeApprovals extends Approvals {
     const named = this.applying(request.action.class, projectId).flatMap((p) => p.rules.filter((r) => r.actionClass === request.action.class && r.expiresSeconds !== undefined).map((r) => r.expiresSeconds!))
     const seconds = Math.min(named.length ? Math.min(...named) : Math.min(...policies.map((p) => p.expiry.defaultSeconds)), ...policies.map((p) => p.expiry.maxSeconds))
     const created: ApprovalRequest = {
-      schema: 'approval-request@1.0', requestId: `apr-${randomUUID().slice(0, 8)}`, state: 'open',
+      schema, requestId: `apr-${randomUUID().slice(0, 8)}`, state: 'open',
       subject: request.subject, action: request.action, requester: request.requester,
       policy: { ...request.verdict.policy, decision: request.verdict.decision }, classification: request.classification,
       createdAt: at.toISOString(), expiresAt: new Date(at.getTime() + seconds * 1000).toISOString(), revision: 0,
@@ -446,15 +615,34 @@ export class FakeApprovals extends Approvals {
       state: option === 'approved' ? 'approved' : 'rejected', revision: request.revision + 1,
       resolution: { cause, ...(approval ? { approval } : {}), decision: decision.id as ArtifactRef, at: at.toISOString() },
     })
+    const change = this.changeOf(request)
+    if (!change) return
+    if (option !== 'approved') {
+      Object.assign(change, { state: 'declined', declined: { at: at.toISOString(), cause: cause === 'verdict' ? 'rejected' : cause, decision: decision.id }, revision: change.revision + 1 })
+      return
+    }
+    // Approved: the proposed set comes into force, recorded with the old and new hashes.
+    const applied = this.ctx.artifacts.recordDecision({
+      schema: 'decision@1.6', decisionType: 'policy-change', question: 'Which autonomy policy set is in force?', inputs: [request.policy.decision, approval!, decision.id as ArtifactRef],
+      candidates: [{ option: change.hash, selected: true, reasons: ['the operator approved it'] }, { option: change.baseHash, selected: false, reasons: ['not kept: the operator approved the change'] }],
+      decider: { type: 'rule', id: 'approvals.policy-change', version: '1', hash: change.hash },
+      outcome: { option: change.hash, detail: { cause: 'approved', changeId: change.changeId, requestId: request.requestId, from: change.baseHash, to: change.hash } }, deterministic: true,
+    }, { producer: { type: 'system', ref: 'approvals' } })
+    this.configured = change.policies
+    this.applied = change.changeId
+    Object.assign(change, { state: 'applied', applied: { at: at.toISOString(), decision: applied.id }, revision: change.revision + 1 })
   }
 
   async decide(verdicts: Verdict[], at: Date = new Date()): Promise<VerdictResult[]> {
-    return verdicts.map((v) => {
+    const applied = this.applied
+    const results = verdicts.map((v): VerdictResult => {
       const request = this.requests.get(v.requestId)
       if (!request) return { requestId: v.requestId, state: 'rejected', refused: 'unknown-request' }
       if (request.resolution) return { requestId: v.requestId, state: request.state, refused: 'already-resolved' }
       if (Date.parse(request.expiresAt) <= at.getTime()) return { requestId: v.requestId, state: request.state, refused: 'expired' }
       if (!sameSubject(request.subject, v.subject)) return { requestId: v.requestId, state: request.state, refused: 'subject-changed' }
+      const change = this.changeOf(request)
+      if (change && v.verdict === 'approved' && change.baseHash !== contentId(this.all())) return { requestId: v.requestId, state: request.state, refused: 'subject-changed' }
       const approval = this.ctx.artifacts.put({
         kind: 'approval', bodySchema: 'approval@1.0', body: { schema: 'approval@1.0', subject: request.subject, verdict: v.verdict, by: 'operator', ...(v.note ? { note: v.note } : {}) },
         classification: request.classification === 'local-private' ? 'local-private' : 'operator-shared', producer: { type: 'operator', ref: 'operator' }, subject: request.subject,
@@ -462,6 +650,9 @@ export class FakeApprovals extends Approvals {
       this.resolve(request, 'verdict', v.verdict, at, approval)
       return { requestId: v.requestId, state: request.state, approval }
     })
+    // A new set is in force: every open request is judged again under it.
+    if (this.applied !== applied) this.withdrawStale(at)
+    return results
   }
 
   async withdraw(requestId: string, at: Date = new Date()): Promise<ApprovalRequest> {
@@ -497,6 +688,8 @@ export class FakeApprovals extends Approvals {
   /** What changed for a request: its policy is not current at its version, or its class (or the class its decision judged it as) no longer asks. */
   private staleness(request: ApprovalRequest): string | undefined {
     const { projectId } = request.requester
+    const change = this.changeOf(request)
+    if (change && change.baseHash !== contentId(this.all())) return `the set it was proposed on (${change.baseHash}) is no longer in force`
     if (!this.policies(projectId).some((p) => p.id === request.policy.id && p.version === request.policy.version)) {
       return `${request.policy.id} at version ${request.policy.version} is not a policy of ${projectId === undefined ? 'the studio' : `project ${projectId}`} now`
     }

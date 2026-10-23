@@ -3,7 +3,7 @@
  * `autonomy-policy@1.x` cannot state (docs/reference/schemas.md#autonomy-policy), and the mode a
  * policy set gives an action. Pure: no store, no clock. Code decides, never a model.
  */
-import type { Action, ActionClass, AutonomyPolicy, Check, Mode } from '@tsuuanmi/system-approvals-core'
+import type { Action, ActionClass, AutonomyPolicy, Check, ContentHash, Mode, ModeChange } from '@tsuuanmi/system-approvals-core'
 import { ALWAYS_ASK, applyingPolicies as applying, MODES, SHELL_METACHARACTER, waitSeconds as expiryOf } from '@tsuuanmi/system-approvals-core'
 import { contentId, SchemaRegistry } from '@tsuuanmi/system-libs'
 
@@ -37,6 +37,9 @@ export interface Judgement {
   /** Why the action is forbidden whatever a rule says (an argv word with a shell metacharacter). */
   forbidden?: string
 }
+
+/** The policies a set holds at most: the studio's and 100 projects' (INV-9; `policy-change@1.0`). */
+export const MAX_SET = 101
 
 /** The batch rule when no policy names one: every request is its own batch, at once. */
 const NO_BATCHING = { maxSize: 1, maxWaitSeconds: 0 } as const
@@ -83,11 +86,11 @@ function commandProblems(line: string): string[] {
  * or notify, and commands-list entries of non-empty words free of shell metacharacters; ids are
  * unique; there is exactly one studio policy; each project policy, at most one per project,
  * narrows that studio policy; and each batch rule's `maxWaitSeconds` is under the shortest expiry
- * a request it batches can get.
+ * a request it batches can get. A set holds at most {@link MAX_SET} policies.
  */
 export function policyProblems(policies: unknown, schemas: SchemaRegistry = new SchemaRegistry()): string[] {
   if (!Array.isArray(policies)) return ['policies must be a list of autonomy-policy@1.0 records']
-  const problems: string[] = []
+  const problems: string[] = policies.length > MAX_SET ? [`a set holds at most ${MAX_SET} policies (the studio's and 100 projects'); ${policies.length} configured`] : []
   const valid: AutonomyPolicy[] = []
   const ids = new Set<string>()
   const projects = new Set<string>()
@@ -155,10 +158,34 @@ export class PolicySet {
   readonly studio: AutonomyPolicy
   private readonly projects = new Map<string, AutonomyPolicy>()
   private readonly hashes = new Map<string, `sha256:${string}`>()
+  private whole: ContentHash | undefined
 
   private constructor(policies: readonly AutonomyPolicy[]) {
     this.studio = policies.find((p) => p.scope === 'studio')!
-    for (const p of policies) if (p.scope === 'project') this.projects.set(p.projectId!, p)
+    for (const p of [...policies].filter((p) => p.scope === 'project').sort((a, b) => (a.projectId! < b.projectId! ? -1 : 1))) this.projects.set(p.projectId!, p)
+  }
+
+  /** The whole set in its canonical order: the studio policy, then the project policies by project id. */
+  all(): AutonomyPolicy[] {
+    return [this.studio, ...this.projects.values()]
+  }
+
+  /** The projects that have a policy, by id. */
+  projectIds(): string[] {
+    return [...this.projects.keys()]
+  }
+
+  /**
+   * The whole set's hash: the sha256 of the canonical JSON of {@link all}, so the order the
+   * configuration lists its policies in does not count as a change. A policy change's subject.
+   */
+  setHash(): ContentHash {
+    return this.whole ??= contentId(this.all())
+  }
+
+  /** The policy with an id, if the set has one. */
+  byId(id: string): AutonomyPolicy | undefined {
+    return this.all().find((p) => p.id === id)
   }
 
   /** Load a configured set, or throw naming every problem: an invalid set is never half used (INV-2). */
@@ -227,4 +254,37 @@ export class PolicySet {
   batchRule(projectId?: string): { maxSize: number; maxWaitSeconds: number } {
     return batchOf(this.of(projectId)).rule
   }
+}
+
+/**
+ * The whole set one proposed record makes from a set (docs/design/approvals.md#a-policy-change):
+ * it replaces the policy with its id, at a higher version and the same scope and project, or adds
+ * a policy for a project that has none. Every problem is named; the set it makes must then load
+ * under {@link policyProblems} too.
+ */
+export function proposedSet(base: PolicySet, policy: AutonomyPolicy): { policies: AutonomyPolicy[]; previous?: AutonomyPolicy } | { problems: string[] } {
+  const previous = base.byId(policy.id)
+  if (previous) {
+    const problems: string[] = []
+    if (!(policy.version > previous.version)) problems.push(`policy ${policy.id}: version ${policy.version} is not above the version in force (${previous.version}); a change raises it`)
+    if (policy.scope !== previous.scope || policy.projectId !== previous.projectId) problems.push(`policy ${policy.id}: its scope and project do not change (${previous.scope}${previous.projectId ? ` ${previous.projectId}` : ''}); propose another id`)
+    if (problems.length) return { problems }
+    return { policies: base.all().map((p) => (p.id === policy.id ? policy : p)), previous }
+  }
+  if (policy.scope !== 'project') return { problems: [`policy ${policy.id}: a new policy is a project's; the set has one studio policy (${base.studio.id})`] }
+  return { policies: [...base.all(), policy] }
+}
+
+/** Every effective mode that differs between two sets, for the studio and for each project either set has a policy for. */
+export function effectOf(before: PolicySet, after: PolicySet): ModeChange[] {
+  const projects = [...new Set([...before.projectIds(), ...after.projectIds()])].sort()
+  const changes: ModeChange[] = []
+  for (const projectId of [undefined, ...projects]) {
+    for (const actionClass of ACTION_CLASSES) {
+      const from = before.effective(actionClass, projectId).mode
+      const to = after.effective(actionClass, projectId).mode
+      if (from !== to) changes.push({ ...(projectId !== undefined ? { projectId } : {}), actionClass, from, to })
+    }
+  }
+  return changes
 }

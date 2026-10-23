@@ -1,0 +1,373 @@
+{
+  "tool": "approvals_policy_propose",
+  "input": {
+    "policy": {
+      "schema": "autonomy-policy@1.0",
+      "id": "studio-default",
+      "version": 2,
+      "scope": "studio",
+      "rules": [
+        {
+          "actionClass": "read",
+          "mode": "auto"
+        },
+        {
+          "actionClass": "workspace-write",
+          "mode": "auto",
+          "requires": [
+            "tests",
+            "lint",
+            "review"
+          ]
+        },
+        {
+          "actionClass": "merge",
+          "mode": "forbid",
+          "note": "no merge from a Worker run until the pilot ends"
+        },
+        {
+          "actionClass": "command",
+          "mode": "ask"
+        },
+        {
+          "actionClass": "remediation",
+          "mode": "ask"
+        },
+        {
+          "actionClass": "external-send",
+          "mode": "ask"
+        },
+        {
+          "actionClass": "deploy",
+          "mode": "ask"
+        },
+        {
+          "actionClass": "delete-data",
+          "mode": "ask"
+        },
+        {
+          "actionClass": "spend",
+          "mode": "ask"
+        },
+        {
+          "actionClass": "charter",
+          "mode": "ask",
+          "expiresSeconds": 604800
+        },
+        {
+          "actionClass": "funding",
+          "mode": "ask",
+          "expiresSeconds": 604800
+        },
+        {
+          "actionClass": "policy-change",
+          "mode": "ask"
+        }
+      ],
+      "default": "ask",
+      "commands": [
+        "pnpm test",
+        "pnpm check",
+        "git status",
+        "git diff"
+      ],
+      "expiry": {
+        "defaultSeconds": 86400,
+        "maxSeconds": 1209600
+      },
+      "batch": {
+        "maxSize": 10,
+        "maxWaitSeconds": 3600
+      }
+    },
+    "note": "no merges during the pilot"
+  },
+  "output": {
+    "change": {
+      "schema": "policy-change@1.0",
+      "changeId": "pch-7d1e0c2a9b4f6e13",
+      "state": "asked",
+      "policy": {
+        "schema": "autonomy-policy@1.0",
+        "id": "studio-default",
+        "version": 2,
+        "scope": "studio",
+        "rules": [
+          {
+            "actionClass": "read",
+            "mode": "auto"
+          },
+          {
+            "actionClass": "workspace-write",
+            "mode": "auto",
+            "requires": [
+              "tests",
+              "lint",
+              "review"
+            ]
+          },
+          {
+            "actionClass": "merge",
+            "mode": "forbid",
+            "note": "no merge from a Worker run until the pilot ends"
+          },
+          {
+            "actionClass": "command",
+            "mode": "ask"
+          },
+          {
+            "actionClass": "remediation",
+            "mode": "ask"
+          },
+          {
+            "actionClass": "external-send",
+            "mode": "ask"
+          },
+          {
+            "actionClass": "deploy",
+            "mode": "ask"
+          },
+          {
+            "actionClass": "delete-data",
+            "mode": "ask"
+          },
+          {
+            "actionClass": "spend",
+            "mode": "ask"
+          },
+          {
+            "actionClass": "charter",
+            "mode": "ask",
+            "expiresSeconds": 604800
+          },
+          {
+            "actionClass": "funding",
+            "mode": "ask",
+            "expiresSeconds": 604800
+          },
+          {
+            "actionClass": "policy-change",
+            "mode": "ask"
+          }
+        ],
+        "default": "ask",
+        "commands": [
+          "pnpm test",
+          "pnpm check",
+          "git status",
+          "git diff"
+        ],
+        "expiry": {
+          "defaultSeconds": 86400,
+          "maxSeconds": 1209600
+        },
+        "batch": {
+          "maxSize": 10,
+          "maxWaitSeconds": 3600
+        }
+      },
+      "previous": {
+        "schema": "autonomy-policy@1.0",
+        "id": "studio-default",
+        "version": 1,
+        "scope": "studio",
+        "rules": [
+          {
+            "actionClass": "read",
+            "mode": "auto"
+          },
+          {
+            "actionClass": "workspace-write",
+            "mode": "auto",
+            "requires": [
+              "tests",
+              "lint",
+              "review"
+            ]
+          },
+          {
+            "actionClass": "merge",
+            "mode": "ask",
+            "note": "batched; auto-merge only once a project policy allows it"
+          },
+          {
+            "actionClass": "command",
+            "mode": "ask"
+          },
+          {
+            "actionClass": "remediation",
+            "mode": "ask"
+          },
+          {
+            "actionClass": "external-send",
+            "mode": "ask"
+          },
+          {
+            "actionClass": "deploy",
+            "mode": "ask"
+          },
+          {
+            "actionClass": "delete-data",
+            "mode": "ask"
+          },
+          {
+            "actionClass": "spend",
+            "mode": "ask"
+          },
+          {
+            "actionClass": "charter",
+            "mode": "ask",
+            "expiresSeconds": 604800
+          },
+          {
+            "actionClass": "funding",
+            "mode": "ask",
+            "expiresSeconds": 604800
+          },
+          {
+            "actionClass": "policy-change",
+            "mode": "ask"
+          }
+        ],
+        "default": "ask",
+        "commands": [
+          "pnpm test",
+          "pnpm check",
+          "git status",
+          "git diff"
+        ],
+        "expiry": {
+          "defaultSeconds": 86400,
+          "maxSeconds": 1209600
+        },
+        "batch": {
+          "maxSize": 10,
+          "maxWaitSeconds": 3600
+        }
+      },
+      "policies": [
+        {
+          "schema": "autonomy-policy@1.0",
+          "id": "studio-default",
+          "version": 2,
+          "scope": "studio",
+          "rules": [
+            {
+              "actionClass": "read",
+              "mode": "auto"
+            },
+            {
+              "actionClass": "workspace-write",
+              "mode": "auto",
+              "requires": [
+                "tests",
+                "lint",
+                "review"
+              ]
+            },
+            {
+              "actionClass": "merge",
+              "mode": "forbid",
+              "note": "no merge from a Worker run until the pilot ends"
+            },
+            {
+              "actionClass": "command",
+              "mode": "ask"
+            },
+            {
+              "actionClass": "remediation",
+              "mode": "ask"
+            },
+            {
+              "actionClass": "external-send",
+              "mode": "ask"
+            },
+            {
+              "actionClass": "deploy",
+              "mode": "ask"
+            },
+            {
+              "actionClass": "delete-data",
+              "mode": "ask"
+            },
+            {
+              "actionClass": "spend",
+              "mode": "ask"
+            },
+            {
+              "actionClass": "charter",
+              "mode": "ask",
+              "expiresSeconds": 604800
+            },
+            {
+              "actionClass": "funding",
+              "mode": "ask",
+              "expiresSeconds": 604800
+            },
+            {
+              "actionClass": "policy-change",
+              "mode": "ask"
+            }
+          ],
+          "default": "ask",
+          "commands": [
+            "pnpm test",
+            "pnpm check",
+            "git status",
+            "git diff"
+          ],
+          "expiry": {
+            "defaultSeconds": 86400,
+            "maxSeconds": 1209600
+          },
+          "batch": {
+            "maxSize": 10,
+            "maxWaitSeconds": 3600
+          }
+        }
+      ],
+      "hash": "sha256:5695bda448848bc78e22fea54a59ac2560a2038a9a0f22ca89001868b155606e",
+      "baseHash": "sha256:cee708fdc1f8ff016ed4b534f88409c3da2997d6400f0dfc07a5d459d92c8c51",
+      "configHash": "sha256:cee708fdc1f8ff016ed4b534f88409c3da2997d6400f0dfc07a5d459d92c8c51",
+      "effect": [
+        {
+          "actionClass": "merge",
+          "from": "ask",
+          "to": "forbid"
+        }
+      ],
+      "requestId": "apr-5c0b9e7d21a84f36",
+      "note": "no merges during the pilot",
+      "proposedAt": "2026-10-23T08:10:00Z",
+      "revision": 0
+    },
+    "request": {
+      "schema": "approval-request@1.1",
+      "requestId": "apr-5c0b9e7d21a84f36",
+      "state": "open",
+      "subject": {
+        "type": "content",
+        "ref": "autonomy-policy-set",
+        "version": "sha256:5695bda448848bc78e22fea54a59ac2560a2038a9a0f22ca89001868b155606e"
+      },
+      "action": {
+        "class": "policy-change",
+        "summary": "Change the autonomy policy: studio-default version 1 to 2",
+        "consequences": "If approved, the set sha256:… replaces the set in force at once, and every open request is judged again under it. If rejected or unanswered, nothing changes. Effect: merge ask → forbid."
+      },
+      "requester": {
+        "component": "approvals",
+        "policyChangeId": "pch-7d1e0c2a9b4f6e13"
+      },
+      "policy": {
+        "id": "studio-default",
+        "version": 1,
+        "decision": "sha256:e94d787f61ea3ee8eede618d9babc84e26045f60635472f2523f407ecf847271"
+      },
+      "classification": "operator-shared",
+      "createdAt": "2026-10-23T08:10:00Z",
+      "expiresAt": "2026-10-24T08:10:00Z",
+      "revision": 0
+    }
+  }
+}

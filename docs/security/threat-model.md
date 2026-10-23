@@ -130,7 +130,15 @@
   approval queue names the subject the operator was shown (the web UI sends each
   request's subject, MCP `approvals_decide` its `subject`); one for a changed subject
   is refused, and a batch verdict names its batch, so it never reaches a request
-  outside it.
+  outside it. A policy change is asked on the hash of the whole set it makes and applies only
+  onto the set it was proposed on, so an approval never applies a set the operator was not shown.
+- **The safety layer loosened by something other than the operator.** A new autonomy policy comes
+  into force only by the operator: an approved `policy-change` request, proposed from `/ui` or
+  MCP `approvals_policy_propose` (both operator only), or the configuration at a start, which no
+  Worker can write ([ADR-0024](../decisions/adr/0024-agent-workers-confined-for-reads.md)). A
+  stored set the configuration no longer matches is never used, nor dropped silently: the queue
+  is refused until the operator chooses
+  ([ADR-0041](../decisions/adr/0041-policy-changes-through-the-approval-queue.md)).
 - **A review's repository read reaches an internal host, or is rebound to one (SSRF, DNS
   rebinding).** A repository read is an inbound read of public data: `system` fetches only what
   a public URL makes public, and sends only git's own requests

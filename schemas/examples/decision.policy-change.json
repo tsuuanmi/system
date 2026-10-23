@@ -1,0 +1,48 @@
+{
+  "schema": "decision@1.6",
+  "decisionType": "policy-change",
+  "question": "Which autonomy policy set is in force?",
+  "inputs": [
+    "sha256:042623062220c847ab12e991145b47cb0a77a7ac86c04b29832ba4338a63f762",
+    "sha256:9deb65b8788f41ff94a217842017db2f843954fc0eb46110835903908e5a265f",
+    "sha256:e94d787f61ea3ee8eede618d9babc84e26045f60635472f2523f407ecf847271"
+  ],
+  "candidates": [
+    {
+      "option": "sha256:5695bda448848bc78e22fea54a59ac2560a2038a9a0f22ca89001868b155606e",
+      "selected": true,
+      "reasons": [
+        "the operator approved request apr-5c0b9e7d21a84f36 on this set, proposed on the set in force"
+      ]
+    },
+    {
+      "option": "sha256:cee708fdc1f8ff016ed4b534f88409c3da2997d6400f0dfc07a5d459d92c8c51",
+      "selected": false,
+      "reasons": [
+        "not kept: the operator approved the change"
+      ]
+    }
+  ],
+  "decider": {
+    "type": "rule",
+    "id": "approvals.policy-change",
+    "version": "1",
+    "hash": "sha256:5695bda448848bc78e22fea54a59ac2560a2038a9a0f22ca89001868b155606e"
+  },
+  "outcome": {
+    "option": "sha256:5695bda448848bc78e22fea54a59ac2560a2038a9a0f22ca89001868b155606e",
+    "detail": {
+      "cause": "approved",
+      "changeId": "pch-7d1e0c2a9b4f6e13",
+      "requestId": "apr-5c0b9e7d21a84f36",
+      "from": "sha256:cee708fdc1f8ff016ed4b534f88409c3da2997d6400f0dfc07a5d459d92c8c51",
+      "to": "sha256:5695bda448848bc78e22fea54a59ac2560a2038a9a0f22ca89001868b155606e",
+      "configHash": "sha256:cee708fdc1f8ff016ed4b534f88409c3da2997d6400f0dfc07a5d459d92c8c51",
+      "policy": {
+        "id": "studio-default",
+        "version": 2
+      }
+    }
+  },
+  "deterministic": true
+}

@@ -2,11 +2,11 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:tsuuanmi:system:schema:approval-request:v1",
   "title": "Approval request",
-  "description": "Durable state of one request in the approval queue (ctx.approvals, design/approvals.md): an action the autonomy policy says needs a person, bound to its exact subject. The verdict itself is an `approval@1.x` artifact; expiry resolves to rejected (fail closed).",
+  "description": "Durable state of one request in the approval queue (ctx.approvals, design/approvals.md): an action the autonomy policy says needs a person, bound to its exact subject. The verdict itself is an `approval@1.x` artifact; expiry resolves to rejected (fail closed). @1.1 adds the queue's own requests: a `policy-change` the operator proposed (requester `approvals` with its `policyChangeId`).",
   "type": "object",
   "required": ["schema", "requestId", "state", "subject", "action", "requester", "policy", "classification", "createdAt", "expiresAt", "revision"],
   "properties": {
-    "schema": { "const": "approval-request@1.0" },
+    "schema": { "enum": ["approval-request@1.0", "approval-request@1.1"] },
     "requestId": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
     "state": {
       "description": "open: waiting to be batched; batched: shown to the operator in a batch; approved and rejected are terminal.",
@@ -49,15 +49,23 @@
         { "required": ["runId"], "properties": { "runId": true } },
         { "required": ["sessionId"], "properties": { "sessionId": true } },
         { "required": ["projectId"], "properties": { "projectId": true } },
-        { "required": ["taskId"], "properties": { "taskId": true } }
+        { "required": ["taskId"], "properties": { "taskId": true } },
+        { "required": ["policyChangeId"], "properties": { "policyChangeId": true } }
       ],
       "properties": {
-        "component": { "enum": ["workflow", "board", "worker", "resources"] },
+        "component": {
+          "description": "approvals (@1.1): the queue itself, for a policy change the operator proposed; it names the `policyChangeId` waiting on the answer.",
+          "enum": ["workflow", "board", "worker", "resources", "approvals"]
+        },
         "runId": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
         "nodeId": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
         "sessionId": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
         "projectId": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
         "taskId": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+        "policyChangeId": {
+          "description": "@1.1: the `policy-change@1.0` record a `policy-change` request applies once approved.",
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+        },
         "toolUseId": {
           "description": "The agent's tool call a deferred PreToolUse hook holds, when the request came from one.",
           "type": "string",
@@ -119,6 +127,22 @@
       "if": { "properties": { "state": { "enum": ["approved", "rejected"] } } },
       "then": { "required": ["resolution"], "properties": { "resolution": true } },
       "else": { "not": { "required": ["resolution"] } }
+    },
+    {
+      "description": "@1.1: the queue's own requests (requester approvals, a policyChangeId) are refused on @1.0; a request by the queue is a policy change and names the change it applies.",
+      "if": {
+        "anyOf": [
+          { "properties": { "requester": { "type": "object", "properties": { "component": { "const": "approvals" } }, "required": ["component"] } }, "required": ["requester"] },
+          { "properties": { "requester": { "type": "object", "required": ["policyChangeId"], "properties": { "policyChangeId": true } } }, "required": ["requester"] }
+        ]
+      },
+      "then": {
+        "properties": {
+          "schema": { "const": "approval-request@1.1" },
+          "action": { "type": "object", "properties": { "class": { "const": "policy-change" } } },
+          "requester": { "type": "object", "properties": { "component": { "const": "approvals" }, "policyChangeId": true }, "required": ["policyChangeId"] }
+        }
+      }
     },
     {
       "description": "Only an operator verdict approves.",

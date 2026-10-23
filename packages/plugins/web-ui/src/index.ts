@@ -2,8 +2,10 @@
  * The operator's web UI (REQ-HOST "Web UI: status, watch"): runs, their steps, and each
  * step's decision chain, plus the operator's approve, deciding vote on a tie, stop, and continue;
  * and, when `ctx.approvals` is present, the approval queue by batch with the operator's verdicts
- * (docs/design/approvals.md); and, when `ctx.board` is present, the board's tasks in review with the
- * operator's acceptance (docs/design/board.md). It is served on the DSH webserver under `/ui`, which is loopback-only:
+ * (docs/design/approvals.md), and the autonomy policy in force, its history, and the operator's
+ * proposed changes, each asked in that queue (docs/design/approvals.md#a-policy-change); and, when
+ * `ctx.board` is present, the board's tasks in review with the operator's acceptance
+ * (docs/design/board.md). It is served on the DSH webserver under `/ui`, which is loopback-only:
  * - the page and script carry no data, under a strict content security policy;
  * - the token arrives in the URL fragment (never sent to a server), and the script sends it as
  *   a bearer token to `/ui/api`;
@@ -16,7 +18,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import z from '@deepseek-ai/schemastery'
 import { assertSafeBind, guardRequest, LOOPBACK_HOSTS, readJsonBody, scopeToken, tokenFile } from '@tsuuanmi/system-gateway-core'
-import { type ApprovalRequest, ApprovalsError, type Subject, type Verdict } from '@tsuuanmi/system-approvals-core'
+import { type ApprovalRequest, ApprovalsError, type AutonomyPolicy, type Subject, type Verdict } from '@tsuuanmi/system-approvals-core'
 import type {} from '@tsuuanmi/system-artifacts'
 import { type ArtifactRef, BoardError, type BoardTask } from '@tsuuanmi/system-board-core'
 import { dshHome, registerSecretPath } from '@tsuuanmi/system-libs'
@@ -38,6 +40,10 @@ export const Config: z<Config> = z.object({
 
 const CSP = "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
 const MAX_BODY = 16_384
+/** A proposed policy record is larger than a verdict: up to 64 rules and 200 commands of 200 characters. */
+const MAX_POLICY_BODY = 131_072
+/** Policy changes the page lists, newest first. */
+export const POLICY_HISTORY = 20
 /** Verdicts one call takes at most, as `approvals_decide` does (a batch holds at most 50). */
 export const MAX_VERDICTS = 50
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$/
@@ -114,9 +120,9 @@ export function apply(ctx: Context, config: Config = {}): void {
     return verdict.ok ? undefined : [verdict.status, verdict.reason]
   }
 
-  const readJson = async (req: IncomingMessage): Promise<Record<string, unknown>> => {
+  const readJson = async (req: IncomingMessage, maxBytes: number = MAX_BODY): Promise<Record<string, unknown>> => {
     if (!/^application\/json\b/.test(req.headers['content-type'] ?? '')) throw Object.assign(new Error('a JSON body is required'), { status: 415 })
-    const value = (await readJsonBody(req, MAX_BODY)) ?? {}
+    const value = (await readJsonBody(req, maxBytes)) ?? {}
     if (typeof value !== 'object' || value === null || Array.isArray(value)) throw Object.assign(new Error('a JSON object is required'), { status: 400 })
     return value as Record<string, unknown>
   }
@@ -156,6 +162,44 @@ export function apply(ctx: Context, config: Config = {}): void {
     } catch (error) {
       const status = error instanceof ApprovalsError ? 400 : (error as { status?: number }).status ?? 409
       return json(res, status, { error: (error as Error).message })
+    }
+  }
+
+  /**
+   * The autonomy policy, when `ctx.approvals` is present (else 503): `GET policy` gives the set in
+   * force (its hash and source), every policy of it with the effective modes of the studio and of
+   * each project, and, from a queue at contract 1.1, the latest changes; `POST policy/propose`
+   * takes the operator's proposed record (INV-6) and answers with the change and the
+   * `policy-change` request that asks for it in the queue, where only the operator's approval
+   * applies it. A queue at contract 1.0 takes no change (`501`): its policy changes by
+   * configuration and a restart.
+   */
+  const policy = async (req: IncomingMessage, res: ServerResponse, path: string): Promise<void> => {
+    const approvals = ctx.get('approvals')
+    if (!approvals) return json(res, 503, { error: 'the approval queue is not running' })
+    if (path === 'policy') {
+      if (req.method !== 'GET') return json(res, 405, { error: 'method not allowed' })
+      const studio = await approvals.policy()
+      const projects = await Promise.all((studio.set?.projects ?? []).map(async (projectId) => ({ projectId, ...(await approvals.policy(projectId)) })))
+      return json(res, 200, {
+        ...(studio.set ? { set: studio.set } : {}),
+        policies: [...studio.policies, ...projects.flatMap((p) => p.policies.slice(1))],
+        effective: [{ effective: studio.effective }, ...projects.map((p) => ({ projectId: p.projectId, effective: p.effective }))],
+        proposals: typeof approvals.proposePolicy === 'function',
+        ...(approvals.policyChanges ? { changes: await approvals.policyChanges({ limit: POLICY_HISTORY }) } : {}),
+      })
+    }
+    if (path !== 'policy/propose') return json(res, 404, { error: 'not found' })
+    if (req.method !== 'POST') return json(res, 405, { error: 'method not allowed' })
+    if (!approvals.proposePolicy) return json(res, 501, { error: 'this approval queue takes policy changes by configuration and a restart only' })
+    try {
+      const body = await readJson(req, MAX_POLICY_BODY)
+      if (typeof body.policy !== 'object' || body.policy === null || Array.isArray(body.policy)) return json(res, 400, { error: 'policy must be one autonomy-policy@1.0 record' })
+      const note = noteOf(body.note)
+      return json(res, 200, await approvals.proposePolicy({ policy: body.policy as AutonomyPolicy, ...(note ? { note } : {}) }, new Date()))
+    } catch (error) {
+      if (error instanceof ApprovalsError) return json(res, error.failure === 'not-asked' ? 409 : 400, { error: `${error.failure}: ${error.message}` })
+      return json(res, (error as { status?: number }).status ?? 409, { error: (error as Error).message })
     }
   }
 
@@ -221,6 +265,7 @@ export function apply(ctx: Context, config: Config = {}): void {
     const refused = refuse(req)
     if (refused) return json(res, refused[0], { error: refused[1] })
     if (path === 'approvals' || path.startsWith('approvals/')) return queue(req, res, path)
+    if (path === 'policy' || path.startsWith('policy/')) return policy(req, res, path)
     if (path === 'reviews' || path.startsWith('reviews/')) return reviews(req, res, path)
     const workflow = ctx.workflow
     if (req.method === 'GET' && path === 'runs') return json(res, 200, { runs: workflow.usage(100) })

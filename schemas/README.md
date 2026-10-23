@@ -14,7 +14,7 @@ each field, which a schema cannot fully express, is documented in
 |---|---|
 | [common.v1.json](common.v1.json) | shared value types: content address, ids, classification, tier, quota class, capability, subject |
 | [artifact-envelope.v1.json](artifact-envelope.v1.json) | immutable envelope of every artifact |
-| [decision.v1.json](decision.v1.json) | body of a `decision` artifact ([INV-13](../docs/architecture/invariants.md#inv-13-every-decision-is-an-artifact)); 1.1 adds team votes and the `client` decider; 1.2 adds a review's quote checks and the `blocking-finding` method; 1.3 adds `retention`; 1.4 adds `autonomy`, `approval`, `board`, and `budget`; 1.5 adds `lifecycle` |
+| [decision.v1.json](decision.v1.json) | body of a `decision` artifact ([INV-13](../docs/architecture/invariants.md#inv-13-every-decision-is-an-artifact)); 1.1 adds team votes and the `client` decider; 1.2 adds a review's quote checks and the `blocking-finding` method; 1.3 adds `retention`; 1.4 adds `autonomy`, `approval`, `board`, and `budget`; 1.5 adds `lifecycle`; 1.6 adds `policy-change` |
 | [work-requirement.v1.json](work-requirement.v1.json) | input to routing |
 | [capability-descriptor.v1.json](capability-descriptor.v1.json) | a Worker's currently proven capabilities |
 | [workflow-node.v1.json](workflow-node.v1.json) | durable state of one DAG node; 1.1 adds `RETIRED`; 1.2 adds the brief its execution was started with |
@@ -39,7 +39,8 @@ each field, which a schema cannot fully express, is documented in
 | [ui-map.v1.json](ui-map.v1.json) | a provider website's UI operations as data: elements, actions, network signals, states ([ADR-0021](../docs/decisions/adr/0021-ui-operations-as-data.md)) |
 | [project.v1.json](project.v1.json) | durable state of a project on the board: its charter (intent, measurable criteria, constraints, stop and pivot rules, budget by resource pool) and milestones |
 | [board-task.v1.json](board-task.v1.json) | durable state of a board task, work that outlives a run, with its lease, run, result, and expiring waits |
-| [approval-request.v1.json](approval-request.v1.json) | durable state of a request in the approval queue, bound to its exact subject; expiry rejects it |
+| [approval-request.v1.json](approval-request.v1.json) | durable state of a request in the approval queue, bound to its exact subject; expiry rejects it; 1.1 adds the queue's own `policy-change` requests |
+| [policy-change.v1.json](policy-change.v1.json) | durable state of one change of the autonomy policy set: the proposed record, the whole set it makes, its hash, base, and configuration hashes, and whether the operator's approval applied it |
 | [autonomy-policy.v1.json](autonomy-policy.v1.json) | which action classes run (`auto`, `notify`) and which need a person (`ask`) or are denied (`forbid`); 1.1 adds `remediation` to the classes that always ask |
 | [usage-record.v1.json](usage-record.v1.json) | body of a `receipt` artifact: what one run, call, or turn consumed, from an objective source, deduplicated by request id |
 | [limit-state.v1.json](limit-state.v1.json) | body of an `evidence` artifact: one observation of one configured window of a resource pool |

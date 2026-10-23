@@ -120,7 +120,8 @@ system mcp-config codex >> ~/.codex/config.toml   # Codex: runs the stdio shim (
   approval queue (`approvals_list`, `approvals_get`, `approvals_policy`), the baseline `report`; `run` also serves one
   attempt of a board task; operator tools for runs (`approve`,
   `stop`, `continue`, `supersede`, `delete`, `drain`, `resume`), verdicts on the queue
-  (`approvals_decide`), and accounts (`account_*`). The full contracts are generated in
+  (`approvals_decide`), policy changes asked in it (`approvals_policy_propose`), and accounts
+  (`account_*`). The full contracts are generated in
   [docs/reference/mcp-tools.md](docs/reference/mcp-tools.md).
 - **`research`:** the scientific-research procedure: testable hypotheses, two
   cited literature reviews on two provider families (one with web search), an

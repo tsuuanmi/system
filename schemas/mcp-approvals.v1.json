@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:tsuuanmi:system:schema:mcp-approvals:v1",
   "title": "MCP approval tools",
-  "description": "Input and output of the `approvals_*` MCP tools (design/approvals.md). `approvals_decide` is operator scope: verdicts come only from the operator's channel (INV-6). The root describes one call (tool, input, structured output); a provider validates input and output against `#/$defs/<tool>-input` and `#/$defs/<tool>-output`, with underscores written as hyphens.",
+  "description": "Input and output of the `approvals_*` MCP tools (design/approvals.md). `approvals_decide` and `approvals_policy_propose` are operator scope: verdicts and policy changes come only from the operator's channel (INV-6). The root describes one call (tool, input, structured output); a provider validates input and output against `#/$defs/<tool>-input` and `#/$defs/<tool>-output`, with underscores written as hyphens. 1.2 adds `approvals_policy_propose` and the policy set in force (`set`) on `approvals_policy`.",
   "type": "object",
   "required": [
     "tool",
@@ -15,7 +15,8 @@
         "approvals_list",
         "approvals_get",
         "approvals_decide",
-        "approvals_policy"
+        "approvals_policy",
+        "approvals_policy_propose"
       ]
     },
     "input": {
@@ -98,6 +99,25 @@
           },
           "output": {
             "$ref": "#/$defs/approvals-policy-output"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "tool": {
+            "const": "approvals_policy_propose"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "input": {
+            "$ref": "#/$defs/approvals-policy-propose-input"
+          },
+          "output": {
+            "$ref": "#/$defs/approvals-policy-propose-output"
           }
         }
       }
@@ -332,6 +352,77 @@
             },
             "additionalProperties": false
           }
+        },
+        "set": {
+          "type": "object",
+          "description": "1.2: the policy set in force: its hash, whether it is the configured set or a change the operator approved (kept in the store), the hash of the configuration it derives from, and the projects that have a policy.",
+          "required": [
+            "hash",
+            "source",
+            "configHash",
+            "projects"
+          ],
+          "properties": {
+            "hash": {
+              "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/sha256"
+            },
+            "source": {
+              "enum": [
+                "configuration",
+                "store"
+              ]
+            },
+            "configHash": {
+              "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/sha256"
+            },
+            "changeId": {
+              "description": "The applied policy change in force, when the source is the store.",
+              "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+            },
+            "projects": {
+              "type": "array",
+              "maxItems": 100,
+              "items": {
+                "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "approvals-policy-propose-input": {
+      "type": "object",
+      "required": [
+        "policy"
+      ],
+      "properties": {
+        "policy": {
+          "description": "The proposed record: a policy of the set at a higher version, or a new project's policy. The whole set it makes must load under the configured set's rules.",
+          "$ref": "urn:tsuuanmi:system:schema:autonomy-policy:v1"
+        },
+        "note": {
+          "description": "Why, shown with the request.",
+          "type": "string",
+          "maxLength": 2000
+        }
+      },
+      "additionalProperties": false
+    },
+    "approvals-policy-propose-output": {
+      "type": "object",
+      "required": [
+        "change",
+        "request"
+      ],
+      "properties": {
+        "change": {
+          "$ref": "urn:tsuuanmi:system:schema:policy-change:v1"
+        },
+        "request": {
+          "description": "The policy-change request on the proposed set's hash; it applies only on the operator's approval.",
+          "$ref": "urn:tsuuanmi:system:schema:approval-request:v1"
         }
       },
       "additionalProperties": false

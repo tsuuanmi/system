@@ -175,13 +175,15 @@ runs the work the router admitted to them. Callers never reach a source directly
   `workers.register(source)`, `workers.contract(id, check)`, `workers.source(name)`;
   `egress.check({ payload, classification, workerClass }) → allowed + egress decision`.
 - **Gate and resource ledger:** `ctx.approvals` (provider `approvals`, on the store), the
-  autonomy policy from configuration and the one batched approval queue, whose expiry denies,
-  with the MCP tools `approvals_list`, `approvals_get`, `approvals_policy`, and the operator's
-  `approvals_decide`, and the operator's queue on the web UI ([approvals](../design/approvals.md)); `ctx.resources` (provider
+  autonomy policy from configuration or from a change the operator approved in the queue (kept in
+  the store while that configuration is unchanged), and the one batched approval queue, whose
+  expiry denies, with the MCP tools `approvals_list`, `approvals_get`, `approvals_policy`, and the
+  operator's `approvals_decide` and `approvals_policy_propose`, and the operator's queue and policy
+  page on the web UI ([approvals](../design/approvals.md)); `ctx.resources` (provider
   `resources`, on the store), configured pools, limit readings, reservations before a run, and deduplicated usage after it,
   with the MCP tools `resources_pools` and `resources_usage`
   ([resources](../design/resources.md)). Contracts: `approvals.check / request / batch / decide /
-  withdraw / sweep`; `resources.pools / observe / reserve / release / record / usage`.
+  withdraw / sweep`, and from contract 1.1 `proposePolicy / policyChanges`; `resources.pools / observe / reserve / release / record / usage`.
 - **Policy inputs:** proven capabilities, data locality, Worker state, tier, session
   affinity, and provider family, compared only for inequality. This is where the three [purposes](../requirements/purpose.md) become mechanics.
 - **Design:** [routing](../design/routing.md).

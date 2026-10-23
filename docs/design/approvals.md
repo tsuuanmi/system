@@ -5,8 +5,11 @@
 > [PROP-0010](../proposals/0010-base-version.md),
 > [PROP-0008](../proposals/0008-studio-operating-model.md#fewer-approvals-reliable-results).
 > Records: [`autonomy-policy@1.0`](../reference/schemas.md#autonomy-policy),
-> [`approval-request@1.0`](../reference/schemas.md#approval-request); verdicts stay
-> [`approval@1.0`](../reference/schemas.md#approval).
+> [`approval-request@1.1`](../reference/schemas.md#approval-request),
+> [`policy-change@1.0`](../reference/schemas.md#policy-change); verdicts stay
+> [`approval@1.0`](../reference/schemas.md#approval). Decisions:
+> [ADR-0039](../decisions/adr/0039-base-guarantee-seam-contract-changes.md),
+> [ADR-0041](../decisions/adr/0041-policy-changes-through-the-approval-queue.md).
 >
 > Implemented in [`approvals`](../../packages/plugins/approvals/README.md) (definition
 > [`approvals-core`](../../packages/approvals-core/README.md)); the operator's queue is on `/ui`
@@ -19,8 +22,7 @@
 > ([a deferred tool call](workflow-engine.md#a-deferred-tool-call)), and a plain run that wrote
 > records the checks still pending ([a plain run's acceptance](workflow-engine.md#a-plain-runs-acceptance)).
 > Differs from target: with no queue loaded, remediation falls back to the operator's plan gate
-> (`approval@1.0` by `approve`), and a planner's plan gate is still the operator's; a new policy
-> version takes effect by configuration and a restart, not through a `policy-change` approval; a
+> (`approval@1.0` by `approve`), and a planner's plan gate is still the operator's; a
 > Worker's tool calls are judged under the studio policy only, since no trusted envelope names an
 > agent run's project yet; a deferred run fails as `config_error`, since the workers seam has no
 > waiting status, and only the workflow engine continues its session once approved (a board
@@ -33,11 +35,11 @@ verified runs without asking. Code decides, never a model.
 
 ## Seam
 
-`ctx.approvals` (`Approvals` in `@tsuuanmi/system-approvals-core`), contract 1.0:
+`ctx.approvals` (`Approvals` in `@tsuuanmi/system-approvals-core`), contract 1.1:
 
 | Method | Does |
 |---|---|
-| `policy(projectId?)` | the studio policy, the project's, and the effective mode per action class |
+| `policy(projectId?)` | the studio policy, the project's, and the effective mode per action class; from 1.1, the set in force (`set`) |
 | `check(action)` | classify one action; records an `autonomy` decision. Its `mode` is the mode once the required checks pass ([below](#a-verdict-is-not-yet-a-permission)) |
 | `request(request)` | queue a request for an action the loaded policies still say `ask` for, as its recorded verdict says |
 | `get`, `list` | read the queue |
@@ -45,6 +47,8 @@ verified runs without asking. Code decides, never a model.
 | `decide(verdicts)` | the operator's verdicts, each bound to its request's exact subject |
 | `withdraw(requestId)` | close a request whose waiting work ended |
 | `sweep(at)` | reject every request unanswered at `at`, then withdraw every open one the loaded policies no longer ask for |
+| `proposePolicy(proposal)` | 1.1, optional: the operator's proposed record, asked as one `policy-change` request on the hash of the set it makes, applied only on approval ([below](#a-policy-change)) |
+| `policyChanges(filter?)` | 1.1, optional: the policy changes, newest first |
 
 `at` is a test seam, here and in `request`, `batch`, `decide`, and `withdraw`: the MCP tools, the
 web UI, the board, and the queue's own passes fill it from the wall clock, and no core caller
@@ -136,7 +140,10 @@ the request becomes `rejected` with cause `expired`, and the decision's outcome 
 | open or batched → rejected (withdrawn) | `withdraw`, by the requester, when its work ended | an `approval` decision `withdrawn` (decider rule `approvals.withdraw`) | a resolved request is returned unchanged |
 | open or batched → rejected (policy changed) | the provider, at load and on every `sweep`, for an unexpired request whose policy is not current at its version, or whose class (and the class its decision judged it as) the loaded policies no longer ask for | an `approval` decision `withdrawn` (decider rule `approvals.policy`), its reason naming what changed | one that fails is logged and left for the next sweep |
 
-A policy change takes effect by configuration and a restart. Cause `withdrawn` covers it, and
+A policy change takes effect through a `policy-change` approval while `system` runs
+([below](#a-policy-change)), or by configuration at a start
+([the configuration and the stored set](#the-configuration-and-the-stored-set)). Either way, open
+requests are judged again under the new set. Cause `withdrawn` covers it, and
 the resolution's decision tells it from the requester's own withdrawal by its decider rule
 (`approvals.policy`, not `approvals.withdraw`). The requester sees its request rejected with no
 verdict and puts the action to the new policy again:
@@ -303,6 +310,70 @@ ids, never the call's input.
   ([a plain run's acceptance](workflow-engine.md#a-plain-runs-acceptance)), and they bind
   wherever its result is applied.
 
+## A policy change
+
+The operator changes the autonomy policy while `system` runs through the queue itself
+([ADR-0041](../decisions/adr/0041-policy-changes-through-the-approval-queue.md)): the safety layer
+never changes itself, and what the operator approves is exactly what comes into force.
+
+```mermaid
+stateDiagram-v2
+  [*] --> asked: the operator proposes one record; the set it makes loads; the policy asks
+  asked --> applied: the operator approves its request, its base still in force
+  asked --> declined: rejected, expired, or withdrawn
+  applied --> retired: a configuration supersedes it at a start
+  declined --> [*]
+  applied --> [*]
+  retired --> [*]
+```
+
+| From → to | Who | Records | On failure |
+|---|---|---|---|
+| — → asked | `proposePolicy`, from the operator's channels only: the policy page on `/ui` (operator token) or MCP `approvals_policy_propose` (operator scope) | the `autonomy` decision for `policy-change` (under the studio's set, or the project's for a project's policy); in one transaction, the `policy-change@1.0` record (the proposed record, the record it replaces, the whole set, its hash, the base set's hash, the configured set's hash, and every effective mode it moves) and an `approval-request@1.1` on `{content, autonomy-policy-set, <hash>}`, requester `approvals` naming the change, its consequences listing the modes that move | a record that is not valid, a version not above the one in force, a changed scope or project, a new studio policy, or a set the load-time rules refuse is refused (`invalid`) and nothing is stored; `forbid` refuses it (`not-asked`); another change in force meanwhile refuses it (`invalid`) |
+| asked → applied | `decide`, the operator's approval of its request on its subject, while the set it was proposed on is still in force | in the verdict's transaction: the `approval` artifact and decision, a `decision@1.6` `policy-change` (decider rule `approvals.policy-change`; candidates the old and new hash; inputs the request's `autonomy` decision, the approval, and its decision), and the change `applied`; then every open request is judged again as at load | the base no longer in force: the verdict is refused (`subject-changed`) and changes nothing; a set that no longer loads: refused (`failed`), logged |
+| asked → declined | `decide` (rejected), `sweep` (expired, or withdrawn: its base no longer in force, or its set no longer loads), `withdraw` | the request's `approval` decision, named on the change with its cause | — |
+| applied → retired | the provider at a start, when the configuration's `supersedes` names the stored set's hash and that set no longer applies | a `decision@1.6` `policy-change` (decider rule `approvals.configuration`), the change `retired` | — |
+
+- **The whole set is the subject.** A proposal names one record, but the request binds to the
+  hash of the whole set it makes (the studio policy, then the project policies by project id), and
+  the change applies only onto the set it was proposed on. A second proposal on the same base is
+  withdrawn when the first comes into force, so an approval never reverts a change it did not show.
+- **After the change**, open requests are put to the new set exactly as at load: one its policy
+  version or its class no longer asks for is withdrawn (decider rule `approvals.policy`), and its
+  requester puts the action to the new policy, as [above](#a-request) (the board on its next sweep).
+- **History:** `policyChanges` lists the changes, newest first; `policy()` names the set in force
+  (`set`). The policy page on `/ui` shows both, a proposed record's diff, and each change's diff in
+  its queue entry ([web UI API](../reference/web-ui.md#autonomy-policy)).
+
+### The configuration and the stored set
+
+An applied change is kept in the store, so a restart keeps it. At a start the provider decides
+which set is in force:
+
+| The latest applied change | In force |
+|---|---|
+| none, or retired | the configured set |
+| derived from the configuration as it is now (its `configHash` is the configured set's hash), or its set is the configured set | the stored set |
+| derived from another configuration, or its set no longer loads, and `supersedes` names its hash | the configured set; the change is retired, recorded |
+| derived from another configuration, or its set no longer loads, and no `supersedes` names it | none: the plugin is refused, naming both hashes and the remedy, so every action that needs a person waits |
+
+Neither set wins silently (INV-2): the operator approved both, so only the operator chooses,
+either by restoring the configuration the change was derived from, or by naming the stored set in
+`supersedes` ([runbook](../operations/runbooks.md#change-the-autonomy-policy)). Every call reads
+which change is in force from the store, so a provider never judges under a set another process
+replaced.
+
+### Where a policy change leaves room
+
+- Only the operator proposes. A lead that wants a policy change asks the operator; turning
+  repeated identical approvals into a proposed policy (PROP-0008) is not built.
+- `system check` cannot see the store, so a configuration that no longer matches the stored set
+  is reported at the start that refuses it, in the log, not before.
+- An upgrade whose bundle changes the default policy refuses the queue where the operator applied
+  a change, until the operator chooses one of the two sets.
+- A provider at contract 1.0 (none in the bundle) takes no proposal: its policy changes by
+  configuration and a restart.
+
 ## Fail-closed rules
 
 1. Only an operator verdict approves. Expiry and withdrawal only reject.
@@ -315,11 +386,16 @@ ids, never the call's input.
 5. With `ctx.approvals` unavailable, an action that needs a person waits; one that does not
    still needs its `autonomy` decision, so nothing runs: a Worker's gate denies every tool call,
    reads included.
+6. The policy set changes only by the operator: an approved `policy-change` request on the exact
+   set, or the configuration at a start. A stored set the configuration no longer matches is never
+   used and never dropped silently.
 
 ## Conformance
 
 [`approvals-core/conformance/approvals.ts`](../../packages/approvals-core/conformance/approvals.ts),
-15 scenarios at contract 1.0, run against the fake provider and the store-backed provider. The
+20 scenarios at contract 1.1 (five of them since 1.1: a policy change asked, applied, declined,
+refused, and withdrawn on a stale base), run against the fake provider and the store-backed
+provider. The
 board's suite also runs over the store-backed provider, as the bundle composes them, and changes
 its policies there: the fake's `reload` stands for the new configuration and a restart, after
 which its sweeps withdraw what the policies no longer ask for, as the store-backed provider's do.

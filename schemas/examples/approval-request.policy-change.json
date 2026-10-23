@@ -1,0 +1,29 @@
+{
+  "schema": "approval-request@1.1",
+  "requestId": "apr-5c0b9e7d21a84f36",
+  "state": "batched",
+  "subject": {
+    "type": "content",
+    "ref": "autonomy-policy-set",
+    "version": "sha256:5695bda448848bc78e22fea54a59ac2560a2038a9a0f22ca89001868b155606e"
+  },
+  "action": {
+    "class": "policy-change",
+    "summary": "Change the autonomy policy: studio-default version 1 to 2",
+    "consequences": "If approved, the set sha256:… replaces the set in force at once, and every open request is judged again under it. If rejected or unanswered, nothing changes. Effect: merge ask → forbid."
+  },
+  "requester": {
+    "component": "approvals",
+    "policyChangeId": "pch-7d1e0c2a9b4f6e13"
+  },
+  "policy": {
+    "id": "studio-default",
+    "version": 1,
+    "decision": "sha256:e94d787f61ea3ee8eede618d9babc84e26045f60635472f2523f407ecf847271"
+  },
+  "classification": "operator-shared",
+  "batchId": "batch-2026-10-23T08:10:00.000Z-1f2e3d4c",
+  "createdAt": "2026-10-23T08:10:00Z",
+  "expiresAt": "2026-10-24T08:10:00Z",
+  "revision": 1
+}

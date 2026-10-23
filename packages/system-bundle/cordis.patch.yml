@@ -33,7 +33,7 @@
         pools: []
     # --- approval queue (core, B5): the autonomy policy and the one batched queue; expiry denies ---
     - id: approvals
-      name: '@tsuuanmi/system-approvals'             # ctx.approvals; MCP approvals_list/get/policy, approvals_decide (operator)
+      name: '@tsuuanmi/system-approvals'             # ctx.approvals; MCP approvals_list/get/policy, approvals_decide and approvals_policy_propose (operator)
       config:
         # The default studio policy, conservative: a read runs; a workspace write runs once tests
         # and lint pass; every other action asks, and so does any class no rule names. A patch

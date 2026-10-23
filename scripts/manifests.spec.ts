@@ -72,8 +72,8 @@ describe('the check catches each kind of disagreement', () => {
   it('a version that disagrees with the conformance contract, of a provider, a definition, or a consumer\'s range', () => {
     expect(check(of('workflow'), shipped('workflow', (m) => { m.provides[0].version = '1.2.0' })))
       .toEqual([expect.stringMatching(/provides ctx\.workflow at 1\.2\.0, but its conformance run pins contract 1\.3 \(packages\/plugins\/workflow\/tests\/conformance\.spec\.ts\), so it is at 1\.3\.0/)])
-    expect(check(of('approvals-core'), shipped('approvals-core', (m) => { m.defines[0].version = '1.1.0' })))
-      .toEqual([expect.stringMatching(/defines ctx\.approvals at 1\.1\.0, but its suite is at contract 1\.0/)])
+    expect(check(of('approvals-core'), shipped('approvals-core', (m) => { m.defines[0].version = '1.0.0' })))
+      .toEqual([expect.stringMatching(/defines ctx\.approvals at 1\.0\.0, but its suite is at contract 1\.1/)])
     expect(check(of('web-ui'), shipped('web-ui', (m) => { m.consumes.find((c: { seam: string }) => c.seam === 'workflow').range = '^2.0.0' })))
       .toEqual([expect.stringMatching(/consumes ctx\.workflow in the range \^2\.0\.0, which its version in this workspace \(1\.3\.0, workflow\) does not satisfy/)])
     expect(check(of('web-ui'), shipped('web-ui', (m) => { m.consumes.find((c: { seam: string }) => c.seam === 'workflow').range = '>=1' })))

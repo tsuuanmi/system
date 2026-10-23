@@ -7,8 +7,10 @@ approval queue ([approvals](../../../docs/design/approvals.md),
 guarantee seam: it fails closed (INV-2). Code decides, never a model.
 
 - **Owns:**
-  - `policy(projectId?)`: the studio policy, the project's when it has one, and the effective
-    mode of every action class.
+  - `policy(projectId?)`: the studio policy, the project's when it has one, the effective mode of
+    every action class, and the set in force (`set`: its hash, `source` `configuration` or
+    `store`, the configured set's hash, the applied change in force, and the projects with a
+    policy).
   - `check(action)`: the mode the policies give one action, recorded as a `decision@1.4`
     `autonomy` decision (decider: the policy that gave it, with its version and `hash`, the
     sha256 of the canonical JSON of the project's effective policy set as loaded). The effective
@@ -67,8 +69,37 @@ guarantee seam: it fails closed (INV-2). Code decides, never a model.
     `withdrawn`, decider rule `approvals.policy`, the reason naming what changed. Each is its own
     transaction that re-reads the request first. Idempotent; one that fails is logged and left
     for the next sweep. The provider withdraws the same at load, before it serves anything.
+  - `proposePolicy({policy, note?}, at?)` (contract 1.1): a policy change, from the operator's
+    channels only (the web UI, MCP `approvals_policy_propose`; INV-6). The record replaces the
+    policy with its id at a higher version, same scope and project, or adds a policy for a project
+    that has none; the whole set it makes must pass every load-time rule, or nothing is stored
+    (`invalid`). `policy-change` is judged like any action (the project's set for a project's
+    policy) and recorded; on `forbid` it is refused (`not-asked`). On `ask`, one transaction
+    stores a `policy-change@1.0` (the record, the record it replaces, the whole set, its hash, the
+    base set's hash, the configured set's hash, and every effective mode it moves) and queues an
+    `approval-request@1.1` on
+    `{content, autonomy-policy-set, <hash>}`, requester `approvals` with the `policyChangeId`.
+    `request` refuses that requester from any caller (`invalid`).
+  - Applying it: an operator's approval of that request, while its base set is still in force (else
+    the verdict is refused `subject-changed`, and the sweep withdraws it), applies the set in the
+    verdict's transaction, with a `decision@1.6` `policy-change` (decider rule
+    `approvals.policy-change`, its two candidates the old and the new hash). Then every open request
+    is judged again as at load (the board puts its own to the new policy on its next sweep). A
+    rejection, expiry, or withdrawal declines the change and changes nothing; a change whose base
+    is no longer in force, or whose set no longer loads, is withdrawn on the next sweep.
+  - `policyChanges({states?, limit?})`: the changes, newest first (20 by default, at most 100).
+  - **The set in force** is the latest applied change's, kept in the store, while it is not
+    retired, its `configHash` is the configured set's hash (or its set is the configured set
+    itself), and its set still loads; the configured set when no change is in force. A stored set
+    the configuration no longer matches is never used and never silently dropped: the plugin is
+    refused, naming both hashes, unless the configuration's `supersedes` names that stored set's
+    hash; then the change is retired with a `policy-change` decision (decider rule
+    `approvals.configuration`) and the configured set is in force. Every call reads which change
+    is in force from the store, so a provider never judges under a set another process replaced.
 - **Records:** `approval_requests`, one row per request with its revision and its
-  `approval-request@1.0` record, indexed by state, batch, project, and expiry. Every record is
+  `approval-request@1.x` record, indexed by state, batch, project, and expiry; `policy_changes`
+  (migration 2), one row per change with its revision, its `policy-change@1.0` record, and the
+  order in which applied changes came into force. Every record is
   validated before it is written and after it is read: one that fails on read is never acted on.
   Every move is revision-checked inside a store transaction (`BEGIN IMMEDIATE`), so of
   concurrent verdicts on one request, also across processes, exactly one is recorded. A
@@ -78,24 +109,29 @@ guarantee seam: it fails closed (INV-2). Code decides, never a model.
   production. The `at` of every method is a test seam: the MCP tools, the web UI, the board, and
   the queue's own passes fill it from the wall clock.
 - **MCP** (when `ctx.mcp` is present): `approvals_list`, `approvals_get`, `approvals_policy`
-  (client scope) and `approvals_decide` (operator scope: verdicts come only from the operator's
-  channel, INV-6; a call that reaches it with another scope is refused too). Each input and
+  (client scope), and `approvals_decide` and `approvals_policy_propose` (operator scope: verdicts
+  and policy changes come only from the operator's channel, INV-6; a call that reaches one with
+  another scope is refused too). Each input and
   structured output is validated against
   [`schemas/mcp-approvals.v1.json`](../../../schemas/mcp-approvals.v1.json) `$defs/<tool>-input`
   and `-output`; a refused input does nothing, a refusal is an MCP error naming the
   `ApprovalsError`.
 - **Config:** `policies` (required): `autonomy-policy@1.x` records, exactly one studio policy
-  and project policies that narrow it; `sweepSeconds` (1 to 3600, default 60). At load, a
-  policy the schema refuses, two rules for one action class, a rule giving a class in
-  `ALWAYS_ASK` `auto` or `notify` (a 1.0 policy's `remediation`), an `expiry.defaultSeconds` or a
-  rule's `expiresSeconds` above `expiry.maxSeconds`, a commands entry with an empty word or a
-  shell metacharacter, a batch rule whose `maxWaitSeconds` is not under the shortest expiry a
-  request it batches can get, no or several studio policies, a project policy narrowing another
-  policy than the studio's, two policies for one project, or two with one id refuses the plugin:
-  no `ctx.approvals` is provided, the error is logged, and every action that needs a person
-  waits. `checkConfig` names the same problems to `system check` before a start.
-  The bundle row carries the default studio policy; a patch that targets the row replaces its
-  whole config, so it carries the policies too.
+  and project policies that narrow it; `sweepSeconds` (1 to 3600, default 60); `supersedes`
+  (optional): the `sha256:` hash of the stored set this configuration replaces, read only at a
+  start where that set no longer matches the configuration. At load, a policy the schema
+  refuses, two rules for one action class, a rule giving a class in `ALWAYS_ASK` `auto` or
+  `notify` (a 1.0 policy's `remediation`), an `expiry.defaultSeconds` or a rule's
+  `expiresSeconds` above `expiry.maxSeconds`, a commands entry with an empty word or a shell
+  metacharacter, a batch rule whose `maxWaitSeconds` is not under the shortest expiry a request
+  it batches can get, no or several studio policies, a project policy narrowing another policy
+  than the studio's, two policies for one project, two with one id, or more than 101 policies
+  (the studio's and 100 projects') refuses the plugin, as does a stored policy set the
+  configuration no longer matches unless `supersedes` names it: no `ctx.approvals` is provided,
+  the error is logged, and every action that needs a person waits. `checkConfig` names the same
+  problems of the configured set to `system check` before a start; only the start sees the
+  store. The bundle row carries the default studio policy; a patch that targets the row replaces
+  its whole config, so it carries the policies too.
 - **Injects:** `store`, `artifacts`; `mcp` and `eventLog` are optional.
 - **Consumers:** the board; the web UI's queue; the `agents` Worker source, whose
   per-run tool gate calls `check`, `request`, and `get` for every tool call of an agent run
@@ -104,15 +140,17 @@ guarantee seam: it fails closed (INV-2). Code decides, never a model.
   deferred call's session once its request is approved, and which records the checks a plain
   run that wrote leaves pending (`check`, `request`, `list`, `get`, `withdraw`;
   [workflow engine](../../../docs/design/workflow-engine.md#remediation-on-the-approval-queue)).
-- **Not yet:** a new policy version takes effect by configuration and a restart, not through a
-  `policy-change` approval.
 - **Tests:** [`tests/conformance.spec.ts`](tests/conformance.spec.ts) runs the seam's suite,
   [`approvals-core/conformance/approvals.ts`](../../approvals-core/conformance/approvals.ts), at
-  contract 1.0 with no known failure; [`tests/board.spec.ts`](tests/board.spec.ts) runs the
+  contract 1.1 with no known failure; [`tests/board.spec.ts`](tests/board.spec.ts) runs the
   board's suite over this provider and the store-backed board, as the bundle composes them;
   [`tests/approvals.spec.ts`](tests/approvals.spec.ts) covers each load-time rule, restart, a
   policy change (refused decisions, withdrawal at load and on a sweep), a decision no policy
   made, a listed command judged again, a verdict race on one store and across processes, a
   verdict that fails on its own, the queue's own clock, the batch bound, paging, records that
-  fail their schema, and the tools' outputs. Tests turn the queue's own clock off through a test
+  fail their schema, the tools' outputs, and a policy change through the queue: kept across a
+  restart, refused against a changed configuration until it supersedes the stored set (retired,
+  recorded), agreeing with a configuration that is the stored set, a stored change that fails its
+  schema never used, a policy that forbids `policy-change`, and `approvals_policy_propose` at
+  operator scope only. Tests turn the queue's own clock off through a test
   subclass ([`tests/manual.ts`](tests/manual.ts)), never through configuration.
