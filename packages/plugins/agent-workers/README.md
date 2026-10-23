@@ -173,12 +173,18 @@ The **`agents` Worker source**: agent runtimes as Workers
     check.
   - A session stays on its one Worker (`affinity`): it never moves to another
     role (another sandbox) of the account.
-- **Capabilities are what `probe()` proves now** ([`src/probes.ts`](src/probes.ts)). A
-  runtime's probe result stands for `probeTtlMs` (default 5 min) from when its probe started,
-  never longer. Once it is half that old, the next probe starts in the background, one at a time
-  per runtime, so a describe never waits for a re-probe (the router gives the whole source 5 s):
-  - a describe waits only for a runtime's first probe; a result past `probeTtlMs` admits nothing
-    (the Worker is `unavailable`) until the probe in the background finishes;
+- **Capabilities are what `probe()` proves now** ([`src/probes.ts`](src/probes.ts)), in
+  the home the Worker's runs run in: its runtime's own, or a derived Worker's account home, each
+  probed on its own. A probe result stands for `probeTtlMs` (default 5 min) from when its probe
+  started, never longer. Once it is half that old, the next probe starts in the background, one at
+  a time per runtime and home, so a describe never waits for a re-probe (the router gives the whole
+  source 5 s):
+  - a describe waits only for the first probe of a runtime in a home; a result past `probeTtlMs`
+    admits nothing (the Worker is `unavailable`) until the probe in the background finishes;
+  - each probe, a background one included, re-reads the runtime's `ready` accounts (an account
+    home's alone) before its result stands;
+  - an account home is probed in the background only while a Worker whose account is `ready`
+    runs in it; one that is not is forgotten, and a later read probes it first;
   - the latest result wins, failed or not: a probe that throws, or proves less, makes the Worker
     `unavailable` at once, never outlived by an older success;
   - a probe slower than half of `probeTtlMs` is logged once, and the next starts at once;

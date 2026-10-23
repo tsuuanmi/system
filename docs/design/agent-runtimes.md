@@ -374,8 +374,9 @@ principal ([INV-13](../architecture/invariants.md#inv-13-every-decision-is-an-ar
   | `ambiguous` | `quarantined`, `ambiguous` |
   | `unverified`, or a runtime with no `identity` | `quarantined`, `unverified` |
 
-- **Read again** at each probe of the runtime (every `ready` account) and before each run (the
-  account in the run's home). A re-read only takes away: a changed principal is quarantined, a
+- **Read again** at each probe of the runtime (every `ready` account; an account home's probe,
+  that home's), which runs in the background every half `probeTtlMs`
+  ([admission evidence](#admission-evidence)), and before each run (the account in the run's home). A re-read only takes away: a changed principal is quarantined, a
   missing one signed out, each recorded first; it never lifts a quarantine or a sign-out, and never
   quarantines a peer. Only the operator's `verify` (or `login`) does.
 - **Who takes work.** A Worker derived as account × role takes work only while its account is
@@ -641,12 +642,20 @@ A probe can take longer than the 5 s the router gives a whole Worker source to d
 Workers ([sources that do not answer](routing.md#sources-that-do-not-answer)), so the `agents`
 source never waits for a re-probe in a describe:
 
+- **Per home.** A runtime is probed in its own home, and apart from it in each account home a
+  derived Worker's runs run in ([its account's home](#workers--account--role)); everything below
+  holds for each. A derived Worker whose account is not `ready` probes nothing.
 - **Bounded staleness.** A probe result stands for `probeTtlMs` (5 min) from when its probe
   started, never longer: past it, the result admits nothing and the Worker is `unavailable` until
-  the next probe finishes. A describe waits only for a runtime's first probe.
+  the next probe finishes. A describe waits only for the first probe of a runtime in a home.
 - **Refreshed in the background.** Once a result is half that old, the next probe starts in the
-  background, whether or not anything reads, one at a time per runtime, so a fresh result
-  normally replaces it before it expires.
+  background, whether or not anything reads, one at a time per runtime and home, so a fresh result
+  normally replaces it before it expires. An account home is probed in the background only while
+  a Worker whose account is `ready` runs in it; one that is not is forgotten, and a later read
+  probes it first.
+- **Accounts read again.** Each probe, a background one included, reads the runtime's `ready`
+  accounts again (an account home's alone) before its result stands
+  ([enrollment](#enrollment-and-quarantine)).
 - **The latest result wins.** A probe that throws, or proves less, replaces an older success at
   once: no Worker is admitted on evidence a later probe contradicts (INV-2).
 - **A run's own check** before the agent starts waits for a result within `probeTtlMs`.

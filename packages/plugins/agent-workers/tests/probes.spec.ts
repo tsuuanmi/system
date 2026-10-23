@@ -149,6 +149,52 @@ describe('agent runtime probes: refreshed in the background, never waited for by
     expect(runtime.probes).toBe(1)
   })
 
+  it('probes each named home on its own, reads its accounts again before a result stands, and forgets a home no Worker runs in', async () => {
+    const probed: Array<string | undefined> = []
+    const runtime: AgentRuntimeProvider = {
+      kind: 'homes',
+      probe: async (options) => {
+        probed.push(options?.home)
+        return { ...READY, homes: true, detail: options?.home ? `in ${options.home}` : 'its own home' }
+      },
+      run: async () => { throw new Error('the probe tests run nothing') },
+    }
+    const stopped = new AbortController()
+    const reread: Array<[string, string | undefined, string | undefined]> = []
+    let inUse = true
+    const probes = new Probes({
+      ttlMs: 600, provider: (kind) => (kind === 'homes' ? runtime : undefined), stopped: stopped.signal, track: () => undefined, warn: () => undefined,
+      // What the read sees as standing when the accounts are read again: nothing of this probe yet.
+      after: async (kind, home) => { reread.push([kind, home, probes.current(kind, home)?.detail]) },
+      inUse: () => inUse,
+    })
+    try {
+      expect(await probes.described('homes')).toMatchObject({ detail: 'its own home' })
+      expect(await probes.described('homes', '/accounts/2')).toMatchObject({ detail: 'in /accounts/2' })
+      // probeIn: the provider's own probe first (it must report homes), then the one in the home.
+      expect(probed).toEqual([undefined, undefined, '/accounts/2'])
+      expect(reread).toEqual([['homes', undefined, undefined], ['homes', '/accounts/2', undefined]])
+      expect(probes.current('homes', '/accounts/2')).toMatchObject({ detail: 'in /accounts/2' })
+      expect(probes.current('homes', '/accounts/3')).toBeUndefined()
+      // Both are refreshed in the background, the home's accounts read again each time.
+      await expect.poll(() => reread.filter(([, home]) => home === '/accounts/2').length, { timeout: 5000, interval: 20 }).toBeGreaterThanOrEqual(2)
+      expect(reread.filter(([, home]) => home === undefined).length).toBeGreaterThanOrEqual(2)
+      // No Worker runs in the home any more: its background probe stops, and what it proved is forgotten.
+      inUse = false
+      await expect.poll(() => probes.current('homes', '/accounts/2'), { timeout: 5000, interval: 20 }).toBeUndefined()
+      const homeProbes = probed.filter((home) => home === '/accounts/2').length
+      await sleep(700)
+      expect(probed.filter((home) => home === '/accounts/2').length).toBe(homeProbes)
+      // The runtime's own home is refreshed still; a later read of the home probes it first.
+      expect(probes.current('homes')).toMatchObject({ detail: 'its own home' })
+      expect(await probes.described('homes', '/accounts/2')).toMatchObject({ detail: 'in /accounts/2' })
+      expect(probed.filter((home) => home === '/accounts/2').length).toBe(homeProbes + 1)
+    } finally {
+      stopped.abort()
+      probes.close()
+    }
+  })
+
   it('keeps no result with probeTtlMs 0: every read waits for a probe, and nothing probes in the background', async () => {
     const { probes, runtime } = setup(0)
     expect(await probes.described('gated')).toEqual(READY)
