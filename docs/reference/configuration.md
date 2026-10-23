@@ -439,6 +439,9 @@ No options.
 | `gateTimeoutHours` | number (0.0001…720) | `24` | Hours a plan's gate waits for the operator's approval, then closes and fails the run, by rule (INV-9); continue the run to wait again |
 | `approvalPollSeconds` | number (1…300) | `15` | Seconds between the engine's reads of the approval queue: a remediation fix's request while its run waits on it, and the requests a Worker's deferred tool calls wait on (INV-9) |
 | `maxSessionRuns` | number (1…50) | `5` | Runs one session may serve when a board task's next attempt, or the next task of a chain, resumes the session of the work before it (INV-9); past it, the run starts a fresh session given its brief |
+| `tasksFile` | object | `{}` | The board's TASKS.md projection a board task's run is given in its own worktree (INV-9) |
+| `tasksFile.maxTasks` | number (0…10000) | `200` | Tasks it lists at most, open ones first, the rest counted; 0 writes no file |
+| `tasksFile.maxChars` | number (1024…1048576) | `65536` | Characters it holds at most; past it, it is cut at a line with a note |
 | `digestsPerHour` | number (0…1000) | `6` | Digests of board task results the engine asks ctx.digests for in any hour, one per attempt, after its result reached the board (INV-9); 0 asks for none. Past it, a result keeps no digest, recorded with why |
 | `repositories` | object | `{}` | A review's repository reads: allowed hosts and bounds (INV-9) |
 | `repositories.hosts` | string[] | `["github.com"]` | Hosts a review may read a public repository from |

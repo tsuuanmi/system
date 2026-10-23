@@ -7,7 +7,7 @@
  * confinement as the Worker's source declares it. The Worker source renders it into its own prompt
  * at start, resolving the pointers there (INV-12).
  */
-import { type Brief, BRIEF_LIMITS, type BriefBudgetLine, type BriefPointer, NO_LOCAL_SANDBOX, renderBrief } from '@tsuuanmi/system-libs'
+import { type Brief, type BriefBudgetLine, type BriefFile, BRIEF_LIMITS, type BriefPointer, NO_LOCAL_SANDBOX, QUESTION_LIMITS, renderBrief } from '@tsuuanmi/system-libs'
 import type { ArtifactRef, WorkerSandbox, WorkRequirement } from '@tsuuanmi/system-workers-core'
 import type { Engine } from './engine.ts'
 import { clampText, type Instructions, literal, type ResolvedNode } from './spec.ts'
@@ -27,6 +27,8 @@ export interface TaskFrame {
   acceptance: Array<{ id: string; statement: string }>
   pointers: BriefPointer[]
   budget: BriefBudgetLine[]
+  /** Files a source with a worktree of the run's own writes there: the board's `TASKS.md` projection (docs/design/workflow-engine.md#tasksmd-in-a-runs-workspace). */
+  files?: BriefFile[]
 }
 
 const RANK: Record<Brief['classification'], number> = { public: 0, 'operator-shared': 1, 'local-private': 2 }
@@ -47,7 +49,8 @@ export function instructionsOf(node: NodeRow): Instructions {
 
 /**
  * The brief a node's next execution is given, but for its sandbox. A node of a board task's run
- * states the task's goal and criteria, and points at what the task points at after its own
+ * states the task's goal and criteria, offers the Worker to ask questions instead of answering
+ * (`ask`), and points at what the task points at after its own
  * instructions' pointers; any other node's goal is its objective, and its criteria are its
  * acceptance contract and result schema. A node on a session the Worker keeps natively names that
  * session (`resume`): its brief is the session's next message.
@@ -60,8 +63,10 @@ export function draftOf(e: Engine, run: RunRow, node: NodeRow, spec: ResolvedNod
   const bound = node.subject ? (JSON.parse(node.subject) as { subject?: { type: 'git-head'; ref: string; version: string } }).subject : undefined
   const handle = spec.session.sessionId ? e.ctx.workers.handle(spec.session.sessionId) : undefined
   return {
-    schema: 'brief@1.1',
-    ...(task ? { projectId: task.projectId, taskId: task.taskId, attempt: task.attempt } : {}),
+    // A board task's brief offers the Worker a bounded way to ask instead of answering (@1.2 `ask`): its questions block the task.
+    schema: task ? 'brief@1.2' : 'brief@1.1',
+    ...(task ? { projectId: task.projectId, taskId: task.taskId, attempt: task.attempt, ask: { maxQuestions: QUESTION_LIMITS.count } } : {}),
+    ...(task?.files?.length ? { files: task.files } : {}),
     goal: clampText(task?.goal ?? spec.objective, BRIEF_LIMITS.goal),
     acceptance: task?.acceptance ?? [
       { id: 'contract', statement: clampText(`The result passes the acceptance contract ${spec.acceptance}`, BRIEF_LIMITS.statement) },
@@ -79,25 +84,27 @@ export function draftOf(e: Engine, run: RunRow, node: NodeRow, spec: ResolvedNod
 
 /** The length of what a Worker source renders from the draft, in characters (code points), for admission (ADR-0032). */
 export function renderedChars(e: Engine, draft: Draft): number {
-  return [...renderBrief({ ...draft, sandbox: NO_LOCAL_SANDBOX }, (ref) => e.ctx.artifacts.get(ref))].length
+  // Rendered as a source that writes the brief's files renders it, the longest any source sends.
+  return [...renderBrief({ ...draft, sandbox: NO_LOCAL_SANDBOX }, (ref) => e.ctx.artifacts.get(ref), { placesFiles: true })].length
 }
 
 /**
  * Record the brief for an execution, before it starts: an `objective` artifact whose inputs are
- * every artifact it points at (so an unknown pointer is refused and the classification floor
+ * every artifact it points at, its files' included (so an unknown pointer is refused and the classification floor
  * applies, INV-12), with the sandbox the routed Worker's source declares (none: a Worker that runs
  * nothing on this machine).
  */
 export function recordBrief(e: Engine, run: RunRow, node: NodeRow, draft: Draft, sandbox: WorkerSandbox | undefined): ArtifactRef {
   // At least as strict as what it points at, in its body as in its envelope (INV-12).
   let classification = draft.classification
-  for (const pointer of draft.artifacts) {
-    const stricter = e.ctx.artifacts.get(pointer.ref)?.classification
+  const refs = [...new Set([...draft.artifacts.map((p) => p.ref), ...(draft.files ?? []).map((f) => f.ref)])]
+  for (const ref of refs) {
+    const stricter = e.ctx.artifacts.get(ref)?.classification
     if (stricter && RANK[stricter] > RANK[classification]) classification = stricter
   }
   const body: Brief = { ...draft, sandbox: sandbox ?? NO_LOCAL_SANDBOX, classification }
   return e.ctx.artifacts.put({
-    kind: 'objective', bodySchema: body.schema, body, inputs: body.artifacts.map((p) => p.ref),
+    kind: 'objective', bodySchema: body.schema, body, inputs: refs,
     classification: body.classification, producer: { type: 'system', ref: 'workflow' }, runId: run.run_id, nodeId: node.node_id,
   }).id as ArtifactRef
 }

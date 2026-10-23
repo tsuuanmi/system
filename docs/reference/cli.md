@@ -17,9 +17,9 @@
 
 `-` in place of the text reads it from stdin. `--classification` is `public`,
 `operator-shared`, or `local-private`; `--tier` is `economy`, `standard`, or `frontier`.
-Each command refuses a flag it does not take: `--deep` only on `research`, `--variant` only
-on `run`, `--repo`, `--ref`, and `--focus` only on `review` (`--ref` and `--focus` only with
-`--repo`).
+Each command refuses a flag it does not take: `--deep` only on `research`, `--variant` and
+`--task` (with `--holder` and `--generation`) only on `run`, `--repo`, `--ref`, and `--focus`
+only on `review` (`--ref` and `--focus` only with `--repo`).
 
 | Command | What it does |
 |---|---|
@@ -27,7 +27,7 @@ on `run`, `--repo`, `--ref`, and `--focus` only on `review` (`--ref` and `--focu
 | `system research [--deep] [--classification <c>] (<question…> \| -)` | the research procedure: hypotheses, two cited reviews on two provider families, one evidence table, a critique on another family, conclusions (template `research`; `--deep`: its `deep` variant, whose reviews use Deep research) |
 | `system brainstorm [--classification <c>] (<question…> \| -)` | decide a question as a team: proposals, sealed ballots, a debate on a split, a tie to you (template `brainstorm`, [teams](../design/teams.md)) |
 | `system review [--repo <url> [--ref <r>] [--focus <glob>]…] [--classification <c>] (<criteria…> \| -)` | review as a team: the text given, or with `--repo` a public repository at one pinned commit (`--ref`: a branch, tag, or commit, default its HEAD; `--focus`: paths or globs to read first, repeatable); every finding's quote is checked, and a confirmed blocking finding decides `changes` (template `review`, [sources](../design/teams.md#sources)) |
-| `system run <template> [--variant <v>] [--session <id>] [--persist] [--tier <t>] [--classification <c>] (<input…> \| -)` | start any [workflow template](workflow-templates.md), or one of its variants (a team: `brainstorm`, `review`) |
+| `system run <template> [--variant <v>] [--session <id>] [--persist] [--tier <t>] [--classification <c>] [--task <taskId> [--holder <owner> --generation <n>]] (<input…> \| -)` | start any [workflow template](workflow-templates.md), or one of its variants (a team: `brainstorm`, `review`). With `--task`, the run serves one attempt of that [board task](../design/workflow-engine.md#board-tasks), as MCP `run`'s `task` does: it claims the ready task, or takes the claim `board_claim` gave `--holder` at `--generation` (both or neither); a task not ready, or a stale claim, refuses it with nothing started |
 | `system approve <runId> [--plan <id>] [--reject] [note…]` | approve (or reject) the plan a run is waiting on, bound to that exact plan (name it with `--plan` when several wait) |
 | `system vote <runId> --decision <id> <option\|inconclusive> <rationale…>` | break a team's tie: the deciding vote, bound to that exact tie decision ([teams](../design/teams.md#tie)) |
 | `system result <runId>` | wait for a run and print its answer; when it waits on a plan or a tie, print the `approve` or `vote` command to run and return |

@@ -25,7 +25,7 @@ import {
 import type {} from '@tsuuanmi/system-artifacts'
 import type { Classification } from '@tsuuanmi/system-egress'
 import { type Lease, LeaseLost, StaleGeneration } from '@tsuuanmi/system-leases'
-import { captureGitSubject, type ContentId, dshHome, sha256 } from '@tsuuanmi/system-libs'
+import { bodyText, BRIEF_FILE_PATH, type BriefFile, captureGitSubject, type ContentId, dshHome, sha256 } from '@tsuuanmi/system-libs'
 import { ProviderError, ProviderScheduler, dispositionOf, promptOfStart, toProviderError } from '@tsuuanmi/system-provider-core'
 import { type LimitState, type Resources, ResourcesError, type UsageRecord } from '@tsuuanmi/system-resources-core'
 import type {} from '@tsuuanmi/system-store'
@@ -110,6 +110,11 @@ interface RunRow {
   reservation_id?: string | null
   /** The workflow run the run belongs to, when it belongs to one (`WorkerStart.runId`). */
   workflow_run_id?: string | null
+  /** The board task and project its brief serves, when it serves one: its usage is recorded under them. */
+  task_id?: string | null
+  project_id?: string | null
+  /** JSON `[{ path, text }]`: the brief's files, resolved at start, written into the run's worktree before the agent starts. */
+  files?: string | null
   created_at: string
   updated_at: string
 }
@@ -123,6 +128,8 @@ const MAX_MODELS = 16
 /** How often finished workflow runs' worktrees are looked at for removal. */
 const SWEEP_MS = 60 * 60_000
 const now = (): string => new Date().toISOString()
+/** The board task and project a run serves, as its reservation and usage record name them. */
+const scopeOf = (row: RunRow): { taskId?: string; projectId?: string } => ({ ...(row.task_id ? { taskId: row.task_id } : {}), ...(row.project_id ? { projectId: row.project_id } : {}) })
 
 export class AgentWorkers extends Service {
   static inject = ['store', 'artifacts', 'leases', 'workers', 'agentRuntimes', 'egress']
@@ -206,7 +213,15 @@ export class AgentWorkers extends Service {
         created_at TEXT NOT NULL, removed_at TEXT, decision TEXT, failure TEXT, failed_at TEXT,
         PRIMARY KEY (repository, workflow_run_id)
       );`,
-    }, GATE_MIGRATION])
+    }, GATE_MIGRATION, {
+      // The board task a run's brief serves (brief@1.x taskId, projectId): its reservation and usage name it.
+      version: 6,
+      sql: 'ALTER TABLE agent_runs ADD COLUMN task_id TEXT; ALTER TABLE agent_runs ADD COLUMN project_id TEXT;',
+    }, {
+      // A brief's files (brief@1.2 files, the board's TASKS.md): their text, resolved at start like the prompt.
+      version: 7,
+      sql: 'ALTER TABLE agent_runs ADD COLUMN files TEXT;',
+    }])
     ctx.workers.register({
       name: 'agents',
       describe: () => this.describe(),
@@ -393,11 +408,19 @@ export class AgentWorkers extends Service {
   private start(request: WorkerStart): WorkerExecution {
     const worker = this.workers.get(request.worker)
     if (!worker) throw new ProviderError('invalid_input', `${request.worker} is not an agent Worker`)
+    // A run of a workflow run on a Worker with a worktree per run writes the brief's files there (brief@1.2 files).
+    const places = !!worker.worktreePerRun && request.runId !== undefined
     // A brief is rendered here, at start, its pointers resolved to their artifacts' text (INV-12).
-    const { prompt, classification } = promptOfStart(request, (ref) => this.ctx.artifacts.get(ref))
+    const { prompt, classification } = promptOfStart(request, (ref) => this.ctx.artifacts.get(ref), { placesFiles: places })
     if (!prompt.trim()) throw new ProviderError('invalid_input', 'prompt must not be empty')
     // It may name a branch and a directory (a worktree per run): letters, digits, `_`, and `-` only.
     if (request.runId !== undefined && !RUN_ID.test(request.runId)) throw new ProviderError('invalid_input', `run id ${JSON.stringify(request.runId)} must match ${RUN_ID}`)
+    // The board task the brief serves, from the engine's own record (never from model text): the run's usage is recorded under it.
+    const task = request.brief ? this.ctx.artifacts.get(request.brief)?.body as { taskId?: unknown; projectId?: unknown; files?: BriefFile[] } | undefined : undefined
+    const taskId = typeof task?.taskId === 'string' ? task.taskId : null
+    const projectId = taskId !== null && typeof task?.projectId === 'string' ? task.projectId : null
+    // Its files' text, resolved now like the prompt, so the egress check reads what the agent will (INV-12).
+    const files = places && Array.isArray(task?.files) && task.files.length ? JSON.stringify(task.files.map((file) => this.fileOf(file))) : null
     const key = sha256(`agent\0${request.key}`)
     return this.ctx.store.transaction((db) => {
       const existing = db.prepare('SELECT * FROM agent_runs WHERE request_key = ?').get(key) as RunRow | undefined
@@ -413,13 +436,21 @@ export class AgentWorkers extends Service {
       const row: RunRow = {
         run_id: newId(), request_key: key, worker: request.worker, session_id: request.sessionId ?? null, prompt,
         classification, status: 'queued', submitted_at: null, native_handle: null, result: null, error: null,
-        workflow_run_id: request.runId ?? null, created_at: now(), updated_at: now(),
+        workflow_run_id: request.runId ?? null, task_id: taskId, project_id: projectId, files, created_at: now(), updated_at: now(),
       }
-      db.prepare(`INSERT INTO agent_runs (run_id, request_key, worker, session_id, prompt, classification, status, workflow_run_id, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?)`).run(row.run_id, key, row.worker, row.session_id, row.prompt, row.classification, row.workflow_run_id ?? null, row.created_at, row.updated_at)
+      db.prepare(`INSERT INTO agent_runs (run_id, request_key, worker, session_id, prompt, classification, status, workflow_run_id, task_id, project_id, files, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?)`).run(row.run_id, key, row.worker, row.session_id, row.prompt, row.classification, row.workflow_run_id ?? null, taskId, projectId, files, row.created_at, row.updated_at)
       this.ctx.store.afterCommit(() => this.schedule(row.run_id))
       return execution(row)
     })
+  }
+
+  /** A brief's file as the run keeps it: its path, checked again, and its artifact's text; one not stored refuses the start, with nothing sent. */
+  private fileOf(file: BriefFile): { path: string; text: string } {
+    if (typeof file?.path !== 'string' || !BRIEF_FILE_PATH.test(file.path)) throw new ProviderError('invalid_input', `the brief names a file ${JSON.stringify(file?.path)} that is not under .system/; nothing was sent`)
+    const stored = this.ctx.artifacts.get(file.ref)
+    if (!stored || stored.body === undefined) throw new ProviderError('invalid_input', `the brief's file ${file.path} points at ${file.ref}, which is not stored here; nothing was sent`)
+    return { path: file.path, text: bodyText(stored.body) }
   }
 
   private async wait(runId: string, timeoutMs: number): Promise<WorkerExecution> {
@@ -502,8 +533,11 @@ export class AgentWorkers extends Service {
         }
         const worker = this.workers.get(row.worker)
         if (!worker) throw new ProviderError('config_error', `${row.worker} is no longer configured`)
-        // INV-12: the prompt reaches the agent's remote model, so it is checked before anything starts.
-        const egress = await this.ctx.egress.check({ payload: row.prompt, classification: row.classification as Classification, workerClass: 'agent' })
+        // INV-12: the prompt reaches the agent's remote model, so it is checked before anything starts,
+        // with the files it will read in its worktree: one check of exactly what the agent is given.
+        const placed = row.files ? (JSON.parse(row.files) as Array<{ path: string; text: string }>) : []
+        const payload = [row.prompt, ...placed.map((f) => `${f.path}:\n${f.text}`)].join('\n\n')
+        const egress = await this.ctx.egress.check({ payload, classification: row.classification as Classification, workerClass: 'agent' })
         // Fenced like every write of a run: a holder that lost the run writes nothing.
         this.update(row.run_id, { egress_decision: egress.decision }, current)
         if (!egress.allowed) {
@@ -540,6 +574,12 @@ export class AgentWorkers extends Service {
       throw new ProviderError('config_error', `${worker.runtime} cannot run this Worker now: ${evidence.gatesToolCalls ? evidence.detail : `${evidence.detail}; it cannot ask the run's gate before each tool call`}`)
     }
     const workspace = await this.workspaceOf(row, worker)
+    // The brief's files go into the run's own worktree before the agent starts; nothing has reached it yet.
+    if (row.files && workspace !== worker.workspace) {
+      await this.worktrees.place(workspace, JSON.parse(row.files) as Array<{ path: string; text: string }>).catch((error: unknown) => {
+        throw new ProviderError('config_error', `${row.worker}: the brief's files cannot be written into ${workspace}: ${(error as Error).message}; nothing was run`, { cause: error })
+      })
+    }
     // Every tool call passes the run's gate before it runs; the runtime's own policy still holds.
     const gate = runGate(this.ctx, {
       runId: row.run_id, worker: row.worker, workspace, sessionId: row.session_id ?? undefined, workflowRunId: row.workflow_run_id ?? undefined,
@@ -638,7 +678,7 @@ export class AgentWorkers extends Service {
    * `config_error` when the ledger does not configure it. Returns the reservation id.
    */
   private async reserve(row: RunRow, meter: Meter, lease: () => Lease): Promise<string> {
-    const reserved = await meter.resources.reserve({ runId: row.run_id, lines: [{ pool: meter.pool, unit: 'runs', amount: 1 }] }).catch((error: unknown) => {
+    const reserved = await meter.resources.reserve({ runId: row.run_id, ...scopeOf(row), lines: [{ pool: meter.pool, unit: 'runs', amount: 1 }] }).catch((error: unknown) => {
       throw error instanceof ResourcesError ? new ProviderError('config_error', `the resource ledger refused to reserve for ${row.worker}: ${error.message}`, { cause: error }) : error
     })
     try {
@@ -682,7 +722,7 @@ export class AgentWorkers extends Service {
       // The runtime's own identity of its result, so another source of the same unit is a duplicate.
       requestId: `${worker.runtime}:${metering?.resultId ?? row.run_id}`,
       source: 'runtime-result', observedAt: now(), account: meter.account, pool: meter.pool, worker: row.worker, runId: row.run_id,
-      ...(row.session_id ? { sessionId: row.session_id } : {}),
+      ...(row.session_id ? { sessionId: row.session_id } : {}), ...scopeOf(row),
       ...(Object.keys(model).length ? { model } : {}), ...usage,
       ...(metering?.turns !== undefined ? { turns: metering.turns } : {}), durationMs: Math.max(0, Math.round(durationMs)),
       ...(metering?.costUsd !== undefined ? { cost: { amount: metering.costUsd, currency: 'USD' as const, basis: 'runtime-estimate' as const } } : {}),

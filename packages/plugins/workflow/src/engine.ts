@@ -22,7 +22,7 @@ import { appended, compose, DEFAULT_TEMPLATES, literal, type NodeTemplate, recor
 import { runSnapshot } from './sources.ts'
 import { TaskRuns } from './tasks.ts'
 import { decide, expireTie, restriction, runtimeOf, tally, teamGroup, teamPrompt } from './teams.ts'
-import { type Config, errorOf, LEASE_TTL_MS, newId, TASK_WAIT_MS, type NodeHelpers, type NodeRecord, type NodeRow, now, type RunRow, type RunView, type StartInput, type WorkflowError, WorkflowFailure } from './types.ts'
+import { type Config, errorOf, LEASE_TTL_MS, newId, TASK_WAIT_MS, type NodeHelpers, type NodeRecord, type NodeRow, now, type RunRow, type RunView, type StartInput, type TaskBudget, type WorkflowError, WorkflowFailure } from './types.ts'
 import { view } from './views.ts'
 
 /** Preflight a template and each of its variants, and check that every result schema it names is known. Throws why. */
@@ -39,7 +39,7 @@ export function checkTemplate(name: string, nodes: NodeTemplate[], schemas: Sche
 export interface Prepared { spec: ResolvedSpec; requestKey: string | null }
 
 /** The board task a run is admitted for, as the board granted it. */
-export interface Bound { runId: string; taskId: string; holder: string; generation: number; claim: 'adopted' | 'own'; writes?: Subject | undefined; frame?: TaskFrame | undefined }
+export interface Bound { runId: string; taskId: string; holder: string; generation: number; claim: 'adopted' | 'own'; writes?: Subject | undefined; frame?: TaskFrame | undefined; budget?: TaskBudget | undefined }
 
 export class Engine {
   readonly schemas = new SchemaRegistry()
@@ -198,8 +198,9 @@ export class Engine {
           .run(run.run_id, node.nodeId, ordinal, JSON.stringify(resolved), JSON.stringify(record), now())
       })
       if (bound) {
-        db.prepare(`INSERT INTO workflow_tasks (run_id, task_id, holder, generation, claim, phase, writes, frame, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'starting', ?, ?, ?, ?)`)
-          .run(run.run_id, bound.taskId, bound.holder, bound.generation, bound.claim, bound.writes ? JSON.stringify(bound.writes) : null, bound.frame ? JSON.stringify(bound.frame) : null, now(), now())
+        db.prepare(`INSERT INTO workflow_tasks (run_id, task_id, holder, generation, claim, phase, writes, frame, budget, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'starting', ?, ?, ?, ?, ?)`)
+          .run(run.run_id, bound.taskId, bound.holder, bound.generation, bound.claim, bound.writes ? JSON.stringify(bound.writes) : null, bound.frame ? JSON.stringify(bound.frame) : null,
+            bound.budget ? JSON.stringify(bound.budget) : null, now(), now())
         return view(this, run)
       }
       this.open(run.run_id)
@@ -324,7 +325,14 @@ export class Engine {
           // Retired nodes (a re-plan's history) never run and never decide the run's outcome.
           const nodes = this.nodeRows(runId).filter((n) => n.state !== 'RETIRED')
           const failed = nodes.find((n) => n.state === 'FAILED')
-          if (failed) return this.finish(run, 'failed', { error: failed.error }, current)
+          if (failed) {
+            // A step that asked questions instead of answering: the board takes the question wait before the run ends.
+            if (await this.tasks.ask(runId) === 'wait') {
+              this.retryLater(runId, TASK_WAIT_MS)
+              return
+            }
+            return this.finish(run, 'failed', { error: failed.error }, current)
+          }
           if (nodes.every((n) => n.state === 'COMPLETED')) {
             const final = (JSON.parse(nodes[nodes.length - 1]!.record) as NodeRecord).outputReceipt!.result
             // A board task's result binds to the exact subject it writes (INV-5), or the run fails.
@@ -744,6 +752,8 @@ export class Engine {
   /** A finished execution: check its result against the node's contract, then commit the output receipt. */
   private complete(run: RunRow, node: NodeRow, spec: ResolvedNode, execution: WorkerExecution, lease: () => Lease): void {
     const result = execution.result as ArtifactRef
+    // A step of a board task's run may ask questions instead of answering, as its brief offers: no result, the task waits.
+    if (this.tasks.asks(run, node, execution, lease)) return
     const acceptance = this.ctx.workers.accept(result, spec.acceptance, { producer: 'workflow', runId: run.run_id, nodeId: node.node_id, ...(spec.resultSchema ? { resultSchema: spec.resultSchema } : {}) })
     const decisions = { decisions: JSON.stringify([...execution.decisions, ...routedDecisions(node, this)]) }
     const data = { executionId: execution.id, source: node.source, worker: node.worker, tier: node.served_tier, quotaClass: node.quota_class, accepted: acceptance.accepted }

@@ -273,6 +273,30 @@ second execution path (INV-1).
     operator may accept leaves the review held for the operator. A failed or stopped run, and a run whose holder was
     lost, is reported with `reconcileRun` (a `reconciliation` decision). The view's `task`
     shows the claim, the phase, and how the outcome reached the board;
+  - a task that declares a budget runs only where the resource ledger can hold it to its lines:
+    with no ledger loaded, or a pool of its budget the ledger does not configure or finds
+    unavailable, the start is refused before the task is taken (`config_error`, `overloaded`; an
+    `admission` refusal). Once the board recorded the run, before any step runs, the run reserves
+    its task's lines on the ledger (`ctx.resources.reserve`: the lines as caps for the task, the
+    least of each line as its draw), and releases the reservation when it finishes. A cap the
+    task already reached refuses it: the run blocks the task on the board (`budget-spent`, which
+    asks the policy about `funding`) and fails as `budget_spent` with nothing of it run, its
+    outcome `blocked`; any other refusal fails it (`quota_exhausted`), an attempt the board
+    counts. Where it stands is the view's `task.budget` and the `workflow.task.budget` event
+    ([a task's budget](../../../docs/design/workflow-engine.md#a-tasks-budget));
+  - every brief of the run gives the board's `TASKS.md` projection of its project
+    (`renderTasks` of `board-core`, at most `tasksFile.maxTasks` tasks, default 200, and
+    `tasksFile.maxChars` characters, default 65,536, cut with a note) as a `board-projection@1.0`
+    artifact named in its `files` (`brief@1.2`, path `.system/TASKS.md`), which a Worker source
+    with a worktree of the run's own writes there before the run, git-ignored and never read back
+    ([TASKS.md in a run's workspace](../../../docs/design/workflow-engine.md#tasksmd-in-a-runs-workspace));
+  - a step may answer with questions instead of a result, as every brief of the run offers
+    (`brief@1.2` `ask`): an answer that is wholly one `{"questions": [...]}` object, 1 to 8 of at
+    most 500 characters, fails the step as `question` with a `gate` decision
+    (`workflow.task-question`), nothing new starts, and before the run ends the holder blocks the
+    task on them (the board's question wait); its outcome is `blocked`. Answered, the next
+    attempt's brief points at the answers
+    ([a question from a run](../../../docs/design/workflow-engine.md#a-question-from-a-run));
   - every brief the run writes states the task, the attempt, its goal and acceptance criteria,
     its budget less the usage spent on it (the ledger's records that name the task, its runs, or
     the executions they started, each once), and points at the accepted results of the
@@ -481,7 +505,8 @@ second execution path (INV-1).
     blocked gate records and names (what it waits for, until when).
 - **Injects:** `store`, `artifacts`, `eventLog`, `leases`, `egress`, `workers`, `workerSessions`;
   `mcp` and `board` (the abstract `Board` of `board-core`, never the board plugin) are optional;
-  it reads `resources` when present (a task's budget for its briefs), asks `digests` (the
+  it reads `resources` when present (a task's budget: its reservation, and its briefs; a task
+  with a budget is refused without it), asks `digests` (the
   abstract `Digests` of `digest-core`) when present, for a task's results, and reads `approvals`
   (the abstract `Approvals` of `approvals-core`) when present: remediation gates, deferred calls'
   continuations, a plain run's acceptance.
@@ -491,7 +516,9 @@ second execution path (INV-1).
   reported, a restart with the holder lost (reconciled, nothing new started) and one whose work
   finished meanwhile (accepted through `reconcileRun`), a review left to the operator for want
   of a required check (held by the board, past the run's lease), a result off the written
-  subject, and the refusals with no board. [`tests/remediation.spec.ts`](tests/remediation.spec.ts)
+  subject, a task's budget reserved and released, a spent one blocking the task, the refusals
+  of a budget no ledger can hold, a step's questions blocking its task and the answers briefing
+  the next attempt, the board's TASKS.md in every brief (bounded), and the refusals with no board. [`tests/remediation.spec.ts`](tests/remediation.spec.ts)
   runs remediation over the store-backed queue and a git working tree: one request on the exact
   subject and the fix only once it is approved (`approve` refused), a rejection and `continue`, an
   expiry, `forbid`, `stop` withdrawing, a restart that applies a verdict given meanwhile and adopts

@@ -13,16 +13,13 @@ import z from '@deepseek-ai/schemastery'
 import { type ApprovalRequest, type AutonomyVerdict, type Check, type Mode, type NewRequest, waitSeconds } from '@tsuuanmi/system-approvals-core'
 import type {} from '@tsuuanmi/system-artifacts'
 import {
-  type ActionClass, type ArtifactRef, Board, BoardError, type BoardTask, type CancelReason, type Charter, type CharterInput, type Claim, type Project, type ProjectState, type RunOutcome, type Subject, type TaskInput, type TaskState, TERMINAL, type WaitReason,
+  type ActionClass, type ArtifactRef, Board, BoardError, type BoardTask, type CancelReason, type Charter, type CharterInput, type Claim, type Project, type ProjectState, renderTasks, type RunOutcome, type Subject, type TaskInput, type TaskState, TERMINAL, type WaitReason,
 } from '@tsuuanmi/system-board-core'
 import type {} from '@tsuuanmi/system-gateway-core'
 import { contentId, SchemaError, SchemaRegistry } from '@tsuuanmi/system-libs'
 import { type Lease, LeaseLost, StaleGeneration } from '@tsuuanmi/system-leases'
 import type {} from '@tsuuanmi/system-store'
-import { renderTasks } from './projection.ts'
 import { registerTools } from './tools.ts'
-
-export { renderTasks } from './projection.ts'
 
 export interface Config {
   /** How long a wait for input lasts before it cancels the task, in seconds (default 7 days). */

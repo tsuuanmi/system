@@ -11,9 +11,11 @@
 > Defined in [`resources-core`](../../packages/resources-core/README.md); provided by
 > [`resources`](../../packages/plugins/resources/README.md) on `ctx.store`, with the MCP tools
 > `resources_pools` and `resources_usage`. Agent Workers configured with a pool reserve, record,
-> and observe through it ([agent runtimes](agent-runtimes.md#metering)). Differs from target: no
-> other Worker source reports yet, no transcript is reconciled, the engine does not reserve
-> before a run, and the bundle configures no pool.
+> and observe through it ([agent runtimes](agent-runtimes.md#metering)), naming the board task
+> their brief serves; the workflow engine reserves a board task's budget lines before the task's
+> run starts work ([a task's budget](workflow-engine.md#a-tasks-budget)). Differs from target: no
+> other Worker source reports yet, no transcript is reconciled, the engine reserves only for a
+> task that declares a budget, and the bundle configures no pool.
 
 The resource ledger knows what each configured pool has left and what every run consumed. Its
 numbers come from objective sources only: a runtime's result message, a provider's usage
@@ -86,8 +88,9 @@ first reading comes from the runtime's result. Every reading field is optional.
 - A cap counts, for its scope (a task, else a project), every counted record of its pool in its
   unit, plus every unexpired reservation held for that scope: `tokens` are input plus output, `usd` the
   record's cost, `turns` its turns, `runs` one per record, `minutes` its duration.
-- A record counts for a task when it names the task or its run was reserved for it. A board
-  task's brief counts more: the workflow engine also reads the records of the runs that served
+- A record counts for a task when it names the task or its run was reserved for it: an agent
+  Worker's record names the task its brief serves, and a task's run is reserved for its task. A
+  board task's brief counts more: the workflow engine also reads the records of the runs that served
   the task and of the executions they started, each record once
   ([usage spent on a task](workflow-engine.md#a-board-tasks-brief)); a cap does not.
 

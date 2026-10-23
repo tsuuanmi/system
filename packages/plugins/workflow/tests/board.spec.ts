@@ -133,6 +133,10 @@ async function boot(options: { workflow?: Config; board?: boolean | 'short'; wor
 }
 
 const project = (ctx: Context): Promise<void> => activeProject(ctx)
+/** The fake ledger's `max.programmatic` pool reads ok, so a budget on it can be reserved (a window with no reading is unknown, INV-2). */
+const poolOpen = async (ctx: Context, observedAt = new Date()): Promise<void> => {
+  await ctx.resources.observe({ schema: 'limit-state@1.0', pool: 'max.programmatic', account: 'max', window: { id: 'monthly', kind: 'credit' }, state: 'ok', source: 'runtime-result', observedAt: observedAt.toISOString() })
+}
 const ready = (ctx: Context, title: string, extra: Partial<TaskInput> = {}): Promise<BoardTask> => readyTask(ctx, title, extra)
 
 const settled = async (ctx: Context, runId: string): Promise<RunView> => {
@@ -432,6 +436,7 @@ describe('ctx.workflow serves board tasks over the store-backed board and approv
   it('briefs a task from the board: the accepted results of the task it depends on by content id, its budget less the usage the ledger counts for it, its criteria first (PROP-0010)', async () => {
     const { ctx, workers } = await boot({ resources: true })
     await project(ctx)
+    await poolOpen(ctx)
     const first = await ready(ctx, 'first')
     workers.reply = () => ({ text: 'the first result' })
     const one = await ctx.workflow.start({ template: 'solo', input: 'q1', classification: 'public', task: { taskId: first.taskId } })
@@ -452,12 +457,13 @@ describe('ctx.workflow serves board tasks over the store-backed board and approv
     expect(brief).toMatchObject({ taskId: second.taskId, attempt: 1, budget: { remaining: [{ pool: 'max.programmatic', unit: 'usd', amount: 3.5 }, { pool: 'max.programmatic', unit: 'runs', amount: 2 }] } })
     expect(brief.artifacts).toEqual([{ ref: firstResult, role: 'input', note: `the accepted result of ${first.taskId}: first` }])
     expect(JSON.stringify(brief)).not.toContain('the first result')
-    expect(started.prompt).toBe(`Board task ${second.taskId} of project p1, attempt 1.\nGoal: build on the first\nAcceptance criteria:\n- a1: it builds\n\ngo on\n\nRead these too:\n\n<artifact id="${firstResult}" role="input" note="the accepted result of ${first.taskId}: first">\nthe first result\n</artifact>`)
+    expect(started.prompt).toBe(`Board task ${second.taskId} of project p1, attempt 1.\nGoal: build on the first\nAcceptance criteria:\n- a1: it builds\nIf you cannot finish without an answer from a person, answer with only this JSON object and nothing else: {"questions": ["..."]}, with 1 to 8 questions of at most 500 characters each. The task then waits for the answers, and its next attempt is given them.\n\ngo on\n\nRead these too:\n\n<artifact id="${firstResult}" role="input" note="the accepted result of ${first.taskId}: first">\nthe first result\n</artifact>`)
   })
 
   it('counts against a task\'s budget the usage the ledger records under the runs that served it and the executions they started, each record once (PROP-0010)', async () => {
     const { ctx, workers } = await boot({ resources: true })
     await project(ctx)
+    await poolOpen(ctx)
     const budget = [
       { pool: 'max.programmatic', unit: 'usd' as const, amount: 5 }, { pool: 'max.programmatic', unit: 'runs' as const, amount: 4 },
       { pool: 'max.programmatic', unit: 'tokens' as const, amount: 1000 },
@@ -481,6 +487,161 @@ describe('ctx.workflow serves board tasks over the store-backed board and approv
     expect(brief).toMatchObject({ attempt: 2, budget: { remaining: [
       { pool: 'max.programmatic', unit: 'usd', amount: 3 }, { pool: 'max.programmatic', unit: 'runs', amount: 1 }, { pool: 'max.programmatic', unit: 'tokens', amount: 600 },
     ] } })
+  })
+
+  it('reserves a task\'s budget lines on the ledger before its run starts work, for the task, and releases the reservation when the run finishes (PROP-0010)', async () => {
+    const { ctx, workers } = await boot({ resources: true })
+    await project(ctx)
+    await poolOpen(ctx)
+    const budget = [{ pool: 'max.programmatic', unit: 'usd' as const, amount: 5 }, { pool: 'max.programmatic', unit: 'runs' as const, amount: 3 }]
+    const task = await ready(ctx, 'funded', { budget })
+    workers.reply = () => 'hold'
+    const run = await ctx.workflow.start({ template: 'solo', input: 'q', classification: 'public', task: { taskId: task.taskId } })
+    await until(() => workers.started.length === 1, 'the step started')
+    // Held while the run lives: the least of each line, the task's lines as its caps.
+    const held = ctx.workflow.get(run.runId)!.task!.budget!
+    expect(held).toMatchObject({ state: 'reserved' })
+    const reserved = decisionOf(ctx, held.decision)
+    expect(reserved).toMatchObject({ decisionType: 'budget', outcome: { option: 'reserved', detail: { runId: run.runId, lines: [{ pool: 'max.programmatic', unit: 'usd', amount: 0.000001 }, { pool: 'max.programmatic', unit: 'runs', amount: 1 }] } } })
+    const { reservationId } = JSON.parse((ctx.store.db.prepare('SELECT budget FROM workflow_tasks WHERE run_id = ?').get(run.runId) as { budget: string }).budget) as { reservationId: string }
+    workers.release(workers.started[0]!.id, { text: 'within budget' })
+    expect((await reported(ctx, run.runId)).task?.outcome).toMatchObject({ status: 'accepted', state: 'done' })
+    await until(() => ctx.workflow.get(run.runId)!.task!.budget!.state === 'released', 'the reservation released')
+    await expect(ctx.resources.release(reservationId)).rejects.toMatchObject({ failure: 'unknown-reservation' })
+    expect(ctx.eventLog.query({ runId: run.runId, type: 'workflow.task.budget', limit: 10 }).map((e) => e.data?.['state'])).toEqual(['reserved'])
+    // A record of the run now counts for the task: the run was reserved for it.
+    await ctx.resources.record({ schema: 'usage-record@1.0', requestId: 'run-1', source: 'runtime-result', observedAt: new Date().toISOString(), account: 'max', pool: 'max.programmatic', runId: run.runId, turns: 1 })
+    expect((await ctx.resources.usage({ taskId: task.taskId })).records).toHaveLength(1)
+  })
+
+  it('blocks a task whose budget is spent (budget-spent) before any step of its run runs; the board asks the operator to fund it (PROP-0010, INV-2)', async () => {
+    const { ctx, workers } = await boot({ resources: true })
+    await project(ctx)
+    await poolOpen(ctx)
+    const task = await ready(ctx, 'spent', { budget: [{ pool: 'max.programmatic', unit: 'runs', amount: 1 }, { pool: 'max.programmatic', unit: 'usd', amount: 5 }] })
+    // One run already counted for the task: its runs line is reached.
+    await ctx.resources.record({ schema: 'usage-record@1.0', requestId: 'r-spent', source: 'runtime-result', observedAt: new Date().toISOString(), account: 'max', pool: 'max.programmatic', taskId: task.taskId, turns: 1 })
+    const run = await ctx.workflow.start({ template: 'solo', input: 'q', classification: 'public', task: { taskId: task.taskId } })
+    const failed = await settled(ctx, run.runId)
+    expect(failed).toMatchObject({ status: 'failed', error: { kind: 'budget_spent', disposition: 'USER_ACTION' } })
+    expect(failed.error!.message).toMatch(/cap 1 runs of max.programmatic would be exceeded/)
+    expect(workers.started).toHaveLength(0)
+    const view = await reported(ctx, run.runId)
+    expect(view.task?.budget).toMatchObject({ state: 'refused', spent: true, blocked: true })
+    expect(decisionOf(ctx, view.task!.budget!.decision)).toMatchObject({ decisionType: 'budget', outcome: { option: 'refused' } })
+    expect(view.task?.outcome).toMatchObject({ status: 'blocked', state: 'waiting-for-approval' })
+    // The board's own path for a spent budget: funding asks the operator (the policy's default here).
+    const blocked = (await ctx.board.task(task.taskId))!
+    expect(blocked).toMatchObject({ state: 'waiting-for-approval', waiting: { reason: 'budget-spent' }, run: { runId: run.runId }, attempts: { count: 1 } })
+    const request = (await ctx.approvals.get(blocked.waiting!.approvalRequest!))!
+    expect(request).toMatchObject({ action: { class: 'funding' }, requester: { component: 'board', taskId: task.taskId } })
+    expect(ctx.eventLog.query({ runId: run.runId, type: 'workflow.task.budget', limit: 10 }).map((e) => e.data?.['state'])).toEqual(['refused'])
+  })
+
+  it('refuses a task with a budget before taking it when no ledger is loaded, or its pool is not configured or not available, with nothing started (INV-2)', async () => {
+    const bare = await boot()
+    await project(bare.ctx)
+    const unledgered = await ready(bare.ctx, 'no ledger', { budget: [{ pool: 'max.programmatic', unit: 'runs', amount: 3 }] })
+    expect(await refusalOf(() => bare.ctx.workflow.start({ template: 'solo', input: 'q', classification: 'public', task: { taskId: unledgered.taskId } }))).toMatch(/^config_error: task \S+ declares a budget, and no resource ledger is loaded/)
+
+    const { ctx, workers } = await boot({ resources: true })
+    await project(ctx)
+    const unknown = await ready(ctx, 'unknown pool', { budget: [{ pool: 'nowhere', unit: 'runs', amount: 3 }] })
+    expect(await refusalOf(() => ctx.workflow.start({ template: 'solo', input: 'q', classification: 'public', task: { taskId: unknown.taskId } }))).toMatch(/^config_error: .*draws on pool nowhere, which the resource ledger does not configure/)
+    // No reading yet: missing telemetry is not capacity.
+    const unread = await ready(ctx, 'unread pool', { budget: [{ pool: 'max.programmatic', unit: 'runs', amount: 3 }] })
+    expect(await refusalOf(() => ctx.workflow.start({ template: 'solo', input: 'q', classification: 'public', task: { taskId: unread.taskId } }))).toMatch(/^overloaded: pool max.programmatic of task \S+'s budget is unavailable/)
+    expect(workers.started).toHaveLength(0)
+    expect(bare.workers.started).toHaveLength(0)
+    for (const [c, t] of [[bare.ctx, unledgered], [ctx, unknown], [ctx, unread]] as const) expect(await c.board.task(t.taskId)).toMatchObject({ state: 'ready', attempts: { count: 0 } })
+    expect(decisionsOf(ctx, 'admission', 'workflow.task-admission').filter((d) => d.outcome.option === 'refuse')).toHaveLength(2)
+  })
+
+  it('blocks a task on the questions a step asks instead of answering (question); answered, its next attempt is briefed with the answers (PROP-0010, INV-6)', async () => {
+    const { ctx, workers } = await boot()
+    await project(ctx)
+    const task = await ready(ctx, 'unclear')
+    workers.reply = () => ({ text: '```json\n{"questions": ["Which band width?", "Keep the old API?"]}\n```' })
+    const run = await ctx.workflow.start({ template: 'chain', input: 'q', classification: 'public', task: { taskId: task.taskId } })
+    const failed = await settled(ctx, run.runId)
+    expect(failed).toMatchObject({ status: 'failed', error: { kind: 'question', disposition: 'USER_ACTION' } })
+    // The step that asked has no result, and nothing after it started.
+    expect(failed.nodes.map((n) => n.state)).toEqual(['FAILED', 'WAITING'])
+    expect(failed.nodes[0]!.result).toBeUndefined()
+    expect(workers.started).toHaveLength(1)
+    // Its brief offered the way to ask (brief@1.2 ask).
+    expect(ctx.artifacts.get(workers.started[0]!.brief!)!.body).toMatchObject({ schema: 'brief@1.2', ask: { maxQuestions: 8 } })
+    const view = await reported(ctx, run.runId)
+    expect(view.task?.question).toMatchObject({ state: 'raised', nodeId: 'a', questions: ['Which band width?', 'Keep the old API?'] })
+    expect(decisionOf(ctx, view.task!.question!.decision)).toMatchObject({ decisionType: 'gate', decider: { id: 'workflow.task-question' }, outcome: { option: 'ask', detail: { taskId: task.taskId, nodeId: 'a' } } })
+    expect(view.task?.outcome).toMatchObject({ status: 'blocked', state: 'waiting-for-input' })
+    expect(ctx.eventLog.query({ runId: run.runId, limit: 100 }).map((e) => e.type)).toEqual(expect.arrayContaining(['workflow.node.failed', 'workflow.task.question', 'workflow.run.failed', 'workflow.task.reported']))
+    expect(await ctx.board.task(task.taskId)).toMatchObject({ state: 'waiting-for-input', waiting: { reason: 'question', questions: ['Which band width?', 'Keep the old API?'] }, attempts: { count: 1 } })
+
+    // The lead answers every question: the next attempt goes through the gate (read: auto) and is briefed with the answers.
+    await ctx.board.answer(task.taskId, ['64 is enough', 'yes, keep it'])
+    expect(await ctx.board.task(task.taskId)).toMatchObject({ state: 'ready' })
+    workers.reply = () => ({ text: 'the answer' })
+    const next = await ctx.workflow.start({ template: 'chain', input: 'q', classification: 'public', task: { taskId: task.taskId } })
+    expect((await reported(ctx, next.runId)).task?.outcome).toMatchObject({ status: 'accepted', state: 'done' })
+    const brief = ctx.artifacts.get(workers.started[1]!.brief!)!.body as { attempt: number; artifacts: Array<{ role: string; note: string }> }
+    expect(brief.attempt).toBe(2)
+    expect(brief.artifacts).toEqual(expect.arrayContaining([expect.objectContaining({ role: 'review', note: 'the answers to the 2 question(s) attempt 1 asked, and the decision that made attempt 2' })]))
+    expect(workers.started[1]!.prompt).toContain('64 is enough')
+  })
+
+  it('takes an answer that only mentions questions as a result, and offers no way to ask outside a board task', async () => {
+    const { ctx, workers } = await boot()
+    await project(ctx)
+    const task = await ready(ctx, 'prose')
+    workers.reply = () => ({ text: 'Done. I had no {"questions": ["none"]} left.' })
+    const run = await ctx.workflow.start({ template: 'solo', input: 'q', classification: 'public', task: { taskId: task.taskId } })
+    expect((await reported(ctx, run.runId)).task?.outcome).toMatchObject({ status: 'accepted', state: 'done' })
+    workers.reply = () => ({ text: '{"questions": ["Which?"]}' })
+    const plain = await settled(ctx, ctx.workflow.start({ template: 'solo', input: 'q', classification: 'public' }).runId)
+    expect(plain).toMatchObject({ status: 'completed', answer: '{"questions": ["Which?"]}' })
+    expect(ctx.artifacts.get(workers.started.at(-1)!.brief!)!.body).not.toHaveProperty('ask')
+  })
+
+  it('gives every brief of a task\'s run the board\'s TASKS.md as a file for its worktree, bounded, by content id, never in a source\'s prompt that writes none (PROP-0010, INV-9, INV-12)', async () => {
+    const { ctx, workers } = await boot()
+    await project(ctx)
+    await ready(ctx, 'other work')
+    const task = await ready(ctx, 'with a board')
+    const run = await ctx.workflow.start({ template: 'solo', input: 'q', classification: 'public', task: { taskId: task.taskId } })
+    expect((await reported(ctx, run.runId)).task?.outcome).toMatchObject({ status: 'accepted' })
+    const envelope = ctx.artifacts.get(workers.started[0]!.brief!)!
+    const brief = envelope.body as { files: Array<{ path: string; ref: ArtifactRef; note: string }> }
+    expect(brief.files).toEqual([{ path: '.system/TASKS.md', ref: expect.any(String), note: 'the board of project p1 when this run was admitted (2 task(s))' }])
+    expect(envelope.inputs).toContain(brief.files[0]!.ref)
+    const projection = ctx.artifacts.get(brief.files[0]!.ref)!
+    expect(projection).toMatchObject({ kind: 'evidence', bodySchema: 'board-projection@1.0', classification: 'public', body: { projectId: 'p1', format: 'tasks-md', tasks: 2, truncated: false } })
+    const text = (projection.body as { text: string }).text
+    expect(text).toContain('### with a board')
+    expect(text).toContain('### other work')
+    expect(text).toContain(`- id: \`${task.taskId}\``)
+    // A source that writes no file never mentions one.
+    expect(workers.started[0]!.prompt).not.toContain('TASKS.md')
+  })
+
+  it('cuts the TASKS.md projection at tasksFile.maxChars with a note, and writes none with tasksFile.maxTasks 0 (INV-9)', async () => {
+    const cut = await boot({ workflow: { tasksFile: { maxChars: 1024 } } })
+    await project(cut.ctx)
+    for (const n of [1, 2, 3]) await ready(cut.ctx, `long ${n}`, { goal: `${'a long goal line\n'.repeat(40)}` })
+    const task = await ready(cut.ctx, 'cut')
+    const run = await cut.ctx.workflow.start({ template: 'solo', input: 'q', classification: 'public', task: { taskId: task.taskId } })
+    await reported(cut.ctx, run.runId)
+    const file = (cut.ctx.artifacts.get(cut.workers.started[0]!.brief!)!.body as { files: Array<{ ref: ArtifactRef }> }).files[0]!
+    const body = cut.ctx.artifacts.get(file.ref)!.body as { text: string; truncated: boolean; tasks: number }
+    expect(body).toMatchObject({ truncated: true, tasks: 4 })
+    expect([...body.text].length).toBeLessThanOrEqual(1024)
+    expect(body.text).toMatch(/…\(cut at 1024 characters of \d+: read the rest of the board with board_tasks\)\n$/)
+
+    const none = await boot({ workflow: { tasksFile: { maxTasks: 0 } } })
+    await project(none.ctx)
+    const bare = await ready(none.ctx, 'no file')
+    await reported(none.ctx, (await none.ctx.workflow.start({ template: 'solo', input: 'q', classification: 'public', task: { taskId: bare.taskId } })).runId)
+    expect(none.ctx.artifacts.get(none.workers.started[0]!.brief!)!.body).not.toHaveProperty('files')
   })
 
   it('fails a node whose instructions retention cleared, with nothing sent, instead of briefing it on its goal alone (INV-2)', async () => {

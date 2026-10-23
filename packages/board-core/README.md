@@ -10,6 +10,9 @@ Work state machine **seam definition**
 | `ctx.board` | abstract `Board` with `charter(input, at?)`, `project`, `projects`, `pause`, `resume`, `close`, `propose(input, at?)`, `task`, `tasks`, `claim`, `renew`, `start`, `submit`, `accept`, `reconcileRun`, `block`, `answer`, `cancel`, `sweep(at)`, and the optional `attachDigest(taskId, digest, at?)` (1.1); `Project`, `Charter`, `Milestone`, `BoardTask`, `CharterInput`, `TaskInput`, `Claim`, `RunOutcome`, `BoardError`; `TERMINAL`, `BOARD_CONTRACT` (1.1) | the fake `FakeBoard`; the store-backed [`board`](../plugins/board/README.md) |
 
 - The types mirror `project@1.0` and `board-task@1.0`; the schemas in `schemas/` are canonical.
+- `renderTasks(project, tasks, maxTasks)` is the board's `TASKS.md` projection, a pure function
+  of those records, outside the seam's contract: the provider renders it on request, and the
+  workflow engine into a task run's worktree, so both render the same text.
 - Depends on Cordis and the vocabulary of `@tsuuanmi/system-approvals-core`: the board asks
   for approvals through `ctx.approvals` and never decides one itself.
 - The conformance suite is [`conformance/board.ts`](conformance/board.ts), run through the

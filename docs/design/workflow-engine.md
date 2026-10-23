@@ -12,7 +12,8 @@
 > handoff envelopes, the plan's side-effect classes, and convergence blocker reports are
 > planned. A board task's `run.brief` is not set: each execution names its own
 > [brief](#briefs). Only a remediation fix's gate asks the [approval queue](#remediation-on-the-approval-queue);
-> a planner's plan gate is still the operator's `approve`.
+> a planner's plan gate is still the operator's `approve`. A task's budget is reserved once per
+> run, before it starts work, not per execution ([a task's budget](#a-tasks-budget)).
 
 There is one engine, and every multi-step job runs on it as an append-only DAG
 ([ADR-0012](../decisions/adr/0012-dag-execution-model.md)). It combines three
@@ -145,7 +146,8 @@ flowchart LR
 - **What the Worker reads.** For a plain run, exactly the prompt the template words: the
   instructions in order, each pointer replaced verbatim and never expanded again. A brief for a
   board task, or one without instructions, first states the task and attempt, the goal, the
-  acceptance criteria, and open questions; pointers the instructions do not place follow
+  acceptance criteria, open questions, and, for a board task (`brief@1.2` `ask`), how to answer
+  with questions instead ([below](#a-question-from-a-run)); pointers the instructions do not place follow
   (`Read these too`), each with its role and note.
 - **Pointers, never content.** The text of the instructions is the template's, the caller's, and
   what the engine composes: a team's ballot and debate prompt, which quotes its peers' sealed
@@ -160,8 +162,8 @@ flowchart LR
 
 A run for a [board task](#board-tasks) fixes, when it is admitted, what every brief it writes
 adds: the project, the task, and the attempt the run will be; the task's goal and acceptance
-criteria; the task's budget lines less the usage spent on the task (with no ledger, the lines as
-declared: the brief informs, reservations enforce); and at most 16
+criteria; the task's budget lines less the usage spent on the task (the brief informs; the run's
+[reservation](#a-tasks-budget) enforces); and at most 16
 pointers, never content: the accepted results of the tasks it depends on (their digests when
 they have one, role `input`), and on a later attempt the previous attempt's result (`prior`) and
 the decision behind this attempt (`review`: a rejection's reasons, the answers to its questions).
@@ -173,8 +175,8 @@ executions they started (each start's `workflow.node.started` event, and each no
 execution), so it reads the ledger for the task and for each of those ids, counts each record
 once by its `(source, requestId)`, and totals it per line: `tokens` input plus output, `usd` the
 cost, `turns`, `runs` one per record; `minutes` stay as declared. A run deleted by retention no
-longer counts. This informs the brief; it reserves and blocks nothing (the engine does not
-reserve per task yet).
+longer counts. This informs the brief; the run's [reservation](#a-tasks-budget) is what enforces
+the lines, by the ledger's own count.
 
 **Resume from a brief.** A task's next attempt, or the first attempt of a task that depends on
 exactly one other (a chain), resumes the session of the run before it when:
@@ -469,7 +471,8 @@ operator approves that request, the engine continues the session by itself, once
 ## Board tasks
 
 A run may serve one attempt of one [board task](board.md): the start names the task, and the
-claim a lead hands over (holder and generation). The engine is that run's owner on `ctx.board`,
+claim a lead hands over (holder and generation): MCP `run`'s `task`, or `system run --task <taskId>
+[--holder <owner> --generation <n>]` ([CLI](../reference/cli.md#work)). The engine is that run's owner on `ctx.board`,
 an optional seam it reaches through the abstract `Board` only; without a board, a run for a task
 is refused (`config_error`), and every other run is unaffected.
 
@@ -514,8 +517,102 @@ is refused (`config_error`), and every other run is unaffected.
 - A run that served an attempt is that attempt: `continue` and `supersede` refuse it, since the
   board decides the next attempt, which runs as a new run. It is not deleted or expired before
   its outcome is reported.
+- **`TASKS.md`.** Every brief of the run gives the board's projection as a file for a run's own
+  worktree ([below](#tasksmd-in-a-runs-workspace)).
+- **A question.** A step may answer with questions instead of a result; the task then waits for
+  input ([below](#a-question-from-a-run)).
+- **Its budget**, when the task declares one, is reserved on the ledger before the run starts
+  work, and a spent one blocks the task ([below](#a-tasks-budget)).
 - **After the report**, a result that reached the board is digested
   ([below](#a-digest-of-a-tasks-result)).
+
+### A task's budget
+
+A task's `budget` lines are caps on what its attempts may draw from the
+[resource ledger](resources.md), counted by the ledger for the task: the records that name it
+(an agent Worker's record names the task its brief serves) and those of runs reserved for it.
+The engine holds each run of a task that declares a budget to those lines, through
+`ctx.resources` and the board's existing `budget-spent` wait
+([board](board.md#task)); a task with no budget reserves nothing here.
+
+```mermaid
+stateDiagram-v2
+  [*] --> checked: start, before the task is taken
+  checked --> refused_start: no ledger, or a pool not configured or unavailable
+  checked --> due: the task taken, the run recorded on the board
+  due --> reserved: ledger reserves (budget decision)
+  due --> spent: ledger refuses, a cap reached
+  due --> failed: ledger refuses, a pool not configured or unavailable now
+  reserved --> released: the run finished
+  spent --> [*]: board.block budget-spent, the run ends with nothing run
+  failed --> [*]: the run fails, an attempt the board counts
+  released --> [*]
+  refused_start --> [*]
+```
+
+| Step | Records | On failure |
+|---|---|---|
+| checked | nothing, when the ledger is loaded, configures every pool the budget names, and finds each available | a refusal before the task is taken: an `admission` decision (`workflow.task-admission`, `refuse`); `config_error` with no ledger or a pool not configured, `overloaded` for a pool unavailable now (retry once it is back); nothing is claimed or sent (INV-2) |
+| due → reserved | after the board recorded the run and before any step runs: `ctx.resources.reserve` for the run and its task (and project), the task's lines as `caps`, and as `lines` the least the run draws on each (one token, turn, or run; a millionth of a dollar or a minute), so a line the task already reached refuses it; the ledger's `budget` decision, and where it stands on the run's `workflow_tasks` row; `workflow.task.budget` | no ledger loaded, or one that does not answer: the run waits and asks again (nothing runs without a reservation) |
+| due → spent | the ledger refused it while every pool is configured and available: a cap is reached. The holder blocks the task (`board.block`, `budget-spent`), so the board asks the policy about `funding` and the operator decides whether it goes on, then the run fails as `budget_spent` (`USER_ACTION`) with nothing of it run; its outcome is `blocked` | a board that does not answer is asked again; one that refuses the block (the holder lapsed, say) ends the run all the same, and its report reconciles it as a failed run |
+| due → failed | the ledger refused it for want of a pool (not configured, or unavailable since the start), or refused the request itself: the run fails as `quota_exhausted` with nothing of it run | its report is a failed attempt (`reconcileRun`), through the board's gate |
+| reserved → released | when the run finishes, completed or not; a reservation a stop left held is released at the next start | a ledger that does not release it: the hold expires on its own (`holdSeconds`, INV-9) |
+
+- **Funding** raises no line: the board has no move that changes a task's budget, so an approval
+  of the `funding` request gives an attempt whose run the ledger refuses again while the line is
+  reached (each such attempt counts). To go on, the work is proposed again with larger lines.
+- **Before, never after** (resources rule 4): a run that overdraws its lines while it runs is
+  not stopped mid-run; what it drew is recorded under the task, so the task's next attempt is
+  refused, and the brief tells each Worker what is left.
+- **Restart** (INV-4): the reservation's state is on the run's row, and the ledger's decision is
+  recorded before the effect; a run left `due` reserves when it advances again, one left `spent`
+  blocks again (a block the board already took is refused, and the run then ends), and a hold a
+  crash left unrecorded expires on its own.
+
+### TASKS.md in a run's workspace
+
+A native agent reads files, not MCP, so a run that serves a board task in a worktree of its own
+gets the board's `TASKS.md` projection ([board](board.md)) for that project as a file there,
+written before the run starts.
+
+| Step | Records | On failure |
+|---|---|---|
+| rendered | when the run is admitted, before the task is taken: `renderTasks` of the board's definition (`board-core`, the same projection the provider renders) over the project's tasks, at most `tasksFile.maxTasks` (default 200; 0 writes no file) and `tasksFile.maxChars` characters (default 65,536), past which it is cut at a line with a note saying so; a `board-projection@1.0` `evidence` artifact at the run's classification | a board that cannot render it: the run goes on without it, logged (a capability) |
+| pointed at | every brief of the run names it in `files` (`brief@1.2`): path `.system/TASKS.md`, by content id; it is an input of the brief's envelope, so the brief's classification is at least its own (INV-12) | — |
+| written | by a Worker source that has a workspace of the run's own (agent Workers with `worktreePerRun`): resolved when the execution starts, checked at egress with the prompt as one payload (INV-12), then written into the worktree before the agent starts, read-only (0444), under `.system/`, whose own `.gitignore` makes git ignore it; the prompt names it ([agent runtimes](agent-runtimes.md#workspaces)) | an egress denial fails the execution as `egress_denied`, a repository that tracks `.system/` (or a `.system` that is not a plain directory) as `config_error`, nothing sent; a source without such a workspace writes none and its prompt does not mention one |
+
+- **Never committed** (decided here): the file is not part of the work. git ignores `.system/`, so
+  it is never in the worktree's exact subject, a review's diff, or the run's changes, and the
+  worktree's retention commit removes `.system/` first unless the repository itself tracks it,
+  in which case no file is written at all. An agent may still change or commit it by hand: what
+  it holds is never read back, the board's store is the source of truth.
+- **Bounded** (INV-9): by task count and characters, at most 4 files a brief.
+- The file is the board as it stood when the run was admitted; the brief names the attempt.
+
+### A question from a run
+
+The board's `question` wait ([board](board.md#what-ends-an-input-wait)) is raised by the holder of
+a running task, so the engine raises it for a step of the task's run that cannot finish without a
+person's answer. The protocol is the brief's: every brief of a board task's run offers it
+(`brief@1.2` `ask`, at most 8 questions), and the Worker answers with only one JSON object
+`{"questions": [...]}` instead of a result.
+
+| Step | Records | On failure |
+|---|---|---|
+| a step's answer is questions | when its execution completes and before its acceptance: the whole answer (in one fenced block, or none) parses as `{"questions": [...]}`, 1 to 8 non-empty questions of at most 500 characters (`questionsOf` in libs; anything else is a result, and an answer is never parsed past a bound); a `gate` decision (`workflow.task-question`, `ask`, inputs: the answer) on the step; the step fails as `question` (`USER_ACTION`) with no result; the questions on the run's `workflow_tasks` row; `workflow.task.question` | — |
+| the run winds down | nothing new is promoted after a failed step, as for any failure | — |
+| the board takes the wait | before the run ends: `board.block(question, questions)` under the holder's generation; the task waits for input, and the run fails as `question`, its outcome `blocked` | a board not loaded, or not answering: asked again; one that refuses (the holder lapsed, the task not running) leaves the run to end as a failed one, which its report reconciles (`reconcileRun`), an attempt the board counts |
+| answered | `board.answer` (the lead's `board_update`, or the operator) records the questions and answers in its `board` decision; the next attempt goes through the gate | — |
+| the next attempt | its brief points at that decision (role `review`, "the answers to the N question(s) attempt n asked"), and its run resumes the session before it when it can ([resume from a brief](#a-board-tasks-brief)) | — |
+
+- **Authority** (INV-6): the questions are model text, data for a person. The move they cause
+  only asks a person and starts nothing: the task stops, and only an answer (a trusted move by the
+  lead or the operator) and the gate start its next attempt.
+- **Bounded** (INV-9): one question wait per attempt (the first step that asks ends the run), at
+  most 8 questions of 500 characters, the board's own bounds; the wait expires
+  (`input-expired`), and the attempts are the board's.
+- Only a run for a board task offers it: a plain run's brief has no `ask`, and its answers are
+  results whatever they say.
 
 ### A digest of a task's result
 

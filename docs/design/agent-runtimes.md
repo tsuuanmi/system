@@ -138,7 +138,10 @@ included. So exact-subject review and remediation
 ([workflow engine](workflow-engine.md#exact-subject-gates)) bind to the tree the writer
 changed. The provider only sees a `RunSpec` whose workspace is the worktree. A worktree under
 the DSH home is bound back like any workspace: writable for `workspace-write`, read-only for
-`read-only`.
+`read-only`. A brief's files (`brief@1.2` `files`, such as a board task's `TASKS.md`) are written
+into the run's own worktree before the agent starts, under a `.system/` that git ignores, read-only
+and never read back ([TASKS.md in a run's workspace](workflow-engine.md#tasksmd-in-a-runs-workspace));
+a run with no worktree of its own gets none.
 
 Worktrees are bounded ([INV-9](../architecture/invariants.md#inv-9-everything-is-bounded)):
 once every agent run of a workflow run has finished and the retention has passed, a
@@ -241,7 +244,9 @@ The `agents` source meters a Worker whose configuration names a resource `pool` 
 3. After the run, completed or not, one `usage-record` (source `runtime-result`) carries the
    runtime's numbers, and each limit observation becomes a `limit-state` reading of the pool
    window the configuration maps the runtime's window name to (`windows`); an unmapped window is
-   skipped. Then the reservation is released.
+   skipped. Then the reservation is released. The reservation and the record name the board task
+   and project the run's brief serves, if any, so the ledger counts the run against that task's
+   budget ([a task's budget](workflow-engine.md#a-tasks-budget)).
 
 A run that started before a restart has no result message, so nothing is recorded for it then;
 its usage is reconciled from the agent's session transcript later (planned). A Worker with no

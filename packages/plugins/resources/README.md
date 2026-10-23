@@ -62,8 +62,8 @@ guarantee seam: it fails closed (INV-2).
   id that is not one refuses the plugin. The bundle's row configures none: every pool is
   unavailable until the operator configures it.
 - **Injects:** `store`, `artifacts`; `mcp` is optional.
-- **Not yet:** only agent Workers report to it, and the engine does not reserve before
-  a run. Released and expired reservations, older readings, and duplicate
+- **Not yet:** only agent Workers report to it, and the engine reserves only for a board
+  task's run that declares a budget (its lines as caps), not before every run. Released and expired reservations, older readings, and duplicate
   records stay (as rows and artifacts) until a retention rule exists for them.
 - Tests: [`tests/conformance.spec.ts`](tests/conformance.spec.ts) runs the seam's suite,
   [`resources-core/conformance/resources.ts`](../../resources-core/conformance/resources.ts),

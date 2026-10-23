@@ -10,6 +10,7 @@ import { type Context, Service } from '@deepseek-ai/cordis'
 import type { ActionClass, ArtifactRef, Check, Classification, Subject } from '@tsuuanmi/system-approvals-core'
 
 export type { ActionClass, ArtifactRef, Check, Classification, Subject }
+export { renderTasks } from './projection.ts'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
