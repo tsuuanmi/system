@@ -160,11 +160,21 @@ flowchart LR
 
 A run for a [board task](#board-tasks) fixes, when it is admitted, what every brief it writes
 adds: the project, the task, and the attempt the run will be; the task's goal and acceptance
-criteria; the task's budget lines less the usage the [ledger](resources.md) counts for the task
-(with no ledger, the lines as declared: the brief informs, reservations enforce); and at most 16
+criteria; the task's budget lines less the usage spent on the task (with no ledger, the lines as
+declared: the brief informs, reservations enforce); and at most 16
 pointers, never content: the accepted results of the tasks it depends on (their digests when
 they have one, role `input`), and on a later attempt the previous attempt's result (`prior`) and
 the decision behind this attempt (`review`: a rejection's reasons, the answers to its questions).
+
+**Usage spent on a task.** The [ledger](resources.md) counts usage by run: a record names the
+task (or the run was reserved for it), the workflow run, or the Worker's own execution (an agent
+Worker's run id). The engine knows which runs served the task (`workflow_tasks`) and which
+executions they started (each start's `workflow.node.started` event, and each node's current
+execution), so it reads the ledger for the task and for each of those ids, counts each record
+once by its `(source, requestId)`, and totals it per line: `tokens` input plus output, `usd` the
+cost, `turns`, `runs` one per record; `minutes` stay as declared. A run deleted by retention no
+longer counts. This informs the brief; it reserves and blocks nothing (the engine does not
+reserve per task yet).
 
 **Resume from a brief.** A task's next attempt, or the first attempt of a task that depends on
 exactly one other (a chain), resumes the session of the run before it when:
@@ -502,6 +512,51 @@ is refused (`config_error`), and every other run is unaffected.
 - A run that served an attempt is that attempt: `continue` and `supersede` refuse it, since the
   board decides the next attempt, which runs as a new run. It is not deleted or expired before
   its outcome is reported.
+- **After the report**, a result that reached the board is digested
+  ([below](#a-digest-of-a-tasks-result)).
+
+### A digest of a task's result
+
+Every result returned to the lead passes through a digest
+([PROP-0008](../proposals/0008-studio-operating-model.md#mechanism-1-the-digest-layer)). Once a
+run's result reached its task (the report accepted it, rejected it, held it for the operator, or
+`reconcileRun` reported it completed), the engine asks [`ctx.digests`](digests.md), when loaded,
+for a digest of the result's artifacts, and sets it on the task's `result.digest` through the
+board's own [`attachDigest`](board.md#a-digest-on-a-result). A dependent task's brief, and the
+next attempt's, then point at the digest instead of the raw result
+([a board task's brief](#a-board-tasks-brief)). A digest is a capability (ADR-0036): it never
+blocks, changes, or replaces an acceptance, and a result with none is complete.
+
+```mermaid
+stateDiagram-v2
+  [*] --> due: result reported to the board
+  due --> requesting: admission decision request (within digestsPerHour)
+  due --> bypassed: admission decision bypass
+  requesting --> requested: digests.request (keyed by the run)
+  requesting --> bypassed: request refused
+  requested --> attached: digest written, board.attachDigest
+  requested --> bypassed: not written, bypassed, the board refuses it, or 6 hours pass
+  attached --> [*]
+  bypassed --> [*]
+```
+
+| From → to | Records | On failure |
+|---|---|---|
+| — → due | in the transaction that reports the run: the run's `workflow_tasks` row | — |
+| due → requesting / bypassed | an `admission` decision (`workflow.task-digest`, `request` or `bypass`, every candidate with why; inputs: the result's artifacts), and the time that counts against the bound, in one transaction | no digest provider loaded, `digestsPerHour` 0, or as many requested in the last hour: bypassed |
+| requesting → requested | the request's id; the request is keyed `workflow-task:<runId>`, so asking again after a crash returns it | a refused request (`invalid`, `overloaded`): bypassed |
+| requested → attached | the board's `attachDigest`; the `workflow.task.digest` event naming the digest's settling decision | not written or bypassed (the digest's own decision says why), the board refuses it (a next attempt started, say), or no settlement within 6 hours of asking: bypassed |
+
+- **Bounded** (INV-9): one request per run, which is one attempt; at most `digestsPerHour`
+  (default 6) asked for in any hour across runs; a wait of at most 6 hours. A digest seam or board
+  that is not loaded is looked for again every 30 seconds within that bound.
+- **Fails open** (ADR-0036): every bypass leaves `result.digest` unset and records why, in the
+  view's `task.digest` and the `workflow.task.digest` event; nothing waits on it.
+- **Restart** (INV-4): where it stands is on the run's row; the bound is taken and the decision
+  recorded before the request, and the request is idempotent by its key, so a restart asks once
+  and goes on waiting.
+- The engine reaches `ctx.digests` and `attachDigest` through their definitions only: with the
+  digest row off, or a board at contract 1.0, results keep no digest.
 
 ## A plain run's acceptance
 

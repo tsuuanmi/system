@@ -7,7 +7,7 @@ import Store from '@tsuuanmi/system-store'
 import { describe, expect, it } from 'vitest'
 import { runSuite } from '../../libs/conformance/runner.ts'
 import { digestsSuite, FakeDigests, LOG } from '../conformance/digests.ts'
-import { type ArtifactRef, DIGESTS_CONTRACT, quoteCheck, settlement } from '../src/index.ts'
+import { type ArtifactRef, DIGESTS_CONTRACT, escalation, quoteCheck, settlement } from '../src/index.ts'
 
 // The seam's own fake passes the suite every provider must pass (ADR-0037).
 runSuite(digestsSuite, {
@@ -67,5 +67,22 @@ describe('the quote check', () => {
     const decision = settlement({ requestId: 'dig-1', sources: [log] }, { state: 'bypassed', reason: 'no Worker' })
     expect(decision.candidates.map((c) => [c.option, c.selected, c.reasons.length > 0])).toEqual([['written', false, true], ['not-written', false, true], ['bypassed', true, true]])
     expect(decision.outcome).toEqual({ option: 'bypassed', detail: { requestId: 'dig-1', kept: 0, dropped: [], reason: 'no Worker' } })
+  })
+
+  it('names why a draft gave no digest, and escalates only an economy answer whose every claim failed, once, to standard', () => {
+    const answer = `sha256:${'4'.repeat(64)}` as ArtifactRef
+    const failed = quoteCheck({ ...base, claims: [claim('C1', log, 'nowhere')] }, [log], read)
+    expect(failed.failure).toBe('quote-check')
+    expect(quoteCheck({ ...base, claims: [] }, [log], read).failure).toBe('no-claim')
+    expect(quoteCheck({ claims: [] }, [log], read).failure).toBe('no-status')
+    expect(quoteCheck(undefined, [log], read).failure).toBe('no-object')
+    expect(quoteCheck({ ...base, claims: [claim('C1', log, 'PASS')] }, [log], read).failure).toBeUndefined()
+    const request = { requestId: 'dig-1', sources: [log], tier: 'economy', escalated: false }
+    const decision = escalation(request, failed, answer)!
+    expect(decision).toMatchObject({ decisionType: 'escalation', decider: { id: 'digests.escalation' }, outcome: { option: 'escalate', detail: { from: 'economy', to: 'standard' } }, inputs: [log, answer] })
+    expect(decision.candidates.map((c) => [c.option, c.selected, c.reasons.length > 0])).toEqual([['escalate', true, true], ['give-up', false, true]])
+    expect(escalation({ ...request, escalated: true }, failed, answer)).toBeUndefined()
+    expect(escalation({ ...request, tier: 'standard' }, failed, answer)).toBeUndefined()
+    expect(escalation(request, quoteCheck({ ...base, claims: [] }, [log], read), answer)).toBeUndefined()
   })
 })

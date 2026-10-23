@@ -16,8 +16,12 @@ declare module '@deepseek-ai/cordis' {
   }
 }
 
-/** The contract version this definition and its conformance suite describe. */
-export const DIGESTS_CONTRACT = '1.0' as const
+/**
+ * The contract version this definition and its conformance suite describe. 1.1 adds the one
+ * escalation: a request whose every claim failed the quote check is written once more on the
+ * standard tier, never higher ({@link escalation}), named by the request's `escalation`.
+ */
+export const DIGESTS_CONTRACT = '1.1' as const
 
 /** A content id (`sha256:<hex>`) of an artifact. */
 export type ArtifactRef = `sha256:${string}`
@@ -49,8 +53,10 @@ export interface DigestView {
   brief?: ArtifactRef
   /** The Worker routing admitted. */
   worker?: string
-  /** Claims of the Worker's draft that passed the quote check, and those dropped. */
+  /** Claims of the Worker's draft that passed the quote check, and those dropped (the last draft's, after an escalation). */
   claims?: { kept: number; dropped: number }
+  /** The `escalation` decision that had the request written once more on a higher tier (1.1). */
+  escalation?: ArtifactRef
   /** Why it was bypassed, or why nothing was written. */
   reason?: string
   createdAt: string
@@ -105,6 +111,13 @@ export abstract class Digests extends Service {
   abstract wait(requestId: string, timeoutMs: number): Promise<DigestView>
 }
 
+/**
+ * Why a draft gave no digest: it held no JSON object (`no-object`), no status or summary
+ * (`no-status`), no claim (`no-claim`), claims none of which survived the quote check
+ * (`quote-check`), or what survived was not a valid `digest@1.0` (`invalid`).
+ */
+export type QuoteFailure = 'no-object' | 'no-status' | 'no-claim' | 'quote-check' | 'invalid'
+
 /** The outcome of the quote check: the digest to write, if any, and every claim it dropped, with why. */
 export interface QuoteCheck {
   digest?: DigestBody
@@ -112,6 +125,8 @@ export interface QuoteCheck {
   dropped: Array<{ claim: string; why: string }>
   /** Why there is no digest. */
   reason?: string
+  /** Why there is no digest, as a code: only `quote-check` lets a request escalate ({@link escalation}). */
+  failure?: QuoteFailure
 }
 
 const CLAIM_ID = /^C[1-9][0-9]{0,2}$/
@@ -134,10 +149,10 @@ const texts = (value: unknown, max: number): string[] => (Array.isArray(value) ?
  */
 export function quoteCheck(draft: unknown, sources: readonly ArtifactRef[], read: (ref: ArtifactRef) => { body?: unknown } | undefined, maxClaims: number = DIGEST_LIMITS.claims): QuoteCheck {
   const value = draft && typeof draft === 'object' && !Array.isArray(draft) ? draft as Record<string, unknown> : undefined
-  if (!value) return { kept: 0, dropped: [], reason: 'the answer holds no JSON object: no digest' }
+  if (!value) return { kept: 0, dropped: [], reason: 'the answer holds no JSON object: no digest', failure: 'no-object' }
   const status = STATUSES.includes(value.status as DigestBody['status']) ? value.status as DigestBody['status'] : undefined
   const summary = text(value.summary, DIGEST_LIMITS.summary)
-  if (!status || !summary) return { kept: 0, dropped: [], reason: 'the answer names no status (passed, failed, partial, blocked) or no summary: no digest' }
+  if (!status || !summary) return { kept: 0, dropped: [], reason: 'the answer names no status (passed, failed, partial, blocked) or no summary: no digest', failure: 'no-status' }
   const bodies = new Map(sources.map((ref) => [ref, read(ref)]))
   const kept: DigestClaim[] = []
   const dropped: QuoteCheck['dropped'] = []
@@ -169,7 +184,11 @@ export function quoteCheck(draft: unknown, sources: readonly ArtifactRef[], read
     kept.push({ id, kind: claim.kind as ClaimKind, text: claimText, citation: { artifact, quote, ...(offset !== undefined ? { offset: offset as number } : {}) } })
   })
   if (all.length > claims.length) dropped.push({ claim: `claims ${claims.length + 1} to ${all.length}`, why: `a draft holds at most ${DIGEST_LIMITS.claims} claims; these were not checked` })
-  if (!kept.length) return { kept: 0, dropped, reason: claims.length ? `no claim survived the quote check (${dropped.length} dropped): no digest` : 'the answer has no claim: no digest' }
+  if (!kept.length) {
+    return claims.length
+      ? { kept: 0, dropped, reason: `no claim survived the quote check (${dropped.length} dropped): no digest`, failure: 'quote-check' }
+      : { kept: 0, dropped, reason: 'the answer has no claim: no digest', failure: 'no-claim' }
+  }
   // What the check dropped comes first: it is what the lead must know was left out.
   const left = Array.isArray(value.dropped) ? value.dropped.flatMap((d) => {
     const entry = d && typeof d === 'object' ? d as Record<string, unknown> : {}
@@ -189,7 +208,7 @@ export function quoteCheck(draft: unknown, sources: readonly ArtifactRef[], read
   try {
     schemas.assertRecord(digest)
   } catch (error) {
-    return { kept: 0, dropped, reason: `the digest is not valid digest@1.0 (${(error as Error).message.slice(0, 300)}): no digest` }
+    return { kept: 0, dropped, reason: `the digest is not valid digest@1.0 (${(error as Error).message.slice(0, 300)}): no digest`, failure: 'invalid' }
   }
   return { digest, kept: kept.length, dropped }
 }
@@ -230,6 +249,47 @@ export function settlement(request: { requestId: string; sources: readonly Artif
     candidates: (['written', 'not-written', 'bypassed'] as const).map((option) => ({ option, selected: option === outcome.state, reasons: reasons(option) })),
     decider: { type: 'rule', id: 'digests.quote-check', version: '1' },
     outcome: { option: outcome.state, detail: { requestId: request.requestId, kept, dropped: dropped.slice(0, DIGEST_LIMITS.dropped), ...(outcome.state !== 'written' ? { reason: outcome.reason } : {}) } },
+    deterministic: true,
+  }
+}
+
+/** The tier a request escalates to, once, when every claim failed the quote check (PROP-0008, mechanism 1). */
+export const ESCALATION_TIER = 'standard' as const
+
+/** An `escalation` decision as a provider records it through `ctx.artifacts.recordDecision` (`decision@1.0`). */
+export interface EscalationDecision {
+  decisionType: 'escalation'
+  question: string
+  inputs: ArtifactRef[]
+  candidates: Array<{ option: 'escalate' | 'give-up'; selected: boolean; reasons: string[] }>
+  decider: { type: 'rule'; id: 'digests.escalation'; version: '1' }
+  outcome: { option: 'escalate'; detail: Record<string, unknown> }
+  deterministic: true
+}
+
+/**
+ * The one escalation every provider applies the same way (contract 1.1): a request whose Worker,
+ * on the economy tier, answered with claims none of which survived the quote check is written once
+ * more by a Worker on the standard tier ({@link ESCALATION_TIER}), never higher and never twice. Any
+ * other answer that gives no digest (no JSON, no status, no claim) is not escalated: a stronger
+ * Worker would not change a missing answer into a checkable one. Returns the `escalation` decision
+ * to record before the second run starts (INV-13), or undefined when the request does not escalate:
+ * it then settles `not-written` with the check's reason. Its inputs are the sources and the answer
+ * whose claims all failed.
+ */
+export function escalation(request: { requestId: string; sources: readonly ArtifactRef[]; tier: string; escalated: boolean }, check: QuoteCheck, answer: ArtifactRef): EscalationDecision | undefined {
+  if (check.digest || check.failure !== 'quote-check' || request.escalated || request.tier !== 'economy') return undefined
+  const to = ESCALATION_TIER
+  return {
+    decisionType: 'escalation',
+    question: `Is digest request ${request.requestId} written once more on a higher tier after every claim failed the quote check?`,
+    inputs: [...new Set([...request.sources, answer])],
+    candidates: [
+      { option: 'escalate', selected: true, reasons: [`every claim of the ${request.tier} answer failed the quote check (${check.dropped.length} dropped): a Worker on the ${to} tier writes it once more, never higher`] },
+      { option: 'give-up', selected: false, reasons: [`not give up: the request has not escalated yet, and ${to} is the one tier a digest escalates to`] },
+    ],
+    decider: { type: 'rule', id: 'digests.escalation', version: '1' },
+    outcome: { option: 'escalate', detail: { requestId: request.requestId, from: request.tier, to, dropped: check.dropped.slice(0, DIGEST_LIMITS.dropped) } },
     deterministic: true,
   }
 }

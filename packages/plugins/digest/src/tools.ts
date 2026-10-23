@@ -35,7 +35,7 @@ export const INPUTS: Record<DigestTool, ToolSpec['inputSchema']> = {
 }
 
 const DESCRIPTIONS: Record<DigestTool, string> = {
-  digests_request: 'Ask for a cited digest (digest@1.0) of raw artifacts: a read-only Worker on the economy tier summarizes them, and every claim is kept only if its quote is verbatim in the artifact it cites. It settles written, not-written (no claim survived), or bypassed (no Worker could serve it: a digest never blocks work). Read the digest with the artifact tool.',
+  digests_request: 'Ask for a cited digest (digest@1.0) of raw artifacts: a read-only Worker on the economy tier summarizes them (once more on the standard tier when every claim fails the check), and every claim is kept only if its quote is verbatim in the artifact it cites. It settles written, not-written (no claim survived), or bypassed (no Worker could serve it: a digest never blocks work). Read the digest with the artifact tool.',
   digests_get: 'Read a digest request as it stands: pending, written (with its digest), not-written, or bypassed, with why.',
 }
 

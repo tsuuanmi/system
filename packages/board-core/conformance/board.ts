@@ -110,9 +110,14 @@ const result = (ctx: Context, text: string): ArtifactRef => ctx.artifacts.put({
   body: { schema: 'agent-result@1.0', worker: 'w', runtime: 'fake', runId: 'r', promptHash: `sha256:${'0'.repeat(64)}`, sandbox: 'read-only', text },
 }).id as ArtifactRef
 const HEAD: Subject = { type: 'git-head', ref: 'HEAD', version: 'abc123' }
+/** A `digest@1.0` report over `sources`, as a digest provider writes it (its envelope's inputs are its sources). */
+const digestOf = (ctx: Context, sources: ArtifactRef[], summary = 'the result in short'): ArtifactRef => ctx.artifacts.put({
+  kind: 'report', bodySchema: 'digest@1.0', classification: 'operator-shared', producer: { type: 'worker', ref: 'conformance' }, inputs: sources,
+  body: { schema: 'digest@1.0', sources, status: 'passed', summary, claims: [{ id: 'C1', kind: 'finding', text: 'it ran', citation: { artifact: sources[0]!, quote: 'attempt' } }] },
+}).id as ArtifactRef
 
-const scenario = (id: string, title: string, run: (ctx: Context, booted: { changePolicies: (policies: readonly AutonomyPolicy[]) => Promise<void> }) => Promise<void>): Scenario<Boot> => ({
-  id: `board.${id}`, since: '1.0', title,
+const scenario = (id: string, title: string, run: (ctx: Context, booted: { changePolicies: (policies: readonly AutonomyPolicy[]) => Promise<void> }) => Promise<void>, since: '1.0' | '1.1' = '1.0'): Scenario<Boot> => ({
+  id: `board.${id}`, since, title,
   run: async (boot) => {
     const { ctx, dispose, changePolicies } = await boot()
     try {
@@ -125,7 +130,7 @@ const scenario = (id: string, title: string, run: (ctx: Context, booted: { chang
 
 export const boardSuite = defineSuite<Boot>({
   seam: 'board',
-  contract: '1.0',
+  contract: '1.1',
   scenarios: [
     scenario('charter-approved-activates', 'starts work only under a charter the operator approved, bound to that charter version, with every milestone planned (INV-5, INV-6)', async (ctx) => {
       expect(await failureOf(ctx.board.charter({ projectId: 'p1', title: 'Kernel', charter: CHARTER, milestones: [{ id: 'm1', title: 'First', state: 'funded', funding: `sha256:${'1'.repeat(64)}` }] }, T0))).toBe('invalid')
@@ -391,6 +396,50 @@ export const boardSuite = defineSuite<Boot>({
       await ctx.board.sweep(at(34 + 61))
       expect(validTask((await ctx.board.task(lapsed.task.taskId))!)).toMatchObject({ state: 'waiting-for-input', waiting: { reason: 'review-expired' } })
     }),
+    scenario('digest-attached', 'attaches the digest of a task\'s exact result once, never while its reviewer holds the review, moving nothing; a review held for the operator takes one, and the operator\'s acceptance must then name it (INV-5, ADR-0036)', async (ctx) => {
+      await active(ctx, 'p2')
+      const t = await ready(ctx, task('p2', 'digested', { actionClass: 'workspace-write' }))
+      const { generation } = await ctx.board.claim(t.taskId, 'lead', 600_000, at(3))
+      expect(ctx.board.attachDigest, 'a provider at contract 1.1 attaches digests').toBeTypeOf('function')
+      const attach = (taskId: string, digest: ArtifactRef, when: Date): Promise<BoardTask> => ctx.board.attachDigest!(taskId, digest, when)
+      const r = result(ctx, 'attempt 1')
+      const notes = result(ctx, 'attempt 1 notes')
+      const digest = digestOf(ctx, [r, notes])
+      expect(await failureOf(attach('task-unknown', digest, at(3)))).toBe('unknown-task')
+      // No result yet.
+      expect(await failureOf(attach(t.taskId, digest, at(3)))).toBe('invalid-transition')
+      await ctx.board.start(t.taskId, generation, { runId: 'run-1' }, at(3))
+      await ctx.board.submit(t.taskId, generation, { artifacts: [r, notes], subject: HEAD }, at(4))
+      // The reviewer holds the review: a digest now would change what its acceptance binds to.
+      expect(await failureOf(attach(t.taskId, digest, at(4)))).toBe('invalid-transition')
+      const held = validTask(await ctx.board.accept(t.taskId, acceptance(ctx, 'accept', t.taskId, [r, notes]), at(5)))
+      expect(held).toMatchObject({ state: 'review', waiting: { reason: 'operator-review' } })
+      // Only a digest@1.0 report of exactly the result's artifacts.
+      expect(await failureOf(attach(t.taskId, digestOf(ctx, [r]), at(6)))).toBe('invalid')
+      expect(await failureOf(attach(t.taskId, r, at(6)))).toBe('invalid')
+      expect(await failureOf(attach(t.taskId, `sha256:${'e'.repeat(64)}`, at(6)))).toBe('invalid')
+      const attached = validTask(await attach(t.taskId, digest, at(6)))
+      expect(attached).toMatchObject({ state: 'review', waiting: { reason: 'operator-review' }, result: { artifacts: [r, notes], subject: HEAD, digest }, lastDecision: held.lastDecision, revision: held.revision + 1 })
+      // Once: the same digest changes nothing, another is refused.
+      expect(validTask(await attach(t.taskId, digest, at(7)))).toMatchObject({ revision: attached.revision })
+      expect(await failureOf(attach(t.taskId, digestOf(ctx, [r, notes], 'another digest'), at(7)))).toBe('invalid-transition')
+      // The operator's acceptance binds to the whole result, its digest included.
+      expect(await failureOf(ctx.board.accept(t.taskId, acceptance(ctx, 'accept', t.taskId, [r, notes], { by: 'operator' }), at(8)))).toBe('invalid')
+      const byOperator = acceptance(ctx, 'accept', t.taskId, [r, notes, digest], { by: 'operator' })
+      expect(validTask(await ctx.board.accept(t.taskId, byOperator, at(8)))).toMatchObject({ state: 'done', result: { digest, acceptance: byOperator } })
+
+      // A done task's result takes its digest after the acceptance: the acceptance stands on the raw artifacts.
+      const d = await ready(ctx, task('p2', 'done first'))
+      const claim = await ctx.board.claim(d.taskId, 'lead', 600_000, at(9))
+      await ctx.board.start(d.taskId, claim.generation, { runId: 'run-2' }, at(9))
+      const r2 = result(ctx, 'attempt 1 of done first')
+      await ctx.board.submit(d.taskId, claim.generation, { artifacts: [r2], subject: HEAD }, at(10))
+      const accepted = acceptance(ctx, 'accept', d.taskId, r2)
+      const done = validTask(await ctx.board.accept(d.taskId, accepted, at(10)))
+      expect(done.state).toBe('done')
+      const later = digestOf(ctx, [r2])
+      expect(validTask(await attach(d.taskId, later, at(11)))).toMatchObject({ state: 'done', result: { artifacts: [r2], digest: later, acceptance: accepted }, lastDecision: accepted })
+    }, '1.1'),
     scenario('run-outcome-reconciled', 'takes a lost holder\'s run outcome from the run\'s owner, withdrawing the approval it asked for, and refuses an outcome for another run (INV-4)', async (ctx) => {
       await active(ctx)
       const t = await ready(ctx, task('p1', 't', { maxAttempts: 2 }))
@@ -1051,6 +1100,20 @@ export class FakeBoard extends Board {
     const task = this.taskOf(taskId)
     this.expect(task, 'proposed', 'ready', 'claimed', 'waiting-for-input', 'waiting-for-approval')
     return this.cancelTask(task, reason, at, undefined, note)
+  }
+
+  async attachDigest(taskId: string, digest: ArtifactRef, at: Date = new Date()) {
+    const task = this.taskOf(taskId)
+    if (!task.result) throw new BoardError('invalid-transition', `${taskId} has no result to digest`)
+    if (task.result.digest === digest) return structuredClone(task)
+    if (task.result.digest) throw new BoardError('invalid-transition', `${taskId}'s result already has a digest`)
+    if (task.state === 'review' && task.waiting?.reason !== 'operator-review') throw new BoardError('invalid-transition', `${taskId}'s reviewer holds the review`)
+    const envelope = this.ctx.artifacts.get(digest)
+    const sources = envelope?.kind === 'report' && envelope.bodySchema === 'digest@1.0' ? (envelope.body as { sources?: unknown }).sources : undefined
+    if (!Array.isArray(sources) || sources.length !== task.result.artifacts.length || task.result.artifacts.some((a) => !sources.includes(a))) {
+      throw new BoardError('invalid', `${digest} is not a digest@1.0 report of exactly the result's artifacts`)
+    }
+    return this.save(task, at, { result: { ...task.result, digest } })
   }
 
   async sweep(at: Date) {

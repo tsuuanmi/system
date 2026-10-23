@@ -7,13 +7,13 @@ Work state machine **seam definition**
 
 | Seam | Definition | Provider |
 |---|---|---|
-| `ctx.board` | abstract `Board` with `charter(input, at?)`, `project`, `projects`, `pause`, `resume`, `close`, `propose(input, at?)`, `task`, `tasks`, `claim`, `renew`, `start`, `submit`, `accept`, `reconcileRun`, `block`, `answer`, `cancel`, `sweep(at)`; `Project`, `Charter`, `Milestone`, `BoardTask`, `CharterInput`, `TaskInput`, `Claim`, `RunOutcome`, `BoardError`; `TERMINAL`, `BOARD_CONTRACT` (1.0) | the fake `FakeBoard`; the store-backed [`board`](../plugins/board/README.md) |
+| `ctx.board` | abstract `Board` with `charter(input, at?)`, `project`, `projects`, `pause`, `resume`, `close`, `propose(input, at?)`, `task`, `tasks`, `claim`, `renew`, `start`, `submit`, `accept`, `reconcileRun`, `block`, `answer`, `cancel`, `sweep(at)`, and the optional `attachDigest(taskId, digest, at?)` (1.1); `Project`, `Charter`, `Milestone`, `BoardTask`, `CharterInput`, `TaskInput`, `Claim`, `RunOutcome`, `BoardError`; `TERMINAL`, `BOARD_CONTRACT` (1.1) | the fake `FakeBoard`; the store-backed [`board`](../plugins/board/README.md) |
 
 - The types mirror `project@1.0` and `board-task@1.0`; the schemas in `schemas/` are canonical.
 - Depends on Cordis and the vocabulary of `@tsuuanmi/system-approvals-core`: the board asks
   for approvals through `ctx.approvals` and never decides one itself.
 - The conformance suite is [`conformance/board.ts`](conformance/board.ts), run through the
-  [conformance runner](../libs/conformance/runner.ts) at contract 1.0 over any `ctx.approvals`
+  [conformance runner](../libs/conformance/runner.ts) at contract 1.1 over any `ctx.approvals`
   provider:
   - a charter approved by the operator before anything starts; rejection or expiry abandons the
     project and cancels its open tasks; amendments held until approved;
@@ -32,7 +32,12 @@ Work state machine **seam definition**
     validation of proposals and of founding milestones; pausing and closing;
   - a wait whose request the queue withdrew on a policy change put to the policy again: ready,
     the forbid outcome, or one new request on the same subject; a charter asked about again or
-    abandoned. Its `boot` therefore also changes the queue's policies (`changePolicies`).
+    abandoned. Its `boot` therefore also changes the queue's policies (`changePolicies`);
+  - since 1.1, a digest attached to a task's exact result once, never while its reviewer holds
+    the review; a review held for the operator takes one, and the operator's acceptance must then
+    name it; a done task's result takes one after its acceptance.
 
   It also exports `FakeBoard`, which passes it. Contract 1.0 is unreleased and amended in place
-  ([ADR-0039](../../docs/decisions/adr/0039-base-guarantee-seam-contract-changes.md)).
+  ([ADR-0039](../../docs/decisions/adr/0039-base-guarantee-seam-contract-changes.md)); 1.1 adds
+  the optional `attachDigest`, a minor
+  ([ADR-0040](../../docs/decisions/adr/0040-briefs-on-the-workers-and-workflow-seams.md)).

@@ -27,7 +27,7 @@ async function boot(drafter: ((refs: { log: ArtifactRef; bench: ArtifactRef }) =
   const dir = mkdtempSync(join(tmpdir(), 'system-digest-'))
   const ctx = new Context()
   const refs = {} as { log: ArtifactRef; bench: ArtifactRef }
-  const worker = new DigestWorker(drafter ? (sources) => drafter(refs)(sources) : undefined)
+  const worker = new DigestWorker(drafter ? (sources, tier) => drafter(refs)(sources, tier) : undefined)
   const fibers: Fiber[] = [
     ctx.plugin(Store, { path: join(dir, 'system.db') }), ctx.plugin(Artifacts, {}), ctx.plugin(EventLog, {}), ctx.plugin(Leases, {}), ctx.plugin(WorkerRouter, {}),
     ctx.plugin({ name: 'digest-worker', inject: ['workers', 'artifacts'], apply: (c: Context) => void c.workers.register(worker.source(c)) }),
@@ -88,7 +88,7 @@ describe('ctx.digests on the store', () => {
 
   it('asks for a Worker of its tier only: with none, it fails open, naming the admission decision that found none (ADR-0036, INV-11)', async () => {
     const { ctx, worker, log } = await boot((r) => () => ({ text: draft(r.log, r.bench) }))
-    worker.tier = 'standard'
+    worker.tiers = ['standard', 'frontier']
     const view = await ctx.digests.wait((await ctx.digests.request({ sources: [log] })).requestId, 30_000)
     expect(view).toMatchObject({ state: 'bypassed' })
     expect(view.reason).toMatch(/read-only Worker on the economy tier/)
@@ -120,6 +120,51 @@ describe('ctx.digests on the store', () => {
     expect(view).toMatchObject({ state: 'bypassed' })
     expect(view.reason).toMatch(/did not finish within 30 minutes/)
     expect(worker.cancelled).toEqual([worker.started[0]!.id])
+  })
+
+  it('escalates once to a Worker of the standard tier when every economy claim fails the quote check, its run keyed apart, and records the decision before it (PROP-0008, INV-13)', async () => {
+    const { ctx, worker, log, bench } = await boot((r) => (_sources, tier) => ({ text: draft(r.log, r.bench, tier === 'economy' ? [{ id: 'C1', kind: 'finding', text: 'x', citation: { artifact: r.log, quote: 'not in the log' } }] : undefined) }))
+    const view = await ctx.digests.wait((await ctx.digests.request({ sources: [log, bench] })).requestId, 30_000)
+    expect(view).toMatchObject({ state: 'written', worker: 'w:digest:standard', claims: { kept: 2, dropped: 0 } })
+    expect(worker.started.map((s) => [s.tier, s.key])).toEqual([['economy', `digests:${view.requestId}`], ['standard', `digests:${view.requestId}:standard`]])
+    expect(worker.started[1]!.requirement.tier).toEqual({ min: 'standard', max: 'standard', source: 'decision', decision: view.escalation })
+    const escalated = ctx.artifacts.get(view.escalation!)!.body as { inputs: string[] }
+    // The sources, and the economy answer whose claims all failed.
+    expect(escalated.inputs).toEqual(expect.arrayContaining([log, bench]))
+    expect(escalated.inputs).toHaveLength(3)
+    expect((ctx.artifacts.get(view.decision!)!.body as { inputs: string[] }).inputs).toContain(view.escalation)
+  })
+
+  it('lets the economy answer stand when no Worker of the standard tier is admitted: not-written, with why, never bypassed (ADR-0036)', async () => {
+    const { ctx, worker, log } = await boot((r) => () => ({ text: draft(r.log, r.bench, [{ id: 'C1', kind: 'finding', text: 'x', citation: { artifact: r.log, quote: 'not in the log' } }]) }))
+    worker.tiers = ['economy']
+    const view = await ctx.digests.wait((await ctx.digests.request({ sources: [log] })).requestId, 30_000)
+    expect(view).toMatchObject({ state: 'not-written', claims: { kept: 0, dropped: 1 } })
+    expect(view.escalation).toBeDefined()
+    expect(view.reason).toMatch(/no claim survived the quote check.*the escalation to standard did not answer \(no Worker can write it \(a read-only Worker on the standard tier\)/)
+    expect(worker.started).toHaveLength(1)
+  })
+
+  it('never escalates above standard: a request configured on standard gives up on its own answer (INV-9)', async () => {
+    const { ctx, worker, log } = await boot((r) => () => ({ text: draft(r.log, r.bench, [{ id: 'C1', kind: 'finding', text: 'x', citation: { artifact: r.log, quote: 'not in the log' } }]) }), { tier: 'standard' })
+    const view = await ctx.digests.wait((await ctx.digests.request({ sources: [log] })).requestId, 30_000)
+    expect(view).toMatchObject({ state: 'not-written' })
+    expect(view.escalation).toBeUndefined()
+    expect(worker.started.map((s) => s.tier)).toEqual(['standard'])
+  })
+
+  it('goes on with an escalated request after a restart, starting its standard run once (INV-4)', async () => {
+    const { ctx, worker, log, bench, restart } = await boot((r) => (_sources, tier) => ({ text: draft(r.log, r.bench, tier === 'economy' ? [{ id: 'C1', kind: 'finding', text: 'x', citation: { artifact: r.log, quote: 'not in the log' } }] : undefined) }))
+    worker.hold = true
+    const requested = await ctx.digests.request({ sources: [log, bench] })
+    await until(() => worker.started.length === 1, 'the economy run')
+    worker.release(worker.started[0]!.id)
+    await until(() => worker.started.length === 2, 'the standard run')
+    await restart()
+    worker.release(worker.started[1]!.id)
+    const view = await ctx.digests.wait(requested.requestId, 30_000)
+    expect(view).toMatchObject({ state: 'written' })
+    expect(worker.started.map((s) => s.tier)).toEqual(['economy', 'standard'])
   })
 
   it('bounds the requests pending at once, refusing more as overloaded (INV-9)', async () => {

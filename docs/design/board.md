@@ -10,8 +10,9 @@
 > [`board-core`](../../packages/board-core/README.md)); its bundle row is on, over the
 > [approval queue](../../packages/plugins/approvals/README.md); the
 > [workflow engine](workflow-engine.md#board-tasks) runs a task's attempts. Differs from target:
-> no run blocks its task yet (no budget per task: the ledger counts usage by run, and the engine
-> does not yet reserve per task; no question reaches the board from a run); `TASKS.md` is
+> no run blocks its task yet (no budget is enforced per task: the engine counts the usage spent
+> on a task for its briefs, but does not reserve per task; no question reaches the board from a
+> run); `TASKS.md` is
 > rendered on request, and nothing writes it into a workspace yet. The operator accepts or
 > rejects a review on `/ui` ([`web-ui`](../../packages/plugins/web-ui/README.md)).
 
@@ -24,7 +25,7 @@ the operator itself: every move that needs a person goes through the
 
 ## Seam
 
-`ctx.board` (`Board` in `@tsuuanmi/system-board-core`), contract 1.0:
+`ctx.board` (`Board` in `@tsuuanmi/system-board-core`), contract 1.1:
 
 | Method | Does |
 |---|---|
@@ -39,6 +40,7 @@ the operator itself: every move that needs a person goes through the
 | `block`, `answer` | interrupt a running task; answer a waiting one |
 | `reconcileRun(taskId, runId, outcome)` | the run's owner reports the outcome of a run whose holder was lost |
 | `cancel` | cancel a task that is not running or in review |
+| `attachDigest(taskId, digest)` | set the result's `digest`, once (1.1, optional: a provider at 1.0 has none) |
 | `sweep(at)` | make every move due at `at`: dependencies met, approvals resolved, leases lost, waits expired |
 
 Time-driven moves happen only in `sweep(at)`, so a restart is a sweep, not a replay
@@ -174,6 +176,8 @@ policy change; the other cases only the store-backed provider checks.
   charter only.
 - Answering a question wait records the questions and answers in the `board` decision's detail,
   which becomes the task's `lastDecision`. Every move back to `ready` clears `run`.
+- [A digest attaches to a result](#a-digest-on-a-result) once, and never while the reviewer
+  holds the review.
 - A task's `milestone` is one of its project's milestones. A founding call declares every
   milestone `planned` with no `funding` (`invalid` otherwise): the charter's approval does not
   fund one.
@@ -223,6 +227,29 @@ work again as a new task.
 | `retries-spent` | review rejected the last attempt, a failed run with none left, or an approval to go on or an answered question with none left | nothing | expires: `input-expired` |
 | `review-expired` | the reviewer's lease lapsed, or a review held for the operator expired, with no acceptance decision | nothing | expires: `input-expired` |
 
+### A digest on a result
+
+`result.digest` is a cited summary of the result's artifacts ([digests](digests.md)), which a
+lead, the operator, and the next attempt's or a dependent task's brief read in place of the raw
+artifacts. A digest is a capability: it never accepts anything, and a result with none is
+complete. `attachDigest(taskId, digest)` (contract 1.1, an optional method: a provider at 1.0 has
+none, and its results keep no digest) sets it; the [workflow engine](workflow-engine.md#a-digest-of-a-tasks-result)
+calls it once a digest of a run's result is written:
+
+- the digest is a stored `digest@1.0` report whose sources are exactly the result's artifacts
+  (`invalid` otherwise), so it binds to that result and no other (INV-5);
+- once: the same digest again changes nothing, another is refused (`invalid-transition`);
+- not while the task has no result, and not while the reviewer holds the review
+  (`invalid-transition`): the acceptance being made binds to the whole result, digest included,
+  so a digest attached under it would refuse it. A review held for the operator takes one, and
+  the operator's acceptance then names it among its inputs (the web UI reads the task when it
+  records the operator's decision);
+- in any other state with a result (done, or back to ready or waiting after a rejection, until the
+  next attempt's `start` clears the result) it attaches. A done task's acceptance stands on the
+  raw artifacts it named;
+- no state moves and no `board` decision is made: the digest's own settling decision records it,
+  and the record's revision moves on.
+
 ### Required checks bind at acceptance
 
 A policy rule `auto` or `notify` may require checks (`requires`, for example tests and lint for
@@ -267,8 +294,8 @@ when the result is accepted:
 
 ## Conformance
 
-[`board-core/conformance/board.ts`](../../packages/board-core/conformance/board.ts), 25
-scenarios at contract 1.0, run against the fake provider and the store-backed provider, both over
+[`board-core/conformance/board.ts`](../../packages/board-core/conformance/board.ts), 26
+scenarios at contract 1.1 (`board.digest-attached` since 1.1), run against the fake provider and the store-backed provider, both over
 the approvals fake, and against the store-backed provider over the store-backed approval queue.
 Contract 1.0 is unreleased and amended in place
 ([ADR-0039](../decisions/adr/0039-base-guarantee-seam-contract-changes.md)); the last amendment

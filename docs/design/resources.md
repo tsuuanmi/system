@@ -86,6 +86,10 @@ first reading comes from the runtime's result. Every reading field is optional.
 - A cap counts, for its scope (a task, else a project), every counted record of its pool in its
   unit, plus every unexpired reservation held for that scope: `tokens` are input plus output, `usd` the
   record's cost, `turns` its turns, `runs` one per record, `minutes` its duration.
+- A record counts for a task when it names the task or its run was reserved for it. A board
+  task's brief counts more: the workflow engine also reads the records of the runs that served
+  the task and of the executions they started, each record once
+  ([usage spent on a task](workflow-engine.md#a-board-tasks-brief)); a cap does not.
 
 ## Fail-closed rules
 

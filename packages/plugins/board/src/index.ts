@@ -671,6 +671,33 @@ export class StoreBoard extends Board {
     return cancelled
   }
 
+  /**
+   * Attach the digest of the task's current result, once (contract 1.1): a stored `digest@1.0`
+   * report of exactly the result's artifacts. Never while the reviewer holds the review, since its
+   * acceptance binds to the whole result, digest included; a review held for the operator takes
+   * one. Nothing moves and no decision is made: the digest's settling decision records it.
+   */
+  async attachDigest(taskId: string, digest: ArtifactRef, at: Date = new Date()) {
+    return this.ctx.store.transaction(() => {
+      const current = this.taskOf(taskId)
+      const { task } = current
+      if (!task.result) throw new BoardError('invalid-transition', `${taskId} has no result to digest`)
+      if (task.result.digest === digest) return task
+      if (task.result.digest) throw new BoardError('invalid-transition', `${taskId}'s result already has digest ${task.result.digest}`)
+      if (task.state === 'review' && task.waiting?.reason !== 'operator-review') {
+        throw new BoardError('invalid-transition', `${taskId}'s reviewer holds the review: a digest attached now would change what the acceptance being made binds to`)
+      }
+      const envelope = this.ctx.artifacts.get(digest)
+      const sources = envelope?.kind === 'report' && envelope.bodySchema === 'digest@1.0' ? (envelope.body as { sources?: unknown }).sources : undefined
+      if (!Array.isArray(sources)) throw new BoardError('invalid', `${digest} is not a stored digest@1.0 report`)
+      const artifacts = task.result.artifacts
+      if (sources.length !== artifacts.length || artifacts.some((a) => !sources.includes(a))) {
+        throw new BoardError('invalid', `${digest} digests ${sources.length} artifact(s), not exactly the ${artifacts.length} of ${taskId}'s result`)
+      }
+      return this.commit(current, { changes: { result: { ...task.result, digest } } }, at)
+    })
+  }
+
   async sweep(at: Date) {
     const tasks = new Map<string, BoardTask>()
     const projects = new Map<string, Project>()

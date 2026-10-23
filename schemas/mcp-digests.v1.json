@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:tsuuanmi:system:schema:mcp-digests:v1",
   "title": "MCP digest tools",
-  "description": "Input and output of the `digests_*` MCP tools (design/digests.md). The root describes one call (tool, input, structured output); a provider validates input and output against `#/$defs/<tool>-input` and `#/$defs/<tool>-output`, with underscores written as hyphens.",
+  "description": "Input and output of the `digests_*` MCP tools (design/digests.md). 1.1 adds a request's `escalation`. The root describes one call (tool, input, structured output); a provider validates input and output against `#/$defs/<tool>-input` and `#/$defs/<tool>-output`, with underscores written as hyphens.",
   "type": "object",
   "required": [
     "tool",
@@ -112,8 +112,12 @@
           "description": "The Worker routing admitted.",
           "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
         },
+        "escalation": {
+          "description": "1.1: the `escalation` decision that had the request written once more on the standard tier, after every claim of the economy answer failed the quote check.",
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/artifactRef"
+        },
         "claims": {
-          "description": "Claims of the Worker's draft that passed the quote check, and those dropped.",
+          "description": "Claims of the Worker's draft that passed the quote check, and those dropped (the last draft's, after an escalation).",
           "type": "object",
           "required": [
             "kept",

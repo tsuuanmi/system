@@ -1421,6 +1421,9 @@ importers:
       '@tsuuanmi/system-board-core':
         specifier: workspace:*
         version: link:../../board-core
+      '@tsuuanmi/system-digest-core':
+        specifier: workspace:*
+        version: link:../../digest-core
       '@tsuuanmi/system-egress':
         specifier: workspace:*
         version: link:../egress

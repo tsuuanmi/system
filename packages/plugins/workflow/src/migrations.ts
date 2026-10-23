@@ -76,4 +76,9 @@ export const MIGRATIONS = [{
   );
   CREATE INDEX workflow_deferrals_open ON workflow_deferrals (created_at) WHERE settled_at IS NULL;
   CREATE INDEX workflow_deferrals_run ON workflow_deferrals (run_id);`,
+}, {
+  // A digest of a board task's result (docs/design/workflow-engine.md#a-digest-of-a-tasks-result):
+  // where it stands, as JSON `TaskDigest`; its `requestedAt` is what the hourly bound counts.
+  version: 14,
+  sql: 'ALTER TABLE workflow_tasks ADD COLUMN digest TEXT;',
 }]
