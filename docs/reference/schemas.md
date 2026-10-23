@@ -474,6 +474,29 @@ guesses.
   when prices change. Examples:
   [`usage-record.agent-run.json`](../../schemas/examples/usage-record.agent-run.json),
   [`usage-record.api-call.json`](../../schemas/examples/usage-record.api-call.json).
+- A cap counts a record's figure for its unit (`tokens`: input plus output, `usd`: `cost`,
+  `turns`, `minutes`: `durationMs`), and a figure the record does not carry counts 0. A unit with no
+  counted record counts 0 as well; the Worker source records each such unit as a
+  [`usage-unknown`](#usage-unknown) fact ([usage the ledger cannot count](../design/resources.md#usage-the-ledger-cannot-count)).
+
+### `usage-unknown`
+
+- The data of a `usage.unknown` event: one accounting unit whose usage the ledger could not count,
+  appended by the Worker source that meters it (today the `agents` source). The event's own
+  `runId` is the workflow run the unit belongs to, if any; the record's `runId` is the unit itself,
+  as a usage record of it would name it.
+- `kind`: `not-reported` (the unit ended, and its runtime reported neither tokens nor turns, so no
+  record can be written), `interrupted` (the host stopped while it ran, so no result came),
+  `refused` (the ledger refused its record: `failure` is the ledger's, and `record` the refused
+  record kept as an `evidence` artifact when it is a valid `usage-record@1.0`), or `failed`
+  (recording it failed otherwise). `failure` and `record` belong to `refused` only.
+- It never carries a number for the unit's usage, and nothing estimates one. A cap counts the unit
+  as 0. The unit is **reconciled** once the ledger counts a usage record of the same `runId` in
+  the same `pool` (later a `transcript` record): from then on the report counts it as reconciled,
+  and health no longer counts it. A reader validates the data and skips an entry that is not a
+  valid record. Examples:
+  [`usage-unknown.not-reported.json`](../../schemas/examples/usage-unknown.not-reported.json),
+  [`usage-unknown.refused.json`](../../schemas/examples/usage-unknown.refused.json).
 
 ### `limit-state`
 

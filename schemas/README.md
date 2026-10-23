@@ -44,6 +44,7 @@ each field, which a schema cannot fully express, is documented in
 | [autonomy-policy.v1.json](autonomy-policy.v1.json) | which action classes run (`auto`, `notify`) and which need a person (`ask`) or are denied (`forbid`); still `@1.0`: `remediation` always asks by a load-time rule, and `promotion` by the schema as well |
 | [usage-record.v1.json](usage-record.v1.json) | body of a `receipt` artifact: what one run, call, or turn consumed, from an objective source, deduplicated by request id |
 | [limit-state.v1.json](limit-state.v1.json) | body of an `evidence` artifact: one observation of one configured window of a resource pool |
+| [usage-unknown.v1.json](usage-unknown.v1.json) | data of a `usage.unknown` event: one run whose usage the resource ledger could not count, and why (not reported, interrupted, the record refused, recording failed), until a record of it is counted |
 | [brief.v1.json](brief.v1.json) | body of an `objective` artifact: what one Worker run is given, with artifacts by content id, never their content; 1.1 adds `instructions`, text and pointers in order; 1.2 adds `ask`, the Worker's bounded way to answer with questions instead, and `files` for the run's own workspace |
 | [board-projection.v1.json](board-projection.v1.json) | body of an `evidence` artifact: one project's board as its `TASKS.md` projection, for a board task run's worktree |
 | [digest.v1.json](digest.v1.json) | body of a `report` artifact: a cited summary of raw artifacts, every claim with a verbatim quote |

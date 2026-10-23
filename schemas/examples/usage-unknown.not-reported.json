@@ -1,0 +1,14 @@
+{
+  "schema": "usage-unknown@1.0",
+  "runId": "arun_5f0c1a9e7b2d4c13",
+  "kind": "not-reported",
+  "account": "claude-max-main",
+  "pool": "claude-max-main.programmatic",
+  "worker": "agent:reviewer",
+  "sessionId": "ses_01JB8Y4K2M",
+  "projectId": "proj-sparse-align",
+  "taskId": "task-0007",
+  "outcome": "failed",
+  "observedAt": "2026-10-23T14:02:11Z",
+  "reason": "its runtime reported neither tokens nor turns"
+}
