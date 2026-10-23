@@ -694,9 +694,9 @@ export class TaskRuns {
    * run draws), recording where it stands on the run's row. Reserved, the run goes on, and the
    * reservation is released when it finishes. Refused because a line is spent, the task blocks on
    * the board (`budget-spent`), unless the run was its last attempt, and the run ends with nothing
-   * of it run; refused for any other
-   * reason (a pool unconfigured or unavailable since the start), the run fails, an attempt the
-   * board counts. Without a ledger, or one that does not answer, the run waits (INV-2).
+   * of it run; refused for any other reason (a pool unconfigured or unavailable since the start),
+   * the run fails, an attempt the board counts. Without a ledger, or one that does not answer, the
+   * run waits (INV-2).
    */
   private async budgeted(runId: string, board: Board): Promise<'go' | 'wait' | 'stop'> {
     const row = this.row(runId)!
@@ -829,11 +829,14 @@ export class TaskRuns {
    * attempts (ADR-0044, amended). A `gate` decision (`workflow.task-funding`) records the choice, and
    * in one transaction with it the run's row keeps it and the run fails as `budget_spent` with
    * nothing of it run, so a restart finds both or neither (INV-4). Its report is a failed run
-   * (`reconcileRun`), which leaves the task waiting for input (`retries-spent`).
+   * (`reconcileRun`), which leaves the task waiting for input (`retries-spent`). A run that ended
+   * meanwhile (the operator stopped it) is left as it ended.
    */
   private lastAttempt(row: TaskRow, budget: TaskBudget, task: BoardTask): 'stop' {
     const attempt = `attempt ${task.attempts.count} of ${task.attempts.max}`
     this.e.ctx.store.transaction((db) => {
+      const run = this.e.runRow(row.run_id)
+      if (run?.status !== 'running') return
       const decision = this.e.ctx.artifacts.recordDecision({
         decisionType: 'gate',
         question: `Does run ${row.run_id}, which found board task ${row.task_id}'s budget spent, ask the operator to fund the task?`,
@@ -851,7 +854,7 @@ export class TaskRuns {
         kind: 'budget_spent', disposition: 'USER_ACTION',
         message: `task ${row.task_id}'s budget is spent (${(budget.reasons ?? []).join('; ') || 'a cap would be exceeded'}; budget decision ${budget.decision}); nothing of this run ran; it was the task's last attempt (${attempt}), so no funding was asked (decision ${decision}): the task waits for input (retries-spent), and to go on the work is proposed again`,
       }
-      this.e.finish(this.e.runRow(row.run_id)!, 'failed', { error: JSON.stringify(error) })
+      this.e.finish(run, 'failed', { error: JSON.stringify(error) })
     })
     return 'stop'
   }
