@@ -649,7 +649,7 @@ Scope: `operator`
 
 ## `usage`
 
-Recent runs and, per step, which Worker, tier, and quota class served it.
+Recent runs and, per step, which Worker, tier, and quota class served it, the tokens a model Worker reports, and a step whose usage the resource ledger could not count (usageUnknown, with why).
 
 Scope: `client`
 

@@ -208,7 +208,7 @@ export function registerTools(c: Context, w: Workflow, ctx: Context): void {
   })
   c.mcp.tool('usage', {
     scope: 'client',
-    description: 'Recent runs and, per step, which Worker, tier, and quota class served it.',
+    description: 'Recent runs and, per step, which Worker, tier, and quota class served it, the tokens a model Worker reports, and a step whose usage the resource ledger could not count (usageUnknown, with why).',
     inputSchema: { limit: zod.number().int().min(1).max(500).optional() },
   }, async (args) => json({ runs: w.usage((args.limit as number | undefined) ?? 50) }))
   c.mcp.tool('explain', {

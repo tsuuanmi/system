@@ -738,6 +738,18 @@ describe('agents source: metering through ctx.resources (docs/design/resources.m
     expect(unknowns(elsewhere.ctx)).toMatchObject([{ data: { runId: third.id, kind: 'refused', failure: 'unknown-pool', account: 'other', pool: 'max.agents' } }])
   })
 
+  it('marks a workflow run\'s step whose usage the ledger could not count in the usage report, and only there (system usage, MCP usage; D25)', async () => {
+    const { ctx } = await boot(new ScriptedAgent({ metering: { turns: undefined } }), { workers: [metered()] }, undefined, LEDGER)
+    const silent = await ctx.workflow.wait(ctx.workflow.start({ template: 'agent-review', input: 'Check the diff', classification: 'operator-shared' }).runId, 10_000)
+    expect(silent).toMatchObject({ status: 'completed', nodes: [{ nodeId: 'review:1', worker: 'agent:reviewer' }] })
+    expect(silent.nodes[0]).not.toHaveProperty('usageUnknown')
+    expect(ctx.workflow.usage(10).find((r) => r.runId === silent.runId)!.nodes).toMatchObject([{ nodeId: 'review:1', worker: 'agent:reviewer', usageUnknown: 'not-reported' }])
+    // A step whose usage was counted is not marked.
+    const counted = await boot(new ScriptedAgent({ metering: METERING }), { workers: [metered()] }, undefined, LEDGER)
+    const done = await counted.ctx.workflow.wait(counted.ctx.workflow.start({ template: 'agent-review', input: 'Check the diff', classification: 'operator-shared' }).runId, 10_000)
+    expect(counted.ctx.workflow.usage(10).find((r) => r.runId === done.runId)!.nodes[0]).not.toHaveProperty('usageUnknown')
+  })
+
   it('records a record() that failed otherwise as a failed fact, and logs one it cannot record; the run\'s own outcome never changes (D25, INV-2)', async () => {
     class LockedLedger extends FakeResources {
       override async record(): Promise<never> {

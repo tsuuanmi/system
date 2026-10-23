@@ -34,7 +34,8 @@ const USAGE = `Usage: system <command>
   delete <runId> [--yes]    preview, then delete a finished run (artifacts stay)
   supersede <runId> <nodeId> (<text...> | -)
                             replace a completed step's result; everything downstream runs again
-  usage [<limit>]           recent runs: per step, the Worker, tier, and quota class used
+  usage [<limit>]           recent runs: per step, the Worker, tier, and quota class used, and whether
+                            the resource ledger could count its usage
   report [--project <id>] [--since <time> | --days <n>] [--until <time>] [--json]
                             the baseline report, from recorded data only: progress, results, what asked for you,
                             usage, cost per accepted result; by default the last 7 days (the weekly investor report)
