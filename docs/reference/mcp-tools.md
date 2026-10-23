@@ -276,7 +276,7 @@ Scope: `client`
 | `goal` | string | yes |  |
 | `acceptance` | array | yes |  |
 | `dependsOn` | array |  |  |
-| `actionClass` | "read" \| "workspace-write" \| "merge" \| "command" \| "external-send" \| "deploy" \| "delete-data" \| "spend" \| "charter" \| "funding" \| "remediation" \| "policy-change" | yes |  |
+| `actionClass` | "read" \| "workspace-write" \| "merge" \| "command" \| "external-send" \| "deploy" \| "delete-data" \| "spend" \| "charter" \| "funding" \| "remediation" \| "policy-change" \| "promotion" | yes |  |
 | `milestone` | string |  |  |
 | `template` | string |  |  |
 | `writes` | object |  |  |

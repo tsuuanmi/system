@@ -470,9 +470,13 @@ guesses.
   policy that breaks one is refused when loaded. A set holds at most 101 policies: the studio's
   and 100 projects'.
 - The classes that always ask are the irreversible effects (`external-send`, `deploy`,
-  `delete-data`, `spend`), the investor's decisions (`charter`, `funding`, `policy-change`), and
-  `remediation`. The schema refuses `auto` and `notify` for them, except `remediation`,
-  which it predates: a policy that gives `remediation` either is refused when loaded.
+  `delete-data`, `spend`), the investor's decisions (`charter`, `funding`, `policy-change`),
+  `remediation`, and `promotion`. The schema refuses `auto` and `notify` for them, except
+  `remediation`, which it predates: a policy that gives `remediation` either is refused when
+  loaded. `promotion` joined `common@1`'s action classes with the feedback loop
+  ([ADR-0044](../decisions/adr/0044-feedback-loop-guarantee-seams.md)). No record named it
+  before, so the schema refuses it `auto` and `notify` from the start without tightening
+  anything, and the record stays `@1.0`.
 - A project policy constrains only the classes it names. The effective mode of a class is the
   strictest of the studio's rule and the project's (`auto` < `notify` < `ask` < `forbid`), so a
   looser project rule has no effect. For a class neither names, it is the stricter of the two
