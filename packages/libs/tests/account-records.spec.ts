@@ -77,8 +77,8 @@ describe('decision@1.8', () => {
       expect(valid('decision@1.8', { ...decision, schema: 'decision@1.7' }), name).toBe(false)
     }
     // Any other recovery outcome keeps its version, so earlier decisions keep their ids.
-    const retry = { ...example('decision.recovery-wait'), schema: 'decision@1.0', outcome: { option: 'retry' } }
-    retry.candidates = retry.candidates.map((c: Json) => ({ ...c, selected: c.option === 'retry' }))
+    const wait = example('decision.recovery-wait')
+    const retry = { ...wait, schema: 'decision@1.0', outcome: { option: 'retry' }, candidates: wait.candidates.map((c: Json) => ({ ...c, selected: c.option === 'retry' })) }
     expect(valid('decision@1.0', retry)).toBe(true)
   })
 })
