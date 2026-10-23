@@ -36,8 +36,12 @@ tools. The Workers are Claude Code Workers that `system` runs, each in a run's o
 ## Name the repository and the Workers
 
 Edit your profile patch, `~/.dsh/profiles/system/cordis.patch.yml`. A patch that targets a row
-replaces its whole configuration, so each row below is complete. For a repository at
-`/home/me/src/align`:
+replaces its whole configuration, so each row below is complete. One row the pilot needs is off by
+default: `profile-software-development`, which contributes the `algorithm-development` template;
+its first two lines below turn it on. Every other row the pilot uses is on by default. Whether Base
+ships that row on is your decision, still open
+([rows the pilot turns on](../requirements/release-scope.md#rows-the-pilot-turns-on)); until you
+make it, the switch is this patch. For a repository at `/home/me/src/align`:
 
 ```yaml
 # The template's profile, off by default.

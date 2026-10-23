@@ -194,8 +194,27 @@ Claude Code Workers under the operator's Claude Max plan.
 | Specification | a schema for every new record and payload, MCP tool input and output included; a definition, a protocol, and a conformance suite for every new seam; conformance suites for the existing guarantee seams (ADR-0037) |
 | Core | `resources` (usage records, limit states), `board` (projects with charters, board tasks), `approvals` (autonomy policy, batched queue), plugin manifests with a recorded lifecycle state (REQ-HOST-7), run budgets, the crash suite at every reconcile point |
 | Workers | Claude Code Workers on by default: a workspace per writing task, remediation through the gate, every agent's credential directories hidden, commands confined to the workspace (`validate`), token usage in `agent-result@1.2`, briefs (`brief@1.0`) |
-| Families | `digest@1.0` by a read-only Claude Code Worker; the `algorithm-development` template |
+| Families | `digest@1.0` by a read-only Claude Code Worker, and a second digest provider to replace it by configuration (exit criterion 6); the `algorithm-development` template |
 | Surface | MCP tools `board_*`, `approvals_*`, `resources_*`; the board and the queue on `/ui`; a weekly investor report |
+
+### Rows the pilot turns on
+
+The default composition keeps some rows off ([turn an off row back
+on](../operations/runbooks.md#turn-an-off-row-back-on)). The Base pilot (exit criterion 3) needs
+exactly one of them: **`profile-software-development`**, which contributes the
+`algorithm-development` template (and `agent-review`). The operator turns it on in the profile
+patch (`- id: profile-software-development`, `disabled: false`), with the Workers, the pool, and
+the policy the [pilot runbook](../operations/pilot.md#name-the-repository-and-the-workers) names;
+the checks of the [release checklist](../validation/release-checklist.md) marked *only with
+`profile-software-development` on* therefore apply to Base. Every other row the pilot uses is on by
+default (the agent rows, `board`, `approvals`, `resources`, `digest`, `report`). The alternative
+digest provider `digest-extractive` is off too, and the pilot does not need it; exit criterion 6
+swaps it in on its own.
+
+**Open, the operator's decision:** whether Base ships `profile-software-development` on by
+default. On, every install offers templates that need an agent Worker configured on a repository,
+and runs fail at their first step until one is; off, as now, the pilot's patch turns it on. The row
+stays off until the operator decides ([roadmap](../proposals/roadmap.md#next-base-v08), B8).
 
 ### Not in Base
 
@@ -218,7 +237,11 @@ knowledge family; RTK, Serena, context-mode; automated shadow and canary runs.
 5. **Resources.** Every run has a usage record taken from the runtime's own usage fields. The
    Claude Max windows are tracked, and every limit hit is recorded with its cooldown.
 6. **Evolution.** The digest provider is replaced (for example by another model) through its
-   manifest without a core change, with metrics before and after.
+   manifest without a core change, with metrics before and after. Verified by replacing `digest`
+   with `digest-extractive` through the operator's patch alone: in CI, the bundle's evolution test
+   on fixed fixtures and the end-to-end swap through the real launcher; live, on the pilot's
+   Worker ([release checklist](../validation/release-checklist.md),
+   [replacing the provider](../design/digests.md#replacing-the-provider)).
 7. **Baseline.** The same kind of task done by Claude Code alone and through `system` is
    reported: cost per accepted result and operator interventions
    ([PROP-0008](../proposals/0008-studio-operating-model.md#validation-plan)).
