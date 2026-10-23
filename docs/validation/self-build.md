@@ -23,8 +23,9 @@ the code before the fix.
 | `run_65c39f158163c5c6` | the Worker tool gate, `agent-workers/src/gate.ts` (`59962e5`) | ChatGPT (Gemini stalled) | changes | 4 of 5: a symlink escaped the workspace; unknown input fields were not classified; the gate left shell syntax to the policy (made defence in depth); a stored request was not checked in full. The fifth (a used approval asks again) is the design | `ef015fb` |
 | `run_d28538263173ef45` | remediation on the approval queue, `workflow/src/queue.ts` (`4dd2d3c`) | ChatGPT, Gemini | changes (a confirmed blocking finding) | 4 of 4: the gate could open after the reviewed tree moved; a late approval was not refused (defence in depth); a crash could lose a terminal verdict and ask twice; an unreadable queue was not settled by the gate itself | `a32e430` |
 
-The nine findings the lead checked (eight defects and the design) are the labelled cases of the
-[worker-agnosticism experiment](experiments/worker-agnosticism.md)'s suite.
+The two subjects and the nine findings the lead checked (eight defects and the design) are the
+cases and the labels of the [worker-agnosticism experiment](experiments/worker-agnosticism.md)'s
+suite.
 
 Two earlier runs did not start, and each showed a defect in `system` itself: `review` refused an
 abbreviated commit id (`run_65a61f8b37f2c17e`), and a focus larger than the source bound
