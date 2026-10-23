@@ -6,7 +6,8 @@
 > Implemented in [`agent-runtime-core`](../../packages/agent-runtime-core/README.md),
 > [`agent-workers`](../../packages/plugins/agent-workers/README.md), and the four runtime
 > plugins below; differs from target: `persistent-conversation` rests on the probe's `resume`
-> flag, not on a resume conformance test (planned); a started run is never reconciled from the
+> flag, not on a resume conformance test (planned), or, for a review member's steps on a runtime
+> without it, on the source's exact replay; a started run is never reconciled from the
 > agent's own records (it fails as `reconciliation_failed`); evidence beyond the final message
 > and the workspace's git subject is not stored; ACP agents cannot ask a
 > [tool gate](#tool-gate) before each tool call, so the `agents` source admits none of their
@@ -334,9 +335,64 @@ whose workspace cannot hold a worktree per run (`config_error`).
 | `develop` | the sandbox is `workspace-write` |
 | `validate` | the sandbox is `workspace-write` and the probe reports `executes` ([confined commands](#confined-commands)) |
 | `persistent-conversation` | the probe reports `resume`. Target: a resume conformance test passes (planned). This is what qualifies a runtime as a long-lived [team member](teams.md#membership-model-a) |
+| `reason`, for a review member's steps only | the Worker is under the [review-member profile](#review-members) (`reviewMember`, read-only), granted by the profile while it is enforced: the Worker is ready, so its runtime enforces the read-only sandbox, `readsConfined`, and `gatesToolCalls` |
+| `persistent-conversation`, for a review member's steps only | the Worker is under the profile and the probe does not report `resume`: the source keeps the member's conversation by an exact, recorded replay (evidence `conformance`) |
 
 An agent Worker never offers plain `reason`, so ordinary asks never spend agent-plan quota
-([P1](../requirements/purpose.md)).
+([P1](../requirements/purpose.md)). The offers a review member adds are scoped to a review member's
+steps ([scoped offers](routing.md#scoped-offers)): an ask, a brainstorm, research, a planner, or a
+digest never reaches them.
+
+### Review members
+
+The operator may place a read-only agent Worker under the **review-member profile**
+(`reviewMember: true`;
+[ADR-0049](../decisions/adr/0049-read-only-agent-workers-as-review-members.md)). It can then be a
+member of a [`review` team](teams.md#review), beside a website Worker or another agent runtime, by
+configuration only: the experiment that swaps one member's Worker for another's needs nothing
+else. The configuration is refused at load unless the sandbox is `read-only`, the Worker names its
+provider `family` (the same as other Workers' of the vendor whose models it runs, so two members of
+one vendor stay apart; [provider diversity](routing.md#provider-diversity)), and `worktreePerRun`
+is off.
+
+- **The profile grants `reason`, never the Worker.** The offer exists only while the profile is
+  enforced: the Worker is ready, so its runtime's probe proves now that it enforces the read-only
+  sandbox, keeps host state unreadable, and asks the run's gate before every tool call. It is
+  scoped to a review member's steps.
+- **Every member step runs under the profile**, or not at all (`config_error`, nothing run):
+  - the Worker is under the profile (a Worker that is not never runs one, not even its first);
+  - its workspace is an empty directory outside any git work tree, checked before anything is
+    sent, so nothing a runtime reads on its own (an instruction file, the repository above)
+    reaches the member: its material is its prompt alone, the source the engine read at the pinned
+    commit;
+  - its gate denies every tool call, each a recorded `gate` decision: no write, no read;
+  - after the step the workspace must still be empty, or the run fails as
+    `reconciliation_failed`, its answer not trusted;
+  - its record is `agent-result@1.3`, `profile: review-member`.
+- **Why a member needs a conversation.** Each member is asked at least twice: its proposal, then
+  its sealed ballot, and a debate turn after a split. The ballot and debate prompts quote the
+  findings and ballots only; the request, the source, and the member's own findings are in its
+  conversation ([teams](teams.md#ballots)).
+- **On a runtime that resumes** (Claude Code, Codex), it continues natively, as every session
+  does. A member step whose session has earlier turns but no native conversation is refused
+  (`invalid_input`, unsent): a member is never given a fresh conversation for a continuation.
+- **On a runtime that cannot** (the Antigravity CLI), the `agents` source **replays** it. This is a
+  replay, not a resume: each later step starts a new agent conversation whose message holds the
+  session's earlier completed turns of its generation, in order, each its message and its answer
+  exactly as recorded, between fence lines derived from its own text, then the new message. Every
+  earlier turn ran under the profile, so no tool ran in it, and a turn is exactly its message and
+  its answer; failed turns are no part of it. The runtime is never asked to resume, and the
+  session keeps no native handle, so no brief claims one. A reset starts a new replay.
+  - **Recorded.** The runs it replays are fixed when the step is first prepared. Its
+    `agent-result@1.3` names them (`replay.runs`), their answers (`replay.answers`, also the
+    artifact's `inputs`), and the hash of everything sent (`replay.promptHash`).
+  - **Fails closed**, unsent: an earlier turn still open, one not run under the profile, one
+    whose answer is no longer stored (`invalid_input`), or more than `maxReplayChars` (default
+    200,000) characters of earlier turns. A history is never cut (INV-9).
+  - Egress checks what is sent, the replay included, at the strictest classification of its turns
+    (INV-12).
+- **Outside a member's steps**, a session that a runtime without `resume` is asked to continue is
+  refused (`config_error`, unsent).
 
 ## Turn semantics
 

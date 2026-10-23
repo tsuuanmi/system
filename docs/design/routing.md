@@ -47,7 +47,7 @@ each one with evidence from the sources shown below.
 
 | Capability | Meaning | Typical evidence |
 |---|---|---|
-| `reason` | general reasoning and synthesis | provider driver conformance (website Workers); a route probe (model Workers, [models](models.md)); for a review member's steps only, a read-only agent Worker the operator names a review member ([scoped offers](#scoped-offers)) |
+| `reason` | general reasoning and synthesis | provider driver conformance (website Workers); a route probe (model Workers, [models](models.md)); for a review member's steps only, a read-only agent Worker under the enforced review-member profile ([scoped offers](#scoped-offers)) |
 | `web-search` | search the live web with citations | feature probe on the account |
 | `deep-research` | provider-native multi-step research report | plan + feature probe (P2) |
 | `connector:<name>` | a website connector or app enabled on the account, e.g. `connector:github` | connector probe on the account (P2) |
@@ -79,9 +79,10 @@ ballot, debate) from the admitted spec, never from a template or model text (INV
   that work.
 - A descriptor below `@1.4`, or a requirement below `@1.1`, that carries a scope is refused, so no
   reader takes a scoped offer for a plain one.
-- Today one source scopes offers: an agent Worker the operator names a review member offers
-  `reason`, and, when its runtime cannot resume, `persistent-conversation` (kept by replay), for a
-  review member's steps only ([agent runtimes](agent-runtimes.md#admission-evidence)).
+- Today one source scopes offers: an agent Worker under the enforced review-member profile
+  offers `reason`, granted by the profile while it is enforced, and, when its runtime cannot
+  resume, `persistent-conversation` (kept by an exact, recorded replay), for a review member's
+  steps only ([agent runtimes](agent-runtimes.md#review-members)).
 - A caller that reads descriptors itself (a board task deciding whether to resume a session)
   counts unscoped offers only.
 
@@ -157,8 +158,11 @@ without naming a provider ([INV-11](../architecture/invariants.md#inv-11-no-tool
 - **Provider family.** A capability descriptor may carry `family`
   (`capability-descriptor@1.1`): an opaque string for who ultimately serves the work, set by
   the Worker source. A website Worker's family is its account's provider, an agent Worker's is
-  its runtime, and a model Worker's is its catalog entry's `family`, by default its route
-  ([models](models.md#the-catalog-and-the-routes)).
+  its configuration's `family`, by default its runtime (a review member must name it,
+  [ADR-0049](../decisions/adr/0049-read-only-agent-workers-as-review-members.md)), and a model
+  Worker's is its catalog entry's `family`, by default its route
+  ([models](models.md#the-catalog-and-the-routes)). Admission checks it apart from capabilities: a
+  Worker that proves every capability the work needs is still refused for `diversity`.
 - **Exclusion.** A caller passes `exclude: { families, reason }` in the route options. The
   `diversity` check then rejects a Worker of an excluded family (`same provider family
   (<reason>)`), and a Worker that declares no family, which cannot be shown to differ
