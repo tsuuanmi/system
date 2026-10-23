@@ -27,8 +27,9 @@
   disabled: true
 - id: gateway-responses
   disabled: true
-# Agent Workers, off in the base composition (PROP-0004), are on here: with the models row,
-# they are where the work runs.
+# Every agent Worker row is on here: with the models row, they are where the work runs. The base
+# composition turns on only the Claude Code rows (PROP-0010 B3); the Codex, ACP, and
+# software-development rows are on in this preset alone.
 - id: agent-runtimes
   disabled: false
 - id: runtime-claude-agent-sdk

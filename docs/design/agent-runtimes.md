@@ -13,10 +13,12 @@
 > Workers.
 
 An **agent runtime** is an external coding agent that `system` drives as a Worker. It is the
-counterpart of the [gateways](gateways.md), where the same agents act as clients. The agent
-runtime and agent Worker rows are off in the default composition (PROP-0004); an operator turns
-them on ([runbook](../operations/runbooks.md#turn-an-off-row-back-on)), and the `api-first`
-preset does.
+counterpart of the [gateways](gateways.md), where the same agents act as clients. The
+`agent-runtimes`, `runtime-claude-agent-sdk`, and `agent-workers` rows are on in the default
+composition (PROP-0010 B3), with no Worker until the operator names a repository
+([runbook](../operations/runbooks.md#agent-workers)); the Codex and ACP rows are off
+([turn one on](../operations/runbooks.md#turn-an-off-row-back-on)), and the `api-first` preset
+turns them on.
 
 ## Providers
 

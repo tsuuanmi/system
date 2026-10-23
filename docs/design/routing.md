@@ -58,8 +58,9 @@ each one with evidence from the sources shown below.
 Profiles express each node as capabilities, not Worker kinds. A research node
 requires `deep-research` or `web-search` together with `reason`. An agent review
 node requires `review` and `local-data`. Only agent Workers prove `local-data`,
-`develop`, `validate`, and `review`, and their rows are off in the default composition
-([turn them on](../operations/runbooks.md#turn-an-off-row-back-on)).
+`develop`, `validate`, and `review`. The Claude Code rows are on in the default composition,
+with no Worker until the operator names a repository
+([agent Workers](../operations/runbooks.md#agent-workers)).
 
 ## Algorithm
 

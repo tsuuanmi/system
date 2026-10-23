@@ -3,10 +3,15 @@
 The **`agents` Worker source**: agent runtimes as Workers
 ([design](../../../docs/design/agent-runtimes.md)).
 
-- **Off by default:** this row, the agent runtime rows, and the
-  software-development profile, whose `agent-review` template only these
-  Workers can run, are off in the default composition (PROP-0004)
+- **On by default, with no Worker** (PROP-0010 B3): this row, `agent-runtimes`,
+  and `runtime-claude-agent-sdk` are on in the default composition; Codex, ACP,
+  and the software-development profile, whose `agent-review` template only
+  these Workers can run, stay off
   ([turn them on](../../../docs/operations/runbooks.md#turn-an-off-row-back-on)).
+  The bundle names no workspace, so it configures no Worker: the operator adds
+  them for a repository ([runbook](../../../docs/operations/runbooks.md#agent-workers)).
+  A Worker whose runtime is missing, or not signed in, is `unavailable`; the
+  profile still boots.
 
 - **Workers come from configuration only** (INV-6). Each entry is `agent:<id>`
   with a `runtime` kind, an absolute `workspace`, a `sandbox` (`read-only` or

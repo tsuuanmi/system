@@ -8,9 +8,16 @@ and the `system` plugins, and it does not use `dsh-base`
 - **Does not own:** plugin behavior. Each plugin package documents its own.
 - **Allow-list:** [DSH core reuse map](../../docs/architecture/plugin-model.md#dsh-core-reuse-map).
   The e2e composition test asserts the exact row set.
-- **Off by default (PROP-0004):** the agent Worker rows (`agent-runtimes`, the
-  `runtime-*` rows, `agent-workers`, `profile-software-development`) and both model
-  gateways are `disabled: true`, not removed. An operator patch turns one back on
+- **Claude Code on by default (PROP-0010 B3):** `agent-runtimes`,
+  `runtime-claude-agent-sdk`, and `agent-workers` are on, with no Worker: a Worker's
+  workspace is a repository the operator names
+  ([runbook](../../docs/operations/runbooks.md#agent-workers)). A host without Claude
+  Code, bubblewrap, or a sign-in still boots; its Workers are unavailable, and the probe
+  says why.
+- **Off by default (PROP-0004):** `runtime-codex-sdk` and `runtime-acp` (they cannot ask
+  a tool gate before each tool call, so no Worker of theirs is admitted),
+  `profile-software-development`, and both model gateways are `disabled: true`, not
+  removed. An operator patch turns one back on
   ([runbook](../../docs/operations/runbooks.md#turn-an-off-row-back-on)); the e2e test
   proves that it mounts again.
 - **The approval queue and the board (B5):** the [`approvals`](../plugins/approvals/README.md)
@@ -22,8 +29,8 @@ and the `system` plugins, and it does not use `dsh-base`
   only with it; with the board off, runs work as before.
 - **Presets:** [`presets/`](presets/) holds named bundle layers that `system init
   --preset <name>` adds right after this bundle. [`api-first`](presets/api-first/cordis.patch.yml)
-  disables every row that drives a website and both model gateways, turns the agent
-  Worker rows back on, and orders quota
+  disables every row that drives a website and both model gateways, turns every agent
+  Worker row on (Codex, ACP, and the software-development profile included), and orders quota
   `local`, `metered`, `agent-plan`, `subscription-chat`
   ([ADR-0025](../../docs/decisions/adr/0025-api-first-composition.md)). A preset names
   no vendor, model, or tool. The e2e test asserts each preset's exact row set.

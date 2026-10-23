@@ -133,6 +133,10 @@ installed.
   uses for its network proxy on Linux; a missing `socat` fails each
   `workspace-write` run at start (`failIfUnavailable`), never runs it
   unconfined ([runbook](../../../docs/operations/runbooks.md#agent-workers)).
+- **Bundle:** on by default, with `agent-runtimes` and `agent-workers`
+  (PROP-0010 B3); it registers the runtime and starts nothing until a Worker
+  names it. A host without Claude Code, or where it is not signed in, still
+  boots: the probe reports why, and its Workers are unavailable.
 - **License:** the SDK is © Anthropic, under Anthropic's legal agreements
   ([dependency register](../../../docs/engineering/dependencies.md)). Its
   sandbox ships in Claude Code itself; nothing new is depended on.
