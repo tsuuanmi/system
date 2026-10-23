@@ -18,11 +18,15 @@ let child: ChildProcess | undefined
 
 // The default composition: the Claude Code agent rows are on (PROP-0010 B3); the Codex, ACP,
 // Antigravity CLI, software-development, and model gateway rows are off (PROP-0004).
-// The rows the default composition has but turns off, and the DSH rows, whose packages ship no plugin manifest.
+// The rows the default composition has but turns off, and the DSH rows, whose packages ship no plugin
+// manifest, as the plugin host's configuration in the bundle allows.
 const OFF_ROWS = ['runtime-codex-sdk', 'runtime-acp', 'runtime-antigravity-cli', 'profile-software-development', 'gateway-anthropic', 'gateway-responses']
 const DSH_PACKAGES = ['@deepseek-ai/cordis-plugin-timer', '@deepseek-ai/dsh-host-webserver', '@deepseek-ai/dsh-llm', '@deepseek-ai/dsh-llm-pi-ai']
 
-type Plugin = { name: string; rows: string[]; mounted: boolean; manifest: string; lifecycle?: { state: string; since: string; decision: string } }
+type Plugin = {
+  name: string; rows: string[]; mounted: boolean; manifest: string; lifecycle?: { state: string; since: string; decision: string }
+  findings?: Array<{ kind: string; reason: string }>; checked?: { since: string; decision: string }
+}
 /** The plugins the first boot recorded, which a restart over an unchanged composition must leave as they are. */
 let firstBoot: Plugin[] = []
 
@@ -125,7 +129,9 @@ describe('system profile (e2e through dsh)', () => {
     expect(plugins.filter((p) => DSH_PACKAGES.includes(p.name)).map((p) => [p.name, p.manifest, p.lifecycle])).toEqual(DSH_PACKAGES.map((name) => [name, 'absent', undefined]))
     for (const p of ours) expect([p.name, p.manifest, p.lifecycle?.state]).toEqual([p.name, 'valid', p.mounted ? 'default' : 'candidate'])
     expect(artifacts).toBe(ours.length)
-    expect(health.checks.find((c) => c.name === 'manifests')).toMatchObject({ state: 'ok', detail: expect.stringContaining('4 have none') })
+    // Every mounted row passes the manifest check, the DSH rows as the bundle's allowance names them (ADR-0045).
+    expect(plugins.filter((p) => p.findings)).toEqual([])
+    expect(health.checks.find((c) => c.name === 'manifests')).toMatchObject({ state: 'ok', detail: expect.stringContaining(`4 of them run with no manifest, as the plugin host's configuration allows: ${DSH_PACKAGES.join(', ')}`) })
     firstBoot = plugins
     await client.close()
 
@@ -236,6 +242,33 @@ describe('system profile (e2e through dsh)', () => {
       const read = await client.callTool({ name: 'artifact', arguments: { id: after.lifecycle!.decision } })
       const decision = JSON.parse((read.structuredContent as { text: string }).text) as { schema: string; decisionType: string; inputs: string[]; outcome: { option: string; detail: { from: string } } }
       expect(decision).toMatchObject({ schema: 'decision@1.5', decisionType: 'lifecycle', inputs: [before.lifecycle!.decision], outcome: { option: 'default', detail: { from: 'candidate' } } })
+    } finally {
+      await client.close()
+      const exited = new Promise((resolve) => child?.on('exit', resolve))
+      child.kill('SIGTERM')
+      await exited
+    }
+  }, 120_000)
+
+  it('finds each DSH row once a patch drops the plugin host\'s allowance: recorded as a gate decision, health down, and nothing stopped (REQ-HOST-7, INV-2, ADR-0045)', async () => {
+    const patch = join(home, 'no-allowance.yml')
+    writeFileSync(patch, `${readFileSync(join(home, 'port0.yml'), 'utf8').trimEnd()}\n- id: plugin-host\n  config: {}\n`)
+    child = spawn(process.execPath, [bin, 'start', '--patch', patch], { env, stdio: 'pipe', detached: true })
+    const discoveryPath = join(home, 'system', 'mcp.json')
+    await waitFor(discoveryPath, 60_000)
+    const { url, tokenFiles } = JSON.parse(readFileSync(discoveryPath, 'utf8')) as { url: string; tokenFiles: Record<'operator', string> }
+    const client = await client2(url, readFileSync(tokenFiles.operator).toString('base64url'))
+    try {
+      const { plugins, health } = (await client.callTool({ name: 'status', arguments: {} })).structuredContent as { plugins: Plugin[]; health: { state: string; checks: Array<{ name: string; state: string; detail: string }> } }
+      const found = plugins.filter((p) => p.findings)
+      expect(found.map((p) => [p.name, p.findings!.map((f) => f.kind)])).toEqual(DSH_PACKAGES.map((name) => [name, ['no-manifest']]))
+      expect(health.state).toBe('down')
+      expect(health.checks.find((c) => c.name === 'manifests')).toMatchObject({ state: 'down', detail: expect.stringContaining('@deepseek-ai/dsh-host-webserver: it runs with no manifest') })
+      // Detection only: the host cannot keep a row from running, so every row still runs.
+      expect(health.checks.find((c) => c.name === 'plugins')).toMatchObject({ state: 'ok' })
+      const read = await client.callTool({ name: 'artifact', arguments: { id: found[0]!.checked!.decision } })
+      const decision = JSON.parse((read.structuredContent as { text: string }).text) as Record<string, unknown>
+      expect(decision).toMatchObject({ schema: 'decision@1.0', decisionType: 'gate', decider: { id: 'plugin-host.manifest-check' }, outcome: { option: 'fail', detail: { plugin: DSH_PACKAGES[0], findings: found[0]!.findings } } })
     } finally {
       await client.close()
       const exited = new Promise((resolve) => child?.on('exit', resolve))
