@@ -1,0 +1,119 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:tsuuanmi:system:schema:policy-change:v1",
+  "title": "Policy change",
+  "description": "Durable state of one change of the autonomy policy set (ctx.approvals, design/approvals.md#a-policy-change): the operator proposes one autonomy-policy record, the queue asks the operator through a `policy-change` approval request on the proposed set's hash, and applies the whole set only on the operator's approval. The set it applies is kept, so a restart keeps it while the configuration it derives from is unchanged.",
+  "type": "object",
+  "required": ["schema", "changeId", "state", "policy", "policies", "hash", "baseHash", "configHash", "effect", "requestId", "proposedAt", "revision"],
+  "properties": {
+    "schema": { "const": "policy-change@1.0" },
+    "changeId": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+    "state": {
+      "description": "asked: its request waits for the operator; applied: approved, and its set came into force (it stays applied when a later change replaces it); declined: rejected, expired, or withdrawn, nothing changed; retired: applied, then replaced by a configuration that names its hash in `supersedes`.",
+      "enum": ["asked", "applied", "declined", "retired"]
+    },
+    "policy": {
+      "description": "The proposed record: a new version of a policy of the set, or a new project's policy.",
+      "$ref": "urn:tsuuanmi:system:schema:autonomy-policy:v1"
+    },
+    "previous": {
+      "description": "The record it replaces, as it was in force when proposed; absent when it adds a project's policy.",
+      "$ref": "urn:tsuuanmi:system:schema:autonomy-policy:v1"
+    },
+    "policies": {
+      "description": "The whole set once applied: the studio policy, then the project policies by project id. It loads under the same rules as a configured set.",
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 101,
+      "items": { "$ref": "urn:tsuuanmi:system:schema:autonomy-policy:v1" }
+    },
+    "hash": {
+      "description": "The sha256 of the canonical JSON of `policies`: the exact subject of its approval request (INV-5).",
+      "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/sha256"
+    },
+    "baseHash": {
+      "description": "The hash of the set in force when it was proposed. It applies only while that set is still in force; otherwise its request is withdrawn.",
+      "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/sha256"
+    },
+    "configHash": {
+      "description": "The hash of the configured set the base derives from. An applied set stays in force across restarts only while the configuration still hashes to it.",
+      "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/sha256"
+    },
+    "effect": {
+      "description": "Every effective mode the change moves, for the studio (no projectId) and for each project with a policy: what the operator is asked to approve, besides the records.",
+      "type": "array",
+      "maxItems": 1212,
+      "items": {
+        "type": "object",
+        "required": ["actionClass", "from", "to"],
+        "properties": {
+          "projectId": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+          "actionClass": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/actionClass" },
+          "from": { "enum": ["auto", "notify", "ask", "forbid"] },
+          "to": { "enum": ["auto", "notify", "ask", "forbid"] }
+        },
+        "additionalProperties": false
+      }
+    },
+    "requestId": {
+      "description": "The `policy-change` approval request that asks the operator.",
+      "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+    },
+    "note": {
+      "description": "The operator's reason, shown with the request.",
+      "type": "string",
+      "maxLength": 2000
+    },
+    "proposedAt": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp" },
+    "applied": {
+      "description": "When the set came into force, and the `policy-change` decision that records the old and new hashes (INV-13).",
+      "$ref": "#/$defs/moment"
+    },
+    "declined": {
+      "description": "Why its request closed without an approval: the operator rejected it, it expired, or it was withdrawn (its base set is no longer in force, or the policy no longer asks for it). The decision is the request's `approval` decision.",
+      "type": "object",
+      "required": ["at", "cause", "decision"],
+      "properties": {
+        "at": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp" },
+        "cause": { "enum": ["rejected", "expired", "withdrawn"] },
+        "decision": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/artifactRef" }
+      },
+      "additionalProperties": false
+    },
+    "retired": {
+      "description": "When a configuration that names this set's hash in `supersedes` replaced it at a start, and the `policy-change` decision that records it.",
+      "$ref": "#/$defs/moment"
+    },
+    "revision": { "type": "integer", "minimum": 0, "maximum": 1000000000 }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "state": { "const": "asked" } } },
+      "then": { "properties": { "applied": false, "declined": false, "retired": false } }
+    },
+    {
+      "if": { "properties": { "state": { "const": "applied" } } },
+      "then": { "required": ["applied"], "properties": { "applied": true, "declined": false, "retired": false } }
+    },
+    {
+      "if": { "properties": { "state": { "const": "declined" } } },
+      "then": { "required": ["declined"], "properties": { "applied": false, "declined": true, "retired": false } }
+    },
+    {
+      "if": { "properties": { "state": { "const": "retired" } } },
+      "then": { "required": ["applied", "retired"], "properties": { "applied": true, "declined": false, "retired": true } }
+    }
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "moment": {
+      "type": "object",
+      "required": ["at", "decision"],
+      "properties": {
+        "at": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp" },
+        "decision": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/artifactRef" }
+      },
+      "additionalProperties": false
+    }
+  }
+}

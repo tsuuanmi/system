@@ -77,6 +77,41 @@ describe('approval-request@1.0', () => {
   })
 })
 
+describe('approval-request@1.1 and policy-change@1.0', () => {
+  const asked = example('approval-request.policy-change')
+  const change = example('policy-change.applied')
+
+  it('asks a policy change only as the queue\'s own request, naming the change it applies, on @1.1 (INV-6)', () => {
+    expect(valid('approval-request@1.1', asked)).toBe(true)
+    expect(valid('approval-request@1.1', { ...asked, schema: 'approval-request@1.0' })).toBe(false)
+    expect(valid('approval-request@1.1', { ...asked, requester: { component: 'approvals', projectId: 'p1' } })).toBe(false)
+    expect(valid('approval-request@1.1', { ...asked, requester: { component: 'board', policyChangeId: asked.requester.policyChangeId } })).toBe(false)
+    expect(valid('approval-request@1.1', { ...asked, action: { ...asked.action, class: 'merge' } })).toBe(false)
+    // Every other request keeps its 1.0 shape, valid at either tag.
+    const { batchId: _, ...open } = example('approval-request.batched')
+    expect(valid('approval-request@1.1', { ...open, state: 'open', schema: 'approval-request@1.1' })).toBe(true)
+  })
+
+  it('holds the whole set it applies, bound to its hash, and is applied only with its decision (INV-5, INV-13)', () => {
+    expect(valid('policy-change@1.0', change)).toBe(true)
+    const { applied: _, ...unrecorded } = change
+    expect(valid('policy-change@1.0', unrecorded)).toBe(false)
+    expect(valid('policy-change@1.0', { ...unrecorded, state: 'asked' })).toBe(true)
+    expect(valid('policy-change@1.0', { ...change, state: 'asked' })).toBe(false)
+    expect(valid('policy-change@1.0', { ...unrecorded, state: 'declined', declined: { at: change.proposedAt, cause: 'expired', decision: change.applied.decision } })).toBe(true)
+    expect(valid('policy-change@1.0', { ...change, state: 'retired' })).toBe(false)
+    expect(valid('policy-change@1.0', { ...change, state: 'retired', retired: change.applied })).toBe(true)
+    expect(valid('policy-change@1.0', { ...change, hash: 'v2' })).toBe(false)
+    expect(valid('policy-change@1.0', { ...change, policies: [] })).toBe(false)
+  })
+
+  it('records a policy change as a decision@1.6 naming the old and new set hashes (INV-13)', () => {
+    const decision = example('decision.policy-change')
+    expect(valid('decision@1.6', decision)).toBe(true)
+    expect(valid('decision@1.6', { ...decision, schema: 'decision@1.5' })).toBe(false)
+  })
+})
+
 describe('board-task@1.0', () => {
   const review = example('board-task.review')
   const waiting = example('board-task.waiting-for-approval')
@@ -255,6 +290,15 @@ describe('MCP tool calls', () => {
     const decide = example('mcp-approvals.decide')
     const { subject: _, ...unbound } = decide.input.verdicts[0]
     expect(call('mcp-approvals', { ...decide, input: { verdicts: [unbound] } })).toBe(false)
+  })
+
+  it('takes a policy change as one autonomy-policy record, and answers with the change and its request', () => {
+    const propose = example('mcp-approvals.policy-propose')
+    expect(call('mcp-approvals', propose)).toBe(true)
+    expect(call('mcp-approvals', { ...propose, input: { policy: { ...propose.input.policy, default: 'auto' } } })).toBe(false)
+    expect(call('mcp-approvals', { ...propose, input: { policies: [propose.input.policy] } })).toBe(false)
+    const { request: _, ...unasked } = propose.output
+    expect(call('mcp-approvals', { ...propose, output: unasked })).toBe(false)
   })
 
   it('takes a digest request of raw artifacts by content id only, and answers with the request as it stands', () => {
