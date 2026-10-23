@@ -143,6 +143,12 @@ describe('snapshotRepository: a public repository read at one commit (PROP-0004 
     for (const a of ['140.82.112.3', '8.8.8.8', '2606:4700::1111', '::ffff:140.82.112.3', '2001:4860:4860::8888']) expect(isPrivateAddress(a), a).toBe(false)
   })
 
+  it('reads an address of a long digit run in linear time, and refuses it (no polynomial backtracking)', () => {
+    const started = performance.now()
+    for (const a of [`${'0'.repeat(100_000)}x`, `::${'1'.repeat(100_000)}.1.1.1`, `::${'1.'.repeat(100_000)}1`]) expect(isPrivateAddress(a)).toBe(true)
+    expect(performance.now() - started).toBeLessThan(1000)
+  })
+
   it('pins git to every address it checked, so a second lookup cannot send it elsewhere (DNS rebinding)', () => {
     expect(pinnedTo('github.com', ['140.82.112.3'])).toEqual(['-c', 'http.curloptResolve=github.com:443:140.82.112.3'])
     expect(pinnedTo('forge.example', ['140.82.112.3', '2606:4700::1111'])).toEqual(['-c', 'http.curloptResolve=forge.example:443:140.82.112.3,[2606:4700::1111]'])

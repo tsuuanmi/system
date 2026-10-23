@@ -209,14 +209,31 @@ const V4_RANGES = [
   ['192.168.0.0', 16], ['198.18.0.0', 15], ['198.51.100.0', 24], ['203.0.113.0', 24], ['224.0.0.0', 4], ['240.0.0.0', 4],
 ] as const
 
+/**
+ * The dotted IPv4 tail of an address (`::ffff:1.2.3.4` → `1.2.3.4`): four digit runs joined by
+ * dots that end it, each run taken whole. One backward scan: a `\d+\.\d+\.\d+\.\d+$` regex is
+ * retried from every digit of a long run, which takes quadratic time.
+ */
+function dottedTail(address: string): string | undefined {
+  const digit = (i: number): boolean => address[i]! >= '0' && address[i]! <= '9'
+  let start = address.length
+  for (let run = 0; run < 4; run++) {
+    if (run > 0 && address[--start] !== '.') return undefined
+    const end = start
+    while (start > 0 && digit(start - 1)) start--
+    if (start === end) return undefined
+  }
+  return address.slice(start)
+}
+
 /** An IPv6 address as eight 16-bit groups, or undefined. */
 function v6(address: string): number[] | undefined {
   let text = address.toLowerCase().split('%')[0]!
-  const tail = /(\d+\.\d+\.\d+\.\d+)$/.exec(text)
+  const tail = dottedTail(text)
   if (tail) {
-    const n = v4(tail[1]!)
+    const n = v4(tail)
     if (n === undefined) return undefined
-    text = `${text.slice(0, -tail[1]!.length)}${(n >>> 16).toString(16)}:${(n & 0xffff).toString(16)}`
+    text = `${text.slice(0, -tail.length)}${(n >>> 16).toString(16)}:${(n & 0xffff).toString(16)}`
   }
   const [head, rest] = text.split('::') as [string, string | undefined]
   const groups = (s: string): number[] => (s ? s.split(':').map((g) => parseInt(g, 16)) : [])
