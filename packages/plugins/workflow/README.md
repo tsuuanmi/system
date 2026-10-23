@@ -261,7 +261,18 @@ second execution path (INV-1).
     keeps a native session it can resume now, and the session has served fewer than
     `maxSessionRuns` runs (default 5); else it starts fresh. Either is an `admission` decision
     (`workflow.task-session`), made before the task is taken;
-  - such a run is not continued, superseded, deleted, or expired before its outcome is reported.
+  - such a run is not continued, superseded, deleted, or expired before its outcome is reported;
+  - once its result reached the board (accepted, rejected, held for the operator, or reconciled
+    completed), the engine asks `ctx.digests` for a digest of the result's artifacts, after the
+    report so it never blocks it: one per run, at most `digestsPerHour` (default 6; 0 asks for
+    none) in any hour, decided by an `admission` decision (`workflow.task-digest`, `request` or
+    `bypass`) that takes the bound in the same transaction. A written digest is set on the task's
+    `result.digest` through the board's `attachDigest`; a bypass (no digest provider, the bound,
+    a refused request, a digest not written, a board that does not take it, or 6 hours without a
+    settlement) leaves it unset, recorded with why in the view's `task.digest` and the
+    `workflow.task.digest` event. Its state is on the run's `workflow_tasks` row, so a restart
+    asks once and goes on waiting
+    ([a digest of a task's result](../../../docs/design/workflow-engine.md#a-digest-of-a-tasks-result)).
   - The board is optional: with none loaded, a task's run is refused (`config_error`) and every
     other run is unchanged.
 - **Wake-on-message ([design](../../../docs/design/sessions-and-messaging.md)).**
@@ -429,14 +440,19 @@ second execution path (INV-1).
     blocked gate records and names (what it waits for, until when).
 - **Injects:** `store`, `artifacts`, `eventLog`, `leases`, `egress`, `workers`, `workerSessions`;
   `mcp` and `board` (the abstract `Board` of `board-core`, never the board plugin) are optional;
-  it reads `resources` when present (a task's budget for its briefs).
+  it reads `resources` when present (a task's budget for its briefs), and asks `digests` (the
+  abstract `Digests` of `digest-core`) when present, for a task's results.
 - **Tests** beyond the suite: [`tests/board.spec.ts`](tests/board.spec.ts) runs the engine over
   the store-backed board and approval queue end to end: a task claimed and done, a lead's claim
   adopted, stale claims refused, the lease renewed past its length, a failed and a stopped run
   reported, a restart with the holder lost (reconciled, nothing new started) and one whose work
   finished meanwhile (accepted through `reconcileRun`), a review left to the operator for want
   of a required check (held by the board, past the run's lease), a result off the written
-  subject, and the refusals with no board.
+  subject, and the refusals with no board. [`tests/digests.spec.ts`](tests/digests.spec.ts) covers
+  the digests of task results: asked after the report and set on the task, the next task's brief
+  pointing at it, the hourly bound, no provider, a digest not written, a review held for the
+  operator, a restart while a request is pending, the wait's bound, and a board that no longer
+  takes it.
 
 ## Source layout
 
@@ -460,5 +476,6 @@ in `engine.ts`:
 | `operator.ts` | `stop`, `continue`, `supersede`, `approve` |
 | `retention.ts` | `delete` and the expiry of private text and runs; a deleted run releases the Worker sessions no other run uses |
 | `tasks.ts` | runs that serve a board task: what their briefs carry, resuming the session before them, taking the task, run first then work, lease renewal, the holder lost, the result's subject and acceptance, the report through the board's moves |
+| `digests.ts` | the digest of a task run's result: asked for after the report, bounded per hour, set on the task through the board's `attachDigest`, failing open |
 | `views.ts` | run views, `usage`, `explain` |
 | `tools.ts` | the MCP tools |

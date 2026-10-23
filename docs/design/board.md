@@ -232,7 +232,7 @@ work again as a new task.
 lead, the operator, and the next attempt's or a dependent task's brief read in place of the raw
 artifacts. A digest is a capability: it never accepts anything, and a result with none is
 complete. `attachDigest(taskId, digest)` (contract 1.1, an optional method: a provider at 1.0 has
-none, and its results keep no digest) sets it; the [workflow engine](workflow-engine.md#board-tasks)
+none, and its results keep no digest) sets it; the [workflow engine](workflow-engine.md#a-digest-of-a-tasks-result)
 calls it once a digest of a run's result is written:
 
 - the digest is a stored `digest@1.0` report whose sources are exactly the result's artifacts

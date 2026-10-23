@@ -21,6 +21,7 @@
   "dependencies": {
     "@tsuuanmi/system-artifacts": "workspace:*",
     "@tsuuanmi/system-board-core": "workspace:*",
+    "@tsuuanmi/system-digest-core": "workspace:*",
     "@tsuuanmi/system-egress": "workspace:*",
     "@tsuuanmi/system-event-log": "workspace:*",
     "@tsuuanmi/system-gateway-core": "workspace:*",

@@ -15,6 +15,8 @@
  *   run, and any run whose holder was lost, is reported with `reconcileRun`. When only the
  *   operator may accept the result (a required check not reported), the board holds the review
  *   for the operator.
+ * - **After it**, a result that reached the board is digested, once, and the digest set on the
+ *   task's result ({@link TaskDigests}); a digest never blocks the report.
  *
  * Every move goes through `ctx.board`: the engine never writes board state, and each of its own
  * choices is a decision with a reason for every candidate (INV-13). The board is optional: a run
@@ -25,6 +27,7 @@ import type { Lease } from '@tsuuanmi/system-leases'
 import { BRIEF_LIMITS, type BriefBudgetLine, type BriefPointer, captureGitSubject } from '@tsuuanmi/system-libs'
 import type {} from '@tsuuanmi/system-resources-core'
 import type { TaskFrame } from './briefs.ts'
+import { TaskDigests } from './digests.ts'
 import type { Engine, Prepared } from './engine.ts'
 import { clampText, type ResolvedNode } from './spec.ts'
 import {
@@ -54,8 +57,12 @@ export class TaskRuns {
   private readonly renewals = new Map<string, NodeJS.Timeout>()
   private readonly reporting = new Map<string, Promise<void>>()
   private readonly retries = new Map<string, { timer: NodeJS.Timeout; tries: number }>()
+  /** The digests of the results the runs reported. */
+  readonly digests: TaskDigests
 
-  constructor(private readonly e: Engine) {}
+  constructor(private readonly e: Engine) {
+    this.digests = new TaskDigests(e)
+  }
 
   row(runId: string): TaskRow | undefined {
     return this.e.ctx.store.db.prepare('SELECT * FROM workflow_tasks WHERE run_id = ?').get(runId) as TaskRow | undefined
@@ -78,6 +85,7 @@ export class TaskRuns {
     return {
       taskId: row.task_id, generation: row.generation, claim: row.claim, phase: row.phase,
       ...(row.lost ? { lost: (JSON.parse(row.lost) as Lost).decision } : {}), ...(row.outcome ? { outcome: JSON.parse(row.outcome) as TaskOutcome } : {}),
+      ...(row.digest ? { digest: this.digests.view(row)! } : {}),
     }
   }
 
@@ -91,6 +99,7 @@ export class TaskRuns {
       if (status === 'running') this.e.schedule(run_id)
       else void this.report(run_id)
     }
+    this.digests.recover()
   }
 
   detach(board: Board): void {
@@ -99,6 +108,7 @@ export class TaskRuns {
 
   /** On start: outcomes a stop or crash left unreported are reported (running runs resume through their advance). */
   recover(): void {
+    this.digests.recover()
     if (!this.e.board) return
     const pending = this.e.ctx.store.db.prepare(`SELECT t.run_id FROM workflow_tasks t JOIN workflow_runs r ON r.run_id = t.run_id
       WHERE t.phase != 'reported' AND r.status != 'running' ORDER BY t.created_at`).all() as Array<{ run_id: string }>
@@ -111,6 +121,7 @@ export class TaskRuns {
     for (const { timer } of this.retries.values()) clearTimeout(timer)
     this.retries.clear()
     await Promise.allSettled(this.reporting.values())
+    await this.digests.close()
   }
 
   // --- taking the task ---
@@ -743,10 +754,13 @@ export class TaskRuns {
   }
 
   private settled(row: TaskRow, outcome: TaskOutcome): void {
-    this.e.ctx.store.transaction((db) => {
+    // A result that reached the board is due its digest, in the transaction that reports it, so a restart asks for it once.
+    const due = this.e.ctx.store.transaction((db) => {
       db.prepare("UPDATE workflow_tasks SET phase = 'reported', outcome = ?, updated_at = ? WHERE run_id = ?").run(JSON.stringify(outcome), now(), row.run_id)
       this.e.ctx.eventLog.append({ type: 'workflow.task.reported', runId: row.run_id, ...(outcome.decision ? { decision: outcome.decision } : {}), data: { taskId: row.task_id, ...outcome } })
+      return this.digests.due(row, outcome.status)
     })
+    if (due) this.digests.drive(row.run_id)
     clearTimeout(this.retries.get(row.run_id)?.timer)
     this.retries.delete(row.run_id)
     if (outcome.status === 'review' || outcome.status === 'refused') this.e.ctx.logger.warn(`workflow: run ${row.run_id}'s outcome left board task ${row.task_id} ${outcome.state ?? 'as it was'}: ${outcome.reason ?? outcome.status}`)

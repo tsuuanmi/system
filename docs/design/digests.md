@@ -9,9 +9,8 @@
 >
 > Defined in [`digest-core`](../../packages/digest-core/README.md); provided by
 > [`digest`](../../packages/plugins/digest/README.md) on `ctx.store`, its bundle row on. Differs
-> from target: a digest is written on request only (nothing digests a run's results on its own,
-> and the board's `result.digest` is not filled yet); no test output is parsed before the model
-> reads it.
+> from target: only a board task's results are digested on their own (a run outside the board is
+> digested on request only); no test output is parsed before the model reads it.
 
 A digest is a cited summary of raw artifacts (test logs, agent results, reports), so the lead
 reads a page instead of the raw material, and every claim on that page can be checked. A cheap
@@ -141,12 +140,19 @@ judges the work, and the raw artifacts stay one `artifact` call away.
 
 ## Trigger
 
-On request only, conservatively: the lead (or a plugin) asks with `digests_request` for the
-artifacts it wants digested, typically a run's result artifacts, and reads the digest with the
-`artifact` tool. Nothing digests on its own after a run: an automatic digest would spend the
-economy tier on every run, and putting it on the board's `result.digest` would make a capability
-part of a task's acceptance inputs, which needs the board's contract to say how a missing digest
-is treated.
+- **A board task's result**, on its own: once a workflow run's result reached its task, the
+  [workflow engine](workflow-engine.md#a-digest-of-a-tasks-result) asks for a digest of the
+  result's artifacts, after the report so it never blocks the acceptance, one per attempt and at
+  most `digestsPerHour` (default 6) in any hour, and sets the written digest on the task's
+  `result.digest` through the board's [`attachDigest`](board.md#a-digest-on-a-result). The
+  board's contract says how a missing digest is treated: a result with none is complete, and a
+  digest never accepts anything. One the operator's held review shows is named by the operator's
+  acceptance.
+- **On request**: the lead (or a plugin) asks with `digests_request` for the artifacts it wants
+  digested, and reads the digest with the `artifact` tool.
+
+Nothing else digests on its own: a run outside the board would spend the economy tier on every
+run, with no task to put the digest on.
 
 ## Configuration
 

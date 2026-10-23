@@ -61,4 +61,9 @@ export const MIGRATIONS = [{
   version: 11,
   sql: `ALTER TABLE workflow_nodes ADD COLUMN brief_parts TEXT;
   ALTER TABLE workflow_tasks ADD COLUMN frame TEXT;`,
+}, {
+  // A digest of a board task's result (docs/design/workflow-engine.md#a-digest-of-a-tasks-result):
+  // where it stands, as JSON `TaskDigest`; its `requestedAt` is what the hourly bound counts.
+  version: 12,
+  sql: 'ALTER TABLE workflow_tasks ADD COLUMN digest TEXT;',
 }]

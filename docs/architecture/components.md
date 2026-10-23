@@ -217,7 +217,8 @@ runs the work the router admitted to them. Callers never reach a source directly
   verbatim in the artifact it cites is dropped and recorded; when every claim fails, it is
   written once more on the standard tier, never higher. It fails open: a request no Worker
   serves is settled `bypassed` and recorded ([digests](../design/digests.md)). It depends on
-  seam definitions only.
+  seam definitions only. The workflow engine asks for a digest of each board task's result once
+  it reached the board, and sets it on the task through the board's `attachDigest`.
 - **Profiles:** plugins that contribute templates through `ctx.workflow.template` (`research`,
   with its `deep` variant; `agent-review`, for the agent Workers, its row off by default) and acceptance
   contracts through `ctx.workers`. A profile never names a provider, browser, or account, and

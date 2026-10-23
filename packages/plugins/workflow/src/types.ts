@@ -119,7 +119,23 @@ export interface TaskView {
   lost?: ArtifactRef
   /** How the outcome reached the board, once reported. */
   outcome?: TaskOutcome
+  /** The digest of the run's result: asked for once the result reached the board, and set on the task when written. */
+  digest?: TaskDigest
 }
+
+/**
+ * Where the digest of a task run's result stands (docs/design/workflow-engine.md#a-digest-of-a-tasks-result):
+ * `due` once the result reached the board; `requesting` once the engine decided to ask (its
+ * `admission` decision, and the time that counts against `digestsPerHour`); `requested` with the
+ * digest request; then `attached` (the digest set on the task's result) or `bypassed` (it keeps
+ * none), with why and the digest's own settling decision when it settled.
+ */
+export type TaskDigest =
+  | { state: 'due' }
+  | { state: 'requesting'; decision: ArtifactRef; requestedAt: string }
+  | { state: 'requested'; decision: ArtifactRef; requestedAt: string; requestId: string }
+  | { state: 'attached'; decision: ArtifactRef; requestedAt: string; requestId: string; digest: ArtifactRef; settled?: ArtifactRef; at: string }
+  | { state: 'bypassed'; decision?: ArtifactRef; requestedAt?: string; requestId?: string; settled?: ArtifactRef; reason: string; at: string }
 
 /** How a run's outcome reached its board task. */
 export interface TaskOutcome {
@@ -193,6 +209,11 @@ export interface Config {
    * resumes the session of the work before it (default 5; INV-9): past it, the run starts fresh.
    */
   maxSessionRuns?: number
+  /**
+   * Digests of board task results the engine asks `ctx.digests` for in any hour, at most (default
+   * 6; INV-9); 0 asks for none. Past it, a result keeps no digest, recorded with why.
+   */
+  digestsPerHour?: number
   /** A review's repository reads: the hosts allowed (default github.com) and the bounds (40 files, 300 KB, 48 KB a file; INV-9). */
   repositories?: { hosts?: string[]; maxFiles?: number; maxBytes?: number; maxFileBytes?: number; maxSourceChars?: number }
 }
@@ -262,6 +283,8 @@ export interface TaskRow {
   outcome: string | null
   /** JSON `TaskFrame`: what the run adds to every brief it writes (the task, its attempt, criteria, pointers, budget). */
   frame?: string | null
+  /** JSON {@link TaskDigest}: the digest of the run's result, once its result reached the board. */
+  digest?: string | null
   created_at: string
   updated_at: string
 }

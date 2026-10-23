@@ -30,7 +30,7 @@ its types is not listed).
 | [profile-scientific-research](../../packages/plugins/profile-scientific-research/README.md) | orchestration | — | `profile-scientific-research` | `workflow`, `workers`, `artifacts`, `eventLog` | `libs` |
 | [profile-software-development](../../packages/plugins/profile-software-development/README.md) | orchestration | — | `profile-software-development` | `workflow` | — |
 | [worker-sessions](../../packages/plugins/worker-sessions/README.md) | orchestration | `workerSessions` | `worker-sessions` | `store`, `artifacts`, `mcp` (optional) | `gateway-core`, `libs` |
-| [workflow](../../packages/plugins/workflow/README.md) | orchestration | `workflow` | `workflow` | `store`, `artifacts`, `eventLog`, `leases`, `egress`, `workers`, `workerSessions`, `board` (optional), `mcp` (optional), `resources` (optional) | `board-core`, `gateway-core`, `leases`, `libs`, `provider-core`, `resources-core`, `worker-sessions`, `workers-core` |
+| [workflow](../../packages/plugins/workflow/README.md) | orchestration | `workflow` | `workflow` | `store`, `artifacts`, `eventLog`, `leases`, `egress`, `workers`, `workerSessions`, `board` (optional), `digests` (optional), `mcp` (optional), `resources` (optional) | `board-core`, `digest-core`, `gateway-core`, `leases`, `libs`, `provider-core`, `resources-core`, `worker-sessions`, `workers-core` |
 | [approvals](../../packages/plugins/approvals/README.md) | routing | `approvals` | `approvals` | `store`, `artifacts`, `eventLog` (optional), `mcp` (optional) | `approvals-core`, `gateway-core`, `libs` |
 | [approvals-core](../../packages/approvals-core/README.md) | routing | defines `approvals` | — | — | — |
 | [egress](../../packages/plugins/egress/README.md) | routing | `egress` | `egress` | `artifacts` | `libs`, `provider-core` |
@@ -234,6 +234,7 @@ flowchart TB
   workflow --> workers
   workflow --> worker_sessions
   workflow -.-> board
+  workflow -.-> digest
   workflow -.-> mcp_server
   workflow -.-> resources
 ```
@@ -389,6 +390,7 @@ flowchart TB
   worker_sessions --> gateway_core
   workers --> workers_core
   workflow --> board_core
+  workflow --> digest_core
   workflow --> gateway_core
   workflow --> leases
   workflow --> provider_core
