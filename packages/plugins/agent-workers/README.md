@@ -14,7 +14,18 @@ The **`agents` Worker source**: agent runtimes as Workers
   A Worker whose runtime is missing, or not signed in, is `unavailable`; the
   profile still boots.
 
-- **Workers come from configuration only** (INV-6). Each entry is `agent:<id>`
+- **Workers come from configuration only** (INV-6), in one of two shapes of the
+  row, never both (`config_error`):
+  - **account × role** (`roles`, `assignments`; PROP-0012 phase F, ADR-0051;
+    `src/roles.ts`, below);
+  - **hand-named** (`workers`), the shape before phase F. These load and run
+    exactly as before until the operator applies `system account migrate`
+    (below); from then on the row is refused at load, naming the way forward
+    and back. `maxConcurrentRunsPerAccount`, `pool`, `windows`, and
+    `limitCooldownSeconds` on a `providers` entry belong to the first shape and
+    are refused beside hand-named Workers.
+
+  A hand-named entry is `agent:<id>`
   with a `runtime` kind, an absolute `workspace`, a `sandbox` (`read-only` or
   `workspace-write`), and optional `tools` (omitted or empty: the runtime's
   minimal set), `model`, and `maxTurns`. It also
@@ -31,9 +42,81 @@ The **`agents` Worker source**: agent runtimes as Workers
   reviews. Optional: `reviewMember` (default false; see **Review members**
   below), refused at load (`config_error`) unless the sandbox is `read-only`
   (a writer never reviews), `family` is set, and `worktreePerRun` is off.
-- **Accounts** (`providers`, ADR-0052): each runtime runs one account today, its
-  home, so every Worker of a runtime names the account `{ id: <runtime>, group:
-  <runtime> }` (`capability-descriptor@1.5`), with its runtime's mode:
+- **Workers = account × role** (`src/roles.ts`; PROP-0012 phase F,
+  [design](../../../docs/design/agent-runtimes.md#workers--account--role)):
+  - a **role** (`roles`) is defined once: `id`, an absolute `workspace`,
+    `sandbox`, `tier`, `quotaClass`, `worktreePerRun`, `reviewMember`, and under
+    `runtimes.<runtime>` what differs per runtime (`tools`, `model`,
+    `maxTurns`, `family`; a review member's role names the family of each
+    runtime it is assigned on);
+  - an **assignment** (`assignments`) gives an enrolled account its roles, by
+    the id `system account list` shows: `{ account, roles }`, one entry per
+    account. An account with no assignment has no Worker;
+  - each assignment of a role derives the Worker `agent:<accountId>/<role>`
+    (`deriveWorkers`, a pure function: the same configuration, the same Workers
+    in the same order). Its runtime is the account's provider, its family
+    `runtimes.<runtime>.family` or the runtime;
+  - it takes work only while its account is `ready` (REQ-ACC-11): an account no
+    slot holds, enrolled and not verified, signed out, or quarantined
+    (`unverified` included) leaves it `unavailable` with why, and probes
+    nothing. A run queued on it fails before the agent starts. Its runs and
+    probes run in its account's home (`RunSpec.home`, `probeIn`), none when
+    that is the runtime's own (slot 1); the account is read again before each
+    run;
+  - **per account**: one scheduler per account runs
+    `maxConcurrentRunsPerAccount` (its provider's, default 1, at most 16) of its
+    runs at once across its roles, one per Worker; each Worker reports its
+    account's `load` (`running`, `queued` across the account's Workers,
+    `pending` admissions counted by `reserve` until released, `slots`), and is
+    `busy` while `running` reaches `slots` (still admitted, ordered after less
+    busy ones; ADR-0033); `siblings` are the account's Workers; a limit's
+    cooldown is the account's (table `agent_cooldowns`, keyed by the account
+    id; event data `account`);
+  - **pools per account**: a provider's `pool` names a template of the
+    resources row (`templates`), and each of its accounts' Workers draws on that
+    account's own pool, `<pool>/<accountId>`, with the provider's `windows` and
+    `limitCooldownSeconds`. The source declares each `ready` assigned account of
+    a metered provider to the ledger (`declare('agents', …)`, again whenever
+    that set changes or the ledger is another one); a ledger with no `declare`,
+    or that refuses, leaves those pools unmade and their Workers `unavailable`
+    (INV-2). A limit on one account never closes another's.
+- **The move from hand-named rows** (`src/migrate.ts`, `system account
+  migrate`, MCP `account_migrate`, operator scope;
+  [runbook](../../../docs/operations/runbooks.md#migrate-agent-workers-to-accounts--roles)):
+  - `planMigration` (rule `agent-workers.migration`, pure) gives the new row
+    from the loaded hand-named rows: rows that agree on the work's settings are
+    one role (`review` when read-only, `develop` when writing, then `review-2`,
+    …; a second row of one runtime starts another role), what each runtime set
+    goes under `runtimes`; slot 1 of each runtime (its configured home, adopted
+    where it is) is assigned that runtime's roles by its verified id; an old
+    `pool` becomes the provider's template (with its windows, `unknown`, and
+    the cooldown), and `maxConcurrentRunsPerAccount` the number of the
+    runtime's rows, so as many runs run at once as did;
+  - blockers stop it: a runtime not registered, no account in slot 1, slot 1
+    not the runtime's own home, an account not `ready` (an `unverified` one
+    waits for its reader, PROP-0012 open question 1, unless the operator
+    stops that runtime's Workers: `stop`), rows of one runtime on different
+    pools, windows, or cooldowns, or a pool the ledger does not configure;
+  - planning changes nothing. `apply` is refused while it has blockers or a run
+    of an old Worker is queued or running (drain first); otherwise, in one
+    transaction: an `enrollment` decision per old Worker (`migrated` to its new
+    id, its input the account's latest enrollment decision, or `stopped`), each
+    agent session and run of the old Worker moved to its new id (each move kept,
+    table `agent_cutover_moves`, migration 11), and the cutover's own
+    `enrollment` decision (`applied`, its inputs the moves'), kept in
+    `agent_cutover`. Applying again changes nothing (`already-applied`);
+  - once applied, hand-named Workers already loaded are `unavailable` and start
+    nothing, and a row with hand-named Workers is refused at the next load
+    (`config_error`, naming `system account migrate --rollback`);
+  - `rollback` (refused while a run of a moved-to Worker is queued or running)
+    moves each moved session and run back unless it moved again since, lifts
+    the refusal, and records `rolled-back` (its input the cutover's decision).
+    Records already written (results, usage, decisions) keep the ids they were
+    written with; the `workerSessions` records of team members are not moved.
+- **Accounts** (`providers`, ADR-0052): a hand-named Worker runs on its
+  runtime's one home, so every hand-named Worker of a runtime names the account
+  `{ id: <runtime>, group: <runtime> }` (`capability-descriptor@1.5`); a derived
+  Worker names `{ id: <accountId>, group: <runtime> }`. Each with its runtime's mode:
   `assigned` by default, or `pooled` only with `pooledTerms` (who confirmed the
   plan's terms allow it, when, which terms; refused at load otherwise, and
   recorded at start as a `gate` decision, rule `agent-workers.pooled-terms`).
@@ -57,31 +140,31 @@ The **`agents` Worker source**: agent runtimes as Workers
     change is an `enrollment` decision (`decision@1.8`) recorded first, its
     input the slot's earlier decision, never the principal.
   - The operator's tools, operator scope, checked against
-    `mcp-agent-accounts@1.0`: `account_enroll` (step `begin` takes a slot and
+    `mcp-agent-accounts@1.1`: `account_enroll` (step `begin` takes a slot and
     returns the runtime's sign-in command for its home; step `verify` records
     who signed in; `accept` takes a `changed` slot's new principal as a new
-    account), `account_remove` (frees a slot, keeping its home), and
-    `account_agents` (every slot, and each runtime's slots). Only the
-    operator's `verify` lifts a quarantine or a sign-out.
+    account), `account_remove` (frees a slot, keeping its home),
+    `account_agents` (every slot with the Workers that run on its account, and
+    each runtime's slots), and `account_migrate` (above). Only the operator's
+    `verify` lifts a quarantine or a sign-out.
   - Each probe re-reads the runtime's `ready` accounts, and each run the
     account of its home: a different principal is quarantined `changed`, none
     signed out, recorded first; a re-read never lifts anything.
-  - Until Workers are account × role (phase F), the configured Workers run in
-    their runtime's own home, slot 1's: they take work while no slot holds it,
-    or while its account is `ready` or `unverified` (no verified reader, as
-    before enrollment); otherwise they are `unavailable` with the reason, and a
-    queued run fails before the agent starts (`config_error`). Later slots run
-    nothing yet.
-- **One account, every role** (PROP-0012 phase C): the Workers of one runtime
-  share its home, so they are one account, and each sees what holds the
-  others:
-  - `siblings(worker)` names every Worker of its runtime, itself included, by
+  - Hand-named Workers run in their runtime's own home, slot 1's: they take
+    work while no slot holds it, or while its account is `ready` or
+    `unverified` (no verified reader, as before enrollment); otherwise they are
+    `unavailable` with the reason, and a queued run fails before the agent
+    starts (`config_error`). Accounts in later slots run only derived Workers.
+- **One account, every role** (PROP-0012 phase C): the Workers of one account
+  (a hand-named Worker's: every Worker of its runtime, which share its home)
+  are one account, and each sees what holds the others:
+  - `siblings(worker)` names every Worker of its account, itself included, by
     id. A failover leaves them all out (ADR-0034), and a team member avoids them
     all once another member holds one (REQ-TEAM-4,
     [teams](../../../docs/design/teams.md#distinct-accounts)): two roles of one home are
     never two members.
-  - A Worker is `quota-exhausted` while its runtime cools down (below) or while
-    the pool of **any** Worker of its runtime is closed, with `limitUntil` the
+  - A Worker is `quota-exhausted` while its account cools down (below) or while
+    the pool of **any** Worker of its account is closed, with `limitUntil` the
     latest of their resets (none when one of them names none): the account is
     back only once each is. It is `unavailable` while such a pool cannot be
     read (INV-2). A run queued on it then fails before the agent starts
@@ -110,7 +193,8 @@ The **`agents` Worker source**: agent runtimes as Workers
   never loosened. The same proof is checked again before each run starts.
 - **Runs** (`start`, `get`, `wait`):
   - durable at once, and idempotent by key;
-  - one at a time per Worker (one writer per workspace, INV-15);
+  - one at a time per Worker (one writer per workspace, INV-15), and for a
+    derived Worker at most `maxConcurrentRunsPerAccount` of its account's at once;
   - under a lease;
   - each result is a `report` artifact with the requirement's classification:
     `agent-result@1.2` (with `model`, `usage`, and `models`) when the runtime
@@ -226,14 +310,15 @@ The **`agents` Worker source**: agent runtimes as Workers
   Without a `pool`, runs are not metered, whether a ledger is loaded or not.
 - **A usage limit with no ledger reading** (PROP-0012 phase C, INV-2): a run
   that fails `quota_exhausted` on a Worker with no `pool`, or whose ledger did
-  not take the readings above, cools its **runtime** down (table
-  `agent_cooldowns`): its Workers share the runtime's one home, so its one
-  sign-in. Every Worker of that runtime is `quota-exhausted`, and a run queued
+  not take the readings above, cools its **account** down (table
+  `agent_cooldowns`): a hand-named Worker's runtime, whose Workers share its one
+  home, or a derived Worker's account. Every Worker of it is `quota-exhausted`, and a run queued
   on one fails `quota_exhausted` before the agent starts, until the latest
   reset time a `rejected` observation of the run named, else for the failing
   Worker's `limitCooldownSeconds`, never more than seven days (INV-9). It
   survives a restart and ends only at that time. Event `agent-workers.cooldown`
-  (`runtime`, `worker`, `agentRun`, `until`, and the failure's message).
+  (`runtime`, a derived Worker's `account`, `worker`, `agentRun`, `until`, and
+  the failure's message).
 - **Briefs** ([briefs](../../../docs/design/workflow-engine.md#briefs)): a run started with a
   `brief@1.x` renders its prompt from it at start (the default text rendering, each pointer
   replaced by its artifact's text); one that cannot be rendered is refused as `invalid_input`.

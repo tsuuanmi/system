@@ -262,12 +262,13 @@ has the configuration and every rule.
 > (proposed), from [PROP-0012](../proposals/0012-agent-accounts.md). Built: the seam's additions,
 > their suite, and a fake that passes it (phase B); identity readers for Codex and Claude Code,
 > runs and probes in a named home, enrollment slots, quarantine, and `enrollment` decisions
-> (phase E). Differs from target: the readers rest on the fields seen on this host and on fixtures,
-> not yet on phase A's supervised check on the operator's accounts ([below](#identity-readers));
-> Workers are not yet account × role (phase F), so only slot 1's account runs work, through the
-> configured Workers of its runtime's own home; and those keep running while that account is
-> `unverified` (REQ-ACC-11 holds for the Workers phase F derives from accounts: the configured ones
-> keep today's behaviour until the cutover, PROP-0012's migration step 5).
+> (phase E); Workers derived as account × role, per-account concurrency, load, and pools, and the
+> move from hand-named rows (phase F). Differs from target: the readers rest on the fields seen on
+> this host and on fixtures, not yet on phase A's supervised check on the operator's accounts
+> ([below](#identity-readers)); and until the operator applies the move
+> ([below](#migration-from-hand-named-rows)), hand-named Workers keep running in their runtime's
+> own home, also while its account is `unverified` (REQ-ACC-11 holds for derived Workers: the
+> hand-named ones keep their behaviour until the cutover, PROP-0012's migration step 5).
 
 Several sign-ins per runtime are told apart by who is signed in, never by a name:
 
@@ -310,13 +311,13 @@ Several sign-ins per runtime are told apart by who is signed in, never by a name
   names the home and no session bus; a run in a named home runs, and a relative one is refused.
   Every provider also passes the provider suite's refusal of a home it does not run in.
   `FakeAgentRuntime` (scripted homes) passes both.
-- **One home, one account, every role** (PROP-0012 phase C, built). Until Workers are account ×
-  role, every runtime runs in its one home, so all the Workers of a runtime are one account: the
-  `agents` source names them all as each one's `siblings`, and the descriptor's `account.id` is the
-  runtime. A cooldown or a closed pool of any of them holds them all (`quota-exhausted`, with
-  `limitUntil` the latest reset), a failover leaves them all out, and a team counts them as one
-  account ([distinct accounts](teams.md#distinct-accounts)). A session stays on its one Worker.
-- **Planned** (PROP-0012 phase F): Workers as account × role, each run naming its account's home.
+- **One account, every role** (PROP-0012 phase C, built). The Workers of one account are its
+  `siblings`: a derived Worker's account is its own ([below](#workers--account--role)); hand-named
+  Workers run in their runtime's one home, so all of a runtime's are one account, whose
+  `account.id` is the runtime. A cooldown or a closed pool of any of them holds them all
+  (`quota-exhausted`, with `limitUntil` the latest reset), a failover leaves them all out, and a
+  team counts them as one account ([distinct accounts](teams.md#distinct-accounts)). A session
+  stays on its one Worker.
 
 ### Identity readers
 
@@ -377,17 +378,116 @@ principal ([INV-13](../architecture/invariants.md#inv-13-every-decision-is-an-ar
   account in the run's home). A re-read only takes away: a changed principal is quarantined, a
   missing one signed out, each recorded first; it never lifts a quarantine or a sign-out, and never
   quarantines a peer. Only the operator's `verify` (or `login`) does.
-- **Who takes work, until Workers are account × role.** The configured Workers run in their
-  runtime's own home, slot 1's. They take work while no slot holds that home (as before
-  enrollment), while its account is `ready`, or while it is `unverified` (the runtime has no
-  verified reader, so nothing better was known before enrollment either; never beyond slot 1).
-  Enrolled and not yet verified, signed out, or quarantined `changed`, `ambiguous`, or `duplicate`,
-  they read `unavailable` with the reason, and a run already queued fails before anything is sent
-  (`config_error`). Accounts in later slots are enrolled and watched, and run nothing yet.
+- **Who takes work.** A Worker derived as account × role takes work only while its account is
+  `ready` ([below](#workers--account--role)). Hand-named Workers, until the operator applies the
+  move ([below](#migration-from-hand-named-rows)), run in their runtime's own home, slot 1's. They
+  take work while no slot holds that home (as before enrollment), while its account is `ready`, or
+  while it is `unverified` (the runtime has no verified reader, so nothing better was known before
+  enrollment either; never beyond slot 1). Enrolled and not yet verified, signed out, or
+  quarantined `changed`, `ambiguous`, or `duplicate`, they read `unavailable` with the reason, and a
+  run already queued fails before anything is sent (`config_error`).
 - **Removal** (`account_remove`) records `removed` and frees the slot; its home and the sign-in in
   it are kept.
 - **Health** (`agent-accounts`) names every account that is not `ready`, with its status and why;
-  `system account list` (MCP `account_agents`) lists each slot beside the website accounts.
+  `system account list` (MCP `account_agents`) lists each slot beside the website accounts, with
+  the Workers that run on it.
+
+### Workers = account × role
+
+PROP-0012 phase F ([ADR-0051](../decisions/adr/0051-agent-accounts-are-enrolled-slots-identified-by-their-login.md)).
+The `agent-workers` row names no Worker by hand: it defines **roles** once, and **assigns** each
+enrolled account its roles, by the id its login was verified as. The assignment is configuration,
+the trusted envelope of account choice
+([INV-6](../architecture/invariants.md#inv-6-authority-comes-from-trusted-envelopes)).
+
+```yaml
+- id: agent-workers
+  config:
+    providers:
+      - { provider: claude-agent-sdk, slots: 2, maxConcurrentRunsPerAccount: 1, pool: claude-plan, windows: { five_hour: five-hour } }
+      - { provider: codex-sdk, slots: 2 }
+    roles:
+      - id: review
+        workspace: /home/me/src/project
+        sandbox: read-only
+        tier: standard
+        runtimes: { claude-agent-sdk: { maxTurns: 4 } }
+    assignments:
+      - { account: "claude-agent-sdk:1f0c2b7e9a5d3c41", roles: [review] }
+      - { account: "codex-sdk:04aa5c1e9b7d3f20", roles: [review] }
+```
+
+- **A role** holds what the work needs (workspace, sandbox, tier, quota class, `worktreePerRun`,
+  `reviewMember`) and, under `runtimes.<runtime>`, what differs per runtime (`tools`, `model`,
+  `maxTurns`, `family`), never a routing input.
+- **The Worker** of an account in a role is `agent:<accountId>/<role>`, derived (a pure function of
+  the configuration: the same roles and assignments always give the same Workers). Its runtime is
+  the account's provider, its family the role's `family` for that runtime or the runtime, its
+  capabilities what the probe proves in its account's home. An account with no assignment has no
+  Worker; an assignment naming an account that is not `ready` (no slot holds it, not verified,
+  signed out, or quarantined, `unverified` included) derives a Worker that reads `unavailable` with
+  the account's reason, and probes nothing.
+- **Its account's home.** Runs and probes name the account's home (`RunSpec.home`, `probeIn`),
+  none when it is the runtime's own (slot 1); the account is read again before each run, as the
+  sandbox proof is.
+- **Per account** (the `agents` source does for agent accounts what `turns` does for website
+  accounts):
+  - one scheduler per account runs `maxConcurrentRunsPerAccount` (on the provider, default 1, at
+    most 16) of its runs at once across its roles, on top of one run at a time per Worker; in-process,
+    since one daemon owns the runs ([INV-1](../architecture/invariants.md#inv-1-one-authoritative-runtime));
+  - each Worker reports its account's `load`: `running` and `queued` across the account's Workers,
+    `pending` admissions (counted by the source's `reserve` from routing until the run is started),
+    and `slots`; it reads `busy` while `running` reaches `slots`, so least-busy routing
+    ([ADR-0033](../decisions/adr/0033-least-busy-routing.md)) prefers a less busy account;
+  - `siblings` are the account's Workers; a limit's cooldown, and a closed pool, hold the account.
+- **Pools per account.** The provider's `pool` names a template of the resources row
+  ([pool templates](resources.md#pool-templates)): each account's Workers draw on its own pool
+  `<pool>/<accountId>`, with the provider's `windows` (once per provider, not per Worker) and
+  `limitCooldownSeconds`. The source declares its ready assigned accounts of metered providers to
+  the ledger (`declare`); without that pool its Workers are `unavailable`. A limit on one account
+  never closes another's.
+
+Hand-named Workers (`workers`) are the shape before phase F; one row holds one shape or the other.
+
+### Migration from hand-named rows
+
+`system account migrate` (MCP `account_migrate`, operator scope;
+[runbook](../operations/runbooks.md#migrate-agent-workers-to-accounts--roles)) moves the hand-named
+Workers to derived ones. It plans by default and changes nothing; `--apply` applies the plan;
+`--rollback` undoes it.
+
+- **The plan** (rule `agent-workers.migration`, pure): each runtime's configured home is slot 1 of
+  its provider, adopted where it is; rows that agree on the work's settings become one role
+  (`review` when read-only, `develop` when writing; another of a kind `review-2`, …; a second row of
+  one runtime starts another role), with what each runtime set under `runtimes`; the account in
+  slot 1 is assigned the roles of its runtime's rows, by its verified id; an old `pool` becomes the
+  provider's pool template, with its windows and cooldown; and `maxConcurrentRunsPerAccount` is the
+  number of the runtime's rows, so as many of its runs run at once as did. The live patch's
+  `claude-research`, `codex-review`, and `agy-review` become one role `review`, with `maxTurns: 4`
+  for Claude Code and the model for the Antigravity CLI.
+- **What stops it** (each named, with what to do): a runtime not registered; no account in slot 1
+  (enroll it first); slot 1 not the runtime's own home; an account not `ready`; rows of one runtime
+  drawing on different pools, windows, or cooldowns; a pool the ledger does not configure. An
+  `unverified` account (the Antigravity CLI has no reader) waits: the cutover waits for its reader,
+  unless the operator stops that runtime's Workers at the cutover (`--stop <runtime>`; PROP-0012
+  open question 1, as proposed). A stopped runtime's role keeps what it set for it, for the
+  assignment the operator adds once its account can be verified.
+- **Apply**, refused while a run of a hand-named Worker is queued or running (drain first), in one
+  transaction: an `enrollment` decision per hand-named Worker (`migrated` to its new id, its input
+  the account's latest enrollment decision, or `stopped`); each of its agent sessions and runs moved
+  to its new id, so a continued session stays on its account and in its home; and the cutover's own
+  `enrollment` decision (`applied`, its inputs the moves'). Applying again changes nothing.
+- **The cutover.** Until the move is applied, both shapes load, and hand-named Workers route and
+  run exactly as before this phase: no load, the runtime as the account, one run at a time per
+  Worker, no pool declared (tested). Once it is applied, hand-named Workers still loaded take no
+  work and start nothing, and a row that names any is refused at load with the path, the decision,
+  and the way back (`config_error`, REQ-HOST-2). The operator puts the printed row in the profile
+  patch and restarts.
+- **Rollback**, refused while a run of a Worker it moved to is queued or running: each session and
+  run moved goes back to its hand-named Worker (one moved again since stays), the refusal is
+  lifted, and a `rolled-back` decision is recorded, its input the cutover's. Then the old row loads
+  again. Results, usage records, and decisions keep the Worker ids they were written with, and
+  still explain; the `workerSessions` records of team members are not moved.
 
 ## Confined commands
 
@@ -443,8 +543,10 @@ agy's total), and the main model when an event names it
 ([its README](../../packages/plugins/runtime-antigravity-cli/README.md)); the Codex and ACP
 providers report none.
 
-The `agents` source meters a Worker whose configuration names a resource `pool` (with its
-`account`) through `ctx.resources`, following [a run's budget](resources.md#a-runs-budget):
+The `agents` source meters a Worker that draws on a resource pool through `ctx.resources`: a
+hand-named Worker whose configuration names a `pool` (with its `account`), or a derived Worker of a
+provider that names a pool template (its account's pool,
+[above](#workers--account--role)). It follows [a run's budget](resources.md#a-runs-budget):
 
 1. The Worker is `quota-exhausted` while its pool is unavailable, so routing skips it; with no
    ledger, or a pool the ledger does not configure, it is `unavailable`.
@@ -464,8 +566,9 @@ The `agents` source meters a Worker whose configuration names a resource `pool` 
 A run that started before a restart has no result message, so nothing is recorded for it then;
 its usage is reconciled from the agent's session transcript later (planned). A Worker with no
 pool is not metered, but its limits still hold: a run that fails `quota_exhausted` on one (or on a
-metered Worker whose ledger did not take the reading) cools down every Worker of its runtime,
-which share the runtime's one home and so its one sign-in. They are `quota-exhausted` until the
+metered Worker whose ledger did not take the reading) cools down every Worker of its account (for
+hand-named Workers, every Worker of the runtime, which share its one home and so its one sign-in).
+They are `quota-exhausted` until the
 reset time the runtime named, else for `limitCooldownSeconds`, at most seven days, across a
 restart (event `agent-workers.cooldown`; [agent Workers](../../packages/plugins/agent-workers/README.md)).
 

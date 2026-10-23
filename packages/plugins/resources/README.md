@@ -44,6 +44,13 @@ guarantee seam: it fails closed (INV-2).
     or page.
   - `page(filter?, { limit?, after? })`: one page of the same, for the MCP tool, with the totals
     over every match and an opaque `next` cursor while more remain.
+  - `declare(source, accounts)` (contract 1.1, ADR-0052): a Worker source's accounts, replacing
+    its previous declaration; each configured template whose `group` is an account's makes the
+    pool `<template>/<account>` of that account, which every method above treats as a configured
+    pool. In memory: a source declares again after a restart. Refused (`invalid`), changing
+    nothing: a source that is not a name, more than 64 accounts, an account that is not an id or
+    a group that is not a name, a pool configured or another source's, or more than 64 pools in
+    all ([pool templates](../../../docs/design/resources.md#pool-templates)).
 - **Records:** `resource_usage` (counted records, one per `(source, requestId)`, indexed by
   run, project, task, account, pool, and time), `resource_readings` (the latest reading per
   pool and window, with its artifact), `resource_reservations` and `resource_holds`. Every
@@ -53,7 +60,9 @@ guarantee seam: it fails closed (INV-2).
   whose structured outputs are `mcp-resources@1`'s `$defs/resources-pools-output` and
   `$defs/resources-usage-output`.
 - **Config:** `pools` (each `pool`, `account`, `kind`, `windows` of `{ id, kind, seconds? }`,
-  `unknown`, default `unavailable`), `pageSize` (default 20), `maxRecords` (default 10000),
+  `unknown`, default `unavailable`), `templates` (each `template` and `group`, names of letters,
+  digits, `.`, `_`, `-`, at most 64; `kind`, `windows`, `unknown` as a pool's; at most 64, unique
+  ids), `pageSize` (default 20), `maxRecords` (default 10000),
   `holdSeconds` (default 14400). A reading timed more than 5 minutes in the future, or of a
   window whose kind or account changed in configuration since, counts as no reading.
   Pools come from configuration only, never a plan named in code
@@ -67,6 +76,6 @@ guarantee seam: it fails closed (INV-2).
   records stay (as rows and artifacts) until a retention rule exists for them.
 - Tests: [`tests/conformance.spec.ts`](tests/conformance.spec.ts) runs the seam's suite,
   [`resources-core/conformance/resources.ts`](../../resources-core/conformance/resources.ts),
-  at contract 1.0 with no known failure; [`tests/resources.spec.ts`](tests/resources.spec.ts)
-  covers restart, configuration, paging, the MCP outputs, and a reservation race across
+  at contract 1.1 with no known failure; [`tests/resources.spec.ts`](tests/resources.spec.ts)
+  covers restart, configuration (templates and the declaration bound included), paging, the MCP outputs, and a reservation race across
   processes.

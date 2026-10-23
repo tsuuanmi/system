@@ -30,16 +30,17 @@ Claude Code Worker run through the Agent SDK may draw on a different pool than i
 
 ## Seam
 
-`ctx.resources` (`Resources` in `@tsuuanmi/system-resources-core`), contract 1.0:
+`ctx.resources` (`Resources` in `@tsuuanmi/system-resources-core`), contract 1.1:
 
 | Method | Does |
 |---|---|
-| `pools(filter?, at?)` | every configured pool, the latest reading of each window, and whether it is available at `at` |
+| `pools(filter?, at?)` | every configured pool (and every pool made from a template for a declared account), the latest reading of each window, and whether it is available at `at` |
 | `observe(reading)` | record a `limit-state` reading |
 | `reserve(request, at?)` | reserve before a run; records a `budget` decision |
 | `release(reservationId)` | release a reservation once the run's usage is recorded, or it never started |
 | `record(usage)` | record one unit's `usage-record`, deduplicated |
 | `usage(filter?)` | the counted records and their totals per pool |
+| `declare?(source, accounts)` | optional, contract 1.1 ([ADR-0052](../decisions/adr/0052-accounts-are-assigned-unless-pooling-is-recorded.md)): a Worker source's accounts, replacing what it declared before; one pool per [template](#pool-templates) and account; returns their ids |
 
 ## A run's budget
 
@@ -83,6 +84,29 @@ is not capacity. A pool with an unknown window is unavailable unless its configu
 `unknown: available` (a pool that never reports, such as a local model). For a plan window that
 reports only after a first response, the operator configures the pool as available, or the
 first reading comes from the runtime's result. Every reading field is optional.
+
+### Pool templates
+
+Several accounts of one provider each have their own windows, so a limit on one never closes
+another's (PROP-0012 phase F). The operator configures a **template** once (`templates` on the
+`resources` row: `template`, `group`, `kind`, `windows`, `unknown`), and a Worker source
+**declares** its accounts (`declare(source, [{ account, group }])`): the ledger makes, of every
+template whose `group` is the account's, the pool `<template>/<account>` with `account` the
+account. It is listed, reserved, read, and recorded as a configured pool is; `resources_pools`
+shows each account's own windows and resets.
+
+- A declaration replaces the source's previous one: a withdrawn account's pool is no longer
+  listed, and a record or reading for it is refused (`unknown-pool`); its readings and records
+  stay, under their ids, and stand again once it is declared again.
+- Declarations are in memory: the source declares again after a restart. The `agents` source
+  declares its ready assigned accounts of metered providers
+  ([agent runtimes](agent-runtimes.md#workers--account--role)).
+- Refused (`invalid`), changing nothing: an account that is not an id or a group that is not a
+  name; a pool that is configured or another source's; more pools, configured and declared, than
+  `resources_pools` lists (64). A template's id and group are names without `/` or `:`, so a pool
+  id names one template and one account.
+- The pool id is `<template>/<account>`, not the proposal's `<template>@<account>`: `@` is not an
+  id character (`common@1`).
 
 ## Counting
 
@@ -158,5 +182,6 @@ exists: before then, nothing could reconcile such a run, and its scope would sta
 ## Conformance
 
 [`resources-core/conformance/resources.ts`](../../packages/resources-core/conformance/resources.ts),
-13 scenarios at contract 1.0, run against the fake provider and the store-backed one. The
+14 scenarios at contract 1.1 (1.1 adds `templates-per-account`: one pool per template and declared
+account, a limit on one never closing another's), run against the fake provider and the store-backed one. The
 metering oracle against `ccusage --json` comes with the first Worker that reports usage (B2).

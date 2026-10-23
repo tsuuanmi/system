@@ -699,9 +699,10 @@ signed in (`codex-sdk:04aa5c1e9b7d3f20`), never a name you choose
 ([ADR-0051](../decisions/adr/0051-agent-accounts-are-enrolled-slots-identified-by-their-login.md)).
 Slot 1 of each runtime is its existing home (`~/.dsh/system/claude-home`, `codex-home`,
 `antigravity-home`), adopted where it is; later slots are
-`~/.dsh/system/agent-homes/<runtime>/<n>`. Until Workers are account × role (PROP-0012 phase F),
-the configured agent Workers run in slot 1's home only: an account in a later slot is enrolled and
-watched, and runs nothing yet.
+`~/.dsh/system/agent-homes/<runtime>/<n>`. An account runs work once the `agent-workers` row
+assigns it roles ([migrate agent Workers to accounts × roles](#migrate-agent-workers-to-accounts--roles));
+while the row still names hand-named Workers, they run in slot 1's home only, and an account in a
+later slot is enrolled and watched, and runs nothing.
 
 Before you start: the vault is loaded (the key of the ids lives there, and is backed up with it),
 the runtime's row is on, and you are at a terminal on the host. Do not enroll a runtime whose
@@ -741,8 +742,8 @@ its Workers stop (PROP-0012 open question 4).
   the sign-in in it are kept; to remove the sign-in itself, sign out with the runtime's own
   command in that home (for example `CODEX_HOME=… codex logout`).
 - **The Antigravity CLI** has no verified way to read who is signed in: its accounts enroll
-  `unverified`. Slot 1's Workers run as before enrollment; no later slot will ever run until a
-  reader is verified (PROP-0012 open question 1).
+  `unverified`. Slot 1's hand-named Workers run as before enrollment; no Worker derived for one of
+  its accounts takes work until a reader is verified (PROP-0012 open question 1).
 - **A new runtime version:** the readers are pinned to the versions they were checked on (Codex
   0.164.0, Claude Code 2.1.308). On another version an account reads `unverified`; slot 1's
   Workers still run as before, and the reader waits for a check on that version.
@@ -759,10 +760,72 @@ your `system account verify` or `login` lifts it.
 | `changed` | the home now signs in as another person | sign it in again as the account it was (`system account login <accountId>`), or take the new person as a new account: `system account verify <runtime> --slot <n> --accept` (the old id keeps its history) |
 | `duplicate` | two slots of one runtime sign in as one person (both are quarantined) | sign one slot in as another person, or `system account remove` it; then `system account verify` the other |
 | `ambiguous` | the sign-in names no whole person (an API-key sign-in, a damaged state file), or two people share one short id | sign the slot in with a personal login; for a short-id clash, remove one of them and enroll it again |
-| `unverified` | no reader is verified for the runtime or its version (the Antigravity CLI; an upgraded Codex or Claude Code) | nothing to do on the account: slot 1's Workers run as before; wait for a reader verified on that version |
+| `unverified` | no reader is verified for the runtime or its version (the Antigravity CLI; an upgraded Codex or Claude Code) | nothing to do on the account: slot 1's hand-named Workers run as before, its derived Workers take no work; wait for a reader verified on that version |
 
 A run that was already queued when its home changed person fails before anything is sent
 (`config_error`, naming the quarantine); `system continue <runId>` once it is resolved.
+
+## Migrate agent Workers to accounts × roles
+
+Agent Workers are derived as account × role (PROP-0012 phase F,
+[design](../design/agent-runtimes.md#workers--account--role)): the `agent-workers` row defines
+roles once and assigns each enrolled account its roles; each Worker is
+`agent:<accountId>/<role>`, never a name you choose. A release with this code changes nothing on
+its own: the hand-named rows (`claude-research`, `codex-review`, `agy-review` on the live host)
+keep loading and routing exactly as before, until you apply the move below. From then on they are
+refused at load.
+
+Before you start: back up (`system backup`), and read the Antigravity note in step 2.
+
+1. **Enroll slot 1 of each runtime the rows use** (its existing home, adopted where it is; see
+   [enroll an agent account](#enroll-an-agent-account)): `system account login claude-agent-sdk`,
+   `system account login codex-sdk`, `system account login antigravity-cli`. Each must read
+   `ready`, except the Antigravity CLI's (step 2).
+2. **Print the move:** `system account migrate`. Nothing changes. It prints what each hand-named
+   Worker becomes, what stops the move (exit 1), and, once nothing does, the new `agent-workers`
+   row and any pool templates for the `resources` row. For the live patch: one role `review` (the
+   checkout, read-only, standard; `maxTurns: 4` on Claude Code, the model on the Antigravity CLI),
+   assigned to the Claude Code and Codex accounts by their ids.
+   - **The Antigravity CLI** cannot be verified (no reader): its account is `unverified`, and a
+     derived Worker takes work only on a `ready` account. The move waits for its reader (PROP-0012
+     open question 1). To move now anyway, stop its Worker at the cutover: `--stop
+     antigravity-cli` (`agy-review` then becomes no Worker, and anything that names it, such as the
+     first experiment, waits for it).
+   - Any other stop is named with what to do (enroll slot 1, resolve a quarantine, give a
+     runtime's rows one pool).
+3. **Drain:** `system drain` (the move is refused while a run of a hand-named Worker is queued or
+   running).
+4. **Apply:** `system account migrate --apply` (with the same `--stop` as step 2, if any). It
+   records an `enrollment` decision per Worker and one for the cutover (`system explain <decision>`),
+   and moves each Worker's agent sessions and runs to its new id, so a continued conversation stays
+   on its account. Run again, it changes nothing. From now on the running hand-named Workers take
+   no work.
+5. **Put the printed row in the profile patch** (`~/.dsh/profiles/system/cordis.patch.yml`): it
+   replaces the `agent-workers` row's whole config (`workers` gone; `providers`, `roles`,
+   `assignments` in). Add any printed `templates` to the `resources` row's config. Then
+   `system shutdown`, `system start`, `system resume`.
+6. **Check:** `system account list` names each account's Workers; `system health` is ok; a review
+   run routes to `agent:<accountId>/review`.
+7. **The first experiment** (`review-worker-agnostic-1`, still `proposed`) pins
+   `agent:codex-review` and `agent:agy-review`: revise its record (`revision: 2`, `supersedes` 1)
+   with the ids the move printed before registering it (PROP-0012 migration step 6). A changed pin
+   after registration is a new experiment.
+
+**Assign roles later:** a newly enrolled account has no Worker until the row assigns it roles
+(`assignments: [{ account: <id>, roles: [review] }]`). Two accounts of one runtime can serve one
+role at once; a limit on one makes its work wait, never move to the other (assigned, D24).
+`maxConcurrentRunsPerAccount` on the runtime's `providers` entry bounds how many of an account's
+runs run at once across its roles (default 1).
+
+**Roll back:** `system drain`, then `system account migrate --rollback`: each session and run moved
+goes back to its hand-named Worker, the refusal is lifted, and a `rolled-back` decision is
+recorded. Put the hand-named row back in the patch and restart. Results, usage, and decisions keep
+the ids they were written with. A release downgrade alone, without the rollback, finds the
+hand-named rows' sign-ins where they were (slot 1 is their home), but their moved sessions stay
+under the new ids.
+
+If the daemon refuses the `agent-workers` row at start with "the hand-named agent Workers … were
+migrated", the patch still names `workers`: put the printed row in, or roll back.
 
 ## Backup and restore
 

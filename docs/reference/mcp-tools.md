@@ -57,6 +57,18 @@ Scope: `operator`
 | `accountId` | string |  | An agent account id, <provider>:<16 hex> |
 | `accept` | boolean |  | verify only: accept a changed slot's new principal as a new account |
 
+## `account_migrate`
+
+Operator tool: the move from hand-named agent Workers to Workers derived as account × role (PROP-0012 phase F). By default it only plans: the roles, assignments, and provider settings of the new agent-workers row, the pool templates for the resources row, each old Worker's new id, and what stops the move. apply records each move and the cutover as enrollment decisions and moves the old Workers' agent sessions and runs to their new ids; from then on the hand-named rows are refused at load (drain first: refused while one of their runs is queued or running). rollback undoes it. stop: runtimes whose Workers stop at the cutover because their account is not ready.
+
+Scope: `operator`
+
+| Argument | Type | Required | Description |
+|---|---|---|---|
+| `apply` | boolean |  | Apply the move (recorded; the hand-named rows are refused from then on) |
+| `rollback` | boolean |  | Undo an applied move: sessions and runs moved back, the hand-named rows load again |
+| `stop` | array |  | Runtimes whose Workers stop at the cutover, their account not ready |
+
 ## `account_list`
 
 List provider accounts and their status (no secrets).
