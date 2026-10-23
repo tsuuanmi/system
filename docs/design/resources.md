@@ -113,12 +113,15 @@ The operator decided (D25, 2026-10-23) to keep counting these as 0, so this seam
 and its contract do not change, and to make each one visible and durable instead:
 
 - **A record without a figure** is its own fact: it names its run, Worker, pool, and task, and the
-  figure it lacks is missing from it. The [report](reports.md) counts such records per pool.
-- **A run with no counted record** is recorded by the Worker source that meters it, as one
-  `usage.unknown` event per run, its data a
+  figure it lacks is missing from it. The [report](reports.md) counts the records without token
+  counts, a cost, or turns per pool (an agent Worker's record always carries its duration).
+- **A run with no counted record** is recorded by the Worker source that meters it, as a
+  `usage.unknown` event, its data a
   [`usage-unknown@1.0`](../reference/schemas.md#usage-unknown) record: the run, Worker, pool,
   account, session, board task and project, how it ended, and its kind (`not-reported`,
-  `interrupted`, `refused`, `failed`) with why. Nothing estimates its usage.
+  `interrupted`, `refused`, `failed`) with why; the event names the workflow run, whose view maps
+  the run to its step. Nothing estimates its usage. A run may get two (a stop aborted it before it
+  reported anything, then the restart found it interrupted): readers count it once, by its first.
 - **A failed `record()` is never lost silently.** What can be recorded is: a record refused as
   `invalid` with a per-model split is offered again with its totals alone, which are what a cap
   counts. Still refused, the record is kept as an `evidence` artifact (when it is a valid
