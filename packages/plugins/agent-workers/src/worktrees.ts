@@ -18,8 +18,8 @@
  * never at whatever the worktree's `.git` file says later: an agent can write that file.
  */
 import { execFile } from 'node:child_process'
-import { createHash } from 'node:crypto'
-import { closeSync, constants, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, rmdirSync, rmSync, unlinkSync, writeSync } from 'node:fs'
+import { createHash, randomUUID } from 'node:crypto'
+import { closeSync, constants, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, rmdirSync, rmSync, writeSync } from 'node:fs'
 import { basename, dirname, join, resolve, sep } from 'node:path'
 import { promisify } from 'node:util'
 import type { Context } from '@deepseek-ai/cordis'
@@ -105,6 +105,27 @@ function pointer(path: string): string | undefined {
   }
   const match = /^gitdir: (.+?)\r?\n?$/.exec(text)
   return match ? real(resolve(path, match[1]!)) : undefined
+}
+
+/**
+ * Whether something other than a plain file is at `path`: a link (which fails to open, never
+ * followed), or what an opened descriptor shows is not a file; a pipe is never waited on. Nothing
+ * there, or an entry that cannot be opened, is not taken for one: a rename over it never follows a
+ * link and fails on a directory.
+ */
+function notPlainFile(path: string): boolean {
+  let fd: number
+  try {
+    fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code
+    return code === 'ELOOP' || code === 'EMLINK'
+  }
+  try {
+    return !fstatSync(fd).isFile()
+  } finally {
+    closeSync(fd)
+  }
 }
 
 interface WorktreeRow {
@@ -243,15 +264,22 @@ export class Worktrees {
     else if (!found.isDirectory() || found.isSymbolicLink()) throw new WorktreeError(`${dir} is not a directory of the worktree; nothing is written`)
     for (const [name, text] of [['.gitignore', '# Written by system: this directory is never part of the work.\n*\n'], ...files.map((f) => [f.path.slice('.system/'.length), f.text])] as const) {
       const path = join(dir, name)
-      const existing = lstatSync(path, { throwIfNoEntry: false })
-      if (existing && !existing.isFile()) throw new WorktreeError(`${path} is not a plain file; nothing more is written`)
-      if (existing) unlinkSync(path)
-      // Created afresh, never through a link (O_NOFOLLOW, O_EXCL), read-only to the agent.
-      const fd = openSync(path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o444)
+      if (notPlainFile(path)) throw new WorktreeError(`${path} is not a plain file; nothing more is written`)
+      // Written whole beside it, never through a link (O_NOFOLLOW, O_EXCL), read-only to the agent,
+      // then renamed over it: a rename replaces whatever is there by then (a link included) and
+      // never follows it.
+      const temporary = join(dir, `.${name}.${randomUUID()}.tmp`)
+      const fd = openSync(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o444)
       try {
-        writeSync(fd, text)
-      } finally {
-        closeSync(fd)
+        try {
+          writeSync(fd, text)
+        } finally {
+          closeSync(fd)
+        }
+        renameSync(temporary, path)
+      } catch (error) {
+        rmSync(temporary, { force: true })
+        throw error
       }
     }
   }

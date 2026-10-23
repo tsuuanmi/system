@@ -295,17 +295,26 @@ function openPanel(turn) {
       : turn.thoughts !== undefined ? '<thinking-panel>' + '<thought-item>Read a source and noted it.</thought-item>'.repeat(turn.thoughts) + '</thinking-panel>' : '<p>Researching...</p>')
     + '</deep-research-immersive-panel>'
 }
+// The turns as last rendered, their research's thoughts aside. Like the live site, an update
+// changes only what changed: the log is rebuilt when a turn changes, never while a research only
+// grows its thoughts in the panel. Rebuilt on every update, each turn's element would be replaced
+// several times a second, which the live site never does.
+let shown = ''
 function renderLog(turns) {
-  $('log').innerHTML = ''
-  for (const turn of turns) {
-    if (turn.role === 'user') $('log').append(userTurn(turn.text))
-    else if (turn.role === 'answer') $('log').append(modelTurn(renderMarkdown(turn.text), true, turn.text))
-    else if (turn.role === 'plan') $('log').append(planTurn(turn))
-    else {
-      $('log').append(researchTurn(turn))
-      openPanel(turn)
+  const key = JSON.stringify(turns.map(({ thoughts, ...turn }) => turn))
+  // The panel shows the last research.
+  const research = turns.filter((turn) => turn.role === 'research').at(-1)
+  if (key !== shown) {
+    shown = key
+    $('log').innerHTML = ''
+    for (const turn of turns) {
+      if (turn.role === 'user') $('log').append(userTurn(turn.text))
+      else if (turn.role === 'answer') $('log').append(modelTurn(renderMarkdown(turn.text), true, turn.text))
+      else if (turn.role === 'plan') $('log').append(planTurn(turn))
+      else $('log').append(researchTurn(turn))
     }
-  }
+    if (research) openPanel(research)
+  } else if (research && research.thoughts !== undefined) openPanel(research)
   render()
 }
 // Like the live site, a running research keeps updating: a failed or slow read never ends it.
@@ -333,6 +342,8 @@ async function send() {
   $('input').textContent = ''
   if (options.draftPersist) localStorage.removeItem(draftKey())
   if (options.dropOver && prompt.length >= options.dropOver) { render(); return }
+  // The page changes its log itself: the next refresh rebuilds it whole.
+  shown = ''
   $('log').append(userTurn(prompt))
   running = true
   render()
