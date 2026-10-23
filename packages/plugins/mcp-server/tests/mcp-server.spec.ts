@@ -11,6 +11,7 @@ import EventLog from '@tsuuanmi/system-event-log'
 import Store from '@tsuuanmi/system-store'
 import { afterEach, describe, expect, it } from 'vitest'
 import { z as zod } from 'zod'
+import { FakePluginHost, manifestText } from '../../../plugin-host-core/conformance/plugin-host.ts'
 import McpEndpoint from '../src/index.ts'
 
 const cleanups: Array<() => unknown> = []
@@ -85,6 +86,30 @@ describe('system MCP server on ctx.webServer', () => {
     expect(client.state).toBe(operator.state)
     // A client sees which checks are ok, never versions, paths, sizes, or names.
     expect(client.checks).toEqual(operator.checks.map(({ name, state }) => ({ name, state })))
+  })
+
+  it('lists every plugin of the composition with its manifest and recorded lifecycle for the operator only, and checks the manifests in health (REQ-HOST-7, ADR-0023)', async () => {
+    const { url, tokens, ctx } = await boot()
+    const composition = {
+      rows: [{ id: 'a', name: '@x/a', mounted: true }, { id: 'b', name: '@x/b', mounted: false }, { id: 'c', name: '@x/c', mounted: true }, { id: 'dsh', name: '@x/dsh', mounted: true }],
+      packages: { '@x/a': manifestText('@x/a', { version: '2.1.0' }), '@x/b': manifestText('@x/b'), '@x/c': manifestText('@x/c', { _meta: {} }), '@x/dsh': undefined },
+    }
+    const host = ctx.plugin(FakePluginHost, { composition, ledger: new Map() })
+    await host
+    cleanups.push(() => host.dispose())
+    type Status = { plugins?: Array<Record<string, unknown>>; health: { checks: Array<{ name: string; state: string; detail?: string }> } }
+    const status = async (token: string) => (await (await connect(url, token)).callTool({ name: 'status', arguments: {} })).structuredContent as Status
+    const operator = await status(tokens.operator)
+    expect(operator.plugins).toEqual([
+      { name: '@x/a', rows: ['a'], mounted: true, manifest: 'valid', version: '2.1.0', class: { kind: 'family', family: 'surface' }, lifecycle: { state: 'default', since: expect.any(String), decision: expect.stringMatching(/^sha256:/) } },
+      { name: '@x/b', rows: ['b'], mounted: false, manifest: 'valid', version: '1.0.0', class: { kind: 'family', family: 'surface' }, lifecycle: expect.objectContaining({ state: 'candidate' }) },
+      { name: '@x/c', rows: ['c'], mounted: true, manifest: 'refused', reason: expect.stringMatching(/_meta/) },
+      { name: '@x/dsh', rows: ['dsh'], mounted: true, manifest: 'absent', reason: expect.stringMatching(/ships no plugin-manifest\.json/) },
+    ])
+    expect(operator.health.checks.find((c) => c.name === 'manifests')).toMatchObject({ state: 'degraded', detail: expect.stringMatching(/^@x\/c: it declares _meta/) })
+    const client = await status(tokens.client)
+    expect(client.plugins).toBeUndefined()
+    expect(client.health.checks.find((c) => c.name === 'manifests')).toEqual({ name: 'manifests', state: 'degraded' })
   })
 
   it('reads the event log for the operator only, in order, a page at a time (QA-7, ADR-0023)', async () => {

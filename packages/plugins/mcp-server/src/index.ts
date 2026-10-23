@@ -19,6 +19,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
 import { dshHome, ensurePrivateDir, registerSecretPath, writeFileDurable } from '@tsuuanmi/system-libs'
+import type { PluginRecord } from '@tsuuanmi/system-plugin-host-core'
 import { type HealthReport, healthReport } from './health.ts'
 import { z as zod } from 'zod'
 
@@ -206,8 +207,10 @@ export class McpEndpoint extends McpTools {
     const workflow = this.ctx.get('workflow' as never) as { refusedTemplates?: () => Array<{ name: string; reason: string }> } | undefined
     const turns = this.ctx.get('turns' as never) as { conversations?: (filter: { state: 'failed' }) => Array<{ account: string; binding: string; reason?: string }> } | undefined
     const browser = this.ctx.get('browser' as never) as { profileStates?: () => Array<{ account: string; open: boolean; pages: number; kept?: number; reserved: boolean; blocked?: string }>; browserCap?: () => number } | undefined
+    const host = this.ctx.get('pluginHost')
     const report = await healthReport({
       plugins: () => brokenPlugins(this.ctx),
+      ...(host ? { manifests: () => host.list().filter((p) => p.rows.length && p.manifestState !== 'valid').map((p) => ({ name: p.name, state: p.manifestState as 'absent' | 'refused', reason: p.reason ?? '' })) } : {}),
       ...(workflow?.refusedTemplates ? { templates: () => workflow.refusedTemplates!() } : {}),
       ...(turns?.conversations ? { undeleted: () => turns.conversations!({ state: 'failed' }) } : {}),
       ...(browser?.profileStates ? { profiles: () => browser.profileStates!() } : {}),
@@ -320,10 +323,11 @@ export class McpEndpoint extends McpTools {
     })
     this.tools.set('status', {
       placeholder: false,
-      spec: { scope: 'client', description: 'Health of the system harness: each check (runtime, store, disk, vault key, accounts, Workers, provider UI drift) and the worst of them, with what to do for operator callers; plus the kernel services and installed providers.', inputSchema: {} },
+      spec: { scope: 'client', description: 'Health of the system harness: each check (plugins and their manifests, runtime, store, disk, vault key, accounts, Workers, provider UI drift) and the worst of them, with what to do for operator callers; plus the kernel services and installed providers, and, for the operator, every plugin of the composition with its manifest and its recorded lifecycle state.', inputSchema: {} },
       handler: async (_args, { scope }) => {
         const artifacts = this.ctx.get('artifacts')
         const providers = this.ctx.get('providers')
+        const host = this.ctx.get('pluginHost')
         const status = {
           harness: 'system',
           store: this.ctx.get('store') ? 'ok' : 'absent',
@@ -331,6 +335,8 @@ export class McpEndpoint extends McpTools {
           kernel: ['store', 'eventLog', 'leases', 'artifacts', 'credentials'].filter((key) => this.ctx.get(key) !== undefined),
           providers: providers ? providers.list() : [],
           health: await this.health(scope),
+          // Which plugins run, at which versions, is the operator's to know, as the health details are.
+          ...(scope === 'operator' && host ? { plugins: host.list().map(pluginView) } : {}),
         }
         return { content: [{ type: 'text', text: JSON.stringify(status) }], structuredContent: status }
       },
@@ -339,6 +345,16 @@ export class McpEndpoint extends McpTools {
 }
 
 export default McpEndpoint
+
+/** A plugin as `status` lists it: its rows, whether one is on, its manifest's state, version, and class, and its recorded lifecycle (REQ-HOST-7). */
+export function pluginView(p: PluginRecord): Record<string, unknown> {
+  return {
+    name: p.name, rows: p.rows, mounted: p.mounted, manifest: p.manifestState,
+    ...(p.reason ? { reason: p.reason } : {}),
+    ...(p.manifest ? { version: p.manifest.version, class: p.manifest.class } : {}),
+    ...(p.lifecycle ? { lifecycle: p.lifecycle } : {}),
+  }
+}
 
 /**
  * The plugins of the composition that are not running: one that failed to activate, with its

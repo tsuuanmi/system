@@ -32,8 +32,10 @@ Claude Code and Codex, and the `system` CLI. It is the primary client interface
     session, or type, a page of at most 1000 after `afterSeq`; it returns the
     page and `next`, the cursor for the following one.
   - `status` reports the store, artifacts, kernel seams, registered providers,
-    and **health** (REQ-HOST-6, `src/health.ts`): each check (plugins of the
-    composition, refused workflow templates, runtime, store integrity, free
+    for the operator only `plugins` (every plugin of the composition with its rows, whether one
+    is on, its manifest's state, version, and class, and its recorded lifecycle, from
+    `ctx.pluginHost` when mounted; REQ-HOST-7), and **health** (REQ-HOST-6, `src/health.ts`):
+    each check (plugins of the composition, their manifests, refused workflow templates, runtime, store integrity, free
     disk, vault key custody, accounts to sign in again, Worker availability,
     login profiles held for a login, open with their kept tabs, or blocked by a
     process that could not be stopped (`login-profiles`, from `browser`), provider UI drift within
@@ -49,7 +51,9 @@ Claude Code and Codex, and the `system` CLI. It is the primary client interface
     still pending on a required service no plugin supplies, read from the
     Cordis registry's own fiber states. Only named plugins count: an anonymous
     `ctx.inject` callback inside a running plugin (DSH waiting for a `settings`
-    service this composition never supplies) is not a plugin of the composition. `templates` is degraded when the
+    service this composition never supplies) is not a plugin of the composition. `manifests` is
+    degraded when the plugin host refused a plugin's manifest (its lifecycle is not recorded),
+    and notes the plugins that ship none. `templates` is degraded when the
     workflow engine refused a configured template at load (with why); every
     other template still works.
 - **`GET /healthz`:** liveness for a supervisor, with no token and no data
@@ -62,8 +66,8 @@ Claude Code and Codex, and the `system` CLI. It is the primary client interface
   `maxBodyBytes`, `minFreeBytes` (default 1 GiB), `driftWindowHours`
   (default 24), `storeCheckMinutes` (default 15).
 - **Injects:** `webServer`. It uses `ctx.get('artifacts')`, `ctx.get('store')`,
-  `ctx.get('providers')`, `ctx.get('accounts')`, `ctx.get('workers')`, and
-  `ctx.get('eventLog')` optionally.
+  `ctx.get('providers')`, `ctx.get('accounts')`, `ctx.get('workers')`,
+  `ctx.get('eventLog')`, and `ctx.get('pluginHost')` optionally.
 
 ## Scopes
 

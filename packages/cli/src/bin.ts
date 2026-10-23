@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { checkProfile, type EventLine, formatEvents, formatHealth, healthExit, hostHealth, parseEvents, assertRuntime, backupHost, browserDeps, callTool, claudeGatewayCommand, codexGatewayCommand, drainHost, formatTools, listTools, restoreHost, shutdownHost, ensureBrowser, formatArtifact, type ArtifactRead, formatExplanation, formatUsage, init, mcpConfig, mcpHeaders, mcpToken, parseAsk, readAllStdin, serveStdio, start, type ToolOutcome, uiUrl, composedRows, PRESETS, type Preset, rowOffProblem } from './index.ts'
+import { checkProfile, type EventLine, formatEvents, formatHealth, healthExit, hostHealth, formatPlugins, hostPlugins, parseEvents, assertRuntime, backupHost, browserDeps, callTool, claudeGatewayCommand, codexGatewayCommand, drainHost, formatTools, listTools, restoreHost, shutdownHost, ensureBrowser, formatArtifact, type ArtifactRead, formatExplanation, formatUsage, init, mcpConfig, mcpHeaders, mcpToken, parseAsk, readAllStdin, serveStdio, start, type ToolOutcome, uiUrl, composedRows, PRESETS, type Preset, rowOffProblem } from './index.ts'
 
 const USAGE = `Usage: system <command>
 
@@ -63,8 +63,10 @@ const USAGE = `Usage: system <command>
   events [--run <id>] [--node <id>] [--session <id>] [--turn <id>] [--type <t>] [--since <time>]
          [--after <seq>] [--limit <n>] [--json]
                             the event log in order (operator); --after the printed next for more
-  health [--json]           each check (runtime, store, disk, vault key, accounts, Workers, UI drift)
-                            and what to do; exit 0 healthy, 1 degraded, 2 down or not running
+  health [--json]           each check (plugins, manifests, runtime, store, disk, vault key, accounts,
+                            Workers, UI drift) and what to do; exit 0 healthy, 1 degraded, 2 down or not running
+  plugins [--json]          every plugin of the composition: its recorded lifecycle state, on or off, version,
+                            class, rows, and why a manifest is absent or refused
   shutdown [--deadline <s>] drain, then stop the running profile (unfinished runs resume on start)
   check                     check the profile against this install's code before starting it (an update's preflight)
   mcp-config <claude|codex> print client configuration for the running MCP server
@@ -493,6 +495,11 @@ async function main(argv: string[]): Promise<number> {
       const health = await hostHealth()
       console.log(rest.includes('--json') ? JSON.stringify(health, null, 2) : formatHealth(health).join('\n'))
       return healthExit(health.state)
+    }
+    case 'plugins': {
+      const plugins = await hostPlugins()
+      console.log(rest.includes('--json') ? JSON.stringify(plugins, null, 2) : formatPlugins(plugins).join('\n'))
+      return 0
     }
     case 'resume': {
       const outcome = await callTool('resume', {})

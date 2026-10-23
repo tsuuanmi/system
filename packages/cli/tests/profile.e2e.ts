@@ -18,7 +18,15 @@ let child: ChildProcess | undefined
 
 // The default composition: the Claude Code agent rows are on (PROP-0010 B3); the Codex, ACP,
 // software-development, and model gateway rows are off (PROP-0004).
-const ALLOWED_ROWS = ['timer', 'credentials', 'webserver', 'store', 'event-log', 'leases', 'artifacts', 'resources', 'approvals', 'accounts', 'turn-receipts', 'display', 'browser', 'providers', 'provider-chatgpt-web', 'provider-gemini-web', 'login', 'egress', 'workers', 'turns', 'agent-runtimes', 'runtime-claude-agent-sdk', 'agent-workers', 'llm', 'llm-pi-ai', 'models', 'worker-sessions', 'workflow', 'board', 'digest', 'profile-scientific-research', 'web-ui', 'mcp-server']
+// The rows the default composition has but turns off, and the DSH rows, whose packages ship no plugin manifest.
+const OFF_ROWS = ['runtime-codex-sdk', 'runtime-acp', 'profile-software-development', 'gateway-anthropic', 'gateway-responses']
+const DSH_PACKAGES = ['@deepseek-ai/cordis-plugin-timer', '@deepseek-ai/dsh-host-webserver', '@deepseek-ai/dsh-llm', '@deepseek-ai/dsh-llm-pi-ai']
+
+type Plugin = { name: string; rows: string[]; mounted: boolean; manifest: string; lifecycle?: { state: string; since: string; decision: string } }
+/** The plugins the first boot recorded, which a restart over an unchanged composition must leave as they are. */
+let firstBoot: Plugin[] = []
+
+const ALLOWED_ROWS = ['timer', 'credentials', 'webserver', 'store', 'event-log', 'leases', 'artifacts', 'plugin-host', 'resources', 'approvals', 'accounts', 'turn-receipts', 'display', 'browser', 'providers', 'provider-chatgpt-web', 'provider-gemini-web', 'login', 'egress', 'workers', 'turns', 'agent-runtimes', 'runtime-claude-agent-sdk', 'agent-workers', 'llm', 'llm-pi-ai', 'models', 'worker-sessions', 'workflow', 'board', 'digest', 'profile-scientific-research', 'web-ui', 'mcp-server']
 
 async function client2(url: string, token: string): Promise<Client> {
   const client = new Client({ name: 'e2e-2', version: '0' })
@@ -107,7 +115,18 @@ describe('system profile (e2e through dsh)', () => {
     const token = readFileSync(tokenFiles.operator).toString('base64url')
     await client.connect(new StreamableHTTPClientTransport(new URL(url), { requestInit: { headers: { authorization: `Bearer ${token}` } } }) as unknown as Transport)
     const status = await client.callTool({ name: 'status', arguments: {} })
-    expect(status.structuredContent).toMatchObject({ harness: 'system', store: 'ok', artifacts: 0, kernel: ['store', 'eventLog', 'leases', 'artifacts', 'credentials'], providers: ['chatgpt-web', 'gemini-web'] })
+    expect(status.structuredContent).toMatchObject({ harness: 'system', store: 'ok', kernel: ['store', 'eventLog', 'leases', 'artifacts', 'credentials'], providers: ['chatgpt-web', 'gemini-web'] })
+    // The plugin host read every row from the loader and each package's manifest, and recorded each
+    // plugin's lifecycle as a decision: a row on is default, a row off candidate (REQ-HOST-7, INV-13).
+    const { plugins, artifacts, health } = status.structuredContent as { plugins: Plugin[]; artifacts: number; health: { checks: Array<{ name: string; state: string; detail: string }> } }
+    expect(plugins.filter((p) => p.mounted).flatMap((p) => p.rows)).toEqual(ALLOWED_ROWS)
+    expect(plugins.filter((p) => !p.mounted).flatMap((p) => p.rows)).toEqual(OFF_ROWS)
+    const ours = plugins.filter((p) => !DSH_PACKAGES.includes(p.name))
+    expect(plugins.filter((p) => DSH_PACKAGES.includes(p.name)).map((p) => [p.name, p.manifest, p.lifecycle])).toEqual(DSH_PACKAGES.map((name) => [name, 'absent', undefined]))
+    for (const p of ours) expect([p.name, p.manifest, p.lifecycle?.state]).toEqual([p.name, 'valid', p.mounted ? 'default' : 'candidate'])
+    expect(artifacts).toBe(ours.length)
+    expect(health.checks.find((c) => c.name === 'manifests')).toMatchObject({ state: 'ok', detail: expect.stringContaining('4 have none') })
+    firstBoot = plugins
     await client.close()
 
     const listed = execFileSync(process.execPath, [bin, 'account', 'list'], { env, encoding: 'utf8' })
@@ -186,9 +205,37 @@ describe('system profile (e2e through dsh)', () => {
     const { checks } = (status.structuredContent as { health: { checks: Array<{ name: string; detail?: string }> } }).health
     expect(checks.find((check) => check.name === 'workers')?.detail).toContain('agent:reviewer (unavailable)')
     expect(checks.find((check) => check.name === 'plugins')).toMatchObject({ state: 'ok' })
+    // The same rows on and off as at the first boot: the plugin host records nothing again (REQ-HOST-7).
+    expect((status.structuredContent as { plugins: Plugin[] }).plugins).toEqual(firstBoot)
     const exited = new Promise((resolve) => child?.on('exit', resolve))
     child.kill('SIGTERM')
     await exited
     expect(existsSync(discoveryPath)).toBe(false)
+  }, 120_000)
+
+  it('records a row the operator turns on as one lifecycle decision, chained to the one before it, and changes no other plugin\'s record (REQ-HOST-7, INV-13)', async () => {
+    expect(firstBoot.length).toBeGreaterThan(0)
+    const patch = join(home, 'gateway-on.yml')
+    writeFileSync(patch, `${readFileSync(join(home, 'port0.yml'), 'utf8').trimEnd()}\n- id: gateway-anthropic\n  disabled: false\n`)
+    child = spawn(process.execPath, [bin, 'start', '--patch', patch], { env, stdio: 'pipe', detached: true })
+    const discoveryPath = join(home, 'system', 'mcp.json')
+    await waitFor(discoveryPath, 60_000)
+    const { url, tokenFiles } = JSON.parse(readFileSync(discoveryPath, 'utf8')) as { url: string; tokenFiles: Record<'operator', string> }
+    const client = await client2(url, readFileSync(tokenFiles.operator).toString('base64url'))
+    try {
+      const { plugins } = (await client.callTool({ name: 'status', arguments: {} })).structuredContent as { plugins: Plugin[] }
+      const before = firstBoot.find((p) => p.rows.includes('gateway-anthropic'))!
+      const after = plugins.find((p) => p.rows.includes('gateway-anthropic'))!
+      expect([before.lifecycle?.state, after.mounted, after.lifecycle?.state]).toEqual(['candidate', true, 'default'])
+      expect(plugins.filter((p) => p !== after)).toEqual(firstBoot.filter((p) => p.name !== after.name))
+      const read = await client.callTool({ name: 'artifact', arguments: { id: after.lifecycle!.decision } })
+      const decision = JSON.parse((read.structuredContent as { text: string }).text) as { schema: string; decisionType: string; inputs: string[]; outcome: { option: string; detail: { from: string } } }
+      expect(decision).toMatchObject({ schema: 'decision@1.5', decisionType: 'lifecycle', inputs: [before.lifecycle!.decision], outcome: { option: 'default', detail: { from: 'candidate' } } })
+    } finally {
+      await client.close()
+      const exited = new Promise((resolve) => child?.on('exit', resolve))
+      child.kill('SIGTERM')
+      await exited
+    }
   }, 120_000)
 })

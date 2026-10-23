@@ -13,7 +13,8 @@
     }
   },
   "files": [
-    "lib"
+    "lib",
+    "plugin-manifest.json"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json"
@@ -22,6 +23,7 @@
     "@modelcontextprotocol/sdk": "1.32.1",
     "@tsuuanmi/system-gateway-core": "workspace:*",
     "@tsuuanmi/system-libs": "workspace:*",
+    "@tsuuanmi/system-plugin-host-core": "workspace:*",
     "zod": "^4.1.0"
   },
   "peerDependencies": {

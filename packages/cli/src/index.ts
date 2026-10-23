@@ -381,6 +381,37 @@ export function formatHealth(health: HealthView): string[] {
   return [`health: ${health.state}`, ...health.checks.map((c) => `  ${c.state.padEnd(8)} ${c.name.padEnd(10)} ${c.detail ?? ''}`.trimEnd())]
 }
 
+/** A plugin of the composition as the running profile's `status` lists it to the operator (REQ-HOST-7). */
+export interface PluginView {
+  name: string
+  rows: string[]
+  mounted: boolean
+  manifest: 'valid' | 'absent' | 'refused'
+  reason?: string
+  version?: string
+  class?: { kind: 'core'; component: string } | { kind: 'family'; family: string }
+  lifecycle?: { state: string; since: string; decision: string }
+}
+
+/** The plugins of the running profile, from `status` as the operator; refused when its plugin host lists none. */
+export async function hostPlugins(call: typeof callTool = callTool): Promise<PluginView[]> {
+  const outcome = await call('status', {})
+  if (outcome.isError) throw new Error(outcome.text)
+  const plugins = outcome.structured?.plugins as PluginView[] | undefined
+  if (!plugins) throw new Error('the running profile lists no plugins: its plugin-host row is off or not running (system health)')
+  return plugins
+}
+
+/** One line per plugin: its recorded lifecycle state, whether a row runs it, name and version, class, rows; why its manifest is absent or refused. */
+export function formatPlugins(plugins: readonly PluginView[]): string[] {
+  const width = Math.max(0, ...plugins.map((p) => p.name.length + (p.version ? p.version.length + 1 : 0)))
+  return plugins.flatMap((p) => {
+    const cls = !p.class ? '' : p.class.kind === 'core' ? `core: ${p.class.component}` : `family: ${p.class.family}`
+    const line = [(p.lifecycle?.state ?? '—').padEnd(9), (p.mounted ? 'on' : 'off').padEnd(3), `${p.name}${p.version ? `@${p.version}` : ''}`.padEnd(width), cls.padEnd(24), p.rows.length ? `row ${p.rows.join(', ')}` : 'no row'].join(' ')
+    return p.manifest === 'valid' ? [line] : [line, `${' '.repeat(14)}manifest ${p.manifest}: ${p.reason ?? ''}`.trimEnd()]
+  })
+}
+
 /**
  * Drain the host (REQ-HOST-1): no new run is admitted, then poll until nothing is executing or
  * the deadline passes. Gateway requests end with their runs.

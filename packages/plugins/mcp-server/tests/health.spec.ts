@@ -59,6 +59,15 @@ describe('host health (REQ-HOST-6)', () => {
       .toMatchObject({ state: 'degraded', detail: '1 configured template(s) refused, every other one works: panel-led (node panel: team must be {kind: …})' })
   })
 
+  it('is degraded by a manifest the plugin host refused, naming the plugin and why, and notes the plugins that ship none (REQ-HOST-7)', async () => {
+    expect(await check({ manifests: () => [{ name: '@x/a', state: 'refused', reason: 'it declares _meta, which belongs to the host' }, { name: '@deepseek-ai/dsh-llm', state: 'absent', reason: 'ships none' }] }, 'manifests'))
+      .toMatchObject({ state: 'degraded', detail: expect.stringMatching(/^@x\/a: it declares _meta, which belongs to the host: its lifecycle is not recorded/) })
+    expect(await check({ manifests: () => [{ name: '@deepseek-ai/dsh-llm', state: 'absent', reason: 'ships none' }] }, 'manifests'))
+      .toMatchObject({ state: 'ok', detail: expect.stringMatching(/1 have none, so their lifecycle is not recorded: @deepseek-ai\/dsh-llm$/) })
+    expect(await check({ manifests: () => [] }, 'manifests')).toMatchObject({ state: 'ok', detail: 'every plugin declares a valid manifest' })
+    expect(await check({}, 'manifests')).toBeUndefined()
+  })
+
   it('notes what retention removed recently, without degrading health', async () => {
     const events = (type: string) => (type === 'workflow.retention.swept' ? [{ data: { runs: 40, conversations: 12, retainRunsDays: 30 } }, { data: { runs: 2, conversations: 0, retainRunsDays: 30 } }] : [])
     expect(await check({ events }, 'retention')).toMatchObject({ state: 'ok', detail: expect.stringMatching(/^retention expired 42 run\(s\) and released 12 website conversation\(s\)/) })

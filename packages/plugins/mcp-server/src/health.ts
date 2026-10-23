@@ -33,6 +33,8 @@ export interface HealthSources {
   events?: (type: string, sinceIso: string) => Array<{ data?: Record<string, unknown> | undefined }>
   /** Plugins of the composition that failed to activate or wait for a service no one supplies. */
   plugins?: () => Array<{ name: string; state: 'failed' | 'pending'; detail: string }>
+  /** Plugins of the composition whose manifest the plugin host could not take: none in their package, or one it refused (REQ-HOST-7). */
+  manifests?: () => Array<{ name: string; state: 'absent' | 'refused'; reason: string }>
   /** Configured workflow templates refused at load, with why. */
   templates?: () => Array<{ name: string; reason: string }>
   /** Website conversations whose deletion failed every attempt (the conversation ledger). */
@@ -72,6 +74,17 @@ export async function healthReport(sources: HealthSources): Promise<HealthReport
       return broken.length
         ? { name: 'plugins', state: 'down', detail: `${broken.map((p) => `${p.name} ${p.state}: ${p.detail}`).join('; ')}. See the daemon's log, fix the configuration, and restart (docs/operations/runbooks.md)` }
         : ok('plugins', 'every plugin of the composition is active')
+    }))
+  }
+  // A refused manifest leaves its plugin running, but its lifecycle unrecorded until the package is fixed.
+  if (sources.manifests) {
+    checks.push(await guarded('manifests', () => {
+      const unread = sources.manifests!()
+      const refused = unread.filter((p) => p.state === 'refused')
+      const absent = unread.filter((p) => p.state === 'absent').map((p) => p.name)
+      return refused.length
+        ? { name: 'manifests', state: 'degraded', detail: `${refused.map((p) => `${p.name}: ${p.reason}`).join('; ')}: its lifecycle is not recorded until its package ships a valid manifest (docs/operations/runbooks.md#a-plugins-manifest-is-refused)` }
+        : ok('manifests', absent.length ? `every other plugin declares a valid manifest; ${absent.length} have none, so their lifecycle is not recorded: ${absent.join(', ')}` : 'every plugin declares a valid manifest')
     }))
   }
   if (sources.templates) {

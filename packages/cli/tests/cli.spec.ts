@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { CHROME_LOCK } from '@tsuuanmi/system-browser-patchright'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { assertRuntime, callTool, formatEvents, formatHealth, parseEvents, healthExit, hostHealth, claudeGatewayCommand, codexGatewayCommand, drainHost, formatTools, ensureBrowser, hostProcessProblem, shutdownHost, exitCode, formatArtifact, formatExplanation, formatUsage, mcpConfig, mcpHeaders, mcpToken, mergeProfileManifest, parseAsk, uiUrl, parseComposedRows, presetOf, rowOffProblem } from '../src/index.ts'
+import { assertRuntime, callTool, formatEvents, formatHealth, formatPlugins, parseEvents, healthExit, hostHealth, hostPlugins, claudeGatewayCommand, codexGatewayCommand, drainHost, formatTools, ensureBrowser, hostProcessProblem, shutdownHost, exitCode, formatArtifact, formatExplanation, formatUsage, mcpConfig, mcpHeaders, mcpToken, mergeProfileManifest, parseAsk, uiUrl, parseComposedRows, presetOf, rowOffProblem } from '../src/index.ts'
 
 const dirs: string[] = []
 afterEach(() => {
@@ -76,6 +76,22 @@ describe('system CLI (PR #3 kernel review)', () => {
     expect([healthExit('ok'), healthExit('degraded'), healthExit('down'), healthExit('unknown')]).toEqual([0, 1, 2, 2])
     const down = await hostHealth(async () => { throw new Error('connect ECONNREFUSED 127.0.0.1:47317') })
     expect(down).toMatchObject({ state: 'down', checks: [{ name: 'host', detail: expect.stringContaining('ECONNREFUSED') }] })
+  })
+
+  it('lists the plugins with their recorded lifecycle and manifest, and refuses a host whose plugin host lists none (REQ-HOST-7)', async () => {
+    const plugins = [
+      { name: '@tsuuanmi/system-store', rows: ['store'], mounted: true, manifest: 'valid' as const, version: '0.8.0', class: { kind: 'core' as const, component: 'ledger-of-record' }, lifecycle: { state: 'default', since: '2026-10-23T00:00:00.000Z', decision: `sha256:${'1'.repeat(64)}` } },
+      { name: '@tsuuanmi/system-runtime-acp', rows: ['runtime-acp'], mounted: false, manifest: 'valid' as const, version: '0.8.0', class: { kind: 'family' as const, family: 'worker' }, lifecycle: { state: 'candidate', since: '2026-10-23T00:00:00.000Z', decision: `sha256:${'2'.repeat(64)}` } },
+      { name: '@deepseek-ai/dsh-llm', rows: ['llm'], mounted: true, manifest: 'absent' as const, reason: '@deepseek-ai/dsh-llm ships no plugin-manifest.json' },
+    ]
+    expect(await hostPlugins(async () => ({ isError: false, text: '', structured: { plugins } }))).toEqual(plugins)
+    expect(formatPlugins(plugins)).toEqual([
+      'default   on  @tsuuanmi/system-store@0.8.0       core: ledger-of-record   row store',
+      'candidate off @tsuuanmi/system-runtime-acp@0.8.0 family: worker           row runtime-acp',
+      '—         on  @deepseek-ai/dsh-llm                                        row llm',
+      '              manifest absent: @deepseek-ai/dsh-llm ships no plugin-manifest.json',
+    ])
+    await expect(hostPlugins(async () => ({ isError: false, text: '', structured: { health: {} } }))).rejects.toThrow(/plugin-host row is off or not running/)
   })
 
   it('maps a signal death to 128 + signal number', () => {
