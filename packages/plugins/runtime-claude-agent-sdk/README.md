@@ -38,8 +38,9 @@ installed.
   2. `proveConfinement` on this host, with its home bound back
      (`readsConfined`; no confinement configured, or not proven:
      `readsConfined: false`, so its Workers are unavailable);
-  3. `claude auth status` under the confinement: a non-zero exit, or
-     `"loggedIn": false`, is unavailable, naming the home to sign in to;
+  3. `claude auth status` under the confinement: only an exit 0 that reports
+     `"loggedIn": true` is a sign-in; a non-zero exit, `"loggedIn": false`, or
+     output that says neither is unavailable, naming the home to sign in to;
   4. a nested sandbox start: bubblewrap, found on Claude Code's own PATH as the
      SDK's sandbox finds it, runs a namespaced `true` with no network
      (`--unshare-net`, `--unshare-pid`, a read-only root) inside the

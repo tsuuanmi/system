@@ -237,7 +237,8 @@ has the configuration and every rule.
   Each agent runs in a home of its own (Codex's `CODEX_HOME`, Claude Code's
   `CLAUDE_CONFIG_DIR`, the Antigravity CLI's `HOME`, each under `<DSH_HOME>/system`), never the
   operator's login, which is hidden; the operator signs in there once, and a probe that finds no
-  one signed in reports the Worker unavailable ([runbook](../operations/runbooks.md#agent-workers)).
+  one signed in, or cannot tell (a status it cannot read is no sign-in), reports the Worker
+  unavailable ([runbook](../operations/runbooks.md#agent-workers)).
   Codex also runs with the terminal devices hidden ([Codex's gate](#codexs-gate)). Each probe
   reports `readsConfined`, proven positively on the host by `proveConfinement`, and the `agents`
   source checks it again before each run starts.

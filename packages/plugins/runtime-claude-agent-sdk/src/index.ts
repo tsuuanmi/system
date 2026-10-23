@@ -307,12 +307,14 @@ export class ClaudeAgentRuntime implements AgentRuntimeProvider {
 
   /**
    * Why Claude Code is not signed in inside its home, or undefined when it is: `claude auth status`
-   * under the confinement exits 0 and does not report `"loggedIn": false`.
+   * under the confinement exits 0 and reports `"loggedIn": true`. Output that does not say so is
+   * unknown, never a sign-in.
    */
   private async signedOut(executable: string, confinement: Confinement, env: Record<string, string>): Promise<string | undefined> {
     try {
       const status = await (this.options.status ?? runConfined)(confinedCommand(executable, ['auth', 'status'], confinement), env)
-      return loggedOut(status) ? 'claude auth status: not logged in' : undefined
+      const said = loggedIn(status)
+      return said === true ? undefined : said === false ? 'claude auth status: not logged in' : 'claude auth status: its output does not say who is signed in'
     } catch (error) {
       return `claude auth status failed: ${firstLine(error)}`
     }
@@ -323,12 +325,13 @@ const unavailable = (detail: string): RuntimeEvidence => ({ available: false, de
 
 const firstLine = (error: unknown): string => (error instanceof Error ? error.message : String(error)).split('\n')[0]!.slice(0, 160)
 
-/** Whether `claude auth status` output says no one is signed in (`"loggedIn": false`); output it cannot read says nothing. */
-function loggedOut(stdout: string): boolean {
+/** What `claude auth status` output says of the sign-in (`"loggedIn"`), or undefined when it says nothing it can be read as. */
+function loggedIn(stdout: string): boolean | undefined {
   try {
-    return (JSON.parse(stdout) as { loggedIn?: unknown } | null)?.loggedIn === false
+    const said = (JSON.parse(stdout) as { loggedIn?: unknown } | null)?.loggedIn
+    return typeof said === 'boolean' ? said : undefined
   } catch {
-    return false
+    return undefined
   }
 }
 
