@@ -90,8 +90,9 @@ charters, and their tasks.
     attempt left
     ([what ends an input wait](../../../docs/design/board.md#what-ends-an-input-wait));
   - `board_cancel` cancels as `operator` for an operator token and as `lead` for a client one;
-  - `board_projects` and `board_brief` give no `budget`: use comes from the resource ledger,
-    which has no provider yet;
+  - `board_projects` and `board_brief` give no `budget`: use comes from the resource ledger
+    (`ctx.resources`), which the board does not read yet, and the engine reserves nothing per
+    task;
   - `board_brief`'s `readFirst` lists the closed project's lessons and the accepted results of
     its latest done tasks (their digest, else their first artifact); `conventions` are the
     charter's constraint notes.

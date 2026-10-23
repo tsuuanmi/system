@@ -104,9 +104,12 @@ The **`agents` Worker source**: agent runtimes as Workers
     logged and never changes the run's own outcome;
   - **observe** each rate-limit observation the runtime reported as a
     `limit-state` reading (source `runtime-result`) of the window `windows`
-    maps it to: `limited` with `resetsAt` when `rejected`, `unknown` when
-    `rejected` without a reset time (the pool stays closed until a reading
-    says otherwise), `ok` otherwise. An unmapped window is logged and skipped;
+    maps it to: `limited` with `resetsAt` when `rejected`, `limited` until
+    `limitCooldownSeconds` (default 3600) after the observation when
+    `rejected` without a reset time, never `unknown`, `ok` otherwise. A
+    `rejected` limit on a window `windows` does not map closes every window
+    of the pool, so it is never retried there unseen (INV-2); any other
+    unmapped window is logged and skipped;
   - **release** the reservation once the usage is recorded, or when the run
     fails before it starts.
 
