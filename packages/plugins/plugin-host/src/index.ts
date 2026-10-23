@@ -119,7 +119,8 @@ export class StorePluginHost extends PluginHost {
     ctx.store.migrate('plugin-host', [{
       version: 1,
       sql: `CREATE TABLE plugin_lifecycle (
-        name TEXT PRIMARY KEY, state TEXT NOT NULL, since TEXT NOT NULL, decision TEXT NOT NULL,
+        name TEXT PRIMARY KEY, state TEXT NOT NULL CHECK (state IN ('candidate', 'shadow', 'canary', 'default', 'retired')),
+        since TEXT NOT NULL, decision TEXT NOT NULL,
         version TEXT NOT NULL, rows TEXT NOT NULL
       );`,
     }])
@@ -139,7 +140,7 @@ export class StorePluginHost extends PluginHost {
         db.prepare(`INSERT INTO plugin_lifecycle (name, state, since, decision, version, rows) VALUES (?, ?, ?, ?, ?, ?)
           ON CONFLICT (name) DO UPDATE SET state = excluded.state, since = excluded.since, decision = excluded.decision, version = excluded.version, rows = excluded.rows`)
           .run(change.name, change.state, since, decision.id, change.version, JSON.stringify(change.rows))
-        ctx.logger.info('plugin %s: %s → %s (decision %s)', change.name, change.previous?.state ?? 'unrecorded', change.state, decision.id)
+        ctx.store.afterCommit(() => ctx.logger.info('plugin %s: %s → %s (decision %s)', change.name, change.previous?.state ?? 'unrecorded', change.state, decision.id))
       }
     })
     this.records = pluginRecords(rows, manifests, this.recorded())

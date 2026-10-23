@@ -102,7 +102,7 @@ stateDiagram-v2
 | every row of it is off (`disabled`) | `candidate`: installed with a valid manifest, not run | one, when its record says otherwise |
 | no row names a plugin that has a record, and no plugin of the composition renames it | `retired` | one, once |
 | its manifest is absent or refused | its record unchanged | none |
-| its manifest's `renames` names a record and no row names that name | the record, carried to its new name | none while its state stays |
+| its manifest's `renames` names a record and no row names that name | the record, carried to its new name (to the first plugin that renames it only) | none while its state stays |
 | — | `shadow`, `canary` | never in Base: nothing runs a plugin beside another or gives it a share of the jobs |
 
 ## A start

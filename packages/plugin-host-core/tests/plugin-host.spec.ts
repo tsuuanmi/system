@@ -76,6 +76,15 @@ describe('reconciliation', () => {
     expect(changes[2]!.decision.inputs).toEqual([`sha256:${'2'.repeat(64)}`])
   })
 
+  it('gives a former name\'s record to the first plugin that renames it only; the other starts its own', () => {
+    const recorded = new Map<string, RecordedLifecycle>([['@x/old', { name: '@x/old', state: 'default', since: '2026-10-23T00:00:00.000Z', decision: `sha256:${'3'.repeat(64)}`, version: '1.0.0', rows: ['old'] }]])
+    const renaming = (name: string): [string, ManifestRead] => [name, readManifest(manifestText(name, { renames: ['@x/old'] }), name)]
+    const rows = [{ id: 'one', name: '@x/one', mounted: true }, { id: 'two', name: '@x/two', mounted: true }]
+    const { changes, moves } = reconcile(rows, new Map([renaming('@x/one'), renaming('@x/two')]), recorded)
+    expect(moves).toEqual([{ from: '@x/old', to: '@x/one' }])
+    expect(changes.map((c) => [c.name, c.state, c.previous?.name])).toEqual([['@x/two', 'default', undefined]])
+  })
+
   it('lists a plugin of several rows once, mounted when any of its rows is', () => {
     expect(pluginsOf([{ id: 'a', name: '@x/a', mounted: false }, { id: 'b', name: '@x/b', mounted: true }, { id: 'a-2', name: '@x/a', mounted: true }]))
       .toEqual([{ name: '@x/a', rows: ['a', 'a-2'], mounted: true }, { name: '@x/b', rows: ['b'], mounted: true }])

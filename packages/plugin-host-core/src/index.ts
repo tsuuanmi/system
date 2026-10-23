@@ -264,7 +264,7 @@ export function reconcile(rows: readonly CompositionRow[], manifests: ReadonlyMa
       continue
     }
     const own = recorded.get(plugin.name)
-    const former = own ? undefined : (read.manifest.renames ?? []).find((old) => recorded.has(old) && !plugins.some((p) => p.name === old))
+    const former = own ? undefined : (read.manifest.renames ?? []).find((old) => recorded.has(old) && !claimed.has(old) && !plugins.some((p) => p.name === old))
     const previous = own ?? (former ? recorded.get(former) : undefined)
     claimed.add(plugin.name)
     if (former) claimed.add(former)
