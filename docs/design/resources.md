@@ -134,10 +134,11 @@ and its contract do not change, and to make each one visible and durable instead
   and not reconciled, the records without a figure; in all: each kind, and how many were
   reconciled since), per step in `system usage` (MCP `usage`), and in health: the `usage` check is
   degraded while a configured pool has a run whose usage is unknown and not reconciled in its
-  current window, naming the pool and the count. A pool's current window is its longest
-  configured window, back from now; a pool with a window of no length (a credit balance) never
-  resets, so every such run counts until it is reconciled or the event log's retention removes it
-  ([runbook](../operations/runbooks.md#usage-the-ledger-could-not-count)).
+  current window, naming the pool and the count; while such a run names a pool the ledger does not
+  configure; and when there are more entries than it reads (it is never `ok` on part of them). A
+  pool's current window is its longest configured window, back from now; a pool with a window of
+  no length (a credit balance) never resets, so every such run counts until it is reconciled or
+  the event log's retention removes it ([runbook](../operations/runbooks.md#usage-the-ledger-could-not-count)).
 
 **Deferred: failing closed for metered pools** (D25's third option). A cap could refuse its
 scope's next reservation while a run of a pool whose kind requires counted usage (a metered pool)

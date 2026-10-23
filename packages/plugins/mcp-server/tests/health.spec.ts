@@ -11,6 +11,9 @@ const base = (extra: Partial<HealthSources> = {}): HealthSources => ({
   events: () => [], nodeVersion: '24.21.0', minFreeBytes: 1, driftWindowMs: 86_400_000, ...extra,
 })
 const check = async (extra: Partial<HealthSources>, name: string) => (await healthReport(base(extra))).checks.find((c) => c.name === name)
+/** An event log of `entries` in `seq` order, read a page at a time as the `usage` check asks for them. */
+const paged = (entries: Array<{ at: string; data?: Record<string, unknown> }>) => ({ afterSeq, limit }: { afterSeq: number; limit: number }) =>
+  entries.slice(afterSeq, afterSeq + limit).map((e, i) => ({ seq: afterSeq + i + 1, ...e }))
 
 describe('host health (REQ-HOST-6)', () => {
   it('is ok when every check is, and names each check', async () => {
@@ -93,14 +96,14 @@ describe('host health (REQ-HOST-6)', () => {
       fact('arun_4', 'max.agents', 'failed', '2026-10-23T11:00:00.000Z'),
       // A credit balance never resets: every unreconciled run counts.
       fact('arun_5', 'api.key', 'not-reported', '2026-09-01T00:00:00.000Z'),
-      // A pool no longer configured is skipped; an entry that is no record is said, never skipped silently.
+      // A pool the ledger does not configure, and an entry that is no record, are said, never skipped silently.
       fact('arun_6', 'gone.pool', 'not-reported', '2026-10-23T11:00:00.000Z'),
       { at: '2026-10-23T11:00:00.000Z', data: { kind: 'not-reported', pool: 'max.agents' } },
     ]
     const asked: string[] = []
     const unknownUsage = {
       pools: async () => [{ pool: 'max.agents', windows: [{ seconds: 3600 }, { seconds: 18_000 }] }, { pool: 'api.key', windows: [{}] }],
-      entries: (since: string) => (asked.push(since), entries),
+      entries: (query: { since: string; afterSeq: number; limit: number }) => (asked.push(query.since), paged(entries)(query)),
       counted: async (runId: string) => runId === 'arun_4',
     }
     const report = await healthReport(base({ unknownUsage, now: () => now }))
@@ -109,6 +112,7 @@ describe('host health (REQ-HOST-6)', () => {
       name: 'usage', state: 'degraded',
       detail: 'api.key: 1 run(s) in its current window (it has a window that never resets) whose usage the ledger could not count (1 not-reported); '
         + 'max.agents: 2 run(s) in its current window (the last 5h) whose usage the ledger could not count (1 not-reported, 1 refused); '
+        + 'unconfigured pool: run(s) whose usage the ledger could not count name a pool it does not configure (gone.pool 1), so no window counts them; '
         + '1 usage.unknown entry is not a valid usage-unknown@1.0 record, so no pool counts it. '
         + 'A cap counts each as 0 until the ledger counts a record of it: see system events --type usage.unknown (docs/operations/runbooks.md#usage-the-ledger-could-not-count)',
     })
@@ -116,18 +120,39 @@ describe('host health (REQ-HOST-6)', () => {
     expect(asked).toEqual([new Date(0).toISOString()])
   })
 
-  it('is ok once every such run is reconciled or out of its window, says when it read only part, and with no pool configured', async () => {
+  it('is ok once every such run is reconciled or out of its window, and with no pool configured', async () => {
     const at = '2026-10-23T11:00:00.000Z'
-    const one = { at, data: { schema: 'usage-unknown@1.0', runId: 'arun_1', kind: 'not-reported', account: 'max', pool: 'max.agents', observedAt: at, reason: 'why' } }
+    const one = { seq: 1, at, data: { schema: 'usage-unknown@1.0', runId: 'arun_1', kind: 'not-reported', account: 'max', pool: 'max.agents', observedAt: at, reason: 'why' } }
     const pools = async () => [{ pool: 'max.agents', windows: [{ seconds: 18_000 }] }]
     const now = () => Date.parse('2026-10-23T12:00:00Z')
     expect(await check({ unknownUsage: { pools, entries: () => [one], counted: async () => true }, now }, 'usage')).toMatchObject({ state: 'ok', detail: 'the ledger counted the usage of every run in each pool\'s current window' })
     expect(await check({ unknownUsage: { pools, entries: () => [one], counted: async () => false }, now: () => Date.parse('2026-10-24T12:00:00Z') }, 'usage')).toMatchObject({ state: 'ok' })
     expect(await check({ unknownUsage: { pools: async () => [], entries: () => [one], counted: async () => false } }, 'usage')).toMatchObject({ state: 'ok', detail: 'no resource pool is configured' })
-    const full = Array.from({ length: MAX_UNKNOWN_ENTRIES }, (_, i) => ({ ...one, data: { ...one.data, runId: `arun_${i}` } }))
-    expect(await check({ unknownUsage: { pools, entries: () => full, counted: async () => false }, now }, 'usage')).toMatchObject({ state: 'degraded', detail: expect.stringMatching(/^max\.agents: 1000 run\(s\) .* \(counted from the first 1000 entries only\)\. /) })
+    // A pool the ledger does not configure whose run the ledger counts a record of is reconciled too.
+    const gone = { ...one, data: { ...one.data, pool: 'gone.pool' } }
+    expect(await check({ unknownUsage: { pools, entries: () => [gone], counted: async () => true }, now }, 'usage')).toMatchObject({ state: 'ok' })
     // A ledger that cannot be read leaves the check down, saying why, never ok.
     expect(await check({ unknownUsage: { pools: async () => { throw new Error('the store is closed') }, entries: () => [], counted: async () => false } }, 'usage')).toMatchObject({ state: 'down', detail: expect.stringContaining('the store is closed') })
+  })
+
+  it('reads every entry of the windows a page at a time, and past what it reads is degraded, never ok (INV-2, INV-9)', async () => {
+    const at = '2026-10-23T11:00:00.000Z'
+    const fact = (runId: string) => ({ at, data: { schema: 'usage-unknown@1.0', runId, kind: 'not-reported', account: 'max', pool: 'max.agents', observedAt: at, reason: 'why' } })
+    const pools = async () => [{ pool: 'max.agents', windows: [{ seconds: 18_000 }] }]
+    const now = () => Date.parse('2026-10-23T12:00:00Z')
+    // 1,500 entries of a reconciled run, then one of a run the ledger has not counted: it is read.
+    const later = [...Array.from({ length: 1500 }, () => fact('arun_1')), fact('arun_2')]
+    const asked: Array<{ afterSeq: number; limit: number }> = []
+    const entries = (query: { since: string; afterSeq: number; limit: number }) => (asked.push({ afterSeq: query.afterSeq, limit: query.limit }), paged(later)(query))
+    expect(await check({ unknownUsage: { pools, entries, counted: async (runId) => runId === 'arun_1' }, now }, 'usage')).toMatchObject({ state: 'degraded', detail: expect.stringMatching(/^max\.agents: 1 run\(s\) in its current window/) })
+    expect(asked).toEqual([{ afterSeq: 0, limit: 1000 }, { afterSeq: 1000, limit: 1000 }])
+    // Exactly the bound is read whole; one entry past it is not, so the check cannot say ok even when
+    // every run it read is reconciled.
+    const counted = async () => true
+    expect(await check({ unknownUsage: { pools, entries: paged(Array.from({ length: MAX_UNKNOWN_ENTRIES }, () => fact('arun_1'))), counted }, now }, 'usage')).toMatchObject({ state: 'ok' })
+    expect(await check({ unknownUsage: { pools, entries: paged(Array.from({ length: MAX_UNKNOWN_ENTRIES + 1 }, () => fact('arun_1'))), counted }, now }, 'usage')).toMatchObject({
+      state: 'degraded', detail: expect.stringMatching(new RegExp(`^more than ${MAX_UNKNOWN_ENTRIES} usage\\.unknown entries in the pools' windows: only the first ${MAX_UNKNOWN_ENTRIES} were read, so later ones are not counted here\\. A cap`)),
+    })
   })
 
   it('is degraded by a provider UI change in the window: a drift event, or a step that failed as ui_drift', async () => {

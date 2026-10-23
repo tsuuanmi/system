@@ -1710,6 +1710,11 @@ pool's availability is unaffected: it comes from limit readings, not records.
      refused record with its numbers. Report it with the runtime's version.
    - `failed`: the ledger could not record it; check the `store` check of `system health` and the
      daemon's log.
+   - An `unconfigured pool` line in `system health`: the entries name a pool no `resources` row
+     configures (a typo in the Worker's `pool`, or a pool removed since). Correct the Worker's
+     `pool` and restart. The line stays until the ledger counts a record of those runs, or their
+     entries are older than every configured pool's longest window (kept until retention removes
+     them while a pool has a window of no length).
 3. **Until it clears,** read the provider's own usage for that account (its status line or usage
    page) before funding a task of that pool, since its budget counted those runs as nothing.
 

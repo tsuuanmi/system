@@ -72,10 +72,12 @@ Claude Code and Codex, and the `system` CLI. It is the primary client interface
     [resources](../../../docs/design/resources.md#usage-the-ledger-cannot-count)) in its current
     window that the ledger has not counted a record of since (`resources.usage` by run and pool),
     naming each pool, its count, and the kinds: each run once, by its first entry; an entry that is
-    not a valid `usage-unknown@1.0` record is counted and said, never skipped. A pool's current
+    not a valid `usage-unknown@1.0` record, or that names a pool the ledger does not configure (an
+    `unconfigured pool` line), is counted and said, never skipped. A pool's current
     window is its longest one, back from now; a pool with a window of no length (a credit
-    balance) reads every entry the log keeps. It reads at most 1000 entries and says so when it
-    reaches them. A cap still counts such a run as 0 (D25).
+    balance) reads every entry the log keeps. It reads the entries a page at a time, at most
+    10,000, and past them it is degraded, saying so, never `ok`. A cap still counts such a run as
+    0 (D25).
 - **`GET /healthz`:** liveness for a supervisor, with no token and no data
   (`ok`).
   - `ask`, `research`, and `result` are placeholders. When `ctx.workflow` is

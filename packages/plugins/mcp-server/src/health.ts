@@ -49,12 +49,13 @@ export interface HealthSources {
   templates?: () => Array<{ name: string; reason: string }>
   /**
    * Usage the resource ledger could not count (docs/design/resources.md#usage-the-ledger-cannot-count):
-   * its configured pools with their windows' lengths, the `usage.unknown` entries since a time (at
-   * most {@link MAX_UNKNOWN_ENTRIES}), and whether the ledger counted a record of a run in a pool.
+   * its configured pools with their windows' lengths, a page of the `usage.unknown` entries since a
+   * time (in `seq` order, after `afterSeq`, at most `limit`), and whether the ledger counted a record
+   * of a run in a pool.
    */
   unknownUsage?: {
     pools: () => Promise<Array<{ pool: string; windows: Array<{ seconds?: number }> }>>
-    entries: (sinceIso: string) => Array<{ at: string; data?: Record<string, unknown> | undefined }>
+    entries: (query: { since: string; afterSeq: number; limit: number }) => Array<{ seq: number; at: string; data?: Record<string, unknown> | undefined }>
     counted: (runId: string, pool: string) => Promise<boolean>
   }
   /** Website conversations whose deletion failed every attempt (the conversation ledger). */
@@ -71,8 +72,10 @@ export interface HealthSources {
 
 const RANK: Record<HealthState, number> = { ok: 0, degraded: 1, down: 2 }
 
-/** `usage.unknown` entries the `usage` check reads at most (INV-9): past it, its counts are lower bounds. */
-export const MAX_UNKNOWN_ENTRIES = 1000
+/** `usage.unknown` entries the `usage` check reads at most (INV-9): past it, it is degraded, never ok. */
+export const MAX_UNKNOWN_ENTRIES = 10_000
+/** `usage.unknown` entries the `usage` check asks for at once: the event log's most per query. */
+const UNKNOWN_PAGE = 1000
 
 /** Seconds as one unit, the largest that divides them: `7d`, `5h`, `90m`, `45s`. */
 const span = (seconds: number): string => {
@@ -223,14 +226,33 @@ export async function healthReport(sources: HealthSources): Promise<HealthReport
       }))
       if (!windows.size) return ok('usage', 'no resource pool is configured')
       const starts = [...windows.values()].map((seconds) => (seconds === undefined ? 0 : now - seconds * 1000))
-      const entries = unknownUsage.entries(new Date(Math.min(...starts)).toISOString())
-      // Each run once per pool, by its first fact. An entry that is not a valid record names no pool
-      // to count it under, so it is said, never skipped silently (INV-14).
+      // Every entry back to the earliest window's start, a page at a time in `seq` order, at most
+      // MAX_UNKNOWN_ENTRIES (INV-9): one entry more says the rest went unread.
+      const since = new Date(Math.min(...starts)).toISOString()
+      const entries: ReturnType<typeof unknownUsage.entries> = []
+      let unread = false
+      for (let afterSeq = 0; ;) {
+        const limit = Math.min(UNKNOWN_PAGE, MAX_UNKNOWN_ENTRIES + 1 - entries.length)
+        const page = unknownUsage.entries({ since, afterSeq, limit })
+        entries.push(...page)
+        if (entries.length > MAX_UNKNOWN_ENTRIES) {
+          unread = true
+          entries.length = MAX_UNKNOWN_ENTRIES
+          break
+        }
+        if (page.length < limit) break
+        afterSeq = page.at(-1)!.seq
+      }
+      // Each run once per pool, by its first fact. An entry that is not a valid record, or that names
+      // a pool the ledger does not configure, has no window to count it in, so it is said, never
+      // skipped silently (INV-14).
       const runs = new Map<string, Map<string, string>>()
+      const unconfigured = new Map<string, Set<string>>()
       let unreadable = 0
       for (const entry of entries) {
         const fact = usageUnknownOf(entry.data)
         if (!fact) unreadable += 1
+        if (fact && !windows.has(fact.pool)) (unconfigured.get(fact.pool) ?? unconfigured.set(fact.pool, new Set()).get(fact.pool)!).add(fact.runId)
         if (!fact || !windows.has(fact.pool)) continue
         const seconds = windows.get(fact.pool)
         if (seconds !== undefined && Date.parse(entry.at) < now - seconds * 1000) continue
@@ -245,10 +267,17 @@ export async function healthReport(sources: HealthSources): Promise<HealthReport
         const seconds = windows.get(pool)
         if (count) open.push(`${pool}: ${count} run(s) in its current window (${seconds === undefined ? 'it has a window that never resets' : `the last ${span(seconds)}`}) whose usage the ledger could not count (${[...kinds].sort().map(([k, n]) => `${n} ${k}`).join(', ')})`)
       }
+      const gone: string[] = []
+      for (const pool of [...unconfigured.keys()].sort()) {
+        let count = 0
+        for (const runId of unconfigured.get(pool)!) if (!(await unknownUsage.counted(runId, pool))) count += 1
+        if (count) gone.push(`${pool} ${count}`)
+      }
+      if (gone.length) open.push(`unconfigured pool: run(s) whose usage the ledger could not count name a pool it does not configure (${gone.join(', ')}), so no window counts them`)
       if (unreadable) open.push(`${unreadable} usage.unknown entr${unreadable === 1 ? 'y is' : 'ies are'} not a valid usage-unknown@1.0 record, so no pool counts ${unreadable === 1 ? 'it' : 'them'}`)
-      const partial = entries.length >= MAX_UNKNOWN_ENTRIES ? ` (counted from the first ${MAX_UNKNOWN_ENTRIES} entries only)` : ''
+      if (unread) open.push(`more than ${MAX_UNKNOWN_ENTRIES} usage.unknown entries in the pools' windows: only the first ${MAX_UNKNOWN_ENTRIES} were read, so later ones are not counted here`)
       return open.length
-        ? { name: 'usage', state: 'degraded', detail: `${open.join('; ')}${partial}. A cap counts each as 0 until the ledger counts a record of it: see system events --type usage.unknown (docs/operations/runbooks.md#usage-the-ledger-could-not-count)` }
+        ? { name: 'usage', state: 'degraded', detail: `${open.join('; ')}. A cap counts each as 0 until the ledger counts a record of it: see system events --type usage.unknown (docs/operations/runbooks.md#usage-the-ledger-could-not-count)` }
         : ok('usage', 'the ledger counted the usage of every run in each pool\'s current window')
     }))
   }

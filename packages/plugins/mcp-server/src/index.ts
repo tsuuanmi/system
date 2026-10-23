@@ -21,7 +21,7 @@ import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
 import { dshHome, ensurePrivateDir, registerSecretPath, USAGE_UNKNOWN_EVENT, writeFileDurable } from '@tsuuanmi/system-libs'
 import type { PluginRecord } from '@tsuuanmi/system-plugin-host-core'
 import type {} from '@tsuuanmi/system-resources-core'
-import { type HealthReport, healthReport, MAX_UNKNOWN_ENTRIES } from './health.ts'
+import { type HealthReport, healthReport } from './health.ts'
 import { z as zod } from 'zod'
 
 
@@ -218,7 +218,7 @@ export class McpEndpoint extends McpTools {
       ...(resources && eventLog ? {
         unknownUsage: {
           pools: async () => (await resources.pools()).map((p) => ({ pool: p.pool, windows: p.windows.map((w) => (w.seconds !== undefined ? { seconds: w.seconds } : {})) })),
-          entries: (since: string) => eventLog.query({ type: USAGE_UNKNOWN_EVENT, since, limit: MAX_UNKNOWN_ENTRIES }),
+          entries: ({ since, afterSeq, limit }) => eventLog.query({ type: USAGE_UNKNOWN_EVENT, since, afterSeq, limit }),
           counted: async (runId: string, pool: string) => (await resources.usage({ runId, pool })).records.length > 0,
         },
       } : {}),
