@@ -135,11 +135,25 @@ The **`agents` Worker source**: agent runtimes as Workers
     `rejected` without a reset time, never `unknown`, `ok` otherwise. A
     `rejected` limit on a window `windows` does not map closes every window
     of the pool, so it is never retried there unseen (INV-2); any other
-    unmapped window is logged and skipped;
+    unmapped window is logged and skipped. A run that fails `quota_exhausted`
+    and left no `limited` reading (Codex and the Antigravity CLI report no
+    limit observation) closes every window of the pool with a `limited`
+    reading (source `limit-notice`) for `limitCooldownSeconds`; a later
+    reading of a window says otherwise;
   - **release** the reservation once the usage is recorded, or when the run
     fails before it starts.
 
   Without a `pool`, runs are not metered, whether a ledger is loaded or not.
+- **A usage limit with no ledger reading** (PROP-0012 phase C, INV-2): a run
+  that fails `quota_exhausted` on a Worker with no `pool`, or whose ledger did
+  not take the readings above, cools its **runtime** down (table
+  `agent_cooldowns`): its Workers share the runtime's one home, so its one
+  sign-in. Every Worker of that runtime is `quota-exhausted`, and a run queued
+  on one fails `quota_exhausted` before the agent starts, until the latest
+  reset time a `rejected` observation of the run named, else for the failing
+  Worker's `limitCooldownSeconds`, never more than seven days (INV-9). It
+  survives a restart and ends only at that time. Event `agent-workers.cooldown`
+  (`runtime`, `worker`, `agentRun`, `until`, and the failure's message).
 - **Briefs** ([briefs](../../../docs/design/workflow-engine.md#briefs)): a run started with a
   `brief@1.x` renders its prompt from it at start (the default text rendering, each pointer
   replaced by its artifact's text); one that cannot be rendered is refused as `invalid_input`.

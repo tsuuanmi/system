@@ -61,6 +61,10 @@ when the site answers with it), the account is **cooled**
   never ends it: a tool still shown is not quota left.
 - The account stays `ready`: nothing needs a login.
 
+An agent Worker's run that hits its plan's limit closes its pool, or, with no pool, cools down
+every Worker of its runtime, even when the runtime reports no reading
+([runbook](runbooks.md#a-resource-pool-is-limited)).
+
 - Wait for the limit to reset, then `system continue <runId>`.
 - Or add capacity:
   - map another account's tiers in the account catalog, then continue: routing

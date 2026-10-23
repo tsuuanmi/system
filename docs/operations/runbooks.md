@@ -1364,12 +1364,21 @@ Reading a limit:
   (`USER_ACTION`) before the agent starts, with a `budget` decision whose reasons name the pool and
   `until` (`system explain <runId>`). A run that hit the limit while working fails the same way and
   is never retried on that pool.
+- A runtime that reports no limit observation (Codex, the Antigravity CLI) still fails the run
+  `quota_exhausted` when it hits one: every window of the pool then reads `limited` (source
+  `limit-notice`) for the Worker's `limitCooldownSeconds`.
+- **A Worker with no pool** is not metered, but a limit it hits cools down every Worker of its
+  runtime (they share one sign-in): `system health` lists them `quota-exhausted`, a run on one
+  fails `quota_exhausted` before the agent starts, and event `agent-workers.cooldown`
+  (`system events --type agent-workers.cooldown`) names the runtime, the run, and `until`: the
+  reset time the runtime named, else `limitCooldownSeconds`, at most seven days. It survives a
+  restart and ends only at `until`.
 
 What to do:
 
-1. **Wait.** The pool opens by itself at `until`. No command ends a limit early (website
-   accounts have `system account clear-cooldown`; the ledger has no counterpart), and a limited
-   pool admits no run that could read it open again.
+1. **Wait.** The pool, or a runtime's cooldown, opens by itself at `until`. No command ends a
+   limit early (website accounts have `system account clear-cooldown`; the ledger and agent
+   runtimes have no counterpart), and a limited pool admits no run that could read it open again.
 2. **Or add capacity:** configure another pool and account for a second Worker, which routing then
    picks; or point the Worker's `pool` and `account` at another pool and restart.
 3. Then `system continue <runId>` for a run that failed on the limit.
