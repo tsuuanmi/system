@@ -568,6 +568,13 @@ guesses.
   for a board task, or one without instructions, first states the task and attempt, the goal,
   the acceptance criteria, and the open questions; pointers the instructions do not place follow,
   with their role and note. `instructions` before 1.1 is refused.
+- `brief@1.2` adds `ask`: the Worker may answer with questions instead of a result, when it
+  cannot finish without a person's answer. Rendered, the brief says how: the whole answer one
+  JSON object `{"questions": [...]}`, 1 to `maxQuestions` (at most 8) questions of at most 500
+  characters, the bounds of a board task's question wait. Anything else is a result. The workflow
+  engine offers it on every brief of a board task's run
+  ([a question from a run](../design/workflow-engine.md#a-question-from-a-run)); `ask` before
+  1.2 is refused. Example: [`brief.task-attempt.json`](../../schemas/examples/brief.task-attempt.json).
 - `sandbox` comes from trusted configuration (the Worker source's), never from model text, and
   `budget.remaining` is computed from the ledger when the brief is written. `resume` names the
   native session the brief continues, when the Worker keeps one. Examples:

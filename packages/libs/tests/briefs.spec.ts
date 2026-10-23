@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { type Brief, BriefError, bodyText, canonicalJson, type ContentId, type ReadArtifact, renderBrief, startPrompt } from '../src/index.ts'
+import { type Brief, BriefError, bodyText, canonicalJson, type ContentId, QUESTION_LIMITS, questionsOf, type ReadArtifact, renderBrief, startPrompt } from '../src/index.ts'
 
 const REPORT = `sha256:${'a'.repeat(64)}` as ContentId
 const LOG = `sha256:${'b'.repeat(64)}` as ContentId
@@ -20,6 +20,26 @@ const store = new Map<string, ReadArtifact>([
 const read = (ref: ContentId): ReadArtifact | undefined => store.get(ref)
 
 describe('briefs', () => {
+  it('tells a Worker how to ask instead of answering only when the brief offers it (brief@1.2 ask)', () => {
+    const asking = renderBrief(brief({ schema: 'brief@1.2', projectId: 'p1', taskId: 't1', attempt: 1, ask: { maxQuestions: 3 } }), read)
+    expect(asking).toContain('answer with only this JSON object and nothing else: {"questions": ["..."]}, with 1 to 3 questions of at most 500 characters each')
+    expect(renderBrief(brief({ projectId: 'p1', taskId: 't1', attempt: 1 }), read)).not.toContain('"questions"')
+  })
+
+  it('reads questions only from an answer that is wholly one questions object, bounded (INV-9)', () => {
+    expect(questionsOf('{"questions": ["Which band width?", " Keep the old API? "]}')).toEqual(['Which band width?', 'Keep the old API?'])
+    expect(questionsOf('```json\n{"questions": ["Which band width?"]}\n```')).toEqual(['Which band width?'])
+    expect(questionsOf('```\n{"questions": ["Which band width?"]}\n```')).toEqual(['Which band width?'])
+    const long = 'x'.repeat(QUESTION_LIMITS.chars + 1)
+    for (const answer of [
+      'Done. {"questions": ["a"]}', '{"questions": []}', '{"questions": ["a"], "result": "b"}', '{"questions": "a"}', '{"questions": [""]}', '{"questions": [1]}',
+      `{"questions": ["${long}"]}`, JSON.stringify({ questions: Array.from({ length: 9 }, (_, i) => `q${i}`) }), '["a"]', 'not json', '```python\n{"questions": ["a"]}\n```',
+      'x'.repeat(100_000),
+    ]) expect(questionsOf(answer), answer.slice(0, 60)).toBeUndefined()
+    expect(questionsOf('{"questions": ["a", "b", "c"]}', 2)).toBeUndefined()
+    expect(questionsOf(JSON.stringify({ questions: ['é'.repeat(QUESTION_LIMITS.chars)] }))).toHaveLength(1)
+  })
+
   it('renders instructions in order, each pointer replaced verbatim by its artifact\'s text and never expanded again', () => {
     expect(renderBrief(brief(), read)).toBe('Compact this:\n<report>\nthe {{input}} report\n</report>')
   })

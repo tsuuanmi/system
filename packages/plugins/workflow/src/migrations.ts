@@ -86,4 +86,9 @@ export const MIGRATIONS = [{
   // reservation of them on the resource ledger, as JSON `TaskBudget`.
   version: 15,
   sql: 'ALTER TABLE workflow_tasks ADD COLUMN budget TEXT;',
+}, {
+  // A question from a task's run (docs/design/workflow-engine.md#a-question-from-a-run): the
+  // questions a step asked, and whether the board took the wait, as JSON `TaskQuestion`.
+  version: 16,
+  sql: 'ALTER TABLE workflow_tasks ADD COLUMN question TEXT;',
 }]

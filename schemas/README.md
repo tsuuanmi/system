@@ -43,7 +43,7 @@ each field, which a schema cannot fully express, is documented in
 | [autonomy-policy.v1.json](autonomy-policy.v1.json) | which action classes run (`auto`, `notify`) and which need a person (`ask`) or are denied (`forbid`); 1.1 adds `remediation` to the classes that always ask |
 | [usage-record.v1.json](usage-record.v1.json) | body of a `receipt` artifact: what one run, call, or turn consumed, from an objective source, deduplicated by request id |
 | [limit-state.v1.json](limit-state.v1.json) | body of an `evidence` artifact: one observation of one configured window of a resource pool |
-| [brief.v1.json](brief.v1.json) | body of an `objective` artifact: what one Worker run is given, with artifacts by content id, never their content; 1.1 adds `instructions`, text and pointers in order |
+| [brief.v1.json](brief.v1.json) | body of an `objective` artifact: what one Worker run is given, with artifacts by content id, never their content; 1.1 adds `instructions`, text and pointers in order; 1.2 adds `ask`, the Worker's bounded way to answer with questions instead |
 | [digest.v1.json](digest.v1.json) | body of a `report` artifact: a cited summary of raw artifacts, every claim with a verbatim quote |
 | [plugin-manifest.v1.json](plugin-manifest.v1.json) | what a plugin declares (name and renames, seams provided and consumed, class, config keys with a sensitive flag), with the host-owned lifecycle state under `_meta`; 1.1 adds the seams a definition package `defines` |
 | [mcp-board.v1.json](mcp-board.v1.json), [mcp-approvals.v1.json](mcp-approvals.v1.json), [mcp-resources.v1.json](mcp-resources.v1.json), [mcp-digests.v1.json](mcp-digests.v1.json) | input and output of the `board_*`, `approvals_*`, `resources_*`, and `digests_*` MCP tools |

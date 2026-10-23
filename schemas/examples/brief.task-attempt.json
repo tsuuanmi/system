@@ -1,0 +1,73 @@
+{
+  "schema": "brief@1.2",
+  "projectId": "proj-sparse-align",
+  "taskId": "task-0007",
+  "attempt": 2,
+  "goal": "Implement the banded alignment kernel behind the existing interface, with a benchmark run recorded.",
+  "acceptance": [
+    {
+      "id": "a1",
+      "statement": "Every existing alignment test passes"
+    },
+    {
+      "id": "a2",
+      "statement": "bench/align records a median speed-up"
+    }
+  ],
+  "artifacts": [
+    {
+      "ref": "sha256:58788f76c2412563cda86105dcde093748838fcfb984ea33424608eb5beab988",
+      "role": "context",
+      "note": "the project charter"
+    },
+    {
+      "ref": "sha256:27906a522c6a493b9c27ae732c8e7d9fa4b5d97e6a5054103f3d3954e6438dd1",
+      "role": "prior",
+      "note": "attempt 1, rejected in review"
+    },
+    {
+      "ref": "sha256:bc45429340851e1b54f8d0c1e0594f4230a27d5dd838860d22188b0781bc8abd",
+      "role": "review",
+      "note": "two blocking findings"
+    }
+  ],
+  "instructions": [
+    {
+      "text": "Implement the kernel the charter describes, then run bench/align.\n\nThe review of attempt 1:\n"
+    },
+    {
+      "artifact": 2
+    }
+  ],
+  "subject": {
+    "type": "git-head",
+    "ref": "refs/heads/task-0007",
+    "version": "9c1f2e7b4a3d5c6e8f0a1b2c3d4e5f6a7b8c9d0e"
+  },
+  "openQuestions": [
+    "Is a band width of 64 enough for the long-read cases?"
+  ],
+  "ask": {
+    "maxQuestions": 8
+  },
+  "budget": {
+    "remaining": [
+      {
+        "pool": "claude-max-main.programmatic",
+        "unit": "usd",
+        "amount": 4.6
+      }
+    ],
+    "deadline": "2026-10-22T18:00:00Z"
+  },
+  "sandbox": {
+    "mode": "workspace-write",
+    "workspace": "/home/operator/.dsh/system/workspaces/task-0007",
+    "network": "none",
+    "commands": true
+  },
+  "resume": {
+    "nativeHandle": "5b0c7c1e-3f7a-4f43-9d1e-7f8a2c1b9e40"
+  },
+  "classification": "operator-shared"
+}

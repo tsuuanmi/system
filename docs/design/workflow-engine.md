@@ -145,7 +145,8 @@ flowchart LR
 - **What the Worker reads.** For a plain run, exactly the prompt the template words: the
   instructions in order, each pointer replaced verbatim and never expanded again. A brief for a
   board task, or one without instructions, first states the task and attempt, the goal, the
-  acceptance criteria, and open questions; pointers the instructions do not place follow
+  acceptance criteria, open questions, and, for a board task (`brief@1.2` `ask`), how to answer
+  with questions instead ([below](#a-question-from-a-run)); pointers the instructions do not place follow
   (`Read these too`), each with its role and note.
 - **Pointers, never content.** The text of the instructions is the template's, the caller's, and
   what the engine composes: a team's ballot and debate prompt, which quotes its peers' sealed
@@ -513,6 +514,8 @@ is refused (`config_error`), and every other run is unaffected.
 - A run that served an attempt is that attempt: `continue` and `supersede` refuse it, since the
   board decides the next attempt, which runs as a new run. It is not deleted or expired before
   its outcome is reported.
+- **A question.** A step may answer with questions instead of a result; the task then waits for
+  input ([below](#a-question-from-a-run)).
 - **Its budget**, when the task declares one, is reserved on the ledger before the run starts
   work, and a spent one blocks the task ([below](#a-tasks-budget)).
 - **After the report**, a result that reached the board is digested
@@ -557,6 +560,31 @@ stateDiagram-v2
   recorded before the effect; a run left `due` reserves when it advances again, one left `spent`
   blocks again (a block the board already took is refused, and the run then ends), and a hold a
   crash left unrecorded expires on its own.
+
+### A question from a run
+
+The board's `question` wait ([board](board.md#what-ends-an-input-wait)) is raised by the holder of
+a running task, so the engine raises it for a step of the task's run that cannot finish without a
+person's answer. The protocol is the brief's: every brief of a board task's run offers it
+(`brief@1.2` `ask`, at most 8 questions), and the Worker answers with only one JSON object
+`{"questions": [...]}` instead of a result.
+
+| Step | Records | On failure |
+|---|---|---|
+| a step's answer is questions | when its execution completes and before its acceptance: the whole answer (in one fenced block, or none) parses as `{"questions": [...]}`, 1 to 8 non-empty questions of at most 500 characters (`questionsOf` in libs; anything else is a result, and an answer is never parsed past a bound); a `gate` decision (`workflow.task-question`, `ask`, inputs: the answer) on the step; the step fails as `question` (`USER_ACTION`) with no result; the questions on the run's `workflow_tasks` row; `workflow.task.question` | — |
+| the run winds down | nothing new is promoted after a failed step, as for any failure | — |
+| the board takes the wait | before the run ends: `board.block(question, questions)` under the holder's generation; the task waits for input, and the run fails as `question`, its outcome `blocked` | a board not loaded, or not answering: asked again; one that refuses (the holder lapsed, the task not running) leaves the run to end as a failed one, which its report reconciles (`reconcileRun`), an attempt the board counts |
+| answered | `board.answer` (the lead's `board_update`, or the operator) records the questions and answers in its `board` decision; the next attempt goes through the gate | — |
+| the next attempt | its brief points at that decision (role `review`, "the answers to the N question(s) attempt n asked"), and its run resumes the session before it when it can ([resume from a brief](#a-board-tasks-brief)) | — |
+
+- **Authority** (INV-6): the questions are model text, data for a person. The move they cause
+  only asks a person and starts nothing: the task stops, and only an answer (a trusted move by the
+  lead or the operator) and the gate start its next attempt.
+- **Bounded** (INV-9): one question wait per attempt (the first step that asks ends the run), at
+  most 8 questions of 500 characters, the board's own bounds; the wait expires
+  (`input-expired`), and the attempts are the board's.
+- Only a run for a board task offers it: a plain run's brief has no `ask`, and its answers are
+  results whatever they say.
 
 ### A digest of a task's result
 

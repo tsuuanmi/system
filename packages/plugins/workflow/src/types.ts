@@ -124,6 +124,23 @@ export interface TaskView {
   digest?: TaskDigest
   /** The run's reservation of its task's budget lines, for a task that declares any (docs/design/workflow-engine.md#a-tasks-budget). */
   budget?: TaskBudgetView
+  /** The questions a step of the run asked instead of answering (docs/design/workflow-engine.md#a-question-from-a-run). */
+  question?: TaskQuestion
+}
+
+/**
+ * Questions a step of a task's run asked instead of a result: `asked` once the engine read them
+ * (its `gate` decision), then `raised` when the board took the question wait, or `refused` when it
+ * did not (the run is then reported as a failed one).
+ */
+export interface TaskQuestion {
+  state: 'asked' | 'raised' | 'refused'
+  nodeId: string
+  questions: string[]
+  /** The engine's `gate` decision (`workflow.task-question`). */
+  decision: ArtifactRef
+  /** Why the board did not take the wait, when it refused it. */
+  reason?: string
 }
 
 /**
@@ -171,7 +188,7 @@ export interface TaskOutcome {
    * and only the operator's acceptance accepts it now (a required check not reported), so the board
    * holds the review for the operator; `reconciled`: reported with `reconcileRun`; `not-started`: the board never
    * recorded the run, so nothing of it ran; `blocked`: the run blocked its task before it had a
-   * result (a spent budget), and the task waits on that; `moved-on`: the task no longer waited on
+   * result (a spent budget, or a step's questions), and the task waits on that; `moved-on`: the task no longer waited on
    * this run; `refused`: the board refused the report.
    */
   status: 'accepted' | 'rejected' | 'review' | 'reconciled' | 'not-started' | 'blocked' | 'moved-on' | 'refused'
@@ -322,6 +339,8 @@ export interface TaskRow {
   digest?: string | null
   /** JSON {@link TaskBudget}: the task's budget lines and the run's reservation of them, for a task that declares any. */
   budget?: string | null
+  /** JSON {@link TaskQuestion}: the questions a step asked instead of answering. */
+  question?: string | null
   created_at: string
   updated_at: string
 }

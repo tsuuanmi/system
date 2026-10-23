@@ -325,7 +325,14 @@ export class Engine {
           // Retired nodes (a re-plan's history) never run and never decide the run's outcome.
           const nodes = this.nodeRows(runId).filter((n) => n.state !== 'RETIRED')
           const failed = nodes.find((n) => n.state === 'FAILED')
-          if (failed) return this.finish(run, 'failed', { error: failed.error }, current)
+          if (failed) {
+            // A step that asked questions instead of answering: the board takes the question wait before the run ends.
+            if (await this.tasks.ask(runId) === 'wait') {
+              this.retryLater(runId, TASK_WAIT_MS)
+              return
+            }
+            return this.finish(run, 'failed', { error: failed.error }, current)
+          }
           if (nodes.every((n) => n.state === 'COMPLETED')) {
             const final = (JSON.parse(nodes[nodes.length - 1]!.record) as NodeRecord).outputReceipt!.result
             // A board task's result binds to the exact subject it writes (INV-5), or the run fails.
@@ -745,6 +752,8 @@ export class Engine {
   /** A finished execution: check its result against the node's contract, then commit the output receipt. */
   private complete(run: RunRow, node: NodeRow, spec: ResolvedNode, execution: WorkerExecution, lease: () => Lease): void {
     const result = execution.result as ArtifactRef
+    // A step of a board task's run may ask questions instead of answering, as its brief offers: no result, the task waits.
+    if (this.tasks.asks(run, node, execution, lease)) return
     const acceptance = this.ctx.workers.accept(result, spec.acceptance, { producer: 'workflow', runId: run.run_id, nodeId: node.node_id, ...(spec.resultSchema ? { resultSchema: spec.resultSchema } : {}) })
     const decisions = { decisions: JSON.stringify([...execution.decisions, ...routedDecisions(node, this)]) }
     const data = { executionId: execution.id, source: node.source, worker: node.worker, tier: node.served_tier, quotaClass: node.quota_class, accepted: acceptance.accepted }

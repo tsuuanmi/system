@@ -24,14 +24,16 @@
  */
 import { type ArtifactRef, BoardError, type BoardTask, type Board, type Classification, type RunOutcome, type Subject } from '@tsuuanmi/system-board-core'
 import type { Lease } from '@tsuuanmi/system-leases'
-import { BRIEF_LIMITS, type BriefBudgetLine, type BriefPointer, captureGitSubject } from '@tsuuanmi/system-libs'
+import type { WorkerExecution } from '@tsuuanmi/system-workers-core'
+import { BRIEF_LIMITS, type BriefBudgetLine, type BriefPointer, captureGitSubject, questionsOf } from '@tsuuanmi/system-libs'
 import { type BudgetLine, ResourcesError, type UsageRecord } from '@tsuuanmi/system-resources-core'
 import type { TaskFrame } from './briefs.ts'
 import { TaskDigests } from './digests.ts'
 import type { Engine, Prepared } from './engine.ts'
+import { routedDecisions } from './recovery.ts'
 import { clampText, type ResolvedNode } from './spec.ts'
 import {
-  newId, type NodeRecord, type NodeRow, now, type RunRow, type RunView, type StartInput, TASK_LEASE_TTL_MS, type TaskBudget, type TaskOutcome, type TaskRow, type TaskStartInput, type TaskView, type WorkflowError, WorkflowFailure,
+  newId, type NodeRecord, type NodeRow, now, type RunRow, type RunView, type StartInput, TASK_LEASE_TTL_MS, type TaskBudget, type TaskOutcome, type TaskQuestion, type TaskRow, type TaskStartInput, type TaskView, type WorkflowError, WorkflowFailure,
 } from './types.ts'
 import { view } from './views.ts'
 
@@ -95,6 +97,7 @@ export class TaskRuns {
       ...(row.lost ? { lost: (JSON.parse(row.lost) as Lost).decision } : {}), ...(row.outcome ? { outcome: JSON.parse(row.outcome) as TaskOutcome } : {}),
       ...(row.digest ? { digest: this.digests.view(row)! } : {}),
       ...(row.budget ? { budget: budgetView(JSON.parse(row.budget) as TaskBudget) } : {}),
+      ...(row.question ? { question: JSON.parse(row.question) as TaskQuestion } : {}),
     }
   }
 
@@ -243,7 +246,13 @@ export class TaskRuns {
     if (task.attempts.count > 0) {
       for (const ref of task.result?.artifacts ?? []) add(ref, 'prior', `the result of attempt ${task.attempts.count}`)
       if (task.result?.digest) add(task.result.digest, 'prior', `the digest of attempt ${task.attempts.count}'s result`)
-      if (task.lastDecision) add(task.lastDecision, 'review', `the decision behind attempt ${attempt}: why attempt ${task.attempts.count} did not finish the task`)
+      if (task.lastDecision) {
+        // Answers to the questions the previous attempt asked resume the task: its next brief points at them.
+        const answered = (this.e.ctx.artifacts.get(task.lastDecision)?.body as { outcome?: { detail?: { answers?: unknown } } } | undefined)?.outcome?.detail?.answers
+        add(task.lastDecision, 'review', Array.isArray(answered)
+          ? `the answers to the ${answered.length} question(s) attempt ${task.attempts.count} asked, and the decision that made attempt ${attempt}`
+          : `the decision behind attempt ${attempt}: why attempt ${task.attempts.count} did not finish the task`)
+      }
     }
     return {
       projectId: task.projectId, taskId: task.taskId, attempt, goal: clampText(task.goal, BRIEF_LIMITS.goal),
@@ -739,6 +748,76 @@ export class TaskRuns {
     this.e.ctx.store.transaction((db) => void db.prepare(`UPDATE workflow_tasks SET budget = json_set(budget, '$.state', 'released'), updated_at = ? WHERE run_id = ? AND json_extract(budget, '$.state') = 'reserved'`).run(now(), runId))
   }
 
+  // --- a question from a run ---
+
+  /**
+   * Whether a step of a task's run asked questions instead of answering, as its brief offers
+   * (brief@1.2 `ask`; docs/design/workflow-engine.md#a-question-from-a-run): its whole answer is one
+   * `{"questions": [...]}` object, bounded ({@link questionsOf}). If so, a `gate` decision
+   * (`workflow.task-question`) records them, the step fails as `question` with no result, and the
+   * run starts nothing new: before it ends, the board takes the question wait ({@link ask}). The
+   * questions are data for a person; the move they cause asks one and starts nothing (INV-6).
+   * Only the first question of a run counts, and none once the run lost its holder.
+   */
+  asks(run: RunRow, node: NodeRow, execution: WorkerExecution, lease: () => Lease): boolean {
+    const row = this.row(run.run_id)
+    if (!row || row.lost || row.question || !execution.result) return false
+    const result = execution.result as ArtifactRef
+    const questions = questionsOf(this.e.resultText(result))
+    if (!questions) return false
+    const decision = this.e.ctx.artifacts.recordDecision({
+      decisionType: 'gate',
+      question: `Does step ${node.node_id} of run ${run.run_id} answer board task ${row.task_id}, or ask a person first?`,
+      inputs: [result],
+      candidates: [
+        { option: 'ask', selected: true, reasons: [`the step's whole answer is ${questions.length} question(s), as its brief offers: it cannot finish without a person's answer`, 'the task waits for the lead or the operator to answer; its next attempt is briefed with the answers'] },
+        { option: 'accept', selected: false, reasons: ['not accept: the answer is questions, not a result of the task'] },
+      ],
+      decider: { type: 'rule', id: 'workflow.task-question', version: '1' },
+      outcome: { option: 'ask', detail: { taskId: row.task_id, nodeId: node.node_id, questions } },
+      deterministic: true,
+    }, { ...PRODUCER, runId: run.run_id, nodeId: node.node_id }).id as ArtifactRef
+    const asked: TaskQuestion = { state: 'asked', nodeId: node.node_id, questions, decision }
+    const error: WorkflowError = { kind: 'question', disposition: 'USER_ACTION', message: `step ${node.node_id} asked ${questions.length} question(s) instead of answering; board task ${row.task_id} waits for the answers` }
+    this.e.ctx.store.transaction((db) => {
+      this.e.writeNode(node, { state: 'FAILED', error: JSON.stringify(error), decisions: JSON.stringify([...execution.decisions, ...routedDecisions(node, this.e), decision]) }, (r) => ({ ...r, lastDecision: decision }), lease)
+      db.prepare('UPDATE workflow_tasks SET question = ?, updated_at = ? WHERE run_id = ? AND question IS NULL').run(JSON.stringify(asked), now(), run.run_id)
+      this.e.ctx.eventLog.append({ type: 'workflow.task.question', runId: run.run_id, nodeId: node.node_id, decision, data: { taskId: row.task_id, questions: questions.length } })
+    })
+    return true
+  }
+
+  /**
+   * Before a run whose step asked questions ends: the holder blocks its task on them (the board's
+   * question wait, waiting for input), once. `go` when it is done or there is nothing to ask (the
+   * run then ends); `wait` while the board is not loaded or did not answer. A board that refuses
+   * the wait (the holder lapsed, say) leaves the run to end as a failed one, which its report
+   * reconciles.
+   */
+  async ask(runId: string): Promise<'go' | 'wait'> {
+    const row = this.row(runId)
+    const question = row?.question ? JSON.parse(row.question) as TaskQuestion : undefined
+    if (!row || question?.state !== 'asked') return 'go'
+    let settled: TaskQuestion
+    if (row.lost) settled = { ...question, state: 'refused', reason: 'the board no longer holds the run\'s generation' }
+    else {
+      const board = this.e.board
+      if (!board) return 'wait'
+      try {
+        await board.block(row.task_id, row.generation, { reason: 'question', questions: question.questions })
+        settled = { ...question, state: 'raised' }
+      } catch (error) {
+        if (!(error instanceof BoardError)) {
+          this.warn(`the board did not answer run ${runId}'s questions on task ${row.task_id}`, error)
+          return 'wait'
+        }
+        settled = { ...question, state: 'refused', reason: refusal(error) }
+      }
+    }
+    this.e.ctx.store.transaction((db) => void db.prepare('UPDATE workflow_tasks SET question = ?, updated_at = ? WHERE run_id = ?').run(JSON.stringify(settled), now(), runId))
+    return 'go'
+  }
+
   // --- the outcome ---
 
   /**
@@ -894,6 +973,10 @@ export class TaskRuns {
     const budget = row.budget ? JSON.parse(row.budget) as TaskBudget : undefined
     if (budget?.blocked && task.state !== 'running') {
       return this.settled(row, { status: 'blocked', state: task.state, ...(task.lastDecision ? { decision: task.lastDecision } : {}), reason: `the task's budget is spent (budget decision ${budget.decision}): it waits ${task.waiting ? `(${task.waiting.reason}) until ${task.waiting.expiresAt}` : `in ${task.state}`}` })
+    }
+    const question = row.question ? JSON.parse(row.question) as TaskQuestion : undefined
+    if (question?.state === 'raised' && task.state !== 'running') {
+      return this.settled(row, { status: 'blocked', state: task.state, ...(task.lastDecision ? { decision: task.lastDecision } : {}), reason: `step ${question.nodeId} asked ${question.questions.length} question(s): it waits ${task.waiting ? `(${task.waiting.reason}) until ${task.waiting.expiresAt}` : `in ${task.state}`}` })
     }
     const waits = task.state === 'running' || (task.state === 'waiting-for-approval' && task.waiting?.reason === 'reconciliation-failed')
     if (run.status === 'completed' && row.result && row.acceptance) {

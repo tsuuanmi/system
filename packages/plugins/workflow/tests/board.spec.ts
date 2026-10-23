@@ -457,7 +457,7 @@ describe('ctx.workflow serves board tasks over the store-backed board and approv
     expect(brief).toMatchObject({ taskId: second.taskId, attempt: 1, budget: { remaining: [{ pool: 'max.programmatic', unit: 'usd', amount: 3.5 }, { pool: 'max.programmatic', unit: 'runs', amount: 2 }] } })
     expect(brief.artifacts).toEqual([{ ref: firstResult, role: 'input', note: `the accepted result of ${first.taskId}: first` }])
     expect(JSON.stringify(brief)).not.toContain('the first result')
-    expect(started.prompt).toBe(`Board task ${second.taskId} of project p1, attempt 1.\nGoal: build on the first\nAcceptance criteria:\n- a1: it builds\n\ngo on\n\nRead these too:\n\n<artifact id="${firstResult}" role="input" note="the accepted result of ${first.taskId}: first">\nthe first result\n</artifact>`)
+    expect(started.prompt).toBe(`Board task ${second.taskId} of project p1, attempt 1.\nGoal: build on the first\nAcceptance criteria:\n- a1: it builds\nIf you cannot finish without an answer from a person, answer with only this JSON object and nothing else: {"questions": ["..."]}, with 1 to 8 questions of at most 500 characters each. The task then waits for the answers, and its next attempt is given them.\n\ngo on\n\nRead these too:\n\n<artifact id="${firstResult}" role="input" note="the accepted result of ${first.taskId}: first">\nthe first result\n</artifact>`)
   })
 
   it('counts against a task\'s budget the usage the ledger records under the runs that served it and the executions they started, each record once (PROP-0010)', async () => {
@@ -555,6 +555,51 @@ describe('ctx.workflow serves board tasks over the store-backed board and approv
     expect(bare.workers.started).toHaveLength(0)
     for (const [c, t] of [[bare.ctx, unledgered], [ctx, unknown], [ctx, unread]] as const) expect(await c.board.task(t.taskId)).toMatchObject({ state: 'ready', attempts: { count: 0 } })
     expect(decisionsOf(ctx, 'admission', 'workflow.task-admission').filter((d) => d.outcome.option === 'refuse')).toHaveLength(2)
+  })
+
+  it('blocks a task on the questions a step asks instead of answering (question); answered, its next attempt is briefed with the answers (PROP-0010, INV-6)', async () => {
+    const { ctx, workers } = await boot()
+    await project(ctx)
+    const task = await ready(ctx, 'unclear')
+    workers.reply = () => ({ text: '```json\n{"questions": ["Which band width?", "Keep the old API?"]}\n```' })
+    const run = await ctx.workflow.start({ template: 'chain', input: 'q', classification: 'public', task: { taskId: task.taskId } })
+    const failed = await settled(ctx, run.runId)
+    expect(failed).toMatchObject({ status: 'failed', error: { kind: 'question', disposition: 'USER_ACTION' } })
+    // The step that asked has no result, and nothing after it started.
+    expect(failed.nodes.map((n) => n.state)).toEqual(['FAILED', 'WAITING'])
+    expect(failed.nodes[0]!.result).toBeUndefined()
+    expect(workers.started).toHaveLength(1)
+    // Its brief offered the way to ask (brief@1.2 ask).
+    expect(ctx.artifacts.get(workers.started[0]!.brief!)!.body).toMatchObject({ schema: 'brief@1.2', ask: { maxQuestions: 8 } })
+    const view = await reported(ctx, run.runId)
+    expect(view.task?.question).toMatchObject({ state: 'raised', nodeId: 'a', questions: ['Which band width?', 'Keep the old API?'] })
+    expect(decisionOf(ctx, view.task!.question!.decision)).toMatchObject({ decisionType: 'gate', decider: { id: 'workflow.task-question' }, outcome: { option: 'ask', detail: { taskId: task.taskId, nodeId: 'a' } } })
+    expect(view.task?.outcome).toMatchObject({ status: 'blocked', state: 'waiting-for-input' })
+    expect(await ctx.board.task(task.taskId)).toMatchObject({ state: 'waiting-for-input', waiting: { reason: 'question', questions: ['Which band width?', 'Keep the old API?'] }, attempts: { count: 1 } })
+
+    // The lead answers every question: the next attempt goes through the gate (read: auto) and is briefed with the answers.
+    await ctx.board.answer(task.taskId, ['64 is enough', 'yes, keep it'])
+    expect(await ctx.board.task(task.taskId)).toMatchObject({ state: 'ready' })
+    workers.reply = () => ({ text: 'the answer' })
+    const next = await ctx.workflow.start({ template: 'chain', input: 'q', classification: 'public', task: { taskId: task.taskId } })
+    expect((await reported(ctx, next.runId)).task?.outcome).toMatchObject({ status: 'accepted', state: 'done' })
+    const brief = ctx.artifacts.get(workers.started[1]!.brief!)!.body as { attempt: number; artifacts: Array<{ role: string; note: string }> }
+    expect(brief.attempt).toBe(2)
+    expect(brief.artifacts).toEqual(expect.arrayContaining([expect.objectContaining({ role: 'review', note: 'the answers to the 2 question(s) attempt 1 asked, and the decision that made attempt 2' })]))
+    expect(workers.started[1]!.prompt).toContain('64 is enough')
+  })
+
+  it('takes an answer that only mentions questions as a result, and offers no way to ask outside a board task', async () => {
+    const { ctx, workers } = await boot()
+    await project(ctx)
+    const task = await ready(ctx, 'prose')
+    workers.reply = () => ({ text: 'Done. I had no {"questions": ["none"]} left.' })
+    const run = await ctx.workflow.start({ template: 'solo', input: 'q', classification: 'public', task: { taskId: task.taskId } })
+    expect((await reported(ctx, run.runId)).task?.outcome).toMatchObject({ status: 'accepted', state: 'done' })
+    workers.reply = () => ({ text: '{"questions": ["Which?"]}' })
+    const plain = await settled(ctx, ctx.workflow.start({ template: 'solo', input: 'q', classification: 'public' }).runId)
+    expect(plain).toMatchObject({ status: 'completed', answer: '{"questions": ["Which?"]}' })
+    expect(ctx.artifacts.get(workers.started.at(-1)!.brief!)!.body).not.toHaveProperty('ask')
   })
 
   it('fails a node whose instructions retention cleared, with nothing sent, instead of briefing it on its goal alone (INV-2)', async () => {

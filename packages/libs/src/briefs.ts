@@ -19,7 +19,7 @@ export interface BriefSandbox { mode: 'read-only' | 'workspace-write'; workspace
 export interface BriefBudgetLine { pool: string; unit: 'tokens' | 'usd' | 'turns' | 'runs' | 'minutes'; amount: number }
 
 export interface Brief {
-  schema: 'brief@1.0' | 'brief@1.1'
+  schema: 'brief@1.0' | 'brief@1.1' | 'brief@1.2'
   projectId?: string
   taskId?: string
   attempt?: number
@@ -30,6 +30,8 @@ export interface Brief {
   instructions?: BriefSegment[]
   subject?: { type: 'content' | 'git-head' | 'pull-request' | 'artifact' | 'external'; ref: string; version?: string }
   openQuestions?: string[]
+  /** `@1.2`: the Worker may answer with at most `maxQuestions` questions instead of a result ({@link questionsOf}). */
+  ask?: { maxQuestions: number }
   budget: { remaining: BriefBudgetLine[]; deadline?: string }
   sandbox: BriefSandbox
   resume?: { nativeHandle: string; fork?: boolean }
@@ -38,6 +40,9 @@ export interface Brief {
 
 /** The bounds `brief@1.x` puts on a record (INV-9): a composer keeps within them. */
 export const BRIEF_LIMITS = { goal: 4000, statement: 500, pointers: 64, note: 300, segments: 256, segmentText: 262_144 } as const
+
+/** How many questions a Worker may ask instead of answering, and how long each may be (a board task's question wait holds as many). */
+export const QUESTION_LIMITS = { count: 8, chars: 500 } as const
 
 /**
  * A sandbox for a Worker whose source declares none: it writes nothing on this machine and runs no
@@ -107,7 +112,43 @@ function frame(brief: Brief): string {
   if (brief.taskId !== undefined) lines.push(`Board task ${brief.taskId} of project ${brief.projectId}${brief.attempt !== undefined ? `, attempt ${brief.attempt}` : ''}.`)
   lines.push(`Goal: ${brief.goal}`, 'Acceptance criteria:', ...brief.acceptance.map((a) => `- ${a.id}: ${a.statement}`))
   if (brief.openQuestions?.length) lines.push('Open questions:', ...brief.openQuestions.map((q) => `- ${q}`))
+  if (brief.ask) {
+    lines.push(`If you cannot finish without an answer from a person, answer with only this JSON object and nothing else: {"questions": ["..."]}, `
+      + `with 1 to ${brief.ask.maxQuestions} questions of at most ${QUESTION_LIMITS.chars} characters each. The task then waits for the answers, and its next attempt is given them.`)
+  }
   return lines.join('\n')
+}
+
+/**
+ * The questions a Worker's answer asks instead of a result, as a brief with `ask` offers it: the
+ * whole answer (in one fenced block, or none) is one JSON object whose only key is `questions`, 1
+ * to `max` non-empty strings of at most {@link QUESTION_LIMITS}`.chars` characters. Anything else
+ * (an answer that mentions questions, extra keys, too many or too long) is no question: undefined,
+ * and the answer is taken as a result. Bounded: a long answer is never parsed.
+ */
+export function questionsOf(answer: string, max: number = QUESTION_LIMITS.count): string[] | undefined {
+  if (answer.length > (QUESTION_LIMITS.chars + 16) * 4 * QUESTION_LIMITS.count + 256) return undefined
+  let text = answer.trim()
+  // One fenced block around the whole answer (```json or ```): its body, the fence lines dropped.
+  if (text.startsWith('```') && text.endsWith('```') && text.length > 6) {
+    const open = text.indexOf('\n')
+    const info = open < 0 ? '' : text.slice(3, open).trim()
+    if (open < 0 || (info !== '' && info !== 'json')) return undefined
+    text = text.slice(open + 1, -3)
+  }
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(text)
+  } catch {
+    return undefined
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return undefined
+  const keys = Object.keys(parsed)
+  const questions = (parsed as { questions?: unknown }).questions
+  if (keys.length !== 1 || keys[0] !== 'questions' || !Array.isArray(questions)) return undefined
+  if (questions.length < 1 || questions.length > Math.min(max, QUESTION_LIMITS.count)) return undefined
+  const asked = questions.map((q) => (typeof q === 'string' ? q.trim() : ''))
+  return asked.every((q) => q.length > 0 && [...q].length <= QUESTION_LIMITS.chars) ? asked : undefined
 }
 
 /** A Worker start as a source sees it: a rendered prompt, or a brief to render (exactly one). */

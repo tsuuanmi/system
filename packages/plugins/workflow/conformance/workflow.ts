@@ -742,7 +742,7 @@ export const workflowSuite = defineSuite<Boot>({
       expect((await settled(ctx, run.runId)).status).toBe('completed')
       const brief = ctx.artifacts.get(workers.started[0]!.brief!)!.body as Record<string, unknown>
       expect(brief).toMatchObject({ projectId: 'p1', taskId: task.taskId, attempt: 1, goal: 'do briefed', acceptance: [{ id: 'a1', statement: 'it answers' }, { id: 'a2', statement: 'it cites' }] })
-      expect(workers.started[0]!.prompt).toBe(`Board task ${task.taskId} of project p1, attempt 1.\nGoal: do briefed\nAcceptance criteria:\n- a1: it answers\n- a2: it cites\n\nq`)
+      expect(workers.started[0]!.prompt).toBe(`Board task ${task.taskId} of project p1, attempt 1.\nGoal: do briefed\nAcceptance criteria:\n- a1: it answers\n- a2: it cites\nIf you cannot finish without an answer from a person, answer with only this JSON object and nothing else: {"questions": ["..."]}, with 1 to 8 questions of at most 500 characters each. The task then waits for the answers, and its next attempt is given them.\n\nq`)
     }, {}, '1.3'),
 
     scenario('task-resume', 'resumes, for a board task\'s next attempt, the session of the attempt before it when its Worker keeps a native session it can resume, the new brief as its next message, and starts fresh otherwise; each choice a decision (INV-9, INV-13)', async ({ ctx, workers }) => {

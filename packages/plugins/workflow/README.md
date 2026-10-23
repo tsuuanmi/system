@@ -280,6 +280,13 @@ second execution path (INV-1).
     outcome `blocked`; any other refusal fails it (`quota_exhausted`), an attempt the board
     counts. Where it stands is the view's `task.budget` and the `workflow.task.budget` event
     ([a task's budget](../../../docs/design/workflow-engine.md#a-tasks-budget));
+  - a step may answer with questions instead of a result, as every brief of the run offers
+    (`brief@1.2` `ask`): an answer that is wholly one `{"questions": [...]}` object, 1 to 8 of at
+    most 500 characters, fails the step as `question` with a `gate` decision
+    (`workflow.task-question`), nothing new starts, and before the run ends the holder blocks the
+    task on them (the board's question wait); its outcome is `blocked`. Answered, the next
+    attempt's brief points at the answers
+    ([a question from a run](../../../docs/design/workflow-engine.md#a-question-from-a-run));
   - every brief the run writes states the task, the attempt, its goal and acceptance criteria,
     its budget less the usage spent on it (the ledger's records that name the task, its runs, or
     the executions they started, each once), and points at the accepted results of the
@@ -500,7 +507,8 @@ second execution path (INV-1).
   finished meanwhile (accepted through `reconcileRun`), a review left to the operator for want
   of a required check (held by the board, past the run's lease), a result off the written
   subject, a task's budget reserved and released, a spent one blocking the task, the refusals
-  of a budget no ledger can hold, and the refusals with no board. [`tests/remediation.spec.ts`](tests/remediation.spec.ts)
+  of a budget no ledger can hold, a step's questions blocking its task and the answers briefing
+  the next attempt, and the refusals with no board. [`tests/remediation.spec.ts`](tests/remediation.spec.ts)
   runs remediation over the store-backed queue and a git working tree: one request on the exact
   subject and the fix only once it is approved (`approve` refused), a rejection and `continue`, an
   expiry, `forbid`, `stop` withdrawing, a restart that applies a verdict given meanwhile and adopts

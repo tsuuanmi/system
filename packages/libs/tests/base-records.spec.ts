@@ -188,6 +188,17 @@ describe('brief@1.0 and digest@1.0', () => {
     expect(valid('brief@1.1', { ...brief, schema: 'brief@1.1' })).toBe(true)
   })
 
+  it('1.2 offers the Worker a bounded way to ask instead of answering, and refuses it before 1.2 (INV-9, INV-14)', () => {
+    const attempt = example('brief.task-attempt')
+    expect(valid('brief@1.2', attempt)).toBe(true)
+    expect(valid('brief@1.2', { ...attempt, schema: 'brief@1.1' })).toBe(false)
+    expect(valid('brief@1.2', { ...attempt, ask: { maxQuestions: 9 } })).toBe(false)
+    expect(valid('brief@1.2', { ...attempt, ask: { maxQuestions: 0 } })).toBe(false)
+    expect(valid('brief@1.2', { ...attempt, ask: {} })).toBe(false)
+    const { ask: _, ...plain } = attempt
+    expect(valid('brief@1.2', { ...plain, schema: 'brief@1.1' })).toBe(true)
+  })
+
   it('cites one artifact with a verbatim quote for every claim (INV-13)', () => {
     const [claim] = digest.claims
     const { quote: _, ...unquoted } = claim.citation

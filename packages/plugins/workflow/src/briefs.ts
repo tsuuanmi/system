@@ -7,7 +7,7 @@
  * confinement as the Worker's source declares it. The Worker source renders it into its own prompt
  * at start, resolving the pointers there (INV-12).
  */
-import { type Brief, BRIEF_LIMITS, type BriefBudgetLine, type BriefPointer, NO_LOCAL_SANDBOX, renderBrief } from '@tsuuanmi/system-libs'
+import { type Brief, BRIEF_LIMITS, type BriefBudgetLine, type BriefPointer, NO_LOCAL_SANDBOX, QUESTION_LIMITS, renderBrief } from '@tsuuanmi/system-libs'
 import type { ArtifactRef, WorkerSandbox, WorkRequirement } from '@tsuuanmi/system-workers-core'
 import type { Engine } from './engine.ts'
 import { clampText, type Instructions, literal, type ResolvedNode } from './spec.ts'
@@ -47,7 +47,8 @@ export function instructionsOf(node: NodeRow): Instructions {
 
 /**
  * The brief a node's next execution is given, but for its sandbox. A node of a board task's run
- * states the task's goal and criteria, and points at what the task points at after its own
+ * states the task's goal and criteria, offers the Worker to ask questions instead of answering
+ * (`ask`), and points at what the task points at after its own
  * instructions' pointers; any other node's goal is its objective, and its criteria are its
  * acceptance contract and result schema. A node on a session the Worker keeps natively names that
  * session (`resume`): its brief is the session's next message.
@@ -60,8 +61,9 @@ export function draftOf(e: Engine, run: RunRow, node: NodeRow, spec: ResolvedNod
   const bound = node.subject ? (JSON.parse(node.subject) as { subject?: { type: 'git-head'; ref: string; version: string } }).subject : undefined
   const handle = spec.session.sessionId ? e.ctx.workers.handle(spec.session.sessionId) : undefined
   return {
-    schema: 'brief@1.1',
-    ...(task ? { projectId: task.projectId, taskId: task.taskId, attempt: task.attempt } : {}),
+    // A board task's brief offers the Worker a bounded way to ask instead of answering (@1.2 `ask`): its questions block the task.
+    schema: task ? 'brief@1.2' : 'brief@1.1',
+    ...(task ? { projectId: task.projectId, taskId: task.taskId, attempt: task.attempt, ask: { maxQuestions: QUESTION_LIMITS.count } } : {}),
     goal: clampText(task?.goal ?? spec.objective, BRIEF_LIMITS.goal),
     acceptance: task?.acceptance ?? [
       { id: 'contract', statement: clampText(`The result passes the acceptance contract ${spec.acceptance}`, BRIEF_LIMITS.statement) },
