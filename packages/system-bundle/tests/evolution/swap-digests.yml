@@ -1,0 +1,7 @@
+# The operator's patch that replaces the digest provider, configuration only
+# (docs/operations/runbooks.md#swap-the-digest-provider). The evolution test applies it to the
+# bundle's rows; the end-to-end test boots the shipped profile with it through the real launcher.
+- id: digest
+  disabled: true
+- id: digest-extractive
+  disabled: false

@@ -198,8 +198,33 @@ after.
 - **What each provider keeps.** A provider's requests live in its own table. After a swap, a
   request the other provider settled is unknown to the one loaded: `digests_get` refuses it
   (`unknown-request`), a board task waiting on it keeps no digest (recorded with why), and a
-  report counts its attachment but not its claims. Its `digest@1.0` and settling decision stay in
-  the ledger of record, and swapping back finds it again.
+  report counts its attachment but not its claims, and says so in its notes
+  ([reports](reports.md#what-it-counts)). Its `digest@1.0` and settling decision stay in the
+  ledger of record, and swapping back finds it again.
+- **Measured, in CI.** The bundle's evolution test
+  ([`digest-swap.spec.ts`](../../packages/system-bundle/tests/evolution/digest-swap.spec.ts))
+  composes the bundle's own rows, as shipped and with the operator's patch, names no provider (it
+  mounts the row whose manifest provides `digests`), digests the same five fixtures (a test
+  runner's log of 8,506 characters, a pytest log, a benchmark with its validation report, an
+  attempt's three results, a short validation report) with the same scripted Worker, which answers
+  from the prompt it was given, and reads every figure from the settling and escalation decisions.
+  Its record ([`digest-swap.record.json`](../../packages/system-bundle/tests/evolution/digest-swap.record.json)),
+  before and after:
+
+  | Scripted Worker | Written | Claims kept (pass rate) | Escalations | Characters sent to the Worker | Characters it answered |
+  |---|---|---|---|---|---|
+  | copies quotes verbatim | 5 and 5 | 30 of 30 (1.0) and 30 of 30 (1.0) | 0 and 0 | 31,035 and 16,234 (−48%) | 8,499 and 4,001 |
+  | paraphrases on the economy tier | 5 and 5 | 23 of 30 (0.767) and 30 of 30 (1.0) | 0 and 0 | 31,035 and 16,234 | 8,472 and 4,001 |
+
+  Every request sends fewer characters after the swap, the short report's too (3,781 and 1,932):
+  the extract replaces the sources, and a short example of the answer replaces the `digest@1.0`
+  schema. These are characters of a scripted Worker's prompts and answers, not a model's tokens,
+  and the paraphrasing Worker is a stand-in for the failure the escalation exists for; a change in
+  either provider that moves a figure fails the test until the record is regenerated and reviewed.
+  The end-to-end test boots the shipped profile with the same patch through the real launcher: the
+  new provider serves the lead's tools, and the plugin host records the swap and finds nothing.
+- **Measured live.** The same comparison on the operator's live Worker, in tokens from the
+  resource ledger, is a check of the [release checklist](../validation/release-checklist.md).
 
 ## Trigger
 

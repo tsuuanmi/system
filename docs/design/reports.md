@@ -66,7 +66,10 @@ those requests.
 
 A missing number stays missing: a usage record with no token counts adds none, and the report says
 how many there were (`notes`). An event log trimmed by retention within the period is said too, as
-is a digest provider that is not loaded.
+is a digest provider that is not loaded, and a digest the provider loaded does not know: another
+provider settled it before its row was swapped ([replacing the
+provider](digests.md#replacing-the-provider)), so its claims, and for a project the runs that wrote
+it, are not counted.
 
 ## The baseline
 

@@ -424,8 +424,9 @@ and one runs at a time. Swapping them is a configuration change only (Base exit 
 
 To swap back, reverse the patch (or remove both rows from it) and restart. A provider's requests
 stay in its own table: while it is off, `digests_get` of one of its requests is refused
-(`unknown-request`), and the report counts that digest's attachment but not its claims; its digest
-and settling decision stay in the ledger (`system artifact`).
+(`unknown-request`), and the report counts that digest's attachment but not its claims, and says so
+in its notes; its digest and settling decision stay in the ledger (`system artifact`). Compare the
+period before a swap with the report made before it.
 
 With both rows on, the second provider to register does not start: `system health` shows
 `plugins` down, naming it ("service \"digests\" has been registered"). Turn one of them off and

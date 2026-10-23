@@ -23,6 +23,8 @@ let child: ChildProcess | undefined
 // manifest, as the plugin host's configuration in the bundle allows.
 const OFF_ROWS = ['runtime-codex-sdk', 'runtime-acp', 'runtime-antigravity-cli', 'digest-extractive', 'profile-software-development', 'gateway-anthropic', 'gateway-responses']
 const DSH_PACKAGES = ['@deepseek-ai/cordis-plugin-timer', '@deepseek-ai/dsh-host-webserver', '@deepseek-ai/dsh-llm', '@deepseek-ai/dsh-llm-pi-ai']
+/** The operator's patch that swaps the digest provider, as the bundle's evolution test applies it to the bundle's rows. */
+const SWAP_PATCH = fileURLToPath(new URL('../../system-bundle/tests/evolution/swap-digests.yml', import.meta.url))
 
 type Plugin = {
   name: string; rows: string[]; mounted: boolean; manifest: string; lifecycle?: { state: string; since: string; decision: string }
@@ -270,6 +272,63 @@ describe('system profile (e2e through dsh)', () => {
       const read = await client.callTool({ name: 'artifact', arguments: { id: found[0]!.checked!.decision } })
       const decision = JSON.parse((read.structuredContent as { text: string }).text) as Record<string, unknown>
       expect(decision).toMatchObject({ schema: 'decision@1.0', decisionType: 'gate', decider: { id: 'plugin-host.manifest-check' }, outcome: { option: 'fail', detail: { plugin: DSH_PACKAGES[0], findings: found[0]!.findings } } })
+    } finally {
+      await client.close()
+      const exited = new Promise((resolve) => child?.on('exit', resolve))
+      child.kill('SIGTERM')
+      await exited
+    }
+  }, 120_000)
+
+  it('replaces the digest provider through the operator\'s patch alone: the other provider serves the same tools, the plugin host records the swap and finds nothing (Base exit criterion 6, QA-9, REQ-HOST-4, REQ-HOST-7)', async () => {
+    const patch = join(home, 'swap-digests.yml')
+    writeFileSync(patch, `${readFileSync(join(home, 'port0.yml'), 'utf8').trimEnd()}\n${readFileSync(SWAP_PATCH, 'utf8')}`)
+    const dump = execFileSync(process.execPath, [bin, 'start', '--patch', patch, '--dump-config'], { env, encoding: 'utf8' })
+    const mounted = dump.split(/^(?=- id: )/m).filter((block) => block.startsWith('- id: ') && !/^ {2}disabled: true$/m.test(block)).map((block) => /^- id: (\S+)/.exec(block)![1])
+    expect(mounted).toEqual(ALLOWED_ROWS.map((row) => (row === 'digest' ? 'digest-extractive' : row)))
+    child = spawn(process.execPath, [bin, 'start', '--patch', patch], { env, stdio: 'pipe', detached: true })
+    const discoveryPath = join(home, 'system', 'mcp.json')
+    await waitFor(discoveryPath, 60_000)
+    const { url, tokenFiles } = JSON.parse(readFileSync(discoveryPath, 'utf8')) as { url: string; tokenFiles: Record<'operator' | 'client', string> }
+    const operator = await client2(url, readFileSync(tokenFiles.operator).toString('base64url'))
+    try {
+      const { plugins, health } = (await operator.callTool({ name: 'status', arguments: {} })).structuredContent as { plugins: Plugin[]; health: { checks: Array<{ name: string; state: string }> } }
+      const of = (name: string): Plugin => plugins.find((p) => p.name === name)!
+      expect([of('@tsuuanmi/system-digest').mounted, of('@tsuuanmi/system-digest').lifecycle?.state]).toEqual([false, 'candidate'])
+      expect([of('@tsuuanmi/system-digest-extractive').mounted, of('@tsuuanmi/system-digest-extractive').lifecycle?.state]).toEqual([true, 'default'])
+      expect(plugins.filter((p) => p.findings)).toEqual([])
+      expect(health.checks.filter((c) => c.name === 'plugins' || c.name === 'manifests').map((c) => c.state)).toEqual(['ok', 'ok'])
+      const read = await operator.callTool({ name: 'artifact', arguments: { id: of('@tsuuanmi/system-digest-extractive').lifecycle!.decision } })
+      expect(JSON.parse((read.structuredContent as { text: string }).text)).toMatchObject({ decisionType: 'lifecycle', outcome: { option: 'default', detail: { from: 'candidate' } } })
+      // The lead's tools are the seam's: the provider swapped in serves them. With no read-only Worker
+      // configured, a request on a stored artifact fails open, recorded, by the new provider (dgx-…).
+      const lead = await client2(url, readFileSync(tokenFiles.client).toString('base64url'))
+      try {
+        expect(await lead.callTool({ name: 'digests_request', arguments: { sources: [`sha256:${'0'.repeat(64)}`] } })).toMatchObject({ isError: true, content: [{ text: expect.stringMatching(/^invalid: .* is not a stored artifact/) }] })
+        const asked = await lead.callTool({ name: 'digests_request', arguments: { sources: [of('@tsuuanmi/system-digest-extractive').lifecycle!.decision], waitSeconds: 30 } })
+        expect(asked.structuredContent).toMatchObject({ requestId: expect.stringMatching(/^dgx-/), state: 'bypassed', reason: expect.stringMatching(/^no Worker can write it/) })
+      } finally {
+        await lead.close()
+      }
+    } finally {
+      await operator.close()
+      const exited = new Promise((resolve) => child?.on('exit', resolve))
+      child.kill('SIGTERM')
+      await exited
+    }
+  }, 120_000)
+
+  it('runs one provider of a seam at a time: with both digest rows on, the second does not start, and health says so (INV-1)', async () => {
+    const patch = join(home, 'both-digests.yml')
+    writeFileSync(patch, `${readFileSync(join(home, 'port0.yml'), 'utf8').trimEnd()}\n- id: digest\n  disabled: false\n- id: digest-extractive\n  disabled: false\n`)
+    child = spawn(process.execPath, [bin, 'start', '--patch', patch], { env, stdio: 'pipe', detached: true })
+    const discoveryPath = join(home, 'system', 'mcp.json')
+    await waitFor(discoveryPath, 60_000)
+    const { url, tokenFiles } = JSON.parse(readFileSync(discoveryPath, 'utf8')) as { url: string; tokenFiles: Record<'operator', string> }
+    const client = await client2(url, readFileSync(tokenFiles.operator).toString('base64url'))
+    try {
+      const { health } = (await client.callTool({ name: 'status', arguments: {} })).structuredContent as { health: { checks: Array<{ name: string; state: string; detail: string }> } }
+      expect(health.checks.find((c) => c.name === 'plugins')).toMatchObject({ state: 'down', detail: expect.stringMatching(/service "digests" has been registered/) })
     } finally {
       await client.close()
       const exited = new Promise((resolve) => child?.on('exit', resolve))

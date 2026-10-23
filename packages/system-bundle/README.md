@@ -35,6 +35,11 @@ and the `system` plugins, and it does not use `dsh-base`
   in by one patch that turns `digest` off and it on
   ([runbook](../../docs/operations/runbooks.md#swap-the-digest-provider)); one provider of a seam
   runs at a time, and `pnpm check:packages` holds exactly one such row on by default.
+- **Evolution test:** [`tests/evolution/`](tests/evolution/digest-swap.spec.ts) applies the
+  operator's swap patch ([`swap-digests.yml`](tests/evolution/swap-digests.yml)) to this bundle's
+  rows and digests the same fixtures before and after, recording the figures
+  ([`digest-swap.record.json`](tests/evolution/digest-swap.record.json); Base exit criterion 6,
+  [replacing the provider](../../docs/design/digests.md#replacing-the-provider)).
 - **The approval queue and the board (B5):** the [`approvals`](../plugins/approvals/README.md)
   row carries the default studio policy, conservative: a read runs, a workspace write runs
   once tests and lint pass, and everything else asks, expiring after a day (at most 14) in

@@ -22,8 +22,8 @@ decides nothing, and no model takes part.
   most 100 000 entries of one event type, the ledger's own bound on the records of a period
   (`maxRecords`), 64 pools, 100 projects listed (the rest counted); past a bound it refuses (`overloaded`),
   never truncates. What it could not count (an event log trimmed by retention within the period, no
-  digest provider to read the digests' claims or runs, records with no token counts) is listed in
-  `notes`.
+  digest provider to read the digests' claims or runs, digests the provider loaded does not know
+  because another settled them before a swap, records with no token counts) is listed in `notes`.
 - **Deterministic:** [`src/report.ts`](src/report.ts) computes the report from what was read, and
   [`src/render.ts`](src/render.ts) renders it; both are pure, sort before they count or sum, and
   write numbers without a locale. The same records and period give the same report; only `asOf`,

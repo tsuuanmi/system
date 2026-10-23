@@ -49,4 +49,7 @@ same MCP tools; it depends on seam definitions only, and fails open.
   a draft's citations ([`tests/extract.spec.ts`](tests/extract.spec.ts)); the provider: the extract
   and the brief, citations by id, a span not given, blank sources, no Worker, the escalation on the
   same extract, restart, the time and pending bounds, the MCP tools, and one provider at a time
-  ([`tests/extractive.spec.ts`](tests/extractive.spec.ts)).
+  ([`tests/extractive.spec.ts`](tests/extractive.spec.ts)). The swap itself, measured against
+  `digest` on the same fixtures, is the bundle's
+  ([`tests/evolution`](../../system-bundle/tests/evolution/digest-swap.spec.ts)), and the
+  end-to-end test boots the shipped profile with the swap patch.

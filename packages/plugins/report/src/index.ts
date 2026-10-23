@@ -65,11 +65,12 @@ function decisionOf(ctx: Context, id: string): DecisionRead | undefined {
 /**
  * The runs that wrote a digest request's answers: the agent runs whose results its settling decision
  * and its escalation took as inputs (an agent result names its run). The ledger counts their usage
- * by those run ids.
+ * by those run ids. Undefined when the provider loaded does not know the request: another provider
+ * settled it, before its row was swapped for this one.
  */
-async function digestRuns(ctx: Context, digests: Digests, requestId: string): Promise<string[]> {
+async function digestRuns(ctx: Context, digests: Digests, requestId: string): Promise<string[] | undefined> {
   const view = await digests.get(requestId)
-  if (!view) return []
+  if (!view) return undefined
   const runs: string[] = []
   for (const decision of [view.decision, view.escalation]) {
     const inputs = decision ? (ctx.artifacts.get(decision)?.body as { inputs?: string[] } | undefined)?.inputs ?? [] : []
@@ -124,7 +125,13 @@ export async function report(ctx: Context, input: ReportInput, now: Date = new D
     }
     const digested = digestedAll.filter((e) => taskIds.has(String(e.data?.['taskId'])) && typeof e.data?.['requestId'] === 'string')
     if (digestsSeam) {
-      for (const e of digested) for (const runId of await digestRuns(ctx, digestsSeam, String(e.data!['requestId']))) runs.add(runId)
+      let unknown = 0
+      for (const e of digested) {
+        const served = await digestRuns(ctx, digestsSeam, String(e.data!['requestId']))
+        if (!served) unknown += 1
+        for (const runId of served ?? []) runs.add(runId)
+      }
+      if (unknown) notes.push(`${unknown} digest request(s) of the project's results are unknown to the digest provider loaded (another provider settled them before its row was swapped): the runs that served them are not counted in its usage`)
     } else if (digested.length) {
       notes.push('no digest provider is loaded: the runs that digested the project\'s results are not counted in its usage')
     }
@@ -158,10 +165,13 @@ export async function report(ctx: Context, input: ReportInput, now: Date = new D
   const attached = events.filter((e) => e.type === 'workflow.task.digest' && e.data?.['state'] === 'attached' && typeof e.data?.['requestId'] === 'string')
   if (digestsSeam) {
     digests = new Map()
+    let unknown = 0
     for (const e of attached) {
       const view = await digestsSeam.get(String(e.data!['requestId']))
       if (view) digests.set(view.requestId, { ...(view.claims ? { kept: view.claims.kept, dropped: view.claims.dropped } : {}), escalated: view.escalation !== undefined })
+      else unknown += 1
     }
+    if (unknown) notes.push(`${unknown} digest(s) attached in the period are unknown to the digest provider loaded (another provider settled them before its row was swapped): their claims are not counted`)
   } else if (attached.length) {
     notes.push('no digest provider is loaded: the claims of the digests attached are not counted')
   }
