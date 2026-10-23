@@ -538,6 +538,28 @@ describe('ctx.workflow serves board tasks over the store-backed board and approv
     expect((await ctx.resources.usage({ taskId: task.taskId })).records).toHaveLength(1)
   })
 
+  it('ends the budget of a run that finished before any step reserved as released, so no restart selects or rewrites its row again (T62)', async () => {
+    const { ctx, workers, restartWorkflow } = await boot({ resources: true })
+    await project(ctx)
+    await poolOpen(ctx)
+    const task = await ready(ctx, 'never reserved', { budget: [{ pool: 'max.programmatic', unit: 'runs', amount: 3 }] })
+    // The ledger does not answer a reservation: the step waits, nothing reserved, and the operator stops the run.
+    const reserve = vi.spyOn(ctx.resources, 'reserve').mockRejectedValue(new Error('the ledger is not answering'))
+    const run = await ctx.workflow.start({ template: 'solo', input: 'q', classification: 'public', task: { taskId: task.taskId } })
+    await until(() => reserve.mock.calls.length > 0, 'the step asked to reserve')
+    await ctx.workflow.stop(run.runId, 'not needed')
+    expect(await settled(ctx, run.runId)).toMatchObject({ status: 'failed' })
+    expect(workers.started).toHaveLength(0)
+    await until(() => ctx.workflow.get(run.runId)!.task!.budget!.state === 'released', 'the budget released')
+    expect(ctx.workflow.get(run.runId)!.task!.budget).not.toHaveProperty('decision')
+    // A restart finds nothing of it to release: its row is not written again.
+    const stored = (): { budget: string; updated_at: string } => ctx.store.db.prepare('SELECT budget, updated_at FROM workflow_tasks WHERE run_id = ?').get(run.runId) as { budget: string; updated_at: string }
+    const before = stored()
+    await restartWorkflow()
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    expect(stored()).toEqual(before)
+  })
+
   it('blocks a task whose budget is spent (budget-spent) before any step of its run runs; the board asks the operator to fund it (PROP-0010, INV-2)', async () => {
     const { ctx, workers } = await boot({ resources: true })
     await project(ctx)

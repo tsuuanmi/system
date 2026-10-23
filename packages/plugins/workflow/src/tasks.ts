@@ -971,7 +971,7 @@ export class TaskRuns {
    * Release every hold of the run's steps but those in `keep`, then record what is left on its row.
    * A hold the ledger does not release stays recorded (it expires on its own, INV-9), and is asked
    * again later; without a ledger now, nothing is released. Once the run `finished` and nothing is
-   * held, a run that reserved is `released`.
+   * held, its budget is `released`, whether or not a step reserved (a refusal stays `refused`).
    */
   private async releaseHolds(runId: string, keep: ReadonlySet<string>, finished: boolean): Promise<void> {
     const row = this.row(runId)
@@ -992,7 +992,8 @@ export class TaskRuns {
     }
     this.setBudget(runId, (b) => {
       const holds = holdsOf(b).filter((h) => !released.has(h.reservationId))
-      const state = b.state === 'refused' ? 'refused' : holds.length ? 'reserved' : finished && b.decision ? 'released' : b.state === 'reserved' ? 'due' : b.state
+      // A finished run with nothing held is terminal, whether or not a step ever reserved, so no restart selects it again.
+      const state = b.state === 'refused' ? 'refused' : holds.length ? 'reserved' : finished ? 'released' : b.state === 'reserved' ? 'due' : b.state
       return { ...withoutHolds(b), ...(holds.length ? { holds } : {}), state }
     })
   }
