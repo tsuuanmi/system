@@ -17,10 +17,10 @@ tools. The Workers are Claude Code Workers that `system` runs, each in a run's o
 ## Before you start
 
 1. **The host.** Claude Code installed, bubblewrap and `socat` installed, and the Workers' home
-   signed in ([agent Workers](runbooks.md#agent-workers)). `system health` shows the
-   `claude-agent-sdk` runtime with reads confined and commands confined (`executes`); without
-   `executes`, no Worker proves `validate` and every attempt fails at its validation step, with
-   nothing sent.
+   signed in ([agent Workers](runbooks.md#agent-workers)). Its commands must be proven confined
+   on this host (`executes`): where they cannot be, a writing Worker is unavailable ("commands
+   cannot be confined"), nothing proves `develop` or `validate`, and an attempt fails at its first
+   step with nothing sent.
 2. **The repository.** Its top level is a git repository with a commit, outside `~/.dsh`. Commands
    in a Worker have no network: install the dependencies the tests and benchmarks need in the
    repository first.

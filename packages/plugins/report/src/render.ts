@@ -56,7 +56,7 @@ export function renderReport(report: Report): string {
   const a = report.attempts
   lines.push('', '## Results', '',
     `- Accepted results: ${whole(t.done)}.`,
-    `- Attempts reported: ${whole(a.reported)}: ${whole(a.accepted)} accepted by their own checks, ${whole(a.rejected)} rejected by them, ${whole(a.heldForOperator)} held for you, ${whole(a.reconciled)} failed or stopped, ${whole(a.other)} other.`,
+    `- Attempts reported: ${whole(a.reported)} (${whole(a.accepted)} accepted by their own checks, ${whole(a.rejected)} rejected by them, ${whole(a.heldForOperator)} held for you, ${whole(a.reconciled)} failed or stopped, ${whole(a.other)} other).`,
     `- Reviews of the results: ${whole(a.review.passed)} passed, ${whole(a.review.failed)} still asking for changes, ${whole(a.review.none)} with no review bound.`,
     `- Remediation: ${plural(report.remediation.cycles, 'cycle')}; fixes approved ${whole(report.remediation.fixesOpened)}, closed ${whole(report.remediation.fixesClosed)}.`)
 
