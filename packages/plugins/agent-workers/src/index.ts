@@ -986,7 +986,7 @@ export class AgentWorkers extends Service {
 
   /**
    * A run failed `quota_exhausted`, and no `limited` reading of its pool was recorded: the runtime
-   * reported no limit (Codex and the Antigravity CLI report none), one the ledger could not place,
+   * reported no limit (it read no reset time, docs/design/agent-runtimes.md#limit-readings), one the ledger could not place,
    * or the Worker has no pool. The limit is never retried unseen (INV-2):
    * - a metered Worker's pool gets a `limited` reading (source `limit-notice`, the runtime's failure)
    *   on every window, for `limitCooldownSeconds`, as a `rejected` limit on an unmapped window does.

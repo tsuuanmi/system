@@ -93,6 +93,23 @@ operator's installed `codex` through the official Codex TypeScript SDK.
 - **Runs:** a thread starts, or resumes by its native handle, the thread id
   reported as soon as the thread starts. The final agent message is the result.
   A failed turn is `session_broken`, or `quota_exhausted` for a usage limit.
+- **A usage limit's reset** (`limits.ts`,
+  [limit readings](../../../docs/design/agent-runtimes.md#limit-readings)):
+  `codex exec` emits no rate-limit event, but a turn that hits the usage limit
+  fails with Codex's own message, which names when to try again
+  (`… try again at 3:04 PM.`, or `… at Oct 25th, 2026 3:04 PM.`) in the process's
+  local time, so Codex always starts with `TZ=UTC` (an operator's `env.TZ` is
+  overridden, and the agent's commands see UTC too). On a Codex version in
+  `VERIFIED_LIMIT_VERSIONS` (0.164.0, from its binary's message parts and
+  formats), the run's `quota_exhausted` error carries (`withMetering`) one
+  `rejected` observation of window `*` (the message names no window) with that
+  time plus a minute (the minute is truncated). A message that names no reset
+  (`try again later`), one that does not parse, or a reset not ahead of now or
+  more than 400 days away gives no observation; on another version, or when
+  `codex --version` fails, the message is not read and the error says so (`its
+  reset time is not read: …`). Either way the `agents` source then closes the
+  pool for the Worker's cooldown, never opens it. Nothing else of Codex's usage
+  is reported.
 - **Configuration:**
   - `executable` (default: `codex` on PATH);
   - `config`: Codex `--config` overrides, such as its model provider, passed as
@@ -114,6 +131,7 @@ operator's installed `codex` through the official Codex TypeScript SDK.
 - **Dependencies:** `@openai/codex-sdk`, whose per-platform Codex builds are
   ignored optional dependencies, and `system-libs` (`dshHome`,
   `ensurePrivateDir`). The gate relies on Codex's hook behaviour as of 0.164
-  (above); the probe proves it on each host.
+  (above); the probe proves it on each host. A limit's reset relies on Codex's
+  usage-limit message as of 0.164.0 (`VERIFIED_LIMIT_VERSIONS`).
 - **Live checks:** the [release checklist](../../../docs/validation/release-checklist.md)
   (a Codex Worker).

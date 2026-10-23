@@ -504,6 +504,8 @@ guesses.
   counts as `unknown`, like an explicit `unknown` reading: missing telemetry is not capacity. Each
   pool's configuration says whether `unknown` leaves it available (a pool that never reports,
   such as a local model) or not, which is the default (fail closed).
+- `runtime-result` readings come from what an agent runtime itself reports
+  ([limit readings](../design/agent-runtimes.md#limit-readings)), never from the model's text.
 - `history-estimate` readings are computed by code from recorded usage, conservatively. Examples:
   [`limit-state.five-hour.json`](../../schemas/examples/limit-state.five-hour.json),
   [`limit-state.limited.json`](../../schemas/examples/limit-state.limited.json).

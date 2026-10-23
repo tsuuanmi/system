@@ -302,7 +302,8 @@ Agent SDK provider reports usage (from the result's `modelUsage`) and rate-limit
 provider reports turns, usage from agy's own result (normalized by the one reading whose sum is
 agy's total), and the main model when an event names it
 ([its README](../../packages/plugins/runtime-antigravity-cli/README.md)); the Codex and ACP
-providers report none.
+providers report no usage. Codex and the Antigravity CLI report a usage limit's reset time
+([limit readings](#limit-readings)).
 
 The `agents` source meters a Worker whose configuration names a resource `pool` (with its
 `account`) through `ctx.resources`, following [a run's budget](resources.md#a-runs-budget):
@@ -317,10 +318,11 @@ The `agents` source meters a Worker whose configuration names a resource `pool` 
    skipped. Then the reservation is released. The reservation and the record name the board task
    and project the run's brief serves, if any, so the ledger counts the run against that task's
    budget ([a task's budget](workflow-engine.md#a-tasks-budget)).
-4. A run that fails `quota_exhausted` and left no `limited` reading (Codex and the Antigravity
-   CLI report no limit observation) closes every window of the pool: a `limited` reading (source
-   `limit-notice`) for the Worker's `limitCooldownSeconds`, until a later reading says otherwise.
-   A limit is never retried on the same pool unseen ([fail-closed rules](resources.md#fail-closed-rules)).
+4. A run that fails `quota_exhausted` and left no `limited` reading (its runtime read no reset
+   time, or one the ledger could not place) closes every window of the pool: a `limited` reading
+   (source `limit-notice`) for the Worker's `limitCooldownSeconds`, until a later reading says
+   otherwise. A limit is never retried on the same pool unseen
+   ([fail-closed rules](resources.md#fail-closed-rules)).
 
 A run that started before a restart has no result message, so nothing is recorded for it then;
 its usage is reconciled from the agent's session transcript later (planned). A Worker with no
@@ -329,6 +331,56 @@ metered Worker whose ledger did not take the reading) cools down every Worker of
 which share the runtime's one home and so its one sign-in. They are `quota-exhausted` until the
 reset time the runtime named, else for `limitCooldownSeconds`, at most seven days, across a
 restart (event `agent-workers.cooldown`; [agent Workers](../../packages/plugins/agent-workers/README.md)).
+
+### Limit readings
+
+A limit is waited out until the reset its runtime names, so each runtime reads the reset from what
+the installed agent itself reports, never from the model's text, and only on a version whose
+format was checked ([fail-closed rules](resources.md#fail-closed-rules)). A reading that cannot
+be read is no reading: the run's limit then closes the pool for the Worker's
+`limitCooldownSeconds`, never opens it. On a version not checked, the format is not read at all,
+and the run's error says so (`its reset time is not read: …`).
+
+| Runtime | What the installed version exposes | What is read | Versions |
+|---|---|---|---|
+| Claude Code | a `rate_limit_event` per limit check in the SDK's stream: `rateLimitType` (the window), `status`, `resetsAt` (Unix seconds), `utilization` | every event, as an observation of its window | any (the SDK's own types) |
+| Codex | `codex exec --experimental-json`, which the SDK drives, emits no rate-limit event; a turn that hits the usage limit fails (`turn.failed`) with Codex's message, which names when to try again, to the minute, in the process's local time: `… try again at 3:04 PM.` (today) or `… at Oct 25th, 2026 3:04 PM.`, or `… try again later.` | the reset time of a `quota_exhausted` turn's message, as a `rejected` observation of window `*` (the message names no window, so the pool closes as a whole), one minute late (the minute is truncated). Codex starts with `TZ=UTC`, so the time is UTC | `VERIFIED_LIMIT_VERSIONS`: 0.164.0 |
+| Antigravity CLI | the run's stream and its quota errors name no reset (`individual quota reached`, `You have exhausted your quota on this model.`); print mode answers `/usage` itself, without an agent turn, and `--output-format json` writes the quota summary: groups of buckets, each with an `id`, `window`, `disabled`, `remaining_fraction`, `remaining_amount`, and `reset_time` (RFC 3339, UTC) | after a run that hit a quota, `agy --print=/usage --output-format json` under the home's confinement: each enabled bucket that says what is left is an observation of the window its `id` names, `rejected` when nothing is left, with its reset; a report not in the checked shape gives none | `VERIFIED_LIMIT_VERSIONS`: 1.4.6 |
+
+The runtime's window names (a Claude `rateLimitType`, an Antigravity bucket `id`) are opaque, and
+the Worker's `windows` maps them to the pool's windows; `*`, or an unmapped rejection, closes every
+window of the pool ([metering](#metering), step 3).
+
+Evidence, checked 2026-10-24 on the installed versions; no account was used, so each format is
+also a [release check](../validation/release-checklist.md) on a live account:
+
+- **Codex 0.164.0** (`@openai/codex` 0.164.0 with `@openai/codex-linux-x64`, under the DSH tools
+  directory; the SDK `@openai/codex-sdk` 0.162.1 in `node_modules`). The SDK's
+  `dist/index.d.ts` types `ThreadEvent` as `thread.started`, `turn.started`, `turn.completed`
+  (token usage only), `turn.failed` (`{ message }`), `item.*`, and `error`; the binary's event
+  names are the same. The binary holds the message's parts (`You’ve hit your usage limit`,
+  ` Try again at `, ` or try again at `, ` or try again later.`) and the reset's formats
+  (`%-I:%M %p`; `%b %-d` + `st|nd|rd|th` + `, %Y %-I:%M %p`). `codex app-server generate-ts`
+  shows the app server's `account/rateLimits/read` and `account/rateLimits/updated`
+  (`RateLimitSnapshot`: `primary` and `secondary` windows with `usedPercent`,
+  `windowDurationMins`, `resetsAt` in Unix seconds), which `codex exec` does not emit and the
+  runtime does not use. Fixtures: `runtime-codex-sdk/tests/fixtures/codex-0.164.0-limit-messages.json`.
+- **agy 1.4.6** (`~/.local/bin/agy`). Its embedded changelog: print mode answers `/usage`,
+  `/quota`, and `/credits` "without starting an agent turn, spending quota, or leaving a
+  conversation behind", and "piped and `--json` output still use UTC timestamps". Its Go type
+  descriptors: `steps.JSONOutput` (`status`, `response`, …, `command`: `steps.JSONCommand`
+  `{ name, data }`), `printmode.quotaJSON` (`description`, `groups`), `printmode.groupJSON`
+  (`name`, `description`, `buckets`), `printmode.bucketJSON` (`id`, `name`, `description`,
+  `window`, `disabled`, `remaining_fraction` a float, `remaining_amount` an integer,
+  `reset_time` a string), and `printmode.agentErrorPayload` (a run's error: `short_error`,
+  `status`, `error_code`, `code_kind`, `retryable`, `error_id`; no reset). `printmode.bucketReset`
+  formats a reset with RFC 3339, and `headless.buildOutput` sets `status` to `SUCCESS`. Fixtures:
+  `runtime-antigravity-cli/tests/fixtures/agy-1.4.6-usage.json`.
+
+Not read: the Codex app server's rate-limit snapshot (it would need a second Codex process per
+reading on the experimental app-server protocol); usage percentages of a Codex run that did not
+hit a limit (`codex exec` reports none); the Antigravity report before or after a run that did not
+hit a quota (each read is one more agy process and backend call); agy's credits (`/credits`).
 
 ## Admission evidence
 

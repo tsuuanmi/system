@@ -1493,8 +1493,14 @@ Reading a limit:
   (`USER_ACTION`) before the agent starts, with a `budget` decision whose reasons name the pool and
   `until` (`system explain <runId>`). A run that hit the limit while working fails the same way and
   is never retried on that pool.
-- A runtime that reports no limit observation (Codex, the Antigravity CLI) still fails the run
-  `quota_exhausted` when it hits one: every window of the pool then reads `limited` (source
+- Codex and the Antigravity CLI read a limit's reset time from the agent's own report
+  ([limit readings](../design/agent-runtimes.md#limit-readings)): Codex's usage-limit message
+  names no window, so every window of the pool reads `limited` until that time; an Antigravity
+  bucket is a window by its `id` (map the ids your account's `agy --print=/usage --output-format
+  json` shows under `command.data.groups[].buckets[]` in the Worker's `windows`; an exhausted
+  bucket left unmapped closes every window). When the runtime read no reset time, the run still
+  fails `quota_exhausted`, its error says why (`its reset time is not read: …`, an agy or Codex
+  version not verified, say), and every window of the pool reads `limited` (source
   `limit-notice`) for the Worker's `limitCooldownSeconds`.
 - **A Worker with no pool** is not metered, but a limit it hits cools down every Worker of its
   runtime (they share one sign-in): `system health` lists them `quota-exhausted`, a run on one

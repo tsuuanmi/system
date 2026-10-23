@@ -147,8 +147,9 @@ The **`agents` Worker source**: agent runtimes as Workers
     `rejected` limit on a window `windows` does not map closes every window
     of the pool, so it is never retried there unseen (INV-2); any other
     unmapped window is logged and skipped. A run that fails `quota_exhausted`
-    and left no `limited` reading (Codex and the Antigravity CLI report no
-    limit observation) closes every window of the pool with a `limited`
+    and left no `limited` reading (its runtime read no reset time,
+    [limit readings](../../../docs/design/agent-runtimes.md#limit-readings))
+    closes every window of the pool with a `limited`
     reading (source `limit-notice`) for `limitCooldownSeconds`; a later
     reading of a window says otherwise;
   - **release** the reservation once the usage is recorded, or when the run
