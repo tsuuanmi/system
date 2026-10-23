@@ -201,7 +201,11 @@ runs the work the router admitted to them. Callers never reach a source directly
   task it serves, its criteria, and the Worker's confinement
   ([briefs](../design/workflow-engine.md#briefs)). A run may serve one attempt of a board task: the engine is that
   run's owner on `ctx.board` (optional), which it reaches through the abstract `Board` only; a
-  task's next attempt resumes the session of the one before it when its Worker can.
+  task's next attempt resumes the session of the one before it when its Worker can. Through the
+  abstract `Approvals` (`ctx.approvals`, optional) a remediation fix's gate asks the approval
+  queue, an approved deferred tool call's session is continued once, and a plain run that wrote
+  records the policy's checks still pending ([remediation on the
+  queue](../design/workflow-engine.md#remediation-on-the-approval-queue)).
 - **Worker sessions** (`ctx.workerSessions`): durable sessions, each with its own `SessionId`,
   a binding to the native handle, groups, and a mailbox for direct peer messages under
   barriers ([sessions and messaging](../design/sessions-and-messaging.md)).
