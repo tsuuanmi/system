@@ -52,7 +52,7 @@ async function compose(dir: string, source: (ctx: Context) => WorkerSource, conf
 
 runSuite(workflowSuite, {
   name: '@tsuuanmi/system-workflow',
-  contract: '1.4',
+  contract: '1.5',
   boot: async (source, config) => {
     const dir = mkdtempSync(join(tmpdir(), 'system-workflow-conformance-'))
     let current = await compose(dir, source, config)

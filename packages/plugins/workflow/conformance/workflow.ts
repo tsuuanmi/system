@@ -61,6 +61,8 @@ export class ScriptedWorkers {
    * as its first execution starts (`native-<sessionId>`). Off, sessions keep no handle.
    */
   keepsHandles = true
+  /** Since 1.5: sets of Workers this runtime names as siblings of one another (one account each); others name none. */
+  accounts: string[][] = []
   private readonly sessions = new Map<string, { worker: string; handle?: string }>()
   /** Executions cancelled while they ran. */
   readonly cancelled: string[] = []
@@ -88,6 +90,7 @@ export class ScriptedWorkers {
         return session ? [session.worker] : undefined
       },
       handle: (sessionId) => this.sessions.get(sessionId)?.handle,
+      siblings: (worker) => this.accounts.find((account) => account.includes(worker)),
     }
   }
 
@@ -192,7 +195,12 @@ export const TEMPLATES: Record<string, NodeTemplate[]> = {
   ],
   // Since 1.3: a step on the run's session, which only a Worker that keeps conversations takes.
   kept: [step('kept', { conversation: 'persistent' })],
+  // Since 1.5: a two-member team, whose members keep their conversations and differ by family and account.
+  team: [step('team', { team: { kind: 'brainstorm' }, acceptance: 'acceptance.team-proposal' })],
 }
+
+/** A Worker a team member may take (since 1.5): it reasons, keeps its conversation, and names its family. */
+const MEMBER = (id: string, family: string): CapabilityDescriptor => worker(id, { schema: 'capability-descriptor@1.1', family, proves: ['reason', 'persistent-conversation'] })
 
 /** What the accounts scenarios' Workers prove: the `needy` template's capabilities, which no Worker of {@link WORKERS} proves. */
 const RESEARCH = ['reason', 'deep-research']
@@ -358,8 +366,10 @@ export const workflowSuite = defineSuite<Boot>({
   // is started with a brief recorded before it (`WorkerStart.brief`), and a task's next attempt
   // resumes the session of the one before it when its Worker can. 1.4: under assigned accounts, a
   // node refused only for their limits waits for the reset (recovery `wait`), and an unsent failure
-  // never moves to another account of its group (ADR-0052).
-  contract: '1.4',
+  // never moves to another account of its group (ADR-0052). 1.5: a team member avoids every Worker
+  // on an account another member holds (its siblings), and is refused when that account cannot be
+  // told apart (REQ-TEAM-4).
+  contract: '1.5',
   scenarios: [
     scenario('node-records', 'keeps every node record valid against workflow-node@1.x with a rising revision, and completes a node only with its input receipt, an output receipt binding its Worker\'s result, and the acceptance decision that accepted it (INV-14, INV-13, INV-3)', async ({ ctx, workers }) => {
       workers.reply = () => 'hold'
@@ -897,5 +907,41 @@ export const workflowSuite = defineSuite<Boot>({
       expect(done).toMatchObject({ status: 'completed', answer: 'answer from w:g-b' })
       expect(workers.started.map((s) => s.worker)).toEqual(['w:g-a', 'w:g-b'])
     }, {}, '1.4'),
+
+    scenario('team-accounts', 'counts every sibling of a Worker a team member holds as that member\'s account: another member never takes one, even of another family, and takes a Worker of another account (REQ-TEAM-4)', async ({ ctx, workers }) => {
+      workers.reply = () => 'hold'
+      // Two Workers of one account (siblings), each with a family of its own.
+      workers.extra = [MEMBER('w:x-review', 'family-a'), MEMBER('w:x-develop', 'family-b')]
+      workers.accounts = [['w:x-develop', 'w:x-review']]
+      const members = ['team:m1:propose', 'team:m2:propose']
+      const one = start(ctx, 'team', 'q')
+      await until(() => members.some((m) => nodeOf(ctx, one.runId, m)?.state === 'FAILED'), 'a member refused')
+      const refused = members.map((m) => nodeOf(ctx, one.runId, m)!).find((n) => n.state === 'FAILED')!
+      expect(refused.worker).toBeUndefined()
+      expect(workers.started).toHaveLength(1)
+      // A Worker of another account takes the second member.
+      workers.extra.push(MEMBER('w:y', 'family-c'))
+      const two = start(ctx, 'team', 'q')
+      await until(() => members.every((m) => nodeOf(ctx, two.runId, m)?.state === 'RUNNING'), 'both members running')
+      const held = members.map((m) => nodeOf(ctx, two.runId, m)!.worker)
+      expect(held).toContain('w:y')
+      expect(held.filter((w) => w !== 'w:y')).toHaveLength(1)
+    }, {}, '1.5'),
+
+    scenario('team-accounts-unknown', 'refuses a team member, sending nothing, when the siblings of a Worker another member holds name different accounts: which account it holds cannot be told (REQ-TEAM-4, INV-2)', async ({ ctx, workers }) => {
+      workers.reply = () => 'hold'
+      workers.extra = [
+        worker('w:x-a', { ...ACCOUNT('a', 'g'), family: 'family-a', proves: ['reason', 'persistent-conversation'] }),
+        worker('w:x-b', { ...ACCOUNT('b', 'g'), family: 'family-b', proves: ['reason', 'persistent-conversation'] }),
+        MEMBER('w:y', 'family-c'),
+      ]
+      workers.accounts = [['w:x-a', 'w:x-b']]
+      const run = start(ctx, 'team', 'q')
+      const members = ['team:m1:propose', 'team:m2:propose']
+      await until(() => members.some((m) => nodeOf(ctx, run.runId, m)?.state === 'FAILED'), 'a member refused')
+      const refused = members.map((m) => nodeOf(ctx, run.runId, m)!).find((n) => n.state === 'FAILED')!
+      expect(refused.error).toMatchObject({ kind: 'config_error' })
+      expect(workers.started).toHaveLength(1)
+    }, {}, '1.5'),
   ],
 })

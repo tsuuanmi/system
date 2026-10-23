@@ -611,7 +611,13 @@ export class Engine {
         release()
         ;(admitted as AdmittedWorker | undefined)?.release()
       }
-      const { distinctAccounts, ...restricted } = await restriction(this, run, spec)
+      const restricting = await restriction(this, run, spec)
+      // A team member beside a held account no one can tell apart is refused, whatever the operator allows (INV-2).
+      if ('problem' in restricting) {
+        done()
+        return failAttempt(this, run, { ...node, attempt }, { kind: 'config_error', disposition: dispositionOf('config_error'), message: restricting.problem }, { sent: false, decisions: [] }, lease)
+      }
+      const { distinctAccounts, ...restricted } = restricting
       // The prompt as its source will render and send it, in characters (ADR-0032): a Worker that takes less is not admitted.
       const input = { chars: renderedChars(this, draft) }
       // Recorded when the node runs on the same provider family for want of another (ADR-0029).

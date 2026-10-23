@@ -36,8 +36,8 @@ describe('the manifests the workspace ships (REQ-HOST-7)', () => {
   })
 
   it('derives each version from the conformance contract, each class from the seam catalog, and each consumer\'s range from its provider', () => {
-    expect(of('workflow').manifest).toMatchObject({ class: { kind: 'core', component: 'work-state-machine' }, provides: [{ seam: 'workflow', version: '1.4.0' }] })
-    expect(of('web-ui').manifest.consumes).toContainEqual({ seam: 'workflow', range: '^1.4.0' })
+    expect(of('workflow').manifest).toMatchObject({ class: { kind: 'core', component: 'work-state-machine' }, provides: [{ seam: 'workflow', version: '1.5.0' }] })
+    expect(of('web-ui').manifest.consumes).toContainEqual({ seam: 'workflow', range: '^1.5.0' })
     expect(of('board-core').manifest).toMatchObject({ schema: 'plugin-manifest@1.1', class: { kind: 'core', component: 'work-state-machine' }, provides: [], defines: [{ seam: 'board', version: '1.2.0' }] })
     expect(of('experiments-core').manifest).toMatchObject({ class: { kind: 'core', component: 'work-state-machine' }, defines: [{ seam: 'experiments', version: '1.0.0' }] })
     expect(of('evaluations-core').manifest).toMatchObject({ class: { kind: 'core', component: 'gate' }, defines: [{ seam: 'evaluations', version: '1.0.0' }] })
