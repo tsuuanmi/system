@@ -1,0 +1,65 @@
+{
+  "schema": "decision@1.5",
+  "decisionType": "lifecycle",
+  "question": "Which lifecycle state does plugin @tsuuanmi/system-runtime-codex-sdk have?",
+  "inputs": [
+    "sha256:5c1b7e0f3d6a2c9b8e4f1a7d0c3b6e9f2a5d8c1b4e7f0a3d6c9b2e5f8a1d4c7b"
+  ],
+  "candidates": [
+    {
+      "option": "candidate",
+      "selected": true,
+      "reasons": [
+        "its row runtime-codex-sdk is off in the composition: installed with a valid manifest, and not run"
+      ]
+    },
+    {
+      "option": "shadow",
+      "selected": false,
+      "reasons": [
+        "Base runs no plugin beside another with its results unused: shadow runs are not automated"
+      ]
+    },
+    {
+      "option": "canary",
+      "selected": false,
+      "reasons": [
+        "Base gives no plugin a share of the jobs: a canary split is not automated"
+      ]
+    },
+    {
+      "option": "default",
+      "selected": false,
+      "reasons": [
+        "not default: no row of the composition mounts it (runtime-codex-sdk off)"
+      ]
+    },
+    {
+      "option": "retired",
+      "selected": false,
+      "reasons": [
+        "not retired: the composition names it (runtime-codex-sdk)"
+      ]
+    }
+  ],
+  "decider": {
+    "type": "rule",
+    "id": "plugin-host.composition",
+    "version": "1",
+    "hash": "sha256:6ec4f88d6dceba479b6d1ccd691789bb6947870130936f6c143cd8ed40dfc033"
+  },
+  "outcome": {
+    "option": "candidate",
+    "detail": {
+      "plugin": "@tsuuanmi/system-runtime-codex-sdk",
+      "version": "0.8.0",
+      "rows": [
+        "runtime-codex-sdk"
+      ],
+      "from": "default",
+      "manifestDigest": "sha256:b60a6a34a40c324cd7fa63c6520b87d589435a1852491a2a421cc1856015ba51"
+    }
+  },
+  "deterministic": true,
+  "rationale": "The state follows from the operator's configuration (a row on, off, or gone); the host records it and automates nothing (PROP-0010)."
+}

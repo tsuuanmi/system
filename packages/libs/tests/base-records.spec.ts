@@ -211,6 +211,14 @@ describe('plugin-manifest@1.0', () => {
     const { share: _, ...lifecycle } = manifest._meta.lifecycle
     expect(valid('plugin-manifest@1.0', { ...manifest, _meta: { lifecycle: { ...lifecycle, state: 'default' } } })).toBe(true)
   })
+
+  it('plugin-manifest@1.1 adds the seams a definition package defines, refused before 1.1 (INV-14)', () => {
+    const definition = example('plugin-manifest.definition')
+    expect(valid('plugin-manifest@1.1', definition)).toBe(true)
+    expect(valid('plugin-manifest@1.0', { ...definition, schema: 'plugin-manifest@1.0' })).toBe(false)
+    expect(valid('plugin-manifest@1.1', { ...definition, defines: [] })).toBe(false)
+    expect(valid('plugin-manifest@1.1', { ...manifest, schema: 'plugin-manifest@1.1' })).toBe(true)
+  })
 })
 
 describe('minor versions of existing records', () => {
@@ -226,6 +234,13 @@ describe('minor versions of existing records', () => {
     expect(valid('decision@1.4', decision)).toBe(true)
     expect(valid('decision@1.3', { ...decision, schema: 'decision@1.3' })).toBe(false)
     expect(valid('decision@1.4', { ...example('decision.retention'), schema: 'decision@1.4' })).toBe(false)
+  })
+
+  it('decision@1.5 adds the plugin host\'s lifecycle decision, refused before 1.5 (INV-13, INV-14)', () => {
+    const decision = example('decision.lifecycle')
+    expect(valid('decision@1.5', decision)).toBe(true)
+    expect(valid('decision@1.4', { ...decision, schema: 'decision@1.4' })).toBe(false)
+    expect(valid('decision@1.5', { ...example('decision.approval-expired'), schema: 'decision@1.5' })).toBe(false)
   })
 })
 

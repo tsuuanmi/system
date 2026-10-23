@@ -1,0 +1,19 @@
+{
+  "schema": "plugin-manifest@1.1",
+  "name": "@tsuuanmi/system-plugin-host-core",
+  "version": "0.8.0",
+  "description": "Plugin host seam definition: ctx.pluginHost, every plugin of the composition with its declared manifest and its recorded lifecycle state, each change a lifecycle decision; with its conformance suite and a fake provider",
+  "class": {
+    "kind": "core",
+    "component": "plugin-host"
+  },
+  "provides": [],
+  "consumes": [],
+  "defines": [
+    {
+      "seam": "pluginHost",
+      "version": "1.0.0"
+    }
+  ],
+  "license": "UNLICENSED"
+}

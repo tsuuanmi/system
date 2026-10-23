@@ -2,11 +2,11 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:tsuuanmi:system:schema:plugin-manifest:v1",
   "title": "Plugin manifest",
-  "description": "What one plugin declares: its immutable name and former names, the seams it provides and consumes with versions, its class (a core component or a plugin family), and its configuration keys with a sensitive flag. The lifecycle state is the host's, kept apart under `_meta` as the MCP registry does; a plugin never declares it.",
+  "description": "What one plugin declares: its immutable name and former names, the seams it provides and consumes with versions, its class (a core component or a plugin family), and its configuration keys with a sensitive flag. The lifecycle state is the host's, kept apart under `_meta` as the MCP registry does; a plugin never declares it. @1.1 adds `defines`: the seams a definition package owns, at their contract versions.",
   "type": "object",
   "required": ["schema", "name", "version", "class", "provides", "consumes", "license"],
   "properties": {
-    "schema": { "const": "plugin-manifest@1.0" },
+    "schema": { "enum": ["plugin-manifest@1.0", "plugin-manifest@1.1"] },
     "name": {
       "description": "The package name. Immutable: a new name lists the old one in `renames`.",
       "type": "string",
@@ -70,6 +70,21 @@
         "additionalProperties": false
       }
     },
+    "defines": {
+      "description": "@1.1: the seams whose abstract definition this package owns (a definition package provides none), each at the contract version of the seam's conformance suite.",
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 16,
+      "items": {
+        "type": "object",
+        "required": ["seam", "version"],
+        "properties": {
+          "seam": { "$ref": "#/$defs/seam" },
+          "version": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/semver" }
+        },
+        "additionalProperties": false
+      }
+    },
     "config": {
       "description": "Its configuration keys. A sensitive one holds a secret: the host keeps it in the credential vault and never logs or shows it.",
       "type": "array",
@@ -127,6 +142,13 @@
       "additionalProperties": false
     }
   },
+  "allOf": [
+    {
+      "description": "@1.1: a manifest that names `defines` is refused before @1.1.",
+      "if": { "properties": { "defines": { "type": "array" } }, "required": ["defines"] },
+      "then": { "properties": { "schema": { "const": "plugin-manifest@1.1" } } }
+    }
+  ],
   "$defs": {
     "seam": {
       "description": "A ctx key, such as board or agentRuntimes.",

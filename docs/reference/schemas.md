@@ -61,7 +61,7 @@ guesses.
 - `decision@1.1` adds the decision type `vote`, the decider type `client`, and
   the `vote` object ([teams](../design/teams.md#the-record)). A record with any
   of them must be `@1.1` and carry `vote`; every other decision stays `@1.0`,
-  so earlier decisions keep their ids. Readers accept 1.0 through 1.4.
+  so earlier decisions keep their ids. Readers accept 1.0 through 1.5.
 - `decision@1.2` adds a review's quote checks ([teams](../design/teams.md#review)):
   - the method and the round end `blocking-finding` (decider rule
     `workflow.blocking-finding`);
@@ -103,6 +103,16 @@ guesses.
     it left.
   - `budget`: a reservation before a run. Options `reserved` and `refused`; `detail` names each
     pool, the amount, and what remained.
+- `decision@1.5` adds the decision type `lifecycle`: the state the plugin host records for one
+  plugin ([plugin host](../design/plugin-host.md#lifecycle-states)). A `lifecycle` decision must be
+  `@1.5`; every other decision keeps its version. Its candidates are the five states, `candidate`,
+  `shadow`, `canary`, `default`, `retired`, each with why; the decider is the rule
+  `plugin-host.composition`, its `hash` the sha256 of the composition as read (each row's id,
+  package, and whether it is mounted, in order). Its input is the plugin's previous lifecycle
+  decision, if any; `detail` names the `plugin`, its `version`, its `rows`, the state it comes
+  `from` (`null` the first time), `renamedFrom` when it took a former name's record, and the
+  `manifestDigest` (the sha256 of the manifest's canonical JSON; not an artifact). Example:
+  [`decision.lifecycle.json`](../../schemas/examples/decision.lifecycle.json).
 - A tally's `vote` holds one round; the team's final `vote` holds every round,
   its `method`, the `dissent`, any `revisions` and `tiebreak`, and a review's
   `findings`. `threshold` is a strict majority of every member, never of the
@@ -601,8 +611,18 @@ guesses.
   ([ADR-0036](../decisions/adr/0036-guarantee-core-and-capability-plugins.md)).
 - A `sensitive` configuration key holds a secret: the host keeps it in `ctx.credentials`, and
   the plugin's configuration holds only its reference.
+- A consumed seam's `range` is a caret range (`^1.3.0`): the plugin works with that contract
+  version and every later minor of its major.
+- `plugin-manifest@1.1` adds `defines`: the seams whose abstract definition a definition package
+  (a `*-core` package) owns, each at its conformance suite's contract. A manifest that names it
+  must be `@1.1`; every other stays `@1.0`. Example:
+  [`plugin-manifest.definition.json`](../../schemas/examples/plugin-manifest.definition.json).
 - `_meta` belongs to the host: a declared manifest that carries it is refused. Each lifecycle
-  change is recorded as a decision; Base records the state and automates nothing. Examples:
+  change is recorded as a `lifecycle` decision before the state; Base records the state the
+  composition gives a plugin and automates nothing, so it never records `shadow` or `canary`
+  ([plugin host](../design/plugin-host.md)). A host also refuses a manifest that names another
+  package than its row loads, or that is larger than 64 KiB. Each package's manifest is generated
+  from its code and checked against it (`pnpm check:manifests`). Examples:
   [`plugin-manifest.digest-provider.json`](../../schemas/examples/plugin-manifest.digest-provider.json),
   [`plugin-manifest.core.json`](../../schemas/examples/plugin-manifest.core.json).
 
