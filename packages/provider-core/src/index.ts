@@ -1,4 +1,4 @@
-export { compareWords, sameWords, type WordsComparison } from './answer-text.ts'
+export { compareWords, sameWords, splitAfterLastFence, type WordsComparison } from './answer-text.ts'
 export { type CompletedResponse, type CompletionSnapshot, type ProviderProgressEvent, type ProviderProgressKind, type WaitOptions, waitForStableCompletion } from './completion.ts'
 export { type Disposition, ProviderError, type ProviderErrorKind, abortReason, dispositionOf, toProviderError } from './errors.ts'
 export { promptOfStart } from './start.ts'

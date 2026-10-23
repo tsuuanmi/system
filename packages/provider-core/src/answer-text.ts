@@ -84,6 +84,18 @@ function replaceMarkers(text: string, replace: (marker: string, id: string) => s
 }
 
 /**
+ * Markdown cut after its last closing fence line (a line break, then ``` and only spaces or tabs),
+ * and the rest. A driver runs its fenced-block pattern on the first part only: no block ends
+ * later, and there every opening fence has a closing one after it, so a lazy `[\s\S]*?` pattern
+ * never rescans to the end from each of many unclosed fences (quadratic). It finds the same blocks.
+ */
+export function splitAfterLastFence(markdown: string): [fenced: string, rest: string] {
+  let end = 0
+  for (const m of markdown.matchAll(/\n```[ \t]*$/gm)) end = m.index + m[0].length
+  return [markdown.slice(0, end), markdown.slice(end)]
+}
+
+/**
  * Whether Markdown is the rendered answer: its prose words appear in the rendered words in order,
  * and rendering added only labels: a code block's language and its Copy button, and for each link
  * its text and a chip's count.

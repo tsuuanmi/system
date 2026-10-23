@@ -9,7 +9,7 @@
  * A bound chat is deleted from its own menu, only once it opens as itself (PROP-0004 Phase 5).
  */
 import { readFileSync } from 'node:fs'
-import { type AskOptions, type AskResult, type AuthState, bindingReporter, completionOptions, type DeleteOptions, modePresets, ProviderError, type ProviderDriver, type ProviderFeature, type ProviderMode, type ResearchState, type TurnSnapshot, waitForReport, waitForStableCompletion, withSources } from '@tsuuanmi/system-provider-core'
+import { type AskOptions, type AskResult, type AuthState, bindingReporter, completionOptions, type DeleteOptions, modePresets, ProviderError, type ProviderDriver, type ProviderFeature, type ProviderMode, type ResearchState, type TurnSnapshot, splitAfterLastFence, waitForReport, waitForStableCompletion, withSources } from '@tsuuanmi/system-provider-core'
 import { copiedMarkdown, type CopyRefusedEvent, type DriftEvent, outlineOf, preWrapText, type StallEvent, UiEngine, type UiMap, type UiOutline, loadUiMap, unverifiedEntries } from '@tsuuanmi/system-ui-ops'
 import type { Locator, Page, Route } from 'patchright-core'
 
@@ -673,7 +673,12 @@ export class GeminiWebDriver implements ProviderDriver<Page> {
   private async markdownOf(engine: UiEngine, rendered: string): Promise<string> {
     const answer = async () => (await engine.resolve('turn.assistant', 1000)).locator.last()
     return copiedMarkdown(engine, rendered, async () => (await engine.findIn('turn.assistant.done', await answer()))?.locator.last(),
-      (markdown) => markdown.replace(/^(```[^\n]*\n[\s\S]*?)\n+(```[ \t]*)$/gm, '$1\n$2').trim(), answer)
+      (markdown) => {
+        // A block's text ends at a character other than a line break, so the blank lines before
+        // its closing fence are matched one way only (a lazy text then `\n+` would try each split).
+        const [fenced, rest] = splitAfterLastFence(markdown)
+        return `${fenced.replace(/^(```[^\n]*\n(?:[\s\S]*?[^\n])??)\n+(```[ \t]*)$/gm, '$1\n$2')}${rest}`.trim()
+      }, answer)
   }
 
   private bindingOf(page: Page): string | undefined {

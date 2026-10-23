@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { compareWords, sameWords } from '../src/index.ts'
+import { compareWords, sameWords, splitAfterLastFence } from '../src/index.ts'
 
 describe('Markdown from a Copy button is kept only when it is the rendered answer (REQ-PRV-5)', () => {
   it('drops heading, list, and fence markers and link targets, and allows a code block\'s label', () => {
@@ -53,6 +53,22 @@ describe('Markdown from a Copy button is kept only when it is the rendered answe
     expect(compareWords('[a]('.repeat(n), 'a')).toMatchObject({ prose: n, links: 0 })
     expect(compareWords('!['.repeat(n), '')).toMatchObject({ prose: 0, links: 0 })
     expect(compareWords(`The answer [1].\n\n[1]: ${'!'.repeat(n)}`, 'The answer 1.')).toMatchObject({ same: true, prose: 2, links: 1 })
+    expect(performance.now() - started).toBeLessThan(1000)
+  })
+})
+
+describe('fenced code blocks of a Copy (REQ-PRV-5)', () => {
+  it('cuts Markdown after its last closing fence line, which no block can end beyond', () => {
+    expect(splitAfterLastFence('Intro\n```js\nx\n```  \nMore\n```py\nopen')).toEqual(['Intro\n```js\nx\n```  ', '\nMore\n```py\nopen'])
+    expect(splitAfterLastFence('No fences.')).toEqual(['', 'No fences.'])
+  })
+
+  it('lets a lazy block pattern pass many unclosed fences in linear time (no polynomial backtracking)', () => {
+    const markdown = `\`\`\`js\nx\n\`\`\`\n${'```a\n'.repeat(100_000)}`
+    const started = performance.now()
+    const [fenced, rest] = splitAfterLastFence(markdown)
+    expect([...fenced.matchAll(/^(```[^\n]*)\n([\s\S]*?)\n```[ \t]*$/gm)].map((m) => m[2])).toEqual(['x'])
+    expect(fenced + rest).toBe(markdown)
     expect(performance.now() - started).toBeLessThan(1000)
   })
 })

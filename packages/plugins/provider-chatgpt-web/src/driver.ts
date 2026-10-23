@@ -8,7 +8,7 @@
  *   marker and stable text (the event stream stays open, so it is never consulted).
  */
 import { readFileSync } from 'node:fs'
-import { type AskOptions, type AskResult, type AuthState, bindingReporter, completionOptions, type ConversationMode, type DeleteOptions, modePresets, ProviderError, type ProviderDriver, type ProviderFeature, type ProviderMode, type ResearchState, type TurnSnapshot, waitForReport, waitForStableCompletion, withMissingSources } from '@tsuuanmi/system-provider-core'
+import { type AskOptions, type AskResult, type AuthState, bindingReporter, completionOptions, type ConversationMode, type DeleteOptions, modePresets, ProviderError, type ProviderDriver, type ProviderFeature, type ProviderMode, type ResearchState, type TurnSnapshot, splitAfterLastFence, waitForReport, waitForStableCompletion, withMissingSources } from '@tsuuanmi/system-provider-core'
 import { copiedMarkdown, type CopyRefusedEvent, type DriftEvent, type HealEvent, linksIn, outlineOf, preWrapText, type StallEvent, UiEngine, type UiMap, type UiOutline, loadUiMap, unverifiedEntries } from '@tsuuanmi/system-ui-ops'
 import type { Frame, Locator, Page, Route } from 'patchright-core'
 
@@ -781,7 +781,8 @@ export class ChatGptWebDriver implements ProviderDriver<Page> {
     return copiedMarkdown(engine, rendered, async () => (await engine.resolve('turn.assistant.done', 1000)).locator.last(), async (markdown) => {
       // Copy rebuilds code blocks from the page and loses their line breaks: take each block's
       // text from its rendered element instead, or keep the rendered answer if they do not pair.
-      const fences = [...markdown.matchAll(/^(```[^\n]*)\n([\s\S]*?)\n```[ \t]*$/gm)]
+      const [fenced, rest] = splitAfterLastFence(markdown)
+      const fences = [...fenced.matchAll(/^(```[^\n]*)\n([\s\S]*?)\n```[ \t]*$/gm)]
       if (!fences.length) return markdown.trim()
       const answer = (await engine.resolve('turn.assistant', 1000)).locator.last().locator('xpath=..')
       const code = await engine.findIn('answer.code', answer)
@@ -791,7 +792,7 @@ export class ChatGptWebDriver implements ProviderDriver<Page> {
       })) : []
       if (blocks.length !== fences.length) return rendered
       let index = 0
-      return markdown.replace(/^(```[^\n]*)\n([\s\S]*?)\n```[ \t]*$/gm, (_, open: string) => `${open}\n${blocks[index++]}\n\`\`\``).trim()
+      return `${fenced.replace(/^(```[^\n]*)\n([\s\S]*?)\n```[ \t]*$/gm, (_, open: string) => `${open}\n${blocks[index++]}\n\`\`\``)}${rest}`.trim()
     }, async () => (await engine.resolve('turn.assistant', 1000)).locator.last().locator('xpath=..'))
   }
 
