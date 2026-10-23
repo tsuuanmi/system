@@ -428,6 +428,8 @@
   vendored binaries. CI fails on any high or critical advisory in a production
   dependency (`pnpm audit:deps`, daily as well), scans every tracked file for
   credentials with the scan `egress` uses (`pnpm check:secrets`), and runs CodeQL.
+  An advisory in a dependency of a dependency is lifted by an override, within every
+  dependent's declared range ([overrides](../engineering/dependencies.md#overrides)).
   The clean `pnpm audit` that
   [production readiness](../requirements/release-scope.md#operational-readiness)
   requires is a [release check](../validation/release-checklist.md). Third-party Actions

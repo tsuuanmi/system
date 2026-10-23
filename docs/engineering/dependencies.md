@@ -93,6 +93,33 @@ operator signs it off.
   credentials; that the SDK's feedback collection is acceptable for the runs' content;
   and that the agreements page still says the above for the release.
 
+## Overrides
+
+The `overrides` of `pnpm-workspace.yaml` lift a dependency, wherever it is in the tree, to the
+release that fixes an advisory, and only within every dependent's declared range (each dependent's own
+`package.json`, read when the override is added): a caret range on the patched release, never an
+open `>=`, so the next major is never taken. A patch outside a dependent's range is not forced: the
+advisory is listed below and waits for that dependent's release. An override goes once every
+dependent's own range excludes the vulnerable versions. The audit gate is
+[`pnpm audit:deps`](testing.md) (no high or critical advisory in a production dependency).
+
+| Package | Override | Advisory | Reached through | Dependents' ranges |
+|---|---|---|---|---|
+| `body-parser` | `^2.4.0` (2.4.0) | [GHSA-27r3-jxmh-p828](https://github.com/advisories/GHSA-27r3-jxmh-p828), high: a denial of service by trailing bytes after a compressed request body, 2.0.0 to 2.3.x | `express` 5.3.0, under `@modelcontextprotocol/sdk` (`mcp-server`, `cli`, the Claude Agent SDK, DSH's `pi-ai` through `@google/genai`) and its `express-rate-limit` | `express` `^2.3.0` |
+| `zod` | `^4.6.6` (4.6.7) | [GHSA-mrhx-c7xc-m3w5](https://github.com/advisories/GHSA-mrhx-c7xc-m3w5), high: memory exhausted validating an oversized constrained collection, below 4.6.6 | `system`'s own MCP tool schemas, `@modelcontextprotocol/sdk` and its `zod-to-json-schema`, DSH packages, the agent and model SDKs | `^4.1.0` (`system`'s packages), `^4.4.3` (DSH), `^4.2.0`, `^4.0.0`, `^3.25 \|\| ^4.0`, `^3.25.0 \|\| ^4.0.0`, `^3.25.28 \|\| ^4` |
+| `ip-address` | `^10.7.4` (10.7.4) | [GHSA-rxp7-6hxx-x8q5](https://github.com/advisories/GHSA-rxp7-6hxx-x8q5), moderate: a zone identifier matched in quadratic time, up to 10.7.3. Below the gate; lifted by the operator's decision (D28, option 1) | `express-rate-limit` 8.7.1, under `@modelcontextprotocol/sdk` (its OAuth server handlers, which `mcp-server` does not import) | `express-rate-limit` `^10.2.0` |
+| `fflate` | `>=0.8.3` (0.8.3) | moderate: an endless loop on a malformed ZIP64 archive, below 0.8.3 | DSH's office and session-export packages, none of them a mounted row | `^0.8.2` (`dsh-session-log-export`), `0.8.2` exactly (`libreoffice-kit`). Set by an earlier change, before this rule: it forces 0.8.3 onto that exact pin and is an open `>=`. Kept as it was |
+
+Not forced:
+
+- `@modelcontextprotocol/client` 2.2.0,
+  [GHSA-6prh-2h8m-c8cw](https://github.com/advisories/GHSA-6prh-2h8m-c8cw), moderate: its HTTP
+  transports and OAuth requests followed cross-origin redirects with the custom headers and body,
+  fixed in 2.3.0. DSH's `dsh-mcp-client` (through the `dsh` launcher) pins `2.2.0` exactly, so the
+  patch is outside its range; no row `system` mounts loads it
+  ([reuse map](../architecture/plugin-model.md#dsh-core-reuse-map)). It waits for a DSH release
+  that moves the pin.
+
 ## Built, with what was compared
 
 Each of these is built because nothing fits; the comparison is the reason.

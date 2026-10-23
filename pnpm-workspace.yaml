@@ -28,6 +28,10 @@ ignoredOptionalDependencies:
   - '@openai/codex-darwin-arm64'
   - '@openai/codex-win32-x64'
   - '@openai/codex-win32-arm64'
-# fflate < 0.8.3 can loop forever on a malformed ZIP64 archive (GHSA, via DSH office packages).
+# Each override lifts a dependency to its patched release within every dependent's
+# declared range; why, and what is not forced, is in docs/engineering/dependencies.md#overrides.
 overrides:
+  body-parser: ^2.4.0
   fflate: '>=0.8.3'
+  ip-address: ^10.7.4
+  zod: ^4.6.6
