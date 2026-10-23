@@ -29,6 +29,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import { canonicalJson } from '../packages/libs/src/index.ts'
 import { MANIFEST_FILE, type PluginManifest, readManifest, satisfies } from '../packages/plugin-host-core/src/index.ts'
 import { HOST_SERVICES, type Pkg, scan } from './gen-packages.ts'
+import { pluginConfigs, type Schema } from './gen-reference.ts'
 
 export { satisfies }
 
@@ -52,34 +53,26 @@ export interface CodeFacts {
   workerClasses: Readonly<Record<string, readonly Classification[]>>
 }
 
-/** The part of a Schemastery schema the generator reads. */
-export interface SchemaNode { type?: string; dict?: Record<string, SchemaNode>; inner?: SchemaNode; list?: SchemaNode[]; meta?: { role?: string } }
-
 /** Whether a schema, or any schema within it, is marked a secret (`.role('secret')`). */
-function secret(node: SchemaNode | undefined, depth = 0): boolean {
+function secret(node: Schema | undefined, depth = 0): boolean {
   if (!node || depth > 16) return false
   if (node.meta?.role === 'secret') return true
   return [...Object.values(node.dict ?? {}), ...(node.inner ? [node.inner] : []), ...(node.list ?? [])].some((child) => secret(child, depth + 1))
 }
 
 /** The keys of an object `Config` schema, in its order, each sensitive when it or a schema within it is marked a secret. */
-export const configKeys = (schema: SchemaNode): ConfigKey[] => Object.entries(schema.dict ?? {}).map(([key, node]) => ({ key, sensitive: secret(node) }))
+export const configKeys = (schema: Schema): ConfigKey[] => Object.entries(schema.dict ?? {}).map(([key, node]) => ({ key, sensitive: secret(node) }))
 
 /**
- * Read from the code what only running it tells: each plugin's `Config` (its entry module, the
- * default export's `Config` or a `Config` export), and the egress plugin's default policy. The
- * workspace resolves from source, by the root tsconfig's paths, so nothing needs building first.
+ * Read from the code what only running it tells: each plugin's `Config` (as the configuration
+ * catalog reads it, `pluginConfigs`), and the egress plugin's default policy.
  */
-export async function codeFacts(pkgs: readonly Pkg[] = scan()): Promise<CodeFacts> {
+export async function codeFacts(): Promise<CodeFacts> {
   const configs = new Map<string, ConfigKey[]>()
-  for (const p of pkgs.filter((x) => x.path && x.plugin)) {
-    const entry = join(root, p.path, 'src', 'index.ts')
-    if (!existsSync(entry)) continue
-    const mod = await import(pathToFileURL(entry).href) as { default?: { Config?: SchemaNode }; Config?: SchemaNode }
-    const schema = mod.default?.Config ?? mod.Config
+  for (const [dir, schema] of await pluginConfigs()) {
     if (!schema) continue
-    if (schema.type !== 'object' || !schema.dict) throw new Error(`gen-manifests: ${p.path}: its Config is not an object schema, so its keys cannot be told`)
-    configs.set(p.dir, configKeys(schema))
+    if (schema.type !== 'object' || !schema.dict) throw new Error(`gen-manifests: packages/plugins/${dir}: its Config is not an object schema, so its keys cannot be told`)
+    configs.set(dir, configKeys(schema))
   }
   const egress = await import(pathToFileURL(join(root, 'packages', 'plugins', 'egress', 'src', 'index.ts')).href) as { WORKER_CLASSES: Record<string, Classification[]> }
   return { configs, workerClasses: egress.WORKER_CLASSES }
@@ -441,7 +434,7 @@ export function checkAll(derived: Derived[], pkgs: readonly Pkg[] = scan(), bund
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
   const pkgs = scan()
-  const derived = derive(await codeFacts(pkgs), pkgs)
+  const derived = derive(await codeFacts(), pkgs)
   if (process.argv.includes('--check')) {
     const problems = checkAll(derived, pkgs)
     for (const p of problems) console.error(p)
