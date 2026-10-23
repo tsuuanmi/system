@@ -449,7 +449,8 @@ Worker it leaves (`from`) and that nothing was sent. The Workers left out are ke
 row (`excluded`), so a restart keeps them; `continue` clears them. The router records each as the
 `excluded` check. With no Worker left but those, the node routes as before: an overload waits its
 back-off and retries there, while an account that hit a limit or needs the operator is refused
-by its own state or cooldown, and the node fails with that kind. A node never fails over:
+by its own state or cooldown, and the node fails with that kind (or, on an assigned account,
+[waits for the limit](#waiting-for-an-accounts-limit)). A node never fails over:
 
 - once its prompt may have been sent: reconciliation and the dispositions above apply (INV-4);
 - when its session holds an account: a turn of it was sent, or it has a conversation (a session
@@ -457,6 +458,42 @@ by its own state or cooldown, and the node fails with that kind. A node never fa
 - as a team member, which joins its team bound to the Worker of its first admission (Model A).
 
 A bare `ask` outside a run has no recovery and fails as before.
+
+This failover applies to a Worker whose account is `pooled`, or that declares none. For an
+`assigned` account it is narrowed, below.
+
+### Waiting for an account's limit
+
+> Decision: [ADR-0052](../decisions/adr/0052-accounts-are-assigned-unless-pooling-is-recorded.md)
+> (proposed). Contract 1.4 of the `workflow` seam.
+
+When a Worker declares an `assigned` account ([assigned accounts](routing.md#assigned-accounts)),
+a limit makes the account's work wait; it never moves to another account of its provider group.
+
+- **Wait.** A node whose routing is refused with a `limitUntil` (every Worker that could take it
+  but for its limit is on an assigned account, and a reset is known) is not failed. The `recovery`
+  decision (`decision@1.8`) chooses `wait`, its input the admission decision, `detail` naming
+  `until`, `since`, and the attempt (unchanged). The node stays `READY` with `not_before` the
+  reset, kept on its row, so a restart waits on ([INV-4](../architecture/invariants.md#inv-4-restart-is-reconciliation-not-replay));
+  then it routes again, as a node backing off does. A wait sends nothing and spends no attempt. The
+  run's view shows the node's `waitingUntil`, and the event log `workflow.node.waiting`.
+- **Bounded** ([INV-9](../architecture/invariants.md#inv-9-everything-is-bounded)): the node's first
+  wait is kept on its row (`limit_wait_since`); a wait whose reset lies more than
+  `maxLimitWaitHours` (default 24) after it, or a refusal with no known reset, fails the node
+  `quota_exhausted` as before, its error saying why it does not wait, and the operator decides.
+  `continue` clears it. `maxLimitWaitHours: 0` never waits.
+- **No failover inside the group.** The engine keeps the account an attempt was routed to on the
+  node row (`account`). After an unsent `quota_exhausted`, `challenge`, or `reauth_required` on an
+  assigned account, the next attempt fails over as above, and also keeps the node on that account
+  within its group (`assignment` on the row, passed to the router as `RouteOptions.assignment`
+  on every later route): a Worker of another group may take it; another account of its own group
+  may not. With none left but its own account, a limit waits for its reset, and a challenge or
+  sign-out fails for the operator (`USER_ACTION`), as before ADR-0034. An unsent `overloaded` is
+  retried with its back-off, never as a failover, under the same rule. The `recovery` decision's
+  `detail` names the `assignment`; `continue` clears it.
+- With one account per provider, as on the live host, nothing is moved anyway, and every route
+  chooses as before; what changes is that a known limit waits instead of failing.
+- A waiting node holds its run open: it counts toward `maxActiveRuns`, and a drain waits for it.
 
 ### A deferred tool call
 

@@ -419,9 +419,21 @@ second execution path (INV-1).
     check), within `maxAttempts`, at once (an overload after its back-off). With
     no other Worker it routes as before. A node whose session holds an account,
     or a team member, never moves. `continue` clears the exclusions.
-  - Each choice is a `recovery` decision (`retry`, `failover`, or `fail`). It
-    becomes the node's `lastDecision`, and the `retry` (with `failoverFrom`) or
-    `failed` event names it.
+  - **Assigned accounts (ADR-0052,
+    [design](../../../docs/design/workflow-engine.md#waiting-for-an-accounts-limit)).**
+    The account an attempt was routed to is kept on the node row (`account`).
+    A node refused only because the assigned accounts that could take it are at
+    their limit (the router's `limitUntil`) waits for the earliest reset:
+    `READY`, `not_before` the reset, nothing sent, no attempt spent, its first
+    wait kept (`limit_wait_since`) and bounded by `maxLimitWaitHours` (default
+    24; past it, or with no known reset, it fails `quota_exhausted` as before).
+    After an unsent failure on an assigned account, no other account of its group
+    takes the node (`assignment` on the row, `RouteOptions.assignment` on every
+    later route); an unsent overload there is retried, never failed over.
+    `continue` clears both. The view shows a waiting node's `waitingUntil`.
+  - Each choice is a `recovery` decision (`retry`, `failover`, `wait`, or
+    `fail`). It becomes the node's `lastDecision`, and the `retry` (with
+    `failoverFrom`), `waiting`, or `failed` event names it.
 - **Ownership and restart (REQ-WF-4).**
   - A run advances under a `run:<id>` lease, and every node write is fenced.
   - A lost lease (a host that slept past it, or a takeover) re-arms the run,
@@ -517,7 +529,7 @@ second execution path (INV-1).
   daily, except a session's latest run, and then `ctx.artifacts.collect()` takes
   what only expired runs needed.
 - **Conformance.** The seam's suite is [`conformance/workflow.ts`](conformance/workflow.ts),
-  run through the [conformance runner](../../libs/conformance/runner.ts) at contract 1.3 by
+  run through the [conformance runner](../../libs/conformance/runner.ts) at contract 1.4 by
   `tests/conformance.spec.ts`, against this engine and the real plugins it injects (the
   store-backed board and approval queue among them), with only Worker execution scripted:
   - valid `workflow-node@1.x` records; a node completes only with its input receipt, its
@@ -532,6 +544,11 @@ second execution path (INV-1).
     pointing at its dependencies' results and never carrying them, which renders to the
     template's prompt; a board task's brief from the task; a task's next attempt resuming the
     session before it when its Worker can, fresh otherwise;
+  - since 1.4 (ADR-0052), under assigned accounts: a node refused only for an account's limit
+    waits for its reset, a `wait` decision, kept across a restart, spending no attempt, then runs
+    on it; a reset past `maxLimitWaitHours` fails it; an unsent challenge moves only to another
+    group, never to another account of its own, and fails with none; an unsent overload retries
+    on its account; under pooled, the failover to another account of the group stands;
   - admission that fails closed and stays within `maxActiveRuns`; a node no Worker is
     admitted for fails with nothing sent;
   - bounded retries of unsent failures, a sent one never resent, and bounded escalation;

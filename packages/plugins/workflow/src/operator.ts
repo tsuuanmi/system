@@ -66,7 +66,7 @@ export function continueRun(e: Engine, runId: string, nodeId?: string): RunView 
       // promoted again, so it decides afresh (a tie blocks again, with a new deadline).
       const ready = recordExecutor(spec) === 'worker' && record.inputReceipt !== undefined
       // A remediation gate reopened asks the queue again: its old request was resolved, or is withdrawn.
-      e.writeNode(node, { state: ready ? 'READY' : 'WAITING', execution_id: null, worker: null, not_before: null, error: null, excluded: null, approval_request: null }, (r) => {
+      e.writeNode(node, { state: ready ? 'READY' : 'WAITING', execution_id: null, worker: null, not_before: null, error: null, excluded: null, approval_request: null, assignment: null, limit_wait_since: null }, (r) => {
         const next: NodeRecord = { ...r, lastDecision: decision }
         delete next.execution
         return next

@@ -194,6 +194,12 @@ export const TEMPLATES: Record<string, NodeTemplate[]> = {
   kept: [step('kept', { conversation: 'persistent' })],
 }
 
+/** What the accounts scenarios' Workers prove: the `needy` template's capabilities, which no Worker of {@link WORKERS} proves. */
+const RESEARCH = ['reason', 'deep-research']
+/** A Worker's account (since 1.4, ADR-0052): opaque id and group, assigned unless said otherwise. */
+const ACCOUNT = (id: string, group: string, mode: 'assigned' | 'pooled' = 'assigned') =>
+  ({ schema: 'capability-descriptor@1.5' as const, family: group, account: { id, group, mode } })
+
 /** A Worker that keeps conversations (`persistent-conversation`), for the scenarios that resume one. */
 export const KEEPER: CapabilityDescriptor = worker('w:keeper', { tier: 'standard', proves: [...PROVES, 'persistent-conversation'] })
 
@@ -350,8 +356,10 @@ export const workflowSuite = defineSuite<Boot>({
   // 1.1: every execution names the run it belongs to (`WorkerStart.runId`). 1.2: a run serves one
   // attempt of a board task (`start` with `task`), through `ctx.board` only. 1.3: every execution
   // is started with a brief recorded before it (`WorkerStart.brief`), and a task's next attempt
-  // resumes the session of the one before it when its Worker can.
-  contract: '1.3',
+  // resumes the session of the one before it when its Worker can. 1.4: under assigned accounts, a
+  // node refused only for their limits waits for the reset (recovery `wait`), and an unsent failure
+  // never moves to another account of its group (ADR-0052).
+  contract: '1.4',
   scenarios: [
     scenario('node-records', 'keeps every node record valid against workflow-node@1.x with a rising revision, and completes a node only with its input receipt, an output receipt binding its Worker\'s result, and the acceptance decision that accepted it (INV-14, INV-13, INV-3)', async ({ ctx, workers }) => {
       workers.reply = () => 'hold'
@@ -799,5 +807,95 @@ export const workflowSuite = defineSuite<Boot>({
       workers.reply = () => ({ text: 'admitted again' })
       expect(await settled(ctx, start(ctx, 'solo', 'after').runId)).toMatchObject({ status: 'completed', answer: 'admitted again' })
     }),
+
+    scenario('limit-wait', 'waits, without spending an attempt or sending anything, for the reset of an assigned account at its limit when only it could take the node, as a recovery decision wait kept across a restart, then runs on it (REQ-WRK-8, REQ-ACC-10, ADR-0052, INV-4, INV-13)', async (h) => {
+      const reset = new Date(Date.now() + 3000).toISOString()
+      h.workers.extra = [
+        worker('w:g-a', { ...ACCOUNT('a', 'g'), proves: RESEARCH, cooldowns: [{ capability: 'deep-research', until: reset }] }),
+        worker('w:g-b', { ...ACCOUNT('b', 'g'), proves: RESEARCH }),
+      ]
+      const run = start(h.ctx, 'needy', 'q')
+      await until(() => nodeOf(h.ctx, run.runId, 'needy')?.waitingUntil === reset, 'the node waits for the reset')
+      expect(h.workers.started).toHaveLength(0)
+      const waiting = recordOf(h.ctx, run.runId, 'needy')
+      const wait = decisionOf(h.ctx, waiting.lastDecision)
+      expect(wait).toMatchObject({ decisionType: 'recovery', outcome: { option: 'wait', detail: { kind: 'quota_exhausted', attempt: 0, until: reset } } })
+      expect(wait.candidates.filter((c) => !c.selected).map((c) => c.option).sort()).toEqual(['fail', 'failover', 'retry'])
+      // The admission decision it waited on held the other account of the group out, saying why.
+      const admission = decisionOf(h.ctx, wait.inputs[0])
+      expect(admission.candidates.find((c) => c.option === 'w:g-b')!.reasons.join(' ')).toMatch(/w:g-a is at its limit/)
+      expect(nodeOf(h.ctx, run.runId, 'needy')).toMatchObject({ state: 'READY', attempt: 0 })
+      // A restart keeps waiting: the reset is on the node's row.
+      await h.restart()
+      expect(nodeOf(h.ctx, run.runId, 'needy')?.waitingUntil).toBe(reset)
+      const done = await settled(h.ctx, run.runId)
+      expect(done).toMatchObject({ status: 'completed', nodes: [{ nodeId: 'needy', attempt: 1 }] })
+      expect(h.workers.started.map((s) => s.worker)).toEqual(['w:g-a'])
+      expect(Date.now()).toBeGreaterThanOrEqual(Date.parse(reset))
+    }, {}, '1.4'),
+
+    scenario('limit-wait-bounded', 'fails a node whose assigned account\'s reset lies past maxLimitWaitHours, as quota_exhausted, saying why it does not wait, and sends nothing (ADR-0052, INV-9)', async ({ ctx, workers }) => {
+      const reset = new Date(Date.now() + 48 * 3_600_000).toISOString()
+      workers.extra = [worker('w:g-a', { ...ACCOUNT('a', 'g'), proves: RESEARCH, cooldowns: [{ capability: 'deep-research', until: reset }] })]
+      const done = await settled(ctx, start(ctx, 'needy', 'q').runId)
+      expect(done).toMatchObject({ status: 'failed', nodes: [{ state: 'FAILED', error: { kind: 'quota_exhausted' } }] })
+      expect(done.nodes[0]!.error!.message).toMatch(/does not wait: waiting until .* would pass maxLimitWaitHours \(24\)/)
+      expect(decisionsOf(ctx, done.runId, 'recovery').map((d) => d.outcome.option)).toEqual(['fail'])
+      expect(workers.started).toHaveLength(0)
+    }, {}, '1.4'),
+
+    scenario('assigned-failover', 'moves an unsent challenge on an assigned account only to another group, never to another account of its own; with none, it fails for the operator (ADR-0052)', async ({ ctx, workers }) => {
+      const failOnce = new Set<string>(['w:g-a'])
+      workers.reply = (request) => {
+        if (!failOnce.delete(request.worker)) return { text: `answer from ${request.worker}` }
+        // The challenge takes the account out until the operator acts.
+        workers.extra = workers.extra.map((w) => (w.worker === request.worker ? { ...w, state: 'unavailable' as const } : w))
+        return { fail: 'challenge', disposition: 'USER_ACTION', sent: false }
+      }
+      workers.extra = [
+        worker('w:g-a', { ...ACCOUNT('a', 'g'), proves: RESEARCH }),
+        worker('w:g-b', { ...ACCOUNT('b', 'g'), proves: RESEARCH }),
+        worker('w:h-c', { ...ACCOUNT('c', 'h'), proves: RESEARCH, tier: 'frontier' }),
+      ]
+      const moved = await settled(ctx, start(ctx, 'needy', 'one').runId)
+      expect(moved).toMatchObject({ status: 'completed', answer: 'answer from w:h-c' })
+      expect(workers.started.map((s) => s.worker)).toEqual(['w:g-a', 'w:h-c'])
+      const failover = decisionsOf(ctx, moved.runId, 'recovery')[0]!
+      expect(failover).toMatchObject({ outcome: { option: 'failover', detail: { from: 'w:g-a', assignment: { group: 'g', account: 'a' } } } })
+      // With no other group, it does not move to the other account of its group.
+      failOnce.add('w:g-a')
+      workers.extra = workers.extra.filter((w) => w.worker !== 'w:h-c').map((w) => ({ ...w, state: 'ready' as const }))
+      const stuck = await settled(ctx, start(ctx, 'needy', 'two').runId)
+      expect(stuck).toMatchObject({ status: 'failed', nodes: [{ state: 'FAILED', error: { kind: 'reauth_required' } }] })
+      expect(workers.started.map((s) => s.worker)).toEqual(['w:g-a', 'w:h-c', 'w:g-a'])
+      expect(stuck.nodes[0]!.error!.message).toMatch(/w:g-b: .*failed on its assigned account a before anything was sent/)
+    }, {}, '1.4'),
+
+    scenario('assigned-overload', 'retries an unsent overload on an assigned account on that account with back-off, never on another account of its group (ADR-0052)', async ({ ctx, workers }) => {
+      let overloaded = true
+      workers.reply = (request) => {
+        if (request.worker !== 'w:g-a' || !overloaded) return { text: `answer from ${request.worker}` }
+        overloaded = false
+        return { fail: 'overloaded', disposition: 'BACKOFF', sent: false }
+      }
+      workers.extra = [worker('w:g-a', { ...ACCOUNT('a', 'g'), proves: RESEARCH }), worker('w:g-b', { ...ACCOUNT('b', 'g'), proves: RESEARCH, tier: 'frontier' })]
+      const done = await settled(ctx, start(ctx, 'needy', 'q').runId)
+      expect(done).toMatchObject({ status: 'completed', answer: 'answer from w:g-a' })
+      expect(workers.started.map((s) => s.worker)).toEqual(['w:g-a', 'w:g-a'])
+      expect(decisionsOf(ctx, done.runId, 'recovery').map((d) => d.outcome.option)).toEqual(['retry'])
+    }, {}, '1.4'),
+
+    scenario('pooled-failover', 'moves an unsent challenge on a pooled account to another account of its group, as ADR-0034 (ADR-0052)', async ({ ctx, workers }) => {
+      let challenged = false
+      workers.reply = (request) => {
+        if (request.worker !== 'w:g-a' || challenged) return { text: `answer from ${request.worker}` }
+        challenged = true
+        return { fail: 'challenge', disposition: 'USER_ACTION', sent: false }
+      }
+      workers.extra = [worker('w:g-a', { ...ACCOUNT('a', 'g', 'pooled'), proves: RESEARCH }), worker('w:g-b', { ...ACCOUNT('b', 'g', 'pooled'), proves: RESEARCH })]
+      const done = await settled(ctx, start(ctx, 'needy', 'q').runId)
+      expect(done).toMatchObject({ status: 'completed', answer: 'answer from w:g-b' })
+      expect(workers.started.map((s) => s.worker)).toEqual(['w:g-a', 'w:g-b'])
+    }, {}, '1.4'),
   ],
 })
