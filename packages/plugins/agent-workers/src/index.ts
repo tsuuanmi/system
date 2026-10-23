@@ -979,6 +979,9 @@ export class AgentWorkers extends Service {
         }
         const worker = this.workers.get(row.worker)
         if (!worker) throw new ProviderError('config_error', `${row.worker} is no longer configured`)
+        // A derived Worker's account that is not ready takes nothing, whatever the run would send (REQ-ACC-11).
+        const account = worker.derived ? this.agentAccounts.accountGate(worker.derived.accountId) : undefined
+        if (account?.state === 'unavailable') throw new ProviderError('config_error', `${row.worker}: ${account.why}; nothing was run`)
         // What the agent is sent: its prompt, or a review member's conversation replayed before it (ADR-0049).
         const turn = await this.turnOf(row, worker, current)
         // INV-12: the prompt reaches the agent's remote model, so it is checked before anything starts,
