@@ -346,32 +346,69 @@ describe('classify: a tool call as the action the policy judges', () => {
 })
 
 describe('a Claude Code Worker under the bundle\'s default policy, end to end (docs/design/approvals.md#a-workers-tool-calls)', () => {
-  it('reads and writes inside its workspace through the runtime\'s PreToolUse hook, and its pre-approvals still bind it there', async () => {
-    const outputs: Array<Record<string, unknown>> = []
-    const optionsSeen: Array<Record<string, unknown>> = []
-    type Hook = (input: Record<string, unknown>, id: string, options: { signal: AbortSignal }) => Promise<Record<string, unknown>>
-    // The SDK's stream as a scripted Claude Code makes it: each tool call through the hooks the run registered.
+  type Hook = (input: Record<string, unknown>, id: string, options: { signal: AbortSignal }) => Promise<Record<string, unknown>>
+  const home = mkdtempSync(join(tmpdir(), 'system-gate-claude-home-'))
+  afterAll(() => rmSync(home, { recursive: true, force: true }))
+
+  /**
+   * Claude Code on a host where both of its confinements are proven (ADR-0038), its SDK stream
+   * scripted: each tool call goes through the hooks the run registered, and a defer ends the run.
+   */
+  function claude(calls: ReadonlyArray<readonly [string, Record<string, unknown>]>, outputs: Array<Record<string, unknown>>, optionsSeen: Array<Record<string, unknown>>): ClaudeAgentRuntime {
     const query = ((params: { prompt: string; options: Record<string, unknown> }) => {
       optionsSeen.push(params.options)
       const hooks = (params.options.hooks as { PreToolUse: Array<{ hooks: Hook[] }> }).PreToolUse
       return (async function* () {
         yield { type: 'system', subtype: 'init', session_id: 'h-claude', model: 'model-main' }
-        const calls = [['Read', { file_path: 'src/a.ts' }], ['Grep', { pattern: 'x' }], ['Write', { file_path: 'src/b.ts', content: 'x' }], ['Edit', { file_path: 'src/b.ts', old_string: 'x', new_string: 'y' }]] as const
+        let deferred = false
         for (const [i, [tool, input]] of calls.entries()) {
-          outputs.push(await hooks[0]!.hooks[0]!({ hook_event_name: 'PreToolUse', session_id: 'h-claude', transcript_path: '/t', cwd: WORKSPACE, tool_name: tool, tool_input: input, tool_use_id: `toolu_${i}` }, `toolu_${i}`, { signal: new AbortController().signal }))
+          const output = await hooks[0]!.hooks[0]!({ hook_event_name: 'PreToolUse', session_id: 'h-claude', transcript_path: '/t', cwd: WORKSPACE, tool_name: tool, tool_input: input, tool_use_id: `toolu_${i}` }, `toolu_${i}`, { signal: new AbortController().signal })
+          outputs.push(output)
+          if ((output.hookSpecificOutput as { permissionDecision?: string } | undefined)?.permissionDecision === 'defer') {
+            deferred = true
+            break
+          }
         }
-        yield { type: 'result', subtype: 'success', is_error: false, result: 'changed b.ts', session_id: 'h-claude', uuid: 'r-1', num_turns: 3, total_cost_usd: 0.01, usage: { input_tokens: 1, output_tokens: 1 }, modelUsage: {}, terminal_reason: 'completed' }
+        yield {
+          type: 'result', subtype: 'success', is_error: false, result: deferred ? '' : 'changed b.ts', session_id: 'h-claude', uuid: 'r-1', num_turns: 3, total_cost_usd: 0.01, usage: { input_tokens: 1, output_tokens: 1 }, modelUsage: {},
+          terminal_reason: deferred ? 'tool_deferred' : 'completed',
+        }
       })()
     }) as unknown as QueryFn
-    const claude = new ClaudeAgentRuntime({ query, executable: '/usr/bin/claude', findExecutable: () => undefined, version: async () => '2.1.300' })
-    const { ctx, run } = await boot(claude, bundlePolicies()[0]!)
+    return new ClaudeAgentRuntime({
+      query, executable: '/usr/bin/claude', findExecutable: () => undefined, version: async () => '2.1.300', home,
+      confine: (bind) => ({ bwrap: '/usr/bin/bwrap', hide: [], readOnly: [...(bind.readOnly ?? [])], writable: [...(bind.writable ?? [])] }),
+      prove: async () => ({ confined: true, detail: 'host state hidden' }), nested: async () => '', status: async () => '{"loggedIn": true}',
+    })
+  }
+
+  it('reads and writes inside its workspace through the runtime\'s PreToolUse hook, and its pre-approvals still bind it there', async () => {
+    const outputs: Array<Record<string, unknown>> = []
+    const optionsSeen: Array<Record<string, unknown>> = []
+    const calls = [['Read', { file_path: 'src/a.ts' }], ['Grep', { pattern: 'x' }], ['Write', { file_path: 'src/b.ts', content: 'x' }], ['Edit', { file_path: 'src/b.ts', old_string: 'x', new_string: 'y' }]] as const
+    const { ctx, run } = await boot(claude(calls, outputs, optionsSeen), bundlePolicies()[0]!)
     const done = await run()
     expect(done.status).toBe('completed')
     expect(ctx.artifacts.get(done.result!)!.body).toMatchObject({ runtime: 'claude-agent-sdk', text: 'changed b.ts' })
     // Every call allowed: no hook decision, so the workspace-scoped pre-approvals decide.
     expect(outputs).toEqual([{}, {}, {}, {}])
-    expect(optionsSeen[0]).toMatchObject({ permissionMode: 'dontAsk', allowedTools: ['Read(./**)', 'Grep(./**)', 'Glob(./**)', 'Edit(./**)', 'Write(./**)'] })
+    expect(optionsSeen[0]).toMatchObject({ permissionMode: 'dontAsk', allowedTools: ['Read(./**)', 'Grep(./**)', 'Glob(./**)', 'Edit(./**)', 'Write(./**)', 'Bash'] })
     expect(ctx.eventLog.query({ type: 'agent-workers.tool.checks-pending' })).toEqual([expect.objectContaining({ data: expect.objectContaining({ pendingChecks: ['tests', 'lint'] }) })])
     expect(await ctx.approvals.list()).toEqual([])
+  })
+
+  it('passes each Bash command through the gate by its exact argv: a shell metacharacter is forbidden, a plain command waits for the operator; the sandbox only bounds where it acts (ADR-0038)', async () => {
+    const outputs: Array<Record<string, unknown>> = []
+    const optionsSeen: Array<Record<string, unknown>> = []
+    const calls = [['Bash', { command: 'npm test && curl https://example.com' }], ['Bash', { command: 'npm test', description: 'run the tests' }], ['Read', { file_path: 'src/a.ts' }]] as const
+    const { ctx, run } = await boot(claude(calls, outputs, optionsSeen), bundlePolicies()[0]!)
+    const done = await run()
+    // The run's commands would run in the SDK's sandbox, yet the policy still decides each one.
+    expect(optionsSeen[0]).toMatchObject({ sandbox: { enabled: true, failIfUnavailable: true, allowUnsandboxedCommands: false, filesystem: { allowWrite: [WORKSPACE] }, network: { allowedDomains: [] } } })
+    const decision = (output: Record<string, unknown>) => (output.hookSpecificOutput as { permissionDecision?: string; permissionDecisionReason?: string }).permissionDecision
+    expect(outputs.map(decision)).toEqual(['deny', 'defer'])
+    expect(decisionOf(ctx, (outputs[0]!.hookSpecificOutput as { permissionDecisionReason: string }).permissionDecisionReason)).toMatchObject({ decisionType: 'autonomy', outcome: { option: 'forbid' } })
+    expect(done).toMatchObject({ status: 'failed', error: { kind: 'config_error' } })
+    expect(await ctx.approvals.list()).toEqual([expect.objectContaining({ action: expect.objectContaining({ class: 'command', summary: 'Bash: npm test' }), requester: expect.objectContaining({ toolUseId: 'toolu_1' }) })])
   })
 })

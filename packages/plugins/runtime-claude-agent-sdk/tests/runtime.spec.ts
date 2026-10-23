@@ -1,12 +1,30 @@
-import { mkdtempSync, rmSync } from 'node:fs'
+import { execFile, execFileSync } from 'node:child_process'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { meteringOf, type ToolCall } from '@tsuuanmi/system-agent-runtime-core'
-import { afterAll, describe, expect, it } from 'vitest'
+import { promisify } from 'node:util'
+import { type Confinement, confinedCommand, meteringOf, type ToolCall } from '@tsuuanmi/system-agent-runtime-core'
+import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { agentRuntimeProviderConformance, expectConsistentMetering } from '../../../agent-runtime-core/conformance/agent-runtimes.ts'
-import { ClaudeAgentRuntime, type QueryFn } from '../src/index.ts'
+import { ClaudeAgentRuntime, type ConfinedRun, commandSandbox, type QueryFn, type RuntimeOptions, type SpawnConfined } from '../src/index.ts'
 
 type Call = { prompt: string; options: Record<string, unknown> }
+
+/** The Workers' Claude Code home of these tests. */
+const HOME = mkdtempSync(join(tmpdir(), 'system-claude-home-'))
+afterAll(() => rmSync(HOME, { recursive: true, force: true }))
+
+/** Every bind a confinement was asked for, in order. */
+const binds: Array<{ readOnly?: readonly string[]; writable?: readonly string[] }> = []
+const confine = (bind: { readOnly?: readonly string[]; writable?: readonly string[] }): Confinement => {
+  binds.push(bind)
+  return { bwrap: '/usr/bin/bwrap', hide: ['/dsh'], readOnly: ['/dsh/system/tools', ...(bind.readOnly ?? [])], writable: [...(bind.writable ?? [])] }
+}
+/** A host where both layers start: the read confinement is proven, a nested sandbox starts, and Claude Code is signed in. */
+const confined: Partial<RuntimeOptions> = {
+  confine, prove: async () => ({ confined: true, detail: 'host state hidden by /usr/bin/bwrap' }), nested: async () => '', status: async () => '{"loggedIn": true, "apiProvider": "firstParty"}',
+}
 
 /** The SDK's `modelUsage`: its `inputTokens` excludes cached input. */
 const MODEL_USAGE = {
@@ -45,8 +63,8 @@ function scripted(calls: Call[] = [], result: Record<string, unknown> | null = {
   }) as unknown as QueryFn
 }
 
-const runtime = (query: QueryFn, executable: string | null = '/usr/bin/claude') =>
-  new ClaudeAgentRuntime({ query, executable: executable ?? undefined, findExecutable: () => undefined, version: async () => '2.1.294' })
+const runtime = (query: QueryFn, executable: string | null = '/usr/bin/claude', extra: Partial<RuntimeOptions> = {}) =>
+  new ClaudeAgentRuntime({ query, executable: executable ?? undefined, findExecutable: () => undefined, version: async () => '2.1.294', home: HOME, ...confined, ...extra })
 
 agentRuntimeProviderConformance('claude-agent-sdk', () => runtime(scripted()))
 
@@ -56,7 +74,8 @@ describe('claude-agent-sdk: the configured policy, exactly', () => {
 
   it('probes the installed Claude Code without running a task, and offers only what it can confine', async () => {
     expect(await runtime(scripted()).probe()).toEqual({
-      available: true, detail: 'Claude Code 2.1.294; reads scoped to the workspace', version: '2.1.294', sandboxes: ['read-only', 'workspace-write'], resume: true, executes: false, readsConfined: true, gatesToolCalls: true,
+      available: true, detail: 'Claude Code 2.1.294; host state hidden by /usr/bin/bwrap; commands confined: a sandbox with no network starts inside it', version: '2.1.294',
+      sandboxes: ['read-only', 'workspace-write'], resume: true, executes: true, readsConfined: true, gatesToolCalls: true,
     })
     expect(await runtime(scripted(), null).probe()).toMatchObject({ available: false, detail: expect.stringMatching(/not installed/) })
   })
@@ -70,7 +89,7 @@ describe('claude-agent-sdk: the configured policy, exactly', () => {
       expect(calls[0]!.options.env).not.toHaveProperty('SYSTEM_MCP_TOKEN')
       expect(calls[0]!.options.env).not.toHaveProperty('ANTHROPIC_API_KEY')
       const forwarded: Call[] = []
-      await new ClaudeAgentRuntime({ query: scripted(forwarded), executable: '/usr/bin/claude', forwardEnv: ['ANTHROPIC_API_KEY'] })
+      await runtime(scripted(forwarded), '/usr/bin/claude', { forwardEnv: ['ANTHROPIC_API_KEY'] })
         .run({ prompt: 'x', workspace, sandbox: 'read-only' }, new AbortController().signal)
       expect(forwarded[0]!.options.env).toMatchObject({ ANTHROPIC_API_KEY: 'daemon-key' })
       expect(forwarded[0]!.options.env).not.toHaveProperty('SYSTEM_MCP_TOKEN')
@@ -100,17 +119,17 @@ describe('claude-agent-sdk: the configured policy, exactly', () => {
     const calls: Call[] = []
     await expect(runtime(scripted(calls)).run({ prompt: 'x', workspace, sandbox: 'read-only', tools: ['Read', 'Write'] }, new AbortController().signal))
       .rejects.toMatchObject({ kind: 'config_error', message: expect.stringContaining('Write') })
-    await expect(runtime(scripted(calls)).run({ prompt: 'x', workspace, sandbox: 'workspace-write', tools: ['Edit', 'Bash'] }, new AbortController().signal))
-      .rejects.toMatchObject({ kind: 'config_error', message: expect.stringContaining('Bash') })
+    await expect(runtime(scripted(calls)).run({ prompt: 'x', workspace, sandbox: 'workspace-write', tools: ['Edit', 'WebFetch'] }, new AbortController().signal))
+      .rejects.toMatchObject({ kind: 'config_error', message: expect.stringContaining('WebFetch') })
     expect(calls).toEqual([])
   })
 
-  it('confines a writable run to its workspace with path-scoped rules (bare rules wrote outside, live 2026-10-12)', async () => {
+  it('confines a writable run to its workspace with path-scoped rules (bare rules wrote outside, live 2026-10-12); its commands go to the sandbox', async () => {
     const calls: Call[] = []
     await runtime(scripted(calls)).run({ prompt: 'fix it', workspace, sandbox: 'workspace-write' }, new AbortController().signal)
     expect(calls[0]!.options).toMatchObject({
-      cwd: workspace, permissionMode: 'dontAsk', tools: ['Read', 'Grep', 'Glob', 'Edit', 'Write'],
-      allowedTools: ['Read(./**)', 'Grep(./**)', 'Glob(./**)', 'Edit(./**)', 'Write(./**)'],
+      cwd: workspace, permissionMode: 'dontAsk', tools: ['Read', 'Grep', 'Glob', 'Edit', 'Write', 'Bash'],
+      allowedTools: ['Read(./**)', 'Grep(./**)', 'Glob(./**)', 'Edit(./**)', 'Write(./**)', 'Bash'],
     })
   })
 
@@ -342,5 +361,226 @@ describe('claude-agent-sdk: the run\'s tool gate is a PreToolUse hook on every t
     const query = scripted([], { terminal_reason: 'tool_deferred', deferred_tool_use: { id: 't', name: 'Bash', input: {} } })
     await expect(runtime(query).run({ prompt: 'x', workspace, sandbox: 'read-only', toolGate: async () => ({ decision: 'allow' }) }, new AbortController().signal))
       .rejects.toMatchObject({ kind: 'config_error', message: expect.stringContaining('did not defer') })
+  })
+})
+
+/** The options every confined command line starts with (agent-runtime-core's `confinedCommand`). */
+const OPTIONS = ['--die-with-parent', '--unshare-pid', '--new-session', '--dev-bind', '/', '/', '--proc', '/proc']
+/** The sandbox the probe starts inside the confinement: bubblewrap on Claude Code's PATH, a namespaced `true` with no network. */
+const NESTED = ['bwrap', '--die-with-parent', '--new-session', '--unshare-net', '--unshare-pid', '--ro-bind', '/', '/', '--dev', '/dev', '--proc', '/proc', '--', 'true']
+
+describe('claude-agent-sdk: two confinements, reads by the host and commands by the SDK\'s sandbox (ADR-0038)', () => {
+  const workspace = mkdtempSync(join(tmpdir(), 'system-claude-confined-'))
+  afterAll(() => rmSync(workspace, { recursive: true, force: true }))
+  const failing = (message: string): ConfinedRun => async () => { throw new Error(message) }
+
+  it('proves both layers before it reports executes: the read confinement on this host, then a sandbox with no network started inside it, in its own home', async () => {
+    const nested: Array<{ command: string; args: string[]; env: Record<string, string> }> = []
+    const status: string[][] = []
+    const evidence = await runtime(scripted(), '/usr/bin/claude', {
+      nested: async (command, env) => (nested.push({ ...command, env }), ''),
+      status: async (command) => (status.push(command.args), '{"loggedIn": true}'),
+    }).probe()
+    expect(evidence).toMatchObject({ available: true, readsConfined: true, executes: true, sandboxes: ['read-only', 'workspace-write'] })
+    // Its own home is the one path bound back writable; the confinement hides the operator's ~/.claude.
+    expect(binds.at(-1)).toEqual({ writable: [HOME] })
+    expect(nested).toEqual([{ command: '/usr/bin/bwrap', args: [...OPTIONS, '--bind', HOME, HOME, '--', ...NESTED], env: expect.objectContaining({ CLAUDE_CONFIG_DIR: HOME }) }])
+    expect(status).toEqual([[...OPTIONS, '--bind', HOME, HOME, '--', '/usr/bin/claude', 'auth', 'status']])
+  })
+
+  it('reports executes false, with the reason, when either layer is not proven: no workspace-write, so nothing writes or runs a command (INV-2)', async () => {
+    const asked: string[] = []
+    const reads = await runtime(scripted(), '/usr/bin/claude', {
+      prove: async () => ({ confined: false, detail: 'reads cannot be confined: bwrap: setting up uid map: Permission denied' }),
+      nested: async () => (asked.push('nested'), ''),
+    }).probe()
+    expect(reads).toMatchObject({ available: true, readsConfined: false, executes: false, sandboxes: ['read-only'], detail: expect.stringContaining('reads cannot be confined: bwrap') })
+    expect(asked).toEqual([])
+    const commands = await runtime(scripted(), '/usr/bin/claude', { nested: failing('bwrap: No permissions to create new namespace') }).probe()
+    expect(commands).toMatchObject({ available: true, readsConfined: true, executes: false, sandboxes: ['read-only'] })
+    expect(commands.detail).toBe('Claude Code 2.1.294; host state hidden by /usr/bin/bwrap; commands cannot be confined: a sandbox does not start inside the confinement: bwrap: No permissions to create new namespace')
+    const none = await runtime(scripted(), '/usr/bin/claude', { confine: undefined }).probe()
+    expect(none).toMatchObject({ readsConfined: false, executes: false, sandboxes: ['read-only'], detail: expect.stringContaining('no read confinement is configured') })
+  })
+
+  it('reports a Claude Code that is not signed in inside its home as unavailable, naming the home, without failing anything (the profile still boots)', async () => {
+    for (const status of [failing('Command failed: claude auth status'), async () => '{"loggedIn": false}']) {
+      expect(await runtime(scripted(), '/usr/bin/claude', { status }).probe()).toMatchObject({ available: false, executes: false, readsConfined: false, detail: expect.stringContaining(`not signed in inside its home ${HOME}`) })
+    }
+    // Output it cannot read, from a command that succeeded, says nothing against the sign-in.
+    expect(await runtime(scripted(), '/usr/bin/claude', { status: async () => 'Logged in.' }).probe()).toMatchObject({ available: true })
+  })
+
+  it('enables the SDK\'s sandbox in a workspace-write run with exactly ADR-0038\'s settings, and offers Bash there', async () => {
+    const calls: Call[] = []
+    await runtime(scripted(calls)).run({ prompt: 'run the tests', workspace, sandbox: 'workspace-write' }, new AbortController().signal)
+    expect(calls[0]!.options.sandbox).toEqual({
+      enabled: true, failIfUnavailable: true, allowUnsandboxedCommands: false,
+      filesystem: { allowWrite: [workspace] },
+      network: { allowedDomains: [], strictAllowlist: true },
+    })
+    expect(calls[0]!.options.sandbox).toEqual(commandSandbox(workspace))
+    expect(calls[0]!.options).toMatchObject({ tools: expect.arrayContaining(['Bash']), allowedTools: expect.arrayContaining(['Bash']) })
+    // A Worker that lists its tools without Bash runs no command, in the same sandbox.
+    const listed: Call[] = []
+    await runtime(scripted(listed)).run({ prompt: 'x', workspace, sandbox: 'workspace-write', tools: ['Read', 'Edit'] }, new AbortController().signal)
+    expect(listed[0]!.options).toMatchObject({ tools: ['Read', 'Edit'], allowedTools: ['Read(./**)', 'Edit(./**)'], sandbox: commandSandbox(workspace) })
+  })
+
+  it('keeps Bash off in a read-only run, and refuses it there before anything runs', async () => {
+    const calls: Call[] = []
+    await runtime(scripted(calls)).run({ prompt: 'review', workspace, sandbox: 'read-only' }, new AbortController().signal)
+    expect(calls[0]!.options.tools).not.toContain('Bash')
+    expect(calls[0]!.options.allowedTools).not.toContain('Bash')
+    expect(calls[0]!.options).not.toHaveProperty('sandbox')
+    const refused: Call[] = []
+    await expect(runtime(scripted(refused)).run({ prompt: 'x', workspace, sandbox: 'read-only', tools: ['Read', 'Bash'] }, new AbortController().signal))
+      .rejects.toMatchObject({ kind: 'config_error', message: expect.stringContaining('refusing Bash') })
+    expect(refused).toEqual([])
+  })
+
+  it('refuses a workspace-write run whose sandbox does not start inside the confinement, before Claude Code starts; a read-only run still runs', async () => {
+    const calls: Call[] = []
+    const host = runtime(scripted(calls), '/usr/bin/claude', { nested: failing('bwrap: setting up uid map: Permission denied') })
+    await expect(host.run({ prompt: 'fix it', workspace, sandbox: 'workspace-write' }, new AbortController().signal))
+      .rejects.toMatchObject({ kind: 'config_error', message: expect.stringMatching(/commands cannot be confined.*uid map.*refusing a workspace-write run/) })
+    expect(calls).toEqual([])
+    await host.run({ prompt: 'review', workspace, sandbox: 'read-only' }, new AbortController().signal)
+    expect(calls).toHaveLength(1)
+    // A run stopped while its sandbox is being proven never starts.
+    const stopped = new AbortController()
+    const late: Call[] = []
+    await expect(runtime(scripted(late), '/usr/bin/claude', { nested: async () => (stopped.abort(), '') }).run({ prompt: 'fix it', workspace, sandbox: 'workspace-write' }, stopped.signal))
+      .rejects.toMatchObject({ kind: 'aborted' })
+    expect(late).toEqual([])
+  })
+
+  it('fails a run whose sandbox cannot start once Claude Code runs: it never completes, and no command runs unconfined (INV-2)', async () => {
+    // As the CLI does: with failIfUnavailable it ends with an error result; without, it would run the command unsandboxed.
+    const unavailableSandbox = ((params: { prompt: string; options?: Record<string, unknown> }) => {
+      const sandbox = params.options?.sandbox as { enabled?: boolean; failIfUnavailable?: boolean } | undefined
+      return (async function* () {
+        yield { type: 'system', subtype: 'init', session_id: 'h-1', model: 'model-main' }
+        yield sandbox?.enabled && sandbox.failIfUnavailable
+          ? { type: 'result', subtype: 'error_during_execution', is_error: true, errors: ['sandbox required but unavailable: bubblewrap cannot create a namespace'], session_id: 'h-1', uuid: 'r-1', num_turns: 0 }
+          : { type: 'result', subtype: 'success', is_error: false, result: 'ran npm test unsandboxed', session_id: 'h-1', uuid: 'r-1', num_turns: 1 }
+      })()
+    }) as unknown as QueryFn
+    await expect(runtime(unavailableSandbox).run({ prompt: 'run the tests', workspace, sandbox: 'workspace-write' }, new AbortController().signal))
+      .rejects.toMatchObject({ kind: 'session_broken', message: expect.stringContaining('sandbox required but unavailable') })
+    // A CLI that exits at startup, with no result at all, fails the run the same way.
+    await expect(runtime(scripted([], null)).run({ prompt: 'run the tests', workspace, sandbox: 'workspace-write' }, new AbortController().signal))
+      .rejects.toMatchObject({ kind: 'session_broken', message: expect.stringContaining('without a result') })
+  })
+
+  it('starts Claude Code itself under bubblewrap: the SDK\'s command line wrapped, its home writable, and the workspace as the run\'s sandbox allows (ADR-0024)', async () => {
+    const spawned: Array<{ command: string; args: string[]; cwd?: string | undefined; env: Record<string, string | undefined> }> = []
+    const spawn: SpawnConfined = (command, args, options) => {
+      spawned.push({ command, args, cwd: options.cwd, env: options.env })
+      return {} as ReturnType<SpawnConfined>
+    }
+    for (const sandbox of ['read-only', 'workspace-write'] as const) {
+      const calls: Call[] = []
+      await runtime(scripted(calls), '/usr/bin/claude', { spawn }).run({ prompt: 'x', workspace, sandbox }, new AbortController().signal)
+      expect(binds.at(-1)).toEqual(sandbox === 'read-only' ? { writable: [HOME], readOnly: [workspace] } : { writable: [HOME, workspace] })
+      const start = calls[0]!.options.spawnClaudeCodeProcess as (options: { command: string; args: string[]; cwd?: string; env: Record<string, string | undefined>; signal: AbortSignal }) => unknown
+      start({ command: '/usr/bin/claude', args: ['--output-format', 'stream-json'], cwd: workspace, env: { CLAUDE_CONFIG_DIR: HOME }, signal: new AbortController().signal })
+    }
+    expect(spawned).toEqual([
+      { command: '/usr/bin/bwrap', args: [...OPTIONS, '--ro-bind', workspace, workspace, '--bind', HOME, HOME, '--', '/usr/bin/claude', '--output-format', 'stream-json'], cwd: workspace, env: { CLAUDE_CONFIG_DIR: HOME } },
+      { command: '/usr/bin/bwrap', args: [...OPTIONS, '--bind', HOME, HOME, '--bind', workspace, workspace, '--', '/usr/bin/claude', '--output-format', 'stream-json'], cwd: workspace, env: { CLAUDE_CONFIG_DIR: HOME } },
+    ])
+  })
+
+  it('runs Claude Code in its own home, never the operator\'s, and refuses a run with no read confinement, before anything runs', async () => {
+    const calls: Call[] = []
+    await runtime(scripted(calls), '/usr/bin/claude', { env: { CLAUDE_CONFIG_DIR: join(HOME, 'elsewhere') } }).run({ prompt: 'x', workspace, sandbox: 'read-only' }, new AbortController().signal)
+    expect(calls[0]!.options.env).toMatchObject({ CLAUDE_CONFIG_DIR: HOME })
+    expect(() => new ClaudeAgentRuntime({ home: 'relative/home' })).toThrow(/home must be an absolute path/)
+    const none: Call[] = []
+    await expect(runtime(scripted(none), '/usr/bin/claude', { confine: undefined }).run({ prompt: 'x', workspace, sandbox: 'read-only' }, new AbortController().signal))
+      .rejects.toMatchObject({ kind: 'config_error', message: expect.stringContaining('no read confinement') })
+    // A bind that would re-expose a hidden path is refused, never run.
+    const exposing = (bind: { readOnly?: readonly string[]; writable?: readonly string[] }): Confinement => ({ ...confine(bind), hide: [join(workspace, 'secret')] })
+    writeFileSync(join(workspace, 'secret'), 'a key')
+    await expect(runtime(scripted(none), '/usr/bin/claude', { confine: exposing }).run({ prompt: 'x', workspace, sandbox: 'read-only' }, new AbortController().signal))
+      .rejects.toMatchObject({ kind: 'config_error', message: expect.stringContaining('would expose') })
+    rmSync(join(workspace, 'secret'))
+    expect(none).toEqual([])
+  })
+})
+
+function findBwrap(): string | undefined {
+  try {
+    return execFileSync('sh', ['-c', 'command -v bwrap'], { encoding: 'utf8' }).trim() || undefined
+  } catch {
+    return undefined
+  }
+}
+const BWRAP = findBwrap()
+// CI requires the real bubblewrap, so a missing one fails instead of skipping silently.
+const REQUIRED = process.env.SYSTEM_REQUIRE_BWRAP === '1'
+
+describe.skipIf(!BWRAP && !REQUIRED)('claude-agent-sdk under the real bubblewrap: both layers nest on this host (ADR-0038)', () => {
+  const root = mkdtempSync(join(tmpdir(), 'system-claude-host-'))
+  const dsh = join(root, 'dsh')
+  const home = join(dsh, 'system', 'claude-home')
+  const vaultKey = join(dsh, 'system', 'vault.key')
+  const workspace = join(root, 'workspace')
+  const outside = join(root, 'outside')
+  /** A stand-in `claude`: its version, and a signed-in `auth status`; it never runs a task. */
+  const claude = join(root, 'bin', 'claude')
+  const confine = (bind: { readOnly?: readonly string[]; writable?: readonly string[] }): Confinement => ({ bwrap: BWRAP ?? 'bwrap', hide: [dsh], readOnly: [...(bind.readOnly ?? [])], writable: [...(bind.writable ?? [])] })
+  const server = createServer((socket) => socket.end())
+  let port = 0
+  beforeAll(async () => {
+    for (const dir of [home, workspace, outside, join(root, 'bin')]) mkdirSync(dir, { recursive: true, mode: 0o700 })
+    writeFileSync(vaultKey, 'vault key')
+    writeFileSync(claude, '#!/bin/sh\ncase "$1" in\n  --version) echo "2.1.308 (Claude Code)" ;;\n  auth) echo \'{"loggedIn": true}\' ;;\n  *) exit 2 ;;\nesac\n', { mode: 0o755 })
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+    port = (server.address() as { port: number }).port
+  })
+  afterAll(async () => {
+    await new Promise((resolve) => server.close(resolve))
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  /**
+   * A command in the sandbox a workspace-write run's settings ask for, rendered as the SDK's
+   * sandbox renders them on Linux (bubblewrap): the root read-only, each `allowWrite` path writable,
+   * and its own network namespace when no domain is allowed; nested inside the run's confinement.
+   */
+  const sandboxed = async (script: string): Promise<number> => {
+    const settings = commandSandbox(workspace)
+    const writable = settings.filesystem?.allowWrite ?? []
+    const network = settings.network?.allowedDomains?.length ? [] : ['--unshare-net']
+    const inner = ['--die-with-parent', '--new-session', ...network, '--unshare-pid', '--ro-bind', '/', '/', ...writable.flatMap((path) => ['--bind', path, path]), '--dev', '/dev', '--proc', '/proc', '--', 'sh', '-c', script]
+    const c = confinedCommand('bwrap', inner, confine({ writable: [home, workspace] }))
+    return promisify(execFile)(c.command, c.args).then(() => 0, (error: { code?: number }) => error.code ?? 1)
+  }
+  const connect = `${process.execPath} -e "require('net').connect(PORT, '127.0.0.1').on('connect', () => process.exit(0)).on('error', () => process.exit(3))"`
+
+  it('proves both layers with the real bubblewrap: reads confined, and a sandbox with no network nested inside', async () => {
+    const evidence = await new ClaudeAgentRuntime({ executable: claude, home, confine }).probe()
+    expect(evidence).toMatchObject({ available: true, version: '2.1.308', readsConfined: true, executes: true, sandboxes: ['read-only', 'workspace-write'] })
+    // Without bubblewrap on Claude Code's PATH the SDK's sandbox cannot start: no executes, the reason named.
+    const noNested = await new ClaudeAgentRuntime({ executable: claude, home, confine, env: { PATH: join(root, 'bin') } }).probe()
+    expect(noNested).toMatchObject({ readsConfined: true, executes: false, sandboxes: ['read-only'], detail: expect.stringContaining('commands cannot be confined') })
+  })
+
+  it('lets a sandboxed command write its workspace, and nothing else: not outside it, not Claude Code\'s own home, and it never reads the host state', async () => {
+    expect(await sandboxed(`touch ${join(workspace, 'built')}`)).toBe(0)
+    expect(existsSync(join(workspace, 'built'))).toBe(true)
+    expect(await sandboxed(`touch ${join(outside, 'escaped')}`)).not.toBe(0)
+    expect(await sandboxed(`touch ${join(home, 'settings.json')}`)).not.toBe(0)
+    expect(existsSync(join(outside, 'escaped')) || existsSync(join(home, 'settings.json'))).toBe(false)
+    expect(await sandboxed(`cat ${vaultKey}`)).not.toBe(0)
+  })
+
+  it('cuts a sandboxed command off the network, while the confinement alone still reaches it (the check can see a connection)', async () => {
+    const script = connect.replace('PORT', String(port))
+    const c = confinedCommand('sh', ['-c', script], confine({ writable: [home, workspace] }))
+    expect(await promisify(execFile)(c.command, c.args).then(() => 0, (error: { code?: number }) => error.code ?? 1)).toBe(0)
+    expect(await sandboxed(script)).toBe(3)
   })
 })

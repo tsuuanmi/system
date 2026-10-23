@@ -5,27 +5,68 @@ the official Claude Agent SDK. It runs the operator's installed `claude`
 (config `executable`, or found on PATH). The SDK's bundled builds are not
 installed.
 
-- **Probe:** `claude --version`; it never runs a task. It offers `read-only`,
-  `workspace-write`, and `resume`. It reports `executes: false` (no Bash), so its
-  Workers never prove `validate`. It reports `readsConfined: true` without a
-  wrapper: every pre-approved tool is scoped to the workspace, reads included,
-  and nothing else is allowed
-  ([ADR-0024](../../../docs/decisions/adr/0024-agent-workers-confined-for-reads.md)).
-  It reports `gatesToolCalls: true`: a run's tool gate is a PreToolUse hook on
-  every tool.
+- **Two confinements**
+  ([ADR-0038](../../../docs/decisions/adr/0038-confined-commands-for-claude-code-workers.md)):
+  - **reads, by the host:** Claude Code starts under the read confinement of
+    `ctx.agentRuntimes`
+    ([ADR-0024](../../../docs/decisions/adr/0024-agent-workers-confined-for-reads.md)),
+    as Codex and ACP agents do: bubblewrap, through the SDK's
+    `spawnClaudeCodeProcess`, wraps the SDK's own command line. The DSH home,
+    the temporary and runtime directories, every credential store, and every
+    coding agent's login (the operator's `~/.claude` included) are hidden; only
+    the operator's tools (read-only), its home (writable), and the run's
+    workspace (as the run's sandbox allows) come back. A bind that would expose
+    a hidden path is refused before anything starts (`config_error`);
+  - **commands, by the SDK's sandbox:** a `workspace-write` run offers `Bash`
+    and enables the SDK's sandbox (Anthropic's sandbox runtime: bubblewrap and
+    a network proxy on Linux) with exactly `enabled: true`,
+    `failIfUnavailable: true` (a run whose sandbox cannot start fails, never
+    runs a command unconfined), `allowUnsandboxedCommands: false`,
+    `filesystem.allowWrite`: the run's workspace only, and
+    `network.allowedDomains: []`, with `strictAllowlist: true` so any host is
+    refused by the sandbox itself rather than asked about. A `read-only` run
+    has no `Bash` and no sandbox. The sandbox bounds where a command acts; the
+    run's tool gate decides whether it runs at all, by its exact argv;
+  - **its own home:** `CLAUDE_CONFIG_DIR` is the Workers' Claude Code home
+    (config `home`, default `<DSH_HOME>/system/claude-home`, created
+    owner-only), never the operator's `~/.claude`, which the confinement hides.
+    Sign in there once (`CLAUDE_CONFIG_DIR=<home> claude`, then `/login`), or
+    forward an API key or OAuth token by name (`forwardEnv`). Its sessions, and
+    so `resume`, live there.
+- **Probe:** it never runs a task.
+  1. `claude --version` (not installed, or failing: unavailable);
+  2. `proveConfinement` on this host, with its home bound back
+     (`readsConfined`; no confinement configured, or not proven:
+     `readsConfined: false`, so its Workers are unavailable);
+  3. `claude auth status` under the confinement: a non-zero exit, or
+     `"loggedIn": false`, is unavailable, naming the home to sign in to;
+  4. a nested sandbox start: bubblewrap, found on Claude Code's own PATH as the
+     SDK's sandbox finds it, runs a namespaced `true` with no network
+     (`--unshare-net`, `--unshare-pid`, a read-only root) inside the
+     confinement. Proven: `executes: true` and both `read-only` and
+     `workspace-write`. Not proven: `executes: false` and `read-only` only,
+     the reason in `detail` (INV-2), so its Workers never prove `develop` or
+     `validate` on this host.
+
+  It offers `resume` and reports `gatesToolCalls: true`: a run's tool gate is a
+  PreToolUse hook on every tool. A `workspace-write` run starts the nested
+  sandbox again first and is refused (`config_error`, nothing run) if it does
+  not start; the SDK's `failIfUnavailable` then guards the sandbox Claude Code
+  itself starts.
 - **Policy, exactly or refused:**
   - only the listed built-in tools exist (`tools`) and are pre-approved
     (`allowedTools`). The defaults are `Read`, `Grep`, `Glob` for `read-only`;
-    `workspace-write` adds `Edit` and `Write`. Any other tool is refused before
-    starting;
-  - every pre-approval is scoped to the workspace, reads included:
+    `workspace-write` adds `Edit`, `Write`, and `Bash`. Any other tool is
+    refused before starting, and so is `Bash` in a `read-only` run;
+  - every file tool's pre-approval is scoped to the workspace, reads included:
     `Read(./**)`, `Grep(./**)`, `Glob(./**)`, `Edit(./**)`, `Write(./**)`. A
     bare rule reaches the whole disk: live sessions wrote (`Write`) and read and
     grepped (`Read`, `Grep`) outside their workspace, which would expose the
     daemon's own state (`vault.key`, the token files). The scoped rules held
     against `..` traversal, a symlink out of the workspace, and a home path; outside
     reads and writes are denied while the workspace stays readable and writable
-    ([release checklist](../../../docs/validation/release-checklist.md));
+    ([release checklist](../../../docs/validation/release-checklist.md)).
+    `Bash` is pre-approved whole: the sandbox bounds every command;
   - `permissionMode: dontAsk` with no approval surface, so anything else is
     denied without a prompt;
   - `settingSources: []`: the operator's own Claude Code settings and hooks
@@ -49,9 +90,9 @@ installed.
     live check of 2026-10-12 showed the account's claude.ai connectors attached;
   - **no daemon credentials** (INV-8): Claude Code starts with
     `childEnvironment` (agent-runtime-core), so credential-shaped and `DSH_*`
-    variables are scrubbed. Its own sign-in in `~/.claude` keeps working. An API
-    key or OAuth token it should take from the environment must be forwarded by
-    name (`forwardEnv`);
+    variables are scrubbed. Its own sign-in lives in its home. An API key or
+    OAuth token it should take from the environment must be forwarded by name
+    (`forwardEnv`);
 - **Run:**
   - the SDK's session id is reported as the native handle as soon as it appears,
     and `resume` continues it;
@@ -83,8 +124,19 @@ installed.
     fraction, reported as `usedPercentage`. An event without a
     `rateLimitType` names no window and is not reported; overage fields are
     not read.
-- **Config:** `executable` (default: `claude` on PATH); `forwardEnv`, daemon
-  variables passed by name; `env`, explicit values, never a secret.
+- **Config:** `executable` (default: `claude` on PATH; keep it outside the
+  hidden paths, `~/.claude/local` among them); `home`, the Workers' Claude Code
+  home (absolute; default `<DSH_HOME>/system/claude-home`); `forwardEnv`,
+  daemon variables passed by name; `env`, explicit values, never a secret
+  (`CLAUDE_CONFIG_DIR` there is ignored: the home wins).
+- **Host:** bubblewrap for both layers, and `socat`, which the SDK's sandbox
+  uses for its network proxy on Linux; a missing `socat` fails each
+  `workspace-write` run at start (`failIfUnavailable`), never runs it
+  unconfined ([runbook](../../../docs/operations/runbooks.md#agent-workers)).
 - **License:** the SDK is © Anthropic, under Anthropic's legal agreements
-  ([dependency register](../../../docs/engineering/dependencies.md)).
+  ([dependency register](../../../docs/engineering/dependencies.md)). Its
+  sandbox ships in Claude Code itself; nothing new is depended on.
+- **Dependencies:** `@anthropic-ai/claude-agent-sdk`, `agent-runtime-core`
+  (`childEnvironment`, `confinedCommand`, `proveConfinement`), `system-libs`
+  (`dshHome`, `ensurePrivateDir`), `provider-core`.
 - **Injects:** `agentRuntimes`.

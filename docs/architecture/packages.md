@@ -42,7 +42,7 @@ its types is not listed).
 | [models](../../packages/plugins/models/README.md) | capabilities | `models` | `models` | `llm`, `store`, `artifacts`, `leases`, `workers`, `egress`, `models`, `credentials` (optional), `eventLog` (optional), `mcp` (optional) | `gateway-core`, `leases`, `libs`, `models-core`, `provider-core`, `workers-core` |
 | [models-core](../../packages/models-core/README.md) | capabilities | defines `models` | — | — | `workers-core` |
 | [runtime-acp](../../packages/plugins/runtime-acp/README.md) | capabilities | — | `runtime-acp` | `agentRuntimes` | `agent-runtime-core`, `provider-core` |
-| [runtime-claude-agent-sdk](../../packages/plugins/runtime-claude-agent-sdk/README.md) | capabilities | — | `runtime-claude-agent-sdk` | `agentRuntimes` | `agent-runtime-core`, `provider-core` |
+| [runtime-claude-agent-sdk](../../packages/plugins/runtime-claude-agent-sdk/README.md) | capabilities | — | `runtime-claude-agent-sdk` | `agentRuntimes` | `agent-runtime-core`, `libs`, `provider-core` |
 | [runtime-codex-sdk](../../packages/plugins/runtime-codex-sdk/README.md) | capabilities | — | `runtime-codex-sdk` | `agentRuntimes` | `agent-runtime-core`, `libs`, `provider-core` |
 | [turns](../../packages/plugins/turns/README.md) | capabilities | `turns` | `turns` | `store`, `artifacts`, `leases`, `egress`, `turnReceipts`, `accounts`, `browser`, `providers`, `workers`, `eventLog` (optional), `login` (optional), `mcp` (optional) | `gateway-core`, `leases`, `libs`, `provider-core`, `workers-core` |
 | [accounts](../../packages/plugins/accounts/README.md) | provider runtime | `accounts` | `accounts` | `credentials` | `libs`, `provider-core` |

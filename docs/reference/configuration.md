@@ -313,6 +313,7 @@ No options.
 | `executable` | string |  | Path to the claude executable (default: found on PATH) |
 | `env` | Record<string, string> | `{}` | Explicit environment for Claude Code (no secrets; use forwardEnv) |
 | `forwardEnv` | string[] | `[]` | Daemon environment variables forwarded by name, such as an API key Claude Code should use |
+| `home` | string |  | The Workers' Claude Code home (CLAUDE_CONFIG_DIR; default <DSH_HOME>/system/claude-home), never the operator's ~/.claude; sign in there once |
 
 ## `runtime-codex-sdk`
 
