@@ -99,7 +99,7 @@ export function withSources(text: string, sources: ReadonlyMap<string, string>):
 
 /** Whether a link's title is only its URL or its site ("sqlite.org" of https://www.sqlite.org/wal.html). */
 function repeatsLink(title: string, href: string): boolean {
-  const bare = (s: string): string => s.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/+$/, '')
+  const bare = (s: string): string => withoutTrailing(s.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, ''), '/')
   let host = ''
   try {
     host = new URL(href).hostname
@@ -127,8 +127,18 @@ export function withoutTrackingLinks(markdown: string): string {
     (_, lead: string, url: string) => lead + (/[?&]utm_/.test(url) ? withoutTracking(url) : url))
 }
 
+/**
+ * Text without the run of `chars` at its end, by one backward scan: a `[…]+$` regex is retried at
+ * every position of a long run that something else ends, which is quadratic on page text.
+ */
+function withoutTrailing(text: string, chars: string): string {
+  let end = text.length
+  while (end > 0 && chars.includes(text[end - 1]!)) end--
+  return text.slice(0, end)
+}
+
 /** A URL as compared for presence: no tracking parameters, no final slash or trailing punctuation. */
-const comparable = (url: string): string => withoutTracking(url.replace(/[.,;:!?]+$/, '')).replace(/\/$/, '')
+const comparable = (url: string): string => withoutTracking(withoutTrailing(url, '.,;:!?')).replace(/\/$/, '')
 
 /**
  * An answer followed by the sources (href → title) its text does not already carry, without

@@ -62,6 +62,17 @@ describe('website turn mechanics', () => {
     expect(withMissingSources('See [x](https://a.example/x/?utm_source=s).', sources)).toBe('See [x](https://a.example/x/?utm_source=s).')
   })
 
+  it('compares a link ending in a long run of slashes or punctuation in linear time (no polynomial backtracking)', () => {
+    const run = (c: string): string => `${c.repeat(100_000)}x`
+    const started = performance.now()
+    expect(withSources('R.', new Map([[`https://a.example/${run('/')}`, run('/')]]))).toBe(`R.\n\nSources:\n- ${run('/')} https://a.example/${run('/')}`)
+    expect(withMissingSources(`See https://a.example/${run('!')}`, new Map([['https://b.example', 'B']]))).toBe(`See https://a.example/${run('!')}\n\nSources:\n- B https://b.example/`)
+    expect(performance.now() - started).toBeLessThan(1000)
+    // The runs that end the text are still set aside, as before.
+    expect(withMissingSources('See https://a.example/x/?!.', new Map([['https://a.example/x', 'X']]))).toBe('See https://a.example/x/?!.')
+    expect(withSources('R.', new Map([['https://sqlite.org/a', 'sqlite.org/a///']]))).toBe('R.\n\nSources:\n- https://sqlite.org/a')
+  })
+
   it('drops tracking parameters from link and reference targets, and leaves other text alone', () => {
     expect(withoutTrackingLinks('Pin by SHA ([GitHub Docs][1]) and [attest](https://github.com/actions/attest?utm_source=chatgpt.com "attest").\n\n[1]: https://docs.github.com/a?id=2&utm_source=chatgpt.com#pin "Security"'))
       .toBe('Pin by SHA ([GitHub Docs][1]) and [attest](https://github.com/actions/attest "attest").\n\n[1]: https://docs.github.com/a?id=2#pin "Security"')
