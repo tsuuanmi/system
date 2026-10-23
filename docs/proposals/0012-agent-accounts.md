@@ -1,13 +1,13 @@
 ---
 id: PROP-0012
 type: proposal
-status: proposed
+status: accepted
 created: 2026-10-23
 summary: Several accounts per agent runtime (3 Claude Code, 2 Codex CLI, 3 Antigravity CLI), managed by provider and an account id derived from the verified login, never a hand-made name; enrollment slots are only homes; Workers are account × role; an unverified, changed, or duplicate identity is quarantined; and a per-provider setting `accounts: assigned | pooled`, assigned by default and required for personal subscriptions, under which a limit makes an account's work wait and never moves it to another account of that provider, for agent and website accounts alike.
 owners: [operator]
 evidence: [run_60bb0779084119d1, run_5297953ae346473d]
-related: [PROP-0007, PROP-0008, PROP-0011, ADR-0024, ADR-0027, ADR-0033, ADR-0034, ADR-0035, ADR-0036, ADR-0043, REQ-ACC-1, REQ-ACC-7, REQ-WRK-8, REQ-TEAM-4]
-implementation: []
+related: [PROP-0007, PROP-0008, PROP-0011, ADR-0024, ADR-0027, ADR-0033, ADR-0034, ADR-0035, ADR-0036, ADR-0043, ADR-0051, ADR-0052, REQ-ACC-1, REQ-ACC-7, REQ-ACC-10, REQ-ACC-11, REQ-WRK-8, REQ-TEAM-4]
+implementation: [ADR-0051, ADR-0052]
 ---
 
 # Proposal: Agent accounts — several sign-ins per agent runtime, identified by their login
@@ -655,8 +655,28 @@ above and no compatibility path. Records keep their old Worker and pool ids.
 
 ## Decision
 
-Pending the operator's review (D23). On acceptance, phase B writes the two ADRs named above.
+Accepted by the operator on 2026-10-23 (D23), with the answer D24: all eight accounts are personal
+paid subscriptions, so accounts are assigned, not pooled, and the website accounts take the same
+per-provider setting, assigned by default. Phase B wrote the two ADRs named above, proposed:
+[ADR-0051](../decisions/adr/0051-agent-accounts-are-enrolled-slots-identified-by-their-login.md)
+and [ADR-0052](../decisions/adr/0052-accounts-are-assigned-unless-pooling-is-recorded.md). Where
+an open question below had a proposed answer that phase B or D needed, it was taken as proposed:
+parallel use under `assigned` (question 5), `maxLimitWaitHours` 24 (question 6), and `pooledTerms`
+as configuration with a `gate` decision at start (question 7).
 
 ## Implementation
 
-Nothing yet. The phases are listed [above](#phased-plan).
+The state of each phase is in the [roadmap](roadmap.md#later-candidates). Built:
+
+- **Phase B** (specification): `agent-account@1.0`, `capability-descriptor@1.5` (`account`),
+  `decision@1.8` (`enrollment`, the `recovery` outcome `wait`); the `agentRuntimes` additions
+  (`RunSpec.home`, `probe({ home })`, `identity(home, key)`, `loginCommand(home)`) with their
+  suite, passed by a fake with scripted homes, every runtime refusing a home it does not run in;
+  the `workers` and `workflow` (contract 1.4) suites extended. `worker-session@1.1`
+  (`antigravity-cli`) is phase C's, and the resource ledger's pool templates and `declare` are
+  phase F's.
+- **Phase D** (account mode): `accounts: assigned | pooled` on the `accounts` row (website
+  providers) and the `agent-workers` row (runtimes), `pooledTerms` required for pooled and recorded
+  at start as a `gate` decision; each website and agent Worker names its `account`; the
+  `assignment` check; the `wait` outcome bounded by `maxLimitWaitHours`; no failover inside an
+  assigned group.

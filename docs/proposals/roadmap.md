@@ -126,7 +126,17 @@ Each needs its own proposal: an A2A gateway and runtime (cross-runtime peers), a
 ACP client gateway for editors, sandboxed or SSH `exec` providers, more website
 providers, and a desktop launcher.
 
-- **Several accounts per agent runtime**: [PROP-0012](0012-agent-accounts.md), its phases A to G,
-  each with the operator's go-ahead. Phase C (agent siblings, team accounts counted by sibling)
-  fixes today's single homes and can go first; Antigravity CLI accounts wait for a verified way to
-  read their identity.
+- **Several accounts per agent runtime**: [PROP-0012](0012-agent-accounts.md), accepted (D23, D24),
+  its phases A to G, each with the operator's go-ahead. Built: phase B, the specification
+  (`agent-account@1.0`, `capability-descriptor@1.5`, `decision@1.8`; the `agentRuntimes` home,
+  identity, and sign-in command with their suite and a fake; [ADR-0051](../decisions/adr/0051-agent-accounts-are-enrolled-slots-identified-by-their-login.md)
+  and [ADR-0052](../decisions/adr/0052-accounts-are-assigned-unless-pooling-is-recorded.md), proposed),
+  and phase D, account mode: `accounts: assigned | pooled` per website provider and agent runtime,
+  assigned by default, pooled only with recorded `pooledTerms`; the `assignment` check; a node
+  refused for assigned accounts' limits waits for the reset (`wait`, bounded by
+  `maxLimitWaitHours`); no failover inside an assigned provider (ADR-0034 superseded in part);
+  with one account per provider routing chooses as before. Open: phase A (the evidence of each
+  runtime's principal, on the operator's accounts), phase C (agent siblings, team accounts counted
+  by sibling, `worker-session@1.1`, a limit with no reading closing its pool), and phases E to G
+  (enrollment and identity readers, Workers as account × role with pool templates, the live
+  checks); Antigravity CLI accounts wait for a verified way to read their identity.

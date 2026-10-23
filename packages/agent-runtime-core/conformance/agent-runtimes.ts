@@ -209,7 +209,7 @@ export function agentRuntimeIdentityConformance(name: string, harness: IdentityH
       expect(accountIdOf(harness.make().kind, first.hmac)).toBe(`${harness.make().kind}:${first.hmac.slice(0, 16)}`)
     })
 
-    it('tells two logins apart, and finds one login in two homes as one (a duplicate the caller quarantines)', async () => {
+    it('tells two logins apart, and finds one login in two homes as one, a duplicate the caller quarantines (REQ-ACC-1, REQ-ACC-7)', async () => {
       const [a, b, c] = [home(), home(), home()]
       await harness.signIn(a, 'alice@example.test')
       await harness.signIn(b, 'bob@example.test')
@@ -227,7 +227,7 @@ export function agentRuntimeIdentityConformance(name: string, harness: IdentityH
       expect(verified(await read(runtime, at, OTHER_KEY)).hmac).not.toBe(verified(await read(runtime, at)).hmac)
     })
 
-    it('never verifies a home it cannot read: signed out, never signed in, or not there (INV-2)', async () => {
+    it('never verifies a home it cannot read: signed out, never signed in, or not there (REQ-ACC-11, INV-2)', async () => {
       const runtime = harness.make()
       const out = home()
       await harness.signIn(out, 'alice@example.test')

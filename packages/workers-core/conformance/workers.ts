@@ -330,7 +330,7 @@ export function workersConformance(name: string, boot: Boot): void {
     const account = (id: string, group: string, mode: 'assigned' | 'pooled' = 'assigned', limitUntil?: string) =>
       ({ schema: 'capability-descriptor@1.5' as const, family: group, account: { id, group, mode, ...(limitUntil ? { limitUntil } : {}) } })
 
-    it('keeps work an assigned account at its limit could take off the other accounts of its group, admits other groups, and says why (ADR-0052)', async () => {
+    it('keeps work an assigned account at its limit could take off the other accounts of its group, admits other groups, and says why (REQ-ACC-10, ADR-0052)', async () => {
       const later = new Date(Date.now() + 3_600_000).toISOString()
       const research = requirement({ capabilities: ['reason', 'deep-research'] })
       const proves = ['reason', 'deep-research']
