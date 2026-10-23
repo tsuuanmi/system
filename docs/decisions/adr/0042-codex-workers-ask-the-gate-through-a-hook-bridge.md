@@ -25,7 +25,7 @@ stdin. Checked live on this host against a scripted model, it:
   recorded under its key, and skips an untrusted one without a word;
 - runs the tool when a hook exits non-zero (other than 2), prints what it cannot read, or times
   out: a hook fails open;
-- refuses `allow` and `ask` as decisions; a block (exit 2 with a reason) is the only one;
+- refuses `allow` and `ask` as decisions; a block (`deny`, or exit 2 with a reason) is the only one;
 - reports `exec_command` as `Bash` with its `command` only, and `apply_patch` and `view_image`
   under their own names;
 - does not run the hook for `write_stdin`, which writes to a running command's terminal;
