@@ -950,6 +950,25 @@ importers:
         specifier: workspace:*
         version: link:../workflow
 
+  packages/plugins/plugin-host:
+    dependencies:
+      '@tsuuanmi/system-artifacts':
+        specifier: workspace:*
+        version: link:../artifacts
+      '@tsuuanmi/system-plugin-host-core':
+        specifier: workspace:*
+        version: link:../../plugin-host-core
+      '@tsuuanmi/system-store':
+        specifier: workspace:*
+        version: link:../store
+    devDependencies:
+      '@deepseek-ai/cordis':
+        specifier: 4.0.5-alpha.1
+        version: 4.0.5-alpha.1(@deepseek-ai/cordis-plugin-include@1.0.10-alpha.1)(@deepseek-ai/cordis-plugin-loader@1.0.6-alpha.1)
+      '@tsuuanmi/system-libs':
+        specifier: workspace:*
+        version: link:../../libs
+
   packages/plugins/profile-scientific-research:
     dependencies:
       '@tsuuanmi/system-artifacts':
@@ -1572,6 +1591,9 @@ importers:
       '@tsuuanmi/system-models':
         specifier: workspace:*
         version: link:../plugins/models
+      '@tsuuanmi/system-plugin-host':
+        specifier: workspace:*
+        version: link:../plugins/plugin-host
       '@tsuuanmi/system-profile-scientific-research':
         specifier: workspace:*
         version: link:../plugins/profile-scientific-research

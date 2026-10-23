@@ -12,6 +12,8 @@ owns a key; **provides** is the plugin that registers it. **Consumes** is the `i
 **Imports** are workspace packages whose code is imported (a plugin package imported only for
 its types is not listed).
 
+A plugin may also consume a service of the dsh launcher itself, which no row provides: `loader`, the DSH loader (Cordis), which mounts the rows; `profileContext`, the dsh launcher's profile. The seam graph draws no edge to one.
+
 ## Packages
 
 | Package | Layer | Defines / provides | Bundle row | Consumes | Imports |
@@ -21,7 +23,7 @@ its types is not listed).
 | [gateway-core](../../packages/gateway-core/README.md) | gateways | defines `mcp` | — | — | `libs` |
 | [gateway-responses](../../packages/plugins/gateway-responses/README.md) | gateways | — | `gateway-responses` | `webServer`, `workflow`, `store` | `gateway-core`, `gateway-turns`, `libs` |
 | [gateway-turns](../../packages/gateway-turns/README.md) | gateways | — | — | — | `gateway-core`, `libs` |
-| [mcp-server](../../packages/plugins/mcp-server/README.md) | gateways | `mcp` | `mcp-server` | `webServer`, `accounts` (optional), `artifacts` (optional), `credentials` (optional), `eventLog` (optional), `providers` (optional), `store` (optional), `workers` (optional) | `gateway-core`, `libs` |
+| [mcp-server](../../packages/plugins/mcp-server/README.md) | gateways | `mcp` | `mcp-server` | `webServer`, `accounts` (optional), `artifacts` (optional), `browser` (optional), `credentials` (optional), `eventLog` (optional), `pluginHost` (optional), `providers` (optional), `store` (optional), `turns` (optional), `workers` (optional), `workflow` (optional) | `gateway-core`, `libs`, `plugin-host-core` |
 | [web-ui](../../packages/plugins/web-ui/README.md) | gateways | — | `web-ui` | `webServer`, `workflow`, `approvals` (optional), `artifacts` (optional), `board` (optional) | `approvals-core`, `board-core`, `gateway-core`, `libs` |
 | [board](../../packages/plugins/board/README.md) | orchestration | `board` | `board` | `store`, `artifacts`, `leases`, `approvals`, `mcp` (optional) | `approvals-core`, `board-core`, `gateway-core`, `leases`, `libs` |
 | [board-core](../../packages/board-core/README.md) | orchestration | defines `board` | — | — | `approvals-core` |
@@ -61,6 +63,8 @@ its types is not listed).
 | [credentials-vault](../../packages/plugins/credentials-vault/README.md) | kernel | `credentials` | `credentials` | — | `libs` |
 | [event-log](../../packages/plugins/event-log/README.md) | kernel | `eventLog` | `event-log` | `store` | `libs` |
 | [leases](../../packages/plugins/leases/README.md) | kernel | `leases` | `leases` | `store` | `libs` |
+| [plugin-host](../../packages/plugins/plugin-host/README.md) | kernel | `pluginHost` | `plugin-host` | `store`, `artifacts`, `loader`, `profileContext` (optional) | `plugin-host-core` |
+| [plugin-host-core](../../packages/plugin-host-core/README.md) | kernel | defines `pluginHost` | — | — | `libs` |
 | [store](../../packages/plugins/store/README.md) | kernel | `store` | `store` | — | `libs` |
 | [libs](../../packages/libs/README.md) | host and libraries | — | — | — | — |
 | [system-bundle](../../packages/system-bundle/README.md) | host and libraries | — | — | — | — |
@@ -121,6 +125,7 @@ flowchart TB
     credentials_vault["credentials-vault<br/>ctx.credentials"]
     event_log["event-log<br/>ctx.eventLog"]
     leases["leases<br/>ctx.leases"]
+    plugin_host["plugin-host<br/>ctx.pluginHost"]
     store["store<br/>ctx.store"]
   end
   subgraph host_and_libraries ["host and libraries"]
@@ -171,11 +176,15 @@ flowchart TB
   mcp_server --> webserver
   mcp_server -.-> accounts
   mcp_server -.-> artifacts
+  mcp_server -.-> browser_patchright
   mcp_server -.-> credentials_vault
   mcp_server -.-> event_log
+  mcp_server -.-> plugin_host
   mcp_server -.-> providers
   mcp_server -.-> store
+  mcp_server -.-> turns
   mcp_server -.-> workers
+  mcp_server -.-> workflow
   models --> llm
   models --> store
   models --> artifacts
@@ -186,6 +195,8 @@ flowchart TB
   models -.-> credentials_vault
   models -.-> event_log
   models -.-> mcp_server
+  plugin_host --> store
+  plugin_host --> artifacts
   profile_scientific_research --> workflow
   profile_scientific_research --> workers
   profile_scientific_research --> artifacts
@@ -321,6 +332,8 @@ flowchart TB
   end
   subgraph kernel ["kernel"]
     leases["leases<br/>ctx.leases"]
+    plugin_host["plugin-host<br/>ctx.pluginHost"]
+    plugin_host_core["plugin-host-core<br/>defines pluginHost"]
   end
   subgraph host_and_libraries ["host and libraries"]
     system_bundle["system-bundle"]
@@ -358,12 +371,14 @@ flowchart TB
   login --> gateway_core
   login --> provider_core
   mcp_server --> gateway_core
+  mcp_server --> plugin_host_core
   models --> gateway_core
   models --> leases
   models --> models_core
   models --> provider_core
   models --> workers_core
   models_core --> workers_core
+  plugin_host --> plugin_host_core
   provider_chatgpt_web --> provider_core
   provider_chatgpt_web --> ui_ops
   provider_gemini_web --> provider_core

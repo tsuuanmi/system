@@ -47,7 +47,8 @@
     "@tsuuanmi/system-store": "workspace:*",
     "@tsuuanmi/system-turn-receipts": "workspace:*",
     "@tsuuanmi/system-turns": "workspace:*",
-    "@tsuuanmi/system-models": "workspace:*"
+    "@tsuuanmi/system-models": "workspace:*",
+    "@tsuuanmi/system-plugin-host": "workspace:*"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "4.0.5-alpha.1",

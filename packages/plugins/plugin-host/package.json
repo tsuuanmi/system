@@ -1,0 +1,19 @@
+{
+  "name": "@tsuuanmi/system-plugin-host",
+  "version": "0.0.0",
+  "private": true,
+  "description": "ctx.pluginHost: reads every row of the composition from the DSH loader and the manifest its package declares, and records each plugin's lifecycle state, every change a lifecycle decision first; records and automates nothing else",
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "exports": { ".": { "types": "./lib/index.d.ts", "default": "./lib/index.js" } },
+  "files": ["lib", "plugin-manifest.json"],
+  "scripts": { "build": "tsc -p tsconfig.build.json" },
+  "dependencies": {
+    "@tsuuanmi/system-artifacts": "workspace:*",
+    "@tsuuanmi/system-plugin-host-core": "workspace:*",
+    "@tsuuanmi/system-store": "workspace:*"
+  },
+  "peerDependencies": { "@deepseek-ai/cordis": "4.0.5-alpha.1" },
+  "devDependencies": { "@deepseek-ai/cordis": "4.0.5-alpha.1", "@tsuuanmi/system-libs": "workspace:*" }
+}

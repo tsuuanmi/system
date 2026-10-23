@@ -14,6 +14,11 @@ and the `system` plugins, and it does not use `dsh-base`
   ([runbook](../../docs/operations/runbooks.md#agent-workers)). A host without Claude
   Code, bubblewrap, or a sign-in still boots; its Workers are unavailable, and the probe
   says why.
+- **The plugin host (B7):** the [`plugin-host`](../plugins/plugin-host/README.md) row is on. It
+  reads every row of the composition and the manifest its package declares, and records each
+  plugin's lifecycle state (a row on `default`, a row off `candidate`), every change a decision;
+  it never turns a row on or off ([plugin host](../../docs/design/plugin-host.md)). Each plugin
+  package ships its `plugin-manifest.json`.
 - **Off by default (PROP-0004):** `runtime-codex-sdk` and `runtime-acp` (they cannot ask
   a tool gate before each tool call, so no Worker of theirs is admitted),
   `profile-software-development`, and both model gateways are `disabled: true`, not

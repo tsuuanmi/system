@@ -32,6 +32,8 @@ export const LAYER_OF: Record<string, Layer> = {
   'leases': 'kernel',
   'artifacts': 'kernel',
   'credentials-vault': 'kernel',
+  'plugin-host-core': 'kernel',
+  'plugin-host': 'kernel',
   // provider runtime
   'provider-core': 'provider runtime',
   'ui-ops': 'provider runtime',
@@ -104,6 +106,12 @@ function sources(dir: string, out: string[] = []): string[] {
   }
   return out
 }
+
+/**
+ * Services the dsh launcher provides itself, outside any row: the loader that mounts the rows, and the
+ * profile it composed. A plugin may consume one; no package or bundle row provides it.
+ */
+export const HOST_SERVICES: Readonly<Record<string, string>> = { loader: 'the DSH loader (Cordis), which mounts the rows', profileContext: 'the dsh launcher\'s profile' }
 
 /** Code without comments, so a commented-out `inject` or `super` never counts. */
 const code = (text: string): string => text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:'"`\\])\/\/.*$/gm, '$1')
@@ -182,7 +190,7 @@ export function scan(): Pkg[] {
     for (const text of texts.get(p.dir)!) {
       for (const m of text.matchAll(/(?:static\s+inject|export\s+const\s+inject)\s*=\s*\[([^\]]*)\]/g)) for (const k of listOf(m[1]!)) required.add(k)
       for (const m of text.matchAll(/\bctx\.inject\(\s*\[([^\]]*)\]/g)) for (const k of listOf(m[1]!)) optional.add(k)
-      for (const m of text.matchAll(/\bctx\.get\(\s*['"]([A-Za-z]+)['"]\s*\)/g)) optional.add(m[1]!)
+      for (const m of text.matchAll(/\bctx\.get\(\s*['"]([A-Za-z]+)['"](?:\s+as\s+\w+)?\s*\)/g)) optional.add(m[1]!)
       const imported = importsOf(text)
       for (const c of classes(text)) {
         if (c.abstract) {
@@ -240,10 +248,10 @@ export function scan(): Pkg[] {
     // present, and a row that is off by default may wait on it. A row that is on never requires a
     // seam nobody provides.
     for (const k of p.required) {
-      if (providerOf.has(k) || (p.mountId && off.has(p.mountId) && defined.has(k))) continue
+      if (providerOf.has(k) || k in HOST_SERVICES || (p.mountId && off.has(p.mountId) && defined.has(k))) continue
       problems.push(`${p.dir} consumes ctx.${k}, which no package or bundle row provides${defined.has(k) ? ' (it is only defined): keep its row off until one does' : ''}`)
     }
-    for (const k of p.optional) if (!providerOf.has(k) && !defined.has(k)) problems.push(`${p.dir} consumes ctx.${k}, which no package or bundle row provides or defines`)
+    for (const k of p.optional) if (!providerOf.has(k) && !defined.has(k) && !(k in HOST_SERVICES)) problems.push(`${p.dir} consumes ctx.${k}, which no package or bundle row provides or defines`)
   }
   for (const [k, by] of providerOf) if (by.length > 1) problems.push(`ctx.${k} is provided by ${by.join(', ')}`)
   if (problems.length) throw new Error(`gen-packages:\n  ${problems.join('\n  ')}`)
@@ -274,6 +282,7 @@ export function render(pkgs: Pkg[] = scan()): string {
   for (const p of pkgs) {
     for (const [keys, arrow, kind] of [[p.required, '-->', 'required'], [p.optional, '-.->', 'optional']] as const) {
       for (const k of keys) {
+        if (k in HOST_SERVICES) continue
         const to = providerOf.get(k)!
         seamEdges.push(`  ${id(p.dir)} ${arrow} ${id(to.dir)}`)
         if (rank(to) < rank(p)) upward.push(`| \`${p.dir}\` (${p.layer}) | \`${k}\` | \`${to.dir}\` (${to.layer}) | ${kind} |`)
@@ -314,6 +323,8 @@ export function render(pkgs: Pkg[] = scan()): string {
     '*optional* seams are taken with `ctx.inject([...])` or `ctx.get(...)` and used only when present.',
     '**Imports** are workspace packages whose code is imported (a plugin package imported only for',
     'its types is not listed).',
+    '',
+    `A plugin may also consume a service of the dsh launcher itself, which no row provides: ${Object.entries(HOST_SERVICES).map(([k, what]) => `\`${k}\`, ${what}`).join('; ')}. The seam graph draws no edge to one.`,
     '',
     '## Packages',
     '',

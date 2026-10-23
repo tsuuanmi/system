@@ -126,6 +126,7 @@ describe('architecture rules', () => {
       turnReceipts: 'plugins/turn-receipts/conformance/turn-receipts.ts', leases: 'plugins/leases/conformance/leases.ts', egress: 'plugins/egress/conformance/egress.ts',
       workerSessions: 'plugins/worker-sessions/conformance/worker-sessions.ts', workflow: 'plugins/workflow/conformance/workflow.ts', workers: 'workers-core/conformance/workers.ts',
       board: 'board-core/conformance/board.ts', approvals: 'approvals-core/conformance/approvals.ts', resources: 'resources-core/conformance/resources.ts',
+      pluginHost: 'plugin-host-core/conformance/plugin-host.ts',
     }
     for (const [seam, file] of Object.entries(suites)) {
       const source = readFileSync(join(packages, file), 'utf8')
