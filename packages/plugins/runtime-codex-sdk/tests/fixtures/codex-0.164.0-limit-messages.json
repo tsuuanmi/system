@@ -1,0 +1,24 @@
+{
+  "source": "Codex 0.164.0 (@openai/codex 0.164.0, codex-linux-x64): turn.failed messages built from the usage-limit message parts and reset formats its binary holds (You’ve hit your usage limit…, ' Try again at ', ' or try again at ', ' or try again later.', '%-I:%M %p', '%b %-d' + st|nd|rd|th + ', %Y %-I:%M %p'), with Codex started in TZ=UTC. Not captured from an account; a limit name is redacted.",
+  "observedAt": "2026-10-24T10:00:00.000Z",
+  "cases": [
+    { "case": "a reset later today, plan with an upgrade offer", "message": "You’ve hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit https://chatgpt.com/settings/usage to purchase more credits or try again at 3:04 PM.", "resetsAt": "2026-10-24T15:05:00.000Z" },
+    { "case": "a reset on another day", "message": "You’ve hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit https://chatgpt.com/settings/usage to purchase more credits or try again at Oct 29th, 2026 9:41 AM.", "resetsAt": "2026-10-29T09:42:00.000Z" },
+    { "case": "midnight, first of the month", "message": "You’ve hit your usage limit. Upgrade to Plus to continue using Codex (https://chatgpt.com/explore/plus), or try again at Nov 1st, 2026 12:00 AM.", "resetsAt": "2026-11-01T00:01:00.000Z" },
+    { "case": "noon, second and third", "message": "You’ve hit your usage limit. Try again at Nov 2nd, 2026 12:30 PM.", "resetsAt": "2026-11-02T12:31:00.000Z" },
+    { "case": "a team plan", "message": "You’ve hit your usage limit. To get more access now, send a request to your admin or try again at Nov 3rd, 2026 11:59 PM.", "resetsAt": "2026-11-04T00:00:00.000Z", "note": "the minute after 23:59 is the next day" },
+    { "case": "a named limit", "message": "You’ve hit your usage limit for <limit>. Try again at 11:15 AM.", "resetsAt": "2026-10-24T11:16:00.000Z" },
+    { "case": "a straight apostrophe", "message": "You've hit your usage limit. Try again at 10:30 AM.", "resetsAt": "2026-10-24T10:31:00.000Z" },
+    { "case": "no reset known", "message": "You’ve hit your usage limit. To get more access now, send a request to your admin or try again later.", "resetsAt": null },
+    { "case": "a reset today already past", "message": "You’ve hit your usage limit. Try again at 9:00 AM.", "resetsAt": null },
+    { "case": "an hour out of range", "message": "You’ve hit your usage limit. Try again at 13:04 PM.", "resetsAt": null },
+    { "case": "a minute out of range", "message": "You’ve hit your usage limit. Try again at 3:64 PM.", "resetsAt": null },
+    { "case": "a date that does not exist", "message": "You’ve hit your usage limit. Try again at Feb 30th, 2027 1:00 AM.", "resetsAt": null },
+    { "case": "an unknown month", "message": "You’ve hit your usage limit. Try again at Okt 30th, 2026 1:00 AM.", "resetsAt": null },
+    { "case": "a reset years ahead", "message": "You’ve hit your usage limit. Try again at Oct 30th, 2031 1:00 AM.", "resetsAt": null },
+    { "case": "no time at all", "message": "You’ve hit your usage limit. Try again at noon.", "resetsAt": null },
+    { "case": "a time in another format", "message": "You’ve hit your usage limit. Try again at 15:04.", "resetsAt": null },
+    { "case": "not the usage-limit message", "message": "exceeded retry limit, last status: 429 Too Many Requests, try again at 3:04 PM.", "resetsAt": null },
+    { "case": "empty", "message": "", "resetsAt": null }
+  ]
+}

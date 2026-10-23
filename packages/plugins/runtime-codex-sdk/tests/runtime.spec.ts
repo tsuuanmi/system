@@ -1,12 +1,12 @@
 import { createHash } from 'node:crypto'
-import { existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterAll, describe, expect, it } from 'vitest'
-import { agentRuntimeProviderConformance } from '../../../agent-runtime-core/conformance/agent-runtimes.ts'
-import type { Confinement, ToolCall, ToolGate } from '@tsuuanmi/system-agent-runtime-core'
-import { CodexRuntime, FEATURES_OFF } from '../src/index.ts'
+import { agentRuntimeProviderConformance, expectConsistentMetering } from '../../../agent-runtime-core/conformance/agent-runtimes.ts'
+import { type Confinement, meteringOf, type ToolCall, type ToolGate } from '@tsuuanmi/system-agent-runtime-core'
+import { CodexRuntime, FEATURES_OFF, limitFromMessage, VERIFIED_LIMIT_VERSIONS } from '../src/index.ts'
 import { hookOverrides } from '../src/gate.ts'
 import { type ProbeBehaviour, type Step, probeExec, scripted } from './fake-codex.ts'
 
@@ -273,5 +273,70 @@ describe('codex-sdk: the probe proves the gate on this host before it reports ga
       expect(await probe(behaviour), why).toMatchObject({ available: true, readsConfined: true, gatesToolCalls: false, detail: expect.stringContaining(`tool calls cannot be gated: ${why}`) })
     }
     expect(await runtime(scripted(), { hook: join(root, 'missing.js') }).probe()).toMatchObject({ gatesToolCalls: false, detail: expect.stringContaining('gate hook') })
+  })
+})
+
+describe('codex-sdk: a usage limit\'s reset time, from Codex\'s own message (docs/design/agent-runtimes.md#metering)', () => {
+  const fixture = JSON.parse(readFileSync(fileURLToPath(new URL('./fixtures/codex-0.164.0-limit-messages.json', import.meta.url)), 'utf8')) as {
+    observedAt: string; cases: Array<{ case: string; message: string; resetsAt: string | null }>
+  }
+  const observedAt = Date.parse(fixture.observedAt)
+
+  it('reads each 0.164.0 message shape, and no reading from one it cannot read (fail closed)', () => {
+    expect(VERIFIED_LIMIT_VERSIONS).toEqual(['0.164.0'])
+    for (const c of fixture.cases) {
+      const limit = limitFromMessage(c.message, observedAt)
+      if (c.resetsAt === null) expect(limit, c.case).toBeUndefined()
+      else {
+        expect(limit, c.case).toEqual({ window: '*', status: 'rejected', resetsAt: c.resetsAt, observedAt: fixture.observedAt })
+        expectConsistentMetering({ limits: [limit!] })
+      }
+    }
+  })
+
+  it('takes a time of day on the UTC date it is read, so a message read past midnight reads late, never early', () => {
+    const message = 'You’ve hit your usage limit. Try again at 11:58 PM.'
+    expect(limitFromMessage(message, Date.parse('2026-10-24T23:50:00.000Z'))?.resetsAt).toBe('2026-10-24T23:59:00.000Z')
+    expect(limitFromMessage(message, Date.parse('2026-10-25T00:00:05.000Z'))?.resetsAt).toBe('2026-10-25T23:59:00.000Z')
+  })
+
+  it('starts Codex in UTC, whatever the operator sets, so the reset it names reads the same on every host', async () => {
+    const s = scripted()
+    await runtime(s, { env: { TZ: 'Asia/Ho_Chi_Minh' } }).run({ prompt: 'x', workspace: '/w', sandbox: 'read-only' }, new AbortController().signal)
+    expect(s.lastClient.env).toMatchObject({ TZ: 'UTC' })
+  })
+
+  const limited = (message: string) => scripted(() => [{ type: 'thread.started', thread_id: 'h-3' }, { type: 'turn.started' }, { type: 'turn.failed', error: { message } }])
+  const fail = async (s: ReturnType<typeof scripted>, version: () => Promise<string>): Promise<Error & { kind: string }> => {
+    const error = await runtime(s, { version }).run({ prompt: 'x', workspace: '/w', sandbox: 'read-only' }, new AbortController().signal).then(() => undefined, (e: unknown) => e as Error & { kind: string })
+    expect(error).toBeDefined()
+    return error!
+  }
+
+  it('fails the run quota_exhausted with the reset as a rejected observation of window *, for the ledger to wait on', async () => {
+    const before = Date.now()
+    const error = await fail(limited(fixture.cases[1]!.message), async () => '0.164.0')
+    expect(error.kind).toBe('quota_exhausted')
+    const metering = meteringOf(error)!
+    expect(metering.limits).toEqual([{ window: '*', status: 'rejected', resetsAt: '2026-10-29T09:42:00.000Z', observedAt: expect.any(String) }])
+    expect(Date.parse(metering.limits![0]!.observedAt)).toBeGreaterThanOrEqual(before)
+    expectConsistentMetering(metering)
+  })
+
+  it('reports no observation for a message it cannot read, and ignores the message of a Codex version not verified, saying so', async () => {
+    const later = await fail(limited('You’ve hit your usage limit. Try again later.'), async () => '0.164.0')
+    expect(later).toMatchObject({ kind: 'quota_exhausted' })
+    expect(meteringOf(later)).toBeUndefined()
+    const unverified = await fail(limited(fixture.cases[1]!.message), async () => '0.165.0')
+    expect(unverified).toMatchObject({ kind: 'quota_exhausted', message: expect.stringContaining('its reset time is not read: the usage-limit message of Codex 0.165.0 is not verified') })
+    expect(meteringOf(unverified)).toBeUndefined()
+    const unknown = await fail(limited(fixture.cases[1]!.message), async () => { throw new Error('no such file') })
+    expect(unknown).toMatchObject({ kind: 'quota_exhausted', message: expect.stringContaining('its reset time is not read: codex --version failed: no such file') })
+    expect(meteringOf(unknown)).toBeUndefined()
+    // Another failure is no limit at all, and its version is never asked.
+    let asked = 0
+    const broken = await fail(limited('stream disconnected before completion'), async () => { asked++; return '0.164.0' })
+    expect(broken).toMatchObject({ kind: 'session_broken' })
+    expect(asked).toBe(0)
   })
 })
