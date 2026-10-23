@@ -36,6 +36,7 @@ const step = (nodeId: string, extra: Partial<NodeTemplate>): NodeTemplate => ({
 /** A change, and an exact-subject review of it: blocking findings grow a fix behind a gate, then a re-review. */
 const TEMPLATES: Record<string, NodeTemplate[]> = {
   change: [step('develop', { prompt: 'Develop: {{input}}' }), step('review', { prompt: 'Review: {{input}}', capabilities: ['review'], dependsOn: ['develop'] })],
+  read: [step('answer', { capabilities: ['reason'] })],
 }
 
 /** Scripted Workers that answer as agents in one git working tree, each result an `agent-result@1.1` on the tree's subject then. */
@@ -278,5 +279,25 @@ describe('remediation on the approval queue', () => {
     ctx.workflow.approve(run.runId, { verdict: 'approved', plan: (view.blocked as { plan: string }).plan })
     expect((await finished(ctx, run.runId)).status).toBe('completed')
     expect(fixes(workers)).toBe(1)
+  })
+
+  it('records the policy\'s required checks a plain run that wrote did not pass on its acceptance decision, and completes all the same', async () => {
+    const policy: AutonomyPolicy = { ...POLICY, rules: [...POLICY.rules, { actionClass: 'workspace-write', mode: 'auto', requires: ['tests', 'lint', 'review'] }] }
+    const { ctx } = await boot({ policy, reviews: 0 })
+    const run = ctx.workflow.start({ template: 'change', input: 'Fix add()', classification: 'public' })
+    const done = await finished(ctx, run.runId)
+    expect(done.status).toBe('completed')
+    const acceptance = ctx.workflow.explain(run.runId)!.nodes.find((n) => n.nodeId === 'review')!.decisions.find((d) => d.type === 'acceptance' && d.reasons.some((r) => r.includes('are pending')))
+    expect(acceptance).toMatchObject({ outcome: 'accept' })
+    const body = ctx.artifacts.get(acceptance!.id)!.body as { decider: { id: string }; outcome: { detail: Record<string, unknown> } }
+    // The review it ran passed on the subject it wrote; tests and lint never ran, and stay pending.
+    expect(body).toMatchObject({ decider: { id: 'workflow.run-acceptance' }, outcome: { detail: { actionClass: 'workspace-write', mode: 'auto', checks: { review: true }, pendingChecks: ['tests', 'lint'] } } })
+  })
+
+  it('records no acceptance decision for a plain run that wrote nothing', async () => {
+    const { ctx } = await boot()
+    const run = ctx.workflow.start({ template: 'read', input: 'What does add() do?', classification: 'public' })
+    expect((await finished(ctx, run.runId)).status).toBe('completed')
+    expect(ctx.artifacts.list({ kind: 'decision', runId: run.runId }).filter((a) => (a.body as { decider: { id: string } }).decider.id === 'workflow.run-acceptance')).toEqual([])
   })
 })

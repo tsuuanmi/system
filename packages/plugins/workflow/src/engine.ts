@@ -11,6 +11,7 @@ import { type Lease, LeaseLost, StaleGeneration } from '@tsuuanmi/system-leases'
 import { canonicalJson, SchemaRegistry, sha256 } from '@tsuuanmi/system-libs'
 import { dispositionOf } from '@tsuuanmi/system-provider-core'
 import { AdmissionFailure, type AdmittedWorker, type ArtifactRef, type Classification, type RouteOptions, type WorkRequirement, type WorkerExecution } from '@tsuuanmi/system-workers-core'
+import { acceptPlain } from './acceptance.ts'
 import { type Draft, draftOf, instructionsText, recordBrief, renderedChars, type TaskFrame } from './briefs.ts'
 import { block, expireGate, gateDeadline, grow, grownSteps } from './growth.ts'
 import { admissionKind, escalate, failAttempt, inputHint, routedDecisions } from './recovery.ts'
@@ -329,6 +330,8 @@ export class Engine {
             // A board task's result binds to the exact subject it writes (INV-5), or the run fails.
             const unbound = this.tasks.complete(run, nodes, final)
             if (unbound) return this.finish(run, 'failed', { error: JSON.stringify(unbound) }, current)
+            // A plain run that wrote records the policy's checks still pending; it applies nothing, so they never block it.
+            if (!this.tasks.bound(runId)) await acceptPlain(this, run, nodes, final)
             return this.finish(run, 'completed', { result: final }, current)
           }
           // A run that lost its board task's holder starts nothing new: it reconciles what is in

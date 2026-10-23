@@ -607,7 +607,7 @@ export class TaskRuns {
    * the very subject the result is on passed its gate (passed when it approved). Nothing else is
    * reported: a check the run did not run is never claimed.
    */
-  private checksOf(done: NodeRow[], subject: Subject): Partial<Record<'schema' | 'review', boolean>> {
+  checksOf(done: NodeRow[], subject: Subject): Partial<Record<'schema' | 'review', boolean>> {
     const checks: Partial<Record<'schema' | 'review', boolean>> = {}
     const final = done.at(-1)
     if (final && (JSON.parse(final.spec) as ResolvedNode).resultSchema) checks.schema = true
