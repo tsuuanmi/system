@@ -98,8 +98,15 @@ operator's installed `codex` through the official Codex TypeScript SDK.
   `codex exec` emits no rate-limit event, but a turn that hits the usage limit
   fails with Codex's own message, which names when to try again
   (`… try again at 3:04 PM.`, or `… at Oct 25th, 2026 3:04 PM.`) in the process's
-  local time, so Codex always starts with `TZ=UTC` (an operator's `env.TZ` is
-  overridden, and the agent's commands see UTC too). On a Codex version in
+  local time. That time is read in the zone the child ran in: the `TZ` of its
+  environment (the operator's `env.TZ`, else the daemon's), else the host's
+  zone (`Intl.DateTimeFormat().resolvedOptions().timeZone`); the runtime never
+  sets `TZ`, so the agent's commands see the zone the operator chose. A time
+  without a date is on the child's date when read; a time a DST change shows
+  twice, or never, is read as the later instant (never early). A `TZ` that is
+  no IANA zone name as the child reads it (empty, a POSIX rule, an offset, a
+  name in the wrong case, or one Intl does not know) gives no observation, and
+  the error says so. On a Codex version in
   `VERIFIED_LIMIT_VERSIONS` (0.164.0, from its binary's message parts and
   formats), the run's `quota_exhausted` error carries (`withMetering`) one
   `rejected` observation of window `*` (the message names no window) with that

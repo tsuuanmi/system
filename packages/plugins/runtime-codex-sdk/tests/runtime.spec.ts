@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url'
 import { afterAll, describe, expect, it } from 'vitest'
 import { agentRuntimeProviderConformance, expectConsistentMetering } from '../../../agent-runtime-core/conformance/agent-runtimes.ts'
 import { type Confinement, meteringOf, type ToolCall, type ToolGate } from '@tsuuanmi/system-agent-runtime-core'
-import { CodexRuntime, FEATURES_OFF, limitFromMessage, VERIFIED_LIMIT_VERSIONS } from '../src/index.ts'
+import { childTimeZone, CodexRuntime, FEATURES_OFF, limitFromMessage, VERIFIED_LIMIT_VERSIONS } from '../src/index.ts'
 import { hookOverrides } from '../src/gate.ts'
 import { type ProbeBehaviour, type Step, probeExec, scripted } from './fake-codex.ts'
 
@@ -276,16 +276,17 @@ describe('codex-sdk: the probe proves the gate on this host before it reports ga
   })
 })
 
-describe('codex-sdk: a usage limit\'s reset time, from Codex\'s own message (docs/design/agent-runtimes.md#metering)', () => {
+describe('codex-sdk: a usage limit\'s reset time, from Codex\'s own message (docs/design/agent-runtimes.md#limit-readings)', () => {
   const fixture = JSON.parse(readFileSync(fileURLToPath(new URL('./fixtures/codex-0.164.0-limit-messages.json', import.meta.url)), 'utf8')) as {
-    observedAt: string; cases: Array<{ case: string; message: string; resetsAt: string | null }>
+    observedAt: string; timeZone: string; cases: Array<{ case: string; timeZone?: string; message: string; resetsAt: string | null }>
   }
   const observedAt = Date.parse(fixture.observedAt)
+  const dated = fixture.cases[1]!.message
 
-  it('reads each 0.164.0 message shape, and no reading from one it cannot read (fail closed)', () => {
+  it('reads each 0.164.0 message shape in the child\'s zone, and no reading from one it cannot read (fail closed)', () => {
     expect(VERIFIED_LIMIT_VERSIONS).toEqual(['0.164.0'])
     for (const c of fixture.cases) {
-      const limit = limitFromMessage(c.message, observedAt)
+      const limit = limitFromMessage(c.message, observedAt, c.timeZone ?? fixture.timeZone)
       if (c.resetsAt === null) expect(limit, c.case).toBeUndefined()
       else {
         expect(limit, c.case).toEqual({ window: '*', status: 'rejected', resetsAt: c.resetsAt, observedAt: fixture.observedAt })
@@ -294,28 +295,51 @@ describe('codex-sdk: a usage limit\'s reset time, from Codex\'s own message (doc
     }
   })
 
-  it('takes a time of day on the UTC date it is read, so a message read past midnight reads late, never early', () => {
+  it('takes a time of day on the child\'s date when it is read, so a message read past its midnight reads late, never early', () => {
     const message = 'You’ve hit your usage limit. Try again at 11:58 PM.'
-    expect(limitFromMessage(message, Date.parse('2026-10-24T23:50:00.000Z'))?.resetsAt).toBe('2026-10-24T23:59:00.000Z')
-    expect(limitFromMessage(message, Date.parse('2026-10-25T00:00:05.000Z'))?.resetsAt).toBe('2026-10-25T23:59:00.000Z')
+    expect(limitFromMessage(message, Date.parse('2026-10-24T23:50:00.000Z'), 'UTC')?.resetsAt).toBe('2026-10-24T23:59:00.000Z')
+    expect(limitFromMessage(message, Date.parse('2026-10-25T00:00:05.000Z'), 'UTC')?.resetsAt).toBe('2026-10-25T23:59:00.000Z')
+    // 23:50 UTC is already Oct 25th in Ho Chi Minh City (06:50): 6:58 AM is that morning, not the UTC date's.
+    expect(limitFromMessage('You’ve hit your usage limit. Try again at 6:58 AM.', Date.parse('2026-10-24T23:50:00.000Z'), 'Asia/Ho_Chi_Minh')?.resetsAt).toBe('2026-10-24T23:59:00.000Z')
+    // 07:00 UTC is Los Angeles' midnight: 11:58 PM is that day's, read late.
+    expect(limitFromMessage(message, Date.parse('2026-10-25T06:50:00.000Z'), 'America/Los_Angeles')?.resetsAt).toBe('2026-10-25T06:59:00.000Z')
+    expect(limitFromMessage(message, Date.parse('2026-10-25T07:00:05.000Z'), 'America/Los_Angeles')?.resetsAt).toBe('2026-10-26T06:59:00.000Z')
   })
 
-  it('starts Codex in UTC, whatever the operator sets, so the reset it names reads the same on every host', async () => {
-    const s = scripted()
-    await runtime(s, { env: { TZ: 'Asia/Ho_Chi_Minh' } }).run({ prompt: 'x', workspace: '/w', sandbox: 'read-only' }, new AbortController().signal)
-    expect(s.lastClient.env).toMatchObject({ TZ: 'UTC' })
+  it('reads the zone from the child\'s TZ, else the host\'s, and no zone from a TZ the child would not read as one', () => {
+    expect(childTimeZone(undefined)).toBe(new Intl.DateTimeFormat().resolvedOptions().timeZone)
+    expect(childTimeZone('Asia/Ho_Chi_Minh')).toBe('Asia/Ho_Chi_Minh')
+    expect(childTimeZone('US/Eastern')).toBe('US/Eastern')
+    expect(childTimeZone('UTC')).toBe('UTC')
+    expect(childTimeZone(':Europe/Berlin')).toBe('Europe/Berlin')
+    for (const tz of ['', ':', 'UTC0', 'CET-1CEST,M3.5.0,M10.5.0/3', '+05:00', '-03:00', 'Mars/Olympus_Mons', 'Etc/Unknown', 'europe/berlin', '/usr/share/zoneinfo/Europe/Berlin']) {
+      expect(childTimeZone(tz), tz).toBeUndefined()
+    }
+    expect(limitFromMessage(dated, observedAt, 'Mars/Olympus_Mons')).toBeUndefined()
   })
 
   const limited = (message: string) => scripted(() => [{ type: 'thread.started', thread_id: 'h-3' }, { type: 'turn.started' }, { type: 'turn.failed', error: { message } }])
-  const fail = async (s: ReturnType<typeof scripted>, version: () => Promise<string>): Promise<Error & { kind: string }> => {
-    const error = await runtime(s, { version }).run({ prompt: 'x', workspace: '/w', sandbox: 'read-only' }, new AbortController().signal).then(() => undefined, (e: unknown) => e as Error & { kind: string })
+  const fail = async (s: ReturnType<typeof scripted>, version: () => Promise<string>, extra: Partial<ConstructorParameters<typeof CodexRuntime>[0]> = { env: { TZ: 'UTC' } }): Promise<Error & { kind: string }> => {
+    const error = await runtime(s, { version, ...extra }).run({ prompt: 'x', workspace: '/w', sandbox: 'read-only' }, new AbortController().signal).then(() => undefined, (e: unknown) => e as Error & { kind: string })
     expect(error).toBeDefined()
     return error!
+  }
+  const resetOf = (error: Error) => meteringOf(error)?.limits?.[0]?.resetsAt
+  const withDaemonTz = async <T>(tz: string | undefined, body: () => Promise<T>): Promise<T> => {
+    const before = process.env.TZ
+    if (tz === undefined) delete process.env.TZ
+    else process.env.TZ = tz
+    try {
+      return await body()
+    } finally {
+      if (before === undefined) delete process.env.TZ
+      else process.env.TZ = before
+    }
   }
 
   it('fails the run quota_exhausted with the reset as a rejected observation of window *, for the ledger to wait on', async () => {
     const before = Date.now()
-    const error = await fail(limited(fixture.cases[1]!.message), async () => '0.164.0')
+    const error = await fail(limited(dated), async () => '0.164.0')
     expect(error.kind).toBe('quota_exhausted')
     const metering = meteringOf(error)!
     expect(metering.limits).toEqual([{ window: '*', status: 'rejected', resetsAt: '2026-10-29T09:42:00.000Z', observedAt: expect.any(String) }])
@@ -323,14 +347,34 @@ describe('codex-sdk: a usage limit\'s reset time, from Codex\'s own message (doc
     expectConsistentMetering(metering)
   })
 
-  it('reports no observation for a message it cannot read, and ignores the message of a Codex version not verified, saying so', async () => {
+  it('leaves Codex\'s TZ as the operator or the daemon has it, and reads the reset in that zone, else the host\'s', async () => {
+    const operator = limited(dated)
+    expect(resetOf(await fail(operator, async () => '0.164.0', { env: { TZ: 'Asia/Ho_Chi_Minh' } }))).toBe('2026-10-29T02:42:00.000Z')
+    expect(operator.lastClient.env).toMatchObject({ TZ: 'Asia/Ho_Chi_Minh' })
+    await withDaemonTz('America/Los_Angeles', async () => {
+      const daemon = limited(dated)
+      expect(resetOf(await fail(daemon, async () => '0.164.0', {}))).toBe('2026-10-29T16:42:00.000Z')
+      expect(daemon.lastClient.env).toMatchObject({ TZ: 'America/Los_Angeles' })
+    })
+    await withDaemonTz(undefined, async () => {
+      const host = limited(dated)
+      const error = await fail(host, async () => '0.164.0', {})
+      expect(host.lastClient.env).not.toHaveProperty('TZ')
+      expect(resetOf(error)).toBe(limitFromMessage(dated, observedAt, new Intl.DateTimeFormat().resolvedOptions().timeZone)!.resetsAt)
+    })
+  })
+
+  it('reports no observation for a message it cannot read, in a zone it cannot read, or from a Codex version not verified, saying so', async () => {
     const later = await fail(limited('You’ve hit your usage limit. Try again later.'), async () => '0.164.0')
     expect(later).toMatchObject({ kind: 'quota_exhausted' })
     expect(meteringOf(later)).toBeUndefined()
-    const unverified = await fail(limited(fixture.cases[1]!.message), async () => '0.165.0')
+    const zoneless = await fail(limited(dated), async () => '0.164.0', { env: { TZ: 'Mars/Olympus_Mons' } })
+    expect(zoneless).toMatchObject({ kind: 'quota_exhausted', message: expect.stringContaining('its reset time is not read: Codex ran with TZ="Mars/Olympus_Mons", no time zone it can be read in') })
+    expect(meteringOf(zoneless)).toBeUndefined()
+    const unverified = await fail(limited(dated), async () => '0.165.0')
     expect(unverified).toMatchObject({ kind: 'quota_exhausted', message: expect.stringContaining('its reset time is not read: the usage-limit message of Codex 0.165.0 is not verified') })
     expect(meteringOf(unverified)).toBeUndefined()
-    const unknown = await fail(limited(fixture.cases[1]!.message), async () => { throw new Error('no such file') })
+    const unknown = await fail(limited(dated), async () => { throw new Error('no such file') })
     expect(unknown).toMatchObject({ kind: 'quota_exhausted', message: expect.stringContaining('its reset time is not read: codex --version failed: no such file') })
     expect(meteringOf(unknown)).toBeUndefined()
     // Another failure is no limit at all, and its version is never asked.

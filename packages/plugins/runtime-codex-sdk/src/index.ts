@@ -28,7 +28,8 @@
  *   through an owner-only launcher (the SDK takes a program path, not arguments). The probe
  *   proves the confinement on this host; without it, a run is refused.
  * A turn that fails on a usage limit is `quota_exhausted`, with the reset time Codex's message
- * names as a limit observation, on a Codex version whose message was verified (`limits.ts`).
+ * names as a limit observation, read in the zone the child ran in, on a Codex version whose message
+ * was verified (`limits.ts`).
  * Codex's own configuration (its model provider and model) is the operator's, passed as
  * `config`, for example the system Responses gateway. The thread stays native; only its id
  * crosses as the run's handle (INV-7).
@@ -50,11 +51,11 @@ import {
 import { dshHome, ensurePrivateDir } from '@tsuuanmi/system-libs'
 import { ProviderError } from '@tsuuanmi/system-provider-core'
 import { type Deferral, type GateChannel, hookOverrides, openGateChannel } from './gate.ts'
-import { VERIFIED_LIMIT_VERSIONS, limitFromMessage } from './limits.ts'
+import { VERIFIED_LIMIT_VERSIONS, childTimeZone, limitFromMessage } from './limits.ts'
 import { configOverrides, refused } from './overrides.ts'
 import { probeGate, proofFailure, startProbeModel } from './proof.ts'
 
-export { VERIFIED_LIMIT_VERSIONS, limitFromMessage } from './limits.ts'
+export { VERIFIED_LIMIT_VERSIONS, childTimeZone, limitFromMessage } from './limits.ts'
 export { FEATURES_OFF } from './overrides.ts'
 
 /** The part of a Codex thread a run uses (the SDK's `Thread`, or a test double). */
@@ -196,6 +197,8 @@ export class CodexRuntime implements AgentRuntimeProvider {
     let failure: string | undefined
     let id: string | null = null
     let launcher: string | undefined
+    // The child's environment, set before Codex starts: its `TZ` is the zone a limit's reset is read in.
+    let env: Record<string, string> | undefined
     try {
       if (spec.toolGate) {
         try {
@@ -216,10 +219,11 @@ export class CodexRuntime implements AgentRuntimeProvider {
       // A gated run's launcher names its own channel, so it is the run's alone, and removed with it.
       const program = this.options.launcher ? this.options.launcher(confined) : (launcher = defaultLauncher(this.runDir, confined))
       if (!channel) launcher = undefined
+      env = this.environment(channel)
       const client = (this.options.client ?? ((options) => new Codex(options)))({
         codexPathOverride: program,
         configOverrides: [...this.overrides, ...(channel ? hookOverrides(this.node(), this.hook()) : [])],
-        env: this.environment(channel),
+        env,
       })
       const thread: ThreadOptions = {
         workingDirectory: spec.workspace, sandboxMode: spec.sandbox, approvalPolicy: 'never', skipGitRepoCheck: true,
@@ -266,17 +270,18 @@ export class CodexRuntime implements AgentRuntimeProvider {
     if (deferral) throw deferredError(deferral)
     // A failed turn breaks the thread's work (as for Claude): the engine's recovery decides what follows.
     if (failure && !/usage limit|quota|rate limit/i.test(failure)) throw new ProviderError('session_broken', `codex-sdk: ${failure.slice(0, 500)}`)
-    if (failure) throw await this.limitError(executable, failure)
+    if (failure) throw await this.limitError(executable, failure, env!.TZ)
     return { text, ...(id ? { nativeHandle: id } : {}), turns }
   }
 
   /**
    * The `quota_exhausted` error of a turn that failed on a usage limit, with the limit its message
-   * names as an observation (`limits.ts`): read only on a Codex version whose message was verified,
-   * and otherwise named as not read in the error, so the run's limit closes the pool for the
-   * Worker's cooldown (never open).
+   * names as an observation (`limits.ts`), in the zone of the child's `TZ` (`tz`, else the host's):
+   * read only on a Codex version whose message was verified and in a zone that can be read, and
+   * otherwise named as not read in the error, so the run's limit closes the pool for the Worker's
+   * cooldown (never open).
    */
-  private async limitError(executable: string, failure: string): Promise<ProviderError> {
+  private async limitError(executable: string, failure: string, tz: string | undefined): Promise<ProviderError> {
     const message = `codex-sdk: ${failure.slice(0, 500)}`
     const observedAt = Date.now()
     let version: string
@@ -288,7 +293,9 @@ export class CodexRuntime implements AgentRuntimeProvider {
     if (!VERIFIED_LIMIT_VERSIONS.includes(version)) {
       return new ProviderError('quota_exhausted', `${message} (its reset time is not read: the usage-limit message of Codex ${version} is not verified)`)
     }
-    const limit: LimitObservation | undefined = limitFromMessage(failure, observedAt)
+    const zone = childTimeZone(tz)
+    if (!zone) return new ProviderError('quota_exhausted', `${message} (its reset time is not read: Codex ran with TZ=${JSON.stringify(tz)}, no time zone it can be read in)`)
+    const limit: LimitObservation | undefined = limitFromMessage(failure, observedAt, zone)
     return limit ? withMetering(new ProviderError('quota_exhausted', message), { limits: [limit] }) : new ProviderError('quota_exhausted', message)
   }
 
@@ -301,13 +308,9 @@ export class CodexRuntime implements AgentRuntimeProvider {
     return checked
   }
 
-  /**
-   * Codex's environment: without the daemon's credentials (INV-8), in its own home, with the gate's
-   * channel, and in UTC (`TZ`), so the reset time its usage-limit message names reads the same on
-   * every host (`limits.ts`).
-   */
+  /** Codex's environment: without the daemon's credentials (INV-8), in its own home, with the gate's channel. */
   private environment(channel?: GateChannel): Record<string, string> {
-    return childEnvironment(this.options.forwardEnv, { ...this.options.env, CODEX_HOME: this.home, TZ: 'UTC', ...channel?.env })
+    return childEnvironment(this.options.forwardEnv, { ...this.options.env, CODEX_HOME: this.home, ...channel?.env })
   }
 
   private hook(): string {
