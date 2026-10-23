@@ -23,7 +23,11 @@ import type { ArtifactRef, CapabilityDescriptor, ExecutionStatus, WorkerExecutio
 export interface ModelWorkersConfig {
   /** Calls in flight at once, over every model Worker (default 4). */
   maxConcurrentCalls?: number
-  /** Hard deadline per call; the call is stopped and fails as `timeout` (default 5 min). */
+  /**
+   * Hard ceiling per call, over every attempt and back-off; the call is stopped and fails as
+   * `timeout` (default 15 min: the default re-attempts of a stalled stream fit within it). A
+   * stalled stream is caught sooner, by `ctx.models` (`idleTimeoutMs`).
+   */
   callTimeoutMs?: number
   /** Days a finished call (with its prompt) is kept, as turns are (default 30; INV-9). */
   retainDays?: number
@@ -92,6 +96,8 @@ interface CallRow {
 }
 
 const PREFIX = 'model:'
+/** The default ceiling per call: three attempts' worth of the default silence bound. */
+export const DEFAULT_CALL_TIMEOUT_MS = 15 * 60_000
 const LEASE_TTL_MS = 60_000
 /** The first send, and one more after a restart (INV-4). */
 const MAX_SENDS = 2
@@ -493,11 +499,11 @@ export class ModelWorkers {
   private async execute(row: CallRow, model: ModelStatus, history: History, signal: AbortSignal, lease: () => Lease): Promise<void> {
     // Sent from here on: each send may be billed, so it is counted before it happens.
     this.update(row.call_id, { status: 'running', submitted_at: now(), sends: row.sends + 1 }, lease)
-    const timeoutMs = this.config.callTimeoutMs ?? 5 * 60_000
+    const timeoutMs = this.config.callTimeoutMs ?? DEFAULT_CALL_TIMEOUT_MS
     const deadline = AbortSignal.timeout(timeoutMs)
     const completion = await this.ctx.models.complete({ model: model.id, prompt: row.prompt, maxTokens: row.max_tokens ?? undefined, ...(history.turns.length ? { history: history.turns } : {}) }, AbortSignal.any([signal, deadline]))
       .catch((error: unknown) => {
-        if (deadline.aborted && !signal.aborted) throw new ProviderError('timeout', `${row.worker} did not answer within ${timeoutMs} ms; the call was stopped`, { cause: error })
+        if (deadline.aborted && !signal.aborted) throw new ProviderError('timeout', `${row.worker} did not finish within ${timeoutMs} ms (callTimeoutMs, the ceiling over every attempt); the call was stopped`, { cause: error })
         if (error instanceof ModelError) throw new ProviderError(KINDS[error.failure], error.message, { cause: error })
         throw error
       })

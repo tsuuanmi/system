@@ -236,7 +236,8 @@
 | `models[].maxInputChars` | number (1…2000000) |  | Characters of prompt this model takes, at most, declared to admission (ADR-0032; default: none declared); its history is bounded by maxHistoryChars |
 | `maxRetries` | number (0…5) | `2` | Re-attempts of a transiently failed call |
 | `maxConcurrentCalls` | number (1…64) | `4` | Model calls in flight at once |
-| `callTimeoutMs` | number (1…) | `300000` | Hard deadline per call |
+| `callTimeoutMs` | number (1…) | `900000` | Hard ceiling per call, over every attempt and back-off |
+| `idleTimeoutMs` | number (1…2147483647) | `300000` | The longest an attempt's answer stream may stay silent: past it the attempt is stopped as timeout (a stalled connection) and re-attempted as the route's retry policy allows; a slow answer that keeps streaming is not stopped |
 | `retainDays` | number (1…) | `30` | Days a finished call and its prompt are kept |
 | `maxSessionTurns` | number (1…10000) | `100` | A session's turns, at most, unless an entry sets its own (ADR-0031; default: the session layer's turn budget) |
 | `maxHistoryChars` | number (1…2000000) | `320000` | Characters of history a session turn replays, at most, unless an entry sets its own; a turn past it fails, never cut (default: above the session layer's compaction point) |
