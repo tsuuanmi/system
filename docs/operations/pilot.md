@@ -202,9 +202,9 @@ Then close the project, on `/ui`:
    or result, but it cancels every open task, so no further attempt runs.
 3. **Close it.** On the **Board** page, press **Close** on the project and pick the outcome:
    `achieved` when its criteria are met, `stopped` when it ends without them (a stop rule fired,
-   or you stop it). The confirmation says how many open tasks it cancels, which claims it
-   releases, and which approval requests it withdraws (a waiting task's, a pending amendment's);
-   **Confirm** closes it. MCP `board_close` (operator scope) does the same with
+   or you stop it). The confirmation says how many open tasks it cancels and claims it releases,
+   and whose approval requests it withdraws (the tasks waiting for approval, a pending
+   amendment); **Confirm** closes it. MCP `board_close` (operator scope) does the same with
    `{projectId, outcome}`. The close is recorded as a `board` decision, the project's
    `closure.decision`.
 4. **Check:** the project shows `closed (<outcome>)`, last on the page, and the queue on `/ui` no
