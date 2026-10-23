@@ -322,6 +322,12 @@ A run that started before a restart has no result message, so nothing is recorde
 its usage is reconciled from the agent's session transcript later (planned). A Worker with no
 pool is not metered.
 
+A metered run whose usage the ledger could not count (its runtime reported neither tokens nor
+turns, the host stopped while it ran, or the ledger refused or failed its record) is recorded as
+one `usage.unknown` event, a cap counting it as 0 until a record of it is counted
+([usage the ledger cannot count](resources.md#usage-the-ledger-cannot-count)). A record refused
+as `invalid` with a per-model split is first offered again with its totals alone.
+
 ## Admission evidence
 
 The Worker registry admits an agent-runtime Worker only on evidence from `probe()`, never

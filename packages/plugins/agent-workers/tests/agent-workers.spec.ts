@@ -11,9 +11,9 @@ import Artifacts from '@tsuuanmi/system-artifacts'
 import Egress from '@tsuuanmi/system-egress'
 import EventLog from '@tsuuanmi/system-event-log'
 import Leases from '@tsuuanmi/system-leases'
-import { captureGitSubject, SchemaRegistry, startPrompt, subjectId } from '@tsuuanmi/system-libs'
+import { captureGitSubject, SchemaRegistry, startPrompt, subjectId, usageUnknownOf } from '@tsuuanmi/system-libs'
 import { ProviderError } from '@tsuuanmi/system-provider-core'
-import type { LimitState, PoolConfig } from '@tsuuanmi/system-resources-core'
+import { type LimitState, type PoolConfig, ResourcesError, type UsageRecord } from '@tsuuanmi/system-resources-core'
 import Store from '@tsuuanmi/system-store'
 import WorkerRouter, { type WorkerExecution, type WorkRequirement } from '@tsuuanmi/system-workers'
 import WorkerSessions from '@tsuuanmi/system-worker-sessions'
@@ -65,11 +65,11 @@ const worker = (overrides: Partial<Config['workers'][number]> = {}): Config['wor
   id: 'reviewer', runtime: 'scripted', workspace: WORKSPACE, sandbox: 'read-only', tier: 'standard', tools: ['Read', 'Grep'], model: 'model-x', ...overrides,
 })
 
-async function boot(agent: AgentRuntimeProvider, config: Config = { workers: [worker()] }, dir = mkdtempSync(join(tmpdir(), 'system-agents-')), ledger?: { pools: readonly PoolConfig[] }) {
+async function boot(agent: AgentRuntimeProvider, config: Config = { workers: [worker()] }, dir = mkdtempSync(join(tmpdir(), 'system-agents-')), ledger?: { pools: readonly PoolConfig[]; provider?: typeof FakeResources }) {
   const ctx = new Context()
   const fibers = [
     ctx.plugin(Store, { path: join(dir, 'system.db') }), ctx.plugin(Artifacts, {}), ctx.plugin(EventLog, {}), ctx.plugin(Leases, {}), ctx.plugin(Egress, {}),
-    ...(ledger ? [ctx.plugin(FakeResources, ledger)] : []),
+    ...(ledger ? [ctx.plugin(ledger.provider ?? FakeResources, { pools: ledger.pools })] : []),
     ctx.plugin(WorkerRouter, {}), ctx.plugin(AgentRuntimeRegistry), ctx.plugin(AgentWorkers, config), ctx.plugin(WorkerSessions, {}), ctx.plugin(Workflow, { retryDelayMs: 100, templates: { develop: DEVELOP } }),
   ]
   await Promise.all(fibers)
@@ -667,6 +667,98 @@ describe('agents source: metering through ctx.resources (docs/design/resources.m
     expect((await silent.ctx.resources.usage()).records).toEqual([])
   })
 
+  /** The `usage.unknown` facts recorded so far, oldest first. */
+  const unknowns = (ctx: Context) => ctx.eventLog.query({ type: 'usage.unknown' })
+  /** The warnings logged anywhere in the context from now on. */
+  const warnings = (ctx: Context): string[] => {
+    const messages: string[] = []
+    ctx.logger.exporter({ levels: { default: 3 }, export: (m) => { if (m.type === 'warn') messages.push(String(m.args[0])) } })
+    return messages
+  }
+
+  it('records a run whose runtime reported no usage as a usage.unknown fact, never a record: the run, Worker, pool, task, how it ended, and why (D25, INV-14)', async () => {
+    const { ctx } = await boot(new ScriptedAgent({ metering: { turns: undefined } }), { workers: [metered()] }, undefined, LEDGER)
+    const brief = ctx.artifacts.put({
+      kind: 'objective', bodySchema: 'brief@1.1', classification: 'operator-shared', producer: { type: 'system', ref: 'workflow' },
+      body: {
+        schema: 'brief@1.1', projectId: 'p1', taskId: 'task-1', attempt: 1, goal: 'look at it', acceptance: [{ id: 'a1', statement: 'it is looked at' }], artifacts: [],
+        instructions: [{ text: 'look at it' }], budget: { remaining: [] }, sandbox: { mode: 'read-only', network: 'allow-list', commands: false }, classification: 'operator-shared',
+      },
+    }).id as `sha256:${string}`
+    const source = ctx.workers.source('agents')!
+    const done = await source.wait(source.start({ key: 'k-wf', worker: 'agent:reviewer', brief, runId: 'run_wf', requirement: requirement(), decisions: { tier: 'sha256:0', route: 'sha256:0' } as never }).id, 10_000)
+    expect(done).toMatchObject({ status: 'completed' })
+    // Counted as nothing, as before: no record is invented.
+    expect((await ctx.resources.usage()).records).toEqual([])
+    const [fact, ...more] = unknowns(ctx)
+    expect(more).toEqual([])
+    expect(fact).toMatchObject({ type: 'usage.unknown', runId: 'run_wf' })
+    expect(fact!.data).toEqual({
+      schema: 'usage-unknown@1.0', runId: done.id, kind: 'not-reported', account: 'max', pool: 'max.agents', worker: 'agent:reviewer', projectId: 'p1', taskId: 'task-1',
+      outcome: 'completed', observedAt: expect.any(String), reason: 'its runtime reported neither tokens nor turns',
+    })
+    expect(usageUnknownOf(fact!.data)).toBeDefined()
+    // A failed run that reported nothing is one too.
+    const failing = await boot(new ScriptedAgent({ fail: new ProviderError('session_broken', 'no result') }), { workers: [metered()] }, undefined, LEDGER)
+    const failed = await run(failing.ctx)
+    expect(unknowns(failing.ctx)).toMatchObject([{ data: { runId: failed.id, kind: 'not-reported', outcome: 'failed' } }])
+  })
+
+  it('records what the ledger takes of a refused record: its totals without a per-model split it refused; else a refused fact naming the record, kept as evidence (D25)', async () => {
+    // A ledger that refuses the per-model split, as the store-backed one does when it does not sum to
+    // the totals: the totals are what a cap counts, and they are taken.
+    class SplitRefusing extends FakeResources {
+      override async record(usage: UsageRecord) {
+        if (usage.models) throw new ResourcesError('invalid', 'usage.inputTokens 36000 is not the sum over models (35999)')
+        return super.record(usage)
+      }
+    }
+    const split = await boot(new ScriptedAgent({ metering: METERING }), { workers: [metered()] }, undefined, { ...LEDGER, provider: SplitRefusing })
+    const warned = warnings(split.ctx)
+    const first = await run(split.ctx)
+    expect(first.status).toBe('completed')
+    const counted = (await split.ctx.resources.usage({ runId: first.id })).records
+    expect(counted).toMatchObject([{ usage: METERING.usage, turns: 3, cost: { amount: 0.25 } }])
+    expect(counted[0]).not.toHaveProperty('models')
+    expect(unknowns(split.ctx)).toEqual([])
+    expect(warned).toContainEqual(expect.stringMatching(/refused the per-model split of .*; its totals were recorded$/))
+    // Totals it refuses too (cached input above the input): nothing counted, the record kept, a refused fact.
+    const broken = { ...METERING, usage: { ...METERING.usage!, cacheReadInputTokens: 99_999 } }
+    const refused = await boot(new ScriptedAgent({ metering: broken }), { workers: [metered()] }, undefined, LEDGER)
+    const second = await run(refused.ctx)
+    expect(second.status).toBe('completed')
+    expect((await refused.ctx.resources.usage()).records).toEqual([])
+    const [fact] = unknowns(refused.ctx)
+    expect(fact!.data).toMatchObject({ runId: second.id, kind: 'refused', failure: 'invalid', outcome: 'completed', reason: 'cached input exceeds the input it is part of', record: expect.stringMatching(/^sha256:/) })
+    expect(refused.ctx.artifacts.get(String(fact!.data!['record']))).toMatchObject({ kind: 'evidence', bodySchema: 'usage-record@1.0', body: { runId: second.id, usage: broken.usage, models: METERING.models } })
+    // A pool the ledger configures under another account takes nothing of it.
+    const elsewhere = await boot(new ScriptedAgent({ metering: METERING }), { workers: [metered({ account: 'other' })] }, undefined, LEDGER)
+    const third = await run(elsewhere.ctx)
+    expect(third.status).toBe('completed')
+    expect(unknowns(elsewhere.ctx)).toMatchObject([{ data: { runId: third.id, kind: 'refused', failure: 'unknown-pool', account: 'other', pool: 'max.agents' } }])
+  })
+
+  it('records a record() that failed otherwise as a failed fact, and logs one it cannot record; the run\'s own outcome never changes (D25, INV-2)', async () => {
+    class LockedLedger extends FakeResources {
+      override async record(): Promise<never> {
+        throw new Error('database is locked')
+      }
+    }
+    const { ctx } = await boot(new ScriptedAgent({ metering: METERING }), { workers: [metered()] }, undefined, { ...LEDGER, provider: LockedLedger })
+    const done = await run(ctx)
+    expect(done.status).toBe('completed')
+    const [fact] = unknowns(ctx)
+    expect(fact!.data).toMatchObject({ runId: done.id, kind: 'failed', reason: 'database is locked', outcome: 'completed' })
+    expect(fact!.data).not.toHaveProperty('failure')
+    // A fact that is not a valid record (an account that is no id) cannot be recorded: it is logged, never lost silently.
+    const odd = await boot(new ScriptedAgent({ metering: { turns: undefined } }), { workers: [metered({ account: 'not an id' })] }, undefined, LEDGER)
+    const warned = warnings(odd.ctx)
+    const silent = await run(odd.ctx)
+    expect(silent.status).toBe('completed')
+    expect(unknowns(odd.ctx)).toEqual([])
+    expect(warned).toContainEqual(expect.stringContaining(`the usage of ${silent.id} on agent:reviewer (pool max.agents) is unknown (not-reported: its runtime reported neither tokens nor turns), and that could not be recorded`))
+  })
+
   it('meters nothing for a Worker with no pool, even with a ledger loaded; a runtime\'s usage still goes into agent-result@1.2', async () => {
     const { ctx } = await boot(new ScriptedAgent({ metering: METERING }), { workers: [worker()] }, undefined, LEDGER)
     const done = await run(ctx)
@@ -689,6 +781,10 @@ describe('agents source: metering through ctx.resources (docs/design/resources.m
     expect(await second.ctx.workers.source('agents')!.wait(started.id, 10_000)).toMatchObject({ status: 'failed', submitted: true, error: { kind: 'reconciliation_failed' } })
     expect(again.runs).toEqual([])
     expect((await second.ctx.resources.usage()).records).toEqual([])
+    // What the ledger cannot count is recorded, under the pool the run drew on (D25): the stop
+    // aborted the agent before it reported anything, and the restart found the run interrupted.
+    const facts = second.ctx.eventLog.query({ type: 'usage.unknown' }).map((e) => e.data)
+    expect(facts).toMatchObject([{ runId: started.id, kind: 'not-reported', outcome: 'aborted' }, { runId: started.id, kind: 'interrupted', pool: 'max.agents', account: 'max', outcome: 'failed' }])
   })
 })
 

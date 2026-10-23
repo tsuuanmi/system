@@ -27,7 +27,7 @@ import {
 import type {} from '@tsuuanmi/system-artifacts'
 import type { Classification } from '@tsuuanmi/system-egress'
 import { type Lease, LeaseLost, StaleGeneration } from '@tsuuanmi/system-leases'
-import { bodyText, BRIEF_FILE_PATH, type BriefFile, captureGitSubject, type ContentId, dshHome, sha256 } from '@tsuuanmi/system-libs'
+import { bodyText, BRIEF_FILE_PATH, type BriefFile, captureGitSubject, type ContentId, dshHome, sha256, USAGE_UNKNOWN_EVENT, type UsageUnknown, usageUnknown } from '@tsuuanmi/system-libs'
 import { ProviderError, ProviderScheduler, dispositionOf, promptOfStart, toProviderError } from '@tsuuanmi/system-provider-core'
 import { type LimitState, type Resources, ResourcesError, type UsageRecord } from '@tsuuanmi/system-resources-core'
 import type {} from '@tsuuanmi/system-store'
@@ -596,8 +596,12 @@ export class AgentWorkers extends Service {
           // Started before a stop: the agent may already have acted in its workspace.
           this.fail(row, new ProviderError('reconciliation_failed',
             `the host stopped while ${row.worker} was running this task${row.native_handle ? ` (native session ${row.native_handle})` : ''}; it is not run again automatically`), current)
-          // Its usage is not invented: it comes from the agent's transcript, reconciled later.
-          if (row.reservation_id) await this.release(row.worker, row.reservation_id)
+          // Its usage is not invented: it comes from the agent's transcript, reconciled later. Until
+          // then the ledger counts none of it, which is recorded (docs/design/resources.md).
+          if (row.reservation_id) {
+            this.interruptedUsage(row)
+            await this.release(row.worker, row.reservation_id)
+          }
           return
         }
         const worker = this.workers.get(row.worker)
@@ -891,6 +895,76 @@ export class AgentWorkers extends Service {
   }
 
   /**
+   * Record a run whose usage the ledger could not count, as one `usage.unknown` event, its data a
+   * `usage-unknown@1.0` record (docs/design/resources.md#usage-the-ledger-cannot-count): the run,
+   * Worker, pool, board task, how it ended, and why. A cap counts the run as 0 until the ledger
+   * counts a record of it. A fact that cannot be appended (no event log, the store failing) is
+   * logged, never dropped silently; the run's own outcome never depends on it.
+   */
+  private unknownUsage(row: RunRow, meter: Pick<Meter, 'pool' | 'account'>, kind: UsageUnknown['kind'], reason: string, extra: Pick<UsageUnknown, 'outcome' | 'failure' | 'record'> = {}): void {
+    try {
+      const eventLog = this.ctx.get('eventLog')
+      if (!eventLog) throw new Error('no event log (ctx.eventLog) is loaded')
+      const fact = usageUnknown({
+        runId: row.run_id, kind, account: meter.account, pool: meter.pool, worker: row.worker, ...(row.session_id ? { sessionId: row.session_id } : {}), ...scopeOf(row), ...extra,
+        observedAt: now(), reason,
+      })
+      eventLog.append({ type: USAGE_UNKNOWN_EVENT, ...(row.workflow_run_id ? { runId: row.workflow_run_id } : {}), ...(row.session_id ? { sessionId: row.session_id } : {}), data: { ...fact } })
+    } catch (error) {
+      this.ctx.logger.warn(`agent Workers: the usage of ${row.run_id} on ${row.worker} (pool ${meter.pool}) is unknown (${kind}: ${reason}), and that could not be recorded: ${(error as Error).message}`)
+    }
+  }
+
+  /**
+   * The ledger did not take a run's usage record. What can be recorded is: a record refused as
+   * `invalid` with a per-model split is offered again with its totals alone, which are what a cap
+   * counts. Otherwise the run's usage is unknown: a refused record is kept as an `evidence`
+   * artifact (when it is a valid `usage-record@1.0`) that the fact names, `refused` with the
+   * ledger's failure; anything else the ledger threw is `failed`. Never throws.
+   */
+  private async unrecorded(row: RunRow, meter: Meter, record: UsageRecord, error: unknown): Promise<void> {
+    let cause = error
+    if (cause instanceof ResourcesError && cause.failure === 'invalid' && record.models) {
+      const { models: _, ...totals } = record
+      cause = await meter.resources.record(totals).then(() => undefined, (again: unknown) => again)
+      if (cause === undefined) {
+        this.ctx.logger.warn(`agent Workers: the ledger refused the per-model split of ${row.run_id} on ${row.worker} (${(error as Error).message}); its totals were recorded`)
+        return
+      }
+    }
+    const message = cause instanceof Error ? cause.message : String(cause)
+    this.ctx.logger.warn(`agent Workers: the usage of ${row.run_id} on ${row.worker} was not recorded: ${message}`)
+    const failure = cause instanceof ResourcesError && (cause.failure === 'invalid' || cause.failure === 'unknown-pool') ? cause.failure : undefined
+    const kept = failure ? this.keep(row, record) : undefined
+    this.unknownUsage(row, meter, failure ? 'refused' : 'failed', message, { ...(record.outcome ? { outcome: record.outcome } : {}), ...(failure ? { failure } : {}), ...(kept ? { record: kept } : {}) })
+  }
+
+  /** A record the ledger refused, as an `evidence` artifact when it is a valid `usage-record@1.0`, so its numbers are not lost; else nothing. */
+  private keep(row: RunRow, record: UsageRecord): ArtifactRef | undefined {
+    try {
+      return this.ctx.artifacts.put({ kind: 'evidence', bodySchema: 'usage-record@1.0', body: record, classification: 'operator-shared', producer: { type: 'worker', ref: row.worker }, runId: row.run_id }).id as ArtifactRef
+    } catch {
+      return undefined
+    }
+  }
+
+  /**
+   * A metered run the host stopped while it ran: no result came, so the ledger counts none of its
+   * usage until its transcript is reconciled. Recorded under the pool its reservation drew on, while
+   * its Worker still names that pool (the account is the Worker's); else logged.
+   */
+  private interruptedUsage(row: RunRow): void {
+    const worker = this.workers.get(row.worker)
+    const decision = row.budget_decision ? this.ctx.artifacts.get(row.budget_decision)?.body as { outcome?: { detail?: { lines?: Array<{ pool?: unknown }> } } } | undefined : undefined
+    const pool = decision?.outcome?.detail?.lines?.[0]?.pool
+    if (worker?.account === undefined || pool === undefined || worker.pool !== pool) {
+      this.ctx.logger.warn(`agent Workers: the usage of ${row.run_id} on ${row.worker} is unknown (the host stopped while it ran), and its Worker no longer names the pool it drew on to record that under`)
+      return
+    }
+    this.unknownUsage(row, { pool: worker.pool, account: worker.account }, 'interrupted', 'the host stopped while it ran, so no result came', { outcome: 'failed' })
+  }
+
+  /**
    * Meter a run from what its runtime reported: each limit observation as a `limit-state`
    * reading, then one `usage-record` (source `runtime-result`). Numbers the runtime did not report
    * stay missing; a run that reported neither tokens nor turns gets no record here (its transcript
@@ -900,6 +974,7 @@ export class AgentWorkers extends Service {
     if (metering?.limits?.length) await this.observe(row.worker, worker, meter, metering.limits)
     const usage = usageOf(metering)
     if (!usage.usage && metering?.turns === undefined) {
+      this.unknownUsage(row, meter, 'not-reported', 'its runtime reported neither tokens nor turns', { outcome })
       this.ctx.logger.warn(`agent Workers: ${row.run_id} on ${row.worker} reported no usage; it is left to transcript reconciliation`)
       return
     }
@@ -916,7 +991,7 @@ export class AgentWorkers extends Service {
       outcome,
     }
     await meter.resources.record(record).catch((error: unknown) => {
-      this.ctx.logger.warn(`agent Workers: the usage of ${row.run_id} on ${row.worker} was not recorded: ${(error as Error).message}`)
+      return this.unrecorded(row, meter, record, error)
     })
   }
 
