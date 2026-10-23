@@ -94,14 +94,16 @@ The **`agents` Worker source**: agent runtimes as Workers
     loaded, a pool the ledger does not configure, or a ledger that cannot be
     read, it is `unavailable` (INV-2);
   - **reserve** before the run, after the egress check and before anything
-    reaches the agent: one line, `runs` 1 on the pool. The `budget` decision
+    reaches the agent: one line, `runs` 1 on the pool, for the board task and
+    project the run's brief serves, if any. The `budget` decision
     joins the run's decisions. A refused reservation fails the run unsubmitted
     as `quota_exhausted` (`config_error` when the ledger does not configure the
     pool, or no ledger is loaded), and nothing runs;
   - **record** after the run, completed, failed, or aborted: one `usage-record`
     (source `runtime-result`; `requestId` `<runtime>:<the runtime's result
     id>`, or the run id when it gives none; `runId`, `account`, `pool`,
-    `worker`, `sessionId`, `model` (request: the configured model; response:
+    `worker`, `sessionId`, `taskId` and `projectId` (the board task its brief
+    serves, read from the engine's brief record, never from model text), `model` (request: the configured model; response:
     the runtime's main model), `usage`, `models`, `turns`, `durationMs` (from
     submission to the end), `cost` with basis `runtime-estimate`, and
     `outcome`). Numbers the runtime did not report stay missing; a run that

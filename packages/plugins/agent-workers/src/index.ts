@@ -110,6 +110,9 @@ interface RunRow {
   reservation_id?: string | null
   /** The workflow run the run belongs to, when it belongs to one (`WorkerStart.runId`). */
   workflow_run_id?: string | null
+  /** The board task and project its brief serves, when it serves one: its usage is recorded under them. */
+  task_id?: string | null
+  project_id?: string | null
   created_at: string
   updated_at: string
 }
@@ -123,6 +126,8 @@ const MAX_MODELS = 16
 /** How often finished workflow runs' worktrees are looked at for removal. */
 const SWEEP_MS = 60 * 60_000
 const now = (): string => new Date().toISOString()
+/** The board task and project a run serves, as its reservation and usage record name them. */
+const scopeOf = (row: RunRow): { taskId?: string; projectId?: string } => ({ ...(row.task_id ? { taskId: row.task_id } : {}), ...(row.project_id ? { projectId: row.project_id } : {}) })
 
 export class AgentWorkers extends Service {
   static inject = ['store', 'artifacts', 'leases', 'workers', 'agentRuntimes', 'egress']
@@ -206,7 +211,11 @@ export class AgentWorkers extends Service {
         created_at TEXT NOT NULL, removed_at TEXT, decision TEXT, failure TEXT, failed_at TEXT,
         PRIMARY KEY (repository, workflow_run_id)
       );`,
-    }, GATE_MIGRATION])
+    }, GATE_MIGRATION, {
+      // The board task a run's brief serves (brief@1.x taskId, projectId): its reservation and usage name it.
+      version: 6,
+      sql: 'ALTER TABLE agent_runs ADD COLUMN task_id TEXT; ALTER TABLE agent_runs ADD COLUMN project_id TEXT;',
+    }])
     ctx.workers.register({
       name: 'agents',
       describe: () => this.describe(),
@@ -398,6 +407,10 @@ export class AgentWorkers extends Service {
     if (!prompt.trim()) throw new ProviderError('invalid_input', 'prompt must not be empty')
     // It may name a branch and a directory (a worktree per run): letters, digits, `_`, and `-` only.
     if (request.runId !== undefined && !RUN_ID.test(request.runId)) throw new ProviderError('invalid_input', `run id ${JSON.stringify(request.runId)} must match ${RUN_ID}`)
+    // The board task the brief serves, from the engine's own record (never from model text): the run's usage is recorded under it.
+    const task = request.brief ? this.ctx.artifacts.get(request.brief)?.body as { taskId?: unknown; projectId?: unknown } | undefined : undefined
+    const taskId = typeof task?.taskId === 'string' ? task.taskId : null
+    const projectId = taskId !== null && typeof task?.projectId === 'string' ? task.projectId : null
     const key = sha256(`agent\0${request.key}`)
     return this.ctx.store.transaction((db) => {
       const existing = db.prepare('SELECT * FROM agent_runs WHERE request_key = ?').get(key) as RunRow | undefined
@@ -413,10 +426,10 @@ export class AgentWorkers extends Service {
       const row: RunRow = {
         run_id: newId(), request_key: key, worker: request.worker, session_id: request.sessionId ?? null, prompt,
         classification, status: 'queued', submitted_at: null, native_handle: null, result: null, error: null,
-        workflow_run_id: request.runId ?? null, created_at: now(), updated_at: now(),
+        workflow_run_id: request.runId ?? null, task_id: taskId, project_id: projectId, created_at: now(), updated_at: now(),
       }
-      db.prepare(`INSERT INTO agent_runs (run_id, request_key, worker, session_id, prompt, classification, status, workflow_run_id, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?)`).run(row.run_id, key, row.worker, row.session_id, row.prompt, row.classification, row.workflow_run_id ?? null, row.created_at, row.updated_at)
+      db.prepare(`INSERT INTO agent_runs (run_id, request_key, worker, session_id, prompt, classification, status, workflow_run_id, task_id, project_id, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?)`).run(row.run_id, key, row.worker, row.session_id, row.prompt, row.classification, row.workflow_run_id ?? null, taskId, projectId, row.created_at, row.updated_at)
       this.ctx.store.afterCommit(() => this.schedule(row.run_id))
       return execution(row)
     })
@@ -638,7 +651,7 @@ export class AgentWorkers extends Service {
    * `config_error` when the ledger does not configure it. Returns the reservation id.
    */
   private async reserve(row: RunRow, meter: Meter, lease: () => Lease): Promise<string> {
-    const reserved = await meter.resources.reserve({ runId: row.run_id, lines: [{ pool: meter.pool, unit: 'runs', amount: 1 }] }).catch((error: unknown) => {
+    const reserved = await meter.resources.reserve({ runId: row.run_id, ...scopeOf(row), lines: [{ pool: meter.pool, unit: 'runs', amount: 1 }] }).catch((error: unknown) => {
       throw error instanceof ResourcesError ? new ProviderError('config_error', `the resource ledger refused to reserve for ${row.worker}: ${error.message}`, { cause: error }) : error
     })
     try {
@@ -682,7 +695,7 @@ export class AgentWorkers extends Service {
       // The runtime's own identity of its result, so another source of the same unit is a duplicate.
       requestId: `${worker.runtime}:${metering?.resultId ?? row.run_id}`,
       source: 'runtime-result', observedAt: now(), account: meter.account, pool: meter.pool, worker: row.worker, runId: row.run_id,
-      ...(row.session_id ? { sessionId: row.session_id } : {}),
+      ...(row.session_id ? { sessionId: row.session_id } : {}), ...scopeOf(row),
       ...(Object.keys(model).length ? { model } : {}), ...usage,
       ...(metering?.turns !== undefined ? { turns: metering.turns } : {}), durationMs: Math.max(0, Math.round(durationMs)),
       ...(metering?.costUsd !== undefined ? { cost: { amount: metering.costUsd, currency: 'USD' as const, basis: 'runtime-estimate' as const } } : {}),

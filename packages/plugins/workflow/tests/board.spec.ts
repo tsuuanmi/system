@@ -133,6 +133,10 @@ async function boot(options: { workflow?: Config; board?: boolean | 'short'; wor
 }
 
 const project = (ctx: Context): Promise<void> => activeProject(ctx)
+/** The fake ledger's `max.programmatic` pool reads ok, so a budget on it can be reserved (a window with no reading is unknown, INV-2). */
+const poolOpen = async (ctx: Context, observedAt = new Date()): Promise<void> => {
+  await ctx.resources.observe({ schema: 'limit-state@1.0', pool: 'max.programmatic', account: 'max', window: { id: 'monthly', kind: 'credit' }, state: 'ok', source: 'runtime-result', observedAt: observedAt.toISOString() })
+}
 const ready = (ctx: Context, title: string, extra: Partial<TaskInput> = {}): Promise<BoardTask> => readyTask(ctx, title, extra)
 
 const settled = async (ctx: Context, runId: string): Promise<RunView> => {
@@ -432,6 +436,7 @@ describe('ctx.workflow serves board tasks over the store-backed board and approv
   it('briefs a task from the board: the accepted results of the task it depends on by content id, its budget less the usage the ledger counts for it, its criteria first (PROP-0010)', async () => {
     const { ctx, workers } = await boot({ resources: true })
     await project(ctx)
+    await poolOpen(ctx)
     const first = await ready(ctx, 'first')
     workers.reply = () => ({ text: 'the first result' })
     const one = await ctx.workflow.start({ template: 'solo', input: 'q1', classification: 'public', task: { taskId: first.taskId } })
@@ -458,6 +463,7 @@ describe('ctx.workflow serves board tasks over the store-backed board and approv
   it('counts against a task\'s budget the usage the ledger records under the runs that served it and the executions they started, each record once (PROP-0010)', async () => {
     const { ctx, workers } = await boot({ resources: true })
     await project(ctx)
+    await poolOpen(ctx)
     const budget = [
       { pool: 'max.programmatic', unit: 'usd' as const, amount: 5 }, { pool: 'max.programmatic', unit: 'runs' as const, amount: 4 },
       { pool: 'max.programmatic', unit: 'tokens' as const, amount: 1000 },
@@ -481,6 +487,74 @@ describe('ctx.workflow serves board tasks over the store-backed board and approv
     expect(brief).toMatchObject({ attempt: 2, budget: { remaining: [
       { pool: 'max.programmatic', unit: 'usd', amount: 3 }, { pool: 'max.programmatic', unit: 'runs', amount: 1 }, { pool: 'max.programmatic', unit: 'tokens', amount: 600 },
     ] } })
+  })
+
+  it('reserves a task\'s budget lines on the ledger before its run starts work, for the task, and releases the reservation when the run finishes (PROP-0010)', async () => {
+    const { ctx, workers } = await boot({ resources: true })
+    await project(ctx)
+    await poolOpen(ctx)
+    const budget = [{ pool: 'max.programmatic', unit: 'usd' as const, amount: 5 }, { pool: 'max.programmatic', unit: 'runs' as const, amount: 3 }]
+    const task = await ready(ctx, 'funded', { budget })
+    workers.reply = () => 'hold'
+    const run = await ctx.workflow.start({ template: 'solo', input: 'q', classification: 'public', task: { taskId: task.taskId } })
+    await until(() => workers.started.length === 1, 'the step started')
+    // Held while the run lives: the least of each line, the task's lines as its caps.
+    const held = ctx.workflow.get(run.runId)!.task!.budget!
+    expect(held).toMatchObject({ state: 'reserved' })
+    const reserved = decisionOf(ctx, held.decision)
+    expect(reserved).toMatchObject({ decisionType: 'budget', outcome: { option: 'reserved', detail: { runId: run.runId, lines: [{ pool: 'max.programmatic', unit: 'usd', amount: 0.000001 }, { pool: 'max.programmatic', unit: 'runs', amount: 1 }] } } })
+    const { reservationId } = JSON.parse((ctx.store.db.prepare('SELECT budget FROM workflow_tasks WHERE run_id = ?').get(run.runId) as { budget: string }).budget) as { reservationId: string }
+    workers.release(workers.started[0]!.id, { text: 'within budget' })
+    expect((await reported(ctx, run.runId)).task?.outcome).toMatchObject({ status: 'accepted', state: 'done' })
+    await until(() => ctx.workflow.get(run.runId)!.task!.budget!.state === 'released', 'the reservation released')
+    await expect(ctx.resources.release(reservationId)).rejects.toMatchObject({ failure: 'unknown-reservation' })
+    expect(ctx.eventLog.query({ runId: run.runId, type: 'workflow.task.budget', limit: 10 }).map((e) => e.data?.['state'])).toEqual(['reserved'])
+    // A record of the run now counts for the task: the run was reserved for it.
+    await ctx.resources.record({ schema: 'usage-record@1.0', requestId: 'run-1', source: 'runtime-result', observedAt: new Date().toISOString(), account: 'max', pool: 'max.programmatic', runId: run.runId, turns: 1 })
+    expect((await ctx.resources.usage({ taskId: task.taskId })).records).toHaveLength(1)
+  })
+
+  it('blocks a task whose budget is spent (budget-spent) before any step of its run runs; the board asks the operator to fund it (PROP-0010, INV-2)', async () => {
+    const { ctx, workers } = await boot({ resources: true })
+    await project(ctx)
+    await poolOpen(ctx)
+    const task = await ready(ctx, 'spent', { budget: [{ pool: 'max.programmatic', unit: 'runs', amount: 1 }, { pool: 'max.programmatic', unit: 'usd', amount: 5 }] })
+    // One run already counted for the task: its runs line is reached.
+    await ctx.resources.record({ schema: 'usage-record@1.0', requestId: 'r-spent', source: 'runtime-result', observedAt: new Date().toISOString(), account: 'max', pool: 'max.programmatic', taskId: task.taskId, turns: 1 })
+    const run = await ctx.workflow.start({ template: 'solo', input: 'q', classification: 'public', task: { taskId: task.taskId } })
+    const failed = await settled(ctx, run.runId)
+    expect(failed).toMatchObject({ status: 'failed', error: { kind: 'budget_spent', disposition: 'USER_ACTION' } })
+    expect(failed.error!.message).toMatch(/cap 1 runs of max.programmatic would be exceeded/)
+    expect(workers.started).toHaveLength(0)
+    const view = await reported(ctx, run.runId)
+    expect(view.task?.budget).toMatchObject({ state: 'refused', spent: true, blocked: true })
+    expect(decisionOf(ctx, view.task!.budget!.decision)).toMatchObject({ decisionType: 'budget', outcome: { option: 'refused' } })
+    expect(view.task?.outcome).toMatchObject({ status: 'blocked', state: 'waiting-for-approval' })
+    // The board's own path for a spent budget: funding asks the operator (the policy's default here).
+    const blocked = (await ctx.board.task(task.taskId))!
+    expect(blocked).toMatchObject({ state: 'waiting-for-approval', waiting: { reason: 'budget-spent' }, run: { runId: run.runId }, attempts: { count: 1 } })
+    const request = (await ctx.approvals.get(blocked.waiting!.approvalRequest!))!
+    expect(request).toMatchObject({ action: { class: 'funding' }, requester: { component: 'board', taskId: task.taskId } })
+    expect(ctx.eventLog.query({ runId: run.runId, type: 'workflow.task.budget', limit: 10 }).map((e) => e.data?.['state'])).toEqual(['refused'])
+  })
+
+  it('refuses a task with a budget before taking it when no ledger is loaded, or its pool is not configured or not available, with nothing started (INV-2)', async () => {
+    const bare = await boot()
+    await project(bare.ctx)
+    const unledgered = await ready(bare.ctx, 'no ledger', { budget: [{ pool: 'max.programmatic', unit: 'runs', amount: 3 }] })
+    expect(await refusalOf(() => bare.ctx.workflow.start({ template: 'solo', input: 'q', classification: 'public', task: { taskId: unledgered.taskId } }))).toMatch(/^config_error: task \S+ declares a budget, and no resource ledger is loaded/)
+
+    const { ctx, workers } = await boot({ resources: true })
+    await project(ctx)
+    const unknown = await ready(ctx, 'unknown pool', { budget: [{ pool: 'nowhere', unit: 'runs', amount: 3 }] })
+    expect(await refusalOf(() => ctx.workflow.start({ template: 'solo', input: 'q', classification: 'public', task: { taskId: unknown.taskId } }))).toMatch(/^config_error: .*draws on pool nowhere, which the resource ledger does not configure/)
+    // No reading yet: missing telemetry is not capacity.
+    const unread = await ready(ctx, 'unread pool', { budget: [{ pool: 'max.programmatic', unit: 'runs', amount: 3 }] })
+    expect(await refusalOf(() => ctx.workflow.start({ template: 'solo', input: 'q', classification: 'public', task: { taskId: unread.taskId } }))).toMatch(/^overloaded: pool max.programmatic of task \S+'s budget is unavailable/)
+    expect(workers.started).toHaveLength(0)
+    expect(bare.workers.started).toHaveLength(0)
+    for (const [c, t] of [[bare.ctx, unledgered], [ctx, unknown], [ctx, unread]] as const) expect(await c.board.task(t.taskId)).toMatchObject({ state: 'ready', attempts: { count: 0 } })
+    expect(decisionsOf(ctx, 'admission', 'workflow.task-admission').filter((d) => d.outcome.option === 'refuse')).toHaveLength(2)
   })
 
   it('fails a node whose instructions retention cleared, with nothing sent, instead of briefing it on its goal alone (INV-2)', async () => {

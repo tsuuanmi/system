@@ -22,7 +22,7 @@ import { appended, compose, DEFAULT_TEMPLATES, literal, type NodeTemplate, recor
 import { runSnapshot } from './sources.ts'
 import { TaskRuns } from './tasks.ts'
 import { decide, expireTie, restriction, runtimeOf, tally, teamGroup, teamPrompt } from './teams.ts'
-import { type Config, errorOf, LEASE_TTL_MS, newId, TASK_WAIT_MS, type NodeHelpers, type NodeRecord, type NodeRow, now, type RunRow, type RunView, type StartInput, type WorkflowError, WorkflowFailure } from './types.ts'
+import { type Config, errorOf, LEASE_TTL_MS, newId, TASK_WAIT_MS, type NodeHelpers, type NodeRecord, type NodeRow, now, type RunRow, type RunView, type StartInput, type TaskBudget, type WorkflowError, WorkflowFailure } from './types.ts'
 import { view } from './views.ts'
 
 /** Preflight a template and each of its variants, and check that every result schema it names is known. Throws why. */
@@ -39,7 +39,7 @@ export function checkTemplate(name: string, nodes: NodeTemplate[], schemas: Sche
 export interface Prepared { spec: ResolvedSpec; requestKey: string | null }
 
 /** The board task a run is admitted for, as the board granted it. */
-export interface Bound { runId: string; taskId: string; holder: string; generation: number; claim: 'adopted' | 'own'; writes?: Subject | undefined; frame?: TaskFrame | undefined }
+export interface Bound { runId: string; taskId: string; holder: string; generation: number; claim: 'adopted' | 'own'; writes?: Subject | undefined; frame?: TaskFrame | undefined; budget?: TaskBudget | undefined }
 
 export class Engine {
   readonly schemas = new SchemaRegistry()
@@ -198,8 +198,9 @@ export class Engine {
           .run(run.run_id, node.nodeId, ordinal, JSON.stringify(resolved), JSON.stringify(record), now())
       })
       if (bound) {
-        db.prepare(`INSERT INTO workflow_tasks (run_id, task_id, holder, generation, claim, phase, writes, frame, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'starting', ?, ?, ?, ?)`)
-          .run(run.run_id, bound.taskId, bound.holder, bound.generation, bound.claim, bound.writes ? JSON.stringify(bound.writes) : null, bound.frame ? JSON.stringify(bound.frame) : null, now(), now())
+        db.prepare(`INSERT INTO workflow_tasks (run_id, task_id, holder, generation, claim, phase, writes, frame, budget, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'starting', ?, ?, ?, ?, ?)`)
+          .run(run.run_id, bound.taskId, bound.holder, bound.generation, bound.claim, bound.writes ? JSON.stringify(bound.writes) : null, bound.frame ? JSON.stringify(bound.frame) : null,
+            bound.budget ? JSON.stringify(bound.budget) : null, now(), now())
         return view(this, run)
       }
       this.open(run.run_id)

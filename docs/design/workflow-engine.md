@@ -160,8 +160,8 @@ flowchart LR
 
 A run for a [board task](#board-tasks) fixes, when it is admitted, what every brief it writes
 adds: the project, the task, and the attempt the run will be; the task's goal and acceptance
-criteria; the task's budget lines less the usage spent on the task (with no ledger, the lines as
-declared: the brief informs, reservations enforce); and at most 16
+criteria; the task's budget lines less the usage spent on the task (the brief informs; the run's
+[reservation](#a-tasks-budget) enforces); and at most 16
 pointers, never content: the accepted results of the tasks it depends on (their digests when
 they have one, role `input`), and on a later attempt the previous attempt's result (`prior`) and
 the decision behind this attempt (`review`: a rejection's reasons, the answers to its questions).
@@ -173,8 +173,8 @@ executions they started (each start's `workflow.node.started` event, and each no
 execution), so it reads the ledger for the task and for each of those ids, counts each record
 once by its `(source, requestId)`, and totals it per line: `tokens` input plus output, `usd` the
 cost, `turns`, `runs` one per record; `minutes` stay as declared. A run deleted by retention no
-longer counts. This informs the brief; it reserves and blocks nothing (the engine does not
-reserve per task yet).
+longer counts. This informs the brief; the run's [reservation](#a-tasks-budget) is what enforces
+the lines, by the ledger's own count.
 
 **Resume from a brief.** A task's next attempt, or the first attempt of a task that depends on
 exactly one other (a chain), resumes the session of the run before it when:
@@ -513,8 +513,50 @@ is refused (`config_error`), and every other run is unaffected.
 - A run that served an attempt is that attempt: `continue` and `supersede` refuse it, since the
   board decides the next attempt, which runs as a new run. It is not deleted or expired before
   its outcome is reported.
+- **Its budget**, when the task declares one, is reserved on the ledger before the run starts
+  work, and a spent one blocks the task ([below](#a-tasks-budget)).
 - **After the report**, a result that reached the board is digested
   ([below](#a-digest-of-a-tasks-result)).
+
+### A task's budget
+
+A task's `budget` lines are caps on what its attempts may draw from the
+[resource ledger](resources.md), counted by the ledger for the task: the records that name it
+(an agent Worker's record names the task its brief serves) and those of runs reserved for it.
+The engine holds each run of a task that declares a budget to those lines, through
+`ctx.resources` and the board's existing `budget-spent` wait
+([board](board.md#task)); a task with no budget reserves nothing here.
+
+```mermaid
+stateDiagram-v2
+  [*] --> checked: start, before the task is taken
+  checked --> refused_start: no ledger, or a pool not configured or unavailable
+  checked --> due: the task taken, the run recorded on the board
+  due --> reserved: ledger reserves (budget decision)
+  due --> spent: ledger refuses, a cap reached
+  due --> failed: ledger refuses, a pool not configured or unavailable now
+  reserved --> released: the run finished
+  spent --> [*]: board.block budget-spent, the run ends with nothing run
+  failed --> [*]: the run fails, an attempt the board counts
+  released --> [*]
+  refused_start --> [*]
+```
+
+| Step | Records | On failure |
+|---|---|---|
+| checked | nothing, when the ledger is loaded, configures every pool the budget names, and finds each available | a refusal before the task is taken: an `admission` decision (`workflow.task-admission`, `refuse`); `config_error` with no ledger or a pool not configured, `overloaded` for a pool unavailable now (retry once it is back); nothing is claimed or sent (INV-2) |
+| due → reserved | after the board recorded the run and before any step runs: `ctx.resources.reserve` for the run and its task (and project), the task's lines as `caps`, and as `lines` the least the run draws on each (one token, turn, or run; a millionth of a dollar or a minute), so a line the task already reached refuses it; the ledger's `budget` decision, and where it stands on the run's `workflow_tasks` row; `workflow.task.budget` | no ledger loaded, or one that does not answer: the run waits and asks again (nothing runs without a reservation) |
+| due → spent | the ledger refused it while every pool is configured and available: a cap is reached. The holder blocks the task (`board.block`, `budget-spent`), so the board asks the policy about `funding` and the operator decides whether it goes on, then the run fails as `budget_spent` (`USER_ACTION`) with nothing of it run; its outcome is `blocked` | a board that does not answer is asked again; one that refuses the block (the holder lapsed, say) ends the run all the same, and its report reconciles it as a failed run |
+| due → failed | the ledger refused it for want of a pool (not configured, or unavailable since the start), or refused the request itself: the run fails as `quota_exhausted` with nothing of it run | its report is a failed attempt (`reconcileRun`), through the board's gate |
+| reserved → released | when the run finishes, completed or not; a reservation a stop left held is released at the next start | a ledger that does not release it: the hold expires on its own (`holdSeconds`, INV-9) |
+
+- **Before, never after** (resources rule 4): a run that overdraws its lines while it runs is
+  not stopped mid-run; what it drew is recorded under the task, so the task's next attempt is
+  refused, and the brief tells each Worker what is left.
+- **Restart** (INV-4): the reservation's state is on the run's row, and the ledger's decision is
+  recorded before the effect; a run left `due` reserves when it advances again, one left `spent`
+  blocks again (a block the board already took is refused, and the run then ends), and a hold a
+  crash left unrecorded expires on its own.
 
 ### A digest of a task's result
 

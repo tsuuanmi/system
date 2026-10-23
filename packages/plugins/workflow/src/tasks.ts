@@ -25,13 +25,13 @@
 import { type ArtifactRef, BoardError, type BoardTask, type Board, type Classification, type RunOutcome, type Subject } from '@tsuuanmi/system-board-core'
 import type { Lease } from '@tsuuanmi/system-leases'
 import { BRIEF_LIMITS, type BriefBudgetLine, type BriefPointer, captureGitSubject } from '@tsuuanmi/system-libs'
-import type { UsageRecord } from '@tsuuanmi/system-resources-core'
+import { type BudgetLine, ResourcesError, type UsageRecord } from '@tsuuanmi/system-resources-core'
 import type { TaskFrame } from './briefs.ts'
 import { TaskDigests } from './digests.ts'
 import type { Engine, Prepared } from './engine.ts'
 import { clampText, type ResolvedNode } from './spec.ts'
 import {
-  newId, type NodeRecord, type NodeRow, now, type RunRow, type RunView, type StartInput, TASK_LEASE_TTL_MS, type TaskOutcome, type TaskRow, type TaskStartInput, type TaskView, type WorkflowError, WorkflowFailure,
+  newId, type NodeRecord, type NodeRow, now, type RunRow, type RunView, type StartInput, TASK_LEASE_TTL_MS, type TaskBudget, type TaskOutcome, type TaskRow, type TaskStartInput, type TaskView, type WorkflowError, WorkflowFailure,
 } from './types.ts'
 import { view } from './views.ts'
 
@@ -53,6 +53,12 @@ const describe = (s: Subject): string => `${s.type} ${s.ref}${s.version ? ` at $
 const refusal = (error: BoardError): string => `${error.failure}: ${error.message}`
 /** A budget amount at a millionth, as the ledger compares them. */
 const round6 = (n: number): number => Math.round(n * 1e6) / 1e6
+/**
+ * The least a run draws on a line its task's budget caps: one token, turn, or run; a millionth of a
+ * dollar or a minute (the ledger's precision). A task run reserves this much of each line, so a
+ * line its task already reached refuses the run before it starts.
+ */
+const LEAST: Record<BudgetLine['unit'], number> = { tokens: 1, turns: 1, runs: 1, usd: 0.000001, minutes: 0.000001 }
 
 export class TaskRuns {
   /** Lease renewals of the runs live in this process. */
@@ -88,6 +94,7 @@ export class TaskRuns {
       taskId: row.task_id, generation: row.generation, claim: row.claim, phase: row.phase,
       ...(row.lost ? { lost: (JSON.parse(row.lost) as Lost).decision } : {}), ...(row.outcome ? { outcome: JSON.parse(row.outcome) as TaskOutcome } : {}),
       ...(row.digest ? { digest: this.digests.view(row)! } : {}),
+      ...(row.budget ? { budget: budgetView(JSON.parse(row.budget) as TaskBudget) } : {}),
     }
   }
 
@@ -111,6 +118,10 @@ export class TaskRuns {
   /** On start: outcomes a stop or crash left unreported are reported (running runs resume through their advance). */
   recover(): void {
     this.digests.recover()
+    // A reservation a stop or crash left held after its run finished is released (it would expire on its own).
+    const held = this.e.ctx.store.db.prepare(`SELECT t.run_id FROM workflow_tasks t JOIN workflow_runs r ON r.run_id = t.run_id
+      WHERE t.budget IS NOT NULL AND json_extract(t.budget, '$.state') = 'reserved' AND r.status != 'running'`).all() as Array<{ run_id: string }>
+    for (const { run_id } of held) void this.release(run_id)
     if (!this.e.board) return
     const pending = this.e.ctx.store.db.prepare(`SELECT t.run_id FROM workflow_tasks t JOIN workflow_runs r ON r.run_id = t.run_id
       WHERE t.phase != 'reported' AND r.status != 'running' ORDER BY t.created_at`).all() as Array<{ run_id: string }>
@@ -155,6 +166,8 @@ export class TaskRuns {
     }
     const project = await board.project(task.projectId)
     const classification = classificationOf(plain.classification, project?.classification, task)
+    // A task with a budget runs only where the ledger can hold it to its lines (INV-2), checked before it is taken.
+    await this.budgetable(task, claim)
     const runId = newId('run')
     // What every brief of the run carries, and whether the run resumes the session of the work
     // before it; both settled before the task is taken, so a failure here claims nothing.
@@ -163,7 +176,10 @@ export class TaskRuns {
     const started = { ...plain, ...(classification ? { classification } : {}), ...(session?.sessionId ? { sessionId: session.sessionId } : {}) }
     const admittedAs = session?.sessionId ? e.prepare(started) : prepared
     const { option, generation, expiresAt, decision } = await this.take(board, task, claim, runId)
-    const bound = { runId, taskId: task.taskId, holder: claim.holder ?? ownerOf(runId), generation, claim: option === 'adopt' ? 'adopted' as const : 'own' as const, writes: task.writes, frame }
+    const bound = {
+      runId, taskId: task.taskId, holder: claim.holder ?? ownerOf(runId), generation, claim: option === 'adopt' ? 'adopted' as const : 'own' as const, writes: task.writes, frame,
+      ...(task.budget?.length ? { budget: { state: 'due' as const, caps: task.budget } } : {}),
+    }
     // A concurrent start under the same clientRequestId admitted its own run: this one starts nothing,
     // and the claim it took lapses back to ready on its own.
     const admitted = e.admit(started, admittedAs, bound)
@@ -443,10 +459,11 @@ export class TaskRuns {
       const resumed = await this.resume(row, board)
       if (resumed !== 'go') return resumed
     } else if (row.lost || this.renewals.has(runId)) {
-      return 'go'
+      return this.budgeted(runId, board)
     }
     // After a restart, the lease is renewed before anything runs: a lapse shows now, not later.
-    return (await this.renew(this.row(runId)!, board)) === 'unknown' ? 'wait' : 'go'
+    if ((await this.renew(this.row(runId)!, board)) === 'unknown') return 'wait'
+    return this.budgeted(runId, board)
   }
 
   /**
@@ -577,6 +594,151 @@ export class TaskRuns {
     this.e.finish(run, 'failed', { error: JSON.stringify(error) }, lease)
   }
 
+  // --- the budget ---
+
+  /**
+   * Whether a task that declares a budget can be held to it (docs/design/workflow-engine.md#a-tasks-budget):
+   * a resource ledger is loaded, and it configures every pool the budget names and finds each
+   * available now. Otherwise the start is refused before the task is taken, with an `admission`
+   * decision, and nothing is claimed: a budget the ledger cannot hold is never run past (INV-2).
+   * Whether a line is already spent is the ledger's call once the board records the run.
+   */
+  private async budgetable(task: BoardTask, claim: TaskStartInput['task']): Promise<void> {
+    const lines = task.budget ?? []
+    if (!lines.length) return
+    const refuse = (kind: 'config_error' | 'overloaded', why: string): never => {
+      const refused = this.admission(task, undefined, 'refuse', claim, why)
+      throw new WorkflowFailure(kind, `${why}; nothing was started (decision ${refused})`)
+    }
+    const resources = this.e.ctx.get('resources')
+    if (!resources) return refuse('config_error', `task ${task.taskId} declares a budget, and no resource ledger is loaded to hold its run to it (ctx.resources, its bundle row on)`)
+    let pools: Awaited<ReturnType<typeof resources.pools>>
+    try {
+      pools = await resources.pools()
+    } catch (error) {
+      throw new WorkflowFailure('overloaded', `the resource ledger did not answer for task ${task.taskId}'s budget (${(error as Error).message}); nothing was started`)
+    }
+    for (const pool of new Set(lines.map((l) => l.pool))) {
+      const state = pools.find((p) => p.pool === pool)
+      if (!state) refuse('config_error', `task ${task.taskId}'s budget draws on pool ${pool}, which the resource ledger does not configure`)
+      else if (!state.available) refuse('overloaded', `pool ${pool} of task ${task.taskId}'s budget is unavailable${state.until ? ` until ${state.until}` : ' (a window has no reading that says ok)'}: retry once it is available`)
+    }
+  }
+
+  /**
+   * Before a recorded task run starts work: reserve its task's budget lines on the ledger, once
+   * (`ctx.resources.reserve`, the lines as caps for the task, the least of each line as what the
+   * run draws), recording where it stands on the run's row. Reserved, the run goes on, and the
+   * reservation is released when it finishes. Refused because a line is spent, the task blocks on
+   * the board (`budget-spent`) and the run ends with nothing of it run; refused for any other
+   * reason (a pool unconfigured or unavailable since the start), the run fails, an attempt the
+   * board counts. Without a ledger, or one that does not answer, the run waits (INV-2).
+   */
+  private async budgeted(runId: string, board: Board): Promise<'go' | 'wait' | 'stop'> {
+    const row = this.row(runId)!
+    // A run that lost its holder winds down, and one that finished has nothing left to start.
+    if (row.lost || !row.budget || this.e.runRow(runId)?.status !== 'running') return 'go'
+    let budget = JSON.parse(row.budget) as TaskBudget
+    if (budget.state === 'reserved' || budget.state === 'released') return 'go'
+    if (budget.state === 'due') {
+      const resources = this.e.ctx.get('resources')
+      if (!resources) {
+        this.warn(`run ${runId} waits to reserve task ${row.task_id}'s budget`, new Error('no resource ledger is loaded'))
+        return 'wait'
+      }
+      const projectId = this.frame(runId)?.projectId
+      const lines = distinct(budget.caps).map((line) => ({ pool: line.pool, unit: line.unit, amount: LEAST[line.unit] }))
+      let reserved: Awaited<ReturnType<typeof resources.reserve>>
+      try {
+        reserved = await resources.reserve({ runId, ...(projectId ? { projectId } : {}), taskId: row.task_id, lines, caps: budget.caps })
+      } catch (error) {
+        if (!(error instanceof ResourcesError)) {
+          this.warn(`the resource ledger did not answer the reservation of run ${runId}`, error)
+          return 'wait'
+        }
+        budget = { ...budget, state: 'refused', spent: false, reasons: [`the ledger refused the request (${error.failure}: ${error.message})`] }
+        this.budgetMoved(row, budget, budget.reasons![0]!)
+        return this.unbudgeted(row, budget)
+      }
+      if (reserved.state === 'reserved') {
+        this.budgetMoved(row, { ...budget, state: 'reserved', reservationId: reserved.reservationId, decision: reserved.decision }, `reserved ${lines.map((l) => `${l.amount} ${l.unit} of ${l.pool}`).join(', ')} within the task's budget`)
+        return 'go'
+      }
+      // Spent: every pool is configured and available, so a cap refused it (fail closed: one that cannot be read is not).
+      const pools = await resources.pools().catch(() => undefined)
+      const spent = !!pools && budget.caps.every((line) => pools.some((p) => p.pool === line.pool && p.available))
+      budget = { ...budget, state: 'refused', decision: reserved.decision, spent, reasons: reserved.reasons }
+      this.budgetMoved(row, budget, reserved.reasons.join('; '))
+    }
+    return budget.spent ? this.spend(row, budget, board) : this.unbudgeted(row, budget)
+  }
+
+  /**
+   * A line of the task's budget is spent: the holder blocks the task on the board (`budget-spent`;
+   * the board asks the policy about `funding`, and the operator decides whether it goes on), and the
+   * run ends with nothing of it run. A block the board refuses (the holder lapsed, say) ends the run
+   * all the same: its report then reconciles it as a failed run. A board that does not answer is
+   * asked again.
+   */
+  private async spend(row: TaskRow, budget: TaskBudget, board: Board): Promise<'wait' | 'stop'> {
+    if (budget.blocked === undefined && budget.refused === undefined) {
+      try {
+        await board.block(row.task_id, row.generation, { reason: 'budget-spent' })
+        budget = { ...budget, blocked: true }
+      } catch (error) {
+        if (!(error instanceof BoardError)) {
+          this.warn(`the board did not answer run ${row.run_id}'s block of task ${row.task_id} on its spent budget`, error)
+          return 'wait'
+        }
+        budget = { ...budget, blocked: false, refused: refusal(error) }
+      }
+      this.e.ctx.store.transaction((db) => void db.prepare('UPDATE workflow_tasks SET budget = ?, updated_at = ? WHERE run_id = ?').run(JSON.stringify(budget), now(), row.run_id))
+    }
+    const error: WorkflowError = {
+      kind: 'budget_spent', disposition: 'USER_ACTION',
+      message: `task ${row.task_id}'s budget is spent (${(budget.reasons ?? []).join('; ') || 'a cap would be exceeded'}; budget decision ${budget.decision}); nothing of this run ran${budget.blocked ? ', and the task waits for the operator to fund it' : ` (the board did not take the block: ${budget.refused})`}`,
+    }
+    this.e.finish(this.e.runRow(row.run_id)!, 'failed', { error: JSON.stringify(error) })
+    return 'stop'
+  }
+
+  /** The ledger refused the run for want of a pool, not a spent line: the run fails with nothing of it run, and its report is a failed attempt. */
+  private unbudgeted(row: TaskRow, budget: TaskBudget): 'stop' {
+    const error: WorkflowError = {
+      kind: 'quota_exhausted', disposition: 'USER_ACTION',
+      message: `task ${row.task_id}'s budget cannot be reserved: ${(budget.reasons ?? []).join('; ')}${budget.decision ? ` (budget decision ${budget.decision})` : ''}; nothing of this run ran`,
+    }
+    this.e.finish(this.e.runRow(row.run_id)!, 'failed', { error: JSON.stringify(error) })
+    return 'stop'
+  }
+
+  /** Where the run's reservation stands, on its row, and the `workflow.task.budget` event naming the ledger's decision. */
+  private budgetMoved(row: TaskRow, budget: TaskBudget, why: string): void {
+    this.e.ctx.store.transaction((db) => {
+      db.prepare('UPDATE workflow_tasks SET budget = ?, updated_at = ? WHERE run_id = ?').run(JSON.stringify(budget), now(), row.run_id)
+      this.e.ctx.eventLog.append({ type: 'workflow.task.budget', runId: row.run_id, ...(budget.decision ? { decision: budget.decision } : {}), data: { taskId: row.task_id, state: budget.state, ...(budget.spent !== undefined ? { spent: budget.spent } : {}), reason: clampText(why, 500) } })
+    })
+  }
+
+  /** A finished run's reservation is released; one the ledger no longer holds (released, or expired) counts as released. */
+  private async release(runId: string): Promise<void> {
+    const row = this.row(runId)
+    const budget = row?.budget ? JSON.parse(row.budget) as TaskBudget : undefined
+    if (!row || budget?.state !== 'reserved' || !budget.reservationId) return
+    const resources = this.e.ctx.get('resources')
+    // Without a ledger now, the hold expires on its own (INV-9); the next start releases it.
+    if (!resources) return
+    try {
+      await resources.release(budget.reservationId)
+    } catch (error) {
+      if (!(error instanceof ResourcesError && error.failure === 'unknown-reservation')) {
+        this.warn(`the reservation ${budget.reservationId} of run ${runId} was not released; it expires on its own`, error)
+        return
+      }
+    }
+    this.e.ctx.store.transaction((db) => void db.prepare(`UPDATE workflow_tasks SET budget = json_set(budget, '$.state', 'released'), updated_at = ? WHERE run_id = ? AND json_extract(budget, '$.state') = 'reserved'`).run(now(), runId))
+  }
+
   // --- the outcome ---
 
   /**
@@ -679,7 +841,9 @@ export class TaskRuns {
   finished(runId: string): void {
     clearTimeout(this.renewals.get(runId))
     this.renewals.delete(runId)
-    if (this.bound(runId)) void this.report(runId)
+    if (!this.bound(runId)) return
+    void this.release(runId)
+    void this.report(runId)
   }
 
   /** Report a finished run's outcome to its task, once at a time; a board that does not answer is asked again later. */
@@ -725,6 +889,11 @@ export class TaskRuns {
     if (task && row.acceptance && task.lastDecision === row.acceptance) return this.settled(row, { status: task.state === 'done' ? 'accepted' : 'rejected', state: task.state, decision: row.acceptance })
     if (!task || task.run?.runId !== runId) {
       return this.settled(row, { status: 'moved-on', ...(task ? { state: task.state } : {}), reason: task ? `task ${task.taskId} is ${task.state} and no longer waits on run ${runId}` : `task ${row.task_id} is unknown to the board` })
+    }
+    // The run blocked its task on the board before it had a result: the task waits on that block, not on a report.
+    const budget = row.budget ? JSON.parse(row.budget) as TaskBudget : undefined
+    if (budget?.blocked && task.state !== 'running') {
+      return this.settled(row, { status: 'blocked', state: task.state, ...(task.lastDecision ? { decision: task.lastDecision } : {}), reason: `the task's budget is spent (budget decision ${budget.decision}): it waits ${task.waiting ? `(${task.waiting.reason}) until ${task.waiting.expiresAt}` : `in ${task.state}`}` })
     }
     const waits = task.state === 'running' || (task.state === 'waiting-for-approval' && task.waiting?.reason === 'reconciliation-failed')
     if (run.status === 'completed' && row.result && row.acceptance) {
@@ -806,6 +975,17 @@ export class TaskRuns {
   private warn(what: string, error: unknown): void {
     this.e.ctx.logger.warn(`workflow: ${what}: ${(error as Error)?.message ?? String(error)}`)
   }
+}
+
+/** A budget's lines, one per pool and unit (the first of each). */
+function distinct(lines: readonly BudgetLine[]): BudgetLine[] {
+  const seen = new Set<string>()
+  return lines.filter((l) => !seen.has(`${l.pool}\0${l.unit}`) && !!seen.add(`${l.pool}\0${l.unit}`))
+}
+
+/** What a run's view shows of its budget. */
+function budgetView(budget: TaskBudget): NonNullable<TaskView['budget']> {
+  return { state: budget.state, ...(budget.decision ? { decision: budget.decision } : {}), ...(budget.spent !== undefined ? { spent: budget.spent } : {}), ...(budget.blocked !== undefined ? { blocked: budget.blocked } : {}) }
 }
 
 /** The lease owner of a run that claims its task itself. */

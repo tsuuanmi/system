@@ -558,6 +558,24 @@ describe('agents source: metering through ctx.resources (docs/design/resources.m
     new SchemaRegistry().assertRecord(result.body as { schema: string })
   })
 
+  it('names the board task its brief serves on its reservation and its usage record, so the ledger counts the run for that task (PROP-0010)', async () => {
+    const { ctx } = await boot(new ScriptedAgent({ metering: METERING }), { workers: [metered()] }, undefined, LEDGER)
+    const brief = ctx.artifacts.put({
+      kind: 'objective', bodySchema: 'brief@1.1', classification: 'operator-shared', producer: { type: 'system', ref: 'workflow' },
+      body: {
+        schema: 'brief@1.1', projectId: 'p1', taskId: 'task-1', attempt: 1, goal: 'look at it', acceptance: [{ id: 'a1', statement: 'it is looked at' }], artifacts: [],
+        instructions: [{ text: 'look at it' }], budget: { remaining: [] }, sandbox: { mode: 'read-only', network: 'allow-list', commands: false }, classification: 'operator-shared',
+      },
+    }).id as `sha256:${string}`
+    const source = ctx.workers.source('agents')!
+    const done = await source.wait(source.start({ key: 'k-task', worker: 'agent:reviewer', brief, requirement: requirement(), decisions: { tier: 'sha256:0', route: 'sha256:0' } as never }).id, 10_000)
+    expect(done).toMatchObject({ status: 'completed' })
+    expect((await ctx.resources.usage({ taskId: 'task-1' })).records).toMatchObject([{ runId: done.id, taskId: 'task-1', projectId: 'p1', usage: METERING.usage }])
+    // A run that serves no task names none.
+    const plain = await run(ctx, 'k-plain')
+    expect(ctx.store.db.prepare('SELECT task_id, project_id FROM agent_runs WHERE run_id = ?').get(plain.id)).toEqual({ task_id: null, project_id: null })
+  })
+
   it('runs nothing when the reservation is refused: the run fails unsubmitted as quota_exhausted, with its budget decision (INV-2)', async () => {
     const agent = new ScriptedAgent({ metering: METERING })
     const { ctx } = await boot(agent, { workers: [metered()] }, undefined, LEDGER)

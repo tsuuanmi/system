@@ -241,7 +241,9 @@ The `agents` source meters a Worker whose configuration names a resource `pool` 
 3. After the run, completed or not, one `usage-record` (source `runtime-result`) carries the
    runtime's numbers, and each limit observation becomes a `limit-state` reading of the pool
    window the configuration maps the runtime's window name to (`windows`); an unmapped window is
-   skipped. Then the reservation is released.
+   skipped. Then the reservation is released. The reservation and the record name the board task
+   and project the run's brief serves, if any, so the ledger counts the run against that task's
+   budget ([a task's budget](workflow-engine.md#a-tasks-budget)).
 
 A run that started before a restart has no result message, so nothing is recorded for it then;
 its usage is reconciled from the agent's session transcript later (planned). A Worker with no
