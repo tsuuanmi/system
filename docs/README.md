@@ -32,6 +32,7 @@ other documents link to it instead of repeating it.
 | run or recover the built system | [operations](operations/README.md): runbooks (first start, a waiting board task, a review, an expired request, a policy change, a limited pool, a run's worktree) and playbooks (a stuck run, quota, a provider UI change) |
 | know what the Base release (v0.8) must deliver, and what is built | [release scope](requirements/release-scope.md#base-v08), [PROP-0010](proposals/0010-base-version.md), the [roadmap](proposals/roadmap.md) |
 | understand the board, the approval queue, or the resource ledger | [board](design/board.md), [approvals](design/approvals.md), [resources](design/resources.md), their [record semantics](reference/schemas.md), and the package READMEs they name |
+| understand the feedback loop (experiments, evaluations, verdicts, lessons) | [PROP-0011](proposals/0011-feedback-loop.md), [experiments](design/experiments.md), [evaluations](design/evaluations.md), [ADR-0044](decisions/adr/0044-feedback-loop-guarantee-seams.md), [ADR-0045](decisions/adr/0045-evaluation-and-promotion-integrity.md) |
 | call a tool or use the operator page | [MCP tools](reference/mcp-tools.md), [web UI API](reference/web-ui.md), [CLI](reference/cli.md) |
 | see why the core is shaped this way | [ADR-0036](decisions/adr/0036-guarantee-core-and-capability-plugins.md) to [ADR-0039](decisions/adr/0039-base-guarantee-seam-contract-changes.md) |
 
