@@ -124,7 +124,20 @@ flowchart LR
   brief's `instructions`: the template's text and the caller's input as text, and every
   dependency's result (`{{node:<id>}}`) and each planned step's result under its objective
   (`{{grown}}`) as a pointer by content id, role `input`. The input hash covers the text these
-  instructions render to, so a node's execution key is what it was.
+  instructions render to, so a node's execution key is what it was. A plan step's prompt is model
+  text and a remediation fix's prompt the engine's own: each is used as it is, never expanded. A
+  re-review is worded as the review it re-runs ([graph growth](#graph-growth)).
+- **Every placeholder filled.** A template's text may hold only `{{input}}`, `{{node:<id>}}` of a
+  node it depends on, and `{{grown}}` after a planner (and the engine's own `{{team}}` in a team's
+  ballot and debate). Any other `{{` (an unknown name, another spelling, no closing `}}`) refuses
+  the template at preflight. A Worker never reads a placeholder as it is (INV-2): at promotion, a
+  placeholder the engine cannot fill for the node fails it as `config_error` with nothing sent, on a
+  `gate` decision (rule `workflow.instructions`) naming the placeholders, and before each Worker
+  execution starts the engine checks again that the node's instructions are what its wording
+  composes to (a node an earlier version promoted with a template's text stored as it is fails the
+  same way, without its input receipt, so `continue` composes it again). Text the engine never
+  expands (the caller's input, a dependency's result, a plan step's model text, a fix's quoted
+  findings, a diff) is data: a `{{…}}` in it is sent as written.
 - **Recorded at the start.** After routing, the brief takes the routed Worker's confinement:
   `sandbox` as its source declares it (`WorkerSource.sandbox`), or, for a source that declares
   none, a Worker that runs nothing here: read-only, no commands, network only as the egress
@@ -270,7 +283,11 @@ comes from two sources, and both are recorded as `graph-growth` decision artifac
   ([teams](teams.md#tally-and-debate)). The other rule is **remediation**: when a node that requires the `review` capability is bound to an exact
   subject, its assessment requests changes with blocking findings, and a step it depends on
   wrote the change (`develop`), the engine appends a fix step (on that step's capabilities) and
-  a re-review bound to the new subject. The fix writes, so it waits behind a gate for a person's
+  a re-review bound to the new subject. The re-review is worded as the review the cycles started
+  from: that review's prompt, composed again, so `{{input}}` is the caller's text and each
+  `{{node:<id>}}` points at the result that review read, except the step that wrote the change,
+  whose place the fix that wrote the new subject takes; a plan step's review stays the step's model
+  text. The fix writes, so it waits behind a gate for a person's
   approval of exactly that fix (a `plan` artifact), never approved by policy
   ([ADR-0028](../decisions/adr/0028-local-lead-final-authority.md), INV-15): through the
   approval queue ([below](#remediation-on-the-approval-queue)), or, with none loaded, the

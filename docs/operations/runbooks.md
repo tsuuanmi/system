@@ -679,7 +679,8 @@ Prune old backup directories yourself; each one is a full snapshot.
    `node <new checkout>/packages/cli/lib/bin.js check`. It loads every row of
    the profile as composed now (the operator's patch included) against the new
    plugins' config schemas and checks, such as a configured workflow template
-   that uses a removed team procedure. It exits 1 and names each problem; fix
+   that uses a removed team procedure or a placeholder the engine does not
+   fill. It exits 1 and names each problem; fix
    the patch, and check again until it says `ok`.
 3. `system shutdown --deadline 600`. This drains first: no new run is admitted
    (gateways answer 529 or `response.failed`), and the command waits for runs
@@ -744,6 +745,20 @@ system artifact --offset 20000 <result id>  # the next window, as the header say
 
 The header names its classification: a website answer is `local-private`, so keep it on this
 machine. A result collected by retention prints as `expired`.
+
+## A step failed on a placeholder
+
+A step whose instructions would reach its Worker with a template's placeholder unfilled fails
+before anything is sent, as `config_error`, on a `gate` decision `workflow.instructions` that names
+the placeholders (`system explain <runId>`; [briefs](../design/workflow-engine.md#briefs)):
+
+- **The template holds a placeholder the engine does not fill** (`node <id>'s template holds
+  {{…}}`): a configured template like that is refused at load (health `templates`, `system check`),
+  so this is a run admitted by an earlier version. Fix the template (config `templates` on the
+  `workflow` row, or the profile), then start the run again: `continue` fails it the same way.
+- **An earlier version stored its instructions uncomposed** (`stored by an earlier engine`): a
+  re-review promoted before re-reviews were composed. `system continue <runId> <nodeId>` composes
+  it as its review was, and it runs.
 
 ## Retention
 

@@ -17,6 +17,15 @@ every template at load (preflight) and refuses a run whose contracts are not reg
 | Conversation | `temporary`: a new one-shot conversation; `persistent`: the caller's session or a new one; `caller`: the caller's session, or a new one with `persist`; `own`: a new persistent conversation of this node alone ([conversations](../design/workflow-engine.md#conversations)) |
 | Acceptance | the contract the result must pass; a rejected result may escalate one tier (`maxEscalations`, default 1) |
 
+A node's prompt is text with placeholders the engine fills when the node is promoted
+([briefs](../design/workflow-engine.md#briefs)): `{{input}}`, the caller's input;
+`{{node:<id>}}`, the result of a node it depends on, by content id; `{{grown}}`, after a planner,
+the steps it added with their results. Preflight refuses any other `{{` (an unknown name such as
+`{{inptu}}`, another spelling such as `{{ input }}`, no closing `}}`); `{{team}}` is the engine's
+own, in a team's ballot. A Worker never reads a placeholder as it is: one the engine cannot fill
+fails the step as `config_error` before anything is sent. A `{{…}}` in the caller's input or in a
+result is data, sent as written.
+
 ## Built-in templates
 
 Provided by [`workflow`](../../packages/plugins/workflow/README.md): `ask`, and the teams
@@ -133,7 +142,8 @@ Worker, in the run's own git worktree when the Workers set `worktreePerRun`.
 - `review:1` is an exact-subject review of that change: the engine appends the subject, its diff,
   and the assessment it asks for. The reviewer reads the task's goal, its criteria, and the
   change, never the developer's answer. Blocking findings grow a fix (on `develop:1`'s
-  capabilities) behind the approval queue and a re-review, as for any template
+  capabilities) behind the approval queue and a re-review given the review's own instructions on
+  the fixed subject, as for any template
   ([remediation](../design/workflow-engine.md#remediation-on-the-approval-queue)); `validate:1`
   waits for them.
 - `validate:1` runs the tests and benchmarks the task's acceptance criteria name, changing no
