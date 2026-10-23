@@ -5,7 +5,7 @@ Capability **seam definition** for agent runtimes
 
 | Seam | Definition | Provider |
 |---|---|---|
-| `ctx.agentRuntimes` | abstract `AgentRuntimes` with `register`, `get`, `list`; `AgentRuntimeProvider` (`probe`, `run`), `RunSpec`, `RunResult`, `RunMetering`, `TokenUsage`, `ModelUsage`, `LimitObservation`, `RuntimeEvidence`, `SandboxMode`, `ToolGate`, `ToolCall`, `ToolVerdict`; `withMetering`, `meteringOf` | `@tsuuanmi/system-agent-runtimes` |
+| `ctx.agentRuntimes` | abstract `AgentRuntimes` with `register`, `get`, `list`; `AgentRuntimeProvider` (`probe`, `run`), `RunSpec`, `RunResult`, `RunMetering`, `TokenUsage`, `ModelUsage`, `LimitObservation`, `RuntimeEvidence`, `SandboxMode`, `ToolGate`, `ToolCall`, `ToolVerdict`; `askToolGate`, `isToolVerdict`, `TOOL_GATE_MS`; `withMetering`, `meteringOf` | `@tsuuanmi/system-agent-runtimes` |
 
 - A provider adapts one agent (Claude Code, Codex, an ACP agent) to `run(spec)`.
   Only the agent's native handle crosses the seam (INV-7).
@@ -35,6 +35,9 @@ Capability **seam definition** for agent runtimes
   that cannot ask it before every call reports `gatesToolCalls: false` and
   refuses a run that carries one (`config_error`), never ignores it. The
   contract names no tool: the gate's owner classifies tool names.
+  `askToolGate(gate, call, signal, ms)` asks it as a gating provider must:
+  bounded (`TOOL_GATE_MS`, 30 s, by default), and a throw, an undefined verdict
+  (`isToolVerdict`), or no answer in time is a `deny`.
 - **`childEnvironment(forward, explicit)`** is the environment every runtime's
   child process starts with (INV-8):
   1. DSH's own `scrubbedParentEnv()` (`@deepseek-ai/dsh-subprocess`): every name

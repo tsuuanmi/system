@@ -78,6 +78,45 @@ export type ToolVerdict =
  */
 export type ToolGate = (call: ToolCall, signal: AbortSignal) => Promise<ToolVerdict>
 
+/** How long a gate may take over one tool call by default (30 s); past it the call is denied. */
+export const TOOL_GATE_MS = 30_000
+
+/** Whether `verdict` is one the {@link ToolGate} contract defines: a `deny` with a reason, a `defer` with a reason and a request id. */
+export function isToolVerdict(verdict: unknown): verdict is ToolVerdict {
+  const v = verdict as Partial<{ decision: string; reason: unknown; requestId: unknown }> | null
+  if (!v || typeof v !== 'object') return false
+  if (v.decision === 'allow') return true
+  if (v.decision === 'deny') return typeof v.reason === 'string'
+  return v.decision === 'defer' && typeof v.reason === 'string' && typeof v.requestId === 'string' && v.requestId.length > 0
+}
+
+/**
+ * Ask a run's gate about one tool call, as a gating provider must: bounded by `ms`, and fail-closed.
+ * A gate that throws, gives a verdict the contract does not define, or does not answer in time is a
+ * `deny` (INV-2), never a pass; the run's `signal` aborts the gate's own signal too.
+ */
+export async function askToolGate(gate: ToolGate, call: ToolCall, signal: AbortSignal, ms: number = TOOL_GATE_MS): Promise<ToolVerdict> {
+  const controller = new AbortController()
+  const abort = (): void => controller.abort()
+  signal.addEventListener('abort', abort, { once: true })
+  let timer: NodeJS.Timeout | undefined
+  try {
+    const late = new Promise<ToolVerdict>((resolve) => {
+      timer = setTimeout(() => {
+        controller.abort()
+        resolve({ decision: 'deny', reason: `the tool gate did not answer within ${ms / 1000} s` })
+      }, ms)
+    })
+    const verdict = await Promise.race([gate(call, controller.signal), late])
+    return isToolVerdict(verdict) ? verdict : { decision: 'deny', reason: 'the tool gate gave a verdict it does not define' }
+  } catch (error) {
+    return { decision: 'deny', reason: `the tool gate failed: ${(error as Error)?.message?.slice(0, 200) ?? String(error)}` }
+  } finally {
+    clearTimeout(timer)
+    signal.removeEventListener('abort', abort)
+  }
+}
+
 export interface RunSpec {
   prompt: string
   /** Absolute workspace root. */
