@@ -1,5 +1,5 @@
 import { execFile, execFileSync, spawn } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
+import { closeSync, existsSync, fstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -149,9 +149,15 @@ describe('writeLauncher: a program path for SDKs that take no arguments', () => 
   it('writes an owner-only script, named by its content, that execs the command with its own and the caller\'s arguments', async () => {
     const path = writeLauncher(dir, 'agent', command)
     expect(path).toMatch(/agent-[0-9a-f]{16}\.sh$/)
-    expect(statSync(path).mode & 0o777).toBe(0o700)
+    // Mode and content are read through one descriptor, so they are of the same file.
+    const fd = openSync(path, 'r')
+    try {
+      expect(fstatSync(fd).mode & 0o777).toBe(0o700)
+      expect(readFileSync(fd, 'utf8')).toContain(`exec '${PASSTHROUGH}' '--die-with-parent'`)
+    } finally {
+      closeSync(fd)
+    }
     expect(writeLauncher(dir, 'agent', command)).toBe(path)
-    expect(readFileSync(path, 'utf8')).toContain(`exec '${PASSTHROUGH}' '--die-with-parent'`)
     expect((await promisify(execFile)(path, ["it's", 'two words'], { encoding: 'utf8' })).stdout).toBe("it's|two words|")
   })
 

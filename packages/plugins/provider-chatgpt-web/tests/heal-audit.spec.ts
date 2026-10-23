@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs'
+import { closeSync, fstatSync, mkdtempSync, openSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
@@ -47,8 +47,14 @@ describe.runIf(canRunBrowser)('self-heal is audited (INV-13) and persisted to th
     const decisions = ctx.artifacts.list({ kind: 'decision' }).map((a) => a.body as { decisionType: string; decider: { id: string }; outcome: { option: string; detail: { element: string } } })
     expect(decisions).toEqual([expect.objectContaining({ decisionType: 'recovery', decider: expect.objectContaining({ id: 'ui-ops.heal.deterministic' }), outcome: expect.objectContaining({ detail: expect.objectContaining({ element: 'composer.send' }) }) })])
     const overlay = join(dir, 'ui', 'chatgpt-web.overlay.yaml')
-    expect(statSync(overlay).mode & 0o777).toBe(0o600)
-    expect(readFileSync(overlay, 'utf8')).toMatch(/composer\.send:[\s\S]*Submit message/)
+    // Mode and content are read through one descriptor, so they are of the same file.
+    const fd = openSync(overlay, 'r')
+    try {
+      expect(fstatSync(fd).mode & 0o777).toBe(0o600)
+      expect(readFileSync(fd, 'utf8')).toMatch(/composer\.send:[\s\S]*Submit message/)
+    } finally {
+      closeSync(fd)
+    }
     expect(ctx.eventLog.query({ limit: 10 }).map((e) => e.type)).toContain('ui.heal')
   }, 60_000)
 
