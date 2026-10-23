@@ -126,7 +126,10 @@ runs the work the router admitted to them. Callers never reach a source directly
   bubblewrap around every agent ([ADR-0024](../decisions/adr/0024-agent-workers-confined-for-reads.md)).
   Commands run in each runtime's own sandbox nested inside it: Codex's, or, for Claude Code, the
   Agent SDK's, writing only the workspace and with no network, proven on the host by the probe
-  ([ADR-0038](../decisions/adr/0038-confined-commands-for-claude-code-workers.md)).
+  ([ADR-0038](../decisions/adr/0038-confined-commands-for-claude-code-workers.md)). Claude Code
+  and Codex ask a run's tool gate through one PreToolUse hook; Codex's is a command that reaches
+  the gate over a per-run socket, proven on the host by the probe against a scripted model
+  ([ADR-0042](../decisions/adr/0042-codex-workers-ask-the-gate-through-a-hook-bridge.md)).
 - **Model Workers** (`ctx.models` and the `models` source): one Worker per entry of the
   operator's model catalog, an API model or a local one, over the DSH `llm` service
   ([models](../design/models.md)). Calls are durable and idempotent by key, the exact prompt

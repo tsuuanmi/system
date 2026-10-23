@@ -9,7 +9,8 @@
 > and `/admin/*` routes.
 >
 > The default composition mounts the Claude Code agent rows (PROP-0010 B3) with no Worker, and
-> neither the Codex and ACP rows nor the model gateways (PROP-0004). The agent threats (an agent
+> neither the Codex and ACP rows nor the model gateways (PROP-0004); the Codex row can be turned on
+> ([Codex Workers](../operations/runbooks.md#codex-workers)). The agent threats (an agent
 > process reading host state, or running commands) arise once the operator
 > [adds a Worker](../operations/runbooks.md#agent-workers); the gateway threats (a gateway
 > client, the model token in use) once the operator
@@ -207,18 +208,41 @@
     ([a Worker's tool calls](../design/approvals.md#a-workers-tool-calls)).
     Claude Code starts under the read confinement below, like Codex and ACP
     agents;
-  - Codex and ACP agents cannot ask a tool gate before each tool call
+  - ACP agents cannot ask a tool gate before each tool call
     (`gatesToolCalls: false`), so they refuse a gated run and the `agents`
     source admits none of their Workers; the policies below hold for them
     still;
   - Codex (`runtime-codex-sdk`): its own `sandboxMode` (`read-only`, or
     `workspace-write` confined to the workspace) and working directory,
-    approvals `never`, network access and web search off. It runs in its own
+    approvals `never` (an escalated command is refused), network access and web
+    search off, and the features that add tools no hook sees off (apps, plugins,
+    subagents, image generation, browser and computer use). It runs in its own
     Codex home (`CODEX_HOME`), never the operator's `~/.codex`, which holds the
     `system` MCP server: Codex starts MCP servers outside its sandbox, so the
     probe and every run fail closed if that home configures any, and a `config`
-    holding `mcp_servers` is refused. Codex's own sandbox confines writes, not
-    reads, so Codex starts under the read confinement below;
+    holding `mcp_servers` or `hooks` is refused. Codex's own sandbox confines
+    writes, not reads, so Codex starts under the read confinement below. The
+    run's tool gate is its one PreToolUse hook
+    ([ADR-0042](../decisions/adr/0042-codex-workers-ask-the-gate-through-a-hook-bridge.md),
+    [Codex's gate](../design/agent-runtimes.md#codexs-gate)), a command that
+    reaches the gate over a per-run unix socket with a key Codex's commands
+    never see. What remains, and how it is held:
+    - Codex runs a tool when its hook fails, prints what it cannot read, or
+      times out, and skips an untrusted hook silently. The hook blocks on every
+      failure of its own; the probe proves, on the host, with the run's
+      configuration, that the hook answers before a tool call and its deny
+      holds, before any Codex Worker is admitted; and a tool item that no
+      allowed call accounts for stops the run (detection after one call, inside
+      Codex's sandbox).
+    - `write_stdin` asks no hook: Codex runs with `/dev/ptmx` and `/dev/pts`
+      hidden, so no command has a terminal to write to, and the operator's
+      terminals are out of reach (no `TIOCSTI` into them); the probe proves no
+      terminal session starts.
+    - The hook sees an `exec_command`'s `command` only, not its `workdir` or
+      `shell`: those act inside Codex's sandbox, which bounds every command, as
+      a listed command such as `npm test` running code the run wrote does;
+    - a process inside Codex's sandbox that could read the socket's path cannot
+      present the key, and the gate only answers: no call runs because of it;
   - ACP agents (`runtime-acp`): the client side enforces the policy. Every
     permission request is rejected, file reads are served inside the workspace
     only, and no write or terminal capability or MCP server is offered. Because

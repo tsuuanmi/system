@@ -212,20 +212,29 @@ flowchart LR
   pre-approvals, so the runtime's own policy still decides, and a call outside the workspace
   stays refused. A gate that throws, answers with an unknown verdict, or takes longer than 30 s
   is a deny.
+- **On Codex** the gate is one PreToolUse hook on every tool (`*`), a command Codex runs, which
+  reaches the run's gate through a private channel of the run
+  ([Codex's gate](agent-runtimes.md#codexs-gate)). `deny` and `defer` block the call with the
+  reason; `allow` prints no decision, so Codex's own sandbox still decides. The hook blocks on any
+  failure of its own, since Codex runs the tool when a hook fails, and the probe proves the hook
+  answers before a tool call on the host before any Codex Worker is admitted.
 
 ### How a call is classified
 
 By code, from the tool's name and input only, never by a model's judgment; a call the table does
-not cover is denied. Each tool in the table takes only the input fields its Claude Agent SDK type
-declares (`MultiEdit`, `NotebookRead`, and `LS`, which the SDK no longer declares, their last
-published shapes), each of its declared type: an unknown field, or a known one of another type, is
-denied, its reason naming the field.
+not cover is denied. The table is keyed by the tool names the runtimes report: Claude Code's
+built-in tools, and Codex's as its hook reports them (Codex 0.164). Each tool in the table takes
+only the input fields its Claude Agent SDK type declares (`MultiEdit`, `NotebookRead`, and `LS`,
+which the SDK no longer declares, their last published shapes), or Codex's hook reports, each of
+its declared type: an unknown field, or a known one of another type, is denied, its reason naming
+the field.
 
 | Tool | Action |
 |---|---|
-| `Read`, `NotebookRead`, `LS`, `Glob`, `Grep` | `read`, for a path inside the run's workspace (absent for `Glob` and `Grep`: the workspace); a `Glob` pattern whose literal leading directory is outside it, or that climbs with `..`, is denied |
+| `Read`, `NotebookRead`, `LS`, `Glob`, `Grep`, `view_image` | `read`, for a path inside the run's workspace (absent for `Glob` and `Grep`: the workspace); a `Glob` pattern whose literal leading directory is outside it, or that climbs with `..`, is denied |
 | `Write`, `Edit`, `MultiEdit`, `NotebookEdit` | `workspace-write`, for a file inside the workspace; outside it is denied (and refused by the runtime) |
-| `Bash` | `command`, its argv the command split on single spaces, so the [exact-argv rule](#the-autonomy-policy) applies as written: a listed argv is judged as `workspace-write`. A word with a shell metacharacter (the policy's own set, `SHELL_METACHARACTER`), or an empty word (a doubled, leading, or trailing space), is denied by the gate before the policy is asked; the policy forbids the former too. Its input fields are `command`, `description`, `timeout`, and `run_in_background`: `dangerouslyDisableSandbox` is denied |
+| `apply_patch` | `workspace-write`, when its patch (`command`) reads strictly in the patch grammar (`*** Begin Patch`; `Add File` with `+` lines, `Delete File`, `Update File` with an optional `Move to`, `@@`, ` `, `+`, `-`, and empty lines, and `*** End of File`; `*** End Patch`) and every file a header names (added, deleted, updated, or moved to) is inside the workspace; a `***` line the grammar does not allow where it stands, a carriage return, or a name with surrounding spaces denies the whole patch |
+| `Bash` | `command`, its argv the command split on single spaces, so the [exact-argv rule](#the-autonomy-policy) applies as written: a listed argv is judged as `workspace-write`. A word with a shell metacharacter (the policy's own set, `SHELL_METACHARACTER`), or an empty word (a doubled, leading, or trailing space), is denied by the gate before the policy is asked; the policy forbids the former too. Its input fields are `command`, `description`, `timeout`, and `run_in_background`: `dangerouslyDisableSandbox` is denied. Codex reports its `exec_command` as `Bash` with `command` alone |
 | `WebFetch`, `WebSearch` | `external-send`, which always asks |
 | any other tool, or an input that is not an object | denied by the gate's own rule |
 
@@ -265,7 +274,9 @@ ids, never the call's input.
 - **The run stops there.** The runtime runs no further tool call (each is denied) and ends the
   run, which fails as `config_error` naming the request, whatever the runtime reported: a
   deferred run never completes, and `config_error` is never retried. On Claude Code a `defer`
-  ends the headless query with the call kept in the session's transcript.
+  ends the headless query with the call kept in the session's transcript. On Codex the call is
+  blocked, its output in the thread naming the request, and the runtime stops Codex; in the later
+  run the model makes the call again.
 - **Resume.** The same session continues in a later run (by its native handle): for a workflow
   run that serves no board task, the engine starts it by itself once the request is approved,
   once per approval ([a deferred tool call](workflow-engine.md#a-deferred-tool-call)). The hook
