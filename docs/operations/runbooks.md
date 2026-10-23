@@ -782,11 +782,15 @@ To decide:
 1. Read the review's findings (`system explain <runId>`, the review step's assessment) and the
    change in the run's worktree ([worktree](#a-runs-worktree)).
 2. **Approve:** within `approvalPollSeconds` (15 s) the gate opens, the fix runs once, and a review
-   of the changed subject follows. **Deny:** the run fails as `plan_rejected`, and the fix never
-   runs. **No answer** by the request's expiry (a day under the bundle's studio policy): the run
-   fails as `gate_timeout`.
+   of the changed subject follows. Leave the worktree as the review read it until then: the gate
+   captures it again before it opens, and if it changed (the request's subject is no longer the
+   tree), the run fails as `stale_subject` and the fix never runs. **Deny:** the run fails as
+   `plan_rejected`, and the fix never runs. **No answer** by the request's expiry (a day under the
+   bundle's studio policy), or a queue the engine cannot read by then: the run fails as
+   `gate_timeout`.
 3. To ask again after a deny or an expiry, `system continue <runId>`: the gate puts the plan to the
-   queue on a new request. A policy change that withdrew the request closes the gate too
+   queue on a new request. After `stale_subject`, put the worktree back to the reviewed subject
+   first (the request's `git:<HEAD>:<hash>`); continuing asks on that same subject again. A policy change that withdrew the request closes the gate too
    (`plan_rejected`, "withdrawn"); continue asks under the policy now.
 
 With no approval queue loaded, the fix waits on the run's plan gate instead: `system approve

@@ -318,17 +318,17 @@ stateDiagram-v2
   [*] --> waiting: gate promoted (BLOCKED)
   waiting --> requested: check says ask, one request opened (or one a crash left adopted)
   waiting --> closed: check says forbid (plan_rejected)
-  requested --> opened: the operator approves the request, bound to exactly this plan and subject
-  requested --> closed: rejected or withdrawn (plan_rejected), expired (gate_timeout)
+  requested --> opened: the operator approves the request in time, bound to exactly this plan and subject, and the working tree is still that subject
+  requested --> closed: rejected or withdrawn (plan_rejected), expired (gate_timeout), the tree moved (stale_subject)
   opened --> [*]: the fix runs, once
   closed --> waiting: operator continue (a new request)
 ```
 
 | Step | Records | On failure |
 |---|---|---|
-| put to the queue | `approvals.check({ class: 'remediation' })` (the run's project for a board task's run), then one `approvals.request` on the exact subject `{ type: artifact, ref: <plan content id>, version: <the reviewed subject, git:<HEAD>:<hash>> }` (that subject's content id when it is longer than 128 characters), requester `workflow` with the run and the gate; a `gate` decision `wait` (rule `workflow.remediation-approval`) naming the request; the request id on the gate's row; `workflow.gate.requested`. The gate then waits until the request's `expiresAt`, the policy's wait for `remediation` | the queue unreadable: the gate waits, logged, until its deadline closes it (`gate_timeout`); any mode but `ask`: the gate closes (`plan_rejected`), and nothing is asked |
-| a crash before the request id is stored | on restart, the gate adopts its own open or approved request on the same subject (requester, run, gate, class) instead of opening a second one (INV-4) | — |
-| approved | a `gate` decision `open` naming the request and the operator's `approval@1.0`, which becomes the gate's result; `workflow.gate.opened` (`by: queue`) | a request that does not bind this gate's plan, subject, run, and node closes the gate (`plan_rejected`, INV-5) |
+| put to the queue | `approvals.check({ class: 'remediation' })` (the run's project for a board task's run), then one `approvals.request` on the exact subject `{ type: artifact, ref: <plan content id>, version: <the reviewed subject, git:<HEAD>:<hash>> }` (that subject's content id when it is longer than 128 characters), requester `workflow` with the run and the gate; a `gate` decision `wait` (rule `workflow.remediation-approval`) naming the request; the request id on the gate's row, in the same transaction; `workflow.gate.requested`. The gate then waits until the request's `expiresAt`, the policy's wait for `remediation` | the queue unreadable: the gate waits, logged; once its deadline passes it closes as `gate_timeout` (a `gate` decision `closed` naming the request), read or not, and withdraws the request if it can; any mode but `ask`: the gate closes (`plan_rejected`), and nothing is asked |
+| a crash before the request id is stored | on restart, the gate adopts its own most recent request in any state (class `remediation`, requester `workflow`, the run, the gate, the exact subject) that no `wait` decision of the gate names, and applies its outcome on the next pass: open, it waits; approved, rejected, withdrawn, or expired, it opens or closes as below. It asks again only when there is none (INV-4). A request a `wait` decision names was the gate's before it was reopened, and is never adopted again | — |
+| approved | the request is checked first, then the working tree: the approval was the operator's verdict (`cause: verdict`) given no later than the request's `expiresAt`, an `approval@1.0` by `operator` approving exactly the gate's subject, resolved by an `approval` decision `approved`; then the reviewed working tree is captured again as the exact-subject review captures it, and must still be the reviewed subject. A `gate` decision `open` naming the request and the operator's `approval@1.0`, which becomes the gate's result; `workflow.gate.opened` (`by: queue`) | a request or approval that does not bind this gate's plan, subject, run, and node closes the gate (`plan_rejected`, INV-5); an approval given after the expiry (the queue refuses one; checked again in defence) closes it as `gate_timeout`; a working tree that moved since the review, or can no longer be captured, closes it as `stale_subject` with an exact-subject `gate` decision (rule `workflow.exact-subject`, naming the reviewed subject and the one now): the fix never acts on a tree other than the one approved (INV-5). The approved request is left as it is |
 | rejected (verdict, withdrawal) or expired | a `gate` decision `closed`; the run fails as `plan_rejected`, or `gate_timeout` for an expiry; `workflow.gate.closed` (`by: queue`) | — |
 | no verdict by the deadline | the gate closes (`gate_timeout`) even if the queue's own sweep has not yet expired the request, and withdraws it | a withdrawal that fails leaves the request to expire on its own |
 
@@ -392,7 +392,9 @@ For a local agent's change, the subject is the working tree's git subject,
 names that subject and the tree is still it, as an exact-subject `gate` decision;
 otherwise the step fails as `stale_subject`. A tree that can no longer be captured
 (removed, or no longer a repository) fails the review step as `stale_subject` before it
-runs, with an exact-subject `gate` decision of its own: a review never runs unbound.
+runs, with an exact-subject `gate` decision of its own: a review never runs unbound. A
+remediation fix's gate captures the tree again before it opens on an approval, and fails as
+`stale_subject` when it moved ([above](#remediation-on-the-approval-queue)).
 The working tree is the one the writer's
 result names: with agent Workers configured `worktreePerRun`, the run's own git worktree,
 which its writers and reviewers share ([workspaces](agent-runtimes.md#workspaces)). Every
