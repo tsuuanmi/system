@@ -14,8 +14,8 @@ router ([routing](../../../docs/design/routing.md#algorithm)). Definition:
   ([`models`](../models/README.md)).
   `describe()` runs on every route, so admission sees current states. Each
   descriptor is validated against `capability-descriptor@1.0`, `@1.1` (with
-  `family`), `@1.2` (with `maxInputChars`), `@1.3` (with `load` and `cooldowns`), or `@1.4` (an
-  offer's `scope`). A Worker id that two sources describe is refused.
+  `family`), `@1.2` (with `maxInputChars`), `@1.3` (with `load` and `cooldowns`), `@1.4` (an
+  offer's `scope`), or `@1.5` (its `account`). A Worker id that two sources describe is refused.
 - **Admission (REQ-WRK-1, -7, -9).** A Worker passes only if all of these hold:
   - it is inside the caller's restriction, if one is given;
   - it is of none of the provider families the caller excludes, if any
@@ -25,6 +25,12 @@ router ([routing](../../../docs/design/routing.md#algorithm)). Definition:
     (`scope`, [ADR-0049](../../../docs/decisions/adr/0049-read-only-agent-workers-as-review-members.md))
     counts only for a requirement that names that scope, and a refusal says so
     (`does not prove reason (it proves reason only for review-member work)`);
+  - no usage limit is on a capability the work needs (`cooldown`, ADR-0034);
+  - no other account of its group holds the work (`assignment`,
+    [assigned accounts](../../../docs/design/routing.md#assigned-accounts)): while a Worker of an
+    `assigned` account is refused only for its limit (its `cooldown`s, or `quota-exhausted`), a
+    Worker of another account of the same group is refused the same work, and so is any Worker of
+    another account when the caller keeps the work on one (`RouteOptions.assignment`);
   - it takes the input's length, when the caller gives one and the Worker
     declares a bound (`input`, [ADR-0032](../../../docs/decisions/adr/0032-admission-refuses-input-longer-than-a-worker-takes.md));
   - it is local when the data is `local-private`;
@@ -50,7 +56,9 @@ router ([routing](../../../docs/design/routing.md#algorithm)). Definition:
   - **Failure:** an `admission` decision with outcome `none`, and
     `AdmissionFailure` carrying every rejection, including each Worker's state.
     A required capability that no Worker proves is named first
-    (`no Worker proves web-search`), as under the `api-first` preset.
+    (`no Worker proves web-search`), as under the `api-first` preset. When every
+    Worker refused only for its limit is on an assigned account, the failure's
+    `limitUntil` is the earliest known reset, and the decision says when the first is back.
 - **Acceptance (REQ-WRK-3).** `contract(id, check)` registers a deterministic
   contract for the plugin's lifetime. `accept(result, contract)` checks a stored
   result and records an `acceptance` decision. `contracts()` lists the

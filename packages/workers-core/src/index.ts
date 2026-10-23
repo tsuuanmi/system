@@ -55,9 +55,31 @@ export interface CapabilityOffer {
 export const provesFor = (offer: CapabilityOffer, requirement: Pick<WorkRequirement, 'scope'>): boolean =>
   offer.scope === undefined || offer.scope === requirement.scope
 
+/**
+ * How a provider's accounts are used (ADR-0052): `assigned` (the default, and the only one for
+ * personal subscriptions), each account serving its own work, a limit never moving that work to
+ * another account of the provider; or `pooled`, only on the operator's recorded confirmation of
+ * that provider's terms.
+ */
+export type AccountMode = 'assigned' | 'pooled'
+
+/**
+ * The account a Worker runs on (`@1.5`; ADR-0052), as opaque values its source sets: routing
+ * compares `id` and `group` for equality only and never names one (INV-11).
+ */
+export interface WorkerAccount {
+  /** The account: every Worker of one account (its tiers, its roles) carries the same id. */
+  id: string
+  /** The accounts it is compared with: a website's provider, an agent runtime. */
+  group: string
+  mode: AccountMode
+  /** When an account whose Worker reads `quota-exhausted` is expected back, when its source knows. */
+  limitUntil?: string
+}
+
 /** What a Worker has proven right now (`capability-descriptor@1.0`; `@1.1` adds `family`). */
 export interface CapabilityDescriptor {
-  schema: 'capability-descriptor@1.0' | 'capability-descriptor@1.1' | 'capability-descriptor@1.2' | 'capability-descriptor@1.3' | 'capability-descriptor@1.4'
+  schema: 'capability-descriptor@1.0' | 'capability-descriptor@1.1' | 'capability-descriptor@1.2' | 'capability-descriptor@1.3' | 'capability-descriptor@1.4' | 'capability-descriptor@1.5'
   worker: string
   /** Informational only; routing never branches on it (INV-11). */
   provider: string
@@ -78,6 +100,12 @@ export interface CapabilityDescriptor {
    * Work that needs one is not admitted here.
    */
   cooldowns?: Array<{ capability: string; until: string }>
+  /**
+   * The account it runs on (`@1.5`; ADR-0052). Under `assigned`, while it is refused only for its
+   * limit, no other account of its group is admitted the same work (check `assignment`). A Worker
+   * with none is routed as before.
+   */
+  account?: WorkerAccount
   tier: Tier
   quotaClass: QuotaClass
   locality: 'local' | 'remote'
@@ -215,7 +243,8 @@ export interface WorkerSource {
 }
 
 /** The admission checks, in the order the router applies them. */
-export type AdmissionCheck = 'restricted' | 'excluded' | 'diversity' | 'capability' | 'cooldown' | 'input' | 'locality' | 'state' | 'tier'
+export type AdmissionCheck = 'restricted' | 'excluded' | 'diversity' | 'capability' | 'cooldown' | 'assignment' | 'input' | 'locality' | 'state' | 'tier'
+export const ADMISSION_CHECKS: readonly AdmissionCheck[] = ['restricted', 'excluded', 'diversity', 'capability', 'cooldown', 'assignment', 'input', 'locality', 'state', 'tier']
 
 export interface Rejection {
   worker: string
@@ -241,6 +270,12 @@ export interface RouteOptions {
    * declares a shorter `maxInputChars` is refused. A source that replays history checks that itself.
    */
   input?: { chars: number }
+  /**
+   * The work stays on this account within its group (ADR-0052): no Worker of another account of
+   * `group` may take it (check `assignment`). Set by a caller after an unsent failure on an
+   * assigned account, so the next attempt never moves inside the provider.
+   */
+  assignment?: { group: string; account: string; reason: string }
   /** Who asked, recorded as the producer of the decisions. */
   producer?: string
 }
@@ -280,9 +315,14 @@ export interface Acceptance extends AcceptanceCheck {
   decision: ArtifactRef
 }
 
-/** No Worker is admissible; fail closed (INV-2). `decision` is the `admission` artifact. */
+/**
+ * No Worker is admissible; fail closed (INV-2). `decision` is the `admission` artifact.
+ * `limitUntil` (ADR-0052): when every Worker refused only for its limit is on an assigned account,
+ * the earliest reset among their known limits, so the caller may wait for it instead of failing;
+ * absent otherwise, and when no reset is known.
+ */
 export class AdmissionFailure extends Error {
-  constructor(readonly rejections: readonly Rejection[], readonly decision: ArtifactRef, message: string) {
+  constructor(readonly rejections: readonly Rejection[], readonly decision: ArtifactRef, message: string, readonly limitUntil?: string) {
     super(message)
     this.name = 'AdmissionFailure'
   }

@@ -327,6 +327,116 @@ export function workersConformance(name: string, boot: Boot): void {
       })
     })
 
+    const account = (id: string, group: string, mode: 'assigned' | 'pooled' = 'assigned', limitUntil?: string) =>
+      ({ schema: 'capability-descriptor@1.5' as const, family: group, account: { id, group, mode, ...(limitUntil ? { limitUntil } : {}) } })
+
+    it('keeps work an assigned account at its limit could take off the other accounts of its group, admits other groups, and says why (ADR-0052)', async () => {
+      const later = new Date(Date.now() + 3_600_000).toISOString()
+      const research = requirement({ capabilities: ['reason', 'deep-research'] })
+      const proves = ['reason', 'deep-research']
+      await withWorkers([
+        worker('w:g-a', { ...account('a', 'g'), proves, cooldowns: [{ capability: 'deep-research', until: later }] }),
+        worker('w:g-b', { ...account('b', 'g'), proves }),
+        worker('w:h-c', { ...account('c', 'h'), proves, tier: 'frontier' }),
+      ], async (ctx) => {
+        // Another group still takes it, though its tier ranks after the refused account's.
+        const admitted = await ctx.workers.route(research)
+        expect(admitted.worker.worker).toBe('w:h-c')
+        const reasons = body(ctx, admitted.decisions.route).candidates.find((c) => c.option === 'w:g-b')!.reasons
+        expect(reasons).toEqual([`w:g-a is at its limit until ${later}; assigned accounts do not take another account's work at its limit`])
+        expect(JSON.stringify(body(ctx, admitted.decisions.route))).not.toMatch(/"(g|h)"/)
+        // Work the limited account is not limited for is admitted as before, on either account.
+        expect((await ctx.workers.route(requirement())).worker.worker).toBe('w:g-a')
+      })
+      // With no other group, the work is refused, and the failure says when the limit lapses.
+      await withWorkers([
+        worker('w:g-a', { ...account('a', 'g'), proves, cooldowns: [{ capability: 'deep-research', until: later }] }),
+        worker('w:g-b', { ...account('b', 'g'), proves }),
+      ], async (ctx) => {
+        const failure = await ctx.workers.route(research).catch((e: unknown) => e) as AdmissionFailure
+        expect(failure).toBeInstanceOf(AdmissionFailure)
+        expect(failure.rejections.map((r) => [r.worker, r.failed.map((f) => f.check)])).toEqual([['w:g-a', ['cooldown']], ['w:g-b', ['assignment']]])
+        expect(failure.limitUntil).toBe(later)
+        expect(body(ctx, failure.decision).candidates.find((c) => c.selected)!.reasons[0]).toMatch(new RegExp(`at their limit, the first back at ${later.replace(/\./g, '\\.')}`))
+      })
+    })
+
+    it('waits for the earliest known reset of an assigned account out of quota, and gives none when no reset is known (ADR-0052)', async () => {
+      const soon = new Date(Date.now() + 600_000).toISOString()
+      const later = new Date(Date.now() + 3_600_000).toISOString()
+      await withWorkers([
+        worker('w:g-a', { ...account('a', 'g', 'assigned', later), state: 'quota-exhausted' }),
+        worker('w:h-b', { ...account('b', 'h', 'assigned', soon), state: 'quota-exhausted' }),
+        worker('w:x', { state: 'reauth-required' }),
+      ], async (ctx) => {
+        const failure = await ctx.workers.route(requirement()).catch((e: unknown) => e) as AdmissionFailure
+        expect(failure.limitUntil).toBe(soon)
+      })
+      await withWorkers([worker('w:g-a', { ...account('a', 'g'), state: 'quota-exhausted' })], async (ctx) => {
+        expect((await ctx.workers.route(requirement()).catch((e: unknown) => e) as AdmissionFailure).limitUntil).toBeUndefined()
+      })
+      // A limit on a Worker with no assigned account is not this rule's: no wait is offered.
+      await withWorkers([
+        worker('w:g-a', { ...account('a', 'g', 'assigned', later), state: 'quota-exhausted' }),
+        worker('w:plain', { schema: 'capability-descriptor@1.3', state: 'quota-exhausted' }),
+      ], async (ctx) => {
+        expect((await ctx.workers.route(requirement()).catch((e: unknown) => e) as AdmissionFailure).limitUntil).toBeUndefined()
+      })
+    })
+
+    it('moves nothing under pooled accounts: a limit leaves the group\'s other accounts admissible, as ADR-0034 (ADR-0052)', async () => {
+      const later = new Date(Date.now() + 3_600_000).toISOString()
+      await withWorkers([
+        worker('w:g-a', { ...account('a', 'g', 'pooled', later), state: 'quota-exhausted' }),
+        worker('w:g-b', { ...account('b', 'g', 'pooled'), tier: 'frontier' }),
+      ], async (ctx) => {
+        expect((await ctx.workers.route(requirement())).worker.worker).toBe('w:g-b')
+      })
+    })
+
+    it('keeps the work on one account of its group when asked to, and leaves other groups and other tiers of that account open (ADR-0052)', async () => {
+      await withWorkers([
+        worker('w:g-a-eco', { ...account('a', 'g'), tier: 'economy' }), worker('w:g-b', { ...account('b', 'g'), tier: 'economy' }),
+        worker('w:h-c', account('c', 'h')), worker('w:plain'),
+      ], async (ctx) => {
+        const assignment = { group: 'g', account: 'b', reason: 'an earlier attempt failed on account b before anything was sent' }
+        const admitted = await ctx.workers.route(requirement(), { assignment })
+        expect(admitted.worker.worker).toBe('w:g-b')
+        expect(body(ctx, admitted.decisions.route).candidates.find((c) => c.option === 'w:g-a-eco')!.reasons).toEqual([assignment.reason])
+        const away = await ctx.workers.route(requirement(), { assignment, excludeWorkers: { workers: ['w:g-b'], reason: 'failed here' } })
+        expect(['w:h-c', 'w:plain']).toContain(away.worker.worker)
+      })
+    })
+
+    it('chooses exactly as before when each group has one account, as on a host with one account per provider (ADR-0052)', async () => {
+      const later = new Date(Date.now() + 3_600_000).toISOString()
+      const plain = [
+        worker('w:a', { schema: 'capability-descriptor@1.3', family: 'g', load: { running: 1, queued: 0, pending: 0, slots: 2 } }),
+        worker('w:b', { schema: 'capability-descriptor@1.3', family: 'h', load: { running: 0, queued: 0, pending: 0, slots: 2 } }),
+        worker('w:c', { schema: 'capability-descriptor@1.3', family: 'k', tier: 'economy', cooldowns: [{ capability: 'reason', until: later }] }),
+        worker('w:d', { schema: 'capability-descriptor@1.3', family: 'm', state: 'quota-exhausted' }),
+      ]
+      const groups = ['g', 'h', 'k', 'm']
+      const accounted = plain.map((w, i) => ({ ...w, schema: 'capability-descriptor@1.5' as const, account: { id: `acct-${i}`, group: groups[i]!, mode: 'assigned' as const } }))
+      const chosen = async (workers: CapabilityDescriptor[]) => {
+        let out: { worker: string; decisions: unknown; failed: unknown } | undefined
+        await withWorkers(workers, async (ctx) => {
+          const admitted = await ctx.workers.route(requirement())
+          const refused = await ctx.workers.route(requirement({ tier: { min: 'frontier', source: 'caller' } })).catch((e: unknown) => e) as AdmissionFailure
+          out = { worker: admitted.worker.worker, decisions: admitted.decisions, failed: refused.rejections }
+        })
+        return out!
+      }
+      // The same Worker, the same decision artifacts (their content ids), and the same refusals.
+      expect(await chosen(accounted)).toEqual(await chosen(plain))
+    })
+
+    it('refuses an account below the schema version that carries it (capability-descriptor@1.5)', async () => {
+      await withWorkers([worker('w:a', { schema: 'capability-descriptor@1.4', account: { id: 'a', group: 'g', mode: 'assigned' } })], async (ctx) => {
+        await expect(ctx.workers.route(requirement())).rejects.toThrow(/capability-descriptor@1\.4/)
+      })
+    })
+
     it('routes past a source that does not describe its Workers in time, and names it in the decision', async () => {
       const { ctx, dispose } = await boot()
       try {
