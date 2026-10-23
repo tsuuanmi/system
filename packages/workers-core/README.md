@@ -6,7 +6,7 @@ Routing **seam definition**
 
 | Seam | Definition | Provider |
 |---|---|---|
-| `ctx.workers` | abstract `Workers` with `register(source)`, `list()`, `route(requirement, options)`, `contract(id, check)`, `contracts()`, `accept(result, contract, { resultSchema })` (the result's JSON checked against the schema first, REQ-ART-5); `source(name)`, `affinity(sessionId)`, `siblings(worker)`, `handle(sessionId)`, `reset(sessionId)`, `release(sessionIds, reason)`; `WorkerSource` (describe, start, reserve, get, wait, affinity, siblings, handle, reset, release, cancel), `WorkerStart` (with the optional `runId` of the workflow run an execution belongs to), `WorkerExecution`, `CapabilityDescriptor` (with `load`, ADR-0033), `WorkRequirement`, `AdmittedWorker` (with `release()`), `AdmissionFailure`, `AcceptanceContract` | `@tsuuanmi/system-workers` |
+| `ctx.workers` | abstract `Workers` with `register(source)`, `list()`, `route(requirement, options)`, `contract(id, check)`, `contracts()`, `accept(result, contract, { resultSchema })` (the result's JSON checked against the schema first, REQ-ART-5); `source(name)`, `affinity(sessionId)`, `siblings(worker)`, `handle(sessionId)`, `reset(sessionId)`, `release(sessionIds, reason)`; `WorkerSource` (describe, start, reserve, get, wait, sandbox, affinity, siblings, handle, reset, release, cancel), `WorkerStart` (with the optional `runId` of the workflow run an execution belongs to, and its rendered `prompt` or the `brief` the source renders, exactly one), `WorkerSandbox`, `WorkerExecution`, `CapabilityDescriptor` (with `load`, ADR-0033), `WorkRequirement`, `AdmittedWorker` (with `release()`), `AdmissionFailure`, `AcceptanceContract` | `@tsuuanmi/system-workers` |
 
 - The types mirror `capability-descriptor@1.2` (its optional `family`, an opaque
   provider family, and `maxInputChars`, the longest input the Worker takes) and
@@ -15,6 +15,13 @@ Routing **seam definition**
   [provider diversity](../../docs/design/routing.md#provider-diversity)), and
   `input` (the input's length as it will be sent,
   [ADR-0032](../../docs/decisions/adr/0032-admission-refuses-input-longer-than-a-worker-takes.md)).
+- **Briefs** ([workflow engine](../../docs/design/workflow-engine.md#briefs)): a caller that
+  composes a `brief@1.x` records it as an `objective` artifact and starts the execution with its
+  id; the source renders its own prompt from it at start (`startPrompt` and `renderBrief` in
+  `@tsuuanmi/system-libs` are the default text rendering), resolving pointers through
+  `ctx.artifacts`, and checks egress on what it rendered at the requirement's classification, as
+  for any prompt (INV-12). A source declares its Workers' confinement for the brief
+  with `sandbox(worker, runId)`; one that declares none runs nothing on this machine.
 - Worker sources (website Workers from `turns`, agent Workers from
   `agent-workers`, model Workers from `models`) and callers depend on this
   package only. It depends on nothing but Cordis.

@@ -1,0 +1,15 @@
+{
+  "name": "@tsuuanmi/system-digest-core",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Digest seam definition: ctx.digests, cited digest@1.0 summaries of raw artifacts, quote-checked, failing open; with its conformance suite and a fake provider",
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "exports": { ".": { "types": "./lib/index.d.ts", "default": "./lib/index.js" } },
+  "files": ["lib"],
+  "scripts": { "build": "tsc -p tsconfig.build.json" },
+  "dependencies": { "@tsuuanmi/system-libs": "workspace:*" },
+  "peerDependencies": { "@deepseek-ai/cordis": "4.0.5-alpha.1" },
+  "devDependencies": { "@deepseek-ai/cordis": "4.0.5-alpha.1", "@tsuuanmi/system-artifacts": "workspace:*", "@tsuuanmi/system-store": "workspace:*" }
+}

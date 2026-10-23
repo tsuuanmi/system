@@ -18,6 +18,7 @@ import WorkerRouter from '@tsuuanmi/system-workers'
 import type { WorkerExecution } from '@tsuuanmi/system-workers-core'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { CHARTER } from '../../../board-core/conformance/board.ts'
+import { FakeResources } from '../../../resources-core/conformance/resources.ts'
 import { activeProject, CONFIG, readyTask, ScriptedWorkers, TEMPLATES } from '../conformance/workflow.ts'
 import Workflow, { type Config, type RunView, WorkflowFailure } from '../src/index.ts'
 
@@ -100,7 +101,7 @@ interface Booted {
   restartWorkflow: (between?: () => void | Promise<void>) => Promise<void>
 }
 
-async function boot(options: { workflow?: Config; board?: boolean | 'short'; workspace?: string } = {}): Promise<Booted> {
+async function boot(options: { workflow?: Config; board?: boolean | 'short'; workspace?: string; resources?: boolean } = {}): Promise<Booted> {
   const dir = mkdtempSync(join(tmpdir(), 'system-workflow-board-'))
   const ctx = new Context()
   const workers = options.workspace ? new AgentWorkers(options.workspace, () => ctx.artifacts) : new ScriptedWorkers()
@@ -110,6 +111,7 @@ async function boot(options: { workflow?: Config; board?: boolean | 'short'; wor
     ctx.plugin(WorkerRouter, {}), ctx.plugin(WorkerSessions, {}),
     ctx.plugin({ name: 'scripted-workers', inject: ['workers', 'artifacts'], apply: (c: Context) => void c.workers.register(workers.source(c)) }),
     ...(options.board === false ? [] : [ctx.plugin(StoreApprovals, { policies: [POLICY], sweepSeconds: 3600 }), ctx.plugin(options.board === 'short' ? ShortLeaseBoard : StoreBoard, { sweepSeconds: 0 })]),
+    ...(options.resources ? [ctx.plugin(FakeResources)] : []),
   ]
   await Promise.all(fibers)
   let engine = ctx.plugin(Workflow, config)
@@ -424,6 +426,46 @@ describe('ctx.workflow serves board tasks over the store-backed board and approv
     expect(view).toMatchObject({ status: 'failed', error: { kind: 'stale_subject' } })
     expect((await reported(ctx, run.runId)).task?.outcome).toMatchObject({ status: 'reconciled', state: 'ready' })
     expect(decisionsOf(ctx, 'gate', 'workflow.task-subject')).toHaveLength(1)
+  })
+
+  it('briefs a task from the board: the accepted results of the task it depends on by content id, its budget less the usage the ledger counts for it, its criteria first (PROP-0010)', async () => {
+    const { ctx, workers } = await boot({ resources: true })
+    await project(ctx)
+    const first = await ready(ctx, 'first')
+    workers.reply = () => ({ text: 'the first result' })
+    const one = await ctx.workflow.start({ template: 'solo', input: 'q1', classification: 'public', task: { taskId: first.taskId } })
+    expect((await reported(ctx, one.runId)).task?.outcome).toMatchObject({ status: 'accepted', state: 'done' })
+    const budget = [{ pool: 'max.programmatic', unit: 'usd' as const, amount: 5 }, { pool: 'max.programmatic', unit: 'runs' as const, amount: 3 }]
+    const second = await ctx.board.propose({ projectId: 'p1', title: 'second', goal: 'build on the first', acceptance: [{ id: 'a1', statement: 'it builds' }], actionClass: 'read', dependsOn: [first.taskId], budget })
+    await ctx.board.sweep(new Date())
+    await ctx.resources.record({
+      schema: 'usage-record@1.0', requestId: 'r-1', source: 'runtime-result', observedAt: new Date().toISOString(), account: 'max', pool: 'max.programmatic', taskId: second.taskId,
+      turns: 2, cost: { amount: 1.5, currency: 'USD', basis: 'runtime-estimate' },
+    })
+    workers.reply = () => ({ text: 'the second result' })
+    const two = await ctx.workflow.start({ template: 'solo', input: 'go on', classification: 'public', task: { taskId: second.taskId } })
+    expect((await reported(ctx, two.runId)).task?.outcome).toMatchObject({ status: 'accepted' })
+    const started = workers.started.at(-1)!
+    const brief = ctx.artifacts.get(started.brief!)!.body as { budget: { remaining: unknown[] }; artifacts: Array<{ ref: string; role: string; note: string }>; taskId: string; attempt: number }
+    const firstResult = (await ctx.board.task(first.taskId))!.result!.artifacts[0]!
+    expect(brief).toMatchObject({ taskId: second.taskId, attempt: 1, budget: { remaining: [{ pool: 'max.programmatic', unit: 'usd', amount: 3.5 }, { pool: 'max.programmatic', unit: 'runs', amount: 2 }] } })
+    expect(brief.artifacts).toEqual([{ ref: firstResult, role: 'input', note: `the accepted result of ${first.taskId}: first` }])
+    expect(JSON.stringify(brief)).not.toContain('the first result')
+    expect(started.prompt).toBe(`Board task ${second.taskId} of project p1, attempt 1.\nGoal: build on the first\nAcceptance criteria:\n- a1: it builds\n\ngo on\n\nRead these too:\n\n<artifact id="${firstResult}" role="input" note="the accepted result of ${first.taskId}: first">\nthe first result\n</artifact>`)
+  })
+
+  it('fails a node whose instructions retention cleared, with nothing sent, instead of briefing it on its goal alone (INV-2)', async () => {
+    const { ctx, workers } = await boot({ board: false })
+    workers.reply = () => ({ fail: 'invalid_input', disposition: 'NONE', sent: false })
+    const failed = await settled(ctx, ctx.workflow.start({ template: 'solo', input: 'q', classification: 'public' }).runId)
+    expect(failed.status).toBe('failed')
+    ctx.store.db.prepare('UPDATE workflow_nodes SET prompt = NULL, brief_parts = NULL WHERE run_id = ?').run(failed.runId)
+    workers.reply = () => ({ text: 'never' })
+    ctx.workflow.continue(failed.runId)
+    const again = await settled(ctx, failed.runId)
+    expect(again).toMatchObject({ status: 'failed', error: { kind: 'invalid_input' } })
+    expect(again.nodes[0]!.error?.message).toMatch(/no instructions left/)
+    expect(workers.started).toHaveLength(1)
   })
 
   it('refuses a template other than the task\'s, a classification laxer than its project\'s, and a run for a task with no board loaded', async () => {

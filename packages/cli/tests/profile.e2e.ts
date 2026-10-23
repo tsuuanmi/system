@@ -18,7 +18,7 @@ let child: ChildProcess | undefined
 
 // The default composition: the Claude Code agent rows are on (PROP-0010 B3); the Codex, ACP,
 // software-development, and model gateway rows are off (PROP-0004).
-const ALLOWED_ROWS = ['timer', 'credentials', 'webserver', 'store', 'event-log', 'leases', 'artifacts', 'resources', 'approvals', 'accounts', 'turn-receipts', 'display', 'browser', 'providers', 'provider-chatgpt-web', 'provider-gemini-web', 'login', 'egress', 'workers', 'turns', 'agent-runtimes', 'runtime-claude-agent-sdk', 'agent-workers', 'llm', 'llm-pi-ai', 'models', 'worker-sessions', 'workflow', 'board', 'profile-scientific-research', 'web-ui', 'mcp-server']
+const ALLOWED_ROWS = ['timer', 'credentials', 'webserver', 'store', 'event-log', 'leases', 'artifacts', 'resources', 'approvals', 'accounts', 'turn-receipts', 'display', 'browser', 'providers', 'provider-chatgpt-web', 'provider-gemini-web', 'login', 'egress', 'workers', 'turns', 'agent-runtimes', 'runtime-claude-agent-sdk', 'agent-workers', 'llm', 'llm-pi-ai', 'models', 'worker-sessions', 'workflow', 'board', 'digest', 'profile-scientific-research', 'web-ui', 'mcp-server']
 
 async function client2(url: string, token: string): Promise<Client> {
   const client = new Client({ name: 'e2e-2', version: '0' })
@@ -127,8 +127,12 @@ describe('system profile (e2e through dsh)', () => {
     expect(clientTools).toEqual([
       'approvals_get', 'approvals_list', 'approvals_policy', 'ask',
       'board_brief', 'board_cancel', 'board_charter', 'board_claim', 'board_projects', 'board_propose', 'board_task', 'board_tasks', 'board_update',
-      'brainstorm', 'explain', 'research', 'resources_pools', 'resources_usage', 'result', 'review', 'run', 'session_inbox', 'session_send', 'status', 'usage', 'vote',
+      'brainstorm', 'digests_get', 'digests_request', 'explain', 'research', 'resources_pools', 'resources_usage', 'result', 'review', 'run', 'session_inbox', 'session_send', 'status', 'usage', 'vote',
     ])
+    // Digests are on (B6): a request names stored artifacts only, and one that names none is refused with nothing done.
+    const digester = await client2(url, tokenOf('client'))
+    const refusedDigest = await digester.callTool({ name: 'digests_request', arguments: { sources: [`sha256:${'0'.repeat(64)}`] } }).finally(() => digester.close())
+    expect(refusedDigest).toMatchObject({ isError: true, content: [{ text: expect.stringMatching(/^invalid: .* is not a stored artifact/) }] })
     // The resource ledger is core and on: with no pool configured it lists none (B2).
     const ledger = await client2(url, tokenOf('client'))
     const pools = await ledger.callTool({ name: 'resources_pools', arguments: {} })

@@ -2,11 +2,11 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:tsuuanmi:system:schema:brief:v1",
   "title": "Brief",
-  "description": "Body of an `objective` artifact: what one Worker run is given (PROP-0010). It carries pointers to artifacts by content id, never their content; the Worker reads them in windows.",
+  "description": "Body of an `objective` artifact: what one Worker run is given (PROP-0010). It carries pointers to artifacts by content id, never their content; the Worker source resolves them when it renders the brief into its own prompt format (design/workflow-engine.md#briefs). 1.1 adds `instructions`.",
   "type": "object",
   "required": ["schema", "goal", "acceptance", "artifacts", "budget", "sandbox", "classification"],
   "properties": {
-    "schema": { "const": "brief@1.0" },
+    "schema": { "enum": ["brief@1.0", "brief@1.1"] },
     "projectId": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
     "taskId": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
     "attempt": { "type": "integer", "minimum": 1, "maximum": 10 },
@@ -41,6 +41,28 @@
           "note": { "type": "string", "maxLength": 300 }
         },
         "additionalProperties": false
+      }
+    },
+    "instructions": {
+      "description": "1.1: what the Worker is told, in order, as its template words it: text, and pointers placed by their index in `artifacts`, whose text the Worker source puts there when it renders the brief. The text is the template's, the caller's, and what the engine composed; never the content of an artifact the brief points to.",
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 256,
+      "items": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": ["text"],
+            "properties": { "text": { "type": "string", "minLength": 1, "maxLength": 262144 } },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": ["artifact"],
+            "properties": { "artifact": { "description": "An index into `artifacts`.", "type": "integer", "minimum": 0, "maximum": 63 } },
+            "additionalProperties": false
+          }
+        ]
       }
     },
     "subject": {
@@ -107,5 +129,7 @@
     }
   },
   "dependentRequired": { "taskId": ["projectId"] },
+  "if": { "properties": { "instructions": { "type": "array" } }, "required": ["instructions"] },
+  "then": { "description": "@1.1 fields (instructions) are refused before @1.1.", "properties": { "schema": { "const": "brief@1.1" } } },
   "additionalProperties": false
 }

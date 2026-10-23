@@ -107,6 +107,17 @@
 | `keyFile` | string |  | 32-byte owner-only key file; defaults to <DSH_HOME>/system/vault.key |
 | `lockWaitMs` | number (0…) | `30000` | Cross-process lock wait in milliseconds |
 
+## `digest`
+
+[@tsuuanmi/system-digest](../../packages/plugins/digest/README.md)
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `tier` | "economy" \| "standard" \| "frontier" | `"economy"` | The tier the digest Worker runs on (its minimum and maximum): routing picks a read-only Worker of that tier, never one named here |
+| `maxClaims` | number (1…50) | `20` | Claims a digest keeps at most; the rest are dropped and recorded in it |
+| `maxPending` | number (1…64) | `4` | Digest requests pending at once (INV-9); another is refused as overloaded |
+| `timeoutMinutes` | number (1…240) | `30` | Minutes a request may stay pending (INV-9): then its Worker run is cancelled and the request is bypassed |
+
 ## `display-virtual`
 
 [@tsuuanmi/system-display-virtual](../../packages/plugins/display-virtual/README.md)
@@ -413,6 +424,7 @@ No options.
 | `maxReviewCycles` | number (1…5) | `3` | Reviews of one change, the first included, before remediation stops |
 | `tieTimeoutHours` | number (0.0001…720) | `24` | Hours a tied team waits for a deciding vote, then completes inconclusive (INV-9) |
 | `gateTimeoutHours` | number (0.0001…720) | `24` | Hours a plan's gate waits for the operator's approval, then closes and fails the run, by rule (INV-9); continue the run to wait again |
+| `maxSessionRuns` | number (1…50) | `5` | Runs one session may serve when a board task's next attempt, or the next task of a chain, resumes the session of the work before it (INV-9); past it, the run starts a fresh session given its brief |
 | `repositories` | object | `{}` | A review's repository reads: allowed hosts and bounds (INV-9) |
 | `repositories.hosts` | string[] | `["github.com"]` | Hosts a review may read a public repository from |
 | `repositories.maxFiles` | number (1…200) |  | Files a review reads from a repository (default 40) |

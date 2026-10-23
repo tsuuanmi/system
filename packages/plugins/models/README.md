@@ -36,6 +36,10 @@ REQ-WRK-10). One row, `models`, mounts two parts from one configuration:
     - a session stays within its model's family;
     - egress covers the history as sent, at its highest classification;
     - the transcript ends with the session, never with a call's retention.
+  - **Briefs:** a start that names a `brief@1.x` is rendered at start with the
+    default text rendering, its pointers resolved to their artifacts' text
+    ([briefs](../../../docs/design/workflow-engine.md#briefs)); one that cannot be
+    rendered refuses the call as `invalid_input`, nothing sent.
   - **Egress (INV-12):** the exact prompt is checked by `ctx.egress` before it
     is sent, as Worker class `model`, or `model-local` for a local entry. The
     decision joins the call's decision chain. A denial fails the call as

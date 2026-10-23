@@ -3,8 +3,8 @@
  * preflight validates a DAG before anything runs, and a resolved spec is hashed so a run
  * binds to exactly what was admitted.
  */
-import { contentId, type ContentId, extractJson } from '@tsuuanmi/system-libs'
-import { TIERS, type Tier } from '@tsuuanmi/system-workers-core'
+import { BRIEF_LIMITS, type BriefPointer, type BriefSegment, contentId, type ContentId, extractJson } from '@tsuuanmi/system-libs'
+import { type ArtifactRef, TIERS, type Tier } from '@tsuuanmi/system-workers-core'
 
 export interface NodeTemplate {
   nodeId: string
@@ -464,19 +464,104 @@ export function resolve(template: string, nodes: readonly NodeTemplate[], caller
   return { template, nodes: resolved, specHash: contentId({ template, nodes: resolved }) }
 }
 
-/** Engine-computed texts: a planner's steps; a team member's ballot or debate prompt, quoting its peers as data. */
-export interface RenderExtras {
-  grown?: string
+/** Engine-computed parts of a prompt: a planner's steps (each with its result, by id); a team member's ballot or debate prompt, quoting its peers as data. */
+export interface ComposeExtras {
+  grown?: Array<{ objective: string; result?: ArtifactRef | undefined }>
   team?: string
 }
 
-/** Fill a prompt in one pass, so text from a dependency is never expanded again. */
-export function render(prompt: string, input: string, results: Readonly<Record<string, string>>, extras: RenderExtras = {}): string {
-  return prompt.replace(/\{\{(input|grown|team|node:[^}]+)\}\}/g, (_, key: string) => {
-    if (key === 'input') return input
-    if (key === 'grown' || key === 'team') return extras[key] ?? ''
-    return results[key.slice(5)] ?? ''
-  })
+/**
+ * A node's instructions as its brief carries them (docs/design/workflow-engine.md#briefs): the
+ * template's text and the caller's input as text, and every dependency's result as a pointer by
+ * content id, never its content. Filled in one pass, so text from a dependency is never expanded
+ * again; rendered, it reads exactly as the template words it.
+ */
+export interface Instructions {
+  segments: BriefSegment[]
+  pointers: BriefPointer[]
+}
+
+/** Compose a template's prompt into instructions: `{{input}}` the caller's text, `{{node:<id>}}` a pointer to that dependency's result. */
+export function compose(prompt: string, input: string, results: Readonly<Record<string, ArtifactRef>>, extras: ComposeExtras = {}): Instructions {
+  const out = instructions()
+  let last = 0
+  for (const match of prompt.matchAll(/\{\{(input|grown|team|node:[^}]+)\}\}/g)) {
+    out.text(prompt.slice(last, match.index))
+    last = match.index + match[0].length
+    const key = match[1]!
+    if (key === 'input') out.text(input)
+    else if (key === 'team') out.text(extras.team ?? '')
+    else if (key === 'grown') {
+      ;(extras.grown ?? []).forEach((step, i) => {
+        out.text(`${i ? '\n\n' : ''}### ${step.objective}\n`)
+        if (step.result) out.pointer(step.result, 'input', `the result of step ${clampText(step.objective, 200)}`)
+      })
+    } else {
+      const ref = results[key.slice(5)]
+      if (ref) out.pointer(ref, 'input', `the result of node ${key.slice(5)}`)
+    }
+  }
+  out.text(prompt.slice(last))
+  return out.done()
+}
+
+/** Instructions of text only: a plan step's prompt, model text used as it is. */
+export function literal(text: string): Instructions {
+  const out = instructions()
+  out.text(text)
+  return out.done()
+}
+
+/** Text appended to composed instructions: a result schema, a review's exact subject. */
+export function appended(parts: Instructions, text: string): Instructions {
+  const out = instructions(parts)
+  out.text(text)
+  return out.done()
+}
+
+/** A builder that merges adjacent text, never stores empty text, and keeps every text within the brief's bound. */
+function instructions(from: Instructions = { segments: [], pointers: [] }) {
+  const segments: BriefSegment[] = from.segments.map((s) => ({ ...s }))
+  const pointers: BriefPointer[] = [...from.pointers]
+  let pending = ''
+  const flush = (): void => {
+    if (!pending) return
+    const previous = segments.at(-1)
+    let text = previous && 'text' in previous ? (segments.pop() as { text: string }).text + pending : pending
+    pending = ''
+    // The schema bounds each text by code points: a long text is split on whole characters.
+    while ([...text].length > BRIEF_LIMITS.segmentText) {
+      const chars = [...text]
+      segments.push({ text: chars.slice(0, BRIEF_LIMITS.segmentText).join('') })
+      text = chars.slice(BRIEF_LIMITS.segmentText).join('')
+    }
+    segments.push({ text })
+  }
+  return {
+    text: (text: string): void => {
+      pending += text
+    },
+    pointer: (ref: ArtifactRef, role: BriefPointer['role'], note: string): void => {
+      flush()
+      let index = pointers.findIndex((p) => p.ref === ref)
+      if (index < 0) {
+        if (pointers.length >= BRIEF_LIMITS.pointers) throw new TypeError(`a node's instructions point at more than ${BRIEF_LIMITS.pointers} artifacts`)
+        index = pointers.push({ ref, role, note: clampText(note, BRIEF_LIMITS.note) }) - 1
+      }
+      segments.push({ artifact: index })
+    },
+    done: (): Instructions => {
+      flush()
+      if (segments.length > BRIEF_LIMITS.segments) throw new TypeError(`a node's instructions have ${segments.length} parts; a brief holds at most ${BRIEF_LIMITS.segments}`)
+      return { segments, pointers }
+    },
+  }
+}
+
+/** At most `max` characters (code points), cut on a whole character and marked with '…'. */
+export function clampText(text: string, max: number): string {
+  const chars = [...text]
+  return chars.length <= max ? text : `${chars.slice(0, max - 1).join('')}…`
 }
 
 const STEP_ID = /^[a-z0-9][a-z0-9-]{0,40}$/

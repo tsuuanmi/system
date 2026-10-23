@@ -173,6 +173,15 @@ export class Worktrees {
   }
 
   /**
+   * Where the worktree of `runId` on the repository at `workspace` is, or where {@link acquire} adds
+   * it: the stored path, else the planned one. Reads only: a run's brief names it before it exists.
+   */
+  pathOf(workspace: string, runId: string): string {
+    const repository = real(workspace) ?? resolve(workspace)
+    return this.row(repository, runId)?.path ?? join(real(this.root) ?? resolve(this.root), repositoryKey(repository), runId)
+  }
+
+  /**
    * The worktree of `runId` on `repository` (a real path from {@link check}): the stored one,
    * after checking it is still this run's, or a new one. A new one is added from the run's branch
    * when that exists (a run continued after its worktree was removed), else on a new branch from

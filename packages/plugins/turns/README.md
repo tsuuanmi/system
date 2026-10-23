@@ -37,6 +37,10 @@ invoked by the [workflow engine](../workflow/README.md)
   - The request `key` makes it idempotent; the same key with another prompt is
     refused.
   - The prompt is stored locally, and is never returned by views or MCP.
+- **Briefs:** a start that names a `brief@1.x` is rendered here, at start, with the default
+  text rendering, each pointer replaced by its artifact's text
+  ([briefs](../../../docs/design/workflow-engine.md#briefs)); a brief that cannot be rendered
+  refuses the turn as `invalid_input`, nothing sent. The rendered prompt is the turn's prompt.
 - **Egress (INV-12):** before sending, `ctx.egress` checks the prompt against
   the requirement's classification for the `website` Worker class, and scans it
   for credentials. A denial fails the turn as `egress_denied` with the decision

@@ -17,9 +17,9 @@ export interface WorkflowError {
   message: string
 }
 
-/** A durable node record (`workflow-node@1.0`; `@1.1` once it is `RETIRED`). */
+/** A durable node record (`workflow-node@1.0`; `@1.1` once it is `RETIRED`; `@1.2` once an execution names its brief). */
 export interface NodeRecord {
-  schema: 'workflow-node@1.0' | 'workflow-node@1.1'
+  schema: 'workflow-node@1.0' | 'workflow-node@1.1' | 'workflow-node@1.2'
   runId: string
   nodeId: string
   objective: string
@@ -30,7 +30,7 @@ export interface NodeRecord {
   state: NodeState
   inputReceipt?: { inputHash: ContentId; bundle: ArtifactRef[] }
   outputReceipt?: { result: ArtifactRef; acceptance: ArtifactRef }
-  execution?: { executionId: string; attempt: number; owner: string; generation: number; route: ArtifactRef }
+  execution?: { executionId: string; attempt: number; owner: string; generation: number; route: ArtifactRef; brief?: ArtifactRef }
   lastDecision?: ArtifactRef
   revision: number
 }
@@ -50,6 +50,8 @@ export interface NodeView {
   tier?: Tier
   quotaClass?: string
   result?: ArtifactRef
+  /** The brief its latest execution was started with (docs/design/workflow-engine.md#briefs). */
+  brief?: ArtifactRef
   /** Tokens the result reports spending, when its Worker counts them (model Workers). */
   usage?: { inputTokens: number; outputTokens: number }
   error?: WorkflowError
@@ -186,6 +188,11 @@ export interface Config {
   tieTimeoutHours?: number
   /** Hours a plan's gate waits for the operator's verdict, then closes and fails the run by rule (default 24; INV-9). */
   gateTimeoutHours?: number
+  /**
+   * Runs one session may serve when a board task's next attempt, or the next task of a chain,
+   * resumes the session of the work before it (default 5; INV-9): past it, the run starts fresh.
+   */
+  maxSessionRuns?: number
   /** A review's repository reads: the hosts allowed (default github.com) and the bounds (40 files, 300 KB, 48 KB a file; INV-9). */
   repositories?: { hosts?: string[]; maxFiles?: number; maxBytes?: number; maxFileBytes?: number; maxSourceChars?: number }
 }
@@ -213,6 +220,8 @@ export interface NodeRow {
   record: string
   state: NodeState
   prompt: string | null
+  /** JSON instructions composed at promotion (`Instructions`): what every brief of the node carries. */
+  brief_parts?: string | null
   /** JSON `{ workspace, subject }` of a review bound to an exact subject. */
   subject?: string | null
   execution_id: string | null
@@ -251,6 +260,8 @@ export interface TaskRow {
   acceptance: string | null
   /** JSON {@link TaskOutcome}, once reported. */
   outcome: string | null
+  /** JSON `TaskFrame`: what the run adds to every brief it writes (the task, its attempt, criteria, pointers, budget). */
+  frame?: string | null
   created_at: string
   updated_at: string
 }

@@ -27,7 +27,7 @@ export function purge(e: Engine): void {
   if (e.stopped.signal.aborted) return
   const cutoff = new Date(Date.now() - (e.config.retainDays ?? 30) * 24 * 60 * 60_000).toISOString()
   e.ctx.store.transaction((db) => {
-    db.prepare("UPDATE workflow_nodes SET prompt = NULL WHERE prompt IS NOT NULL AND run_id IN (SELECT run_id FROM workflow_runs WHERE status != 'running' AND updated_at < ?)").run(cutoff)
+    db.prepare("UPDATE workflow_nodes SET prompt = NULL, brief_parts = NULL WHERE (prompt IS NOT NULL OR brief_parts IS NOT NULL) AND run_id IN (SELECT run_id FROM workflow_runs WHERE status != 'running' AND updated_at < ?)").run(cutoff)
     db.prepare("UPDATE workflow_runs SET input = '' WHERE input != '' AND status != 'running' AND updated_at < ?").run(cutoff)
   })
   expireRuns(e)

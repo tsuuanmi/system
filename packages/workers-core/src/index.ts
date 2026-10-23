@@ -88,8 +88,19 @@ export interface WorkerStart {
   key: string
   /** The admitted Worker, one of this source's. */
   worker: string
-  /** The input, already rendered. */
-  prompt: string
+  /**
+   * The input, already rendered, for a caller that composes no brief. Exactly one of `prompt` and
+   * `brief`.
+   */
+  prompt?: string | undefined
+  /**
+   * The `brief@1.x` (an `objective` artifact) the execution serves, recorded before the start. The
+   * source renders its own prompt from it at start, resolving each pointer to its artifact's text
+   * (`renderBrief` in `@tsuuanmi/system-libs` is the default text rendering), and checks egress on
+   * what it rendered, at the requirement's classification, as for any prompt (INV-12).
+   * A brief it cannot render (a pointer no longer stored) refuses the start: nothing is sent.
+   */
+  brief?: ArtifactRef | undefined
   /** Continue (or open, on first use) this persistent session. */
   sessionId?: string | undefined
   /**
@@ -103,6 +114,18 @@ export interface WorkerStart {
 }
 
 export type ExecutionStatus = 'queued' | 'running' | 'completed' | 'failed'
+
+/**
+ * The confinement a Worker's run is held to (`brief@1.x` `sandbox`), from its source's trusted
+ * configuration, never from model text: whether it may write a workspace (which one), reach the
+ * network beyond what the egress policy allows, and run commands.
+ */
+export interface WorkerSandbox {
+  mode: 'read-only' | 'workspace-write'
+  workspace?: string
+  network: 'none' | 'allow-list'
+  commands?: boolean
+}
 
 /** One execution, as its owning runtime reports it. */
 export interface WorkerExecution {
@@ -135,6 +158,13 @@ export interface WorkerSource {
   get(executionId: string): WorkerExecution | undefined
   /** Wait until the execution finishes or `timeoutMs` passes; the current state either way. */
   wait(executionId: string, timeoutMs: number): Promise<WorkerExecution>
+  /**
+   * The confinement a run on this Worker is held to (for the workflow run `runId`, when it belongs to
+   * one), for the brief it is started with. A source that declares none runs nothing on this
+   * machine: its Workers are briefed as read-only, with no commands, and network only as the egress
+   * policy allows (`NO_LOCAL_SANDBOX`).
+   */
+  sandbox?(worker: string, runId?: string): WorkerSandbox | undefined
   /** The Workers a continued session must stay on, when this source owns the session. */
   affinity?(sessionId: string): string[] | undefined
   /**

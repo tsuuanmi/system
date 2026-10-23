@@ -20,6 +20,7 @@
     "@tsuuanmi/system-board": "workspace:*",
     "@tsuuanmi/system-browser-patchright": "workspace:*",
     "@tsuuanmi/system-credentials-vault": "workspace:*",
+    "@tsuuanmi/system-digest": "workspace:*",
     "@tsuuanmi/system-display-virtual": "workspace:*",
     "@tsuuanmi/system-egress": "workspace:*",
     "@tsuuanmi/system-workers": "workspace:*",

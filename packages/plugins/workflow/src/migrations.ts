@@ -55,4 +55,10 @@ export const MIGRATIONS = [{
   );
   CREATE UNIQUE INDEX workflow_tasks_live ON workflow_tasks (task_id) WHERE phase != 'reported';
   CREATE INDEX workflow_tasks_phase ON workflow_tasks (phase);`,
+}, {
+  // Briefs (docs/design/workflow-engine.md#briefs): a node's instructions, composed at promotion
+  // (its record names each execution's brief), and what a board task's run adds to every brief.
+  version: 11,
+  sql: `ALTER TABLE workflow_nodes ADD COLUMN brief_parts TEXT;
+  ALTER TABLE workflow_tasks ADD COLUMN frame TEXT;`,
 }]

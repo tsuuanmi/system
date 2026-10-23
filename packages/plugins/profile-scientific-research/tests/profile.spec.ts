@@ -6,6 +6,7 @@ import Artifacts from '@tsuuanmi/system-artifacts'
 import Egress from '@tsuuanmi/system-egress'
 import EventLog from '@tsuuanmi/system-event-log'
 import Leases from '@tsuuanmi/system-leases'
+import { startPrompt } from '@tsuuanmi/system-libs'
 import Store from '@tsuuanmi/system-store'
 import WorkerSessions from '@tsuuanmi/system-worker-sessions'
 import WorkerRouter, { type WorkerExecution } from '@tsuuanmi/system-workers'
@@ -56,10 +57,11 @@ function scholar(ctx: Context, families: [string, string] = ['fam-a', 'fam-b'], 
     describe: async () => [descriptor('chat:a', families[0], true), descriptor('chat:b', families[1], false)],
     affinity: (sessionId) => (sessions.has(sessionId) ? [sessions.get(sessionId)!] : undefined),
     start: (request) => {
-      prompts.push(request.prompt)
+      // What a text-prompted source sends: the brief rendered, its pointers resolved at start.
+      const p = startPrompt(request, (ref) => ctx.artifacts.get(ref)).prompt
+      prompts.push(p)
       prompts.sessions.push(request.sessionId)
       if (request.sessionId && !sessions.has(request.sessionId)) sessions.set(request.sessionId, request.worker)
-      const p = request.prompt
       // chat:a refuses the first review unsent, so review A backs off and is routed again (a busy
       // Worker no longer backs off at admission: it stays admissible, ADR-0033).
       if (options.refuseFirstReview && !refused && request.worker === 'chat:a' && p.includes('Review the published evidence')) {

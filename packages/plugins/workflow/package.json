@@ -27,6 +27,7 @@
     "@tsuuanmi/system-leases": "workspace:*",
     "@tsuuanmi/system-libs": "workspace:*",
     "@tsuuanmi/system-provider-core": "workspace:*",
+    "@tsuuanmi/system-resources-core": "workspace:*",
     "@tsuuanmi/system-store": "workspace:*",
     "@tsuuanmi/system-worker-sessions": "workspace:*",
     "@tsuuanmi/system-workers-core": "workspace:*"

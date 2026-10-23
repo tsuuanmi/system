@@ -1,0 +1,207 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:tsuuanmi:system:schema:mcp-digests:v1",
+  "title": "MCP digest tools",
+  "description": "Input and output of the `digests_*` MCP tools (design/digests.md). The root describes one call (tool, input, structured output); a provider validates input and output against `#/$defs/<tool>-input` and `#/$defs/<tool>-output`, with underscores written as hyphens.",
+  "type": "object",
+  "required": [
+    "tool",
+    "input",
+    "output"
+  ],
+  "properties": {
+    "tool": {
+      "enum": [
+        "digests_request",
+        "digests_get"
+      ]
+    },
+    "input": {
+      "type": "object"
+    },
+    "output": {
+      "type": "object"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "tool": {
+            "const": "digests_request"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "input": {
+            "$ref": "#/$defs/digests-request-input"
+          },
+          "output": {
+            "$ref": "#/$defs/digests-request-output"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "tool": {
+            "const": "digests_get"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "input": {
+            "$ref": "#/$defs/digests-get-input"
+          },
+          "output": {
+            "$ref": "#/$defs/digests-get-output"
+          }
+        }
+      }
+    }
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "request": {
+      "description": "A digest request as its provider holds it (design/digests.md): pending until settled, then written (a digest that passed the quote check), not-written (no claim survived it, or the answer was no digest), or bypassed (no Worker, or its run failed): a digest fails open.",
+      "type": "object",
+      "required": [
+        "requestId",
+        "state",
+        "sources",
+        "createdAt",
+        "updatedAt"
+      ],
+      "properties": {
+        "requestId": {
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+        },
+        "state": {
+          "enum": [
+            "pending",
+            "written",
+            "not-written",
+            "bypassed"
+          ]
+        },
+        "sources": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/artifactRef"
+          }
+        },
+        "digest": {
+          "description": "The `digest@1.0` report artifact, when written.",
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/artifactRef"
+        },
+        "decision": {
+          "description": "The `acceptance` decision that settled the request: written, not-written, or bypassed.",
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/artifactRef"
+        },
+        "brief": {
+          "description": "The brief the digest Worker was started with.",
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/artifactRef"
+        },
+        "worker": {
+          "description": "The Worker routing admitted.",
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+        },
+        "claims": {
+          "description": "Claims of the Worker's draft that passed the quote check, and those dropped.",
+          "type": "object",
+          "required": [
+            "kept",
+            "dropped"
+          ],
+          "properties": {
+            "kept": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 50
+            },
+            "dropped": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 50
+            }
+          },
+          "additionalProperties": false
+        },
+        "reason": {
+          "description": "Why the request was bypassed or nothing was written.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000
+        },
+        "createdAt": {
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp"
+        },
+        "updatedAt": {
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp"
+        }
+      },
+      "additionalProperties": false
+    },
+    "digests-request-input": {
+      "type": "object",
+      "required": [
+        "sources"
+      ],
+      "properties": {
+        "sources": {
+          "description": "The raw artifacts to digest, by content id.",
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/artifactRef"
+          }
+        },
+        "clientRequestId": {
+          "description": "Retry-safe request key: the same key returns the same request.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "waitSeconds": {
+          "description": "How long to wait for the request to settle before returning it (default 0, at most 55 s)",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 55
+        }
+      },
+      "additionalProperties": false
+    },
+    "digests-request-output": {
+      "$ref": "#/$defs/request"
+    },
+    "digests-get-input": {
+      "type": "object",
+      "required": [
+        "requestId"
+      ],
+      "properties": {
+        "requestId": {
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+        },
+        "waitSeconds": {
+          "description": "How long to wait for the request to settle before returning it (default 0, at most 55 s)",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 55
+        }
+      },
+      "additionalProperties": false
+    },
+    "digests-get-output": {
+      "$ref": "#/$defs/request"
+    }
+  }
+}

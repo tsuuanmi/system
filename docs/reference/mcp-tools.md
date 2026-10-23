@@ -365,6 +365,29 @@ Scope: `operator`
 | `runId` | string | yes |  |
 | `updatedAt` | string |  |  |
 
+## `digests_get`
+
+Read a digest request as it stands: pending, written (with its digest), not-written, or bypassed, with why.
+
+Scope: `client`
+
+| Argument | Type | Required | Description |
+|---|---|---|---|
+| `requestId` | string | yes | The digest request, as digests_request returned it |
+| `waitSeconds` | integer |  | How long to wait for the request to settle before returning it (default 0, at most 55 s) |
+
+## `digests_request`
+
+Ask for a cited digest (digest@1.0) of raw artifacts: a read-only Worker on the economy tier summarizes them, and every claim is kept only if its quote is verbatim in the artifact it cites. It settles written, not-written (no claim survived), or bypassed (no Worker could serve it: a digest never blocks work). Read the digest with the artifact tool.
+
+Scope: `client`
+
+| Argument | Type | Required | Description |
+|---|---|---|---|
+| `sources` | array | yes | The raw artifacts to digest, by content id (1 to 64, each once) |
+| `clientRequestId` | string |  | Retry-safe request key: the same key returns the same request |
+| `waitSeconds` | integer |  | How long to wait for the request to settle before returning it (default 0, at most 55 s) |
+
 ## `drain`
 
 Drain the host before a stop or upgrade: admit no new run, and report the runs still executing. Call again to poll.

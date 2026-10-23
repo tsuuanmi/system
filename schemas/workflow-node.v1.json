@@ -19,9 +19,10 @@
     "schema": {
       "enum": [
         "workflow-node@1.0",
-        "workflow-node@1.1"
+        "workflow-node@1.1",
+        "workflow-node@1.2"
       ],
-      "description": "1.1 adds the state RETIRED."
+      "description": "1.1 adds the state RETIRED; 1.2 adds the execution's brief."
     },
     "runId": {
       "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
@@ -132,6 +133,10 @@
         "route": {
           "description": "Decision artifact (route).",
           "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/artifactRef"
+        },
+        "brief": {
+          "description": "1.2: the `brief` (an `objective` artifact) the execution was started with, recorded before it started.",
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/artifactRef"
         }
       },
       "additionalProperties": false
@@ -205,9 +210,40 @@
         ],
         "properties": {
           "schema": {
-            "const": "workflow-node@1.1"
+            "enum": [
+              "workflow-node@1.1",
+              "workflow-node@1.2"
+            ]
           },
           "lastDecision": true
+        }
+      }
+    },
+    {
+      "description": "@1.2 fields (the execution's brief) are refused before @1.2.",
+      "if": {
+        "properties": {
+          "execution": {
+            "type": "object",
+            "properties": {
+              "brief": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "brief"
+            ]
+          }
+        },
+        "required": [
+          "execution"
+        ]
+      },
+      "then": {
+        "properties": {
+          "schema": {
+            "const": "workflow-node@1.2"
+          }
         }
       }
     }

@@ -10,7 +10,8 @@
 > decision), and one `effect`, a review's [source step](teams.md#sources); `RECOVERING` is not used;
 > a scheduler exception fails the run as `internal` (`CODE_FIX`) instead of blocking it;
 > handoff envelopes, the plan's side-effect classes, and convergence blocker reports are
-> planned.
+> planned. A board task's `run.brief` is not set: each execution names its own
+> [brief](#briefs).
 
 There is one engine, and every multi-step job runs on it as an append-only DAG
 ([ADR-0012](../decisions/adr/0012-dag-execution-model.md)). It combines three
@@ -97,6 +98,87 @@ provider family than the Workers that served those nodes
   node's Worker declares no family or is no longer listed, no Worker can be shown to differ:
   the node fails as `config_error`, with nothing sent (fail closed). With only Workers of the
   excluded families, it fails admission with the `diversity` reasons.
+
+## Briefs
+
+Every Worker execution the engine starts is given a `brief@1.1`
+([`brief`](../reference/schemas.md#brief)): an `objective` artifact recorded before the execution
+starts, in the transaction that starts it, and named by it (`workflow-node@1.2`
+`execution.brief`, the node's view, and the `workflow.node.started` event). The engine composes
+the record; the Worker source renders it into its own prompt
+([PROP-0010](../proposals/0010-base-version.md),
+[ADR-0040](../decisions/adr/0040-briefs-on-the-workers-and-workflow-seams.md)).
+
+```mermaid
+flowchart LR
+  P["promotion: the template's prompt composed<br/>into instructions (text + pointers)"] --> R[routing]
+  R --> B["brief recorded: instructions, goal, criteria,<br/>pointers, budget, the Worker's sandbox"]
+  B --> S["WorkerStart.brief"]
+  S --> W["the source renders it: each pointer<br/>replaced by its artifact's text"]
+  W --> E["egress check of what it rendered (INV-12)"]
+```
+
+- **Composed at promotion.** When a node becomes `READY`, its template's prompt becomes the
+  brief's `instructions`: the template's text and the caller's input as text, and every
+  dependency's result (`{{node:<id>}}`) and each planned step's result under its objective
+  (`{{grown}}`) as a pointer by content id, role `input`. The input hash covers the text these
+  instructions render to, so a node's execution key is what it was.
+- **Recorded at the start.** After routing, the brief takes the routed Worker's confinement:
+  `sandbox` as its source declares it (`WorkerSource.sandbox`), or, for a source that declares
+  none, a Worker that runs nothing here: read-only, no commands, network only as the egress
+  policy allows. Its `goal` is the node's objective and its `acceptance` names the node's
+  contract, result schema, and exact subject; a node of a board task's run takes the task's goal
+  and criteria instead ([below](#a-board-tasks-brief)). A node on a session the Worker keeps
+  natively names that session (`resume`). Its classification is the run's, raised to the
+  strictest artifact it points at, and its envelope's inputs are every pointer, so an unknown
+  pointer is refused (INV-12). A plain run's budget is empty.
+- **Rendered by the source.** The start names the brief (`WorkerStart.brief`); the source reads
+  it at start, resolves each pointer to its artifact's text (the body's `text`, else its
+  canonical JSON), and renders its prompt: the website, model, and agent sources share the
+  default text rendering (`renderBrief` in [libs](../../packages/libs/README.md)). It checks
+  egress on what it rendered at the requirement's classification, the work's own, as for any
+  prompt (a brief's record may be stricter for storage: a website answer is stored
+  `local-private`, and was always forwarded at the run's classification). A brief it cannot render (a pointer no longer stored) refuses the start as
+  `invalid_input`, with nothing sent. Admission measures the length of that rendering
+  ([ADR-0032](../decisions/adr/0032-admission-refuses-input-longer-than-a-worker-takes.md)).
+- **What the Worker reads.** For a plain run, exactly the prompt the template words: the
+  instructions in order, each pointer replaced verbatim and never expanded again. A brief for a
+  board task, or one without instructions, first states the task and attempt, the goal, the
+  acceptance criteria, and open questions; pointers the instructions do not place follow
+  (`Read these too`), each with its role and note.
+- **Pointers, never content.** The text of the instructions is the template's, the caller's, and
+  what the engine composes: a team's ballot and debate prompt, which quotes its peers' sealed
+  records as the [teams](teams.md) protocol does; a remediation step's prompt, which quotes the
+  review's findings; a result schema; a review's exact subject with its diff. No dependency's
+  result is copied in.
+- **Retention.** A finished run's composed instructions are cleared with its prompts after
+  `retainDays`. Its briefs are artifacts of the run: they stay until the run is deleted
+  (`retainRunsDays`), the caller's input in them included.
+
+### A board task's brief
+
+A run for a [board task](#board-tasks) fixes, when it is admitted, what every brief it writes
+adds: the project, the task, and the attempt the run will be; the task's goal and acceptance
+criteria; the task's budget lines less the usage the [ledger](resources.md) counts for the task
+(with no ledger, the lines as declared: the brief informs, reservations enforce); and at most 16
+pointers, never content: the accepted results of the tasks it depends on (their digests when
+they have one, role `input`), and on a later attempt the previous attempt's result (`prior`) and
+the decision behind this attempt (`review`: a rejection's reasons, the answers to its questions).
+
+**Resume from a brief.** A task's next attempt, or the first attempt of a task that depends on
+exactly one other (a chain), resumes the session of the run before it when:
+
+- the template keeps a conversation across its steps (a node on the run's session);
+- that session's Worker keeps a native session (`ctx.workers.handle`) and can resume it now: it
+  is listed, ready or busy, and proves `persistent-conversation`;
+- the session has served fewer than `maxSessionRuns` runs (default 5, INV-9).
+
+The run then continues that session, and the new brief is its next message, so the Worker keeps
+the context it built (an agent Worker resumes its SDK session). Otherwise the run starts a fresh
+session, given the brief, which points at the earlier work. The choice is an `admission`
+decision (`workflow.task-session`) whose detail names the run and session it resumed from, made
+before the task is taken, so a failure there claims nothing. A caller that names a session keeps
+it.
 
 ## Graph model
 
@@ -321,6 +403,8 @@ is refused (`config_error`), and every other run is unaffected.
   one too (`refuse`), and refuses the start with no run left and nothing sent. A task that names
   a template runs only that template, and its run is classified at least as strictly as its
   project ([INV-12](../architecture/invariants.md#inv-12-data-egress-is-explicit)).
+- **Briefs.** Every execution of the run is briefed from the task
+  ([a board task's brief](#a-board-tasks-brief)); its next attempt may resume this run's session.
 - **Run first, then work.** The run is written `starting`, the board records it (`start`, with
   the holder's generation), and only then is it opened and scheduled. A restart in between is
   decided by the board's record: recorded, the run goes on; still claimed under its generation,

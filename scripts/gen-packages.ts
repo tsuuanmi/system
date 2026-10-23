@@ -65,6 +65,8 @@ export const LAYER_OF: Record<string, Layer> = {
   'workflow': 'orchestration',
   'board-core': 'orchestration',
   'board': 'orchestration',
+  'digest-core': 'orchestration',
+  'digest': 'orchestration',
   'worker-sessions': 'orchestration',
   'profile-software-development': 'orchestration',
   'profile-scientific-research': 'orchestration',

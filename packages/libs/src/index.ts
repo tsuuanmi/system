@@ -1,4 +1,8 @@
 export { canonicalJson, contentId, sha256, type ContentId } from './canonical.ts'
+export {
+  type ArtifactLookup, type Brief, type BriefBudgetLine, type BriefClassification, BriefError, type BriefPointer, type BriefRole, type BriefSandbox, type BriefSegment, BRIEF_LIMITS,
+  bodyText, NO_LOCAL_SANDBOX, type ReadArtifact, renderBrief, type StartInput, startPrompt,
+} from './briefs.ts'
 export { extractJson, SchemaError, SchemaRegistry } from './schemas.ts'
 export { dshHome, ensurePrivateDir, fsyncDir, readOrCreateSecretFile, writeFileDurable } from './files.ts'
 export { nodeVersionProblem, sqliteRuntimeProblem, SUPPORTED_NODE } from './runtime.ts'

@@ -28,8 +28,8 @@ import { registerTools } from './tools.ts'
 import type { Config, Explanation, NodeRecord, RunStatus, RunView, StartInput, TaskStartInput } from './types.ts'
 import { explain, usage } from './views.ts'
 
-export { DEFAULT_TEMPLATES, preflight, render, resolve } from './spec.ts'
-export type { NodeTemplate, ResolvedNode, ResolvedSpec } from './spec.ts'
+export { compose, DEFAULT_TEMPLATES, preflight, resolve } from './spec.ts'
+export type { Instructions, NodeTemplate, ResolvedNode, ResolvedSpec } from './spec.ts'
 export { WorkflowFailure } from './types.ts'
 export type { Config, ExplainedDecision, Explanation, NodeRecord, NodeState, NodeView, RunStatus, RunView, StartInput, TaskClaim, TaskOutcome, TaskStartInput, TaskView, WorkflowError } from './types.ts'
 
@@ -88,6 +88,7 @@ export class Workflow extends Service {
     maxReviewCycles: z.natural().min(1).max(5).default(3).description('Reviews of one change, the first included, before remediation stops'),
     tieTimeoutHours: z.number().min(0.0001).max(720).default(24).description('Hours a tied team waits for a deciding vote, then completes inconclusive (INV-9)'),
     gateTimeoutHours: z.number().min(0.0001).max(720).default(24).description('Hours a plan\'s gate waits for the operator\'s approval, then closes and fails the run, by rule (INV-9); continue the run to wait again'),
+    maxSessionRuns: z.natural().min(1).max(50).default(5).description('Runs one session may serve when a board task\'s next attempt, or the next task of a chain, resumes the session of the work before it (INV-9); past it, the run starts a fresh session given its brief'),
     repositories: z.object({
       hosts: z.array(z.string()).default(['github.com']).description('Hosts a review may read a public repository from'),
       maxFiles: z.natural().min(1).max(200).description('Files a review reads from a repository (default 40)'),

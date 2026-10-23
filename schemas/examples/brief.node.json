@@ -1,0 +1,37 @@
+{
+  "schema": "brief@1.1",
+  "goal": "Compact the report into a cited synthesis",
+  "acceptance": [
+    {
+      "id": "contract",
+      "statement": "The result passes the acceptance contract acceptance.answer"
+    }
+  ],
+  "artifacts": [
+    {
+      "ref": "sha256:27906a522c6a493b9c27ae732c8e7d9fa4b5d97e6a5054103f3d3954e6438dd1",
+      "role": "input",
+      "note": "the result of node research:1"
+    }
+  ],
+  "instructions": [
+    {
+      "text": "Compact the research report below into a synthesis for another AI agent that will act on it.\n\n<report>\n"
+    },
+    {
+      "artifact": 0
+    },
+    {
+      "text": "\n</report>"
+    }
+  ],
+  "budget": {
+    "remaining": []
+  },
+  "sandbox": {
+    "mode": "read-only",
+    "network": "allow-list",
+    "commands": false
+  },
+  "classification": "public"
+}

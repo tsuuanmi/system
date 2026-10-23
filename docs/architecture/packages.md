@@ -25,10 +25,12 @@ its types is not listed).
 | [web-ui](../../packages/plugins/web-ui/README.md) | gateways | — | `web-ui` | `webServer`, `workflow`, `approvals` (optional), `artifacts` (optional), `board` (optional) | `approvals-core`, `board-core`, `gateway-core`, `libs` |
 | [board](../../packages/plugins/board/README.md) | orchestration | `board` | `board` | `store`, `artifacts`, `leases`, `approvals`, `mcp` (optional) | `approvals-core`, `board-core`, `gateway-core`, `leases`, `libs` |
 | [board-core](../../packages/board-core/README.md) | orchestration | defines `board` | — | — | `approvals-core` |
+| [digest](../../packages/plugins/digest/README.md) | orchestration | `digests` | `digest` | `store`, `artifacts`, `leases`, `workers`, `eventLog` (optional), `mcp` (optional) | `digest-core`, `gateway-core`, `leases`, `libs`, `workers-core` |
+| [digest-core](../../packages/digest-core/README.md) | orchestration | defines `digests` | — | — | `libs` |
 | [profile-scientific-research](../../packages/plugins/profile-scientific-research/README.md) | orchestration | — | `profile-scientific-research` | `workflow`, `workers`, `artifacts`, `eventLog` | `libs` |
 | [profile-software-development](../../packages/plugins/profile-software-development/README.md) | orchestration | — | `profile-software-development` | `workflow` | — |
 | [worker-sessions](../../packages/plugins/worker-sessions/README.md) | orchestration | `workerSessions` | `worker-sessions` | `store`, `artifacts`, `mcp` (optional) | `gateway-core`, `libs` |
-| [workflow](../../packages/plugins/workflow/README.md) | orchestration | `workflow` | `workflow` | `store`, `artifacts`, `eventLog`, `leases`, `egress`, `workers`, `workerSessions`, `board` (optional), `mcp` (optional) | `board-core`, `gateway-core`, `leases`, `libs`, `provider-core`, `worker-sessions`, `workers-core` |
+| [workflow](../../packages/plugins/workflow/README.md) | orchestration | `workflow` | `workflow` | `store`, `artifacts`, `eventLog`, `leases`, `egress`, `workers`, `workerSessions`, `board` (optional), `mcp` (optional), `resources` (optional) | `board-core`, `gateway-core`, `leases`, `libs`, `provider-core`, `resources-core`, `worker-sessions`, `workers-core` |
 | [approvals](../../packages/plugins/approvals/README.md) | routing | `approvals` | `approvals` | `store`, `artifacts`, `eventLog` (optional), `mcp` (optional) | `approvals-core`, `gateway-core`, `libs` |
 | [approvals-core](../../packages/approvals-core/README.md) | routing | defines `approvals` | — | — | — |
 | [egress](../../packages/plugins/egress/README.md) | routing | `egress` | `egress` | `artifacts` | `libs`, `provider-core` |
@@ -83,6 +85,7 @@ flowchart TB
   end
   subgraph orchestration ["orchestration"]
     board["board<br/>ctx.board"]
+    digest["digest<br/>ctx.digests"]
     profile_scientific_research["profile-scientific-research"]
     profile_software_development["profile-software-development"]
     worker_sessions["worker-sessions<br/>ctx.workerSessions"]
@@ -146,6 +149,12 @@ flowchart TB
   board -.-> mcp_server
   browser_patchright --> display_virtual
   browser_patchright -.-> event_log
+  digest --> store
+  digest --> artifacts
+  digest --> leases
+  digest --> workers
+  digest -.-> event_log
+  digest -.-> mcp_server
   egress --> artifacts
   event_log --> store
   gateway_anthropic --> webserver
@@ -226,6 +235,7 @@ flowchart TB
   workflow --> worker_sessions
   workflow -.-> board
   workflow -.-> mcp_server
+  workflow -.-> resources
 ```
 
 ### Seam edges that point up a layer
@@ -241,6 +251,7 @@ policy above it. Each such edge is listed here so a new one is a visible change.
 | `agent-workers` (capabilities) | `workers` | `workers` (routing) | required |
 | `approvals` (routing) | `mcp` | `mcp-server` (gateways) | optional |
 | `board` (orchestration) | `mcp` | `mcp-server` (gateways) | optional |
+| `digest` (orchestration) | `mcp` | `mcp-server` (gateways) | optional |
 | `login` (provider runtime) | `mcp` | `mcp-server` (gateways) | optional |
 | `models` (capabilities) | `egress` | `egress` (routing) | required |
 | `models` (capabilities) | `mcp` | `mcp-server` (gateways) | optional |
@@ -271,6 +282,8 @@ flowchart TB
   subgraph orchestration ["orchestration"]
     board["board<br/>ctx.board"]
     board_core["board-core<br/>defines board"]
+    digest["digest<br/>ctx.digests"]
+    digest_core["digest-core<br/>defines digests"]
     worker_sessions["worker-sessions<br/>ctx.workerSessions"]
     workflow["workflow<br/>ctx.workflow"]
   end
@@ -330,6 +343,10 @@ flowchart TB
   browser_patchright --> provider_core
   cli --> browser_patchright
   cli --> system_bundle
+  digest --> digest_core
+  digest --> gateway_core
+  digest --> leases
+  digest --> workers_core
   display_virtual --> provider_core
   egress --> provider_core
   gateway_anthropic --> gateway_core
@@ -375,6 +392,7 @@ flowchart TB
   workflow --> gateway_core
   workflow --> leases
   workflow --> provider_core
+  workflow --> resources_core
   workflow --> worker_sessions
   workflow --> workers_core
 ```

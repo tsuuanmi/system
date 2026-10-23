@@ -11,11 +11,12 @@ import { type Lease, LeaseLost, StaleGeneration } from '@tsuuanmi/system-leases'
 import { canonicalJson, SchemaRegistry, sha256 } from '@tsuuanmi/system-libs'
 import { dispositionOf } from '@tsuuanmi/system-provider-core'
 import { AdmissionFailure, type AdmittedWorker, type ArtifactRef, type Classification, type RouteOptions, type WorkRequirement, type WorkerExecution } from '@tsuuanmi/system-workers-core'
-import { block, expireGate, gateDeadline, grow, grownText } from './growth.ts'
+import { type Draft, draftOf, instructionsText, recordBrief, renderedChars, type TaskFrame } from './briefs.ts'
+import { block, expireGate, gateDeadline, grow, grownSteps } from './growth.ts'
 import { admissionKind, escalate, failAttempt, inputHint, routedDecisions } from './recovery.ts'
 import { missingSubject, remediate, reviewSubject, subjectGate } from './review.ts'
 import { recoverWakes, settleWake } from './sessions.ts'
-import { DEFAULT_TEMPLATES, type NodeTemplate, recordExecutor, render, type ResolvedNode, type ResolvedSpec, resolve, schemaBlock, variantProblem, variantsOf } from './spec.ts'
+import { appended, compose, DEFAULT_TEMPLATES, literal, type NodeTemplate, recordExecutor, type ResolvedNode, type ResolvedSpec, resolve, schemaBlock, variantProblem, variantsOf } from './spec.ts'
 import { runSnapshot } from './sources.ts'
 import { TaskRuns } from './tasks.ts'
 import { decide, expireTie, restriction, runtimeOf, tally, teamGroup, teamPrompt } from './teams.ts'
@@ -36,7 +37,7 @@ export function checkTemplate(name: string, nodes: NodeTemplate[], schemas: Sche
 export interface Prepared { spec: ResolvedSpec; requestKey: string | null }
 
 /** The board task a run is admitted for, as the board granted it. */
-export interface Bound { runId: string; taskId: string; holder: string; generation: number; claim: 'adopted' | 'own'; writes?: Subject | undefined }
+export interface Bound { runId: string; taskId: string; holder: string; generation: number; claim: 'adopted' | 'own'; writes?: Subject | undefined; frame?: TaskFrame | undefined }
 
 export class Engine {
   readonly schemas = new SchemaRegistry()
@@ -195,8 +196,8 @@ export class Engine {
           .run(run.run_id, node.nodeId, ordinal, JSON.stringify(resolved), JSON.stringify(record), now())
       })
       if (bound) {
-        db.prepare(`INSERT INTO workflow_tasks (run_id, task_id, holder, generation, claim, phase, writes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'starting', ?, ?, ?)`)
-          .run(run.run_id, bound.taskId, bound.holder, bound.generation, bound.claim, bound.writes ? JSON.stringify(bound.writes) : null, now(), now())
+        db.prepare(`INSERT INTO workflow_tasks (run_id, task_id, holder, generation, claim, phase, writes, frame, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'starting', ?, ?, ?, ?)`)
+          .run(run.run_id, bound.taskId, bound.holder, bound.generation, bound.claim, bound.writes ? JSON.stringify(bound.writes) : null, bound.frame ? JSON.stringify(bound.frame) : null, now(), now())
         return view(this, run)
       }
       this.open(run.run_id)
@@ -431,13 +432,14 @@ export class Engine {
     if (spec.executor === 'decide') return decide(this, run, node, spec, nodes, lease)
     const deps = spec.dependsOn.map((id) => nodes.find((n) => n.node_id === id)!)
     const results = deps.map((d) => (JSON.parse(d.record) as NodeRecord).outputReceipt!.result)
-    const texts = Object.fromEntries(deps.map((d, i) => [d.node_id, this.resultText(results[i]!)]))
+    const refs = Object.fromEntries(deps.map((d, i) => [d.node_id, results[i]!]))
     const extras = {
-      ...(spec.prompt.includes('{{grown}}') ? { grown: grownText(this, spec, nodes) } : {}),
+      ...(spec.prompt.includes('{{grown}}') ? { grown: grownSteps(spec, nodes) } : {}),
       ...(spec.team?.role === 'ballot' || spec.team?.role === 'debate' ? { team: teamPrompt(this, spec, nodes) } : {}),
     }
-    let prompt = spec.literal ? spec.prompt : render(spec.prompt, run.input, texts, extras)
-    if (spec.resultSchema) prompt = `${prompt}\n\n${schemaBlock(spec.resultSchema, this.schemas.schemaOf(spec.resultSchema))}`
+    // The brief's instructions: text, and each dependency's result as a pointer, never its content.
+    let parts = spec.literal ? literal(spec.prompt) : compose(spec.prompt, run.input, refs, extras)
+    if (spec.resultSchema) parts = appended(parts, `\n\n${schemaBlock(spec.resultSchema, this.schemas.schemaOf(spec.resultSchema))}`)
     // A review of an agent's change binds to the workspace's exact subject now (REQ-TEAM-5, REQ-WF-5).
     const found = spec.capabilities.includes('review') ? reviewSubject(this, results, run.input) : undefined
     if (found && 'missing' in found) {
@@ -448,9 +450,11 @@ export class Engine {
       return
     }
     const bound = found
-    if (bound) prompt = `${prompt}\n\n${bound.block}`
+    if (bound) parts = appended(parts, `\n\n${bound.block}`)
+    // The prompt as the Worker will read it, for the input hash: rendered as its source renders the brief.
+    const prompt = instructionsText(this, parts)
     const inputHash = sha256(canonicalJson({ node: spec, prompt, dependencies: results }))
-    this.writeNode(node, { state: 'READY', prompt, ...(bound ? { subject: JSON.stringify({ workspace: bound.workspace, subject: bound.subject }) } : {}) },
+    this.writeNode(node, { state: 'READY', prompt, brief_parts: JSON.stringify(parts), ...(bound ? { subject: JSON.stringify({ workspace: bound.workspace, subject: bound.subject }) } : {}) },
       (record) => ({ ...record, inputReceipt: { inputHash, bundle: results } }), lease)
   }
 
@@ -524,6 +528,13 @@ export class Engine {
       const differs = await this.diversity(run, spec, signal)
       if (differs === 'stopped') return
       if (differs === 'deferred') return 'deferred'
+      // The brief this execution is given, but for the routed Worker's sandbox (docs/design/workflow-engine.md#briefs).
+      let draft: Draft
+      try {
+        draft = draftOf(this, run, node, spec, record.requirement)
+      } catch (error) {
+        return failAttempt(this, run, { ...node, attempt }, errorOf(error), { sent: false, decisions: [] }, lease)
+      }
       // Members of one team route one at a time, so each sees which accounts the others hold.
       const release = await this.routingTurn(run.run_id)
       const exclude = differs ? await this.families(run, spec) : undefined
@@ -539,8 +550,8 @@ export class Engine {
         ;(admitted as AdmittedWorker | undefined)?.release()
       }
       const { distinctAccounts, ...restricted } = await restriction(this, run, spec)
-      // The prompt as it will be sent, in characters (ADR-0032): a Worker that takes less is not admitted.
-      const input = { chars: [...(node.prompt ?? '')].length }
+      // The prompt as its source will render and send it, in characters (ADR-0032): a Worker that takes less is not admitted.
+      const input = { chars: renderedChars(this, draft) }
       // Recorded when the node runs on the same provider family for want of another (ADR-0029).
       let sameFamily: ArtifactRef | undefined
       // The Workers it failed over from, unsent (ADR-0034); with none left but them, it routes as before.
@@ -613,17 +624,21 @@ export class Engine {
               worker: admitted.worker.worker, formation: admitted.decisions.route, runId: run.run_id, nodeId: spec.team.id,
             })
           }
+          // The brief is recorded before the execution starts, and the execution names it; its
+          // source renders the prompt from it (INV-13, INV-12).
+          const brief = recordBrief(this, run, node, draft, source.sandbox?.(admitted.worker.worker, run.run_id))
           const started = source.start({
             key: `workflow:${run.run_id}:${node.node_id}:${attempt}:${node.escalations}:${record.inputReceipt!.inputHash}`,
-            worker: admitted.worker.worker, prompt: node.prompt!, sessionId: spec.session.sessionId, runId: run.run_id,
+            worker: admitted.worker.worker, brief, sessionId: spec.session.sessionId, runId: run.run_id,
             requirement: record.requirement, decisions: admitted.decisions,
           })
           this.writeNode(node, { state: 'RUNNING', execution_id: started.id, attempt, not_before: null, ...routed }, (r) => ({
-            ...r, execution: { executionId: started.id, attempt, owner: admitted.source, generation: lease().generation, route: admitted.decisions.route }, lastDecision: admitted.decisions.route,
+            ...r, schema: 'workflow-node@1.2', execution: { executionId: started.id, attempt, owner: admitted.source, generation: lease().generation, route: admitted.decisions.route, brief },
+            lastDecision: admitted.decisions.route,
           }), lease)
           this.ctx.eventLog.append({
             type: 'workflow.node.started', runId: run.run_id, nodeId: node.node_id, decision: admitted.decisions.route,
-            data: { executionId: started.id, source: admitted.source, worker: admitted.worker.worker, minTier: spec.tier, attempt },
+            data: { executionId: started.id, source: admitted.source, worker: admitted.worker.worker, minTier: spec.tier, attempt, brief },
           })
         })
       } catch (error) {

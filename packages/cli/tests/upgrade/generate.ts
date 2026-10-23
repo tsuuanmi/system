@@ -22,6 +22,7 @@ import Artifacts from '../../../plugins/artifacts/src/index.ts'
 import Egress from '../../../plugins/egress/src/index.ts'
 import EventLog from '../../../plugins/event-log/src/index.ts'
 import Leases from '../../../plugins/leases/src/index.ts'
+import { startPrompt } from '../../../libs/src/index.ts'
 import Store from '../../../plugins/store/src/index.ts'
 import WorkerSessions from '../../../plugins/worker-sessions/src/index.ts'
 import WorkerRouter, { type WorkerExecution } from '../../../plugins/workers/src/index.ts'
@@ -58,7 +59,7 @@ function chatSource(ctx: Context): void {
       const id = `chat-${executions.size + 1}`
       const result = ctx.artifacts.put({
         kind: 'report', bodySchema: 'provider-answer@1.0', classification: 'operator-shared', producer: { type: 'worker', ref: request.worker },
-        body: { schema: 'provider-answer@1.0', provider: 'fixture', account: request.worker.replace(/^chat:/, 'account-'), turnId: id, conversation: { mode: 'temporary' }, promptHash: `sha256:${'0'.repeat(64)}`, text: answer(request.prompt) || ' ' },
+        body: { schema: 'provider-answer@1.0', provider: 'fixture', account: request.worker.replace(/^chat:/, 'account-'), turnId: id, conversation: { mode: 'temporary' }, promptHash: `sha256:${'0'.repeat(64)}`, text: answer(startPrompt(request, (ref) => ctx.artifacts.get(ref)).prompt) || ' ' },
       }).id
       const execution: WorkerExecution = { id, status: 'completed', submitted: true, result: result as `sha256:${string}`, decisions: [] }
       executions.set(id, execution)

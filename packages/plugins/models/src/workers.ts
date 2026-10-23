@@ -16,7 +16,7 @@ import type { Classification } from '@tsuuanmi/system-egress'
 import { type Lease, LeaseLost, StaleGeneration } from '@tsuuanmi/system-leases'
 import { type ContentId, sha256 } from '@tsuuanmi/system-libs'
 import { ModelError, type ModelFailure, type ModelStatus, type ModelTurn } from '@tsuuanmi/system-models-core'
-import { ProviderError, type ProviderErrorKind, ProviderScheduler, dispositionOf, toProviderError } from '@tsuuanmi/system-provider-core'
+import { ProviderError, type ProviderErrorKind, ProviderScheduler, dispositionOf, promptOfStart, toProviderError } from '@tsuuanmi/system-provider-core'
 import type {} from '@tsuuanmi/system-store'
 import type { ArtifactRef, CapabilityDescriptor, ExecutionStatus, WorkerExecution, WorkerStart } from '@tsuuanmi/system-workers-core'
 
@@ -223,13 +223,15 @@ export class ModelWorkers {
   /** Accept a call on an admitted model Worker: durable at once, idempotent by key. */
   private start(request: WorkerStart): WorkerExecution {
     if (!request.worker.startsWith(PREFIX)) throw new ProviderError('invalid_input', `${request.worker} is not a model Worker`)
-    if (!request.prompt.trim()) throw new ProviderError('invalid_input', 'prompt must not be empty')
+    // A brief is rendered here, at start, its pointers resolved to their artifacts' text (INV-12).
+    const { prompt, classification } = promptOfStart(request, (ref) => this.ctx.artifacts.get(ref))
+    if (!prompt.trim()) throw new ProviderError('invalid_input', 'prompt must not be empty')
     const key = sha256(`model\0${request.key}`)
     const sessionId = request.sessionId ?? null
     return this.ctx.store.transaction((db) => {
       const existing = db.prepare('SELECT * FROM model_calls WHERE request_key = ?').get(key) as CallRow | undefined
       if (existing) {
-        if (existing.prompt !== request.prompt || existing.session_id !== sessionId) throw new ProviderError('invalid_input', 'the request key was reused with a different prompt or session')
+        if (existing.prompt !== prompt || existing.session_id !== sessionId) throw new ProviderError('invalid_input', 'the request key was reused with a different prompt or session')
         return execution(existing)
       }
       let historySeq: number | null = null
@@ -255,7 +257,7 @@ export class ModelWorkers {
         historyHash = hashTurns(turns)
       }
       const row: CallRow = {
-        call_id: newId(), request_key: key, worker: request.worker, prompt: request.prompt, classification: request.requirement.data.classification,
+        call_id: newId(), request_key: key, worker: request.worker, prompt, classification,
         max_tokens: request.requirement.budget?.maxTokens ?? null, status: 'queued', sends: 0, submitted_at: null, result: null, error: null, decisions: '[]',
         session_id: sessionId, session_generation: generation, history_seq: historySeq, history_hash: historyHash, created_at: now(), updated_at: now(),
       }
