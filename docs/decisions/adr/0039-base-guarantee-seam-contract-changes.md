@@ -1,6 +1,6 @@
 # ADR-0039: Base B3 to B5 extend the workers, workflow, board, and approvals contracts
 
-- **Status:** Accepted
+- **Status:** Accepted; amended 2026-10-23 (the board puts a wait to the policy again when a policy change withdrew its request)
 - **Date:** 2026-10-23 (accepted 2026-10-23, by the operator)
 - **Related:** [ADR-0036](0036-guarantee-core-and-capability-plugins.md),
   [ADR-0037](0037-schema-and-protocol-first.md), [PROP-0010](../../proposals/0010-base-version.md),
@@ -88,3 +88,14 @@ admitted.
     studio policy. Carrying it would change `WorkerStart` again.
 - Revisit if a later milestone needs a waiting status in the `workers` seam: a run deferred on an
   approval now ends as a failure that names the request.
+
+## Amendment (2026-10-23): a wait whose request a policy change withdrew
+
+The `approvals` change above withdraws an open request the new policies no longer ask for. The
+board took every withdrawn request for its own, so such a wait stayed until it expired, even when
+the new policy would let the work run. `board` is amended in place at contract 1.0 (still
+unreleased): a request withdrawn by the queue's policy rule (decider rule `approvals.policy`) gets
+no verdict, so the sweep runs the wait's gate again under the current policy, as a fresh gate, and
+records a `board` decision. A request the board withdrew itself still changes nothing. The suite
+adds `board.policy-change-asks-again`, and its `boot` gains `changePolicies`
+([board](../../design/board.md#where-the-tables-leave-room)).

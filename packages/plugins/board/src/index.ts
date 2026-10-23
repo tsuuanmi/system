@@ -10,7 +10,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
-import { type ApprovalRequest, type AutonomyVerdict, type Check, type NewRequest, waitSeconds } from '@tsuuanmi/system-approvals-core'
+import { type ApprovalRequest, type AutonomyVerdict, type Check, type Mode, type NewRequest, waitSeconds } from '@tsuuanmi/system-approvals-core'
 import type {} from '@tsuuanmi/system-artifacts'
 import {
   type ActionClass, type ArtifactRef, Board, BoardError, type BoardTask, type CancelReason, type Charter, type CharterInput, type Claim, type Project, type ProjectState, type RunOutcome, type Subject, type TaskInput, type TaskState, TERMINAL, type WaitReason,
@@ -107,6 +107,10 @@ interface Why {
   from: string; to: string; why: string; whyNot: string; inputs?: ArtifactRef[]; detail?: Record<string, unknown>
   /** The move it declined, when that is not staying where it was (`from`): the rejected candidate. */
   instead?: string
+  /** Further candidates it declined, each with why not. */
+  also?: Array<{ option: string; whyNot: string }>
+  /** The question, when the default (from → to, or to → instead) does not say it. */
+  question?: string
 }
 
 /** The checks a policy rule can require (`autonomy-policy@1.0`). */
@@ -704,13 +708,16 @@ export class StoreBoard extends Board {
    * An approved charter takes effect; a refused first charter abandons its project, cancelling its
    * open tasks in the same transaction, and a refused amendment is dropped. A charter request the
    * queue never resolved, or no longer knows, is refused by the board itself once it expired
-   * (INV-9): that decides nothing and starts nothing.
+   * (INV-9): that decides nothing and starts nothing. One the queue withdrew on a policy change is
+   * put to the policy again ({@link regateCharter}).
    */
   private async settleCharter(projectId: string, at: Date): Promise<Settled | undefined> {
     const before = this.projectOf(projectId)
     if (!before.request) return undefined
     const request = await this.ctx.approvals.get(before.request)
-    // Only the board withdraws a request, and only once nothing waits on it: a withdrawn one is not a verdict.
+    // A request the queue withdrew on a policy change gets no verdict: the charter is put to the policy again.
+    if (this.withdrawnByPolicy(request)) return this.regateCharter(before, request!, at)
+    // Otherwise only the board withdraws a request, and only once nothing waits on it: a withdrawn one is not a verdict.
     const resolution = request?.resolution && request.resolution.cause !== 'withdrawn' ? request.resolution : undefined
     if (!resolution) {
       const due = earliest(before.expiresAt, request?.expiresAt)
@@ -852,8 +859,10 @@ export class StoreBoard extends Board {
       case 'waiting-for-approval': {
         const requestId = task.waiting!.approvalRequest!
         const request = await this.ctx.approvals.get(requestId)
-        // Only the board withdraws a request, and only once nothing waits on it: a task still waiting
-        // on a withdrawn one is a crash between the two (S7), so it keeps waiting for its owner's report.
+        // A request the queue withdrew on a policy change gets no verdict: the wait's gate runs again under the policy now.
+        if (this.withdrawnByPolicy(request)) return this.regate(task, request!, at)
+        // Otherwise only the board withdraws a request, and only once nothing waits on it: a task still
+        // waiting on one it withdrew is a crash between the two (S7), so it keeps waiting for its owner's report.
         const resolution = request?.resolution && request.resolution.cause !== 'withdrawn' ? request.resolution : undefined
         if (!resolution) {
           // The board applies the wait's expiry itself when the queue has not (INV-9): it starts nothing and decides nothing.
@@ -924,6 +933,136 @@ export class StoreBoard extends Board {
         }, at),
       },
     }))
+  }
+
+  /**
+   * Whether the queue withdrew `request` because the policy changed: cause `withdrawn`, and its
+   * `approval` decision's decider is the rule `approvals.policy`. The board's own withdrawals
+   * (`approvals.withdraw`) are not: those end a wait the board already moved (S7).
+   */
+  private withdrawnByPolicy(request: ApprovalRequest | undefined): boolean {
+    if (request?.resolution?.cause !== 'withdrawn') return false
+    const body = this.ctx.artifacts.get(request.resolution.decision)?.body as { decisionType?: string; decider?: { type?: string; id?: string } } | undefined
+    return body?.decisionType === 'approval' && body.decider?.type === 'rule' && body.decider.id === 'approvals.policy'
+  }
+
+  /**
+   * A task's request the queue withdrew on a policy change: no verdict will come, so the board runs
+   * the wait's gate again under the policy loaded now, as a fresh gate. An `approval-needed` wait
+   * becomes ready on auto or notify, waits on a new request on the same exact subject on ask
+   * (adopting an open one), and is cancelled on forbid. A spent budget or a lost run goes on only
+   * with a person, as {@link gate} says: a new request on ask, else a wait for input (`rejected`).
+   */
+  private async regate(task: BoardTask, withdrawn: ApprovalRequest, at: Date): Promise<BoardTask> {
+    const reason = task.waiting!.reason as 'approval-needed' | 'budget-spent' | 'reconciliation-failed'
+    const actionClass: ActionClass = reason === 'budget-spent' ? 'funding' : reason === 'reconciliation-failed' ? 'remediation' : task.actionClass
+    const verdict = await this.ctx.approvals.check({ class: actionClass, projectId: task.projectId })
+    const request = verdict.mode === 'ask' ? await this.ask(this.taskRequest(task, actionClass, reason, verdict), at) : undefined
+    try {
+      return this.commitLater(task, at, undefined, (c) => this.regateMove(c.task, reason, actionClass, verdict, request, withdrawn, at))
+    } catch (error) {
+      if (request) await this.withdrawUnheld(request.requestId, at)
+      throw error
+    }
+  }
+
+  /** The move {@link regate} makes, with a `board` decision that names the withdrawal and the `autonomy` decision, and says why of every outcome the wait has. */
+  private regateMove(task: BoardTask, reason: 'approval-needed' | 'budget-spent' | 'reconciliation-failed', actionClass: ActionClass, verdict: AutonomyVerdict, request: ApprovalRequest | undefined, withdrawn: ApprovalRequest, at: Date): Move {
+    const { project } = this.projectOf(task.projectId)
+    const outcomes: Array<{ option: TaskState; modes: Mode[]; why: string }> = reason === 'approval-needed'
+      ? [
+        { option: 'ready', modes: ['auto', 'notify'], why: 'it needs no person' },
+        { option: 'waiting-for-approval', modes: ['ask'], why: `the operator is asked again, on a new request${request ? ` (${request.requestId})` : ''} on the same subject` },
+        { option: 'cancelled', modes: ['forbid'], why: 'no attempt may run' },
+      ]
+      : [
+        { option: 'waiting-for-approval', modes: ['ask'], why: `the operator is asked again, on a new request${request ? ` (${request.requestId})` : ''} on the same subject` },
+        { option: 'waiting-for-input', modes: ['auto', 'notify', 'forbid'], why: `a ${reason === 'budget-spent' ? 'run past its budget' : 'lost run'} goes on only with an operator's approval (INV-4), and the queue takes a request only on ask` },
+      ]
+    const chosen = outcomes.find((o) => o.modes.includes(verdict.mode))!
+    const declined = outcomes.filter((o) => o !== chosen)
+    const pending = chosen.option === 'ready' ? verdict.failedChecks ?? [] : []
+    const decision = this.decision(project, task, {
+      from: task.state, to: chosen.option, instead: declined[0]!.option,
+      question: `Where does task ${task.taskId} of ${project.projectId} go now that a policy change withdrew ${withdrawn.requestId}, the request its ${reason} wait was on?`,
+      why: `a policy change withdrew ${withdrawn.requestId}, so no verdict will come; the policy now gives ${actionClass} ${verdict.mode}: ${chosen.why}${pending.length ? `; its required checks (${pending.join(', ')}) have not run yet and bind at acceptance` : ''}`,
+      whyNot: `only on ${declined[0]!.modes.join(' or ')}, and the policy gives ${actionClass} ${verdict.mode}`,
+      also: declined.slice(1).map((o) => ({ option: o.option, whyNot: `only on ${o.modes.join(' or ')}, and the policy gives ${actionClass} ${verdict.mode}` })),
+      inputs: [withdrawn.resolution!.decision, verdict.decision],
+      detail: { reason, actionClass, mode: verdict.mode, withdrawn: withdrawn.requestId, ...(request ? { approvalRequest: request.requestId } : {}), ...(pending.length ? { pendingChecks: pending } : {}) },
+    }, at)
+    switch (chosen.option) {
+      case 'ready': return { changes: { state: 'ready', holder: undefined, run: undefined, waiting: undefined, lastDecision: decision } }
+      case 'cancelled': return this.cancelMove(project, task, 'forbidden', at, decision)
+      case 'waiting-for-input': return { changes: { state: 'waiting-for-input', holder: undefined, waiting: this.inputWait('rejected', at), lastDecision: decision } }
+      default: return { changes: { waiting: { reason, approvalRequest: request!.requestId, since: at.toISOString(), expiresAt: request!.expiresAt }, lastDecision: decision } }
+    }
+  }
+
+  /**
+   * A charter request the queue withdrew on a policy change: no verdict will come, so the board
+   * puts the same charter version to the policy again, as `charter` did. On ask, a new request on
+   * the same exact subject (adopting an open one) that the project waits on; on any other verdict
+   * no request can be opened, so nothing can approve it: a first charter abandons its project
+   * (its open tasks cancelled), an amendment is dropped, as when refused.
+   */
+  private async regateCharter(before: StoredProject, withdrawn: ApprovalRequest, at: Date): Promise<Settled | undefined> {
+    const { project } = before
+    const projectId = project.projectId
+    const founding = project.state === 'proposed'
+    const pending = founding ? project.charter : project.proposedCharter
+    const verdict = await this.ctx.approvals.check({ class: 'charter', projectId })
+    const request = verdict.mode === 'ask' && pending !== undefined && project.state !== 'closed'
+      ? await this.ask({
+        subject: { type: 'content', ref: charterRef(projectId, pending.version), version: charterHash(pending) },
+        action: { class: 'charter', summary: clamp(`${founding ? 'Found' : 'Amend'} ${project.title}: ${pending.intent}`, 500) },
+        requester: { component: 'board', projectId }, verdict, classification: project.classification ?? 'operator-shared',
+      }, at)
+      : undefined
+    let settled: (Settled & { released: string[] }) | undefined
+    try {
+      settled = this.ctx.store.transaction((): (Settled & { released: string[] }) | undefined => {
+        const now = this.projectOf(projectId)
+        if (now.request !== before.request) return undefined
+        if (now.project.revision !== project.revision) throw new BoardError('conflict', `${projectId} changed while its charter was put to the policy again`)
+        const charter = founding ? now.project.charter : now.project.proposedCharter
+        if (now.project.state === 'closed' || !charter || charter.version !== now.version) {
+          this.writeProject(now.project, undefined, null)
+          return undefined
+        }
+        const [asked, refused] = founding ? ['proposed', 'closed'] : ['amendment-pending', 'amendment-dropped']
+        const what = founding ? `the first charter of ${projectId}` : `amendment ${charter.version} of ${projectId}`
+        const move = {
+          question: `What becomes of ${what} now that a policy change withdrew ${withdrawn.requestId}, the request it waited on?`,
+          inputs: [withdrawn.resolution!.decision, verdict.decision],
+          detail: { withdrawn: withdrawn.requestId, version: charter.version, mode: verdict.mode, ...(request ? { approvalRequest: request.requestId } : {}), ...(founding && !request ? { outcome: 'abandoned' } : {}) },
+        }
+        if (request) {
+          const decision = this.decision(now.project, undefined, {
+            ...move, from: asked, to: asked, instead: refused,
+            why: `a policy change withdrew ${withdrawn.requestId}, so no verdict will come; the policy still asks about charter: a new request ${request.requestId} on the same charter version`,
+            whyNot: 'a charter is refused only by the operator\'s verdict or its expiry, and the policy still asks, so the operator is asked again',
+          }, at)
+          return { project: this.writeProject(now.project, changed(now.project, at, { lastDecision: decision }), { request: request.requestId, version: charter.version, expiresAt: request.expiresAt }), released: [], cancelled: [] }
+        }
+        const decision = this.decision(now.project, undefined, {
+          ...move, from: asked, to: refused, instead: asked,
+          why: `a policy change withdrew ${withdrawn.requestId}, so no verdict will come; the policy now gives charter ${verdict.mode}, under which no request can be opened, so nothing can approve it`,
+          whyNot: `asked again only on ask, and the policy gives charter ${verdict.mode}`,
+        }, at)
+        if (founding) return this.abandon(now.project, decision, at)
+        return { project: this.writeProject(now.project, changed(now.project, at, { proposedCharter: undefined, lastDecision: decision }), null), released: [], cancelled: [] }
+      })
+    } catch (error) {
+      if (request) await this.withdrawUnheld(request.requestId, at)
+      throw error
+    }
+    if (!settled) {
+      if (request) await this.withdrawUnheld(request.requestId, at)
+      return undefined
+    }
+    await this.withdrawAll(settled.released, at)
+    return { project: settled.project, cancelled: settled.cancelled }
   }
 
   /**
@@ -1187,10 +1326,11 @@ export class StoreBoard extends Board {
     const subject = task ? `task ${task.taskId} of ${project.projectId}` : `project ${project.projectId}`
     return this.ctx.artifacts.recordDecision({
       schema: 'decision@1.4', decisionType: 'board', inputs: move.inputs ?? [],
-      question: move.instead ? `Does ${subject} go from ${move.from} to ${move.instead} or to ${move.to}?` : `Does ${subject} move from ${move.from} to ${move.to}?`,
+      question: move.question ?? (move.instead ? `Does ${subject} go from ${move.from} to ${move.instead} or to ${move.to}?` : `Does ${subject} move from ${move.from} to ${move.to}?`),
       candidates: [
         { option: move.to, selected: true, reasons: [move.why] },
         move.instead ? { option: move.instead, selected: false, reasons: [`not ${move.instead}: ${move.whyNot}`] } : { option: move.from, selected: false, reasons: [`not kept ${move.from}: ${move.whyNot}`] },
+        ...(move.also ?? []).map((o) => ({ option: o.option, selected: false, reasons: [`not ${o.option}: ${o.whyNot}`] })),
       ],
       decider: { type: 'rule', id: 'board.transition', version: '1' },
       outcome: { option: move.to, detail: { projectId: project.projectId, ...(task ? { taskId: task.taskId } : {}), from: move.from, at: at.toISOString(), ...move.detail } },

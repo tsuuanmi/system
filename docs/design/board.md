@@ -71,7 +71,8 @@ An amendment (a pivot) does not change the project's state: the new charter wait
 |---|---|---|---|
 | — → proposed | `charter`, by the lead or the operator | the `autonomy` decision (`charter` always asks) and an approval request on the charter's exact version | a charter carrying an approval, or a wrong version, is refused (`invalid`) |
 | proposed → active | `sweep`, on an approved request | the request's `approval` decision; `charter.approval` names the verdict | none: until approved nothing starts |
-| proposed → closed | `sweep`, on a rejected or expired request; at the request's expiry the board applies it itself when the queue has not resolved it or no longer knows it | `closure: abandoned` with the request's `approval` decision, or the board's own (`board`, cause `expired`); its open tasks are cancelled (`project-closed`) in the same transaction, which frees the subjects they would write | — |
+| proposed → proposed / closed, amendment kept / dropped | `sweep`, on a request the queue withdrew on a policy change (decider rule `approvals.policy`): the charter is put to the policy again, as `charter` did | a `board` decision naming the withdrawal and the `autonomy` decision; on `ask`, a new request on the same charter version (an open one adopted), which the project now waits on; on any other verdict no request can be opened, so nothing can approve it: a first charter is abandoned (its open tasks cancelled, `project-closed`), an amendment dropped | the charter keeps waiting until its new request is resolved or expires |
+| proposed → closed | `sweep`, on a rejected or expired request; at the request's expiry the board applies it itself when the queue has not resolved it, the board withdrew it, or the queue no longer knows it | `closure: abandoned` with the request's `approval` decision, or the board's own (`board`, cause `expired`); its open tasks are cancelled (`project-closed`) in the same transaction, which frees the subjects they would write | — |
 | active ↔ paused | `pause`, `resume` | a `board` decision | other states refused (`invalid-transition`) |
 | active or paused → closed | `close` | a `board` decision and `closure`; open tasks are cancelled (`project-closed`) in the same transaction, and the requests they and a pending amendment waited on are withdrawn after it | refused while a task runs or is in review |
 
@@ -101,6 +102,10 @@ stateDiagram-v2
   waiting_for_approval --> waiting_for_approval: approved to go on, the gate asks for the next attempt
   waiting_for_approval --> done: owner reports the run completed and accepted
   waiting_for_approval --> waiting_for_input: rejected or expired
+  waiting_for_approval --> ready: request withdrawn on a policy change, gate again (auto or notify)
+  waiting_for_approval --> waiting_for_approval: request withdrawn on a policy change, gate again (ask)
+  waiting_for_approval --> cancelled: request withdrawn on a policy change, gate again (forbid)
+  waiting_for_approval --> waiting_for_input: run's request withdrawn on a policy change, no ask
   waiting_for_input --> ready: answered (gate)
   waiting_for_input --> waiting_for_approval: answered (gate: ask)
   waiting_for_input --> cancelled: wait expired
@@ -121,7 +126,8 @@ Unlike A2A, every interrupted state has an expiry.
 The store-backed provider settles these cases so that the [fail-closed rules](#fail-closed-rules)
 hold. The suite tests, and the fake provider checks too, the acceptance binding, the required
 checks, the gate per attempt, founding milestones, the written subject, the board's own expiry
-of a wait, and a withdrawn wait kept; the other cases only the store-backed provider checks.
+of a wait, a wait the board withdrew itself kept, and a wait put to the policy again after a
+policy change; the other cases only the store-backed provider checks.
 
 - `start` outside an active project is refused (`invalid-transition`), also for a task claimed
   before a pause (rule 1).
@@ -142,9 +148,23 @@ of a wait, and a withdrawn wait kept; the other cases only the store-backed prov
 - A move that ends a wait on an approval request (`reconcileRun`, `cancel`, `close`) reads the
   request first, so with the queue unavailable nothing moves (rule 7), then commits, and
   withdraws the request only after: a crash between the two leaves an open request that nothing
-  waits on, which expires on its own and moves nothing if approved. Only the board withdraws its
-  requests, so the sweep leaves a task waiting on a withdrawn request as it is: that is the same
-  crash the other way round, and the run's owner may still report.
+  waits on, which expires on its own and moves nothing if approved. A request the board withdrew
+  itself (decider rule `approvals.withdraw`) is therefore no verdict: the sweep leaves a task
+  still waiting on one as it is, since that is the same crash the other way round, and the run's
+  owner may still report.
+- The queue also withdraws a request when a policy change means the loaded policies no longer ask
+  for it ([approvals](approvals.md#a-request)). The board tells the two apart by the resolution's
+  `approval` decision: decider rule `approvals.policy`. Such a request gets no verdict, so the
+  sweep runs the wait's gate again under the policy loaded now, exactly as a fresh gate: an
+  `approval-needed` wait becomes ready on `auto` or `notify`, waits on a new request on the same
+  exact subject on `ask` (adopting an open one, so a crash in between asks once), and is
+  cancelled (`forbidden`) on `forbid`; a `budget-spent` or `reconciliation-failed` wait asks
+  again on `ask` and otherwise waits for input (`rejected`), since such a run goes on only with a
+  person; a charter is asked about again on `ask` and otherwise abandoned (a first charter) or
+  dropped (an amendment). Every outcome records a `board` decision that names the withdrawal and
+  the `autonomy` decision, with a reason on every candidate. A wait's expiry does not end it
+  first: the queue withdraws only an unexpired request, so the withdrawal came before the wait
+  would have expired.
 - No move makes a task ready once its attempts are spent: an approval to go on, or an answered
   question, with no attempt left leaves it waiting for input (`retries-spent`, with a `board`
   decision whose candidates both say why), so `attempts.count` never exceeds `attempts.max` and a
@@ -183,7 +203,8 @@ of a wait, and a withdrawn wait kept; the other cases only the store-backed prov
 | review → waiting-for-input | `sweep`, the reviewer's lease lapsed with no decision, or a review held for the operator reached `waiting.expiresAt` | a `board` decision (`review-expired`) | the wait expires and cancels the task |
 | review → done | `accept` with an `acceptance` decision whose outcome is `accept` | that decision; `result.acceptance`; the run and subject stay | a decision of another type, or one not bound to the task's exact result, is refused; one not the operator's needs the required checks passed |
 | review → ready / waiting-for-approval / waiting-for-input | `accept` with a `reject` outcome | while `count < max`, another attempt through the gate: a `board` decision naming that decision and the `autonomy` decision (ready, or `approval-needed` with a new request); else that decision and `retries-spent` | an approval of an earlier attempt never covers this one |
-| waiting-for-approval → ready / waiting-for-approval / waiting-for-input | `sweep`, on the request's resolution (an approval to go on after `budget-spent` or `reconciliation-failed` goes through the gate for the next attempt); at `waiting.expiresAt` (or the request's expiry, if earlier) the board applies the expiry itself when the queue has not resolved the request, withdrew it, or no longer knows it | the request's `approval` decision, or the board's own (`board`, cause `expired`), after which it withdraws a request still open | rejection and expiry never start work: the task waits for input (`rejected`) |
+| waiting-for-approval → ready / waiting-for-approval / waiting-for-input | `sweep`, on the request's resolution (an approval to go on after `budget-spent` or `reconciliation-failed` goes through the gate for the next attempt); at `waiting.expiresAt` (or the request's expiry, if earlier) the board applies the expiry itself when the queue has not resolved the request, the board withdrew it, or the queue no longer knows it | the request's `approval` decision, or the board's own (`board`, cause `expired`), after which it withdraws a request still open | rejection and expiry never start work: the task waits for input (`rejected`) |
+| waiting-for-approval → ready / waiting-for-approval / cancelled (`approval-needed`), or waiting-for-approval / waiting-for-input (`budget-spent`, `reconciliation-failed`) | `sweep`, on a request the queue withdrew on a policy change (decider rule `approvals.policy`): the wait's gate runs again under the policy loaded now, as when it first asked (the class: the task's, `funding`, or `remediation`) | a `board` decision naming the withdrawal and the `autonomy` decision, a reason on every outcome the wait has; `approval-needed`: ready on `auto` or `notify` (pending checks recorded), a new request on the same exact subject on `ask` (an open one adopted), `forbidden` on `forbid`; a spent budget or a lost run: a new request on `ask`, else a wait for input (`rejected`), the run kept | a move that cannot commit withdraws the new request; the run's owner may still report a lost run |
 | waiting-for-input → ready / waiting-for-approval | `answer`, every question of a `question` wait answered; the next attempt goes through the gate, and with no attempt left the task waits for input (`retries-spent`) instead | a `board` decision with the questions and answers | partial answers, and answers to any other wait, are refused |
 | waiting-for-input → cancelled | `sweep`, its wait expired | a `board` decision (`input-expired`) | — |
 | any not running or in review → cancelled | `cancel` (`operator`, `lead`, `superseded`) | a `board` decision; a pending approval request is withdrawn once the move committed; dependents are cancelled on the next sweep | a running task or one in review is refused |
@@ -246,6 +267,11 @@ when the result is accepted:
 
 ## Conformance
 
-[`board-core/conformance/board.ts`](../../packages/board-core/conformance/board.ts), 24
+[`board-core/conformance/board.ts`](../../packages/board-core/conformance/board.ts), 25
 scenarios at contract 1.0, run against the fake provider and the store-backed provider, both over
 the approvals fake, and against the store-backed provider over the store-backed approval queue.
+Contract 1.0 is unreleased and amended in place
+([ADR-0039](../decisions/adr/0039-base-guarantee-seam-contract-changes.md)); the last amendment
+adds `board.policy-change-asks-again`, for which each harness changes the queue's policies
+(`changePolicies`: the fake's `reload`, or a restart of the store-backed queue over the same
+store).

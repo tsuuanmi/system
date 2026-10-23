@@ -26,6 +26,7 @@ runSuite(boardSuite, {
     await Promise.all(fibers)
     return {
       ctx,
+      changePolicies: async (policies) => { (ctx.approvals as FakeApprovals).reload(policies) },
       dispose: async () => {
         for (const fiber of fibers.reverse()) await fiber.dispose()
         rmSync(dir, { recursive: true, force: true })

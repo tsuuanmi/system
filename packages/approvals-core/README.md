@@ -30,4 +30,7 @@ ADR ([ADR-0036](../../docs/decisions/adr/0036-guarantee-core-and-capability-plug
     change nothing;
   - expiry rejects with `denied:expired`; withdrawal; listing.
 
-  It also exports `FakeApprovals`, which passes it, over the policies in `POLICIES`.
+  It also exports `FakeApprovals`, which passes it, over the policies in `POLICIES`; its
+  `reload(policies)` stands for a policy change and a restart, after which it withdraws (cause
+  `withdrawn`, decider rule `approvals.policy`) what the policies no longer ask for, as the
+  store-backed provider does at load and on every sweep.

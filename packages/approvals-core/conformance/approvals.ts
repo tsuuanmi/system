@@ -277,20 +277,32 @@ const sameSubject = (a: Subject, b: Subject) => a.type === b.type && a.ref === b
 
 /**
  * A fake provider of `ctx.approvals`: the protocol in memory, over the configured policies, with
- * decisions and approvals recorded through `ctx.artifacts`. Its policies never change, so no open
- * request ever outlives its policy.
+ * decisions and approvals recorded through `ctx.artifacts`. Its policies change only by
+ * {@link FakeApprovals.reload}, which stands for the operator's new configuration and a restart:
+ * from then on, every sweep withdraws the open requests they no longer ask for.
  */
 export class FakeApprovals extends Approvals {
   static inject = ['artifacts']
   private readonly requests = new Map<string, ApprovalRequest>()
   private batches = 0
+  private configured: readonly AutonomyPolicy[]
 
-  constructor(ctx: Context, private readonly config: { policies?: readonly AutonomyPolicy[] } = {}) {
+  constructor(ctx: Context, config: { policies?: readonly AutonomyPolicy[] } = {}) {
     super(ctx)
+    this.configured = config.policies ?? POLICIES
+  }
+
+  /**
+   * Judge under `policies` from now on, as a restart with the operator's new configuration would,
+   * and withdraw at `at` every unexpired open request they no longer ask for (as the next sweeps do).
+   */
+  reload(policies: readonly AutonomyPolicy[], at: Date = new Date()): ApprovalRequest[] {
+    this.configured = policies
+    return this.withdrawStale(at)
   }
 
   private policies(projectId?: string): AutonomyPolicy[] {
-    const all = this.config.policies ?? POLICIES
+    const all = this.configured
     const studio = all.find((p) => p.scope === 'studio')
     if (!studio) throw new ApprovalsError('invalid', 'no studio policy is configured')
     const project = projectId === undefined ? undefined : all.find((p) => p.scope === 'project' && p.projectId === projectId)
@@ -416,16 +428,18 @@ export class FakeApprovals extends Approvals {
     return made
   }
 
-  private resolve(request: ApprovalRequest, cause: 'verdict' | 'expired' | 'withdrawn', option: string, at: Date, approval?: ArtifactRef): void {
+  /** Resolve a request with its `approval` decision; a withdrawal on a policy change names its decider rule `approvals.policy` and what changed (`policyChanged`). */
+  private resolve(request: ApprovalRequest, cause: 'verdict' | 'expired' | 'withdrawn', option: string, at: Date, approval?: ArtifactRef, policyChanged?: string): void {
     // Why each other resolution lost: what happened first.
     const verdicts = ['approved', 'rejected']
+    const withdrawnBy = policyChanged ? 'the policy changed' : 'it was withdrawn'
     const lost = (o: string): string => cause === 'verdict' ? (verdicts.includes(o) ? `the operator's verdict is ${option}` : 'a verdict came first')
       : cause === 'expired' ? (o === 'withdrawn' ? 'it was not withdrawn before it expired' : 'no verdict came before it expired')
-      : o === 'denied:expired' ? 'it was withdrawn before it expired' : 'it was withdrawn before a verdict'
+      : o === 'denied:expired' ? `${withdrawnBy} before it expired` : `${withdrawnBy} before a verdict`
     const decision = this.ctx.artifacts.recordDecision({
       schema: 'decision@1.4', decisionType: 'approval', question: `Is approval request ${request.requestId} approved?`, inputs: [request.policy.decision, ...(approval ? [approval] : [])],
-      candidates: ['approved', 'rejected', 'denied:expired', 'withdrawn'].map((o) => ({ option: o, selected: o === option, reasons: [o === option ? cause : `not ${o}: ${lost(o)}`] })),
-      decider: cause === 'verdict' ? { type: 'operator', id: 'operator', version: '1' } : { type: 'rule', id: cause === 'expired' ? 'approvals.expiry' : 'approvals.withdraw', version: '1' },
+      candidates: ['approved', 'rejected', 'denied:expired', 'withdrawn'].map((o) => ({ option: o, selected: o === option, reasons: [o === option ? (policyChanged ? `the policy changed: ${policyChanged}` : cause) : `not ${o}: ${lost(o)}`] })),
+      decider: cause === 'verdict' ? { type: 'operator', id: 'operator', version: '1' } : { type: 'rule', id: cause === 'expired' ? 'approvals.expiry' : policyChanged ? 'approvals.policy' : 'approvals.withdraw', version: '1' },
       outcome: { option, detail: { requestId: request.requestId } }, deterministic: cause !== 'verdict',
     }, { producer: { type: cause === 'verdict' ? 'operator' : 'system', ref: 'approvals' }, classification: request.classification === 'local-private' ? 'local-private' : 'operator-shared' })
     Object.assign(request, {
@@ -464,6 +478,33 @@ export class FakeApprovals extends Approvals {
       this.resolve(request, 'expired', 'denied:expired', at)
       expired.push(structuredClone(request))
     }
-    return expired
+    return [...expired, ...this.withdrawStale(at)]
+  }
+
+  /** Withdraw every unexpired open request the policies no longer ask for (decider rule `approvals.policy`). */
+  private withdrawStale(at: Date): ApprovalRequest[] {
+    const withdrawn: ApprovalRequest[] = []
+    for (const request of this.requests.values()) {
+      if (request.resolution || Date.parse(request.expiresAt) <= at.getTime()) continue
+      const why = this.staleness(request)
+      if (!why) continue
+      this.resolve(request, 'withdrawn', 'withdrawn', at, undefined, why)
+      withdrawn.push(structuredClone(request))
+    }
+    return withdrawn
+  }
+
+  /** What changed for a request: its policy is not current at its version, or its class (or the class its decision judged it as) no longer asks. */
+  private staleness(request: ApprovalRequest): string | undefined {
+    const { projectId } = request.requester
+    if (!this.policies(projectId).some((p) => p.id === request.policy.id && p.version === request.policy.version)) {
+      return `${request.policy.id} at version ${request.policy.version} is not a policy of ${projectId === undefined ? 'the studio' : `project ${projectId}`} now`
+    }
+    const judgedAs = (this.ctx.artifacts.get(request.policy.decision)?.body as { outcome?: { detail?: { actionClass?: ActionClass } } } | undefined)?.outcome?.detail?.actionClass
+    for (const actionClass of new Set([request.action.class, ...(judgedAs ? [judgedAs] : [])])) {
+      const { mode } = this.effective(actionClass, projectId)
+      if (mode !== 'ask') return `it now gives ${actionClass} ${mode}`
+    }
+    return undefined
   }
 }

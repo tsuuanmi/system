@@ -130,10 +130,21 @@ the request becomes `rejected` with cause `expired`, and the decision's outcome 
 | open or batched → rejected (withdrawn) | `withdraw`, by the requester, when its work ended | an `approval` decision `withdrawn` (decider rule `approvals.withdraw`) | a resolved request is returned unchanged |
 | open or batched → rejected (policy changed) | the provider, at load and on every `sweep`, for an unexpired request whose policy is not current at its version, or whose class (and the class its decision judged it as) the loaded policies no longer ask for | an `approval` decision `withdrawn` (decider rule `approvals.policy`), its reason naming what changed | one that fails is logged and left for the next sweep |
 
-A policy change takes effect by configuration and a restart. Cause `withdrawn` covers it: the
-requester sees its request rejected, as when its own work ended, and may ask anew if the new
-policy still asks. No requester does so by itself
-([withdrawn is not a verdict](#where-the-tables-leave-room)).
+A policy change takes effect by configuration and a restart. Cause `withdrawn` covers it, and
+the resolution's decision tells it from the requester's own withdrawal by its decider rule
+(`approvals.policy`, not `approvals.withdraw`). The requester sees its request rejected with no
+verdict and puts the action to the new policy again:
+
+- The board does so on its next sweep, as a fresh gate
+  ([board](board.md#where-the-tables-leave-room)). A task waiting for approval becomes ready when
+  the new policy gives its class `auto` or `notify`, waits on one new request on the same exact
+  subject when it still says `ask`, and is cancelled (`forbidden`) on `forbid`. A spent budget or
+  a lost run asks again on `ask` and otherwise waits for input, since it goes on only with a
+  person. A charter is asked about again, or refused (a first charter abandons its project, an
+  amendment is dropped) when no request can be opened. A request the board withdrew itself
+  changes nothing there.
+- A Worker's deferred call is denied when its session runs it again, as for any withdrawn
+  request, and nothing new is queued for that call ([below](#a-deferred-call)).
 
 ### Where the tables leave room
 
@@ -155,11 +166,10 @@ hold. The fake provider does not check them, and the suite does not test them.
   unless both `command` and the class it was judged as still ask.
 - The queue sweeps, then batches, once at start and every `sweepSeconds` (1 to 3600, never off);
   nothing else calls them in production.
-- A withdrawn request is not a verdict. A board task that waits on one stays as it is until its
-  wait expires, then waits for input (`rejected`)
-  ([board](board.md#where-the-tables-leave-room)); a Worker's gate denies the same call again in
-  that session ([a deferred call](#a-deferred-call)); a charter request waits for its expiry.
-  Whoever owns the work proposes it again.
+- A withdrawn request is not a verdict. A request the requester withdrew itself changes nothing
+  more; one the queue withdrew on a policy change is put to the new policy again by the board on
+  its next sweep ([above](#a-request)), while a Worker's gate denies the same call again in that
+  session ([a deferred call](#a-deferred-call)).
 
 ## A Worker's tool calls
 
@@ -273,4 +283,6 @@ ids, never the call's input.
 
 [`approvals-core/conformance/approvals.ts`](../../packages/approvals-core/conformance/approvals.ts),
 15 scenarios at contract 1.0, run against the fake provider and the store-backed provider. The
-board's suite also runs over the store-backed provider, as the bundle composes them.
+board's suite also runs over the store-backed provider, as the bundle composes them, and changes
+its policies there: the fake's `reload` stands for the new configuration and a restart, after
+which its sweeps withdraw what the policies no longer ask for, as the store-backed provider's do.

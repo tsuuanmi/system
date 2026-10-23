@@ -794,12 +794,13 @@ What happens to what is open:
 | a class still asking, same version | they stay, and a verdict still counts. Their expiry never changes |
 | a class that did not ask now asks | nothing to withdraw. The board asks the policy when a task becomes ready and before each further attempt, not at claim or start, so a task already `ready` or `claimed` is not asked again. A Worker's gate asks on every tool call, so its next calls follow the new policy |
 
-A withdrawn request is not a verdict, and nothing asks again by itself. A task that waited on it
-stays in `waiting-for-approval` until its wait expires, then waits for input (`rejected`), whether
-the change loosened or tightened the class: cancel it and propose it again to go on sooner
-([expired request](#an-approval-request-expired)). A Worker's gate denies the same call again in that
-session (it reads the withdrawn request as the answer), and a charter request waits for its
-expiry, then abandons a first charter's project or drops an amendment.
+A withdrawn request is not a verdict. On its next sweep the board puts each task or charter that
+waited on one to the new policy again ([board](../design/board.md#where-the-tables-leave-room)): a
+task waiting for approval becomes ready when its class is now `auto` or `notify`, waits on one new
+request when it still asks, and is cancelled (`forbidden`) on `forbid`; a spent budget or a lost run
+asks again or waits for input; a charter is asked about again, or refused. A Worker's gate denies
+the same call again in that session (it reads the withdrawn request as the answer): run the work
+again to have the new policy judge it.
 
 ## A resource pool is limited
 
