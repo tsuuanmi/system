@@ -1,0 +1,15 @@
+{
+  "numStartups": 3,
+  "installMethod": "native",
+  "autoUpdates": false,
+  "userID": "REDACTED",
+  "hasCompletedOnboarding": true,
+  "oauthAccount": {
+    "accountUuid": "REDACTED-ACCOUNT-UUID",
+    "emailAddress": "REDACTED@example.test",
+    "organizationUuid": "REDACTED-ORGANIZATION-UUID",
+    "organizationName": "REDACTED",
+    "organizationRole": "admin",
+    "workspaceRole": null
+  }
+}

@@ -32,9 +32,24 @@ installed.
     owner-only), never the operator's `~/.claude`, which the confinement hides.
     Sign in there once (`CLAUDE_CONFIG_DIR=<home> claude`, then `/login`), or
     forward an API key or OAuth token by name (`forwardEnv`). Its sessions, and
-    so `resume`, live there. It runs in no other home: a run naming one
-    (`RunSpec.home`, one account's home, ADR-0051) is refused (`config_error`)
-    before anything runs, and its probe reports no `homes`.
+    so `resume`, live there. A run or probe may name another home
+    (`RunSpec.home`, `probe({ home })`: one account's, ADR-0051; its probe
+    reports `homes`), which must already be an owner-only directory of this
+    user, never made by a run, else it is refused (`config_error`) before
+    anything runs. Its own home is `home` on the provider, which slot 1 of its
+    accounts adopts.
+  - **Who is signed in** (`identity(home, key)`, reader `claude-state-file`, on
+    `VERIFIED_IDENTITY_VERSIONS`, Claude Code 2.1.308; any other version is
+    `unverified`): `claude auth status` in that home, confined and with none of
+    the forwarded variables, must say `"loggedIn": true` (false or failing:
+    `missing`; unreadable: `ambiguous`); the home must keep that sign-in in its
+    own `.credentials.json` (only its existence is checked; a sign-in kept
+    elsewhere is `unverified`); then `oauthAccount.accountUuid` and
+    `oauthAccount.organizationUuid` of the home's `.claude.json`, both whole, or
+    `ambiguous` (never the email alone), hashed with the install's key; the
+    hint is `emailAddress`, masked. The fields were seen on this host; phase A's
+    supervised check on real accounts is still owed. `loginCommand(home)` is
+    `CLAUDE_CONFIG_DIR=<home> claude` (then `/login`).
 - **Probe:** it never runs a task.
   1. `claude --version` (not installed, or failing: unavailable);
   2. `proveConfinement` on this host, with its home bound back

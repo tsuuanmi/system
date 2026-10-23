@@ -1,0 +1,771 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:tsuuanmi:system:schema:mcp-agent-accounts:v1",
+  "title": "MCP agent account tools",
+  "description": "Input and output of the operator's agent account tools `account_enroll`, `account_remove`, and `account_agents` (proposals/0012-agent-accounts.md phase E, ADR-0051). The root describes one call (tool, input, structured output); the provider validates input and output against `#/$defs/<tool>-input` and `#/$defs/<tool>-output`, with underscores written as hyphens. No principal and no token is in any of them (INV-8). 1.1 adds `account_migrate`, the move from hand-named agent Workers to Workers derived as account × role (phase F).",
+  "type": "object",
+  "required": [
+    "tool",
+    "input",
+    "output"
+  ],
+  "properties": {
+    "tool": {
+      "enum": [
+        "account_enroll",
+        "account_remove",
+        "account_agents",
+        "account_migrate"
+      ]
+    },
+    "input": {
+      "type": "object"
+    },
+    "output": {
+      "type": "object"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "tool": {
+            "const": "account_enroll"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "input": {
+            "$ref": "#/$defs/account-enroll-input"
+          },
+          "output": {
+            "$ref": "#/$defs/account-enroll-output"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "tool": {
+            "const": "account_remove"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "input": {
+            "$ref": "#/$defs/account-remove-input"
+          },
+          "output": {
+            "$ref": "#/$defs/account-remove-output"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "tool": {
+            "const": "account_agents"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "input": {
+            "$ref": "#/$defs/account-agents-input"
+          },
+          "output": {
+            "$ref": "#/$defs/account-agents-output"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "tool": {
+            "const": "account_migrate"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "input": {
+            "$ref": "#/$defs/account-migrate-input"
+          },
+          "output": {
+            "$ref": "#/$defs/account-migrate-output"
+          }
+        }
+      }
+    }
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "provider": {
+      "description": "An agent runtime kind: the account's namespace.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]{0,63}$"
+    },
+    "accountId": {
+      "description": "`<provider>:<h>`, derived from the verified login (agent-account@1.0).",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]{0,63}:[0-9a-f]{16}$"
+    },
+    "slot": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 64
+    },
+    "slot-ref": {
+      "description": "A slot by its provider and number, or the account it holds by its id; never both.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "accountId"
+          ],
+          "properties": {
+            "accountId": true,
+            "provider": false,
+            "slot": false
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "provider"
+          ],
+          "properties": {
+            "provider": true,
+            "accountId": false
+          }
+        }
+      ]
+    },
+    "workerId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "role-id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]{0,31}$"
+    },
+    "workers": {
+      "description": "The configured Workers that run on the slot's account: those assigned to it (`agent:<accountId>/<role>`), or, while hand-named Workers are loaded, its runtime's when the home is the runtime's own.",
+      "type": "array",
+      "maxItems": 256,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      }
+    },
+    "account-enroll-input": {
+      "type": "object",
+      "required": [
+        "step"
+      ],
+      "properties": {
+        "step": {
+          "description": "`begin`: take the lowest free slot of `provider` (or `slot`), or name a taken one or an account for a sign-in again, and get the runtime's sign-in command for its home; `verify`: read who is signed in to that slot's home and record it.",
+          "enum": [
+            "begin",
+            "verify"
+          ]
+        },
+        "provider": {
+          "$ref": "#/$defs/provider"
+        },
+        "slot": {
+          "$ref": "#/$defs/slot"
+        },
+        "accountId": {
+          "$ref": "#/$defs/accountId"
+        },
+        "accept": {
+          "description": "With `verify` only: take the new principal of a slot quarantined as `changed` as a new account.",
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "$ref": "#/$defs/slot-ref"
+        },
+        {
+          "description": "A slot to verify is named whole.",
+          "if": {
+            "type": "object",
+            "properties": {
+              "step": {
+                "const": "verify"
+              },
+              "provider": true
+            },
+            "required": [
+              "step",
+              "provider"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "slot": true
+            },
+            "required": [
+              "slot"
+            ]
+          }
+        },
+        {
+          "description": "Only a verification accepts.",
+          "if": {
+            "type": "object",
+            "properties": {
+              "step": {
+                "const": "begin"
+              }
+            },
+            "required": [
+              "step"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "accept": false
+            }
+          }
+        }
+      ]
+    },
+    "account-enroll-output": {
+      "type": "object",
+      "required": [
+        "account",
+        "workers"
+      ],
+      "properties": {
+        "account": {
+          "$ref": "urn:tsuuanmi:system:schema:agent-account:v1"
+        },
+        "workers": {
+          "$ref": "#/$defs/workers"
+        },
+        "login": {
+          "description": "`begin` only: the runtime's own sign-in command for the slot's home, which the operator runs in their own terminal without a session bus. Its environment names the home, never a secret.",
+          "type": "object",
+          "required": [
+            "command",
+            "args",
+            "env"
+          ],
+          "properties": {
+            "command": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096
+            },
+            "args": {
+              "type": "array",
+              "maxItems": 32,
+              "items": {
+                "type": "string",
+                "maxLength": 4096
+              }
+            },
+            "env": {
+              "type": "object",
+              "maxProperties": 32,
+              "propertyNames": {
+                "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+                "not": {
+                  "const": "DBUS_SESSION_BUS_ADDRESS"
+                }
+              },
+              "additionalProperties": {
+                "type": "string",
+                "maxLength": 4096
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        "adopted": {
+          "description": "`begin` only: slot 1 was just taken, and its home is the runtime's own, which already existed and holds the sign-in its configured Workers run on.",
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "account-remove-input": {
+      "type": "object",
+      "properties": {
+        "provider": {
+          "$ref": "#/$defs/provider"
+        },
+        "slot": {
+          "$ref": "#/$defs/slot"
+        },
+        "accountId": {
+          "$ref": "#/$defs/accountId"
+        }
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "$ref": "#/$defs/slot-ref"
+        },
+        {
+          "type": "object",
+          "if": {
+            "type": "object",
+            "properties": {
+              "provider": true
+            },
+            "required": [
+              "provider"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "slot": true
+            },
+            "required": [
+              "slot"
+            ]
+          }
+        }
+      ]
+    },
+    "account-remove-output": {
+      "type": "object",
+      "required": [
+        "removed"
+      ],
+      "properties": {
+        "removed": {
+          "description": "The record as it was; the slot is free, and its home is kept as it is.",
+          "$ref": "urn:tsuuanmi:system:schema:agent-account:v1"
+        }
+      },
+      "additionalProperties": false
+    },
+    "account-agents-input": {
+      "type": "object",
+      "additionalProperties": false
+    },
+    "account-agents-output": {
+      "type": "object",
+      "required": [
+        "accounts",
+        "providers"
+      ],
+      "properties": {
+        "accounts": {
+          "type": "array",
+          "maxItems": 4096,
+          "items": {
+            "type": "object",
+            "required": [
+              "account",
+              "workers"
+            ],
+            "properties": {
+              "account": {
+                "$ref": "urn:tsuuanmi:system:schema:agent-account:v1"
+              },
+              "workers": {
+                "$ref": "#/$defs/workers"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "providers": {
+          "description": "Each registered runtime that can name an account namespace.",
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "type": "object",
+            "required": [
+              "provider",
+              "slots",
+              "taken",
+              "identity",
+              "login"
+            ],
+            "properties": {
+              "provider": {
+                "$ref": "#/$defs/provider"
+              },
+              "slots": {
+                "$ref": "#/$defs/slot"
+              },
+              "taken": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 64
+              },
+              "identity": {
+                "description": "Whether its runtime has an identity reader; without one its accounts are `unverified`.",
+                "type": "boolean"
+              },
+              "login": {
+                "description": "Whether its runtime gives a sign-in command, so it can be enrolled.",
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "account-migrate-input": {
+      "description": "@1.1. Neither flag: plan only, nothing changes. `apply`: apply the plan. `rollback`: undo an applied one. `stop`: runtimes whose Workers stop at the cutover because the account in their home is not ready (PROP-0012 open question 1).",
+      "type": "object",
+      "properties": {
+        "apply": {
+          "type": "boolean"
+        },
+        "rollback": {
+          "type": "boolean"
+        },
+        "stop": {
+          "type": "array",
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/provider"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "not": {
+        "description": "Apply or roll back, not both.",
+        "type": "object",
+        "properties": {
+          "apply": {
+            "const": true
+          },
+          "rollback": {
+            "const": true
+          }
+        },
+        "required": [
+          "apply",
+          "rollback"
+        ]
+      }
+    },
+    "migration-plan": {
+      "description": "The move from the hand-named rows: what each old Worker becomes, the new row's roles, assignments, and provider entries, the pool templates for the resources row, and what stops the move now (empty when it can be applied).",
+      "type": "object",
+      "required": [
+        "workers",
+        "roles",
+        "assignments",
+        "providers",
+        "templates",
+        "blockers"
+      ],
+      "properties": {
+        "workers": {
+          "type": "array",
+          "maxItems": 256,
+          "items": {
+            "type": "object",
+            "required": [
+              "from",
+              "runtime",
+              "role",
+              "why"
+            ],
+            "properties": {
+              "from": {
+                "$ref": "#/$defs/workerId"
+              },
+              "runtime": {
+                "$ref": "#/$defs/provider"
+              },
+              "role": {
+                "$ref": "#/$defs/role-id"
+              },
+              "to": {
+                "description": "The Worker it becomes, `agent:<accountId>/<role>`; absent when it stops.",
+                "$ref": "#/$defs/workerId"
+              },
+              "account": {
+                "$ref": "#/$defs/accountId"
+              },
+              "why": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 2000
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "roles": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "workspace",
+              "sandbox",
+              "tier"
+            ],
+            "properties": {
+              "id": {
+                "$ref": "#/$defs/role-id"
+              },
+              "workspace": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096
+              },
+              "sandbox": {
+                "enum": [
+                  "read-only",
+                  "workspace-write"
+                ]
+              },
+              "tier": {
+                "enum": [
+                  "economy",
+                  "standard",
+                  "frontier"
+                ]
+              },
+              "quotaClass": {
+                "enum": [
+                  "subscription-chat",
+                  "agent-plan",
+                  "metered",
+                  "local"
+                ]
+              },
+              "worktreePerRun": {
+                "type": "boolean"
+              },
+              "reviewMember": {
+                "type": "boolean"
+              },
+              "runtimes": {
+                "type": "object",
+                "maxProperties": 64,
+                "propertyNames": {
+                  "$ref": "#/$defs/provider"
+                },
+                "additionalProperties": {
+                  "type": "object",
+                  "properties": {
+                    "tools": {
+                      "type": "array",
+                      "maxItems": 256,
+                      "items": {
+                        "type": "string",
+                        "maxLength": 256
+                      }
+                    },
+                    "model": {
+                      "type": "string",
+                      "maxLength": 256
+                    },
+                    "maxTurns": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "family": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 128
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "assignments": {
+          "type": "array",
+          "maxItems": 256,
+          "items": {
+            "type": "object",
+            "required": [
+              "account",
+              "roles"
+            ],
+            "properties": {
+              "account": {
+                "$ref": "#/$defs/accountId"
+              },
+              "roles": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 64,
+                "items": {
+                  "$ref": "#/$defs/role-id"
+                }
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "providers": {
+          "description": "The row's agent provider entries, as the configuration reference describes them.",
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "type": "object",
+            "required": [
+              "provider"
+            ],
+            "properties": {
+              "provider": {
+                "$ref": "#/$defs/provider"
+              }
+            }
+          }
+        },
+        "templates": {
+          "description": "Pool templates to add to the resources row, from the old rows' pools.",
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "type": "object",
+            "required": [
+              "template",
+              "group",
+              "kind",
+              "windows"
+            ],
+            "properties": {
+              "template": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
+              },
+              "group": {
+                "$ref": "#/$defs/provider"
+              },
+              "kind": {
+                "enum": [
+                  "interactive",
+                  "programmatic",
+                  "api-key",
+                  "local"
+                ]
+              },
+              "windows": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 8,
+                "items": {
+                  "type": "object"
+                }
+              },
+              "unknown": {
+                "enum": [
+                  "available",
+                  "unavailable"
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "blockers": {
+          "type": "array",
+          "maxItems": 256,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "account-migrate-output": {
+      "type": "object",
+      "required": [
+        "outcome",
+        "plan",
+        "row"
+      ],
+      "properties": {
+        "outcome": {
+          "description": "`planned`: nothing changed. `applied`: applied now. `already-applied`: applied before, nothing changed. `rolled-back`: undone now. `not-applied`: a rollback with nothing to undo.",
+          "enum": [
+            "planned",
+            "applied",
+            "already-applied",
+            "rolled-back",
+            "not-applied"
+          ]
+        },
+        "plan": {
+          "description": "The plan; once applied, the one that was applied.",
+          "$ref": "#/$defs/migration-plan"
+        },
+        "row": {
+          "description": "The agent-workers row's configuration after the move: its settings as loaded (those not at their defaults), with the plan's providers, roles, and assignments in place of the hand-named workers.",
+          "type": "object"
+        },
+        "cutover": {
+          "description": "The cutover in force: the decision that applied it, and when.",
+          "type": "object",
+          "required": [
+            "decision",
+            "appliedAt",
+            "plan"
+          ],
+          "properties": {
+            "decision": {
+              "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/artifactRef"
+            },
+            "appliedAt": {
+              "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp"
+            },
+            "plan": {
+              "$ref": "#/$defs/migration-plan"
+            }
+          },
+          "additionalProperties": false
+        },
+        "moved": {
+          "description": "How many agent sessions and runs were moved to their new Workers (or back, by a rollback).",
+          "type": "object",
+          "required": [
+            "sessions",
+            "runs"
+          ],
+          "properties": {
+            "sessions": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "runs": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-import { checkProfile, type EventLine, formatEvents, formatHealth, healthExit, hostHealth, formatPlugins, hostPlugins, parseEvents, assertRuntime, backupHost, browserDeps, callTool, claudeGatewayCommand, codexGatewayCommand, drainHost, formatTools, listTools, restoreHost, shutdownHost, ensureBrowser, formatArtifact, type ArtifactRead, formatExplanation, formatUsage, init, mcpConfig, mcpHeaders, mcpToken, parseAsk, parseReport, readAllStdin, serveStdio, start, type ToolOutcome, uiUrl, composedRows, PRESETS, type Preset, rowOffProblem } from './index.ts'
+import { spawnSync } from 'node:child_process'
+import { type AccountTarget, accountTarget, agentAccountLine, formatMigration, parseMigrate, type SignIn, signInEnvironment, signInLine, checkProfile, type EventLine, formatEvents, formatHealth, healthExit, hostHealth, formatPlugins, hostPlugins, parseEvents, assertRuntime, backupHost, browserDeps, callTool, claudeGatewayCommand, codexGatewayCommand, drainHost, formatTools, listTools, restoreHost, shutdownHost, ensureBrowser, formatArtifact, type ArtifactRead, formatExplanation, formatUsage, init, mcpConfig, mcpHeaders, mcpToken, parseAsk, parseReport, readAllStdin, serveStdio, start, type ToolOutcome, uiUrl, composedRows, PRESETS, type Preset, rowOffProblem } from './index.ts'
 
 const USAGE = `Usage: system <command>
 
@@ -47,8 +48,21 @@ const USAGE = `Usage: system <command>
   evidence <id>             the page outline a ui.drift event names (structure, never text; local-private)
   model key <NAME>          store a model route's API key from stdin, encrypted, under the
                             credential reference its apiKeyEnv names
-  account list              list provider accounts and their status (profile must be running)
+  account list              list provider accounts and their status, agent accounts beside them (profile must be running)
   account login <id>        open a remote login desktop (noVNC over ssh -L); Save stores the account
+  account login <runtime> [--slot <n>]
+                            enroll an agent account: take the runtime's lowest free slot (or that one), run its
+                            own sign-in in the slot's home here, then verify who signed in (ADR-0051)
+  account login <accountId> sign an agent account in again in its own home; it must be the same principal
+  account verify <accountId | runtime --slot <n>> [--accept]
+                            read who is signed in to an agent account's home again and record it; --accept
+                            takes a changed slot's new principal as a new account
+  account remove <accountId | runtime --slot <n>>
+                            free an agent account's slot (its home is kept as it is)
+  account migrate [--apply | --rollback] [--stop <runtime>]...
+                            the move from hand-named agent Workers to Workers derived as account × role:
+                            printed (nothing changes), applied, or undone; --stop: a runtime whose Workers stop
+                            at the cutover, its account not ready (drain first)
   account credentials <id>  store login credentials from stdin as JSON {"email","password","totpSecret"?}
   account relogin <id>      sign in again with the stored credentials (TOTP computed locally)
   account code <id> <code>  supply a one-time code a running sign-in is waiting for
@@ -147,6 +161,52 @@ async function awaitRun(first: ToolOutcome): Promise<number> {
     if (run.status === 'failed') throw new Error(`${run.error?.kind}: ${run.error?.message} (system explain ${run.runId})`)
     outcome = await callTool('result', { runId: run.runId, waitSeconds: 55 })
   }
+}
+
+/**
+ * `system account login|verify|remove` for an agent account (ADR-0051). A login takes a slot (or
+ * names a taken one), runs the runtime's own sign-in in the slot's home here, in this terminal and
+ * without D-Bus (the daemon runs no interactive sign-in), then verifies who signed in. A slot 1 that
+ * just adopted the runtime's own home is verified as it is, without signing in again: its Workers
+ * run on that sign-in now. Exits 0 when the account is ready.
+ */
+async function agentAccount(action: string, target: Extract<AccountTarget, { kind: 'agent' }>, accept: boolean): Promise<number> {
+  const call = async (tool: string, args: Record<string, unknown>): Promise<Record<string, unknown>> => {
+    const outcome = await callTool(tool, args)
+    if (outcome.isError) throw new Error(outcome.text)
+    return outcome.structured ?? {}
+  }
+  const ref: Record<string, unknown> = 'accountId' in target ? { accountId: target.accountId } : { provider: target.provider, ...(target.slot !== undefined ? { slot: target.slot } : {}) }
+  if (action !== 'login' && !('accountId' in target) && target.slot === undefined) throw new Error(`name the slot: system account ${action} ${target.provider} --slot <n>, or the account id`)
+  if (action === 'remove') {
+    const removed = (await call('account_remove', ref)).removed as { provider: string; slot: number; accountId?: string; home: string }
+    console.log(`freed slot ${removed.slot} of ${removed.provider}${removed.accountId ? ` (was ${removed.accountId})` : ''}; its home ${removed.home} is kept as it is`)
+    return 0
+  }
+  let slot = ref
+  if (action === 'login') {
+    if (accept) throw new Error('--accept is for system account verify')
+    const begun = await call('account_enroll', { step: 'begin', ...ref })
+    const account = begun.account as { provider: string; slot: number; home: string }
+    const login = begun.login as SignIn
+    slot = { provider: account.provider, slot: account.slot }
+    if (begun.adopted === true) {
+      console.log(`slot 1 of ${account.provider} adopts its own home ${account.home}, where its Workers already run: verifying the sign-in it holds now (to sign in there again: system account login ${account.provider} --slot 1)`)
+    } else {
+      console.log(`slot ${account.slot} of ${account.provider}: sign in with its own command, in its home ${account.home}, without D-Bus; it runs now, and the account is verified when it ends:\n  ${signInLine(login)}`)
+      const ran = spawnSync(login.command, login.args, { stdio: 'inherit', env: signInEnvironment(process.env, login) })
+      if (ran.error) console.error(`the sign-in command could not run (${ran.error.message}); verifying what the home holds`)
+    }
+  }
+  const verified = await call('account_enroll', { step: 'verify', ...slot, ...(accept ? { accept: true } : {}) })
+  const line = agentAccountLine(verified as { account: Record<string, unknown>; workers: string[] })
+  console.log(JSON.stringify(line, null, 2))
+  if (line.status !== 'ready') {
+    console.log(`not ready: it takes no work until resolved (docs/operations/runbooks.md#resolve-a-quarantined-agent-account)`)
+    return 1
+  }
+  if (!(line.workers as string[]).length) console.log('no Worker runs on it yet: give it roles in the agent-workers row (assignments, by this id); while hand-named Workers are loaded, only the account in its runtime\'s own home runs them (docs/operations/runbooks.md#migrate-agent-workers-to-accounts--roles)')
+  return 0
 }
 
 async function main(argv: string[]): Promise<number> {
@@ -324,6 +384,23 @@ async function main(argv: string[]): Promise<number> {
       return 0
     }
     case 'account': {
+      // An agent account (ADR-0051) is named by its id (it has a `:`) or by its runtime; anything else is a website account.
+      if ((rest[0] === 'login' || rest[0] === 'verify' || rest[0] === 'remove') && rest[1]) {
+        const agents = await callTool('account_agents', {}).catch(() => undefined)
+        const providers = agents && !agents.isError ? ((agents.structured as { providers?: Array<{ provider: string }> } | undefined)?.providers ?? []).map((p) => p.provider) : []
+        const target = accountTarget(rest.slice(1), providers)
+        if (target.kind === 'agent') return agentAccount(rest[0], target, rest.includes('--accept'))
+        if (rest[0] === 'remove') throw new Error(`${rest[1]} is not an agent account: a website account leaves the catalog through configuration`)
+      }
+      if (rest[0] === 'migrate') {
+        // The move from hand-named agent Workers to account × role (PROP-0012 phase F): planned unless --apply or --rollback.
+        const options = parseMigrate(rest.slice(1))
+        const outcome = await callTool('account_migrate', { ...(options.apply ? { apply: true } : {}), ...(options.rollback ? { rollback: true } : {}), ...(options.stop.length ? { stop: options.stop } : {}) })
+        if (outcome.isError) throw new Error(outcome.text)
+        const printed = formatMigration(outcome.structured ?? {})
+        console.log(printed.text)
+        return printed.exit
+      }
       if (rest[0] === 'verify' && rest[1]) {
         const outcome = await callTool('account_verify', { account: rest[1] })
         if (outcome.isError) throw new Error(outcome.text)
@@ -346,7 +423,10 @@ async function main(argv: string[]): Promise<number> {
           const own = cooldowns.filter((c) => c.account === a.id).map((c) => ({ feature: c.feature, until: c.until, source: c.source }))
           return own.length ? { ...a, cooldowns: own } : a
         })
-        console.log(JSON.stringify(accounts, null, 2))
+        // Agent accounts beside them, when the agents source is loaded (ADR-0051).
+        const agents = await callTool('account_agents', {}).catch(() => undefined)
+        const enrolled = agents && !agents.isError ? ((agents.structured as { accounts?: Array<{ account: Record<string, unknown>; workers: string[] }> } | undefined)?.accounts ?? []) : []
+        console.log(JSON.stringify([...accounts, ...enrolled.map(agentAccountLine)], null, 2))
         return 0
       }
       if (rest[0] === 'clear-cooldown' && rest[1]) {

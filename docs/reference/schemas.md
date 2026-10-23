@@ -168,12 +168,24 @@ guesses.
   A decision of either kind must be `@1.8`; every other decision keeps its version.
   - The decision type `enrollment`: what account a slot of an agent runtime holds
     ([ADR-0051](../decisions/adr/0051-agent-accounts-are-enrolled-slots-identified-by-their-login.md)).
-    Candidates `ready`, `quarantined`, and `signed-out`, each with why; the decider is the rule
-    `agent-accounts.enrollment`. Its inputs are the slot's previous `enrollment` decision, if any,
-    never the principal; `detail` names the `provider`, the `slot`, the `accountId` once a principal
-    was read whole, the quarantine `reason` (`changed`, `ambiguous`, `duplicate`, `unverified`), and
-    the `reader` and `runtimeVersion` that read it. Recorded from PROP-0012 phase E. Example:
+    A slot's first decision has the one candidate `enrolled` (the slot is taken); each later one
+    has `ready`, `signed-out`, `quarantined`, and `removed` (the slot freed), the selected one with
+    why. The decider is the rule `agent-accounts.enrollment`. Its inputs are the slot's previous
+    `enrollment` decision, if any, never the principal; `detail` names the `provider`, the `slot`,
+    its `home`, the record's `revision`, the `accountId` once a principal was read whole (and the
+    `previousAccountId` when an accepted change replaced it), the quarantine `reason` (`changed`,
+    `ambiguous`, `duplicate`, `unverified`), and the `reader` and `runtimeVersion` that read it;
+    `rationale` says why. Recorded from PROP-0012 phase E by the `agents` source
+    ([enrollment](../design/agent-runtimes.md#enrollment-and-quarantine)). Example:
     [`decision.enrollment.json`](../../schemas/examples/decision.enrollment.json).
+    From phase F the same type records the move from hand-named agent Workers
+    ([migration](../design/agent-runtimes.md#migration-from-hand-named-rows)), decider the rule
+    `agent-workers.migration`: per hand-named Worker, candidates `migrated` and `stopped` (`detail`:
+    `from`, `runtime`, `role`, and when migrated `to` and `accountId`; its input the account's latest
+    enrollment decision); then the cutover, candidates `applied` and `kept` (`detail`: each Worker's
+    `from` and `to`, the `roles`, the `assignments`, and how many `sessions` and `runs` moved; its
+    inputs the Workers' decisions); and a rollback, candidates `rolled-back` and `applied`
+    (`detail`: the `cutover` decision, and what moved back; its input the cutover's).
   - The `recovery` outcome `wait`: a node refused only because assigned accounts that could take it
     are at their limit waits for the earliest of their resets, spending no attempt
     ([ADR-0052](../decisions/adr/0052-accounts-are-assigned-unless-pooling-is-recorded.md)). Its
@@ -400,7 +412,11 @@ guesses.
   with `quarantine.reason` `changed`, `ambiguous`, `duplicate`, or `unverified` and the
   `enrollment` decision that set it. A quarantine never clears by itself.
 - `hint` is a masked hint for the operator, kept local, never sent to a Worker.
-- Written from PROP-0012 phase E; the shape is fixed now (phase B). Examples:
+- `home` of slot 1 is its runtime's own home, adopted where it is; of a later slot,
+  `<accountHomes>/<provider>/<n>`. A `changed` record keeps the pinned `accountId` and `identity`
+  (the account the slot should hold), not the one now read.
+- Written by the `agents` source (PROP-0012 phase E), one per slot taken, `revision` raised on
+  each change; a freed slot's record is deleted, its history kept in its decisions. Examples:
   [`agent-account.ready.json`](../../schemas/examples/agent-account.ready.json),
   [`agent-account.quarantined.json`](../../schemas/examples/agent-account.quarantined.json).
 
@@ -846,6 +862,26 @@ guesses.
   a `clientRequestId` reused for other sources is refused (`invalid`).
 - A request no Worker can serve is not refused: it settles `bypassed` ([digests](../design/digests.md)).
   Example: [`mcp-digests.request.json`](../../schemas/examples/mcp-digests.request.json).
+
+### MCP tools: agent accounts
+
+| Tool | Scope | Does |
+|---|---|---|
+| `account_enroll` | operator | step `begin`: take the lowest free slot of a runtime (or the slot named; a taken slot, or an `accountId`, is signed in again) and return the runtime's own sign-in command for its home; step `verify`: read who signed in and record the account (`accept` takes a `changed` slot's new principal as a new account) |
+| `account_remove` | operator | free a slot, by `accountId` or by `provider` and `slot`; its home is kept |
+| `account_agents` | operator | every slot and the account in it, with the Workers that run on its account; each runtime's slots, how many are taken, and whether it reads identity and gives a sign-in command |
+| `account_migrate` | operator | `@1.1`: the move from hand-named agent Workers to Workers derived as account × role: `plan` (`workers`: each old Worker's `from`, `runtime`, `role`, new id `to` and `account`, or none when it stops, and why; the new row's `roles`, `assignments`, `providers`; `templates` for the resources row; `blockers`), the new row's whole config (`row`), the `outcome` (`planned`, `applied`, `already-applied`, `rolled-back`, `not-applied`), the `cutover` in force (its decision, when, and the plan applied), and how many sessions and runs were `moved`. `apply` and `rollback` never together |
+
+- Input and output: [`mcp-agent-accounts.v1.json`](../../schemas/mcp-agent-accounts.v1.json)
+  `$defs/<tool>-input` and `<tool>-output` (`mcp-agent-accounts@1.1`; 1.1 adds `account_migrate`). A slot is named by its
+  `provider` and `slot` or by the `accountId` it holds, never both; `verify` and `remove` name the
+  slot whole, and only `verify` accepts. An `accountId` two slots hold (a duplicate) names neither.
+- Each account is an [`agent-account@1.0`](#agent-account) record. The sign-in command's
+  environment names the home and never a session bus; nothing holds a principal or a token (INV-8).
+  A refused input does nothing (`invalid input, nothing done`); a refused call says its kind
+  (`invalid_input`, `config_error`) and changes nothing.
+- Examples: [`mcp-agent-accounts.enroll.json`](../../schemas/examples/mcp-agent-accounts.enroll.json),
+  [`mcp-agent-accounts.list.json`](../../schemas/examples/mcp-agent-accounts.list.json).
 
 ### MCP tool: `report`
 

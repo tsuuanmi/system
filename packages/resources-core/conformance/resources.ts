@@ -1,7 +1,7 @@
 /**
  * Conformance suite for `ctx.resources` (ADR-0037; docs/design/resources.md), and a fake provider
  * that passes it. `boot` returns a context that provides `ctx.resources` and `ctx.artifacts`,
- * with the pools in {@link POOLS} configured and nothing recorded.
+ * with the pools in {@link POOLS} and the templates in {@link TEMPLATES} configured and nothing recorded.
  */
 import { randomUUID } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
@@ -10,8 +10,8 @@ import { SchemaRegistry } from '@tsuuanmi/system-libs'
 import { expect } from 'vitest'
 import { defineSuite, type Scenario } from '../../libs/conformance/runner.ts'
 import {
-  type ArtifactRef, type BudgetLine, type LimitState, type PoolConfig, type PoolState, type Reservation, type ReservationRequest, Resources, ResourcesError,
-  type TokenUsage, type Unit, type UsageFilter, type UsageRecord, type UsageTotal,
+  type ArtifactRef, type BudgetLine, type DeclaredAccount, type LimitState, type PoolConfig, type PoolState, type PoolTemplate, type Reservation, type ReservationRequest, Resources, ResourcesError,
+  templatePool, type TokenUsage, type Unit, type UsageFilter, type UsageRecord, type UsageTotal,
 } from '../src/index.ts'
 
 export type Boot = () => Promise<{ ctx: Context; dispose: () => Promise<void> }>
@@ -21,6 +21,11 @@ export const POOLS: readonly PoolConfig[] = [
   { pool: 'max.interactive', account: 'max', kind: 'interactive', windows: [{ id: 'five-hour', kind: 'rolling', seconds: 18000 }, { id: 'seven-day', kind: 'rolling', seconds: 604800 }] },
   { pool: 'max.programmatic', account: 'max', kind: 'programmatic', windows: [{ id: 'monthly', kind: 'credit' }] },
   { pool: 'key', account: 'api', kind: 'api-key', windows: [{ id: 'minute', kind: 'rate', seconds: 60 }], unknown: 'available' },
+]
+
+/** The pool templates every provider under test is configured with (contract 1.1). */
+export const TEMPLATES: readonly PoolTemplate[] = [
+  { template: 'plan', group: 'runtime-a', kind: 'interactive', windows: [{ id: 'five-hour', kind: 'rolling', seconds: 18000 }] },
 ]
 
 const T0 = new Date('2026-10-22T09:00:00Z')
@@ -51,8 +56,8 @@ const budgetOf = (ctx: Context, reservation: Reservation) => {
   return body
 }
 
-const scenario = (id: string, title: string, run: (ctx: Context) => Promise<void>): Scenario<Boot> => ({
-  id: `resources.${id}`, since: '1.0', title,
+const scenario = (id: string, title: string, run: (ctx: Context) => Promise<void>, since: Scenario<Boot>['since'] = '1.0'): Scenario<Boot> => ({
+  id: `resources.${id}`, since, title,
   run: async (boot) => {
     const { ctx, dispose } = await boot()
     try {
@@ -65,7 +70,7 @@ const scenario = (id: string, title: string, run: (ctx: Context) => Promise<void
 
 export const resourcesSuite = defineSuite<Boot>({
   seam: 'resources',
-  contract: '1.0',
+  contract: '1.1',
   scenarios: [
     scenario('pools-from-configuration', 'lists every configured pool with its windows; a window with no reading is unknown, so the pool fails closed unless configured available (INV-2)', async (ctx) => {
       const pools = await ctx.resources.pools({}, T0)
@@ -183,6 +188,40 @@ export const resourcesSuite = defineSuite<Boot>({
       expect(t1.totals).toEqual([{ pool: 'max.programmatic', records: 2, usage: { inputTokens: 2000, outputTokens: 200, cacheReadInputTokens: 1600 }, turns: 3, costUsd: 1 }] satisfies UsageTotal[])
       expect((await ctx.resources.usage({ since: at(2).toISOString() })).records.map((r) => r.requestId)).toEqual(['b', 'c'])
     }),
+    scenario('templates-per-account', 'makes one pool of each template per account a source declares in its group, `<template>/<account>`, so a limit on one account never closes another\'s; a declaration replaces the source\'s last one, and one that would take a configured pool changes nothing (ADR-0052)', async (ctx) => {
+      const declare = ctx.resources.declare
+      expect(typeof declare, 'a contract 1.1 provider declares accounts').toBe('function')
+      const [a, b] = ['runtime-a:0000000000000001', 'runtime-a:0000000000000002']
+      expect(await ctx.resources.declare!('agents', [{ account: a, group: 'runtime-a' }, { account: b, group: 'runtime-a' }, { account: 'other:1', group: 'runtime-b' }]))
+        .toEqual([templatePool('plan', a), templatePool('plan', b)])
+      const pa = templatePool('plan', a)
+      const pb = templatePool('plan', b)
+      const listed = (await ctx.resources.pools({}, T0)).filter((p) => p.pool.startsWith('plan/'))
+      expect(listed.map((p) => [p.pool, p.account, p.kind, p.windows.map((w) => w.id), p.available])).toEqual([[pa, a, 'interactive', ['five-hour'], false], [pb, b, 'interactive', ['five-hour'], false]])
+      expect((await ctx.resources.pools({ account: a }, T0)).map((p) => p.pool)).toEqual([pa])
+      const window = TEMPLATES[0]!.windows[0]!
+      const read = (pool: string, account: string, extra: Partial<LimitState> = {}): LimitState => ({ schema: 'limit-state@1.0', pool, account, window, state: 'ok', source: 'runtime-result', observedAt: T0.toISOString(), ...extra })
+      await ctx.resources.observe(read(pa, a, { state: 'limited', resetsAt: at(60).toISOString() }))
+      await ctx.resources.observe(read(pb, b))
+      // A limit on one account's pool leaves the other's open.
+      expect([(await poolOf(ctx, pa, at(1))).available, (await poolOf(ctx, pb, at(1))).available]).toEqual([false, true])
+      expect((await ctx.resources.reserve({ runId: 'run-b', lines: [{ pool: pb, unit: 'runs', amount: 1 }] }, at(1))).state).toBe('reserved')
+      expect((await ctx.resources.reserve({ runId: 'run-a', lines: [{ pool: pa, unit: 'runs', amount: 1 }] }, at(1))).state).toBe('refused')
+      expect((await ctx.resources.record(usage('t-b', { account: b, pool: pb }))).duplicate).toBe(false)
+      // A reading of another account than the pool's is refused.
+      expect(await failureOf(ctx.resources.observe(read(pa, b)))).toBe('unknown-pool')
+      // A declaration that would take a configured pool, or names no account, changes nothing.
+      expect(await failureOf(ctx.resources.declare!('agents', [{ account: 'bad account', group: 'runtime-a' }]))).toBe('invalid')
+      expect((await ctx.resources.pools({}, T0)).filter((p) => p.pool.startsWith('plan/')).map((p) => p.pool)).toEqual([pa, pb])
+      // A new declaration replaces the last: the withdrawn account's pool is no longer listed, and its readings never stand for another.
+      expect(await ctx.resources.declare!('agents', [{ account: b, group: 'runtime-a' }])).toEqual([pb])
+      expect((await ctx.resources.pools({}, T0)).filter((p) => p.pool.startsWith('plan/')).map((p) => p.pool)).toEqual([pb])
+      expect(await failureOf(ctx.resources.record(usage('t-a', { account: a, pool: pa })))).toBe('unknown-pool')
+      // Another source cannot take a pool one source declared.
+      expect(await failureOf(ctx.resources.declare!('other', [{ account: b, group: 'runtime-a' }]))).toBe('invalid')
+      expect(await ctx.resources.declare!('agents', [])).toEqual([])
+      expect((await ctx.resources.pools({}, T0)).map((p) => p.pool)).toEqual(POOLS.map((p) => p.pool).sort())
+    }, '1.1'),
   ],
 })
 
@@ -218,12 +257,32 @@ export class FakeResources extends Resources {
   /** The scope each run was reserved for, kept after release, so its usage counts there. */
   private readonly scopes = new Map<string, { projectId?: string; taskId?: string }>()
 
-  constructor(ctx: Context, private readonly config: { pools?: readonly PoolConfig[] } = {}) {
+  /** The pools of each source's declared accounts (contract 1.1). */
+  private readonly declared = new Map<string, PoolConfig[]>()
+
+  constructor(ctx: Context, private readonly config: { pools?: readonly PoolConfig[]; templates?: readonly PoolTemplate[] } = {}) {
     super(ctx)
   }
 
   private get configured(): readonly PoolConfig[] {
-    return this.config.pools ?? POOLS
+    return [...this.config.pools ?? POOLS, ...[...this.declared.values()].flat()]
+  }
+
+  async declare(source: string, accounts: readonly DeclaredAccount[]): Promise<string[]> {
+    const taken = new Set([...this.config.pools ?? POOLS, ...[...this.declared].filter(([s]) => s !== source).flatMap(([, pools]) => pools)].map((p) => p.pool))
+    const made: PoolConfig[] = []
+    for (const { account, group } of accounts) {
+      if (!/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$/.test(account) || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(group)) throw new ResourcesError('invalid', `${account} of ${group} is not an account and its group`)
+      for (const t of (this.config.templates ?? TEMPLATES).filter((t) => t.group === group)) {
+        const pool = templatePool(t.template, account)
+        if (taken.has(pool)) throw new ResourcesError('invalid', `the pool ${pool} is already configured or declared`)
+        taken.add(pool)
+        made.push({ pool, account, kind: t.kind, windows: structuredClone(t.windows), ...(t.unknown ? { unknown: t.unknown } : {}) })
+      }
+    }
+    if (made.length) this.declared.set(source, made)
+    else this.declared.delete(source)
+    return made.map((p) => p.pool).sort()
   }
 
   async pools(filter: { account?: string } = {}, at: Date = new Date()): Promise<PoolState[]> {

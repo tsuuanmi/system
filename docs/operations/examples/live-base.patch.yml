@@ -27,6 +27,9 @@
 # The agent Workers. This list replaces the whole list, so it keeps the live patch's Claude Code
 # Worker as it is (claude-research, renamed from claude-review on 2026-10-24). All three read the same checkout and never write, so none needs a worktree per run; give
 # every Worker on the workspace `worktreePerRun: true` once a writing Worker joins them.
+# These are hand-named Workers, the row's shape before Workers are account × role: they run as they
+# are until you apply `system account migrate`, which prints the row that replaces this one
+# (docs/operations/runbooks.md#migrate-agent-workers-to-accounts--roles).
 - id: agent-workers
   config:
     workers:

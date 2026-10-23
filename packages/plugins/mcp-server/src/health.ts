@@ -30,6 +30,8 @@ export interface HealthSources {
   accounts?: () => Promise<Array<{ id: string; status: string }>>
   /** Groups of accounts signed in as one person (REQ-ACC-7): their Workers take no work. */
   duplicateAccounts?: () => Promise<string[][]>
+  /** Agent accounts in their enrollment slots (ADR-0051): any not `ready` takes no work, and is named. */
+  agentAccounts?: () => Array<{ provider: string; slot: number; accountId?: string | undefined; status: string; reason?: string | undefined }>
   workers?: () => Promise<Array<{ worker: string; state: string }>>
   /**
    * How each Worker source answered its last read (`ctx.workers.sources()`), read after `workers`:
@@ -179,6 +181,18 @@ export async function healthReport(sources: HealthSources): Promise<HealthReport
       return problems.length
         ? { name: 'accounts', state: 'degraded', detail: problems.join('; ') }
         : ok('accounts', 'every account is signed in or not in use')
+    }))
+  }
+
+  const agentAccounts = sources.agentAccounts
+  if (agentAccounts) {
+    checks.push(await guarded('agent-accounts', () => {
+      const all = agentAccounts()
+      const named = (a: (typeof all)[number]) => `${a.accountId ?? `slot ${a.slot} of ${a.provider}`} (${a.status}${a.reason ? `: ${a.reason}` : ''})`
+      const waiting = all.filter((a) => a.status !== 'ready')
+      return waiting.length
+        ? { name: 'agent-accounts', state: 'degraded', detail: `take no work: ${waiting.map(named).join(', ')}; see system account list, and resolve each (docs/operations/runbooks.md#resolve-a-quarantined-agent-account)` }
+        : ok('agent-accounts', `${all.length} enrolled, every one ready`)
     }))
   }
 

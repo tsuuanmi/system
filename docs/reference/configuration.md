@@ -37,7 +37,7 @@
 
 | Option | Type | Default | Description |
 |---|---|---|---|
-| `workers` | object[] | `[]` | Agent-runtime Workers; each policy comes from here only (INV-6) |
+| `workers` | object[] | `[]` | Hand-named agent-runtime Workers (the shape before Workers are account × role): they run as before until system account migrate --apply, then are refused; never with roles or assignments. Each policy comes from here only (INV-6) |
 | `workers[].id` (required) | string |  |  |
 | `workers[].runtime` (required) | string |  |  |
 | `workers[].workspace` (required) | string |  |  |
@@ -54,10 +54,28 @@
 | `workers[].limitCooldownSeconds` | number (60…604800) | `3600` | How long a limit hit with no reset time keeps the pool closed; with no pool, how long every Worker of its runtime cools down |
 | `workers[].family` | string (1…128) |  | Its provider family (ADR-0027; default: the runtime): the same as other Workers' of the vendor whose models it runs, so team members of one vendor stay apart. Required for a review member |
 | `workers[].reviewMember` | boolean | `false` | Its review team member steps run under the enforced review-member profile (ADR-0049): no tool call runs, its workspace is an empty directory outside any repository, and the profile grants reason for those steps only; a runtime that cannot resume keeps the member's conversation by replay. Read-only Workers with a family only |
-| `providers` | object[] | `[]` | How each agent runtime's accounts are used; a runtime not listed is assigned (ADR-0052) |
+| `roles` | object[] | `[]` | Role templates (PROP-0012 phase F), each defined once: what the work needs, whatever account serves it |
+| `roles[].id` (required) | string |  | Role id: its Workers are agent:<accountId>/<role> |
+| `roles[].workspace` (required) | string |  | Absolute workspace root its work is done in |
+| `roles[].sandbox` (required) | "read-only" \| "workspace-write" |  |  |
+| `roles[].tier` (required) | "economy" \| "standard" \| "frontier" |  |  |
+| `roles[].quotaClass` | "subscription-chat" \| "agent-plan" \| "metered" \| "local" | `"agent-plan"` |  |
+| `roles[].worktreePerRun` | boolean | `false` | Each run of a workflow run works in that run's own git worktree of the workspace, as a hand-named Worker's |
+| `roles[].reviewMember` | boolean | `false` | Its review team member steps run under the enforced review-member profile (ADR-0049); read-only, and each runtime it is assigned on names its family |
+| `roles[].runtimes` | Record<string, object> | `{}` | What differs per runtime, by runtime kind: tools, model, maxTurns, family; never a routing input |
+| `assignments` | object[] | `[]` | Which roles each enrolled account serves (D24: assigned); an account with no assignment has no Worker |
+| `assignments[].account` (required) | string |  | An enrolled agent account, by the id system account list shows |
+| `assignments[].roles` (required) | string[] | `[]` | The roles it serves: one Worker agent:<account>/<role> each |
+| `providers` | object[] | `[]` | How each agent runtime's accounts are used and how many may be enrolled; a runtime not listed is assigned, with one slot (ADR-0051, ADR-0052) |
 | `providers[].provider` (required) | string |  | The agent runtime kind, as its provider registers it (the runtime of its Workers) |
 | `providers[].accounts` | "assigned" \| "pooled" | `"assigned"` | assigned (the default; personal subscriptions): a limit on one account never moves its work to another account of this runtime, the work waits; pooled: only with pooledTerms |
 | `providers[].pooledTerms` | any |  | {confirmedBy, confirmedAt, terms}: who confirmed that this runtime's plan terms allow pooling its accounts, when (ISO time), and which terms; required for pooled (ADR-0052) |
+| `providers[].slots` | number (1…64) |  | How many accounts of this runtime may be enrolled (default 1: its own home, adopted as slot 1); each slot is an owner-only home (ADR-0051) |
+| `providers[].maxConcurrentRunsPerAccount` | number (1…16) |  | How many runs one of its accounts runs at once, across all its roles (default 1; one per Worker as well); with roles and assignments only |
+| `providers[].pool` | string |  | The pool template (resources templates) each of its accounts draws on: pool <pool>/<accountId>; unset: not metered. With roles and assignments only |
+| `providers[].windows` | Record<string, string> | `{}` | The runtime's limit window names mapped to the template's window ids; with pool only |
+| `providers[].limitCooldownSeconds` | number (60…604800) |  | How long a limit hit with no reset time closes an account's pool, or with no pool cools the account down (default 3600); with roles and assignments only |
+| `accountHomes` | string |  | Where enrollment slots 2 and later keep their homes, <accountHomes>/<provider>/<n> (default <DSH_HOME>/system/agent-homes); hidden from every agent |
 | `maxReplayChars` | number (1…2000000) | `200000` | Characters of earlier turns a review member's replayed conversation holds, at most; a turn past it fails, never cut |
 | `probeTtlMs` | number (0…) | `300000` | How long a runtime's probe result stands, from when its probe started: the next probe starts in the background at half of it, and a result past it admits no Worker until one finishes (0: every read waits for a probe) |
 | `runTimeoutMs` | number (1…) | `900000` | Hard deadline per run |
@@ -341,6 +359,15 @@ No options.
 | `pools[].windows[].kind` (required) | "rolling" \| "calendar" \| "credit" \| "rate" |  | rolling: resets a fixed time after use starts; calendar: at fixed dates; credit: a balance drawn down; rate: per interval |
 | `pools[].windows[].seconds` | number (1…31622400) |  | The window's length, when it has one |
 | `pools[].unknown` | "available" \| "unavailable" | `"unavailable"` | Whether a window with no reading, or an unknown one, leaves the pool available (a pool that never reports, such as a local model); unavailable fails closed |
+| `templates` | object[] | `[]` | Pool templates (ADR-0052): one pool of a template per account a Worker source declares in its group, <template>/<account>, so a limit on one account never closes another's |
+| `templates[].template` (required) | string |  | Template id: the pool it makes for an account is <template>/<account> |
+| `templates[].group` (required) | string |  | The account group it applies to (an agent runtime, as the agent-workers providers name it) |
+| `templates[].kind` (required) | "interactive" \| "programmatic" \| "api-key" \| "local" |  | What each pool of it is, as a pool's kind |
+| `templates[].windows` (required) | object[] | `[]` | Each pool's limit windows (1 to 8, unique ids) |
+| `templates[].windows[].id` (required) | string |  | Window id, as readings name it |
+| `templates[].windows[].kind` (required) | "rolling" \| "calendar" \| "credit" \| "rate" |  | As a pool window's kind |
+| `templates[].windows[].seconds` | number (1…31622400) |  | The window's length, when it has one |
+| `templates[].unknown` | "available" \| "unavailable" | `"unavailable"` | As a pool's unknown; unavailable fails closed |
 | `pageSize` | number (1…100) | `20` | Records per resources_usage page when the caller names no limit |
 | `maxRecords` | number (1…1000000) | `10000` | Records usage() returns at most; more matching is refused (narrow the filter or page) |
 | `holdSeconds` | number (60…604800) | `14400` | How long a reservation nobody releases (a crashed run) keeps counting against its caps |

@@ -19,6 +19,12 @@
  *   reports `executes`; without either proof nothing writes or runs a command;
  * - Claude Code starts without the daemon's credentials: only the variables the operator
  *   forwards by name (`forwardEnv`) or sets (`env`) reach it (INV-8);
+ * - a run or probe may name another home (one account's, ADR-0051), an owner-only directory that
+ *   exists, which then stands for its own everywhere; who is signed in to a home (`identity`) is
+ *   read as the account and organization ids of the `oauthAccount` its state file holds, after
+ *   `claude auth status` there, confined, says it is logged in, with its sign-in in its own
+ *   `.credentials.json`, and only on a Claude Code version a check verified
+ *   (`VERIFIED_IDENTITY_VERSIONS`); only their keyed hash, and a masked email, leave it;
  * - a run's tool gate (`RunSpec.toolGate`) compiles to a PreToolUse hook on every tool: `deny`
  *   and `defer` are the hook's own decisions, and `allow` leaves the call to the pre-approvals
  *   above (a hook's `allow` would skip them); a deferred run stops there and never completes.
@@ -29,15 +35,16 @@
  * @module @tsuuanmi/system-runtime-claude-agent-sdk
  */
 import { execFile, spawn } from 'node:child_process'
-import { accessSync, constants } from 'node:fs'
+import { accessSync, constants, lstatSync } from 'node:fs'
 import { delimiter, isAbsolute, join } from 'node:path'
 import { promisify } from 'node:util'
 import { type HookCallback, type HookJSONOutput, type SandboxSettings, type SpawnedProcess, type SpawnOptions, query } from '@anthropic-ai/claude-agent-sdk'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import {
-  type AgentRuntimeProvider, type Confinement, type LimitObservation, type ModelUsage, type RunMetering, type RunResult, type RunSpec, type RuntimeEvidence, type SandboxMode, type TokenUsage,
-  type ToolGate, askToolGate, childEnvironment, confinedCommand, proveConfinement, withMetering,
+  type AgentRuntimeProvider, type Confinement, type IdentityReading, type LimitObservation, type LoginCommand, type ModelUsage, type ProbeOptions, type RunMetering, type RunResult, type RunSpec,
+  type RuntimeEvidence, type SandboxMode, type TokenUsage, type ToolGate, askToolGate, childEnvironment, confinedCommand, homeProblem, identityHmac, maskEmail, proveConfinement, readHomeJson,
+  withMetering,
 } from '@tsuuanmi/system-agent-runtime-core'
 import { dshHome, ensurePrivateDir } from '@tsuuanmi/system-libs'
 import { ProviderError, type ProviderErrorKind } from '@tsuuanmi/system-provider-core'
@@ -96,6 +103,20 @@ export type SpawnConfined = (command: string, args: string[], options: { cwd?: s
 /** The hook's own timeout, in the SDK's unit (seconds): above the gate's bound (`TOOL_GATE_MS`), so the hook always answers itself. */
 const HOOK_TIMEOUT_S = 60
 
+/**
+ * The Claude Code versions its identity reader is pinned to (ADR-0051, as ADR-0043 pins agy's
+ * hook): with `CLAUDE_CONFIG_DIR` set, the home's `.claude.json` holds `oauthAccount` with
+ * `accountUuid`, `emailAddress`, and `organizationUuid`, and its OAuth sign-in is kept in the home's
+ * own `.credentials.json` (the lead's look on this host, field names only). On any other version a
+ * reading is `unverified`. Owed (PROP-0012 phase A): the supervised check on the operator's real
+ * accounts that the ids stay equal across a restart, a token refresh, and a re-login, and differ for
+ * two accounts.
+ */
+export const VERIFIED_IDENTITY_VERSIONS: readonly string[] = ['2.1.308']
+
+/** The reader's id, as an `agent-account@1.0` record names it. */
+export const IDENTITY_READER = 'claude-state-file'
+
 export interface RuntimeOptions {
   /** The `claude` executable; found on PATH when absent. */
   executable?: string | undefined
@@ -129,7 +150,8 @@ export interface RuntimeOptions {
 export class ClaudeAgentRuntime implements AgentRuntimeProvider {
   readonly kind = 'claude-agent-sdk'
   private readonly query: QueryFn
-  private readonly home: string
+  /** Its own configured home: where a run that names none runs, and slot 1 of its accounts. */
+  readonly home: string
 
   constructor(private readonly options: RuntimeOptions = {}) {
     this.query = options.query ?? query
@@ -137,7 +159,11 @@ export class ClaudeAgentRuntime implements AgentRuntimeProvider {
     this.home = options.home ?? join(dshHome(), 'system', 'claude-home')
   }
 
-  async probe(): Promise<RuntimeEvidence> {
+  async probe(options: ProbeOptions = {}): Promise<RuntimeEvidence> {
+    // A named home is one account's (ADR-0051): an owner-only directory that exists, never made here.
+    const named = options.home !== undefined ? homeProblem(options.home) : undefined
+    if (named) return unavailable(`claude-agent-sdk: ${named}`)
+    const home = options.home ?? this.home
     const executable = this.executable()
     if (!executable) return unavailable('Claude Code is not installed (no claude executable on PATH)')
     let version: string
@@ -149,21 +175,21 @@ export class ClaudeAgentRuntime implements AgentRuntimeProvider {
     // Every pre-approved tool is scoped to the workspace, and Claude Code runs under the host's
     // read confinement, proven here (ADR-0024, ADR-0038). A run's tool gate is a PreToolUse hook on
     // every tool, which holds in every permission mode.
-    const found = { available: true, version, resume: true, gatesToolCalls: true }
+    const found = { available: true, version, resume: true, gatesToolCalls: true, homes: true }
     const unconfined = (detail: string): RuntimeEvidence => ({ ...found, detail: `Claude Code ${version}; ${detail}`, sandboxes: ['read-only'], executes: false, readsConfined: false })
     if (!this.options.confine) return unconfined('no read confinement is configured')
     try {
-      ensurePrivateDir(this.home)
+      this.ensureHome(home)
     } catch (error) {
-      return unavailable(`claude-agent-sdk: its home ${this.home} cannot be used: ${firstLine(error)}`)
+      return unavailable(`claude-agent-sdk: its home ${home} cannot be used: ${firstLine(error)}`)
     }
-    const confinement = this.options.confine({ writable: [this.home] })
+    const confinement = this.options.confine({ writable: [home] })
     const reads = await (this.options.prove ?? proveConfinement)(confinement)
     if (!reads.confined) return unconfined(reads.detail)
-    const env = this.environment()
+    const env = this.environment(home)
     const signedOut = await this.signedOut(executable, confinement, env)
     if (signedOut) {
-      return unavailable(`Claude Code ${version} is not signed in inside its home ${this.home} (${signedOut}): sign in there (CLAUDE_CONFIG_DIR=${this.home} claude), or forward an API key by name (forwardEnv)`)
+      return unavailable(`Claude Code ${version} is not signed in inside its home ${home} (${signedOut}): sign in there (CLAUDE_CONFIG_DIR=${home} claude), or forward an API key by name (forwardEnv)`)
     }
     // Commands need the second layer too: without it, no run writes or runs a command (ADR-0038).
     const commands = await this.proveCommands(confinement, env)
@@ -175,8 +201,10 @@ export class ClaudeAgentRuntime implements AgentRuntimeProvider {
 
   async run(spec: RunSpec, signal: AbortSignal, onHandle?: (handle: string) => void): Promise<RunResult> {
     if (!isAbsolute(spec.workspace)) throw new ProviderError('config_error', 'claude-agent-sdk: the workspace must be an absolute path')
-    // One account's own home (ADR-0051) is not supported yet: refused, never run in the configured home instead.
-    if (spec.home !== undefined) throw new ProviderError('config_error', 'claude-agent-sdk: it runs in its configured home only; refusing a run that names another (RunSpec.home)')
+    // One account's own home (ADR-0051): an owner-only directory that exists, or nothing runs.
+    const named = spec.home !== undefined ? homeProblem(spec.home) : undefined
+    if (named) throw new ProviderError('config_error', `claude-agent-sdk: ${named}; nothing was run`)
+    const home = spec.home ?? this.home
     const allowed = ALLOWED[spec.sandbox]
     if (!allowed) throw new ProviderError('config_error', `claude-agent-sdk: unknown sandbox ${String(spec.sandbox)}`)
     // Absent or empty means the sandbox's default set; an empty `tools` would disable every tool.
@@ -190,8 +218,8 @@ export class ClaudeAgentRuntime implements AgentRuntimeProvider {
     if (signal.aborted) throw new ProviderError('aborted', 'claude-agent-sdk: aborted before starting')
     if (!this.options.confine) throw new ProviderError('config_error', 'claude-agent-sdk: no read confinement is configured; refusing to run Claude Code with the host state readable (ADR-0024)')
     const writes = spec.sandbox === 'workspace-write'
-    const confinement = this.confinement(writes ? { writable: [this.home, spec.workspace] } : { writable: [this.home], readOnly: [spec.workspace] })
-    const env = this.environment()
+    const confinement = this.confinement(home, writes ? { writable: [home, spec.workspace] } : { writable: [home], readOnly: [spec.workspace] })
+    const env = this.environment(home)
     if (writes) {
       // The second layer is proven again before a run that writes: its sandbox must start (ADR-0038).
       const commands = await this.proveCommands(confinement, env)
@@ -274,15 +302,85 @@ export class ClaudeAgentRuntime implements AgentRuntimeProvider {
     return this.options.executable ?? (this.options.findExecutable ?? (() => onPath('claude')))()
   }
 
-  /** Claude Code's environment: without the daemon's credentials (INV-8), in its own home. */
-  private environment(): Record<string, string> {
-    return childEnvironment(this.options.forwardEnv, { ...this.options.env, CLAUDE_CONFIG_DIR: this.home })
+  /**
+   * Who is signed in to `home` (ADR-0051), hashed with `key`; never the ids themselves (INV-8). Only on
+   * a pinned Claude Code version: `claude auth status` in that home, under the confinement and with
+   * none of the operator's forwarded variables, must say it is logged in; the home must keep that
+   * sign-in in its own `.credentials.json` (whose content is never read: a sign-in kept elsewhere is
+   * not this home's, so `unverified`); then the account and organization ids of the `oauthAccount`
+   * in the home's `.claude.json`, both whole, or the reading is `ambiguous` (never the email alone,
+   * which can change). The email only gives the masked hint.
+   */
+  async identity(home: string, key: Uint8Array): Promise<IdentityReading> {
+    const reader = IDENTITY_READER
+    const executable = this.executable()
+    if (!executable) return { status: 'unverified', reason: 'Claude Code is not installed (no claude executable on PATH)', reader }
+    let runtimeVersion: string
+    try {
+      runtimeVersion = await (this.options.version ?? claudeVersion)(executable)
+    } catch (error) {
+      return { status: 'unverified', reason: `claude --version failed: ${firstLine(error)}`, reader }
+    }
+    const pinned = { reader, runtimeVersion }
+    if (!VERIFIED_IDENTITY_VERSIONS.includes(runtimeVersion)) {
+      return { status: 'unverified', reason: `no identity reader is verified for Claude Code ${runtimeVersion} (verified: ${VERIFIED_IDENTITY_VERSIONS.join(', ')})`, ...pinned }
+    }
+    const problem = homeProblem(home)
+    if (problem) return { status: 'missing', reason: problem, ...pinned }
+    if (!this.options.confine) return { status: 'unverified', reason: 'no read confinement is configured, so the sign-in cannot be checked as a run would see it (ADR-0024)', ...pinned }
+    let status: string
+    try {
+      const confinement = this.confinement(home, { writable: [home] })
+      status = await (this.options.status ?? runConfined)(confinedCommand(executable, ['auth', 'status'], confinement), childEnvironment([], { CLAUDE_CONFIG_DIR: home }))
+    } catch (error) {
+      return { status: 'missing', reason: `claude auth status failed: ${firstLine(error)}`, ...pinned }
+    }
+    const said = loggedIn(status)
+    if (said === false) return { status: 'missing', reason: 'claude auth status: not logged in', ...pinned }
+    if (said === undefined) return { status: 'ambiguous', reason: 'claude auth status: its output does not say who is signed in', ...pinned }
+    let credentials: ReturnType<typeof lstatSync> | undefined
+    try {
+      credentials = lstatSync(join(home, '.credentials.json'))
+    } catch {
+      credentials = undefined
+    }
+    if (!credentials?.isFile()) return { status: 'unverified', reason: 'its sign-in is not kept in the home\'s own .credentials.json, so it is not this home\'s', ...pinned }
+    const state = readHomeJson(join(home, '.claude.json'))
+    if (state.state === 'absent') return { status: 'ambiguous', reason: 'the home holds no .claude.json naming the signed-in account', ...pinned }
+    if (state.state === 'refused') return { status: 'ambiguous', reason: `its .claude.json cannot be read: ${state.why}`, ...pinned }
+    const account = state.value.oauthAccount
+    const fields = account && typeof account === 'object' ? account as Record<string, unknown> : {}
+    const whole = (value: unknown): value is string => typeof value === 'string' && value.length > 0 && value.length <= 256
+    if (!whole(fields.accountUuid) || !whole(fields.organizationUuid)) {
+      return { status: 'ambiguous', reason: 'its .claude.json does not name the signed-in account and its organization whole (oauthAccount.accountUuid, organizationUuid)', ...pinned }
+    }
+    const hint = typeof fields.emailAddress === 'string' ? maskEmail(fields.emailAddress) : undefined
+    return { status: 'verified', hmac: identityHmac(key, this.kind, { accountUuid: fields.accountUuid, organizationUuid: fields.organizationUuid }), ...pinned, ...(hint ? { hint } : {}) }
+  }
+
+  /** Claude Code in `home`, where the operator signs in (`/login`) in their own terminal, without D-Bus (ADR-0051). */
+  loginCommand(home: string): LoginCommand {
+    return { command: this.executable() ?? 'claude', args: [], env: { CLAUDE_CONFIG_DIR: home } }
+  }
+
+  /** Claude Code's environment: without the daemon's credentials (INV-8), in its home. */
+  private environment(home: string): Record<string, string> {
+    return childEnvironment(this.options.forwardEnv, { ...this.options.env, CLAUDE_CONFIG_DIR: home })
+  }
+
+  /** Its own home is made owner-only on first use; a named one was checked to be one already, and is never made. */
+  private ensureHome(home: string): void {
+    if (home === this.home) ensurePrivateDir(home)
+    else {
+      const problem = homeProblem(home)
+      if (problem) throw new Error(problem)
+    }
   }
 
   /** The confinement of one run, checked before anything starts: its home exists owner-only, and no bind exposes a hidden path. */
-  private confinement(bind: { readOnly?: readonly string[]; writable?: readonly string[] }): Confinement {
+  private confinement(home: string, bind: { readOnly?: readonly string[]; writable?: readonly string[] }): Confinement {
     try {
-      ensurePrivateDir(this.home)
+      this.ensureHome(home)
       const confinement = this.options.confine!(bind)
       confinedCommand('true', [], confinement)
       return confinement
@@ -323,7 +421,8 @@ export class ClaudeAgentRuntime implements AgentRuntimeProvider {
   }
 }
 
-const unavailable = (detail: string): RuntimeEvidence => ({ available: false, detail, sandboxes: [], resume: false, executes: false, readsConfined: false, gatesToolCalls: false })
+// It runs in a named home whether or not it is available now: `homes` says what it can do, not its state.
+const unavailable = (detail: string): RuntimeEvidence => ({ available: false, detail, sandboxes: [], resume: false, executes: false, readsConfined: false, gatesToolCalls: false, homes: true })
 
 const firstLine = (error: unknown): string => (error instanceof Error ? error.message : String(error)).split('\n')[0]!.slice(0, 160)
 

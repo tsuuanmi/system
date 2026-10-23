@@ -695,5 +695,59 @@ The state of each phase is in the [roadmap](roadmap.md#later-candidates). Built:
     home are one account, never two members; a member whose held account cannot be told apart is
     refused with the cause (`workflow` contract 1.5,
     [distinct accounts](../design/teams.md#distinct-accounts)).
+- **Phase E** (2026-10-24; [enrollment and quarantine](../design/agent-runtimes.md#enrollment-and-quarantine),
+  [runbook](../operations/runbooks.md#enroll-an-agent-account)):
+  - enrollment slots (`slots` on an `agent-workers` `providers` entry, default 1), each an
+    owner-only home; slot 1 adopts the runtime's own home where it is (the provider's optional
+    `home`), later slots are `<DSH_HOME>/system/agent-homes/<provider>/<n>`;
+  - `system account login <runtime>` (MCP `account_enroll`, `begin` then `verify`), `login
+    <accountId>`, `verify`, `remove`, and agent accounts in `system account list` (MCP
+    `account_agents`), operator scope, `mcp-agent-accounts@1.0`;
+  - identity readers: Codex (`tokens.account_id` of `auth.json`) and Claude Code
+    (`oauthAccount.accountUuid` and `organizationUuid` of `.claude.json`), each pinned to the
+    version it was seen on (0.164.0, 2.1.308), against redacted fixtures; Codex and Claude Code run
+    and probe in a named home; the Antigravity CLI gives its sign-in command and reads no identity;
+  - the account id `<provider>:<16 hex>` of an HMAC keyed by a per-install key in the vault;
+    quarantine (`changed`, `ambiguous`, `duplicate` of both slots, `unverified`) and `signed-out`,
+    each an `enrollment` decision first; re-read at each probe and before each run, never lifting
+    anything; health's `agent-accounts` check;
+  - open questions taken as proposed: Codex's principal is its ChatGPT account id alone (question
+    3; a workspace plan's shared id then reads as a duplicate, the safe side); Claude Code's is the
+    account and organization ids from the home's state file (question 2); the masked hint is kept
+    (question 9); an API-key sign-in names no person and is `ambiguous` (question 4, the account
+    kind `credential` not built).
+  - Until phase F, the configured Workers run in their runtime's own home: they take work while no
+    slot holds it, or while its account is `ready` or `unverified` (Antigravity's slot 1, as before
+    enrollment); never beyond slot 1. Owed: phase A's supervised check of both readers on the
+    operator's real accounts.
+- **Phase F** (2026-10-24; [Workers = account × role](../design/agent-runtimes.md#workers--account--role),
+  [migration](../design/agent-runtimes.md#migration-from-hand-named-rows),
+  [runbook](../operations/runbooks.md#migrate-agent-workers-to-accounts--roles)):
+  - `roles` and `assignments` on the `agent-workers` row; Workers `agent:<accountId>/<role>`,
+    derived; admitted only while their account is `ready`; each run in its account's home;
+  - per account: `maxConcurrentRunsPerAccount` (default 1), `load` and `reserve`, `siblings`,
+    cooldowns; pools from the resources row's `templates` through the ledger's optional `declare`
+    (resources contract 1.1), one per template and ready account;
+  - `system account migrate` (MCP `account_migrate`, `mcp-agent-accounts@1.1`): planned by default,
+    `--apply` recorded as `enrollment` decisions (rule `agent-workers.migration`) with the old
+    Workers' agent sessions and runs moved, `--rollback` undoing exactly those moves.
+  - Departures, each the conservative reading:
+    - **The cutover** (migration step 2) refuses the hand-named rows only once the operator applied
+      the move, not at the upgrade: until then both shapes load (one per row), and the hand-named
+      Workers route and run exactly as before (tested), so a release with phase F changes nothing
+      on the live host by itself;
+    - the pool id is `<template>/<accountId>`, not `<template>@<accountId>`: `@` is not an id
+      character (`common@1`);
+    - open question 1 taken as proposed: the cutover waits for the Antigravity CLI's reader, unless
+      the operator stops its Workers at the cutover (`--stop antigravity-cli`);
+    - the pools declared are the ready assigned accounts' (ADR-0052), declared again whenever that
+      set changes;
+    - `maxConcurrentRunsPerAccount` of a migrated runtime is the number of its hand-named rows, so
+      as many of its runs run at once as did;
+    - **the first experiment's record** (step 6) is not revised here: its new ids are the live
+      accounts' keyed hashes, which only the operator's `system account migrate` prints; the
+      runbook revises it (`revision: 2`) before it is registered;
+    - the `workerSessions` records of team members keep the ids they were written with, as other
+      records do; only the `agents` source's own sessions and runs move.
 
 The other phases are listed [above](#phased-plan).

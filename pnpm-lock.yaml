@@ -470,6 +470,9 @@ importers:
       '@tsuuanmi/system-event-log':
         specifier: workspace:*
         version: link:../event-log
+      '@tsuuanmi/system-gateway-core':
+        specifier: workspace:*
+        version: link:../../gateway-core
       '@tsuuanmi/system-leases':
         specifier: workspace:*
         version: link:../leases
@@ -492,6 +495,9 @@ importers:
       '@deepseek-ai/cordis':
         specifier: 4.0.5-alpha.1
         version: 4.0.5-alpha.1(@deepseek-ai/cordis-plugin-include@1.0.10-alpha.1)(@deepseek-ai/cordis-plugin-loader@1.0.6-alpha.1)
+      '@deepseek-ai/dsh-credentials':
+        specifier: 0.2.1-alpha.2
+        version: 0.2.1-alpha.2(@deepseek-ai/cordis@4.0.5-alpha.1)
       '@deepseek-ai/schemastery':
         specifier: 3.18.5-alpha.1
         version: 3.18.5-alpha.1
@@ -501,6 +507,9 @@ importers:
       '@tsuuanmi/system-approvals':
         specifier: workspace:*
         version: link:../approvals
+      '@tsuuanmi/system-credentials-vault':
+        specifier: workspace:*
+        version: link:../credentials-vault
       '@tsuuanmi/system-runtime-claude-agent-sdk':
         specifier: workspace:*
         version: link:../runtime-claude-agent-sdk
@@ -519,6 +528,9 @@ importers:
       yaml:
         specifier: 2.9.1
         version: 2.9.1
+      zod:
+        specifier: ^4.1.0
+        version: 4.6.5
 
   packages/plugins/approvals:
     dependencies:

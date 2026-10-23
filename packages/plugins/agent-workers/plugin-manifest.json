@@ -44,13 +44,23 @@
       "optional": true
     },
     {
+      "seam": "credentials",
+      "range": "^1.0.0",
+      "optional": true
+    },
+    {
       "seam": "eventLog",
       "range": "^1.0.0",
       "optional": true
     },
     {
-      "seam": "resources",
+      "seam": "mcp",
       "range": "^1.0.0",
+      "optional": true
+    },
+    {
+      "seam": "resources",
+      "range": "^1.1.0",
       "optional": true
     }
   ],
@@ -60,7 +70,19 @@
       "sensitive": false
     },
     {
+      "key": "roles",
+      "sensitive": false
+    },
+    {
+      "key": "assignments",
+      "sensitive": false
+    },
+    {
       "key": "providers",
+      "sensitive": false
+    },
+    {
+      "key": "accountHomes",
       "sensitive": false
     },
     {

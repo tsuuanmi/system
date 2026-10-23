@@ -25,6 +25,7 @@
     "@tsuuanmi/system-artifacts": "workspace:*",
     "@tsuuanmi/system-egress": "workspace:*",
     "@tsuuanmi/system-event-log": "workspace:*",
+    "@tsuuanmi/system-gateway-core": "workspace:*",
     "@tsuuanmi/system-leases": "workspace:*",
     "@tsuuanmi/system-libs": "workspace:*",
     "@tsuuanmi/system-provider-core": "workspace:*",
@@ -34,19 +35,24 @@
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "4.0.5-alpha.1",
-    "@deepseek-ai/schemastery": "3.18.5-alpha.1"
+    "@deepseek-ai/dsh-credentials": "0.2.1-alpha.2",
+    "@deepseek-ai/schemastery": "3.18.5-alpha.1",
+    "zod": "^4.1.0"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "4.0.5-alpha.1",
+    "@deepseek-ai/dsh-credentials": "0.2.1-alpha.2",
     "@deepseek-ai/schemastery": "3.18.5-alpha.1",
     "@tsuuanmi/system-agent-runtimes": "workspace:*",
     "@tsuuanmi/system-approvals": "workspace:*",
+    "@tsuuanmi/system-credentials-vault": "workspace:*",
     "@tsuuanmi/system-egress": "workspace:*",
     "@tsuuanmi/system-runtime-claude-agent-sdk": "workspace:*",
     "@tsuuanmi/system-runtime-codex-sdk": "workspace:*",
     "@tsuuanmi/system-worker-sessions": "workspace:*",
     "@tsuuanmi/system-workers": "workspace:*",
     "@tsuuanmi/system-workflow": "workspace:*",
-    "yaml": "2.9.1"
+    "yaml": "2.9.1",
+    "zod": "^4.1.0"
   }
 }

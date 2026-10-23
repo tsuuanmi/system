@@ -5,7 +5,7 @@ import { Context } from '@deepseek-ai/cordis'
 import Artifacts from '@tsuuanmi/system-artifacts'
 import Store from '@tsuuanmi/system-store'
 import { runSuite } from '../../../libs/conformance/runner.ts'
-import { POOLS, resourcesSuite } from '../../../resources-core/conformance/resources.ts'
+import { POOLS, resourcesSuite, TEMPLATES } from '../../../resources-core/conformance/resources.ts'
 import { RESOURCES_CONTRACT } from '@tsuuanmi/system-resources-core'
 import StoreResources from '../src/index.ts'
 
@@ -17,7 +17,7 @@ runSuite(resourcesSuite, {
   boot: async () => {
     const dir = mkdtempSync(join(tmpdir(), 'system-resources-conformance-'))
     const ctx = new Context()
-    const fibers = [ctx.plugin(Store, { path: join(dir, 'system.db') }), ctx.plugin(Artifacts, {}), ctx.plugin(StoreResources, { pools: structuredClone([...POOLS]) })]
+    const fibers = [ctx.plugin(Store, { path: join(dir, 'system.db') }), ctx.plugin(Artifacts, {}), ctx.plugin(StoreResources, { pools: structuredClone([...POOLS]), templates: structuredClone([...TEMPLATES]) })]
     await Promise.all(fibers)
     return {
       ctx,

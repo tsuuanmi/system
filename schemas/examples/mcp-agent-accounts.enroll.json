@@ -1,0 +1,18 @@
+{
+  "tool": "account_enroll",
+  "input": { "step": "begin", "provider": "codex-sdk" },
+  "output": {
+    "account": {
+      "schema": "agent-account@1.0",
+      "provider": "codex-sdk",
+      "slot": 2,
+      "home": "/home/operator/.dsh/system/agent-homes/codex-sdk/2",
+      "status": "enrolled",
+      "revision": 0,
+      "updatedAt": "2026-10-24T08:00:00Z"
+    },
+    "workers": [],
+    "login": { "command": "/usr/local/bin/codex", "args": ["login"], "env": { "CODEX_HOME": "/home/operator/.dsh/system/agent-homes/codex-sdk/2" } },
+    "adopted": false
+  }
+}
