@@ -61,4 +61,9 @@ export const MIGRATIONS = [{
   version: 11,
   sql: `ALTER TABLE workflow_nodes ADD COLUMN brief_parts TEXT;
   ALTER TABLE workflow_tasks ADD COLUMN frame TEXT;`,
+}, {
+  // A remediation fix's gate on the approval queue (docs/design/workflow-engine.md#remediation-on-the-approval-queue):
+  // the request it waits on.
+  version: 12,
+  sql: 'ALTER TABLE workflow_nodes ADD COLUMN approval_request TEXT;',
 }]

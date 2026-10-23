@@ -55,12 +55,20 @@ function usageOf(e: Engine, result: ArtifactRef): Pick<NodeView, 'usage'> {
   return typeof usage?.inputTokens === 'number' && typeof usage.outputTokens === 'number' ? { usage: { inputTokens: usage.inputTokens, outputTokens: usage.outputTokens } } : {}
 }
 
-/** What the run waits for: a plan's gate (the operator's `approve`) or a team's tie (a deciding `vote`). */
+/**
+ * What the run waits for: a plan's gate (the operator's `approve`, or, for a remediation fix put to
+ * the approval queue, the verdict on its request there) or a team's tie (a deciding `vote`).
+ */
 function blockedOf(e: Engine, runId: string): Pick<RunView, 'blocked'> {
   const node = e.nodeRows(runId).find((n) => n.state === 'BLOCKED')
   if (!node) return {}
   const spec = JSON.parse(node.spec) as ResolvedNode
-  return { blocked: spec.executor === 'decide' ? tieOf(e, node) : { kind: 'gate', nodeId: node.node_id, plan: spec.plan as ArtifactRef, ...(node.not_before ? { until: node.not_before } : {}) } }
+  return {
+    blocked: spec.executor === 'decide' ? tieOf(e, node) : {
+      kind: 'gate', nodeId: node.node_id, plan: spec.plan as ArtifactRef, ...(node.not_before ? { until: node.not_before } : {}),
+      ...(node.approval_request ? { approvalRequest: node.approval_request } : {}),
+    },
+  }
 }
 
 /** Recent runs and, per node, which Worker, tier, and quota class served it (usage report). */

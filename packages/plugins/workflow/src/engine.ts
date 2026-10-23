@@ -14,6 +14,7 @@ import { AdmissionFailure, type AdmittedWorker, type ArtifactRef, type Classific
 import { type Draft, draftOf, instructionsText, recordBrief, renderedChars, type TaskFrame } from './briefs.ts'
 import { block, expireGate, gateDeadline, grow, grownSteps } from './growth.ts'
 import { admissionKind, escalate, failAttempt, inputHint, routedDecisions } from './recovery.ts'
+import { isRemediationGate, pollMs, queueOf, settleQueued } from './queue.ts'
 import { missingSubject, remediate, reviewSubject, subjectGate } from './review.ts'
 import { recoverWakes, settleWake } from './sessions.ts'
 import { appended, compose, DEFAULT_TEMPLATES, literal, type NodeTemplate, recordExecutor, type ResolvedNode, type ResolvedSpec, resolve, schemaBlock, variantProblem, variantsOf } from './spec.ts'
@@ -365,6 +366,10 @@ export class Engine {
             // A tie waits a bounded time for a deciding vote, and a plan's gate for its verdict (INV-9):
             // a tie then completes inconclusive, a gate closes and fails the run.
             const waiting = current_.filter((n) => n.state === 'BLOCKED' && ['decide', 'gate'].includes((JSON.parse(n.spec) as ResolvedNode).executor ?? ''))
+            // A remediation fix's gate waits on the approval queue when one is loaded: put its plan
+            // there, or apply the verdict the queue has (./queue.ts).
+            const queued = waiting.filter((n) => isRemediationGate(JSON.parse(n.spec) as ResolvedNode) && n.not_before)
+            if (queued.length && await settleQueued(this, run, queued, current)) continue
             const expired = waiting.find((n) => !(Date.parse(n.not_before ?? '') - Date.now() > 0))
             if (expired) {
               if (!expired.not_before) {
@@ -374,8 +379,11 @@ export class Engine {
               else expireGate(this, run, expired, current)
               continue
             }
-            if (waiting.length) this.retryLater(runId, Math.min(...waiting.map((n) => Date.parse(n.not_before!) - Date.now())))
-            // Waiting for the operator's `approve` or the caller's `vote`, which schedule the run again;
+            // A run waiting on the queue reads it again every approvalPollSeconds.
+            const poll = queued.length && queueOf(this) ? [pollMs(this)] : []
+            if (waiting.length) this.retryLater(runId, Math.min(...poll, ...waiting.map((n) => Date.parse(n.not_before!) - Date.now())))
+            // Waiting for the operator's `approve` or the caller's `vote`, which schedule the run again,
+            // or for the queue's verdict, read on the poll above;
             // whoever waits on the run learns now that it waits on them.
             if (current_.some((n) => n.state === 'BLOCKED')) {
               for (const wake of this.waiters.get(runId) ?? []) wake()

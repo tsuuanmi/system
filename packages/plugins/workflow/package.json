@@ -19,6 +19,7 @@
     "build": "tsc -p tsconfig.build.json"
   },
   "dependencies": {
+    "@tsuuanmi/system-approvals-core": "workspace:*",
     "@tsuuanmi/system-artifacts": "workspace:*",
     "@tsuuanmi/system-board-core": "workspace:*",
     "@tsuuanmi/system-egress": "workspace:*",
@@ -44,7 +45,6 @@
     "@modelcontextprotocol/sdk": "1.32.1",
     "@tsuuanmi/system-accounts": "workspace:*",
     "@tsuuanmi/system-approvals": "workspace:*",
-    "@tsuuanmi/system-approvals-core": "workspace:*",
     "@tsuuanmi/system-board": "workspace:*",
     "@tsuuanmi/system-browser-patchright": "workspace:*",
     "@tsuuanmi/system-credentials-vault": "workspace:*",

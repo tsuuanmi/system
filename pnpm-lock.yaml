@@ -1374,6 +1374,9 @@ importers:
 
   packages/plugins/workflow:
     dependencies:
+      '@tsuuanmi/system-approvals-core':
+        specifier: workspace:*
+        version: link:../../approvals-core
       '@tsuuanmi/system-artifacts':
         specifier: workspace:*
         version: link:../artifacts
@@ -1429,9 +1432,6 @@ importers:
       '@tsuuanmi/system-approvals':
         specifier: workspace:*
         version: link:../approvals
-      '@tsuuanmi/system-approvals-core':
-        specifier: workspace:*
-        version: link:../../approvals-core
       '@tsuuanmi/system-board':
         specifier: workspace:*
         version: link:../board

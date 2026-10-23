@@ -98,7 +98,7 @@ interface RunOutcome {
   sessionId?: string
   answer?: string
   nodes?: Array<{ nodeId: string; state: string }>
-  blocked?: { kind: 'gate'; nodeId: string; plan: string } | { kind: 'tie'; nodeId: string; decision: string; options: Array<{ option: string; summary: string }>; until: string }
+  blocked?: { kind: 'gate'; nodeId: string; plan: string; approvalRequest?: string } | { kind: 'tie'; nodeId: string; decision: string; options: Array<{ option: string; summary: string }>; until: string }
   error?: { kind: string; message: string }
 }
 
@@ -116,6 +116,10 @@ async function awaitRun(first: ToolOutcome): Promise<number> {
       console.error(`the team tied; until ${tie.until} it waits for a deciding vote, then ends inconclusive:`)
       for (const o of tie.options) console.error(`  ${o.option}: ${o.summary}`)
       console.error(`system vote ${run.runId} --decision ${tie.decision} <${tie.options.map((o) => o.option).join('|')}|inconclusive> <rationale>`)
+      return 0
+    }
+    if (run.status === 'running' && run.blocked?.kind === 'gate' && run.blocked.approvalRequest) {
+      console.error(`waiting on approval request ${run.blocked.approvalRequest} for plan ${run.blocked.plan}: decide it in the approval queue (system ui, or MCP approvals_decide)`)
       return 0
     }
     if (run.status === 'running' && run.blocked?.kind === 'gate') {
