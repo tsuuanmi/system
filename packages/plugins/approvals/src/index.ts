@@ -644,7 +644,13 @@ export class StoreApprovals extends Approvals {
       WHERE s.shape = ? AND s.created_ms > ? AND s.created_ms <= ? ORDER BY s.created_ms, r.seq`).all(shape, since, when.getTime()) as Array<{ request_id: string; record: string }>
     const approved: ApprovalRequest[] = []
     for (const row of rows) {
-      const request = this.load(row.request_id, row.record)
+      let request: ApprovalRequest
+      try {
+        request = this.load(row.request_id, row.record)
+      } catch (error) {
+        this.skipped(`the repeated approvals of \`${shape}\``, error)
+        return undefined
+      }
       const { resolution } = request
       if (request.action.class !== 'command' || request.requester.projectId !== undefined || request.classification === 'local-private') return undefined
       if (request.state === 'rejected' && (resolution?.cause === 'verdict' || resolution?.cause === 'expired')) return undefined

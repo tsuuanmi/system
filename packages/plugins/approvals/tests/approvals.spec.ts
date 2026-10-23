@@ -873,6 +873,16 @@ describe('the queue proposes a policy change from repeated approvals (docs/desig
     expect(decisions()).toEqual(before)
   })
 
+  it('leaves out a command whose stored request fails its schema, logged, and still proposes another (INV-14)', async () => {
+    const { ctx, approvals } = await boot({ config: REPEATED })
+    const [broken] = await approvedTimes(ctx, LINT, 4)
+    await approvedTimes(ctx, ['pnpm', 'build'], 3, after(300), 'b')
+    ctx.store.db.prepare('UPDATE approval_requests SET record = ? WHERE request_id = ?').run(JSON.stringify({ ...broken, expiresAt: 'never' }), broken!.requestId)
+    const warned = logged(ctx, 'warn')
+    expect(await approvals.proposeRepeated(after(600))).toMatchObject({ origin: { shape: { command: 'pnpm build' } } })
+    expect(warned.some((m) => m.includes('left the repeated approvals of `pnpm lint` as it was'))).toBe(true)
+  })
+
   it('lets one of two providers over the same store propose, never both (BEGIN IMMEDIATE)', async () => {
     const one = await boot({ config: REPEATED })
     const two = await boot({ dir: one.dir, config: REPEATED })
