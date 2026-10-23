@@ -1,0 +1,24 @@
+{
+  "schema": "decision@1.8",
+  "decisionType": "recovery",
+  "question": "How does node review:1 of run run_0123456789abcdef recover from quota_exhausted?",
+  "inputs": ["sha256:9b1c4d2e3f405162738495a6b7c8d9e0f1a2b3c4d5e6f708192a3b4c5d6e7f80"],
+  "candidates": [
+    { "option": "retry", "selected": false, "reasons": ["not retry: the only Workers that could take it are on assigned accounts at their limit"] },
+    { "option": "failover", "selected": false, "reasons": ["not failover: assigned accounts do not take another account's work at its limit"] },
+    { "option": "wait", "selected": true, "reasons": ["worker:account-b/standard is at its limit until 2026-10-24T18:40:00Z; the node waits for that reset, 1 h of the 24 h it may wait in all, and spends no attempt"] },
+    { "option": "fail", "selected": false, "reasons": ["not fail: the reset is known and within maxLimitWaitHours (24)"] }
+  ],
+  "decider": { "type": "rule", "id": "workflow.recovery", "version": "1" },
+  "outcome": {
+    "option": "wait",
+    "detail": {
+      "kind": "quota_exhausted",
+      "attempt": 0,
+      "until": "2026-10-24T18:40:00Z",
+      "since": "2026-10-24T17:40:00Z",
+      "maxLimitWaitHours": 24
+    }
+  },
+  "deterministic": true
+}

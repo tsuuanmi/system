@@ -1,0 +1,17 @@
+{
+  "schema": "agent-account@1.0",
+  "accountId": "claude-agent-sdk:1f0c7a9e2b4d6c88",
+  "provider": "claude-agent-sdk",
+  "slot": 1,
+  "home": "/home/operator/.dsh/system/agent-homes/claude-agent-sdk/1",
+  "status": "ready",
+  "identity": {
+    "hmac": "1f0c7a9e2b4d6c8810a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708",
+    "reader": "claude-state-file",
+    "runtimeVersion": "2.1.0",
+    "verifiedAt": "2026-10-24T08:00:00Z"
+  },
+  "hint": "j…@example.com",
+  "revision": 3,
+  "updatedAt": "2026-10-24T08:00:00Z"
+}

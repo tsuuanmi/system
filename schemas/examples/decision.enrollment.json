@@ -1,0 +1,24 @@
+{
+  "schema": "decision@1.8",
+  "decisionType": "enrollment",
+  "question": "What is the account signed in to slot 2 of codex-sdk?",
+  "inputs": [],
+  "candidates": [
+    { "option": "ready", "selected": false, "reasons": ["not ready: another slot of codex-sdk signs in as the same principal"] },
+    { "option": "quarantined", "selected": true, "reasons": ["duplicate: slots 1 and 2 of codex-sdk resolve to one principal, so both take no work until the operator resolves it"] },
+    { "option": "signed-out", "selected": false, "reasons": ["not signed-out: the runtime's own sign-in check passed"] }
+  ],
+  "decider": { "type": "rule", "id": "agent-accounts.enrollment", "version": "1" },
+  "outcome": {
+    "option": "quarantined",
+    "detail": {
+      "provider": "codex-sdk",
+      "slot": 2,
+      "accountId": "codex-sdk:04aa5c1e9b7d3f20",
+      "reason": "duplicate",
+      "reader": "codex-auth-json",
+      "runtimeVersion": "0.120.0"
+    }
+  },
+  "deterministic": true
+}

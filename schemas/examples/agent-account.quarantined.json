@@ -1,0 +1,14 @@
+{
+  "schema": "agent-account@1.0",
+  "provider": "antigravity-cli",
+  "slot": 1,
+  "home": "/home/operator/.dsh/system/agent-homes/antigravity-cli/1",
+  "status": "quarantined",
+  "quarantine": {
+    "reason": "unverified",
+    "since": "2026-10-24T08:00:00Z",
+    "decision": "sha256:3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8091a2b"
+  },
+  "revision": 1,
+  "updatedAt": "2026-10-24T08:00:00Z"
+}
