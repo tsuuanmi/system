@@ -1,0 +1,42 @@
+{
+  "hypothesisId": "review-worker-agnostic",
+  "statement": "The review template is worker-agnostic: a team of a Codex CLI Worker and an Antigravity CLI Worker is non-inferior to a team of a ChatGPT website Worker and a Gemini website Worker on correctly identified actionable defects per cost, with blocking-defect recall at or above the floor.",
+  "target": {
+    "kind": "template",
+    "ref": "review",
+    "version": "1"
+  },
+  "mechanism": {
+    "tag": "worker-substitution",
+    "text": "The template's guarantees (sealed ballots, quote checks, the blocking-finding rule) do not depend on the Worker source its members run on."
+  },
+  "intervention": {
+    "tag": "member-workers",
+    "text": "Both website members replaced by agent CLI members of two other families."
+  },
+  "expectedEffect": {
+    "metric": "defects-per-cost",
+    "direction": "non-inferior"
+  },
+  "context": {
+    "workload": "review.public-commits",
+    "text": "Exact-subject reviews of pinned commits of system's own public repository, read offline."
+  },
+  "priorEvidence": {
+    "experiments": [],
+    "lessons": [],
+    "research": []
+  },
+  "source": {
+    "kind": "operator"
+  },
+  "schema": "hypothesis@1.0",
+  "fingerprint": {
+    "version": "1",
+    "target": "template:review",
+    "mechanism": "worker-substitution",
+    "intervention": "member-workers",
+    "effect": "defects-per-cost:non-inferior",
+    "hash": "sha256:e0cebe240cc7d131819188c47d03d3ed9a45e478801c15fd88d16d34b44f546a"
+  }
+}

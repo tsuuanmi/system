@@ -1,0 +1,160 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:tsuuanmi:system:schema:lesson:v1",
+  "title": "Lesson",
+  "description": "Body of a `finding` artifact: reusable knowledge drawn from verdicts, qualified by where it was observed (PROP-0011, design/experiments.md). Its outcome equals the outcome of every verdict it cites (checked by the registry). Whether it still applies is computed when it is read, from its `invalidatedBy` predicates against the current environment; it is never a stored status.",
+  "type": "object",
+  "required": ["schema", "lessonId", "claim", "outcome", "evidence", "applicability", "invalidatedBy"],
+  "properties": {
+    "schema": { "const": "lesson@1.0" },
+    "lessonId": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+    "claim": { "type": "string", "minLength": 1, "maxLength": 4000 },
+    "outcome": { "enum": ["supported", "refuted", "inconclusive", "invalid"] },
+    "evidence": {
+      "description": "The verdict decisions it interprets, and their experiments.",
+      "type": "object",
+      "required": ["verdicts", "experiments"],
+      "properties": {
+        "verdicts": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/artifactRef" }
+        },
+        "experiments": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "items": {
+            "type": "object",
+            "required": ["id", "revision", "ref"],
+            "properties": {
+              "id": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+              "revision": { "type": "integer", "minimum": 1, "maximum": 1000 },
+              "ref": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/artifactRef" }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "applicability": {
+      "description": "The envelope it was observed in: the workload, the families and the model versions they showed, the environment, the contract and suite versions, when, and how confident the author is.",
+      "type": "object",
+      "required": ["families", "environment", "objective", "suite", "date", "confidence"],
+      "properties": {
+        "workload": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+        "families": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "items": {
+            "type": "object",
+            "required": ["family"],
+            "properties": {
+              "family": { "$ref": "urn:tsuuanmi:system:schema:experiment:v1#/$defs/family" },
+              "observed": { "type": "string", "minLength": 1, "maxLength": 128 }
+            },
+            "additionalProperties": false
+          }
+        },
+        "environment": {
+          "description": "The environment hash of the experiments it was drawn from.",
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/sha256"
+        },
+        "objective": { "$ref": "#/$defs/versioned" },
+        "suite": { "$ref": "#/$defs/versioned" },
+        "date": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp" },
+        "confidence": { "enum": ["low", "medium", "high"] }
+      },
+      "additionalProperties": false
+    },
+    "invalidatedBy": {
+      "description": "Predicates that, once one fires against the current environment, make the lesson history: shown as possibly stale, never applied.",
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 32,
+      "items": { "$ref": "#/$defs/invalidation" }
+    },
+    "supersedes": {
+      "description": "An earlier lesson this one replaces.",
+      "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/artifactRef"
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "versioned": {
+      "type": "object",
+      "required": ["id", "version"],
+      "properties": {
+        "id": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+        "version": { "type": "integer", "minimum": 1, "maximum": 1000000 }
+      },
+      "additionalProperties": false
+    },
+    "invalidation": {
+      "description": "`model-version`: the family shows another version than `observed`; `objective-version`, `suite-version`: the contract or suite in use is at another version; `mechanism`: the vocabulary no longer has the tag; `measurement-defect`: the collector is at another version (its defect fixed); `cost-structure`: another cost model; `expiry`: the date passed.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["kind", "family", "observed"],
+          "properties": {
+            "kind": { "const": "model-version" },
+            "family": { "$ref": "urn:tsuuanmi:system:schema:experiment:v1#/$defs/family" },
+            "observed": { "type": "string", "minLength": 1, "maxLength": 128 }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["kind", "id", "version"],
+          "properties": {
+            "kind": { "enum": ["objective-version", "suite-version"] },
+            "id": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+            "version": { "type": "integer", "minimum": 1, "maximum": 1000000 }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["kind", "tag"],
+          "properties": {
+            "kind": { "const": "mechanism" },
+            "tag": { "$ref": "urn:tsuuanmi:system:schema:objective-contract:v1#/$defs/name" }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["kind", "collector", "version"],
+          "properties": {
+            "kind": { "const": "measurement-defect" },
+            "collector": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+            "version": { "type": "string", "minLength": 1, "maxLength": 64 }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["kind", "costModel"],
+          "properties": {
+            "kind": { "const": "cost-structure" },
+            "costModel": { "type": "string", "minLength": 1, "maxLength": 128 }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["kind", "at"],
+          "properties": {
+            "kind": { "const": "expiry" },
+            "at": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp" }
+          },
+          "additionalProperties": false
+        }
+      ]
+    }
+  }
+}

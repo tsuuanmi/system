@@ -50,9 +50,9 @@ export interface Decision {
    * `@1.1` once it records a team vote or a client's decision; otherwise `@1.0`, so earlier decisions
    * keep their ids. A recorder that uses a later minor's fields names it (`@1.2`: a review's quote checks;
    * `@1.3`: a `retention` decision; `@1.4`: an `autonomy`, `approval`, `board`, or `budget` decision;
-   * `@1.5`: a `lifecycle` decision; `@1.6`: a `policy-change` decision).
+   * `@1.5`: a `lifecycle` decision; `@1.6`: a `policy-change` decision; `@1.7`: a `registration` or `verdict` decision).
    */
-  schema: 'decision@1.0' | 'decision@1.1' | 'decision@1.2' | 'decision@1.3' | 'decision@1.4' | 'decision@1.5' | 'decision@1.6'
+  schema: 'decision@1.0' | 'decision@1.1' | 'decision@1.2' | 'decision@1.3' | 'decision@1.4' | 'decision@1.5' | 'decision@1.6' | 'decision@1.7'
   decisionType: string
   question: string
   inputs: ContentId[]

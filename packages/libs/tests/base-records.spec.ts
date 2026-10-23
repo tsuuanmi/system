@@ -23,7 +23,7 @@ describe('autonomy-policy@1.0', () => {
   const withRule = (rule: Json) => ({ ...policy, rules: [rule] })
 
   it('never lets an irreversible action or an investor decision run unasked (INV-2)', () => {
-    for (const actionClass of ['external-send', 'deploy', 'delete-data', 'spend', 'charter', 'funding', 'policy-change']) {
+    for (const actionClass of ['external-send', 'deploy', 'delete-data', 'spend', 'charter', 'funding', 'policy-change', 'promotion']) {
       expect(valid('autonomy-policy@1.0', withRule({ actionClass, mode: 'auto' })), actionClass).toBe(false)
       expect(valid('autonomy-policy@1.0', withRule({ actionClass, mode: 'notify' })), actionClass).toBe(false)
       expect(valid('autonomy-policy@1.0', withRule({ actionClass, mode: 'ask' })), actionClass).toBe(true)

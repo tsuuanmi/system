@@ -1,0 +1,271 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:tsuuanmi:system:schema:evaluation:v1",
+  "title": "Evaluation",
+  "description": "Body of an `evidence` artifact: the measurements and evidence of one evaluation of one experiment, at its exact identity (PROP-0011, design/evaluations.md). Written by the evaluation engine once the evaluation ends; measurements are observations, never a verdict: the verdict is a `verdict` decision that cites this record.",
+  "type": "object",
+  "required": ["schema", "evaluationId", "experiment", "startedAt", "ended", "horizonReached", "trials", "arms", "analysis", "hardConstraints", "cost", "integrity"],
+  "properties": {
+    "schema": { "const": "evaluation@1.0" },
+    "evaluationId": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+    "experiment": {
+      "description": "The experiment evaluated, at its exact identity (INV-5).",
+      "type": "object",
+      "required": ["id", "revision", "ref", "identity"],
+      "properties": {
+        "id": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+        "revision": { "type": "integer", "minimum": 1, "maximum": 1000 },
+        "ref": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/artifactRef" },
+        "identity": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/sha256" }
+      },
+      "additionalProperties": false
+    },
+    "startedAt": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp" },
+    "ended": {
+      "description": "Why it ended: its horizon reached, its budget spent, an integrity breach, or a broken hard constraint.",
+      "type": "object",
+      "required": ["reason", "at"],
+      "properties": {
+        "reason": { "enum": ["horizon", "budget", "integrity", "hard-constraint"] },
+        "at": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp" },
+        "detail": { "type": "string", "minLength": 1, "maxLength": 1000 }
+      },
+      "additionalProperties": false
+    },
+    "horizonReached": { "type": "boolean" },
+    "trials": {
+      "description": "Every scheduled trial, in schedule order: case × arm × repetition, drawn from the experiment's seed.",
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 200000,
+      "items": { "$ref": "#/$defs/trial" }
+    },
+    "arms": {
+      "description": "The metric vector per arm: each metric's value over the arm's measured trials (a mean per case, then over cases; a ratio of sums for a ratio metric).",
+      "type": "array",
+      "maxItems": 2,
+      "items": {
+        "type": "object",
+        "required": ["arm", "metrics"],
+        "properties": {
+          "arm": { "$ref": "#/$defs/arm" },
+          "metrics": {
+            "type": "array",
+            "maxItems": 64,
+            "items": {
+              "type": "object",
+              "required": ["metric", "value", "cases"],
+              "properties": {
+                "metric": { "$ref": "#/$defs/name" },
+                "value": { "type": "number" },
+                "cases": { "type": "integer", "minimum": 0, "maximum": 100000 }
+              },
+              "additionalProperties": false
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "analysis": {
+      "description": "The declared method's result per metric, on paired differences per case (candidate minus baseline, as measured: the verdict rule orients them by the metric's direction). Empty unless the horizon was reached with every integrity check passed: v1 takes one analysis, at the end.",
+      "type": "array",
+      "maxItems": 64,
+      "items": {
+        "type": "object",
+        "required": ["metric", "method", "cases", "difference"],
+        "properties": {
+          "metric": { "$ref": "#/$defs/name" },
+          "method": {
+            "type": "object",
+            "required": ["kind", "library", "version"],
+            "properties": {
+              "kind": { "enum": ["sign-flip", "bootstrap", "bayesian"] },
+              "library": { "type": "string", "minLength": 1, "maxLength": 214 },
+              "version": { "type": "string", "minLength": 1, "maxLength": 64 }
+            },
+            "additionalProperties": false
+          },
+          "cases": { "type": "integer", "minimum": 1, "maximum": 100000 },
+          "difference": { "$ref": "#/$defs/interval" },
+          "candidate": {
+            "description": "The candidate arm's own level, for a guardrail held to a floor.",
+            "$ref": "#/$defs/interval"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "hardConstraints": {
+      "type": "array",
+      "maxItems": 32,
+      "items": {
+        "type": "object",
+        "required": ["id", "held", "broken"],
+        "properties": {
+          "id": { "$ref": "#/$defs/name" },
+          "held": { "type": "boolean" },
+          "broken": {
+            "description": "The trials it broke in, by index.",
+            "type": "array",
+            "maxItems": 1000,
+            "items": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "cost": {
+      "description": "What the experiment cost, from the resource ledger's usage records (never a model's report): per pool and unit, per phase, sunk (spent) or projected (an estimate of operating it).",
+      "type": "object",
+      "required": ["lines"],
+      "properties": {
+        "lines": {
+          "type": "array",
+          "maxItems": 256,
+          "items": {
+            "type": "object",
+            "required": ["pool", "unit", "amount", "phase", "kind"],
+            "properties": {
+              "pool": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+              "unit": { "enum": ["tokens", "usd", "turns", "runs", "minutes"] },
+              "amount": { "type": "number", "minimum": 0, "maximum": 1000000000000 },
+              "phase": { "enum": ["research", "brainstorm", "implementation", "evaluation", "review", "deployment", "operations"] },
+              "kind": { "enum": ["sunk", "projected"] }
+            },
+            "additionalProperties": false
+          }
+        },
+        "operator": {
+          "description": "The operator's attention: interruptions and adjudication time.",
+          "type": "object",
+          "required": ["interruptions", "adjudicationMinutes"],
+          "properties": {
+            "interruptions": { "type": "integer", "minimum": 0, "maximum": 1000000 },
+            "adjudicationMinutes": { "type": "number", "minimum": 0, "maximum": 1000000 }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "integrity": {
+      "description": "Each integrity check and whether it passed: the pins, the partitions' seals, every trial inside its arm, no same-family fallback, every required metric measured, a candidate that never touched its judge, and no trial lost. One failed check makes the verdict `invalid`.",
+      "type": "object",
+      "required": ["checks", "missing"],
+      "properties": {
+        "checks": {
+          "type": "array",
+          "minItems": 7,
+          "maxItems": 7,
+          "items": {
+            "type": "object",
+            "required": ["check", "passed"],
+            "properties": {
+              "check": { "enum": ["pins", "seal", "arms", "families", "metrics", "judge", "trials"] },
+              "passed": { "type": "boolean" },
+              "detail": { "type": "string", "minLength": 1, "maxLength": 1000 }
+            },
+            "additionalProperties": false
+          }
+        },
+        "missing": {
+          "description": "Every value a trial lacks, and why.",
+          "type": "array",
+          "maxItems": 10000,
+          "items": {
+            "type": "object",
+            "required": ["trial", "metric", "why"],
+            "properties": {
+              "trial": { "type": "integer", "minimum": 0 },
+              "metric": { "$ref": "#/$defs/name" },
+              "why": { "type": "string", "minLength": 1, "maxLength": 500 }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "name": { "$ref": "urn:tsuuanmi:system:schema:objective-contract:v1#/$defs/name" },
+    "arm": { "enum": ["baseline", "candidate"] },
+    "interval": {
+      "type": "object",
+      "required": ["estimate", "lower", "upper"],
+      "properties": {
+        "estimate": { "type": "number" },
+        "lower": { "type": "number" },
+        "upper": { "type": "number" }
+      },
+      "additionalProperties": false
+    },
+    "trial": {
+      "type": "object",
+      "required": ["index", "case", "partition", "arm", "repetition", "state", "results", "measurements"],
+      "properties": {
+        "index": { "description": "Its place in the schedule.", "type": "integer", "minimum": 0, "maximum": 200000 },
+        "case": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+        "partition": { "enum": ["regression", "held-out"] },
+        "arm": { "$ref": "#/$defs/arm" },
+        "repetition": { "type": "integer", "minimum": 1, "maximum": 100 },
+        "state": {
+          "description": "`completed` or `failed`: the run ended and was measured (a failed run is an outcome too); `lost`: it started and its outcome is unknown, so it was never run again (INV-4); `skipped`: the evaluation ended before it started.",
+          "enum": ["completed", "failed", "lost", "skipped"]
+        },
+        "task": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+        "run": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+        "results": {
+          "type": "array",
+          "maxItems": 64,
+          "items": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/artifactRef" }
+        },
+        "route": {
+          "description": "The Workers and families that served it, and whether it fell back to one family.",
+          "type": "object",
+          "required": ["workers", "families", "sameFamily"],
+          "properties": {
+            "workers": { "type": "array", "maxItems": 16, "items": { "type": "string", "minLength": 1, "maxLength": 200 } },
+            "families": { "type": "array", "maxItems": 16, "items": { "type": "string", "minLength": 1, "maxLength": 128 } },
+            "sameFamily": { "type": "boolean" },
+            "observed": {
+              "description": "The model or provider version each Worker showed, by worker.",
+              "type": "object",
+              "maxProperties": 16,
+              "additionalProperties": { "type": "string", "minLength": 1, "maxLength": 128 }
+            }
+          },
+          "additionalProperties": false
+        },
+        "measurements": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "type": "object",
+            "required": ["metric", "value", "source"],
+            "properties": {
+              "metric": { "$ref": "#/$defs/name" },
+              "value": { "type": "number" },
+              "source": {
+                "description": "The collector and version that measured it, or `ledger` for a cost metric.",
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 300
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "invalid": {
+          "description": "Why the trial is invalid: it ran outside its arm, fell back to one family, showed a model version other than the pinned one, or a collector found it contaminated.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

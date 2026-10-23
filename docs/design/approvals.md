@@ -68,9 +68,12 @@ request that never expires (INV-9).
   only the classes it names. A class no rule names takes the stricter `default`, which is `ask`
   or `forbid`.
 - Irreversible effects (`external-send`, `deploy`, `delete-data`, `spend`), the investor's
-  decisions (`charter`, `funding`, `policy-change`), and `remediation` (a fix that writes, or a
+  decisions (`charter`, `funding`, `policy-change`), `remediation` (a fix that writes, or a
   lost run going on, waits for a person: the workflow's remediation gate and the board ask the
-  queue about it) are never `auto` or `notify` (`ALWAYS_ASK`).
+  queue about it), and `promotion` (a plugin moved to `default` on an accepted evaluation, so the
+  feedback loop never approves its own change:
+  [ADR-0045](../decisions/adr/0045-feedback-loop-guarantee-seams.md)) are never `auto` or
+  `notify` (`ALWAYS_ASK`).
   The schema refuses a policy that says so (for `remediation`, which the schema predates, a
   load-time rule does), and the provider raises each of them to at least `ask` whatever a rule
   says.

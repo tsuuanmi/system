@@ -1,0 +1,324 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:tsuuanmi:system:schema:experiment:v1",
+  "title": "Experiment",
+  "description": "Body of a `plan` artifact: an immutable, pre-registered trial specification (PROP-0011, design/experiments.md). Written by the experiment registry when it answers a registration, with the answer and the exact identity it computed; a material change is a new revision that supersedes this one, never an edit.",
+  "type": "object",
+  "required": ["schema", "experimentId", "revision", "hypothesis", "objectiveContract", "comparison", "baseline", "candidate", "suite", "environment", "protocol", "stopping", "budget", "seed", "independence", "registry", "identity"],
+  "properties": {
+    "schema": { "const": "experiment@1.0" },
+    "experimentId": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+    "revision": { "type": "integer", "minimum": 1, "maximum": 1000 },
+    "supersedes": {
+      "description": "The experiment artifact of the revision this one replaces, the live one; required from revision 2 on.",
+      "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/artifactRef"
+    },
+    "hypothesis": {
+      "type": "object",
+      "required": ["id", "ref"],
+      "properties": {
+        "id": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+        "ref": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/artifactRef" }
+      },
+      "additionalProperties": false
+    },
+    "objectiveContract": {
+      "description": "The contract version the experiment is judged under: `hash` is the sha256 of the contract's canonical JSON, `ref` its artifact.",
+      "type": "object",
+      "required": ["id", "version", "hash", "ref"],
+      "properties": {
+        "id": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+        "version": { "type": "integer", "minimum": 1, "maximum": 1000000 },
+        "hash": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/sha256" },
+        "ref": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/artifactRef" }
+      },
+      "additionalProperties": false
+    },
+    "comparison": {
+      "description": "The comparison on the primary metric, declared here: superiority (above the contract's minimum practical effect) or non-inferiority within `margin`.",
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "enum": ["superiority", "non-inferiority"] },
+        "margin": { "type": "number", "minimum": 0, "maximum": 1000000000 }
+      },
+      "if": { "properties": { "type": { "const": "non-inferiority" } } },
+      "then": { "required": ["margin"], "properties": { "margin": true } },
+      "else": { "not": { "required": ["margin"], "properties": { "margin": true } } },
+      "additionalProperties": false
+    },
+    "baseline": { "$ref": "#/$defs/arm" },
+    "candidate": {
+      "description": "The candidate, with the runs that produced it: their usage counts as its cost.",
+      "type": "object",
+      "required": ["subject", "provenance"],
+      "properties": {
+        "subject": { "$ref": "#/$defs/exactSubject" },
+        "label": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/shortText" },
+        "provenance": {
+          "type": "object",
+          "required": ["runs"],
+          "properties": {
+            "runs": {
+              "type": "array",
+              "maxItems": 64,
+              "uniqueItems": true,
+              "items": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "suite": {
+      "description": "The task suite at one version: each partition's hash and number of cases, and the partitions whose cases are this experiment's evidence.",
+      "type": "object",
+      "required": ["id", "version", "partitions", "used"],
+      "properties": {
+        "id": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+        "version": { "type": "integer", "minimum": 1, "maximum": 1000000 },
+        "partitions": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 3,
+          "items": {
+            "type": "object",
+            "required": ["name", "hash", "cases"],
+            "properties": {
+              "name": { "enum": ["development", "regression", "held-out"] },
+              "hash": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/sha256" },
+              "cases": { "type": "integer", "minimum": 1, "maximum": 100000 }
+            },
+            "additionalProperties": false
+          }
+        },
+        "used": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 2,
+          "uniqueItems": true,
+          "items": { "enum": ["regression", "held-out"] }
+        }
+      },
+      "additionalProperties": false
+    },
+    "environment": { "$ref": "#/$defs/environment" },
+    "protocol": { "$ref": "urn:tsuuanmi:system:schema:objective-contract:v1#/$defs/protocol" },
+    "stopping": {
+      "description": "v1 has a fixed horizon only: every case of the partitions used, in both arms, at the protocol's repetitions, with one analysis at the end.",
+      "type": "object",
+      "required": ["rule", "trials"],
+      "properties": {
+        "rule": { "const": "fixed-horizon" },
+        "trials": { "type": "integer", "minimum": 2, "maximum": 200000 }
+      },
+      "additionalProperties": false
+    },
+    "budget": {
+      "description": "The funding round that pays for it: the board milestone, the operator's approval that funded it, the maximum it may spend, and what each trial reserves before it starts.",
+      "type": "object",
+      "required": ["projectId", "milestone", "funding", "lines", "perTrial"],
+      "properties": {
+        "projectId": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+        "milestone": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+        "funding": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/artifactRef" },
+        "lines": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "items": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/budgetLine" }
+        },
+        "perTrial": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "items": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/budgetLine" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "seed": {
+      "description": "The seed the trial order is drawn from.",
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._-]{1,128}$"
+    },
+    "independence": {
+      "description": "The provider families of the candidate's maker, of its reviewers, and of every model-based validator: pairwise different. A deterministic collector has no family.",
+      "type": "object",
+      "required": ["maker", "reviewers", "validators"],
+      "properties": {
+        "maker": { "$ref": "#/$defs/family" },
+        "reviewers": { "type": "array", "minItems": 1, "maxItems": 5, "uniqueItems": true, "items": { "$ref": "#/$defs/family" } },
+        "validators": { "type": "array", "maxItems": 5, "uniqueItems": true, "items": { "$ref": "#/$defs/family" } }
+      },
+      "additionalProperties": false
+    },
+    "registry": {
+      "description": "The registry's answer, the experiments the registration cites, and the retry predicates it names as changed, with why the earlier evidence may no longer apply.",
+      "type": "object",
+      "required": ["answer", "cites", "changed"],
+      "properties": {
+        "answer": { "enum": ["EXACT_REPEAT", "RELATED", "CONTEXT_CHANGED", "NOVEL"] },
+        "cites": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "type": "object",
+            "required": ["experimentId", "revision", "ref"],
+            "properties": {
+              "experimentId": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+              "revision": { "type": "integer", "minimum": 1, "maximum": 1000 },
+              "ref": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/artifactRef" }
+            },
+            "additionalProperties": false
+          }
+        },
+        "changed": {
+          "type": "array",
+          "maxItems": 7,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/predicate" }
+        },
+        "why": { "type": "string", "minLength": 1, "maxLength": 2000 }
+      },
+      "additionalProperties": false
+    },
+    "identity": {
+      "description": "The exact identity (version 1): the sha256 of the canonical JSON of the normalized hypothesis, target, intervention, candidate, baseline, comparison, objective contract, suite, environment, protocol, stopping rule, and independence. Equal identities are the same experiment.",
+      "type": "object",
+      "required": ["version", "hash"],
+      "properties": {
+        "version": { "const": "1" },
+        "hash": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/sha256" }
+      },
+      "additionalProperties": false
+    },
+    "note": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/shortText" }
+  },
+  "if": { "properties": { "revision": { "const": 1 } } },
+  "then": { "not": { "required": ["supersedes"], "properties": { "supersedes": true } } },
+  "else": { "required": ["supersedes"], "properties": { "supersedes": true } },
+  "additionalProperties": false,
+  "$defs": {
+    "family": {
+      "description": "An opaque provider family, compared only for inequality (ADR-0027).",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "predicate": {
+      "description": "A retry predicate the registry checks against the recorded experiments.",
+      "enum": ["model-version", "workload", "objective-version", "suite-version", "mechanism", "measurement-defect", "cost-structure"]
+    },
+    "exactSubject": {
+      "description": "An exact subject (INV-5): a content hash or a VCS head, always with its version.",
+      "type": "object",
+      "required": ["type", "ref", "version"],
+      "properties": {
+        "type": { "enum": ["content", "git-head", "pull-request", "artifact", "external"] },
+        "ref": { "type": "string", "minLength": 1, "maxLength": 512 },
+        "version": { "type": "string", "minLength": 1, "maxLength": 128 }
+      },
+      "additionalProperties": false
+    },
+    "arm": {
+      "type": "object",
+      "required": ["subject"],
+      "properties": {
+        "subject": { "$ref": "#/$defs/exactSubject" },
+        "label": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/shortText" }
+      },
+      "additionalProperties": false
+    },
+    "environment": {
+      "description": "Everything the evaluation pins: the composition, the plugins with their manifest digests, each arm's Workers with their families and the model versions they show, the templates' spec hashes, the collectors' and the statistics library's versions, the workload, and the cost model. `hash` is the sha256 of the canonical JSON of the rest, normalized.",
+      "type": "object",
+      "required": ["hash", "composition", "plugins", "workers", "templates", "collectors", "statistics"],
+      "properties": {
+        "hash": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/sha256" },
+        "composition": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/sha256" },
+        "plugins": {
+          "type": "array",
+          "maxItems": 200,
+          "items": {
+            "type": "object",
+            "required": ["name", "version"],
+            "properties": {
+              "name": { "type": "string", "minLength": 1, "maxLength": 214 },
+              "version": { "type": "string", "minLength": 1, "maxLength": 100 },
+              "manifestDigest": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/sha256" }
+            },
+            "additionalProperties": false
+          }
+        },
+        "workers": {
+          "description": "The Workers each arm is fixed to.",
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 32,
+          "items": {
+            "type": "object",
+            "required": ["arm", "worker", "family"],
+            "properties": {
+              "arm": { "enum": ["baseline", "candidate"] },
+              "worker": { "type": "string", "minLength": 1, "maxLength": 200 },
+              "family": { "$ref": "#/$defs/family" },
+              "descriptor": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/sha256" },
+              "observed": {
+                "description": "The model or provider version the Worker shows, when it shows one.",
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "templates": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {
+            "type": "object",
+            "required": ["name", "specHash"],
+            "properties": {
+              "name": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+              "specHash": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/sha256" }
+            },
+            "additionalProperties": false
+          }
+        },
+        "collectors": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "type": "object",
+            "required": ["id", "version"],
+            "properties": {
+              "id": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+              "version": { "type": "string", "minLength": 1, "maxLength": 64 }
+            },
+            "additionalProperties": false
+          }
+        },
+        "statistics": {
+          "type": "object",
+          "required": ["library", "version"],
+          "properties": {
+            "library": { "type": "string", "minLength": 1, "maxLength": 214 },
+            "version": { "type": "string", "minLength": 1, "maxLength": 64 }
+          },
+          "additionalProperties": false
+        },
+        "workload": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+        "costModel": {
+          "description": "The cost structure the usage was priced under, such as a price table's version.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

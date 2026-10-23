@@ -30,15 +30,16 @@ export interface Subject { type: 'content' | 'git-head' | 'pull-request' | 'arti
 
 export type ActionClass =
   | 'read' | 'workspace-write' | 'merge' | 'command' | 'external-send' | 'deploy' | 'delete-data' | 'spend'
-  | 'charter' | 'funding' | 'remediation' | 'policy-change'
+  | 'charter' | 'funding' | 'remediation' | 'policy-change' | 'promotion'
 /**
- * Classes that always ask, even unattended: irreversible effects, the investor's own decisions, and
+ * Classes that always ask, even unattended: irreversible effects, the investor's own decisions,
  * remediation (a fix that writes, or a lost run going on: the workflow's remediation gate and the
- * board ask the queue about it). A provider gives
+ * board ask the queue about it), and promotion (a plugin moved to `default` on an accepted
+ * evaluation, PROP-0011: the loop never approves its own change). A provider gives
  * them at least `ask` whatever a rule says, and a policy that gives one `auto` or `notify` is
  * refused when loaded.
  */
-export const ALWAYS_ASK: readonly ActionClass[] = ['external-send', 'deploy', 'delete-data', 'spend', 'charter', 'funding', 'remediation', 'policy-change']
+export const ALWAYS_ASK: readonly ActionClass[] = ['external-send', 'deploy', 'delete-data', 'spend', 'charter', 'funding', 'remediation', 'policy-change', 'promotion']
 
 /**
  * A shell metacharacter, or a character a shell or a naive split treats specially: `; & | $` and

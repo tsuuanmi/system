@@ -237,6 +237,18 @@ runs the work the router admitted to them. Callers never reach a source directly
   serves is settled `bypassed` and recorded ([digests](../design/digests.md)). It depends on
   seam definitions only. The workflow engine asks for a digest of each board task's result once
   it reached the board, and sets it on the task through the board's `attachDigest`.
+- **Experiment registry** (`ctx.experiments`, defined): hypotheses and pre-registered experiments
+  with their exact identity and structured fingerprint; every registration answered EXACT_REPEAT,
+  RELATED, CONTEXT_CHANGED, or NOVEL, and pre-registered or refused as a `registration` decision;
+  each experiment's state while the evaluation engine runs it; and lessons, whose applicability is
+  computed when they are read ([experiments](../design/experiments.md)). No provider yet: its
+  suite runs against a fake.
+- **Evaluation engine** (`ctx.evaluations`, defined): a pre-registered experiment run offline
+  under its pins and seals as paired trials, measured by collectors (the verification family,
+  registered through `evaluations.collector`) and by the resource ledger, analysed once at the
+  horizon, and classified by the deterministic verdict rule as a `verdict` decision; it decides no
+  promotion, which always asks the operator ([evaluations](../design/evaluations.md)). No provider
+  yet: its suite runs against a fake.
 - **Profiles:** plugins that contribute templates through `ctx.workflow.template` (`research`,
   with its `deep` variant; `agent-review`, for the agent Workers, its row off by default) and acceptance
   contracts through `ctx.workers`. A profile never names a provider, browser, or account, and
@@ -247,13 +259,16 @@ runs the work the router admitted to them. Callers never reach a source directly
   `workerSessions.join / send / inbox / ack / openBarrier / activate / settle`;
   `board.charter / propose / claim / renew / start / submit / accept / reconcileRun / block / answer /
   cancel / pause / resume / close / sweep / attachDigest`; MCP `board_*`, and `run` with `task`; `digests.request / get / wait`, MCP
-  `digests_request`, `digests_get`.
+  `digests_request`, `digests_get`; `experiments.lookup / register / get / list / link / begin / settle /
+  close / recordLesson / lessons`; `evaluations.collector / start / sweep / get / list`.
 - **Packages:** [workflow](../../packages/plugins/workflow/README.md),
   [worker-sessions](../../packages/plugins/worker-sessions/README.md),
   [profile-software-development](../../packages/plugins/profile-software-development/README.md),
   [profile-scientific-research](../../packages/plugins/profile-scientific-research/README.md),
   [board-core](../../packages/board-core/README.md), [board](../../packages/plugins/board/README.md),
-  [digest-core](../../packages/digest-core/README.md), [digest](../../packages/plugins/digest/README.md).
+  [digest-core](../../packages/digest-core/README.md), [digest](../../packages/plugins/digest/README.md),
+  [experiments-core](../../packages/experiments-core/README.md),
+  [evaluations-core](../../packages/evaluations-core/README.md).
 
 ## Host
 

@@ -161,9 +161,9 @@ flowchart TB
   subgraph CORE["core: guarantee seams"]
     direction LR
     led["ledger of record<br/>ctx.store, ctx.artifacts,<br/>ctx.eventLog, ctx.credentials"]
-    sm["work state machine<br/>ctx.workflow, ctx.workerSessions,<br/>ctx.leases, ctx.board"]
+    sm["work state machine<br/>ctx.workflow, ctx.workerSessions,<br/>ctx.leases, ctx.board, ctx.experiments"]
     run["runner<br/>workflow engine, ctx.turnReceipts"]
-    gate["gate<br/>ctx.egress, workers admission<br/>and acceptance, ctx.approvals"]
+    gate["gate<br/>ctx.egress, workers admission<br/>and acceptance, ctx.approvals,<br/>ctx.evaluations"]
     res["resource ledger and metering<br/>ctx.resources"]
     host["plugin host<br/>DSH core, Cordis, system bundle,<br/>ctx.pluginHost"]
   end
