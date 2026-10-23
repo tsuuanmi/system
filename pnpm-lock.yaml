@@ -1175,6 +1175,25 @@ importers:
         specifier: 3.18.5-alpha.1
         version: 3.18.5-alpha.1
 
+  packages/plugins/runtime-antigravity-cli:
+    dependencies:
+      '@tsuuanmi/system-agent-runtime-core':
+        specifier: workspace:*
+        version: link:../../agent-runtime-core
+      '@tsuuanmi/system-libs':
+        specifier: workspace:*
+        version: link:../../libs
+      '@tsuuanmi/system-provider-core':
+        specifier: workspace:*
+        version: link:../../provider-core
+    devDependencies:
+      '@deepseek-ai/cordis':
+        specifier: 4.0.5-alpha.1
+        version: 4.0.5-alpha.1(@deepseek-ai/cordis-plugin-include@1.0.10-alpha.1)(@deepseek-ai/cordis-plugin-loader@1.0.6-alpha.1)
+      '@deepseek-ai/schemastery':
+        specifier: 3.18.5-alpha.1
+        version: 3.18.5-alpha.1
+
   packages/plugins/runtime-claude-agent-sdk:
     dependencies:
       '@anthropic-ai/claude-agent-sdk':
@@ -1658,6 +1677,9 @@ importers:
       '@tsuuanmi/system-runtime-acp':
         specifier: workspace:*
         version: link:../plugins/runtime-acp
+      '@tsuuanmi/system-runtime-antigravity-cli':
+        specifier: workspace:*
+        version: link:../plugins/runtime-antigravity-cli
       '@tsuuanmi/system-runtime-claude-agent-sdk':
         specifier: workspace:*
         version: link:../plugins/runtime-claude-agent-sdk

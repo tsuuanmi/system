@@ -86,8 +86,8 @@
     # --- agent runtimes: Claude Code as the first Worker, on by default (PROP-0010 B3). Each run is
     # confined for reads by bubblewrap, and its commands by the SDK's sandbox (ADR-0024, ADR-0038);
     # a host without Claude Code, bubblewrap, or a sign-in still boots, and the probe says why its
-    # Workers are unavailable. Codex and ACP stay off: they cannot ask a tool gate before each tool
-    # call, so the `agents` source would admit none of their Workers. ---
+    # Workers are unavailable. Codex, ACP, and the Antigravity CLI stay off: none of them can ask a
+    # tool gate before each tool call yet, so the `agents` source would admit none of their Workers. ---
     - id: agent-runtimes
       name: '@tsuuanmi/system-agent-runtimes'         # ctx.agentRuntimes and the read confinement
     - id: runtime-claude-agent-sdk
@@ -97,6 +97,9 @@
       disabled: true
     - id: runtime-acp
       name: '@tsuuanmi/system-runtime-acp'            # ACP agents (none until configured)
+      disabled: true
+    - id: runtime-antigravity-cli
+      name: '@tsuuanmi/system-runtime-antigravity-cli'   # the Antigravity CLI (the installed agy), in its own home
       disabled: true
     - id: agent-workers
       name: '@tsuuanmi/system-agent-workers'          # the `agents` Worker source

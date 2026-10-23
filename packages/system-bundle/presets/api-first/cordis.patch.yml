@@ -38,6 +38,8 @@
   disabled: false
 - id: runtime-acp
   disabled: false
+- id: runtime-antigravity-cli
+  disabled: false
 - id: agent-workers
   disabled: false
 - id: profile-software-development
