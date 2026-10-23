@@ -659,6 +659,10 @@ source never waits for a re-probe in a describe:
 - **The latest result wins.** A probe that throws, or proves less, replaces an older success at
   once: no Worker is admitted on evidence a later probe contradicts (INV-2).
 - **A run's own check** before the agent starts waits for a result within `probeTtlMs`.
+- **Each probe is bounded.** A probe that has not settled within `probeTtlMs` of its start (5 min
+  with `probeTtlMs: 0`), its accounts' re-read included, when its result could no longer stand, is
+  refused as `probe timed out`: it admits nothing, its late answer is dropped, and the next probe
+  starts. A stop waits for a probe in flight no longer than that.
 
 | Capability | Offered when |
 |---|---|

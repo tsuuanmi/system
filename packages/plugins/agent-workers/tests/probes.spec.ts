@@ -74,33 +74,32 @@ describe('agent runtime probes: refreshed in the background, never waited for by
   })
 
   it('never answers from a result past its bound: a describe gets evidence that admits nothing, at once, until the re-probe finishes', async () => {
-    const { probes, runtime, warned } = setup(800)
+    const { probes, runtime, warned } = setup(2000)
     expect(await probes.described('gated')).toEqual(READY)
     runtime.hold = true
     await expect.poll(() => runtime.probes, { timeout: 5000, interval: 20 }).toBe(2)
-    // Past the bound (800 ms from when the first probe started), with the re-probe still running.
-    await sleep(900)
+    // Past the bound (2000 ms from when the first probe started), with the re-probe (started at
+    // half of it) still running within its own.
+    await sleep(1300)
     const expired = await atOnce(probes.described('gated'))
     expect(expired).toMatchObject({ available: false, readsConfined: false, gatesToolCalls: false, sandboxes: [] })
-    expect((expired as RuntimeEvidence).detail).toMatch(/^the last probe of gated started \d+ s ago, past probeTtlMs \(800 ms\), and the next has not finished$/)
+    expect((expired as RuntimeEvidence).detail).toMatch(/^the last probe of gated started \d+ s ago, past probeTtlMs \(2000 ms\), and the next has not finished$/)
     expect(probes.current('gated')).toBeUndefined()
-    expect(warned).toEqual(['agent Workers: the last probe of gated is older than probeTtlMs (800 ms) and the next has not finished; its Workers take no work until it does'])
+    expect(warned).toEqual(['agent Workers: the last probe of gated is older than probeTtlMs (2000 ms) and the next has not finished; its Workers take no work until it does'])
     // No second probe joins the one in flight.
     expect(runtime.probes).toBe(2)
-    // A run's own check waits for the probe instead.
+    // A run's own check waits for the probe instead, no longer than the probe's own bound: one
+    // that takes as long as its result could stand is refused as timed out.
     const proven = probes.proven('gated')
     expect(await Promise.race([proven, sleep(100).then(() => 'waiting')])).toBe('waiting')
     runtime.hold = false
-    runtime.release()
-    expect(await proven).toEqual(READY)
-    // That result is already past its bound, counted from when its probe started: a describe
-    // starts the next probe and answers at once; once it finishes, the runtime is back.
-    expect(await atOnce(probes.described('gated'))).toMatchObject({ available: false })
+    expect(await proven).toMatchObject({ available: false, detail: 'probe timed out: the probe of gated did not finish within probeTtlMs (2000 ms)' })
+    // Slower than half its bound, it is said once and probed again at once; once that probe
+    // finishes, the runtime is back.
+    expect(warned).toContain('agent Workers: a probe of gated took longer than half of probeTtlMs (2000 ms), so it is probed again at once; its Workers take no work while a result is past probeTtlMs: raise probeTtlMs, or see why the runtime is slow')
     await expect.poll(async () => (await atOnce(probes.described('gated'))), { timeout: 5000, interval: 20 }).toEqual(READY)
     expect(runtime.probes).toBe(3)
-    // A probe slower than half its bound is said once.
-    expect(warned).toContain('agent Workers: a probe of gated took longer than half of probeTtlMs (800 ms), so it is probed again at once; its Workers take no work while a result is past probeTtlMs: raise probeTtlMs, or see why the runtime is slow')
-  })
+  }, 20_000)
 
   it('admits nothing once a refresh fails, at once, though the older success would still stand', async () => {
     const { probes, runtime } = setup(1600)
@@ -193,6 +192,20 @@ describe('agent runtime probes: refreshed in the background, never waited for by
       stopped.abort()
       probes.close()
     }
+  })
+
+  it('bounds every probe by probeTtlMs: one that never settles is refused as timed out, and the next one starts', async () => {
+    const { probes, runtime, tracked } = setup(600)
+    runtime.hold = true
+    // A first probe is waited for, but no longer than its bound.
+    const first = await atOnce(probes.described('gated'))
+    expect(first).toMatchObject({ available: false, readsConfined: false, gatesToolCalls: false, detail: 'probe timed out: the probe of gated did not finish within probeTtlMs (600 ms)' })
+    // What a stop waits for settles within the bound too.
+    expect(await atOnce(Promise.allSettled(tracked))).not.toBe('waited')
+    // Its probe no longer counts as running: the next one starts, and its answer brings the runtime back.
+    runtime.hold = false
+    await expect.poll(async () => (await atOnce(probes.described('gated'))), { timeout: 5000, interval: 20 }).toEqual(READY)
+    expect(runtime.probes).toBe(2)
   })
 
   it('keeps no result with probeTtlMs 0: every read waits for a probe, and nothing probes in the background', async () => {

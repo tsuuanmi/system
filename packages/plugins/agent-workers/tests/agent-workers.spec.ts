@@ -215,6 +215,27 @@ describe('ctx.workers source `agents`: agent runtimes as Workers', () => {
     }
   }, 30_000)
 
+  it('never waits for a probe that does not settle past probeTtlMs: the next probe starts, and a stop finishes', async () => {
+    const agent = new SlowProbeAgent()
+    const { ctx, stop } = await boot(agent, { workers: [worker()], probeTtlMs: 1000 })
+    try {
+      ;(await ctx.workers.route(requirement())).release()
+      // The background re-probe at half the bound never settles.
+      agent.hold = true
+      await expect.poll(() => agent.probes, { timeout: 5000, interval: 20 }).toBe(2)
+      // Its bound passed, it is refused as timed out, which the Worker reads.
+      await expect.poll(async () => (await ctx.workers.list())[0], { timeout: 5000, interval: 20 }).toMatchObject({ state: 'unavailable' })
+      await expect.poll(() => agent.probes, { timeout: 5000, interval: 20 }).toBe(3)
+      // A stop waits for the probe in flight no longer than its bound.
+      const stopping = Date.now()
+      expect(await Promise.race([stop().then(() => 'stopped'), new Promise((resolve) => setTimeout(resolve, 3000, 'hung'))])).toBe('stopped')
+      expect(Date.now() - stopping).toBeLessThan(1500)
+    } finally {
+      agent.hold = false
+      agent.release()
+    }
+  }, 20_000)
+
   it('proves develop (never review) for a confined writable Worker, and validate only when the runtime can run commands', async () => {
     const config = { workers: [worker({ id: 'writer', sandbox: 'workspace-write' as const })] }
     const without = await boot(new ScriptedAgent({ sandboxes: ['read-only', 'workspace-write'] }), config)

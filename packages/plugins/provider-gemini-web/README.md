@@ -88,8 +88,12 @@ driver, its operations are data: a UI map,
     (read at once each poll, as a digest; a failed read keeps the last one) is
     progress, so a long think past the stall deadline is not taken for a stall
     (live 2026-10-23: a review member's answer on the standard tier failed
-    `provider_stalled` at five minutes). A think whose answer shows nothing new
-    still stalls, and the turn's hard deadline bounds every answer. Verified on
+    `provider_stalled` at five minutes). Its digits are left out of the digest,
+    so a count that only goes up (a timer, "Thinking for 12s") is no progress; the
+    answer's text is read apart, digits and all. The whole answer is read, not
+    a named part of it, since the live thinking summary's element is not known.
+    A think whose answer shows nothing new but numbers still stalls, and the
+    turn's hard deadline bounds every answer. Verified on
     the fake site only: whether the live thinking summary changes while
     collapsed is a [release check](../../../docs/validation/release-checklist.md).
 - **The answer is Markdown (REQ-PRV-5).** The answer's Copy gives Markdown with
@@ -154,8 +158,9 @@ driver, its operations are data: a UI map,
   - a terms notice over the input (`termsNotice`, from the live outline of
     2026-10-17).
   - a thinking answer (`thinkMs`): Stop shown and the `model-response` there with
-    no text, its thinking summary (`model-thoughts`) changing every 400 ms, or,
-    with `thoughts: false`, nothing in it changing.
+    no text, its thinking summary (`model-thoughts`) changing its words every
+    400 ms, or, with `thoughts: false`, nothing in it changing; with
+    `thinkTimer`, a "Thinking for Ns" count beside it either way.
 
   Tests drive it in a real headed Chrome.
 - **Live checks:** what was verified on the live site, and what is verified

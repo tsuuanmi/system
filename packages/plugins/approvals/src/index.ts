@@ -503,8 +503,8 @@ export class StoreApprovals extends Approvals {
    * Ask one policy record as a change (the operator's proposal, or the queue's own `from` repeated
    * approvals): the set it makes must load, `policy-change` must ask, and the change and its request
    * are stored in one transaction on the set in force. The queue's own proposal also records its
-   * `policy-change` decision there (INV-13), and is refused while any change is asked or once its
-   * shape is barred.
+   * `policy-change` decision there (INV-13), and is refused while any change is asked, once its
+   * shape is barred, or when its shape's requests no longer read as they did when it was counted.
    */
   private async propose(policy: AutonomyPolicy, note: string | undefined, when: Date, from?: Repeated): Promise<{ change: PolicyChange; request: ApprovalRequest }> {
     const base = this.current()
@@ -540,6 +540,14 @@ export class StoreApprovals extends Approvals {
       if (this.current().key !== base.key) throw invalid('another policy change came into force while this one was proposed; propose it again on the set in force')
       // The queue's own: at most one change asked at a time, and never for a shape barred (checked again under the write lock).
       if (from && (this.changeAsked() || this.barred(from.shape))) throw invalid(`the queue proposes no change for \`${from.shape}\` now: a change is asked, or this command's proposal was settled`)
+      // And its requests read again: one settled while the policy was checked (rejected, expired, or
+      // approved) changes whether it qualifies and what its consequences and origin say.
+      if (from) {
+        const again = this.repeatedOf(from.shape, when.getTime() - from.windowSeconds * 1000, when, { approvals: from.threshold, windowSeconds: from.windowSeconds })
+        if (!again || !sameList(again.requests.map((r) => r.requestId), from.requests.map((r) => r.requestId))) {
+          throw invalid(`the queue proposes no change for \`${from.shape}\` now: its requests changed while it was proposed; the next pass reads them again`)
+        }
+      }
       const request = this.open({
         subject: { type: 'content', ref: POLICY_SET_REF, version: hash },
         action: { class: 'policy-change', summary, consequences },

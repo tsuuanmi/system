@@ -140,6 +140,20 @@ describe.runIf(canRunBrowser)('GeminiWebDriver against the fake site', { timeout
     expect(Date.now() - started).toBeLessThan(6000)
   }, 60_000)
 
+  it('takes no count that changes only its numbers for progress: a think whose summary stands still stalls while its timer counts up', async () => {
+    const { page, fake } = await open({ startOnSpark: false, thinkMs: 6000, thoughts: false, thinkTimer: true, answer: 'too late' })
+    const driver = new GeminiWebDriver({ origin: fake.origin, modes: PRESETS, defaultMode: 'flash', timeouts: { readyMs: 5000, stableMs: 300, pollMs: 100, turnMs: 30_000, stallMs: 1500 } })
+    const started = Date.now()
+    await expect(driver.ask(page, 'review this', { conversation: 'persistent' })).rejects.toMatchObject({ kind: 'provider_stalled' })
+    expect(Date.now() - started).toBeLessThan(6000)
+  }, 60_000)
+
+  it('still takes a summary whose words change for progress, a timer counting beside it', async () => {
+    const { page, fake } = await open({ startOnSpark: false, thinkMs: 4000, thinkTimer: true, answer: 'Reviewed: no blocking defect.' })
+    const driver = new GeminiWebDriver({ origin: fake.origin, modes: PRESETS, defaultMode: 'flash', timeouts: { readyMs: 5000, stableMs: 300, pollMs: 100, turnMs: 30_000, stallMs: 1500 } })
+    expect((await driver.ask(page, 'review this', { conversation: 'persistent' })).text).toBe('Reviewed: no blocking defect.')
+  }, 60_000)
+
   it('counts the prompt in code points against its input bound, as admission does (ADR-0032)', async () => {
     const { page, fake } = await open({ startOnSpark: false, answer: 'OK' })
     const limited = new GeminiWebDriver({ origin: fake.origin, modes: PRESETS, defaultMode: 'flash', maxPromptChars: 40, timeouts: { readyMs: 5000, stableMs: 300, pollMs: 100, turnMs: 30_000, stallMs: 15_000 } })

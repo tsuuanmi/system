@@ -16,6 +16,10 @@
  * - After each probe, and before its result stands, `after` reads the accounts of that home again
  *   (ADR-0051), so no result stands on an account the re-read would have taken out.
  * - One probe at a time per runtime and home: concurrent reads share it.
+ * - Each probe, its accounts' re-read included, is bounded by `ttlMs` ({@link UNBOUNDED_TTL_PROBE_MS}
+ *   with `ttlMs` 0): its result could stand no longer, so one that has not settled by then is refused
+ *   as timed out (its late answer is dropped), no longer counts as running, and a stop never waits
+ *   for it past the bound.
  *
  * `described` (a describe) waits only for the first probe; past the bound it answers at once with
  * evidence that admits nothing, and the background probe brings the runtime back. `proven` (a run's
@@ -59,6 +63,9 @@ export interface ProbeOptions {
   /** A standing problem, logged once. */
   warn: (message: string) => void
 }
+
+/** How long one probe may take with `ttlMs` 0, where no result stands to bound it: the default `probeTtlMs`. */
+export const UNBOUNDED_TTL_PROBE_MS = 5 * 60_000
 
 /** Evidence that admits no Worker, with why. */
 export const refused = (detail: string): RuntimeEvidence => ({ available: false, detail, sandboxes: [], resume: false, executes: false, readsConfined: false, gatesToolCalls: false })
@@ -131,11 +138,23 @@ export class Probes {
     clearTimeout(state.timer)
     state.timer = undefined
     const at = Date.now()
-    const running = Promise.resolve()
+    const boundMs = this.options.ttlMs || UNBOUNDED_TTL_PROBE_MS
+    let bound: NodeJS.Timeout | undefined
+    const timedOut = new Promise<RuntimeEvidence>((resolve) => {
+      bound = setTimeout(() => resolve(refused(`probe timed out: the probe of ${label(target)} did not finish within ${this.options.ttlMs ? 'probeTtlMs' : 'its bound'} (${boundMs} ms)`)), boundMs)
+      bound.unref()
+    })
+    // The bound covers the accounts' re-read too: a result stands only once that read is done, or as timed out.
+    const probed = Promise.resolve()
       .then(() => (target.home === undefined ? provider.probe() : probeIn(provider, target.home)))
       .catch((error: unknown): RuntimeEvidence => refused((error instanceof Error ? error.message : String(error)).slice(0, 200)))
       .then(async (evidence) => {
         await Promise.resolve().then(() => this.options.after?.(target.runtime, target.home)).catch(() => undefined)
+        return evidence
+      })
+    const running = Promise.race([probed, timedOut])
+      .then((evidence) => {
+        clearTimeout(bound)
         state.latest = { at, evidence }
         state.running = undefined
         this.schedule(target, state, at)

@@ -283,7 +283,7 @@ export class AgentWorkers extends Service {
     })).default([]).description('How each agent runtime\'s accounts are used and how many may be enrolled; a runtime not listed is assigned, with one slot (ADR-0051, ADR-0052)'),
     accountHomes: z.string().description('Where enrollment slots 2 and later keep their homes, <accountHomes>/<provider>/<n> (default <DSH_HOME>/system/agent-homes); hidden from every agent'),
     maxReplayChars: z.natural().min(1).max(2_000_000).default(200_000).description('Characters of earlier turns a review member\'s replayed conversation holds, at most; a turn past it fails, never cut'),
-    probeTtlMs: z.natural().default(5 * 60_000).description('How long a runtime\'s probe result stands, from when its probe started: the next probe starts in the background at half of it, and a result past it admits no Worker until one finishes (0: every read waits for a probe)'),
+    probeTtlMs: z.natural().default(5 * 60_000).description('How long a runtime\'s probe result stands, from when its probe started: the next probe starts in the background at half of it, a result past it admits no Worker until one finishes, and a probe not settled within it is refused as timed out (0: every read waits for a probe, bounded at 5 min)'),
     runTimeoutMs: z.natural().min(1).default(15 * 60_000).description('Hard deadline per run'),
     worktreeRoot: z.string().description('Where the worktrees of worktreePerRun Workers go (default <DSH_HOME>/system/worktrees)'),
     worktreeRetentionHours: z.natural().default(168).description('Hours a workflow run\'s worktree is kept after its last agent run ended; then its changes are committed on its branch and it is removed (0 keeps them)'),
@@ -382,7 +382,7 @@ export class AgentWorkers extends Service {
       }),
       inUse: (runtime, home) => this.runsIn(runtime, home),
       stopped: this.stopped.signal,
-      // A stop waits for a probe in flight: each of its steps is bounded by its runtime.
+      // A stop waits for a probe in flight, no longer than its bound (probeTtlMs, ./probes.ts).
       track: (probe) => {
         const tracked = probe.then(() => undefined, () => undefined)
         this.inflight.add(tracked)
