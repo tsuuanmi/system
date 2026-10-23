@@ -132,8 +132,11 @@ guesses.
   dependencies' completion decisions) and records none.
 - `workflow-node@1.1` adds the state `RETIRED`: a node a re-plan took out of the
   graph. It stays as history, never runs again, and its `lastDecision` is the
-  `graph-growth` decision that retired it. Only a retired node is written as
-  1.1; readers accept 1.0 and 1.1.
+  `graph-growth` decision that retired it.
+- `workflow-node@1.2` adds `execution.brief`: the brief the execution was started with,
+  recorded before it started ([briefs](../design/workflow-engine.md#briefs)). A node is written
+  as 1.2 once an execution names its brief, retired or not; otherwise as 1.1 when retired, and
+  1.0 before. Readers accept 1.0 to 1.2.
 
 ### `conversation`
 
@@ -542,23 +545,49 @@ guesses.
 ### `brief`
 
 - The body of an `objective` artifact. Every `artifacts[].ref` is also an input of its envelope,
-  so unknown references are refused and the classification floor applies (INV-12).
-- It carries pointers, never content: the Worker reads each artifact in windows through the
-  `artifact` tool.
-- `sandbox` comes from trusted configuration, and `budget.remaining` is computed from the
-  ledger when the brief is written. Example:
-  [`brief.task.json`](../../schemas/examples/brief.task.json).
+  so unknown references are refused and the classification floor applies (INV-12); its
+  `classification` is at least the strictest of them.
+- It carries pointers, never content. A Worker source resolves them when it renders the brief
+  into its prompt at start, and checks egress on what it rendered
+  ([briefs](../design/workflow-engine.md#briefs)).
+- `brief@1.1` adds `instructions`: what the Worker is told, in order, as its template words it,
+  text and pointers by their index in `artifacts`. Rendered, each pointer is replaced by its
+  artifact's text (the body's `text`, else its canonical JSON) and never expanded again. A brief
+  for a board task, or one without instructions, first states the task and attempt, the goal,
+  the acceptance criteria, and the open questions; pointers the instructions do not place follow,
+  with their role and note. `instructions` before 1.1 is refused.
+- `sandbox` comes from trusted configuration (the Worker source's), never from model text, and
+  `budget.remaining` is computed from the ledger when the brief is written. `resume` names the
+  native session the brief continues, when the Worker keeps one. Examples:
+  [`brief.task.json`](../../schemas/examples/brief.task.json),
+  [`brief.node.json`](../../schemas/examples/brief.node.json).
 
 ### `digest`
 
 - The body of a `report` artifact whose envelope inputs are its `sources`. Every
   `citation.artifact` is one of them, and claim ids are unique.
 - The quote check: each quote must occur verbatim in the cited artifact's text (its body's `text`
-  field when it has one, otherwise its canonical JSON), at `offset` when one is given. A digest
-  that fails is not accepted and is written again at the next tier.
+  field when it has one, otherwise its canonical JSON), at `offset` (in code points) when one is
+  given. A claim that fails is dropped and recorded first in `dropped`; a digest with no claim
+  left is not written ([digests](../design/digests.md#the-quote-check)). Writing it again at a
+  higher tier is not built.
+- `sources` are the request's, never the Worker's answer's.
 - Its classification is at least its sources'. A digest of `local-private` sources is written by
   a local Worker or one the egress policy allows. Example:
   [`digest.test-run.json`](../../schemas/examples/digest.test-run.json).
+
+### MCP tools: `digests_*`
+
+| Tool | Scope | Does |
+|---|---|---|
+| `digests_request` | client | ask for a cited digest of 1 to 64 raw artifacts, by content id; waits up to `waitSeconds` for it to settle |
+| `digests_get` | client | read a request as it stands: `pending`, `written` (with its digest), `not-written`, or `bypassed`, with why |
+
+- Both answer with the request (`$defs/request` of
+  [`mcp-digests.v1.json`](../../schemas/mcp-digests.v1.json)); a refused input does nothing, and
+  a `clientRequestId` reused for other sources is refused (`invalid`).
+- A request no Worker can serve is not refused: it settles `bypassed` ([digests](../design/digests.md)).
+  Example: [`mcp-digests.request.json`](../../schemas/examples/mcp-digests.request.json).
 
 ### `plugin-manifest`
 

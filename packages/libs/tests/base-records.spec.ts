@@ -178,6 +178,16 @@ describe('brief@1.0 and digest@1.0', () => {
     expect(valid('brief@1.0', { ...brief, sandbox: { ...sandbox, mode: 'read-only' } })).toBe(true)
   })
 
+  it('1.1 places pointers in its instructions by index, never content, and refuses instructions before 1.1 (INV-14)', () => {
+    const node = example('brief.node')
+    expect(valid('brief@1.1', node)).toBe(true)
+    expect(valid('brief@1.1', { ...node, schema: 'brief@1.0' })).toBe(false)
+    expect(valid('brief@1.1', { ...node, instructions: [{ text: 'a' }, { artifact: 0, text: 'the report' }] })).toBe(false)
+    expect(valid('brief@1.1', { ...node, instructions: [{ artifact: 64 }] })).toBe(false)
+    expect(valid('brief@1.1', { ...node, instructions: [{ text: '' }] })).toBe(false)
+    expect(valid('brief@1.1', { ...brief, schema: 'brief@1.1' })).toBe(true)
+  })
+
   it('cites one artifact with a verbatim quote for every claim (INV-13)', () => {
     const [claim] = digest.claims
     const { quote: _, ...unquoted } = claim.citation
@@ -230,6 +240,15 @@ describe('MCP tool calls', () => {
     const decide = example('mcp-approvals.decide')
     const { subject: _, ...unbound } = decide.input.verdicts[0]
     expect(call('mcp-approvals', { ...decide, input: { verdicts: [unbound] } })).toBe(false)
+  })
+
+  it('takes a digest request of raw artifacts by content id only, and answers with the request as it stands', () => {
+    const request = example('mcp-digests.request')
+    expect(call('mcp-digests', request)).toBe(true)
+    expect(call('mcp-digests', { ...request, input: { ...request.input, sources: ['the test log'] } })).toBe(false)
+    expect(call('mcp-digests', { ...request, input: { ...request.input, sources: [] } })).toBe(false)
+    expect(call('mcp-digests', { ...request, output: { ...request.output, state: 'accepted' } })).toBe(false)
+    expect(call('mcp-digests', { tool: 'digests_get', input: { requestId: request.output.requestId }, output: request.output })).toBe(true)
   })
 
   it('checks a call against its own tool, not another', () => {

@@ -17,7 +17,7 @@ each field, which a schema cannot fully express, is documented in
 | [decision.v1.json](decision.v1.json) | body of a `decision` artifact ([INV-13](../docs/architecture/invariants.md#inv-13-every-decision-is-an-artifact)); 1.1 adds team votes and the `client` decider; 1.2 adds a review's quote checks and the `blocking-finding` method; 1.3 adds `retention`; 1.4 adds `autonomy`, `approval`, `board`, and `budget` |
 | [work-requirement.v1.json](work-requirement.v1.json) | input to routing |
 | [capability-descriptor.v1.json](capability-descriptor.v1.json) | a Worker's currently proven capabilities |
-| [workflow-node.v1.json](workflow-node.v1.json) | durable state of one DAG node |
+| [workflow-node.v1.json](workflow-node.v1.json) | durable state of one DAG node; 1.1 adds `RETIRED`; 1.2 adds the brief its execution was started with |
 | [provider-turn-receipt.v1.json](provider-turn-receipt.v1.json) | body of a provider turn `receipt` artifact |
 | [worker-session.v1.json](worker-session.v1.json) | durable Worker session with its own `SessionId` ([ADR-0015](../docs/decisions/adr/0015-worker-sessions-and-peer-messaging.md)) |
 | [session-summary.v1.json](session-summary.v1.json) | body of a Worker session's `report` checkpoint or `handoff` compaction artifact |
@@ -43,10 +43,10 @@ each field, which a schema cannot fully express, is documented in
 | [autonomy-policy.v1.json](autonomy-policy.v1.json) | which action classes run (`auto`, `notify`) and which need a person (`ask`) or are denied (`forbid`); 1.1 adds `remediation` to the classes that always ask |
 | [usage-record.v1.json](usage-record.v1.json) | body of a `receipt` artifact: what one run, call, or turn consumed, from an objective source, deduplicated by request id |
 | [limit-state.v1.json](limit-state.v1.json) | body of an `evidence` artifact: one observation of one configured window of a resource pool |
-| [brief.v1.json](brief.v1.json) | body of an `objective` artifact: what one Worker run is given, with artifacts by content id, never their content |
+| [brief.v1.json](brief.v1.json) | body of an `objective` artifact: what one Worker run is given, with artifacts by content id, never their content; 1.1 adds `instructions`, text and pointers in order |
 | [digest.v1.json](digest.v1.json) | body of a `report` artifact: a cited summary of raw artifacts, every claim with a verbatim quote |
 | [plugin-manifest.v1.json](plugin-manifest.v1.json) | what a plugin declares (name and renames, seams provided and consumed, class, config keys with a sensitive flag), with the host-owned lifecycle state under `_meta` |
-| [mcp-board.v1.json](mcp-board.v1.json), [mcp-approvals.v1.json](mcp-approvals.v1.json), [mcp-resources.v1.json](mcp-resources.v1.json) | input and output of the `board_*`, `approvals_*`, and `resources_*` MCP tools |
+| [mcp-board.v1.json](mcp-board.v1.json), [mcp-approvals.v1.json](mcp-approvals.v1.json), [mcp-resources.v1.json](mcp-resources.v1.json), [mcp-digests.v1.json](mcp-digests.v1.json) | input and output of the `board_*`, `approvals_*`, `resources_*`, and `digests_*` MCP tools |
 
 Schemas still to come, added with their milestone: the domain artifact bodies
 (`report`, `handoff`, …), the input and output of the MCP tools built before Base, and the
