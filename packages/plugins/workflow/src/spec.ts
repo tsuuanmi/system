@@ -239,7 +239,8 @@ export const DEFAULT_TEMPLATES: Record<string, NodeTemplate[]> = {
 }
 
 const NODE_ID = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$/
-const REFERENCE = /\{\{node:([^}]+)\}\}/g
+/** A `{{node:<id>}}` reference: an id as NODE_ID allows, bounded, so a long unclosed run cannot backtrack. */
+const REFERENCE = /\{\{node:([A-Za-z0-9._:/-]{1,200})\}\}/g
 
 /** Validate a template; returns node ids in a dependency order. Throws on any defect. */
 export function preflight(nodes: readonly NodeTemplate[]): string[] {
@@ -491,7 +492,7 @@ export interface Instructions {
 export function compose(prompt: string, input: string, results: Readonly<Record<string, ArtifactRef>>, extras: ComposeExtras = {}): Instructions {
   const out = instructions()
   let last = 0
-  for (const match of prompt.matchAll(/\{\{(input|grown|team|node:[^}]+)\}\}/g)) {
+  for (const match of prompt.matchAll(/\{\{(input|grown|team|node:[A-Za-z0-9._:/-]{1,200})\}\}/g)) {
     out.text(prompt.slice(last, match.index))
     last = match.index + match[0].length
     const key = match[1]!
