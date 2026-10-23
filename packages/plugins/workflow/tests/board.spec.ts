@@ -538,6 +538,28 @@ describe('ctx.workflow serves board tasks over the store-backed board and approv
     expect((await ctx.resources.usage({ taskId: task.taskId })).records).toHaveLength(1)
   })
 
+  it('ends the budget of a run that finished before any step reserved as released, so no restart selects or rewrites its row again (T62)', async () => {
+    const { ctx, workers, restartWorkflow } = await boot({ resources: true })
+    await project(ctx)
+    await poolOpen(ctx)
+    const task = await ready(ctx, 'never reserved', { budget: [{ pool: 'max.programmatic', unit: 'runs', amount: 3 }] })
+    // The ledger does not answer a reservation: the step waits, nothing reserved, and the operator stops the run.
+    const reserve = vi.spyOn(ctx.resources, 'reserve').mockRejectedValue(new Error('the ledger is not answering'))
+    const run = await ctx.workflow.start({ template: 'solo', input: 'q', classification: 'public', task: { taskId: task.taskId } })
+    await until(() => reserve.mock.calls.length > 0, 'the step asked to reserve')
+    await ctx.workflow.stop(run.runId, 'not needed')
+    expect(await settled(ctx, run.runId)).toMatchObject({ status: 'failed' })
+    expect(workers.started).toHaveLength(0)
+    await until(() => ctx.workflow.get(run.runId)!.task!.budget!.state === 'released', 'the budget released')
+    expect(ctx.workflow.get(run.runId)!.task!.budget).not.toHaveProperty('decision')
+    // A restart finds nothing of it to release: its row is not written again.
+    const stored = (): { budget: string; updated_at: string } => ctx.store.db.prepare('SELECT budget, updated_at FROM workflow_tasks WHERE run_id = ?').get(run.runId) as { budget: string; updated_at: string }
+    const before = stored()
+    await restartWorkflow()
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    expect(stored()).toEqual(before)
+  })
+
   it('blocks a task whose budget is spent (budget-spent) before any step of its run runs; the board asks the operator to fund it (PROP-0010, INV-2)', async () => {
     const { ctx, workers } = await boot({ resources: true })
     await project(ctx)
@@ -731,6 +753,44 @@ describe('ctx.workflow serves board tasks over the store-backed board and approv
     expect(brief.attempt).toBe(2)
     expect(brief.artifacts).toContainEqual({ ref: stepA, role: 'prior', note: 'the result of step a of attempt 1, which the task\'s spent budget stopped before its next step' })
     expect(ctx.eventLog.query({ runId: second.runId, type: 'workflow.task.budget', limit: 10 }).map((e) => [e.nodeId, e.data?.['state']])).toEqual([['a', 'reserved'], ['b', 'reserved']])
+  })
+
+  it('releases a step\'s hold as soon as its execution settles, so a sibling of its batch that reserves later is not refused for a hold no step needs (T62, ADR-0047)', async () => {
+    const node = (nodeId: string, extra: { prompt?: string; dependsOn?: string[] } = {}) => ({ nodeId, objective: `Do ${nodeId}`, prompt: '{{input}}', capabilities: ['reason'], tier: 'standard' as const, conversation: 'temporary' as const, acceptance: 'acceptance.answer', ...extra })
+    const pair = [node('one'), node('two'), node('join', { prompt: '{{node:one}} {{node:two}}', dependsOn: ['one', 'two'] })]
+    const { ctx, workers } = await boot({ resources: 'store', workflow: { templates: { pair } } })
+    await project(ctx)
+    await poolOpen(ctx)
+    // Two runs: the first step's own, and one for its sibling (then for the join). Counted with the first step's usage, its hold would make three.
+    const task = await ready(ctx, 'two beside each other', { budget: [{ pool: 'max.programmatic', unit: 'runs', amount: 2 }] })
+    workers.reply = () => 'hold'
+    // The second reservation of the batch waits until the first step finished (as a sibling waking from a back-off would).
+    let open!: () => void
+    const late = new Promise<void>((resolve) => (open = resolve))
+    cleanups.push(() => open())
+    const reserve = ctx.resources.reserve.bind(ctx.resources)
+    const spy = vi.spyOn(ctx.resources, 'reserve').mockImplementation(async (request) => {
+      if (spy.mock.calls.length === 2) await late
+      return reserve(request)
+    })
+    const run = await ctx.workflow.start({ template: 'pair', input: 'q', classification: 'public', task: { taskId: task.taskId } })
+    await until(() => workers.started.length === 1 && spy.mock.calls.length === 2, 'one step started, the other reserving')
+    const first = workers.started[0]!
+    const firstNode = ctx.workflow.get(run.runId)!.nodes.find((n) => n.executionId === first.id)!.nodeId
+    await drew(ctx, task.taskId, 'first-step', { runId: first.id })
+    workers.release(first.id, { text: 'the first' })
+    await until(() => ctx.workflow.get(run.runId)!.nodes.find((n) => n.nodeId === firstNode)!.state === 'COMPLETED', 'the first step completed')
+    const holds = (): unknown[] | undefined => (JSON.parse((ctx.store.db.prepare('SELECT budget FROM workflow_tasks WHERE run_id = ?').get(run.runId) as { budget: string }).budget) as { holds?: unknown[] }).holds
+    await until(() => holds() === undefined, 'the first step\'s hold released while its sibling is in flight', 5000).catch(() => undefined)
+    const left = holds()
+    open()
+    expect(left).toBeUndefined()
+    await until(() => workers.started.length === 2, 'the second step started', 10_000)
+    workers.release(workers.started[1]!.id, { text: 'the second' })
+    await until(() => workers.started.length === 3, 'the join started', 10_000)
+    workers.release(workers.started[2]!.id, { text: 'joined' })
+    expect(await settled(ctx, run.runId)).toMatchObject({ status: 'completed', answer: 'joined' })
+    expect(ctx.eventLog.query({ runId: run.runId, type: 'workflow.task.budget', limit: 10 }).map((e) => e.data?.['state'])).toEqual(['reserved', 'reserved', 'reserved'])
   })
 
   it('refuses the next step on a spent budget across a restart of the engine while the first step runs: its reservation is kept, never made twice, and on the task\'s last attempt the run ends with no funding asked (retries-spent) (ADR-0047, ADR-0044, INV-4)', async () => {

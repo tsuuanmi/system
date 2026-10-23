@@ -85,6 +85,26 @@ function scripted(ctx: Context, workers: CapabilityDescriptor[], answer: (prompt
   return started
 }
 
+/** A source with no Worker whose `describe` throws once `broken` is set, as one whose vault read fails. */
+function failing(ctx: Context): { broken: boolean } {
+  const state = { broken: false }
+  ctx.workers.register({
+    name: 'unreadable',
+    describe: async () => {
+      if (state.broken) throw new Error('the vault is locked')
+      return []
+    },
+    start: () => {
+      throw new Error('it has no Worker to start')
+    },
+    get: () => undefined,
+    wait: async () => {
+      throw new Error('it has no execution to wait on')
+    },
+  })
+  return state
+}
+
 async function boot() {
   const dir = mkdtempSync(join(tmpdir(), 'system-member-routing-'))
   const ctx = new Context()
@@ -210,5 +230,39 @@ describe('a review member kept off a website by its input bound (live 2026-10-23
     scripted(ctx, [website('chat', 'site-a', 'standard'), website('chat2', 'site-a', 'standard')], (prompt) => ({ text: isProposal(prompt) ? findings : ballot }))
     const done = await ctx.workflow.wait(ctx.workflow.start({ template: 'review', input: material(10), classification: 'public' }).runId, 60_000)
     expect(done.nodes.find((n) => n.nodeId === 'review:m2:propose')!.error).toMatchObject({ kind: 'config_error', message: expect.stringMatching(/^team review needs 2 provider families, one per member; 1 is ready \(ADR-0027\)\. no Worker can take this work/) })
+  }, 60_000)
+})
+
+describe('a session step\'s held Workers, when another Worker source cannot describe itself (T62)', () => {
+  it('completes a session step whose answer is accepted while another Worker source cannot describe itself (T62)', async () => {
+    const { ctx } = await boot()
+    const unreadable = failing(ctx)
+    // The other source fails to describe itself only once the step started, as a vault read failing then.
+    scripted(ctx, [model('api', 'fam', 'standard')], () => {
+      unreadable.broken = true
+      return { text: 'An answer.' }
+    })
+    const done = await ctx.workflow.wait(ctx.workflow.start({ template: 'ask', input: 'hello', persist: true }).runId, 30_000)
+    expect(done).toMatchObject({ status: 'completed', answer: 'An answer.' })
+    expect(decisions(ctx, done.runId, 'recovery')).toEqual([])
+  }, 60_000)
+
+  it('does not escalate a session step\'s rejected answer when its held Workers cannot be listed, and fails it as rejected, never as internal (T62)', async () => {
+    const { ctx } = await boot()
+    const unreadable = failing(ctx)
+    // Its session's source has a Worker at the next tier: with the listing readable, it would escalate there.
+    const started = scripted(ctx, [model('api', 'fam', 'standard'), model('api-pro', 'fam', 'frontier')], () => {
+      unreadable.broken = true
+      return { text: '' }
+    }, { 'model:api': ['model:api-pro'] })
+    const done = await ctx.workflow.wait(ctx.workflow.start({ template: 'ask', input: 'hello', persist: true }).runId, 30_000)
+    expect(done.status).toBe('failed')
+    const [node] = done.nodes
+    expect(node).toMatchObject({ state: 'FAILED', worker: 'model:api', error: { kind: 'acceptance_rejected', disposition: 'NONE' } })
+    expect(node!.error!.message).toMatch(/^acceptance\.answer: the answer is empty; not escalated: held Workers unknown: the Workers session \S+ stays on could not be listed \(the vault is locked\), so no Worker can be shown to take it at tier frontier$/)
+    const [escalation] = decisions(ctx, done.runId, 'escalation')
+    expect(escalation).toMatchObject({ decider: { id: 'workflow.escalation', version: '2' }, outcome: { option: 'fail' } })
+    expect(decisions(ctx, done.runId, 'recovery')).toEqual([])
+    expect(started).toHaveLength(1)
   }, 60_000)
 })

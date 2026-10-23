@@ -277,7 +277,11 @@ without naming a provider ([INV-11](../architecture/invariants.md#inv-11-no-tool
   Worker, REQ-TEAM-2) escalates only when one of them, as listed now, serves the
   next tier or above: routing would refuse every other Worker, so the decision is
   `fail`, and the node fails as `acceptance_rejected` with the contract's reasons
-  and why it was not escalated, never as an admission failure. A rejected answer
+  and why it was not escalated, never as an admission failure. Those Workers are
+  listed only once the result is rejected. When the listing fails (a Worker source
+  that cannot describe itself), no Worker can be shown to take the next tier: the
+  decision is `fail` ("held Workers unknown", with the listing's error), and the
+  step never fails for the listing itself. A rejected answer
   its Worker cut at its output bound (`model-answer` `finish: max-tokens`) says so
   among the reasons, since a higher tier is not what a cut answer lacked.
   Escalation is only ever for a rejected result: a Worker refused at admission

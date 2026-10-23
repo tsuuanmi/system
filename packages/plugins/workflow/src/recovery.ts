@@ -13,22 +13,30 @@ import type { NodeRecord, NodeRow, RunRow, WorkflowError } from './types.ts'
 
 const RETRYABLE = new Set(['IMMEDIATE', 'BACKOFF', 'RECREATE_SESSION'])
 
-/** The Workers a node's session holds it to (Model A: a team member keeps one logical Worker), as listed now. */
-export interface Held {
-  session: string
-  workers: CapabilityDescriptor[]
-}
+/**
+ * The Workers a node's session holds it to (Model A: a team member keeps one logical Worker), as
+ * listed now; or why they could not be listed (`unknown`), when the listing failed.
+ */
+export type Held = { session: string; workers: CapabilityDescriptor[] } | { session: string; unknown: string }
 
 /**
- * The Workers a node's session holds it to, as listed now, read before a rejected result's
- * escalation is decided (that runs in a transaction, which cannot wait for the listing).
+ * The Workers a node's session holds it to, as listed now, read once its result was rejected,
+ * before the escalation is decided (that runs in a transaction, which cannot wait for the listing).
  * Undefined when its session holds it to none, or none of them is listed now: routing then decides.
+ * A listing that fails (any source's `describe` throwing) is `unknown`, never an error: the step's
+ * own answer is judged all the same, and an escalation no Worker can be shown to take is not chosen.
  */
 export async function heldWorkers(e: Engine, spec: ResolvedNode): Promise<Held | undefined> {
   const session = spec.session.sessionId
   const own = session ? e.ctx.workers.affinity(session) : undefined
   if (!session || !own?.length) return undefined
-  const workers = (await e.ctx.workers.list()).filter((w) => own.includes(w.worker))
+  let listed: CapabilityDescriptor[]
+  try {
+    listed = await e.ctx.workers.list()
+  } catch (error) {
+    return { session, unknown: errorLine(error instanceof Error ? error.message : String(error)) }
+  }
+  const workers = listed.filter((w) => own.includes(w.worker))
   return workers.length ? { session, workers } : undefined
 }
 
@@ -36,20 +44,22 @@ export async function heldWorkers(e: Engine, spec: ResolvedNode): Promise<Held |
  * A rejected result may run again at the next tier above the one that served it, at most
  * `maxEscalations` times (REQ-WRK-9, routing.md#intelligence-tiers), and only onto a Worker it
  * may take: a node its session holds to its Workers (`held`) escalates only when one of them
- * serves that tier or above, since routing would refuse every other one. The rejected result
- * stays as evidence; the choice is an `escalation` decision either way. `why` says why it
- * escalated, or why not.
+ * serves that tier or above, since routing would refuse every other one. When those Workers could
+ * not be listed (`held.unknown`), none can be shown to serve it, so it does not escalate (fail
+ * closed). The rejected result stays as evidence; the choice is an `escalation` decision either
+ * way. `why` says why it escalated, or why not.
  */
 export function escalate(e: Engine, run: RunRow, node: NodeRow, spec: ResolvedNode, result: ArtifactRef, acceptance: ArtifactRef, reasons: string[], decisions: { decisions: string }, lease: () => Lease, held?: Held): { escalated: boolean; why: string } {
   const max = spec.maxEscalations ?? 1
   const served = node.served_tier ?? spec.tier
   const next = TIERS[TIERS.indexOf(served) + 1]
-  const reachable = next === undefined || !held || held.workers.some((w) => TIERS.indexOf(w.tier) >= TIERS.indexOf(next))
+  const reachable = next === undefined || !held || ('workers' in held && held.workers.some((w) => TIERS.indexOf(w.tier) >= TIERS.indexOf(next)))
   const escalate = node.escalations < max && next !== undefined && reachable
   const why = escalate
     ? `escalation ${node.escalations + 1} of ${max} to ${next}: ${spec.acceptance} rejected the ${served} result (${reasons.join('; ')})`
     : next === undefined ? `no tier above ${served}`
     : node.escalations >= max ? `escalation bound reached (${max})`
+    : held && 'unknown' in held ? `held Workers unknown: the Workers session ${held.session} stays on could not be listed (${held.unknown}), so no Worker can be shown to take it at tier ${next}`
     : `session ${held!.session} stays on its Worker${held!.workers.length > 1 ? 's' : ''} ${held!.workers.map((w) => `${w.worker} (${w.tier})`).join(', ')}, none at tier ${next} or above, so no Worker could take it there`
   const decision = e.ctx.artifacts.recordDecision({
     decisionType: 'escalation',
