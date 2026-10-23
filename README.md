@@ -38,7 +38,11 @@ Milestones M0 to M5 are done apart from a few listed items, and M6 (second
 domain and readiness) has started. PROP-0004 (the Claude Code-lead MVP) Phase 1
 is in progress: the default composition leaves the agent Worker and model gateway
 rows off until an operator
-[turns one on](docs/operations/runbooks.md#turn-an-off-row-back-on). The
+[turns one on](docs/operations/runbooks.md#turn-an-off-row-back-on). The next
+release is Base (v0.8, [PROP-0010](docs/proposals/0010-base-version.md)): the
+closed core, with Claude Code as the first Worker
+([scope](docs/requirements/release-scope.md#base-v08)). Its specification, resource
+ledger, board, and approval queue (B1 to B5) are in the code. The
 [roadmap](docs/proposals/roadmap.md) has the milestone table and what remains. What each package does today is in its own
 `README.md`; what was verified on live accounts, and when, is in the
 [release checklist](docs/validation/release-checklist.md).
@@ -55,8 +59,17 @@ Built today:
   exact-subject review;
 - profiles for scientific research (`research`, with a `deep` variant) and
   software development (`agent-review`, for agent Workers);
+- the [resource ledger](docs/design/resources.md): configured pools and their limit
+  windows, reservations before an agent run, and usage from the runtime's own numbers;
+- the [board](docs/design/board.md): projects with charters and tasks that outlive a run,
+  whose attempts the workflow engine serves, with expiring waits;
+- the [approval queue](docs/design/approvals.md): an autonomy policy, one batched queue whose
+  expiry denies, and a gate that judges every tool call of a Claude Code Worker; an agent Worker
+  can work in a git worktree of its own per workflow run. The board and the queue are on in the
+  default composition;
 - the MCP server, the Anthropic Messages and Responses gateways, the `system`
-  CLI, and an operator web page at `/ui`.
+  CLI, and an operator web page at `/ui` (runs, the approval queue, and the reviews of board
+  tasks).
 
 ## Quick start (Linux)
 
@@ -98,10 +111,12 @@ system mcp-config codex >> ~/.codex/config.toml   # Codex: runs the stdio shim (
 - **MCP tools:** `ask` (one turn on a website Worker), `research`,
   `brainstorm`, `review`, `vote` (break a team's tie), `run` (any workflow
   template), `result`, `usage`, `explain`, `status`, sessions
-  (`session_send`, `session_inbox`), and the resource ledger (`resources_pools`,
-  `resources_usage`); operator tools for runs (`approve`,
-  `stop`, `continue`, `supersede`, `delete`, `drain`, `resume`) and accounts
-  (`account_*`). The full contracts are generated in
+  (`session_send`, `session_inbox`), the resource ledger (`resources_pools`,
+  `resources_usage`), the board (`board_*`: projects with charters, tasks, claims), and the
+  approval queue (`approvals_list`, `approvals_get`, `approvals_policy`); `run` also serves one
+  attempt of a board task; operator tools for runs (`approve`,
+  `stop`, `continue`, `supersede`, `delete`, `drain`, `resume`), verdicts on the queue
+  (`approvals_decide`), and accounts (`account_*`). The full contracts are generated in
   [docs/reference/mcp-tools.md](docs/reference/mcp-tools.md).
 - **`research`:** the scientific-research procedure: testable hypotheses, two
   cited literature reviews on two provider families (one with web search), an
@@ -120,7 +135,8 @@ system mcp-config codex >> ~/.codex/config.toml   # Codex: runs the stdio shim (
   or Codex on the gateways, with a website Worker as their model.
 - **Inspection:** `system explain <runId>` shows why each step ran where it did,
   and `system usage` which quota class and tier served each step. `system ui`
-  prints the link to the operator page.
+  prints the link to the operator page. What to do when something waits or fails is in the
+  [runbooks and playbooks](docs/operations/README.md).
 
 ## How it fits together
 
