@@ -575,6 +575,7 @@ describe('ctx.workflow serves board tasks over the store-backed board and approv
     expect(view.task?.question).toMatchObject({ state: 'raised', nodeId: 'a', questions: ['Which band width?', 'Keep the old API?'] })
     expect(decisionOf(ctx, view.task!.question!.decision)).toMatchObject({ decisionType: 'gate', decider: { id: 'workflow.task-question' }, outcome: { option: 'ask', detail: { taskId: task.taskId, nodeId: 'a' } } })
     expect(view.task?.outcome).toMatchObject({ status: 'blocked', state: 'waiting-for-input' })
+    expect(ctx.eventLog.query({ runId: run.runId, limit: 100 }).map((e) => e.type)).toEqual(expect.arrayContaining(['workflow.node.failed', 'workflow.task.question', 'workflow.run.failed', 'workflow.task.reported']))
     expect(await ctx.board.task(task.taskId)).toMatchObject({ state: 'waiting-for-input', waiting: { reason: 'question', questions: ['Which band width?', 'Keep the old API?'] }, attempts: { count: 1 } })
 
     // The lead answers every question: the next attempt goes through the gate (read: auto) and is briefed with the answers.
