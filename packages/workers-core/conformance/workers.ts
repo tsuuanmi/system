@@ -101,6 +101,43 @@ export function workersConformance(name: string, boot: Boot): void {
       })
     })
 
+    it('counts an offer scoped to a kind of work for that work only, and says it is scoped when it refuses (ADR-0049)', async () => {
+      const at = '2026-10-23T00:00:00Z'
+      const scoped = worker('w:scoped', {
+        schema: 'capability-descriptor@1.4', quotaClass: 'agent-plan',
+        capabilities: [{ capability: 'review', evidence: { kind: 'probe', at } }, { capability: 'reason', evidence: { kind: 'probe', at }, scope: 'review-member' }],
+      })
+      await withWorkers([scoped], async (ctx) => {
+        // Work of that scope: the scoped offer proves it.
+        const member = requirement({ schema: 'work-requirement@1.1', scope: 'review-member' })
+        const admitted = await ctx.workers.route(member)
+        expect(admitted.worker.worker).toBe('w:scoped')
+        expect(body(ctx, admitted.decisions.route).candidates.find((c) => c.selected)!.reasons[0]).toBe('proves reason for review-member work')
+        // Any other work: refused, fail closed, the scope named; no Worker proves the capability for it.
+        const failure = await ctx.workers.route(requirement()).catch((e: unknown) => e) as AdmissionFailure
+        expect(failure).toBeInstanceOf(AdmissionFailure)
+        expect(failure.rejections).toEqual([{ worker: 'w:scoped', state: 'ready', failed: [{ check: 'capability', reason: 'does not prove reason (it proves reason only for review-member work)' }] }])
+        expect(failure.message).toMatch(/no Worker proves reason\b/)
+        // An unscoped capability of the same Worker still counts for any work.
+        expect((await ctx.workers.route(requirement({ capabilities: ['review'] }))).worker.worker).toBe('w:scoped')
+      })
+      // An unscoped offer proves its capability for work of every scope.
+      await withWorkers([worker('w:plain')], async (ctx) => {
+        expect((await ctx.workers.route(requirement({ schema: 'work-requirement@1.1', scope: 'review-member' }))).worker.worker).toBe('w:plain')
+      })
+    })
+
+    it('refuses a scope below the schema version that carries it: a descriptor below @1.4, a requirement below @1.1 (ADR-0049)', async () => {
+      const at = '2026-10-23T00:00:00Z'
+      const early = worker('w:early', { schema: 'capability-descriptor@1.3', capabilities: [{ capability: 'reason', evidence: { kind: 'probe', at }, scope: 'review-member' }] })
+      await withWorkers([early], async (ctx) => {
+        await expect(ctx.workers.route(requirement())).rejects.toThrow(/capability-descriptor@1\.3/)
+      })
+      await withWorkers([worker('w:a')], async (ctx) => {
+        await expect(ctx.workers.route(requirement({ scope: 'review-member' }))).rejects.toThrow(/work-requirement@1\.0/)
+      })
+    })
+
     it('chooses the lowest admissible tier at or above the minimum, within the maximum, and records a tier decision (QA-12)', async () => {
       const workers = [worker('w:eco', { tier: 'economy' }), worker('w:std', { tier: 'standard' }), worker('w:top', { tier: 'frontier' })]
       await withWorkers(workers, async (ctx) => {

@@ -34,10 +34,13 @@ collaboration identity, and it is chosen through admission once, at formation
 | Claude Agent SDK | SDK session id | SDK resume |
 | Codex SDK | thread id | resume thread |
 | ACP agent | ACP `sessionId` | `session/resume` (v2) or `session/load` (v1) |
+| An agent runtime that cannot resume (the Antigravity CLI), as a review member only | none | a replay, not a resume: the `agents` source sends the session's earlier turns, exactly as recorded, before each new one, and records them with the answer ([review members](agent-runtimes.md#review-members)) |
+| Model Worker | none | the `models` source replays the session's transcript ([ADR-0031](../decisions/adr/0031-model-worker-sessions-by-replay.md)) |
 | A2A remote agent (planned) | `contextId` (+ current `taskId`) | `SubscribeToTask` / Get Task |
 
 A Worker can serve a session only if it proves `persistent-conversation`
-([routing](routing.md#capability-vocabulary)).
+([routing](routing.md#capability-vocabulary)), for that work when its offer is scoped to one kind
+of work ([scoped offers](routing.md#scoped-offers)).
 
 ## Session states
 

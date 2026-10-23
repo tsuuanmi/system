@@ -22,9 +22,10 @@ Worker states, and the same requirement always give the same result
 ## Work requirement
 
 ```ts
-WorkRequirement {                    // work-requirement@1.0
+WorkRequirement {                    // work-requirement@1.1
   objective: string;
   capabilities: Capability[];        // all must be proven
+  scope?: "review-member";           // the kind of work, for offers scoped to it (below)
   data: { classification: "public" | "operator-shared" | "local-private";
           refs: ArtifactRef[] };      // what the work must read
   egressPolicy: string;              // policy id from a trusted envelope (INV-6, INV-12)
@@ -46,11 +47,11 @@ each one with evidence from the sources shown below.
 
 | Capability | Meaning | Typical evidence |
 |---|---|---|
-| `reason` | general reasoning and synthesis | provider driver conformance (website Workers); a route probe (model Workers, [models](models.md)) |
+| `reason` | general reasoning and synthesis | provider driver conformance (website Workers); a route probe (model Workers, [models](models.md)); for a review member's steps only, a read-only agent Worker under the enforced review-member profile ([scoped offers](#scoped-offers)) |
 | `web-search` | search the live web with citations | feature probe on the account |
 | `deep-research` | provider-native multi-step research report | plan + feature probe (P2) |
 | `connector:<name>` | a website connector or app enabled on the account, e.g. `connector:github` | connector probe on the account (P2) |
-| `persistent-conversation` | resumable multi-turn identity | driver conformance (website Workers); the runtime probe's `resume` flag (agent Workers). A resume conformance test for agent runtimes is planned |
+| `persistent-conversation` | resumable multi-turn identity | driver conformance (website Workers); the runtime probe's `resume` flag (agent Workers); the source's own replay (model Workers; for a review member's steps only, an agent Worker under the review-member profile whose runtime cannot resume: an exact, recorded replay). A resume conformance test for agent runtimes is planned |
 | `local-data` | can read local files and datasets in place | runs on this machine; sandbox policy allows the paths |
 | `develop`, `validate` | edit code, run tests in a workspace | agent-runtime probe + writable sandbox; `validate` also needs `executes` |
 | `review` | assess a provided subject against criteria | a read-only agent Worker (runtime probe + read-only sandbox) |
@@ -61,6 +62,29 @@ node requires `review` and `local-data`. Only agent Workers prove `local-data`,
 `develop`, `validate`, and `review`. The Claude Code rows are on in the default composition,
 with no Worker until the operator names a repository
 ([agent Workers](../operations/runbooks.md#agent-workers)).
+
+### Scoped offers
+
+A Worker may offer a capability for one kind of work only
+([ADR-0049](../decisions/adr/0049-read-only-agent-workers-as-review-members.md)). A capability
+offer carries `scope` (`capability-descriptor@1.4`), and a work requirement names the kind of work
+it is (`scope`, `work-requirement@1.1`). The only scope is `review-member`: a step of a review
+team's member, which the workflow engine names on every member step of a `review` team (proposal,
+ballot, debate) from the admitted spec, never from a template or model text (INV-6).
+
+- A scoped offer proves its capability only for a requirement that names its scope; an unscoped
+  offer proves it for every requirement. Routing compares the two for equality, and nothing else.
+- A Worker refused for it says so: `does not prove reason (it proves reason only for review-member
+  work)`. With no Worker left, admission fails closed and names the capability no Worker proves for
+  that work.
+- A descriptor below `@1.4`, or a requirement below `@1.1`, that carries a scope is refused, so no
+  reader takes a scoped offer for a plain one.
+- Today one source scopes offers: an agent Worker under the enforced review-member profile
+  offers `reason`, granted by the profile while it is enforced, and, when its runtime cannot
+  resume, `persistent-conversation` (kept by an exact, recorded replay), for a review member's
+  steps only ([agent runtimes](agent-runtimes.md#review-members)).
+- A caller that reads descriptors itself (a board task deciding whether to resume a session)
+  counts unscoped offers only.
 
 ## Algorithm
 
@@ -134,8 +158,11 @@ without naming a provider ([INV-11](../architecture/invariants.md#inv-11-no-tool
 - **Provider family.** A capability descriptor may carry `family`
   (`capability-descriptor@1.1`): an opaque string for who ultimately serves the work, set by
   the Worker source. A website Worker's family is its account's provider, an agent Worker's is
-  its runtime, and a model Worker's is its catalog entry's `family`, by default its route
-  ([models](models.md#the-catalog-and-the-routes)).
+  its configuration's `family`, by default its runtime (a review member must name it,
+  [ADR-0049](../decisions/adr/0049-read-only-agent-workers-as-review-members.md)), and a model
+  Worker's is its catalog entry's `family`, by default its route
+  ([models](models.md#the-catalog-and-the-routes)). Admission checks it apart from capabilities: a
+  Worker that proves every capability the work needs is still refused for `diversity`.
 - **Exclusion.** A caller passes `exclude: { families, reason }` in the route options. The
   `diversity` check then rejects a Worker of an excluded family (`same provider family
   (<reason>)`), and a Worker that declares no family, which cannot be shown to differ
@@ -206,7 +233,9 @@ design.
   (`quotaPreference`, REQ-WRK-8). The default composition prefers
   `subscription-chat`, then `local`, `agent-plan`, and `metered`. Agent Workers never
   offer plain `reason`, so `agent-plan` quota is spent only on capabilities only
-  they prove, such as `develop`, `review`, and `local-data` (P1). Tier comes before
+  they prove, such as `develop`, `review`, and `local-data` (P1), and on the review member steps
+  of the agent Workers the operator names review members, which offer `reason` for that work only
+  ([scoped offers](#scoped-offers)); the quota order still puts a website Worker first there. Tier comes before
   quota, so a model Worker the operator declares at a lower tier than every website
   Worker serves the `economy` work (P4).
 - The `api-first` preset ([ADR-0025](../decisions/adr/0025-api-first-composition.md)) orders

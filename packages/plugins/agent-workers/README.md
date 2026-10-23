@@ -19,21 +19,30 @@ The **`agents` Worker source**: agent runtimes as Workers
   `workspace-write`), and optional `tools` (omitted or empty: the runtime's
   minimal set), `model`, and `maxTurns`. It also
   has a `tier`, and a `quotaClass` (default `agent-plan`). The Worker is local.
-  Its provider family (`capability-descriptor@1.1`) is its runtime. Optional,
+  Its provider family (`capability-descriptor@1.1`) is its `family`, by
+  default its runtime: give Workers of one vendor's models the same family, so
+  team members of one vendor stay apart (ADR-0027). Optional,
   for metering: `pool` and `account` (set together: a pool id from the
   resources configuration and the account it belongs to), and `windows`, the
   runtime's limit window names mapped to the pool's window ids (for example
   `five_hour: five-hour`). Optional: `worktreePerRun` (default false; see
   below). Workers configured with the same workspace must agree on it, or the
   plugin refuses to load (`config_error`): a reviewer must read the tree it
-  reviews.
+  reviews. Optional: `reviewMember` (default false; see **Review members**
+  below), refused at load (`config_error`) unless the sandbox is `read-only`
+  (a writer never reviews), `family` is set, and `worktreePerRun` is off.
 - **Capabilities are what `probe()` proves now** (cached for `probeTtlMs`):
   - `local-data`;
   - `review` only for a read-only sandbox: a review is independent of the
     change (INV-15);
   - `develop` for a writable sandbox, and `validate` only if the runtime can
     also run commands confined to the workspace (`executes`);
-  - `persistent-conversation` when the runtime can resume.
+  - `persistent-conversation` when the runtime can resume;
+  - under the review-member profile only, offers scoped to a review member's
+    steps (`capability-descriptor@1.4`), granted by the profile while it is
+    enforced (the Worker is ready): `reason`, and `persistent-conversation`
+    (evidence `conformance`, kept by an exact replay) when the runtime cannot
+    resume.
 
   A Worker never offers plain `reason`, so ordinary asks never spend agent-plan
   quota (P1). If the runtime is missing, cannot enforce the configured sandbox,
@@ -236,7 +245,46 @@ The **`agents` Worker source**: agent runtimes as Workers
   period; a run already submitted then fails as `reconciliation_failed`, never
   run again (INV-4).
 - **Sessions:** a session id is bound to its Worker (`affinity`). Later runs
-  resume the agent's native session. With `worktreePerRun`, a session resumed
-  by another workflow run resumes in that run's worktree.
+  resume the agent's native session, on a runtime that reports `resume`; no
+  other runtime is ever asked to resume one, and the session keeps no native
+  handle there. With `worktreePerRun`, a session resumed by another workflow
+  run resumes in that run's worktree. A `reset` (a compaction) starts the
+  session's next run fresh: no native handle, and a new generation for a replay.
+  On a runtime that cannot resume, a session's later run is refused
+  (`config_error`, unsent) unless it is a review member's (below).
+- **Review members**
+  ([ADR-0049](../../../docs/decisions/adr/0049-read-only-agent-workers-as-review-members.md)):
+  a read-only Worker configured `reviewMember: true` runs a `review` team
+  member's steps (scope `review-member`, which the workflow engine names on
+  each proposal, ballot, and debate of a `review` team) under the enforced
+  **review-member profile**, and only those:
+  - the profile grants `reason` for those steps, never for an ask, a
+    brainstorm, research, a planner, or a digest; a Worker not under it never
+    runs one (`config_error`, unsent);
+  - the step's workspace must be an empty directory outside any git work tree,
+    checked before anything is sent (`config_error`), so the member's material
+    is its prompt alone; after the step it must still be empty, or the run
+    fails as `reconciliation_failed`;
+  - the run's gate denies every tool call (`./src/gate.ts`), each a recorded
+    `gate` decision;
+  - its record is `agent-result@1.3` with `profile: review-member`;
+  - on a runtime that resumes, the member's steps continue its native session;
+    a step whose session has earlier turns but no native handle is refused
+    (`invalid_input`, unsent), never started fresh;
+  - on a runtime that cannot (the Antigravity CLI), the member's conversation
+    is **replayed**, not resumed: a later run's prompt is the session's earlier
+    completed runs of its generation, each its own message and its answer
+    exactly as recorded, in order, each between fence lines derived from its
+    own text, then the new message. Every earlier run ran under the profile, so
+    no tool ran in it. The runs it replays are fixed in the run's row when it is
+    first prepared, and its `agent-result@1.3` names them (`replay.runs`), their
+    answers (`replay.answers`, also its `inputs`), and the hash of everything
+    sent (`replay.promptHash`); `promptHash` stays its own message's;
+  - a replay fails closed, unsent (`invalid_input`): an earlier run still open,
+    one not run under the profile, an answer no longer stored, or more than
+    `maxReplayChars` (default 200,000) characters of earlier turns; a history
+    is never cut (INV-9);
+  - egress checks exactly what is sent, the replay included, at the strictest
+    classification of the turns it holds (INV-12).
 - **Injects:** `store`, `artifacts`, `leases`, `workers`, `agentRuntimes`, `egress`;
   reads `resources`, `approvals`, and `eventLog` when present.

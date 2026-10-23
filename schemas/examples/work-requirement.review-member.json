@@ -1,0 +1,22 @@
+{
+  "schema": "work-requirement@1.1",
+  "objective": "Review the caller's material as a team (member 2: ballot, round 1)",
+  "capabilities": [
+    "reason",
+    "persistent-conversation"
+  ],
+  "scope": "review-member",
+  "data": {
+    "classification": "public",
+    "refs": []
+  },
+  "egressPolicy": "egress.classification-and-secrets",
+  "tier": {
+    "min": "standard",
+    "source": "profile"
+  },
+  "acceptance": {
+    "contract": "acceptance.team-ballot-review",
+    "maxEscalations": 1
+  }
+}

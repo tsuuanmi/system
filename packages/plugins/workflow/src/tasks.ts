@@ -395,7 +395,8 @@ export class TaskRuns {
       handle = workers.handle(previous.sessionId)
       const bound = workers.affinity(previous.sessionId) ?? []
       const listed = (await workers.list()).filter((w) => bound.includes(w.worker))
-      const ready = listed.find((w) => (w.state === 'ready' || w.state === 'busy') && w.capabilities.some((c) => c.capability === 'persistent-conversation'))
+      // An offer scoped to another kind of work (a review member's conversation, ADR-0049) never resumes a task's session.
+      const ready = listed.find((w) => (w.state === 'ready' || w.state === 'busy') && w.capabilities.some((c) => c.capability === 'persistent-conversation' && c.scope === undefined))
       const served = (this.e.ctx.store.db.prepare('SELECT COUNT(*) AS n FROM workflow_runs WHERE session_id = ?').get(previous.sessionId) as { n: number }).n
       if (!handle) fresh = `session ${previous.sessionId} of ${what} has no native session its Worker can resume`
       else if (!ready) fresh = `the Worker of session ${previous.sessionId} cannot resume it now (${listed.length ? listed.map((w) => `${w.worker} is ${w.state}`).join(', ') : `${bound.join(', ') || 'no Worker'} is not listed`})`

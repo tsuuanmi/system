@@ -21,6 +21,7 @@ import type { WorkerExecution } from '@tsuuanmi/system-workers-core'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { CHARTER } from '../../../board-core/conformance/board.ts'
 import { FakeResources } from '../../../resources-core/conformance/resources.ts'
+import { worker } from '../../../workers-core/conformance/workers.ts'
 import { activeProject, CONFIG, readyTask, ScriptedWorkers, TEMPLATES } from '../conformance/workflow.ts'
 import Workflow, { type Config, type RunView, WorkflowFailure } from '../src/index.ts'
 
@@ -849,6 +850,37 @@ describe('ctx.workflow serves board tasks over the store-backed board and approv
     const again = await settled(ctx, failed.runId)
     expect(again).toMatchObject({ status: 'failed', error: { kind: 'invalid_input' } })
     expect(again.nodes[0]!.error?.message).toMatch(/no instructions left/)
+    expect(workers.started).toHaveLength(1)
+  })
+
+  it('resumes a task\'s session only on a conversation its Worker keeps for any work, never on one it keeps for a review member\'s steps alone (ADR-0049)', async () => {
+    const { ctx, workers } = await boot()
+    const at = '2026-10-23T00:00:00Z'
+    // The same Worker, keeping conversations for any work, then (its runtime no longer resuming) for review members only.
+    const keeper = (scoped: boolean) => worker('w:keeper', {
+      schema: 'capability-descriptor@1.4', tier: 'standard',
+      capabilities: [{ capability: 'reason', evidence: { kind: 'conformance', at } }, { capability: 'persistent-conversation', evidence: { kind: 'conformance', at }, ...(scoped ? { scope: 'review-member' as const } : {}) }],
+    })
+    workers.extra = [keeper(false)]
+    await project(ctx)
+    const attempt = async (task: BoardTask): Promise<RunView> => {
+      const run = await ctx.workflow.start({ template: 'kept', input: 'q', classification: 'public', task: { taskId: task.taskId } })
+      await settled(ctx, run.runId)
+      return reported(ctx, run.runId)
+    }
+    workers.reply = () => ({ fail: 'invalid_input', disposition: 'NONE', sent: true })
+    const kept = await ready(ctx, 'kept', { maxAttempts: 3 })
+    const first = await attempt(kept)
+    expect(first.sessionId).toBeDefined()
+    await ctx.board.sweep(new Date())
+    workers.extra = [keeper(true)]
+    const second = await attempt((await ctx.board.task(kept.taskId))!)
+    const [fresh] = decisionsOf(ctx, 'admission', 'workflow.task-session')
+    expect(fresh).toMatchObject({ outcome: { option: 'fresh' } })
+    expect(fresh!.candidates.find((c) => c.option === 'fresh')!.reasons.join(' ')).toMatch(/cannot resume it now/)
+    expect(second.sessionId).not.toBe(first.sessionId)
+    // Its step needs a conversation for any work, which no Worker keeps now: it fails closed, unsent.
+    expect(second.status).toBe('failed')
     expect(workers.started).toHaveLength(1)
   })
 

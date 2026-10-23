@@ -1,0 +1,18 @@
+{
+  "schema": "agent-result@1.3",
+  "worker": "agent:agy-review",
+  "runtime": "antigravity-cli",
+  "runId": "arun_9c2e4b1a7d3f6e05",
+  "sessionId": "ses_member_2",
+  "promptHash": "sha256:0d6f4c1b8e2a3d5f7a9c0b1e2d3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0e1f",
+  "sandbox": "read-only",
+  "workspace": "/home/operator/experiments/review/empty",
+  "profile": "review-member",
+  "replay": {
+    "runs": ["arun_4a7c1e9b2d6f3a08"],
+    "answers": ["sha256:7e1c3b5a9d2f4e6a8c0b1d3f5e7a9c2b4d6f8e0a1c3e5b7d9f2a4c6e8b0d1f3a"],
+    "promptHash": "sha256:b3a1c5e7d9f2a4c6e8b0d2f4a6c8e1b3d5f7a9c2e4b6d8f0a3c5e7b9d1f4a6c8"
+  },
+  "turns": 1,
+  "text": "```json\n{\"choice\": \"changes\", \"ranking\": [\"changes\", \"pass\"], \"rationale\": \"F1 holds: the lease acquired on line 3 is never released.\", \"evidence\": [], \"strongest\": {\"pass\": \"the change is small\"}, \"objections\": [], \"confidence\": \"high\", \"findings\": {\"F1\": \"agree\"}}\n```"
+}

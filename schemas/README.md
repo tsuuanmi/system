@@ -30,7 +30,7 @@ each field, which a schema cannot fully express, is documented in
 | [plan.v1.json](plan.v1.json) | body of a `plan` artifact: nodes a planner proposes to append to its run's DAG |
 | [approval.v1.json](approval.v1.json) | body of an `approval` artifact: an operator's verdict bound to one exact subject |
 | [model-answer.v1.json](model-answer.v1.json) | body of a `report` artifact holding one API or local model Worker's answer (the prompt by hash only), with its finish, output bound, and token usage |
-| [agent-result.v1.json](agent-result.v1.json) | body of a `report` artifact holding one agent-runtime Worker run's final message (the prompt by hash only); 1.1 adds its workspace and exact subject; 1.2 adds the model and token usage with cache reads and writes |
+| [agent-result.v1.json](agent-result.v1.json) | body of a `report` artifact holding one agent-runtime Worker run's final message (the prompt by hash only); 1.1 adds its workspace and exact subject; 1.2 adds the model and token usage with cache reads and writes; 1.3 adds a review member's profile and the turns it replayed |
 | [hypothesis-set.v1.json](hypothesis-set.v1.json) | body of a `criteria` artifact: a research question framed as testable hypotheses (scientific-research profile) |
 | [evidence-table.v1.json](evidence-table.v1.json) | body of an `evidence` artifact: cited claims and how each bears on each hypothesis (scientific-research profile) |
 | [team-result.v1.json](team-result.v1.json) | body of a `report` artifact holding a team's answer, composed from its final `vote` decision; its text starts with a machine-readable outcome line; 1.1 adds the method `blocking-finding` |

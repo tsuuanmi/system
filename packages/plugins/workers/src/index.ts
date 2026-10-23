@@ -11,7 +11,7 @@ import z from '@deepseek-ai/schemastery'
 import type {} from '@tsuuanmi/system-artifacts'
 import { extractJson, SchemaRegistry } from '@tsuuanmi/system-libs'
 import {
-  type Acceptance, type AcceptanceContract, type AdmissionCheck, AdmissionFailure, type AdmittedWorker, type ArtifactRef, type CapabilityDescriptor, type QuotaClass,
+  type Acceptance, type AcceptanceContract, type AdmissionCheck, AdmissionFailure, type AdmittedWorker, type ArtifactRef, type CapabilityDescriptor, provesFor, type QuotaClass,
   type Rejection, type RouteOptions, TIERS, type Tier, type WorkRequirement, type WorkerSource, Workers,
 } from '@tsuuanmi/system-workers-core'
 
@@ -172,7 +172,7 @@ export class WorkerRouter extends Workers {
     const unheard = silent.map((name) => ({ option: `source ${name}`, selected: false, reasons: [`did not describe its Workers within ${DESCRIBE_MS / 1000} s`] }))
     const producer = { type: 'system' as const, ref: options.producer ?? 'workers' }
     const stored = this.ctx.artifacts.put({
-      kind: 'objective', bodySchema: 'work-requirement@1.0', body: requirement, classification: requirement.data.classification, producer,
+      kind: 'objective', bodySchema: requirement.schema, body: requirement, classification: requirement.data.classification, producer,
     })
     const requirementRef = stored.id as ArtifactRef
     const failures = new Map(workers.map((w) => [w.worker, this.admit(w, requirement, options)]))
@@ -181,7 +181,7 @@ export class WorkerRouter extends Workers {
     if (!chosen) {
       const rejections: Rejection[] = workers.map((w) => ({ worker: w.worker, state: w.state, failed: failures.get(w.worker)! }))
       // A capability no Worker proves now is the plainest reason, for example website-only work in a composition without website Workers.
-      const unproven = requirement.capabilities.filter((c) => !workers.some((w) => w.capabilities.some((p) => p.capability === c)))
+      const unproven = requirement.capabilities.filter((c) => !workers.some((w) => w.capabilities.some((p) => p.capability === c && provesFor(p, requirement))))
       const why = unproven.length ? `no Worker proves ${unproven.join(', ')}` : workers.length ? 'no Worker passes admission' : 'no Worker is registered'
       const decision = this.ctx.artifacts.recordDecision({
         decisionType: 'admission',
@@ -300,9 +300,13 @@ export class WorkerRouter extends Workers {
       if (worker.family === undefined) fail('diversity', `declares no provider family, so it cannot differ (${options.exclude.reason})`)
       else if (options.exclude.families.includes(worker.family)) fail('diversity', `same provider family (${options.exclude.reason})`)
     }
-    const proven = new Set(worker.capabilities.map((c) => c.capability))
+    // An offer scoped to a kind of work proves its capability for that work only (ADR-0049).
+    const proven = new Set(worker.capabilities.filter((c) => provesFor(c, requirement)).map((c) => c.capability))
     const missing = requirement.capabilities.filter((c) => !proven.has(c))
-    if (missing.length) fail('capability', `does not prove ${missing.join(', ')}`)
+    if (missing.length) {
+      const scoped = worker.capabilities.filter((c) => missing.includes(c.capability) && c.scope !== undefined).map((c) => `${c.capability} only for ${c.scope} work`)
+      fail('capability', `does not prove ${missing.join(', ')}${scoped.length ? ` (it proves ${scoped.join(', ')})` : ''}`)
+    }
     // A site's usage limit on a capability the work needs (ADR-0034); a lapsed one no longer counts.
     const now = Date.now()
     const cooled = (worker.cooldowns ?? []).filter((c) => requirement.capabilities.includes(c.capability) && Date.parse(c.until) > now)
@@ -344,7 +348,7 @@ export class WorkerRouter extends Workers {
   }
 
   private chosenReasons(worker: CapabilityDescriptor, requirement: WorkRequirement): string[] {
-    const reasons = [`proves ${requirement.capabilities.join(', ')}`, `lowest admissible tier ${worker.tier}`, `quota class ${worker.quotaClass}`]
+    const reasons = [`proves ${requirement.capabilities.join(', ')}${requirement.scope ? ` for ${requirement.scope} work` : ''}`, `lowest admissible tier ${worker.tier}`, `quota class ${worker.quotaClass}`]
     if (worker.load) reasons.push(loadOf(worker.load))
     if ((this.config.priority ?? []).includes(worker.worker)) reasons.push('first in the configured priority list')
     return reasons

@@ -12,7 +12,7 @@ every template at load (preflight) and refuses a run whose contracts are not reg
 
 | Field | Meaning |
 |---|---|
-| Capabilities | what routing admits Workers by ([capability vocabulary](../design/routing.md#capability-vocabulary)); a node in a session also requires `persistent-conversation` |
+| Capabilities | what routing admits Workers by ([capability vocabulary](../design/routing.md#capability-vocabulary)); a node in a session also requires `persistent-conversation`; a review team member's step is also review-member work ([scoped offers](../design/routing.md#scoped-offers)) |
 | Tier | the minimum tier; *caller* means the caller's `tier` replaces it |
 | Conversation | `temporary`: a new one-shot conversation; `persistent`: the caller's session or a new one; `caller`: the caller's session, or a new one with `persist`; `own`: a new persistent conversation of this node alone ([conversations](../design/workflow-engine.md#conversations)) |
 | Acceptance | the contract the result must pass; a rejected result may escalate one tier (`maxEscalations`, default 1) |
@@ -68,12 +68,22 @@ by quoted line; a confirmed blocking finding decides `changes`. The MCP tool `re
 | Node | Capabilities | Tier | Conversation | Acceptance |
 |---|---|---|---|---|
 | `source` (a repository at one commit, or the caller's text) | none (`effect` executor: the engine reads it) | — | — | — (records an `acceptance` decision `workflow.source-snapshot`) |
-| `review:m<k>:propose` (independent findings; member k differs from members 1..k-1) | `reason` | standard | the member's own session | `acceptance.team-findings` |
-| `review:m<k>:ballot:1` (sealed) | `reason` | standard | the member's own session | `acceptance.team-ballot-review` |
+| `review:m<k>:propose` (independent findings; member k differs from members 1..k-1) | `reason` (review-member work) | standard | the member's own session | `acceptance.team-findings` |
+| `review:m<k>:ballot:1` (sealed) | `reason` (review-member work) | standard | the member's own session | `acceptance.team-ballot-review` |
 | `review:tally:1` | none (`team` executor) | — | — | — |
 | `review` (decision) | none (`team` executor) | — | — | — |
 
 Debate steps are appended as for `brainstorm`, with `acceptance.team-ballot-review`.
+
+Every member step (proposal, ballot, debate) routes as review-member work (`scope: review-member`,
+[scoped offers](../design/routing.md#scoped-offers)). So a member is a website or model Worker, or
+a read-only agent Worker under the enforced review-member profile
+([ADR-0049](../decisions/adr/0049-read-only-agent-workers-as-review-members.md);
+[agent runtimes](../design/agent-runtimes.md#review-members)): no tool call of its step runs, and
+its material is its prompt alone. Its source keeps its conversation natively or, on a runtime that
+cannot resume, by an exact, recorded replay; one it can do neither for fails the step unsent. Each
+member is asked at least twice (its proposal, then its ballot), so a member always needs its
+conversation, single-round or not.
 
 ## Profile templates
 
@@ -178,7 +188,7 @@ one fails admission, fail closed, with the capability named:
 | Template | Under `api-first` |
 |---|---|
 | `ask` | runs on model Workers, in a session too: a model Worker keeps it by replay ([ADR-0031](../decisions/adr/0031-model-worker-sessions-by-replay.md)) |
-| `brainstorm`, `review` | run on model Workers, each member in its own session by replay; members of one family need `allowSameFamily` ([ADR-0029](../decisions/adr/0029-opt-in-same-family-fallback.md)) |
+| `brainstorm`, `review` | run on model Workers, each member in its own session by replay; members of one family need `allowSameFamily` ([ADR-0029](../decisions/adr/0029-opt-in-same-family-fallback.md)); a `review` member may also be an agent Worker under the review-member profile |
 | `agent-review` | runs on agent Workers (the preset turns their rows and the software-development profile on) |
 | `algorithm-development` | runs on agent Workers, as `agent-review`; `validate:1` needs one whose commands are proven confined |
 | `research` | `frame:1` runs on a model Worker; `literature:1` fails: no Worker proves `web-search` (variant `deep`: `deep-research`), and `literature:2` sends nothing |

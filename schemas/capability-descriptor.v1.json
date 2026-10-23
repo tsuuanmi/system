@@ -6,7 +6,7 @@
   "type": "object",
   "required": ["schema", "worker", "provider", "tier", "quotaClass", "locality", "capabilities", "state", "observedAt"],
   "properties": {
-    "schema": { "enum": ["capability-descriptor@1.0", "capability-descriptor@1.1", "capability-descriptor@1.2", "capability-descriptor@1.3"] },
+    "schema": { "enum": ["capability-descriptor@1.0", "capability-descriptor@1.1", "capability-descriptor@1.2", "capability-descriptor@1.3", "capability-descriptor@1.4"] },
     "worker": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
     "provider": { "description": "Provider plugin kind; never used for routing semantics (INV-11).", "type": "string", "maxLength": 64 },
     "family": { "description": "@1.1: opaque provider family its Worker source sets; routing only compares it for inequality (ADR-0027).", "type": "string", "minLength": 1, "maxLength": 128 },
@@ -58,7 +58,11 @@
             },
             "additionalProperties": false
           },
-          "sideEffectClass": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/sideEffectClass" }
+          "sideEffectClass": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/sideEffectClass" },
+          "scope": {
+            "description": "@1.4: the capability is proven only for work of this scope (a work requirement naming it), never for other work (ADR-0049).",
+            "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/workScope"
+          }
         },
         "additionalProperties": false
       }
@@ -70,19 +74,23 @@
   "allOf": [
     {
       "if": { "properties": { "family": { "type": "string" } }, "required": ["family"] },
-      "then": { "properties": { "schema": { "enum": ["capability-descriptor@1.1", "capability-descriptor@1.2", "capability-descriptor@1.3"] } } }
+      "then": { "properties": { "schema": { "enum": ["capability-descriptor@1.1", "capability-descriptor@1.2", "capability-descriptor@1.3", "capability-descriptor@1.4"] } } }
     },
     {
       "if": { "properties": { "maxInputChars": { "type": "integer" } }, "required": ["maxInputChars"] },
-      "then": { "properties": { "schema": { "enum": ["capability-descriptor@1.2", "capability-descriptor@1.3"] } } }
+      "then": { "properties": { "schema": { "enum": ["capability-descriptor@1.2", "capability-descriptor@1.3", "capability-descriptor@1.4"] } } }
     },
     {
       "if": { "properties": { "cooldowns": { "type": "array" } }, "required": ["cooldowns"] },
-      "then": { "properties": { "schema": { "const": "capability-descriptor@1.3" } } }
+      "then": { "properties": { "schema": { "enum": ["capability-descriptor@1.3", "capability-descriptor@1.4"] } } }
     },
     {
       "if": { "properties": { "load": { "type": "object" } }, "required": ["load"] },
-      "then": { "properties": { "schema": { "const": "capability-descriptor@1.3" } } }
+      "then": { "properties": { "schema": { "enum": ["capability-descriptor@1.3", "capability-descriptor@1.4"] } } }
+    },
+    {
+      "if": { "properties": { "capabilities": { "type": "array", "contains": { "type": "object", "properties": { "scope": { "type": "string" } }, "required": ["scope"] } } }, "required": ["capabilities"] },
+      "then": { "properties": { "schema": { "const": "capability-descriptor@1.4" } } }
     }
   ]
 }

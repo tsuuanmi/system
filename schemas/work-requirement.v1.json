@@ -15,7 +15,11 @@
   ],
   "properties": {
     "schema": {
-      "const": "work-requirement@1.0"
+      "enum": ["work-requirement@1.0", "work-requirement@1.1"]
+    },
+    "scope": {
+      "description": "@1.1: the kind of work this is, for capability offers scoped to it (ADR-0049): review-member, a step of a review team's member. Set by the workflow engine from the admitted spec, never by a template or model text (INV-6).",
+      "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/workScope"
     },
     "objective": {
       "type": "string",
@@ -155,5 +159,11 @@
       "additionalProperties": false
     }
   },
-  "additionalProperties": false
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": { "properties": { "scope": { "type": "string" } }, "required": ["scope"] },
+      "then": { "properties": { "schema": { "const": "work-requirement@1.1" } } }
+    }
+  ]
 }

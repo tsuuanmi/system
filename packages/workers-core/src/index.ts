@@ -35,9 +35,29 @@ export interface WorkerLoad {
   slots: number
 }
 
+/**
+ * A kind of work a capability offer may be limited to (ADR-0049): `review-member`, a step of a
+ * review team's member. A requirement names it (`WorkRequirement.scope`); an offer scoped to it
+ * proves its capability for that work only.
+ */
+export type WorkScope = 'review-member'
+export const WORK_SCOPES: readonly WorkScope[] = ['review-member']
+
+/** One capability a Worker proves, with its evidence; `scope` (`@1.4`) limits it to work of that scope. */
+export interface CapabilityOffer {
+  capability: string
+  evidence: { kind: 'probe' | 'conformance' | 'plan' | 'sandbox-policy'; ref?: ArtifactRef; at: string }
+  /** Proven only for work whose requirement names this scope, never for other work (`@1.4`; ADR-0049). */
+  scope?: WorkScope
+}
+
+/** Whether an offer proves its capability for this work: an unscoped one always, a scoped one only for work of its scope. */
+export const provesFor = (offer: CapabilityOffer, requirement: Pick<WorkRequirement, 'scope'>): boolean =>
+  offer.scope === undefined || offer.scope === requirement.scope
+
 /** What a Worker has proven right now (`capability-descriptor@1.0`; `@1.1` adds `family`). */
 export interface CapabilityDescriptor {
-  schema: 'capability-descriptor@1.0' | 'capability-descriptor@1.1' | 'capability-descriptor@1.2' | 'capability-descriptor@1.3'
+  schema: 'capability-descriptor@1.0' | 'capability-descriptor@1.1' | 'capability-descriptor@1.2' | 'capability-descriptor@1.3' | 'capability-descriptor@1.4'
   worker: string
   /** Informational only; routing never branches on it (INV-11). */
   provider: string
@@ -61,16 +81,21 @@ export interface CapabilityDescriptor {
   tier: Tier
   quotaClass: QuotaClass
   locality: 'local' | 'remote'
-  capabilities: Array<{ capability: string; evidence: { kind: 'probe' | 'conformance' | 'plan' | 'sandbox-policy'; ref?: ArtifactRef; at: string } }>
+  capabilities: CapabilityOffer[]
   state: WorkerState
   observedAt: string
 }
 
-/** The input to routing (`work-requirement@1.0`). */
+/** The input to routing (`work-requirement@1.0`; `@1.1` adds `scope`). */
 export interface WorkRequirement {
-  schema: 'work-requirement@1.0'
+  schema: 'work-requirement@1.0' | 'work-requirement@1.1'
   objective: string
   capabilities: string[]
+  /**
+   * The kind of work this is (`@1.1`; ADR-0049), so offers scoped to it count: set by the workflow
+   * engine from the admitted spec (a review team member's step), never from a template or model text.
+   */
+  scope?: WorkScope
   data: { classification: Classification; refs: ArtifactRef[] }
   /** Policy id from a trusted envelope (INV-6, INV-12). */
   egressPolicy: string

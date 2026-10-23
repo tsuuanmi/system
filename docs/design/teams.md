@@ -34,7 +34,15 @@ formation, through normal admission. Process-local activations can be recreated
 without changing identity.
 
 - Each member is a Worker session, joined to the team's session group at its first
-  admission. All of a member's steps run in that one conversation.
+  admission. All of a member's steps run in that one conversation, so every step requires
+  `persistent-conversation`: the ballot and debate prompts rely on it holding the request, the
+  material, and the member's own earlier answers ([ballots](#ballots)). Its Worker's source keeps
+  it natively (a website conversation, an agent's resumed session) or by replay (a model Worker,
+  [ADR-0031](../decisions/adr/0031-model-worker-sessions-by-replay.md); an agent Worker under the
+  review-member profile whose runtime cannot resume, for a review member's steps only, an exact
+  replay of its earlier turns, recorded with its answer, [agent runtimes](agent-runtimes.md#review-members)).
+  A member whose conversation can be neither resumed nor replayed whole fails its step unsent; it
+  is never given a fresh conversation for a continuation.
   A later step, an escalated one too, stays in that conversation through session affinity,
   which admits any tier of the same account; it never joins again.
 - Members never message each other. The engine composes every prompt from sealed records.
@@ -233,6 +241,19 @@ the source, in its own conversation. For a repository the exact subject is the p
 files, which `system` reads itself, so REQ-TEAM-5 holds for repositories too: no member browses
 the repository, and every quote is checked against the bytes the members saw. No model merges or
 judges a finding.
+
+**Who may be a member.** A member step needs `reason` and its conversation. Website and model
+Workers prove both for any work. Every member step of a `review` team (proposal, ballot, debate)
+also names its kind of work, `review-member` ([scoped offers](routing.md#scoped-offers)), so a
+read-only agent Worker under the enforced review-member profile is admitted there too, and nowhere
+else ([ADR-0049](../decisions/adr/0049-read-only-agent-workers-as-review-members.md);
+[agent runtimes](agent-runtimes.md#review-members)). Under the profile no tool call of its runs,
+in an empty workspace outside any repository, so it reviews the same material as every other
+member: what its prompt shows. The routing order is unchanged: such a Worker takes a member step
+only when no website Worker of the family the step needs is admitted. Its provider family is the
+one its configuration names, checked apart from its capabilities, so two members of one family
+need `allowSameFamily`, as any one-family team does. A `brainstorm` member stays a website or
+model Worker.
 
 ### Sources
 

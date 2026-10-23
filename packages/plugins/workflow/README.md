@@ -131,7 +131,13 @@ second execution path (INV-1).
     is data, sent as written.
   - A `worker` node declares capabilities, and its requirement (objective,
     capabilities, plus `persistent-conversation` in a session, classification,
-    tier, and contract) is recorded at admission.
+    tier, and contract) is recorded at admission. A review team member's step
+    (proposal, ballot, debate) also names its kind of work, `scope: review-member`
+    (`work-requirement@1.1`), so a Worker whose offers are scoped to it is
+    admitted there and nowhere else
+    ([scoped offers](../../../docs/design/routing.md#scoped-offers),
+    [ADR-0049](../../../docs/decisions/adr/0049-read-only-agent-workers-as-review-members.md)).
+    A board task's session is resumed only on an unscoped `persistent-conversation`.
   - The engine routes it through `ctx.workers` (a session keeps its affinity),
     then records its **brief** (`brief@1.1`, an `objective` artifact: the
     instructions, its goal and criteria, the pointers, the budget, the Worker's
@@ -262,7 +268,13 @@ second execution path (INV-1).
     at its first admission. Members never message each other. A member's later
     steps stay in its conversation through session affinity, which admits any
     tier of the same account, so an escalated step runs in the same
-    conversation without joining again.
+    conversation without joining again. Its Worker's source keeps that
+    conversation natively, or by replaying it (a model Worker; an agent Worker
+    under the review-member profile whose runtime cannot resume, for a review
+    member's steps only, an exact replay recorded with its answer): the ballot
+    and debate prompts rely on it holding the request, the source, and the
+    member's own earlier answers. A member that cannot continue its
+    conversation fails its step; it is never given a fresh one.
   - Members route one at a time, each avoiding every account another member
     holds (REQ-TEAM-4). A member that finds no other provider family fails as
     `config_error`, naming how many families the team needs and how many are

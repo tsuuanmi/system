@@ -273,7 +273,8 @@ proven", and no run starts.
      give it.
    - A `workspace-write` Worker can `develop` but never `validate`. Its runs
      never continue a conversation (`resume` is not proven), so it is no team
-     member.
+     member, except a `review` member under the review-member profile, whose
+     conversation the `agents` source replays ([below](#agent-workers-as-review-team-members)).
    - Another model's tools are not verified: a Worker whose `model` gives agy
      other tool names has every call denied.
 4. Keep the home and the repository free of what agy would run outside the
@@ -297,6 +298,58 @@ every tool step, its `deny` holding, how agy treats a failing hook, and the tool
 names and input fields the hook receives; the runtime's rules and the `agents`
 source's gate then take any name or field that differs. Until then, keep the
 verified version installed, or the Workers off.
+
+## Agent Workers as review team members
+
+A read-only agent Worker (a Codex, Antigravity CLI, or Claude Code one) can be a
+member of a `review` team under the **review-member profile**
+([ADR-0049](../decisions/adr/0049-read-only-agent-workers-as-review-members.md)):
+its member steps run with every tool call denied, in an empty
+workspace, so it reviews exactly what its prompt shows, as a website member
+does. It takes no other work for the profile: an ask, a brainstorm, or research
+never reaches it.
+
+1. Make an empty directory outside any repository for it, for example
+   `install -d ~/experiments/review-member/empty`. Nothing goes in it: a step
+   refuses to start in a directory that holds anything or that lies inside a git
+   work tree, and a step after which it holds anything fails, its answer not
+   trusted.
+2. Add a Worker for it, apart from any reviewer that reads your repository:
+
+   ```yaml
+   - id: agent-workers
+     config:
+       workers:
+         - { id: agy-member, runtime: antigravity-cli, workspace: /home/me/experiments/review-member/empty,
+             sandbox: read-only, tier: standard, reviewMember: true, family: <family> }
+   ```
+
+   `family` is required: the provider family that keeps two members of one
+   vendor apart. Give it the family other Workers of the vendor whose models it
+   runs carry (a website Worker's is its account's provider; `system explain`
+   shows a Worker's), so a Codex member and a ChatGPT website member never sit
+   on one team unless you turn `allowSameFamily` on
+   ([one provider family](#one-provider-family)). The load refuses a
+   `reviewMember` Worker that is not `read-only`, has no `family`, or works in a
+   worktree per run.
+3. Keep instruction files the runtime reads on its own out of its way: its own
+   home (the Worker's Codex or Antigravity home) and the directories above the
+   empty one hold none for it. The source checks only the workspace and the
+   repository around it.
+4. Restart, then check with `system explain`: the Worker offers `reason` for
+   review-member work only, and, on a runtime that cannot resume (the
+   Antigravity CLI), `persistent-conversation` for that work only. A `review`
+   then routes a member step to it when no website Worker of the family the step
+   needs is admitted.
+
+A member on a runtime that resumes (Codex, Claude Code) continues its own
+session for its ballot and debates. On the Antigravity CLI the `agents` source
+replays the member's earlier turns, exactly, before each later one, and records
+which turns it sent with the answer (`agent-result@1.3` `replay`). A step whose
+conversation can be neither resumed nor replayed whole fails, nothing sent (the
+message says why); a replay longer than `maxReplayChars` (default 200,000
+characters) fails the same way, and so does an Antigravity turn over its
+100,000-byte prompt limit.
 
 ## Turn an off row back on
 

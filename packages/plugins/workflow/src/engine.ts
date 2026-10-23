@@ -257,13 +257,17 @@ export class Engine {
   /**
    * A node's work requirement (`work-requirement@1.0`): its declared capabilities, plus
    * `persistent-conversation` when it runs in a session; the run's data classification; its
-   * tier and where that came from; its acceptance contract.
+   * tier and where that came from; its acceptance contract. A review team member's step
+   * (proposal, ballot, debate) names its kind of work, `scope: review-member` (`@1.1`), so offers
+   * scoped to it count (ADR-0049); its capabilities stay the same.
    */
   requirementOf(node: ResolvedNode, persistent: boolean, classification: Classification | undefined): WorkRequirement {
+    const member = node.team?.kind === 'review' && node.team.member !== undefined
     return {
-      schema: 'work-requirement@1.0',
+      schema: member ? 'work-requirement@1.1' : 'work-requirement@1.0',
       objective: node.objective,
       capabilities: [...new Set([...node.capabilities, ...(persistent ? ['persistent-conversation'] : [])])],
+      ...(member ? { scope: 'review-member' as const } : {}),
       data: { classification: classification ?? this.ctx.egress.defaultClassification, refs: [] },
       egressPolicy: 'egress.classification-and-secrets',
       tier: { min: node.tier, source: node.tierSource, ...(node.tierDecision ? { decision: node.tierDecision as ArtifactRef } : {}) },
