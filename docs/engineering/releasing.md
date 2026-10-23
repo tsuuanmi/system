@@ -28,6 +28,8 @@ pnpm changeset          # pick the bump; the summary becomes the changelog line
    - applies the pending changesets: the new version in every `package.json`
      (the bundle's presets too, which are layers inside it rather than workspace
      packages) and a section in each `CHANGELOG.md`;
+   - regenerates every `plugin-manifest.json` with its package's new version
+     (`pnpm gen:manifests`);
    - seeds this release's store fixture for the
      [upgrade suite](testing.md) with `pnpm gen:upgrade-fixture v<version>`.
      Fixtures are never edited afterwards.

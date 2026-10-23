@@ -21,6 +21,7 @@ verified live.
 | [board.md](board.md) | projects with charters, board tasks across runs, their states, leases, and fail-closed waits | orchestration (work state machine) |
 | [approvals.md](approvals.md) | the autonomy policy and the one batched approval queue; expiry denies | routing (gate) |
 | [digests.md](digests.md) | cited digests of raw artifacts on request: a read-only Worker on the economy tier, the quote check, failing open | orchestration (digest family) |
+| [plugin-host.md](plugin-host.md) | plugin manifests generated from the code and checked against it; the composition's plugins and their lifecycle states, every change a decision | kernel (plugin host) |
 | [resources.md](resources.md) | configured pools, limit readings, reservations before a run, deduplicated usage after it | routing (resource ledger) |
 | [sessions-and-messaging.md](sessions-and-messaging.md) | Worker sessions (SessionId), direct peer messaging, long-running mechanics, A2A alignment | orchestration |
 | [teams.md](teams.md) | the `team` option on a workflow node: Model A members, independent proposals, sealed ballots, tally, bounded debate, tie votes | orchestration |

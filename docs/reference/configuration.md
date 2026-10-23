@@ -239,6 +239,12 @@
 | `maxSessionTurns` | number (1…10000) | `100` | A session's turns, at most, unless an entry sets its own (ADR-0031; default: the session layer's turn budget) |
 | `maxHistoryChars` | number (1…2000000) | `320000` | Characters of history a session turn replays, at most, unless an entry sets its own; a turn past it fails, never cut (default: above the session layer's compaction point) |
 
+## `plugin-host`
+
+[@tsuuanmi/system-plugin-host](../../packages/plugins/plugin-host/README.md)
+
+No options.
+
 ## `profile-scientific-research`
 
 [@tsuuanmi/system-profile-scientific-research](../../packages/plugins/profile-scientific-research/README.md)

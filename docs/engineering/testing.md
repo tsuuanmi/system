@@ -135,9 +135,15 @@ Chrome installed. Each gate is a root [`package.json`](../../package.json) scrip
    - `check:schemas` ([`scripts/check-schemas.ts`](../../scripts/check-schemas.ts)):
      every file in `schemas/` compiles under Ajv draft 2020-12 with
      `strict: true`, and every file in `schemas/examples/` validates;
-   - `check:reference` and `check:traceability`: the generated
-     [configuration catalog](../reference/configuration.md) and
+   - `check:reference`, `check:packages`, and `check:traceability`: the generated
+     [configuration catalog](../reference/configuration.md),
+     [package graph](../architecture/packages.md), and
      [traceability](../validation/traceability.md) are current;
+   - `check:manifests` ([`scripts/gen-manifests.ts`](../../scripts/gen-manifests.ts)): every plugin
+     and seam definition ships a `plugin-manifest.json` the plugin host would take, and it agrees
+     with the code: the seams provided, consumed, and defined, their conformance contract
+     versions, the class in the seam catalog, and `package.json`
+     ([plugin host](../design/plugin-host.md#manifests));
    - `lint` (oxlint) and `typecheck` (`tsc --noEmit`).
 2. `pnpm test`, with `SYSTEM_REQUIRE_BROWSER=1` and `SYSTEM_REQUIRE_BWRAP=1`:
    unit, contract, driver, concurrency, and architecture tests. The agent read

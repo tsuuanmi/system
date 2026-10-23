@@ -185,6 +185,28 @@ To turn it off again, remove the row from your patch, or set `disabled: true`,
 and restart; the Claude Code rows turn off the same way. The `api-first` preset
 turns every agent row on for you ([API-first](#api-first-preset)).
 
+At the start after the change, the plugin host records it: `system plugins` shows the row's
+plugin `default` once its row is on and `candidate` once it is off, and `system artifact` of
+its lifecycle decision (`system plugins --json`) shows the state it left
+([plugin host](../design/plugin-host.md)). A start with the same rows records nothing.
+
+## A plugin's manifest is refused
+
+`system health` shows `manifests` degraded, naming the plugin and why: the plugin host refused
+the `plugin-manifest.json` its package ships (it declares `_meta`, is not a valid
+`plugin-manifest@1.x`, names another package, or is larger than 64 KiB). The plugin still runs
+as composed, but its lifecycle is not recorded until its package ships a valid manifest; its
+last recorded state stays.
+
+1. `system plugins` shows the plugin, its rows, and why its manifest was refused.
+2. A `@tsuuanmi` package's manifest is generated and checked with the code: reinstall the
+   release (`system init` from it), which ships valid ones.
+3. A third party's plugin: fix its manifest, or ask its publisher to; the host never repairs one.
+4. Restart. The start records the plugin's state if it differs from its last record.
+
+A row whose package ships no manifest (the DSH rows) is noted, not degraded: its lifecycle is
+not recorded.
+
 ## Remove the free ChatGPT account
 
 The ChatGPT driver cannot use an account without a model picker (ChatGPT Free,

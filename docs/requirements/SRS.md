@@ -240,3 +240,10 @@
   vault key custody, accounts, Workers, provider UI drift) as ok, degraded, or
   down with what to do, and the worst of them. Health is degraded while a
   provider UI change was seen recently.
+- **REQ-HOST-7** Every plugin package and seam definition ships a manifest
+  (`plugin-manifest@1.x`) that agrees with its code: the seams it provides,
+  consumes, and defines, at their contract versions, and its core component or
+  plugin family. The host lists every plugin of the composition with its
+  manifest, and records each plugin's lifecycle state, every change as a
+  decision before the state. It records the state the configuration gives and
+  automates nothing.

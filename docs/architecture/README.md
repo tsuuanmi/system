@@ -121,6 +121,7 @@ flowchart TB
     ev["ctx.eventLog"]
     ls["ctx.leases"]
     cred["ctx.credentials<br/>(DSH seam, our vault)"]
+    ph["ctx.pluginHost<br/>manifests, lifecycle record"]
     libs["libs (library)<br/>hashing, schemas, files"]
   end
   subgraph H["Host"]
@@ -164,7 +165,7 @@ flowchart TB
     run["runner<br/>workflow engine, ctx.turnReceipts"]
     gate["gate<br/>ctx.egress, workers admission<br/>and acceptance, ctx.approvals"]
     res["resource ledger and metering<br/>ctx.resources"]
-    host["plugin host<br/>DSH core, Cordis, system bundle"]
+    host["plugin host<br/>DSH core, Cordis, system bundle,<br/>ctx.pluginHost"]
   end
   subgraph CAPF["capability plugin families"]
     direction LR

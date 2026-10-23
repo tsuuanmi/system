@@ -192,7 +192,7 @@ Claude Code Workers under the operator's Claude Max plan.
 | Area | Adds |
 |---|---|
 | Specification | a schema for every new record and payload, MCP tool input and output included; a definition, a protocol, and a conformance suite for every new seam; conformance suites for the existing guarantee seams (ADR-0037) |
-| Core | `resources` (usage records, limit states), `board` (projects with charters, board tasks), `approvals` (autonomy policy, batched queue), plugin manifests with a recorded lifecycle state, run budgets, the crash suite at every reconcile point |
+| Core | `resources` (usage records, limit states), `board` (projects with charters, board tasks), `approvals` (autonomy policy, batched queue), plugin manifests with a recorded lifecycle state (REQ-HOST-7), run budgets, the crash suite at every reconcile point |
 | Workers | Claude Code Workers on by default: a workspace per writing task, remediation through the gate, every agent's credential directories hidden, commands confined to the workspace (`validate`), token usage in `agent-result@1.2`, briefs (`brief@1.0`) |
 | Families | `digest@1.0` by a read-only Claude Code Worker; the `algorithm-development` template |
 | Surface | MCP tools `board_*`, `approvals_*`, `resources_*`; the board and the queue on `/ui`; a weekly investor report |
