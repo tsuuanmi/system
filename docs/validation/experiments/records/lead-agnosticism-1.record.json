@@ -1,0 +1,33 @@
+{
+  "record": "lead-agnosticism",
+  "experimentId": "lead-agnosticism-1",
+  "state": "planned",
+  "claim": "A project on the board is continued by a lead of another provider family through system's MCP tools alone, with no other context, and no step is lost or repeated.",
+  "date": null,
+  "system": { "version": null, "commit": null },
+  "repository": { "clone": null, "branch": "exp/lead-agnosticism-1", "base": null },
+  "sessions": {
+    "A": { "client": null, "version": null, "model": null, "family": null },
+    "B": { "client": null, "version": null, "model": null, "family": null, "permissions": null }
+  },
+  "project": { "projectId": null, "charterRequest": null },
+  "tasks": [
+    { "milestone": "m1", "taskId": null, "proposedBy": null, "runs": [], "acceptance": null, "merged": null },
+    { "milestone": "m2", "taskId": null, "proposedBy": null, "runs": [], "acceptance": null, "merged": null },
+    { "milestone": "m3", "taskId": null, "proposedBy": null, "runs": [], "acceptance": null, "merged": null }
+  ],
+  "handoff": { "at": null, "boardBrief": null, "boardTasks": null },
+  "operatorMessages": [],
+  "bFirstSummary": null,
+  "bCalls": { "total": null, "refused": null, "outsideMcp": null, "log": null },
+  "evidence": [],
+  "criteria": {
+    "C1": { "pass": null, "evidence": null },
+    "C2": { "pass": null, "evidence": null },
+    "C3": { "pass": null, "evidence": null },
+    "C4": { "pass": null, "evidence": null }
+  },
+  "measures": { "wallClockMinutes": null, "operatorInterruptions": null },
+  "deviations": [],
+  "outcome": null
+}

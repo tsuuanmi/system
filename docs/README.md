@@ -33,6 +33,7 @@ other documents link to it instead of repeating it.
 | know what the Base release (v0.8) must deliver, and what is built | [release scope](requirements/release-scope.md#base-v08), [PROP-0010](proposals/0010-base-version.md), the [roadmap](proposals/roadmap.md) |
 | understand the board, the approval queue, or the resource ledger | [board](design/board.md), [approvals](design/approvals.md), [resources](design/resources.md), their [record semantics](reference/schemas.md), and the package READMEs they name |
 | call a tool or use the operator page | [MCP tools](reference/mcp-tools.md), [web UI API](reference/web-ui.md), [CLI](reference/cli.md) |
+| run an experiment on the live install | [experiments](validation/experiments/README.md): lead agnosticism |
 | see why the core is shaped this way | [ADR-0036](decisions/adr/0036-guarantee-core-and-capability-plugins.md) to [ADR-0039](decisions/adr/0039-base-guarantee-seam-contract-changes.md) |
 
 ## Authority and durability
@@ -47,7 +48,7 @@ other documents link to it instead of repeating it.
 | [Engineering](engineering/README.md) | development and delivery process | canonical / living |
 | [Security](security/README.md) | trust boundaries and controls | canonical / living |
 | [Governance](governance/README.md) | lifecycle and documentation policy | canonical / living |
-| [Validation](validation/README.md) | acceptance evidence: traceability, release checklist | canonical / living |
+| [Validation](validation/README.md) | acceptance evidence: traceability, release checklist, experiments | canonical / living |
 | [Operations](operations/README.md) | runbooks and playbooks for the built system | canonical / living |
 | [Decisions](decisions/README.md) | historical rationale | historical / durable |
 | [Proposals](proposals/README.md) | reviewed change under evolution | evolutionary |
