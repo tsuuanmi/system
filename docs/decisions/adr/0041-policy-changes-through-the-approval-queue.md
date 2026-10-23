@@ -1,7 +1,7 @@
 # ADR-0041: A policy change goes through the approval queue, and the stored set yields only to the configuration it came from
 
-- **Status:** Proposed
-- **Date:** 2026-10-23
+- **Status:** Accepted
+- **Date:** 2026-10-23 (accepted 2026-10-23, by the operator)
 - **Related:** [ADR-0036](0036-guarantee-core-and-capability-plugins.md),
   [ADR-0039](0039-base-guarantee-seam-contract-changes.md),
   [PROP-0010](../../proposals/0010-base-version.md),

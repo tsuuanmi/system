@@ -43,6 +43,22 @@ dated section, `## Amendment (YYYY-MM-DD): <title>`, below the original text.
 Anything that changes the decision needs a new ADR that supersedes the old one,
 in whole or in part.
 
+## Work state and conversations
+
+What the operator and the agents building `system` decide and do lives in artifacts any later
+Worker, of any vendor, can read; never only in one session's memory:
+
+- a product decision goes into these documents (an ADR, a requirement, a design);
+- dialogue, decisions waiting on the operator, and the state of delegated work are the system's own
+  records (`decision` artifacts, approval requests, board tasks), each answer recorded with its
+  time and who gave it;
+- a Worker reads them through its brief and the git-ignored `.system/` projection in its run's
+  worktree ([TASKS.md in a run's workspace](../design/workflow-engine.md#tasksmd-in-a-runs-workspace)),
+  which names its sources and is never authoritative.
+
+No vendor's folder (`.claude/`, `.codex/`, `.agents/`) holds them
+([INV-11](../architecture/invariants.md#inv-11-no-tool-lock-in)).
+
 ## Enforcement
 
 CI checks the documentation structure and links (`pnpm check:docs`) and the

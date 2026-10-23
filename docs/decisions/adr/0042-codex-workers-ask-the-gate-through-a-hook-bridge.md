@@ -1,7 +1,7 @@
 # ADR-0042: Codex Workers ask the run's tool gate through a PreToolUse hook bridge, proven on the host
 
-- **Status:** Proposed
-- **Date:** 2026-10-23
+- **Status:** Accepted
+- **Date:** 2026-10-23 (accepted 2026-10-23, by the operator)
 - **Related:** [ADR-0009](0009-claude-and-codex-first-class.md),
   [ADR-0024](0024-agent-workers-confined-for-reads.md),
   [ADR-0038](0038-confined-commands-for-claude-code-workers.md),

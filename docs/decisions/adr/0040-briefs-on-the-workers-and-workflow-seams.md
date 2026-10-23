@@ -1,7 +1,7 @@
 # ADR-0040: Base B6 gives every Worker execution a brief, composed by the engine and rendered by the Worker source
 
-- **Status:** Proposed
-- **Date:** 2026-10-23
+- **Status:** Accepted; amended 2026-10-23 (digests on a task's result, usage spent on a task)
+- **Date:** 2026-10-23 (accepted 2026-10-23, by the operator)
 - **Related:** [ADR-0036](0036-guarantee-core-and-capability-plugins.md),
   [ADR-0037](0037-schema-and-protocol-first.md), [ADR-0039](0039-base-guarantee-seam-contract-changes.md),
   [PROP-0010](../../proposals/0010-base-version.md),

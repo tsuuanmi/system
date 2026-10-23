@@ -1,7 +1,7 @@
 # ADR-0044: An approved funding request raises a spent task's budget by exactly the lines it names
 
-- **Status:** Proposed
-- **Date:** 2026-10-23
+- **Status:** Accepted; an amendment of 2026-10-23 (no funding asked on a task's last attempt) is proposed
+- **Date:** 2026-10-23 (accepted 2026-10-23, by the operator)
 - **Related:** [ADR-0036](0036-guarantee-core-and-capability-plugins.md),
   [ADR-0039](0039-base-guarantee-seam-contract-changes.md),
   [ADR-0040](0040-briefs-on-the-workers-and-workflow-seams.md),

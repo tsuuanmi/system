@@ -99,8 +99,8 @@
         {
           "id": "Q2",
           "kind": "defect",
-          "severity": "warning",
-          "summary": "An approval resolved after the request expired, or that is not the operator's verdict on exactly the gate's subject, still opens the gate (defence in depth).",
+          "severity": "blocking",
+          "summary": "An approval resolved after the request expired, or that is not the operator's verdict on exactly the gate's subject, still opens the gate: an authorization failure, which Q1's subject check does not make acceptable (operator decision D20).",
           "lines": [7, 8, 165, 166, 167, 168, 169, 182, 183],
           "test": "does not open on an approval resolved after the request expired, as a provider might forge it (defence in depth)"
         },

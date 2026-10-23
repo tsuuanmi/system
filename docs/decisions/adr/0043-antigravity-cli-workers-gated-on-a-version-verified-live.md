@@ -1,7 +1,7 @@
 # ADR-0043: Antigravity CLI Workers ask the run's tool gate through their PreToolUse hook, on an agy version verified live
 
-- **Status:** Proposed
-- **Date:** 2026-10-23
+- **Status:** Accepted
+- **Date:** 2026-10-23 (accepted 2026-10-23, by the operator)
 - **Related:** [ADR-0024](0024-agent-workers-confined-for-reads.md),
   [ADR-0039](0039-base-guarantee-seam-contract-changes.md),
   [ADR-0042](0042-codex-workers-ask-the-gate-through-a-hook-bridge.md), REQ-WRK-5, REQ-WRK-6,

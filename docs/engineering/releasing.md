@@ -77,9 +77,8 @@ The release scripts run the pnpm that `packageManager` in the root
 [`package.json`](../../package.json) pins, never whichever comes first on `PATH`
 ([`scripts/pnpm.ts`](../../scripts/pnpm.ts)): the pnpm running them, else a
 `pnpm` on `PATH` at that version, else `corepack pnpm`. With none of these at
-the pinned version, nothing runs. The root scripts they start (`build`) call
-`pnpm` by name, so building the assets still needs the pinned pnpm on `PATH`
-(`corepack enable` puts it there).
+the pinned version, nothing runs. The root scripts they start (`build`) run the
+pnpm that runs them (`"$npm_execpath"`, [development](development.md)).
 
 ## Verifying a release
 

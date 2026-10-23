@@ -18,7 +18,7 @@ its outcomes beyond pre-registered margins
 | baseline arm | a ChatGPT website Worker and an Antigravity CLI Worker |
 | candidate arm | a Codex CLI Worker and the same Antigravity CLI Worker |
 | comparison | non-inferiority of the candidate on defects identified per cost: candidate over baseline at least 0.8 |
-| suite | [review-suite v1](records/review-suite.v1.json): the two commits the [self-build](../self-build.md#before-the-pilot-team-reviews-of-its-own-code) reviews ran on, nine labels (six blocking defects, two defence-in-depth defects, one known non-defect), all in the regression partition |
+| suite | [review-suite v1](records/review-suite.v1.json): the two commits the [self-build](../self-build.md#before-the-pilot-team-reviews-of-its-own-code) reviews ran on, nine labels (seven blocking defects, one defence-in-depth defect, one known non-defect; Q2 blocking by the operator's decision D20), all in the regression partition |
 | trials | 2 cases × 2 arms × 3 repetitions = 12, in blocks: each round runs both arms in the order the seed gives, each arm both cases |
 | maker, judges | the code was written by Claude Code sessions, a family in neither arm; the collector is deterministic; the operator adjudicates |
 | expected verdict | `inconclusive`: two cases are fewer than the five any declared method needs ([objective contract](records/review-objective-contract.v1.json)), and no statistic is computed until F2. That is a valid outcome: the loop is accepted when it gives an auditable verdict, not when one arm wins |
