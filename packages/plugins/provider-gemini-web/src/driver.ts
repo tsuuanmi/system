@@ -50,12 +50,15 @@ const RPC_REQUEST = /\/_\/BardChatUi\/data\/batchexecute/
 /**
  * Whether an RPC request names no conversation but `binding`: its form-encoded `f.req` calls are
  * parsed, and every conversation id any call carries (16 hex digits, `c_`-prefixed or not) must be
- * the bound one. A body that cannot be read is refused.
+ * the bound one. A body that cannot be read as calls (no `f.req`, or one that is not JSON) is
+ * refused: calls it cannot see are never taken for none.
  */
 export function namesOnly(body: string, binding: string): boolean {
+  const raw = new URLSearchParams(body).get('f.req')
+  if (raw === null) return false
   let calls: unknown
   try {
-    calls = JSON.parse(new URLSearchParams(body).get('f.req') ?? '[]')
+    calls = JSON.parse(raw)
   } catch {
     return false
   }

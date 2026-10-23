@@ -367,6 +367,10 @@ describe.runIf(canRunBrowser)('GeminiWebDriver against the fake site', { timeout
     expect(namesOnly(body([['GzXR5e', JSON.stringify(['c_bbbbbbbbbbbbbbbb']), null, 'generic'], ['MaZiqc', JSON.stringify(['c_aaaaaaaaaaaaaaaa']), null, 'generic']]), 'aaaaaaaaaaaaaaaa')).toBe(false)
     expect(namesOnly(body([['ESY5D', '[]', null, 'generic']]), 'aaaaaaaaaaaaaaaa')).toBe(true)
     expect(namesOnly('f.req=%7Bnot json', 'aaaaaaaaaaaaaaaa')).toBe(false)
+    // A body with no calls to read is refused, whatever it carries: unreadable is never "names nothing".
+    expect(namesOnly('', 'aaaaaaaaaaaaaaaa')).toBe(false)
+    expect(namesOnly('{"conversation":"c_bbbbbbbbbbbbbbbb"}', 'aaaaaaaaaaaaaaaa')).toBe(false)
+    expect(namesOnly('at=x', 'aaaaaaaaaaaaaaaa')).toBe(false)
   })
 
   it('deletes nothing when the conversation does not open as itself', async () => {
