@@ -29,7 +29,7 @@ package's `package.json`. **Status** is one of **in use**, **planned**, or
 | UI maps | `yaml` | library | `ui-ops` | in use | maps are data ([ADR-0021](../decisions/adr/0021-ui-operations-as-data.md)) |
 | Credential scan for egress | `@secretlint/core`, `@secretlint/secretlint-rule-preset-recommend` | library | `egress`, the repository secrets audit (`scripts/check-secrets.ts`, through `egress`'s `scan.ts`) | in use | a thin policy layer over secretlint; gitleaks (Go), detect-secrets (Python), and Presidio need another runtime |
 | Exact git subjects and repository snapshots | the installed `git`, read-only, fixed arguments; 2.37 or later for snapshots (`http.curloptResolve` pins a connection to the checked address) | system tool | `libs` | in use | a review subject, and a review's files at a pinned commit, must match what git sees; isomorphic-git would reimplement it |
-| Claude Code as a Worker | `@anthropic-ai/claude-agent-sdk`, running the operator's `claude` | protocol SDK | `runtime-claude-agent-sdk` | in use | exact tool list, `settingSources: []`, resume; © Anthropic, review the terms before a release |
+| Claude Code as a Worker | `@anthropic-ai/claude-agent-sdk`, running the operator's `claude` | protocol SDK | `runtime-claude-agent-sdk` | in use | exact tool list, `settingSources: []`, resume; © Anthropic, not open source; a dependency, never vendored ([terms](#claude-agent-sdk-terms)) |
 | Claude Code Workers' confined commands | the Agent SDK's `sandbox` option: Anthropic's sandbox runtime as Claude Code ships it (bubblewrap and a `socat` network proxy on Linux; Apache-2.0) | protocol SDK feature, with `socat` from system packages | `runtime-claude-agent-sdk` | in use | nested in the host's read confinement; no new dependency: `@anthropic-ai/sandbox-runtime` directly would duplicate what the SDK ships ([ADR-0038](../decisions/adr/0038-confined-commands-for-claude-code-workers.md)) |
 | Codex as a Worker | `@openai/codex-sdk`, running the operator's `codex` | protocol SDK | `runtime-codex-sdk` | in use | exact sandbox mode, resume; the run's tool gate through Codex's own PreToolUse hooks (CLI 0.164 behaviour, proven by the probe on each host), no new dependency ([runtime](../../packages/plugins/runtime-codex-sdk/README.md), [ADR-0042](../decisions/adr/0042-codex-workers-ask-the-gate-through-a-hook-bridge.md)) |
 | ACP agents as Workers | `@agentclientprotocol/sdk`, client side over stdio | protocol SDK | `runtime-acp` | in use | client-enforced policy ([runtime](../../packages/plugins/runtime-acp/README.md)) |
@@ -41,6 +41,57 @@ package's `package.json`. **Status** is one of **in use**, **planned**, or
 | SBOM | `pnpm sbom` (CycloneDX), built into the package manager | dev tool | `scripts/release-artifacts.ts` | in use | `@cyclonedx/cdxgen` and `@cyclonedx/cyclonedx-npm` add a dependency; the package manager already resolves the exact production tree |
 | Build provenance | `actions/attest-build-provenance`, pinned by SHA | CI action | `release` workflow | in use | SLSA provenance stored by GitHub, verified with `gh attestation verify`; no signing key to keep |
 | Statistics reference | SciPy 1.18.1 `scipy.stats.permutation_test` (BSD-3-Clause), with NumPy 2.5.4 on Python 3.14.2, fetched by `uv run --with` into uv's cache | dev tool (reference, run once) | `scripts/statistics/sign-flip-goldens.py`, the fixture of `statistics` | in use | the research run's reference ([research](../research/statistics-tooling-2026-10-23.md)): it generates the golden results the [statistics](../design/statistics.md#golden-tests) tests read; never installed in the workspace, never run by a test or at runtime |
+
+### Claude Agent SDK terms
+
+The [release checklist](../validation/release-checklist.md) row "The Claude Agent SDK
+terms still allow how `system` runs it" reads these facts again for each release; the
+operator signs it off.
+
+- **Pinned:** `@anthropic-ai/claude-agent-sdk` `0.3.296` exactly, in
+  `runtime-claude-agent-sdk`'s `package.json` and the lockfile.
+- **Licence:** not an open-source licence. The package's `license` field is
+  `SEE LICENSE IN README.md`; its `LICENSE.md` reads "© Anthropic PBC. All rights
+  reserved. Use is subject to the Legal Agreements outlined here:
+  <https://code.claude.com/docs/en/legal-and-compliance>". Its README adds that the SDK
+  collects feedback (usage data such as code acceptances and rejections, the associated
+  conversation data, and `/bug` reports), under the
+  [Commercial Terms](https://www.anthropic.com/legal/commercial-terms) and the
+  [Privacy Policy](https://www.anthropic.com/legal/privacy).
+- **The legal agreements page** (read 2026-10-23; it can change between releases):
+  - use falls under the Commercial Terms for Team, Enterprise, and Claude API users, and
+    the Consumer Terms for Free, Pro, and Max users, with the Usage Policy; the advertised
+    Pro and Max limits assume ordinary, individual use of Claude Code and the Agent SDK;
+  - running Claude Code in a product or service needs the Commercial Terms, an
+    unmodified Claude Code binary with none of its sign-in methods removed, and each end
+    user signed in with their own credentials: no paying for, reselling, or intermediating
+    their usage;
+  - developers of products built on the Agent SDK should use API keys; offering
+    Claude.ai login in their own application, routing requests through Free, Pro, or Max
+    credentials on behalf of users, and collecting, storing, or intermediating Claude.ai
+    credentials or session tokens are not permitted; sign-in completes through
+    Anthropic's own flow;
+  - "runs Claude Code" may be said in plain text; the Claude Code and Anthropic names and
+    logos may not be part of a product's own name or suggest endorsement.
+- **Not vendored:** no file of the SDK is in this repository. It is a registry
+  dependency, installed by the package manager; a release tarball (`pnpm pack` of `lib`
+  and `plugin-manifest.json`) holds only `system`'s compiled code and names the SDK at its
+  exact version, and the SBOM lists it. The SDK's platform builds, which bundle Claude
+  Code, are not installed (`ignoredOptionalDependencies` in `pnpm-workspace.yaml`).
+- **How `system` runs it:** the operator's own installed, unmodified `claude`, for the
+  operator's own runs; the workspace packages are `private`, never published to a
+  registry (a release's tarballs install from the file).
+  Claude Code signs in through its own `/login` in the Workers' home, or with an API key
+  or OAuth token the operator forwards by name (`forwardEnv`) from the daemon's
+  environment to the child; `system` stores no such credential
+  ([runtime](../../packages/plugins/runtime-claude-agent-sdk/README.md)).
+- **For the operator to sign off:** which agreement covers the account the Workers use
+  (Consumer Terms for a Free, Pro, or Max subscription, Commercial Terms for an API key,
+  Team, or Enterprise), and that unattended Workers on a subscription stay within its
+  ordinary, individual use (otherwise an API key); that no one but the operator uses the
+  install, since serving others needs the Commercial Terms and each user's own
+  credentials; that the SDK's feedback collection is acceptable for the runs' content;
+  and that the agreements page still says the above for the release.
 
 ## Built, with what was compared
 
