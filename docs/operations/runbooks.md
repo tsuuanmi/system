@@ -690,10 +690,17 @@ Prune old backup directories yourself; each one is a full snapshot.
    directly, once `/proc` shows the discovery file's process is this home's DSH
    profile; otherwise it stops nothing.
 4. Update the code, then `pnpm install && pnpm build`, or install the new
-   packages.
+   packages. The profile must link its bundle from the installation that runs
+   it: the plugin host reads each plugin's manifest through that link
+   ([plugin host](../design/plugin-host.md)). If the profile was set up from
+   another checkout (`~/.dsh/profiles/system/package.json` names it), run
+   `system init` from this one; it never rewrites your patch.
 5. `system start`. Store migrations run forward at start, per owner, each in
    one transaction. A run resumes from its durable node records; a submitted
    turn is reconciled, never blindly resent.
+
+The live install's update from e218ae7 to Base does these steps by a script, with the checks of
+the upgrade suite and a rollback ([below](#update-the-live-install-from-e218ae7-to-the-base-release)).
 
 `system drain` and `system resume` do the same drain without stopping, for
 example to let work finish before maintenance on a provider account.
@@ -710,6 +717,142 @@ path. Once the profile runs the new version:
   again for a Codex Worker on the Responses gateway, and restart;
 - a client added with `system mcp-config` keeps working, because its helper
   reads the client token on each connection. Re-running it does no harm.
+
+## Update the live install from e218ae7 to the Base release
+
+The live install runs from the `~/workspaces/system-live` worktree, detached at e218ae7, on Node 24:
+started there with `nohup node packages/cli/lib/bin.js start >> ~/system-backups/daemon.log`, its
+patch `~/.dsh/profiles/system/cordis.patch.yml`. Claude Code's `system` MCP server authenticates
+through that checkout's `packages/cli/lib/bin.js mcp-headers`. [`scripts/live-update.sh`](../../scripts/live-update.sh)
+takes it to the Base release (the merged `main`): the [upgrade with drain](#upgrade-with-drain),
+each step checked, rolled back when one fails. It is a dry run unless `--apply`.
+
+**What changes.**
+
+- **The store.** Base's migrations run at its first start, per owner, each in one transaction. Every
+  one from e218ae7 to Base adds tables, nullable columns, or indexes; none rewrites a row. Once Base
+  has migrated the store, e218ae7 refuses it (newer than it knows), so going back restores the
+  backup.
+
+  | Owner | Migrations | Adds |
+  |---|---|---|
+  | `agent-workers` | 3 to 7 | a run's budget decision and reservation; its workflow run, and the worktrees; the tool gate's requests; its task and project; its brief's files |
+  | `workflow` | 9 to 16 | a wake's generation; the runs that serve board tasks; briefs; a remediation's approval request; deferred tool calls; a task's digest, budget, and question |
+  | `approvals` (new) | 1, 2 | the approval queue; policy changes |
+  | `board` (new) | 1, 2 | projects, tasks, and client requests; a charter's expiry |
+  | `digests` (new) | 1, 2 | digest requests, with their tier and escalation |
+  | `plugin-host` (new) | 1 | each plugin's recorded lifecycle |
+  | `resources` (new) | 1 | usage records, readings, reservations, holds |
+
+  `artifacts` (3), `event-log` (2), `gateway-turns` (2), `leases` (1), `models` (2), `turn-receipts`
+  (1), `turns` (9), and `worker-sessions` (2) do not change. At its first start Base also records
+  each plugin's lifecycle state, a `lifecycle` decision each. Retention is unchanged (30 days), and a
+  run still running at the stop resumes under Base.
+- **The composition.** New rows, on with their defaults: `plugin-host`, `resources` (no pool),
+  `approvals` (the [studio policy](../../packages/system-bundle/README.md)), `board`, `digest`, and
+  `report`. `agent-runtimes`, `runtime-claude-agent-sdk`, and `agent-workers` are on now, so the live
+  patch's `claude-review`, inert until now, becomes a Worker. `runtime-antigravity-cli` is new and
+  off; `runtime-codex-sdk`, `runtime-acp`, `profile-software-development`, and both gateways stay off.
+  A read-only agent Worker proves `review` and `local-data`, never `reason`: `ask`, teams, and
+  research route to the website Workers as before.
+- **The profile's link.** The live profile links its bundle from the main checkout
+  (`~/workspaces/system`), not from `system-live`. The code comes from the installation either way,
+  but Base's plugin host would record the main checkout's manifests (none, on its branch). The script
+  runs `system init` from `system-live` (the patch is never rewritten) and puts the old link back on
+  a rollback.
+
+**The live patch.** Merge [`examples/live-base.patch.yml`](examples/live-base.patch.yml) into a copy
+of it by row id: its `agent-workers` row replaces the live one and keeps `claude-review` as it is;
+`runtime-codex-sdk` and `runtime-antigravity-cli` are added. Keep every other row as it is:
+`accounts` (`chatgpt-main`; `gemini-main` with its `argon` frontier tier), `login` (`vncPath`),
+`workers` (`priority`), `provider-gemini-web` (`disabled: false`, the `modes` map with `argon` and
+`site`, `researchMode: flash`), `workflow` (`allowSameFamily`, `repositories.maxSourceChars: 24000`),
+`turns` (`maxConcurrentTurnsPerAccount: 2`), `llm-pi-ai` (`google`, `apiKeyEnv`), and `models`
+(`gemini-api`). The new rows need nothing. The live patch with the fragment passes Base's `system
+check` (37 rows, checked on a copy, 2026-10-23).
+
+- **Codex.** Of the [two ways](#codex-workers) to make `codex` reachable, use the npm install under
+  the Workers' tools directory. It is there already (`~/.dsh/system/tools/codex`, 0.162.1); the read
+  confinement binds that directory back with no `readOnly` entry to keep in step; and its path does
+  not move when your own `codex` updates itself, as the standalone release directory does. Install the
+  release the runtime's gate is written against first:
+  `npm i --prefix ~/.dsh/system/tools/codex @openai/codex@0.164.0`. Its Worker home
+  (`~/.dsh/system/codex-home`) is signed in and configures no MCP server.
+- **Antigravity.** The row names `~/.local/bin/agy`. Check that
+  `AGY_CLI_DISABLE_AUTO_UPDATE=true ~/.local/bin/agy --version` says 1.4.6, the only version admitted
+  ([Antigravity CLI Workers](#antigravity-cli-workers)). Its Worker home exists; its empty
+  `mcp_config.json` configures no server.
+- **Claude Code.** `claude-review` is unavailable ("not signed in inside its home") until Claude Code
+  is signed in inside `~/.dsh/system/claude-home` ([Worker home](#agent-workers)).
+
+**Steps.**
+
+1. **Prepare, with the profile running.** Build the target in a checkout of its own:
+   `git -C ~/workspaces/system worktree add --detach ~/workspaces/system-base <sha>`, then
+   `pnpm install --frozen-lockfile && pnpm build` there (Node 24 first on `PATH`, pnpm from Node 22's:
+   `export PATH="$PATH:$HOME/.nvm/versions/node/v22.23.2/bin"`). Write the candidate patch
+   (`~/system-backups/live-base.cordis.patch.yml`). Install Codex 0.164.0 and check agy's version.
+2. **Dry run:** `scripts/live-update.sh <sha> --check-with ~/workspaces/system-base --patch
+   ~/system-backups/live-base.cordis.patch.yml`. It changes nothing. It checks the tools, the live
+   checkout (clean, at e218ae7), the target (a descendant), the vault key, free space, and the
+   candidate patch against the target's code (`system check` on a scratch copy of the profile); reads
+   how the daemon was started from its process; captures what the profile answers now (a read); and
+   prints `system health` and the plan. Fix what it reports until it ends with the plan.
+3. **Apply:** the same command with `--apply`, in a shell that outlives a disconnect (`tmux`, or
+   `nohup … > ~/system-backups/live-update.out 2>&1 &`): the drain alone may take ten minutes. The
+   daemon starts with this shell's environment, as the first `nohup` start had its own. Notes and the
+   backup go to `~/system-backups/<date>-before-base/` (`-2`, `-3` for a later attempt).
+4. **Read the outcome.**
+   - Exit 0, `updated`: Base runs. `system plugins` lists each plugin's lifecycle, and `system
+     health` names each agent Worker that cannot take work yet (`agent:codex-review
+     (unavailable)`): [Codex Workers](#codex-workers) and [Antigravity CLI
+     Workers](#antigravity-cli-workers) list the reasons and what to do.
+   - Exit 1, `STOP` (nothing was changed) or `rolled back`: e218ae7 runs, on its store as it was at the
+     stop. The notes say why.
+   - Exit 2, `LOOK FIRST`: the script will not act on what it found, or the rollback failed. It prints
+     the checkout, the daemon, and the backup; recover by hand (below).
+
+   The same command takes up an interrupted run: each step done is checked, not done again.
+
+**What the script checks.**
+
+- Before the stop, as in the dry run, and that the daemon is this checkout's `dsh` under `system
+  start`, started in `system-live` on Node 24, its output going to a file.
+- The stop: `system shutdown --deadline 600`, then the daemon and `system start` exit within five
+  minutes. It never kills.
+- The backup, taken once the daemon has stopped, so it is the store a rollback returns to: `system
+  backup` (the store by `VACUUM INTO`, and the vault; the key stays in `~/.dsh/system`, as in
+  [backup and restore](#backup-and-restore)), verified by a restore preview; and the profile's files.
+  Login profiles are not state, and Base pins the same Chrome, so they are not copied.
+- The build: `pnpm install --frozen-lockfile`, `pnpm build`, every package of the bundle built, and
+  `packages/cli/lib/index.js` holding `hostPlugins`, which e218ae7 has not.
+- Before the start: `system check` of the profile as it will start.
+- After the start: `/healthz`, then the [upgrade suite's](../../packages/cli/tests/upgrade/upgrade.e2e.ts)
+  expectations, on the live store: every run explains and answers `result` as before (one running at
+  the capture may have moved on), no migration went backwards, and every step, session, and artifact
+  record of a post-update snapshot validates. No health check is worse than it was (ok, degraded,
+  down) or gone, and no Worker that could take work cannot; the agent Workers new in the update are
+  reported, not held to it. `system plugins` names no refused manifest, and `system mcp-headers`
+  prints the client token's header. A profile already down before the update (a check other than
+  its Workers) is no baseline: the capture refuses it, and nothing stops.
+- A failure after the stop rolls back: the updated daemon stopped, the profile's files and link put
+  back, e218ae7 checked out, installed, and built (its lib without `hostPlugins`), `system restore
+  <dir>/store --yes` once Base has started on the store, and the daemon started as before. What Base
+  did in its minutes is lost with its store.
+
+**By hand**, with the daemon stopped (`system shutdown`):
+
+1. Copy `package.json`, `pnpm-lock.yaml`, and `cordis.patch.yml` from `<dir>/profiles/system` back
+   to `~/.dsh/profiles/system`, and its `node_modules` too when the bundle link differs.
+2. `git -C ~/workspaces/system-live checkout --detach e218ae7`, then `pnpm install --frozen-lockfile
+   && pnpm build` there.
+3. If Base started: `node packages/cli/lib/bin.js restore <dir>/store`, then again with `--yes`.
+4. Start as before: `cd ~/workspaces/system-live && nohup node packages/cli/lib/bin.js start >>
+   ~/system-backups/daemon.log 2>&1 &`.
+
+The script was rehearsed on a throwaway worktree and DSH home: the upgrade suite's fixture store,
+a profile linked from another checkout. A start that failed rolled back to e218ae7, the store
+restored; an update with a changed patch completed, its seven old runs explaining as before.
 
 ## Rotate a control token
 
