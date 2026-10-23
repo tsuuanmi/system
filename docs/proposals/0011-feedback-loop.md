@@ -234,11 +234,9 @@ The operator's principle, as in team routing ([ADR-0027](../decisions/adr/0027-p
 - **Families are not independence.** As ADR-0027 says, different families make independent errors
   more likely, not certain. Records say "different provider family", and the
   [Goodhart defences](#goodhart-defences) do not rest on diversity alone.
-- **Families follow the Worker source today:** one vendor reached as a website and as an agent CLI
-  counts as two families ([ADR-0027 consequences](../decisions/adr/0027-provider-diversity-in-routing.md#consequences)).
-  Vendor-level independence needs the operator's family override (the "provider diversity" item
-  of the [roadmap's follow-ups](roadmap.md#follow-ups-from-the-reliability-review)); see the
-  [open questions](#open-questions).
+- **Families follow the Worker source:** one vendor reached as a website and as an agent CLI
+  counts as two families ([ADR-0027 consequences](../decisions/adr/0027-provider-diversity-in-routing.md#consequences)),
+  as the operator confirmed for this proposal ([open questions](#open-questions)).
 
 ### Objective contracts
 
@@ -396,7 +394,7 @@ to end is the acceptance test of v1.
 | candidate arm | the Codex CLI + Antigravity CLI team |
 | later | swapping one member (one website and one CLI Worker): a separate experiment, `RELATED` to this one |
 | maker | the code under review was written by Claude Code sessions, a family in neither arm |
-| evaluator | deterministic collectors; findings that match no label are adjudicated by the operator (no model of either arm's families judges) |
+| evaluator | deterministic collectors; findings that match no label are adjudicated by the operator or the lead, the adjudicator and its family recorded (no model of either arm's families judges) |
 | suite | pinned commits with labelled defects. The nine findings the lead checked in [self-build](../validation/self-build.md#before-the-pilot-team-reviews-of-its-own-code) are the first seeded cases: eight held and were fixed (`ef015fb`, `a32e430`), each with a test that fails before the fix; one is the design, a known non-defect |
 | partitions | the seeds go to regression, not held-out: they were found by the baseline arm's families and are public, so they favour it. Held-out cases are defects found after pre-registration, each confirmed by a test that fails before its fix |
 | primary | correctly identified actionable defects per cost: a finding counts when it is a `defect` whose checked quote ([quote checks](../design/teams.md#quote-checks)) lies in the lines its labelled defect's fix changed |
@@ -547,12 +545,13 @@ migration.
    ([algorithm](../design/routing.md#algorithm)); carrying it from a trial's trusted envelope into
    a run changes the `workflow` contract (an ADR). The alternative, one composition per arm, needs
    no core change but cannot interleave arms. Proposed: the envelope.
-3. **Vendor-level families.** Codex CLI and ChatGPT website count as two families today. Should
-   the family override per runtime and account come before F7, so independence is checked per
-   vendor?
-4. **Adjudicating unmatched findings.** Every family available is a maker or an arm here. Proposed:
-   the operator adjudicates (bounded by a sample size in the protocol); an API or local model of a
-   fourth family is the alternative.
+3. **Vendor-level families.** Answered by the operator (2026-10-23): Codex CLI and ChatGPT
+   website count as two families, as the Worker source makes them today; no vendor-level override
+   is needed before F7.
+4. **Adjudicating unmatched findings.** Answered by the operator (2026-10-23): for now the
+   operator or the lead adjudicates. Each adjudication records who made it and their family; when
+   the lead's family made the code under review, the record says so, and the operator spot-checks
+   the lead's adjudications.
 5. **Suite size and sources.** How many cases, and from where: later defects with failing tests,
    historical fix commits, defects injected by reverting fixes? The minimum per partition, the
    repetitions per case, and the recall floor and margins.
