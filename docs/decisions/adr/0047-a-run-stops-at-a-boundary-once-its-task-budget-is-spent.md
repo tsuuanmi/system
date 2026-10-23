@@ -107,3 +107,26 @@ Do option 2 first, then option 3 for runtimes that report progress. Each lands a
   (`agentRuntimes`). A runtime without progress reports gets only option 2.
 - Revisit this if the workflow contract should state its budget behaviour. That would add a
   conformance scenario, which changes the workflow contract and needs an ADR (roadmap B4).
+
+## Implementation note (2026-10-23): option 2
+
+Option 2 is built in the workflow engine alone, while this ADR is proposed; no seam changes, and
+rule 4 is unchanged ([a task's budget](../../design/workflow-engine.md#a-tasks-budget)). Where the
+decision left room, the engine:
+
+- counts as a step each Worker execution of a run, so each attempt, retry, and escalation of a node
+  reserves; a step that draws no Worker (a gate, a team's tally or decision, a review's source)
+  reserves nothing;
+- reserves after the step's brief is drafted and before it is routed, so a refused step records no
+  route and sends nothing;
+- keeps each hold on the run's row under its step (node, attempt, escalations), and releases it at
+  the run's next turn once the step is no longer in flight. A hold whose step never started (a
+  crash between the two) is released, and the step reserves again, so a restart never holds two;
+- keeps the first refusal, and does not start a step whose reservation was granted beside a refused
+  one;
+- lets a step in flight that fails for good, or asks questions, decide the run as it would without
+  the refusal; the next attempt's first step is then refused on the spent line;
+- points the next attempt's brief at the results of the steps a stopped attempt completed (role
+  `prior`). A failed attempt has no result on the board, so the engine reads them from the stopped
+  run;
+- still briefs each step with what the task had left when the run was admitted.
