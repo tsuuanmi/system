@@ -5,7 +5,7 @@
  * no optional index writes, bounded time and output.
  */
 import { execFileSync } from 'node:child_process'
-import { readFileSync, statSync } from 'node:fs'
+import { closeSync, constants, fstatSync, openSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { sha256 } from './canonical.ts'
 
@@ -46,6 +46,31 @@ function git(workspace: string, args: string[], timeoutMs: number): Buffer {
 }
 
 /**
+ * An untracked file as captured: its size and mtime, and its content when it is at most
+ * `maxBytes`; undefined when it is gone or not a regular file. Its type, size, and content are
+ * read through one descriptor, so they are of one file even if the path is replaced meanwhile.
+ * It is opened non-blocking, so a FIFO is skipped instead of waited on.
+ */
+function untrackedFile(path: string, maxBytes: number): { size: number; mtimeMs: number; content?: Buffer } | undefined {
+  let fd: number
+  try {
+    fd = openSync(path, constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOCTTY)
+  } catch (error) {
+    // Gone, or not a file to read (a socket cannot be opened): skipped. A regular file that
+    // cannot be read fails the capture, which must not leave a change out of the subject.
+    if (!statSync(path, { throwIfNoEntry: false })?.isFile()) return undefined
+    throw error
+  }
+  try {
+    const stat = fstatSync(fd)
+    if (!stat.isFile()) return undefined
+    return { size: stat.size, mtimeMs: stat.mtimeMs, ...(stat.size > maxBytes ? {} : { content: readFileSync(fd) }) }
+  } finally {
+    closeSync(fd)
+  }
+}
+
+/**
  * The subject of a git working tree, or undefined when the workspace is not a repository with a
  * commit. Two captures are equal exactly when HEAD and every change on top of it are.
  */
@@ -63,17 +88,15 @@ export function captureGitSubject(workspace: string, options: CaptureOptions = {
   const parts: string[] = []
   const shown: string[] = []
   for (const path of untracked) {
-    const full = join(workspace, path)
-    const stat = statSync(full, { throwIfNoEntry: false })
-    if (!stat?.isFile()) continue
-    if (stat.size > maxFileBytes) {
-      parts.push(`${path}\0${stat.size}\0${stat.mtimeMs}`)
-      shown.push(`new file ${path} (${stat.size} bytes, not shown)`)
+    const file = untrackedFile(join(workspace, path), maxFileBytes)
+    if (!file) continue
+    if (file.content === undefined) {
+      parts.push(`${path}\0${file.size}\0${file.mtimeMs}`)
+      shown.push(`new file ${path} (${file.size} bytes, not shown)`)
       continue
     }
-    const content = readFileSync(full)
-    parts.push(`${path}\0${sha256(content)}`)
-    shown.push(`new file ${path}\n${content.toString('utf8')}`)
+    parts.push(`${path}\0${sha256(file.content)}`)
+    shown.push(`new file ${path}\n${file.content.toString('utf8')}`)
   }
   const tree = sha256(`${tracked}\0${parts.join('\0')}`).replace(/^sha256:/, '')
   const full = [tracked.trimEnd(), ...shown].filter(Boolean).join('\n\n')

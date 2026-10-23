@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -38,6 +38,18 @@ describe('exact git subjects (REQ-WF-5)', () => {
     const added = captureGitSubject(dir)!
     expect(added.subject.version).not.toBe(edited.subject.version)
     expect(added.diff).toContain('new file notes.md\nnew')
+  })
+
+  it('shows an untracked file over the size bound by its size only, and skips one that is not a regular file without waiting on it (REQ-WF-5)', () => {
+    const dir = repo()
+    writeFileSync(join(dir, 'big.bin'), 'x'.repeat(20))
+    // git lists a symlink, not the FIFO it points at; reading the FIFO would wait for a writer.
+    const outside = mkdtempSync(join(tmpdir(), 'system-subject-fifo-'))
+    dirs.push(outside)
+    execFileSync('mkfifo', [join(outside, 'fifo')])
+    symlinkSync(join(outside, 'fifo'), join(dir, 'pipe'))
+    const captured = captureGitSubject(dir, { maxFileBytes: 10 })!
+    expect(captured.diff).toBe('new file big.bin (20 bytes, not shown)')
   })
 
   it('is undefined outside a repository', () => {
