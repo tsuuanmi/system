@@ -248,7 +248,7 @@ Consumers depend on definitions only.
 | `approvals` | `Approvals` in `@tsuuanmi/system-approvals-core` | `approvals-core/conformance/approvals.ts` (contract 1.0) | `approvals` (store-backed), the fake `FakeApprovals` |
 | `resources` | `Resources` in `@tsuuanmi/system-resources-core` | `resources-core/conformance/resources.ts` (contract 1.0) | `resources` (store-backed), the fake `FakeResources` |
 | `board` | `Board` in `@tsuuanmi/system-board-core` | `board-core/conformance/board.ts` (contract 1.0, over any `ctx.approvals`) | `board` (over a real store, with `FakeApprovals` and with `approvals`), the fake `FakeBoard` |
-| `digests` | `Digests` in `@tsuuanmi/system-digest-core` | `digest-core/conformance/digests.ts` (contract 1.0) | `digest` (over real routing, with a scripted Worker), the fake `FakeDigests` |
+| `digests` | `Digests` in `@tsuuanmi/system-digest-core` | `digest-core/conformance/digests.ts` (contract 1.1) | `digest` (over real routing, with a scripted Worker), the fake `FakeDigests` |
 | `store` | concrete `Store` in `@tsuuanmi/system-store` | `plugins/store/conformance/store.ts` (contract 1.0) | `store` |
 | `eventLog` | concrete `EventLog` in `@tsuuanmi/system-event-log` | `plugins/event-log/conformance/event-log.ts` (contract 1.0) | `event-log` |
 | `artifacts` | concrete `Artifacts` in `@tsuuanmi/system-artifacts` | `plugins/artifacts/conformance/artifacts.ts` (contract 1.0) | `artifacts` |

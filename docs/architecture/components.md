@@ -214,7 +214,8 @@ runs the work the router admitted to them. Callers never reach a source directly
 - **Digests** (`ctx.digests`, the digest family): a cited `digest@1.0` of raw artifacts, on
   request (MCP `digests_request`), written by a read-only Worker on the economy tier that
   `ctx.workers` routes to, and quote-checked before it is stored: a claim whose quote is not
-  verbatim in the artifact it cites is dropped and recorded. It fails open: a request no Worker
+  verbatim in the artifact it cites is dropped and recorded; when every claim fails, it is
+  written once more on the standard tier, never higher. It fails open: a request no Worker
   serves is settled `bypassed` and recorded ([digests](../design/digests.md)). It depends on
   seam definitions only.
 - **Profiles:** plugins that contribute templates through `ctx.workflow.template` (`research`,

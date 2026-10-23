@@ -1,8 +1,9 @@
 /**
  * Conformance suite for `ctx.digests` (ADR-0037; docs/design/digests.md), and a fake provider that
  * passes it. `boot(drafter)` returns a context that provides `ctx.digests` and `ctx.artifacts`,
- * nothing digested yet, in which the digest Worker answers each request as `drafter` says (given
- * the request's sources, in order); with no drafter, no Worker can serve a digest at all.
+ * nothing digested yet, in which a digest Worker on each tier answers each request as `drafter`
+ * says (given the request's sources, in order, and the tier of the Worker asked); with no drafter,
+ * no Worker can serve a digest at all.
  */
 import { randomBytes } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
@@ -10,10 +11,10 @@ import type {} from '@tsuuanmi/system-artifacts'
 import { extractJson, SchemaRegistry } from '@tsuuanmi/system-libs'
 import { expect } from 'vitest'
 import { defineSuite, type Scenario } from '../../libs/conformance/runner.ts'
-import { type ArtifactRef, type DigestBody, DigestError, type DigestRequest, Digests, type DigestView, quoteCheck, settlement } from '../src/index.ts'
+import { type ArtifactRef, type DigestBody, DigestError, type DigestRequest, Digests, type DigestView, type EscalationDecision, escalation, ESCALATION_TIER, quoteCheck, type QuoteCheck, settlement, type SettlementDecision } from '../src/index.ts'
 
-/** How the digest Worker answers a request: the text of its answer, or a failure of its run. */
-export type Drafter = (sources: readonly ArtifactRef[]) => { text: string } | { fail: string }
+/** How the digest Worker of a tier answers a request: the text of its answer, or a failure of its run. */
+export type Drafter = (sources: readonly ArtifactRef[], tier: 'economy' | 'standard' | 'frontier') => { text: string } | { fail: string }
 export type Boot = (drafter: Drafter | undefined) => Promise<{ ctx: Context; dispose: () => Promise<void> }>
 
 const schemas = new SchemaRegistry()
@@ -66,15 +67,36 @@ const settled = async (ctx: Context, view: DigestView): Promise<DigestView> => {
   schemas.assertDef('mcp-digests@1.0', 'request', done)
   return done
 }
+type Escalation = { decisionType: string; decider: { id: string }; inputs: string[]; outcome: { option: string; detail: { from: string; to: string } }; candidates: Array<{ option: string; selected: boolean; reasons: string[] }> }
+const escalationOf = (ctx: Context, view: DigestView): Escalation => {
+  expect(view.escalation, `request ${view.requestId} names the decision that escalated it`).toBeDefined()
+  const body = ctx.artifacts.get(view.escalation!)!.body as Escalation & { schema: string }
+  schemas.assertRecord(body)
+  expect(body).toMatchObject({ decisionType: 'escalation', decider: { id: 'digests.escalation' }, outcome: { option: 'escalate', detail: { from: 'economy', to: 'standard' } } })
+  expect(body.candidates.every((c) => c.reasons.length > 0)).toBe(true)
+  return body
+}
+/** The tiers of the Workers a scenario's drafter was asked by, in order (reset at each boot). */
+const asked: string[] = []
+/** Claims whose quotes are in neither source: none survives the quote check. */
+const misquoted = (log: ArtifactRef, bench: ArtifactRef): Claim[] => [
+  { id: 'C1', kind: 'failure', text: 'Three tests fail.', citation: { artifact: log, quote: 'FAIL tests/align/end-gaps.spec.ts (3 failed)' } },
+  { id: 'C2', kind: 'finding', text: 'Paraphrased.', citation: { artifact: bench, quote: 'the median speed-up was 2.4x' } },
+]
 const digests = (ctx: Context): number => ctx.artifacts.list({ kind: 'report', limit: 1000 }).filter((a) => a.bodySchema === 'digest@1.0').length
 
 interface Harness { ctx: Context; log: ArtifactRef; bench: ArtifactRef }
 
-const scenario = (id: string, title: string, drafter: ((h: { log: () => ArtifactRef; bench: () => ArtifactRef }) => Drafter) | undefined, run: (h: Harness) => Promise<void>): Scenario<Boot> => ({
-  id: `digests.${id}`, since: '1.0', title,
+const scenario = (id: string, title: string, drafter: ((h: { log: () => ArtifactRef; bench: () => ArtifactRef }) => Drafter) | undefined, run: (h: Harness) => Promise<void>, since: '1.0' | '1.1' = '1.0'): Scenario<Boot> => ({
+  id: `digests.${id}`, since, title,
   run: async (boot) => {
     const refs: { log?: ArtifactRef; bench?: ArtifactRef } = {}
-    const { ctx, dispose } = await boot(drafter?.({ log: () => refs.log!, bench: () => refs.bench! }))
+    asked.length = 0
+    const given = drafter?.({ log: () => refs.log!, bench: () => refs.bench! })
+    const { ctx, dispose } = await boot(given && ((sources, tier) => {
+      asked.push(tier)
+      return given(sources, tier)
+    }))
     try {
       refs.log = raw(ctx, LOG, 'public')
       refs.bench = raw(ctx, BENCH, 'operator-shared')
@@ -87,7 +109,7 @@ const scenario = (id: string, title: string, drafter: ((h: { log: () => Artifact
 
 export const digestsSuite = defineSuite<Boot>({
   seam: 'digests',
-  contract: '1.0',
+  contract: '1.1',
   scenarios: [
     scenario('written', 'writes a digest@1.0 report whose every claim quotes the artifact it cites verbatim, over exactly the requested sources, at least as strict as they are, settled by an acceptance decision (INV-12, INV-13, INV-14)', (h) => () => ({ text: draft(h.log(), h.bench()) }), async ({ ctx, log, bench }) => {
       const view = await settled(ctx, await ctx.digests.request({ sources: [log, bench] }))
@@ -125,10 +147,7 @@ export const digestsSuite = defineSuite<Boot>({
     }),
 
     scenario('nothing-survives', 'writes no digest when no claim survives the quote check, and settles the request not-written with why (INV-13)', (h) => () => ({
-      text: draft(h.log(), h.bench(), [
-        { id: 'C1', kind: 'failure', text: 'Three tests fail.', citation: { artifact: h.log(), quote: 'FAIL tests/align/end-gaps.spec.ts (3 failed)' } },
-        { id: 'C2', kind: 'finding', text: 'Paraphrased.', citation: { artifact: h.bench(), quote: 'the median speed-up was 2.4x' } },
-      ]),
+      text: draft(h.log(), h.bench(), misquoted(h.log(), h.bench())),
     }), async ({ ctx, log, bench }) => {
       const view = await settled(ctx, await ctx.digests.request({ sources: [log, bench] }))
       expect(view).toMatchObject({ state: 'not-written', claims: { kept: 0, dropped: 2 } })
@@ -189,12 +208,46 @@ export const digestsSuite = defineSuite<Boot>({
       expect(await ctx.digests.get('dig-unknown')).toBeUndefined()
       expect(await failureOf(ctx.digests.wait('dig-unknown', 10))).toBe('unknown-request')
     }),
+
+    scenario('escalates-once', 'writes a request whose every economy claim failed the quote check once more on the standard tier, recording the escalation decision before it, and settles it on that answer (PROP-0008, INV-13)', (h) => (_sources, tier) => ({
+      text: draft(h.log(), h.bench(), tier === 'economy' ? misquoted(h.log(), h.bench()) : undefined),
+    }), async ({ ctx, log, bench }) => {
+      const view = await settled(ctx, await ctx.digests.request({ sources: [log, bench] }))
+      expect(asked).toEqual(['economy', 'standard'])
+      expect(view).toMatchObject({ state: 'written', claims: { kept: 2, dropped: 0 } })
+      const escalated = escalationOf(ctx, view)
+      expect(escalated.inputs).toEqual(expect.arrayContaining([log, bench]))
+      expect(decisionOf(ctx, view).inputs).toContain(view.escalation)
+      expect((ctx.artifacts.get(view.digest!)!.body as DigestBody).claims.map((c) => c.id)).toEqual(['C1', 'C2'])
+    }, '1.1'),
+
+    scenario('gives-up-after-one-escalation', 'gives up after one escalation, never asking a tier above standard: a request whose claims fail the quote check on both tiers settles not-written, with why (INV-9, INV-13)', (h) => () => ({
+      text: draft(h.log(), h.bench(), misquoted(h.log(), h.bench())),
+    }), async ({ ctx, log, bench }) => {
+      const view = await settled(ctx, await ctx.digests.request({ sources: [log, bench] }))
+      expect(asked).toEqual(['economy', 'standard'])
+      expect(view).toMatchObject({ state: 'not-written', claims: { kept: 0, dropped: 2 } })
+      expect(view.reason).toMatch(/no claim survived the quote check.*standard/)
+      escalationOf(ctx, view)
+      expect(digests(ctx)).toBe(0)
+      const decision = decisionOf(ctx, view)
+      expect(decision.inputs).toContain(view.escalation)
+      expect(decision.outcome.detail.reason).toMatch(/standard/)
+    }, '1.1'),
+
+    scenario('escalates-only-on-the-quote-check', 'does not escalate an answer that gives no digest for another reason than the quote check (no JSON, no claim): it settles not-written on the economy answer alone', () => () => ({ text: 'I could not read the artifacts.' }), async ({ ctx, log }) => {
+      const view = await settled(ctx, await ctx.digests.request({ sources: [log] }))
+      expect(asked).toEqual(['economy'])
+      expect(view).toMatchObject({ state: 'not-written' })
+      expect(view.escalation).toBeUndefined()
+    }, '1.1'),
   ],
 })
 
 /**
  * The seam's fake provider: requests in memory, each settled at once by asking `drafter` (no
- * drafter: no Worker), then the same quote check and the same settlement decision as any provider.
+ * drafter: no Worker), then the same quote check, escalation, and settlement decision as any
+ * provider: an economy answer whose every claim failed is asked once more of the standard tier.
  */
 export class FakeDigests extends Digests {
   static inject = ['artifacts']
@@ -219,25 +272,46 @@ export class FakeDigests extends Digests {
     const at = new Date().toISOString()
     const requestId = `dig-${randomBytes(12).toString('hex')}`
     if (input.key !== undefined) this.keys.set(input.key, { id: requestId, sources: JSON.stringify(sources) })
-    const answer = this.config.drafter?.(sources)
+    const answer = this.config.drafter?.(sources, 'economy')
     const settle = (view: Omit<DigestView, 'requestId' | 'sources' | 'createdAt' | 'updatedAt'>): DigestView => {
       const done: DigestView = { requestId, sources, ...view, createdAt: at, updatedAt: new Date().toISOString() }
       this.requests.set(requestId, done)
       return done
     }
-    const record = (decision: ReturnType<typeof settlement>): ArtifactRef => this.ctx.artifacts.recordDecision(decision, { producer: { type: 'system', ref: 'digests' } }).id as ArtifactRef
+    const record = (decision: SettlementDecision | EscalationDecision): ArtifactRef => this.ctx.artifacts.recordDecision(decision, { producer: { type: 'system', ref: 'digests' } }).id as ArtifactRef
     if (!answer || 'fail' in answer) {
       const reason = answer ? `the digest Worker's run failed (${answer.fail})` : 'no Worker can serve a digest (none is admitted)'
       return settle({ state: 'bypassed', reason, decision: record(settlement({ requestId, sources }, { state: 'bypassed', reason })) })
     }
-    const check = quoteCheck(extractJson(answer.text), sources, (ref) => this.ctx.artifacts.get(ref))
+    const answerOf = (text: string): ArtifactRef => this.ctx.artifacts.put({
+      kind: 'report', bodySchema: 'provider-answer@1.0', classification: 'public', producer: { type: 'worker', ref: 'fake' },
+      body: { schema: 'provider-answer@1.0', provider: 'fake', account: 'fake', turnId: `${requestId}-${randomBytes(4).toString('hex')}`, conversation: { mode: 'temporary' }, promptHash: `sha256:${'0'.repeat(64)}`, text },
+    }).id as ArtifactRef
+    const checkOf = (text: string): QuoteCheck => quoteCheck(extractJson(text), sources, (ref) => this.ctx.artifacts.get(ref))
+    let check = checkOf(answer.text)
+    let inputs: ArtifactRef[] = [answerOf(answer.text)]
+    let escalated: ArtifactRef | undefined
+    let reason = check.reason
+    const decided = escalation({ requestId, sources, tier: 'economy', escalated: false }, check, inputs[0]!)
+    if (decided) {
+      escalated = record(decided)
+      const again = this.config.drafter!(sources, ESCALATION_TIER)
+      if ('fail' in again) {
+        reason = `${check.reason}; the escalation to ${ESCALATION_TIER} failed (${again.fail}), so the economy answer stands`
+        inputs = [...inputs, escalated]
+      } else {
+        check = checkOf(again.text)
+        inputs = [answerOf(again.text), escalated]
+        reason = check.digest ? undefined : `${check.reason}, on ${ESCALATION_TIER} too, after one escalation: given up`
+      }
+    }
     const claims = { kept: check.kept, dropped: check.dropped.length }
+    const more = escalated ? { escalation: escalated } : {}
     if (!check.digest) {
-      const reason = check.reason!
-      return settle({ state: 'not-written', reason, claims, decision: record(settlement({ requestId, sources }, { state: 'not-written', check, reason })) })
+      return settle({ state: 'not-written', reason: reason!, claims, ...more, decision: record(settlement({ requestId, sources }, { state: 'not-written', check, reason: reason!, inputs })) })
     }
     const digest = this.ctx.artifacts.put({ kind: 'report', bodySchema: 'digest@1.0', body: check.digest, inputs: sources, classification: 'public', producer: { type: 'worker', ref: 'fake' } }).id as ArtifactRef
-    return settle({ state: 'written', digest, claims, decision: record(settlement({ requestId, sources }, { state: 'written', check, inputs: [digest] })) })
+    return settle({ state: 'written', digest, claims, ...more, decision: record(settlement({ requestId, sources }, { state: 'written', check, inputs: [...inputs, digest] })) })
   }
 
   async get(requestId: string): Promise<DigestView | undefined> {

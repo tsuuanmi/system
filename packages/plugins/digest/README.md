@@ -19,16 +19,22 @@ depends on seam definitions only, and fails open.
   rendered (INV-12). The brief, the start, and the execution's id on the request commit together.
 - **The quote check** (`quoteCheck` of `digest-core`) keeps the claims whose quotes are verbatim
   in the source they cite, drops and records the rest, and keeps at most `maxClaims` (default 20).
+- **One escalation** (`escalation` of `digest-core`): when every claim of the economy answer
+  failed the check, the `escalation` decision and the request's new tier commit together under its
+  lease, and a read-only Worker on the standard tier writes it once more (its start keyed apart);
+  never higher, never twice. If that run gives no answer, the economy answer stands: `not-written`.
 - **Settled once**, in one transaction under the request's lease: the digest (a `report` whose
   envelope inputs are its sources, as strict as the strictest), the `acceptance` decision
   (`digests.quote-check`) that names it, and the event `digests.settled` (with `ctx.eventLog`).
 - **Fails open:** no Worker admitted (its `admission` decision is named), a start refused, a
   failed run, an execution gone, or a run past `timeoutMinutes` (default 30; the run is
   cancelled) settles the request `bypassed`, recorded with why; nothing waits on it.
-- **Restart:** each pending request goes on where it stood: routed again if nothing started, or
-  waiting for the execution it named; a run is never started twice (INV-4).
+- **Restart:** each pending request goes on where it stood: routed again if nothing started (on
+  the tier it escalated to, if it did), or waiting for the execution it named; a run is never
+  started twice (INV-4).
 - **MCP tools** (client scope): `digests_request` and `digests_get`, each input and output
-  validated against [`mcp-digests.v1.json`](../../../schemas/mcp-digests.v1.json); both may wait up
+  validated against [`mcp-digests.v1.json`](../../../schemas/mcp-digests.v1.json) (1.1: a request
+  names its `escalation`); both may wait up
   to 55 s for the request to settle.
 - **Bundle row:** on. With no read-only Worker on its tier (the agent rows off), every request
   settles `bypassed`, recorded, which is safe.
@@ -36,5 +42,6 @@ depends on seam definitions only, and fails open.
   is optional.
 - **Tests:** the seam's conformance suite over this provider, real routing, and a scripted Worker
   ([`tests/conformance.spec.ts`](tests/conformance.spec.ts)); the brief and its rendering, the
-  tier bound, restart, the time bound, the pending bound, and the MCP tools
+  tier bound, the escalation (its key, no standard Worker, a request configured on standard, a
+  restart between the runs), restart, the time bound, the pending bound, and the MCP tools
   ([`tests/digest.spec.ts`](tests/digest.spec.ts)).

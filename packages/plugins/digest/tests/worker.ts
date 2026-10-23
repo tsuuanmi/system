@@ -1,23 +1,27 @@
 /**
  * A scripted digest Worker for the provider's tests: a read-only Worker on this machine (it proves
- * `review` and `local-data`) that answers each run as the drafter says, given the sources its
- * brief points at. With no drafter it describes no Worker at all. Its runs outlive a restart of
- * the provider, as a Worker's own runtime does.
+ * `review` and `local-data`) on each of `tiers` (`w:digest` on economy, `w:digest:<tier>` above),
+ * that answers each run as the drafter says, given the sources its brief points at and its tier.
+ * With no drafter it describes no Worker at all. Its runs outlive a restart of the provider, as a
+ * Worker's own runtime does.
  */
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@tsuuanmi/system-artifacts'
 import { type Brief, startPrompt } from '@tsuuanmi/system-libs'
-import type { ArtifactRef, Tier, WorkerExecution, WorkerSource, WorkerStart } from '@tsuuanmi/system-workers-core'
+import { type ArtifactRef, type Tier, TIERS, type WorkerExecution, type WorkerSource, type WorkerStart } from '@tsuuanmi/system-workers-core'
 import type { Drafter } from '../../../digest-core/conformance/digests.ts'
 import { worker } from '../../../workers-core/conformance/workers.ts'
 
+const idOf = (tier: Tier): string => (tier === 'economy' ? 'w:digest' : `w:digest:${tier}`)
+
 export class DigestWorker {
   /** Every run started, with the prompt its brief rendered to; a repeated key starts none. */
-  readonly started: Array<WorkerStart & { id: string; prompt: string; sources: ArtifactRef[] }> = []
+  readonly started: Array<WorkerStart & { id: string; prompt: string; sources: ArtifactRef[]; tier: Tier }> = []
   readonly cancelled: string[] = []
   /** Runs stay running until {@link release}. */
   hold = false
-  tier: Tier = 'economy'
+  /** The tiers it describes a Worker on. */
+  tiers: Tier[] = ['economy', 'standard', 'frontier']
   private readonly executions = new Map<string, WorkerExecution>()
   private readonly keys = new Map<string, string>()
   private readonly waiters = new Map<string, Set<() => void>>()
@@ -29,7 +33,7 @@ export class DigestWorker {
     this.ctx = ctx
     return {
       name: 'digest-worker',
-      describe: async () => (this.drafter ? [worker('w:digest', { tier: this.tier, locality: 'local', proves: ['review', 'local-data'] })] : []),
+      describe: async () => (this.drafter ? this.tiers.map((tier) => worker(idOf(tier), { tier, locality: 'local', proves: ['review', 'local-data'] })) : []),
       start: (request) => this.start(request),
       get: (id) => {
         const execution = this.executions.get(id)
@@ -49,7 +53,7 @@ export class DigestWorker {
   /** End a held run as the drafter says. */
   release(id: string): void {
     const run = this.started.find((s) => s.id === id)!
-    this.finish(id, this.drafter!(run.sources))
+    this.finish(id, this.drafter!(run.sources, run.tier))
   }
 
   private start(request: WorkerStart): WorkerExecution {
@@ -59,10 +63,11 @@ export class DigestWorker {
     const prompt = startPrompt(request, (ref) => ctx.artifacts.get(ref)).prompt
     const sources = (ctx.artifacts.get(request.brief!)!.body as Brief).artifacts.map((p) => p.ref as ArtifactRef)
     const id = `d-${this.started.length + 1}`
+    const tier = TIERS.find((t) => idOf(t) === request.worker)!
     this.keys.set(request.key, id)
-    this.started.push({ ...request, id, prompt, sources })
+    this.started.push({ ...request, id, prompt, sources, tier })
     this.executions.set(id, { id, status: 'running', submitted: true, decisions: [] })
-    if (!this.hold) this.finish(id, this.drafter!(sources))
+    if (!this.hold) this.finish(id, this.drafter!(sources, tier))
     return { ...this.executions.get(id)! }
   }
 

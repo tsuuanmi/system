@@ -1,10 +1,11 @@
 /**
  * `ctx.digests` on `ctx.store` (docs/design/digests.md): a cited `digest@1.0` of raw artifacts,
  * written by a read-only Worker on the configured tier (economy by default) and quote-checked
- * before it is stored. A capability plugin of the digest family (ADR-0036): it depends on seam
- * definitions only, asks `ctx.workers` for a capability and a tier, never a Worker by name
- * (INV-11), and fails open: a request no Worker serves, or whose run fails, is settled `bypassed`
- * and recorded, and nothing waits on it. Requests are durable; a restart picks up each pending one
+ * before it is stored; an economy answer whose every claim failed the check is written once more
+ * on the standard tier, never higher (`escalation` of the definition). A capability plugin of the
+ * digest family (ADR-0036): it depends on seam definitions only, asks `ctx.workers` for a
+ * capability and a tier, never a Worker by name (INV-11), and fails open: a request no Worker
+ * serves, or whose run fails, is settled `bypassed` and recorded, and nothing waits on it. Requests are durable; a restart picks up each pending one
  * where it stood, never starting its Worker run twice (INV-4).
  * @module @tsuuanmi/system-digest
  */
@@ -12,7 +13,7 @@ import { randomBytes } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import type {} from '@tsuuanmi/system-artifacts'
-import { type ArtifactRef, DigestError, type DigestRequest, Digests, type DigestState, type DigestView, type QuoteCheck, quoteCheck, settlement } from '@tsuuanmi/system-digest-core'
+import { type ArtifactRef, DigestError, type DigestRequest, Digests, type DigestState, type DigestView, type EscalationDecision, escalation, type QuoteCheck, quoteCheck, settlement } from '@tsuuanmi/system-digest-core'
 import type {} from '@tsuuanmi/system-event-log'
 import type {} from '@tsuuanmi/system-gateway-core'
 import { type Lease, LeaseLost, StaleGeneration } from '@tsuuanmi/system-leases'
@@ -47,9 +48,18 @@ interface Row {
   kept: number | null
   dropped: number | null
   reason: string | null
+  /** The tier the request runs on now: null for the configured one, `standard` once escalated. */
+  tier: Tier | null
+  /** The `escalation` decision, once the request escalated. */
+  escalation: string | null
+  /** The answer whose every claim failed the quote check before the escalation, and that check (JSON {@link Escalated}). */
+  escalated_from: string | null
   created_at: string
   updated_at: string
 }
+
+/** What the economy answer came to before a request escalated: it stands if the escalation cannot run. */
+interface Escalated { answer: ArtifactRef; tier: Tier; check: QuoteCheck }
 
 type Outcome =
   | { state: 'written'; check: QuoteCheck; inputs: ArtifactRef[] }
@@ -118,6 +128,12 @@ export class StoreDigests extends Digests {
         created_at TEXT NOT NULL, updated_at TEXT NOT NULL
       );
       CREATE INDEX digest_requests_state ON digest_requests (state);`,
+    }, {
+      // The one escalation (contract 1.1): the tier a request runs on, the decision, and what the first answer came to.
+      version: 2,
+      sql: `ALTER TABLE digest_requests ADD COLUMN tier TEXT;
+      ALTER TABLE digest_requests ADD COLUMN escalation TEXT;
+      ALTER TABLE digest_requests ADD COLUMN escalated_from TEXT;`,
     }])
     ctx.effect(() => {
       queueMicrotask(() => this.recover())
@@ -155,7 +171,8 @@ export class StoreDigests extends Digests {
       if (pending >= this.maxPending) throw new DigestError('overloaded', `${pending} digest requests are pending (limit ${this.maxPending}); ask again once one settles`)
       const row: Row = {
         request_id: `dig-${randomBytes(12).toString('hex')}`, request_key: key, sources: JSON.stringify(sources), classification, state: 'pending',
-        source: null, worker: null, execution_id: null, brief: null, digest: null, decision: null, kept: null, dropped: null, reason: null, created_at: now(), updated_at: now(),
+        source: null, worker: null, execution_id: null, brief: null, digest: null, decision: null, kept: null, dropped: null, reason: null, tier: null, escalation: null, escalated_from: null,
+        created_at: now(), updated_at: now(),
       }
       db.prepare(`INSERT INTO digest_requests (request_id, request_key, sources, classification, state, created_at, updated_at) VALUES (?, ?, ?, ?, 'pending', ?, ?)`)
         .run(row.request_id, key, row.sources, classification, row.created_at, row.updated_at)
@@ -230,7 +247,7 @@ export class StoreDigests extends Digests {
         }
         // A digest fails open (ADR-0036): whatever went wrong, the request is bypassed and recorded.
         const row = this.row(requestId)
-        if (row?.state === 'pending') this.settle(row, { state: 'bypassed', reason: `the digest could not be written: ${(error as Error)?.message ?? String(error)}` }, lease)
+        if (row?.state === 'pending') this.fail(row, `the digest could not be written: ${(error as Error)?.message ?? String(error)}`, lease)
       }
     })
     if (!outcome.held) this.retryLater(requestId, outcome.retryInMs)
@@ -238,38 +255,77 @@ export class StoreDigests extends Digests {
 
   private async serve(requestId: string, lease: () => Lease, signal: AbortSignal): Promise<void> {
     let row = this.row(requestId)
-    if (!row || row.state !== 'pending') return
-    const sources = JSON.parse(row.sources) as ArtifactRef[]
-    if (!row.execution_id) {
-      const started = await this.start(row, sources, lease, signal)
-      if (!started) return
-      row = started
-    }
-    const source = this.ctx.workers.source(row.source!)
-    if (!source) return this.settle(row, { state: 'bypassed', reason: `its Worker source ${row.source} is no longer registered (its row is off); nothing was digested` }, lease)
-    const deadline = Date.parse(row.created_at) + this.timeoutMs
-    let current = source.get(row.execution_id!)
-    const stop = aborted(signal)
-    while (current && (current.status === 'queued' || current.status === 'running')) {
-      if (signal.aborted) return
-      if (Date.now() >= deadline) {
-        source.cancel?.(current.id)
-        return this.settle(row, { state: 'bypassed', reason: `the digest Worker did not finish within ${this.timeoutMs / 60_000} minutes (timeoutMinutes); its run was cancelled` }, lease)
+    // At most two runs: the configured tier's, and one escalation (INV-9).
+    while (row?.state === 'pending') {
+      const sources = JSON.parse(row.sources) as ArtifactRef[]
+      if (!row.execution_id) {
+        const started = await this.start(row, sources, lease, signal)
+        if (!started) return
+        row = started
       }
-      await Promise.race([source.wait(current.id, Math.max(1, Math.min(POLL_MS, deadline - Date.now()))), stop])
-      if (signal.aborted) return
-      current = source.get(current.id)
+      const source = this.ctx.workers.source(row.source!)
+      if (!source) return this.fail(row, `its Worker source ${row.source} is no longer registered (its row is off); nothing was digested`, lease)
+      const deadline = Date.parse(row.created_at) + this.timeoutMs
+      let current = source.get(row.execution_id!)
+      const stop = aborted(signal)
+      while (current && (current.status === 'queued' || current.status === 'running')) {
+        if (signal.aborted) return
+        if (Date.now() >= deadline) {
+          source.cancel?.(current.id)
+          return this.fail(row, `the digest Worker did not finish within ${this.timeoutMs / 60_000} minutes (timeoutMinutes); its run was cancelled`, lease)
+        }
+        await Promise.race([source.wait(current.id, Math.max(1, Math.min(POLL_MS, deadline - Date.now()))), stop])
+        if (signal.aborted) return
+        current = source.get(current.id)
+      }
+      if (!current) return this.fail(row, `the digest Worker's execution ${row.execution_id} is gone`, lease)
+      if (current.status === 'failed' || !current.result) {
+        const error = current.error
+        return this.fail(row, `the digest Worker's run failed (${error ? `${error.kind}: ${error.message}` : 'no result'})`, lease)
+      }
+      const result = current.result
+      const answer = this.ctx.artifacts.get(result)
+      const check = quoteCheck(answer?.body !== undefined ? extractJson(bodyText(answer.body)) : undefined, sources, (ref) => this.ctx.artifacts.get(ref), this.maxClaims)
+      const escalated = row.escalation ? [row.escalation as ArtifactRef] : []
+      if (check.digest) return this.settle(row, { state: 'written', check, inputs: [result, ...escalated] }, lease)
+      const tier = row.tier ?? this.tier
+      const decided = escalation({ requestId: row.request_id, sources, tier, escalated: !!row.escalation }, check, result)
+      if (!decided) {
+        const reason = row.escalation ? `${check.reason}, on ${tier} too, after one escalation: given up` : check.reason!
+        return this.settle(row, { state: 'not-written', check, reason, inputs: [result, ...escalated] }, lease)
+      }
+      row = this.escalate(row, decided, { answer: result, tier, check }, lease)
     }
-    if (!current) return this.settle(row, { state: 'bypassed', reason: `the digest Worker's execution ${row.execution_id} is gone` }, lease)
-    if (current.status === 'failed' || !current.result) {
-      const error = current.error
-      return this.settle(row, { state: 'bypassed', reason: `the digest Worker's run failed (${error ? `${error.kind}: ${error.message}` : 'no result'})` }, lease)
-    }
-    const result = current.result
-    const answer = this.ctx.artifacts.get(result)
-    const check = quoteCheck(answer?.body !== undefined ? extractJson(bodyText(answer.body)) : undefined, sources, (ref) => this.ctx.artifacts.get(ref), this.maxClaims)
-    if (!check.digest) return this.settle(row, { state: 'not-written', check, reason: check.reason!, inputs: [result] }, lease)
-    return this.settle(row, { state: 'written', check, inputs: [result] }, lease)
+  }
+
+  /**
+   * Escalate once (contract 1.1): the `escalation` decision recorded, and the request made ready to
+   * route again on the standard tier, in one transaction under its lease, so a restart routes the
+   * second run once, never a third (INV-4, INV-13).
+   */
+  private escalate(row: Row, decision: EscalationDecision, from: Escalated, lease: () => Lease): Row | undefined {
+    return this.ctx.store.transaction((db) => {
+      this.ctx.leases.fence(lease())
+      const current = this.row(row.request_id)
+      if (current?.state !== 'pending' || current.escalation) return current
+      const recorded = this.ctx.artifacts.recordDecision(decision, { producer: PRODUCER, classification: row.classification }).id
+      db.prepare('UPDATE digest_requests SET tier = ?, escalation = ?, escalated_from = ?, source = NULL, worker = NULL, execution_id = NULL, updated_at = ? WHERE request_id = ?')
+        .run(decision.outcome.detail['to'] as string, recorded, JSON.stringify(from), now(), row.request_id)
+      this.ctx.logger.info(`digests: request ${row.request_id} escalated to ${String(decision.outcome.detail['to'])}: every claim of the ${from.tier} answer failed the quote check`)
+      return this.row(row.request_id)
+    })
+  }
+
+  /**
+   * A run that could not give an answer: the request fails open, bypassed. After an escalation a
+   * Worker did answer, on the tier before it, so that answer stands: the request settles
+   * `not-written` on its check, with why the escalation did not run to an answer.
+   */
+  private fail(row: Row, why: string, lease: () => Lease, inputs: ArtifactRef[] = []): void {
+    if (!row.escalation || !row.escalated_from) return this.settle(row, { state: 'bypassed', reason: why, inputs }, lease)
+    const from = JSON.parse(row.escalated_from) as Escalated
+    const reason = `${from.check.reason}; the escalation to ${row.tier} did not answer (${why}), so the ${from.tier} answer stands`
+    this.settle(row, { state: 'not-written', check: from.check, reason, inputs: [from.answer, row.escalation as ArtifactRef, ...inputs] }, lease)
   }
 
   /**
@@ -279,9 +335,11 @@ export class StoreDigests extends Digests {
    */
   private async start(row: Row, sources: ArtifactRef[], lease: () => Lease, signal: AbortSignal): Promise<Row | undefined> {
     const draft = this.draft(sources, row.classification)
+    const tier = row.tier ?? this.tier
     const requirement: WorkRequirement = {
       schema: 'work-requirement@1.0', objective: GOAL, capabilities: CAPABILITIES, data: { classification: row.classification, refs: sources },
-      egressPolicy: 'egress.classification-and-secrets', tier: { min: this.tier, max: this.tier, source: 'profile' },
+      egressPolicy: 'egress.classification-and-secrets',
+      tier: row.escalation ? { min: tier, max: tier, source: 'decision', decision: row.escalation as ArtifactRef } : { min: tier, max: tier, source: 'profile' },
       acceptance: { contract: 'digests.quote-check', resultSchema: 'digest@1.0' },
     }
     const chars = [...renderBrief({ ...draft, sandbox: NO_LOCAL_SANDBOX }, (ref) => this.ctx.artifacts.get(ref))].length
@@ -290,7 +348,7 @@ export class StoreDigests extends Digests {
       admitted = await this.ctx.workers.route(requirement, { producer: 'digests', input: { chars } })
     } catch (error) {
       if (!(error instanceof AdmissionFailure)) throw error
-      this.settle(row, { state: 'bypassed', reason: `no Worker can write it (a read-only Worker on the ${this.tier} tier): ${error.message}`, inputs: [error.decision] }, lease)
+      this.fail(row, `no Worker can write it (a read-only Worker on the ${tier} tier): ${error.message}`, lease, [error.decision])
       return undefined
     }
     try {
@@ -301,14 +359,16 @@ export class StoreDigests extends Digests {
         this.ctx.leases.fence(lease())
         const body: Brief = { ...draft, sandbox: source.sandbox?.(admitted.worker.worker) ?? NO_LOCAL_SANDBOX }
         const brief = this.ctx.artifacts.put({ kind: 'objective', bodySchema: body.schema, body, inputs: sources, classification: row.classification, producer: PRODUCER }).id as ArtifactRef
-        const execution = source.start({ key: `digests:${row.request_id}`, worker: admitted.worker.worker, brief, requirement, decisions: admitted.decisions })
+        // The escalated run has a key of its own, so its start is never mistaken for the first run's.
+        const key = row.escalation ? `digests:${row.request_id}:${tier}` : `digests:${row.request_id}`
+        const execution = source.start({ key, worker: admitted.worker.worker, brief, requirement, decisions: admitted.decisions })
         db.prepare('UPDATE digest_requests SET source = ?, worker = ?, execution_id = ?, brief = ?, updated_at = ? WHERE request_id = ?')
           .run(admitted.source, admitted.worker.worker, execution.id, brief, now(), row.request_id)
         return this.row(row.request_id)!
       })
     } catch (error) {
       if (error instanceof LeaseLost || error instanceof StaleGeneration) throw error
-      this.settle(row, { state: 'bypassed', reason: `the digest Worker ${admitted.worker.worker} refused the run: ${(error as Error).message}`, inputs: [admitted.decisions.route] }, lease)
+      this.fail(row, `the digest Worker ${admitted.worker.worker} refused the run: ${(error as Error).message}`, lease, [admitted.decisions.route])
       return undefined
     } finally {
       admitted.release()
@@ -370,7 +430,7 @@ function view(row: Row): DigestView {
     requestId: row.request_id, state: row.state, sources: JSON.parse(row.sources) as ArtifactRef[],
     ...(row.digest ? { digest: row.digest as ArtifactRef } : {}), ...(row.decision ? { decision: row.decision as ArtifactRef } : {}),
     ...(row.brief ? { brief: row.brief as ArtifactRef } : {}), ...(row.worker ? { worker: row.worker } : {}),
-    ...(row.kept !== null && row.dropped !== null ? { claims: { kept: row.kept, dropped: row.dropped } } : {}),
+    ...(row.kept !== null && row.dropped !== null ? { claims: { kept: row.kept, dropped: row.dropped } } : {}), ...(row.escalation ? { escalation: row.escalation as ArtifactRef } : {}),
     ...(row.reason ? { reason: row.reason } : {}), createdAt: row.created_at, updatedAt: row.updated_at,
   }
 }

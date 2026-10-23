@@ -11,7 +11,7 @@
 > [`digest`](../../packages/plugins/digest/README.md) on `ctx.store`, its bundle row on. Differs
 > from target: a digest is written on request only (nothing digests a run's results on its own,
 > and the board's `result.digest` is not filled yet); no test output is parsed before the model
-> reads it; a digest whose claims all fail the quote check is not written again at a higher tier.
+> reads it.
 
 A digest is a cited summary of raw artifacts (test logs, agent results, reports), so the lead
 reads a page instead of the raw material, and every claim on that page can be checked. A cheap
@@ -19,7 +19,7 @@ Worker writes it; code keeps only the claims whose quotes are verbatim in the ar
 
 ## Seam
 
-`ctx.digests` (`Digests` in `@tsuuanmi/system-digest-core`), contract 1.0, a capability seam:
+`ctx.digests` (`Digests` in `@tsuuanmi/system-digest-core`), contract 1.1, a capability seam:
 
 | Method | Does |
 |---|---|
@@ -28,7 +28,8 @@ Worker writes it; code keeps only the claims whose quotes are verbatim in the ar
 | `wait(requestId, timeoutMs)` | wait until it settles or the time passes |
 
 The definition also holds what every provider applies the same way: the quote check
-(`quoteCheck`) and the decision that settles a request (`settlement`). A provider depends on
+(`quoteCheck`), the one escalation (`escalation`, contract 1.1), and the decision that settles a
+request (`settlement`). A provider depends on
 seam definitions only: `ctx.workers` for its Worker, `ctx.artifacts` for what it reads and
 writes. It cooperates with the core by artifacts.
 
@@ -38,19 +39,26 @@ writes. It cooperates with the core by artifacts.
 stateDiagram-v2
   [*] --> pending: request (sources stored, within maxPending)
   pending --> written: claims survived the quote check
-  pending --> not_written: no claim survived, or the answer held no digest
+  pending --> escalated: every economy claim failed the quote check (once)
+  escalated --> written: claims of the standard answer survived
+  escalated --> not_written: none survived again, or the standard run gave no answer
+  pending --> not_written: no claim survived and no escalation is left, or the answer held no digest
   pending --> bypassed: no Worker admitted, its run failed, or timeoutMinutes passed
   written --> [*]
   not_written --> [*]
   bypassed --> [*]
 ```
 
+`escalated` is not a state of its own: the request stays `pending`, names its `escalation`
+decision, and runs once more on the standard tier.
+
 | From → to | Who | Records | On failure |
 |---|---|---|---|
 | — → pending | `request`, by the lead (`digests_request`) or a plugin | the request row | refused (`invalid`, nothing recorded): no source, a repeated source, more than 64, a source that is not a stored artifact, a key reused for other sources; `overloaded` at `maxPending` pending |
 | pending (routed and started) | the provider, under the request's lease | a `brief@1.1` (`objective`) recorded before the run, its sources by content id; the execution named on the request in the same transaction | no Worker admitted: bypassed, naming the `admission` decision; a start refused: bypassed |
 | pending → written | the provider, once the run completed | the `digest@1.0` report (its envelope's inputs are the sources), the `acceptance` decision that names it, and `digests.settled`, in one transaction | — |
-| pending → not-written | the same | the `acceptance` decision with why, and the claims dropped | — |
+| pending (escalated) | the provider, when every claim of the economy answer failed the quote check and the request has not escalated | the `escalation` decision (rule `digests.escalation`) and the request's new tier, in one transaction under the lease; then a brief and a start as above, on the standard tier, with a key of its own | no standard Worker admitted, a start refused, or its run failed or timed out: `not-written` on the economy answer's check, saying why the escalation gave no answer |
+| pending → not-written | the same | the `acceptance` decision with why, and the claims dropped; after an escalation its inputs name the `escalation` decision | — |
 | pending → bypassed | the same, when the run failed, its execution is gone, its source is no longer registered, or `timeoutMinutes` passed (the run is cancelled) | the `acceptance` decision with why | — |
 
 Every settlement is one `acceptance` decision (rule `digests.quote-check`) with three candidates,
@@ -63,15 +71,16 @@ restart finds either nothing started (it routes again) or the execution (it wait
 is never started twice.
 
 **Bounded** (INV-9): at most `maxPending` requests pending (default 4), each for at most
-`timeoutMinutes` (default 30); at most 64 sources, 50 claims checked, `maxClaims` kept (default
-20).
+`timeoutMinutes` (default 30, both runs together) and two Worker runs (one escalation); at most 64
+sources, 50 claims checked, `maxClaims` kept (default 20).
 
 ## The Worker
 
 The provider asks `ctx.workers` for work, never for a Worker by name (INV-11): capabilities
 `review` and `local-data`, which only a read-only agent Worker proves today
 ([routing](routing.md#capability-vocabulary)), on the configured tier as both its minimum and its
-maximum (`tier`, default `economy`), at the sources' strictest classification. With the agent
+maximum (`tier`, default `economy`; [once on `standard`](#one-escalation) after an escalation), at
+the sources' strictest classification. With the agent
 rows on and a read-only Claude Code Worker configured on the economy tier, that is the Worker
 PROP-0010 names; with none, the request is bypassed.
 
@@ -99,6 +108,29 @@ The Worker's answer is untrusted model output. From the JSON object it ends with
 
 `confidence` is kept as the Worker gave it and decides nothing.
 
+## One escalation
+
+A cheap Worker that paraphrases instead of quoting gives claims that all fail the check. The
+request then runs once more on the standard tier ([PROP-0008](../proposals/0008-studio-operating-model.md#mechanism-1-the-digest-layer):
+"escalation to `standard` when the quote check fails"); the rule is `escalation` of the definition,
+contract 1.1, the same for every provider:
+
+- only when the answer had claims and none survived the quote check (`QuoteCheck.failure` is
+  `quote-check`); an answer with no JSON, no status or summary, or no claim is not escalated, since
+  a stronger Worker does not make a missing answer checkable;
+- only from the economy tier, only to `standard`, and only once: a request configured on the
+  standard tier or above never escalates, and an escalated request never escalates again;
+- the `escalation` decision (`digests.escalation`; inputs: the sources and the economy answer;
+  detail: from, to, and the dropped claims) is recorded, and the request's tier changed, in one
+  transaction under its lease, before the second run is routed (INV-13). The second run's start
+  has its own key, so a restart routes and starts it once (INV-4);
+- the request then settles on the second answer: `written` if claims survive, else `not-written`
+  saying it was given up after one escalation. When the second run gives no answer (no standard
+  Worker admitted, a start refused, a failed run, `timeoutMinutes` passed), the economy answer
+  stands: `not-written` on its check, never `bypassed`, since a Worker did answer;
+- the settling decision's inputs name the `escalation` decision, and the request names it
+  (`escalation`).
+
 ## Failing open
 
 A digest is a capability, not a guarantee (ADR-0036, plugin rule 2): a digest that cannot be
@@ -123,6 +155,7 @@ is treated.
 
 ## Conformance
 
-[`digest-core/conformance/digests.ts`](../../packages/digest-core/conformance/digests.ts), 9
-scenarios at contract 1.0, run against the fake provider and against the store-backed provider
-over real routing with a scripted Worker.
+[`digest-core/conformance/digests.ts`](../../packages/digest-core/conformance/digests.ts), 12
+scenarios at contract 1.1 (three of them, the escalation, since 1.1), run against the fake
+provider and against the store-backed provider over real routing with a scripted Worker on each
+tier.

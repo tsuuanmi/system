@@ -571,8 +571,9 @@ guesses.
 - The quote check: each quote must occur verbatim in the cited artifact's text (its body's `text`
   field when it has one, otherwise its canonical JSON), at `offset` (in code points) when one is
   given. A claim that fails is dropped and recorded first in `dropped`; a digest with no claim
-  left is not written ([digests](../design/digests.md#the-quote-check)). Writing it again at a
-  higher tier is not built.
+  left is not written ([digests](../design/digests.md#the-quote-check)). When every claim of an
+  economy Worker's answer fails, the request is written once more on the standard tier, never
+  higher ([one escalation](../design/digests.md#one-escalation)).
 - `sources` are the request's, never the Worker's answer's.
 - Its classification is at least its sources'. A digest of `local-private` sources is written by
   a local Worker or one the egress policy allows. Example:
@@ -586,7 +587,8 @@ guesses.
 | `digests_get` | client | read a request as it stands: `pending`, `written` (with its digest), `not-written`, or `bypassed`, with why |
 
 - Both answer with the request (`$defs/request` of
-  [`mcp-digests.v1.json`](../../schemas/mcp-digests.v1.json)); a refused input does nothing, and
+  [`mcp-digests.v1.json`](../../schemas/mcp-digests.v1.json); 1.1 adds its `escalation`, the
+  decision that had it written once more on the standard tier); a refused input does nothing, and
   a `clientRequestId` reused for other sources is refused (`invalid`).
 - A request no Worker can serve is not refused: it settles `bypassed` ([digests](../design/digests.md)).
   Example: [`mcp-digests.request.json`](../../schemas/examples/mcp-digests.request.json).
