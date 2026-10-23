@@ -72,6 +72,10 @@ describe('ctx.workers: configured preferences', () => {
       const cited = 'See [A](https://a.example/x) and https://b.example/y, again https://a.example/x.'
       const accepted = ctx.workers.accept(put(cited), 'acceptance.cited')
       expect(accepted).toMatchObject({ accepted: true, reasons: ['the answer cites 2 source link(s)'] })
+      // A link ending in a long run of punctuation is counted in linear time (no polynomial backtracking).
+      const started = performance.now()
+      expect(ctx.workers.accept(put(`See https://a.example/x${'!'.repeat(100_000)}y and https://a.example/x?!.`), 'acceptance.cited')).toMatchObject({ reasons: ['the answer cites 2 source link(s)'] })
+      expect(performance.now() - started).toBeLessThan(1000)
       // The losing option says why it lost (INV-13): the failed check, or that every check passed.
       const candidates = (decision: string) => (ctx.artifacts.get(decision)?.body as { candidates: unknown[] }).candidates
       expect(candidates(uncited.decision)).toEqual([

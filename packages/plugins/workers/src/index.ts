@@ -34,6 +34,16 @@ const textOf = (body: unknown): string => {
   return typeof text === 'string' ? text : ''
 }
 
+/**
+ * A URL without the sentence punctuation after it, by one backward scan: `[.,;:!?]+$` is retried
+ * at every position of a long run that something else ends, which is quadratic on an answer.
+ */
+function withoutTrailingPunctuation(url: string): string {
+  let end = url.length
+  while (end > 0 && '.,;:!?'.includes(url[end - 1]!)) end--
+  return url.slice(0, end)
+}
+
 /** Contracts every deployment has; a plugin adds its own with `contract()`. */
 const BUILT_IN: Record<string, AcceptanceContract> = {
   'acceptance.answer': ({ body }) => (textOf(body).trim()
@@ -42,7 +52,7 @@ const BUILT_IN: Record<string, AcceptanceContract> = {
   'acceptance.cited': ({ body }) => {
     const text = textOf(body)
     if (!text.trim()) return { accepted: false, reasons: ['the answer is empty'] }
-    const links = new Set((text.match(/https?:\/\/[^\s)\]>"']+/g) ?? []).map((url) => url.replace(/[.,;:!?]+$/, ''))).size
+    const links = new Set((text.match(/https?:\/\/[^\s)\]>"']+/g) ?? []).map(withoutTrailingPunctuation)).size
     return links ? { accepted: true, reasons: [`the answer cites ${links} source link(s)`] } : { accepted: false, reasons: ['the answer cites no source link'] }
   },
 }
