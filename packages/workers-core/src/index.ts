@@ -36,7 +36,7 @@ export interface WorkerLoad {
 }
 
 /**
- * A kind of work a capability offer may be limited to (ADR-0045): `review-member`, a step of a
+ * A kind of work a capability offer may be limited to (ADR-0049): `review-member`, a step of a
  * review team's member. A requirement names it (`WorkRequirement.scope`); an offer scoped to it
  * proves its capability for that work only.
  */
@@ -47,7 +47,7 @@ export const WORK_SCOPES: readonly WorkScope[] = ['review-member']
 export interface CapabilityOffer {
   capability: string
   evidence: { kind: 'probe' | 'conformance' | 'plan' | 'sandbox-policy'; ref?: ArtifactRef; at: string }
-  /** Proven only for work whose requirement names this scope, never for other work (`@1.4`; ADR-0045). */
+  /** Proven only for work whose requirement names this scope, never for other work (`@1.4`; ADR-0049). */
   scope?: WorkScope
 }
 
@@ -92,7 +92,7 @@ export interface WorkRequirement {
   objective: string
   capabilities: string[]
   /**
-   * The kind of work this is (`@1.1`; ADR-0045), so offers scoped to it count: set by the workflow
+   * The kind of work this is (`@1.1`; ADR-0049), so offers scoped to it count: set by the workflow
    * engine from the admitted spec (a review team member's step), never from a template or model text.
    */
   scope?: WorkScope

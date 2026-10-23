@@ -1,4 +1,4 @@
-# ADR-0045: A read-only agent Worker the operator names may be a `review` team member: scoped offers, and its conversation kept by replay
+# ADR-0049: A read-only agent Worker the operator names may be a `review` team member: scoped offers, and its conversation kept by replay
 
 - **Status:** Proposed (the operator decides: D19)
 - **Date:** 2026-10-23

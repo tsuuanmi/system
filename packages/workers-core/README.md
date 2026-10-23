@@ -6,14 +6,14 @@ Routing **seam definition**
 
 | Seam | Definition | Provider |
 |---|---|---|
-| `ctx.workers` | abstract `Workers` with `register(source)`, `list()`, `route(requirement, options)`, `contract(id, check)`, `contracts()`, `accept(result, contract, { resultSchema })` (the result's JSON checked against the schema first, REQ-ART-5); `source(name)`, `affinity(sessionId)`, `siblings(worker)`, `handle(sessionId)`, `reset(sessionId)`, `release(sessionIds, reason)`; `WorkerSource` (describe, start, reserve, get, wait, sandbox, affinity, siblings, handle, reset, release, cancel), `WorkerStart` (with the optional `runId` of the workflow run an execution belongs to, and its rendered `prompt` or the `brief` the source renders, exactly one), `WorkerSandbox`, `WorkerExecution`, `CapabilityDescriptor` (with `load`, ADR-0033), `CapabilityOffer` (with `scope`, ADR-0045), `WorkRequirement` (with `scope`), `WorkScope`, `provesFor(offer, requirement)`, `AdmittedWorker` (with `release()`), `AdmissionFailure`, `AcceptanceContract` | `@tsuuanmi/system-workers` |
+| `ctx.workers` | abstract `Workers` with `register(source)`, `list()`, `route(requirement, options)`, `contract(id, check)`, `contracts()`, `accept(result, contract, { resultSchema })` (the result's JSON checked against the schema first, REQ-ART-5); `source(name)`, `affinity(sessionId)`, `siblings(worker)`, `handle(sessionId)`, `reset(sessionId)`, `release(sessionIds, reason)`; `WorkerSource` (describe, start, reserve, get, wait, sandbox, affinity, siblings, handle, reset, release, cancel), `WorkerStart` (with the optional `runId` of the workflow run an execution belongs to, and its rendered `prompt` or the `brief` the source renders, exactly one), `WorkerSandbox`, `WorkerExecution`, `CapabilityDescriptor` (with `load`, ADR-0033), `CapabilityOffer` (with `scope`, ADR-0049), `WorkRequirement` (with `scope`), `WorkScope`, `provesFor(offer, requirement)`, `AdmittedWorker` (with `release()`), `AdmissionFailure`, `AcceptanceContract` | `@tsuuanmi/system-workers` |
 
 - The types mirror `capability-descriptor@1.4` (its optional `family`, an opaque
   provider family; `maxInputChars`, the longest input the Worker takes; `load` and `cooldowns`;
   and a capability offer's `scope`) and `work-requirement@1.1` (its optional `scope`). A scoped
   offer proves its capability only for work whose requirement names that scope (`provesFor`,
   [scoped offers](../../docs/design/routing.md#scoped-offers),
-  [ADR-0045](../../docs/decisions/adr/0045-read-only-agent-workers-as-review-members.md)). The
+  [ADR-0049](../../docs/decisions/adr/0049-read-only-agent-workers-as-review-members.md)). The
   schemas in `schemas/` are canonical. `RouteOptions`
   takes `restrict`, `exclude` (provider families no Worker may be of,
   [provider diversity](../../docs/design/routing.md#provider-diversity)), and

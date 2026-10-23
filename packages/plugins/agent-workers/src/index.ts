@@ -74,7 +74,7 @@ export interface AgentWorkerConfig {
   /** How long a limit hit with no reset time keeps the pool closed, in seconds (default 3600). */
   limitCooldownSeconds?: number
   /**
-   * The operator names this read-only Worker a review member (ADR-0045): it offers `reason` for a
+   * The operator names this read-only Worker a review member (ADR-0049): it offers `reason` for a
    * review team member's steps only, never for other work, and, when its runtime cannot resume a
    * conversation, keeps the member's conversation by replay. Default false; refused unless the
    * sandbox is `read-only`.
@@ -86,7 +86,7 @@ export interface Config {
   workers: AgentWorkerConfig[]
   /**
    * The most characters of earlier turns a review member's replayed conversation holds (default
-   * 200,000); a turn past it fails before anything is sent, never cut (ADR-0045, INV-9).
+   * 200,000); a turn past it fails before anything is sent, never cut (ADR-0049, INV-9).
    */
   maxReplayChars?: number
   /** How long a probe result stands (default 5 min). */
@@ -127,7 +127,7 @@ interface RunRow {
   project_id?: string | null
   /** JSON `[{ path, text }]`: the brief's files, resolved at start, written into the run's worktree before the agent starts. */
   files?: string | null
-  /** The kind of work the run was admitted for (`WorkRequirement.scope`): a review member's step may be replayed (ADR-0045). */
+  /** The kind of work the run was admitted for (`WorkRequirement.scope`): a review member's step may be replayed (ADR-0049). */
   scope?: string | null
   /** The generation of its session it belongs to: a replay holds that generation's earlier turns only. */
   session_generation?: number | null
@@ -143,7 +143,7 @@ const newId = (): string => `arun_${randomBytes(8).toString('hex')}`
 const MAX_MODELS = 16
 /** How often finished workflow runs' worktrees are looked at for removal. */
 const SWEEP_MS = 60 * 60_000
-/** The kind of work a review member's offers are scoped to (ADR-0045). */
+/** The kind of work a review member's offers are scoped to (ADR-0049). */
 const REVIEW_MEMBER: WorkScope = 'review-member'
 const RANK: Record<Classification, number> = { public: 0, 'operator-shared': 1, 'local-private': 2 }
 const now = (): string => new Date().toISOString()
@@ -169,7 +169,7 @@ export class AgentWorkers extends Service {
       windows: z.dict(z.string()).description('The runtime\'s limit window names mapped to the pool\'s window ids, for example five_hour: five-hour'),
       worktreePerRun: z.boolean().default(false).description('Each run of a workflow run works in that run\'s own git worktree of the workspace (the top level of a git repository), on branch system/run/<runId>'),
       limitCooldownSeconds: z.natural().min(60).max(604_800).default(3600).description('How long a limit hit with no reset time keeps the pool closed'),
-      reviewMember: z.boolean().default(false).description('A review member (ADR-0045): this read-only Worker offers reason for a review team member\'s steps only, and keeps the member\'s conversation by replay when its runtime cannot resume'),
+      reviewMember: z.boolean().default(false).description('A review member (ADR-0049): this read-only Worker offers reason for a review team member\'s steps only, and keeps the member\'s conversation by replay when its runtime cannot resume'),
     })).default([]).description('Agent-runtime Workers; each policy comes from here only (INV-6)'),
     maxReplayChars: z.natural().min(1).max(2_000_000).default(200_000).description('Characters of earlier turns a review member\'s replayed conversation holds, at most; a turn past it fails, never cut'),
     probeTtlMs: z.natural().default(5 * 60_000).description('How long a probe result stands'),
@@ -245,7 +245,7 @@ export class AgentWorkers extends Service {
       version: 7,
       sql: 'ALTER TABLE agent_runs ADD COLUMN files TEXT;',
     }, {
-      // A review member's conversation kept by replay (ADR-0045): the kind of work a run is, and the
+      // A review member's conversation kept by replay (ADR-0049): the kind of work a run is, and the
       // session's generation it belongs to (a reset starts a new one, whose replay starts empty).
       version: 8,
       sql: `ALTER TABLE agent_runs ADD COLUMN scope TEXT;
@@ -269,7 +269,7 @@ export class AgentWorkers extends Service {
       },
       handle: (sessionId) => (this.ctx.store.db.prepare('SELECT native_handle FROM agent_sessions WHERE session_id = ?').get(sessionId) as { native_handle: string | null } | undefined)?.native_handle ?? undefined,
       // The Worker stays (session affinity); without a handle the next run starts a new agent session,
-      // and in a new generation a replayed conversation starts empty (ADR-0045).
+      // and in a new generation a replayed conversation starts empty (ADR-0049).
       reset: (sessionId) => Number(this.ctx.store.db.prepare('UPDATE agent_sessions SET native_handle = NULL, generation = generation + 1 WHERE session_id = ?').run(sessionId).changes) > 0,
     })
     ctx.effect(() => {
@@ -314,7 +314,7 @@ export class AgentWorkers extends Service {
               ...(worker.sandbox === 'workspace-write' ? ['develop', ...(evidence.executes ? ['validate'] : [])] : ['review']),
               ...(evidence.resume ? ['persistent-conversation'] : []),
             ].map((capability) => ({ capability, evidence: probed })),
-            // A review member (ADR-0045) reasons for a review team member's steps only: never plain
+            // A review member (ADR-0049) reasons for a review team member's steps only: never plain
             // reason, so an ordinary ask never spends agent-plan quota (P1). Its conversation is kept
             // natively when the runtime resumes one, else by this source's replay, for that work only.
             ...(worker.reviewMember ? [{ capability: 'reason', evidence: probed, scope: REVIEW_MEMBER }] : []),
@@ -577,7 +577,7 @@ export class AgentWorkers extends Service {
         }
         const worker = this.workers.get(row.worker)
         if (!worker) throw new ProviderError('config_error', `${row.worker} is no longer configured`)
-        // What the agent is sent: its prompt, or a review member's conversation replayed before it (ADR-0045).
+        // What the agent is sent: its prompt, or a review member's conversation replayed before it (ADR-0049).
         const turn = await this.turnOf(row, worker)
         // INV-12: the prompt reaches the agent's remote model, so it is checked before anything starts,
         // with the files it will read in its worktree: one check of exactly what the agent is given.
@@ -614,7 +614,7 @@ export class AgentWorkers extends Service {
    * What a run sends its agent. Outside a session, or on a runtime that resumes a conversation, its
    * own prompt (continuing the session's native conversation, once it has one). On a runtime that
    * cannot resume, a session's later turn replays the session's earlier completed turns before its
-   * prompt, each its own message and its answer, as they were (ADR-0045): only for a review
+   * prompt, each its own message and its answer, as they were (ADR-0049): only for a review
    * member's step on a Worker named a review member, bounded by `maxReplayChars` and never cut, at
    * the strictest classification of what it holds (INV-12). Any other such turn is refused. Nothing
    * has reached the agent yet.
@@ -633,7 +633,7 @@ export class AgentWorkers extends Service {
       ORDER BY created_at, run_id`).all(row.session_id, row.run_id, row.session_generation ?? 0, row.created_at) as Array<{ run_id: string; prompt: string; result: string | null; classification: Classification }>
     if (!earlier.length) return { ...own, native: false }
     if (!worker.reviewMember || row.scope !== REVIEW_MEMBER) {
-      throw new ProviderError('config_error', `${row.worker} cannot continue session ${row.session_id}: its runtime cannot resume a conversation, and this source keeps one by replay only for a review member's steps (ADR-0045); nothing was run`)
+      throw new ProviderError('config_error', `${row.worker} cannot continue session ${row.session_id}: its runtime cannot resume a conversation, and this source keeps one by replay only for a review member's steps (ADR-0049); nothing was run`)
     }
     let classification = own.classification
     const turns = earlier.map((run, i) => {
@@ -928,7 +928,7 @@ function fenced(label: string, text: string): string {
 }
 
 /**
- * A review member's conversation replayed for a runtime that cannot resume it (ADR-0045): its
+ * A review member's conversation replayed for a runtime that cannot resume it (ADR-0049): its
  * earlier turns as they were, each the message it was given and its answer, in order, then the
  * conversation's next message.
  */

@@ -259,7 +259,7 @@ export class Engine {
    * `persistent-conversation` when it runs in a session; the run's data classification; its
    * tier and where that came from; its acceptance contract. A review team member's step
    * (proposal, ballot, debate) names its kind of work, `scope: review-member` (`@1.1`), so offers
-   * scoped to it count (ADR-0045); its capabilities stay the same.
+   * scoped to it count (ADR-0049); its capabilities stay the same.
    */
   requirementOf(node: ResolvedNode, persistent: boolean, classification: Classification | undefined): WorkRequirement {
     const member = node.team?.kind === 'review' && node.team.member !== undefined

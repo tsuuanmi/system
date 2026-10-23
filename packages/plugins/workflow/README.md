@@ -136,7 +136,7 @@ second execution path (INV-1).
     (`work-requirement@1.1`), so a Worker whose offers are scoped to it is
     admitted there and nowhere else
     ([scoped offers](../../../docs/design/routing.md#scoped-offers),
-    [ADR-0045](../../../docs/decisions/adr/0045-read-only-agent-workers-as-review-members.md)).
+    [ADR-0049](../../../docs/decisions/adr/0049-read-only-agent-workers-as-review-members.md)).
     A board task's session is resumed only on an unscoped `persistent-conversation`.
   - The engine routes it through `ctx.workers` (a session keeps its affinity),
     then records its **brief** (`brief@1.1`, an `objective` artifact: the

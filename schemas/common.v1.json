@@ -34,7 +34,7 @@
       "enum": ["subscription-chat", "agent-plan", "metered", "local"]
     },
     "workScope": {
-      "description": "A kind of work a scoped capability offer is limited to (ADR-0045): review-member, a step of a review team's member.",
+      "description": "A kind of work a scoped capability offer is limited to (ADR-0049): review-member, a step of a review team's member.",
       "enum": ["review-member"]
     },
     "capability": {

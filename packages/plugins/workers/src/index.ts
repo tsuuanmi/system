@@ -300,7 +300,7 @@ export class WorkerRouter extends Workers {
       if (worker.family === undefined) fail('diversity', `declares no provider family, so it cannot differ (${options.exclude.reason})`)
       else if (options.exclude.families.includes(worker.family)) fail('diversity', `same provider family (${options.exclude.reason})`)
     }
-    // An offer scoped to a kind of work proves its capability for that work only (ADR-0045).
+    // An offer scoped to a kind of work proves its capability for that work only (ADR-0049).
     const proven = new Set(worker.capabilities.filter((c) => provesFor(c, requirement)).map((c) => c.capability))
     const missing = requirement.capabilities.filter((c) => !proven.has(c))
     if (missing.length) {

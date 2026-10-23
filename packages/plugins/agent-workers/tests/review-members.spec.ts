@@ -1,5 +1,5 @@
 /**
- * Read-only agent Workers as `review` team members (ADR-0045): the real workflow engine, routing,
+ * Read-only agent Workers as `review` team members (ADR-0049): the real workflow engine, routing,
  * approval queue, and `agents` source, with two scripted agent runtimes of different kinds (so two
  * provider families): one that resumes a conversation, as the Codex runtime does, and one that
  * cannot, as the Antigravity CLI runtime cannot, whose member's conversation this source replays.
@@ -112,7 +112,7 @@ const ordinary = (overrides: Partial<WorkRequirement> = {}): WorkRequirement => 
   return { ...rest, schema: 'work-requirement@1.0' }
 }
 
-describe('read-only agent Workers as review team members (ADR-0045)', () => {
+describe('read-only agent Workers as review team members (ADR-0049)', () => {
   it('offers reason only to a Worker named a review member, for a review member\'s steps only, and its conversation by replay when its runtime cannot resume', async () => {
     const { ctx } = await boot([new Member('resumes', true), new Member('replays', false)], {
       workers: [member('codex', 'resumes'), member('agy', 'replays'), member('plain', 'replays', { reviewMember: false })],

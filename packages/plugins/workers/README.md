@@ -22,7 +22,7 @@ router ([routing](../../../docs/design/routing.md#algorithm)). Definition:
     (`diversity`); a Worker that declares no family cannot differ, so it fails
     too ([provider diversity](../../../docs/design/routing.md#provider-diversity));
   - it proves every required capability; an offer scoped to a kind of work
-    (`scope`, [ADR-0045](../../../docs/decisions/adr/0045-read-only-agent-workers-as-review-members.md))
+    (`scope`, [ADR-0049](../../../docs/decisions/adr/0049-read-only-agent-workers-as-review-members.md))
     counts only for a requirement that names that scope, and a refusal says so
     (`does not prove reason (it proves reason only for review-member work)`);
   - it takes the input's length, when the caller gives one and the Worker

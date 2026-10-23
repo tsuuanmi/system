@@ -66,7 +66,7 @@ with no Worker until the operator names a repository
 ### Scoped offers
 
 A Worker may offer a capability for one kind of work only
-([ADR-0045](../decisions/adr/0045-read-only-agent-workers-as-review-members.md)). A capability
+([ADR-0049](../decisions/adr/0049-read-only-agent-workers-as-review-members.md)). A capability
 offer carries `scope` (`capability-descriptor@1.4`), and a work requirement names the kind of work
 it is (`scope`, `work-requirement@1.1`). The only scope is `review-member`: a step of a review
 team's member, which the workflow engine names on every member step of a `review` team (proposal,

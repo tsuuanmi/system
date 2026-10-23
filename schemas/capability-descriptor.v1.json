@@ -60,7 +60,7 @@
           },
           "sideEffectClass": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/sideEffectClass" },
           "scope": {
-            "description": "@1.4: the capability is proven only for work of this scope (a work requirement naming it), never for other work (ADR-0045).",
+            "description": "@1.4: the capability is proven only for work of this scope (a work requirement naming it), never for other work (ADR-0049).",
             "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/workScope"
           }
         },

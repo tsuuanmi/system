@@ -1,5 +1,5 @@
 /**
- * `review` team members on Workers whose offers are scoped to a review member's steps (ADR-0045):
+ * `review` team members on Workers whose offers are scoped to a review member's steps (ADR-0049):
  * the engine names that kind of work on every member step, and nothing else, so such a Worker is a
  * member of a review, single-round or with a debate, and never takes an ask or a brainstorm. The
  * Workers are scripted as an `agents` source describes a read-only agent named a review member.
@@ -91,7 +91,7 @@ async function boot() {
 const routeReasons = (ctx: Context, ref: string): string[] =>
   (ctx.artifacts.get(ref as ArtifactRef)!.body as { candidates: Array<{ selected: boolean; reasons: string[] }> }).candidates.find((c) => c.selected)!.reasons
 
-describe('review team members on Workers scoped to a review member\'s steps (ADR-0045)', () => {
+describe('review team members on Workers scoped to a review member\'s steps (ADR-0049)', () => {
   it('runs a review with two such members, each step named review-member work; an ask and a brainstorm never reach them', async () => {
     const { ctx } = await boot()
     const started = scripted(ctx, [member('agent:a', 'runtime-a'), member('agent:b', 'runtime-b')], (prompt) => (isProposal(prompt) ? findings : ballot('pass')))

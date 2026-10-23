@@ -822,7 +822,7 @@ describe('ctx.workflow serves board tasks over the store-backed board and approv
     expect(workers.started).toHaveLength(1)
   })
 
-  it('resumes a task\'s session only on a conversation its Worker keeps for any work, never on one it keeps for a review member\'s steps alone (ADR-0045)', async () => {
+  it('resumes a task\'s session only on a conversation its Worker keeps for any work, never on one it keeps for a review member\'s steps alone (ADR-0049)', async () => {
     const { ctx, workers } = await boot()
     const at = '2026-10-23T00:00:00Z'
     // The same Worker, keeping conversations for any work, then (its runtime no longer resuming) for review members only.

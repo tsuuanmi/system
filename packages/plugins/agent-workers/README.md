@@ -244,7 +244,7 @@ The **`agents` Worker source**: agent runtimes as Workers
   On a runtime that cannot resume, a session's later run is refused
   (`config_error`, unsent) unless it is a review member's (below).
 - **Review members**
-  ([ADR-0045](../../../docs/decisions/adr/0045-read-only-agent-workers-as-review-members.md)):
+  ([ADR-0049](../../../docs/decisions/adr/0049-read-only-agent-workers-as-review-members.md)):
   a read-only Worker configured `reviewMember: true` may be a member of a
   `review` team:
   - it offers `reason` for a review member's steps only (scope `review-member`,

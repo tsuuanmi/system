@@ -101,7 +101,7 @@ export function workersConformance(name: string, boot: Boot): void {
       })
     })
 
-    it('counts an offer scoped to a kind of work for that work only, and says it is scoped when it refuses (ADR-0045)', async () => {
+    it('counts an offer scoped to a kind of work for that work only, and says it is scoped when it refuses (ADR-0049)', async () => {
       const at = '2026-10-23T00:00:00Z'
       const scoped = worker('w:scoped', {
         schema: 'capability-descriptor@1.4', quotaClass: 'agent-plan',
@@ -127,7 +127,7 @@ export function workersConformance(name: string, boot: Boot): void {
       })
     })
 
-    it('refuses a scope below the schema version that carries it: a descriptor below @1.4, a requirement below @1.1 (ADR-0045)', async () => {
+    it('refuses a scope below the schema version that carries it: a descriptor below @1.4, a requirement below @1.1 (ADR-0049)', async () => {
       const at = '2026-10-23T00:00:00Z'
       const early = worker('w:early', { schema: 'capability-descriptor@1.3', capabilities: [{ capability: 'reason', evidence: { kind: 'probe', at }, scope: 'review-member' }] })
       await withWorkers([early], async (ctx) => {

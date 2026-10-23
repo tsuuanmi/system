@@ -142,7 +142,7 @@ guesses.
   from model text alone is invalid.
 - `work-requirement@1.1` adds the optional `scope`: the kind of work this is, for capability
   offers scoped to it ([scoped offers](../design/routing.md#scoped-offers),
-  [ADR-0045](../decisions/adr/0045-read-only-agent-workers-as-review-members.md)). The only value
+  [ADR-0049](../decisions/adr/0049-read-only-agent-workers-as-review-members.md)). The only value
   is `review-member`, a step of a review team's member, set by the workflow engine from the
   admitted spec. A record carrying it below `@1.1` is refused. Readers accept 1.0 and 1.1. Example:
   [`work-requirement.review-member.json`](../../schemas/examples/work-requirement.review-member.json).
@@ -231,7 +231,7 @@ guesses.
 - `capability-descriptor@1.4` adds the optional `scope` on a capability offer: the capability is
   proven only for work whose requirement names that scope (`work-requirement@1.1`), never for
   other work ([scoped offers](../design/routing.md#scoped-offers),
-  [ADR-0045](../decisions/adr/0045-read-only-agent-workers-as-review-members.md)). The only value
+  [ADR-0049](../decisions/adr/0049-read-only-agent-workers-as-review-members.md)). The only value
   is `review-member`. A record carrying it below `@1.4` is refused. Readers accept 1.0 to 1.4.
   Example: [`capability-descriptor.review-member.json`](../../schemas/examples/capability-descriptor.review-member.json).
 
