@@ -1,7 +1,7 @@
 /**
  * Gate seam definition: `ctx.approvals`, the autonomy policy and the one batched queue for every
  * action that needs a person (docs/design/approvals.md). The types mirror
- * `autonomy-policy@1.0`, `approval-request@1.1`, `policy-change@1.0`, and `approval@1.0`; the
+ * `autonomy-policy@1.0`, `approval-request@1.1`, `policy-change@1.1`, and `approval@1.0`; the
  * schemas in `schemas/` are canonical. A guarantee seam: it fails closed (INV-2), and its contract changes only by an
  * ADR (ADR-0036).
  * @module @tsuuanmi/system-approvals-core
@@ -176,12 +176,14 @@ export const POLICY_SET_REF = 'autonomy-policy-set'
 export interface ModeChange { projectId?: string; actionClass: ActionClass; from: Mode; to: Mode }
 
 /**
- * `policy-change@1.0` (contract 1.1): one change of the autonomy policy set, asked through a
+ * `policy-change@1.x` (contract 1.1): one change of the autonomy policy set, asked through a
  * `policy-change` request on the proposed set's hash and applied only on the operator's approval
- * (docs/design/approvals.md#a-policy-change).
+ * (docs/design/approvals.md#a-policy-change). `@1.1` adds the optional `origin` of a change the
+ * queue proposed itself.
  */
 export interface PolicyChange {
-  schema: 'policy-change@1.0'
+  /** `@1.1` for a change the queue proposed itself (with its `origin`), `@1.0` for the operator's own. */
+  schema: 'policy-change@1.0' | 'policy-change@1.1'
   changeId: string
   /** `asked` → `applied` (approved) or `declined` (rejected, expired, withdrawn); `applied` → `retired` (a configuration superseded it). */
   state: 'asked' | 'applied' | 'declined' | 'retired'
@@ -201,11 +203,31 @@ export interface PolicyChange {
   effect: ModeChange[]
   requestId: string
   note?: string
+  /**
+   * `policy-change@1.1`, optional: set when the queue proposed the change itself, from approvals the
+   * operator gave the same exact shape again and again (docs/design/approvals.md#the-queue-proposes-a-policy-change);
+   * absent when the operator proposed it. It is no authority: only the operator's approval of its
+   * request applies the change.
+   */
+  origin?: PolicyChangeOrigin
   proposedAt: string
   applied?: { at: string; decision: ArtifactRef }
   declined?: { at: string; cause: 'rejected' | 'expired' | 'withdrawn'; decision: ArtifactRef }
   retired?: { at: string; decision: ArtifactRef }
   revision: number
+}
+
+/**
+ * Why the queue proposed a policy change itself (`policy-change@1.1`): the shape the operator
+ * approved repeatedly (a studio command's exact argv, as a commands-list line), how many approvals
+ * of it fell in the window, and the `policy-change` decision that recorded the proposal (INV-13).
+ */
+export interface PolicyChangeOrigin {
+  rule: 'approvals.repeated-approvals'
+  shape: { actionClass: 'command'; command: string }
+  approved: number
+  windowSeconds: number
+  decision: ArtifactRef
 }
 
 /** The policy set in force (contract 1.1): its hash, where it comes from, the configured set's hash, and the projects with a policy. */

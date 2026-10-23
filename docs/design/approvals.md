@@ -6,10 +6,11 @@
 > [PROP-0008](../proposals/0008-studio-operating-model.md#fewer-approvals-reliable-results).
 > Records: [`autonomy-policy@1.0`](../reference/schemas.md#autonomy-policy),
 > [`approval-request@1.1`](../reference/schemas.md#approval-request),
-> [`policy-change@1.0`](../reference/schemas.md#policy-change); verdicts stay
+> [`policy-change@1.1`](../reference/schemas.md#policy-change); verdicts stay
 > [`approval@1.0`](../reference/schemas.md#approval). Decisions:
 > [ADR-0039](../decisions/adr/0039-base-guarantee-seam-contract-changes.md),
-> [ADR-0041](../decisions/adr/0041-policy-changes-through-the-approval-queue.md).
+> [ADR-0041](../decisions/adr/0041-policy-changes-through-the-approval-queue.md),
+> [ADR-0050](../decisions/adr/0050-the-queue-proposes-a-policy-change-from-repeated-approvals.md).
 >
 > Implemented in [`approvals`](../../packages/plugins/approvals/README.md) (definition
 > [`approvals-core`](../../packages/approvals-core/README.md)); the operator's queue is on `/ui`
@@ -375,6 +376,42 @@ stateDiagram-v2
   (`set`). The policy page on `/ui` shows both, a proposed record's diff, and each change's diff in
   its queue entry ([web UI API](../reference/web-ui.md#autonomy-policy)).
 
+### The queue proposes a policy change
+
+The queue can propose, never apply, a policy change itself, from approvals the operator gave the
+same exact shape again and again (PROP-0008, [ADR-0050](../decisions/adr/0050-the-queue-proposes-a-policy-change-from-repeated-approvals.md)).
+It is off unless the row's `repeatedApprovals.enabled` is true, and the bundle leaves it off.
+
+- **The shape.** Only a studio `command` request (no project) that is not `local-private`, judged
+  as the `command` class, has one: its exact argv, as a commands line (words joined by single
+  spaces; no empty word, no shell metacharacter, at most 200 characters). The provider stores it
+  with the request, in the transaction that writes it (`request_shapes`). No other request is ever
+  counted: the policy can say nothing narrower than a class for them, and a class-wide change
+  would widen beyond what was approved.
+- **The rule.** On each of the queue's own passes (after the sweep, before the batch), when no
+  policy change is asked and the policy asks for `policy-change`: a shape the operator approved at
+  least `approvals` times (default 5, 3 to 100) among the requests made in the last
+  `windowSeconds` (default 604800, a week; 3600 to 7776000), none of whose requests there was
+  rejected by a verdict or expired (withdrawn and open ones count neither way), is proposed, the
+  one approved most often first, at most one per pass.
+- **The change.** The studio policy in force at its next version with that one line appended to
+  its `commands`, nothing else: only when the argv then runs as `workspace-write` under `auto` or
+  `notify`, no class's effective mode moves, neither class is in `ALWAYS_ASK`, and the set loads.
+  It goes through the path of [a policy change](#a-policy-change): a `policy-change@1.1` with its
+  `origin` (the rule, the shape, the approvals counted, the window, and the decision) and an
+  `approval-request@1.1` on the exact hash of the set, whose summary and consequences say the
+  queue proposed it and why. Only the operator's approval applies it.
+- **Never again.** A shape whose queue proposal was asked, applied, retired, rejected, or expired
+  is never proposed again; the operator can still propose it on the policy page. A withdrawn one
+  (another change came into force first) may be proposed again on the set in force.
+
+| From → to | Who | Records | On failure |
+|---|---|---|---|
+| — → asked | the queue's own pass (`proposeRepeated`), when the rule holds | in one transaction: the `policy-change` request, a `decision@1.6` `policy-change` (decider rule `approvals.repeated-approvals`; candidates the proposed set's hash, selected, and the set in force, kept until the operator approves; inputs the `autonomy` decision that said ask and the operator's approvals it counted, the newest 100), and the `policy-change@1.1` with its `origin` | a change asked meanwhile, or the shape barred, refuses it under the write lock and nothing is stored; a pass that fails is logged and the next pass tries again: the queue goes on |
+
+The pass is deterministic from the store: a restart, or a second process over the same store,
+proposes nothing twice. A stored request that fails its schema leaves its shape out.
+
 ### The configuration and the stored set
 
 An applied change is kept in the store, so a restart keeps it. At a start the provider decides
@@ -395,8 +432,14 @@ replaced.
 
 ### Where a policy change leaves room
 
-- Only the operator proposes. A lead that wants a policy change asks the operator; turning
-  repeated identical approvals into a proposed policy (PROP-0008) is not built.
+- Only the operator and the queue's own pass propose. A lead that wants a policy change asks the
+  operator. The queue turns repeated identical approvals into a proposal only for a studio
+  command's exact argv ([above](#the-queue-proposes-a-policy-change)): a project's command, and any
+  other class, keep asking, since the policy cannot say anything that narrow for them.
+- A rejected or expired queue proposal bars its command for good, not for a cooldown: the queue
+  never asks again about what the operator declined.
+- An approved queue proposal raises the studio policy's version, so open requests made under the
+  old one are withdrawn and asked again, as for any studio change.
 - `system check` cannot see the store, so a configuration that no longer matches the stored set
   is reported at the start that refuses it, in the log, not before.
 - An upgrade whose bundle changes the default policy refuses the queue where the operator applied

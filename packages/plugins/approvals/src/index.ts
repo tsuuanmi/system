@@ -8,22 +8,24 @@
  * ask for is withdrawn at load and on every sweep. A policy change the operator proposes is asked
  * through the queue as a `policy-change` request on the proposed set's hash, applied only on the
  * operator's approval, and kept in the store; the stored set applies only while the configuration
- * it derives from is unchanged (docs/design/approvals.md#a-policy-change).
+ * it derives from is unchanged (docs/design/approvals.md#a-policy-change). When configured, the queue
+ * itself proposes, never applies, a change from approvals the operator gave one exact studio command
+ * again and again (docs/design/approvals.md#the-queue-proposes-a-policy-change).
  * @module @tsuuanmi/system-approvals
  */
 import { randomUUID } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import {
-  type Action, type ActionClass, type ApprovalRequest, Approvals, ApprovalsError, type ArtifactRef, type AutonomyPolicy, type AutonomyVerdict, type ContentHash, MODES,
-  type NewRequest, POLICY_SET_REF, type PolicyChange, type PolicySetInForce, type RequestState, type Subject, type Verdict, type VerdictResult,
+  type Action, type ActionClass, ALWAYS_ASK, type ApprovalRequest, Approvals, ApprovalsError, type ArtifactRef, type AutonomyPolicy, type AutonomyVerdict, type ContentHash, MODES,
+  type NewRequest, POLICY_SET_REF, type PolicyChange, type PolicyChangeOrigin, type PolicySetInForce, type RequestState, type Subject, type Verdict, type VerdictResult,
 } from '@tsuuanmi/system-approvals-core'
 import type {} from '@tsuuanmi/system-artifacts'
 import type {} from '@tsuuanmi/system-event-log'
 import type {} from '@tsuuanmi/system-gateway-core'
 import { SchemaRegistry } from '@tsuuanmi/system-libs'
 import type {} from '@tsuuanmi/system-store'
-import { ACTION_CLASSES, effectOf, PolicySet, policyProblems, proposedSet, rank } from './policy.ts'
+import { ACTION_CLASSES, commandProblems, effectOf, PolicySet, policyProblems, proposedSet, rank } from './policy.ts'
 import { registerTools } from './tools.ts'
 
 export { ACTION_CLASSES, PolicySet, policyProblems } from './policy.ts'
@@ -40,6 +42,45 @@ export interface Config {
    * the plugin is refused (docs/design/approvals.md#the-configuration-and-the-stored-set).
    */
   supersedes?: ContentHash
+  /**
+   * Off unless `enabled`. Then the queue proposes (never applies) a policy change once the operator
+   * approved one exact studio command `approvals` times among the requests made in the last
+   * `windowSeconds`, and rejected or let expire none of them: one `policy-change` request adding that
+   * argv, and nothing more, to the studio policy's commands list
+   * (docs/design/approvals.md#the-queue-proposes-a-policy-change).
+   */
+  repeatedApprovals?: RepeatedApprovals
+}
+
+/** When the queue proposes a policy change from repeated approvals of one shape. */
+export interface RepeatedApprovals {
+  /** Whether the queue proposes at all (default false). */
+  enabled?: boolean
+  /** Approvals of one shape in the window before the queue proposes (3 to 100, default 5). */
+  approvals?: number
+  /** The window, in seconds: requests made in it count (3600 to 7776000, default 604800, a week). */
+  windowSeconds?: number
+}
+
+/** The threshold the queue proposes at, once enabled. */
+interface Threshold { approvals: number; windowSeconds: number }
+
+/** The bounds and defaults of {@link RepeatedApprovals}: conservative, since a proposal asks the operator once more. */
+export const REPEATED_APPROVALS = { approvals: { min: 3, max: 100, default: 5 }, windowSeconds: { min: 3600, max: 7776000, default: 604800 } } as const
+
+/** Every problem of a `repeatedApprovals` value; none when it is absent or valid. */
+function repeatedProblems(value: unknown): string[] {
+  if (value === undefined) return []
+  if (!isObject(value)) return ['repeatedApprovals must be an object: {enabled?, approvals?, windowSeconds?}']
+  const problems: string[] = []
+  for (const key of Object.keys(value)) if (key !== 'enabled' && key !== 'approvals' && key !== 'windowSeconds') problems.push(`repeatedApprovals.${key} is not an option`)
+  if (value.enabled !== undefined && typeof value.enabled !== 'boolean') problems.push('repeatedApprovals.enabled must be true or false')
+  for (const key of ['approvals', 'windowSeconds'] as const) {
+    const n = value[key]
+    const { min, max } = REPEATED_APPROVALS[key]
+    if (n !== undefined && (typeof n !== 'number' || !Number.isInteger(n) || n < min || n > max)) problems.push(`repeatedApprovals.${key} must be a whole number from ${min} to ${max}, not ${String(n)}`)
+  }
+  return problems
 }
 
 /** The policy set in force, and where it comes from: `key` names the stored row it was read from, or the configuration. */
@@ -89,6 +130,18 @@ const MIGRATIONS = [{
     CHECK ((applied_seq IS NOT NULL) = (state IN ('applied', 'retired')))
   );
   CREATE INDEX policy_changes_state ON policy_changes (state, seq);`,
+}, {
+  // Repeated approvals (docs/design/approvals.md#the-queue-proposes-a-policy-change): the exact
+  // shape of each request the queue could propose a change for (a studio command's argv as a
+  // commands-list line), written with the request; and the shape a queue-proposed change is for.
+  version: 3,
+  sql: `CREATE TABLE request_shapes (
+    request_id TEXT PRIMARY KEY REFERENCES approval_requests (request_id), shape TEXT NOT NULL, created_ms INTEGER NOT NULL
+  );
+  CREATE INDEX request_shapes_window ON request_shapes (created_ms, shape);
+  CREATE INDEX request_shapes_shape ON request_shapes (shape, created_ms);
+  ALTER TABLE policy_changes ADD COLUMN origin_shape TEXT;
+  CREATE INDEX policy_changes_origin ON policy_changes (origin_shape) WHERE origin_shape IS NOT NULL;`,
 }]
 
 const invalid = (message: string): ApprovalsError => new ApprovalsError('invalid', message)
@@ -98,6 +151,18 @@ const sameSubject = (a: Subject, b: Subject): boolean => a.type === b.type && a.
 const exactSubject = (subject: unknown): boolean => isObject(subject)
   && ((typeof subject.version === 'string' && subject.version !== '') || (subject.type === 'artifact' && typeof subject.ref === 'string' && CONTENT_ID.test(subject.ref)))
 const sameList = (a: unknown, b: readonly string[]): boolean => Array.isArray(a) && a.length === b.length && a.every((x, i) => x === b[i])
+/** A window in words: whole days, else whole hours, else seconds. */
+const span = (seconds: number): string => seconds % 86400 === 0 ? `${seconds / 86400} day${seconds === 86400 ? '' : 's'}`
+  : seconds % 3600 === 0 ? `${seconds / 3600} hour${seconds === 3600 ? '' : 's'}` : `${seconds} seconds`
+/** Approval artifacts a queue proposal's decision cites at most: the newest it counted. */
+const MAX_COUNTED = 100
+
+/**
+ * One shape the operator approved repeatedly (docs/design/approvals.md#the-queue-proposes-a-policy-change):
+ * the commands-list line, the approved requests counted in the window (oldest first), and the window.
+ */
+interface Repeated { shape: string; requests: ApprovalRequest[]; windowSeconds: number; threshold: number }
+
 /** Text cut to a bound on whole characters, ending in an ellipsis when cut. */
 const clip = (text: string, max: number): string => { const chars = [...text]; return chars.length <= max ? text : `${chars.slice(0, max - 1).join('')}…` }
 
@@ -133,6 +198,7 @@ const decodeCursor = (cursor: string): [number, string, number, number] => {
 export function checkConfig(config: Partial<Config> = {}): string[] {
   const problems = policyProblems(config.policies)
   if (config.supersedes !== undefined && (typeof config.supersedes !== 'string' || !CONTENT_ID.test(config.supersedes))) problems.push('supersedes must be the sha256:… hash of a stored policy set')
+  problems.push(...repeatedProblems(config.repeatedApprovals))
   return problems
 }
 
@@ -146,12 +212,22 @@ export class StoreApprovals extends Approvals {
     sweepSeconds: z.natural().min(1).max(3600).default(60).description('Seconds between the queue\'s own passes (expired requests rejected, requests the policy no longer asks for withdrawn, then open ones batched), and one at start; never off, so every request expires (INV-9)'),
     supersedes: z.string().pattern(CONTENT_ID).description('The sha256:… hash of the applied policy set in the store that this configuration replaces. Read only at a start where that set no longer matches the configuration it was derived from: '
       + 'then the configuration takes over and the stored change is retired, recorded; without it the plugin is refused, so nothing that needs a person runs (INV-2)'),
+    repeatedApprovals: z.object({
+      enabled: z.boolean().default(false).description('Whether the queue proposes such a change at all; off by default'),
+      approvals: z.natural().min(REPEATED_APPROVALS.approvals.min).max(REPEATED_APPROVALS.approvals.max).default(REPEATED_APPROVALS.approvals.default)
+        .description('Approvals of one exact studio command, among the requests made in the window, before the queue proposes listing it'),
+      windowSeconds: z.natural().min(REPEATED_APPROVALS.windowSeconds.min).max(REPEATED_APPROVALS.windowSeconds.max).default(REPEATED_APPROVALS.windowSeconds.default)
+        .description('The window in seconds: the requests made in it count, and none of the shape may have been rejected or have expired'),
+    }).description('Off unless enabled. The queue proposes, never applies, a policy change adding one exact studio command (its argv, nothing more) to the studio policy\'s commands list, '
+      + 'once the operator approved it often enough in the window and rejected or let expire none; never for a class that always asks, never again for a command whose proposal was rejected or expired, at most one proposal open'),
   }) as unknown as z<Config>
 
   private readonly schemas = new SchemaRegistry()
   /** The configured set, checked at load. */
   private readonly configured: PolicySet
   private readonly supersedes: ContentHash | undefined
+  /** When the queue proposes a change from repeated approvals; off when undefined. */
+  private readonly repeated: Threshold | undefined
   /** The set in force as last read from the store (see {@link current}). */
   private state: InForce | undefined
 
@@ -162,6 +238,12 @@ export class StoreApprovals extends Approvals {
     this.configured = PolicySet.load(config.policies, this.schemas)
     if (config.supersedes !== undefined && (typeof config.supersedes !== 'string' || !CONTENT_ID.test(config.supersedes))) throw new Error('approvals: supersedes must be the sha256:… hash of a stored policy set')
     this.supersedes = config.supersedes
+    const repeated = repeatedProblems(config.repeatedApprovals)
+    if (repeated.length) throw new Error(`approvals: ${repeated.join('; ')}`)
+    this.repeated = config.repeatedApprovals?.enabled !== true ? undefined : {
+      approvals: config.repeatedApprovals.approvals ?? REPEATED_APPROVALS.approvals.default,
+      windowSeconds: config.repeatedApprovals.windowSeconds ?? REPEATED_APPROVALS.windowSeconds.default,
+    }
     const seconds = config.sweepSeconds ?? 60
     if (!Number.isInteger(seconds) || seconds < 1 || seconds > 3600) throw new Error(`approvals: sweepSeconds must be a whole number of seconds from 1 to 3600, not ${seconds}: expiry is never off (INV-9)`)
     ctx.store.migrate('approvals', MIGRATIONS)
@@ -175,9 +257,10 @@ export class StoreApprovals extends Approvals {
   }
 
   /**
-   * The queue's own clock: a sweep, then a batch, once at start (a restart is a sweep, INV-4) and
-   * every `seconds`, from the wall clock. Nothing else calls them in production; a test that names
-   * the times itself replaces this.
+   * The queue's own clock: a sweep, then its own proposal from repeated approvals (when configured;
+   * one that fails is logged and never stops the pass), then a batch, once at start (a restart is a
+   * sweep, INV-4) and every `seconds`, from the wall clock. Nothing else calls them in production; a
+   * test that names the times itself replaces this.
    */
   protected clock(seconds: number): void {
     const ctx = this.ctx
@@ -186,7 +269,7 @@ export class StoreApprovals extends Approvals {
       const tick = (): void => {
         if (running) return
         const at = new Date()
-        running = this.sweep(at).then(() => this.batch(at))
+        running = this.sweep(at).then(() => this.proposeRepeated(at)).then(() => this.batch(at))
           .catch((error: unknown) => {
             ctx.logger.warn('approvals: a sweep or batch pass failed; the next pass retries')
             ctx.logger.warn(error)
@@ -272,6 +355,9 @@ export class StoreApprovals extends Approvals {
       }
       this.ctx.store.db.prepare('INSERT INTO approval_requests (request_id, state, batch_id, project_id, created_ms, expires_ms, revision, record) VALUES (?, \'open\', NULL, ?, ?, ?, 0, ?)')
         .run(created.requestId, projectId ?? null, when.getTime(), expiresMs, JSON.stringify(created))
+      // Its exact shape, if the queue could ever propose a change for it, in the same transaction.
+      const shape = this.shapeOf(request, projectId)
+      if (shape !== undefined) this.ctx.store.db.prepare('INSERT INTO request_shapes (request_id, shape, created_ms) VALUES (?, ?, ?)').run(created.requestId, shape, when.getTime())
       return structuredClone(created)
     })
   }
@@ -410,7 +496,17 @@ export class StoreApprovals extends Approvals {
     } catch (error) {
       throw invalid(`the proposed policy is not a valid autonomy-policy@1.0: ${(error as Error).message}`)
     }
-    const policy = structuredClone(proposal.policy)
+    return this.propose(structuredClone(proposal.policy), note, when)
+  }
+
+  /**
+   * Ask one policy record as a change (the operator's proposal, or the queue's own `from` repeated
+   * approvals): the set it makes must load, `policy-change` must ask, and the change and its request
+   * are stored in one transaction on the set in force. The queue's own proposal also records its
+   * `policy-change` decision there (INV-13), and is refused while any change is asked or once its
+   * shape is barred.
+   */
+  private async propose(policy: AutonomyPolicy, note: string | undefined, when: Date, from?: Repeated): Promise<{ change: PolicyChange; request: ApprovalRequest }> {
     const base = this.current()
     const made = proposedSet(base.set, policy)
     if ('problems' in made) throw invalid(made.problems.join('; '))
@@ -425,33 +521,44 @@ export class StoreApprovals extends Approvals {
     if (verdict.mode !== 'ask') throw new ApprovalsError('not-asked', `policy-change: the policy says ${verdict.mode} (decision ${verdict.decision}), so no change can be asked; change the configuration instead`)
     const effect = effectOf(base.set, next)
     const changeId = newId('pch')
-    const summary = made.previous
-      ? `Change the autonomy policy ${policy.id}: version ${made.previous.version} to ${policy.version}`
-      : `Add project ${String(projectId)}'s autonomy policy ${policy.id} (version ${policy.version})`
+    const summary = from
+      ? clip(`The queue proposes: list the command \`${from.shape}\` in ${policy.id} (version ${made.previous!.version} to ${policy.version})`, 500)
+      : made.previous
+        ? `Change the autonomy policy ${policy.id}: version ${made.previous.version} to ${policy.version}`
+        : `Add project ${String(projectId)}'s autonomy policy ${policy.id} (version ${policy.version})`
     const modes = effect.map((e) => `${e.projectId ?? 'studio'} ${e.actionClass} ${e.from} → ${e.to}`).join('; ')
-    const consequences = clip(`If approved: the set ${hash} replaces the set in force (${baseHash}) at once, and every open request is judged again under it. `
-      + `If rejected or unanswered: nothing changes. ${effect.length ? `Effective modes: ${modes}.` : 'No effective mode moves (expiry, batching, commands, or required checks only).'}${note ? ` Note: ${note}` : ''}`, 2000)
+    const listed = from && next.effective('workspace-write')
+    const consequences = clip((from
+      ? `Proposed by the queue, not by you: you approved this exact command ${from.requests.length} times among the requests of the last ${span(from.windowSeconds)}, and rejected none and let none expire. `
+        + `If approved: exactly this argv, with nothing added, is judged as workspace-write (${listed!.mode}${listed!.requires.length ? `, its checks ${listed!.requires.join(', ')} pending until the result is accepted` : ''}) instead of asking; `
+        + `the set ${hash} replaces the set in force (${baseHash}) at once, and every open request is judged again under it (one made under ${policy.id} version ${made.previous!.version} is withdrawn, and its requester asks again). `
+        + 'If rejected or unanswered: nothing changes, and the queue never proposes this command again.'
+      : `If approved: the set ${hash} replaces the set in force (${baseHash}) at once, and every open request is judged again under it. `
+        + `If rejected or unanswered: nothing changes. ${effect.length ? `Effective modes: ${modes}.` : 'No effective mode moves (expiry, batching, commands, or required checks only).'}${note ? ` Note: ${note}` : ''}`), 2000)
     return this.ctx.store.transaction(() => {
       // The base is the set in force when the change is stored, never an older one (INV-5).
       if (this.current().key !== base.key) throw invalid('another policy change came into force while this one was proposed; propose it again on the set in force')
+      // The queue's own: at most one change asked at a time, and never for a shape barred (checked again under the write lock).
+      if (from && (this.changeAsked() || this.barred(from.shape))) throw invalid(`the queue proposes no change for \`${from.shape}\` now: a change is asked, or this command's proposal was settled`)
       const request = this.open({
         subject: { type: 'content', ref: POLICY_SET_REF, version: hash },
         action: { class: 'policy-change', summary, consequences },
         requester: { component: 'approvals', policyChangeId: changeId, ...(projectId !== undefined ? { projectId } : {}) },
         verdict, classification: 'operator-shared',
       }, when, 'approval-request@1.1')
+      const origin = from && this.recordProposal(from, { changeId, requestId: request.requestId, baseHash, hash, policy, verdict })
       const change: PolicyChange = {
-        schema: 'policy-change@1.0', changeId, state: 'asked', policy, ...(made.previous ? { previous: structuredClone(made.previous) } : {}),
+        schema: origin ? 'policy-change@1.1' : 'policy-change@1.0', changeId, state: 'asked', policy, ...(made.previous ? { previous: structuredClone(made.previous) } : {}),
         policies: next.all(), hash, baseHash, configHash: this.configured.setHash(), effect, requestId: request.requestId,
-        ...(note ? { note } : {}), proposedAt: when.toISOString(), revision: 0,
+        ...(note ? { note } : {}), ...(origin ? { origin } : {}), proposedAt: when.toISOString(), revision: 0,
       }
       try {
         this.schemas.assertRecord(change)
       } catch (error) {
         throw invalid((error as Error).message)
       }
-      this.ctx.store.db.prepare('INSERT INTO policy_changes (change_id, state, hash, base_hash, config_hash, request_id, proposed_ms, applied_seq, revision, record) VALUES (?, \'asked\', ?, ?, ?, ?, ?, NULL, 0, ?)')
-        .run(changeId, hash, baseHash, change.configHash, request.requestId, when.getTime(), JSON.stringify(change))
+      this.ctx.store.db.prepare('INSERT INTO policy_changes (change_id, state, hash, base_hash, config_hash, request_id, proposed_ms, applied_seq, revision, record, origin_shape) VALUES (?, \'asked\', ?, ?, ?, ?, ?, NULL, 0, ?, ?)')
+        .run(changeId, hash, baseHash, change.configHash, request.requestId, when.getTime(), JSON.stringify(change), from?.shape ?? null)
       return { change: structuredClone(change), request }
     })
   }
@@ -466,6 +573,165 @@ export class StoreApprovals extends Approvals {
     const rows = this.ctx.store.db.prepare(`SELECT change_id, record FROM policy_changes WHERE state IN (${states.map(() => '?').join(', ')}) ORDER BY seq DESC LIMIT ?`)
       .all(...states, limit) as Array<{ change_id: string; record: string }>
     return rows.map((r) => this.loadChange(r.change_id, r.record))
+  }
+
+  // --- the queue's own proposal from repeated approvals ---
+
+  /**
+   * When configured (`repeatedApprovals`), propose, never apply, one policy change
+   * (docs/design/approvals.md#the-queue-proposes-a-policy-change): for the studio command the
+   * operator approved most often among the requests made in the window, at least `approvals` times,
+   * none of its requests there rejected by a verdict or expired, and no change of the queue's for it
+   * ever asked, applied, retired, rejected, or expired; only while no policy change is asked at all
+   * and the policy asks for `policy-change`. The change adds exactly that argv, as one line, to the
+   * studio policy's commands list, and only where that lets the argv run as `workspace-write` under
+   * `auto` or `notify`, moving no class's mode. Recorded as a `policy-change` decision (decider rule
+   * `approvals.repeated-approvals`) in the transaction that stores the change and its request.
+   * Deterministic from the store, so a restart or a second process proposes nothing twice. Returns
+   * the change, if one was proposed. Never throws: a pass that fails is logged, and the queue goes
+   * on, since the proposal only saves the operator verdicts.
+   */
+  async proposeRepeated(at: Date = new Date()): Promise<PolicyChange | undefined> {
+    const rule = this.repeated
+    if (!rule) return undefined
+    try {
+      const when = this.instant(at)
+      if (this.changeAsked()) return undefined
+      const set = this.set
+      // A change the policy would not ask (forbid) is never proposed, nor its autonomy decision recorded on every pass.
+      if (set.effective('policy-change').mode !== 'ask') return undefined
+      const since = when.getTime() - rule.windowSeconds * 1000
+      const shapes = this.ctx.store.db.prepare(`SELECT s.shape AS shape FROM request_shapes s JOIN approval_requests r ON r.request_id = s.request_id
+        WHERE s.created_ms > ? AND s.created_ms <= ? AND r.state = 'approved' GROUP BY s.shape HAVING COUNT(*) >= ? ORDER BY COUNT(*) DESC, s.shape`)
+        .all(since, when.getTime(), rule.approvals) as Array<{ shape: string }>
+      for (const { shape } of shapes) {
+        if (this.barred(shape)) continue
+        const from = this.repeatedOf(shape, since, when, rule)
+        const policy = from && this.listing(set, shape)
+        if (!from || !policy) continue
+        const { change } = await this.propose(policy, undefined, when, from)
+        this.ctx.logger.info(`approvals: the queue proposes policy change ${change.changeId} (request ${change.requestId}): list \`${shape}\`, approved ${from.requests.length} times in ${span(rule.windowSeconds)}`)
+        return change
+      }
+      return undefined
+    } catch (error) {
+      this.ctx.logger.warn('approvals: the queue proposed no policy change from repeated approvals on this pass; the next pass tries again')
+      this.ctx.logger.warn(error)
+      return undefined
+    }
+  }
+
+  /**
+   * The exact shape the queue may ever propose a change for: a request for a studio `command` (no
+   * project) that is not `local-private`, judged as the `command` class, whose argv is a valid
+   * commands-list line word for word; that line. Any other request has none and is never counted.
+   */
+  private shapeOf(request: NewRequest, projectId: string | undefined): string | undefined {
+    const argv = request.command
+    if (request.action.class !== 'command' || projectId !== undefined || request.classification === 'local-private' || argv === undefined || !argv.length) return undefined
+    const line = argv.join(' ')
+    if ([...line].length > 200 || commandProblems(line).length || !sameList(line.split(' '), argv)) return undefined
+    return this.set.judge({ class: 'command', command: argv }).actionClass === 'command' ? line : undefined
+  }
+
+  /**
+   * A shape's requests made in the window, each validated: the approved ones (by the operator's
+   * verdict) when there are at least the threshold and none was rejected by a verdict or expired;
+   * withdrawn and open ones count neither way. A record that fails its schema leaves the shape out.
+   */
+  private repeatedOf(shape: string, since: number, when: Date, rule: Threshold): Repeated | undefined {
+    const rows = this.ctx.store.db.prepare(`SELECT r.request_id AS request_id, r.record AS record FROM request_shapes s JOIN approval_requests r ON r.request_id = s.request_id
+      WHERE s.shape = ? AND s.created_ms > ? AND s.created_ms <= ? ORDER BY s.created_ms, r.seq`).all(shape, since, when.getTime()) as Array<{ request_id: string; record: string }>
+    const approved: ApprovalRequest[] = []
+    for (const row of rows) {
+      let request: ApprovalRequest
+      try {
+        request = this.load(row.request_id, row.record)
+      } catch (error) {
+        this.skipped(`the repeated approvals of \`${shape}\``, error)
+        return undefined
+      }
+      const { resolution } = request
+      if (request.action.class !== 'command' || request.requester.projectId !== undefined || request.classification === 'local-private') return undefined
+      if (request.state === 'rejected' && (resolution?.cause === 'verdict' || resolution?.cause === 'expired')) return undefined
+      if (request.state === 'approved' && resolution?.cause === 'verdict' && resolution.approval) approved.push(request)
+    }
+    return approved.length >= rule.approvals ? { shape, requests: approved, windowSeconds: rule.windowSeconds, threshold: rule.approvals } : undefined
+  }
+
+  /**
+   * The studio policy at its next version with the line added to its commands list, nothing else
+   * changed, when that is exactly the shape and lowers what is asked: the argv asks as the `command`
+   * class under the set in force, and is judged as `workspace-write` under `auto` or `notify` once
+   * listed; no class's effective mode moves; neither class always asks; the set it makes loads.
+   */
+  private listing(set: PolicySet, shape: string): AutonomyPolicy | undefined {
+    const argv = shape.split(' ')
+    if (commandProblems(shape).length) return undefined
+    const now = set.judge({ class: 'command', command: argv })
+    if (now.actionClass !== 'command' || now.rule.mode !== 'ask' || now.forbidden || ALWAYS_ASK.includes(now.actionClass)) return undefined
+    const studio = set.studio
+    const policy: AutonomyPolicy = { ...structuredClone(studio), version: studio.version + 1, commands: [...(studio.commands ?? []), shape] }
+    const made = proposedSet(set, policy)
+    if ('problems' in made || policyProblems(made.policies, this.schemas).length) return undefined
+    const next = PolicySet.load(made.policies, this.schemas)
+    const listed = next.judge({ class: 'command', command: argv })
+    if (listed.actionClass !== 'workspace-write' || (listed.rule.mode !== 'auto' && listed.rule.mode !== 'notify') || ALWAYS_ASK.includes(listed.actionClass)) return undefined
+    return effectOf(set, next).length ? undefined : policy
+  }
+
+  /**
+   * Record the queue's proposal as a `policy-change` decision (decider rule
+   * `approvals.repeated-approvals`), inside the transaction that stores the change, and return the
+   * change's `origin`: the proposed set selected, the set in force kept until the operator approves;
+   * its inputs the `autonomy` decision that said ask and the operator's approvals it counted (the
+   * newest {@link MAX_COUNTED}).
+   */
+  private recordProposal(from: Repeated, at: { changeId: string; requestId: string; baseHash: ContentHash; hash: ContentHash; policy: AutonomyPolicy; verdict: AutonomyVerdict }): PolicyChangeOrigin {
+    const counted = from.requests.slice(-MAX_COUNTED)
+    const approved = from.requests.length
+    const decision = this.ctx.artifacts.recordDecision({
+      schema: 'decision@1.6', decisionType: 'policy-change', question: 'Which autonomy policy set does the queue propose to the operator?',
+      inputs: [...new Set([at.verdict.decision, ...counted.map((r) => r.resolution!.approval!)])],
+      candidates: [
+        { option: at.hash, selected: true, reasons: [`the operator approved \`${from.shape}\` ${approved} times among the requests of the last ${span(from.windowSeconds)} (at least ${from.threshold}), and rejected none and let none expire; proposed, never applied: only the operator's approval of request ${at.requestId} applies it`] },
+        { option: at.baseHash, selected: false, reasons: ['the set in force stays in force until the operator approves the proposal'] },
+      ],
+      decider: { type: 'rule', id: 'approvals.repeated-approvals', version: '1', hash: at.hash },
+      outcome: {
+        option: at.hash,
+        detail: {
+          cause: 'repeated-approvals', changeId: at.changeId, requestId: at.requestId, from: at.baseHash, to: at.hash, configHash: this.configured.setHash(),
+          policy: { id: at.policy.id, version: at.policy.version }, shape: { actionClass: 'command', command: from.shape },
+          approved, threshold: from.threshold, windowSeconds: from.windowSeconds, requests: counted.map((r) => r.requestId),
+        },
+      },
+      deterministic: true,
+    }, { producer: { type: 'system', ref: 'approvals' }, classification: 'operator-shared' }).id as ArtifactRef
+    return { rule: 'approvals.repeated-approvals', shape: { actionClass: 'command', command: from.shape }, approved, windowSeconds: from.windowSeconds, decision }
+  }
+
+  /** Whether any policy change is asked now: the queue proposes nothing then. */
+  private changeAsked(): boolean {
+    return this.ctx.store.db.prepare("SELECT 1 FROM policy_changes WHERE state = 'asked' LIMIT 1").get() !== undefined
+  }
+
+  /**
+   * Whether the queue never proposes for a shape again: a change of its for that shape was asked,
+   * applied, retired, or declined as rejected or expired. Only a withdrawn one (its base no longer
+   * in force, or the policy no longer asking) leaves the shape open; a record that fails its schema
+   * bars it too.
+   */
+  private barred(shape: string): boolean {
+    const rows = this.ctx.store.db.prepare('SELECT change_id, state, record FROM policy_changes WHERE origin_shape = ?').all(shape) as Array<{ change_id: string; state: string; record: string }>
+    return rows.some((row) => {
+      if (row.state !== 'declined') return true
+      try {
+        return this.loadChange(row.change_id, row.record).declined?.cause !== 'withdrawn'
+      } catch {
+        return true
+      }
+    })
   }
 
   /** The set in force, read again from the store whenever its latest applied change moved (a verdict here, or another process). */
@@ -589,7 +855,7 @@ export class StoreApprovals extends Approvals {
     try {
       this.schemas.assertRecord(change)
     } catch (error) {
-      throw new Error(`approvals: the stored policy change ${changeId} is not a valid policy-change@1.0 and is not used: ${(error as Error).message}`)
+      throw new Error(`approvals: the stored policy change ${changeId} is not a valid policy-change@1.x and is not used: ${(error as Error).message}`)
     }
     return change
   }

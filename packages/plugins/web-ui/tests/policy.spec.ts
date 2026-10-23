@@ -48,6 +48,25 @@ async function propose(booted: Booted, policy: AutonomyPolicy, note?: string): P
 const decide = (booted: Booted, request: ApprovalRequest, verdict: 'approved' | 'rejected') =>
   booted.call('approvals/decide', { verdicts: [{ requestId: request.requestId, subject: request.subject, verdict }] })
 
+/** The queue on, proposing from 3 approvals in an hour (docs/design/approvals.md#the-queue-proposes-a-policy-change). */
+const REPEATED = { repeatedApprovals: { enabled: true, approvals: 3, windowSeconds: 3600 } }
+
+/** A Worker's `pnpm lint` asked and approved on the page `times` times, then the queue's own pass: its proposal. */
+async function queueProposes(booted: Booted, times = 3): Promise<PolicyChange> {
+  for (let i = 0; i < times; i++) {
+    const command = ['pnpm', 'lint']
+    const verdict = await booted.ctx.approvals.check({ class: 'command', command })
+    const request = await booted.ctx.approvals.request({
+      subject: { type: 'content', ref: `agent-tool-call:run-${i}:Bash`, version: `v${i}` }, action: { class: 'command', summary: 'Bash: pnpm lint' },
+      requester: { component: 'worker', runId: `run-${i}`, sessionId: `session-${i}` }, verdict, command, classification: 'operator-shared',
+    })
+    expect(((await decide(booted, request, 'approved')).value.results as Array<{ state: string }>)[0]!.state).toBe('approved')
+  }
+  const change = await (booted.ctx.approvals as unknown as { proposeRepeated: () => Promise<PolicyChange | undefined> }).proposeRepeated()
+  expect(change).toMatchObject({ origin: { shape: { command: 'pnpm lint' }, approved: times } })
+  return change!
+}
+
 describe('web UI: the operator changes the autonomy policy through a policy-change approval', () => {
   it('shows the policy in force, takes a proposed version, asks it in the queue on its exact hash, and applies it only on approval: recorded with the old and new hashes, and the board re-gates a waiting task (INV-5, INV-13)', async () => {
     const booted = await boot()
@@ -148,7 +167,38 @@ describe('web UI: the operator changes the autonomy policy through a policy-chan
   })
 })
 
+describe('web UI: a policy change the queue proposed itself', () => {
+  it('shows the queue\'s proposal with its origin in the queue and the history, and applies it only on the operator\'s approval (INV-6)', async () => {
+    const booted = await boot({ approvals: REPEATED })
+    const change = await queueProposes(booted)
+    const queued = ((await booted.call('approvals')).value.batches as Array<{ requests: ApprovalRequest[] }>).flatMap((b) => b.requests)
+    const request = queued.find((r) => r.requestId === change.requestId)!
+    expect(request.action.summary).toBe('The queue proposes: list the command `pnpm lint` in studio-default (version 1 to 2)')
+    const listed = (await booted.call('policy')).value.changes as PolicyChange[]
+    expect(listed[0]).toMatchObject({ changeId: change.changeId, schema: 'policy-change@1.1', state: 'asked', origin: { rule: 'approvals.repeated-approvals' } })
+    expect((await booted.ctx.approvals.check({ class: 'command', command: ['pnpm', 'lint'] })).mode).toBe('ask')
+    await decide(booted, request, 'approved')
+    expect((await booted.ctx.approvals.check({ class: 'command', command: ['pnpm', 'lint'] })).mode).toBe('auto')
+    expect((await booted.call('policy')).value).toMatchObject({ set: { source: 'store', changeId: change.changeId }, policies: [{ version: 2, commands: ['pnpm lint'] }] })
+  })
+})
+
 describe('web UI: the policy page in a real browser', () => {
+  it.runIf(canRunBrowser)('says in the queue entry that the queue, not the operator, proposed a change, and why', async () => {
+    const booted = await boot({ approvals: REPEATED })
+    const change = await queueProposes(booted)
+    const origin = `http://127.0.0.1:${(booted.ctx as unknown as { webServer: { port: number } }).webServer.port}`
+    const browser = await chromium.launch({ executablePath: testChrome!, headless: true })
+    cleanups.push(() => browser.close())
+    const page = await browser.newPage()
+    await page.goto(`${origin}/ui/#token=${OPERATOR}`)
+    const queue = page.getByRole('region', { name: 'Approval queue' })
+    await queue.getByRole('button', { name: `Show the change of ${change.requestId}` }).click()
+    await expect.poll(() => queue.innerText()).toContain('Proposed by the queue, not by you: you approved pnpm lint 3 times among the requests of the last 1 hour, and rejected none')
+    await page.goto(`${origin}/ui/?view=policy#token=${OPERATOR}`)
+    await expect.poll(() => page.locator('main').innerText()).toContain('(proposed by the queue)')
+  }, 60_000)
+
   it.runIf(canRunBrowser)('shows the policy in force and a diff of a proposed version, proposes it, shows the change in the queue entry, and shows it in force once approved there', async () => {
     const booted = await boot()
     const origin = `http://127.0.0.1:${(booted.ctx as unknown as { webServer: { port: number } }).webServer.port}`

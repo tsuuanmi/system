@@ -1,8 +1,9 @@
 // What the conformance suite does not cover: the policy set checked at load (each load-time rule),
 // restart persistence, a policy change reaching requests already open, a verdict race on one store
 // and across processes, the queue's own clock, the batch bound, paging bounds, records that fail
-// their schema, a verdict that fails on its own, the MCP tools' outputs, and an applied policy
-// change across restarts against the configuration it derives from.
+// their schema, a verdict that fails on its own, the MCP tools' outputs, an applied policy change
+// across restarts against the configuration it derives from, and the queue's own proposal from
+// repeated approvals.
 import { fork } from 'node:child_process'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -18,7 +19,7 @@ import Store from '@tsuuanmi/system-store'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { z as zod } from 'zod'
 import { POLICIES } from '../../../approvals-core/conformance/approvals.ts'
-import StoreApprovals, { checkConfig, type Config, policyProblems } from '../src/index.ts'
+import StoreApprovals, { checkConfig, type Config, policyProblems, type RepeatedApprovals } from '../src/index.ts'
 import { APPROVAL_TOOLS, type ApprovalTool, INPUTS } from '../src/tools.ts'
 import { ManualApprovals } from './manual.ts'
 
@@ -674,7 +675,7 @@ describe('a policy change through the queue (docs/design/approvals.md#a-policy-c
     const change = await applied(first, NO_MERGE)
     first.ctx.store.db.prepare('UPDATE policy_changes SET record = ? WHERE change_id = ?').run(JSON.stringify({ ...change, policies: [] }), change.changeId)
     await first.stop()
-    expect(await refusal(first.dir, {})).toMatch(/the stored policy change .* is not a valid policy-change@1\.0 and is not used/)
+    expect(await refusal(first.dir, {})).toMatch(/the stored policy change .* is not a valid policy-change@1\.x and is not used/)
   })
 
   it('refuses a proposal when the policy forbids policy changes, recording the autonomy decision, and queues nothing (INV-2)', async () => {
@@ -702,5 +703,217 @@ describe('a policy change through the queue (docs/design/approvals.md#a-policy-c
     const policy = await booted.mcp().tools.get('approvals_policy')!.handler({}, { scope: 'client' })
     schemas.assertDef('mcp-approvals@1.2', 'approvals-policy-output', policy.structuredContent)
     expect((policy.structuredContent as { set: { source: string } }).set.source).toBe('configuration')
+  })
+})
+
+describe('the queue proposes a policy change from repeated approvals (docs/design/approvals.md#the-queue-proposes-a-policy-change)', () => {
+  const REPEATED = { repeatedApprovals: { enabled: true, approvals: 3, windowSeconds: 3600 } }
+  const LINT = ['pnpm', 'lint']
+  /** A Worker's command call asked of the queue at `at`, as the agents source's gate asks it (studio policy, the argv judged again). */
+  const command = async (ctx: Context, argv: string[], ref: string, at: Date, extra: Partial<NewRequest> = {}): Promise<ApprovalRequest> => {
+    const verdict = await ctx.approvals.check({ class: 'command', command: argv })
+    expect(verdict.mode).toBe('ask')
+    return ctx.approvals.request({
+      subject: subject(`agent-tool-call:run-${ref}:Bash`), action: { class: 'command', summary: `Bash: ${argv.join(' ')}` },
+      requester: { component: 'worker', runId: `run-${ref}`, sessionId: `session-${ref}` }, verdict, command: argv, classification: 'operator-shared', ...extra,
+    }, at)
+  }
+  const verdict = async (ctx: Context, request: ApprovalRequest, value: 'approved' | 'rejected', at: Date): Promise<VerdictResult> =>
+    (await ctx.approvals.decide([{ requestId: request.requestId, subject: request.subject, verdict: value }], at))[0]!
+  /** `times` requests for the argv, each approved by the operator 5 s after it was asked, a minute apart from `from`. */
+  const approvedTimes = async (ctx: Context, argv: string[], times: number, from: Date = T0, tag = 'a'): Promise<ApprovalRequest[]> => {
+    const made: ApprovalRequest[] = []
+    for (let i = 0; i < times; i++) {
+      const request = await command(ctx, argv, `${tag}${i}`, after(60 * i, from))
+      expect(await verdict(ctx, request, 'approved', after(60 * i + 5, from))).toMatchObject({ state: 'approved' })
+      made.push(request)
+    }
+    return made
+  }
+  const decisionBody = (ctx: Context, ref: string) => ctx.artifacts.get(ref as `sha256:${string}`)!.body as { schema: string; inputs: string[]; decider: Record<string, unknown>; outcome: { option: string; detail: Record<string, unknown> }; candidates: Array<{ option: string; selected: boolean }> }
+
+  it('is off unless enabled: no approvals, however many, make a proposal', async () => {
+    for (const config of [{}, { repeatedApprovals: { approvals: 3 } }]) {
+      const { ctx, approvals } = await boot({ config })
+      await approvedTimes(ctx, LINT, 6)
+      expect(await approvals.proposeRepeated(after(600))).toBeUndefined()
+      expect(await approvals.policyChanges()).toEqual([])
+    }
+  })
+
+  it('proposes, once the threshold is reached, exactly the repeated argv as one studio commands line, recorded as a decision, and never applies it (INV-6, INV-13)', async () => {
+    const booted = await boot({ config: REPEATED })
+    const { ctx, approvals } = booted
+    const counted = await approvedTimes(ctx, LINT, 2)
+    expect(await approvals.proposeRepeated(after(300))).toBeUndefined()
+    counted.push(...await approvedTimes(ctx, LINT, 1, after(200), 'b'))
+    const change = (await approvals.proposeRepeated(after(300)))!
+    schemas.assertRecord(change)
+    expect(change).toMatchObject({
+      schema: 'policy-change@1.1', state: 'asked', effect: [], previous: STUDIO,
+      origin: { rule: 'approvals.repeated-approvals', shape: { actionClass: 'command', command: 'pnpm lint' }, approved: 3, windowSeconds: 3600 },
+    })
+    // Exactly one line added to the studio's commands list, at the next version; nothing else moves.
+    expect(change.policy).toEqual({ ...STUDIO, version: 4, commands: ['pnpm test', 'pnpm lint'] })
+    expect(change.note).toBeUndefined()
+    const request = (await ctx.approvals.get(change.requestId))!
+    expect(request).toMatchObject({ schema: 'approval-request@1.1', state: 'open', action: { class: 'policy-change' }, requester: { component: 'approvals', policyChangeId: change.changeId } })
+    expect(request.action.summary).toBe('The queue proposes: list the command `pnpm lint` in studio (version 3 to 4)')
+    expect(request.action.consequences).toContain('Proposed by the queue, not by you: you approved this exact command 3 times among the requests of the last 1 hour')
+    expect(request.action.consequences).toContain('judged as workspace-write (auto, its checks tests, lint pending until the result is accepted)')
+    const decision = decisionBody(ctx, change.origin!.decision)
+    schemas.assertRecord(decision as unknown as { schema: string })
+    expect(decision).toMatchObject({
+      schema: 'decision@1.6', decisionType: 'policy-change', decider: { type: 'rule', id: 'approvals.repeated-approvals', hash: change.hash },
+      outcome: { option: change.hash, detail: { cause: 'repeated-approvals', changeId: change.changeId, requestId: change.requestId, from: change.baseHash, to: change.hash, approved: 3, threshold: 3, requests: counted.map((r) => r.requestId) } },
+    })
+    expect(decision.candidates.map((c) => [c.option, c.selected])).toEqual([[change.hash, true], [change.baseHash, false]])
+    const approvalsCounted = await Promise.all(counted.map(async (r) => (await ctx.approvals.get(r.requestId))!.resolution!.approval))
+    expect([...decision.inputs].sort()).toEqual([request.policy.decision, ...approvalsCounted].sort())
+    // Proposed, not applied: the argv still asks.
+    expect((await ctx.approvals.check({ class: 'command', command: LINT })).mode).toBe('ask')
+    // At most one open proposal: further passes, also after a restart, propose nothing more.
+    await approvedTimes(ctx, ['pnpm', 'build'], 3, after(400), 'c')
+    expect(await approvals.proposeRepeated(after(700))).toBeUndefined()
+    await booted.stop()
+    const again = await boot({ dir: booted.dir, config: REPEATED })
+    expect(await again.approvals.proposeRepeated(after(700))).toBeUndefined()
+    expect((await again.approvals.policyChanges()).map((c) => c.changeId)).toEqual([change.changeId])
+    // The operator's approval applies it: the exact argv now runs as workspace-write, a longer one still asks.
+    expect(await verdict(again.ctx, request, 'approved', after(800))).toMatchObject({ state: 'approved' })
+    expect(await again.ctx.approvals.check({ class: 'command', command: LINT })).toMatchObject({ mode: 'auto', failedChecks: ['tests', 'lint'] })
+    expect((await again.ctx.approvals.check({ class: 'command', command: [...LINT, '--fix'] })).mode).toBe('ask')
+    // Applied: never proposed again; the next shape is proposed on the new set.
+    const next = (await again.approvals.proposeRepeated(after(900)))!
+    expect(next).toMatchObject({ baseHash: change.hash, origin: { shape: { command: 'pnpm build' } }, policy: { version: 5, commands: ['pnpm test', 'pnpm lint', 'pnpm build'] } })
+  })
+
+  it('never proposes again for a command whose proposal the operator rejected or let expire', async () => {
+    const { ctx, approvals } = await boot({ config: REPEATED })
+    await approvedTimes(ctx, LINT, 3)
+    const rejected = (await approvals.proposeRepeated(after(200)))!
+    expect(await verdict(ctx, (await ctx.approvals.get(rejected.requestId))!, 'rejected', after(210))).toMatchObject({ state: 'rejected' })
+    expect((await approvals.policyChanges())[0]).toMatchObject({ state: 'declined', declined: { cause: 'rejected' } })
+    await approvedTimes(ctx, LINT, 3, after(300), 'b')
+    expect(await approvals.proposeRepeated(after(600))).toBeUndefined()
+    // Another command is proposed, and left unanswered until it expires (the studio's default, an hour).
+    await approvedTimes(ctx, ['pnpm', 'build'], 3, after(600), 'c')
+    const expiring = (await approvals.proposeRepeated(after(800)))!
+    expect(expiring.origin?.shape.command).toBe('pnpm build')
+    await ctx.approvals.sweep(after(800 + 3600))
+    expect((await approvals.policyChanges())[0]).toMatchObject({ changeId: expiring.changeId, state: 'declined', declined: { cause: 'expired' } })
+    await approvedTimes(ctx, ['pnpm', 'build'], 3, after(4500), 'd')
+    expect(await approvals.proposeRepeated(after(4700))).toBeUndefined()
+  })
+
+  it('proposes again on the new set when its proposal was withdrawn because another change came into force', async () => {
+    const { ctx, approvals } = await boot({ config: REPEATED })
+    await approvedTimes(ctx, LINT, 3)
+    // The operator's own proposal is open: the queue waits.
+    const own = await approvals.proposePolicy({ policy: { ...PROJECT, version: 2, default: 'forbid' } }, after(190))
+    expect(await approvals.proposeRepeated(after(200))).toBeUndefined()
+    await verdict(ctx, own.request, 'rejected', after(205))
+    const first = (await approvals.proposeRepeated(after(210)))!
+    // Another change comes into force first (the operator proposes and approves it through the queue elsewhere).
+    const other = await approvals.proposePolicy({ policy: { ...PROJECT, version: 2, default: 'forbid' } }, after(220))
+    expect(await approvals.proposeRepeated(after(225))).toBeUndefined()
+    expect(await verdict(ctx, other.request, 'approved', after(230))).toMatchObject({ state: 'approved' })
+    expect((await approvals.policyChanges({ states: ['declined'] })).find((c) => c.changeId === first.changeId)).toMatchObject({ declined: { cause: 'withdrawn' } })
+    const second = (await approvals.proposeRepeated(after(240)))!
+    expect(second).toMatchObject({ baseHash: other.change.hash, origin: { shape: { command: 'pnpm lint' } } })
+    expect(second.changeId).not.toBe(first.changeId)
+  })
+
+  it('counts only the requests made in the window, never with a rejected or expired one there; withdrawn and open ones count neither way', async () => {
+    const { ctx, approvals } = await boot({ config: REPEATED })
+    const refused = await command(ctx, LINT, 'r', T0)
+    await verdict(ctx, refused, 'rejected', after(5))
+    await approvedTimes(ctx, LINT, 3, after(60))
+    expect(await approvals.proposeRepeated(after(300))).toBeUndefined()
+    // An hour after the rejection's request was made it falls out of the window; the approvals in it still count.
+    expect(await approvals.proposeRepeated(after(3600))).toMatchObject({ origin: { approved: 3 } })
+    // Expired: another command, its window holds an unanswered request that expired (600 s).
+    const second = await boot({ config: REPEATED })
+    await command(second.ctx, LINT, 'x', T0)
+    await second.ctx.approvals.sweep(after(600))
+    await approvedTimes(second.ctx, LINT, 3, after(700))
+    expect(await second.approvals.proposeRepeated(after(1000))).toBeUndefined()
+    // Withdrawn and still open requests do not stop it.
+    const third = await boot({ config: REPEATED })
+    await third.ctx.approvals.withdraw((await command(third.ctx, LINT, 'w', T0)).requestId, after(5))
+    await command(third.ctx, LINT, 'o', after(10))
+    await approvedTimes(third.ctx, LINT, 2, after(20))
+    expect(await third.approvals.proposeRepeated(after(300))).toBeUndefined()
+    await approvedTimes(third.ctx, LINT, 1, after(400), 'b')
+    expect(await third.approvals.proposeRepeated(after(500))).toMatchObject({ origin: { approved: 3 } })
+  })
+
+  it('never proposes for anything but a studio command\'s exact argv: not a project\'s, a local-private one, another class, a class that always asks, or where listing would not lower what is asked', async () => {
+    const { ctx, approvals } = await boot({ config: REPEATED })
+    for (let i = 0; i < 3; i++) {
+      for (const [action, ref] of [[{ class: 'merge' }, 'merge'], [{ class: 'deploy' }, 'deploy'], [{ class: 'command', command: LINT, projectId: 'p1' }, 'p1']] as Array<[Action, string]>) {
+        const request = await asked(ctx, action, `${ref}${i}`, after(i * 60), action.command ? { command: action.command } : {})
+        await verdict(ctx, request, 'approved', after(i * 60 + 5))
+      }
+      const secret = await command(ctx, LINT, `secret${i}`, after(i * 60), { classification: 'local-private' })
+      await verdict(ctx, secret, 'approved', after(i * 60 + 5))
+    }
+    expect(await approvals.proposeRepeated(after(300))).toBeUndefined()
+    expect(ctx.store.db.prepare('SELECT COUNT(*) AS n FROM request_shapes').get()).toEqual({ n: 0 })
+    // Where a listed argv would still ask (workspace-write asks), nothing is proposed.
+    const asking = await boot({ config: { ...REPEATED, policies: [{ ...STUDIO, rules: STUDIO.rules.map((r) => (r.actionClass === 'workspace-write' ? { actionClass: 'workspace-write', mode: 'ask' } : r)) }, PROJECT, NO_COMMANDS] } })
+    await approvedTimes(asking.ctx, LINT, 3)
+    expect(await asking.approvals.proposeRepeated(after(300))).toBeUndefined()
+    // Where the policy forbids policy changes, nothing is proposed, and no decision is recorded for it.
+    const locked = await boot({ config: { ...REPEATED, policies: [{ ...STUDIO, rules: [...STUDIO.rules, { actionClass: 'policy-change', mode: 'forbid' }] }, PROJECT, NO_COMMANDS] } })
+    await approvedTimes(locked.ctx, LINT, 3)
+    const decisions = (): unknown => locked.ctx.store.db.prepare("SELECT COUNT(*) AS n FROM artifacts WHERE kind = 'decision'").get()
+    const before = decisions()
+    expect(await locked.approvals.proposeRepeated(after(300))).toBeUndefined()
+    expect(decisions()).toEqual(before)
+  })
+
+  it('leaves out a command whose stored request fails its schema, logged, and still proposes another (INV-14)', async () => {
+    const { ctx, approvals } = await boot({ config: REPEATED })
+    const [broken] = await approvedTimes(ctx, LINT, 4)
+    await approvedTimes(ctx, ['pnpm', 'build'], 3, after(300), 'b')
+    ctx.store.db.prepare('UPDATE approval_requests SET record = ? WHERE request_id = ?').run(JSON.stringify({ ...broken, expiresAt: 'never' }), broken!.requestId)
+    const warned = logged(ctx, 'warn')
+    expect(await approvals.proposeRepeated(after(600))).toMatchObject({ origin: { shape: { command: 'pnpm build' } } })
+    expect(warned.some((m) => m.includes('left the repeated approvals of `pnpm lint` as it was'))).toBe(true)
+  })
+
+  it('lets one of two providers over the same store propose, never both (BEGIN IMMEDIATE)', async () => {
+    const one = await boot({ config: REPEATED })
+    const two = await boot({ dir: one.dir, config: REPEATED })
+    await approvedTimes(one.ctx, LINT, 3)
+    const proposed = await Promise.all([one.approvals.proposeRepeated(after(300)), two.approvals.proposeRepeated(after(300))])
+    expect(proposed.filter(Boolean)).toHaveLength(1)
+    expect(await one.approvals.policyChanges()).toHaveLength(1)
+    expect(await one.ctx.approvals.list()).toHaveLength(1)
+  })
+
+  it('proposes on the queue\'s own clock once configured', async () => {
+    const { ctx } = await boot({ clock: true, config: { ...REPEATED, sweepSeconds: 1 } })
+    await approvedTimes(ctx, LINT, 3, after(-300, new Date()))
+    await vi.waitFor(async () => expect((await ctx.approvals.list()).map((r) => r.action.class)).toEqual(['policy-change']), { timeout: 5000, interval: 100 })
+  })
+
+  it('refuses repeatedApprovals out of its bounds, at load and in system check', async () => {
+    for (const value of [{ approvals: 2 }, { approvals: 101 }, { windowSeconds: 60 }, { windowSeconds: 7776001 }, { approvals: 3.5 }, { every: 1 }, { enabled: 'yes' }]) {
+      expect(checkConfig({ policies: POLICIES, repeatedApprovals: value as RepeatedApprovals }).join('; ')).toMatch(/^repeatedApprovals\./)
+    }
+    expect(checkConfig({ policies: POLICIES, repeatedApprovals: {} })).toEqual([])
+    expect(checkConfig({ policies: POLICIES, repeatedApprovals: { enabled: true, approvals: 100, windowSeconds: 7776000 } })).toEqual([])
+    const ctx = new Context()
+    const dir = tempDir()
+    const fibers = [ctx.plugin(Store, { path: join(dir, 'system.db') }), ctx.plugin(Artifacts, {})]
+    await Promise.all(fibers)
+    cleanups.push(async () => { for (const f of fibers.reverse()) await f.dispose() })
+    const fiber = ctx.plugin(ManualApprovals, { policies: POLICIES, repeatedApprovals: { enabled: true, approvals: 1 } })
+    const error = await Promise.resolve(fiber).then(() => undefined, (e: unknown) => e)
+    expect(String((error as Error | undefined)?.message)).toMatch(/repeatedApprovals\.approvals/)
+    expect(ctx.get('approvals')).toBeUndefined()
+    await fiber.dispose()
   })
 })

@@ -88,6 +88,20 @@ guarantee seam: it fails closed (INV-2). Code decides, never a model.
     rejection, expiry, or withdrawal declines the change and changes nothing; a change whose base
     is no longer in force, or whose set no longer loads, is withdrawn on the next sweep.
   - `policyChanges({states?, limit?})`: the changes, newest first (20 by default, at most 100).
+  - `proposeRepeated(at?)` (not a seam method; off unless `repeatedApprovals.enabled`): the queue's
+    own proposal, never applied, from repeated identical approvals
+    ([approvals](../../../docs/design/approvals.md#the-queue-proposes-a-policy-change),
+    [ADR-0050](../../../docs/decisions/adr/0050-the-queue-proposes-a-policy-change-from-repeated-approvals.md)).
+    A request's shape is a studio `command`'s exact argv (no project, not `local-private`, judged as
+    `command`, a valid commands line), stored with the request. When no policy change is asked and
+    the policy asks for `policy-change`, a shape approved at least `approvals` times among the
+    requests made in the last `windowSeconds`, none of them rejected by a verdict or expired, is
+    proposed as the studio policy at its next version with that one line added to `commands`, and
+    nothing else: only when the argv then runs as `workspace-write` under `auto` or `notify` and no
+    class's mode moves. One transaction stores the `policy-change@1.1` (its `origin`), its request,
+    and a `decision@1.6` `policy-change` (decider rule `approvals.repeated-approvals`). A shape whose
+    queue proposal was asked, applied, retired, rejected, or expired is never proposed again; a
+    withdrawn one may be. A pass that fails is logged; it never stops the queue.
   - **The set in force** is the latest applied change's, kept in the store, while it is not
     retired, its `configHash` is the configured set's hash (or its set is the configured set
     itself), and its set still loads; the configured set when no change is in force. A stored set
@@ -98,16 +112,18 @@ guarantee seam: it fails closed (INV-2). Code decides, never a model.
     is in force from the store, so a provider never judges under a set another process replaced.
 - **Records:** `approval_requests`, one row per request with its revision and its
   `approval-request@1.x` record, indexed by state, batch, project, and expiry; `policy_changes`
-  (migration 2), one row per change with its revision, its `policy-change@1.0` record, and the
-  order in which applied changes came into force. Every record is
+  (migration 2), one row per change with its revision, its `policy-change@1.x` record, and the
+  order in which applied changes came into force; `request_shapes` (migration 3), the shape of each
+  request the queue could propose a change for, and `policy_changes.origin_shape`, the shape a
+  queue proposal is for. Every record is
   validated before it is written and after it is read: one that fails on read is never acted on.
   Every move is revision-checked inside a store transaction (`BEGIN IMMEDIATE`), so of
   concurrent verdicts on one request, also across processes, exactly one is recorded. A
   restarted provider over the same store and configuration answers the same.
-- **Time:** the queue sweeps, then batches, once at start (a restart is a sweep) and every
-  `sweepSeconds` (1 to 3600: never off, so every request expires); nothing else calls them in
-  production. The `at` of every method is a test seam: the MCP tools, the web UI, the board, and
-  the queue's own passes fill it from the wall clock.
+- **Time:** the queue sweeps, then makes its own proposal (when enabled), then batches, once at
+  start (a restart is a sweep) and every `sweepSeconds` (1 to 3600: never off, so every request
+  expires); nothing else calls them in production. The `at` of every method is a test seam: the
+  MCP tools, the web UI, the board, and the queue's own passes fill it from the wall clock.
 - **MCP** (when `ctx.mcp` is present): `approvals_list`, `approvals_get`, `approvals_policy`
   (client scope), and `approvals_decide` and `approvals_policy_propose` (operator scope: verdicts
   and policy changes come only from the operator's channel, INV-6; a call that reaches one with
@@ -119,7 +135,9 @@ guarantee seam: it fails closed (INV-2). Code decides, never a model.
 - **Config:** `policies` (required): `autonomy-policy@1.x` records, exactly one studio policy
   and project policies that narrow it; `sweepSeconds` (1 to 3600, default 60); `supersedes`
   (optional): the `sha256:` hash of the stored set this configuration replaces, read only at a
-  start where that set no longer matches the configuration. At load, a policy the schema
+  start where that set no longer matches the configuration; `repeatedApprovals` (optional, off
+  unless `enabled`): `approvals` (3 to 100, default 5) and `windowSeconds` (3600 to 7776000,
+  default 604800), when the queue proposes a change from repeated approvals. At load, a policy the schema
   refuses, two rules for one action class, a rule giving a class in `ALWAYS_ASK` `auto` or
   `notify` (a 1.0 policy's `remediation`), an `expiry.defaultSeconds` or a rule's
   `expiresSeconds` above `expiry.maxSeconds`, a commands entry with an empty word or a shell
@@ -152,5 +170,8 @@ guarantee seam: it fails closed (INV-2). Code decides, never a model.
   restart, refused against a changed configuration until it supersedes the stored set (retired,
   recorded), agreeing with a configuration that is the stored set, a stored change that fails its
   schema never used, a policy that forbids `policy-change`, and `approvals_policy_propose` at
-  operator scope only. Tests turn the queue's own clock off through a test
+  operator scope only; and the queue's own proposal from repeated approvals: off unless enabled,
+  the threshold and window, exactly one line, recorded, at most one asked (also across a restart
+  and between two providers), never again once rejected or expired, again once withdrawn, never
+  for a project's, local-private, other-class, or always-asking request, and its bounds. Tests turn the queue's own clock off through a test
   subclass ([`tests/manual.ts`](tests/manual.ts)), never through configuration.

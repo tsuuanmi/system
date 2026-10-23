@@ -132,7 +132,16 @@ guesses.
   `supersedes` replaced it at a start), its `hash` the new set's. `detail` names the `cause`
   (`approved` or `configuration`), the `changeId`, the `requestId` when approved, `from` and `to`,
   the `configHash`, and the proposed `policy` by id and version. Example:
-  [`decision.policy-change.json`](../../schemas/examples/decision.policy-change.json).
+  [`decision.policy-change.json`](../../schemas/examples/decision.policy-change.json). A third
+  decider rule, `approvals.repeated-approvals`, records the queue's own proposal
+  ([approvals](../design/approvals.md#the-queue-proposes-a-policy-change)): the question is which
+  set the queue proposes, the proposed set's hash selected and the set in force kept until the
+  operator approves; its inputs the `autonomy` decision that said ask and the operator's approvals
+  it counted (the newest 100); `detail` names the `cause` (`repeated-approvals`), the `changeId`,
+  the `requestId`, `from` and `to`, the `configHash`, the `policy`, the `shape`
+  (`{actionClass: command, command}`), the approvals counted (`approved`), the `threshold`, the
+  `windowSeconds`, and the counted `requests`. Example:
+  [`decision.policy-change-proposed.json`](../../schemas/examples/decision.policy-change-proposed.json).
 - `decision@1.7` adds the feedback loop's two decision types
   ([ADR-0045](../decisions/adr/0045-feedback-loop-guarantee-seams.md)). A decision of either must be
   `@1.7`; every other decision keeps its version.
@@ -531,7 +540,8 @@ guesses.
   that apply to its class (the studio's and the project's), else the stricter
   `expiry.defaultSeconds`, never more than the stricter `expiry.maxSeconds`.
 - A `policy-change` is never made by a Worker. While `system` runs, a new policy version takes
-  effect only through the operator's approval of a `policy-change` request
+  effect only through the operator's approval of a `policy-change` request (proposed by the
+  operator, or by the queue itself from repeated identical approvals)
   ([`policy-change`](#policy-change)), so the safety layer never changes itself; at a start, the
   configured set applies unless an applied change derived from that same configuration is
   kept in the store. Examples:
@@ -563,7 +573,7 @@ guesses.
   class no longer asks (checked at load and on every sweep; the decision's decider is the rule
   `approvals.policy` and its reason says what changed).
 - `approval-request@1.1` adds the queue's own requests: a `policy-change` the operator proposed,
-  requested by `approvals` and naming its `policyChangeId`. Such a request must be `@1.1`, of
+  or the queue proposed itself, requested by `approvals` and naming its `policyChangeId`. Such a request must be `@1.1`, of
   class `policy-change`; every other request stays `@1.0`. Only the queue writes one: `request`
   refuses the requester `approvals` (`invalid`). Its subject is
   `{type: content, ref: autonomy-policy-set, version: <the proposed set's hash>}`.
@@ -589,6 +599,14 @@ guesses.
   is the configured set's hash, else the configured set
   ([approvals](../design/approvals.md#the-configuration-and-the-stored-set)).
   Example: [`policy-change.applied.json`](../../schemas/examples/policy-change.applied.json).
+- `policy-change@1.1` adds the optional `origin`: the queue proposed the change itself
+  ([approvals](../design/approvals.md#the-queue-proposes-a-policy-change)). It names the rule
+  (`approvals.repeated-approvals`), the `shape` (`{actionClass: command, command}`: the exact argv
+  as the one commands line the change adds), the operator's approvals counted (`approved`), the
+  `windowSeconds`, and the `decision` that recorded the proposal. A change with an `origin` must be
+  `@1.1`; the operator's own changes stay `@1.0`. It carries no authority: only the operator's
+  approval of its request applies it. Example:
+  [`policy-change.queue-proposed.json`](../../schemas/examples/policy-change.queue-proposed.json).
 
 ### `project`
 

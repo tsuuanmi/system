@@ -1311,7 +1311,9 @@ loaded, every call is denied, reads included.
 Two ways, both the operator's alone ([a policy change](../design/approvals.md#a-policy-change)):
 **on `/ui`, through a `policy-change` approval**, with no restart, or **by configuration and a
 restart**. No Worker can do either: the proposal routes take the operator's token or scope only,
-and the DSH home is hidden from agents.
+and the DSH home is hidden from agents. Once enabled, the queue may propose a change itself from
+your repeated approvals; it still applies only on your approval
+([below](#the-queue-proposes-a-policy-change)).
 
 1. **Read what is in force:** the **Autonomy policy** page on `/ui` (`system ui` prints the link),
    or MCP `approvals_policy` (a `projectId` adds that project's policy). It shows the set's hash,
@@ -1403,6 +1405,48 @@ request when it still asks, and is cancelled (`forbidden`) on `forbid`; a spent 
 asks again or waits for input; a charter is asked about again, or refused. A Worker's gate denies
 the same call again in that session (it reads the withdrawn request as the answer): run the work
 again to have the new policy judge it.
+
+## The queue proposes a policy change
+
+When you keep approving the same exact command, the queue can propose listing it, so that it runs
+without asking ([the queue proposes a policy change](../design/approvals.md#the-queue-proposes-a-policy-change),
+[ADR-0050](../decisions/adr/0050-the-queue-proposes-a-policy-change-from-repeated-approvals.md)).
+It only proposes: nothing changes until you approve its request, like any
+[policy change](#change-the-autonomy-policy). It is off by default.
+
+1. **Turn it on** in `~/.dsh/profiles/system/cordis.patch.yml`. A patch that targets the
+   `approvals` row replaces its whole config, so carry the `policies` too (copy the bundle's row):
+
+   ```yaml
+   - id: approvals
+     config:
+       policies: [...]               # the whole list, as in the bundle or your change
+       repeatedApprovals:
+         enabled: true
+         approvals: 5                # 3 to 100: approvals of one exact command
+         windowSeconds: 604800       # 3600 to 7776000: among the requests of the last week
+   ```
+
+   `system check` names a value out of bounds; then `system shutdown` and `system start`.
+2. **What it proposes.** Only a Worker's command judged under the studio policy, by its exact argv
+   (for example `pnpm lint`, never `pnpm lint --fix`), approved at least `approvals` times among
+   the requests made in the window, none of them rejected or expired. Never a project's command, a
+   `local-private` one, another class, or a class that always asks; never while another policy
+   change waits for you.
+3. **Decide it in the approval queue.** Its summary starts *The queue proposes: list the command
+   …*, and **Show change** says *Proposed by the queue, not by you*, how many times you approved
+   it, and the diff: the studio policy at its next version with that one line added to `commands`.
+   - **Approve** to apply it: that argv, and nothing longer, then runs as `workspace-write` (under
+     the bundle's policy `auto`, its `tests` and `lint` pending until the result is accepted). The
+     studio policy's version rises, so open requests made under the old one are withdrawn and
+     asked again, as for any change.
+   - **Deny**, or let it expire: nothing changes, and the queue never proposes that command again.
+     You can still propose it yourself on the policy page.
+4. **Audit:** the policy page's history marks the change *(proposed by the queue)*; its `origin`
+   names the `policy-change` decision (rule `approvals.repeated-approvals`) that lists the
+   approvals it counted (`system explain <decision>`, MCP `artifact`).
+5. **Turn it off:** remove `repeatedApprovals` (or set `enabled: false`) and restart. A proposal
+   already waiting stays in the queue until you decide it or it expires.
 
 ## A resource pool is limited
 

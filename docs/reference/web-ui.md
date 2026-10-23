@@ -94,7 +94,7 @@ Served when `ctx.approvals` is present; without it, both routes answer `503`
 
 | Route | Body | Answer |
 |---|---|---|
-| `GET policy` | — | `{set?, policies, effective, proposals, changes?}`: the set in force (`hash`, `source` `configuration` or `store`, `configHash`, `changeId`, `projects`), every policy of it (the studio's first), the effective mode per action class for the studio and each project (`[{projectId?, effective}]`), whether the queue takes proposals (contract 1.1), and its latest 20 `policy-change@1.0` records, newest first |
+| `GET policy` | — | `{set?, policies, effective, proposals, changes?}`: the set in force (`hash`, `source` `configuration` or `store`, `configHash`, `changeId`, `projects`), every policy of it (the studio's first), the effective mode per action class for the studio and each project (`[{projectId?, effective}]`), whether the queue takes proposals (contract 1.1), and its latest 20 `policy-change@1.x` records, newest first (a change the queue proposed itself carries its `origin`, `@1.1`) |
 | `POST policy/propose` | `{policy, note?}`: one `autonomy-policy@1.0` record | `{change, request}`: the `policy-change@1.0` record (`asked`) and the `policy-change` request that asks for it |
 
 - The proposal goes to `ctx.approvals.proposePolicy` as the operator's (INV-6), at the server's
@@ -106,3 +106,8 @@ Served when `ctx.approvals` is present; without it, both routes answer `503`
   nothing is stored. A queue at contract 1.0 answers `501`: its policy changes by configuration
   and a restart only.
 - `note` is trimmed to 2000 characters and shown with the request.
+- A change the queue proposed itself from repeated approvals
+  ([approvals](../design/approvals.md#the-queue-proposes-a-policy-change)) has an `origin`: the
+  queue entry's **Show change** says it was proposed by the queue, not the operator, with the
+  command, the approvals counted, the window, and its decision, and the history marks it
+  *(proposed by the queue)*. It is decided like any other request.
