@@ -2,7 +2,7 @@
   "name": "@tsuuanmi/system-web-ui",
   "version": "0.0.0",
   "private": true,
-  "description": "The operator's web UI on the DSH webserver: runs, steps, decision chains, and approve, stop, continue; the approval queue's verdicts; the autonomy policy and the operator's proposed changes; the operator's acceptance of board reviews; loopback and token-gated",
+  "description": "The operator's web UI on the DSH webserver: runs, steps, decision chains, and approve, stop, continue; the approval queue's verdicts; the autonomy policy and the operator's proposed changes; the operator's acceptance of board reviews; the board's projects with the operator's pause, resume, and close; loopback and token-gated",
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",

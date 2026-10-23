@@ -1,6 +1,6 @@
 // The web UI over the store-backed board, approval queue, and engine, under the bundle's own
 // default studio policy, with the operator's and a client's tokens. Only Worker execution is
-// scripted. Shared by the reviews and policy suites.
+// scripted. Shared by the reviews, policy, and projects suites.
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -11,16 +11,17 @@ import StoreApprovals, { type Config as ApprovalsConfig } from '@tsuuanmi/system
 import type { AutonomyPolicy } from '@tsuuanmi/system-approvals-core'
 import Artifacts from '@tsuuanmi/system-artifacts'
 import StoreBoard from '@tsuuanmi/system-board'
+import type { BoardTask } from '@tsuuanmi/system-board-core'
 import Egress from '@tsuuanmi/system-egress'
 import EventLog from '@tsuuanmi/system-event-log'
 import Leases from '@tsuuanmi/system-leases'
 import Store from '@tsuuanmi/system-store'
 import WorkerSessions from '@tsuuanmi/system-worker-sessions'
 import WorkerRouter from '@tsuuanmi/system-workers'
-import Workflow from '@tsuuanmi/system-workflow'
+import Workflow, { type RunView } from '@tsuuanmi/system-workflow'
 import { expect } from 'vitest'
 import { parse } from 'yaml'
-import { CONFIG, ScriptedWorkers, TEMPLATES } from '../../workflow/conformance/workflow.ts'
+import { CONFIG, readyTask, ScriptedWorkers, TEMPLATES } from '../../workflow/conformance/workflow.ts'
 import * as WebUi from '../src/index.ts'
 
 /** The `approvals` row's policies, as the bundle ships them (`cordis.patch.yml`). */
@@ -99,4 +100,18 @@ export async function boot(cleanups: Array<() => unknown>, options: { dir?: stri
     return { status: response.status, value: await response.json() as Record<string, unknown> }
   }
   return { ctx, workers, dir, ...(refused ? { refused } : {}), call, client: CLIENT, stop }
+}
+
+/** A workspace-write task of project p1 run to completion: under the bundle's policy, its run reports neither tests nor lint, so it waits in review for the operator. */
+export async function reviewed(ctx: Context, title: string): Promise<{ task: BoardTask; run: RunView }> {
+  const task = await readyTask(ctx, title, { actionClass: 'workspace-write', maxAttempts: 2 })
+  const run = await ctx.workflow.start({ template: 'solo', input: `change ${title}`, classification: 'public', task: { taskId: task.taskId } })
+  const deadline = Date.now() + 60_000
+  while (ctx.workflow.get(run.runId)?.task?.phase !== 'reported') {
+    if (Date.now() > deadline) throw new Error(`run ${run.runId} was not reported`)
+    await new Promise((resolve) => setTimeout(resolve, 25))
+  }
+  const view = ctx.workflow.get(run.runId)!
+  expect(view).toMatchObject({ status: 'completed', task: { outcome: { status: 'review', state: 'review' } } })
+  return { task: (await ctx.board.task(task.taskId))!, run: view }
 }

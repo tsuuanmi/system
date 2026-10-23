@@ -19,7 +19,8 @@
 > into a task run's own worktree ([TASKS.md in a run's workspace](workflow-engine.md#tasksmd-in-a-runs-workspace)).
 > Differs from target: a budget is enforced before a run, never during it, so a run can overdraw
 > its last lines; only a Worker source with a worktree per run writes `TASKS.md`. The operator
-> accepts or rejects a review on `/ui` ([`web-ui`](../../packages/plugins/web-ui/README.md)).
+> accepts or rejects a review, and pauses, resumes, or closes a project, on `/ui`
+> ([`web-ui`](../../packages/plugins/web-ui/README.md)).
 
 The board holds work that outlives a run: projects with charters, and their tasks. A run of the
 [workflow engine](workflow-engine.md) serves one attempt of one task. Only the board moves a
@@ -87,9 +88,11 @@ An amendment (a pivot) does not change the project's state: the new charter wait
 
 `pause`, `resume`, and `close` are the operator's: no lead or Worker moves a project
 ([INV-6](../architecture/invariants.md#inv-6-authority-comes-from-trusted-envelopes)). The
-operator makes them with the MCP tools `board_pause`, `board_resume`, and `board_close`, which
-the host serves to the operator token only and which refuse any other caller themselves. Each
-records a `board` decision whose candidates say why
+operator makes them on `/ui`, the board page, where each move opens a confirmation of what it
+does to that project and is sent with the project revision shown, so a project changed since is
+refused ([web UI API](../reference/web-ui.md#projects)); or with the MCP tools `board_pause`,
+`board_resume`, and `board_close`, which the host serves to the operator token only and which
+refuse any other caller themselves. Each records a `board` decision whose candidates say why
 ([INV-13](../architecture/invariants.md#inv-13-every-decision-is-an-artifact)).
 
 - **Pause** (active → paused): until it is resumed, no task of the project is claimed or started

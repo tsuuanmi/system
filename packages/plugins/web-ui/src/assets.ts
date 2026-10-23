@@ -5,11 +5,11 @@ export const PAGE = `<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>system: runs, approvals, reviews, and policy</title>
+<title>system: runs, approvals, reviews, board, and policy</title>
 <link rel="stylesheet" href="/ui/app.css">
 </head>
 <body>
-<header><h1><a href="/ui/" id="home">system</a></h1><nav><a href="/ui/?view=policy" id="policy-link">Autonomy policy</a></nav><span id="status" role="status"></span></header>
+<header><h1><a href="/ui/" id="home">system</a></h1><nav><a href="/ui/?view=board" id="board-link">Board</a> <a href="/ui/?view=policy" id="policy-link">Autonomy policy</a></nav><span id="status" role="status"></span></header>
 <main id="main"></main>
 <script src="/ui/app.js"></script>
 </body>
@@ -22,7 +22,7 @@ export const APP_CSS = `
 * { box-sizing: border-box; }
 body { margin: 0; font: 14px/1.5 system-ui, sans-serif; color: var(--fg); background: var(--bg); }
 header { display: flex; align-items: baseline; gap: 16px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
-header h1 { margin: 0; font-size: 18px; } header a { color: inherit; text-decoration: none; }
+header h1 { margin: 0; font-size: 18px; } header a { color: inherit; text-decoration: none; } header nav a { margin-right: 12px; }
 #status { color: var(--muted); }
 main { padding: 16px; max-width: 1100px; margin: 0 auto; }
 table { width: 100%; border-collapse: collapse; margin: 8px 0 24px; }
@@ -234,6 +234,72 @@ export const APP_JS = `'use strict'
     )
   }
 
+  // The board's projects, and the operator's pause, resume, and close: each behind a confirmation
+  // that says what the move does, sent with the project revision shown, so a project changed since
+  // is refused and nothing moves. The page does not refresh while a confirmation is open.
+  const OPEN = ['proposed', 'ready', 'claimed', 'running', 'review', 'waiting-for-input', 'waiting-for-approval']
+  let confirming = false
+  async function boardView() {
+    let projects
+    try { ({ projects } = await api('projects')) } catch (error) {
+      show(el('h2', {}, 'Board'), el('p', { class: error.status === 503 ? 'muted' : 'state failed' }, error.status === 503 ? 'The board is not running.' : error.message))
+      return
+    }
+    const count = (p, states) => states.reduce((n, s) => n + (p.open[s] || 0), 0)
+    const shown = el('div', {})
+    const settle = async (text) => { confirming = false; await boardView(); status.textContent = text }
+    const send = (p, action, body) => async () => {
+      try {
+        const { project } = await api('projects/' + encodeURIComponent(p.projectId) + '/' + action, Object.assign({ revision: p.revision }, body()))
+        await settle(p.projectId + ' is ' + project.state)
+      } catch (error) { await settle(error.message) }
+    }
+    const confirm = (p, action) => () => {
+      confirming = true
+      const busy = count(p, ['running', 'review'])
+      const refused = action === 'close' && busy > 0
+      const outcome = el('select', { 'aria-label': 'Outcome of ' + p.projectId }, el('option', { value: 'achieved' }, 'achieved: its criteria are met'), el('option', { value: 'stopped' }, 'stopped: it ends without them'))
+      const asked = [p.open['waiting-for-approval'] ? p.open['waiting-for-approval'] + ' task(s) waiting for approval' : null, p.amendment ? 'the pending amendment (charter version ' + p.amendment + ')' : null].filter(Boolean)
+      const what = action === 'pause' ? [
+        'Until you resume it, no task of it is claimed or started, and no proposed task is put to the policy.',
+        busy ? busy + ' task(s) running or in review go on to their outcome.' : 'No task of it is running or in review.',
+        'Every wait keeps its expiry, and a request you answer meanwhile still applies.',
+      ] : action === 'resume' ? [
+        'Its proposed tasks go through the gate on the next sweep of the board, and its ready tasks may be claimed again.',
+      ] : refused ? [
+        'It cannot close while a task runs or is in review: ' + busy + ' do. Stop the run, or decide the review, first.',
+      ] : [
+        count(p, OPEN) + ' open task(s) are cancelled (project-closed)' + (p.open.claimed ? ', and the lease of ' + p.open.claimed + ' claimed one(s) released' : '') + '.',
+        asked.length ? 'The approval requests of ' + asked.join(' and of ') + ' are withdrawn.' : 'No approval request waits on it.',
+        'A closed project takes no task again. This cannot be undone.',
+      ]
+      const confirmButton = el('button', { class: 'primary', onclick: send(p, action, () => (action === 'close' ? { outcome: outcome.value } : {})) }, 'Confirm ' + action)
+      const cancelButton = el('button', { onclick: () => { confirming = false; shown.replaceChildren() } }, 'Cancel')
+      shown.replaceChildren(el('div', { class: 'panel', role: 'group', 'aria-label': 'Confirm ' + action + ' of ' + p.projectId },
+        el('h3', {}, (action === 'pause' ? 'Pause ' : action === 'resume' ? 'Resume ' : 'Close ') + p.title),
+        el('ul', {}, what.map((line) => el('li', {}, line))),
+        action === 'close' && !refused ? el('p', {}, 'Outcome: ', outcome) : null,
+        refused ? null : confirmButton,
+        cancelButton))
+      ;(refused ? cancelButton : confirmButton).focus()
+    }
+    const moves = (p) => p.state === 'active' ? ['pause', 'close'] : p.state === 'paused' ? ['resume', 'close'] : []
+    const label = { pause: 'Pause', resume: 'Resume', close: 'Close' }
+    const stateOf = (p) => p.state + (p.closure ? ' (' + p.closure.outcome + ')' : p.state === 'proposed' ? ' (its charter waits in the approval queue)' : '')
+    show(
+      el('p', {}, el('a', { href: '/ui/', onclick: (e) => { e.preventDefault(); go() } }, '← runs and approvals')),
+      el('h2', {}, 'Board'),
+      projects.length ? null : el('p', { class: 'muted' }, 'No project is on the board yet.'),
+      projects.length ? table(['Project', 'State', 'Charter', 'Open tasks', 'Move'], projects.map((p) => el('tr', {},
+        el('td', {}, el('strong', {}, p.title), el('div', { class: 'muted' }, p.projectId)),
+        el('td', { class: 'state' }, stateOf(p)),
+        el('td', {}, 'version ' + p.charter.version + (p.amendment ? '; amendment ' + p.amendment + ' waits' : '')),
+        el('td', {}, OPEN.filter((s) => p.open[s]).map((s) => s + ' ' + p.open[s]).join(', ') || '-'),
+        el('td', {}, moves(p).map((m) => el('button', { onclick: confirm(p, m), 'aria-label': label[m] + ' ' + p.projectId }, label[m] + '…'))),
+      )), 'queue') : null,
+      shown)
+  }
+
   // The autonomy policy in force, its history, and a proposed change with its diff. A proposal is
   // asked in the approval queue as a policy-change request; only the operator's approval there applies it.
   async function policyView() {
@@ -312,23 +378,27 @@ export const APP_JS = `'use strict'
   function go(runId) {
     current = runId || null
     view = null
+    confirming = false
     history.pushState(null, '', runId ? '?run=' + encodeURIComponent(runId) : '/ui/')
     refresh()
   }
-  document.getElementById('policy-link').addEventListener('click', (e) => {
+  const nav = (id, name) => document.getElementById(id).addEventListener('click', (e) => {
     e.preventDefault()
     current = null
-    view = 'policy'
-    history.pushState(null, '', '?view=policy')
+    view = name
+    confirming = false
+    history.pushState(null, '', '?view=' + name)
     refresh()
   })
-  window.addEventListener('popstate', () => { const query = new URLSearchParams(location.search); current = query.get('run'); view = query.get('view'); refresh() })
+  nav('board-link', 'board')
+  nav('policy-link', 'policy')
+  window.addEventListener('popstate', () => { const query = new URLSearchParams(location.search); current = query.get('run'); view = query.get('view'); confirming = false; refresh() })
   async function refresh() {
     if (!token) { show(el('p', {}, 'Open the link that ', el('code', {}, 'system ui'), ' prints.')); return }
-    try { await (view === 'policy' ? policyView() : current ? detail(current) : list()); status.textContent = 'updated ' + new Date().toLocaleTimeString() } catch (error) { status.textContent = error.message }
+    try { await (view === 'policy' ? policyView() : view === 'board' ? boardView() : current ? detail(current) : list()); status.textContent = 'updated ' + new Date().toLocaleTimeString() } catch (error) { status.textContent = error.message }
   }
   refresh()
-  // The policy page holds an edit in progress: it is refreshed on demand only.
-  setInterval(() => { if (view !== 'policy' && !document.hidden && !main.contains(document.activeElement)) refresh() }, 5000)
+  // The policy page holds an edit in progress, and an open confirmation a move not yet made: neither is refreshed away.
+  setInterval(() => { if (view !== 'policy' && !confirming && !document.hidden && !main.contains(document.activeElement)) refresh() }, 5000)
 })()
 `

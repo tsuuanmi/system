@@ -1,10 +1,7 @@
-import type { Context } from '@deepseek-ai/cordis'
-import type { BoardTask } from '@tsuuanmi/system-board-core'
 import { SchemaRegistry } from '@tsuuanmi/system-libs'
-import type { RunView } from '@tsuuanmi/system-workflow'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { activeProject, readyTask } from '../../workflow/conformance/workflow.ts'
-import { boot as bootUi } from './store-backed.ts'
+import { activeProject } from '../../workflow/conformance/workflow.ts'
+import { boot as bootUi, reviewed } from './store-backed.ts'
 
 // End to end over the store-backed board, approval queue, and engine, under the bundle's own
 // default studio policy, with the operator's verdicts through the web UI's API. Only Worker
@@ -19,20 +16,6 @@ afterEach(async () => {
 })
 
 const boot = () => bootUi(cleanups)
-
-/** A workspace-write task run to completion: under the bundle's policy, its run reports neither tests nor lint, so it waits in review for the operator. */
-async function reviewed(ctx: Context, title: string): Promise<{ task: BoardTask; run: RunView }> {
-  const task = await readyTask(ctx, title, { actionClass: 'workspace-write', maxAttempts: 2 })
-  const run = await ctx.workflow.start({ template: 'solo', input: `change ${title}`, classification: 'public', task: { taskId: task.taskId } })
-  const deadline = Date.now() + 60_000
-  while (ctx.workflow.get(run.runId)?.task?.phase !== 'reported') {
-    if (Date.now() > deadline) throw new Error(`run ${run.runId} was not reported`)
-    await new Promise((resolve) => setTimeout(resolve, 25))
-  }
-  const view = ctx.workflow.get(run.runId)!
-  expect(view).toMatchObject({ status: 'completed', task: { outcome: { status: 'review', state: 'review' } } })
-  return { task: (await ctx.board.task(task.taskId))!, run: view }
-}
 
 describe('web UI: the operator accepts or rejects a board review held for the operator', () => {
   it('holds a workspace-write task\'s review past its run\'s lease, lists it with its pending checks, and takes only the operator\'s acceptance: done', async () => {

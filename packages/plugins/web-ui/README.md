@@ -27,7 +27,15 @@ The **operator's web UI**, on the DSH webserver under `/ui` (loopback only):
   holds for the operator first ([board](../../../docs/design/board.md#required-checks-bind-at-acceptance)),
   each with its project, exact subject, result artifacts, the checks still pending, its run, and
   until when it waits, and the operator's **Accept / Reject**. Without it the reviews routes
-  answer `503`.
+  answer `503`;
+- when `ctx.board` is present, the **board** page (`?view=board`): every project, the closed ones
+  last, with its state, charter version, a pending amendment, and its open tasks per state, and
+  the operator's **Pause**, **Resume**, and **Close** (achieved or stopped)
+  ([the operator's project moves](../../../docs/design/board.md#the-operators-project-moves)).
+  Each opens a confirmation that says what the move does to this project (what goes on, what is
+  cancelled and released, which approval requests are withdrawn, or why a close is refused), and
+  moves nothing until **Confirm**; **Cancel** closes it. The page does not refresh while a
+  confirmation is open. Without the board the projects routes answer `503`.
 
 The routes are in the [web UI API](../../../docs/reference/web-ui.md).
 
@@ -75,6 +83,10 @@ the host, or over `ssh -L <port>:127.0.0.1:<port> host` like the login desktop.
   another subject is refused, INV-5), and every result artifact, then applied with
   `ctx.board.accept`. Like the queue's, this is the operator's human channel: no MCP tool
   accepts a review.
+- **Project moves** go to `ctx.board.pause`, `resume`, and `close` from this channel and the
+  operator-scope MCP tools `board_pause`, `board_resume`, and `board_close` only (INV-6), at the
+  server's clock. Each sends the project revision the page showed: a project changed since is
+  refused (`409`) and nothing moves. The board records each move's `board` decision (INV-13).
 - **Rendering:** the page is built with DOM methods and `textContent` only.
   Model output is never parsed as HTML.
 - **Scope:** only the operator scope reaches `/ui`
@@ -88,7 +100,7 @@ headers, the guard, the run actions, the queue's routes (listing by batch,
 verdicts bound to the subjects shown, a batch verdict bound to its batch, each
 refusal, `503` without a queue or a board), and, with a browser, both pages.
 [`tests/store-backed.ts`](tests/store-backed.ts) boots the UI over the store-backed board,
-approval queue, and engine under the bundle's own default studio policy, for two suites.
+approval queue, and engine under the bundle's own default studio policy, for three suites.
 [`tests/policy.spec.ts`](tests/policy.spec.ts): a proposed version asked in the queue on its
 exact hash and applied only on approval, with its `policy-change` decision, a waiting board task
 re-gated by the board's next sweep; a rejection that changes nothing; a restart that keeps the
@@ -99,3 +111,11 @@ policy page's diff, a proposal, its queue entry, and its approval.
 review held for the operator past its run's lease, listed with its pending checks, refused to a
 client token, bound to the subject shown, accepted to done; a rejection as another attempt; and a
 review that expires `review-expired`.
+[`tests/projects.spec.ts`](tests/projects.spec.ts): the projects listed with their open tasks; a
+pause and a close refused to a client token, bound to the revision shown; a paused project whose
+ready task the engine does not run and whose proposed task is not gated, resumed and run to done;
+a close refused while a task is in review, then cancelling the open tasks, releasing a claim, and
+withdrawing the requests a waiting task and a pending amendment were on, in the store-backed queue;
+and, with a browser, a pause and a close each made only after its confirmation, and a Cancel that
+moves nothing. [`tests/web-ui.spec.ts`](tests/web-ui.spec.ts) also checks the projects routes
+answer `503` without a board.

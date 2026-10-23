@@ -291,7 +291,8 @@ runs the work the router admitted to them. Callers never reach a source directly
 - **Web UI** (`/ui`) and **CLI**: the operator surface for runs, approvals, accounts, remote
   login, and maintenance. The CLI calls the MCP tools of the running profile. The web UI also
   shows the approval queue by batch and passes the operator's verdicts to `ctx.approvals`, when
-  that is present ([web UI API](../reference/web-ui.md)).
+  that is present, and the board's reviews and projects, with the operator's acceptance and
+  project moves, when `ctx.board` is ([web UI API](../reference/web-ui.md)).
 - **Report** (`report`): the baseline report of a period, for one project or every one, from
   recorded data only (the board, the approval queue, the resource ledger, the event log), as the
   MCP tool `report` and `system report`; by default the weekly investor report. It writes and

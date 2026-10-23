@@ -4,8 +4,9 @@
  * and, when `ctx.approvals` is present, the approval queue by batch with the operator's verdicts
  * (docs/design/approvals.md), and the autonomy policy in force, its history, and the operator's
  * proposed changes, each asked in that queue (docs/design/approvals.md#a-policy-change); and, when
- * `ctx.board` is present, the board's tasks in review with the operator's acceptance
- * (docs/design/board.md). It is served on the DSH webserver under `/ui`, which is loopback-only:
+ * `ctx.board` is present, the board's tasks in review with the operator's acceptance, and its
+ * projects with the operator's pause, resume, and close (docs/design/board.md). It is served on the
+ * DSH webserver under `/ui`, which is loopback-only:
  * - the page and script carry no data, under a strict content security policy;
  * - the token arrives in the URL fragment (never sent to a server), and the script sends it as
  *   a bearer token to `/ui/api`;
@@ -20,7 +21,7 @@ import z from '@deepseek-ai/schemastery'
 import { assertSafeBind, guardRequest, LOOPBACK_HOSTS, readJsonBody, scopeToken, tokenFile } from '@tsuuanmi/system-gateway-core'
 import { type ApprovalRequest, ApprovalsError, type AutonomyPolicy, type Subject, type Verdict } from '@tsuuanmi/system-approvals-core'
 import type {} from '@tsuuanmi/system-artifacts'
-import { type ArtifactRef, BoardError, type BoardTask } from '@tsuuanmi/system-board-core'
+import { type ArtifactRef, BoardError, type BoardTask, type Project, type TaskState } from '@tsuuanmi/system-board-core'
 import { dshHome, registerSecretPath } from '@tsuuanmi/system-libs'
 import type {} from '@tsuuanmi/system-workflow'
 import { APP_CSS, APP_JS, PAGE } from './assets.ts'
@@ -48,6 +49,8 @@ export const POLICY_HISTORY = 20
 export const MAX_VERDICTS = 50
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$/
 const SUBJECT_TYPES: ReadonlyArray<Subject['type']> = ['content', 'git-head', 'pull-request', 'artifact', 'external']
+/** A task's states before it is done or cancelled: what a pause holds or lets go on, and what a close cancels or is refused by. */
+export const OPEN_STATES: readonly TaskState[] = ['proposed', 'ready', 'claimed', 'running', 'review', 'waiting-for-input', 'waiting-for-approval']
 
 const isObject = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value)
 const noteOf = (value: unknown): string | undefined => typeof value === 'string' && value.trim() ? value.trim().slice(0, 2000) : undefined
@@ -86,6 +89,22 @@ export function reviewOf(task: BoardTask, project: { projectId: string; title: s
     heldFor: task.waiting?.reason === 'operator-review' ? 'operator' : 'reviewer',
     ...(task.waiting ? { since: task.waiting.since, expiresAt: task.waiting.expiresAt } : task.holder ? { expiresAt: task.holder.leaseExpiresAt } : {}),
     ...(task.lastDecision ? { lastDecision: task.lastDecision } : {}),
+  }
+}
+
+/**
+ * A project as the board page shows it: its state and the revision a move binds to, its charter
+ * and a pending amendment, its open tasks per state (what a close would cancel, or what refuses
+ * it), and its closure.
+ */
+export function projectOf(project: Project, open: readonly BoardTask[]): Record<string, unknown> {
+  const counts = Object.fromEntries(OPEN_STATES.map((s) => [s, 0])) as Record<TaskState, number>
+  for (const task of open) counts[task.state] += 1
+  return {
+    projectId: project.projectId, title: project.title, state: project.state, revision: project.revision,
+    charter: { version: project.charter.version, intent: project.charter.intent }, ...(project.proposedCharter ? { amendment: project.proposedCharter.version } : {}),
+    open: counts, ...(project.closure ? { closure: project.closure } : {}), ...(project.lastDecision ? { lastDecision: project.lastDecision } : {}),
+    createdAt: project.createdAt, ...(project.updatedAt ? { updatedAt: project.updatedAt } : {}),
   }
 }
 
@@ -261,12 +280,64 @@ export function apply(ctx: Context, config: Config = {}): void {
     }
   }
 
+  /**
+   * The board's projects, when `ctx.board` is present (else 503): `GET projects` lists them, the
+   * closed ones last, each with its open tasks per state; `POST projects/<projectId>/pause`,
+   * `resume`, and `close` make the operator's project moves
+   * (docs/design/board.md#the-operators-project-moves), each bound to the project's revision the
+   * page showed: a project changed since is refused and nothing moves. The UI is the operator's
+   * channel (INV-6), so the moves go to `ctx.board` from here, at the wall clock; the board
+   * records each one's `board` decision (INV-13).
+   */
+  const projects = async (req: IncomingMessage, res: ServerResponse, path: string): Promise<void> => {
+    const board = ctx.get('board')
+    if (!board) return json(res, 503, { error: 'the board is not running' })
+    if (path === 'projects') {
+      if (req.method !== 'GET') return json(res, 405, { error: 'method not allowed' })
+      const listed: Array<Record<string, unknown>> = []
+      for (const project of await board.projects()) listed.push(projectOf(project, await board.tasks({ projectId: project.projectId, states: [...OPEN_STATES] })))
+      // A stable sort: in creation order, the closed ones last.
+      listed.sort((a, b) => Number(a.state === 'closed') - Number(b.state === 'closed'))
+      return json(res, 200, { projects: listed })
+    }
+    const match = /^projects\/([^/]+)\/(pause|resume|close)$/.exec(path)
+    if (!match) return json(res, 404, { error: 'not found' })
+    if (req.method !== 'POST') return json(res, 405, { error: 'method not allowed' })
+    let projectId: string
+    try {
+      // A project id may hold a slash: the page sends it encoded.
+      projectId = decodeURIComponent(match[1]!)
+    } catch {
+      return json(res, 400, { error: 'not a project id' })
+    }
+    if (!ID.test(projectId)) return json(res, 400, { error: 'not a project id' })
+    const move = match[2] as 'pause' | 'resume' | 'close'
+    try {
+      const body = await readJson(req)
+      if (!Number.isSafeInteger(body.revision) || (body.revision as number) < 0) return json(res, 400, { error: 'revision must be the project revision the page showed' })
+      if (move === 'close' && body.outcome !== 'achieved' && body.outcome !== 'stopped') return json(res, 400, { error: 'outcome must be achieved or stopped' })
+      const shown = await board.project(projectId)
+      if (!shown) return json(res, 404, { error: `unknown project ${projectId}` })
+      // The move binds to the project the operator confirmed: one changed since is refused (INV-5).
+      if (shown.revision !== body.revision) return json(res, 409, { error: `project ${projectId} changed since the page showed it (revision ${shown.revision}, not ${String(body.revision)}); nothing was done` })
+      const at = new Date()
+      const moved = move === 'pause' ? await board.pause(projectId, at)
+        : move === 'resume' ? await board.resume(projectId, at)
+        : await board.close(projectId, body.outcome as 'achieved' | 'stopped', at)
+      return json(res, 200, { project: moved, decision: moved.lastDecision })
+    } catch (error) {
+      if (error instanceof BoardError) return json(res, error.failure === 'unknown-project' ? 404 : 409, { error: `${error.failure}: ${error.message}` })
+      return json(res, (error as { status?: number }).status ?? 409, { error: (error as Error).message })
+    }
+  }
+
   const api = async (req: IncomingMessage, res: ServerResponse, path: string): Promise<void> => {
     const refused = refuse(req)
     if (refused) return json(res, refused[0], { error: refused[1] })
     if (path === 'approvals' || path.startsWith('approvals/')) return queue(req, res, path)
     if (path === 'policy' || path.startsWith('policy/')) return policy(req, res, path)
     if (path === 'reviews' || path.startsWith('reviews/')) return reviews(req, res, path)
+    if (path === 'projects' || path.startsWith('projects/')) return projects(req, res, path)
     const workflow = ctx.workflow
     if (req.method === 'GET' && path === 'runs') return json(res, 200, { runs: workflow.usage(100) })
     const match = /^runs\/([A-Za-z0-9_-]{1,100})(?:\/(approve|vote|stop|continue))?$/.exec(path)

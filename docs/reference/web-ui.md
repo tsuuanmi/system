@@ -42,6 +42,28 @@ Served when `ctx.board` is present; without it, both routes answer `503`
   accepts a review.
 - A refusal by the board is `409`, with its failure (`invalid`, `invalid-transition`, …).
 
+## Projects
+
+Served when `ctx.board` is present; without it, every route answers `503`
+([the operator's project moves](../design/board.md#the-operators-project-moves)).
+
+| Route | Body | Answer |
+|---|---|---|
+| `GET projects` | — | `{projects}`: every project, in creation order with the closed ones last: `projectId`, `title`, `state`, `revision`, `charter {version, intent}`, `amendment` (a pending amendment's charter version), `open` (its tasks per open state: `proposed`, `ready`, `claimed`, `running`, `review`, `waiting-for-input`, `waiting-for-approval`), `closure`, `lastDecision`, `createdAt`, `updatedAt` |
+| `POST projects/<projectId>/pause` | `{revision}` | `{project, decision}`: the `project@1.0` record after `ctx.board.pause`, and the `board` decision that records the move |
+| `POST projects/<projectId>/resume` | `{revision}` | `{project, decision}`, after `ctx.board.resume` |
+| `POST projects/<projectId>/close` | `{revision, outcome: achieved \| stopped}` | `{project, decision}`, after `ctx.board.close`; `decision` is also the closure's |
+
+- `<projectId>` is URI-encoded (an id may hold `/`). `revision` is the project's revision the page
+  showed: a project whose revision moved since (a move, a charter amended or dropped) is refused
+  (`409`) and nothing moves. A malformed body is `400`, an unknown project `404`.
+- The move goes to `ctx.board` as the operator's (INV-6), at the server's clock. A refusal by the
+  board is `409` with its failure: `invalid-transition` for a move from another state, or a close
+  while a task of the project runs or is in review.
+- A close cancels every open task of the project (`project-closed`), releasing a claimed one's
+  lease, then withdraws the approval requests those tasks and a pending amendment waited on. The
+  page shows each move's consequences for that project, and sends it only on **Confirm**.
+
 ## Approval queue
 
 Served when `ctx.approvals` is present; without it, both routes answer `503`

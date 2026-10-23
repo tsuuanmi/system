@@ -187,13 +187,17 @@ describe('web UI: the operator\'s view, loopback and token-gated', () => {
     expect(approvals().calls).toHaveLength(2)
   })
 
-  it('answers 503 for the reviews when no ctx.board runs, and refuses a client token there as everywhere (401)', async () => {
+  it('answers 503 for the reviews and the projects when no ctx.board runs, and refuses a client token there as everywhere (401)', async () => {
     const { origin, token } = await boot()
     const auth = { authorization: `Bearer ${token}` }
     const reviews = await fetch(`${origin}/ui/api/reviews`, { headers: auth })
     expect([reviews.status, await reviews.json()]).toEqual([503, { error: 'the board is not running' }])
     expect((await fetch(`${origin}/ui/api/reviews/task-1/decide`, { method: 'POST', headers: { ...auth, 'content-type': 'application/json', origin }, body: '{"verdict":"accept"}' })).status).toBe(503)
     expect((await fetch(`${origin}/ui/api/reviews`, { headers: { authorization: `Bearer ${Buffer.alloc(32, 8).toString('base64url')}` } })).status).toBe(401)
+    const projects = await fetch(`${origin}/ui/api/projects`, { headers: auth })
+    expect([projects.status, await projects.json()]).toEqual([503, { error: 'the board is not running' }])
+    expect((await fetch(`${origin}/ui/api/projects/p1/close`, { method: 'POST', headers: { ...auth, 'content-type': 'application/json', origin }, body: '{"revision":1,"outcome":"stopped"}' })).status).toBe(503)
+    expect((await fetch(`${origin}/ui/api/projects/p1/close`, { method: 'POST', headers: { authorization: `Bearer ${Buffer.alloc(32, 8).toString('base64url')}`, 'content-type': 'application/json', origin }, body: '{"revision":1,"outcome":"stopped"}' })).status).toBe(401)
   })
 
   it('answers 503 for the queue when no ctx.approvals runs, and serves the runs as before', async () => {
