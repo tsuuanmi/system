@@ -209,6 +209,8 @@ well-configured Claude Code session alone and through `system`
    result is a change you accepted; an interruption is each time the session needed you (a
    permission prompt, a question, a correction, a review); take the tokens and cost from the
    session's own usage report. Record the dates and the counts.
-3. **Compare:** accepted results per interruption must be clearly better through `system`, and
+3. **Before the pilot:** the runs of `system` on its own code are recorded in
+   [self-build](../validation/self-build.md); the pilot is the measured version.
+4. **Compare:** accepted results per interruption must be clearly better through `system`, and
    tokens per accepted result no worse. Quota lost at reset is not reported yet. Record both sides
    in the [release checklist](../validation/release-checklist.md).
