@@ -15,11 +15,12 @@ verified live.
 | [ui-operations.md](ui-operations.md) | UI maps as data, deterministic resolution, passive network signals, bounded self-heal with local overlay | provider runtime |
 | [provider-turns.md](provider-turns.md) | driver contract, turn receipts, reconciliation, two-clock completion, the turn path | provider runtime |
 | [scheduling-and-leases.md](scheduling-and-leases.md) | per-account scheduler, exclusive fence, lease generations | provider runtime, kernel |
-| [workflow-engine.md](workflow-engine.md) | DAG, durable nodes, graph growth, remediation, exact-subject gates, recovery, lineage | orchestration |
+| [workflow-engine.md](workflow-engine.md) | DAG, durable nodes, briefs, graph growth, remediation, exact-subject gates, recovery, lineage | orchestration |
 | [artifacts.md](artifacts.md) | artifact envelope, kinds, decision records, lineage, explain | kernel, orchestration |
 | [routing.md](routing.md) | capability vocabulary, admission, data locality, intelligence tiers, quota-aware deterministic routing | routing |
 | [board.md](board.md) | projects with charters, board tasks across runs, their states, leases, and fail-closed waits | orchestration (work state machine) |
 | [approvals.md](approvals.md) | the autonomy policy and the one batched approval queue; expiry denies | routing (gate) |
+| [digests.md](digests.md) | cited digests of raw artifacts on request: a read-only Worker on the economy tier, the quote check, failing open | orchestration (digest family) |
 | [resources.md](resources.md) | configured pools, limit readings, reservations before a run, deduplicated usage after it | routing (resource ledger) |
 | [sessions-and-messaging.md](sessions-and-messaging.md) | Worker sessions (SessionId), direct peer messaging, long-running mechanics, A2A alignment | orchestration |
 | [teams.md](teams.md) | the `team` option on a workflow node: Model A members, independent proposals, sealed ballots, tally, bounded debate, tie votes | orchestration |

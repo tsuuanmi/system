@@ -275,6 +275,22 @@ importers:
         specifier: workspace:*
         version: link:../plugins/store
 
+  packages/digest-core:
+    dependencies:
+      '@tsuuanmi/system-libs':
+        specifier: workspace:*
+        version: link:../libs
+    devDependencies:
+      '@deepseek-ai/cordis':
+        specifier: 4.0.5-alpha.1
+        version: 4.0.5-alpha.1(@deepseek-ai/cordis-plugin-include@1.0.10-alpha.1)(@deepseek-ai/cordis-plugin-loader@1.0.6-alpha.1)
+      '@tsuuanmi/system-artifacts':
+        specifier: workspace:*
+        version: link:../plugins/artifacts
+      '@tsuuanmi/system-store':
+        specifier: workspace:*
+        version: link:../plugins/store
+
   packages/gateway-core:
     dependencies:
       '@tsuuanmi/system-libs':
@@ -574,6 +590,52 @@ importers:
       '@deepseek-ai/schemastery':
         specifier: 3.18.5-alpha.1
         version: 3.18.5-alpha.1
+
+  packages/plugins/digest:
+    dependencies:
+      '@tsuuanmi/system-artifacts':
+        specifier: workspace:*
+        version: link:../artifacts
+      '@tsuuanmi/system-digest-core':
+        specifier: workspace:*
+        version: link:../../digest-core
+      '@tsuuanmi/system-event-log':
+        specifier: workspace:*
+        version: link:../event-log
+      '@tsuuanmi/system-gateway-core':
+        specifier: workspace:*
+        version: link:../../gateway-core
+      '@tsuuanmi/system-leases':
+        specifier: workspace:*
+        version: link:../leases
+      '@tsuuanmi/system-libs':
+        specifier: workspace:*
+        version: link:../../libs
+      '@tsuuanmi/system-store':
+        specifier: workspace:*
+        version: link:../store
+      '@tsuuanmi/system-workers-core':
+        specifier: workspace:*
+        version: link:../../workers-core
+    devDependencies:
+      '@deepseek-ai/cordis':
+        specifier: 4.0.5-alpha.1
+        version: 4.0.5-alpha.1(@deepseek-ai/cordis-plugin-include@1.0.10-alpha.1)(@deepseek-ai/cordis-plugin-loader@1.0.6-alpha.1)
+      '@deepseek-ai/schemastery':
+        specifier: 3.18.5-alpha.1
+        version: 3.18.5-alpha.1
+      '@tsuuanmi/system-egress':
+        specifier: workspace:*
+        version: link:../egress
+      '@tsuuanmi/system-mcp-server':
+        specifier: workspace:*
+        version: link:../mcp-server
+      '@tsuuanmi/system-workers':
+        specifier: workspace:*
+        version: link:../workers
+      zod:
+        specifier: ^4.1.0
+        version: 4.6.5
 
   packages/plugins/display-virtual:
     dependencies:
@@ -1461,6 +1523,9 @@ importers:
       '@tsuuanmi/system-credentials-vault':
         specifier: workspace:*
         version: link:../plugins/credentials-vault
+      '@tsuuanmi/system-digest':
+        specifier: workspace:*
+        version: link:../plugins/digest
       '@tsuuanmi/system-display-virtual':
         specifier: workspace:*
         version: link:../plugins/display-virtual

@@ -111,6 +111,11 @@
     # the board waits on its inject and is not mounted. Turned off on its own, runs work as before. ---
     - id: board
       name: '@tsuuanmi/system-board'
+    # --- digests (B6, digest family): a cited digest@1.0 of raw artifacts, on request (MCP digests_request),
+    # by a read-only Worker on the economy tier, quote-checked. It fails open: with no such Worker (the
+    # agent rows off), a request is settled `bypassed` and recorded, and nothing waits on it. ---
+    - id: digest
+      name: '@tsuuanmi/system-digest'                # ctx.digests; MCP digests_request, digests_get
     - id: profile-software-development
       name: '@tsuuanmi/system-profile-software-development'  # agent-review, for agent Workers (off with them)
       disabled: true
