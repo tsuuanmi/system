@@ -60,9 +60,12 @@ export function workersConformance(name: string, boot: Boot): void {
         expect((await ctx.workers.list()).map((w) => w.worker)).toEqual(['w:a', 'w:b'])
         expect(() => ctx.workers.register(source('temp', []))).toThrow()
         expect(ctx.workers.source('temp')?.name).toBe('temp')
+        // A provider that keeps each source's last read (optional) keeps it for the source's lifetime only.
+        if (ctx.workers.sources) expect(ctx.workers.sources()).toEqual([{ source: 'temp', state: 'described', at: expect.any(String), workers: 2 }])
         await fiber.dispose()
         expect(await ctx.workers.list()).toEqual([])
         expect(ctx.workers.source('temp')).toBeUndefined()
+        if (ctx.workers.sources) expect(ctx.workers.sources()).toEqual([])
       } finally {
         await dispose()
       }
@@ -335,10 +338,40 @@ export function workersConformance(name: string, boot: Boot): void {
         const admitted = await ctx.workers.route(requirement())
         expect(admitted.worker.worker).toBe('w:a')
         expect(body(ctx, admitted.decisions.route).candidates.find((c) => c.option === 'source stuck')).toEqual({ option: 'source stuck', selected: false, reasons: ['did not describe its Workers within 5 s'] })
+        // A provider that keeps each source's last read names the silent one, so health can.
+        if (ctx.workers.sources) {
+          expect(ctx.workers.sources()).toEqual([
+            { source: 'live', state: 'described', at: expect.any(String), workers: 1 },
+            { source: 'stuck', state: 'silent', at: expect.any(String), workers: 0, detail: 'did not describe its Workers within 5 s' },
+          ])
+        }
       } finally {
         await dispose()
       }
     }, 20_000)
+
+    it('keeps a source whose describe fails as failed in its last read, with why, until a later read hears it', async () => {
+      const { ctx, dispose } = await boot()
+      try {
+        let broken = true
+        ctx.workers.register(source('flaky', async () => {
+          if (broken) throw new Error('the vault is locked')
+          return [worker('w:f')]
+        }))
+        ctx.workers.register(source('live', [worker('w:a')]))
+        // Whatever the read then gives, no Worker of the failed source is admitted from it.
+        const listed = await ctx.workers.list().catch(() => [])
+        expect(listed.map((w) => w.worker)).not.toContain('w:f')
+        if (ctx.workers.sources) {
+          expect(ctx.workers.sources().find((s) => s.source === 'flaky')).toEqual({ source: 'flaky', state: 'failed', at: expect.any(String), workers: 0, detail: 'failed to describe its Workers: the vault is locked' })
+        }
+        broken = false
+        expect((await ctx.workers.list()).map((w) => w.worker)).toEqual(['w:a', 'w:f'])
+        if (ctx.workers.sources) expect(ctx.workers.sources().map((s) => [s.source, s.state, s.workers])).toEqual([['flaky', 'described', 1], ['live', 'described', 1]])
+      } finally {
+        await dispose()
+      }
+    })
 
     it('accepts or rejects a stored result by contract, records the decision, and fails closed on unknowns (REQ-WRK-3)', async () => {
       const { ctx, dispose } = await boot()

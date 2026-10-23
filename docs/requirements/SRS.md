@@ -240,8 +240,9 @@
   vault key custody, accounts, Workers, provider UI drift, usage the resource
   ledger could not count) as ok, degraded, or down with what to do, and the
   worst of them. Health is degraded while a provider UI change was seen
-  recently, and while a resource pool has a run whose usage the ledger could
-  not count, and has not counted since, in its current window.
+  recently, while a Worker source was silent or failed in its last read, naming
+  it, and while a resource pool has a run whose usage the ledger could not
+  count, and has not counted since, in its current window.
 - **REQ-HOST-7** Every plugin package and seam definition ships a manifest
   (`plugin-manifest@1.x`) that agrees with its code: the seams it provides,
   consumes, and defines, at their contract versions, and its core component or

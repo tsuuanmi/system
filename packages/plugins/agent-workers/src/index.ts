@@ -36,6 +36,7 @@ import { type LimitState, type Resources, ResourcesError, type UsageRecord } fro
 import type {} from '@tsuuanmi/system-store'
 import type { ArtifactRef, CapabilityDescriptor, CapabilityOffer, ExecutionStatus, QuotaClass, Tier, WorkerExecution, WorkerSandbox, WorkerStart, WorkScope } from '@tsuuanmi/system-workers-core'
 import { GATE_MIGRATION, type Deferral, runGate } from './gate.ts'
+import { Probes } from './probes.ts'
 import { RUN_ID, type RepositoryCheck, type SweepOutcome, Worktrees } from './worktrees.ts'
 
 declare module '@deepseek-ai/cordis' {
@@ -105,7 +106,11 @@ export interface Config {
    * 200,000); a turn past it fails before anything is sent, never cut (ADR-0049, INV-9).
    */
   maxReplayChars?: number
-  /** How long a probe result stands (default 5 min). */
+  /**
+   * How long a runtime's probe result stands, from when its probe started (default 5 min): the
+   * next probe starts in the background at half of it, and a result past it admits no Worker until
+   * one finishes (./probes.ts). 0 keeps none: every read waits for a probe.
+   */
   probeTtlMs?: number
   /** Hard deadline per run; the agent is stopped and the run fails as `timeout` (default 15 min). */
   runTimeoutMs?: number
@@ -193,14 +198,15 @@ export class AgentWorkers extends Service {
       reviewMember: z.boolean().default(false).description('Its review team member steps run under the enforced review-member profile (ADR-0049): no tool call runs, its workspace is an empty directory outside any repository, and the profile grants reason for those steps only; a runtime that cannot resume keeps the member\'s conversation by replay. Read-only Workers with a family only'),
     })).default([]).description('Agent-runtime Workers; each policy comes from here only (INV-6)'),
     maxReplayChars: z.natural().min(1).max(2_000_000).default(200_000).description('Characters of earlier turns a review member\'s replayed conversation holds, at most; a turn past it fails, never cut'),
-    probeTtlMs: z.natural().default(5 * 60_000).description('How long a probe result stands'),
+    probeTtlMs: z.natural().default(5 * 60_000).description('How long a runtime\'s probe result stands, from when its probe started: the next probe starts in the background at half of it, and a result past it admits no Worker until one finishes (0: every read waits for a probe)'),
     runTimeoutMs: z.natural().min(1).default(15 * 60_000).description('Hard deadline per run'),
     worktreeRoot: z.string().description('Where the worktrees of worktreePerRun Workers go (default <DSH_HOME>/system/worktrees)'),
     worktreeRetentionHours: z.natural().default(168).description('Hours a workflow run\'s worktree is kept after its last agent run ended; then its changes are committed on its branch and it is removed (0 keeps them)'),
   }) as unknown as z<Config>
 
   private readonly workers = new Map<string, AgentWorkerConfig>()
-  private readonly probes = new Map<string, { at: number; evidence: RuntimeEvidence }>()
+  /** Each runtime's probe, refreshed in the background (./probes.ts). */
+  private readonly probes: Probes
   private readonly schedulers = new Map<string, ProviderScheduler>()
   private readonly waiters = new Map<string, Set<() => void>>()
   private readonly inflight = new Set<Promise<void>>()
@@ -237,6 +243,18 @@ export class AgentWorkers extends Service {
     }
     if (config.worktreeRoot !== undefined && !isAbsolute(config.worktreeRoot)) throw new ProviderError('config_error', 'agent Workers: worktreeRoot must be an absolute path')
     this.worktrees = new Worktrees(ctx, config.worktreeRoot ?? join(dshHome(), 'system', 'worktrees'))
+    this.probes = new Probes({
+      ttlMs: config.probeTtlMs ?? 5 * 60_000,
+      provider: (runtime) => this.ctx.agentRuntimes.get(runtime),
+      stopped: this.stopped.signal,
+      // A stop waits for a probe in flight: each of its steps is bounded by its runtime.
+      track: (probe) => {
+        const tracked = probe.then(() => undefined, () => undefined)
+        this.inflight.add(tracked)
+        void tracked.finally(() => this.inflight.delete(tracked))
+      },
+      warn: (message) => this.warnOnce(message),
+    })
     ctx.store.migrate('agent-workers', [{
       version: 1,
       sql: `CREATE TABLE agent_runs (
@@ -317,6 +335,7 @@ export class AgentWorkers extends Service {
         clearInterval(hourly)
         // A stop is not a failure: a started run stays as it is, and the next start reconciles it.
         this.stopped.abort()
+        this.probes.close()
         for (const timer of this.retries) clearTimeout(timer)
         for (const scheduler of this.schedulers.values()) scheduler.close(new ProviderError('aborted', 'agent Workers stopped'))
         await Promise.allSettled(this.inflight)
@@ -326,11 +345,15 @@ export class AgentWorkers extends Service {
     })
   }
 
-  /** Each configured Worker, with what its runtime's probe proves now. */
+  /**
+   * Each configured Worker, with what its runtime's probe proves now. Once a runtime's first probe
+   * has finished, this never waits for one: a result past `probeTtlMs` admits nothing until the
+   * probe in the background replaces it (./probes.ts).
+   */
   private async describe(): Promise<CapabilityDescriptor[]> {
     const observedAt = now()
     return Promise.all([...this.workers].map(async ([id, worker]): Promise<CapabilityDescriptor> => {
-      const evidence = await this.evidence(worker)
+      const evidence = await this.probes.described(worker.runtime)
       // A Worker that works in a worktree per run takes no work while its workspace cannot hold one.
       const repository = worker.worktreePerRun ? await this.repository(id, worker) : undefined
       // A Worker whose runtime cannot keep the host state unreadable (ADR-0024), or cannot ask the
@@ -457,16 +480,6 @@ export class AgentWorkers extends Service {
     this.ctx.logger.warn(message)
   }
 
-  private async evidence(worker: AgentWorkerConfig): Promise<RuntimeEvidence> {
-    const provider = this.ctx.agentRuntimes.get(worker.runtime)
-    if (!provider) return { available: false, detail: `no ${worker.runtime} runtime is registered`, sandboxes: [], resume: false, executes: false, readsConfined: false, gatesToolCalls: false }
-    const cached = this.probes.get(worker.runtime)
-    if (cached && Date.now() - cached.at < (this.config.probeTtlMs ?? 5 * 60_000)) return cached.evidence
-    const evidence = await provider.probe().catch((error: unknown): RuntimeEvidence => ({ available: false, detail: (error as Error).message.slice(0, 200), sandboxes: [], resume: false, executes: false, readsConfined: false, gatesToolCalls: false }))
-    this.probes.set(worker.runtime, { at: Date.now(), evidence })
-    return evidence
-  }
-
   /**
    * The confinement a run on an agent Worker is held to, for its brief (brief@1.x `sandbox`): the
    * configured sandbox in the workspace the run works in (with `worktreePerRun`, the workflow run's
@@ -477,7 +490,8 @@ export class AgentWorkers extends Service {
     const worker = this.workers.get(id)
     if (!worker) return undefined
     const workspace = worker.worktreePerRun && runId !== undefined && RUN_ID.test(runId) ? this.worktrees.pathOf(worker.workspace, runId) : worker.workspace
-    const executes = this.probes.get(worker.runtime)?.evidence.executes === true
+    // Only a result that still stands proves it; none, and the brief claims no commands.
+    const executes = this.probes.current(worker.runtime)?.executes === true
     return { mode: worker.sandbox, workspace, network: 'allow-list', commands: worker.sandbox === 'workspace-write' && executes }
   }
 
@@ -667,7 +681,7 @@ export class AgentWorkers extends Service {
     const own: Turn = { prompt: row.prompt, classification: row.classification as Classification, native: true }
     if (!row.session_id) return own
     const member = row.scope === REVIEW_MEMBER
-    const evidence = await this.evidence(worker)
+    const evidence = await this.probes.proven(worker.runtime)
     if (evidence.resume) {
       const session = this.ctx.store.db.prepare('SELECT native_handle FROM agent_sessions WHERE session_id = ?').get(row.session_id) as { native_handle: string | null } | undefined
       if (session?.native_handle) return { ...own, resume: session.native_handle }
@@ -748,8 +762,8 @@ export class AgentWorkers extends Service {
     const provider = this.ctx.agentRuntimes.get(worker.runtime)
     if (!provider) throw new ProviderError('config_error', `no ${worker.runtime} runtime is registered`)
     // Admission proved it once; a queued run, or one taken up after a restart, runs only on
-    // proof that still holds (ADR-0024). Nothing has reached the agent yet.
-    const evidence = await this.evidence(worker)
+    // proof that still holds (ADR-0024), never one past probeTtlMs. Nothing has reached the agent yet.
+    const evidence = await this.probes.proven(worker.runtime)
     if (!admits(evidence, worker)) {
       throw new ProviderError('config_error', `${worker.runtime} cannot run this Worker now: ${evidence.gatesToolCalls ? evidence.detail : `${evidence.detail}; it cannot ask the run's gate before each tool call`}`)
     }

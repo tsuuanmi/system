@@ -46,7 +46,13 @@ Claude Code and Codex, and the `system` CLI. It is the primary client interface
     sees the details; a client sees each check's name and state. It reads the
     mounted services (`credentials`, `accounts`, `workers`, `eventLog`, `browser`, `resources`), skips
     those not mounted, and reports a check whose source throws as down. Workers
-    count as available only when `ready` or `busy`. A vault key beside the vault
+    count as available only when `ready` or `busy`. `workers` lists the Workers,
+    then reads how each Worker source answered its last read (`ctx.workers.sources()`,
+    when the router keeps them): it names every source that was silent (no answer
+    within the router's 5 s) or failed, with when, and is degraded while one is,
+    down when no Worker answered or a source's failure failed the read
+    ([sources that do not answer](../../../docs/design/routing.md#sources-that-do-not-answer)).
+    A vault key beside the vault
     is advice, never degraded (the default must not page). The store integrity
     check is reused for `storeCheckMinutes`.
   - `plugins` is down when a plugin failed to activate (with its error) or is

@@ -230,6 +230,7 @@ export class McpEndpoint extends McpTools {
       ...(credentials?.custody ? { keyCustody: () => credentials.custody!() } : {}),
       ...(accounts ? { accounts: async () => (await accounts.list()).map((a: { id: string; status: string }) => ({ id: a.id, status: a.status })), duplicateAccounts: () => accounts.duplicateIdentities() } : {}),
       ...(workers ? { workers: async () => (await workers.list()).map((w: { worker: string; state: string }) => ({ worker: w.worker, state: w.state })) } : {}),
+      ...(workers?.sources ? { workerSources: () => workers.sources!() } : {}),
       ...(eventLog ? { events: (type: string, since: string) => eventLog.query({ type, since, limit: 1000 }) } : {}),
       minFreeBytes: this.config.minFreeBytes ?? 2 ** 30,
       driftWindowMs: (this.config.driftWindowHours ?? 24) * 60 * 60_000,

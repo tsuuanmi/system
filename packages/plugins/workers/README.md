@@ -12,7 +12,15 @@ router ([routing](../../../docs/design/routing.md#algorithm)). Definition:
   per account and mapped tier), agent Workers
   ([`agent-workers`](../agent-workers/README.md)), and model Workers
   ([`models`](../models/README.md)).
-  `describe()` runs on every route, so admission sees current states. Each
+  `describe()` runs on every route, so admission sees current states. A source
+  gets 5 s inside the routing lock: one silent that long counts as describing
+  no Workers for that read, and the route or admission decision names it
+  (`source <name>`: `did not describe its Workers within 5 s`); one whose
+  `describe` throws fails the read with its error, as before. `sources()` gives
+  how each source answered its last read, by a route or `list` (`described`,
+  `silent`, or `failed`, when, and why); a source's read goes with the source.
+  Health names every source silent or failed in it
+  ([sources that do not answer](../../../docs/design/routing.md#sources-that-do-not-answer)). Each
   descriptor is validated against `capability-descriptor@1.0`, `@1.1` (with
   `family`), `@1.2` (with `maxInputChars`), `@1.3` (with `load` and `cooldowns`), or `@1.4` (an
   offer's `scope`). A Worker id that two sources describe is refused.

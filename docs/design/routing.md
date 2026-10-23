@@ -143,6 +143,26 @@ stays admissible: it only orders it later.
   pending"), and an admitted Worker that lost on load says so ("w:b is less busy (load 0 of 2;
   this one load 2 of 2)"). The load read is part of the decision's input (REQ-WRK-2).
 
+### Sources that do not answer
+
+`describe` runs on every route, inside the routing lock
+([ADR-0033](../decisions/adr/0033-least-busy-routing.md#amendment-2026-10-19-where-pending-admissions-are-counted)).
+
+- **Silent.** Each source gets 5 s. A source silent that long counts as describing no Workers for
+  that read, and the route or admission decision names it as a candidate it could not offer
+  (`source agents`: `did not describe its Workers within 5 s`), so one stuck source never holds
+  every route. A step routed then sees none of its Workers.
+- **Failed.** A source whose `describe` throws fails the read with its error: no route is taken
+  until it answers.
+- **Its last read.** The router keeps how each source answered its last read, by a route or a
+  listing (`sources()`: `described`, `silent`, or `failed`, when the read started, and why); a
+  source's read goes with the source. Health reads it after listing the Workers, names every
+  source silent or failed in it, and is degraded while one is, down when no Worker answered or the
+  read failed ([runbook](../operations/runbooks.md#a-worker-source-does-not-answer)).
+- **A source keeps its own describe fast.** The `agents` source refreshes its runtimes' probes in
+  the background and, once a runtime's first probe has finished, never waits for one in a
+  describe ([admission evidence](agent-runtimes.md#admission-evidence)).
+
 Quota and health are inputs **before** admission. Once a turn starts on a Worker,
 it is never moved to another one. Running out of quota mid-turn is a classified
 failure (`USER_ACTION` or `BACKOFF`), not a silent switch to a different provider.

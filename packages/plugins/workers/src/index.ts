@@ -12,7 +12,7 @@ import type {} from '@tsuuanmi/system-artifacts'
 import { extractJson, SchemaRegistry } from '@tsuuanmi/system-libs'
 import {
   type Acceptance, type AcceptanceContract, type AdmissionCheck, AdmissionFailure, type AdmittedWorker, type ArtifactRef, type CapabilityDescriptor, provesFor, type QuotaClass,
-  type Rejection, type RouteOptions, TIERS, type Tier, type WorkRequirement, type WorkerSource, Workers,
+  type Rejection, type RouteOptions, TIERS, type Tier, type WorkRequirement, type WorkerSource, type WorkerSourceRead, Workers,
 } from '@tsuuanmi/system-workers-core'
 
 export * from '@tsuuanmi/system-workers-core'
@@ -28,6 +28,8 @@ const QUOTA_CLASSES: QuotaClass[] = ['subscription-chat', 'local', 'agent-plan',
 const DECIDER = { type: 'policy', id: 'workers.route.deterministic', version: '1' } as const
 /** How long one source may take to describe its Workers inside the routing lock (ADR-0033). */
 const DESCRIBE_MS = 5000
+/** Why a source counted as describing none: it did not answer within `DESCRIBE_MS`. */
+const SILENT = `did not describe its Workers within ${DESCRIBE_MS / 1000} s`
 
 const textOf = (body: unknown): string => {
   const text = (body as { text?: unknown } | undefined)?.text
@@ -67,7 +69,9 @@ export class WorkerRouter extends Workers {
     priority: z.array(z.string()).default([]).description('Worker ids preferred, in order, after tier and quota class'),
   })
 
-  private readonly sources = new Map<string, WorkerSource>()
+  private readonly registry = new Map<string, WorkerSource>()
+  /** How each registered source answered its last read, by name: what `sources()` reports. */
+  private readonly reads = new Map<string, WorkerSourceRead>()
   private readonly registered = new Map<string, AcceptanceContract>(Object.entries(BUILT_IN))
   private readonly schemas = new SchemaRegistry()
   /** One route at a time, across every caller, so no two read the same load (ADR-0033). */
@@ -78,21 +82,27 @@ export class WorkerRouter extends Workers {
   }
 
   register(source: WorkerSource): void {
-    if (this.sources.has(source.name)) throw new Error(`Worker source ${source.name} is already registered`)
+    if (this.registry.has(source.name)) throw new Error(`Worker source ${source.name} is already registered`)
     this.ctx.effect(() => {
-      this.sources.set(source.name, source)
+      this.registry.set(source.name, source)
       return () => {
-        if (this.sources.get(source.name) === source) this.sources.delete(source.name)
+        if (this.registry.get(source.name) !== source) return
+        this.registry.delete(source.name)
+        this.reads.delete(source.name)
       }
     })
   }
 
   source(name: string): WorkerSource | undefined {
-    return this.sources.get(name)
+    return this.registry.get(name)
+  }
+
+  sources(): WorkerSourceRead[] {
+    return [...this.reads.values()].sort((a, b) => compare(a.source, b.source))
   }
 
   affinity(sessionId: string): string[] | undefined {
-    for (const source of this.sources.values()) {
+    for (const source of this.registry.values()) {
       const workers = source.affinity?.(sessionId)
       if (workers) return workers
     }
@@ -100,7 +110,7 @@ export class WorkerRouter extends Workers {
   }
 
   siblings(worker: string): string[] {
-    for (const source of this.sources.values()) {
+    for (const source of this.registry.values()) {
       const workers = source.siblings?.(worker)
       if (workers) return workers
     }
@@ -108,7 +118,7 @@ export class WorkerRouter extends Workers {
   }
 
   handle(sessionId: string): string | undefined {
-    for (const source of this.sources.values()) {
+    for (const source of this.registry.values()) {
       const handle = source.handle?.(sessionId)
       if (handle) return handle
     }
@@ -116,13 +126,13 @@ export class WorkerRouter extends Workers {
   }
 
   reset(sessionId: string): boolean {
-    for (const source of this.sources.values()) if (source.reset?.(sessionId)) return true
+    for (const source of this.registry.values()) if (source.reset?.(sessionId)) return true
     return false
   }
 
   release(sessionIds: readonly string[], reason: string): { due: number } {
     let due = 0
-    if (sessionIds.length) for (const source of this.sources.values()) due += source.release?.(sessionIds, reason).due ?? 0
+    if (sessionIds.length) for (const source of this.registry.values()) due += source.release?.(sessionIds, reason).due ?? 0
     return { due }
   }
 
@@ -133,15 +143,27 @@ export class WorkerRouter extends Workers {
   /**
    * Every Worker with the name of its source, validated and ordered by id. A source that does not
    * describe its Workers within `DESCRIBE_MS` counts as describing none (`silent`), so one stuck
-   * source never holds every route behind the routing lock.
+   * source never holds every route behind the routing lock. A source whose `describe` throws fails
+   * the read with its error, as before. How each source answered is kept as its last read.
    */
   private async described(): Promise<{ all: Array<{ worker: CapabilityDescriptor; source: string }>; silent: string[] }> {
     const silent: string[] = []
-    const described = await Promise.all([...this.sources.values()].map(async (source) => {
+    const at = new Date().toISOString()
+    const described = await Promise.all([...this.registry.values()].map(async (source) => {
       const done = new AbortController()
       const late = delay(DESCRIBE_MS, undefined, { signal: done.signal }).catch(() => undefined)
-      const workers = await Promise.race([source.describe(), late]).finally(() => done.abort())
+      let workers: CapabilityDescriptor[] | undefined
+      try {
+        workers = await Promise.race([source.describe(), late])
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        this.remember(source, { source: source.name, state: 'failed', at, workers: 0, detail: `failed to describe its Workers: ${message.slice(0, 200)}` })
+        throw error
+      } finally {
+        done.abort()
+      }
       if (!workers) silent.push(source.name)
+      this.remember(source, workers ? { source: source.name, state: 'described', at, workers: workers.length } : { source: source.name, state: 'silent', at, workers: 0, detail: SILENT })
       return { source: source.name, workers: workers ?? [] }
     }))
     const seen = new Map<string, string>()
@@ -158,6 +180,13 @@ export class WorkerRouter extends Workers {
     return { all: all.sort((a, b) => compare(a.worker.worker, b.worker.worker)), silent: silent.sort() }
   }
 
+  /** Keep a read as the source's last, unless the source is gone or a read that started later is kept already. */
+  private remember(source: WorkerSource, read: WorkerSourceRead): void {
+    if (this.registry.get(source.name) !== source) return
+    const kept = this.reads.get(source.name)
+    if (!kept || kept.at <= read.at) this.reads.set(source.name, read)
+  }
+
   async route(requirement: WorkRequirement, options: RouteOptions = {}): Promise<AdmittedWorker> {
     const turn = this.routing.then(() => this.routeNow(requirement, options))
     this.routing = turn.catch(() => undefined)
@@ -169,7 +198,7 @@ export class WorkerRouter extends Workers {
     const { all: described, silent } = await this.described()
     const workers = described.map((d) => d.worker)
     // A source that did not answer in time is named in the decision, as a candidate it could not offer.
-    const unheard = silent.map((name) => ({ option: `source ${name}`, selected: false, reasons: [`did not describe its Workers within ${DESCRIBE_MS / 1000} s`] }))
+    const unheard = silent.map((name) => ({ option: `source ${name}`, selected: false, reasons: [SILENT] }))
     const producer = { type: 'system' as const, ref: options.producer ?? 'workers' }
     const stored = this.ctx.artifacts.put({
       kind: 'objective', bodySchema: requirement.schema, body: requirement, classification: requirement.data.classification, producer,
@@ -223,7 +252,7 @@ export class WorkerRouter extends Workers {
     }, { producer, classification: requirement.data.classification })
     const source = described.find((d) => d.worker === chosen)!.source
     // Counted as pending on the chosen Worker until the caller starts the work, or gives it up.
-    let held = this.sources.get(source)?.reserve?.(chosen.worker)
+    let held = this.registry.get(source)?.reserve?.(chosen.worker)
     const release = (): void => {
       held?.()
       held = undefined

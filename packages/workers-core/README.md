@@ -6,7 +6,7 @@ Routing **seam definition**
 
 | Seam | Definition | Provider |
 |---|---|---|
-| `ctx.workers` | abstract `Workers` with `register(source)`, `list()`, `route(requirement, options)`, `contract(id, check)`, `contracts()`, `accept(result, contract, { resultSchema })` (the result's JSON checked against the schema first, REQ-ART-5); `source(name)`, `affinity(sessionId)`, `siblings(worker)`, `handle(sessionId)`, `reset(sessionId)`, `release(sessionIds, reason)`; `WorkerSource` (describe, start, reserve, get, wait, sandbox, affinity, siblings, handle, reset, release, cancel), `WorkerStart` (with the optional `runId` of the workflow run an execution belongs to, and its rendered `prompt` or the `brief` the source renders, exactly one), `WorkerSandbox`, `WorkerExecution`, `CapabilityDescriptor` (with `load`, ADR-0033), `CapabilityOffer` (with `scope`, ADR-0049), `WorkRequirement` (with `scope`), `WorkScope`, `provesFor(offer, requirement)`, `AdmittedWorker` (with `release()`), `AdmissionFailure`, `AcceptanceContract` | `@tsuuanmi/system-workers` |
+| `ctx.workers` | abstract `Workers` with `register(source)`, `list()`, optional `sources()` (how each source answered its last read, `WorkerSourceRead`), `route(requirement, options)`, `contract(id, check)`, `contracts()`, `accept(result, contract, { resultSchema })` (the result's JSON checked against the schema first, REQ-ART-5); `source(name)`, `affinity(sessionId)`, `siblings(worker)`, `handle(sessionId)`, `reset(sessionId)`, `release(sessionIds, reason)`; `WorkerSource` (describe, start, reserve, get, wait, sandbox, affinity, siblings, handle, reset, release, cancel), `WorkerStart` (with the optional `runId` of the workflow run an execution belongs to, and its rendered `prompt` or the `brief` the source renders, exactly one), `WorkerSandbox`, `WorkerExecution`, `CapabilityDescriptor` (with `load`, ADR-0033), `CapabilityOffer` (with `scope`, ADR-0049), `WorkRequirement` (with `scope`), `WorkScope`, `provesFor(offer, requirement)`, `AdmittedWorker` (with `release()`), `AdmissionFailure`, `AcceptanceContract` | `@tsuuanmi/system-workers` |
 
 - The types mirror `capability-descriptor@1.4` (its optional `family`, an opaque
   provider family; `maxInputChars`, the longest input the Worker takes; `load` and `cooldowns`;
@@ -31,6 +31,12 @@ Routing **seam definition**
   package only. It depends on nothing but Cordis.
 - Tier escalation after a rejected result is the workflow engine's, not the
   router's: it routes a new execution with `tier.source: decision`.
+- **A source's last read** (`sources()`, optional): for each registered source, how it answered
+  the last read of its Workers, by a route or `list`: `described` (how many), `silent` (it did not
+  answer within the router's bound, so that read counted none of its Workers), or `failed` (its
+  `describe` threw), when that read started, and why. A provider that keeps none leaves a caller
+  unable to tell a silent source from one with no Workers; health reads it
+  ([routing](../../docs/design/routing.md#sources-that-do-not-answer)).
 - The conformance suite is [`conformance/workers.ts`](conformance/workers.ts):
   - source lifetime and duplicate names;
   - capability admission, data locality, state, and tier bounds; a failure names
@@ -39,6 +45,9 @@ Routing **seam definition**
     and a refusal says it is scoped;
   - the order: lowest tier, then quota class, then id;
   - restriction, determinism, and the decision artifacts;
+  - a source that does not describe its Workers in time: routed past and named in the decision;
+    with `sources()`, kept `silent` in its last read, a source whose describe fails kept `failed`,
+    and a source's read gone with the source;
   - provider-family exclusion: only another family is admitted, a Worker with no
     family is rejected, and the reasons name no family;
   - input length: a Worker that takes less than the input is refused, saying so,

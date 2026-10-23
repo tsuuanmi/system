@@ -15,7 +15,7 @@ import { captureGitSubject, SchemaRegistry, startPrompt, subjectId, usageUnknown
 import { ProviderError } from '@tsuuanmi/system-provider-core'
 import { type LimitState, type PoolConfig, ResourcesError, type UsageRecord } from '@tsuuanmi/system-resources-core'
 import Store from '@tsuuanmi/system-store'
-import WorkerRouter, { type WorkerExecution, type WorkRequirement } from '@tsuuanmi/system-workers'
+import WorkerRouter, { AdmissionFailure, type WorkerExecution, type WorkRequirement } from '@tsuuanmi/system-workers'
 import WorkerSessions from '@tsuuanmi/system-worker-sessions'
 import Workflow from '@tsuuanmi/system-workflow'
 import * as SoftwareDevelopment from '@tsuuanmi/system-profile-software-development'
@@ -57,6 +57,23 @@ class ScriptedAgent implements AgentRuntimeProvider {
     }
     if (this.options.fail) throw this.options.fail
     return { text: this.options.act?.(spec) ?? `echo: ${spec.prompt}`, nativeHandle: spec.resume ?? `h-${this.runs.length}`, turns: 1, ...this.options.metering }
+  }
+}
+
+/** A scripted agent whose probes wait until the test releases them while `hold` is set: a slow probe. */
+class SlowProbeAgent extends ScriptedAgent {
+  hold = false
+  probes = 0
+  private readonly held: Array<() => void> = []
+
+  override async probe() {
+    this.probes++
+    if (this.hold) await new Promise<void>((resolve) => this.held.push(resolve))
+    return super.probe()
+  }
+
+  release(): void {
+    for (const resolve of this.held.splice(0)) resolve()
   }
 }
 
@@ -157,6 +174,46 @@ describe('ctx.workers source `agents`: agent runtimes as Workers', () => {
     expect(done).toMatchObject({ status: 'failed', error: { kind: 'config_error' } })
     expect(agent.runs).toEqual([])
   })
+
+  it('never makes a describe wait for a re-probe: a slow one keeps the Worker routable within probeTtlMs, past it the Worker is unavailable while the source still answers, and a failed one admits nothing (T50)', async () => {
+    const options = { readsConfined: true }
+    const agent = new SlowProbeAgent(options)
+    const { ctx } = await boot(agent, { workers: [worker()], probeTtlMs: 3000 })
+    try {
+      const started = Date.now()
+      const first = await ctx.workers.route(requirement())
+      first.release()
+      expect(first.worker.worker).toBe('agent:reviewer')
+      // Probes are slow from now on. At half its bound the next starts in the background.
+      agent.hold = true
+      await expect.poll(() => agent.probes, { timeout: 5000, interval: 20 }).toBe(2)
+      const during = await ctx.workers.route(requirement())
+      during.release()
+      expect(Date.now() - started).toBeLessThan(3000)
+      expect(during.worker.worker).toBe('agent:reviewer')
+      // The source answered within the router's bound: no decision names it, and its last read says so.
+      expect((ctx.artifacts.get(during.decisions.route)!.body as { candidates: Array<{ option: string }> }).candidates.map((c) => c.option)).toEqual(['agent:reviewer'])
+      expect(ctx.workers.sources!()).toEqual([expect.objectContaining({ source: 'agents', state: 'described', workers: 1 })])
+      // Past the bound, the re-probe still running: the Worker is unavailable, at once, never on the old result.
+      await new Promise((resolve) => setTimeout(resolve, Math.max(0, started + 3100 - Date.now())))
+      const refused = await ctx.workers.route(requirement()).catch((error: unknown) => error) as AdmissionFailure
+      expect(refused).toBeInstanceOf(AdmissionFailure)
+      expect(refused.rejections).toEqual([expect.objectContaining({ worker: 'agent:reviewer', state: 'unavailable' })])
+      expect((ctx.artifacts.get(refused.decision)!.body as { candidates: Array<{ option: string }> }).candidates.map((c) => c.option)).not.toContain('source agents')
+      expect(agent.probes).toBe(2)
+      // The probe finishes: the Worker is back.
+      agent.hold = false
+      agent.release()
+      await expect.poll(async () => (await ctx.workers.list())[0]?.state, { timeout: 5000, interval: 20 }).toBe('ready')
+      // A refresh that proves less (reads no longer confined) admits nothing from then on.
+      options.readsConfined = false
+      await expect.poll(async () => (await ctx.workers.list())[0], { timeout: 5000, interval: 20 }).toMatchObject({ state: 'unavailable', capabilities: [] })
+      expect(ctx.workers.sources!()).toEqual([expect.objectContaining({ source: 'agents', state: 'described' })])
+    } finally {
+      agent.hold = false
+      agent.release()
+    }
+  }, 30_000)
 
   it('proves develop (never review) for a confined writable Worker, and validate only when the runtime can run commands', async () => {
     const config = { workers: [worker({ id: 'writer', sandbox: 'workspace-write' as const })] }

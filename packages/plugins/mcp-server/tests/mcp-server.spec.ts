@@ -1,7 +1,7 @@
 import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { Context } from '@deepseek-ai/cordis'
+import { Context, Service } from '@deepseek-ai/cordis'
 import WebServer from '@deepseek-ai/dsh-host-webserver'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
@@ -106,6 +106,37 @@ describe('system MCP server on ctx.webServer', () => {
     // Reconciled: the ledger now counts a record of the run.
     await ctx.resources.record({ schema: 'usage-record@1.0', requestId: 'transcript:arun_1', source: 'transcript', observedAt, account: 'max', pool: 'max.agents', runId: 'arun_1', turns: 4 })
     expect(await usage()).toMatchObject({ state: 'ok' })
+  })
+
+  it('reads each Worker source\'s last read into health, after listing the Workers: a silent one is named, never ok (INV-2)', async () => {
+    const { url, tokens, ctx } = await boot()
+    const at = '2026-10-23T09:41:07.000Z'
+    const order: string[] = []
+    // A router whose last read did not hear from the agents source: seven Workers answered, its three did not.
+    class Router extends Service {
+      constructor(c: Context) {
+        super(c, 'workers')
+      }
+      async list() {
+        order.push('list')
+        return Array.from({ length: 7 }, (_, i) => ({ worker: `w${i}`, state: 'ready' }))
+      }
+      sources() {
+        order.push('sources')
+        return [{ source: 'agents', state: 'silent', at, workers: 0, detail: 'did not describe its Workers within 5 s' }, { source: 'turns', state: 'described', at, workers: 7 }]
+      }
+    }
+    const fiber = ctx.plugin(Router)
+    await fiber
+    cleanups.push(() => fiber.dispose())
+    type Health = { state: string; checks: Array<{ name: string; state: string; detail?: string }> }
+    const health = async (token: string) => ((await (await connect(url, token)).callTool({ name: 'status', arguments: {} })).structuredContent as { health: Health }).health
+    const operator = await health(tokens.operator)
+    expect(operator.checks.find((c) => c.name === 'workers')).toEqual({ name: 'workers', state: 'degraded', detail: expect.stringMatching(/^7 available; source agents did not describe its Workers within 5 s \(at 2026-10-23T09:41:07\.000Z\): routing sees none of its Workers/) })
+    expect(operator.state).toBe('degraded')
+    expect(order).toEqual(['list', 'sources'])
+    // A client sees that it is degraded, never which source.
+    expect((await health(tokens.client)).checks.find((c) => c.name === 'workers')).toEqual({ name: 'workers', state: 'degraded' })
   })
 
   it('lists every plugin of the composition with its manifest, recorded lifecycle, and what the manifest check found, for the operator only, and fails health on a finding (REQ-HOST-7, ADR-0023, ADR-0048)', async () => {

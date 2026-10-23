@@ -25,6 +25,37 @@ describe('host health (REQ-HOST-6)', () => {
     expect(await check({ minFreeBytes: Number.MAX_SAFE_INTEGER }, 'disk')).toMatchObject({ state: 'degraded' })
   })
 
+  it('names every Worker source that was silent or failed in its last read, and is never ok while one is (REQ-HOST-6, INV-2)', async () => {
+    const at = '2026-10-23T09:41:07.000Z'
+    const described = { source: 'turns', state: 'described' as const, at }
+    const silent = { source: 'agents', state: 'silent' as const, at, detail: 'did not describe its Workers within 5 s' }
+    const runbook = '(docs/operations/runbooks.md#a-worker-source-does-not-answer)'
+    // Seven Workers answered, and the source of the other three did not: degraded, naming it.
+    const seven = Array.from({ length: 7 }, (_, i) => ({ worker: `w${i}`, state: 'ready' }))
+    expect(await check({ workers: async () => seven, workerSources: () => [silent, described] }, 'workers')).toEqual({
+      name: 'workers', state: 'degraded',
+      detail: `7 available; source agents did not describe its Workers within 5 s (at ${at}): routing sees none of its Workers until it answers ${runbook}`,
+    })
+    // With a Worker that cannot take work too, both are named.
+    expect(await check({ workers: async () => [{ worker: 'w1', state: 'ready' }, { worker: 'w2', state: 'reauth-required' }], workerSources: () => [silent] }, 'workers'))
+      .toMatchObject({ state: 'degraded', detail: expect.stringMatching(/^cannot take work: w2 \(reauth-required\) \(system explain shows why\); source agents did not describe/) })
+    // No Worker answered at all: no work can run.
+    expect(await check({ workers: async () => [], workerSources: () => [silent, { ...silent, source: 'models' }] }, 'workers')).toEqual({
+      name: 'workers', state: 'down',
+      detail: `no Worker can take work: source agents did not describe its Workers within 5 s (at ${at}); source models did not describe its Workers within 5 s (at ${at}): routing sees none of their Workers until it answers ${runbook}`,
+    })
+    // A source whose describe threw fails the read, and no route is taken: down, naming it.
+    const failed = { source: 'agents', state: 'failed' as const, at, detail: 'failed to describe its Workers: the store is closed' }
+    expect(await check({ workers: async () => { throw new Error('the store is closed') }, workerSources: () => [failed, described] }, 'workers')).toEqual({
+      name: 'workers', state: 'down', detail: `the Workers cannot be read, so no route is taken: source agents failed to describe its Workers: the store is closed (at ${at}) ${runbook}`,
+    })
+    // A router that keeps no reads: the failed read is still down, with its error.
+    expect(await check({ workers: async () => { throw new Error('the store is closed') } }, 'workers')).toMatchObject({ state: 'down', detail: 'the check failed: the store is closed' })
+    // Every source answered: ok, as before.
+    expect(await check({ workers: async () => seven, workerSources: () => [described, { ...described, source: 'agents' }] }, 'workers')).toEqual({ name: 'workers', state: 'ok', detail: '7 available' })
+    expect((await healthReport(base({ workerSources: () => [silent] }))).state).toBe('degraded')
+  })
+
   it('is degraded by accounts signed in as one person, naming them and the runbook (REQ-ACC-7)', async () => {
     const duplicates = await check({ duplicateAccounts: async () => [['chatgpt-main', 'chatgpt-2']] }, 'accounts')
     expect(duplicates).toMatchObject({ state: 'degraded', detail: expect.stringMatching(/^chatgpt-main and chatgpt-2 are signed in as the same person, so none of them takes work: .*runbooks\.md#two-accounts-sign-in-as-one-person/) })
