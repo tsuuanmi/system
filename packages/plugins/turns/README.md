@@ -178,6 +178,11 @@ invoked by the [workflow engine](../workflow/README.md)
   stands (`checkAuth`, at most 15 s, never loaded again). Positive sign-out evidence turns the
   failure into `reauth_required`, which marks the account signed out (below); a challenge, into
   `challenge`. An unclear page keeps the original failure.
+- **A stall** (`provider_stalled`, a page signed in) names the bound that ended it
+  (`turns.stallTimeoutMs`, or `researchStallTimeoutMs` for Deep research), says that nothing the
+  driver reads changed in that time, and points at the page's outline (`system events --type
+  provider.stall`): a site still working past the bound with nothing visible changing is the
+  operator's to allow (a longer bound, below `turnTimeoutMs`, or a faster mode), never a resend.
 - **Challenge:** a driver `challenge` (a CAPTCHA, an unusual-traffic check, a terms notice) from
   a turn, a sign-in check, or a feature probe marks the account `challenge`
   (event `account.challenged`): its Workers are unavailable, so nothing loads the

@@ -194,6 +194,19 @@ async function signedOutAfter(driver: ProviderDriver, page: unknown, error: unkn
   }
 }
 
+/**
+ * A stall as the operator reads it: what showed no change, the bound that ended it, and what to
+ * do. A site can work longer than the bound with nothing a driver can see change (a long think it
+ * shows no progress of): only the page's outline (`provider.stall`) tells that from a site that
+ * stopped answering.
+ */
+function stalledTurn(error: unknown, research: boolean): unknown {
+  if (!(error instanceof ProviderError) || error.kind !== 'provider_stalled') return error
+  const bound = `turns.${research ? 'researchStallTimeoutMs' : 'stallTimeoutMs'}`
+  return new ProviderError('provider_stalled', `${error.message} (${bound}): no answer text, no activity the driver reads, and no start or stop of generation in that time. `
+    + `The provider.stall event outlines the page as it stood (system events --type provider.stall): if the site was still working, raise ${bound}, which must stay below the turn's hard deadline, or map the tier to a faster mode`, { cause: error })
+}
+
 const newId = (prefix: string): string => `${prefix}_${randomBytes(8).toString('hex')}`
 const now = (): string => new Date().toISOString()
 const TERMINAL: ReadonlySet<TurnStatus> = new Set(['completed', 'failed'])
@@ -1020,7 +1033,7 @@ export class Turns extends Service {
       signal.removeEventListener('abort', forward)
       // A turn that failed on a page the site has since signed out reports the sign-out, so the
       // account shows its real state (live 2026-10-17: a stall on the logged-out home).
-      const error = signal.aborted ? caught : await signedOutAfter(driver, turn.page, caught)
+      const error = signal.aborted ? caught : stalledTurn(await signedOutAfter(driver, turn.page, caught), research)
       // Never kept after a failure: the next turn starts from a fresh page.
       await (turn.discard?.() ?? turn.close())
       if (error instanceof ProviderError && error.kind === 'reauth_required') {
