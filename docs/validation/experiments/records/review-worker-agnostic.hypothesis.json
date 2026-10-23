@@ -1,0 +1,29 @@
+{
+  "record": "hypothesis",
+  "hypothesisId": "review-worker-agnostic",
+  "statement": "The review template is worker-agnostic: with one member's Worker held fixed (an Antigravity CLI Worker), a Codex CLI Worker in the other member's seat is non-inferior to a ChatGPT website Worker on correctly identified actionable defects per cost, with blocking-defect recall at or above the floor and no guardrail inferior beyond its margin.",
+  "target": { "kind": "template", "ref": "review", "version": "the built-in template of the workflow package the experiment pins" },
+  "mechanism": {
+    "tag": "worker-substitution",
+    "text": "The template's guarantees (independent proposals, sealed ballots, quote checks against the bytes shown, the blocking-finding rule) are code, so the outcome should not depend on the Worker source a member runs on."
+  },
+  "intervention": {
+    "tag": "member-worker",
+    "text": "One member's Worker swapped by configuration only: the ChatGPT website Worker replaced by a Codex CLI Worker; the other member, an Antigravity CLI Worker, unchanged."
+  },
+  "expectedEffect": { "metric": "defects-per-cost", "direction": "non-inferior", "magnitude": "candidate over baseline at least 0.8" },
+  "context": {
+    "workload": "review.public-commits",
+    "text": "Exact-subject reviews of pinned commits of system's own public repository, each focused on one source file the members read only as the engine shows it, offline, with no web search."
+  },
+  "priorEvidence": { "experiments": [], "lessons": [], "research": ["docs/validation/self-build.md"] },
+  "source": { "kind": "operator", "ref": "the operator's request of 2026-10-23" },
+  "fingerprint": {
+    "version": "1",
+    "target": "template:review",
+    "mechanism": "worker-substitution",
+    "intervention": "member-worker",
+    "effect": "defects-per-cost:non-inferior",
+    "hash": null
+  }
+}

@@ -1,0 +1,126 @@
+{
+  "record": "suite",
+  "suiteId": "review-suite",
+  "version": 1,
+  "summary": "Pinned commits of system's own public repository with labelled defects, seeded from the self-build team reviews: each defect held, was fixed, and has a test that fails before its fix; one finding is the design, a known non-defect.",
+  "repository": "https://github.com/tsuuanmi/system",
+  "request": "Review this code for defects: places where it does not do what its own comments and names promise, above all where a security boundary or an approval could be bypassed, or where a restart could lose or repeat an effect. Report only defects you can point to in the code shown, each with the exact line it is about.",
+  "matching": {
+    "version": "1",
+    "rule": "A finding identifies a defect label when its kind is defect (the default), its quote is confirmed, its path is the case's path, and its matched line is one of the label's lines. A confirmed finding on a line of several defect labels is adjudicated: one of those labels, or none. A confirmed finding on a non-defect label's line, and on no defect label's, is a false positive. Every other defect finding is unmatched and adjudicated: not a defect (a false positive), a defect no label holds, or unsure."
+  },
+  "labelling": {
+    "rule": "A label's lines are the lines at the case's commit that its fix changed or deleted, imports excluded; a comment line that describes several defects belongs to each of them. Severity: blocking when the defect breaks a guarantee its failing test names (workspace confinement, fail closed, exact-subject binding, restart without repeating, a bounded wait); warning when the self-build record calls its fix defence in depth.",
+    "proposedBy": {
+      "who": "lead session preparing the experiment",
+      "family": "claude-code",
+      "note": "the family that wrote the code under review (the maker's), so the operator confirms every label before the experiment is frozen"
+    },
+    "confirmedBy": null
+  },
+  "partitions": {
+    "development": [],
+    "regression": ["gate-59962e5", "queue-4dd2d3c"],
+    "held-out": []
+  },
+  "cases": [
+    {
+      "caseId": "gate-59962e5",
+      "commit": "59962e50ea1c05eeb5e7350f654c0e345c201237",
+      "path": "packages/plugins/agent-workers/src/gate.ts",
+      "blob": "6a8d4f1ae86fb21cae8a29b58d07646076dd2ad9",
+      "focus": ["packages/plugins/agent-workers/src/gate.ts"],
+      "seededBy": { "run": "run_65c39f158163c5c6", "fixedIn": "ef015fb817890c4cc7c0b79c29dd933cbd9728b4", "test": "packages/plugins/agent-workers/tests/gate.spec.ts" },
+      "contamination": {
+        "invalid": ["ef015fb817890c4cc7c0b79c29dd933cbd9728b4", "ef015fb"],
+        "flag": ["realLocation", "unknownField", "EDIT_FIELDS", "follows every symlink", "refuses an input field a classified tool does not declare", "checks a stored request in full"]
+      },
+      "labels": [
+        {
+          "id": "G1",
+          "kind": "defect",
+          "severity": "blocking",
+          "summary": "Whether a path is inside the workspace is decided lexically: a symlink inside the workspace that points outside lets a read or a write escape it, and a Glob pattern's leading directory is checked only when absolute.",
+          "lines": [49, 51, 53, 54, 61, 63, 64, 82],
+          "test": "follows every symlink: a path whose real location is outside the real workspace is refused, for a read and for a write"
+        },
+        {
+          "id": "G2",
+          "kind": "defect",
+          "severity": "blocking",
+          "summary": "A classified tool's input is checked only for the field the gate reads: an unknown or mistyped field passes (only Bash's fields were listed), and tool names are looked up through the prototype chain.",
+          "lines": [41, 43, 61, 69, 70, 78, 91, 100, 101, 104],
+          "test": "refuses an input field a classified tool does not declare, or a declared one of another type, naming it"
+        },
+        {
+          "id": "G3",
+          "kind": "defect",
+          "severity": "warning",
+          "summary": "A Bash argv word with a shell metacharacter, or an empty word, is passed to the policy instead of being refused by the gate itself (defence in depth).",
+          "lines": [68, 102],
+          "test": "denies a command with a shell metacharacter in a word, or an empty word, by its own rule before the policy is asked, though commands ask: argv is never parsed by a shell"
+        },
+        {
+          "id": "G4",
+          "kind": "defect",
+          "severity": "blocking",
+          "summary": "A stored approval request is checked only by its version and action class before its approval is used: a request for another ref, run, session, or requester passes.",
+          "lines": [139, 224, 229, 230],
+          "test": "checks a stored request in full before its approval is used: one whose ref, session, or requester is not this call's is denied, and never asked again"
+        },
+        {
+          "id": "N1",
+          "kind": "non-defect",
+          "summary": "A used approval asks again for the same call: the design (one approval, one call).",
+          "lines": [143, 144, 237, 238, 239, 240, 241, 242, 243]
+        }
+      ]
+    },
+    {
+      "caseId": "queue-4dd2d3c",
+      "commit": "4dd2d3cdef24fa1241857d52a1eabda02955b749",
+      "path": "packages/plugins/workflow/src/queue.ts",
+      "blob": "45c30512637ab5b21a8d389a17f5d678ac1bab17",
+      "focus": ["packages/plugins/workflow/src/queue.ts"],
+      "seededBy": { "run": "run_d28538263173ef45", "fixedIn": "a32e430f78556af05b71cea10e71cbdb4305ccec", "test": "packages/plugins/workflow/tests/remediation.spec.ts" },
+      "contamination": {
+        "invalid": ["a32e430f78556af05b71cea10e71cbdb4305ccec", "a32e430"],
+        "flag": ["approvalProblem", "subjectMoved", "storedRequests", "does not open on an approval when the working tree moved", "reconciles on restart: a request whose id was never stored"]
+      },
+      "labels": [
+        {
+          "id": "Q1",
+          "kind": "defect",
+          "severity": "blocking",
+          "summary": "The remediation gate opens on an approval without checking that the working tree is still the reviewed subject: a tree that moved after the review gets the fix.",
+          "lines": [7, 8, 165, 166, 167, 168, 169, 182, 183, 225, 226, 236, 237, 238],
+          "test": "does not open on an approval when the working tree moved since the review: the fix never runs on another tree"
+        },
+        {
+          "id": "Q2",
+          "kind": "defect",
+          "severity": "warning",
+          "summary": "An approval resolved after the request expired, or that is not the operator's verdict on exactly the gate's subject, still opens the gate (defence in depth).",
+          "lines": [7, 8, 165, 166, 167, 168, 169, 182, 183],
+          "test": "does not open on an approval resolved after the request expired, as a provider might forge it (defence in depth)"
+        },
+        {
+          "id": "Q3",
+          "kind": "defect",
+          "severity": "blocking",
+          "summary": "After a crash between opening a request and storing its id, reconciliation lists only open, batched, and approved requests: one resolved meanwhile is lost and the gate asks twice.",
+          "lines": [9, 10, 93, 94, 109, 110, 119, 138, 139, 149],
+          "test": "reconciles on restart: a request whose id was never stored and that was rejected meanwhile is adopted and applied, never asked again"
+        },
+        {
+          "id": "Q4",
+          "kind": "defect",
+          "severity": "blocking",
+          "summary": "A gate whose queue cannot be read only logs and waits: nothing closes it at its deadline, so its wait is unbounded.",
+          "lines": [73, 84],
+          "test": "closes the gate as gate_timeout by its deadline when the queue cannot be read, naming and withdrawing its request"
+        }
+      ]
+    }
+  ]
+}

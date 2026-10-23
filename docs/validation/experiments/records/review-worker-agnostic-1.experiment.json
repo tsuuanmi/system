@@ -1,0 +1,104 @@
+{
+  "record": "experiment",
+  "experimentId": "review-worker-agnostic-1",
+  "revision": 1,
+  "supersedes": null,
+  "state": "proposed",
+  "hypothesis": { "id": "review-worker-agnostic", "ref": null },
+  "objectiveContract": { "id": "review-workflow", "version": 1, "hash": null },
+  "comparison": { "type": "non-inferiority", "metric": "defects-per-cost", "margin": { "value": 0.2, "scale": "ratio" } },
+  "baseline": {
+    "arm": "baseline",
+    "label": "a ChatGPT website Worker and an Antigravity CLI Worker",
+    "subject": { "type": "content", "ref": "review-team:baseline", "version": null },
+    "configuration": "arm-baseline.patch.yml",
+    "seats": [
+      { "seat": "swapped", "source": "website", "workers": null, "family": null, "model": null, "observed": null },
+      { "seat": "fixed", "source": "agents", "workers": ["agent:agy-review"], "family": "antigravity-cli", "model": null, "observed": null }
+    ]
+  },
+  "candidate": {
+    "arm": "candidate",
+    "label": "a Codex CLI Worker and an Antigravity CLI Worker",
+    "subject": { "type": "content", "ref": "review-team:candidate", "version": null },
+    "configuration": "arm-candidate.patch.yml",
+    "seats": [
+      { "seat": "swapped", "source": "agents", "workers": ["agent:codex-review"], "family": "codex-sdk", "model": null, "observed": null },
+      { "seat": "fixed", "source": "agents", "workers": ["agent:agy-review"], "family": "antigravity-cli", "model": null, "observed": null }
+    ],
+    "provenance": { "runs": [], "note": "no candidate was produced: both arms are existing Workers, chosen by the operator" }
+  },
+  "suite": { "id": "review-suite", "version": 1, "partitions": [{ "name": "regression", "cases": 2, "hash": null }], "used": ["regression"] },
+  "environment": {
+    "system": { "version": null, "commit": null },
+    "workflow": { "allowSameFamily": false, "maxSourceChars": 24000, "members": 2, "debateRounds": 1, "maxEscalations": 1, "maxAttempts": 3 },
+    "collector": { "file": "scripts/experiments/worker-agnosticism.ts", "version": "1", "sha256": null },
+    "statistics": { "library": null, "note": "F2 pending: the collector gives descriptive estimates only" },
+    "workload": "review.public-commits",
+    "costModel": "member-steps",
+    "hash": null
+  },
+  "protocol": {
+    "confidence": 0.9,
+    "minCases": 5,
+    "repetitions": 3,
+    "partitions": ["regression"],
+    "methods": [
+      { "metric": "defects-per-cost", "kind": "paired-bootstrap", "unit": "case", "resamples": 10000, "when": "cases at least minCases" },
+      { "metric": "blocking-recall", "kind": "sign-flip-exact", "unit": "case" },
+      { "metric": "false-positives", "kind": "sign-flip-exact", "unit": "case" },
+      { "metric": "quote-validity", "kind": "sign-flip-exact", "unit": "case" },
+      { "metric": "latency", "kind": "sign-flip-exact", "unit": "case", "on": "log of the per-case median" },
+      { "metric": "stalls", "kind": "sign-flip-exact", "unit": "case" }
+    ],
+    "order": "blocks: in each round, both arms in the order the seed gives, and within an arm both cases in the order the seed gives (the collector's schedule)",
+    "tie": "a tied team is ended with vote inconclusive at once, rationale 'experiment trial: ties are not broken'; its findings stand",
+    "failedRun": "a member step that failed as provider_stalled, timeout, quota_exhausted, overloaded, session_broken, or acceptance_rejected is the arm's outcome: the trial counts, with what it decided; any other failure (config_error, egress_denied, invalid_input, network, reconciliation_failed after a host stop) is an integrity breach. A trial's run is never continued or started again: a failed run is its trial's outcome",
+    "adjudication": "the operator adjudicates every adjudication item, recording minutes spent; a lead may draft, and is recorded with its family",
+    "contamination": "a finding that names a fix commit makes its trial invalid; one that names a fix's identifiers or test titles is flagged for the operator, who records whether it cites the fix",
+    "drift": "before each block the operator records each seat's observed model and version; a change from the frozen value makes the trials after it invalid"
+  },
+  "stopping": {
+    "rule": "fixed-horizon",
+    "trials": 12,
+    "earlyEnd": ["an integrity breach: invalid", "a hard constraint broken: refuted", "a budget line spent: inconclusive at most"]
+  },
+  "budget": {
+    "boardTask": false,
+    "lines": [
+      { "seat": "baseline swapped (website)", "unit": "turns", "amount": 30 },
+      { "seat": "candidate swapped (agents)", "unit": "runs", "amount": 30 },
+      { "seat": "fixed (agents), both arms", "unit": "runs", "amount": 60 }
+    ],
+    "note": "MCP review takes no board task, so trials are plain runs; the operator stops the experiment when a line is spent"
+  },
+  "seed": "review-worker-agnostic-1:2026-10-23",
+  "independence": {
+    "maker": ["claude-code"],
+    "reviewers": { "baseline": [null, "antigravity-cli"], "candidate": ["codex-sdk", "antigravity-cli"] },
+    "validators": [],
+    "adjudicator": { "who": "operator", "family": "none" },
+    "note": "the code under review was written by Claude Code sessions, a family in neither arm; the collector is deterministic and has no family; records say different provider family, never independent"
+  },
+  "registry": {
+    "answer": "NOVEL",
+    "cites": [],
+    "changed": [],
+    "note": "no experiment is recorded before this one. PROP-0011 proposed two website members against two CLI members; the operator chose this one-member swap first. That two-member comparison is a later experiment, RELATED to this one."
+  },
+  "deviations": [
+    "arms are fixed by the operator's configuration, one composition per arm, with a restart between blocks: no trusted envelope carries an arm into a run (PROP-0011 open question 2)",
+    "trials are blocked, not interleaved one by one: at most six blocks, so at most five configuration switches, instead of one per trial",
+    "trials are plain review runs, not board tasks: the ledger attributes their usage by run, never by task",
+    "the collector is a script, not an evaluations collector; no statistic is computed (F2 pending)",
+    "the suite was seeded by findings of the ChatGPT and Gemini website members, so it favours the baseline's swapped seat: non-inferiority of the candidate on it is a conservative test"
+  ],
+  "preconditions": [
+    { "id": "P1", "state": "open", "text": "agent Workers admitted to review member steps" },
+    { "id": "P2", "state": "open", "text": "Antigravity CLI Workers keep a conversation (resume), as every team member must" },
+    { "id": "P3", "state": "open", "text": "the arms' Workers verified live (release checklist)" },
+    { "id": "P4", "state": "open", "text": "the suite's labels confirmed by the operator, and the calibration on the seeding runs passed" },
+    { "id": "P5", "state": "open", "text": "a maintenance window: no other run, other projects paused" }
+  ],
+  "identity": { "version": "1", "hash": null }
+}
