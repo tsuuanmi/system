@@ -77,7 +77,7 @@ describe('approval-request@1.0', () => {
   })
 })
 
-describe('approval-request@1.1 and policy-change@1.0', () => {
+describe('approval-request@1.1 and policy-change@1.x', () => {
   const asked = example('approval-request.policy-change')
   const change = example('policy-change.applied')
 
@@ -109,6 +109,20 @@ describe('approval-request@1.1 and policy-change@1.0', () => {
     const decision = example('decision.policy-change')
     expect(valid('decision@1.6', decision)).toBe(true)
     expect(valid('decision@1.6', { ...decision, schema: 'decision@1.5' })).toBe(false)
+    expect(valid('decision@1.6', example('decision.policy-change-proposed'))).toBe(true)
+  })
+
+  it('names, from @1.1, the origin of a change the queue proposed itself: one exact command line, its approvals, and its decision (INV-13)', () => {
+    const proposed = example('policy-change.queue-proposed')
+    expect(valid('policy-change@1.1', proposed)).toBe(true)
+    expect(valid('policy-change@1.1', { ...proposed, schema: 'policy-change@1.0' })).toBe(false)
+    // The operator's own change is valid at either tag.
+    expect(valid('policy-change@1.1', { ...change, schema: 'policy-change@1.1' })).toBe(true)
+    const { decision: _, ...unrecorded } = proposed.origin
+    expect(valid('policy-change@1.1', { ...proposed, origin: unrecorded })).toBe(false)
+    expect(valid('policy-change@1.1', { ...proposed, origin: { ...proposed.origin, rule: 'operator' } })).toBe(false)
+    expect(valid('policy-change@1.1', { ...proposed, origin: { ...proposed.origin, shape: { actionClass: 'merge', command: 'pnpm lint' } } })).toBe(false)
+    expect(valid('policy-change@1.1', { ...proposed, origin: { ...proposed.origin, shape: { actionClass: 'command', command: 'x'.repeat(201) } } })).toBe(false)
   })
 })
 
