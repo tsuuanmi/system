@@ -47,6 +47,7 @@ A plugin may also consume a service of the dsh launcher itself, which no row pro
 | [models](../../packages/plugins/models/README.md) | capabilities | `models` | `models` | `llm`, `store`, `artifacts`, `leases`, `workers`, `egress`, `models`, `credentials` (optional), `eventLog` (optional), `mcp` (optional) | `gateway-core`, `leases`, `libs`, `models-core`, `provider-core`, `workers-core` |
 | [models-core](../../packages/models-core/README.md) | capabilities | defines `models` | — | — | `workers-core` |
 | [runtime-acp](../../packages/plugins/runtime-acp/README.md) | capabilities | — | `runtime-acp` | `agentRuntimes` | `agent-runtime-core`, `provider-core` |
+| [runtime-antigravity-cli](../../packages/plugins/runtime-antigravity-cli/README.md) | capabilities | — | `runtime-antigravity-cli` | `agentRuntimes` | `agent-runtime-core`, `libs`, `provider-core` |
 | [runtime-claude-agent-sdk](../../packages/plugins/runtime-claude-agent-sdk/README.md) | capabilities | — | `runtime-claude-agent-sdk` | `agentRuntimes` | `agent-runtime-core`, `libs`, `provider-core` |
 | [runtime-codex-sdk](../../packages/plugins/runtime-codex-sdk/README.md) | capabilities | — | `runtime-codex-sdk` | `agentRuntimes` | `agent-runtime-core`, `libs`, `provider-core` |
 | [turns](../../packages/plugins/turns/README.md) | capabilities | `turns` | `turns` | `store`, `artifacts`, `leases`, `egress`, `turnReceipts`, `accounts`, `browser`, `providers`, `workers`, `eventLog` (optional), `login` (optional), `mcp` (optional) | `gateway-core`, `leases`, `libs`, `provider-core`, `workers-core` |
@@ -108,6 +109,7 @@ flowchart TB
     agent_workers["agent-workers<br/>ctx.agentWorkers"]
     models["models<br/>ctx.models"]
     runtime_acp["runtime-acp"]
+    runtime_antigravity_cli["runtime-antigravity-cli"]
     runtime_claude_agent_sdk["runtime-claude-agent-sdk"]
     runtime_codex_sdk["runtime-codex-sdk"]
     turns["turns<br/>ctx.turns"]
@@ -221,6 +223,7 @@ flowchart TB
   resources --> artifacts
   resources -.-> mcp_server
   runtime_acp --> agent_runtimes
+  runtime_antigravity_cli --> agent_runtimes
   runtime_claude_agent_sdk --> agent_runtimes
   runtime_codex_sdk --> agent_runtimes
   turn_receipts --> store
@@ -326,6 +329,7 @@ flowchart TB
     models["models<br/>ctx.models"]
     models_core["models-core<br/>defines models"]
     runtime_acp["runtime-acp"]
+    runtime_antigravity_cli["runtime-antigravity-cli"]
     runtime_claude_agent_sdk["runtime-claude-agent-sdk"]
     runtime_codex_sdk["runtime-codex-sdk"]
     turns["turns<br/>ctx.turns"]
@@ -405,6 +409,8 @@ flowchart TB
   resources --> resources_core
   runtime_acp --> agent_runtime_core
   runtime_acp --> provider_core
+  runtime_antigravity_cli --> agent_runtime_core
+  runtime_antigravity_cli --> provider_core
   runtime_claude_agent_sdk --> agent_runtime_core
   runtime_claude_agent_sdk --> provider_core
   runtime_codex_sdk --> agent_runtime_core

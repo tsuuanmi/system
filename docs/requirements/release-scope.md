@@ -154,7 +154,7 @@ Adds, as plugins:
   engine unrolls; its members are durable sessions that propose, vote, and
   debate on prompts the engine composes ([teams](../design/teams.md)).
 - **Workers:** `agent-runtimes`, `agent-workers`, `runtime-claude-agent-sdk`,
-  `runtime-codex-sdk`, `runtime-acp` (REQ-WRK-5..6). Claude Code and Codex become
+  `runtime-codex-sdk`, `runtime-acp`, `runtime-antigravity-cli` (REQ-WRK-5..6). Claude Code and Codex become
   Workers as well as clients.
 - **Providers:** `provider-gemini-web`, connectors as capabilities (REQ-PRV-7), and
   an economy-tier model provider for API or local models (P4).

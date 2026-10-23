@@ -52,6 +52,7 @@ export const LAYER_OF: Record<string, Layer> = {
   'runtime-claude-agent-sdk': 'capabilities',
   'runtime-codex-sdk': 'capabilities',
   'runtime-acp': 'capabilities',
+  'runtime-antigravity-cli': 'capabilities',
   'agent-workers': 'capabilities',
   'models-core': 'capabilities',
   'models': 'capabilities',

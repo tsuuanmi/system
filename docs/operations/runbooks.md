@@ -45,10 +45,11 @@
 
 ## Agent Workers
 
-An agent Worker (Claude Code, Codex, an ACP agent) runs on this machine, under
-the `agent-workers` row. The Claude Code rows (`agent-runtimes`,
-`runtime-claude-agent-sdk`, `agent-workers`) are on by default, with no Worker;
-the Codex and ACP rows are off ([below](#turn-an-off-row-back-on)).
+An agent Worker (Claude Code, Codex, an ACP agent, the Antigravity CLI) runs on
+this machine, under the `agent-workers` row. The Claude Code rows
+(`agent-runtimes`, `runtime-claude-agent-sdk`, `agent-workers`) are on by
+default, with no Worker; the Codex, ACP, and Antigravity CLI rows are off
+([below](#turn-an-off-row-back-on); [Antigravity CLI](#antigravity-cli-workers)).
 
 - **Add Claude Code Workers for a repository.** A Worker works in a workspace
   you name, so the bundle configures none. For a repository at
@@ -216,6 +217,83 @@ queue as a Claude Code Worker's does. To use one:
      asking the gate (a hook that did not run, a terminal session, a hosted tool). Usually a
      Codex release that changed its hooks: keep the Workers off and report the reason.
 
+## Antigravity CLI Workers
+
+The `runtime-antigravity-cli` row runs the Antigravity CLI (`agy`) as a Worker
+([runtime](../../packages/plugins/runtime-antigravity-cli/README.md)). It is off
+by default, and today it admits no Worker on any host. `system explain` and
+`/ui` show both reasons on such a Worker:
+
+- agy can be held to a policy only through its PreToolUse hook. The probe proves
+  the hook reaches the run's gate on this host, but that agy runs it before each
+  tool call takes a model turn to show, and no agy version is recorded as
+  verified live. So the runtime offers no sandbox, and every run is refused;
+- the `agents` source's tool gate classifies Claude Code's tools only
+  ([approvals](../design/approvals.md#how-a-call-is-classified)), so a gated
+  run is refused.
+
+These steps prepare a host. Until both reasons are gone, they change nothing
+that runs.
+
+1. Turn the row on in your profile patch ([below](#turn-an-off-row-back-on)):
+   `- id: runtime-antigravity-cli` with `disabled: false`. The `api-first`
+   preset turns it on for you.
+2. Sign agy in once inside the Workers' Antigravity home (config `home`,
+   default `~/.dsh/system/antigravity-home`), never your own `~/.gemini`, which
+   the read confinement hides from every agent:
+
+   ```sh
+   install -d -m 700 ~/.dsh/system/antigravity-home   # owner-only, or the Worker refuses it
+   env -u DBUS_SESSION_BUS_ADDRESS HOME="$HOME/.dsh/system/antigravity-home" AGY_CLI_DISABLE_AUTO_UPDATE=true agy
+   ```
+
+   Follow its sign-in, then exit (`Ctrl+D` twice). Without the session bus, agy
+   keeps the sign-in in a file in that home, where a Worker finds it (a Worker
+   never gets the bus); with it, agy may put it in your keyring instead. Every
+   tool call in that session is denied ("no system tool gate is attached to this
+   session"): the home is the Workers', not for your own work. A Worker can use
+   an API key agy accepts instead, forwarded by name (`forwardEnv`).
+3. Check with `system explain` (or `/ui`) on an `antigravity-cli` Worker: "not
+   signed in inside its home" until step 2; then "the hook reaches the run's gate
+   inside the confinement", followed by the two reasons above.
+4. Configure the Worker like a Claude Code one ([above](#agent-workers)). Its
+   runtime is `antigravity-cli`:
+
+   ```yaml
+   - id: agent-workers
+     config:
+       workers:
+         - { id: agy-reviewer, runtime: antigravity-cli, workspace: /home/me/src/project, sandbox: read-only, tier: standard, worktreePerRun: true }
+   ```
+
+   Set no `maxTurns`: agy has no turn limit, and a run with one is refused.
+   `tools` may narrow the sandbox's tools (`view_file`, `list_directory`,
+   `grep_search`, `find`; with `workspace-write`, also `code_action` and
+   `file_change`). A `workspace-write` Worker can `develop` but never `validate`:
+   no command is offered. Its runs never continue a conversation (`resume` is not
+   proven), so it is no team member.
+5. Keep the home and the repository free of what agy would run outside the
+   gate. The home must have no MCP server (`.gemini/config/mcp_config.json`), no
+   enabled plugin (`HOME=… agy plugin list`), and no `hooks.json` but the one the
+   runtime writes. The repository must have no `hooks.json`, `mcp_config.json`,
+   `plugins.json`, or `plugins/` under `.agents/` (or `.agent/`, `_agents/`,
+   `_agent/`), from the workspace up to the repository root. Each makes the
+   Worker unavailable or the run refused, and the message names the file.
+
+agy updates itself in your own sessions; a Worker's runs never do
+(`AGY_CLI_DISABLE_AUTO_UPDATE`). What admits Workers is a reviewed code change,
+in this order:
+
+1. A supervised live check of the installed agy version, in its Worker home, on
+   a scratch repository: a session whose model calls each offered tool once
+   shows the PreToolUse hook running before every tool step, its `deny`
+   holding, and the tool names and input fields the hook receives. The version
+   then joins the runtime's `VERIFIED_HOOK_VERSIONS`, and the runtime's rules
+   take any name or field that differs. A later agy version is unverified until
+   it is checked the same way.
+2. The `agents` source's gate classifies those tool names and fields. The
+   runtime then reports `gatesToolCalls`, and admits a gated run.
+
 ## Turn an off row back on
 
 The default composition (PROP-0004) keeps these rows in the system bundle but
@@ -226,6 +304,7 @@ off (`disabled: true`). The Claude Code agent rows (`agent-runtimes`,
 |---|---|
 | `runtime-codex-sdk` | Codex agent Workers ([Codex Workers](#codex-workers)); admitted where the probe proves its tool gate on the host |
 | `runtime-acp` | ACP agent Workers ([agent runtimes](../design/agent-runtimes.md)); an ACP agent cannot ask a tool gate before each tool call, so the `agents` source admits none of its Workers until it can |
+| `runtime-antigravity-cli` | Antigravity CLI agent Workers ([Antigravity CLI](#antigravity-cli-workers)); admits none until a verified agy version and the gate's classification of its tools |
 | `profile-software-development` | the `agent-review` template, for agent Workers ([templates](../reference/workflow-templates.md#agent-review)) |
 | `gateway-anthropic`, `gateway-responses` | the model gateways behind `system claude-env`, `system codex-env`, and `system mcp-token --scope model` ([gateways](../design/gateways.md)) |
 

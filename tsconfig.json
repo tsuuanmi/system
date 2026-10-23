@@ -90,6 +90,9 @@
       "@tsuuanmi/system-runtime-claude-agent-sdk": [
         "packages/plugins/runtime-claude-agent-sdk/src/index.ts"
       ],
+      "@tsuuanmi/system-runtime-antigravity-cli": [
+        "packages/plugins/runtime-antigravity-cli/src/index.ts"
+      ],
       "@tsuuanmi/system-gateway-turns": [
         "packages/gateway-turns/src/index.ts"
       ],

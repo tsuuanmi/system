@@ -1,22 +1,23 @@
-# Agent runtimes (Claude Code, Codex, ACP agents as Workers)
+# Agent runtimes (Claude Code, Codex, ACP agents, the Antigravity CLI as Workers)
 
 > Target state. Seam: `ctx.agentRuntimes` ([plugin model](../architecture/plugin-model.md#seam-catalog)).
 > Requirements: REQ-WRK-5, REQ-WRK-6. Decision: [ADR-0009](../decisions/adr/0009-claude-and-codex-first-class.md).
 >
 > Implemented in [`agent-runtime-core`](../../packages/agent-runtime-core/README.md),
-> [`agent-workers`](../../packages/plugins/agent-workers/README.md), and the three runtime
+> [`agent-workers`](../../packages/plugins/agent-workers/README.md), and the four runtime
 > plugins below; differs from target: `persistent-conversation` rests on the probe's `resume`
 > flag, not on a resume conformance test (planned); a started run is never reconciled from the
 > agent's own records (it fails as `reconciliation_failed`); evidence beyond the final message
 > and the workspace's git subject is not stored; ACP agents cannot ask a
 > [tool gate](#tool-gate) before each tool call, so the `agents` source admits none of their
-> Workers.
+> Workers; the Antigravity CLI cannot either until its hook is verified live and the gate
+> classifies its tools, and until then it offers no sandbox.
 
 An **agent runtime** is an external coding agent that `system` drives as a Worker. It is the
 counterpart of the [gateways](gateways.md), where the same agents act as clients. The
 `agent-runtimes`, `runtime-claude-agent-sdk`, and `agent-workers` rows are on in the default
 composition (PROP-0010 B3), with no Worker until the operator names a repository
-([runbook](../operations/runbooks.md#agent-workers)); the Codex and ACP rows are off
+([runbook](../operations/runbooks.md#agent-workers)); the Codex, ACP, and Antigravity CLI rows are off
 ([turn one on](../operations/runbooks.md#turn-an-off-row-back-on)), and the `api-first` preset
 turns them on.
 
@@ -27,6 +28,7 @@ turns them on.
 | [`runtime-claude-agent-sdk`](../../packages/plugins/runtime-claude-agent-sdk/README.md) | `claude-agent-sdk` | official Claude Agent SDK, on the operator's installed `claude` | exact built-in tools, file tools pre-approved inside the workspace only; `Bash` in `workspace-write` runs only, inside the SDK's sandbox ([confined commands](#confined-commands)); its own home; no settings files, hooks from disk, or MCP servers; the run's tool gate as its one PreToolUse hook |
 | [`runtime-codex-sdk`](../../packages/plugins/runtime-codex-sdk/README.md) | `codex-sdk` | official Codex SDK, on the operator's installed `codex` | Codex's own sandbox (read-only or workspace-write); approvals `never`; network, web search, and the features that add unhooked tools off; no terminal; its own Codex home, with no MCP server; the run's tool gate as its one PreToolUse hook, through a private channel ([Codex's gate](#codexs-gate)) |
 | [`runtime-acp`](../../packages/plugins/runtime-acp/README.md) | `acp:<name>` | official ACP SDK, with an agent subprocess | the client side: permission requests refused, reads confined to the workspace, no writes or terminals advertised; no tool gate (refused) |
+| [`runtime-antigravity-cli`](../../packages/plugins/runtime-antigravity-cli/README.md) | `antigravity-cli` | the operator's installed `agy`, in print mode (stream-json); no SDK exists | its PreToolUse hook, bridged to the run: the runtime's own rules (the sandbox's reading and file-editing tools only, no command; every location inside the workspace), then the run's gate; its own home (`HOME`), with no MCP server, plugin, or other hook, in it or in the workspace; no sandbox offered until agy's half of the hook is verified live; no tool gate yet (refused) |
 
 ACP is the generic path for any ACP-speaking agent, not the primary path for Claude or Codex.
 
@@ -44,7 +46,7 @@ abstract class AgentRuntimes extends Service {     // ctx.agentRuntimes
 }
 
 interface AgentRuntimeProvider {
-  readonly kind: string;                    // "claude-agent-sdk", "codex-sdk", "acp:<name>"
+  readonly kind: string;                    // "claude-agent-sdk", "codex-sdk", "acp:<name>", "antigravity-cli"
   probe(): Promise<RuntimeEvidence>;
   run(spec: RunSpec, signal: AbortSignal,
       onHandle?: (nativeHandle: string) => void): Promise<RunResult>;
@@ -125,8 +127,14 @@ refuses a run that carries a gate (`config_error`), and its Workers are not admi
 runtime asks it with `askToolGate` (agent-runtime-core): bounded at 30 s, and a gate that throws,
 answers a verdict the contract does not define, or answers late is a deny. Claude Code compiles
 the gate to one PreToolUse hook on every tool, an in-process callback of its SDK. Codex runs a
-PreToolUse hook as a command, so its gate goes through a bridge ([below](#codexs-gate)). An ACP
-agent asks the client only for what it chooses to, so it does not gate.
+PreToolUse hook as a command, so its gate goes through a bridge ([below](#codexs-gate)). The
+Antigravity CLI also runs a command hook before each tool call, which its runtime bridges to the
+run (a socket in an owner-only directory, a per-run token, any failure a deny,
+[its README](../../packages/plugins/runtime-antigravity-cli/README.md)): it asks its own rules,
+then the gate, and a `defer` is denied and ends the run. It reports `gatesToolCalls` only once
+agy's half of the hook is verified live and the `agents` source classifies agy's tools; until
+then it refuses a gated run. An ACP agent asks the client only for what it chooses to, so it does
+not gate.
 
 ### Codex's gate
 
@@ -209,7 +217,9 @@ has the configuration and every rule.
   own client configuration holds the `system` MCP server (operator tools such as `approve`).
   So a Worker attaches none: Claude Code takes no settings files and a strict, empty MCP
   configuration; Codex runs in its own Codex home and fails closed if that home configures
-  any, with plugins and apps off.
+  any, with plugins and apps off; the Antigravity CLI runs in its own home and fails closed if
+  that home, or the workspace's customization roots, configure any, or a plugin or hook of their
+  own.
 - **Reads** ([ADR-0024](../decisions/adr/0024-agent-workers-confined-for-reads.md)). The host
   state is never readable to an agent. `ctx.agentRuntimes.confinement()` names what to hide
   (the DSH home, the session's runtime directory, the temporary directories, credential
@@ -218,15 +228,15 @@ has the configuration and every rule.
   sandbox allows; never a bind that holds a hidden path). Every runtime starts its agent under
   bubblewrap with that confinement (`confinedCommand`: its own PID namespace and session,
   `--die-with-parent`): Codex through an owner-only launcher (`writeLauncher`), ACP agents
-  directly, Claude Code through the SDK's `spawnClaudeCodeProcess`, which wraps the SDK's own
+  and the Antigravity CLI directly, Claude Code through the SDK's `spawnClaudeCodeProcess`, which wraps the SDK's own
   command line ([ADR-0038](../decisions/adr/0038-confined-commands-for-claude-code-workers.md)).
   Each agent runs in a home of its own (Codex's `CODEX_HOME`, Claude Code's
-  `CLAUDE_CONFIG_DIR`, both under `<DSH_HOME>/system`), never the operator's login, which is
-  hidden; the operator signs in there once, and a probe that finds no one signed in reports the
-  Worker unavailable ([runbook](../operations/runbooks.md#agent-workers)). Codex also runs with the
-  terminal devices hidden ([Codex's gate](#codexs-gate)). Each probe reports `readsConfined`, proven
-  positively on the host by `proveConfinement`, and the `agents` source checks it again before
-  each run starts.
+  `CLAUDE_CONFIG_DIR`, the Antigravity CLI's `HOME`, each under `<DSH_HOME>/system`), never the
+  operator's login, which is hidden; the operator signs in there once, and a probe that finds no
+  one signed in reports the Worker unavailable ([runbook](../operations/runbooks.md#agent-workers)).
+  Codex also runs with the terminal devices hidden ([Codex's gate](#codexs-gate)). Each probe
+  reports `readsConfined`, proven positively on the host by `proveConfinement`, and the `agents`
+  source checks it again before each run starts.
 - **Egress** ([INV-12](../architecture/invariants.md#inv-12-data-egress-is-explicit)). The
   agent runs here, but its model is remote. So the `agents` source checks each prompt with
   `ctx.egress` (Worker class `agent`) before the agent starts, keeps the decision id on the run,
@@ -266,6 +276,9 @@ Claude Code runs them under two confinements
   forbidden, and with the default studio policy any other command asks the operator unless a
   rule lists it.
 
+The Antigravity CLI offers no command tool, so its Workers never `validate`: agy's own terminal
+sandbox (`--sandbox`) has no model-free proof.
+
 Commands that need the network (installing packages) fail inside a Worker: dependencies are
 prepared in the repository before the run. The sandbox runtime does not claim to stop a kernel
 escape ([threat model](../security/threat-model.md#threats-and-controls)).
@@ -279,7 +292,10 @@ them in provider-neutral names (`RunMetering`); a run that fails attaches them t
 checks that what a provider reports holds together: input includes its cached part, and
 per-model counts sum to the totals. A provider that reports nothing passes. Today the Claude
 Agent SDK provider reports usage (from the result's `modelUsage`) and rate-limit observations
-([its README](../../packages/plugins/runtime-claude-agent-sdk/README.md)); the Codex and ACP
+([its README](../../packages/plugins/runtime-claude-agent-sdk/README.md)); the Antigravity CLI
+provider reports turns, usage from agy's own result (normalized by the one reading whose sum is
+agy's total), and the main model when an event names it
+([its README](../../packages/plugins/runtime-antigravity-cli/README.md)); the Codex and ACP
 providers report none.
 
 The `agents` source meters a Worker whose configuration names a resource `pool` (with its

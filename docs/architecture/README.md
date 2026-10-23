@@ -101,7 +101,7 @@ flowchart TB
     direction LR
     turns["ctx.turns<br/>website Workers"]
     aw["ctx.agentWorkers<br/>agent Workers"]
-    ar["ctx.agentRuntimes<br/>claude-agent-sdk, codex-sdk, acp"]
+    ar["ctx.agentRuntimes<br/>claude-agent-sdk, codex-sdk, acp, antigravity-cli"]
     mod["ctx.models<br/>model Workers"]
   end
   subgraph PR["Provider runtime"]

@@ -17,9 +17,9 @@ const env = { ...process.env, DSH_HOME: home }
 let child: ChildProcess | undefined
 
 // The default composition: the Claude Code agent rows are on (PROP-0010 B3); the Codex, ACP,
-// software-development, and model gateway rows are off (PROP-0004).
+// Antigravity CLI, software-development, and model gateway rows are off (PROP-0004).
 // The rows the default composition has but turns off, and the DSH rows, whose packages ship no plugin manifest.
-const OFF_ROWS = ['runtime-codex-sdk', 'runtime-acp', 'profile-software-development', 'gateway-anthropic', 'gateway-responses']
+const OFF_ROWS = ['runtime-codex-sdk', 'runtime-acp', 'runtime-antigravity-cli', 'profile-software-development', 'gateway-anthropic', 'gateway-responses']
 const DSH_PACKAGES = ['@deepseek-ai/cordis-plugin-timer', '@deepseek-ai/dsh-host-webserver', '@deepseek-ai/dsh-llm', '@deepseek-ai/dsh-llm-pi-ai']
 
 type Plugin = { name: string; rows: string[]; mounted: boolean; manifest: string; lifecycle?: { state: string; since: string; decision: string } }

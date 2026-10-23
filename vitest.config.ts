@@ -31,6 +31,7 @@ export default defineConfig({
       '@tsuuanmi/system-runtime-acp': src('./packages/plugins/runtime-acp/src/index.ts'),
       '@tsuuanmi/system-runtime-codex-sdk': src('./packages/plugins/runtime-codex-sdk/src/index.ts'),
       '@tsuuanmi/system-runtime-claude-agent-sdk': src('./packages/plugins/runtime-claude-agent-sdk/src/index.ts'),
+      '@tsuuanmi/system-runtime-antigravity-cli': src('./packages/plugins/runtime-antigravity-cli/src/index.ts'),
       '@tsuuanmi/system-gateway-turns': src('./packages/gateway-turns/src/index.ts'),
       '@tsuuanmi/system-profile-scientific-research': src('./packages/plugins/profile-scientific-research/src/index.ts'),
       '@tsuuanmi/system-profile-software-development': src('./packages/plugins/profile-software-development/src/index.ts'),

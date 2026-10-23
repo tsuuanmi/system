@@ -28,8 +28,10 @@ Capability **seam definition** for agent runtimes
   goes on to the runtime's own policy, which still holds), `deny` with a
   `reason` the agent is told, or `defer` with a `reason` and the approval
   `requestId` it waits for. A provider that gates (`RuntimeEvidence.gatesToolCalls`)
-  asks it before every tool call, subagents' included; a gate that throws, gives
-  an unknown verdict, or does not answer within the provider's bound is a deny.
+  asks it before every tool call, subagents' included, through
+  `askToolGate(gate, call, signal, ms)`: a gate that throws, gives an unknown
+  verdict, or does not answer within the provider's bound (`ms`) is a deny, and
+  the gate's own signal aborts with the run or the bound.
   After a `defer` it runs no further tool call and ends the run with a
   `config_error` naming the request: a deferred run never completes. A provider
   that cannot ask it before every call reports `gatesToolCalls: false` and

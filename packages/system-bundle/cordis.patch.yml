@@ -87,8 +87,10 @@
     # confined for reads by bubblewrap, and its commands by the SDK's sandbox (ADR-0024, ADR-0038);
     # a host without Claude Code, bubblewrap, or a sign-in still boots, and the probe says why its
     # Workers are unavailable. Codex stays off (PROP-0004): its Workers ask the tool gate through a
-    # PreToolUse hook its probe proves on the host (ADR-0042), once the operator turns it on. ACP
-    # stays off: it cannot ask a tool gate before each tool call, so no Worker of its is admitted. ---
+    # PreToolUse hook its probe proves on the host (ADR-0042), once the operator turns it on. The
+    # Antigravity CLI stays off: its hook is proven per verified version, and the gate does not yet
+    # classify its tools, so no Worker of its is admitted. ACP stays off: it cannot ask a tool gate
+    # before each tool call, so no Worker of its is admitted. ---
     - id: agent-runtimes
       name: '@tsuuanmi/system-agent-runtimes'         # ctx.agentRuntimes and the read confinement
     - id: runtime-claude-agent-sdk
@@ -98,6 +100,9 @@
       disabled: true
     - id: runtime-acp
       name: '@tsuuanmi/system-runtime-acp'            # ACP agents (none until configured)
+      disabled: true
+    - id: runtime-antigravity-cli
+      name: '@tsuuanmi/system-runtime-antigravity-cli'   # the Antigravity CLI (the installed agy), in its own home
       disabled: true
     - id: agent-workers
       name: '@tsuuanmi/system-agent-workers'          # the `agents` Worker source

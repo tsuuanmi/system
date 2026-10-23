@@ -218,6 +218,14 @@ flowchart LR
   reason; `allow` prints no decision, so Codex's own sandbox still decides. The hook blocks on any
   failure of its own, since Codex runs the tool when a hook fails, and the probe proves the hook
   answers before a tool call on the host before any Codex Worker is admitted.
+- **On the Antigravity CLI** the hook is a command agy runs before each tool call, which the
+  runtime bridges to the run (a socket in an owner-only directory, a per-run token; any failure
+  on the way is a deny). The runtime's own rules come first, since agy has no workspace-scoped
+  permission of its own; then the gate, bounded the same way. `allow` is the hook's allow (the
+  rules already held the call to the workspace); `deny` its deny; `defer` is a deny too (agy
+  cannot wait on a call), and the run ends there as above. Its tools are not in the table below,
+  so the runtime refuses a gated run (`gatesToolCalls: false`) until they are
+  ([its README](../../packages/plugins/runtime-antigravity-cli/README.md)).
 
 ### How a call is classified
 

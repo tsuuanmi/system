@@ -328,6 +328,17 @@ No options.
 | `agents[].forwardEnv` | string[] | `[]` | Daemon environment variables forwarded by name, such as an API key the agent needs |
 | `agents[].honoursPermissions` | boolean | `false` | The operator vouches that the agent asks permission before acting |
 
+## `runtime-antigravity-cli`
+
+[@tsuuanmi/system-runtime-antigravity-cli](../../packages/plugins/runtime-antigravity-cli/README.md)
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `executable` | string |  | Path to the agy executable (default: found on PATH) |
+| `env` | Record<string, string> | `{}` | Explicit environment for agy (no secrets; use forwardEnv) |
+| `forwardEnv` | string[] | `[]` | Daemon environment variables forwarded by name, such as an API key agy should use |
+| `home` | string |  | The Workers' Antigravity home (agy's HOME; default <DSH_HOME>/system/antigravity-home), never the operator's; sign in there once |
+
 ## `runtime-claude-agent-sdk`
 
 [@tsuuanmi/system-runtime-claude-agent-sdk](../../packages/plugins/runtime-claude-agent-sdk/README.md)

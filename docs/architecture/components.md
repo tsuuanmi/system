@@ -101,7 +101,7 @@ runs the work the router admitted to them. Callers never reach a source directly
 - **Agent Workers** (`ctx.agentWorkers`): one Worker per configured agent, held to a policy from
   configuration (workspace, sandbox, tool allow-list). Its row, `agent-runtimes`, and the Claude
   Code runtime's are on in the default composition, with no Worker until the operator names a
-  repository ([agent Workers](../operations/runbooks.md#agent-workers)); the Codex and ACP rows
+  repository ([agent Workers](../operations/runbooks.md#agent-workers)); the Codex, ACP, and Antigravity CLI rows
   are off. A Worker's capabilities are what its
   runtime's `probe()` proves now; a policy the runtime cannot enforce leaves it unavailable, and
   only a runtime that proves its commands confined (`executes`) gives a writable Worker `validate`.
@@ -119,7 +119,8 @@ runs the work the router admitted to them. Callers never reach a source directly
   the run's branch, once the run has been idle past a retention
   ([workspaces](../design/agent-runtimes.md#workspaces)).
 - **Agent runtimes** (`ctx.agentRuntimes`): providers for Claude Code (Claude Agent SDK), Codex
-  (Codex SDK), and ACP agents ([agent runtimes](../design/agent-runtimes.md)). Each agent
+  (Codex SDK), ACP agents, and the Antigravity CLI (its installed `agy`, every tool call held by
+  its PreToolUse hook, bridged to the run) ([agent runtimes](../design/agent-runtimes.md)). Each agent
   process starts without the daemon's credentials, in a home of its own, and cannot read host
   state (the DSH home, the session's runtime and temporary directories, registered secret
   paths, every agent's login): the registry owns the read confinement, applied with
@@ -156,6 +157,7 @@ runs the work the router admitted to them. Callers never reach a source directly
   [runtime-claude-agent-sdk](../../packages/plugins/runtime-claude-agent-sdk/README.md),
   [runtime-codex-sdk](../../packages/plugins/runtime-codex-sdk/README.md),
   [runtime-acp](../../packages/plugins/runtime-acp/README.md),
+  [runtime-antigravity-cli](../../packages/plugins/runtime-antigravity-cli/README.md),
   [models-core](../../packages/models-core/README.md),
   [models](../../packages/plugins/models/README.md).
 
