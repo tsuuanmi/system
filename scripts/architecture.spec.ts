@@ -29,6 +29,8 @@ describe('architecture rules', () => {
     const governed = [
       join(packages, 'workers-core', 'src'), join(plugins, 'workers', 'src'), join(plugins, 'workflow', 'src'), join(packages, 'gateway-turns', 'src'),
       join(packages, 'models-core', 'src'), join(plugins, 'models', 'src'),
+      // The feedback loop's seams compare provider families for independence; they never name one.
+      join(packages, 'experiments-core', 'src'), join(packages, 'evaluations-core', 'src'),
       // The client edge and the other control-plane plugins: one MCP interface for every client (ADR-0011).
       join(packages, 'gateway-core', 'src'), join(plugins, 'mcp-server', 'src'), join(plugins, 'egress', 'src'), join(plugins, 'turns', 'src'),
       join(plugins, 'accounts', 'src'), join(plugins, 'agent-workers', 'src'), join(packages, 'agent-runtime-core', 'src'),
@@ -128,7 +130,8 @@ describe('architecture rules', () => {
       turnReceipts: 'plugins/turn-receipts/conformance/turn-receipts.ts', leases: 'plugins/leases/conformance/leases.ts', egress: 'plugins/egress/conformance/egress.ts',
       workerSessions: 'plugins/worker-sessions/conformance/worker-sessions.ts', workflow: 'plugins/workflow/conformance/workflow.ts', workers: 'workers-core/conformance/workers.ts',
       board: 'board-core/conformance/board.ts', approvals: 'approvals-core/conformance/approvals.ts', resources: 'resources-core/conformance/resources.ts',
-      pluginHost: 'plugin-host-core/conformance/plugin-host.ts',
+      pluginHost: 'plugin-host-core/conformance/plugin-host.ts', experiments: 'experiments-core/conformance/experiments.ts',
+      evaluations: 'evaluations-core/conformance/evaluations.ts',
     }
     for (const [seam, file] of Object.entries(suites)) {
       const source = readFileSync(join(packages, file), 'utf8')
