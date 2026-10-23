@@ -36,6 +36,22 @@ describe('host health (REQ-HOST-6)', () => {
     expect(await check({ duplicateAccounts: async () => { throw new Error('vault locked') } }, 'accounts')).toMatchObject({ state: 'down', detail: expect.stringContaining('vault locked') })
   })
 
+  it('names every agent account that takes no work, with its status and why, and the runbook (ADR-0051, REQ-ACC-11)', async () => {
+    const quarantined = await check({
+      agentAccounts: () => [
+        { provider: 'codex-sdk', slot: 1, accountId: 'codex-sdk:04aa5c1e9b7d3f20', status: 'ready' },
+        { provider: 'codex-sdk', slot: 2, accountId: 'codex-sdk:9b2e0c11aa223344', status: 'quarantined', reason: 'duplicate' },
+        { provider: 'antigravity-cli', slot: 1, status: 'quarantined', reason: 'unverified' },
+        { provider: 'claude-agent-sdk', slot: 2, status: 'enrolled' },
+      ],
+    }, 'agent-accounts')
+    expect(quarantined).toMatchObject({ state: 'degraded', detail: expect.stringMatching(/^take no work: codex-sdk:9b2e0c11aa223344 \(quarantined: duplicate\), slot 1 of antigravity-cli \(quarantined: unverified\), slot 2 of claude-agent-sdk \(enrolled\); .*#resolve-a-quarantined-agent-account/) })
+    expect(quarantined?.detail).not.toContain('codex-sdk:04aa5c1e9b7d3f20')
+    expect(await check({ agentAccounts: () => [{ provider: 'codex-sdk', slot: 1, accountId: 'codex-sdk:04aa5c1e9b7d3f20', status: 'ready' }] }, 'agent-accounts')).toMatchObject({ state: 'ok' })
+    // No agent source: no check.
+    expect(await check({}, 'agent-accounts')).toBeUndefined()
+  })
+
   it('advises on a vault key beside the vault without alarming: the default must not page every install', async () => {
     expect(await check({ keyCustody: () => ({ keyApart: false }) }, 'vault-key')).toMatchObject({ state: 'ok', detail: expect.stringContaining('key-custody') })
   })
