@@ -179,7 +179,8 @@ adds: the project, the task, and the attempt the run will be; the task's goal an
 criteria; the task's budget lines less the usage spent on the task (the brief informs; the run's
 [reservation](#a-tasks-budget) enforces); and at most 16
 pointers, never content: the accepted results of the tasks it depends on (their digests when
-they have one, role `input`), and on a later attempt the previous attempt's result (`prior`) and
+they have one, role `input`), and on a later attempt the previous attempt's result (`prior`; for
+an attempt a spent budget stopped between steps, the result of each step it completed) and
 the decision behind this attempt (`review`: a rejection's reasons, the answers to its questions).
 
 **Usage spent on a task.** The [ledger](resources.md) counts usage by run: a record names the
