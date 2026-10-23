@@ -593,6 +593,36 @@ Two team members then share one account, each in its own conversation. The team'
 two families, turn the row back on and sign the account in; `allowSameFamily` can stay on, since
 a second family is used whenever one is admitted.
 
+## Pool a provider's accounts
+
+Every provider's accounts are `assigned` by default
+([ADR-0052](../decisions/adr/0052-accounts-are-assigned-unless-pooling-is-recorded.md)): each
+serves its own work, and a limit on one makes its work wait for the reset instead of moving to
+another account of that provider. Personal subscriptions stay assigned: rotating them around their
+limits is restricted or prohibited by the providers' terms. Pool a provider only when you have read
+its terms and they allow it (an organization plan's seats, say):
+
+1. Add the provider to the row that holds its accounts, with the terms you read. A website provider
+   goes on the `accounts` row, an agent runtime on the `agent-workers` row:
+
+   ```yaml
+   - id: accounts            # or agent-workers
+     config:
+       providers:
+         - provider: chatgpt-web          # or the runtime kind, for example codex-sdk
+           accounts: pooled
+           pooledTerms:
+             confirmedBy: operator
+             confirmedAt: "2026-10-24T09:00:00+07:00"
+             terms: "ChatGPT Team terms, section 3, read 2026-10-24"
+   ```
+
+   The rest of the row's configuration stays (a targeted patch replaces the whole config).
+2. Restart (`system shutdown`, then start). A pooled provider with no or partial `pooledTerms`
+   fails startup with the exact path. Each start records the terms as a `gate` decision (rule
+   `turns.pooled-terms` or `agent-workers.pooled-terms`); `system explain` shows it.
+3. To go back, set `accounts: assigned` (or remove the entry) and restart.
+
 ## Account re-auth
 
 A turn that fails with `reauth_required` or `challenge` (disposition

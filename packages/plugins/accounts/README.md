@@ -32,6 +32,16 @@
     with its state unchanged.
   - `markChallenge` keeps the state.
   - `duplicateIdentities` flags accounts that share an identity (REQ-TEAM-4).
+- **How a provider's accounts are used** (`providers`, ADR-0052): each website
+  provider is `assigned` (the default, and the only one for personal
+  subscriptions: a limit on one account never moves its work to another account
+  of that provider; the work waits) or `pooled`, which is refused at load unless
+  its `pooledTerms` record who confirmed the provider's terms allow it, when,
+  and which terms. `setting(provider)` gives a provider's setting (assigned when
+  not listed), `pooled()` the pooled providers with their terms; the `website`
+  source puts the setting on each Worker's `account` and records each pooled
+  provider's terms as a `gate` decision at start
+  ([assigned accounts](../../../docs/design/routing.md#assigned-accounts)).
 - **Known limitation:** every read decrypts the whole vault, including every
   account's portable state. That is fine for a few accounts; caching by file
   change, or one record per file, is the next step if the catalog grows.

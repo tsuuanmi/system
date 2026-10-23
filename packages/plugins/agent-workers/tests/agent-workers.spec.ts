@@ -599,6 +599,26 @@ describe('agents source: metering through ctx.resources (docs/design/resources.m
     expect((await ctx.workers.route(requirement())).worker.worker).toBe('agent:reviewer')
   })
 
+  it('names its runtime\'s one account, assigned by default, and when an exhausted pool is back, so routing can wait for it (ADR-0052)', async () => {
+    const { ctx } = await boot(new ScriptedAgent(), { workers: [metered()] }, undefined, LEDGER)
+    expect((await ctx.workers.list())[0]).toMatchObject({ schema: 'capability-descriptor@1.5', account: { id: 'scripted', group: 'scripted', mode: 'assigned' } })
+    expect((await ctx.workers.list())[0]!.account).not.toHaveProperty('limitUntil')
+    const reset = inAnHour()
+    await ctx.resources.observe(limitReading(POOL.windows[1] as never, { state: 'limited', resetsAt: reset }))
+    expect((await ctx.workers.list())[0]).toMatchObject({ state: 'quota-exhausted', account: { mode: 'assigned', limitUntil: reset } })
+    // With one account for the runtime, the refusal says when it is back.
+    await expect(ctx.workers.route(requirement())).rejects.toMatchObject({ name: 'AdmissionFailure', limitUntil: reset })
+  })
+
+  it('pools a runtime\'s accounts only with the operator\'s recorded terms, recorded at start as a gate decision (ADR-0052)', async () => {
+    expect(() => new AgentWorkers(new Context(), { workers: [worker()], providers: [{ provider: 'scripted', accounts: 'pooled' }] })).toThrow(/agent-workers\.providers\[0\]: scripted is pooled, and no pooledTerms/)
+    const pooledTerms = { confirmedBy: 'operator', confirmedAt: '2026-10-24T09:00:00Z', terms: 'the plan terms, read 2026-10-24' }
+    const { ctx } = await boot(new ScriptedAgent(), { workers: [worker()], providers: [{ provider: 'scripted', accounts: 'pooled', pooledTerms }] })
+    expect((await ctx.workers.list())[0]).toMatchObject({ account: { id: 'scripted', group: 'scripted', mode: 'pooled' } })
+    const gates = ctx.artifacts.list({ kind: 'decision', decisionType: 'gate', limit: 10 }).map((a) => a.body as { decider: { id: string }; outcome: { option: string; detail: Record<string, unknown> } })
+    expect(gates.filter((g) => g.decider.id === 'agent-workers.pooled-terms')).toEqual([expect.objectContaining({ outcome: { option: 'pooled', detail: { provider: 'scripted', ...pooledTerms } } })])
+  })
+
   it('fails closed when a metered Worker\'s ledger or pool is missing: unavailable, and a run never starts (INV-2)', async () => {
     const agent = new ScriptedAgent()
     const unledgered = await boot(agent, { workers: [metered()] })

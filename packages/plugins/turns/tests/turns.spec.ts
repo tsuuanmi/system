@@ -18,7 +18,7 @@ import ChatGptWeb from '@tsuuanmi/system-provider-chatgpt-web'
 import * as GeminiWeb from '@tsuuanmi/system-provider-gemini-web'
 import { ProviderError } from '@tsuuanmi/system-provider-core'
 import Providers from '@tsuuanmi/system-providers'
-import { contentId, SchemaRegistry } from '@tsuuanmi/system-libs'
+import { contentId, type ProviderAccounts, SchemaRegistry } from '@tsuuanmi/system-libs'
 import Store from '@tsuuanmi/system-store'
 import TurnReceipts from '@tsuuanmi/system-turn-receipts'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -63,7 +63,7 @@ async function ask(ctx: Context, input: AskSpec) {
   }
 }
 
-async function boot(options: { fake?: FakeOptions; accounts?: CatalogEntry[]; ready?: string[]; dir?: string; capacity?: number; shared?: FakeChatGpt; turns?: Record<string, unknown> } = {}) {
+async function boot(options: { fake?: FakeOptions; accounts?: CatalogEntry[]; providers?: ProviderAccounts[]; ready?: string[]; dir?: string; capacity?: number; shared?: FakeChatGpt; turns?: Record<string, unknown> } = {}) {
   const fake = options.shared ?? new FakeChatGpt({ answer: 'OK', ...options.fake })
   if (!options.shared) await fake.start()
   const dir = options.dir ?? mkdtempSync(join(tmpdir(), 'system-turns-'))
@@ -78,7 +78,7 @@ async function boot(options: { fake?: FakeOptions; accounts?: CatalogEntry[]; re
     ctx.plugin(Egress, {}),
     ctx.plugin(TurnReceipts, {}),
     ctx.plugin(Vault, { path: join(dir, 'vault.enc'), keyFile: join(dir, 'vault.key') }),
-    ctx.plugin(Accounts, { accounts: options.accounts ?? [account('chatgpt-main')] }),
+    ctx.plugin(Accounts, { accounts: options.accounts ?? [account('chatgpt-main')], ...(options.providers ? { providers: options.providers } : {}) }),
     ctx.plugin(VirtualDisplay, {}),
     ctx.plugin(BrowserPool, { chromePath: testChrome! }),
     ctx.plugin(Providers),
@@ -365,9 +365,12 @@ describe.runIf(canRunBrowser)('ctx.turns: ask through a saved account', () => {
     expect(fake.sent).toHaveLength(1)
     expect(ctx.turns.cooldowns()).toEqual([expect.objectContaining({ account: 'chatgpt-main', feature: '*', source: expect.stringMatching(/quota_exhausted/) })])
     expect((await stateOf()).state).toBe('quota-exhausted')
+    // Its account, assigned by default, says when it is back, so work only it could take waits for it (ADR-0052).
+    expect((await stateOf()).account).toEqual({ id: 'chatgpt-main', group: 'chatgpt-web', mode: 'assigned', limitUntil: ctx.turns.cooldowns()[0]!.until })
     expect((await ctx.accounts.get('chatgpt-main')).status).toBe('ready')
     expect(ctx.turns.clearCooldown('chatgpt-main')).toBe(1)
     expect((await stateOf()).state).toBe('ready')
+    expect((await stateOf()).account).toEqual({ id: 'chatgpt-main', group: 'chatgpt-web', mode: 'assigned' })
     // One feature: only work that needs it is kept away; a turn that used it and succeeded ends it.
     await ctx.turns.probe('chatgpt-main')
     fake.options.answer = 'You have reached your search limit for today.'
@@ -382,6 +385,14 @@ describe.runIf(canRunBrowser)('ctx.turns: ask through a saved account', () => {
     expect(await ctx.turns.wait(used.turnId, 30_000)).toMatchObject({ status: 'completed' })
     expect(ctx.turns.cooldowns()).toEqual([])
   }, 120_000)
+
+  it('names a pooled provider\'s accounts pooled, only with the operator\'s recorded terms, recorded at start as a gate decision (REQ-ACC-10, ADR-0052)', async () => {
+    const pooledTerms = { confirmedBy: 'operator', confirmedAt: '2026-10-24T09:00:00Z', terms: 'Team plan terms, read 2026-10-24' }
+    const { ctx } = await boot({ providers: [{ provider: 'chatgpt-web', accounts: 'pooled', pooledTerms }] })
+    expect((await ctx.workers.list()).find((w) => w.worker === 'worker:chatgpt-main/standard')!.account).toEqual({ id: 'chatgpt-main', group: 'chatgpt-web', mode: 'pooled' })
+    const gates = ctx.artifacts.list({ kind: 'decision', decisionType: 'gate', limit: 10 }).map((a) => a.body as { decider: { id: string }; outcome: unknown })
+    expect(gates.filter((g) => g.decider.id === 'turns.pooled-terms').map((g) => g.outcome)).toEqual([{ option: 'pooled', detail: { provider: 'chatgpt-web', ...pooledTerms } }])
+  })
 
   it('never takes a limit an earlier answer of the conversation gave for the next answer\'s (ADR-0034)', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'system-turns-'))

@@ -31,6 +31,17 @@ The **`agents` Worker source**: agent runtimes as Workers
   reviews. Optional: `reviewMember` (default false; see **Review members**
   below), refused at load (`config_error`) unless the sandbox is `read-only`
   (a writer never reviews), `family` is set, and `worktreePerRun` is off.
+- **Accounts** (`providers`, ADR-0052): each runtime runs one account today, its
+  home, so every Worker of a runtime names the account `{ id: <runtime>, group:
+  <runtime> }` (`capability-descriptor@1.5`), with its runtime's mode:
+  `assigned` by default, or `pooled` only with `pooledTerms` (who confirmed the
+  plan's terms allow it, when, which terms; refused at load otherwise, and
+  recorded at start as a `gate` decision, rule `agent-workers.pooled-terms`).
+  A metered Worker whose pool is out says when it is back (`limitUntil`, the
+  ledger's `until`), so a node that only it could take waits for the reset
+  instead of failing ([assigned accounts](../../../docs/design/routing.md#assigned-accounts)).
+  Several accounts per runtime, enrolled by their login, are PROP-0012's later
+  phases (ADR-0051).
 - **Capabilities are what `probe()` proves now** (cached for `probeTtlMs`):
   - `local-data`;
   - `review` only for a read-only sandbox: a review is independent of the

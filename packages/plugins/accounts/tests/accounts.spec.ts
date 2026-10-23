@@ -94,6 +94,27 @@ describe('ctx.accounts', () => {
   })
 })
 
+describe('how a provider\'s accounts are used (ADR-0052)', () => {
+  const pooledTerms = { confirmedBy: 'operator', confirmedAt: '2026-10-24T09:00:00Z', terms: 'Team plan terms, read 2026-10-24' }
+
+  it('is assigned for every provider by default, and pooled only where the operator recorded its terms (REQ-ACC-10)', () => {
+    const accounts = new Accounts(new Context(), { accounts: catalog })
+    expect(accounts.setting('chatgpt-web')).toEqual({ mode: 'assigned' })
+    expect(accounts.pooled()).toEqual([])
+    const pooled = new Accounts(new Context(), { accounts: catalog, providers: [{ provider: 'chatgpt-web', accounts: 'pooled', pooledTerms }, { provider: 'gemini-web' }] })
+    expect(pooled.setting('chatgpt-web')).toEqual({ mode: 'pooled', pooledTerms })
+    expect(pooled.setting('gemini-web')).toEqual({ mode: 'assigned' })
+    expect(pooled.pooled()).toEqual([{ provider: 'chatgpt-web', pooledTerms }])
+  })
+
+  it('refuses pooled without whole terms at load, naming the path (REQ-HOST-2, INV-2)', () => {
+    expect(() => new Accounts(new Context(), { accounts: catalog, providers: [{ provider: 'chatgpt-web', accounts: 'pooled' }] }))
+      .toThrow(/accounts\.providers\[0\]: chatgpt-web is pooled, and no pooledTerms/)
+    expect(() => new Accounts(new Context(), { accounts: catalog, providers: [{ provider: 'chatgpt-web', accounts: 'pooled', pooledTerms: { confirmedBy: 'operator' } }] }))
+      .toThrow(/pooledTerms\.confirmedAt/)
+  })
+})
+
 describe('refreshState (write-back after a turn)', () => {
   it('replaces only the portable state of a ready account, guarded by revision', async () => {
     const { ctx } = await boot()

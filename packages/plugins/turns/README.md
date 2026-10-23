@@ -12,7 +12,12 @@ invoked by the [workflow engine](../workflow/README.md)
     provider family (`capability-descriptor@1.1`) is the account's provider. Its
     `load` (`@1.3`, ADR-0033) is the account's turns running and queued, its
     routes not started yet (`reserve`), and `maxConcurrentTurnsPerAccount` as its
-    slots; a ready account with every slot running reads `busy`.
+    slots; a ready account with every slot running reads `busy`. Its `account`
+    (`@1.5`, ADR-0052) is the catalog account, its group the provider, its mode
+    the provider's setting in `ctx.accounts` (`assigned` unless the operator
+    recorded `pooledTerms` for it), and, while the whole account is cooled, its
+    `limitUntil`. Each pooled provider's terms are recorded at start as a `gate`
+    decision (rule `turns.pooled-terms`).
   - **Cooldowns (ADR-0034).** A turn that fails `quota_exhausted` (a site's usage
     limit, recognized by a UI-map error rule) cools its account in table
     `turn_cooldowns`: the rule's `feature` for `featureLimitCooldownMs`, else the
@@ -27,7 +32,8 @@ invoked by the [workflow engine](../workflow/README.md)
   - **Affinity:** a session stays on the account it is bound to, once a turn of
     it was sent, is under way, or it has a conversation. A session whose turns
     all failed before sending holds no account: its next turn may run on another
-    (unsent failover, ADR-0034), and the tab the first account kept for it closes.
+    (unsent failover, ADR-0034; for an assigned provider only another
+    provider's, ADR-0052), and the tab the first account kept for it closes.
 - **Durable from acceptance.** `ask(WorkerStart)` writes the turn (`queued`) on
   the admitted Worker and returns at once.
   - The turn takes its feature from the requirement's capabilities
