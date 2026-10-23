@@ -279,11 +279,16 @@ second execution path (INV-1).
     `admission` refusal). Once the board recorded the run, before any step runs, the run reserves
     its task's lines on the ledger (`ctx.resources.reserve`: the lines as caps for the task, the
     least of each line as its draw), and releases the reservation when it finishes. A cap the
-    task already reached refuses it: the run blocks the task on the board (`budget-spent`, which
-    asks the policy about `funding`) and fails as `budget_spent` with nothing of it run, its
-    outcome `blocked`; any other refusal fails it (`quota_exhausted`), an attempt the board
-    counts. Where it stands is the view's `task.budget` and the `workflow.task.budget` event
-    ([a task's budget](../../../docs/design/workflow-engine.md#a-tasks-budget));
+    task already reached refuses it: the run asks for funding, from the ledger's count of the
+    task's usage (`ctx.resources.usage`): for each spent line, what the task overdrew plus one
+    attempt's share of the line, fixed on the run's row (`task.budget.funding`) before it blocks
+    the task on the board with it (`budget-spent` with `funding`, which asks the policy about
+    `funding`; the operator's approval adds exactly those lines to the task's budget). The run
+    fails as `budget_spent` with nothing of it run, its outcome `blocked`; any other refusal fails
+    it (`quota_exhausted`), an attempt the board counts. Where it stands is the view's
+    `task.budget` and the `workflow.task.budget` event
+    ([a task's budget](../../../docs/design/workflow-engine.md#a-tasks-budget),
+    [funding a spent task](../../../docs/design/workflow-engine.md#funding-a-spent-task));
   - every brief of the run gives the board's `TASKS.md` projection of its project
     (`renderTasks` of `board-core`, at most `tasksFile.maxTasks` tasks, default 200, and
     `tasksFile.maxChars` characters, default 65,536, cut with a note) as a `board-projection@1.0`
@@ -505,8 +510,8 @@ second execution path (INV-1).
     blocked gate records and names (what it waits for, until when).
 - **Injects:** `store`, `artifacts`, `eventLog`, `leases`, `egress`, `workers`, `workerSessions`;
   `mcp` and `board` (the abstract `Board` of `board-core`, never the board plugin) are optional;
-  it reads `resources` when present (a task's budget: its reservation, and its briefs; a task
-  with a budget is refused without it), asks `digests` (the
+  it reads `resources` when present (a task's budget: its reservation, its briefs, and the
+  funding a spent one asks for; a task with a budget is refused without it), asks `digests` (the
   abstract `Digests` of `digest-core`) when present, for a task's results, and reads `approvals`
   (the abstract `Approvals` of `approvals-core`) when present: remediation gates, deferred calls'
   continuations, a plain run's acceptance.
@@ -516,7 +521,10 @@ second execution path (INV-1).
   reported, a restart with the holder lost (reconciled, nothing new started) and one whose work
   finished meanwhile (accepted through `reconcileRun`), a review left to the operator for want
   of a required check (held by the board, past the run's lease), a result off the written
-  subject, a task's budget reserved and released, a spent one blocking the task, the refusals
+  subject, a task's budget reserved and released, a spent one blocking the task, a spent one
+  funded over the store-backed ledger (the ask from the ledger's count, approved in the queue, the
+  lines raised, the next attempt reserving and running; a denial and an ask past the board's bound
+  raising nothing; a crash between the approval and the board's move applying it once), the refusals
   of a budget no ledger can hold, a step's questions blocking its task and the answers briefing
   the next attempt, the board's TASKS.md in every brief (bounded), and the refusals with no board. [`tests/remediation.spec.ts`](tests/remediation.spec.ts)
   runs remediation over the store-backed queue and a git working tree: one request on the exact

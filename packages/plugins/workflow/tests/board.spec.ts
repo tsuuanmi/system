@@ -6,12 +6,13 @@ import { Context, type Fiber } from '@deepseek-ai/cordis'
 import StoreApprovals from '@tsuuanmi/system-approvals'
 import type { AutonomyPolicy } from '@tsuuanmi/system-approvals-core'
 import Artifacts from '@tsuuanmi/system-artifacts'
-import StoreBoard from '@tsuuanmi/system-board'
-import type { ArtifactRef, BoardTask, Subject, TaskInput } from '@tsuuanmi/system-board-core'
+import StoreBoard, { type Config as BoardConfig } from '@tsuuanmi/system-board'
+import { type ArtifactRef, type BoardTask, type BudgetLine, fundingVersion, type Subject, type TaskInput } from '@tsuuanmi/system-board-core'
 import Egress from '@tsuuanmi/system-egress'
 import EventLog from '@tsuuanmi/system-event-log'
 import Leases from '@tsuuanmi/system-leases'
-import { captureGitSubject, SchemaRegistry, sha256 } from '@tsuuanmi/system-libs'
+import { captureGitSubject, contentId, SchemaRegistry, sha256 } from '@tsuuanmi/system-libs'
+import StoreResources from '@tsuuanmi/system-resources'
 import type { UsageRecord } from '@tsuuanmi/system-resources-core'
 import Store from '@tsuuanmi/system-store'
 import WorkerSessions from '@tsuuanmi/system-worker-sessions'
@@ -100,20 +101,30 @@ interface Booted {
   workers: ScriptedWorkers
   /** Stop the engine alone, run `between` while it is down (the board, the queue, and the store stay), then start it again. */
   restartWorkflow: (between?: () => void | Promise<void>) => Promise<void>
+  /** Stop the board alone (a host that died), then start it again over the same store, as a restart does. */
+  restartBoard: () => Promise<void>
 }
 
-async function boot(options: { workflow?: Config; board?: boolean | 'short'; workspace?: string; resources?: boolean } = {}): Promise<Booted> {
+/** The store-backed ledger's one pool, as the ledger fake configures it. */
+const POOLS = [{ pool: 'max.programmatic', account: 'max', kind: 'programmatic' as const, windows: [{ id: 'monthly', kind: 'credit' as const }] }]
+
+async function boot(options: { workflow?: Config; board?: boolean | 'short'; boardConfig?: BoardConfig; workspace?: string; resources?: boolean | 'store' } = {}): Promise<Booted> {
   const dir = mkdtempSync(join(tmpdir(), 'system-workflow-board-'))
   const ctx = new Context()
   const workers = options.workspace ? new AgentWorkers(options.workspace, () => ctx.artifacts) : new ScriptedWorkers()
   const config: Config = { ...CONFIG, ...options.workflow, templates: { ...TEMPLATES, ...options.workflow?.templates } }
+  const boardPlugin = options.board === 'short' ? ShortLeaseBoard : StoreBoard
+  const boardConfig: BoardConfig = { ...options.boardConfig, sweepSeconds: 0 }
   const fibers: Fiber[] = [
     ctx.plugin(Store, { path: join(dir, 'system.db') }), ctx.plugin(Artifacts, {}), ctx.plugin(EventLog, {}), ctx.plugin(Leases, {}), ctx.plugin(Egress, {}),
     ctx.plugin(WorkerRouter, {}), ctx.plugin(WorkerSessions, {}),
     ctx.plugin({ name: 'scripted-workers', inject: ['workers', 'artifacts'], apply: (c: Context) => void c.workers.register(workers.source(c)) }),
-    ...(options.board === false ? [] : [ctx.plugin(StoreApprovals, { policies: [POLICY], sweepSeconds: 3600 }), ctx.plugin(options.board === 'short' ? ShortLeaseBoard : StoreBoard, { sweepSeconds: 0 })]),
-    ...(options.resources ? [ctx.plugin(FakeResources)] : []),
+    ...(options.board === false ? [] : [ctx.plugin(StoreApprovals, { policies: [POLICY], sweepSeconds: 3600 })]),
   ]
+  const boardAt = fibers.length
+  if (options.board !== false) fibers.push(ctx.plugin(boardPlugin, boardConfig))
+  if (options.resources === 'store') fibers.push(ctx.plugin(StoreResources, { pools: POOLS }))
+  else if (options.resources) fibers.push(ctx.plugin(FakeResources))
   await Promise.all(fibers)
   let engine = ctx.plugin(Workflow, config)
   await engine
@@ -129,6 +140,11 @@ async function boot(options: { workflow?: Config; board?: boolean | 'short'; wor
       engine = ctx.plugin(Workflow, config)
       await engine
     },
+    restartBoard: async () => {
+      await fibers[boardAt]!.dispose()
+      fibers[boardAt] = ctx.plugin(boardPlugin, boardConfig)
+      await fibers[boardAt]
+    },
   }
 }
 
@@ -138,6 +154,10 @@ const poolOpen = async (ctx: Context, observedAt = new Date()): Promise<void> =>
   await ctx.resources.observe({ schema: 'limit-state@1.0', pool: 'max.programmatic', account: 'max', window: { id: 'monthly', kind: 'credit' }, state: 'ok', source: 'runtime-result', observedAt: observedAt.toISOString() })
 }
 const ready = (ctx: Context, title: string, extra: Partial<TaskInput> = {}): Promise<BoardTask> => readyTask(ctx, title, extra)
+/** Usage the ledger counts for a task, as earlier work recorded it on `max.programmatic`: one run of one turn. */
+const drew = (ctx: Context, taskId: string, requestId: string, extra: Partial<UsageRecord> = {}): Promise<unknown> => ctx.resources.record({
+  schema: 'usage-record@1.0', requestId, source: 'runtime-result', observedAt: new Date().toISOString(), account: 'max', pool: 'max.programmatic', taskId, turns: 1, ...extra,
+})
 
 const settled = async (ctx: Context, runId: string): Promise<RunView> => {
   const view = await ctx.workflow.wait(runId, 60_000)
@@ -536,6 +556,149 @@ describe('ctx.workflow serves board tasks over the store-backed board and approv
     const request = (await ctx.approvals.get(blocked.waiting!.approvalRequest!))!
     expect(request).toMatchObject({ action: { class: 'funding' }, requester: { component: 'board', taskId: task.taskId } })
     expect(ctx.eventLog.query({ runId: run.runId, type: 'workflow.task.budget', limit: 10 }).map((e) => e.data?.['state'])).toEqual(['refused'])
+  })
+
+  it('asks to fund a spent budget by lines computed from the ledger\'s count, which the operator sees and approves in the queue; the board raises exactly those, and the next attempt reserves on the store-backed ledger and runs (PROP-0010, INV-5, INV-13)', async () => {
+    const { ctx, workers } = await boot({ resources: 'store' })
+    await project(ctx)
+    await poolOpen(ctx)
+    const budget: BudgetLine[] = [{ pool: 'max.programmatic', unit: 'runs', amount: 2 }, { pool: 'max.programmatic', unit: 'usd', amount: 3 }]
+    const task = await ready(ctx, 'spent', { budget })
+    // What earlier work drew, as the ledger counts it for the task: both runs, and half a dollar past the usd line.
+    await drew(ctx, task.taskId, 'r-1', { cost: { amount: 2, currency: 'USD', basis: 'runtime-estimate' } })
+    await drew(ctx, task.taskId, 'r-2', { cost: { amount: 1.5, currency: 'USD', basis: 'runtime-estimate' } })
+    const run = await ctx.workflow.start({ template: 'solo', input: 'q', classification: 'public', task: { taskId: task.taskId } })
+    expect(await settled(ctx, run.runId)).toMatchObject({ status: 'failed', error: { kind: 'budget_spent', message: expect.stringMatching(/asking to raise the budget by \+1 runs of max.programmatic, \+1.5 usd of max.programmatic/) } })
+    expect(workers.started).toHaveLength(0)
+    // Each spent line: what the task overdrew it by, plus one attempt's share of it (the line over its 3 attempts), at the unit's precision.
+    const ask: BudgetLine[] = [{ pool: 'max.programmatic', unit: 'runs', amount: 1 }, { pool: 'max.programmatic', unit: 'usd', amount: 1.5 }]
+    expect((await reported(ctx, run.runId)).task).toMatchObject({ budget: { state: 'refused', spent: true, blocked: true, funding: ask }, outcome: { status: 'blocked', state: 'waiting-for-approval' } })
+    const blocked = (await ctx.board.task(task.taskId))!
+    schemas.assertRecord(blocked)
+    expect(blocked).toMatchObject({ schema: 'board-task@1.1', state: 'waiting-for-approval', waiting: { reason: 'budget-spent', funding: ask }, budget, attempts: { count: 1 } })
+
+    // The operator reads the lines in the queue, and the verdict binds to exactly them (INV-5).
+    const request = (await ctx.approvals.get(blocked.waiting!.approvalRequest!))!
+    expect(request).toMatchObject({ action: { class: 'funding' }, subject: { type: 'content', ref: `board-task:${task.taskId}:attempt:1`, version: fundingVersion(contentId(ask)) } })
+    expect(request.action.summary).toBe('budget-spent: spent; raise its budget by +1 runs of max.programmatic, +1.5 usd of max.programmatic')
+    expect(request.action.consequences).toMatch(/^Approved: the board adds exactly \+1 runs of max.programmatic, \+1.5 usd of max.programmatic to the task's budget, which becomes 3 runs of max.programmatic, 4.5 usd of max.programmatic, and attempt 2 of 3/)
+    const [verdict] = await ctx.approvals.decide([{ requestId: request.requestId, subject: request.subject, verdict: 'approved' }])
+    expect(verdict?.refused).toBeUndefined()
+    await ctx.board.sweep(new Date())
+    const funded = (await ctx.board.task(task.taskId))!
+    schemas.assertRecord(funded)
+    expect(funded).toMatchObject({ state: 'ready', attempts: { count: 1 }, budget: [{ pool: 'max.programmatic', unit: 'runs', amount: 3 }, { pool: 'max.programmatic', unit: 'usd', amount: 4.5 }] })
+    expect(funded.funding).toEqual([{ lines: ask, approval: verdict!.approval, decision: expect.stringMatching(/^sha256:/), at: expect.any(String) }])
+    const raise = decisionOf(ctx, funded.funding![0]!.decision)
+    expect(raise).toMatchObject({ decisionType: 'board', outcome: { option: 'funded', detail: { approvalRequest: request.requestId, funding: ask } } })
+    const resolution = (await ctx.approvals.get(request.requestId))!.resolution!
+    expect(raise.inputs).toEqual(expect.arrayContaining([resolution.decision, resolution.approval]))
+    // Raised before the gate: the next attempt's readiness names the raise.
+    expect(decisionOf(ctx, funded.lastDecision).inputs).toContain(funded.funding![0]!.decision)
+
+    // The next attempt reserves within the raised lines, and runs.
+    workers.reply = () => ({ text: 'funded work' })
+    const second = await ctx.workflow.start({ template: 'solo', input: 'q', classification: 'public', task: { taskId: task.taskId } })
+    expect(await settled(ctx, second.runId)).toMatchObject({ status: 'completed', answer: 'funded work' })
+    const view = await reported(ctx, second.runId)
+    expect(view.task?.outcome).toMatchObject({ status: 'accepted', state: 'done' })
+    expect(decisionOf(ctx, view.task!.budget!.decision)).toMatchObject({ decisionType: 'budget', outcome: { option: 'reserved', detail: { caps: funded.budget } } })
+    expect(workers.started).toHaveLength(1)
+    const brief = ctx.artifacts.get(workers.started[0]!.brief!)!.body as { budget: { remaining: unknown[] } }
+    expect(brief.budget.remaining).toEqual([{ pool: 'max.programmatic', unit: 'runs', amount: 1 }, { pool: 'max.programmatic', unit: 'usd', amount: 1 }])
+    expect(await ctx.board.task(task.taskId)).toMatchObject({ state: 'done', attempts: { count: 2 } })
+  })
+
+  it('raises nothing when the operator denies the funding, and asks for none past the board\'s bound per task: either way the task waits for input (INV-9)', async () => {
+    const { ctx } = await boot({ resources: 'store', boardConfig: { fundingMaxPercent: 40 } })
+    await project(ctx)
+    await poolOpen(ctx)
+    const budget: BudgetLine[] = [{ pool: 'max.programmatic', unit: 'usd', amount: 3 }]
+    const spend = async (title: string, drawnUsd: number): Promise<{ task: BoardTask; run: RunView }> => {
+      const task = await ready(ctx, title, { budget })
+      await drew(ctx, task.taskId, `r-${title}`, { cost: { amount: drawnUsd, currency: 'USD', basis: 'runtime-estimate' } })
+      const started = await ctx.workflow.start({ template: 'solo', input: 'q', classification: 'public', task: { taskId: task.taskId } })
+      expect(await settled(ctx, started.runId)).toMatchObject({ status: 'failed', error: { kind: 'budget_spent' } })
+      return { task, run: await reported(ctx, started.runId) }
+    }
+
+    // Within the bound (one attempt's share, 1 usd, of at most 40% of 3), denied: the budget stays.
+    const denied = await spend('denied', 3)
+    expect(denied.run.task?.budget?.funding).toEqual([{ pool: 'max.programmatic', unit: 'usd', amount: 1 }])
+    const asked = (await ctx.board.task(denied.task.taskId))!
+    const request = (await ctx.approvals.get(asked.waiting!.approvalRequest!))!
+    await ctx.approvals.decide([{ requestId: request.requestId, subject: request.subject, verdict: 'rejected' }])
+    await ctx.board.sweep(new Date())
+    const rejected = (await ctx.board.task(denied.task.taskId))!
+    schemas.assertRecord(rejected)
+    expect(rejected).toMatchObject({ state: 'waiting-for-input', waiting: { reason: 'rejected' }, budget })
+    expect(rejected.funding).toBeUndefined()
+    expect(rejected.waiting?.funding).toBeUndefined()
+
+    // Past the bound: a dollar overdrawn plus one attempt's share is 2 usd, more than 40% of 3, so no request is opened.
+    const greedy = await spend('greedy', 4)
+    expect(greedy.run.task?.budget).toMatchObject({ blocked: true, funding: [{ pool: 'max.programmatic', unit: 'usd', amount: 2 }] })
+    const refused = (await ctx.board.task(greedy.task.taskId))!
+    schemas.assertRecord(refused)
+    expect(refused).toMatchObject({ state: 'waiting-for-input', waiting: { reason: 'rejected' }, budget })
+    expect(refused.holder).toBeUndefined()
+    expect(decisionOf(ctx, refused.lastDecision)).toMatchObject({ decisionType: 'board', outcome: { option: 'waiting-for-input', detail: { reason: 'budget-spent', funding: [{ amount: 2 }], fundingMaxPercent: 40 } } })
+    expect((await ctx.approvals.list({ states: ['open', 'batched', 'approved', 'rejected'] })).filter((r) => r.requester.taskId === greedy.task.taskId)).toEqual([])
+    expect(greedy.run.task?.outcome).toMatchObject({ status: 'blocked', state: 'waiting-for-input' })
+  })
+
+  it('reconciles a crash between the operator\'s approval and the board\'s move: the raise is applied once, adopting the request the dead move left, and the next attempt reserves and runs (INV-4)', async () => {
+    const { ctx, workers, restartBoard } = await boot({ resources: 'store' })
+    await project(ctx)
+    await poolOpen(ctx)
+    // A merge task asks before every attempt, so going on opens a request of its own.
+    const proposed = await ctx.board.propose({ projectId: 'p1', title: 'merge it', goal: 'merge', acceptance: [{ id: 'a1', statement: 'merged' }], actionClass: 'merge', budget: [{ pool: 'max.programmatic', unit: 'runs', amount: 1 }] })
+    await ctx.board.sweep(new Date())
+    const approve = async (requestId: string): Promise<void> => {
+      const request = (await ctx.approvals.get(requestId))!
+      const [result] = await ctx.approvals.decide([{ requestId, subject: request.subject, verdict: 'approved' }])
+      expect(result?.refused).toBeUndefined()
+    }
+    await approve((await ctx.board.task(proposed.taskId))!.waiting!.approvalRequest!)
+    await ctx.board.sweep(new Date())
+    await drew(ctx, proposed.taskId, 'r-merge')
+    const run = await ctx.workflow.start({ template: 'solo', input: 'q', classification: 'public', task: { taskId: proposed.taskId } })
+    expect(await settled(ctx, run.runId)).toMatchObject({ status: 'failed', error: { kind: 'budget_spent' } })
+    await reported(ctx, run.runId)
+    const funding = (await ctx.board.task(proposed.taskId))!.waiting!
+    expect(funding).toMatchObject({ reason: 'budget-spent', funding: [{ pool: 'max.programmatic', unit: 'runs', amount: 1 }] })
+    await approve(funding.approvalRequest!)
+
+    // The board's move dies after the queue took the next attempt's request and before the move committed.
+    const request = StoreApprovals.prototype.request
+    const died = vi.spyOn(StoreApprovals.prototype, 'request').mockImplementationOnce(async function (this: StoreApprovals, ...args: Parameters<typeof request>) {
+      await request.apply(this, args)
+      throw new Error('the host died before the board committed its move')
+    })
+    await ctx.board.sweep(new Date())
+    died.mockRestore()
+    expect((await ctx.board.task(proposed.taskId))!).toMatchObject({ state: 'waiting-for-approval', waiting: { reason: 'budget-spent' }, budget: [{ amount: 1 }] })
+    const orphans = (await ctx.approvals.list({ states: ['open', 'batched'] })).filter((r) => r.requester.taskId === proposed.taskId)
+    expect(orphans.map((r) => r.subject)).toEqual([{ type: 'content', ref: `board-task:${proposed.taskId}:attempt:1`, version: 'approval-needed' }])
+
+    // Restarted, the board finds the approval still standing: it raises the budget once, and its gate adopts the request the dead move left.
+    await restartBoard()
+    await ctx.board.sweep(new Date())
+    const funded = (await ctx.board.task(proposed.taskId))!
+    schemas.assertRecord(funded)
+    expect(funded).toMatchObject({ state: 'waiting-for-approval', waiting: { reason: 'approval-needed', approvalRequest: orphans[0]!.requestId }, budget: [{ amount: 2 }] })
+    expect(funded.funding).toHaveLength(1)
+    expect(await ctx.board.sweep(new Date())).toEqual({ tasks: [], projects: [] })
+    expect((await ctx.approvals.list({ states: ['open', 'batched'] })).filter((r) => r.requester.taskId === proposed.taskId).map((r) => r.requestId)).toEqual([orphans[0]!.requestId])
+
+    await approve(orphans[0]!.requestId)
+    await ctx.board.sweep(new Date())
+    expect((await ctx.board.task(proposed.taskId))!).toMatchObject({ state: 'ready', budget: [{ amount: 2 }] })
+    workers.reply = () => ({ text: 'merged' })
+    const second = await ctx.workflow.start({ template: 'solo', input: 'q', classification: 'public', task: { taskId: proposed.taskId } })
+    expect(await settled(ctx, second.runId)).toMatchObject({ status: 'completed', answer: 'merged' })
+    expect(decisionOf(ctx, (await reported(ctx, second.runId)).task!.budget!.decision)).toMatchObject({ outcome: { option: 'reserved' } })
+    expect(workers.started).toHaveLength(1)
   })
 
   it('refuses a task with a budget before taking it when no ledger is loaded, or its pool is not configured or not available, with nothing started (INV-2)', async () => {
