@@ -10,8 +10,9 @@
 > [`board-core`](../../packages/board-core/README.md)); its bundle row is on, over the
 > [approval queue](../../packages/plugins/approvals/README.md); the
 > [workflow engine](workflow-engine.md#board-tasks) runs a task's attempts. Differs from target:
-> no run blocks its task yet (no budget per task: the ledger counts usage by run, and the engine
-> does not yet reserve per task; no question reaches the board from a run); `TASKS.md` is
+> no run blocks its task yet (no budget is enforced per task: the engine counts the usage spent
+> on a task for its briefs, but does not reserve per task; no question reaches the board from a
+> run); `TASKS.md` is
 > rendered on request, and nothing writes it into a workspace yet. The operator accepts or
 > rejects a review on `/ui` ([`web-ui`](../../packages/plugins/web-ui/README.md)).
 

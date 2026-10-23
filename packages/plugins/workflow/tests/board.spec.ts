@@ -12,6 +12,7 @@ import Egress from '@tsuuanmi/system-egress'
 import EventLog from '@tsuuanmi/system-event-log'
 import Leases from '@tsuuanmi/system-leases'
 import { captureGitSubject, SchemaRegistry, sha256 } from '@tsuuanmi/system-libs'
+import type { UsageRecord } from '@tsuuanmi/system-resources-core'
 import Store from '@tsuuanmi/system-store'
 import WorkerSessions from '@tsuuanmi/system-worker-sessions'
 import WorkerRouter from '@tsuuanmi/system-workers'
@@ -452,6 +453,34 @@ describe('ctx.workflow serves board tasks over the store-backed board and approv
     expect(brief.artifacts).toEqual([{ ref: firstResult, role: 'input', note: `the accepted result of ${first.taskId}: first` }])
     expect(JSON.stringify(brief)).not.toContain('the first result')
     expect(started.prompt).toBe(`Board task ${second.taskId} of project p1, attempt 1.\nGoal: build on the first\nAcceptance criteria:\n- a1: it builds\n\ngo on\n\nRead these too:\n\n<artifact id="${firstResult}" role="input" note="the accepted result of ${first.taskId}: first">\nthe first result\n</artifact>`)
+  })
+
+  it('counts against a task\'s budget the usage the ledger records under the runs that served it and the executions they started, each record once (PROP-0010)', async () => {
+    const { ctx, workers } = await boot({ resources: true })
+    await project(ctx)
+    const budget = [
+      { pool: 'max.programmatic', unit: 'usd' as const, amount: 5 }, { pool: 'max.programmatic', unit: 'runs' as const, amount: 4 },
+      { pool: 'max.programmatic', unit: 'tokens' as const, amount: 1000 },
+    ]
+    const task = await ready(ctx, 'metered', { budget })
+    workers.reply = () => ({ fail: 'invalid_input', disposition: 'NONE', sent: false })
+    const one = await ctx.workflow.start({ template: 'solo', input: 'q', classification: 'public', task: { taskId: task.taskId } })
+    expect((await reported(ctx, one.runId)).task?.outcome).toMatchObject({ status: 'reconciled', state: 'ready' })
+    const record = (requestId: string, extra: Partial<UsageRecord>) => ctx.resources.record({
+      schema: 'usage-record@1.0', requestId, source: 'runtime-result', observedAt: new Date().toISOString(), account: 'max', pool: 'max.programmatic', ...extra,
+    })
+    // The ledger counts by run: an agent Worker names its own execution, another source the workflow run, a reservation the task.
+    await record('agent-1', { runId: workers.started[0]!.id, usage: { inputTokens: 300, outputTokens: 100 }, cost: { amount: 1.25, currency: 'USD', basis: 'runtime-estimate' } })
+    await record('model-1', { runId: one.runId, turns: 1, cost: { amount: 0.5, currency: 'USD', basis: 'runtime-estimate' } })
+    await record('both-1', { runId: one.runId, taskId: task.taskId, turns: 1, cost: { amount: 0.25, currency: 'USD', basis: 'runtime-estimate' } })
+    await record('other-1', { runId: 'run_unrelated', turns: 1, cost: { amount: 9, currency: 'USD', basis: 'runtime-estimate' } })
+    workers.reply = () => ({ text: 'the second attempt' })
+    const two = await ctx.workflow.start({ template: 'solo', input: 'q', classification: 'public', task: { taskId: task.taskId } })
+    expect((await reported(ctx, two.runId)).task?.outcome).toMatchObject({ status: 'accepted' })
+    const brief = ctx.artifacts.get(workers.started.at(-1)!.brief!)!.body as { attempt: number; budget: { remaining: unknown[] } }
+    expect(brief).toMatchObject({ attempt: 2, budget: { remaining: [
+      { pool: 'max.programmatic', unit: 'usd', amount: 3 }, { pool: 'max.programmatic', unit: 'runs', amount: 1 }, { pool: 'max.programmatic', unit: 'tokens', amount: 600 },
+    ] } })
   })
 
   it('fails a node whose instructions retention cleared, with nothing sent, instead of briefing it on its goal alone (INV-2)', async () => {

@@ -253,7 +253,8 @@ second execution path (INV-1).
     lost, is reported with `reconcileRun` (a `reconciliation` decision). The view's `task`
     shows the claim, the phase, and how the outcome reached the board;
   - every brief the run writes states the task, the attempt, its goal and acceptance criteria,
-    its budget less what the ledger counts for it, and points at the accepted results of the
+    its budget less the usage spent on it (the ledger's records that name the task, its runs, or
+    the executions they started, each once), and points at the accepted results of the
     tasks it depends on and, on a later attempt, the previous attempt's result and the decision
     behind this one ([a board task's brief](../../../docs/design/workflow-engine.md#a-board-tasks-brief));
   - a task's next attempt, or the first of a task that depends on exactly one other, resumes the

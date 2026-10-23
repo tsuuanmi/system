@@ -25,7 +25,7 @@
 import { type ArtifactRef, BoardError, type BoardTask, type Board, type Classification, type RunOutcome, type Subject } from '@tsuuanmi/system-board-core'
 import type { Lease } from '@tsuuanmi/system-leases'
 import { BRIEF_LIMITS, type BriefBudgetLine, type BriefPointer, captureGitSubject } from '@tsuuanmi/system-libs'
-import type {} from '@tsuuanmi/system-resources-core'
+import type { UsageRecord } from '@tsuuanmi/system-resources-core'
 import type { TaskFrame } from './briefs.ts'
 import { TaskDigests } from './digests.ts'
 import type { Engine, Prepared } from './engine.ts'
@@ -51,6 +51,8 @@ type Lost = { at: string; decision: ArtifactRef; reason: string }
 
 const describe = (s: Subject): string => `${s.type} ${s.ref}${s.version ? ` at ${s.version}` : ''}`
 const refusal = (error: BoardError): string => `${error.failure}: ${error.message}`
+/** A budget amount at a millionth, as the ledger compares them. */
+const round6 = (n: number): number => Math.round(n * 1e6) / 1e6
 
 export class TaskRuns {
   /** Lease renewals of the runs live in this process. */
@@ -234,9 +236,13 @@ export class TaskRuns {
   }
 
   /**
-   * What the task may still draw, per budget line: the line less the usage the resource ledger
-   * counts for the task (tokens are input and output tokens; minutes are not totalled by the
-   * ledger and stay as declared). With no ledger loaded, or one that cannot answer, the lines as
+   * What the task may still draw, per budget line: the line less the usage spent on the task.
+   * The ledger counts usage by run: a record names the task (or the run was reserved for it), the
+   * workflow run, or the Worker's own execution (an agent Worker's run). The engine attributes to
+   * the task every counted record of the runs that served it and of the executions they started
+   * (`workflow_tasks`, and each run's `workflow.node.started` events), each record once by its
+   * `(source, requestId)`. Tokens are input and output tokens; minutes are not totalled by the
+   * ledger and stay as declared. With no ledger loaded, or one that cannot answer, the lines as
    * declared: the brief informs the Worker, and the ledger's reservations enforce the pools.
    */
   private async budgetOf(task: BoardTask): Promise<BriefBudgetLine[]> {
@@ -244,17 +250,48 @@ export class TaskRuns {
     const resources = this.e.ctx.get('resources')
     if (!lines.length || !resources) return lines
     try {
-      const { totals } = await resources.usage({ taskId: task.taskId })
+      const records = new Map<string, UsageRecord>()
+      const count = (found: UsageRecord[]): void => {
+        for (const record of found) records.set(`${record.source}\0${record.requestId}`, record)
+      }
+      count((await resources.usage({ taskId: task.taskId })).records)
+      for (const runId of this.runsOf(task.taskId)) count((await resources.usage({ runId })).records)
       return lines.map((line) => {
-        const total = totals.find((t) => t.pool === line.pool)
-        const used = !total ? 0 : line.unit === 'tokens' ? (total.usage?.inputTokens ?? 0) + (total.usage?.outputTokens ?? 0)
-          : line.unit === 'usd' ? total.costUsd ?? 0 : line.unit === 'turns' ? total.turns ?? 0 : line.unit === 'runs' ? total.records : 0
-        return { ...line, amount: Math.max(0, line.amount - used) }
+        let used = 0
+        for (const record of records.values()) {
+          if (record.pool !== line.pool) continue
+          used += line.unit === 'tokens' ? (record.usage?.inputTokens ?? 0) + (record.usage?.outputTokens ?? 0)
+            : line.unit === 'usd' ? record.cost?.amount ?? 0 : line.unit === 'turns' ? record.turns ?? 0 : line.unit === 'runs' ? 1 : 0
+        }
+        return { ...line, amount: Math.max(0, round6(line.amount - used)) }
       })
     } catch (error) {
       this.warn(`the resource ledger did not count task ${task.taskId}'s usage; its brief names its budget as declared`, error)
       return lines
     }
+  }
+
+  /**
+   * The ids the ledger may count a task's usage under: every run that served one of its attempts,
+   * and every execution those runs started, retries included (each start is a
+   * `workflow.node.started` event; a node's current execution as well, should the events be
+   * trimmed). A run deleted by retention no longer counts.
+   */
+  private runsOf(taskId: string): string[] {
+    const db = this.e.ctx.store.db
+    const runs = (db.prepare('SELECT run_id FROM workflow_tasks WHERE task_id = ? ORDER BY created_at').all(taskId) as Array<{ run_id: string }>).map((r) => r.run_id)
+    const ids = new Set(runs)
+    for (const runId of runs) {
+      for (const { execution_id } of db.prepare('SELECT execution_id FROM workflow_nodes WHERE run_id = ? AND execution_id IS NOT NULL').all(runId) as Array<{ execution_id: string }>) ids.add(execution_id)
+      let afterSeq: number | undefined
+      for (;;) {
+        const page = this.e.ctx.eventLog.query({ runId, type: 'workflow.node.started', limit: 1000, ...(afterSeq !== undefined ? { afterSeq } : {}) })
+        for (const event of page) if (typeof event.data?.['executionId'] === 'string') ids.add(event.data['executionId'])
+        if (page.length < 1000) break
+        afterSeq = page.at(-1)!.seq
+      }
+    }
+    return [...ids]
   }
 
   /**

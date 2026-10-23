@@ -159,11 +159,21 @@ flowchart LR
 
 A run for a [board task](#board-tasks) fixes, when it is admitted, what every brief it writes
 adds: the project, the task, and the attempt the run will be; the task's goal and acceptance
-criteria; the task's budget lines less the usage the [ledger](resources.md) counts for the task
-(with no ledger, the lines as declared: the brief informs, reservations enforce); and at most 16
+criteria; the task's budget lines less the usage spent on the task (with no ledger, the lines as
+declared: the brief informs, reservations enforce); and at most 16
 pointers, never content: the accepted results of the tasks it depends on (their digests when
 they have one, role `input`), and on a later attempt the previous attempt's result (`prior`) and
 the decision behind this attempt (`review`: a rejection's reasons, the answers to its questions).
+
+**Usage spent on a task.** The [ledger](resources.md) counts usage by run: a record names the
+task (or the run was reserved for it), the workflow run, or the Worker's own execution (an agent
+Worker's run id). The engine knows which runs served the task (`workflow_tasks`) and which
+executions they started (each start's `workflow.node.started` event, and each node's current
+execution), so it reads the ledger for the task and for each of those ids, counts each record
+once by its `(source, requestId)`, and totals it per line: `tokens` input plus output, `usd` the
+cost, `turns`, `runs` one per record; `minutes` stay as declared. A run deleted by retention no
+longer counts. This informs the brief; it reserves and blocks nothing (the engine does not
+reserve per task yet).
 
 **Resume from a brief.** A task's next attempt, or the first attempt of a task that depends on
 exactly one other (a chain), resumes the session of the run before it when:
