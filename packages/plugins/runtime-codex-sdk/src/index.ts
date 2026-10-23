@@ -171,6 +171,8 @@ export class CodexRuntime implements AgentRuntimeProvider {
 
   async run(spec: RunSpec, signal: AbortSignal, onHandle?: (handle: string) => void): Promise<RunResult> {
     if (!isAbsolute(spec.workspace)) throw new ProviderError('config_error', 'codex-sdk: the workspace must be an absolute path')
+    // One account's own home (ADR-0051) is not supported yet: refused, never run in the configured home instead.
+    if (spec.home !== undefined) throw new ProviderError('config_error', 'codex-sdk: it runs in its configured home only; refusing a run that names another (RunSpec.home)')
     if (signal.aborted) throw new ProviderError('aborted', 'codex-sdk: the run was stopped before it started')
     if (spec.sandbox !== 'read-only' && spec.sandbox !== 'workspace-write') throw new ProviderError('config_error', `codex-sdk: unknown sandbox ${String(spec.sandbox)}`)
     if (spec.tools?.length) throw new ProviderError('config_error', 'codex-sdk: Codex has no tool allow-list; refusing a configured tools list instead of ignoring it')

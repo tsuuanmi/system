@@ -48,9 +48,11 @@ abstract class AgentRuntimes extends Service {     // ctx.agentRuntimes
 
 interface AgentRuntimeProvider {
   readonly kind: string;                    // "claude-agent-sdk", "codex-sdk", "acp:<name>", "antigravity-cli"
-  probe(): Promise<RuntimeEvidence>;
+  probe(options?: { home?: string }): Promise<RuntimeEvidence>;  // a named home: through probeIn only
   run(spec: RunSpec, signal: AbortSignal,
       onHandle?: (nativeHandle: string) => void): Promise<RunResult>;
+  identity?(home: string, key: Uint8Array): Promise<IdentityReading>;  // who is signed in (below)
+  loginCommand?(home: string): { command: string; args: string[]; env: Record<string, string> };
 }
 
 interface RuntimeEvidence {
@@ -62,6 +64,7 @@ interface RuntimeEvidence {
   executes: boolean;                        // runs commands confined to the workspace
   readsConfined: boolean;                   // host state unreadable to the agent, proven now
   gatesToolCalls: boolean;                  // asks RunSpec.toolGate before every tool call
+  homes?: boolean;                          // runs in the home a run or probe names (ADR-0051)
 }
 
 interface RunSpec {
@@ -73,6 +76,7 @@ interface RunSpec {
   maxTurns?: number;
   resume?: string;                          // native handle of a conversation to continue
   toolGate?: ToolGate;                      // asked before every tool call (below)
+  home?: string;                            // one account's home; refused unless `homes` (ADR-0051)
 }
 
 type ToolGate = (call: { tool: string; input: unknown; callId?: string }, signal: AbortSignal) =>
@@ -240,6 +244,8 @@ has the configuration and every rule.
   operator's login, which is hidden; the operator signs in there once, and a probe that finds no
   one signed in, or cannot tell (a status it cannot read is no sign-in), reports the Worker
   unavailable ([runbook](../operations/runbooks.md#agent-workers)).
+  Several accounts per runtime each get a home of their own (an enrollment slot), and a run binds
+  back only its own account's home ([agent accounts](#agent-accounts)).
   Codex also runs with the terminal devices hidden ([Codex's gate](#codexs-gate)). Each probe
   reports `readsConfined`, proven positively on the host by `proveConfinement`, and the `agents`
   source checks it again before each run starts.
@@ -249,6 +255,53 @@ has the configuration and every rule.
   and fails a denied run as `egress_denied`, never submitted. By default the `agent` class
   receives `public` and `operator-shared` work only, although routing admits `local-private`
   work to a local Worker ([routing](routing.md#data-locality-policy)).
+
+## Agent accounts
+
+> Decision: [ADR-0051](../decisions/adr/0051-agent-accounts-are-enrolled-slots-identified-by-their-login.md)
+> (proposed), from [PROP-0012](../proposals/0012-agent-accounts.md). Built: the seam's additions,
+> their suite, and a fake that passes it; no runtime reads an identity or runs in a named home yet.
+
+Several sign-ins per runtime are told apart by who is signed in, never by a name:
+
+- **Slots are homes.** An enrollment slot is an owner-only home under the DSH home,
+  `<DSH_HOME>/system/agent-homes/<provider>/<n>`, hidden from every agent child; a run binds back
+  only its own account's home. The slot's number never names, orders, or identifies an account.
+- **`RunSpec.home` and `probe({ home })`.** A provider that runs in a named home reports `homes`.
+  One that does not refuses a run naming a home (`config_error`) before anything runs, never runs
+  it in its own home instead; and `probeIn(provider, home)` asks a named home only of a provider
+  whose own probe reports `homes`, else the evidence is unavailable. Every runtime today runs in
+  its configured home only.
+- **`identity(home, key)`** reads who is signed in to that home, under the same confinement as a
+  run, and returns:
+
+  | Status | When | Carries |
+  |---|---|---|
+  | `verified` | the runtime's own sign-in check passes and the reader reads the principal whole, on a CLI version a supervised check verified | `hmac` (`identityHmac`: HMAC-SHA256 keyed by the per-install key, over the provider and the principal's parts in canonical order), `reader`, `runtimeVersion`, a masked `hint` (`maskEmail`) |
+  | `missing` | no sign-in in the home | why |
+  | `ambiguous` | the principal cannot be read whole | why |
+  | `unverified` | no reader is verified for this runtime or its version | why, the version |
+
+  No token and no raw principal leaves the provider
+  ([INV-8](../architecture/invariants.md#inv-8-credentials-never-cross-upward)); a home it cannot
+  read is a reading, never a throw. The account id is `accountIdOf(provider, hmac)`,
+  `<provider>:<first 16 hex characters>`; the full HMAC is what is compared
+  ([`agent-account`](../reference/schemas.md#agent-account)).
+- **`loginCommand(home)`**: the runtime's own sign-in command for that home (for example
+  `CODEX_HOME=<home> codex login`), which the operator runs in their own terminal; its environment
+  names the home and sets no session bus, so the sign-in lands in the home's own files, where a run,
+  which starts without D-Bus, reads it. The daemon runs no interactive sign-in.
+- **Conformance** (`agentRuntimeIdentityConformance`, for a provider that reads identity): one
+  login gives one HMAC across reads, a restart, and a re-login; two logins two; one login in two
+  homes one (a duplicate the caller quarantines); another key another; a signed-out, never
+  signed-in, or absent home is never `verified`; the reading holds no principal; the sign-in command
+  names the home and no session bus; a run in a named home runs, and a relative one is refused.
+  Every provider also passes the provider suite's refusal of a home it does not run in.
+  `FakeAgentRuntime` (scripted homes) passes both.
+- **Planned** (PROP-0012 phases E and F): identity readers for Codex and Claude Code on the CLI
+  versions phase A verifies, quarantine (`agent-account@1.0` status, `enrollment` decisions),
+  `system account login <provider>`, and Workers as account × role. The Antigravity CLI has no
+  verified reader: its accounts stay `unverified` and route nothing.
 
 ## Confined commands
 

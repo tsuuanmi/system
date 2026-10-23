@@ -3,14 +3,19 @@
  * every provider. A provider's test supplies it wired to a scripted agent that answers with
  * the prompt it received (`echo: <prompt>`) and reports the native handle `h-1`. A provider
  * whose agent reports what it consumed has the scripted agent report it too, so the suite checks
- * it; one that reports nothing passes as it is.
+ * it; one that reports nothing passes as it is. A provider that reads who is signed in to a home
+ * also runs the identity suite, with a harness that signs scripted homes in and out; the fake
+ * {@link FakeAgentRuntime} passes every suite here.
  */
-import { mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { isAbsolute, join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import { afterAll, describe, expect, it } from 'vitest'
-import type { AgentRuntimeProvider, RunMetering, TokenUsage } from '../src/index.ts'
+import {
+  type AgentRuntimeProvider, type IdentityReading, type LoginCommand, type ProbeOptions, type RunMetering, type RunResult, type RunSpec, type RuntimeEvidence, type TokenUsage,
+  accountIdOf, identityHmac, maskEmail, probeIn,
+} from '../src/index.ts'
 
 const provider = (kind: string): AgentRuntimeProvider => ({
   kind,
@@ -139,5 +144,190 @@ export function agentRuntimeProviderConformance(name: string, make: () => AgentR
       controller.abort()
       await expect(make().run({ prompt: 'x', workspace, sandbox: 'read-only' }, controller.signal)).rejects.toMatchObject({ kind: 'aborted' })
     })
+
+    it('refuses a run naming a home it does not run in, before running anything (never runs another account in its own home; ADR-0051)', async () => {
+      const runtime = make()
+      if ((await runtime.probe()).homes) {
+        // One that runs in a named home still refuses a home that is not an absolute path.
+        await expect(runtime.run({ prompt: 'x', workspace, sandbox: 'read-only', home: 'relative/home' }, new AbortController().signal)).rejects.toMatchObject({ kind: 'config_error' })
+        return
+      }
+      await expect(runtime.run({ prompt: 'x', workspace, sandbox: 'read-only', home: workspace }, new AbortController().signal)).rejects.toMatchObject({ kind: 'config_error' })
+    })
   })
+}
+
+/**
+ * What a provider's test supplies to check its identity reader (ADR-0051): the provider wired to
+ * its scripted agent, and a way to sign a home in as a scripted login (an opaque string, an email
+ * here, which the harness writes where the reader reads it) and to sign it out.
+ */
+export interface IdentityHarness {
+  make: () => AgentRuntimeProvider
+  signIn: (home: string, login: string) => void | Promise<void>
+  signOut: (home: string) => void | Promise<void>
+}
+
+/**
+ * Conformance of a provider that reads who is signed in to a home (`identity`, `loginCommand`,
+ * `RunSpec.home`; ADR-0051): one login gives one keyed hash across reads, a restart, and a re-login;
+ * two logins two, another key another; a home it cannot read is never verified; nothing it returns
+ * holds the principal; and its sign-in command names the home and no session bus.
+ */
+export function agentRuntimeIdentityConformance(name: string, harness: IdentityHarness): void {
+  describe(`agent runtime identity conformance: ${name}`, () => {
+    const root = mkdtempSync(join(tmpdir(), 'system-agent-homes-'))
+    afterAll(() => rmSync(root, { recursive: true, force: true }))
+    let n = 0
+    const home = (): string => {
+      const dir = join(root, `slot-${++n}`)
+      mkdirSync(dir, { mode: 0o700 })
+      return dir
+    }
+    const KEY = new Uint8Array(32).fill(7)
+    const OTHER_KEY = new Uint8Array(32).fill(9)
+    const verified = (reading: IdentityReading): Extract<IdentityReading, { status: 'verified' }> => {
+      expect(reading.status, `verified: ${'reason' in reading ? reading.reason : ''}`).toBe('verified')
+      return reading as Extract<IdentityReading, { status: 'verified' }>
+    }
+    const read = (runtime: AgentRuntimeProvider, at: string, key = KEY): Promise<IdentityReading> => {
+      expect(runtime.identity, `${name} reads identity`).toBeTypeOf('function')
+      return runtime.identity!(at, key)
+    }
+
+    it('reads one login as one keyed hash across reads, a restart, and a re-login, pinned to its reader and version', async () => {
+      const at = home()
+      await harness.signIn(at, 'alice@example.test')
+      const first = verified(await read(harness.make(), at))
+      expect(first.hmac).toMatch(/^[0-9a-f]{64}$/)
+      expect(first.reader.length).toBeGreaterThan(0)
+      expect(first.runtimeVersion.length).toBeGreaterThan(0)
+      // A new provider stands for a restart; signing the same login in again for a re-login or a refreshed token.
+      expect(verified(await read(harness.make(), at)).hmac).toBe(first.hmac)
+      await harness.signIn(at, 'alice@example.test')
+      expect(verified(await read(harness.make(), at)).hmac).toBe(first.hmac)
+      expect(accountIdOf(harness.make().kind, first.hmac)).toBe(`${harness.make().kind}:${first.hmac.slice(0, 16)}`)
+    })
+
+    it('tells two logins apart, and finds one login in two homes as one (a duplicate the caller quarantines)', async () => {
+      const [a, b, c] = [home(), home(), home()]
+      await harness.signIn(a, 'alice@example.test')
+      await harness.signIn(b, 'bob@example.test')
+      await harness.signIn(c, 'alice@example.test')
+      const runtime = harness.make()
+      const [ha, hb, hc] = [verified(await read(runtime, a)).hmac, verified(await read(runtime, b)).hmac, verified(await read(runtime, c)).hmac]
+      expect(ha).not.toBe(hb)
+      expect(hc).toBe(ha)
+    })
+
+    it('keys the hash: another install key gives another hash for the same login', async () => {
+      const at = home()
+      await harness.signIn(at, 'alice@example.test')
+      const runtime = harness.make()
+      expect(verified(await read(runtime, at, OTHER_KEY)).hmac).not.toBe(verified(await read(runtime, at)).hmac)
+    })
+
+    it('never verifies a home it cannot read: signed out, never signed in, or not there (INV-2)', async () => {
+      const runtime = harness.make()
+      const out = home()
+      await harness.signIn(out, 'alice@example.test')
+      await harness.signOut(out)
+      for (const at of [out, home(), join(root, 'absent')]) {
+        const reading = await read(runtime, at)
+        expect(reading.status, at).not.toBe('verified')
+        expect('reason' in reading && reading.reason.length > 0, 'it says why').toBe(true)
+      }
+    })
+
+    it('returns no principal: only the keyed hash and a masked hint leave it (INV-8)', async () => {
+      const at = home()
+      await harness.signIn(at, 'carol.secret@example.test')
+      const reading = verified(await read(harness.make(), at))
+      expect(JSON.stringify(reading)).not.toMatch(/carol\.secret/)
+      if (reading.hint !== undefined) expect(reading.hint).toBe(maskEmail('carol.secret@example.test'))
+    })
+
+    it('gives the sign-in command for a home: it names the home, and sets no session bus', () => {
+      const runtime = harness.make()
+      expect(runtime.loginCommand, `${name} gives its sign-in command`).toBeTypeOf('function')
+      const at = join(root, 'login-home')
+      const login = runtime.loginCommand!(at)
+      expect(login.command.length).toBeGreaterThan(0)
+      expect([...login.args, ...Object.values(login.env)].some((value) => value.includes(at)), 'the home is named').toBe(true)
+      expect(Object.keys(login.env)).not.toContain('DBUS_SESSION_BUS_ADDRESS')
+    })
+
+    it('runs in the home a run names, and probes a named home only through probeIn (ADR-0051)', async () => {
+      const runtime = harness.make()
+      expect((await runtime.probe()).homes).toBe(true)
+      const at = home()
+      await harness.signIn(at, 'alice@example.test')
+      expect((await probeIn(runtime, at)).available).toBe(true)
+      expect((await probeIn(runtime, 'relative/home')).available).toBe(false)
+      const result = await runtime.run({ prompt: 'hello', workspace: root, sandbox: 'read-only', home: at }, new AbortController().signal)
+      expect(result.text).toBe('echo: hello')
+    })
+  })
+}
+
+/**
+ * A fake agent runtime with scripted homes (ADR-0051), for the suites above and for consumers' tests:
+ * a home is signed in when it holds `fake-login.json` (`{ "user": <login> }`, written by
+ * {@link FakeAgentRuntime.signIn}); its reader is verified on `version` only. It answers a run with
+ * `echo: <prompt>` and the handle `h-1`, runs read-only only, and gates tool calls.
+ */
+export class FakeAgentRuntime implements AgentRuntimeProvider {
+  static readonly FILE = 'fake-login.json'
+  static readonly VERIFIED = ['1.0.0']
+
+  constructor(readonly kind = 'fake-runtime', private readonly version = '1.0.0') {}
+
+  static signIn(home: string, login: string): void {
+    writeFileSync(join(home, FakeAgentRuntime.FILE), JSON.stringify({ user: login }), { mode: 0o600 })
+  }
+
+  static signOut(home: string): void {
+    rmSync(join(home, FakeAgentRuntime.FILE), { force: true })
+  }
+
+  async probe(options: ProbeOptions = {}): Promise<RuntimeEvidence> {
+    const base: RuntimeEvidence = { available: true, detail: `fake ${this.version}`, version: this.version, sandboxes: ['read-only'], resume: false, executes: false, readsConfined: true, gatesToolCalls: true, homes: true }
+    if (options.home === undefined) return base
+    const user = this.user(options.home)
+    return user ? base : { ...base, available: false, detail: `${options.home} is not signed in` }
+  }
+
+  async run(spec: RunSpec, signal: AbortSignal, onHandle?: (handle: string) => void): Promise<RunResult> {
+    const refuse = (message: string): Error => Object.assign(new Error(`${this.kind}: ${message}`), { kind: 'config_error' })
+    if (!isAbsolute(spec.workspace)) throw refuse('the workspace must be an absolute path')
+    if (spec.sandbox !== 'read-only') throw refuse(`only read-only is offered, not ${spec.sandbox}`)
+    if (spec.home !== undefined && (!isAbsolute(spec.home) || !existsSync(spec.home))) throw refuse(`the home ${spec.home} is not an existing absolute path`)
+    if (signal.aborted) throw Object.assign(new Error(`${this.kind}: aborted`), { kind: 'aborted' })
+    onHandle?.('h-1')
+    return { text: `echo: ${spec.prompt}`, nativeHandle: 'h-1' }
+  }
+
+  async identity(home: string, key: Uint8Array): Promise<IdentityReading> {
+    const reader = 'fake-login-file'
+    if (!FakeAgentRuntime.VERIFIED.includes(this.version)) return { status: 'unverified', reason: `no reader is verified for version ${this.version}`, reader, runtimeVersion: this.version }
+    if (!existsSync(join(home, FakeAgentRuntime.FILE))) return { status: 'missing', reason: 'the home holds no sign-in', reader, runtimeVersion: this.version }
+    const user = this.user(home)
+    if (!user) return { status: 'ambiguous', reason: 'the sign-in names no user', reader, runtimeVersion: this.version }
+    const hint = maskEmail(user)
+    return { status: 'verified', hmac: identityHmac(key, this.kind, { user }), reader, runtimeVersion: this.version, ...(hint ? { hint } : {}) }
+  }
+
+  loginCommand(home: string): LoginCommand {
+    return { command: 'fake-login', args: ['--home', home], env: { FAKE_HOME: home } }
+  }
+
+  /** The signed-in user of a home, or undefined when it holds none, or none whole. */
+  private user(home: string): string | undefined {
+    try {
+      const user = (JSON.parse(readFileSync(join(home, FakeAgentRuntime.FILE), 'utf8')) as { user?: unknown }).user
+      return typeof user === 'string' && user.length ? user : undefined
+    } catch {
+      return undefined
+    }
+  }
 }

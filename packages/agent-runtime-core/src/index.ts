@@ -7,8 +7,8 @@
  */
 import { execFile } from 'node:child_process'
 import { chmodSync, closeSync, constants, fstatSync, fsyncSync, openSync, readFileSync, realpathSync, renameSync, statSync, writeFileSync } from 'node:fs'
-import { createHash, randomBytes } from 'node:crypto'
-import { join, relative, sep } from 'node:path'
+import { createHash, createHmac, randomBytes } from 'node:crypto'
+import { isAbsolute, join, relative, sep } from 'node:path'
 import { promisify } from 'node:util'
 import { type Context, Service } from '@deepseek-ai/cordis'
 import { scrubbedParentEnv } from '@deepseek-ai/dsh-subprocess'
@@ -45,6 +45,59 @@ export interface RuntimeEvidence {
    * without it.
    */
   gatesToolCalls: boolean
+  /**
+   * It runs in the home a run or probe names ({@link RunSpec.home}, {@link ProbeOptions.home}), one
+   * account's own sign-in, binding back only that home (ADR-0051). Absent or false: it runs in its
+   * own configured home only, and refuses a run that names another.
+   */
+  homes?: boolean
+}
+
+/** What a probe is asked about (ADR-0051). */
+export interface ProbeOptions {
+  /**
+   * Probe the account signed in to this home (an absolute path) instead of the provider's own
+   * configured home. Only for a provider whose plain probe reports {@link RuntimeEvidence.homes}:
+   * use {@link probeIn}, which never asks one that does not.
+   */
+  home?: string | undefined
+}
+
+/**
+ * Who is signed in to a home, as a provider's identity reader reads it (ADR-0051). `verified`
+ * carries the keyed hash of the principal ({@link identityHmac}), never the principal or a token
+ * (INV-8). `missing`: the runtime's own sign-in check finds no sign-in; `ambiguous`: the principal
+ * cannot be read whole; `unverified`: no reader is verified for this runtime version.
+ */
+export type IdentityReading =
+  | {
+    status: 'verified'
+    /** HMAC-SHA256 of the provider and the principal's canonical parts, hex; compared in full. */
+    hmac: string
+    /** The reader that read it (an id), pinned to the versions a supervised check verified. */
+    reader: string
+    runtimeVersion: string
+    /** A masked hint for the operator ({@link maskEmail}), when the runtime shows an email. */
+    hint?: string | undefined
+  }
+  | {
+    status: 'missing' | 'ambiguous' | 'unverified'
+    /** Why, in a few words; never the principal. */
+    reason: string
+    reader?: string | undefined
+    runtimeVersion?: string | undefined
+  }
+
+/** The runtime's own sign-in command for one home, run by the operator in their own terminal (ADR-0051). */
+export interface LoginCommand {
+  command: string
+  args: string[]
+  /**
+   * The variables to set for it: the one naming the home (for example `CODEX_HOME`), and never a
+   * session bus (`DBUS_SESSION_BUS_ADDRESS`), so the sign-in lands in the home's own files, where a
+   * run, which starts without D-Bus, can read it.
+   */
+  env: Record<string, string>
 }
 
 /** One tool call an agent is about to make, as its runtime reports it. */
@@ -131,6 +184,13 @@ export interface RunSpec {
   resume?: string | undefined
   /** Asked before every tool call the agent makes ({@link ToolGate}). */
   toolGate?: ToolGate | undefined
+  /**
+   * The home the agent runs in (an absolute path): one account's own sign-in, the only home its
+   * confinement binds back (ADR-0051). Absent: the provider's own configured home. A provider that
+   * does not report {@link RuntimeEvidence.homes} refuses a run that names one (`config_error`),
+   * before running anything, never ignores it.
+   */
+  home?: string | undefined
 }
 
 /**
@@ -224,8 +284,60 @@ export function meteringOf(error: unknown): RunMetering | undefined {
  */
 export interface AgentRuntimeProvider {
   readonly kind: string
-  probe(): Promise<RuntimeEvidence>
+  /** What it proves now, for its own home or, when it reports `homes`, the one `options.home` names. */
+  probe(options?: ProbeOptions): Promise<RuntimeEvidence>
   run(spec: RunSpec, signal: AbortSignal, onHandle?: (handle: string) => void): Promise<RunResult>
+  /**
+   * Who is signed in to `home`, read under the same confinement as a run, hashed with `key` (the
+   * per-install key, at least 16 bytes) by {@link identityHmac} (ADR-0051). Optional: a provider
+   * without it has no verified reader, so its accounts are `unverified`. It never throws for a home
+   * it cannot read: that reading is `missing` or `ambiguous`.
+   */
+  identity?(home: string, key: Uint8Array): Promise<IdentityReading>
+  /** The runtime's own sign-in command for `home` ({@link LoginCommand}); optional, with `identity`. */
+  loginCommand?(home: string): LoginCommand
+}
+
+/**
+ * The keyed hash of a principal (ADR-0051): HMAC-SHA256, keyed by the per-install key, over the
+ * provider and the principal's parts in a canonical order. A plain hash of an email or an account id
+ * could be reversed by guessing; the key keeps the id from revealing the person. Refuses an empty
+ * part, a part that is not a string, or a short key: a principal read in part is `ambiguous`, never
+ * hashed.
+ */
+export function identityHmac(key: Uint8Array, provider: string, parts: Readonly<Record<string, string>>): string {
+  if (key.length < 16) throw new RangeError('identityHmac: the key must be at least 16 bytes')
+  const names = Object.keys(parts).sort()
+  if (!provider || !names.length) throw new RangeError('identityHmac: a provider and at least one principal part are required')
+  for (const name of names) {
+    if (typeof parts[name] !== 'string' || !parts[name]) throw new RangeError(`identityHmac: the principal part ${name} is empty`)
+  }
+  const canonical = JSON.stringify([provider, names.map((name) => [name, parts[name]])])
+  return createHmac('sha256', key).update(canonical).digest('hex')
+}
+
+/** An agent account's id (ADR-0051): `<provider>:<first 16 hex characters of its HMAC>`. */
+export function accountIdOf(provider: string, hmac: string): string {
+  if (!/^[0-9a-f]{64}$/.test(hmac)) throw new RangeError('accountIdOf: the HMAC is 64 hex characters')
+  return `${provider}:${hmac.slice(0, 16)}`
+}
+
+/** An email masked for the operator (`j…@example.com`): its first letter and its domain; undefined for anything else. */
+export function maskEmail(email: string): string | undefined {
+  const match = /^([^@\s])[^@\s]*@([^@\s]+\.[^@\s]+)$/.exec(email)
+  return match ? `${match[1]}…@${match[2]}` : undefined
+}
+
+/**
+ * Probe the account signed in to `home` (ADR-0051), failing closed: a provider whose own probe does
+ * not report `homes` would answer for its own home, so it is not asked, and the evidence is
+ * unavailable; so is a home that is not an absolute path.
+ */
+export async function probeIn(provider: AgentRuntimeProvider, home: string): Promise<RuntimeEvidence> {
+  const own = await provider.probe()
+  if (!own.homes) return { ...own, available: false, detail: `${provider.kind} runs in its own configured home only, not in ${home}` }
+  if (!isAbsolute(home)) return { ...own, available: false, detail: `the home ${home} is not an absolute path` }
+  return provider.probe({ home })
 }
 
 export abstract class AgentRuntimes extends Service {

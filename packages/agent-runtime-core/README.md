@@ -5,7 +5,7 @@ Capability **seam definition** for agent runtimes
 
 | Seam | Definition | Provider |
 |---|---|---|
-| `ctx.agentRuntimes` | abstract `AgentRuntimes` with `register`, `get`, `list`; `AgentRuntimeProvider` (`probe`, `run`), `RunSpec`, `RunResult`, `RunMetering`, `TokenUsage`, `ModelUsage`, `LimitObservation`, `RuntimeEvidence`, `SandboxMode`, `ToolGate`, `ToolCall`, `ToolVerdict`; `askToolGate`, `isToolVerdict`, `TOOL_GATE_MS`; `withMetering`, `meteringOf` | `@tsuuanmi/system-agent-runtimes` |
+| `ctx.agentRuntimes` | abstract `AgentRuntimes` with `register`, `get`, `list`; `AgentRuntimeProvider` (`probe`, `run`, optional `identity`, `loginCommand`), `RunSpec`, `RunResult`, `RunMetering`, `TokenUsage`, `ModelUsage`, `LimitObservation`, `RuntimeEvidence`, `ProbeOptions`, `IdentityReading`, `LoginCommand`, `SandboxMode`, `ToolGate`, `ToolCall`, `ToolVerdict`; `askToolGate`, `isToolVerdict`, `TOOL_GATE_MS`; `withMetering`, `meteringOf`; `identityHmac`, `accountIdOf`, `maskEmail`, `probeIn` | `@tsuuanmi/system-agent-runtimes` |
 
 - A provider adapts one agent (Claude Code, Codex, an ACP agent) to `run(spec)`.
   Only the agent's native handle crosses the seam (INV-7).
@@ -40,6 +40,22 @@ Capability **seam definition** for agent runtimes
   `askToolGate(gate, call, signal, ms)` asks it as a gating provider must:
   bounded (`TOOL_GATE_MS`, 30 s, by default), and a throw, an undefined verdict
   (`isToolVerdict`), or no answer in time is a `deny`.
+- **Agent accounts** ([ADR-0051](../../docs/decisions/adr/0051-agent-accounts-are-enrolled-slots-identified-by-their-login.md),
+  [design](../../docs/design/agent-runtimes.md#agent-accounts)), all optional:
+  - `RunSpec.home` and `probe({ home })`: one account's home. A provider that runs
+    in a named home reports `RuntimeEvidence.homes`; one that does not refuses a run
+    naming a home (`config_error`) before anything runs, never ignores it.
+    `probeIn(provider, home)` asks a named home only of a provider whose own probe
+    reports `homes`, and reads unavailable otherwise or for a relative home;
+  - `identity(home, key)`: who is signed in to that home, as an `IdentityReading`:
+    `verified` with the keyed `hmac` (`identityHmac(key, provider, parts)`:
+    HMAC-SHA256 over the provider and the parts in canonical order; it refuses a
+    key under 16 bytes and an empty part), the `reader`, the `runtimeVersion`,
+    and a masked `hint` (`maskEmail`); or `missing`, `ambiguous`, `unverified`
+    with why. Never a token or the raw principal (INV-8), never a throw for a home
+    it cannot read. `accountIdOf(provider, hmac)` is the account id;
+  - `loginCommand(home)`: the runtime's own sign-in command, its environment
+    naming the home and no session bus.
 - **`childEnvironment(forward, explicit)`** is the environment every runtime's
   child process starts with (INV-8):
   1. DSH's own `scrubbedParentEnv()` (`@deepseek-ai/dsh-subprocess`): every name
@@ -80,6 +96,15 @@ Capability **seam definition** for agent runtimes
     what a run reports it consumed holds together, or is absent
     (`expectConsistentMetering`: whole counts, input including its cached part,
     per-model counts summing to the totals, limits with an opaque window and ISO
-    times). A provider that reports nothing passes as it is.
+    times). A provider that reports nothing passes as it is. It also refuses a run
+    naming a home the provider does not run in;
+  - `agentRuntimeIdentityConformance` (`IdentityHarness`: the provider, and how
+    to sign a scripted home in and out) for a provider that reads identity: one
+    HMAC per login across reads, a restart, and a re-login, two logins two, one
+    login in two homes one, another key another, no unreadable home verified, no
+    principal in the reading, a sign-in command that names the home and sets no
+    session bus, and a run in a named home;
+  - `FakeAgentRuntime`: scripted homes (`signIn`, `signOut`), a reader verified on
+    one version, passing both suites (`tests/identity.spec.ts`).
 - **Dependencies:** `@deepseek-ai/dsh-subprocess` and its peer
   `@deepseek-ai/dsh-http-proxy`, for the scrub only.

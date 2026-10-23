@@ -184,6 +184,8 @@ export class AntigravityRuntime implements AgentRuntimeProvider {
 
   async run(spec: RunSpec, signal: AbortSignal, onHandle?: (handle: string) => void): Promise<RunResult> {
     if (!isAbsolute(spec.workspace)) throw new ProviderError('config_error', `${KIND}: the workspace must be an absolute path`)
+    // One account's own home (ADR-0051) is not supported yet: refused, never run in the configured home instead.
+    if (spec.home !== undefined) throw new ProviderError('config_error', `${KIND}: it runs in its configured home only; refusing a run that names another (RunSpec.home)`)
     const offered = TOOLS[spec.sandbox]
     if (!offered) throw new ProviderError('config_error', `${KIND}: unknown sandbox ${String(spec.sandbox)}`)
     // Absent or empty means the sandbox's set.

@@ -22,7 +22,7 @@ first-class provider.
   - no write and no terminal capability is advertised, and no MCP server is
     passed;
   - what ACP cannot express exactly (a tool list, a model, a turn limit, a
-    run's tool gate) is refused, never ignored. An agent asks the client only
+    run's tool gate, a home of the run's own, `RunSpec.home`) is refused, never ignored. An agent asks the client only
     for what it chooses to, so not every tool call could reach a gate: the probe
     reports `gatesToolCalls: false`, and the `agents` source admits none of its
     Workers ([tool gate](../../../docs/design/agent-runtimes.md#tool-gate)).
