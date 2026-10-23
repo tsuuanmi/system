@@ -7,7 +7,7 @@ import { type Confinement, meteringOf, proveConfinement, type ToolCall, type Too
 import { afterAll, beforeEach, describe, expect, it } from 'vitest'
 import { agentRuntimeProviderConformance, expectConsistentMetering } from '../../../agent-runtime-core/conformance/agent-runtimes.ts'
 import { HOOK_COMMAND, HOOK_ENV, HOOK_NAME, HOOKS_JSON, openChannel, TOKEN_ENV } from '../src/bridge.ts'
-import { AntigravityRuntime, type HookProof, refusal, type RuntimeOptions, usageFrom, workspaceCustomizations } from '../src/index.ts'
+import { AntigravityRuntime, type HookProof, refusal, type RuntimeOptions, usageFrom, VERIFIED_HOOK_VERSIONS, workspaceCustomizations } from '../src/index.ts'
 
 const PASSTHROUGH = fileURLToPath(new URL('../../../agent-runtime-core/conformance/passthrough-bwrap.sh', import.meta.url))
 const FAKE = fileURLToPath(new URL('./fake-agy.mjs', import.meta.url))
@@ -57,11 +57,11 @@ const prints = (log: Array<Record<string, unknown>>) => log.filter((e) => e.comm
 agentRuntimeProviderConformance('antigravity-cli', () => runtime({ env: scenario().env }))
 
 describe('antigravity-cli: the probe proves what it reports, and never runs a task', () => {
-  it('reports its home, confinement, and hook layer proven, and no executes, resume, or tool gate', async () => {
+  it('reports its home, confinement, and hook layer proven, its tool calls gated, and no executes or resume', async () => {
     const evidence = await runtime({ env: scenario().env }).probe()
     expect(evidence).toEqual({
-      available: true, version: '1.4.6', sandboxes: ['read-only', 'workspace-write'], resume: false, executes: false, readsConfined: true, gatesToolCalls: false,
-      detail: 'Antigravity CLI 1.4.6; host state hidden by the test; the hook reaches the run\'s gate inside the confinement; the agents source\'s tool gate does not classify Antigravity\'s tools, so a run with a gate is refused',
+      available: true, version: '1.4.6', sandboxes: ['read-only', 'workspace-write'], resume: false, executes: false, readsConfined: true, gatesToolCalls: true,
+      detail: 'Antigravity CLI 1.4.6; host state hidden by the test; the hook reaches the run\'s gate inside the confinement',
     })
     // Its own home: the confinement binds it back writable, and nothing else.
     expect(binds).toContainEqual({ writable: [HOME] })
@@ -82,15 +82,18 @@ describe('antigravity-cli: the probe proves what it reports, and never runs a ta
     expect(readdirSync(RUN_ROOT)).toEqual([])
   })
 
-  it('offers no sandbox while agy\'s half of the hook layer is not proven: no version is verified live, and it takes a model turn to show', async () => {
-    const evidence = await runtime({ env: scenario().env, hooks: undefined }).probe()
-    expect(evidence).toMatchObject({ available: true, readsConfined: true, sandboxes: [], gatesToolCalls: false, executes: false })
-    expect(evidence.detail).toContain('the hook reaches the run\'s gate inside the confinement; that agy 1.4.6 runs it before each tool call is not proven')
+  it('admits an agy version verified live, and offers no sandbox and gates nothing for any other: agy\'s half of the hook layer takes a model turn to show', async () => {
+    expect(VERIFIED_HOOK_VERSIONS).toEqual(['1.4.6'])
+    const verified = await runtime({ env: scenario().env, hooks: undefined }).probe()
+    expect(verified).toMatchObject({ available: true, readsConfined: true, sandboxes: ['read-only', 'workspace-write'], gatesToolCalls: true, executes: false })
+    expect(verified.detail).toContain('the hook reaches the run\'s gate inside the confinement; agy 1.4.6 runs it before each tool call (verified live)')
+    const unverified = await runtime({ env: scenario().env, hooks: undefined, version: async () => '1.4.7' }).probe()
+    expect(unverified).toMatchObject({ available: true, readsConfined: true, sandboxes: [], gatesToolCalls: false, executes: false })
+    expect(unverified.detail).toContain('the hook reaches the run\'s gate inside the confinement; that agy 1.4.7 runs it before each tool call is not proven')
   })
 
-  it('reports gatesToolCalls only with the hook layer proven and its tools classified by the gate\'s owner', async () => {
-    expect(await runtime({ env: scenario().env, gateClassifies: true }).probe()).toMatchObject({ gatesToolCalls: true, sandboxes: ['read-only', 'workspace-write'] })
-    expect(await runtime({ env: scenario().env, gateClassifies: true, hooks: async () => ({ proven: false, detail: 'no' }) }).probe()).toMatchObject({ gatesToolCalls: false, sandboxes: [] })
+  it('reports gatesToolCalls exactly when the hook layer is proven', async () => {
+    expect(await runtime({ env: scenario().env, hooks: async () => ({ proven: false, detail: 'no' }) }).probe()).toMatchObject({ gatesToolCalls: false, sandboxes: [] })
   })
 
   it('is unavailable, with the reason, when agy is missing, failing, or not signed in inside its own home (INV-2)', async () => {
@@ -172,14 +175,13 @@ describe('antigravity-cli: a run, exactly as configured, or refused before anyth
     expect(readdirSync(RUN_ROOT)).toEqual([])
   })
 
-  it('refuses what agy cannot hold exactly, before it starts: tools outside the sandbox, a turn limit, a conversation to continue, a gate it cannot classify, an oversized prompt (REQ-WRK-6)', async () => {
+  it('refuses what agy cannot hold exactly, before it starts: tools outside the sandbox, a turn limit, a conversation to continue, an oversized prompt (REQ-WRK-6)', async () => {
     const s = scenario()
     const go = (spec: Partial<Parameters<AntigravityRuntime['run']>[0]>) => runtime({ env: s.env }).run({ prompt: 'x', workspace, sandbox: 'read-only', ...spec }, new AbortController().signal)
-    await expect(go({ tools: ['view_file', 'code_action'] })).rejects.toMatchObject({ kind: 'config_error', message: expect.stringContaining('refusing code_action') })
+    await expect(go({ tools: ['read_file', 'write_file'] })).rejects.toMatchObject({ kind: 'config_error', message: expect.stringContaining('refusing write_file') })
     await expect(go({ sandbox: 'workspace-write', tools: ['run_command'] })).rejects.toMatchObject({ kind: 'config_error', message: expect.stringContaining('refusing run_command') })
     await expect(go({ maxTurns: 3 })).rejects.toMatchObject({ kind: 'config_error', message: expect.stringContaining('no turn limit') })
     await expect(go({ resume: 'h-0' })).rejects.toMatchObject({ kind: 'config_error', message: expect.stringContaining('not proven') })
-    await expect(go({ toolGate: async () => ({ decision: 'allow' }) })).rejects.toMatchObject({ kind: 'config_error', message: expect.stringContaining('does not classify') })
     await expect(go({ prompt: 'x'.repeat(100_001) })).rejects.toMatchObject({ kind: 'invalid_input' })
     await expect(go({ prompt: 'a\0b' })).rejects.toMatchObject({ kind: 'invalid_input' })
     await expect(go({ model: 'm\0' })).rejects.toMatchObject({ kind: 'config_error' })
@@ -221,8 +223,8 @@ describe('antigravity-cli: a run, exactly as configured, or refused before anyth
       .run({ prompt: 'x', workspace, sandbox: 'read-only' }, new AbortController().signal))
       .rejects.toMatchObject({ kind: 'config_error', message: expect.stringContaining('node: not found') })
     // The default proof: the bridge holds, agy's half is not verified for this version.
-    await expect(runtime({ env: s.env, hooks: undefined }).run({ prompt: 'x', workspace, sandbox: 'read-only' }, new AbortController().signal))
-      .rejects.toMatchObject({ kind: 'config_error', message: expect.stringContaining('not proven') })
+    await expect(runtime({ env: s.env, hooks: undefined, version: async () => '1.4.7' }).run({ prompt: 'x', workspace, sandbox: 'read-only' }, new AbortController().signal))
+      .rejects.toMatchObject({ kind: 'config_error', message: expect.stringContaining('that agy 1.4.7 runs it before each tool call is not proven') })
     expect(prints(s.log())).toEqual([])
     expect(readdirSync(RUN_ROOT)).toEqual([])
   })
@@ -240,108 +242,115 @@ describe('antigravity-cli: every tool call passes the hook: the runtime\'s rules
   it('lets a read-only run read inside its workspace only, and nothing else: no write, no command, no other tool (REQ-WRK-6)', async () => {
     const s = scenario({
       calls: [
-        { name: 'view_file', args: { AbsolutePath: join(workspace, 'src', 'a.ts'), StartLine: 1, EndLine: 5 } },
-        { name: 'grep_search', args: { SearchPath: workspace, Query: '/etc/passwd', Includes: ['*.ts'] } },
-        { name: 'view_file', args: { AbsolutePath: outside } },
-        { name: 'view_file', args: { AbsolutePath: join(workspace, 'escape') } },
-        { name: 'list_directory', args: { DirectoryPath: `${workspace}/../gated` } },
-        { name: 'code_action', args: { TargetFile: join(workspace, 'b.ts'), CodeContent: 'b' } },
-        { name: 'run_command', args: { CommandLine: 'ls', Cwd: workspace } },
+        { name: 'read_file', args: { Path: join(workspace, 'src', 'a.ts'), StartLine: 1, EndLine: 5 } },
+        { name: 'read_file', args: { Path: outside } },
+        { name: 'read_file', args: { Path: join(workspace, 'escape') } },
+        { name: 'read_file', args: { Path: `${workspace}/../gated/src/a.ts` } },
+        { name: 'write_file', args: { Path: join(workspace, 'b.ts'), Content: 'b' } },
+        { name: 'edit_file', args: { Path: join(workspace, 'src', 'a.ts'), Target: 'a', Replacement: 'b' } },
+        { name: 'run_command', args: { CommandLine: 'ls', WaitMsBeforeAsync: 5000 } },
         { name: 'search_web', args: { query: 'x' } },
+        { name: 'invoke_subagent', args: { Prompt: 'x', Workspace: workspace } },
       ],
     })
     await runtime({ env: s.env }).run({ prompt: 'review', workspace, sandbox: 'read-only' }, new AbortController().signal)
     expect(answers(s.log())).toEqual([
-      ['view_file', 'allow', ''],
-      // A query is text, never a location.
-      ['grep_search', 'allow', ''],
-      ['view_file', 'deny', expect.stringContaining('is not inside the workspace')],
-      ['view_file', 'deny', expect.stringContaining('is not inside the workspace')],
-      ['list_directory', 'deny', expect.stringContaining('climbs out with ..')],
-      ['code_action', 'deny', expect.stringContaining('not a tool this run offers')],
+      ['read_file', 'allow', ''],
+      ['read_file', 'deny', expect.stringContaining('is not inside the workspace')],
+      ['read_file', 'deny', expect.stringContaining('is not inside the workspace')],
+      ['read_file', 'deny', expect.stringContaining('climbs out with ..')],
+      ['write_file', 'deny', expect.stringContaining('not a tool this run offers')],
+      ['edit_file', 'deny', expect.stringContaining('not a tool this run offers')],
       ['run_command', 'deny', expect.stringContaining('not a tool this run offers')],
       ['search_web', 'deny', expect.stringContaining('not a tool this run offers')],
+      ['invoke_subagent', 'deny', expect.stringContaining('not a tool this run offers')],
     ])
   })
 
   it('lets a workspace-write run edit files inside its workspace, never a customization root, and still no command', async () => {
     const s = scenario({
       calls: [
-        { name: 'code_action', args: { TargetFile: join(workspace, 'src', 'b.ts'), CodeContent: '/* starts with a slash */\n', Description: 'add b', explanation: 'x' } },
-        { name: 'code_action', args: { TargetFile: outside, CodeContent: 'x' } },
-        { name: 'code_action', args: { TargetFile: join(workspace, '.agents', 'hooks.json'), CodeContent: '{}' } },
-        { name: 'run_command', args: { CommandLine: 'npm test', Cwd: workspace } },
+        { name: 'write_file', args: { Path: join(workspace, 'src', 'b.ts'), Content: '/* starts with a slash */\n', Append: false } },
+        { name: 'edit_file', args: { Path: join(workspace, 'src', 'a.ts'), Target: '~/a', Replacement: '/etc/b' } },
+        { name: 'write_file', args: { Path: outside, Content: 'x' } },
+        { name: 'edit_file', args: { Path: join(workspace, 'escape'), Target: 'secret', Replacement: 'x' } },
+        { name: 'write_file', args: { Path: join(workspace, '.agents', 'hooks.json'), Content: '{}' } },
+        { name: 'run_command', args: { CommandLine: 'npm test' } },
       ],
     })
     await runtime({ env: s.env }).run({ prompt: 'fix', workspace, sandbox: 'workspace-write' }, new AbortController().signal)
     expect(answers(s.log())).toEqual([
-      ['code_action', 'allow', ''],
-      ['code_action', 'deny', expect.stringContaining('is not inside the workspace')],
-      ['code_action', 'deny', expect.stringContaining('customization root')],
+      ['write_file', 'allow', ''],
+      // An edit's target and replacement are text, never a location.
+      ['edit_file', 'allow', ''],
+      ['write_file', 'deny', expect.stringContaining('is not inside the workspace')],
+      ['edit_file', 'deny', expect.stringContaining('is not inside the workspace')],
+      ['write_file', 'deny', expect.stringContaining('customization root')],
       ['run_command', 'deny', expect.stringContaining('not a tool this run offers')],
     ])
   })
 
   it('narrows to the configured tool list', async () => {
-    const s = scenario({ calls: [{ name: 'view_file', args: { AbsolutePath: join(workspace, 'src', 'a.ts') } }, { name: 'grep_search', args: { SearchPath: workspace, Query: 'a' } }] })
-    await runtime({ env: s.env }).run({ prompt: 'x', workspace, sandbox: 'read-only', tools: ['view_file'] }, new AbortController().signal)
+    const s = scenario({ calls: [{ name: 'read_file', args: { Path: join(workspace, 'src', 'a.ts') } }, { name: 'write_file', args: { Path: join(workspace, 'c.ts'), Content: 'c' } }] })
+    await runtime({ env: s.env }).run({ prompt: 'x', workspace, sandbox: 'workspace-write', tools: ['read_file'] }, new AbortController().signal)
     expect(answers(s.log()).map(([, d]) => d)).toEqual(['allow', 'deny'])
   })
 
   it('reads every string outside the known text fields as a location: home paths, other URIs, and unknown fields are held to the workspace', () => {
-    const offered = ['view_file', 'code_action']
-    expect(refusal({ tool: 'view_file', input: { AbsolutePath: pathToFileURL(join(workspace, 'src', 'a.ts')).href } }, workspace, offered)).toBeUndefined()
-    expect(refusal({ tool: 'view_file', input: { AbsolutePath: 'src/a.ts' } }, workspace, offered)).toBeUndefined()
-    for (const input of [{ AbsolutePath: '~/.ssh/id_rsa' }, { AbsolutePath: 'https://example.com/x' }, { Unknown: { nested: ['/etc/hostname'] } }, { AbsolutePath: 'a\0b' }, 'not an object']) {
-      expect(refusal({ tool: 'view_file', input }, workspace, offered)).toBeDefined()
+    const offered = ['read_file', 'write_file']
+    expect(refusal({ tool: 'read_file', input: { Path: pathToFileURL(join(workspace, 'src', 'a.ts')).href } }, workspace, offered)).toBeUndefined()
+    expect(refusal({ tool: 'read_file', input: { Path: 'src/a.ts' } }, workspace, offered)).toBeUndefined()
+    for (const input of [{ Path: '~/.ssh/id_rsa' }, { Path: 'https://example.com/x' }, { Path: pathToFileURL(outside).href }, { Unknown: { nested: ['/etc/hostname'] } }, { Path: 'a\0b' }, 'not an object']) {
+      expect(refusal({ tool: 'read_file', input }, workspace, offered)).toBeDefined()
     }
-    // A file's content and the model's explanation are text, at any depth.
-    expect(refusal({ tool: 'code_action', input: { TargetFile: join(workspace, 'c.ts'), ReplacementChunks: [{ TargetContent: '/etc', ReplacementContent: '~/x' }], explanation: '../../' } }, workspace, offered)).toBeUndefined()
+    // A file's content is text, at any depth.
+    expect(refusal({ tool: 'write_file', input: { Path: join(workspace, 'c.ts'), Content: '../../etc/passwd' } }, workspace, offered)).toBeUndefined()
+    expect(refusal({ tool: 'write_file', input: { Path: join(workspace, 'c.ts'), ArtifactMetadata: { Summary: '/etc/passwd' } } }, workspace, offered)).toBeDefined()
   })
 
   it('asks the gate with the tool, its input, and agy\'s step as the call id, after the runtime\'s rules: allow runs, deny is the reason the agent is told', async () => {
     const asked: ToolCall[] = []
     const toolGate: ToolGate = async (call) => {
       asked.push(call)
-      return call.tool === 'view_file' ? { decision: 'allow' } : { decision: 'deny', reason: 'the policy forbids it' }
+      return call.tool === 'read_file' ? { decision: 'allow' } : { decision: 'deny', reason: 'the policy forbids it' }
     }
     const s = scenario({
       calls: [
-        { name: 'view_file', args: { AbsolutePath: join(workspace, 'src', 'a.ts') } },
-        { name: 'code_action', args: { TargetFile: join(workspace, 'src', 'c.ts'), CodeContent: 'c' } },
-        { name: 'view_file', args: { AbsolutePath: outside } },
+        { name: 'read_file', args: { Path: join(workspace, 'src', 'a.ts') } },
+        { name: 'write_file', args: { Path: join(workspace, 'src', 'c.ts'), Content: 'c' } },
+        { name: 'read_file', args: { Path: outside } },
       ],
     })
-    const result = await runtime({ env: s.env, gateClassifies: true }).run({ prompt: 'go', workspace, sandbox: 'workspace-write', toolGate }, new AbortController().signal)
+    const result = await runtime({ env: s.env }).run({ prompt: 'go', workspace, sandbox: 'workspace-write', toolGate }, new AbortController().signal)
     expect(result.text).toBe('echo: go')
     expect(asked).toEqual([
-      { tool: 'view_file', input: { AbsolutePath: join(workspace, 'src', 'a.ts') }, callId: 'h-1:0' },
-      { tool: 'code_action', input: { TargetFile: join(workspace, 'src', 'c.ts'), CodeContent: 'c' }, callId: 'h-1:1' },
+      { tool: 'read_file', input: { Path: join(workspace, 'src', 'a.ts') }, callId: 'h-1:0' },
+      { tool: 'write_file', input: { Path: join(workspace, 'src', 'c.ts'), Content: 'c' }, callId: 'h-1:1' },
     ])
     // The runtime's rules denied the third before the gate was asked.
-    expect(answers(s.log())).toEqual([['view_file', 'allow', ''], ['code_action', 'deny', 'the policy forbids it'], ['view_file', 'deny', expect.stringContaining('not inside the workspace')]])
+    expect(answers(s.log())).toEqual([['read_file', 'allow', ''], ['write_file', 'deny', 'the policy forbids it'], ['read_file', 'deny', expect.stringContaining('not inside the workspace')]])
   })
 
   it('denies a deferred call, stops agy there, asks about nothing more, and fails the run as a config_error naming the request, with what it consumed', async () => {
     const asked: string[] = []
     const toolGate: ToolGate = async (call) => {
       asked.push(call.tool)
-      return call.tool === 'code_action' ? { decision: 'defer', reason: 'waits for the operator', requestId: 'apr-1' } : { decision: 'allow' }
+      return call.tool === 'write_file' ? { decision: 'defer', reason: 'waits for the operator', requestId: 'apr-1' } : { decision: 'allow' }
     }
     const s = scenario({
       calls: [
-        { name: 'view_file', args: { AbsolutePath: join(workspace, 'src', 'a.ts') } },
-        { name: 'code_action', args: { TargetFile: join(workspace, 'src', 'd.ts'), CodeContent: 'd' } },
-        { name: 'view_file', args: { AbsolutePath: join(workspace, 'src', 'a.ts') } },
+        { name: 'read_file', args: { Path: join(workspace, 'src', 'a.ts') } },
+        { name: 'write_file', args: { Path: join(workspace, 'src', 'd.ts'), Content: 'd' } },
+        { name: 'read_file', args: { Path: join(workspace, 'src', 'a.ts') } },
       ],
       hang: true,
     })
     const started = Date.now()
-    const failure = await runtime({ env: s.env, gateClassifies: true }).run({ prompt: 'go', workspace, sandbox: 'workspace-write', toolGate }, new AbortController().signal)
+    const failure = await runtime({ env: s.env }).run({ prompt: 'go', workspace, sandbox: 'workspace-write', toolGate }, new AbortController().signal)
       .then(() => { throw new Error('the run completed') }, (error: unknown) => error as Error & { kind: string })
     expect(failure).toMatchObject({ kind: 'config_error', message: expect.stringContaining('approval request apr-1') })
-    expect(failure.message).toContain('code_action (h-1:1)')
-    expect(asked).toEqual(['view_file', 'code_action'])
+    expect(failure.message).toContain('write_file (h-1:1)')
+    expect(asked).toEqual(['read_file', 'write_file'])
     // agy was stopped, not left to run to the end of its hang.
     expect(Date.now() - started).toBeLessThan(10_000)
     expect(meteringOf(failure)).toMatchObject({ model: 'model-main' })
@@ -355,16 +364,16 @@ describe('antigravity-cli: every tool call passes the hook: the runtime\'s rules
       async () => ({ decision: 'defer', reason: 'x', requestId: '' }) as never,
       () => new Promise<never>(() => undefined),
     ] as ToolGate[]) {
-      const s = scenario({ calls: [{ name: 'view_file', args: { AbsolutePath: join(workspace, 'src', 'a.ts') } }] })
-      await runtime({ env: s.env, gateClassifies: true, timing: { gateMs: 50, killMs: 500 } }).run({ prompt: 'go', workspace, sandbox: 'read-only', toolGate }, new AbortController().signal)
-      expect(answers(s.log())).toEqual([['view_file', 'deny', expect.stringMatching(/the tool gate/)]])
+      const s = scenario({ calls: [{ name: 'read_file', args: { Path: join(workspace, 'src', 'a.ts') } }] })
+      await runtime({ env: s.env, timing: { gateMs: 50, killMs: 500 } }).run({ prompt: 'go', workspace, sandbox: 'read-only', toolGate }, new AbortController().signal)
+      expect(answers(s.log())).toEqual([['read_file', 'deny', expect.stringMatching(/the tool gate/)]])
     }
   })
 })
 
 describe('antigravity-cli: the hook fails closed on its own', () => {
   /** The command in hooks.json, run as agy runs it; asynchronously, since the channel answers from this process. */
-  const hook = (env: Record<string, string>, input: unknown = { toolCall: { name: 'view_file', args: {} } }): Promise<{ decision: string; reason?: string }> => new Promise((resolve, reject) => {
+  const hook = (env: Record<string, string>, input: unknown = { toolCall: { name: 'read_file', args: {} } }): Promise<{ decision: string; reason?: string }> => new Promise((resolve, reject) => {
     const child = spawn('sh', ['-c', HOOK_COMMAND], { cwd: root, env: { PATH: process.env.PATH ?? '', ...env } })
     let out = ''
     child.stdout.on('data', (chunk: Buffer) => {
@@ -381,6 +390,20 @@ describe('antigravity-cli: the hook fails closed on its own', () => {
   it('denies in a session no run started: no hook named, or one that is not executable', async () => {
     expect(await hook({})).toEqual({ decision: 'deny', reason: 'no system tool gate is attached to this session' })
     expect(await hook({ [HOOK_ENV]: join(root, 'missing') })).toMatchObject({ decision: 'deny' })
+  })
+
+  it('prints a deny itself when the run\'s hook gives no answer: agy 1.4.6 runs the tool on a hook that exits 0 printing nothing', async () => {
+    const launcher = (name: string, body: string): string => {
+      const path = join(root, name)
+      writeFileSync(path, `#!/bin/sh\n${body}\n`, { mode: 0o755 })
+      return path
+    }
+    const noAnswer = { decision: 'deny', reason: 'the tool gate hook of this run gave no answer' }
+    expect(await hook({ [HOOK_ENV]: launcher('silent', 'cat >/dev/null; exit 0') })).toEqual(noAnswer)
+    expect(await hook({ [HOOK_ENV]: launcher('fails', 'cat >/dev/null; echo \'{"decision":"allow"}\'; exit 1') })).toEqual(noAnswer)
+    expect(await hook({ [HOOK_ENV]: launcher('killed', 'kill -9 $$') })).toEqual(noAnswer)
+    // An answer is passed on as the hook printed it.
+    expect(await hook({ [HOOK_ENV]: launcher('answers', 'cat >/dev/null; echo \'{"decision":"allow"}\'') })).toEqual({ decision: 'allow' })
   })
 
   it('answers the run\'s gate with the run\'s token, and denies without it, after the channel closed, or past its bound', async () => {
@@ -404,6 +427,51 @@ describe('antigravity-cli: the hook fails closed on its own', () => {
     } finally {
       await slow.close()
     }
+  })
+})
+
+describe('antigravity-cli: agy 1.4.6\'s hook inputs, recorded in the supervised live check, replayed through the bridge', { timeout: 30_000 }, () => {
+  interface Recorded { toolCall: { name: string; args: Record<string, unknown> }; stepIdx: number; conversationId: string }
+  interface Bridged extends Recorded { sandbox: 'read-only' | 'workspace-write'; answer: 'allow' | 'deny'; by: 'gate' | 'rules'; reason?: string; gateSaw?: ToolCall }
+  const live = join(root, 'live')
+  const workspace = join(live, 'workspace')
+  mkdirSync(workspace, { recursive: true })
+  mkdirSync(join(live, 'outside'))
+  // The fixture's placeholders, as this host's paths: the session's workspace, a directory beside it, agy's home.
+  const fixture = JSON.parse(readFileSync(new URL('./fixtures/agy-1.4.6-hook-inputs.json', import.meta.url), 'utf8')
+    .replaceAll('<workspace>', workspace).replaceAll('<outside>', join(live, 'outside')).replaceAll('<home>', HOME).replaceAll('<scratch>', live)) as {
+    agy: string; recorded: Array<{ input: Recorded }>; bridge: Bridged[]
+  }
+  const answers = (log: Array<Record<string, unknown>>) => prints(log)[0]!.calls.map((c) => [c.name, c.answer.decision, c.answer.reason ?? ''])
+  const gate = (asked: ToolCall[]): ToolGate => async (call) => {
+    asked.push(call)
+    return JSON.stringify(call.input).includes('gate-denied.txt') ? { decision: 'deny', reason: 'the live check gate denies gate-denied.txt' } : { decision: 'allow' }
+  }
+
+  it('is the evidence for the version the runtime admits', () => {
+    expect(VERIFIED_HOOK_VERSIONS).toContain(fixture.agy)
+  })
+
+  it('answers each call of the live bridge sessions as it was answered live: the runtime\'s rules first, then the gate, asked with the same call', async () => {
+    for (const sandbox of ['workspace-write', 'read-only'] as const) {
+      const calls = fixture.bridge.filter((b) => b.sandbox === sandbox)
+      const asked: ToolCall[] = []
+      const s = scenario({ calls: calls.map(({ toolCall, stepIdx, conversationId }) => ({ input: { toolCall, stepIdx, conversationId } })) })
+      await runtime({ env: s.env }).run({ prompt: 'replay', workspace, sandbox, toolGate: gate(asked) }, new AbortController().signal)
+      expect(answers(s.log()), sandbox).toEqual(calls.map((b) => [b.toolCall.name, b.answer, b.reason ?? '']))
+      expect(asked, sandbox).toEqual(calls.filter((b) => b.by === 'gate').map((b) => b.gateSaw))
+    }
+  })
+
+  it('takes every hook input agy gave the recording hook, whole: its file tools reach the gate with agy\'s step as the call id, and run_command is denied', async () => {
+    const asked: ToolCall[] = []
+    const s = scenario({ calls: fixture.recorded.map((r) => ({ input: r.input })) })
+    await runtime({ env: s.env }).run({ prompt: 'replay', workspace, sandbox: 'workspace-write', toolGate: gate(asked) }, new AbortController().signal)
+    const files = fixture.recorded.filter((r) => r.input.toolCall.name !== 'run_command').map((r) => r.input)
+    expect(new Set(files.map((r) => r.toolCall.name))).toEqual(new Set(['read_file', 'edit_file', 'write_file']))
+    expect(asked).toEqual(files.map((r) => ({ tool: r.toolCall.name, input: r.toolCall.args, callId: `${r.conversationId}:${r.stepIdx}` })))
+    expect(answers(s.log()).filter(([name]) => name === 'run_command')).toEqual([['run_command', 'deny', expect.stringContaining('not a tool this run offers')]])
+    expect(answers(s.log()).filter(([name]) => name !== 'run_command').every(([, decision]) => decision === 'allow')).toBe(true)
   })
 })
 
@@ -509,7 +577,7 @@ describe.skipIf(!BWRAP && !REQUIRED)('antigravity-cli under the real bubblewrap:
   })
 
   it('holds a run to its workspace through the hook, under the real confinement', async () => {
-    const s = scenario({ calls: [{ name: 'view_file', args: { AbsolutePath: join(workspace, 'a.txt') } }, { name: 'view_file', args: { AbsolutePath: outside } }] })
+    const s = scenario({ calls: [{ name: 'read_file', args: { Path: join(workspace, 'a.txt') } }, { name: 'read_file', args: { Path: outside } }] })
     const result = await hosted(s.env).run({ prompt: 'x', workspace, sandbox: 'read-only' }, new AbortController().signal)
     expect(result.text).toBe('echo: x')
     expect(prints(s.log())[0]!.calls.map((c) => c.answer.decision)).toEqual(['allow', 'deny'])

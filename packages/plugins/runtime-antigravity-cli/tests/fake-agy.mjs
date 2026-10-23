@@ -5,7 +5,8 @@
 // of the scenario, each first through the PreToolUse hooks of `$HOME/.gemini/config/hooks.json`,
 // run as agy runs them (`sh -c` in that directory, the call as JSON on stdin, bounded by the
 // hook's timeout), then a `result` answering `echo: <prompt>` with agy's usage fields. The
-// scenario (FAKE_AGY_SCENARIO, a JSON file) may name `calls`, `result` (overrides; null: no
+// scenario (FAKE_AGY_SCENARIO, a JSON file) may name `calls` (`{ name, args }`, or `{ input }`: a
+// hook input as recorded from the real agy, given to the hooks as it is), `result` (overrides; null: no
 // result), `exitCode`, `stderr`, `hang` (wait to be killed after the calls), and `events` (extra
 // lines before the result). Each invocation appends what it saw to FAKE_AGY_LOG.
 import { spawnSync } from 'node:child_process'
@@ -71,17 +72,18 @@ function runHook(hook, input) {
 emit('init', { conversation_id: 'h-1', model: 'model-main' })
 const calls = []
 for (const [stepIdx, call] of (scenario.calls ?? []).entries()) {
-  const input = {
+  const input = call.input ?? {
     toolCall: { name: call.name, args: call.args }, stepIdx, conversationId: 'h-1', workspacePaths: [process.cwd()],
     transcriptPath: join(env.HOME, '.gemini', 'antigravity-cli', 'brain', 'h-1', 'transcript.jsonl'), artifactDirectoryPath: join(env.HOME, '.gemini', 'antigravity-cli', 'brain', 'h-1'), modelName: 'model-main',
   }
+  const name = input.toolCall.name
   let answer = { decision: 'allow' }
-  for (const hook of hooksFor(call.name)) {
+  for (const hook of hooksFor(name)) {
     answer = runHook(hook, input)
     if (answer.decision !== 'allow') break
   }
-  calls.push({ name: call.name, answer })
-  emit('step', { tool: call.name, status: answer.decision === 'allow' ? 'ran' : 'denied', ...(answer.reason ? { reason: answer.reason } : {}) })
+  calls.push({ name, answer })
+  emit('step', { tool: name, status: answer.decision === 'allow' ? 'ran' : 'denied', ...(answer.reason ? { reason: answer.reason } : {}) })
 }
 log({ ...seen, command: 'print', prompt, calls })
 for (const line of scenario.events ?? []) process.stdout.write(`${JSON.stringify(line)}\n`)

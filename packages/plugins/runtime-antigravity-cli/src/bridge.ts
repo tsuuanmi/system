@@ -35,11 +35,19 @@ export const HOOK_NAME = 'system-tool-gate'
 const HOOK_TIMEOUT_S = 60
 
 /**
- * The command Antigravity runs (`sh -c`, in the directory of hooks.json) before each tool call:
- * the run's hook when the run named an executable one, else a deny. So a session in the runtime's
- * home that no run started (the operator signing in) runs no tool without a gate.
+ * The command Antigravity runs (`sh -c`, in the directory of hooks.json) before each tool call. It
+ * always prints a decision itself: the run's hook's answer when the run named an executable hook
+ * and it exited 0 with an answer; a deny in every other case. agy 1.4.6 blocks the tool when a hook
+ * exits non-zero, times out, or prints what it cannot read, but runs it when a hook exits 0 and
+ * prints nothing (the supervised live check, `tests/fixtures/agy-1.4.6-hook-inputs.json`), so an
+ * empty answer is never left to agy. A session in the runtime's home that no run started (the
+ * operator signing in) runs no tool without a gate.
  */
-export const HOOK_COMMAND = `if [ -x "$${HOOK_ENV}" ]; then exec "$${HOOK_ENV}"; fi; echo '{"decision":"deny","reason":"no system tool gate is attached to this session"}'`
+export const HOOK_COMMAND = [
+  `if [ ! -x "$${HOOK_ENV}" ]; then echo '{"decision":"deny","reason":"no system tool gate is attached to this session"}'; exit 0; fi`,
+  `answer=$("$${HOOK_ENV}"); status=$?`,
+  `if [ "$status" -eq 0 ] && [ -n "$answer" ]; then printf '%s\\n' "$answer"; else echo '{"decision":"deny","reason":"the tool gate hook of this run gave no answer"}'; fi`,
+].join('; ')
 
 /** The runtime's hooks.json: one PreToolUse hook, on every tool (`*`), and nothing else. */
 export const HOOKS_JSON = `${JSON.stringify({ [HOOK_NAME]: { PreToolUse: [{ matcher: '*', hooks: [{ type: 'command', command: HOOK_COMMAND, timeout: HOOK_TIMEOUT_S }] }] } }, null, 2)}\n`
@@ -276,7 +284,7 @@ export const SELF_TEST_REASON = 'the hook self-test denies every call'
  * Antigravity itself running the hook before each tool call: that takes a model turn.
  */
 export async function selfTest(home: string, confinement: Confinement, env: Record<string, string>, run: ConfinedExec = execConfined): Promise<{ ok: boolean; detail: string }> {
-  const event = JSON.stringify({ toolCall: { name: 'view_file', args: {} }, stepIdx: 0, conversationId: 'self-test' })
+  const event = JSON.stringify({ toolCall: { name: 'read_file', args: {} }, stepIdx: 0, conversationId: 'self-test' })
   const hook = (token: string): Promise<HookAnswer | undefined> =>
     run(confinedCommand('sh', ['-c', HOOK_COMMAND], confinement), { env: { ...env, [TOKEN_ENV]: token }, cwd: configDir(home), input: event }).then(printed)
   try {

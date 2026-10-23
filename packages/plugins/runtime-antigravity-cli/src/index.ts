@@ -19,12 +19,14 @@
  *   gate directory read-only;
  * - agy starts without the daemon's credentials: only the variables the operator forwards by name
  *   (`forwardEnv`) or sets (`env`) reach it (INV-8);
- * - what Antigravity cannot express exactly is refused: a turn limit, continuing a conversation
- *   (not proven), and a tool gate while the Worker source's gate does not classify its tools.
- * The probe reports `sandboxes` only when the hook layer is proven on this host, as an ACP agent
- * offers none unless vouched for: without the hook, nothing would hold a policy. It proves the
- * bridge's half (the hook command, run as agy runs it inside the confinement, reaches the run's
- * gate), not agy's half: that agy runs the hook before each tool call takes a model turn to show.
+ * - what Antigravity cannot express exactly is refused: a turn limit, and continuing a
+ *   conversation (not proven).
+ * The probe reports `sandboxes` and `gatesToolCalls` only when the hook layer is proven on this
+ * host, as an ACP agent offers none unless vouched for: without the hook, nothing would hold a
+ * policy. It proves the bridge's half (the hook command, run as agy runs it inside the
+ * confinement, reaches the run's gate); agy's half, that it runs the hook before each tool call,
+ * takes a model turn to show, so it is the supervised live check of the installed version
+ * ({@link VERIFIED_HOOK_VERSIONS}).
  * It never reports `executes` (agy's terminal sandbox has no model-free proof, and commands are
  * never offered) or `resume`. The conversation stays native; only its id crosses as the run's
  * handle (INV-7). What a run consumed is read from agy's own result, never from the model's text.
@@ -52,20 +54,18 @@ const KIND = 'antigravity-cli'
 
 /**
  * agy versions on which a supervised live session showed the PreToolUse hook running before every
- * tool step, with the tool names and inputs `policy.ts` uses: none yet. The probe can prove the
- * bridge's half on the host, never agy's (that takes a model turn), so without a version here the
- * hook layer is not proven, no sandbox is offered, and no run starts
- * (docs/operations/runbooks.md#antigravity-cli-workers).
+ * tool step, with the tool names and inputs `policy.ts` and the `agents` source's gate use. The
+ * probe can prove the bridge's half on the host, never agy's (that takes a model turn), so without
+ * the installed version here the hook layer is not proven, no sandbox is offered, no tool call is
+ * reported gated, and no run starts (docs/operations/runbooks.md#antigravity-cli-workers).
+ * - 1.4.6 (2026-10-23, `gemini-3.8-flash-low`, a scratch workspace): the hook ran before each of
+ *   the session's tool steps with agy's environment, in the config directory; its deny held (the
+ *   file was not written); a hook that exits non-zero, prints what agy cannot read, or times out
+ *   blocked the step, and one that exits 0 printing nothing let it run, which `HOOK_COMMAND`
+ *   closes; the runtime's own bridge, under the real confinement, allowed, denied by its rules,
+ *   and denied by the gate as asked. Evidence: `tests/fixtures/agy-1.4.6-hook-inputs.json`.
  */
-export const VERIFIED_HOOK_VERSIONS: readonly string[] = []
-
-/**
- * Whether the `agents` source's tool gate classifies Antigravity's tool names: it does not yet. It
- * classifies Claude Code's tools and denies any other (docs/design/approvals.md#how-a-call-is-classified),
- * so a gated run could do nothing; until it does, this runtime reports `gatesToolCalls: false` and
- * refuses a gated run, and the `agents` source admits none of its Workers.
- */
-const GATE_CLASSIFIES_TOOLS = false
+export const VERIFIED_HOOK_VERSIONS: readonly string[] = ['1.4.6']
 
 /** One request through the bridge, the gate included; below the hook script's own 45 s. */
 const REQUEST_MS = 40_000
@@ -129,8 +129,6 @@ export interface RuntimeOptions {
   runRoot?: string | undefined
   /** The node executable that runs the hook (default: this process's). */
   node?: string | undefined
-  /** Whether the Worker source's gate classifies Antigravity's tools (default false, {@link GATE_CLASSIFIES_TOOLS}); its tests drive the gate path with it. */
-  gateClassifies?: boolean | undefined
   /** Bounds (tests shorten them). */
   timing?: { gateMs?: number; requestMs?: number; killMs?: number } | undefined
 }
@@ -177,11 +175,10 @@ export class AntigravityRuntime implements AgentRuntimeProvider {
     const plugins = await this.pluginProblem(executable, confinement, env)
     if (plugins) return unavailable(plugins)
     const hooks = await this.proveHooks(version, (dir) => this.options.confine!({ writable: [this.home], readOnly: [dir] }))
-    const gates = hooks.proven && this.gateClassifies()
+    // Every tool call is asked of the run's gate exactly when the hook layer holds.
     return {
-      available: true,
-      detail: `Antigravity CLI ${version}; ${reads.detail}; ${hooks.detail}${gates ? '' : '; the agents source\'s tool gate does not classify Antigravity\'s tools, so a run with a gate is refused'}`,
-      version, sandboxes: hooks.proven ? ['read-only', 'workspace-write'] : [], resume: false, executes: false, readsConfined: true, gatesToolCalls: gates,
+      available: true, detail: `Antigravity CLI ${version}; ${reads.detail}; ${hooks.detail}`,
+      version, sandboxes: hooks.proven ? ['read-only', 'workspace-write'] : [], resume: false, executes: false, readsConfined: true, gatesToolCalls: hooks.proven,
     }
   }
 
@@ -195,9 +192,6 @@ export class AntigravityRuntime implements AgentRuntimeProvider {
     if (refused.length) throw new ProviderError('config_error', `${KIND}: a ${spec.sandbox} run offers only ${offered.join(', ')}; refusing ${refused.join(', ')}`)
     if (spec.maxTurns !== undefined) throw new ProviderError('config_error', `${KIND}: agy has no turn limit; refusing a configured maxTurns instead of ignoring it`)
     if (spec.resume) throw new ProviderError('config_error', `${KIND}: continuing a conversation is not proven for agy; refusing instead of starting a new one`)
-    if (spec.toolGate && !this.gateClassifies()) {
-      throw new ProviderError('config_error', `${KIND}: the run's tool gate does not classify Antigravity's tools and would deny every call; refusing a gated run until it does`)
-    }
     // Both are agy's arguments, which hold no NUL.
     if (Buffer.byteLength(spec.prompt) > MAX_PROMPT_BYTES) throw new ProviderError('invalid_input', `${KIND}: the prompt is longer than agy takes as an argument (${MAX_PROMPT_BYTES} bytes)`)
     if (spec.prompt.includes('\0')) throw new ProviderError('invalid_input', `${KIND}: the prompt holds a NUL character, which no argument can carry`)
@@ -298,10 +292,6 @@ export class AntigravityRuntime implements AgentRuntimeProvider {
 
   private exec(): ConfinedExec {
     return this.options.exec ?? execConfined
-  }
-
-  private gateClassifies(): boolean {
-    return this.options.gateClassifies ?? GATE_CLASSIFIES_TOOLS
   }
 
   /** What in the runtime's home would reach a Worker outside its gate, or why the home cannot be used; undefined when it is fit. */

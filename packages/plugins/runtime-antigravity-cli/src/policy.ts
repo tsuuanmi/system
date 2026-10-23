@@ -8,10 +8,15 @@
  * - every location a call names is inside the run's workspace, on disk (symlinks followed);
  * - nothing writes a customization root (`.agents/` and its spellings), whose hooks and MCP
  *   servers Antigravity would run outside every gate.
- * Tool names are as Antigravity's hooks name them: the step type, lowercased, without its
- * `CORTEX_STEP_TYPE_` prefix (agy 1.4.6's hooks guide). Their inputs are the model's arguments;
- * only the fields that hold text, never a location, are known by name. Every other string is read
- * as a location, so an input this runtime does not know is held to the workspace or denied.
+ * Tool names are as Antigravity's hooks name them: the name the model calls (`read_file`), which is
+ * also the stream's `tool_name`, not the lowercased step type its hooks guide describes, as the
+ * supervised live check of agy 1.4.6 with `gemini-3.8-flash` recorded
+ * (`tests/fixtures/agy-1.4.6-hook-inputs.json`). That model's file tools are `read_file`,
+ * `write_file`, and `edit_file`; it has no tool that lists or searches a directory (it would run a
+ * command for that, which no run offers), and other models' toolsets are not verified, so their
+ * tools are denied. Their inputs are the model's arguments; only the fields that hold text, never
+ * a location, are known by name. Every other string is read as a location, so an input this
+ * runtime does not know is held to the workspace or denied.
  * @module @tsuuanmi/system-runtime-antigravity-cli/policy
  */
 import { existsSync, lstatSync, realpathSync } from 'node:fs'
@@ -19,22 +24,19 @@ import { dirname, isAbsolute, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { SandboxMode } from '@tsuuanmi/system-agent-runtime-core'
 
-/** Tools that only read the workspace: `view_file`, `list_dir`, `grep_search`, `find_by_name` as the model calls them. */
-export const READ_TOOLS = ['view_file', 'list_directory', 'grep_search', 'find'] as const
-/** Tools that change one file: `write_to_file`, `replace_file_content`, `multi_replace_file_content` as the model calls them. */
-export const WRITE_TOOLS = ['code_action', 'file_change'] as const
+/** Tools that only read the workspace: `read_file` (`Path`, and a line or byte range). */
+export const READ_TOOLS = ['read_file'] as const
+/** Tools that change one file: `write_file` (`Path`, `Content`, to create, overwrite, or append) and `edit_file` (`Path`, `Target` replaced by `Replacement`). */
+export const WRITE_TOOLS = ['write_file', 'edit_file'] as const
 
 /** The tools each sandbox offers; absent from both, a tool is denied in every run. */
 export const TOOLS: Record<SandboxMode, readonly string[]> = { 'read-only': READ_TOOLS, 'workspace-write': [...READ_TOOLS, ...WRITE_TOOLS] }
 
 /**
- * Input fields that hold text, never a location: a file's new content, a search query, an
- * explanation the model gives. Their strings, at any depth, are not read as locations.
+ * Input fields that hold text, never a location: a file's new content, and the text an edit
+ * replaces and its replacement. Their strings, at any depth, are not read as locations.
  */
-const TEXT_FIELDS = new Set([
-  'Query', 'CodeContent', 'ReplacementContent', 'TargetContent', 'ReplacementChunks', 'Instruction', 'Description', 'CodeMarkdownLanguage',
-  'explanation', 'toolSummary', 'toolAction',
-])
+const TEXT_FIELDS = new Set(['Content', 'Target', 'Replacement'])
 
 /** The directory names Antigravity discovers customizations in, walking up from its working directory to the repository root. */
 export const CUSTOMIZATION_ROOTS = ['.agents', '.agent', '_agents', '_agent'] as const
