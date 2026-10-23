@@ -10,10 +10,14 @@
  *   that start work outside the run (`FEATURES_OFF`);
  * - the `codex` process starts without the daemon's credentials: only the variables the operator
  *   forwards by name (`forwardEnv`) or sets (`env`) reach it (INV-8);
- * - it runs in its own Codex home (`home`, never the operator's `~/.codex`), which must configure
- *   no MCP server: Codex starts those outside its sandbox, so a Worker would reach their tools
- *   (the system MCP server among them). Probe and every run check, and fail closed. The probe also
- *   checks it is signed in there, unless a model provider is configured or an API key forwarded;
+ * - it runs in its own Codex home (`home`, never the operator's `~/.codex`), or in the home a run
+ *   or probe names (one account's, ADR-0051), which must configure no MCP server: Codex starts those
+ *   outside its sandbox, so a Worker would reach their tools (the system MCP server among them).
+ *   Probe and every run check, and fail closed. The probe also checks it is signed in there, unless
+ *   a model provider is configured or an API key forwarded;
+ * - who is signed in to a home (`identity`) is read as the ChatGPT account id in its `auth.json`,
+ *   after `codex login status` in that home, confined, says it is signed in with ChatGPT, and only on
+ *   a Codex version a check verified (`VERIFIED_IDENTITY_VERSIONS`); only its keyed hash leaves;
  * - Codex has no per-tool allow-list and no turn limit: a configured `tools` or `maxTurns` is
  *   refused, not ignored;
  * - a run's tool gate (`RunSpec.toolGate`) is a PreToolUse hook on every tool, reached through a
@@ -42,7 +46,8 @@ import { Codex, type CodexOptions, type ThreadEvent, type ThreadOptions } from '
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import {
-  type AgentRuntimeProvider, type Confinement, type RunResult, type RunSpec, type RuntimeEvidence, type ToolCall, childEnvironment, confinedCommand, proveConfinement, writeLauncher,
+  type AgentRuntimeProvider, type Confinement, type IdentityReading, type LoginCommand, type ProbeOptions, type RunResult, type RunSpec, type RuntimeEvidence, type ToolCall, childEnvironment,
+  confinedCommand, homeProblem, identityHmac, proveConfinement, readHomeJson, writeLauncher,
 } from '@tsuuanmi/system-agent-runtime-core'
 import { dshHome, ensurePrivateDir } from '@tsuuanmi/system-libs'
 import { ProviderError } from '@tsuuanmi/system-provider-core'
@@ -101,8 +106,8 @@ export interface RuntimeOptions {
    * true`, confined): a host policy can let bubblewrap run yet refuse Codex's nested one.
    */
   nested?: (command: { command: string; args: string[] }, env: Record<string, string>) => Promise<void>
-  /** `codex login status` inside the confinement (default: run it); rejects when no one is signed in. */
-  status?: (command: { command: string; args: string[] }, env: Record<string, string>) => Promise<void>
+  /** `codex login status` inside the confinement (default: run it): resolves what it printed, rejects when no one is signed in. */
+  status?: (command: { command: string; args: string[] }, env: Record<string, string>) => Promise<string | void>
   /** Runs the probe's Codex turn (default: spawn it, stdin closed, killed at the timeout). */
   exec?: ConfinedExec
   /** The program the SDK starts for a confined Codex (default: an owner-only launcher script). */
@@ -122,10 +127,24 @@ const PLAIN_ITEMS = new Set(['agent_message', 'reasoning', 'todo_list', 'error']
 /** Variables that sign Codex in without its home's login. */
 const API_KEYS = ['CODEX_API_KEY', 'OPENAI_API_KEY']
 
+/**
+ * The Codex versions its identity reader is pinned to (ADR-0051, as ADR-0043 pins agy's hook):
+ * `auth.json` in `CODEX_HOME` holds `tokens.account_id`, the ChatGPT account id, and `codex login
+ * status` prints `Logged in using ChatGPT`; two homes signed in as two accounts showed two ids (the
+ * lead's look on this host, field names only). On any other version a reading is `unverified`. Owed
+ * (PROP-0012 phase A): the supervised check on the operator's real accounts that the id stays equal
+ * across a restart, a token refresh, and a re-login.
+ */
+export const VERIFIED_IDENTITY_VERSIONS: readonly string[] = ['0.164.0']
+
+/** The reader's id, as an `agent-account@1.0` record names it. */
+export const IDENTITY_READER = 'codex-auth-json'
+
 export class CodexRuntime implements AgentRuntimeProvider {
   readonly kind = 'codex-sdk'
 
-  private readonly home: string
+  /** Its own configured home: where a run that names none runs, and slot 1 of its accounts. */
+  readonly home: string
   private readonly runDir: string
   private readonly overrides: string[]
 
@@ -138,49 +157,55 @@ export class CodexRuntime implements AgentRuntimeProvider {
     this.overrides = configOverrides(options.config)
   }
 
-  async probe(): Promise<RuntimeEvidence> {
+  async probe(options: ProbeOptions = {}): Promise<RuntimeEvidence> {
+    // A named home is one account's (ADR-0051): an owner-only directory that exists, never made here.
+    const named = options.home !== undefined ? homeProblem(options.home) : undefined
+    if (named) return unavailable(`codex-sdk: ${named}`)
+    const home = options.home ?? this.home
     const executable = this.executable()
     if (!executable) return unavailable('Codex is not installed (no codex executable on PATH)')
     let version: string
     try {
-      const servers = await this.mcpServers(executable)
-      if (servers.length) return unavailable(noMcp(this.home, servers))
+      const servers = await this.mcpServers(executable, home)
+      if (servers.length) return unavailable(noMcp(home, servers))
       version = await (this.options.version ?? codexVersion)(executable)
     } catch (error) {
       return unavailable(`codex --version failed: ${firstLine(error)}`)
     }
     // Codex confines commands in the same OS sandbox as its file writes, so it can validate.
-    const found = { available: true, version, sandboxes: ['read-only', 'workspace-write'] as RuntimeEvidence['sandboxes'], resume: true, executes: true }
+    const found = { available: true, version, sandboxes: ['read-only', 'workspace-write'] as RuntimeEvidence['sandboxes'], resume: true, executes: true, homes: true }
     // Codex's own sandbox confines writes only; reads are confined around it (ADR-0024).
     if (!this.options.confine) return { ...found, detail: `Codex ${version}; no read confinement is configured`, readsConfined: false, gatesToolCalls: false }
     let confinement: Confinement
     try {
-      confinement = this.confinement({ writable: [this.home] })
+      confinement = this.confinement({ writable: [home] })
     } catch (error) {
       return { ...found, detail: `Codex ${version}; ${firstLine(error)}`, readsConfined: false, gatesToolCalls: false }
     }
-    const reads = await this.proveReads(executable, confinement)
+    const reads = await this.proveReads(executable, confinement, home)
     if (!reads.confined) return { ...found, detail: `Codex ${version}; ${reads.detail}`, readsConfined: false, gatesToolCalls: false }
-    const signedOut = await this.signedOut(executable, confinement)
+    const signedOut = await this.signedOut(executable, confinement, home)
     if (signedOut) {
-      return unavailable(`Codex ${version} is not signed in inside its home ${this.home} (${signedOut}): sign in there (CODEX_HOME=${this.home} codex login), configure a model provider (config), or forward an API key by name (forwardEnv)`)
+      return unavailable(`Codex ${version} is not signed in inside its home ${home} (${signedOut}): sign in there (CODEX_HOME=${home} codex login), configure a model provider (config), or forward an API key by name (forwardEnv)`)
     }
-    const gate = await this.proveGate(executable)
+    const gate = await this.proveGate(executable, home)
     return { ...found, detail: `Codex ${version}; ${reads.detail}; ${gate.detail}`, readsConfined: true, gatesToolCalls: gate.proven }
   }
 
   async run(spec: RunSpec, signal: AbortSignal, onHandle?: (handle: string) => void): Promise<RunResult> {
     if (!isAbsolute(spec.workspace)) throw new ProviderError('config_error', 'codex-sdk: the workspace must be an absolute path')
-    // One account's own home (ADR-0051) is not supported yet: refused, never run in the configured home instead.
-    if (spec.home !== undefined) throw new ProviderError('config_error', 'codex-sdk: it runs in its configured home only; refusing a run that names another (RunSpec.home)')
+    // One account's own home (ADR-0051): an owner-only directory that exists, or nothing runs.
+    const named = spec.home !== undefined ? homeProblem(spec.home) : undefined
+    if (named) throw new ProviderError('config_error', `codex-sdk: ${named}; nothing was run`)
+    const home = spec.home ?? this.home
     if (signal.aborted) throw new ProviderError('aborted', 'codex-sdk: the run was stopped before it started')
     if (spec.sandbox !== 'read-only' && spec.sandbox !== 'workspace-write') throw new ProviderError('config_error', `codex-sdk: unknown sandbox ${String(spec.sandbox)}`)
     if (spec.tools?.length) throw new ProviderError('config_error', 'codex-sdk: Codex has no tool allow-list; refusing a configured tools list instead of ignoring it')
     if (spec.maxTurns !== undefined) throw new ProviderError('config_error', 'codex-sdk: Codex has no turn limit; refusing a configured maxTurns instead of ignoring it')
     const executable = this.executable()
     if (!executable) throw new ProviderError('config_error', 'codex-sdk: Codex is not installed (no codex executable on PATH)')
-    const servers = await this.mcpServers(executable)
-    if (servers.length) throw new ProviderError('config_error', noMcp(this.home, servers))
+    const servers = await this.mcpServers(executable, home)
+    if (servers.length) throw new ProviderError('config_error', noMcp(home, servers))
     if (!this.options.confine) throw new ProviderError('config_error', 'codex-sdk: no read confinement is configured; refusing to run Codex with the host state readable (ADR-0024)')
     if (spec.toolGate) this.checkHook()
     const controller = new AbortController()
@@ -203,7 +228,7 @@ export class CodexRuntime implements AgentRuntimeProvider {
       }
       // The workspace is bound back as the sandbox allows; Codex's own sandbox still confines writes.
       const own = channel ? [channel.dir, this.hook(), this.node()] : []
-      const bind = spec.sandbox === 'workspace-write' ? { writable: [this.home, spec.workspace], readOnly: own } : { writable: [this.home], readOnly: [spec.workspace, ...own] }
+      const bind = spec.sandbox === 'workspace-write' ? { writable: [home, spec.workspace], readOnly: own } : { writable: [home], readOnly: [spec.workspace, ...own] }
       let confined: { command: string; args: string[] }
       try {
         confined = confinedCommand(executable, [], this.confinement(bind))
@@ -216,7 +241,7 @@ export class CodexRuntime implements AgentRuntimeProvider {
       const client = (this.options.client ?? ((options) => new Codex(options)))({
         codexPathOverride: program,
         configOverrides: [...this.overrides, ...(channel ? hookOverrides(this.node(), this.hook()) : [])],
-        env: this.environment(channel),
+        env: this.environment(home, channel),
       })
       const thread: ThreadOptions = {
         workingDirectory: spec.workspace, sandboxMode: spec.sandbox, approvalPolicy: 'never', skipGitRepoCheck: true,
@@ -266,6 +291,55 @@ export class CodexRuntime implements AgentRuntimeProvider {
     return { text, ...(id ? { nativeHandle: id } : {}), turns }
   }
 
+  /**
+   * Who is signed in to `home` (ADR-0051), hashed with `key`; never the account id itself (INV-8).
+   * Only on a pinned Codex version: `codex login status` in that home, under the confinement and with
+   * none of the operator's forwarded variables, must say it is signed in with ChatGPT; then the
+   * ChatGPT account id (`tokens.account_id`) of the home's `auth.json`, the only field read. An
+   * API-key sign-in names no person, so it is `ambiguous`; a workspace plan's account id that two
+   * homes share reads equal, which the caller quarantines as a duplicate.
+   */
+  async identity(home: string, key: Uint8Array): Promise<IdentityReading> {
+    const reader = IDENTITY_READER
+    const executable = this.executable()
+    if (!executable) return { status: 'unverified', reason: 'Codex is not installed (no codex executable on PATH)', reader }
+    let runtimeVersion: string
+    try {
+      runtimeVersion = await (this.options.version ?? codexVersion)(executable)
+    } catch (error) {
+      return { status: 'unverified', reason: `codex --version failed: ${firstLine(error)}`, reader }
+    }
+    const pinned = { reader, runtimeVersion }
+    if (!VERIFIED_IDENTITY_VERSIONS.includes(runtimeVersion)) {
+      return { status: 'unverified', reason: `no identity reader is verified for Codex ${runtimeVersion} (verified: ${VERIFIED_IDENTITY_VERSIONS.join(', ')})`, ...pinned }
+    }
+    const problem = homeProblem(home)
+    if (problem) return { status: 'missing', reason: problem, ...pinned }
+    if (!this.options.confine) return { status: 'unverified', reason: 'no read confinement is configured, so the sign-in cannot be checked as a run would see it (ADR-0024)', ...pinned }
+    let said: string
+    try {
+      const confinement = this.confinement({ writable: [home] })
+      said = String(await (this.options.status ?? loginStatus)(confinedCommand(executable, ['login', 'status'], confinement), childEnvironment([], { CODEX_HOME: home })) ?? '')
+    } catch (error) {
+      return { status: 'missing', reason: `codex login status: ${firstLine(error)}`, ...pinned }
+    }
+    if (!/Logged in using ChatGPT/i.test(said)) {
+      return { status: 'ambiguous', reason: /api key/i.test(said) ? 'it is signed in with an API key, which names no person' : 'codex login status does not say it is signed in with ChatGPT', ...pinned }
+    }
+    const auth = readHomeJson(join(home, 'auth.json'))
+    if (auth.state === 'absent') return { status: 'missing', reason: 'the home holds no auth.json', ...pinned }
+    if (auth.state === 'refused') return { status: 'ambiguous', reason: `its auth.json cannot be read: ${auth.why}`, ...pinned }
+    const tokens = auth.value.tokens
+    const accountId = tokens && typeof tokens === 'object' ? (tokens as Record<string, unknown>).account_id : undefined
+    if (typeof accountId !== 'string' || !accountId || accountId.length > 256) return { status: 'ambiguous', reason: 'its auth.json names no ChatGPT account id (tokens.account_id)', ...pinned }
+    return { status: 'verified', hmac: identityHmac(key, this.kind, { chatgptAccountId: accountId }), ...pinned }
+  }
+
+  /** `codex login` in `home`, which the operator runs in their own terminal, without D-Bus (ADR-0051). */
+  loginCommand(home: string): LoginCommand {
+    return { command: this.executable() ?? 'codex', args: ['login'], env: { CODEX_HOME: home } }
+  }
+
   /** The read confinement for one Codex child, with no terminal device (`NO_TERMINAL`). */
   private confinement(bind: { readOnly?: readonly string[]; writable?: readonly string[] }): Confinement {
     const confinement = this.options.confine!(bind)
@@ -275,9 +349,9 @@ export class CodexRuntime implements AgentRuntimeProvider {
     return checked
   }
 
-  /** Codex's environment: without the daemon's credentials (INV-8), in its own home, with the gate's channel. */
-  private environment(channel?: GateChannel): Record<string, string> {
-    return childEnvironment(this.options.forwardEnv, { ...this.options.env, CODEX_HOME: this.home, ...channel?.env })
+  /** Codex's environment: without the daemon's credentials (INV-8), in its home, with the gate's channel. */
+  private environment(home: string, channel?: GateChannel): Record<string, string> {
+    return childEnvironment(this.options.forwardEnv, { ...this.options.env, CODEX_HOME: home, ...channel?.env })
   }
 
   private hook(): string {
@@ -299,11 +373,11 @@ export class CodexRuntime implements AgentRuntimeProvider {
     }
   }
 
-  private async proveReads(executable: string, confinement: Confinement): Promise<{ confined: boolean; detail: string }> {
+  private async proveReads(executable: string, confinement: Confinement, home: string): Promise<{ confined: boolean; detail: string }> {
     const reads = await (this.options.prove ?? proveConfinement)(confinement)
     if (!reads.confined) return reads
     try {
-      await (this.options.nested ?? runQuiet)(confinedCommand(executable, ['sandbox', '--', 'true'], confinement), childEnvironment([], { CODEX_HOME: this.home }))
+      await (this.options.nested ?? runQuiet)(confinedCommand(executable, ['sandbox', '--', 'true'], confinement), childEnvironment([], { CODEX_HOME: home }))
       return reads
     } catch (error) {
       return { confined: false, detail: `Codex's own sandbox does not start inside the confinement: ${firstLine(error)}` }
@@ -314,12 +388,12 @@ export class CodexRuntime implements AgentRuntimeProvider {
    * Why Codex is not signed in inside its home, or undefined when it is, or needs no login: a
    * configured model provider (other than the built-in one), or an API key forwarded by name.
    */
-  private async signedOut(executable: string, confinement: Confinement): Promise<string | undefined> {
+  private async signedOut(executable: string, confinement: Confinement, home: string): Promise<string | undefined> {
     const provider = this.options.config?.model_provider
     if (typeof provider === 'string' && provider !== 'openai') return undefined
     if ([...this.options.forwardEnv ?? [], ...Object.keys(this.options.env ?? {})].some((name) => API_KEYS.includes(name))) return undefined
     try {
-      await (this.options.status ?? loginStatus)(confinedCommand(executable, ['login', 'status'], confinement), this.environment())
+      await (this.options.status ?? loginStatus)(confinedCommand(executable, ['login', 'status'], confinement), this.environment(home))
       return undefined
     } catch (error) {
       return `codex login status: ${firstLine(error)}`
@@ -331,7 +405,7 @@ export class CodexRuntime implements AgentRuntimeProvider {
    * terminal session starts, with Codex's own configuration and confinement and a scripted model
    * (`proof.ts`). Nothing reaches a model provider, and nothing is kept in Codex's home (`--ephemeral`).
    */
-  private async proveGate(executable: string): Promise<{ proven: boolean; detail: string }> {
+  private async proveGate(executable: string, home: string): Promise<{ proven: boolean; detail: string }> {
     const no = (why: string) => ({ proven: false, detail: `tool calls cannot be gated: ${why}` })
     try {
       this.checkHook()
@@ -349,7 +423,7 @@ export class CodexRuntime implements AgentRuntimeProvider {
       work = mkdtempSync(join(this.runDir, 'codex-probe-'))
       model = await startProbeModel(nonce)
       channel = await openGateChannel({ parent: this.runDir, gate: probeGate(nonce, calls), workspace: work, signal: controller.signal, onDefer: () => undefined })
-      const confinement = this.confinement({ writable: [this.home], readOnly: [work, channel.dir, this.hook(), this.node()] })
+      const confinement = this.confinement({ writable: [home], readOnly: [work, channel.dir, this.hook(), this.node()] })
       const provider = `model_providers.system-gate-probe={name="system gate probe",base_url=${JSON.stringify(model.baseUrl)},wire_api="responses",request_max_retries=0,stream_max_retries=0}`
       const args = [
         'exec', '--json', '--ephemeral', '--skip-git-repo-check', '--sandbox', 'read-only', '--cd', work,
@@ -357,7 +431,7 @@ export class CodexRuntime implements AgentRuntimeProvider {
           .flatMap((o) => ['--config', o]),
         '--model', 'system-gate-probe', 'Reply as the scripted model says.',
       ]
-      const { code, stdout } = await (this.options.exec ?? execConfined)(confinedCommand(executable, args, confinement), this.environment(channel), 60_000)
+      const { code, stdout } = await (this.options.exec ?? execConfined)(confinedCommand(executable, args, confinement), this.environment(home, channel), 60_000)
       const why = proofFailure(nonce, calls, model, stdout)
       if (why) return no(why)
       if (code !== 0) return no(`Codex exited with ${String(code)}`)
@@ -372,10 +446,11 @@ export class CodexRuntime implements AgentRuntimeProvider {
     }
   }
 
-  private async mcpServers(executable: string): Promise<string[]> {
-    if (this.options.mcpServers) return this.options.mcpServers(this.home, executable)
-    ensurePrivateDir(this.home)
-    return codexMcpServers(this.home, executable)
+  private async mcpServers(executable: string, home: string): Promise<string[]> {
+    if (this.options.mcpServers) return this.options.mcpServers(home, executable)
+    // Its own home is made on first use; a named one was checked to exist already.
+    ensurePrivateDir(home)
+    return codexMcpServers(home, executable)
   }
 
   private executable(): string | undefined {
@@ -391,7 +466,8 @@ const deferredError = (d: Deferral): ProviderError => new ProviderError('config_
 const ungatedError = (item: string): ProviderError => new ProviderError('config_error',
   `codex-sdk: Codex reported a ${item} item that the run's tool gate never allowed (its PreToolUse hook failed or did not run); the run was stopped`)
 
-const unavailable = (detail: string): RuntimeEvidence => ({ available: false, detail, sandboxes: [], resume: false, executes: false, readsConfined: false, gatesToolCalls: false })
+// It runs in a named home whether or not it is available now: `homes` says what it can do, not its state.
+const unavailable = (detail: string): RuntimeEvidence => ({ available: false, detail, sandboxes: [], resume: false, executes: false, readsConfined: false, gatesToolCalls: false, homes: true })
 
 /** An owner-only launcher in the run directory (`<DSH_HOME>/system/run`), which the confinement then hides from Codex. */
 function defaultLauncher(dir: string, command: { command: string; args: string[] }): string {
@@ -428,10 +504,14 @@ async function runQuiet(command: { command: string; args: string[] }, env: Recor
   await promisify(execFile)(command.command, command.args, { timeout: 15_000, env })
 }
 
-/** `codex login status`, confined: rejects with what it printed when it exits non-zero ("Not logged in"). */
-async function loginStatus(command: { command: string; args: string[] }, env: Record<string, string>): Promise<void> {
+/**
+ * `codex login status`, confined: resolves what it printed, on either stream (`Logged in using
+ * ChatGPT`); rejects with what it printed when it exits non-zero ("Not logged in").
+ */
+async function loginStatus(command: { command: string; args: string[] }, env: Record<string, string>): Promise<string> {
   try {
-    await promisify(execFile)(command.command, command.args, { timeout: 15_000, env })
+    const { stdout, stderr } = await promisify(execFile)(command.command, command.args, { timeout: 15_000, env })
+    return `${stdout}\n${stderr}`
   } catch (error) {
     const { stdout, stderr } = error as { stdout?: unknown; stderr?: unknown }
     const said = `${String(stdout ?? '')}\n${String(stderr ?? '')}`.split('\n').map((line) => line.trim()).filter(Boolean).at(-1)
