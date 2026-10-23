@@ -221,8 +221,9 @@ export interface WorkerSource {
   /** The Workers a continued session must stay on, when this source owns the session. */
   affinity?(sessionId: string): string[] | undefined
   /**
-   * The Workers that share this one's runtime (the tiers of one account), itself included, when
-   * this source owns it: a failover leaves all of them out (ADR-0034).
+   * The Workers on this one's account (the tiers of a website account, every role of an agent
+   * account), itself included, when this source owns it: a failover leaves all of them out
+   * (ADR-0034), and a team member avoids all of them once another member holds one (REQ-TEAM-4).
    */
   siblings?(worker: string): string[] | undefined
   /** The session's native conversation handle (conversation URL, SDK session or thread id), once known. */
@@ -344,7 +345,7 @@ export abstract class Workers extends Service {
 
   /** The Workers a continued session must stay on, from the source that owns it. */
   abstract affinity(sessionId: string): string[] | undefined
-  /** The Workers that share a Worker's runtime (the tiers of one account), from its source; just itself when none says. */
+  /** The Workers on a Worker's account (itself included), from its source; just itself when none says. */
   abstract siblings(worker: string): string[]
 
   /** A session's native conversation handle, from the source that owns it. */

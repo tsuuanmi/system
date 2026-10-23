@@ -10,6 +10,8 @@
  * `usage-record` from the runtime's own numbers after it, and its limit observations as readings.
  * A run that fails `quota_exhausted` with no limit reading the ledger keeps closes its pool for a
  * bounded cooldown; with no pool, every Worker of its runtime cools down (one home, one sign-in).
+ * Every Worker of one runtime is one account, its `siblings`: a cooldown or a closed pool of any of
+ * them holds them all, and a failover or a team counts them as one.
  * A Worker configured with `worktreePerRun` works in a git worktree of its own per workflow run
  * (./worktrees.ts). Every tool call of a run passes the run's gate first (./gate.ts): the autonomy
  * policy through `ctx.approvals` (optional; none, and no tool call runs), so a Worker whose runtime
@@ -176,8 +178,15 @@ const RANK: Record<Classification, number> = { public: 0, 'operator-shared': 1, 
 const now = (): string => new Date().toISOString()
 /** The longest a runtime cools down for one limit hit, whatever reset time its runtime named (INV-9). */
 const MAX_COOLDOWN_MS = 604_800_000
+/**
+ * The account a Worker runs on: its runtime's, while each runtime has one home and so one sign-in
+ * (PROP-0012 phase C). Its siblings, cooldowns, and limits are that account's.
+ */
+const accountOf = (worker: AgentWorkerConfig): string => worker.runtime
+/** Whether an account takes work now, and when not, until when (when known) and why. */
+interface AccountGate { state: 'ready' | 'quota-exhausted' | 'unavailable'; until?: string | undefined; why?: string }
 /** The board task and project a run serves, as its reservation and usage record name them. */
-const scopeOf = (row: RunRow): { taskId?: string; projectId?: string } => ({ ...(row.task_id ? { taskId: row.task_id } : {}), ...(row.project_id ? { projectId: row.project_id } : {}) })
+const scopeOf =(row: RunRow): { taskId?: string; projectId?: string } => ({ ...(row.task_id ? { taskId: row.task_id } : {}), ...(row.project_id ? { projectId: row.project_id } : {}) })
 
 export class AgentWorkers extends Service {
   static inject = ['store', 'artifacts', 'leases', 'workers', 'agentRuntimes', 'egress']
@@ -327,6 +336,11 @@ export class AgentWorkers extends Service {
         const session = this.ctx.store.db.prepare('SELECT worker FROM agent_sessions WHERE session_id = ?').get(sessionId) as { worker: string } | undefined
         return session ? [session.worker] : undefined
       },
+      // Every role on one sign-in is one account: a failover and a team leave them all out.
+      siblings: (worker) => {
+        const config = this.workers.get(worker)
+        return config && this.siblingsOf(config)
+      },
       handle: (sessionId) => (this.ctx.store.db.prepare('SELECT native_handle FROM agent_sessions WHERE session_id = ?').get(sessionId) as { native_handle: string | null } | undefined)?.native_handle ?? undefined,
       // The Worker stays (session affinity); without a handle the next run starts a new agent session,
       // and in a new generation a replayed conversation starts empty (ADR-0049).
@@ -362,12 +376,9 @@ export class AgentWorkers extends Service {
       // A Worker whose runtime cannot keep the host state unreadable (ADR-0024), or cannot ask the
       // run's gate before each tool call, is never admitted.
       const proof = admits(evidence, worker) && (!repository || 'repository' in repository)
-      // A metered Worker takes work only while its pool is available (INV-2), and no Worker while its
-      // runtime cools down from a limit no ledger reading holds.
-      const cooled = proof ? this.cooldown(worker.runtime) : undefined
-      const { state: pool, until } = !proof
-        ? { state: 'ready' as const, until: undefined }
-        : cooled ? { state: 'quota-exhausted' as const, until: cooled.until } : await this.poolGate(id, worker)
+      // A Worker takes work only while its account does (INV-2): no Worker of it while its runtime
+      // cools down from a limit no ledger reading holds, or while the pool of any of them is closed.
+      const { state: pool, until } = proof ? await this.accountGate(worker, true) : { state: 'ready' as const, until: undefined }
       const ready = proof && pool !== 'unavailable'
       const probed = { kind: 'probe' as const, at: observedAt }
       const proven: CapabilityOffer[] = ready
@@ -389,9 +400,9 @@ export class AgentWorkers extends Service {
           ]
         : []
       // Every Worker of a runtime runs on its one home, so on one account, compared within the
-      // runtime under its setting (ADR-0052); out of quota, it says until when its pool is back.
+      // runtime under its setting (ADR-0052); out of quota, it says until when its account is back.
       const mode = (this.accounts.get(worker.runtime) ?? ASSIGNED).mode
-      const account = { id: worker.runtime, group: worker.runtime, mode, ...(pool === 'quota-exhausted' && until ? { limitUntil: until } : {}) }
+      const account = { id: accountOf(worker), group: worker.runtime, mode, ...(pool === 'quota-exhausted' && until ? { limitUntil: until } : {}) }
       return {
         // The operator's family, else the runtime, who serves the work (ADR-0027).
         schema: 'capability-descriptor@1.5', account,
@@ -408,6 +419,37 @@ export class AgentWorkers extends Service {
     // Configured to be metered, and no ledger: no run starts (INV-2; docs/design/resources.md).
     if (!resources) throw new ProviderError('config_error', `${id} draws on pool ${worker.pool}, and no resource ledger (ctx.resources) is loaded`)
     return { resources, pool: worker.pool, account: worker.account }
+  }
+
+  /** The Workers on this Worker's account, itself included, ordered by id (`siblings`, PROP-0012 phase C). */
+  private siblingsOf(worker: AgentWorkerConfig): string[] {
+    return [...this.workers].filter(([, w]) => accountOf(w) === accountOf(worker)).map(([id]) => id).sort()
+  }
+
+  /**
+   * Whether the account a Worker runs on takes work now. A limit seen on any of its Workers holds
+   * them all, since they share one sign-in: its runtime's cooldown, or a closed pool of any of them,
+   * `quota-exhausted` until the last of those is back (no time when one of them names none). A pool
+   * of any of them that cannot be read leaves it `unavailable` (INV-2). `own` false leaves out the
+   * Worker's own pool, which its run's reservation checks with a `budget` decision.
+   */
+  private async accountGate(worker: AgentWorkerConfig, own: boolean): Promise<AccountGate> {
+    const cooled = this.cooldown(worker.runtime)
+    if (cooled) return { state: 'quota-exhausted', until: cooled.until, why: `${worker.runtime} hit a usage limit (run ${cooled.run_id} on ${cooled.worker}); its Workers take no run until ${cooled.until}` }
+    const meter = (w: AgentWorkerConfig): string => JSON.stringify([w.account, w.pool])
+    const seen = new Set(own || worker.pool === undefined ? [] : [meter(worker)])
+    const closed: Array<{ id: string; pool: string; until: string | undefined }> = []
+    for (const id of this.siblingsOf(worker)) {
+      const sibling = this.workers.get(id)!
+      if (sibling.pool === undefined || seen.has(meter(sibling))) continue
+      seen.add(meter(sibling))
+      const gate = await this.poolGate(id, sibling)
+      if (gate.state === 'unavailable') return { state: 'unavailable', why: `the pool ${sibling.pool} of ${id}, on the same sign-in, cannot be read` }
+      if (gate.state === 'quota-exhausted') closed.push({ id, pool: sibling.pool, until: gate.until })
+    }
+    if (!closed.length) return { state: 'ready' }
+    const until = closed.every((c) => c.until) ? closed.map((c) => c.until!).sort().at(-1) : undefined
+    return { state: 'quota-exhausted', until, why: `${closed.map((c) => `the pool ${c.pool} of ${c.id}`).join(' and ')}, on the same sign-in, ${closed.length > 1 ? 'are at their limits' : 'is at its limit'}${until ? ` until ${until}` : ''}` }
   }
 
   /**
@@ -789,9 +831,10 @@ export class AgentWorkers extends Service {
     if (!admits(evidence, worker)) {
       throw new ProviderError('config_error', `${worker.runtime} cannot run this Worker now: ${evidence.gatesToolCalls ? evidence.detail : `${evidence.detail}; it cannot ask the run's gate before each tool call`}`)
     }
-    // Queued before its runtime hit a limit no ledger reading holds: it would hit it again (INV-2).
-    const cooled = this.cooldown(worker.runtime)
-    if (cooled) throw new ProviderError('quota_exhausted', `${worker.runtime} hit a usage limit (run ${cooled.run_id} on ${cooled.worker}); its Workers take no run until ${cooled.until}; nothing was run`)
+    // Queued before its account hit a limit (its runtime's cooldown, or another of its Workers' pools):
+    // it would hit it again (INV-2). Its own pool is its reservation's to check.
+    const held = await this.accountGate(worker, false)
+    if (held.state !== 'ready') throw new ProviderError(held.state === 'quota-exhausted' ? 'quota_exhausted' : 'config_error', `${row.worker}: ${held.why}; nothing was run`)
     const workspace = await this.workspaceOf(row, worker)
     // The brief's files go into the run's own worktree before the agent starts; nothing has reached it yet.
     if (row.files && workspace !== worker.workspace) {
