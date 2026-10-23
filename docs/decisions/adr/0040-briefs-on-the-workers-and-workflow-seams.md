@@ -80,7 +80,41 @@ follows ADR-0037 with its own schema, definition, protocol, and suite.
 - A source that renders in another format (an agent reading pointers in windows) can do so behind
   the same brief.
 - Open, and not decided here: a team's ballot and debate prompts and a remediation step's prompt
-  quote sealed records as engine-composed text rather than pointers; the board's `run.brief` is
-  not set, since a run has one brief per execution; a task's budget is computed from usage the
-  ledger counts by task, which no Worker source reports yet.
+  quote sealed records as engine-composed text rather than pointers (see the amendment); the
+  board's `run.brief` is not set, since a run has one brief per execution.
 - Revisit if a Worker needs pointers it reads itself, or if briefs must survive a run's deletion.
+
+## Amendment (2026-10-23): digests on a task's result, and usage spent on a task
+
+B6's remaining items change one guarantee seam additively and leave the others' contracts as they
+are.
+
+**`board` (core: work state machine): contract 1.1** adds one optional method,
+`attachDigest(taskId, digest)`. It sets the task result's `digest` once, to a stored
+`digest@1.0` report whose sources are exactly the result's artifacts. It is refused while the
+reviewer holds the review, because that acceptance binds to the whole result, digest included. No
+state moves and no decision is made. A provider at 1.0 has no such method, and its results keep
+no digest. Scenario `board.digest-attached` (since 1.1). This settles what the board's contract
+must say about a missing digest: a result with none is complete, and a digest never accepts
+anything.
+
+**`workflow` (core): no contract change.** The engine asks the `digests` capability seam, when
+loaded, for a digest of each board task result that reached the board. It asks after the report,
+so the acceptance never waits. One request per run, at most `digestsPerHour` (a new optional
+configuration field, default 6) in any hour, recorded as an `admission` decision
+(`workflow.task-digest`). A written digest is set through `attachDigest`; anything else leaves it
+unset, recorded with why. A board task's brief counts against the task's budget the ledger's
+records of the runs that served it and of the executions they started, each once, through
+`ctx.resources.usage` (no change to `resources`).
+
+**`digests` (capability, contract 1.1, no ADR needed under ADR-0036)** escalates once: an
+economy answer whose every claim failed the quote check is written again on the standard tier,
+never higher.
+
+Still open: a team's ballot and debate prompts and a remediation step's prompt stay
+engine-composed text. Moving them to pointers would change what the Worker reads. A ballot
+quotes fields parsed out of each peer's answer (recommendation, rationale, risks; choice,
+confidence, strongest points), and a review ballot quotes findings merged across members, which
+no single artifact holds. A remediation prompt lists only the blocking findings of the
+assessment, one formatted line each. A pointer would render the whole answer or the whole
+assessment instead.
