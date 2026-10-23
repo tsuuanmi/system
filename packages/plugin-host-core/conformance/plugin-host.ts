@@ -2,7 +2,8 @@
  * Conformance suite for `ctx.pluginHost` (ADR-0037; docs/design/plugin-host.md), and a fake provider
  * that passes it. `boot()` gives a host over one durable state: `start(composition)` (re)starts it on
  * a composition, stopping the one before, and returns a context with `ctx.pluginHost` and
- * `ctx.artifacts`. A composition is its rows, and what each row's package ships as its manifest.
+ * `ctx.artifacts`. A composition is its rows, what each row's package ships as its manifest, and
+ * (1.1) the packages the host's configuration allows without one.
  */
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@tsuuanmi/system-artifacts'
@@ -10,12 +11,15 @@ import { SchemaRegistry } from '@tsuuanmi/system-libs'
 import { expect } from 'vitest'
 import { defineSuite, type Scenario } from '../../libs/conformance/runner.ts'
 import {
-  type CompositionRow, findPlugin, LIFECYCLE_STATES, type LifecycleDecision, PluginHost, type PluginRecord, pluginRecords, pluginsOf,
-  readManifest, reconcile, type RecordedLifecycle,
+  type CompositionRow, findPlugin, LIFECYCLE_STATES, type LifecycleDecision, type ManifestCheckDecision, PluginHost, type PluginRecord, pluginRecords,
+  pluginsOf, readManifest, reconcile, reconcileChecks, type RecordedCheck, type RecordedLifecycle,
 } from '../src/index.ts'
 
-/** A composition as a host reads it: its rows, and each package's `plugin-manifest.json` text (undefined: it ships none). */
-export interface Composition { rows: CompositionRow[]; packages: Record<string, string | undefined> }
+/**
+ * A composition as a host reads it: its rows, each package's `plugin-manifest.json` text (undefined:
+ * it ships none), and (1.1) the packages the host's configuration allows without one.
+ */
+export interface Composition { rows: CompositionRow[]; packages: Record<string, string | undefined>; allowWithoutManifest?: string[] }
 export type Boot = () => Promise<{ start: (composition: Composition) => Promise<Context>; dispose: () => Promise<void> }>
 
 const schemas = new SchemaRegistry()
@@ -29,6 +33,8 @@ const row = (id: string, name: string, mounted = true): CompositionRow => ({ id,
 const A = '@conformance/plugin-a'
 const B = '@conformance/plugin-b'
 const DSH = '@conformance/no-manifest'
+const P = '@conformance/provider'
+const C = '@conformance/consumer'
 
 /** Two plugins and a package with no manifest; plugin A has two rows, one of them off. */
 const base = (): Composition => ({
@@ -56,8 +62,29 @@ const decisionOf = (ctx: Context, record: PluginRecord): LifecycleDecision => {
   return body!
 }
 
-const scenario = (id: string, title: string, run: (start: (composition: Composition) => Promise<Context>) => Promise<void>): Scenario<Boot> => ({
-  id: `pluginHost.${id}`, since: '1.0', title,
+type CheckEnvelope = { id: string; body: ManifestCheckDecision & { schema: string } }
+/** The manifest check's decisions. */
+const checks = (ctx: Context): CheckEnvelope[] => (ctx.artifacts.list({ kind: 'decision', decisionType: 'gate', limit: 1000 }) as unknown as CheckEnvelope[])
+  .filter((d) => d.body.decider.id === 'plugin-host.manifest-check')
+
+/** The decision that recorded a plugin's findings, checked as every manifest check decision must be. */
+const checkOf = (ctx: Context, record: PluginRecord): ManifestCheckDecision => {
+  expect(record.checked, `${record.name}'s findings name the decision that recorded them`).toBeDefined()
+  const body = ctx.artifacts.get(record.checked!.decision)?.body as (ManifestCheckDecision & { schema: string }) | undefined
+  expect(body, `${record.name}'s check names a stored decision`).toBeDefined()
+  return checked(body!)
+}
+const checked = (body: ManifestCheckDecision & { schema: string }): ManifestCheckDecision => {
+  schemas.assertRecord(body)
+  expect(body).toMatchObject({ decisionType: 'gate', decider: { type: 'rule', id: 'plugin-host.manifest-check', version: '1' }, deterministic: true })
+  expect(body.candidates.map((c) => c.option)).toEqual(['pass', 'fail'])
+  expect(body.candidates.filter((c) => c.selected).map((c) => c.option)).toEqual([body.outcome.option])
+  expect(body.candidates.every((c) => c.reasons.some((r) => r.trim() !== '')), 'every candidate says why').toBe(true)
+  return body
+}
+
+const scenario = (id: string, title: string, run: (start: (composition: Composition) => Promise<Context>) => Promise<void>, since: '1.0' | '1.1' = '1.0'): Scenario<Boot> => ({
+  id: `pluginHost.${id}`, since, title,
   run: async (boot) => {
     const { start, dispose } = await boot()
     try {
@@ -70,7 +97,7 @@ const scenario = (id: string, title: string, run: (start: (composition: Composit
 
 export const pluginHostSuite = defineSuite<Boot>({
   seam: 'pluginHost',
-  contract: '1.0',
+  contract: '1.1',
   scenarios: [
     scenario('lists-the-composition', 'lists every plugin of the composition once, in the order of its first row, mounted or not, each valid manifest with the host\'s lifecycle in _meta, and a package that ships none as absent with no lifecycle (REQ-HOST-7, INV-14)', async (start) => {
       const ctx = await start(base())
@@ -184,16 +211,125 @@ export const pluginHostSuite = defineSuite<Boot>({
       expect(decisions(ctx)).toHaveLength(3)
       expect(decisionOf(ctx, byName(ctx, NEW))).toMatchObject({ inputs: [old.decision], outcome: { option: 'candidate', detail: { from: 'default' } } })
     }),
+
+    scenario('finds-a-row-without-a-manifest', 'finds a plugin a row mounts whose package ships no manifest, or one the host refuses, and lists the finding with the gate decision that recorded it (fail) before the listing; finds nothing in a plugin whose rows are off, and records no lifecycle from a manifest it could not read (REQ-HOST-7, INV-2, INV-13)', async (start) => {
+      const composition = base()
+      const refused = '@conformance/refused'
+      composition.rows.push(row('off-dsh', '@conformance/off-no-manifest', false), row('refused', refused), row('off-refused', '@conformance/off-refused', false))
+      Object.assign(composition.packages, { '@conformance/off-no-manifest': undefined, [refused]: manifestText(refused, { _meta: {} }), '@conformance/off-refused': '{' })
+      const ctx = await start(composition)
+      const found = ctx.pluginHost.list().filter((p) => p.findings)
+      expect(found.map((p) => [p.name, p.findings!.map((f) => (f.kind === 'no-manifest' ? `${f.kind}:${f.manifest}` : f.kind))])).toEqual([[DSH, ['no-manifest:absent']], [refused, ['no-manifest:refused']]])
+      expect(byName(ctx, DSH).findings![0]!.reason).toMatch(/ships no plugin-manifest\.json/)
+      expect(byName(ctx, refused).findings![0]!.reason).toMatch(/_meta/)
+      expect(checks(ctx)).toHaveLength(2)
+      const dsh = byName(ctx, DSH)
+      expect(checkOf(ctx, dsh)).toMatchObject({ inputs: [], outcome: { option: 'fail', detail: { plugin: DSH, rows: ['dsh'], findings: dsh.findings, from: null } } })
+      expect(checkOf(ctx, dsh).candidates.find((c) => c.option === 'fail')!.reasons).toEqual([dsh.findings![0]!.reason])
+      expect([dsh.lifecycle, byName(ctx, refused).lifecycle]).toEqual([undefined, undefined])
+      expect(decisions(ctx)).toHaveLength(2)
+      for (const name of [A, B, '@conformance/off-no-manifest', '@conformance/off-refused']) expect(byName(ctx, name).findings, name).toBeUndefined()
+    }, '1.1'),
+
+    scenario('allows-a-package-the-configuration-names', 'finds nothing in a plugin whose package ships no manifest when the host\'s configuration allows it (the DSH rows), and still lists it absent; the allowance never covers a manifest the host refuses (REQ-HOST-7, INV-6, INV-14)', async (start) => {
+      let ctx = await start({ ...base(), allowWithoutManifest: [DSH] })
+      expect(byName(ctx, DSH)).toMatchObject({ manifestState: 'absent', mounted: true })
+      expect(ctx.pluginHost.list().filter((p) => p.findings)).toEqual([])
+      expect(checks(ctx)).toEqual([])
+      const broken = { ...base(), allowWithoutManifest: [DSH] }
+      broken.packages[DSH] = '{ "schema": '
+      ctx = await start(broken)
+      expect(byName(ctx, DSH).findings).toEqual([{ kind: 'no-manifest', manifest: 'refused', reason: expect.stringMatching(/not JSON/) }])
+      expect(checks(ctx)).toHaveLength(1)
+    }, '1.1'),
+
+    scenario('finds-an-unsatisfied-range', 'finds each seam a mounted plugin consumes whose mounted provider declares a version its range does not accept, naming the provider and its version; a required seam no mounted plugin declares is taken at contract 1.0, an optional one is not checked, and a plugin whose rows are off is neither checked nor a provider (REQ-HOST-7, INV-2)', async (start) => {
+      const OFF_PROVIDER = '@conformance/off-provider'
+      const OFF_CONSUMER = '@conformance/off-consumer'
+      const ctx = await start({
+        rows: [row('p', P), row('c', C), row('w', OFF_PROVIDER, false), row('c-off', OFF_CONSUMER, false)],
+        packages: {
+          [P]: manifestText(P, { provides: [{ seam: 'thing', version: '1.0.0' }] }),
+          [OFF_PROVIDER]: manifestText(OFF_PROVIDER, { provides: [{ seam: 'other', version: '1.2.0' }] }),
+          [C]: manifestText(C, { consumes: [{ seam: 'thing', range: '^2.0.0' }, { seam: 'other', range: '^1.2.0' }, { seam: 'launcher', range: '^1.0.0' }, { seam: 'gone', range: '^3.0.0', optional: true }] }),
+          [OFF_CONSUMER]: manifestText(OFF_CONSUMER, { consumes: [{ seam: 'thing', range: '^9.0.0' }] }),
+        },
+      })
+      const consumer = byName(ctx, C)
+      expect(consumer.findings).toEqual([
+        { kind: 'unsatisfied', seam: 'thing', range: '^2.0.0', provider: P, version: '1.0.0', reason: expect.stringMatching(/ctx\.thing in the range \^2\.0\.0, which @conformance\/provider does not satisfy: it provides 1\.0\.0/) },
+        { kind: 'unsatisfied', seam: 'other', range: '^1.2.0', version: '1.0.0', reason: expect.stringMatching(/no plugin of the composition declares it/) },
+      ])
+      for (const name of [P, OFF_PROVIDER, OFF_CONSUMER]) expect(byName(ctx, name).findings, name).toBeUndefined()
+      expect(checks(ctx)).toHaveLength(1)
+      expect(checkOf(ctx, consumer)).toMatchObject({ outcome: { option: 'fail', detail: { plugin: C, rows: ['c'], version: '1.0.0', manifestDigest: expect.stringMatching(/^sha256:[0-9a-f]{64}$/), findings: consumer.findings } } })
+      expect(checkOf(ctx, consumer).candidates.find((c) => c.option === 'fail')!.reasons).toHaveLength(2)
+      // The check is not a lifecycle state: the composition still gives the plugin its state.
+      expect(consumer.lifecycle!.state).toBe('default')
+    }, '1.1'),
+
+    scenario('passes-a-satisfied-range', 'finds nothing, and records nothing, in a plugin whose every consumed seam each mounted provider declares at a version its range accepts, or that no plugin declares and its range accepts at 1.0; each mounted provider of a seam is checked (REQ-HOST-7)', async (start) => {
+      const P2 = '@conformance/provider-2'
+      const satisfied = (second: string): Composition => ({
+        rows: [row('p', P), row('p-2', P2), row('c', C)],
+        packages: {
+          [P]: manifestText(P, { provides: [{ seam: 'thing', version: '1.3.1' }] }),
+          [P2]: manifestText(P2, { provides: [{ seam: 'thing', version: second }] }),
+          [C]: manifestText(C, { consumes: [{ seam: 'thing', range: '^1.3.0' }, { seam: 'launcher', range: '^1.0.0' }, { seam: 'gone', range: '^1.0.0', optional: true }] }),
+        },
+      })
+      let ctx = await start(satisfied('1.4.0'))
+      expect(ctx.pluginHost.list().filter((p) => p.findings)).toEqual([])
+      expect(checks(ctx)).toEqual([])
+      ctx = await start(satisfied('2.0.0'))
+      expect(byName(ctx, C).findings).toEqual([expect.objectContaining({ seam: 'thing', provider: P2, version: '2.0.0' })])
+    }, '1.1'),
+
+    scenario('records-a-finding-once', 'records a finding once: a restart over the same composition records nothing, another finding is recorded chained to the one before, and a finding cleared (fixed, or no row mounts the plugin any more) is recorded once as pass, chained to it (INV-4, INV-13)', async (start) => {
+      const composition = (version: string, mounted = true): Composition => ({
+        rows: [row('p', P), row('c', C, mounted)],
+        packages: { [P]: manifestText(P, { provides: [{ seam: 'thing', version }] }), [C]: manifestText(C, { consumes: [{ seam: 'thing', range: '^2.0.0' }] }) },
+      })
+      let ctx = await start(composition('1.0.0'))
+      const first = byName(ctx, C).checked!
+      expect(checks(ctx)).toHaveLength(1)
+      ctx = await start(composition('1.0.0'))
+      expect(checks(ctx)).toHaveLength(1)
+      expect(byName(ctx, C).checked).toEqual(first)
+      ctx = await start(composition('1.5.0'))
+      expect(checks(ctx)).toHaveLength(2)
+      const second = byName(ctx, C)
+      expect(checkOf(ctx, second)).toMatchObject({ inputs: [first.decision], outcome: { option: 'fail', detail: { from: 'fail', findings: [{ version: '1.5.0' }] } } })
+      ctx = await start(composition('2.1.0'))
+      expect(checks(ctx)).toHaveLength(3)
+      expect(byName(ctx, C).findings).toBeUndefined()
+      const passed = checks(ctx).find((d) => d.body.outcome.option === 'pass')!
+      expect(checked(passed.body)).toMatchObject({ inputs: [second.checked!.decision], outcome: { detail: { plugin: C, findings: [], from: 'fail' } } })
+      ctx = await start(composition('2.1.0'))
+      expect(checks(ctx)).toHaveLength(3)
+      ctx = await start(composition('1.0.0'))
+      expect(checks(ctx)).toHaveLength(4)
+      expect(checkOf(ctx, byName(ctx, C))).toMatchObject({ inputs: [passed.id], outcome: { option: 'fail', detail: { from: 'pass' } } })
+      ctx = await start(composition('1.0.0', false))
+      expect(checks(ctx)).toHaveLength(5)
+      expect(byName(ctx, C).findings).toBeUndefined()
+      ctx = await start(composition('1.0.0', false))
+      expect(checks(ctx)).toHaveLength(5)
+    }, '1.1'),
   ],
 })
 
-/** The fake's configuration: the composition it reads, and the map that stands for its durable state across restarts. */
-export interface FakeConfig { composition: Composition; ledger: Map<string, RecordedLifecycle> }
+/**
+ * The fake's configuration: the composition it reads, and the maps that stand for its durable state
+ * across restarts, its lifecycle records (`ledger`) and (1.1) its manifest checks (`checks`; a fresh
+ * one when omitted, so nothing of the check is kept across restarts).
+ */
+export interface FakeConfig { composition: Composition; ledger: Map<string, RecordedLifecycle>; checks?: Map<string, RecordedCheck> }
 
 /**
  * A fake `ctx.pluginHost` over a given composition (no loader, no package files), its records in the
- * `ledger` map its caller keeps across restarts. It reconciles as every provider does: each decision
- * through `ctx.artifacts` first, then the records.
+ * maps its caller keeps across restarts. It reconciles as every provider does: each decision through
+ * `ctx.artifacts` first, then the records.
  */
 export class FakePluginHost extends PluginHost {
   static inject = ['artifacts']
@@ -201,20 +337,26 @@ export class FakePluginHost extends PluginHost {
 
   constructor(ctx: Context, config: FakeConfig) {
     super(ctx)
-    const { rows, packages } = config.composition
+    const { rows, packages, allowWithoutManifest = [] } = config.composition
+    const ledger = config.ledger
+    const checked = config.checks ?? new Map<string, RecordedCheck>()
     const manifests = new Map(pluginsOf(rows).map((p) => [p.name, readManifest(packages[p.name], p.name)]))
-    const { changes, moves } = reconcile(rows, manifests, config.ledger)
+    const { changes, moves } = reconcile(rows, manifests, ledger)
+    const check = reconcileChecks(rows, manifests, allowWithoutManifest, checked)
     const since = new Date().toISOString()
-    const recorded = changes.map((change) => ({ change, decision: ctx.artifacts.recordDecision(change.decision, { producer: { type: 'system', ref: 'plugin-host' } }).id }))
+    const producer = { producer: { type: 'system', ref: 'plugin-host' } } as const
+    const recorded = changes.map((change) => ({ change, decision: ctx.artifacts.recordDecision(change.decision, producer).id }))
+    const recordedChecks = check.changes.map((change) => ({ change, decision: ctx.artifacts.recordDecision(change.decision, producer).id }))
     for (const { from, to } of moves) {
-      config.ledger.set(to, { ...config.ledger.get(from)!, name: to })
-      config.ledger.delete(from)
+      ledger.set(to, { ...ledger.get(from)!, name: to })
+      ledger.delete(from)
     }
     for (const { change, decision } of recorded) {
-      if (change.previous && change.previous.name !== change.name) config.ledger.delete(change.previous.name)
-      config.ledger.set(change.name, { name: change.name, state: change.state, since, decision: decision as RecordedLifecycle['decision'], version: change.version, rows: change.rows })
+      if (change.previous && change.previous.name !== change.name) ledger.delete(change.previous.name)
+      ledger.set(change.name, { name: change.name, state: change.state, since, decision: decision as RecordedLifecycle['decision'], version: change.version, rows: change.rows })
     }
-    this.records = pluginRecords(rows, manifests, config.ledger)
+    for (const { change, decision } of recordedChecks) checked.set(change.name, { name: change.name, findings: change.findings, since, decision: decision as RecordedCheck['decision'] })
+    this.records = pluginRecords(rows, manifests, ledger, { findings: check.findings, recorded: checked })
   }
 
   list(): PluginRecord[] {

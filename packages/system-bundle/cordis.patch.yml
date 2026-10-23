@@ -23,9 +23,20 @@
       name: '@tsuuanmi/system-artifacts'
     # --- plugin host (core, B7): every row's plugin with the manifest its package declares, and each
     # plugin's lifecycle state, every change a decision. It reads the rows from the DSH loader at start,
-    # records, and automates nothing: a row turned off is recorded `candidate`, never stopped by it. ---
+    # records, and automates nothing: a row turned off is recorded `candidate`, never stopped by it.
+    # Its manifest check finds a mounted row with no manifest, or a seam its provider does not
+    # satisfy, and health is down until it is cleared (ADR-0045). ---
     - id: plugin-host
       name: '@tsuuanmi/system-plugin-host'           # ctx.pluginHost; MCP status lists the plugins
+      config:
+        # Exactly the DSH rows of this bundle, whose packages ship no plugin manifest (`pnpm
+        # check:manifests` holds this list to them). A patch that targets this row replaces its whole
+        # config, so it carries the list too; a package left out of it is a finding, and health is down.
+        allowWithoutManifest:
+          - '@deepseek-ai/cordis-plugin-timer'
+          - '@deepseek-ai/dsh-host-webserver'
+          - '@deepseek-ai/dsh-llm'
+          - '@deepseek-ai/dsh-llm-pi-ai'
     # --- resource ledger (core, B2): pools are the operator's configuration; none until configured ---
     - id: resources
       name: '@tsuuanmi/system-resources'             # ctx.resources; MCP resources_pools, resources_usage
