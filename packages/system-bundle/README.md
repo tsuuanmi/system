@@ -30,6 +30,11 @@ and the `system` plugins, and it does not use `dsh-base`
   removed. An operator patch turns one back on
   ([runbook](../../docs/operations/runbooks.md#turn-an-off-row-back-on)); the e2e test
   proves that it mounts again.
+- **An alternative provider, off:** `digest-extractive` provides `ctx.digests`, as `digest` does,
+  extractive-first ([digests](../../docs/design/digests.md#extractive-first)). The operator swaps it
+  in by one patch that turns `digest` off and it on
+  ([runbook](../../docs/operations/runbooks.md#swap-the-digest-provider)); one provider of a seam
+  runs at a time, and `pnpm check:packages` holds exactly one such row on by default.
 - **The approval queue and the board (B5):** the [`approvals`](../plugins/approvals/README.md)
   row carries the default studio policy, conservative: a read runs, a workspace write runs
   once tests and lint pass, and everything else asks, expiring after a day (at most 14) in

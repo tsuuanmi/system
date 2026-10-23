@@ -143,6 +143,13 @@
     # agent rows off), a request is settled `bypassed` and recorded, and nothing waits on it. ---
     - id: digest
       name: '@tsuuanmi/system-digest'                # ctx.digests; MCP digests_request, digests_get
+    # --- the same seam, extractive-first (Base exit criterion 6): code selects verbatim spans of the
+    # sources before any Worker writes, and the Worker reads only those. Off: the operator swaps it in by
+    # turning this row on and the digest row off in one patch. One provider of ctx.digests runs at a
+    # time: with both on, the second to register does not start, and health `plugins` is down. ---
+    - id: digest-extractive
+      name: '@tsuuanmi/system-digest-extractive'     # ctx.digests in place of digest; the same MCP tools
+      disabled: true
     # --- the baseline report (B8, surface): from recorded data only, over a period and one project or
     # every one; it reads the board, the queue, and the ledger, writes nothing, and no model writes it.
     # By default the last 7 days: the weekly investor report. Off, nothing else changes. ---

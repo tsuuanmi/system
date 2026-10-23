@@ -8,9 +8,12 @@
 > MCP tools [`digests_*`](../reference/schemas.md#mcp-tools-digests_).
 >
 > Defined in [`digest-core`](../../packages/digest-core/README.md); provided by
-> [`digest`](../../packages/plugins/digest/README.md) on `ctx.store`, its bundle row on. Differs
-> from target: only a board task's results are digested on their own (a run outside the board is
-> digested on request only); no test output is parsed before the model reads it.
+> [`digest`](../../packages/plugins/digest/README.md) on `ctx.store`, its bundle row on, or, in its
+> place, by [`digest-extractive`](../../packages/plugins/digest-extractive/README.md)
+> ([extractive-first](#extractive-first)), its row off. Differs from target: only a board task's
+> results are digested on their own (a run outside the board is digested on request only); no test
+> output is parsed before the model reads it (the extractive provider selects lines by signal words,
+> it does not parse a runner's output).
 
 A digest is a cited summary of raw artifacts (test logs, agent results, reports), so the lead
 reads a page instead of the raw material, and every claim on that page can be checked. A cheap
@@ -27,8 +30,9 @@ Worker writes it; code keeps only the claims whose quotes are verbatim in the ar
 | `wait(requestId, timeoutMs)` | wait until it settles or the time passes |
 
 The definition also holds what every provider applies the same way: the quote check
-(`quoteCheck`), the one escalation (`escalation`, contract 1.1), and the decision that settles a
-request (`settlement`). A provider depends on
+(`quoteCheck`), the one escalation (`escalation`, contract 1.1), the decision that settles a
+request (`settlement`), and the MCP tools `digests_*` (`registerDigestTools`), so replacing the
+provider keeps the lead's tools. A provider depends on
 seam definitions only: `ctx.workers` for its Worker, `ctx.artifacts` for what it reads and
 writes. It cooperates with the core by artifacts.
 
@@ -138,6 +142,65 @@ settles, with its decision and reason. The bundle row is therefore on: with the 
 every request settles `bypassed`. A digest never accepts anything: a lead or a reviewer still
 judges the work, and the raw artifacts stay one `artifact` call away.
 
+## Extractive-first
+
+[`digest-extractive`](../../packages/plugins/digest-extractive/README.md) provides the same seam
+another way: code reads first, and the Worker writes from what code selected. Its row is off; the
+operator swaps it in for `digest` ([replacing the provider](#replacing-the-provider)).
+
+1. **Select.** Before routing, the rule `digest-extractive.select` 1 splits each source's text (the
+   text the quote check reads: its body's `text`, else its canonical JSON) into spans, each
+   non-blank line without its surrounding whitespace, a line longer than a quote may be cut into
+   parts of at most 500 characters, and keeps at most `maxExtracts` (default 40): each source's
+   first span, so no source goes unseen; then failures, risks, decisions, and metrics, each signal
+   taken across the sources in turn; then each source's last span; then results; then the rest,
+   while there is room. It reads at most the first 1,000,000 characters of a source, and says so.
+   The extract is recorded as [`digest-extract@1.0`](../reference/schemas.md#digest-extract), an
+   `evidence` artifact whose envelope inputs are the sources, as strict as the strictest.
+   Deterministic: the same sources give the same artifact, so a restart records nothing new.
+   Sources with nothing to quote ask no Worker: the request is bypassed.
+2. **Write.** The brief points at the extract alone, never at a source. The Worker reads the
+   extract's text, the sources by number and each span with its id (`E1`, `E2`, …), and a short
+   example of the answer instead of the whole `digest@1.0` schema, and cites each claim by a
+   span's id (`"extract": "E3"`).
+3. **Check.** A claim citing a span is given that span's source, quote, and offset from the
+   extract, never from the answer, so its quote is verbatim by construction; one citing a span it
+   was not given cites no source, and the quote check drops it, saying so; one that quotes a source
+   itself is checked as it is. Then the seam's quote check reads the sources, as for any provider;
+   the escalation (with the same extract) and the settling decision are the seam's, and the
+   settling decision's inputs also name the extract.
+
+| | `digest` | `digest-extractive` |
+|---|---|---|
+| The Worker reads | every source, whole, and the `digest@1.0` schema | the extract (at most `maxExtracts` spans) and a short example of the answer |
+| A claim's quote | copied by the Worker, checked against its source | filled from the extract by code, checked against its source |
+| Left out | nothing the Worker was given | the spans the rule did not keep; the extract's header says how many, and the raw artifacts stay one `artifact` call away |
+| Requests, escalation, restart, bounds, failing open, MCP tools | the seam's | the same; its own table, request ids `dgx-…` |
+
+What it trades: the Worker sees only what the rule kept, so a finding in a span left out is not in
+the digest. What it buys: fewer characters sent per digest when the sources are longer than the
+extract, and claims that cannot misquote.
+
+## Replacing the provider
+
+Base exit criterion 6 ([release scope](../requirements/release-scope.md#base-exit-criteria)): the
+digest provider is replaced through its manifest, with no core change, with metrics before and
+after.
+
+- **By configuration only.** One patch turns the `digest` row off and the `digest-extractive` row
+  on ([runbook](../operations/runbooks.md#swap-the-digest-provider)). Both manifests provide
+  `digests` at contract 1.1, so every consumer's range (`^1.1.0`) accepts either, and the plugin
+  host's manifest check finds nothing; it records the swap as two `lifecycle` decisions (`digest`
+  to `candidate`, `digest-extractive` to `default`). The workflow engine and the report reach the
+  seam through its definition, and the MCP tools are the seam's, so no other row and no file of
+  the install changes. One provider runs at a time: with both rows on, the second to register does
+  not start, and health `plugins` is down, naming it.
+- **What each provider keeps.** A provider's requests live in its own table. After a swap, a
+  request the other provider settled is unknown to the one loaded: `digests_get` refuses it
+  (`unknown-request`), a board task waiting on it keeps no digest (recorded with why), and a
+  report counts its attachment but not its claims. Its `digest@1.0` and settling decision stay in
+  the ledger of record, and swapping back finds it again.
+
 ## Trigger
 
 - **A board task's result**, on its own: once a workflow run's result reached its task, the
@@ -156,12 +219,13 @@ run, with no task to put the digest on.
 
 ## Configuration
 
-`digest` row: `tier`, `maxClaims`, `maxPending`, `timeoutMinutes`
-([configuration](../reference/configuration.md)).
+`digest` row: `tier`, `maxClaims`, `maxPending`, `timeoutMinutes`; `digest-extractive` row: the
+same, and `maxExtracts` ([configuration](../reference/configuration.md)). A row's configuration is
+its own: an operator who set the `digest` row sets the same on `digest-extractive` when swapping.
 
 ## Conformance
 
 [`digest-core/conformance/digests.ts`](../../packages/digest-core/conformance/digests.ts), 12
 scenarios at contract 1.1 (three of them, the escalation, since 1.1), run against the fake
-provider and against the store-backed provider over real routing with a scripted Worker on each
-tier.
+provider and against both store-backed providers over real routing with the seam's scripted Worker
+([`conformance/worker.ts`](../../packages/digest-core/conformance/worker.ts)) on each tier.

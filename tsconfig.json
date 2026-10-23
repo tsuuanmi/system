@@ -144,6 +144,9 @@
       "@tsuuanmi/system-digest": [
         "packages/plugins/digest/src/index.ts"
       ],
+      "@tsuuanmi/system-digest-extractive": [
+        "packages/plugins/digest-extractive/src/index.ts"
+      ],
       "@tsuuanmi/system-report": [
         "packages/plugins/report/src/index.ts"
       ],

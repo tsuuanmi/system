@@ -123,6 +123,18 @@
 | `maxPending` | number (1…64) | `4` | Digest requests pending at once (INV-9); another is refused as overloaded |
 | `timeoutMinutes` | number (1…240) | `30` | Minutes a request may stay pending (INV-9): then its Worker run is cancelled and the request is bypassed |
 
+## `digest-extractive`
+
+[@tsuuanmi/system-digest-extractive](../../packages/plugins/digest-extractive/README.md)
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `tier` | "economy" \| "standard" \| "frontier" | `"economy"` | The tier the digest Worker runs on (its minimum and maximum): routing picks a read-only Worker of that tier, never one named here |
+| `maxClaims` | number (1…50) | `20` | Claims a digest keeps at most; the rest are dropped and recorded in it |
+| `maxExtracts` | number (1…200) | `40` | Verbatim spans of the sources the digest Worker is given at most, selected by code before it writes (INV-9); the rest of each source is left out, and the extract says how much |
+| `maxPending` | number (1…64) | `4` | Digest requests pending at once (INV-9); another is refused as overloaded |
+| `timeoutMinutes` | number (1…240) | `30` | Minutes a request may stay pending (INV-9): then its Worker run is cancelled and the request is bypassed |
+
 ## `display-virtual`
 
 [@tsuuanmi/system-display-virtual](../../packages/plugins/display-virtual/README.md)

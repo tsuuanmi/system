@@ -40,6 +40,11 @@ depends on seam definitions only, and fails open.
   settles `bypassed`, recorded, which is safe.
 - **Injects:** `store`, `artifacts`, `leases`, `workers`; reads `eventLog` when present; `mcp`
   is optional.
+- **Replaced by configuration:** the [`digest-extractive`](../digest-extractive/README.md) row
+  provides the same seam, extractive-first; one patch turns this row off and that one on
+  ([swap the digest provider](../../../docs/operations/runbooks.md#swap-the-digest-provider)). One
+  provider of `ctx.digests` runs at a time: with both rows on, the second to register does not
+  start, and health `plugins` is down, naming it.
 - **Tests:** the seam's conformance suite over this provider, real routing, and the seam's
   scripted Worker ([`tests/conformance.spec.ts`](tests/conformance.spec.ts)); the brief and its rendering, the
   tier bound, the escalation (its key, no standard Worker, a request configured on standard, a

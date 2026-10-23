@@ -275,6 +275,27 @@ describe('brief@1.0 and digest@1.0', () => {
   })
 })
 
+describe('digest-extract@1.0', () => {
+  const extract = example('digest-extract.test-run')
+  const [first] = extract.extracts
+
+  it('holds only spans a claim can quote: one source by index, a code-point offset, at most 500 characters, a rule and its version (INV-9, INV-14)', () => {
+    expect(valid('digest-extract@1.0', extract)).toBe(true)
+    expect(valid('digest-extract@1.0', { ...extract, extracts: [{ ...first, quote: 'x'.repeat(501) }] })).toBe(false)
+    expect(valid('digest-extract@1.0', { ...extract, extracts: [{ ...first, quote: '' }] })).toBe(false)
+    expect(valid('digest-extract@1.0', { ...extract, extracts: [{ ...first, source: 64 }] })).toBe(false)
+    expect(valid('digest-extract@1.0', { ...extract, extracts: [{ ...first, source: extract.sources[0].ref }] })).toBe(false)
+    expect(valid('digest-extract@1.0', { ...extract, extracts: [{ ...first, id: 'C1' }] })).toBe(false)
+    expect(valid('digest-extract@1.0', { ...extract, extracts: [{ ...first, signal: 'important' }] })).toBe(false)
+    expect(valid('digest-extract@1.0', { ...extract, extracts: [] })).toBe(false)
+    expect(valid('digest-extract@1.0', { ...extract, extracts: Array.from({ length: 201 }, () => first) })).toBe(false)
+    const { rule: _, ...unruled } = extract
+    expect(valid('digest-extract@1.0', unruled)).toBe(false)
+    expect(valid('digest-extract@1.0', { ...extract, sources: [{ ...extract.sources[0], ref: 'the test log' }] })).toBe(false)
+    expect(valid('digest-extract@1.0', { ...extract, sources: [{ ...extract.sources[0], truncated: false }] })).toBe(false)
+  })
+})
+
 describe('plugin-manifest@1.0', () => {
   const manifest = example('plugin-manifest.digest-provider')
 

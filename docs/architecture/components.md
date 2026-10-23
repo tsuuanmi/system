@@ -236,7 +236,11 @@ runs the work the router admitted to them. Callers never reach a source directly
   written once more on the standard tier, never higher. It fails open: a request no Worker
   serves is settled `bypassed` and recorded ([digests](../design/digests.md)). It depends on
   seam definitions only. The workflow engine asks for a digest of each board task's result once
-  it reached the board, and sets it on the task through the board's `attachDigest`.
+  it reached the board, and sets it on the task through the board's `attachDigest`. Two providers,
+  one running at a time: `digest` (its row on) gives its Worker the sources whole;
+  `digest-extractive` (its row off, swapped in by configuration) gives it verbatim spans code
+  selected first and fills each claim's quote from them
+  ([extractive-first](../design/digests.md#extractive-first)).
 - **Experiment registry** (`ctx.experiments`, defined): hypotheses and pre-registered experiments
   with their exact identity and structured fingerprint; every registration answered EXACT_REPEAT,
   RELATED, CONTEXT_CHANGED, or NOVEL, and pre-registered or refused as a `registration` decision;
@@ -250,7 +254,7 @@ runs the work the router admitted to them. Callers never reach a source directly
   promotion, which always asks the operator ([evaluations](../design/evaluations.md)). No provider
   yet: its suite runs against a fake.
 - **Profiles:** plugins that contribute templates through `ctx.workflow.template` (`research`,
-  with its `deep` variant; `agent-review`, for the agent Workers, its row off by default) and acceptance
+  with its `deep` variant; `agent-review` and `algorithm-development`, for the agent Workers, their row off by default) and acceptance
   contracts through `ctx.workers`. A profile never names a provider, browser, or account, and
   holds no engine code.
 - **Does not own:** provider mechanics, Worker admission, or protocol framing.
@@ -267,6 +271,7 @@ runs the work the router admitted to them. Callers never reach a source directly
   [profile-scientific-research](../../packages/plugins/profile-scientific-research/README.md),
   [board-core](../../packages/board-core/README.md), [board](../../packages/plugins/board/README.md),
   [digest-core](../../packages/digest-core/README.md), [digest](../../packages/plugins/digest/README.md),
+  [digest-extractive](../../packages/plugins/digest-extractive/README.md),
   [experiments-core](../../packages/experiments-core/README.md),
   [evaluations-core](../../packages/evaluations-core/README.md).
 

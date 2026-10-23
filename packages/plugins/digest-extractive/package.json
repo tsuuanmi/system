@@ -1,0 +1,28 @@
+{
+  "name": "@tsuuanmi/system-digest-extractive",
+  "version": "0.0.0",
+  "private": true,
+  "description": "ctx.digests, extractive-first: verbatim spans of the sources selected by code before any Worker writes; a read-only Worker on the economy tier reads only those and cites each claim by a span, quote-checked; fails open; MCP digests_request and digests_get; its row off, in place of digest when turned on",
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "exports": { ".": { "types": "./lib/index.d.ts", "default": "./lib/index.js" } },
+  "files": ["lib", "plugin-manifest.json"],
+  "scripts": { "build": "tsc -p tsconfig.build.json" },
+  "dependencies": {
+    "@tsuuanmi/system-artifacts": "workspace:*",
+    "@tsuuanmi/system-digest-core": "workspace:*",
+    "@tsuuanmi/system-event-log": "workspace:*",
+    "@tsuuanmi/system-gateway-core": "workspace:*",
+    "@tsuuanmi/system-leases": "workspace:*",
+    "@tsuuanmi/system-libs": "workspace:*",
+    "@tsuuanmi/system-store": "workspace:*",
+    "@tsuuanmi/system-workers-core": "workspace:*"
+  },
+  "peerDependencies": { "@deepseek-ai/cordis": "4.0.5-alpha.1", "@deepseek-ai/schemastery": "3.18.5-alpha.1" },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "4.0.5-alpha.1",
+    "@deepseek-ai/schemastery": "3.18.5-alpha.1",
+    "@tsuuanmi/system-workers": "workspace:*"
+  }
+}

@@ -1,0 +1,67 @@
+{
+  "schema": "plugin-manifest@1.0",
+  "name": "@tsuuanmi/system-digest-extractive",
+  "version": "0.0.0",
+  "description": "ctx.digests, extractive-first: verbatim spans of the sources selected by code before any Worker writes; a read-only Worker on the economy tier reads only those and cites each claim by a span, quote-checked; fails open; MCP digests_request and digests_get; its row off, in place of digest when turned on",
+  "class": {
+    "kind": "family",
+    "family": "digest"
+  },
+  "provides": [
+    {
+      "seam": "digests",
+      "version": "1.1.0"
+    }
+  ],
+  "consumes": [
+    {
+      "seam": "store",
+      "range": "^1.0.0"
+    },
+    {
+      "seam": "artifacts",
+      "range": "^1.0.0"
+    },
+    {
+      "seam": "leases",
+      "range": "^1.0.0"
+    },
+    {
+      "seam": "workers",
+      "range": "^1.0.0"
+    },
+    {
+      "seam": "eventLog",
+      "range": "^1.0.0",
+      "optional": true
+    },
+    {
+      "seam": "mcp",
+      "range": "^1.0.0",
+      "optional": true
+    }
+  ],
+  "config": [
+    {
+      "key": "tier",
+      "sensitive": false
+    },
+    {
+      "key": "maxClaims",
+      "sensitive": false
+    },
+    {
+      "key": "maxExtracts",
+      "sensitive": false
+    },
+    {
+      "key": "maxPending",
+      "sensitive": false
+    },
+    {
+      "key": "timeoutMinutes",
+      "sensitive": false
+    }
+  ],
+  "license": "UNLICENSED"
+}
