@@ -1,5 +1,5 @@
 ---
-"@tsuuanmi/system-workflow": patch
+"@tsuuanmi/system-workflow": minor
 ---
 
 A board task whose budget is spent on its last attempt no longer asks the operator for funding that could not be used:

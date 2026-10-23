@@ -118,4 +118,4 @@ chosen, and only the workflow engine changes.
   ends as `retries-spent`, and nothing is put to the operator.
 
 Still open: stopping a run that overdraws its lines while it runs
-([ADR-0047](0047-a-run-stops-at-a-boundary-once-its-task-budget-is-spent.md), proposed).
+([ADR-0047](0047-a-run-stops-at-a-boundary-once-its-task-budget-is-spent.md)).

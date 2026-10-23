@@ -585,7 +585,7 @@ stateDiagram-v2
 - **Before, never after** (resources rule 4): a run that overdraws its lines while it runs is
   not stopped mid-run; what it drew is recorded under the task, so the task's next attempt is
   refused, and the brief tells each Worker what is left. Stopping it at its next step, then at an
-  agent run's next turn or tool boundary, is proposed in
+  agent run's next turn or tool boundary, is the subject of
   [ADR-0047](../decisions/adr/0047-a-run-stops-at-a-boundary-once-its-task-budget-is-spent.md):
   the ledger records no usage while a run is in flight, and no seam stops one at a boundary yet.
 - **Restart** (INV-4): the reservation's state is on the run's row, and the ledger's decision is
@@ -616,7 +616,7 @@ and each pool, the records a cap counts), never from a model:
 - never made for the task's last attempt: with no attempt left, an approval could raise nothing and
   start nothing (the board never makes a task ready past `attempts.max`), so the run blocks
   nothing, and its report leaves the task waiting for input (`retries-spent`)
-  ([above](#a-tasks-budget); [ADR-0044, amended](../decisions/adr/0044-funding-raises-a-spent-task-budget.md#amendment-2026-10-23-no-funding-asked-on-a-tasks-last-attempt)).
+  ([above](#a-tasks-budget); [ADR-0044's amendment](../decisions/adr/0044-funding-raises-a-spent-task-budget.md#amendment-2026-10-23-no-funding-asked-on-a-tasks-last-attempt)).
 
 The board bounds the ask (`fundingMaxPercent`): one past it opens no request, and the task waits
 for input. The board adds an approved ask to the task's budget before it gates the next attempt,
