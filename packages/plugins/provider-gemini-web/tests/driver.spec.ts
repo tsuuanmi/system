@@ -132,20 +132,31 @@ describe.runIf(canRunBrowser)('GeminiWebDriver against the fake site', { timeout
     expect(stalls).toEqual([])
   }, 60_000)
 
+  /**
+   * A think that shows nothing new fails as provider_stalled once the stall clock runs out, before
+   * the turn's hard deadline. Both clocks start at the send, so the wait is timed from there
+   * (`beforeSend`), never from opening the page. The think outlasts the deadline: a stall left
+   * undetected would end the turn at the deadline as a timeout. The deadline is far enough past
+   * the stall for a slow runner's polls.
+   */
+  async function stallsBeforeTheDeadline(options: FakeOptions): Promise<void> {
+    const stallMs = 1500
+    const timeouts = { readyMs: 5000, stableMs: 300, pollMs: 100, stallMs, turnMs: 8 * stallMs }
+    const { page, fake } = await open({ startOnSpark: false, thoughts: false, answer: 'too late', ...options, thinkMs: 2 * timeouts.turnMs })
+    const driver = new GeminiWebDriver({ origin: fake.origin, modes: PRESETS, defaultMode: 'flash', timeouts })
+    let sent: number | undefined
+    await expect(driver.ask(page, 'review this', { conversation: 'persistent', beforeSend: () => { sent = Date.now() } })).rejects.toMatchObject({ kind: 'provider_stalled' })
+    const waited = Date.now() - sent!
+    expect(waited).toBeGreaterThanOrEqual(timeouts.stallMs)
+    expect(waited).toBeLessThan(timeouts.turnMs)
+  }
+
   it('still fails a think that shows nothing new as provider_stalled, before the turn\'s hard deadline', async () => {
-    const { page, fake } = await open({ startOnSpark: false, thinkMs: 6000, thoughts: false, answer: 'too late' })
-    const driver = new GeminiWebDriver({ origin: fake.origin, modes: PRESETS, defaultMode: 'flash', timeouts: { readyMs: 5000, stableMs: 300, pollMs: 100, turnMs: 30_000, stallMs: 1500 } })
-    const started = Date.now()
-    await expect(driver.ask(page, 'review this', { conversation: 'persistent' })).rejects.toMatchObject({ kind: 'provider_stalled' })
-    expect(Date.now() - started).toBeLessThan(6000)
+    await stallsBeforeTheDeadline({})
   }, 60_000)
 
   it('takes no count that changes only its numbers for progress: a think whose summary stands still stalls while its timer counts up', async () => {
-    const { page, fake } = await open({ startOnSpark: false, thinkMs: 6000, thoughts: false, thinkTimer: true, answer: 'too late' })
-    const driver = new GeminiWebDriver({ origin: fake.origin, modes: PRESETS, defaultMode: 'flash', timeouts: { readyMs: 5000, stableMs: 300, pollMs: 100, turnMs: 30_000, stallMs: 1500 } })
-    const started = Date.now()
-    await expect(driver.ask(page, 'review this', { conversation: 'persistent' })).rejects.toMatchObject({ kind: 'provider_stalled' })
-    expect(Date.now() - started).toBeLessThan(6000)
+    await stallsBeforeTheDeadline({ thinkTimer: true })
   }, 60_000)
 
   it('still takes a summary whose words change for progress, a timer counting beside it', async () => {
