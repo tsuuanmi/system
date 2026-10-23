@@ -1,0 +1,13 @@
+{
+  "name": "@tsuuanmi/system-statistics",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The evaluation engine's statistics library: the exact paired sign-flip test and its interval, golden-tested against SciPy, pinned by version in each experiment",
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "exports": { ".": { "types": "./lib/index.d.ts", "default": "./lib/index.js" } },
+  "files": ["lib"],
+  "scripts": { "build": "tsc -p tsconfig.build.json" },
+  "devDependencies": { "@tsuuanmi/system-evaluations-core": "workspace:*", "@tsuuanmi/system-experiments-core": "workspace:*", "@tsuuanmi/system-libs": "workspace:*" }
+}
