@@ -211,7 +211,9 @@ guesses.
 
 ### `approval`
 
-- `subject` is the exact artifact approved (INV-5). Today that is a plan.
+- `subject` is the exact subject approved (INV-5): a plan at the workflow's plan gate, or the
+  subject of an approval request in the queue (a charter version, a board task's attempt, a
+  Worker's tool call; [`approval-request`](#approval-request)).
 - It is written only through an operator channel (the CLI, MCP `approve` or
   `approvals_decide`, or the web UI), never from model output (INV-6).
 

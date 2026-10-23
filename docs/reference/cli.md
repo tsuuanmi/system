@@ -74,7 +74,7 @@ on `run`, `--repo`, `--ref`, and `--focus` only on `review` (`--ref` and `--focu
 | `system resume` | admit new runs again after a drain |
 | `system shutdown [--deadline <s>]` | drain, then stop the running profile (unfinished runs resume on start); with no workflow engine running, stop it directly once `/proc` proves it is this home's host |
 | `system check` | check the profile (its operator patch included) against this install's code before starting it; exit 1 names each problem |
-| `system ui` | print the web UI link (runs, steps, decisions; approve, stop, continue; the approval queue's verdicts) |
+| `system ui` | print the web UI link (runs, steps, decisions; approve, stop, continue; the approval queue's verdicts; accept or reject the reviews of board tasks) |
 
 ## Clients
 
