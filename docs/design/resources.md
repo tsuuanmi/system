@@ -13,7 +13,9 @@
 > `resources_pools` and `resources_usage`. Agent Workers configured with a pool reserve, record,
 > and observe through it ([agent runtimes](agent-runtimes.md#metering)), naming the board task
 > their brief serves; the workflow engine reserves a board task's budget lines before the task's
-> run starts work ([a task's budget](workflow-engine.md#a-tasks-budget)). Differs from target: no
+> run starts work ([a task's budget](workflow-engine.md#a-tasks-budget)), and asks to fund a spent
+> one by lines it computes from the ledger's count of the task's usage
+> ([funding a spent task](workflow-engine.md#funding-a-spent-task)). Differs from target: no
 > other Worker source reports yet, no transcript is reconciled, the engine reserves only for a
 > task that declares a budget, and the bundle configures no pool.
 

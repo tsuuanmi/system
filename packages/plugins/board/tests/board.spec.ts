@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url'
 import { Context } from '@deepseek-ai/cordis'
 import type { Action, ApprovalRequest, NewRequest } from '@tsuuanmi/system-approvals-core'
 import Artifacts from '@tsuuanmi/system-artifacts'
-import { type ArtifactRef, BoardError, type BoardTask, type Subject, type TaskInput } from '@tsuuanmi/system-board-core'
+import { type ArtifactRef, BoardError, type BoardTask, type BudgetLine, type Subject, type TaskInput } from '@tsuuanmi/system-board-core'
 import { McpTools, type ToolHandler, type ToolSpec } from '@tsuuanmi/system-gateway-core'
 import Leases from '@tsuuanmi/system-leases'
 import { SchemaRegistry } from '@tsuuanmi/system-libs'
@@ -748,6 +748,86 @@ describe('ctx.board (store-backed): the protocol\'s guards', () => {
     for (const t of await ctx.board.tasks({ projectId: 'p2' })) expect(ctx.artifacts.get(t.lastDecision!)?.kind).toBe('decision')
     const answered = decisions.map((d) => d.body as { outcome: { option: string; detail?: { answers?: string[] } } }).find((d) => d.outcome.detail?.answers)
     expect(answered?.outcome).toMatchObject({ option: 'ready', detail: { answers: ['Because.'] } })
+  })
+})
+
+describe('ctx.board (store-backed): funding a spent budget', () => {
+  const usd = (amount: number): BudgetLine[] => [{ pool: 'max.programmatic', unit: 'usd', amount }]
+  /** A running task of p2 with a 10 usd budget, its attempt started: its holder's generation. */
+  const running = async (ctx: Context, title: string, when: number, extra: Partial<TaskInput> = {}): Promise<{ taskId: string; generation: number }> => {
+    const t = await ready(ctx, task('p2', title, { budget: usd(10), ...extra }), at(when))
+    const { generation } = await ctx.board.claim(t.taskId, 'lead', 600_000, at(when))
+    await ctx.board.start(t.taskId, generation, { runId: `run-${title}-${when}` }, at(when))
+    return { taskId: t.taskId, generation }
+  }
+  const boardDecision = (ctx: Context, ref: ArtifactRef | undefined) => ctx.artifacts.get(ref!)!.body as { decisionType: string; inputs: string[]; outcome: { option: string; detail: Record<string, unknown> } }
+
+  it('bounds a task\'s raises together by fundingMaxPercent of what it declared: an ask past what is left opens no request, and nothing is raised (INV-9)', async () => {
+    const { ctx } = await boot({ board: { fundingMaxPercent: 50 } })
+    await active(ctx)
+    let { taskId, generation } = await running(ctx, 'raised', 3)
+    const first = await ctx.board.block(taskId, generation, { reason: 'budget-spent', funding: usd(4) }, at(4))
+    await decide(ctx, first.waiting!.approvalRequest!, 'approved', at(5))
+    await ctx.board.sweep(at(5))
+    expect(await ctx.board.task(taskId)).toMatchObject({ state: 'ready', budget: usd(14), funding: [{ lines: usd(4) }] })
+
+    // 4 raised of the 5 (50% of the 10 declared): 2 more is past it, though 2 is within 50% of the 14 it holds now.
+    ;({ generation } = await ctx.board.claim(taskId, 'lead', 600_000, at(6)))
+    await ctx.board.start(taskId, generation, { runId: 'run-raised-2' }, at(6))
+    const asked = (await open(ctx, 'p2')).length
+    const refused = await ctx.board.block(taskId, generation, { reason: 'budget-spent', funding: usd(2) }, at(7))
+    schemas.assertRecord(refused)
+    expect(refused).toMatchObject({ state: 'waiting-for-input', waiting: { reason: 'rejected' }, budget: usd(14), funding: [{ lines: usd(4) }], attempts: { count: 2 } })
+    expect(refused.holder).toBeUndefined()
+    expect(boardDecision(ctx, refused.lastDecision)).toMatchObject({ decisionType: 'board', outcome: { option: 'waiting-for-input', detail: { reason: 'budget-spent', funding: usd(2), fundingMaxPercent: 50 } } })
+    expect((await open(ctx, 'p2')).length).toBe(asked)
+    // The lease is released with the move: the holder's generation no longer writes.
+    expect(await failureOf(ctx.board.renew(taskId, generation, 600_000, at(8)))).toBe('stale-generation')
+  })
+
+  it('applies an approval only within the bound in force when it is applied, and only on the exact lines its request binds: otherwise nothing is raised, and the task waits for input (INV-5, INV-9)', async () => {
+    const { ctx, restartBoard } = await boot()
+    await active(ctx)
+    const lowered = await running(ctx, 'lowered', 3)
+    const asked = await ctx.board.block(lowered.taskId, lowered.generation, { reason: 'budget-spent', funding: usd(8) }, at(4))
+    await decide(ctx, asked.waiting!.approvalRequest!, 'approved', at(5))
+    // The operator lowers the bound before the board applies the approval.
+    await restartBoard({ fundingMaxPercent: 50 })
+    await ctx.board.sweep(at(5))
+    const past = (await ctx.board.task(lowered.taskId))!
+    schemas.assertRecord(past)
+    expect(past).toMatchObject({ state: 'waiting-for-input', waiting: { reason: 'rejected' }, budget: usd(10) })
+    expect(past.funding).toBeUndefined()
+    const resolution = (await ctx.approvals.get(asked.waiting!.approvalRequest!))!.resolution!
+    expect(boardDecision(ctx, past.lastDecision)).toMatchObject({ outcome: { option: 'waiting-for-input', detail: { cause: 'past-bound', funding: usd(8) } }, inputs: [resolution.decision] })
+
+    // A wait whose stored lines are not the ones its request was asked on: the approval binds nothing (INV-5).
+    await restartBoard({ fundingMaxPercent: 100 })
+    const altered = await running(ctx, 'altered', 6)
+    const blocked = await ctx.board.block(altered.taskId, altered.generation, { reason: 'budget-spent', funding: usd(4) }, at(7))
+    const record = { ...blocked, waiting: { ...blocked.waiting!, funding: usd(5) } }
+    schemas.assertRecord(record)
+    ctx.store.db.prepare('UPDATE board_tasks SET record = ? WHERE task_id = ?').run(JSON.stringify(record), altered.taskId)
+    await decide(ctx, blocked.waiting!.approvalRequest!, 'approved', at(8))
+    await ctx.board.sweep(at(8))
+    const unbound = (await ctx.board.task(altered.taskId))!
+    expect(unbound).toMatchObject({ state: 'waiting-for-input', waiting: { reason: 'rejected' }, budget: usd(10) })
+    expect(unbound.funding).toBeUndefined()
+    expect(boardDecision(ctx, unbound.lastDecision)).toMatchObject({ outcome: { detail: { cause: 'unbound' } } })
+  })
+
+  it('says in the queue that an approval with no attempt left raises nothing, and raises nothing then (INV-9)', async () => {
+    const { ctx } = await boot()
+    await active(ctx)
+    const { taskId, generation } = await running(ctx, 'last', 3, { maxAttempts: 1 })
+    const blocked = await ctx.board.block(taskId, generation, { reason: 'budget-spent', funding: usd(4) }, at(4))
+    const request = (await ctx.approvals.get(blocked.waiting!.approvalRequest!))!
+    expect(request.action.consequences).toBe('Approved: nothing is raised, since all 1 attempt(s) are used; the task waits for input (retries-spent). Denied or unanswered: the budget stays 10 usd of max.programmatic, and the task waits for input (rejected) until it is cancelled.')
+    await decide(ctx, request.requestId, 'approved', at(5))
+    await ctx.board.sweep(at(5))
+    const stopped = (await ctx.board.task(taskId))!
+    expect(stopped).toMatchObject({ state: 'waiting-for-input', waiting: { reason: 'retries-spent' }, budget: usd(10) })
+    expect(stopped.funding).toBeUndefined()
   })
 })
 

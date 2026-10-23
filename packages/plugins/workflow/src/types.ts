@@ -156,6 +156,8 @@ export interface TaskBudgetView {
   spent?: boolean
   /** The task was blocked (`budget-spent`) on this run's refusal. */
   blocked?: boolean
+  /** The lines the block asked to raise the task's budget by (empty: it asked only to go on), fixed before the block. */
+  funding?: Array<{ pool: string; unit: 'tokens' | 'usd' | 'turns' | 'runs' | 'minutes'; amount: number }>
 }
 
 /** A task run's budget as its row keeps it (`workflow_tasks.budget`): the task's lines (the caps), and its reservation. */

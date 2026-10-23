@@ -588,6 +588,15 @@ guesses.
   an outcome reported later withdraws that request. When the policy's verdict on `remediation`
   (or, for a spent budget, `funding`) is not `ask`, no request can be opened, and the task waits
   for input (`rejected`) instead: it is never readied or cancelled on the policy alone.
+- `budget` lines cap what the task's attempts draw together, as the ledger counts them for the
+  task. `board-task@1.1` adds a spent budget's funding
+  ([board](../design/board.md#funding-a-spent-budget)): `waiting.funding`, only on a
+  `budget-spent` wait, holds the lines its `funding` request asks to add, whose subject version is
+  `budget-spent:<sha256 of their canonical JSON>`; `funding` lists each raise an approved request
+  applied (the lines, the operator's `approval`, the board's `decision`, and when), oldest first,
+  at most one per attempt. A record carries either only at `@1.1`; every other record stays
+  `@1.0`. Example:
+  [`board-task.funding.json`](../../schemas/examples/board-task.funding.json).
 - `lastDecision` is the decision behind the latest move: a `board` decision for moves the board
   makes on its own, otherwise the acceptance, approval, route, or reconciliation decision that
   caused it. Examples: [`board-task.review.json`](../../schemas/examples/board-task.review.json),

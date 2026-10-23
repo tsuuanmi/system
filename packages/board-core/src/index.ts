@@ -1,6 +1,6 @@
 /**
  * Work state machine seam definition: `ctx.board`, projects with charters and board tasks that
- * outlive a run (docs/design/board.md). The types mirror `project@1.0` and `board-task@1.0`; the
+ * outlive a run (docs/design/board.md). The types mirror `project@1.0` and `board-task@1.1`; the
  * schemas in `schemas/` are canonical. Only the board moves a task, each move naming the decision
  * behind it (INV-13). A guarantee seam: it fails closed (INV-2), and its contract changes only by
  * an ADR (ADR-0036). It asks for approvals through `ctx.approvals`, never on its own.
@@ -20,9 +20,11 @@ declare module '@deepseek-ai/cordis' {
 
 /**
  * The contract version of this seam; its conformance suite names the same. 1.1 adds the optional
- * {@link Board.attachDigest}: a provider at 1.0 has none.
+ * {@link Board.attachDigest}: a provider at 1.0 has none. 1.2 adds the optional `funding` of a
+ * `budget-spent` {@link Board.block}: the lines the holder asks to raise the task's budget by,
+ * bound to the request's subject and applied, exactly, once the operator approves it.
  */
-export const BOARD_CONTRACT = '1.1'
+export const BOARD_CONTRACT = '1.2'
 
 export type Unit = 'tokens' | 'usd' | 'turns' | 'runs' | 'minutes'
 export interface BudgetLine { pool: string; unit: Unit; amount: number }
@@ -65,9 +67,20 @@ export const TERMINAL: readonly TaskState[] = ['done', 'cancelled']
 export type WaitReason = 'approval-needed' | 'budget-spent' | 'reconciliation-failed' | 'retries-spent' | 'question' | 'rejected' | 'review-expired' | 'operator-review'
 export type CancelReason = 'operator' | 'lead' | 'project-closed' | 'input-expired' | 'superseded' | 'forbidden' | 'dependency-cancelled'
 
-/** `board-task@1.0`. */
+/** One raise of a task's budget (`board-task@1.1`): the lines the operator approved, that approval, and the board's decision that applied them. */
+export interface Funding { lines: BudgetLine[]; approval: ArtifactRef; decision: ArtifactRef; at: string }
+
+/**
+ * The subject version of a `budget-spent` request that asks for `funding`, given the sha256 content
+ * id of the lines' canonical JSON (as `contentId` in `@tsuuanmi/system-libs` gives it): the verdict
+ * binds to exactly those lines (INV-5). A request that asks for none keeps the version
+ * `budget-spent`.
+ */
+export const fundingVersion = (contentIdOfLines: `sha256:${string}`): string => `budget-spent:${contentIdOfLines}`
+
+/** `board-task@1.0`; `board-task@1.1` once it carries a funding ask (`waiting.funding`) or a raise (`funding`). */
 export interface BoardTask {
-  schema: 'board-task@1.0'
+  schema: 'board-task@1.0' | 'board-task@1.1'
   taskId: string
   projectId: string
   milestone?: string
@@ -84,8 +97,11 @@ export interface BoardTask {
   holder?: { owner: string; generation: number; leaseExpiresAt: string }
   run?: { runId: string; brief?: ArtifactRef; startedAt: string }
   result?: { artifacts: ArtifactRef[]; digest?: ArtifactRef; subject: Subject; files?: string[]; acceptance?: ArtifactRef; next?: string }
-  waiting?: { reason: WaitReason; approvalRequest?: string; questions?: string[]; pendingChecks?: Check[]; since: string; expiresAt: string }
+  /** `funding` (1.1): for a `budget-spent` wait, the lines its request asks to raise the budget by. */
+  waiting?: { reason: WaitReason; approvalRequest?: string; questions?: string[]; pendingChecks?: Check[]; funding?: BudgetLine[]; since: string; expiresAt: string }
   cancellation?: { reason: CancelReason; note?: string; at: string }
+  /** 1.1: every raise of `budget` an approved funding request applied, oldest first. */
+  funding?: Funding[]
   createdAt: string
   updatedAt?: string
   lastDecision?: ArtifactRef
@@ -204,8 +220,19 @@ export abstract class Board extends Service {
    * Interrupt a running task: budget spent or a failed reconciliation waits for approval (or, when
    * the policy's verdict is not ask, for input: it is never readied or cancelled on the policy
    * alone), a question waits for input.
+   *
+   * `funding` (1.2, optional, `budget-spent` only): the lines the holder asks to raise the task's
+   * budget by, at most one per pool and unit of its budget, each above zero (`invalid` otherwise,
+   * and nothing changes). The `funding` request then binds to exactly those lines (its subject's
+   * version is {@link fundingVersion} of them), and the wait keeps them (`waiting.funding`). An ask
+   * that would raise a line past the provider's bound per task opens no request: the task waits
+   * for input (`rejected`, INV-9). Once the operator approves the request, the board adds exactly
+   * those lines to the budget and records the raise (`funding`, and a `board` decision naming the
+   * approval) before the next attempt goes through the gate; with no attempt left it raises
+   * nothing. Rejected or expired, the budget stays as it was. Without `funding` the request asks
+   * only to go on, as at 1.1.
    */
-  abstract block(taskId: string, generation: number, wait: { reason: 'budget-spent' | 'reconciliation-failed' | 'question'; questions?: string[] }, at?: Date): Promise<BoardTask>
+  abstract block(taskId: string, generation: number, wait: { reason: 'budget-spent' | 'reconciliation-failed' | 'question'; questions?: string[]; funding?: BudgetLine[] }, at?: Date): Promise<BoardTask>
 
   /** Answer a question wait's questions, every one (waiting-for-input → ready, through the gate again); no other wait takes answers. */
   abstract answer(taskId: string, answers: string[], at?: Date): Promise<BoardTask>

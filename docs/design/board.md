@@ -4,7 +4,9 @@
 > component *work state machine*
 > ([ADR-0036](../decisions/adr/0036-guarantee-core-and-capability-plugins.md)). Proposal:
 > [PROP-0010](../proposals/0010-base-version.md). Records: [`project@1.0`](../reference/schemas.md#project),
-> [`board-task@1.0`](../reference/schemas.md#board-task).
+> [`board-task@1.1`](../reference/schemas.md#board-task). Decisions:
+> [ADR-0039](../decisions/adr/0039-base-guarantee-seam-contract-changes.md),
+> [ADR-0044](../decisions/adr/0044-funding-raises-a-spent-task-budget.md).
 >
 > Implemented in [`board`](../../packages/plugins/board/README.md) (definition
 > [`board-core`](../../packages/board-core/README.md)); its bundle row is on, over the
@@ -12,7 +14,9 @@
 > [workflow engine](workflow-engine.md#board-tasks) runs a task's attempts (MCP `run` or
 > `system run --task`): it reserves a task's budget lines on the ledger before its run starts
 > work, and a spent one blocks the task (`budget-spent`,
-> [a task's budget](workflow-engine.md#a-tasks-budget)); a step that cannot finish without a
+> [a task's budget](workflow-engine.md#a-tasks-budget)), asking for the lines that would fund its
+> next attempt, which the operator's approval adds to its budget
+> ([funding a spent budget](#funding-a-spent-budget)); a step that cannot finish without a
 > person's answer blocks it on its questions (`question`,
 > [a question from a run](workflow-engine.md#a-question-from-a-run)); and the `TASKS.md`
 > projection (`renderTasks` in [`board-core`](../../packages/board-core/README.md)) is written
@@ -31,7 +35,7 @@ the operator itself: every move that needs a person goes through the
 
 ## Seam
 
-`ctx.board` (`Board` in `@tsuuanmi/system-board-core`), contract 1.1:
+`ctx.board` (`Board` in `@tsuuanmi/system-board-core`), contract 1.2:
 
 | Method | Does |
 |---|---|
@@ -43,7 +47,7 @@ the operator itself: every move that needs a person goes through the
 | `claim`, `renew` | take and renew a task's lease |
 | `start`, `submit` | record the run before it starts; record its result |
 | `accept(taskId, acceptance)` | apply the `acceptance` decision on the result |
-| `block`, `answer` | interrupt a running task; answer a waiting one |
+| `block`, `answer` | interrupt a running task, a spent budget naming the funding it asks for (`funding`, 1.2, optional: [funding a spent budget](#funding-a-spent-budget)); answer a waiting one |
 | `reconcileRun(taskId, runId, outcome)` | the run's owner reports the outcome of a run whose holder was lost |
 | `cancel` | cancel a task that is not running or in review |
 | `attachDigest(taskId, digest)` | set the result's `digest`, once (1.1, optional: a provider at 1.0 has none) |
@@ -232,15 +236,15 @@ policy change; the other cases only the store-backed provider checks.
 | claimed → ready | `sweep`, the lease lapsed and no run started | a `board` decision | the old generation is fenced out (`stale-generation`) |
 | claimed → running | `start`, with the holder's generation | a `board` decision; `run` is written before the run starts, and the attempt counted | a stale generation or lapsed lease is refused |
 | running → review | `submit`, with the result's exact subject (a commit, or the result artifact) | a `board` decision; `result` | unknown result artifacts are refused |
-| running → waiting-for-approval | `block` (`budget-spent`: action class `funding`), or `sweep` when the holder's lease lapsed mid-run (`reconciliation-failed`: `remediation`), on an `ask` verdict | the `autonomy` decision and an approval request | the run is never started again on its own (INV-4) |
-| running → waiting-for-input (`rejected`) | the same, on any other verdict: `forbid`, and also `auto` or `notify`, since the queue takes a request only on `ask` | a `board` decision naming the `autonomy` decision | a spent or lost run is never readied or cancelled by the policy alone, so it waits for a person; the wait expires (`input-expired`) |
+| running → waiting-for-approval | `block` (`budget-spent`: action class `funding`), or `sweep` when the holder's lease lapsed mid-run (`reconciliation-failed`: `remediation`), on an `ask` verdict | the `autonomy` decision and an approval request; a spent budget's `funding` ask is bound by the request's subject and kept in `waiting.funding` ([funding a spent budget](#funding-a-spent-budget)) | the run is never started again on its own (INV-4); an invalid ask is refused (`invalid`) and nothing changes |
+| running → waiting-for-input (`rejected`) | the same, on any other verdict: `forbid`, and also `auto` or `notify`, since the queue takes a request only on `ask`; or a `funding` ask past the bound per task, which no request is opened for | a `board` decision naming the `autonomy` decision, or the ask and the bound | a spent or lost run is never readied or cancelled by the policy alone, so it waits for a person; the wait expires (`input-expired`) |
 | running → waiting-for-input | `block` with questions | a `board` decision | a question wait without questions is refused |
 | running or waiting-for-approval (`reconciliation-failed`) → done, ready, or waiting-for-input | `reconcileRun` by the run's owner (the workflow engine), after it reconciled the recorded run | the acceptance decision of a completed run, or a `board` decision for a failed one; the pending approval request is withdrawn once the move committed | an outcome for another run id is refused; an unknown outcome is never reported, so the task keeps waiting for approval |
 | review → review (held for the operator) | `accept` (or a run owner's completed report) with an accepting decision that is not the operator's, while the class's required checks have not passed or the policy forbids the class | a `board` decision naming the acceptance and the `autonomy` decision; the lease released; `waiting` (`operator-review`, the checks still pending, and the policy's wait for the class) | only the operator's acceptance accepts it now: another such decision is refused (`invalid`); a rejection, or one with the checks passed, applies |
 | review → waiting-for-input | `sweep`, the reviewer's lease lapsed with no decision, or a review held for the operator reached `waiting.expiresAt` | a `board` decision (`review-expired`) | the wait expires and cancels the task |
 | review → done | `accept` with an `acceptance` decision whose outcome is `accept` | that decision; `result.acceptance`; the run and subject stay | a decision of another type, or one not bound to the task's exact result, is refused; one not the operator's needs the required checks passed |
 | review → ready / waiting-for-approval / waiting-for-input | `accept` with a `reject` outcome | while `count < max`, another attempt through the gate: a `board` decision naming that decision and the `autonomy` decision (ready, or `approval-needed` with a new request); else that decision and `retries-spent` | an approval of an earlier attempt never covers this one |
-| waiting-for-approval → ready / waiting-for-approval / waiting-for-input | `sweep`, on the request's resolution (an approval to go on after `budget-spent` or `reconciliation-failed` goes through the gate for the next attempt); at `waiting.expiresAt` (or the request's expiry, if earlier) the board applies the expiry itself when the queue has not resolved the request, the board withdrew it, or the queue no longer knows it | the request's `approval` decision, or the board's own (`board`, cause `expired`), after which it withdraws a request still open | rejection and expiry never start work: the task waits for input (`rejected`) |
+| waiting-for-approval → ready / waiting-for-approval / waiting-for-input | `sweep`, on the request's resolution (an approval to go on after `budget-spent` or `reconciliation-failed` goes through the gate for the next attempt, a `funding` ask's lines added to the budget first, in the same transaction); at `waiting.expiresAt` (or the request's expiry, if earlier) the board applies the expiry itself when the queue has not resolved the request, the board withdrew it, or the queue no longer knows it | the request's `approval` decision, or the board's own (`board`, cause `expired`), after which it withdraws a request still open; a raise: `funding` and its `board` decision, which the gate's decision names | rejection and expiry never start work, and raise nothing: the task waits for input (`rejected`) |
 | waiting-for-approval → ready / waiting-for-approval / cancelled (`approval-needed`), or waiting-for-approval / waiting-for-input (`budget-spent`, `reconciliation-failed`) | `sweep`, on a request the queue withdrew on a policy change (decider rule `approvals.policy`): the wait's gate runs again under the policy loaded now, as when it first asked (the class: the task's, `funding`, or `remediation`) | a `board` decision naming the withdrawal and the `autonomy` decision, a reason on every outcome the wait has; `approval-needed`: ready on `auto` or `notify` (pending checks recorded), a new request on the same exact subject on `ask` (an open one adopted), `forbidden` on `forbid`; a spent budget or a lost run: a new request on `ask`, else a wait for input (`rejected`), the run kept | a move that cannot commit withdraws the new request; the run's owner may still report a lost run |
 | waiting-for-input → ready / waiting-for-approval | `answer`, every question of a `question` wait answered; the next attempt goes through the gate, and with no attempt left the task waits for input (`retries-spent`) instead | a `board` decision with the questions and answers | partial answers, and answers to any other wait, are refused |
 | waiting-for-input → cancelled | `sweep`, its wait expired | a `board` decision (`input-expired`) | — |
@@ -256,9 +260,38 @@ work again as a new task.
 | `waiting.reason` | From | Revived by | Otherwise |
 |---|---|---|---|
 | `question` | `block` with questions | `answer` (`board_update` answers), every question by index: the next attempt, through the gate; with no attempt left, `retries-spent` instead | expires: `input-expired` |
-| `rejected` | an approval refused or expired, or none could be asked | nothing | expires: `input-expired` |
+| `rejected` | an approval refused or expired, or none could be asked (a policy that does not ask, or a funding ask past the bound) | nothing | expires: `input-expired` |
 | `retries-spent` | review rejected the last attempt, a failed run with none left, or an approval to go on or an answered question with none left | nothing | expires: `input-expired` |
 | `review-expired` | the reviewer's lease lapsed, or a review held for the operator expired, with no acceptance decision | nothing | expires: `input-expired` |
+
+### Funding a spent budget
+
+A task's `budget` lines cap what its attempts draw, together, as the
+[resource ledger](resources.md) counts them for the task. A spent line blocks the task
+(`budget-spent`), and only an approved `funding` request lets it go on. From contract 1.2 the
+request names the exact lines it would add, and the approval adds exactly those
+([ADR-0044](../decisions/adr/0044-funding-raises-a-spent-task-budget.md)). The holder computes
+them: the [workflow engine](workflow-engine.md#funding-a-spent-task) takes them from the ledger's
+count, never from a model.
+
+| Step | Who | Records | On failure |
+|---|---|---|---|
+| asked | the holder's `block` with `reason: budget-spent` and `funding`: 1 to 16 lines, at most one per pool and unit of the task's budget, each above zero | on `ask`, one request on `board-task:<id>:attempt:<n>` at version `budget-spent:<sha256 of the lines' canonical JSON>`, its summary naming the lines and its consequences the budget they make; `waiting.funding`; the record is `board-task@1.1` | an invalid ask is refused (`invalid`), and nothing changes; an ask past the bound opens no request: the task waits for input (`rejected`), with a `board` decision naming the ask and the bound; on a verdict other than `ask`, the task waits for input, as without an ask |
+| funded | `sweep`, on the operator's approval of that request, while an attempt is left | in one transaction: the lines added to every budget line of their pool and unit; `funding` gains `{lines, approval, decision, at}`, its `board` decision (`budget-spent` → `funded`) naming the approval and its `approval` decision; then the next attempt through the gate, its decision naming the raise | a request whose subject does not bind the stored lines (INV-5), or lines past the bound in force now: nothing raised, the task waits for input (`rejected`); a crash before the commit leaves the task waiting on the approved request, and the next sweep applies it once, adopting the request the gate opened (INV-4) |
+| not funded | `sweep`: rejected, expired, or approved with no attempt left | as for any `budget-spent` wait: waiting for input (`rejected`, or `retries-spent` with no attempt left) | the budget never changes |
+| asked again | `sweep`, on a request the queue withdrew on a policy change | a new request on the same subject, the wait keeping its lines | as for any `budget-spent` wait |
+
+- **The bound** (INV-9) is the provider's configuration: what all of a task's raises add to one of
+  its lines may not exceed `fundingMaxPercent` (default 100) of the amount the task declared,
+  which is the line less what raises added; nor may a line pass 10^12. It is checked when the
+  task is blocked and again when an approval is applied. Each raise follows a spent run, which is
+  an attempt, so a task is raised at most `attempts.max - 1` times. The suite tests an ask past
+  any bound a provider may set; the store-backed provider's tests cover the bound across raises
+  and one lowered before an approval is applied.
+- **Exact lines.** The board applies only the lines its wait stored, and only on a request whose
+  subject's version is their hash, so what the operator approved is what is added.
+- A `budget-spent` block without `funding` asks only to go on, as at 1.1. The engine sends none when
+  the ledger cannot count the task's usage.
 
 ### A digest on a result
 
@@ -327,11 +360,13 @@ when the result is accepted:
 
 ## Conformance
 
-[`board-core/conformance/board.ts`](../../packages/board-core/conformance/board.ts), 26
-scenarios at contract 1.1 (`board.digest-attached` since 1.1), run against the fake provider and the store-backed provider, both over
+[`board-core/conformance/board.ts`](../../packages/board-core/conformance/board.ts), 27
+scenarios at contract 1.2 (`board.digest-attached` since 1.1, `board.funding-raises-budget` since
+1.2), run against the fake provider and the store-backed provider, both over
 the approvals fake, and against the store-backed provider over the store-backed approval queue.
 Contract 1.0 is unreleased and amended in place
 ([ADR-0039](../decisions/adr/0039-base-guarantee-seam-contract-changes.md)); the last amendment
 adds `board.policy-change-asks-again`, for which each harness changes the queue's policies
 (`changePolicies`: the fake's `reload`, or a restart of the store-backed queue over the same
-store).
+store). 1.1 adds `attachDigest`, and 1.2 the optional `funding` of a `budget-spent` block, both
+minors ([ADR-0044](../decisions/adr/0044-funding-raises-a-spent-task-budget.md)).

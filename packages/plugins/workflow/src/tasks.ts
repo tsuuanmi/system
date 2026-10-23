@@ -63,6 +63,21 @@ const round6 = (n: number): number => Math.round(n * 1e6) / 1e6
  * line its task already reached refuses the run before it starts.
  */
 const LEAST: Record<BudgetLine['unit'], number> = { tokens: 1, turns: 1, runs: 1, usd: 0.000001, minutes: 0.000001 }
+/** The largest amount a budget line holds (`common@1` `budgetLine`). */
+const AMOUNT_MAX = 1e12
+/** What one usage record draws on a line of `unit`, as the ledger counts it against a cap. */
+const drawn = (record: UsageRecord, unit: BudgetLine['unit']): number => {
+  switch (unit) {
+    case 'tokens': return (record.usage?.inputTokens ?? 0) + (record.usage?.outputTokens ?? 0)
+    case 'usd': return record.cost?.amount ?? 0
+    case 'turns': return record.turns ?? 0
+    case 'runs': return 1
+    case 'minutes': return (record.durationMs ?? 0) / 60_000
+  }
+}
+/** An amount to ask for, at the unit's precision: whole tokens, turns, and runs (rounded up); a millionth of a dollar or a minute. */
+const askable = (n: number, unit: BudgetLine['unit']): number => Math.min(AMOUNT_MAX, LEAST[unit] === 1 ? Math.ceil(round6(n)) : Math.max(LEAST[unit], round6(n)))
+const linesText = (lines: readonly BudgetLine[]): string => lines.map((l) => `+${l.amount} ${l.unit} of ${l.pool}`).join(', ')
 
 export class TaskRuns {
   /** Lease renewals of the runs live in this process. */
@@ -722,16 +737,24 @@ export class TaskRuns {
   }
 
   /**
-   * A line of the task's budget is spent: the holder blocks the task on the board (`budget-spent`;
-   * the board asks the policy about `funding`, and the operator decides whether it goes on), and the
-   * run ends with nothing of it run. A block the board refuses (the holder lapsed, say) ends the run
-   * all the same: its report then reconciles it as a failed run. A board that does not answer is
-   * asked again.
+   * A line of the task's budget is spent: the holder blocks the task on the board (`budget-spent`,
+   * with the funding it asks for, {@link fundingAsk}: the board asks the policy about `funding`, and
+   * the operator decides whether the budget is raised by exactly those lines and the task goes on),
+   * and the run ends with nothing of it run. The ask is fixed on the run's row before the block, so
+   * a block asked again after a crash asks for the same lines. A block the board refuses (the
+   * holder lapsed, say) ends the run all the same: its report then reconciles it as a failed run.
+   * A board or ledger that does not answer is asked again.
    */
   private async spend(row: TaskRow, budget: TaskBudget, board: Board): Promise<'wait' | 'stop'> {
     if (budget.blocked === undefined && budget.refused === undefined) {
+      if (budget.funding === undefined) {
+        const funding = await this.fundingAsk(row, budget, board)
+        if (funding === 'wait') return 'wait'
+        budget = { ...budget, funding }
+        this.e.ctx.store.transaction((db) => void db.prepare('UPDATE workflow_tasks SET budget = ?, updated_at = ? WHERE run_id = ?').run(JSON.stringify(budget), now(), row.run_id))
+      }
       try {
-        await board.block(row.task_id, row.generation, { reason: 'budget-spent' })
+        await board.block(row.task_id, row.generation, { reason: 'budget-spent', ...(budget.funding!.length ? { funding: budget.funding! } : {}) })
         budget = { ...budget, blocked: true }
       } catch (error) {
         if (!(error instanceof BoardError)) {
@@ -744,10 +767,57 @@ export class TaskRuns {
     }
     const error: WorkflowError = {
       kind: 'budget_spent', disposition: 'USER_ACTION',
-      message: `task ${row.task_id}'s budget is spent (${(budget.reasons ?? []).join('; ') || 'a cap would be exceeded'}; budget decision ${budget.decision}); nothing of this run ran${budget.blocked ? ', and the task waits for the operator to fund it' : ` (the board did not take the block: ${budget.refused})`}`,
+      message: `task ${row.task_id}'s budget is spent (${(budget.reasons ?? []).join('; ') || 'a cap would be exceeded'}; budget decision ${budget.decision}); nothing of this run ran${budget.blocked
+        ? `; the board took the block${budget.funding?.length ? `, asking to raise the budget by ${linesText(budget.funding)}` : ''}, and the operator decides whether the task goes on`
+        : ` (the board did not take the block: ${budget.refused})`}`,
     }
     this.e.finish(this.e.runRow(row.run_id)!, 'failed', { error: JSON.stringify(error) })
     return 'stop'
+  }
+
+  /**
+   * The funding a spent budget asks for, computed conservatively from the ledger's own count of the
+   * task's usage (`ctx.resources.usage` for the task, as a cap counts it), never from a model's
+   * report: for each line the recorded usage has reached (what it drew, and the least a run draws,
+   * pass the line), what the task overdrew it by plus one attempt's share of it (the line over the
+   * task's attempts), at the unit's precision. Approved, the next attempt can reserve, and is given
+   * about what one attempt was. Empty when no line is reached by recorded usage (holds that expire
+   * refused the run) or the ledger cannot count it (more records than it returns): the request then
+   * asks only to go on. `wait` while the board or the ledger does not answer.
+   */
+  private async fundingAsk(row: TaskRow, budget: TaskBudget, board: Board): Promise<BudgetLine[] | 'wait'> {
+    const resources = this.e.ctx.get('resources')
+    if (!resources) return 'wait'
+    let task: BoardTask | undefined
+    try {
+      task = await board.task(row.task_id)
+    } catch (error) {
+      this.warn(`could not read board task ${row.task_id} to ask for its funding`, error)
+      return 'wait'
+    }
+    if (!task) return []
+    const asked: BudgetLine[] = []
+    const records = new Map<string, UsageRecord[]>()
+    for (const cap of binding(budget.caps)) {
+      let counted = records.get(cap.pool)
+      if (!counted) {
+        try {
+          counted = (await resources.usage({ taskId: row.task_id, pool: cap.pool })).records
+        } catch (error) {
+          if (!(error instanceof ResourcesError)) {
+            this.warn(`the resource ledger did not answer for task ${row.task_id}'s usage`, error)
+            return 'wait'
+          }
+          this.warn(`the resource ledger cannot count task ${row.task_id}'s usage of pool ${cap.pool}; its funding request asks only to go on`, error)
+          return []
+        }
+        records.set(cap.pool, counted)
+      }
+      const used = round6(counted.reduce((n, r) => n + drawn(r, cap.unit), 0))
+      if (round6(used + LEAST[cap.unit]) <= cap.amount) continue
+      asked.push({ pool: cap.pool, unit: cap.unit, amount: askable(Math.max(0, used - cap.amount) + cap.amount / task.attempts.max, cap.unit) })
+    }
+    return asked
   }
 
   /** The ledger refused the run for want of a pool, not a spent line: the run fails with nothing of it run, and its report is a failed attempt. */
@@ -1106,9 +1176,17 @@ function distinct(lines: readonly BudgetLine[]): BudgetLine[] {
   return lines.filter((l) => !seen.has(`${l.pool}\0${l.unit}`) && !!seen.add(`${l.pool}\0${l.unit}`))
 }
 
+/** A budget's lines, one per pool and unit: the least of each, the one a cap binds at. */
+function binding(lines: readonly BudgetLine[]): BudgetLine[] {
+  return distinct(lines).map((l) => lines.filter((o) => o.pool === l.pool && o.unit === l.unit).reduce((least, o) => (o.amount < least.amount ? o : least)))
+}
+
 /** What a run's view shows of its budget. */
 function budgetView(budget: TaskBudget): NonNullable<TaskView['budget']> {
-  return { state: budget.state, ...(budget.decision ? { decision: budget.decision } : {}), ...(budget.spent !== undefined ? { spent: budget.spent } : {}), ...(budget.blocked !== undefined ? { blocked: budget.blocked } : {}) }
+  return {
+    state: budget.state, ...(budget.decision ? { decision: budget.decision } : {}), ...(budget.spent !== undefined ? { spent: budget.spent } : {}), ...(budget.blocked !== undefined ? { blocked: budget.blocked } : {}),
+    ...(budget.funding !== undefined ? { funding: budget.funding } : {}),
+  }
 }
 
 /** The lease owner of a run that claims its task itself. */

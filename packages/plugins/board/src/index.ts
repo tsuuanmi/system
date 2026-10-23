@@ -1,6 +1,6 @@
 /**
  * `ctx.board`: the store-backed provider of the work state machine seam (docs/design/board.md).
- * Projects and board tasks are `project@1.0` and `board-task@1.0` records in the store, validated
+ * Projects and board tasks are `project@1.0` and `board-task@1.x` records in the store, validated
  * before every write and after every read. Each move is one store transaction with the decision
  * it names (INV-13); a task's holder is a `ctx.leases` lease on `board-task:<taskId>`, whose
  * generation fences every write the holder makes (INV-4, INV-15). Approvals go through
@@ -13,7 +13,8 @@ import z from '@deepseek-ai/schemastery'
 import { type ApprovalRequest, type AutonomyVerdict, type Check, type Mode, type NewRequest, waitSeconds } from '@tsuuanmi/system-approvals-core'
 import type {} from '@tsuuanmi/system-artifacts'
 import {
-  type ActionClass, type ArtifactRef, Board, BoardError, type BoardTask, type CancelReason, type Charter, type CharterInput, type Claim, type Project, type ProjectState, renderTasks, type RunOutcome, type Subject, type TaskInput, type TaskState, TERMINAL, type WaitReason,
+  type ActionClass, type ArtifactRef, Board, BoardError, type BoardTask, type BudgetLine, type CancelReason, type Charter, type CharterInput, type Claim, fundingVersion, type Project, type ProjectState, renderTasks, type RunOutcome, type Subject,
+  type TaskInput, type TaskState, TERMINAL, type Unit, type WaitReason,
 } from '@tsuuanmi/system-board-core'
 import type {} from '@tsuuanmi/system-gateway-core'
 import { contentId, SchemaError, SchemaRegistry } from '@tsuuanmi/system-libs'
@@ -22,6 +23,12 @@ import type {} from '@tsuuanmi/system-store'
 import { registerTools } from './tools.ts'
 
 export interface Config {
+  /**
+   * The most approved funding may raise one of a task's budget lines, over all its raises, in
+   * percent of the amount the task declared (default 100: at most double it; 0 raises none). A
+   * `budget-spent` ask past it opens no request, and an approval is applied only within it (INV-9).
+   */
+  fundingMaxPercent?: number
   /** How long a wait for input lasts before it cancels the task, in seconds (default 7 days). */
   inputExpirySeconds?: number
   /** Lease length when a claim names none (`board_claim` without `ttlSeconds`), in seconds (default 600, the leases' own default cap); `leases.maxTtlMs` caps it. */
@@ -50,6 +57,10 @@ const SWEEP_PAGE = 500
 /** Characters of an answer to a task's question (the `board_update` input's bound). */
 const ANSWER_MAX = 2000
 const DEFAULT_PAGE = 20
+/** Lines a funding ask names at most, and the largest amount a budget line holds (`common@1` `budgetLine`). */
+const FUNDING_LINES = 16
+const AMOUNT_MAX = 1e12
+const UNITS: readonly Unit[] = ['tokens', 'usd', 'turns', 'runs', 'minutes']
 
 const MIGRATIONS = [{
   version: 1,
@@ -127,6 +138,17 @@ const attemptLeft = (task: BoardTask): boolean => task.attempts.count < task.att
 /** The earlier of two instants, either of which may be unknown. */
 const earliest = (a: string | undefined, b: string | undefined): string | undefined => (a === undefined ? b : b === undefined || Date.parse(a) <= Date.parse(b) ? a : b)
 const sameSubject = (a: Subject, b: Subject): boolean => a.type === b.type && a.ref === b.ref && a.version === b.version
+/** An amount at the ledger's precision, a millionth. */
+const round6 = (n: number): number => Math.round(n * 1e6) / 1e6
+const samePoolUnit = (a: BudgetLine, b: BudgetLine): boolean => a.pool === b.pool && a.unit === b.unit
+/** Budget lines in words: `+4 usd of max.programmatic, +1 runs of max.programmatic`. */
+const linesText = (lines: readonly BudgetLine[], sign = ''): string => lines.map((l) => `${sign}${l.amount} ${l.unit} of ${l.pool}`).join(', ')
+/** `budget` with each of `lines` added to every line of its pool and unit. */
+const raised = (budget: readonly BudgetLine[], lines: readonly BudgetLine[]): BudgetLine[] =>
+  budget.map((b) => ({ ...b, amount: round6(b.amount + lines.filter((l) => samePoolUnit(l, b)).reduce((n, l) => n + l.amount, 0)) }))
+/** What the task's applied raises added to its pool and unit so far. */
+const raisedSoFar = (task: BoardTask, line: BudgetLine): number =>
+  round6((task.funding ?? []).flatMap((f) => f.lines).filter((l) => samePoolUnit(l, line)).reduce((n, l) => n + l.amount, 0))
 /** At most `max` characters (code points), cut on a whole one. */
 const clamp = (text: string, max: number): string => {
   const chars = [...text]
@@ -161,6 +183,7 @@ function changed<T extends Project | BoardTask>(record: T, at: Date, changes: Ch
 export class StoreBoard extends Board {
   static inject = ['store', 'artifacts', 'leases', 'approvals']
   static Config: z<Config> = z.object({
+    fundingMaxPercent: z.natural().max(1000).default(100).description('The most approved funding may raise a task\'s budget line in all, in percent of what the task declared; an ask past it opens no request'),
     inputExpirySeconds: z.natural().min(60).max(90 * 24 * 3600).default(7 * 24 * 3600).description('How long a wait for input lasts before it cancels the task, in seconds'),
     leaseTtlSeconds: z.natural().min(30).max(3600).default(600).description('Lease length when a claim names none, in seconds (leases.maxTtlMs caps it)'),
     maxAttempts: z.natural().min(1).max(10).default(3).description('Attempts a task gets when its proposal names none'),
@@ -612,7 +635,8 @@ export class StoreBoard extends Board {
     return moved
   }
 
-  async block(taskId: string, generation: number, wait: { reason: 'budget-spent' | 'reconciliation-failed' | 'question'; questions?: string[] }, at: Date = new Date()) {
+  async block(taskId: string, generation: number, wait: { reason: 'budget-spent' | 'reconciliation-failed' | 'question'; questions?: string[]; funding?: BudgetLine[] }, at: Date = new Date()) {
+    if (wait.funding !== undefined && wait.reason !== 'budget-spent') throw new BoardError('invalid', `only a budget-spent block asks for funding, not a ${String(wait.reason)} one`)
     if (wait.reason === 'question') {
       return this.ctx.store.transaction(() => {
         const current = this.taskOf(taskId)
@@ -635,7 +659,71 @@ export class StoreBoard extends Board {
     const before = this.taskOf(taskId)
     this.holding(before, generation, at)
     this.expectState(before.task, 'running')
-    return this.gate(before.task, wait.reason === 'budget-spent' ? 'funding' : 'remediation', wait.reason, at, generation)
+    const funding = wait.funding === undefined ? undefined : this.fundingAsk(before.task, wait.funding)
+    const past = funding && this.pastBound(before.task, funding)
+    if (past) return this.commitLater(before.task, at, generation, (c) => this.pastBoundMove(c.task, funding!, past, at))
+    return this.gate(before.task, wait.reason === 'budget-spent' ? 'funding' : 'remediation', wait.reason, at, generation, funding)
+  }
+
+  /**
+   * The lines a `budget-spent` block asks for, as stored: 1 to {@link FUNDING_LINES} budget lines,
+   * each of a pool and unit the task's budget has, once, with an amount above zero; `invalid`
+   * otherwise, and nothing changes.
+   */
+  private fundingAsk(task: BoardTask, funding: unknown): BudgetLine[] {
+    if (!Array.isArray(funding) || funding.length < 1 || funding.length > FUNDING_LINES) throw new BoardError('invalid', `a funding ask names 1 to ${FUNDING_LINES} budget lines`)
+    const lines: BudgetLine[] = []
+    for (const line of funding as unknown[]) {
+      if (!isObject(line) || typeof line['pool'] !== 'string' || !UNITS.includes(line['unit'] as Unit) || typeof line['amount'] !== 'number' || !Number.isFinite(line['amount']) || line['amount'] <= 0 || line['amount'] > AMOUNT_MAX) {
+        throw new BoardError('invalid', `${JSON.stringify(line)} is not a budget line to add (pool, unit of ${UNITS.join(', ')}, amount above 0 and at most ${AMOUNT_MAX})`)
+      }
+      const asked: BudgetLine = { pool: line['pool'], unit: line['unit'] as Unit, amount: line['amount'] }
+      if (!task.budget?.some((b) => samePoolUnit(b, asked))) throw new BoardError('invalid', `${task.taskId} has no budget line of ${asked.unit} of ${asked.pool} to raise`)
+      if (lines.some((l) => samePoolUnit(l, asked))) throw new BoardError('invalid', `a funding ask names ${asked.unit} of ${asked.pool} once`)
+      lines.push(asked)
+    }
+    return lines
+  }
+
+  /**
+   * Why adding `lines` would take the task's budget past the bound (INV-9), or undefined: no line
+   * grows, over all its raises, by more than `fundingMaxPercent` of the amount the task declared
+   * (its amount less what raises added), nor past the largest amount a line holds.
+   */
+  private pastBound(task: BoardTask, lines: readonly BudgetLine[]): string | undefined {
+    const percent = this.config.fundingMaxPercent ?? 100
+    for (const ask of lines) {
+      const so = raisedSoFar(task, ask)
+      for (const line of (task.budget ?? []).filter((b) => samePoolUnit(b, ask))) {
+        const declared = round6(line.amount - so)
+        const most = round6((declared * percent) / 100)
+        if (round6(so + ask.amount) > most) {
+          return `${ask.unit} of ${ask.pool} was declared ${declared}, raised ${so} so far, and ${ask.amount} more would raise it past ${most} in all (fundingMaxPercent ${percent})`
+        }
+        if (line.amount + ask.amount > AMOUNT_MAX) return `${ask.unit} of ${ask.pool} would exceed ${AMOUNT_MAX}`
+      }
+    }
+    return undefined
+  }
+
+  /**
+   * A funding ask past the bound: no request is opened, since no approval could apply it, so the
+   * spent run goes on only with a person, as when the policy does not ask: the task waits for
+   * input (`rejected`), and the work is proposed again if wanted (INV-9).
+   */
+  private pastBoundMove(task: BoardTask, funding: BudgetLine[], past: string, at: Date): Move {
+    return {
+      changes: {
+        state: 'waiting-for-input', holder: undefined, waiting: this.inputWait('rejected', at),
+        lastDecision: this.decision(this.projectOf(task.projectId).project, task, {
+          from: 'running', to: 'waiting-for-input', instead: 'waiting-for-approval',
+          question: `Is task ${task.taskId}'s spent budget put to the operator with the funding its run asks for (${linesText(funding, '+')})?`,
+          why: `budget-spent: ${past}, so no request is opened; a run past its budget goes on only with a person, so it waits for input`,
+          whyNot: `asked about only within the bound per task (fundingMaxPercent ${this.config.fundingMaxPercent ?? 100}): no approval could apply this ask (INV-9)`,
+          detail: { reason: 'budget-spent', actionClass: 'funding', funding, fundingMaxPercent: this.config.fundingMaxPercent ?? 100 },
+        }, at),
+      },
+    }
   }
 
   async answer(taskId: string, answers: string[], at: Date = new Date()) {
@@ -926,6 +1014,9 @@ export class StoreBoard extends Board {
         }
         // An approval counts only from the board's own request for this task (INV-5).
         const approved = request!.state === 'approved' && request!.requester.component === 'board' && request!.requester.taskId === taskId
+        const funding = task.waiting!.reason === 'budget-spent' ? task.waiting!.funding : undefined
+        // An approved funding ask raises exactly its lines, recorded, before the next attempt goes through the gate.
+        if (approved && funding && attemptLeft(task)) return this.fund(task, funding, request!, at)
         // Going on after a spent budget or a lost run is another attempt: the policy is asked about the task's class again (S9).
         if (approved && task.waiting!.reason !== 'approval-needed' && attemptLeft(task)) {
           const next = await this.nextAttempt(task, at)
@@ -949,17 +1040,66 @@ export class StoreBoard extends Board {
   }
 
   /**
+   * The operator approved a spent budget's funding ask. Only when the request binds to exactly the
+   * lines the wait asked for (INV-5) and they still fit the bound per task (INV-9), the board adds
+   * them to the budget, with a `board` decision naming the approval, and in the same transaction
+   * the next attempt goes through the gate, that decision its cause: a crash anywhere before the
+   * commit leaves the task waiting on the approved request, and the next sweep does it all again,
+   * adopting the request the gate opened (INV-4). Otherwise nothing is raised, and the task waits
+   * for input (`rejected`), since the ledger would refuse the next attempt again.
+   */
+  private async fund(task: BoardTask, funding: BudgetLine[], request: ApprovalRequest, at: Date): Promise<BoardTask | undefined> {
+    const unbound = request.subject.version !== fundingVersion(contentId(funding))
+    const past = unbound ? `its subject (${request.subject.version ?? 'no version'}) does not bind the lines the task asked for` : this.pastBound(task, funding)
+    if (past) {
+      return this.commitLater(task, at, undefined, (c) => ({
+        changes: {
+          state: 'waiting-for-input', waiting: this.inputWait('rejected', at),
+          lastDecision: this.decision(this.projectOf(task.projectId).project, c.task, {
+            from: 'waiting-for-approval', to: 'waiting-for-input', instead: 'funded',
+            why: `the operator approved ${request.requestId}, but ${past}: nothing is raised, and the ledger would refuse the next attempt again, so it waits for input`,
+            whyNot: unbound ? 'an approval counts only for the exact lines it was asked on (INV-5)' : `a raise past the bound per task (fundingMaxPercent ${this.config.fundingMaxPercent ?? 100}) is never applied (INV-9)`,
+            inputs: [request.resolution!.decision], detail: { reason: 'rejected', approvalRequest: request.requestId, funding, cause: unbound ? 'unbound' : 'past-bound' },
+          }, at),
+        },
+      }))
+    }
+    const next = await this.nextAttempt(task, at)
+    return this.committing(next, at, () => this.commitLater(task, at, undefined, (c) => this.fundedMove(c.task, funding, request, next, at)))
+  }
+
+  /** The raise and the next attempt's move, in one: the budget plus exactly `funding`, the raise recorded, then the gate's outcome, whose decision names the raise's. */
+  private fundedMove(task: BoardTask, funding: BudgetLine[], request: ApprovalRequest, next: NextAttempt, at: Date): Move {
+    const { project } = this.projectOf(task.projectId)
+    const resolution = request.resolution!
+    const budget = raised(task.budget ?? [], funding)
+    const decision = this.decision(project, task, {
+      from: 'budget-spent', to: 'funded',
+      question: `Is the budget of task ${task.taskId} of ${project.projectId} raised by the lines the operator approved on ${request.requestId}?`,
+      why: `the operator approved ${request.requestId} on exactly ${linesText(funding, '+')} (approval ${resolution.approval}): the budget becomes ${linesText(budget)} before attempt ${task.attempts.count + 1} goes through the gate`,
+      whyNot: 'an approved funding request raises exactly the lines it names, and no other move changes a task\'s budget',
+      inputs: [resolution.decision, resolution.approval!],
+      detail: { reason: 'budget-spent', approvalRequest: request.requestId, approval: resolution.approval, funding, budget },
+    }, at)
+    const raises = [...(task.funding ?? []), { lines: funding, approval: resolution.approval!, decision, at: at.toISOString() }]
+    const move = this.nextAttemptMove(project, { ...task, budget, funding: raises }, next, {
+      decision, why: `the operator approved going on after budget-spent (request ${request.requestId}), its budget raised by ${linesText(funding, '+')}`,
+    }, at)
+    return { changes: { schema: 'board-task@1.1', budget, funding: raises, ...move.changes } }
+  }
+
+  /**
    * Put a running task to the operator after a spent budget or a lost run (`funding`,
    * `remediation`): one approval request whatever the policy's mode, since such a run is never
    * readied or cancelled by the policy alone (INV-4, rule 3). The queue takes a request only on an
    * `ask` verdict, so under any other (forbid, and also auto or notify) the task waits for input
    * (`rejected`) instead: it never runs again without a person, and is not cancelled while its
    * run may still be live; the wait expires in turn. A holder's call presents its `generation`
-   * again when the move commits.
+   * again when the move commits. A spent budget's `funding` ask goes into the request's subject.
    */
-  private async gate(task: BoardTask, actionClass: ActionClass, reason: 'budget-spent' | 'reconciliation-failed', at: Date, generation?: number): Promise<BoardTask> {
+  private async gate(task: BoardTask, actionClass: ActionClass, reason: 'budget-spent' | 'reconciliation-failed', at: Date, generation?: number, funding?: BudgetLine[]): Promise<BoardTask> {
     const verdict = await this.ctx.approvals.check({ class: actionClass, projectId: task.projectId })
-    if (verdict.mode === 'ask') return this.waitForApproval(task, actionClass, reason, verdict, at, generation)
+    if (verdict.mode === 'ask') return this.waitForApproval(task, actionClass, reason, verdict, at, generation, funding)
     return this.commitLater(task, at, generation, (c) => ({
       changes: {
         state: 'waiting-for-input', holder: undefined, waiting: this.inputWait('rejected', at),
@@ -968,7 +1108,7 @@ export class StoreBoard extends Board {
           why: `${reason}: the policy gives ${actionClass} ${verdict.mode}, under which no approval request can be opened, so the run goes on only with a person`,
           whyNot: verdict.mode === 'forbid' ? 'kept running, or cancelled while its run may still be live: neither, as the policy forbids going on'
             : `readied on ${verdict.mode}: a ${reason === 'budget-spent' ? 'run past its budget' : 'lost run'} never starts again without an operator's approval (INV-4)`,
-          inputs: [verdict.decision], detail: { reason, actionClass, mode: verdict.mode },
+          inputs: [verdict.decision], detail: { reason, actionClass, mode: verdict.mode, ...(funding ? { funding } : {}) },
         }, at),
       },
     }))
@@ -996,7 +1136,8 @@ export class StoreBoard extends Board {
     const reason = task.waiting!.reason as 'approval-needed' | 'budget-spent' | 'reconciliation-failed'
     const actionClass: ActionClass = reason === 'budget-spent' ? 'funding' : reason === 'reconciliation-failed' ? 'remediation' : task.actionClass
     const verdict = await this.ctx.approvals.check({ class: actionClass, projectId: task.projectId })
-    const request = verdict.mode === 'ask' ? await this.ask(this.taskRequest(task, actionClass, reason, verdict), at) : undefined
+    // A spent budget's funding ask is asked again as it was: the same lines, the same subject.
+    const request = verdict.mode === 'ask' ? await this.ask(this.taskRequest(task, actionClass, reason, verdict, task.waiting!.funding), at) : undefined
     try {
       return this.commitLater(task, at, undefined, (c) => this.regateMove(c.task, reason, actionClass, verdict, request, withdrawn, at))
     } catch (error) {
@@ -1028,13 +1169,16 @@ export class StoreBoard extends Board {
       whyNot: `only on ${declined[0]!.modes.join(' or ')}, and the policy gives ${actionClass} ${verdict.mode}`,
       also: declined.slice(1).map((o) => ({ option: o.option, whyNot: `only on ${o.modes.join(' or ')}, and the policy gives ${actionClass} ${verdict.mode}` })),
       inputs: [withdrawn.resolution!.decision, verdict.decision],
-      detail: { reason, actionClass, mode: verdict.mode, withdrawn: withdrawn.requestId, ...(request ? { approvalRequest: request.requestId } : {}), ...(pending.length ? { pendingChecks: pending } : {}) },
+      detail: {
+        reason, actionClass, mode: verdict.mode, withdrawn: withdrawn.requestId, ...(request ? { approvalRequest: request.requestId } : {}), ...(pending.length ? { pendingChecks: pending } : {}),
+        ...(task.waiting?.funding ? { funding: task.waiting.funding } : {}),
+      },
     }, at)
     switch (chosen.option) {
       case 'ready': return { changes: { state: 'ready', holder: undefined, run: undefined, waiting: undefined, lastDecision: decision } }
       case 'cancelled': return this.cancelMove(project, task, 'forbidden', at, decision)
       case 'waiting-for-input': return { changes: { state: 'waiting-for-input', holder: undefined, waiting: this.inputWait('rejected', at), lastDecision: decision } }
-      default: return { changes: { waiting: { reason, approvalRequest: request!.requestId, since: at.toISOString(), expiresAt: request!.expiresAt }, lastDecision: decision } }
+      default: return { changes: { waiting: { reason, approvalRequest: request!.requestId, ...(task.waiting?.funding ? { funding: task.waiting.funding } : {}), since: at.toISOString(), expiresAt: request!.expiresAt }, lastDecision: decision } }
     }
   }
 
@@ -1106,16 +1250,31 @@ export class StoreBoard extends Board {
 
   /**
    * The request that puts `task` to the operator, on `board-task:<id>:attempt:<n>` with the wait's
-   * reason, where n is the attempts it already made: one request, and one approval, per attempt.
+   * reason, where n is the attempts it already made: one request, and one approval, per attempt. A
+   * spent budget's `funding` ask is its subject's version ({@link fundingVersion}), so the verdict
+   * binds to exactly those lines (INV-5), and its summary and consequences name them.
    */
-  private taskRequest(task: BoardTask, actionClass: ActionClass, reason: 'approval-needed' | 'budget-spent' | 'reconciliation-failed', verdict: AutonomyVerdict): NewRequest {
+  private taskRequest(task: BoardTask, actionClass: ActionClass, reason: 'approval-needed' | 'budget-spent' | 'reconciliation-failed', verdict: AutonomyVerdict, funding?: BudgetLine[]): NewRequest {
     const { project } = this.projectOf(task.projectId)
+    const asked = reason === 'budget-spent' ? funding : undefined
     return {
-      subject: { type: 'content', ref: `board-task:${task.taskId}:attempt:${task.attempts.count}`, version: reason },
-      action: { class: actionClass, summary: clamp(`${reason}: ${task.title}`, 500) },
+      subject: { type: 'content', ref: `board-task:${task.taskId}:attempt:${task.attempts.count}`, version: asked ? fundingVersion(contentId(asked)) : reason },
+      action: {
+        class: actionClass,
+        summary: clamp(asked ? `${reason}: ${task.title}; raise its budget by ${linesText(asked, '+')}` : `${reason}: ${task.title}`, 500),
+        ...(asked ? { consequences: clamp(this.fundingConsequences(task, asked), 2000) } : {}),
+      },
       requester: { component: 'board', projectId: task.projectId, taskId: task.taskId, ...(task.run ? { runId: task.run.runId } : {}) },
       verdict, classification: project.classification ?? 'operator-shared',
     }
+  }
+
+  /** What approving a funding ask does, and what denying it does, as the operator reads it in the queue. */
+  private fundingConsequences(task: BoardTask, funding: readonly BudgetLine[]): string {
+    const budget = task.budget ?? []
+    const denied = `Denied or unanswered: the budget stays ${linesText(budget)}, and the task waits for input (rejected) until it is cancelled.`
+    if (!attemptLeft(task)) return `Approved: nothing is raised, since all ${task.attempts.max} attempt(s) are used; the task waits for input (retries-spent). ${denied}`
+    return `Approved: the board adds exactly ${linesText(funding, '+')} to the task's budget, which becomes ${linesText(raised(budget, funding))}, and attempt ${task.attempts.count + 1} of ${task.attempts.max} goes through the autonomy policy for ${task.actionClass}. ${denied}`
   }
 
   /**
@@ -1169,14 +1328,14 @@ export class StoreBoard extends Board {
     return this.readyMove(project, task, verdict, at, `${cause.why}; the policy gives ${task.actionClass} ${verdict.mode} for attempt ${attempt}`, { inputs: cause.decision ? [cause.decision] : [], ...(cause.detail ? { detail: cause.detail } : {}) })
   }
 
-  /** Put the task to the operator: one request on `board-task:<id>:attempt:<n>`, which its wait follows. */
-  private async waitForApproval(task: BoardTask, actionClass: ActionClass, reason: 'approval-needed' | 'budget-spent' | 'reconciliation-failed', verdict: AutonomyVerdict, at: Date, generation?: number): Promise<BoardTask> {
-    const request = await this.ask(this.taskRequest(task, actionClass, reason, verdict), at)
+  /** Put the task to the operator: one request on `board-task:<id>:attempt:<n>`, which its wait follows, keeping a spent budget's funding ask. */
+  private async waitForApproval(task: BoardTask, actionClass: ActionClass, reason: 'approval-needed' | 'budget-spent' | 'reconciliation-failed', verdict: AutonomyVerdict, at: Date, generation?: number, funding?: BudgetLine[]): Promise<BoardTask> {
+    const request = await this.ask(this.taskRequest(task, actionClass, reason, verdict, funding), at)
     try {
       return this.commitLater(task, at, generation, () => ({
         changes: {
-          state: 'waiting-for-approval', holder: undefined,
-          waiting: { reason, approvalRequest: request.requestId, since: at.toISOString(), expiresAt: request.expiresAt }, lastDecision: request.policy.decision,
+          state: 'waiting-for-approval', holder: undefined, ...(funding ? { schema: 'board-task@1.1' as const } : {}),
+          waiting: { reason, approvalRequest: request.requestId, ...(funding ? { funding } : {}), since: at.toISOString(), expiresAt: request.expiresAt }, lastDecision: request.policy.decision,
         },
       }))
     } catch (error) {
