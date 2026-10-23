@@ -803,9 +803,12 @@ the run stops at it, and the call waits in the queue
 ([a Worker's tool calls](../design/approvals.md#a-workers-tool-calls)). This needs an agent Worker
 on a runtime that can ask the gate first (Claude Code; [turn the rows
 on](#turn-an-off-row-back-on)), and a policy that asks. Under the bundle's studio policy a Claude
-Code Worker's calls are `read` and `workspace-write`, both `auto`, and the runtime offers no
-`Bash`, `WebFetch`, or `WebSearch`, the tools that would ask: a deferral shows only after a policy
-gives one of the Worker's classes `ask`.
+Code Worker's reads and edits are `read` and `workspace-write`, both `auto`; a `workspace-write`
+run's `Bash` command asks unless the policy lists its exact argv, and the runtime offers no
+`WebFetch` or `WebSearch`. Only a run in a session can wait: in a run with none (a step whose
+conversation is temporary, such as `algorithm-development`'s `validate:1`), a call the policy asks
+about is denied, nothing is queued, and the agent goes on without it
+([pilot](pilot.md#name-the-repository-and-the-workers)).
 
 Where it shows:
 

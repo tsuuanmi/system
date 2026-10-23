@@ -288,6 +288,12 @@ No options.
 
 No options.
 
+## `report`
+
+[@tsuuanmi/system-report](../../packages/plugins/report/README.md)
+
+No options.
+
 ## `resources`
 
 [@tsuuanmi/system-resources](../../packages/plugins/resources/README.md)

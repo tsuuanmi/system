@@ -42,7 +42,8 @@ rows off until an operator
 release is Base (v0.8, [PROP-0010](docs/proposals/0010-base-version.md)): the
 closed core, with Claude Code as the first Worker
 ([scope](docs/requirements/release-scope.md#base-v08)). Its specification, resource
-ledger, board, and approval queue (B1 to B5) are in the code. The
+ledger, board, approval queue, briefs and digests, and plugin manifests (B1 to B7) are in the code,
+and so are B8's template and baseline report; the pilot is the operator's. The
 [roadmap](docs/proposals/roadmap.md) has the milestone table and what remains. What each package does today is in its own
 `README.md`; what was verified on live accounts, and when, is in the
 [release checklist](docs/validation/release-checklist.md).
@@ -58,7 +59,8 @@ Built today:
   (`brainstorm`, `review`), Worker sessions with peer messages, and
   exact-subject review;
 - profiles for scientific research (`research`, with a `deep` variant) and
-  software development (`agent-review`, for agent Workers);
+  software development (`agent-review`, for agent Workers, and `algorithm-development`: one
+  attempt of a board task, developed, reviewed, and validated in its own worktree);
 - the [resource ledger](docs/design/resources.md): configured pools and their limit
   windows, reservations before an agent run, and usage from the runtime's own numbers;
 - the [board](docs/design/board.md): projects with charters and tasks that outlive a run,
@@ -67,6 +69,8 @@ Built today:
   expiry denies, and a gate that judges every tool call of a Claude Code Worker; an agent Worker
   can work in a git worktree of its own per workflow run. The board and the queue are on in the
   default composition;
+- the [baseline report](docs/design/reports.md): what a period recorded, for one project or every
+  one, counted by code (MCP `report`, `system report`; by default the weekly investor report);
 - the MCP server, the Anthropic Messages and Responses gateways, the `system`
   CLI, and an operator web page at `/ui` (runs, the approval queue, and the reviews of board
   tasks).
@@ -113,7 +117,7 @@ system mcp-config codex >> ~/.codex/config.toml   # Codex: runs the stdio shim (
   template), `result`, `usage`, `explain`, `status`, sessions
   (`session_send`, `session_inbox`), the resource ledger (`resources_pools`,
   `resources_usage`), the board (`board_*`: projects with charters, tasks, claims), and the
-  approval queue (`approvals_list`, `approvals_get`, `approvals_policy`); `run` also serves one
+  approval queue (`approvals_list`, `approvals_get`, `approvals_policy`), the baseline `report`; `run` also serves one
   attempt of a board task; operator tools for runs (`approve`,
   `stop`, `continue`, `supersede`, `delete`, `drain`, `resume`), verdicts on the queue
   (`approvals_decide`), and accounts (`account_*`). The full contracts are generated in

@@ -28,3 +28,4 @@ verified live.
 | [agent-runtimes.md](agent-runtimes.md) | Claude Code, Codex, ACP agents as Workers | capabilities |
 | [models.md](models.md) | API and local models as Workers: the model catalog, keys by reference, egress, bounds, restart; the `api-first` preset | capabilities |
 | [gateways.md](gateways.md) | Messages and Responses gateways, the text tool protocol, threads, drain; MCP inversion as target | gateways |
+| [reports.md](reports.md) | the baseline report: what a period recorded, per project or for every one, counted by code; the weekly investor report | gateways (surface) |

@@ -1,0 +1,47 @@
+{
+  "schema": "plugin-manifest@1.0",
+  "name": "@tsuuanmi/system-report",
+  "version": "0.0.0",
+  "description": "The baseline report (PROP-0010 B8): from recorded data only, a period of one project or every one: board progress, attempts and reviews, approvals asked and answered with their waits, attention per day, ledger usage, digests, and cost per accepted result; MCP report, the weekly investor report",
+  "class": {
+    "kind": "family",
+    "family": "surface"
+  },
+  "provides": [],
+  "consumes": [
+    {
+      "seam": "artifacts",
+      "range": "^1.0.0"
+    },
+    {
+      "seam": "eventLog",
+      "range": "^1.0.0"
+    },
+    {
+      "seam": "approvals",
+      "range": "^1.0.0",
+      "optional": true
+    },
+    {
+      "seam": "board",
+      "range": "^1.1.0",
+      "optional": true
+    },
+    {
+      "seam": "digests",
+      "range": "^1.1.0",
+      "optional": true
+    },
+    {
+      "seam": "mcp",
+      "range": "^1.0.0",
+      "optional": true
+    },
+    {
+      "seam": "resources",
+      "range": "^1.0.0",
+      "optional": true
+    }
+  ],
+  "license": "UNLICENSED"
+}

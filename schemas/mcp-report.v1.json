@@ -1,0 +1,769 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:tsuuanmi:system:schema:mcp-report:v1",
+  "title": "MCP report tool",
+  "description": "Input and output of the `report` MCP tool (design/reports.md): the baseline report of PROP-0010 B8, computed by code from recorded data only (the board, the approval queue, the resource ledger, the event log, and the decisions they name) over a period and one project or every one. The root describes one call (tool, input, structured output); a provider validates input and output against `#/$defs/report-input` and `#/$defs/report-output`.",
+  "type": "object",
+  "required": [
+    "tool",
+    "input",
+    "output"
+  ],
+  "properties": {
+    "tool": {
+      "const": "report"
+    },
+    "input": {
+      "$ref": "#/$defs/report-input"
+    },
+    "output": {
+      "$ref": "#/$defs/report-output"
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "count": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000000
+    },
+    "seconds": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1000000000
+    },
+    "usd": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1000000000
+    },
+    "tokens": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000000000000
+    },
+    "date": {
+      "description": "A UTC calendar date.",
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+    },
+    "taskStates": {
+      "description": "Tasks per state, as the board holds them when the report reads it (`asOf`).",
+      "type": "object",
+      "required": [
+        "proposed",
+        "ready",
+        "claimed",
+        "running",
+        "review",
+        "waiting-for-input",
+        "waiting-for-approval",
+        "done",
+        "cancelled"
+      ],
+      "properties": {
+        "proposed": {
+          "$ref": "#/$defs/count"
+        },
+        "ready": {
+          "$ref": "#/$defs/count"
+        },
+        "claimed": {
+          "$ref": "#/$defs/count"
+        },
+        "running": {
+          "$ref": "#/$defs/count"
+        },
+        "review": {
+          "$ref": "#/$defs/count"
+        },
+        "waiting-for-input": {
+          "$ref": "#/$defs/count"
+        },
+        "waiting-for-approval": {
+          "$ref": "#/$defs/count"
+        },
+        "done": {
+          "$ref": "#/$defs/count"
+        },
+        "cancelled": {
+          "$ref": "#/$defs/count"
+        }
+      },
+      "additionalProperties": false
+    },
+    "usage": {
+      "description": "Counted usage records and what they consumed: tokens as the ledger counts them (input includes cached input), turns, and the runtime's own cost estimate.",
+      "type": "object",
+      "required": [
+        "records",
+        "inputTokens",
+        "outputTokens",
+        "cacheReadInputTokens",
+        "cacheCreationInputTokens",
+        "turns",
+        "costUsd"
+      ],
+      "properties": {
+        "records": {
+          "$ref": "#/$defs/count"
+        },
+        "inputTokens": {
+          "$ref": "#/$defs/tokens"
+        },
+        "outputTokens": {
+          "$ref": "#/$defs/tokens"
+        },
+        "cacheReadInputTokens": {
+          "$ref": "#/$defs/tokens"
+        },
+        "cacheCreationInputTokens": {
+          "$ref": "#/$defs/tokens"
+        },
+        "turns": {
+          "$ref": "#/$defs/count"
+        },
+        "costUsd": {
+          "$ref": "#/$defs/usd"
+        }
+      },
+      "additionalProperties": false
+    },
+    "report-input": {
+      "type": "object",
+      "properties": {
+        "projectId": {
+          "description": "One project; absent: every project on the board (the studio).",
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+        },
+        "since": {
+          "description": "The period's start (inclusive). With neither since nor days, the period is the 7 days before until.",
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp"
+        },
+        "until": {
+          "description": "The period's end (exclusive); default the time of the call.",
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp"
+        },
+        "days": {
+          "description": "The period as the days before until; not with since.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 366
+        }
+      },
+      "not": {
+        "required": [
+          "since",
+          "days"
+        ],
+        "properties": {
+          "since": true,
+          "days": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "report-output": {
+      "type": "object",
+      "required": [
+        "period",
+        "asOf",
+        "projects",
+        "tasks",
+        "attempts",
+        "remediation",
+        "approvals",
+        "attention",
+        "usage",
+        "digests",
+        "baseline",
+        "notes"
+      ],
+      "properties": {
+        "period": {
+          "description": "The period counted: from since (inclusive) to until (exclusive), at most 366 days.",
+          "type": "object",
+          "required": [
+            "since",
+            "until"
+          ],
+          "properties": {
+            "since": {
+              "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp"
+            },
+            "until": {
+              "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp"
+            }
+          },
+          "additionalProperties": false
+        },
+        "projectId": {
+          "description": "The project reported on; absent: every project.",
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+        },
+        "asOf": {
+          "description": "When the board and the queue were read: the `now` counts are as of then, whatever the period.",
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp"
+        },
+        "projects": {
+          "description": "The projects reported on, by id: each one's state, charter, milestones, and tasks now.",
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "type": "object",
+            "required": [
+              "projectId",
+              "title",
+              "state",
+              "charterVersion",
+              "milestones",
+              "tasks"
+            ],
+            "properties": {
+              "projectId": {
+                "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+              },
+              "title": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "state": {
+                "enum": [
+                  "proposed",
+                  "active",
+                  "paused",
+                  "closed"
+                ]
+              },
+              "charterVersion": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1000000
+              },
+              "milestones": {
+                "type": "array",
+                "maxItems": 64,
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "id",
+                    "title",
+                    "state"
+                  ],
+                  "properties": {
+                    "id": {
+                      "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+                    },
+                    "title": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    "state": {
+                      "enum": [
+                        "planned",
+                        "funded",
+                        "done",
+                        "dropped"
+                      ]
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "attention": {
+                "description": "The charter's attention budget, when it sets one.",
+                "type": "object",
+                "properties": {
+                  "maxBatchesPerDay": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 1000
+                  },
+                  "maxInterruptionsPerDay": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 1000
+                  }
+                },
+                "additionalProperties": false
+              },
+              "tasks": {
+                "$ref": "#/$defs/taskStates"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "projectsOmitted": {
+          "description": "Projects counted but not listed, past the first 100 by id.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000000000
+        },
+        "tasks": {
+          "type": "object",
+          "required": [
+            "now",
+            "created",
+            "done",
+            "doneByOperator",
+            "cancelled"
+          ],
+          "properties": {
+            "now": {
+              "$ref": "#/$defs/taskStates"
+            },
+            "created": {
+              "description": "Tasks proposed in the period.",
+              "$ref": "#/$defs/count"
+            },
+            "done": {
+              "description": "Tasks whose accepting acceptance decision was made in the period: the accepted results.",
+              "$ref": "#/$defs/count"
+            },
+            "doneByOperator": {
+              "description": "Of those, accepted by the operator's own decision (a review held for the operator).",
+              "$ref": "#/$defs/count"
+            },
+            "cancelled": {
+              "description": "Tasks cancelled in the period.",
+              "$ref": "#/$defs/count"
+            }
+          },
+          "additionalProperties": false
+        },
+        "attempts": {
+          "description": "Runs whose outcome reached their task in the period (`workflow.task.reported`), one per attempt.",
+          "type": "object",
+          "required": [
+            "reported",
+            "accepted",
+            "rejected",
+            "heldForOperator",
+            "reconciled",
+            "other",
+            "review"
+          ],
+          "properties": {
+            "reported": {
+              "$ref": "#/$defs/count"
+            },
+            "accepted": {
+              "description": "Accepted by the run's own acceptance decision: the task done.",
+              "$ref": "#/$defs/count"
+            },
+            "rejected": {
+              "description": "Rejected by a check the run ran itself: another attempt, without the operator.",
+              "$ref": "#/$defs/count"
+            },
+            "heldForOperator": {
+              "description": "Held for the operator's acceptance: a required check not reported.",
+              "$ref": "#/$defs/count"
+            },
+            "reconciled": {
+              "description": "Reported with reconcileRun and neither accepted nor held: a failed or stopped run, or one whose holder was lost.",
+              "$ref": "#/$defs/count"
+            },
+            "other": {
+              "description": "Refused, moved on, or never started.",
+              "$ref": "#/$defs/count"
+            },
+            "review": {
+              "description": "The exact-subject review the run's acceptance decision reports, by attempt: passed (approved), failed (changes still requested), or none bound to the result.",
+              "type": "object",
+              "required": [
+                "passed",
+                "failed",
+                "none"
+              ],
+              "properties": {
+                "passed": {
+                  "$ref": "#/$defs/count"
+                },
+                "failed": {
+                  "$ref": "#/$defs/count"
+                },
+                "none": {
+                  "$ref": "#/$defs/count"
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        "remediation": {
+          "description": "Remediation of blocking review findings in the period: cycles grown, and fixes the approval queue opened or closed.",
+          "type": "object",
+          "required": [
+            "cycles",
+            "fixesOpened",
+            "fixesClosed"
+          ],
+          "properties": {
+            "cycles": {
+              "$ref": "#/$defs/count"
+            },
+            "fixesOpened": {
+              "$ref": "#/$defs/count"
+            },
+            "fixesClosed": {
+              "$ref": "#/$defs/count"
+            }
+          },
+          "additionalProperties": false
+        },
+        "approvals": {
+          "type": "object",
+          "required": [
+            "asked",
+            "approved",
+            "rejected",
+            "expired",
+            "withdrawn",
+            "openNow",
+            "byClass"
+          ],
+          "properties": {
+            "asked": {
+              "description": "Requests made in the period.",
+              "$ref": "#/$defs/count"
+            },
+            "approved": {
+              "description": "Approved by the operator in the period.",
+              "$ref": "#/$defs/count"
+            },
+            "rejected": {
+              "description": "Rejected by the operator's verdict in the period.",
+              "$ref": "#/$defs/count"
+            },
+            "expired": {
+              "description": "Expired unanswered in the period (denied).",
+              "$ref": "#/$defs/count"
+            },
+            "withdrawn": {
+              "description": "Withdrawn in the period: the waiting work ended first, or the policy changed.",
+              "$ref": "#/$defs/count"
+            },
+            "openNow": {
+              "description": "Open or batched as of asOf.",
+              "$ref": "#/$defs/count"
+            },
+            "byClass": {
+              "type": "array",
+              "maxItems": 16,
+              "items": {
+                "type": "object",
+                "required": [
+                  "actionClass",
+                  "asked",
+                  "approved",
+                  "rejected",
+                  "expired",
+                  "withdrawn"
+                ],
+                "properties": {
+                  "actionClass": {
+                    "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/actionClass"
+                  },
+                  "asked": {
+                    "$ref": "#/$defs/count"
+                  },
+                  "approved": {
+                    "$ref": "#/$defs/count"
+                  },
+                  "rejected": {
+                    "$ref": "#/$defs/count"
+                  },
+                  "expired": {
+                    "$ref": "#/$defs/count"
+                  },
+                  "withdrawn": {
+                    "$ref": "#/$defs/count"
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "wait": {
+              "description": "From a request's creation to the operator's verdict, over the verdicts given in the period; nearest-rank percentiles. Absent with no verdict.",
+              "type": "object",
+              "required": [
+                "answered",
+                "medianSeconds",
+                "p90Seconds",
+                "maxSeconds"
+              ],
+              "properties": {
+                "answered": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 1000000000
+                },
+                "medianSeconds": {
+                  "$ref": "#/$defs/seconds"
+                },
+                "p90Seconds": {
+                  "$ref": "#/$defs/seconds"
+                },
+                "maxSeconds": {
+                  "$ref": "#/$defs/seconds"
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        "attention": {
+          "description": "What asked for the operator in the period: approval requests made and reviews held for the operator (interruptions), and the batches shown (a batch the queue made, or a request answered alone), per UTC day.",
+          "type": "object",
+          "required": [
+            "interruptions",
+            "batches",
+            "days"
+          ],
+          "properties": {
+            "interruptions": {
+              "$ref": "#/$defs/count"
+            },
+            "batches": {
+              "$ref": "#/$defs/count"
+            },
+            "days": {
+              "description": "The days with any interruption or batch, in order.",
+              "type": "array",
+              "maxItems": 367,
+              "items": {
+                "type": "object",
+                "required": [
+                  "date",
+                  "interruptions",
+                  "batches"
+                ],
+                "properties": {
+                  "date": {
+                    "$ref": "#/$defs/date"
+                  },
+                  "interruptions": {
+                    "$ref": "#/$defs/count"
+                  },
+                  "batches": {
+                    "$ref": "#/$defs/count"
+                  },
+                  "over": {
+                    "description": "Set when the day is over the project's charter thresholds.",
+                    "const": true
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "threshold": {
+              "description": "The project's charter attention budget, for a report on one project that sets one.",
+              "type": "object",
+              "properties": {
+                "maxBatchesPerDay": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 1000
+                },
+                "maxInterruptionsPerDay": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 1000
+                }
+              },
+              "additionalProperties": false
+            },
+            "daysOver": {
+              "description": "Days over the threshold, with one.",
+              "$ref": "#/$defs/count"
+            }
+          },
+          "additionalProperties": false
+        },
+        "usage": {
+          "description": "The ledger's counted usage records observed in the period (for one project: those naming it or one of its tasks, or the run or execution that served one of its tasks).",
+          "type": "object",
+          "required": [
+            "total",
+            "pools",
+            "byOutcome"
+          ],
+          "properties": {
+            "total": {
+              "$ref": "#/$defs/usage"
+            },
+            "pools": {
+              "type": "array",
+              "maxItems": 64,
+              "items": {
+                "$ref": "#/$defs/poolUsage"
+              }
+            },
+            "byOutcome": {
+              "type": "object",
+              "required": [
+                "completed",
+                "failed",
+                "aborted",
+                "unknown"
+              ],
+              "properties": {
+                "completed": {
+                  "$ref": "#/$defs/count"
+                },
+                "failed": {
+                  "$ref": "#/$defs/count"
+                },
+                "aborted": {
+                  "$ref": "#/$defs/count"
+                },
+                "unknown": {
+                  "$ref": "#/$defs/count"
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        "digests": {
+          "description": "Digests of task results that ended in the period: attached to the task, or bypassed (failing open); and, for those attached, the claims kept and dropped and the escalations, when a digest provider is loaded to read them.",
+          "type": "object",
+          "required": [
+            "attached",
+            "bypassed"
+          ],
+          "properties": {
+            "attached": {
+              "$ref": "#/$defs/count"
+            },
+            "bypassed": {
+              "$ref": "#/$defs/count"
+            },
+            "claimsKept": {
+              "$ref": "#/$defs/count"
+            },
+            "claimsDropped": {
+              "$ref": "#/$defs/count"
+            },
+            "escalated": {
+              "$ref": "#/$defs/count"
+            }
+          },
+          "additionalProperties": false
+        },
+        "baseline": {
+          "description": "PROP-0008's baseline: accepted results, what asked for the operator, and, with at least one accepted result, what each cost.",
+          "type": "object",
+          "required": [
+            "acceptedResults",
+            "interruptions",
+            "attempts"
+          ],
+          "properties": {
+            "acceptedResults": {
+              "$ref": "#/$defs/count"
+            },
+            "interruptions": {
+              "$ref": "#/$defs/count"
+            },
+            "attempts": {
+              "$ref": "#/$defs/count"
+            },
+            "perAcceptedResult": {
+              "type": "object",
+              "required": [
+                "tokens",
+                "costUsd",
+                "turns",
+                "interruptions",
+                "attempts"
+              ],
+              "properties": {
+                "tokens": {
+                  "description": "Input and output tokens.",
+                  "type": "number",
+                  "minimum": 0
+                },
+                "costUsd": {
+                  "$ref": "#/$defs/usd"
+                },
+                "turns": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "interruptions": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "attempts": {
+                  "type": "number",
+                  "minimum": 0
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        "notes": {
+          "description": "What the report could not count, and why (an event log trimmed before the period, no digest provider loaded).",
+          "type": "array",
+          "maxItems": 16,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "poolUsage": {
+      "description": "One pool's counted usage.",
+      "type": "object",
+      "required": [
+        "pool",
+        "records",
+        "inputTokens",
+        "outputTokens",
+        "cacheReadInputTokens",
+        "cacheCreationInputTokens",
+        "turns",
+        "costUsd"
+      ],
+      "properties": {
+        "pool": {
+          "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id"
+        },
+        "records": {
+          "$ref": "#/$defs/count"
+        },
+        "inputTokens": {
+          "$ref": "#/$defs/tokens"
+        },
+        "outputTokens": {
+          "$ref": "#/$defs/tokens"
+        },
+        "cacheReadInputTokens": {
+          "$ref": "#/$defs/tokens"
+        },
+        "cacheCreationInputTokens": {
+          "$ref": "#/$defs/tokens"
+        },
+        "turns": {
+          "$ref": "#/$defs/count"
+        },
+        "costUsd": {
+          "$ref": "#/$defs/usd"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

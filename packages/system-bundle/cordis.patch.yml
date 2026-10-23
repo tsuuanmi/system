@@ -126,6 +126,11 @@
     # agent rows off), a request is settled `bypassed` and recorded, and nothing waits on it. ---
     - id: digest
       name: '@tsuuanmi/system-digest'                # ctx.digests; MCP digests_request, digests_get
+    # --- the baseline report (B8, surface): from recorded data only, over a period and one project or
+    # every one; it reads the board, the queue, and the ledger, writes nothing, and no model writes it.
+    # By default the last 7 days: the weekly investor report. Off, nothing else changes. ---
+    - id: report
+      name: '@tsuuanmi/system-report'                # MCP report; system report
     - id: profile-software-development
       name: '@tsuuanmi/system-profile-software-development'  # agent-review, for agent Workers; off until the operator turns it on
       disabled: true

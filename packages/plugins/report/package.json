@@ -1,0 +1,40 @@
+{
+  "name": "@tsuuanmi/system-report",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The baseline report (PROP-0010 B8): from recorded data only, a period of one project or every one: board progress, attempts and reviews, approvals asked and answered with their waits, attention per day, ledger usage, digests, and cost per accepted result; MCP report, the weekly investor report",
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    }
+  },
+  "files": [
+    "lib",
+    "plugin-manifest.json"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json"
+  },
+  "dependencies": {
+    "@tsuuanmi/system-approvals-core": "workspace:*",
+    "@tsuuanmi/system-artifacts": "workspace:*",
+    "@tsuuanmi/system-board-core": "workspace:*",
+    "@tsuuanmi/system-digest-core": "workspace:*",
+    "@tsuuanmi/system-event-log": "workspace:*",
+    "@tsuuanmi/system-gateway-core": "workspace:*",
+    "@tsuuanmi/system-libs": "workspace:*",
+    "@tsuuanmi/system-resources-core": "workspace:*"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "4.0.5-alpha.1",
+    "zod": "^4.1.0"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "4.0.5-alpha.1",
+    "zod": "^4.1.0"
+  }
+}

@@ -444,6 +444,19 @@ Scope: `operator`
 | `name` | string | yes | The credential reference (an UPPER_SNAKE name), as the route's apiKeyEnv names it |
 | `value` | string | yes |  |
 
+## `report`
+
+The baseline report, from recorded data only (no model writes it): for a period (default the 7 days before now: the weekly investor report) and one project or every one, the board's progress and tasks, the attempts and the reviews of their results, remediation, the approval requests asked and answered and how long your verdicts took, what asked for the operator per day against the charter's attention budget, the resource ledger's usage per pool, the digests of task results, and the baseline: accepted results, interruptions, and what each accepted result cost. Answers with the report and its one-screen rendering.
+
+Scope: `client`
+
+| Argument | Type | Required | Description |
+|---|---|---|---|
+| `projectId` | string |  | One project; absent: every project on the board |
+| `since` | string |  | The period's start, ISO 8601 (inclusive); not with days |
+| `until` | string |  | The period's end, ISO 8601 (exclusive); default now |
+| `days` | integer |  | The period as the days before until (default 7: the weekly investor report) |
+
 ## `research`
 
 Research a question with the research profile: testable hypotheses, two cited literature reviews on two provider families (web search, or the providers' Deep research with `deep`), one evidence table from both, a critique on another family, and conclusions per hypothesis that say where the reviews agree and differ. Returns at once with a runId; poll `result` (runs take minutes; with `deep`, up to an hour).

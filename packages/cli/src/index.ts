@@ -369,6 +369,19 @@ export function parseEvents(args: readonly string[]): Record<string, string | nu
   return filter
 }
 
+/** `system report` flags to the `report` tool's input, each at most once; undefined for an unknown flag or a missing value. */
+export function parseReport(args: readonly string[]): Record<string, string | number> | undefined {
+  const input: Record<string, string | number> = {}
+  const names: Record<string, string> = { '--project': 'projectId', '--since': 'since', '--until': 'until', '--days': 'days' }
+  for (let i = 0; i < args.length; i += 2) {
+    const name = names[args[i]!]
+    const value = args[i + 1]
+    if (!name || value === undefined || name in input) return undefined
+    input[name] = name === 'days' ? Number(value) : value
+  }
+  return input
+}
+
 /** One line per event: sequence, time, type, where, and its data. */
 export function formatEvents(events: readonly EventLine[]): string[] {
   return events.map((e) => [e.seq, e.at, e.type, e.runId ? `run=${e.runId}${e.nodeId ? `/${e.nodeId}` : ''}` : '', e.sessionId ? `session=${e.sessionId}` : '', e.data ? JSON.stringify(e.data) : '']

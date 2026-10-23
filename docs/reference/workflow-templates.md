@@ -114,6 +114,41 @@ by a read-only local agent Worker; never a website account.
 |---|---|---|---|---|
 | `review:1` | `review`, `local-data` | standard (caller) | caller | `acceptance.answer` |
 
+### `algorithm-development`
+
+Provided by
+[`profile-software-development`](../../packages/plugins/profile-software-development/README.md)
+(row off by default, like `agent-review`). One attempt of a board task that tests one hypothesis
+(PROP-0010 B8): a lead starts it with MCP `run` and `task`, and the project's charter and
+milestones are the board's ([pilot](../operations/pilot.md)). Every step runs on a local agent
+Worker, in the run's own git worktree when the Workers set `worktreePerRun`.
+
+| Node | Capabilities | Tier | Conversation | Acceptance |
+|---|---|---|---|---|
+| `develop:1` | `develop`, `local-data` | standard | persistent (the run's session; the task's next attempt resumes it) | `acceptance.answer` |
+| `review:1` (depends on `develop:1`) | `review`, `local-data` | standard | temporary | `acceptance.answer` |
+| `validate:1` (depends on `review:1`) | `validate`, `local-data` | economy | temporary | `acceptance.answer` |
+
+- `develop:1` states the hypothesis it tests, then changes the code toward the task.
+- `review:1` is an exact-subject review of that change: the engine appends the subject, its diff,
+  and the assessment it asks for. The reviewer reads the task's goal, its criteria, and the
+  change, never the developer's answer. Blocking findings grow a fix (on `develop:1`'s
+  capabilities) behind the approval queue and a re-review, as for any template
+  ([remediation](../design/workflow-engine.md#remediation-on-the-approval-queue)); `validate:1`
+  waits for them.
+- `validate:1` runs the tests and benchmarks the task's acceptance criteria name, changing no
+  file, and reports each command, its exit code, and the output lines that hold the result. Only a
+  Worker whose commands are proven confined (`executes`) proves `validate`
+  ([ADR-0038](../decisions/adr/0038-confined-commands-for-claude-code-workers.md)); with none, the
+  step fails admission and nothing is sent. Each command passes the tool gate by its exact argv: a
+  listed one runs as a workspace write, and any other is denied, since the step has no session to
+  defer it on.
+- `validate:1` is the final node, so the run's result is the validation's report on the subject
+  the task writes, after any fix: the task keeps it, its digest cites it, and the next attempt's
+  brief points at it. The engine reports the `review` check on that subject, never `tests`: a
+  model's account of a command is not a check, so under a policy that requires `tests` the board
+  holds the result for the operator.
+
 ## Removed templates
 
 PROP-0004 removed `investigate`, `deep-research`, `develop`, and `panel`, and replaced
@@ -135,6 +170,7 @@ one fails admission, fail closed, with the capability named:
 | `ask` | runs on model Workers, in a session too: a model Worker keeps it by replay ([ADR-0031](../decisions/adr/0031-model-worker-sessions-by-replay.md)) |
 | `brainstorm`, `review` | run on model Workers, each member in its own session by replay; members of one family need `allowSameFamily` ([ADR-0029](../decisions/adr/0029-opt-in-same-family-fallback.md)) |
 | `agent-review` | runs on agent Workers (the preset turns their rows and the software-development profile on) |
+| `algorithm-development` | runs on agent Workers, as `agent-review`; `validate:1` needs one whose commands are proven confined |
 | `research` | `frame:1` runs on a model Worker; `literature:1` fails: no Worker proves `web-search` (variant `deep`: `deep-research`), and `literature:2` sends nothing |
 
 ## Acceptance contracts

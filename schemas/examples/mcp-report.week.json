@@ -1,0 +1,88 @@
+{
+  "tool": "report",
+  "input": {
+    "projectId": "proj-sparse-align",
+    "days": 7,
+    "until": "2026-10-23T00:00:00Z"
+  },
+  "output": {
+    "period": {
+      "since": "2026-10-16T00:00:00.000Z",
+      "until": "2026-10-23T00:00:00.000Z"
+    },
+    "projectId": "proj-sparse-align",
+    "asOf": "2026-10-23T08:12:40.511Z",
+    "projects": [
+      {
+        "projectId": "proj-sparse-align",
+        "title": "Sparse alignment kernel",
+        "state": "active",
+        "charterVersion": 1,
+        "milestones": [
+          { "id": "m1-baseline", "title": "Baseline benchmark", "state": "done" },
+          { "id": "m2-kernel", "title": "Kernel at least 3x faster", "state": "funded" }
+        ],
+        "attention": { "maxBatchesPerDay": 3, "maxInterruptionsPerDay": 6 },
+        "tasks": { "proposed": 1, "ready": 1, "claimed": 0, "running": 0, "review": 1, "waiting-for-input": 0, "waiting-for-approval": 0, "done": 4, "cancelled": 1 }
+      }
+    ],
+    "tasks": {
+      "now": { "proposed": 1, "ready": 1, "claimed": 0, "running": 0, "review": 1, "waiting-for-input": 0, "waiting-for-approval": 0, "done": 4, "cancelled": 1 },
+      "created": 6,
+      "done": 4,
+      "doneByOperator": 4,
+      "cancelled": 1
+    },
+    "attempts": {
+      "reported": 7,
+      "accepted": 0,
+      "rejected": 1,
+      "heldForOperator": 5,
+      "reconciled": 1,
+      "other": 0,
+      "review": { "passed": 5, "failed": 1, "none": 1 }
+    },
+    "remediation": { "cycles": 2, "fixesOpened": 2, "fixesClosed": 0 },
+    "approvals": {
+      "asked": 3,
+      "approved": 3,
+      "rejected": 0,
+      "expired": 0,
+      "withdrawn": 0,
+      "openNow": 0,
+      "byClass": [
+        { "actionClass": "charter", "asked": 1, "approved": 1, "rejected": 0, "expired": 0, "withdrawn": 0 },
+        { "actionClass": "remediation", "asked": 2, "approved": 2, "rejected": 0, "expired": 0, "withdrawn": 0 }
+      ],
+      "wait": { "answered": 3, "medianSeconds": 2640, "p90Seconds": 15120, "maxSeconds": 15120 }
+    },
+    "attention": {
+      "interruptions": 8,
+      "batches": 6,
+      "days": [
+        { "date": "2026-10-16", "interruptions": 2, "batches": 1 },
+        { "date": "2026-10-19", "interruptions": 2, "batches": 2 },
+        { "date": "2026-10-20", "interruptions": 1, "batches": 1 },
+        { "date": "2026-10-21", "interruptions": 2, "batches": 1 },
+        { "date": "2026-10-22", "interruptions": 1, "batches": 1 }
+      ],
+      "threshold": { "maxBatchesPerDay": 3, "maxInterruptionsPerDay": 6 },
+      "daysOver": 0
+    },
+    "usage": {
+      "total": { "records": 38, "inputTokens": 9412880, "outputTokens": 318342, "cacheReadInputTokens": 8371204, "cacheCreationInputTokens": 730110, "turns": 611, "costUsd": 18.4184 },
+      "pools": [
+        { "pool": "claude-max-main.programmatic", "records": 38, "inputTokens": 9412880, "outputTokens": 318342, "cacheReadInputTokens": 8371204, "cacheCreationInputTokens": 730110, "turns": 611, "costUsd": 18.4184 }
+      ],
+      "byOutcome": { "completed": 36, "failed": 1, "aborted": 0, "unknown": 1 }
+    },
+    "digests": { "attached": 6, "bypassed": 1, "claimsKept": 31, "claimsDropped": 3, "escalated": 1 },
+    "baseline": {
+      "acceptedResults": 4,
+      "interruptions": 8,
+      "attempts": 7,
+      "perAcceptedResult": { "tokens": 2432805.5, "costUsd": 4.6046, "turns": 152.75, "interruptions": 2, "attempts": 1.75 }
+    },
+    "notes": []
+  }
+}

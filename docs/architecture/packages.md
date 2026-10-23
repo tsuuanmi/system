@@ -24,6 +24,7 @@ A plugin may also consume a service of the dsh launcher itself, which no row pro
 | [gateway-responses](../../packages/plugins/gateway-responses/README.md) | gateways | — | `gateway-responses` | `webServer`, `workflow`, `store` | `gateway-core`, `gateway-turns`, `libs` |
 | [gateway-turns](../../packages/gateway-turns/README.md) | gateways | — | — | — | `gateway-core`, `libs` |
 | [mcp-server](../../packages/plugins/mcp-server/README.md) | gateways | `mcp` | `mcp-server` | `webServer`, `accounts` (optional), `artifacts` (optional), `browser` (optional), `credentials` (optional), `eventLog` (optional), `pluginHost` (optional), `providers` (optional), `store` (optional), `turns` (optional), `workers` (optional), `workflow` (optional) | `gateway-core`, `libs`, `plugin-host-core` |
+| [report](../../packages/plugins/report/README.md) | gateways | — | `report` | `artifacts`, `eventLog`, `approvals` (optional), `board` (optional), `digests` (optional), `mcp` (optional), `resources` (optional) | `approvals-core`, `board-core`, `digest-core`, `gateway-core`, `libs`, `resources-core` |
 | [web-ui](../../packages/plugins/web-ui/README.md) | gateways | — | `web-ui` | `webServer`, `workflow`, `approvals` (optional), `artifacts` (optional), `board` (optional) | `approvals-core`, `board-core`, `gateway-core`, `libs` |
 | [board](../../packages/plugins/board/README.md) | orchestration | `board` | `board` | `store`, `artifacts`, `leases`, `approvals`, `mcp` (optional) | `approvals-core`, `board-core`, `gateway-core`, `leases`, `libs` |
 | [board-core](../../packages/board-core/README.md) | orchestration | defines `board` | — | — | `approvals-core` |
@@ -85,6 +86,7 @@ flowchart TB
     gateway_anthropic["gateway-anthropic"]
     gateway_responses["gateway-responses"]
     mcp_server["mcp-server<br/>ctx.mcp"]
+    report["report"]
     web_ui["web-ui"]
   end
   subgraph orchestration ["orchestration"]
@@ -208,6 +210,13 @@ flowchart TB
   provider_gemini_web --> providers
   provider_gemini_web -.-> artifacts
   provider_gemini_web -.-> event_log
+  report --> artifacts
+  report --> event_log
+  report -.-> approvals
+  report -.-> board
+  report -.-> digest
+  report -.-> mcp_server
+  report -.-> resources
   resources --> store
   resources --> artifacts
   resources -.-> mcp_server
@@ -290,6 +299,7 @@ flowchart TB
     gateway_responses["gateway-responses"]
     gateway_turns["gateway-turns"]
     mcp_server["mcp-server<br/>ctx.mcp"]
+    report["report"]
     web_ui["web-ui"]
   end
   subgraph orchestration ["orchestration"]
@@ -386,6 +396,11 @@ flowchart TB
   provider_gemini_web --> provider_core
   provider_gemini_web --> ui_ops
   providers --> provider_core
+  report --> approvals_core
+  report --> board_core
+  report --> digest_core
+  report --> gateway_core
+  report --> resources_core
   resources --> gateway_core
   resources --> resources_core
   runtime_acp --> agent_runtime_core

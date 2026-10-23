@@ -26,7 +26,7 @@ type Plugin = { name: string; rows: string[]; mounted: boolean; manifest: string
 /** The plugins the first boot recorded, which a restart over an unchanged composition must leave as they are. */
 let firstBoot: Plugin[] = []
 
-const ALLOWED_ROWS = ['timer', 'credentials', 'webserver', 'store', 'event-log', 'leases', 'artifacts', 'plugin-host', 'resources', 'approvals', 'accounts', 'turn-receipts', 'display', 'browser', 'providers', 'provider-chatgpt-web', 'provider-gemini-web', 'login', 'egress', 'workers', 'turns', 'agent-runtimes', 'runtime-claude-agent-sdk', 'agent-workers', 'llm', 'llm-pi-ai', 'models', 'worker-sessions', 'workflow', 'board', 'digest', 'profile-scientific-research', 'web-ui', 'mcp-server']
+const ALLOWED_ROWS = ['timer', 'credentials', 'webserver', 'store', 'event-log', 'leases', 'artifacts', 'plugin-host', 'resources', 'approvals', 'accounts', 'turn-receipts', 'display', 'browser', 'providers', 'provider-chatgpt-web', 'provider-gemini-web', 'login', 'egress', 'workers', 'turns', 'agent-runtimes', 'runtime-claude-agent-sdk', 'agent-workers', 'llm', 'llm-pi-ai', 'models', 'worker-sessions', 'workflow', 'board', 'digest', 'report', 'profile-scientific-research', 'web-ui', 'mcp-server']
 
 async function client2(url: string, token: string): Promise<Client> {
   const client = new Client({ name: 'e2e-2', version: '0' })
@@ -146,7 +146,7 @@ describe('system profile (e2e through dsh)', () => {
     expect(clientTools).toEqual([
       'approvals_get', 'approvals_list', 'approvals_policy', 'ask',
       'board_brief', 'board_cancel', 'board_charter', 'board_claim', 'board_projects', 'board_propose', 'board_task', 'board_tasks', 'board_update',
-      'brainstorm', 'digests_get', 'digests_request', 'explain', 'research', 'resources_pools', 'resources_usage', 'result', 'review', 'run', 'session_inbox', 'session_send', 'status', 'usage', 'vote',
+      'brainstorm', 'digests_get', 'digests_request', 'explain', 'report', 'research', 'resources_pools', 'resources_usage', 'result', 'review', 'run', 'session_inbox', 'session_send', 'status', 'usage', 'vote',
     ])
     // Digests are on (B6): a request names stored artifacts only, and one that names none is refused with nothing done.
     const digester = await client2(url, tokenOf('client'))
@@ -163,6 +163,11 @@ describe('system profile (e2e through dsh)', () => {
     const queued = await queue.callTool({ name: 'approvals_list', arguments: {} }).finally(() => queue.close())
     expect(policy.structuredContent).toMatchObject({ policies: [{ id: 'studio-default', scope: 'studio' }], effective: expect.arrayContaining([{ actionClass: 'read', mode: 'auto' }, { actionClass: 'deploy', mode: 'ask' }]) })
     expect(queued.structuredContent).toEqual({ requests: [] })
+    // The baseline report is on (B8): over the board, the queue, and the ledger, with nothing recorded it counts nothing.
+    const reporter = await client2(url, tokenOf('client'))
+    const week = await reporter.callTool({ name: 'report', arguments: {} }).finally(() => reporter.close())
+    expect(week.structuredContent).toMatchObject({ projects: [], approvals: { asked: 0 }, usage: { total: { records: 0 } }, baseline: { acceptedResults: 0 } })
+    expect((week.content as Array<{ text: string }>)[0]!.text).toMatch(/^# Report: every project\n/)
     expect(await toolsOf('operator')).toEqual(expect.arrayContaining([...clientTools, 'approve', 'approvals_decide', 'stop', 'delete', 'drain', 'account_set_credentials', 'account_relogin', 'account_code', 'model_key']))
     const origin = new URL(url).origin
     const send = (path: string, scope: 'operator' | 'client' | 'model', body?: object) => fetch(`${origin}${path}`, {

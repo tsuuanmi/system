@@ -2,7 +2,7 @@
   "name": "@tsuuanmi/system-profile-software-development",
   "version": "0.0.0",
   "private": true,
-  "description": "The software-development profile: plan, approval, local agents implement, an exact-subject review, remediation, a report (a template contributed to the workflow engine)",
+  "description": "The software-development profile: templates for local agent Workers contributed to the workflow engine (agent-review; algorithm-development: develop, an exact-subject review, confined validation)",
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",

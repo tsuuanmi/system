@@ -603,6 +603,23 @@ guesses.
 - A request no Worker can serve is not refused: it settles `bypassed` ([digests](../design/digests.md)).
   Example: [`mcp-digests.request.json`](../../schemas/examples/mcp-digests.request.json).
 
+### MCP tool: `report`
+
+| Tool | Scope | Does |
+|---|---|---|
+| `report` | client | the baseline report of a period, for one project or every one, from recorded data only; by default the 7 days before now (the weekly investor report) |
+
+- Input and output: [`mcp-report.v1.json`](../../schemas/mcp-report.v1.json) `$defs/report-input` and
+  `report-output`. The period is `since` (inclusive) to `until` (exclusive, default the call), or
+  the `days` before `until`; never both `since` and `days`, and at most 366 days.
+- What each figure counts, and from which records, is in [reports](../design/reports.md#what-it-counts).
+  `asOf` is when the board and the queue were read: the `now` counts are as of then. Two calls on
+  the same records and period differ in `asOf` only.
+- The call's text content is the report rendered for the operator (Markdown); the structured
+  content is the report. A refusal (`unavailable`, `unknown-project`, `invalid`, `overloaded`)
+  reads nothing more and reports nothing. Example:
+  [`mcp-report.week.json`](../../schemas/examples/mcp-report.week.json).
+
 ### `plugin-manifest`
 
 - `name` never changes; a renamed plugin lists its old names in `renames`, so the host matches

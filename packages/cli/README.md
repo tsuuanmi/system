@@ -17,6 +17,7 @@ the supported way to run a DSH harness
 | `system ui` | prints the operator web UI link (`/ui/#token=…`, the operator token in the fragment only): runs, steps, decision chains, approve, stop, continue, the approval queue's verdicts, and accept or reject for the reviews of board tasks |
 | `system result <runId>` | waits for a run and prints its answer |
 | `system usage [<limit>]` | recent runs: per step, the Worker, tier, and quota class that served it, and the tokens a model Worker reported (usage report) |
+| `system report [--project <id>] [--since <time> \| --days <n>] [--until <time>] [--json]` | the baseline report of a period through the `report` tool, printed as its one-screen rendering (`--json`: the report itself); by default the last 7 days, the weekly investor report ([reports](../../docs/design/reports.md)) |
 | `system model key <NAME>` | stores a model route's API key, read from stdin (never from arguments), encrypted in the vault under the credential reference `<NAME>` the route's `apiKeyEnv` names (MCP `model_key`, operator scope) |
 | `system explain <runId\|artifact>` | a run's decision chain per step (egress, tier, route or admission, acceptance), or any artifact's input tree |
 | `system account login <id>` | opens the remote login desktop through the running profile (`account_login`). Prints the `ssh -L` command and URL, then waits until Save has stored the account (its revision increases) |

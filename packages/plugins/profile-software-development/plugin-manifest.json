@@ -2,7 +2,7 @@
   "schema": "plugin-manifest@1.0",
   "name": "@tsuuanmi/system-profile-software-development",
   "version": "0.0.0",
-  "description": "The software-development profile: plan, approval, local agents implement, an exact-subject review, remediation, a report (a template contributed to the workflow engine)",
+  "description": "The software-development profile: templates for local agent Workers contributed to the workflow engine (agent-review; algorithm-development: develop, an exact-subject review, confined validation)",
   "class": {
     "kind": "family",
     "family": "workflow"
