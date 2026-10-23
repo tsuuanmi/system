@@ -19,5 +19,15 @@
       "range": "^1.0.0"
     }
   ],
+  "config": [
+    {
+      "key": "quotaPreference",
+      "sensitive": false
+    },
+    {
+      "key": "priority",
+      "sensitive": false
+    }
+  ],
   "license": "UNLICENSED"
 }

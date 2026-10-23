@@ -54,5 +54,28 @@
       "optional": true
     }
   ],
-  "license": "UNLICENSED"
+  "config": [
+    {
+      "key": "workers",
+      "sensitive": false
+    },
+    {
+      "key": "probeTtlMs",
+      "sensitive": false
+    },
+    {
+      "key": "runTimeoutMs",
+      "sensitive": false
+    },
+    {
+      "key": "worktreeRoot",
+      "sensitive": false
+    },
+    {
+      "key": "worktreeRetentionHours",
+      "sensitive": false
+    }
+  ],
+  "license": "UNLICENSED",
+  "egress": "operator-shared"
 }

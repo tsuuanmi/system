@@ -14,5 +14,24 @@
       "range": "^1.0.0"
     }
   ],
-  "license": "UNLICENSED"
+  "config": [
+    {
+      "key": "executable",
+      "sensitive": false
+    },
+    {
+      "key": "env",
+      "sensitive": false
+    },
+    {
+      "key": "forwardEnv",
+      "sensitive": false
+    },
+    {
+      "key": "home",
+      "sensitive": false
+    }
+  ],
+  "license": "UNLICENSED",
+  "egress": "operator-shared"
 }

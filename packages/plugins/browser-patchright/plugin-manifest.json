@@ -24,5 +24,23 @@
       "optional": true
     }
   ],
+  "config": [
+    {
+      "key": "chromePath",
+      "sensitive": false
+    },
+    {
+      "key": "closeAfterMs",
+      "sensitive": false
+    },
+    {
+      "key": "maxBrowsers",
+      "sensitive": false
+    },
+    {
+      "key": "maxIndexedDbBytes",
+      "sensitive": false
+    }
+  ],
   "license": "UNLICENSED"
 }

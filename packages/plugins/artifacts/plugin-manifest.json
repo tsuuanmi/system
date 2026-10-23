@@ -19,5 +19,23 @@
       "range": "^1.0.0"
     }
   ],
+  "config": [
+    {
+      "key": "explainDepth",
+      "sensitive": false
+    },
+    {
+      "key": "explainBudget",
+      "sensitive": false
+    },
+    {
+      "key": "collectGraceHours",
+      "sensitive": false
+    },
+    {
+      "key": "collectBatch",
+      "sensitive": false
+    }
+  ],
   "license": "UNLICENSED"
 }

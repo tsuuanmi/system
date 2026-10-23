@@ -58,5 +58,36 @@
       "optional": true
     }
   ],
-  "license": "UNLICENSED"
+  "config": [
+    {
+      "key": "models",
+      "sensitive": false
+    },
+    {
+      "key": "maxRetries",
+      "sensitive": false
+    },
+    {
+      "key": "maxConcurrentCalls",
+      "sensitive": false
+    },
+    {
+      "key": "callTimeoutMs",
+      "sensitive": false
+    },
+    {
+      "key": "retainDays",
+      "sensitive": false
+    },
+    {
+      "key": "maxSessionTurns",
+      "sensitive": false
+    },
+    {
+      "key": "maxHistoryChars",
+      "sensitive": false
+    }
+  ],
+  "license": "UNLICENSED",
+  "egress": "operator-shared"
 }

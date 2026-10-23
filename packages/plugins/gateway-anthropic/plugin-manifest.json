@@ -22,5 +22,35 @@
       "range": "^1.0.0"
     }
   ],
+  "config": [
+    {
+      "key": "path",
+      "sensitive": false
+    },
+    {
+      "key": "tokenDir",
+      "sensitive": false
+    },
+    {
+      "key": "allowedHosts",
+      "sensitive": false
+    },
+    {
+      "key": "models",
+      "sensitive": false
+    },
+    {
+      "key": "classification",
+      "sensitive": false
+    },
+    {
+      "key": "timeoutMs",
+      "sensitive": false
+    },
+    {
+      "key": "pingMs",
+      "sensitive": false
+    }
+  ],
   "license": "UNLICENSED"
 }

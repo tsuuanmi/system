@@ -66,5 +66,56 @@
       "optional": true
     }
   ],
-  "license": "UNLICENSED"
+  "config": [
+    {
+      "key": "maxConcurrentTurnsPerAccount",
+      "sensitive": false
+    },
+    {
+      "key": "turnTimeoutMs",
+      "sensitive": false
+    },
+    {
+      "key": "stallTimeoutMs",
+      "sensitive": false
+    },
+    {
+      "key": "researchTimeoutMs",
+      "sensitive": false
+    },
+    {
+      "key": "researchStallTimeoutMs",
+      "sensitive": false
+    },
+    {
+      "key": "maxPendingTurns",
+      "sensitive": false
+    },
+    {
+      "key": "retainDays",
+      "sensitive": false
+    },
+    {
+      "key": "probeTtlMs",
+      "sensitive": false
+    },
+    {
+      "key": "authCheckMs",
+      "sensitive": false
+    },
+    {
+      "key": "providerPageGapMs",
+      "sensitive": false
+    },
+    {
+      "key": "featureLimitCooldownMs",
+      "sensitive": false
+    },
+    {
+      "key": "accountLimitCooldownMs",
+      "sensitive": false
+    }
+  ],
+  "license": "UNLICENSED",
+  "egress": "operator-shared"
 }

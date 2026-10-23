@@ -19,5 +19,15 @@
       "range": "^1.0.0"
     }
   ],
+  "config": [
+    {
+      "key": "maxDataBytes",
+      "sensitive": false
+    },
+    {
+      "key": "retainDays",
+      "sensitive": false
+    }
+  ],
   "license": "UNLICENSED"
 }

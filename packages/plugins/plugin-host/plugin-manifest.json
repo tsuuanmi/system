@@ -32,5 +32,11 @@
       "optional": true
     }
   ],
+  "config": [
+    {
+      "key": "allowWithoutManifest",
+      "sensitive": false
+    }
+  ],
   "license": "UNLICENSED"
 }

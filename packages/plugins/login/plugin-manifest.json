@@ -32,5 +32,31 @@
       "optional": true
     }
   ],
+  "config": [
+    {
+      "key": "profilesDir",
+      "sensitive": false
+    },
+    {
+      "key": "vncPath",
+      "sensitive": false
+    },
+    {
+      "key": "chromePath",
+      "sensitive": false
+    },
+    {
+      "key": "remoteTtlMs",
+      "sensitive": false
+    },
+    {
+      "key": "remotePort",
+      "sensitive": false
+    },
+    {
+      "key": "codeWaitMs",
+      "sensitive": false
+    }
+  ],
   "license": "UNLICENSED"
 }

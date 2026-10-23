@@ -68,5 +68,75 @@
       "optional": true
     }
   ],
+  "config": [
+    {
+      "key": "templates",
+      "sensitive": false
+    },
+    {
+      "key": "maxAttempts",
+      "sensitive": false
+    },
+    {
+      "key": "retryDelayMs",
+      "sensitive": false
+    },
+    {
+      "key": "maxActiveRuns",
+      "sensitive": false
+    },
+    {
+      "key": "maxWaitingRuns",
+      "sensitive": false
+    },
+    {
+      "key": "retainDays",
+      "sensitive": false
+    },
+    {
+      "key": "allowSameFamily",
+      "sensitive": false
+    },
+    {
+      "key": "retainRunsDays",
+      "sensitive": false
+    },
+    {
+      "key": "autoApprovePlans",
+      "sensitive": false
+    },
+    {
+      "key": "maxReviewCycles",
+      "sensitive": false
+    },
+    {
+      "key": "tieTimeoutHours",
+      "sensitive": false
+    },
+    {
+      "key": "gateTimeoutHours",
+      "sensitive": false
+    },
+    {
+      "key": "approvalPollSeconds",
+      "sensitive": false
+    },
+    {
+      "key": "maxSessionRuns",
+      "sensitive": false
+    },
+    {
+      "key": "tasksFile",
+      "sensitive": false
+    },
+    {
+      "key": "digestsPerHour",
+      "sensitive": false
+    },
+    {
+      "key": "repositories",
+      "sensitive": false
+    }
+  ],
   "license": "UNLICENSED"
 }

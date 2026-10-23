@@ -24,5 +24,32 @@
       "optional": true
     }
   ],
-  "license": "UNLICENSED"
+  "config": [
+    {
+      "key": "origin",
+      "sensitive": false
+    },
+    {
+      "key": "modes",
+      "sensitive": false
+    },
+    {
+      "key": "defaultMode",
+      "sensitive": false
+    },
+    {
+      "key": "researchMode",
+      "sensitive": false
+    },
+    {
+      "key": "maxPromptChars",
+      "sensitive": false
+    },
+    {
+      "key": "pageGapMs",
+      "sensitive": false
+    }
+  ],
+  "license": "UNLICENSED",
+  "egress": "operator-shared"
 }

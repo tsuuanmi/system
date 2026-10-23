@@ -19,5 +19,11 @@
       "range": "^1.0.0"
     }
   ],
+  "config": [
+    {
+      "key": "accounts",
+      "sensitive": false
+    }
+  ],
   "license": "UNLICENSED"
 }

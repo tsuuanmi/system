@@ -74,5 +74,39 @@
       "optional": true
     }
   ],
+  "config": [
+    {
+      "key": "path",
+      "sensitive": false
+    },
+    {
+      "key": "tokenDir",
+      "sensitive": false
+    },
+    {
+      "key": "discoveryFile",
+      "sensitive": false
+    },
+    {
+      "key": "allowedHosts",
+      "sensitive": false
+    },
+    {
+      "key": "maxBodyBytes",
+      "sensitive": false
+    },
+    {
+      "key": "minFreeBytes",
+      "sensitive": false
+    },
+    {
+      "key": "driftWindowHours",
+      "sensitive": false
+    },
+    {
+      "key": "storeCheckMinutes",
+      "sensitive": false
+    }
+  ],
   "license": "UNLICENSED"
 }

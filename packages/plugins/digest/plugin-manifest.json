@@ -41,5 +41,23 @@
       "optional": true
     }
   ],
+  "config": [
+    {
+      "key": "tier",
+      "sensitive": false
+    },
+    {
+      "key": "maxClaims",
+      "sensitive": false
+    },
+    {
+      "key": "maxPending",
+      "sensitive": false
+    },
+    {
+      "key": "timeoutMinutes",
+      "sensitive": false
+    }
+  ],
   "license": "UNLICENSED"
 }
