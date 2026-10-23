@@ -815,7 +815,7 @@ export class AgentWorkers extends Service {
     const native = turn.native
     const member = row.scope === REVIEW_MEMBER
     // A review member's workspace is still empty: else the read-only sandbox did not hold, and its answer is not trusted.
-    if (member && readdirSync(workspace).length) {
+    if (member && !emptyDirectory(workspace)) {
       throw new ProviderError('reconciliation_failed', `${row.worker}'s workspace ${workspace} is no longer empty after a review member's step: the read-only sandbox did not hold, the answer is not trusted, and the workspace is left for the operator`)
     }
     // A worktree whose .git file the agent pointed elsewhere is not read by git: its result is not trusted.
@@ -999,6 +999,15 @@ function execution(row: RunRow): WorkerExecution {
     ...(row.result ? { result: row.result as ArtifactRef } : {}),
     ...(row.error ? { error: JSON.parse(row.error) as WorkerExecution['error'] & object } : {}),
     decisions: [row.egress_decision, row.budget_decision].filter((d): d is string => typeof d === 'string').map((d) => d as ContentId),
+  }
+}
+
+/** Whether `dir` is a directory that can be read and holds nothing. */
+function emptyDirectory(dir: string): boolean {
+  try {
+    return readdirSync(dir).length === 0
+  } catch {
+    return false
   }
 }
 

@@ -303,8 +303,8 @@ verified version installed, or the Workers off.
 
 A read-only agent Worker (a Codex, Antigravity CLI, or Claude Code one) can be a
 member of a `review` team under the **review-member profile**
-([ADR-0049](../decisions/adr/0049-read-only-agent-workers-as-review-members.md),
-proposed): its member steps run with every tool call denied, in an empty
+([ADR-0049](../decisions/adr/0049-read-only-agent-workers-as-review-members.md)):
+its member steps run with every tool call denied, in an empty
 workspace, so it reviews exactly what its prompt shows, as a website member
 does. It takes no other work for the profile: an ask, a brainstorm, or research
 never reaches it.
