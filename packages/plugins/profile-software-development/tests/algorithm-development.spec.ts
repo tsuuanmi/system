@@ -75,6 +75,9 @@ describe('the algorithm-development template (PROP-0010 B8)', () => {
     expect(reviews[0]!.prompt).not.toContain('Hypothesis:')
     const final = captureGitSubject(worktree)!.subject
     expect(/^Subject: (\S+)$/m.exec(reviews[1]!.prompt)![1]).toBe(subjectId(final))
+    const asked = (prompt: string): string => prompt.split('\n\n## The exact subject of this review')[0]!
+    expect(asked(reviews[1]!.prompt)).toBe(asked(reviews[0]!.prompt))
+    expect(asked(reviews[1]!.prompt)).toContain('Review this change as an independent reviewer')
 
     // Validation came last, on the fixed change: its listed command ran as the workspace write the policy judges it, asking no one.
     expect(agent.calls.filter((c) => c.role === 'validate')).toEqual([{ role: 'validate', tool: 'Bash', verdict: { decision: 'allow' } }])
