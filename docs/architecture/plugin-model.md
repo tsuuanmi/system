@@ -57,7 +57,7 @@ from the code in [packages](packages.md); this table names the roles.
 | Capabilities | `agentRuntimes` | plugin: Worker | built | `AgentRuntimes` in `system-agent-runtime-core`; registry `system-agent-runtimes`; providers `runtime-claude-agent-sdk`, `runtime-codex-sdk`, `runtime-acp`. A run may carry a per-tool-call gate (`RunSpec.toolGate`), asked by a runtime that reports `gatesToolCalls` and refused by one that cannot ([tool gate](../design/agent-runtimes.md#tool-gate)) | agent-workers |
 | Capabilities | `agentWorkers` | plugin: Worker | built | `system-agent-workers`: the `agents` Worker source | `ctx.workers`, through the source it registers |
 | Capabilities | `models` | plugin: Worker | built | `Models` in `system-models-core`; provider `system-models` over **DSH** `ctx.llm` (`llm`, `llm-pi-ai`) ([models](../design/models.md)) | the `models` Worker source in `system-models` |
-| Routing | `workers` | core: gate (admission, acceptance); its routing policy is a decision input | built | `Workers` in `system-workers-core`; `system-workers` | workflow; profile-scientific-research adds acceptance contracts |
+| Routing | `workers` | core: gate (admission, acceptance); its routing policy is a decision input | built | `Workers` in `system-workers-core`; `system-workers`. A start names the `brief` its source renders its prompt from ([briefs](../design/workflow-engine.md#briefs)) | workflow, digests; profile-scientific-research adds acceptance contracts |
 | Routing | `egress` | core: gate | built | `system-egress`: classification policy and credential scan (INV-12) | turns, agent-workers, models, workflow |
 | Orchestration | `workflow` | core: work state machine, runner; templates are the workflow family | built | `system-workflow`; templates through `ctx.workflow.template` | gateways, web-ui, profiles |
 | Orchestration | `workerSessions` | core: work state machine | built | `system-worker-sessions` ([design](../design/sessions-and-messaging.md)) | workflow |
@@ -67,7 +67,7 @@ from the code in [packages](packages.md); this table names the roles.
 | Routing | `approvals` | core: gate | built | `Approvals` in `system-approvals-core` ([approvals](../design/approvals.md)): the autonomy policy and one batched approval queue for every action that needs a person, expiry denying; provider `system-approvals` (on `ctx.store`, the policies from its configuration, MCP `approvals_*` with `approvals_decide` at operator scope) | board; web-ui (the operator's queue, optional); agent-workers (each run's tool gate, optional: none, and no tool call runs); workflow (planned); surfaces |
 | Routing | `decisions` | plugin: decision | planned | typed decisions with probabilities for intake and routing ([PROP-0002](../proposals/0002-decision-assisted-routing.md)) | workers, workflow |
 | Orchestration | `board` | core: work state machine | built | `Board` in `system-board-core` ([board](../design/board.md)): projects (charter, milestones, funding rounds) and board tasks across runs, with leases and expiring waits; provider `system-board` (store-backed, `board_*` MCP tools, projected to `TASKS.md`), its bundle row on, over the approval queue | workflow, surfaces, the lead through `board_*` tools |
-| Orchestration | `digests` | plugin: digest | planned | cited `digest@1.0` summaries of raw artifacts, quote-checked ([PROP-0008](../proposals/0008-studio-operating-model.md#mechanism-1-the-digest-layer)) | workflow, board, the lead |
+| Orchestration | `digests` | plugin: digest | built | `Digests` in `system-digest-core` ([digests](../design/digests.md)): cited `digest@1.0` summaries of raw artifacts, every claim quote-checked against the artifact it cites, failing open; provider `system-digest` (on `ctx.store`, a read-only Worker on the economy tier through `ctx.workers`, MCP `digests_*`), its bundle row on | the lead, on request (`digests_request`); it cooperates with the core by artifacts only |
 | Capabilities | `context` | plugin: context | planned | context plugins attached to an agent Worker at launch (tool search, output filters, symbol retrieval), each with a manifest | agent-workers |
 | Kernel | `knowledge` | plugin: knowledge | planned | indexing and retrieval over artifacts (full text, local embeddings, re-check dates) | intake, research templates |
 | — | `website` (Website Core) | — | not planned | replaced by `ctx.turns` and the engine's request keys and result reuse | — |
@@ -105,7 +105,7 @@ The `Class` column of the [seam catalog](#seam-catalog) gives each seam's class.
 | Worker | takes a brief and artifact pointers; returns result artifacts with usage | Worker sources `turns`, `agentWorkers`, `models`; their runtimes `agentRuntimes`, `providers`, `browser`, `display`, `accounts`, `login` |
 | decision | takes state and typed questions; returns typed answers with probabilities | the routing policy inside `workers`; model healing in `ui-ops`; `decisions` (planned) |
 | verification | takes an artifact and criteria; returns pass or fail with evidence | acceptance contracts registered through `workers.contract`; quote checks and tallies in team review |
-| digest | takes raw artifacts; returns a cited summary | `digests` (planned) |
+| digest | takes raw artifacts; returns a cited summary | `digests`: `system-digest` |
 | context | attached to a Worker at launch; reduces tokens entering context without changing results | `context` (planned) |
 | workflow | template: job graph, team kind, milestones, default criteria | profiles through `workflow.template` |
 | knowledge | indexing and retrieval over the ledger of record | `knowledge` (planned) |
@@ -248,6 +248,7 @@ Consumers depend on definitions only.
 | `approvals` | `Approvals` in `@tsuuanmi/system-approvals-core` | `approvals-core/conformance/approvals.ts` (contract 1.0) | `approvals` (store-backed), the fake `FakeApprovals` |
 | `resources` | `Resources` in `@tsuuanmi/system-resources-core` | `resources-core/conformance/resources.ts` (contract 1.0) | `resources` (store-backed), the fake `FakeResources` |
 | `board` | `Board` in `@tsuuanmi/system-board-core` | `board-core/conformance/board.ts` (contract 1.0, over any `ctx.approvals`) | `board` (over a real store, with `FakeApprovals` and with `approvals`), the fake `FakeBoard` |
+| `digests` | `Digests` in `@tsuuanmi/system-digest-core` | `digest-core/conformance/digests.ts` (contract 1.0) | `digest` (over real routing, with a scripted Worker), the fake `FakeDigests` |
 | `store` | concrete `Store` in `@tsuuanmi/system-store` | `plugins/store/conformance/store.ts` (contract 1.0) | `store` |
 | `eventLog` | concrete `EventLog` in `@tsuuanmi/system-event-log` | `plugins/event-log/conformance/event-log.ts` (contract 1.0) | `event-log` |
 | `artifacts` | concrete `Artifacts` in `@tsuuanmi/system-artifacts` | `plugins/artifacts/conformance/artifacts.ts` (contract 1.0) | `artifacts` |
@@ -255,4 +256,4 @@ Consumers depend on definitions only.
 | `leases` | concrete `Leases` in `@tsuuanmi/system-leases` | `plugins/leases/conformance/leases.ts` (contract 1.0) | `leases` |
 | `egress` | concrete `Egress` in `@tsuuanmi/system-egress` | `plugins/egress/conformance/egress.ts` (contract 1.0) | `egress` |
 | `workerSessions` | concrete `WorkerSessions` in `@tsuuanmi/system-worker-sessions` | `plugins/worker-sessions/conformance/worker-sessions.ts` (contract 1.0) | `worker-sessions` |
-| `workflow` | concrete `Workflow` in `@tsuuanmi/system-workflow` | `plugins/workflow/conformance/workflow.ts` (contract 1.2, over the store-backed `board` and `approvals`), beside the template suite `profiles.ts` | `workflow` |
+| `workflow` | concrete `Workflow` in `@tsuuanmi/system-workflow` | `plugins/workflow/conformance/workflow.ts` (contract 1.3, over the store-backed `board` and `approvals`), beside the template suite `profiles.ts` | `workflow` |
