@@ -96,6 +96,16 @@ export function assertRuntime(problem: string | undefined = sqliteRuntimeProblem
   if (problem) throw new Error(problem)
 }
 
+/** A file's text, or undefined when there is none: one read, so nothing can change between a check and it. */
+function readIfPresent(path: string): string | undefined {
+  try {
+    return readFileSync(path, 'utf8')
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
+    throw error
+  }
+}
+
 /**
  * Create or refresh the profile, with `preset` when given (otherwise the profile keeps its
  * preset). The operator's own `cordis.patch.yml` is never rewritten: a preset is a bundle layer.
@@ -105,9 +115,14 @@ export function init(home: string = dshHome(), preset?: Preset): string {
   mkdirSync(dir, { recursive: true, mode: 0o700 })
   const bundleDir = dirname(require.resolve('@tsuuanmi/system-bundle/package.json'))
   const path = join(dir, 'package.json')
-  const current = existsSync(path) ? (JSON.parse(readFileSync(path, 'utf8')) as Partial<ProfileManifest>) : undefined
-  writeFileSync(path, `${JSON.stringify(mergeProfileManifest(current, bundleDir, preset), null, 2)}\n`)
-  if (!existsSync(join(dir, 'cordis.patch.yml'))) writeFileSync(join(dir, 'cordis.patch.yml'), '# Operator overrides for the system profile.\n[]\n')
+  const current = readIfPresent(path)
+  writeFileSync(path, `${JSON.stringify(mergeProfileManifest(current === undefined ? undefined : JSON.parse(current) as Partial<ProfileManifest>, bundleDir, preset), null, 2)}\n`)
+  // Created only when absent (`wx`, one atomic step): an operator's file is never overwritten.
+  try {
+    writeFileSync(join(dir, 'cordis.patch.yml'), '# Operator overrides for the system profile.\n[]\n', { flag: 'wx' })
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+  }
   const install = spawnSync(process.execPath, [dshBin(), 'plugin', '--profile', PROFILE, 'install'], {
     env: dshEnv({ ...process.env, DSH_HOME: home }), stdio: 'inherit',
   })
@@ -249,8 +264,9 @@ interface Discovery { url: string; tokenFiles: Record<Scope, string>; pid?: numb
 /** The running profile's discovery file. */
 function discovery(home: string): Discovery {
   const path = join(home, 'system', 'mcp.json')
-  if (!existsSync(path)) throw new Error(`no discovery file at ${path}; is \`system start\` running?`)
-  const found = JSON.parse(readFileSync(path, 'utf8')) as Partial<Discovery>
+  const text = readIfPresent(path)
+  if (text === undefined) throw new Error(`no discovery file at ${path}; is \`system start\` running?`)
+  const found = JSON.parse(text) as Partial<Discovery>
   if (typeof found.tokenFiles !== 'object' || found.tokenFiles === null) {
     throw new Error(`the running profile predates scoped tokens (${path}); run \`system shutdown\`, then \`system start\` with this version`)
   }
@@ -458,8 +474,9 @@ export function hostProcessProblem(pid: number, home: string, proc = '/proc'): s
 export async function shutdownHost(deadlineMs: number, options: { home?: string; call?: typeof callTool; pollMs?: number; onActive?: (active: string[]) => void; proc?: string } = {}): Promise<{ drained: boolean; active: string[]; pid: number; undrained?: string }> {
   const home = options.home ?? dshHome()
   const path = join(home, 'system', 'mcp.json')
-  if (!existsSync(path)) throw new Error(`no discovery file at ${path}; is \`system start\` running?`)
-  const { pid } = JSON.parse(readFileSync(path, 'utf8')) as Discovery
+  const text = readIfPresent(path)
+  if (text === undefined) throw new Error(`no discovery file at ${path}; is \`system start\` running?`)
+  const { pid } = JSON.parse(text) as Discovery
   if (!pid) throw new Error(`${path} names no process`)
   let drained: { drained: boolean; active: string[]; undrained?: string }
   try {
