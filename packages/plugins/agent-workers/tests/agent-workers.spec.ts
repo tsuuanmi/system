@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process'
 import { generateKeyPairSync } from 'node:crypto'
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
@@ -892,6 +892,40 @@ describe('agents source: a git worktree per workflow run (worktreePerRun; PROP-0
     await briefed(ctx, 'k-alone', taskBrief(ctx, '# p1\n'))
     expect(existsSync(join(repo, '.system'))).toBe(false)
     expect(agent.runs[1]!.prompt).not.toContain('Files in your workspace')
+  })
+
+  it('replaces the brief\'s files whole on a later run of the workflow run, whatever the agent did to them, and never writes through a link it left there (INV-15)', async () => {
+    const repo = repository()
+    const outside = join(temp('system-outside-'), 'kept.txt')
+    writeFileSync(outside, 'not the workspace\'s\n')
+    const seen: Array<{ text: string; mode: number }> = []
+    const agent = developer({
+      act: (spec) => {
+        const file = join(spec.workspace, '.system', 'TASKS.md')
+        seen.push({ text: readFileSync(file, 'utf8'), mode: statSync(file).mode & 0o777 })
+        if (seen.length === 1) {
+          // Made writable and edited: the next run's brief replaces it whole, read-only again.
+          chmodSync(file, 0o644)
+          writeFileSync(file, 'edited by the agent\n')
+        } else {
+          // A link left in its place: the next run is refused, and what it points to is untouched.
+          rmSync(file)
+          symlinkSync(outside, file)
+        }
+        return writes(spec)
+      },
+    })
+    const { ctx } = await boot(agent, { workers: [writer(repo)], worktreeRoot: temp('system-worktrees-') })
+    expect(await briefed(ctx, 'k-first', taskBrief(ctx, '# p1\n\n### first\n'), 'run_again')).toMatchObject({ status: 'completed' })
+    expect(await briefed(ctx, 'k-second', taskBrief(ctx, '# p1\n\n### second\n'), 'run_again')).toMatchObject({ status: 'completed' })
+    expect(seen).toEqual([{ text: '# p1\n\n### first\n', mode: 0o444 }, { text: '# p1\n\n### second\n', mode: 0o444 }])
+    const refused = await briefed(ctx, 'k-third', taskBrief(ctx, '# p1\n\n### third\n'), 'run_again')
+    expect(refused).toMatchObject({ status: 'failed', submitted: false, error: { kind: 'config_error' } })
+    expect(refused.error!.message).toMatch(/TASKS\.md is not a plain file/)
+    expect(readFileSync(outside, 'utf8')).toBe('not the workspace\'s\n')
+    expect(agent.runs).toHaveLength(2)
+    // No temporary file is left beside the brief's files.
+    expect(readdirSync(join(agent.runs[0]!.workspace, '.system')).sort()).toEqual(['.gitignore', 'TASKS.md'])
   })
 
   it('checks the brief\'s files at egress with the prompt, and writes none into a repository that tracks .system/: nothing reaches the agent (INV-12, INV-2)', async () => {

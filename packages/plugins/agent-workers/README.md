@@ -76,9 +76,10 @@ The **`agents` Worker source**: agent runtimes as Workers
     (one check of exactly what the agent is given, INV-12), and written into
     the run's worktree before the agent starts, under `.system/`, whose own
     `.gitignore` (`*`) makes git ignore it: never in the worktree's subject, a
-    review's diff, or a commit. Each file is created afresh read-only (0444),
-    never through a link; edits are never read back. A repository that tracks
-    anything under `.system/`, or a `.system` that is not a plain directory,
+    review's diff, or a commit. Each file is written whole, read-only (0444),
+    beside its name and renamed over it, never through a link; edits are never
+    read back. A repository that tracks anything under `.system/`, a `.system`
+    that is not a plain directory, or a file of it that is not a plain file,
     fails the run unsubmitted (`config_error`). The prompt names the files
     only when they are written: a run of no workflow run, or of a Worker
     without `worktreePerRun`, gets none;
