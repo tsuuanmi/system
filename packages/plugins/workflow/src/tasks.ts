@@ -796,6 +796,27 @@ export class TaskRuns {
   }
 
   /**
+   * Release the holds of one step whose execution settled, at once: a sibling of its batch still in
+   * flight would otherwise keep it held, and one reserving later would count it beside the step's
+   * own usage. Only this node's holds: a sibling may hold a reservation it has not started on yet.
+   * Its hold stays while the node is still `RUNNING` (a stop while it waits). A failure here is
+   * logged; the next turn's {@link releaseSteps} asks again.
+   */
+  async releaseStep(runId: string, nodeId: string): Promise<void> {
+    try {
+      const row = this.row(runId)
+      if (!row?.budget) return
+      const holds = holdsOf(JSON.parse(row.budget) as TaskBudget)
+      if (!holds.some((h) => h.nodeId === nodeId)) return
+      const node = this.e.nodeRow(runId, nodeId)
+      const running = node?.state === 'RUNNING' && node.execution_id ? stepKey(node.node_id, node.attempt, node.escalations) : undefined
+      await this.releaseHolds(runId, new Set(holds.filter((h) => h.nodeId !== nodeId || h.step === running).map((h) => h.step)), false)
+    } catch (error) {
+      this.warn(`the hold of step ${nodeId} of run ${runId} was not released when it settled; the run's next turn releases it`, error)
+    }
+  }
+
+  /**
    * A line of the task's budget is spent: the holder blocks the task on the board (`budget-spent`,
    * with the funding it asks for, {@link fundingAsk}: the board asks the policy about `funding`, and
    * the operator decides whether the budget is raised by exactly those lines and the task goes on),

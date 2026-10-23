@@ -432,6 +432,9 @@ export class Engine {
               failAttempt(this, run, row, { kind: 'internal', disposition: 'CODE_FIX', message: (error as Error).message }, { sent: !!row.execution_id }, current)
             } finally {
               this.executing.delete(keys[i]!)
+              // A step settled keeps no hold while its siblings run (ADR-0047); the next turn's release stays the backstop.
+              // A stop or a lost lease leaves it to the next turn or start, which know whether it is still in flight.
+              if (!signal.aborted) await this.tasks.releaseStep(run.run_id, node.node_id)
             }
           }))
           // A step waits to reserve its task's budget (no ledger, or one that did not answer): look again later.
