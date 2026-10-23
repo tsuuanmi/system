@@ -83,6 +83,14 @@ accepted/implemented -> superseded
   redoes an experiment blindly; promotion through the approval queue. First loop: worker
   agnosticism on the `review` template.
 
+- [PROP-0012: Agent accounts](0012-agent-accounts.md), **proposed**. Several sign-ins per agent
+  runtime (three Claude Code, two Codex CLI, three Antigravity CLI): enrollment slots are only
+  homes; the account id is derived from the verified login, never named; an unverified, changed,
+  or duplicate identity is quarantined; Workers are account × role with per-account concurrency,
+  pools, and siblings; and a per-provider `accounts: assigned | pooled`, assigned by default and
+  required for personal plans, under which a limit makes an account's work wait instead of moving
+  it to another account of that provider, website accounts included.
+
 Use [0000-template.md](0000-template.md) for new proposals. The
 [roadmap](roadmap.md) is a non-normative queue of milestones, not a substitute for
 a reviewed proposal.

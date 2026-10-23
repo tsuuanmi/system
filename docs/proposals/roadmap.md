@@ -125,3 +125,8 @@ Not scheduled; each needs the operator's go-ahead:
 Each needs its own proposal: an A2A gateway and runtime (cross-runtime peers), an
 ACP client gateway for editors, sandboxed or SSH `exec` providers, more website
 providers, and a desktop launcher.
+
+- **Several accounts per agent runtime**: [PROP-0012](0012-agent-accounts.md), its phases A to G,
+  each with the operator's go-ahead. Phase C (agent siblings, team accounts counted by sibling)
+  fixes today's single homes and can go first; Antigravity CLI accounts wait for a verified way to
+  read their identity.
