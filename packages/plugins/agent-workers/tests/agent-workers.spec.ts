@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process'
 import { generateKeyPairSync } from 'node:crypto'
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
@@ -840,6 +840,78 @@ describe('agents source: a git worktree per workflow run (worktreePerRun; PROP-0
     expect(second.runs[0]!.workspace).toBe(first.runs[0]!.workspace)
     expect(readFileSync(join(second.runs[0]!.workspace, 'note-run_keep.txt'), 'utf8')).toBe('k-1\n')
     expect(readdirSync(elsewhere)).toEqual([])
+  })
+
+  /** A board task's brief whose files hold `text` as the board's TASKS.md (brief@1.2 files). */
+  const taskBrief = (ctx: Context, text: string): `sha256:${string}` => {
+    const ref = ctx.artifacts.put({
+      kind: 'evidence', bodySchema: 'board-projection@1.0', classification: 'operator-shared', producer: { type: 'system', ref: 'workflow' },
+      body: { schema: 'board-projection@1.0', projectId: 'p1', format: 'tasks-md', text, tasks: 1, truncated: false },
+    }).id
+    return ctx.artifacts.put({
+      kind: 'objective', bodySchema: 'brief@1.2', classification: 'operator-shared', producer: { type: 'system', ref: 'workflow' }, inputs: [ref],
+      body: {
+        schema: 'brief@1.2', projectId: 'p1', taskId: 'task-1', attempt: 1, goal: 'fix add', acceptance: [{ id: 'a1', statement: 'add adds' }], artifacts: [],
+        instructions: [{ text: 'fix add' }], files: [{ path: '.system/TASKS.md', ref, note: 'the board of project p1' }],
+        budget: { remaining: [] }, sandbox: { mode: 'read-only', network: 'allow-list', commands: false }, classification: 'operator-shared',
+      },
+    }).id as `sha256:${string}`
+  }
+  const briefed = async (ctx: Context, key: string, brief: `sha256:${string}`, runId?: string): Promise<WorkerExecution> => {
+    const source = ctx.workers.source('agents')!
+    return source.wait(source.start({ key, worker: 'agent:dev', brief, ...(runId ? { runId } : {}), requirement: requirement({ capabilities: ['develop'] }), decisions: { tier: 'sha256:0', route: 'sha256:0' } as never }).id, 30_000)
+  }
+
+  it('writes a board task brief\'s TASKS.md into the run\'s worktree before the agent starts, read-only, under a .system/ git ignores: never in its subject or the retention commit (PROP-0010, INV-15)', async () => {
+    const repo = repository()
+    const head = git(repo, 'rev-parse', 'HEAD')
+    const seen: Array<{ text?: string; mode?: number }> = []
+    const agent = developer({
+      act: (spec) => {
+        const file = join(spec.workspace, '.system', 'TASKS.md')
+        seen.push(existsSync(file) ? { text: readFileSync(file, 'utf8'), mode: statSync(file).mode & 0o777 } : {})
+        return writes(spec)
+      },
+    })
+    const { ctx } = await boot(agent, { workers: [writer(repo)], worktreeRoot: temp('system-worktrees-') })
+    const done = await briefed(ctx, 'k-files', taskBrief(ctx, '# p1\n\n### fix add\n'), 'run_files')
+    expect(done).toMatchObject({ status: 'completed' })
+    expect(seen[0]).toEqual({ text: '# p1\n\n### fix add\n', mode: 0o444 })
+    // The prompt names the file, since this source wrote it.
+    expect(agent.runs[0]!.prompt).toContain('Files in your workspace, written by system before this run (read-only; edits are never read back):\n- .system/TASKS.md: the board of project p1')
+    const workspace = agent.runs[0]!.workspace
+    // Ignored by git: the run's subject is its change alone.
+    expect(git(workspace, 'status', '--porcelain', '--untracked-files=all').split('\n').map((l) => l.trim()).sort()).toEqual(['?? note-run_files.txt', 'M calc.py'])
+    expect(captureGitSubject(workspace)!.diff).not.toContain('new file .system/')
+    expect((ctx.artifacts.get(done.result!)!.body as { subject: unknown }).subject).toEqual(captureGitSubject(workspace)!.subject)
+    // The retention commit keeps the work and never the board's file.
+    expect(await ctx.agentWorkers.sweepWorktrees(LATER())).toEqual({ removed: [workspace], kept: [] })
+    expect(git(repo, 'ls-tree', '-r', '--name-only', 'system/run/run_files').split('\n').sort()).toEqual(['calc.py', 'note-run_files.txt'])
+    untouched(repo, head)
+    // A run of no workflow run works in the configured workspace: no file there, and the prompt does not name one.
+    await briefed(ctx, 'k-alone', taskBrief(ctx, '# p1\n'))
+    expect(existsSync(join(repo, '.system'))).toBe(false)
+    expect(agent.runs[1]!.prompt).not.toContain('Files in your workspace')
+  })
+
+  it('checks the brief\'s files at egress with the prompt, and writes none into a repository that tracks .system/: nothing reaches the agent (INV-12, INV-2)', async () => {
+    const repo = repository()
+    const agent = developer()
+    const { ctx } = await boot(agent, { workers: [writer(repo)], worktreeRoot: temp('system-worktrees-') })
+    // Generated at run time: never a real secret in the repository.
+    const secret = String(generateKeyPairSync('rsa', { modulusLength: 1024 }).privateKey.export({ type: 'pkcs1', format: 'pem' }))
+    const leaked = await briefed(ctx, 'k-leak', taskBrief(ctx, `# p1\n${secret}`), 'run_leak')
+    expect(leaked).toMatchObject({ status: 'failed', submitted: false, error: { kind: 'egress_denied' } })
+    const tracked = repository()
+    mkdirSync(join(tracked, '.system'))
+    writeFileSync(join(tracked, '.system', 'notes.txt'), 'the repository\'s own\n')
+    git(tracked, 'add', '.')
+    git(tracked, 'commit', '-q', '-m', 'notes')
+    const other = await boot(agent, { workers: [writer(tracked)], worktreeRoot: temp('system-worktrees-') })
+    const refused = await briefed(other.ctx, 'k-tracked', taskBrief(other.ctx, '# p1\n'), 'run_tracked')
+    expect(refused).toMatchObject({ status: 'failed', submitted: false, error: { kind: 'config_error' } })
+    expect(refused.error!.message).toMatch(/tracks files under \.system\//)
+    expect(agent.runs).toEqual([])
   })
 
   it('commits a finished workflow run\'s pending changes on its branch, then removes its worktree after the retention, by a recorded decision; a later run of it adds the worktree again from that branch (INV-9, INV-13)', async () => {

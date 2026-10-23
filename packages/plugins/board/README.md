@@ -68,14 +68,16 @@ charters, and their tasks.
 - **Reads beyond the seam:** `projectPage` and `taskPage` (20 items by default, never more than
   `pageBound`, with an opaque cursor), `counts`, `latest`, and `tasksMarkdown`. `projects` and
   `tasks`, the seam's own reads, return every match.
-- **`TASKS.md`:** `tasksMarkdown(projectId)` renders one project's board as Markdown in
-  Backlog.md's spirit, for native agents without MCP: per task its id, title, state, action
+- **`TASKS.md`:** `tasksMarkdown(projectId)` renders one project's board with the definition's
+  `renderTasks` ([`board-core`](../../board-core/README.md)), as Markdown in Backlog.md's spirit, for native agents without MCP: per task its id, title, state, action
   class, attempts, dependencies, holder, run, why it waits (with its questions), result (with
   its digest), and
   acceptance criteria as checkboxes (checked once done). Tasks are grouped in progress, waiting,
   ready, proposed, done, cancelled; at most `projectionMaxTasks`, open ones first, the rest
   counted. The output depends on the stored records only, quotes each goal so it cannot read as
-  the board's structure, and is never read back; the caller writes it where an agent reads it.
+  the board's structure, and is never read back; the caller writes it where an agent reads it
+  (the workflow engine renders the same projection into a task run's worktree,
+  [TASKS.md in a run's workspace](../../../docs/design/workflow-engine.md#tasksmd-in-a-runs-workspace)).
 - **MCP** (when `ctx.mcp` is present, client scope): `board_projects`, `board_charter`,
   `board_brief`, `board_tasks`, `board_task`, `board_propose`, `board_claim`, `board_update`,
   `board_cancel`. Each input and structured output is validated against

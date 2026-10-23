@@ -138,7 +138,10 @@ included. So exact-subject review and remediation
 ([workflow engine](workflow-engine.md#exact-subject-gates)) bind to the tree the writer
 changed. The provider only sees a `RunSpec` whose workspace is the worktree. A worktree under
 the DSH home is bound back like any workspace: writable for `workspace-write`, read-only for
-`read-only`.
+`read-only`. A brief's files (`brief@1.2` `files`, such as a board task's `TASKS.md`) are written
+into the run's own worktree before the agent starts, under a `.system/` that git ignores, read-only
+and never read back ([TASKS.md in a run's workspace](workflow-engine.md#tasksmd-in-a-runs-workspace));
+a run with no worktree of its own gets none.
 
 Worktrees are bounded ([INV-9](../architecture/invariants.md#inv-9-everything-is-bounded)):
 once every agent run of a workflow run has finished and the retention has passed, a

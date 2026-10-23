@@ -26,6 +26,14 @@ describe('briefs', () => {
     expect(renderBrief(brief({ projectId: 'p1', taskId: 't1', attempt: 1 }), read)).not.toContain('"questions"')
   })
 
+  it('names a brief\'s files only when its source writes them into the run\'s workspace (brief@1.2 files)', () => {
+    const filed = brief({ schema: 'brief@1.2', projectId: 'p1', taskId: 't1', attempt: 1, files: [{ path: '.system/TASKS.md', ref: LOG, note: 'the board of p1' }] })
+    expect(renderBrief(filed, read, { placesFiles: true })).toContain('Files in your workspace, written by system before this run (read-only; edits are never read back):\n- .system/TASKS.md: the board of p1')
+    // Never inlined: the file's text is not part of the prompt either way.
+    expect(renderBrief(filed, read, { placesFiles: true })).not.toContain('"z":1')
+    expect(renderBrief(filed, read)).not.toContain('.system/TASKS.md')
+  })
+
   it('reads questions only from an answer that is wholly one questions object, bounded (INV-9)', () => {
     expect(questionsOf('{"questions": ["Which band width?", " Keep the old API? "]}')).toEqual(['Which band width?', 'Keep the old API?'])
     expect(questionsOf('```json\n{"questions": ["Which band width?"]}\n```')).toEqual(['Which band width?'])

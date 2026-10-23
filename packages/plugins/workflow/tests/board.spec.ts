@@ -602,6 +602,47 @@ describe('ctx.workflow serves board tasks over the store-backed board and approv
     expect(ctx.artifacts.get(workers.started.at(-1)!.brief!)!.body).not.toHaveProperty('ask')
   })
 
+  it('gives every brief of a task\'s run the board\'s TASKS.md as a file for its worktree, bounded, by content id, never in a source\'s prompt that writes none (PROP-0010, INV-9, INV-12)', async () => {
+    const { ctx, workers } = await boot()
+    await project(ctx)
+    await ready(ctx, 'other work')
+    const task = await ready(ctx, 'with a board')
+    const run = await ctx.workflow.start({ template: 'solo', input: 'q', classification: 'public', task: { taskId: task.taskId } })
+    expect((await reported(ctx, run.runId)).task?.outcome).toMatchObject({ status: 'accepted' })
+    const envelope = ctx.artifacts.get(workers.started[0]!.brief!)!
+    const brief = envelope.body as { files: Array<{ path: string; ref: ArtifactRef; note: string }> }
+    expect(brief.files).toEqual([{ path: '.system/TASKS.md', ref: expect.any(String), note: 'the board of project p1 when this run was admitted (2 task(s))' }])
+    expect(envelope.inputs).toContain(brief.files[0]!.ref)
+    const projection = ctx.artifacts.get(brief.files[0]!.ref)!
+    expect(projection).toMatchObject({ kind: 'evidence', bodySchema: 'board-projection@1.0', classification: 'public', body: { projectId: 'p1', format: 'tasks-md', tasks: 2, truncated: false } })
+    const text = (projection.body as { text: string }).text
+    expect(text).toContain('### with a board')
+    expect(text).toContain('### other work')
+    expect(text).toContain(`- id: \`${task.taskId}\``)
+    // A source that writes no file never mentions one.
+    expect(workers.started[0]!.prompt).not.toContain('TASKS.md')
+  })
+
+  it('cuts the TASKS.md projection at tasksFile.maxChars with a note, and writes none with tasksFile.maxTasks 0 (INV-9)', async () => {
+    const cut = await boot({ workflow: { tasksFile: { maxChars: 1024 } } })
+    await project(cut.ctx)
+    for (const n of [1, 2, 3]) await ready(cut.ctx, `long ${n}`, { goal: `${'a long goal line\n'.repeat(40)}` })
+    const task = await ready(cut.ctx, 'cut')
+    const run = await cut.ctx.workflow.start({ template: 'solo', input: 'q', classification: 'public', task: { taskId: task.taskId } })
+    await reported(cut.ctx, run.runId)
+    const file = (cut.ctx.artifacts.get(cut.workers.started[0]!.brief!)!.body as { files: Array<{ ref: ArtifactRef }> }).files[0]!
+    const body = cut.ctx.artifacts.get(file.ref)!.body as { text: string; truncated: boolean; tasks: number }
+    expect(body).toMatchObject({ truncated: true, tasks: 4 })
+    expect([...body.text].length).toBeLessThanOrEqual(1024)
+    expect(body.text).toMatch(/…\(cut at 1024 characters of \d+: read the rest of the board with board_tasks\)\n$/)
+
+    const none = await boot({ workflow: { tasksFile: { maxTasks: 0 } } })
+    await project(none.ctx)
+    const bare = await ready(none.ctx, 'no file')
+    await reported(none.ctx, (await none.ctx.workflow.start({ template: 'solo', input: 'q', classification: 'public', task: { taskId: bare.taskId } })).runId)
+    expect(none.ctx.artifacts.get(none.workers.started[0]!.brief!)!.body).not.toHaveProperty('files')
+  })
+
   it('fails a node whose instructions retention cleared, with nothing sent, instead of briefing it on its goal alone (INV-2)', async () => {
     const { ctx, workers } = await boot({ board: false })
     workers.reply = () => ({ fail: 'invalid_input', disposition: 'NONE', sent: false })

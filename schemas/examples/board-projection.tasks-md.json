@@ -1,0 +1,8 @@
+{
+  "schema": "board-projection@1.0",
+  "projectId": "proj-sparse-align",
+  "format": "tasks-md",
+  "text": "<!-- TASKS.md for project proj-sparse-align: a projection of the system board, generated from its store. Edits here are never read back; change the board through the board_* tools. -->\n\n# Sparse alignment\n\n- project: `proj-sparse-align`\n- state: active\n- charter: version 1, approved\n- intent: A banded alignment kernel twice as fast on long reads\n\n## In progress\n\n### Banded kernel\n\n- id: `task-0007`\n- state: claimed\n- action: workspace-write\n- attempts: 1 of 3\n- depends on: nothing\n- holder: workflow:run_5f2c (generation 2, lease until 2026-10-23T10:10:00.000Z)\n\n> Implement the banded alignment kernel behind the existing interface.\n\nAcceptance criteria:\n\n- [ ] a1: Every existing alignment test passes (tests)\n",
+  "tasks": 1,
+  "truncated": false
+}

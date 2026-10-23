@@ -575,11 +575,27 @@ guesses.
   engine offers it on every brief of a board task's run
   ([a question from a run](../design/workflow-engine.md#a-question-from-a-run)); `ask` before
   1.2 is refused. Example: [`brief.task-attempt.json`](../../schemas/examples/brief.task-attempt.json).
+- `brief@1.2` adds `files`: at most 4 files a Worker source with a workspace of the run's own
+  writes there before the run, each the text of the artifact it points at, at a path of one name
+  under `.system/` (a directory the source makes git ignore). Every `files[].ref` is an input of
+  the envelope too, under the same classification floor. A source with no such workspace writes
+  none and never mentions them; `files` before 1.2 is refused
+  ([TASKS.md in a run's workspace](../design/workflow-engine.md#tasksmd-in-a-runs-workspace)).
 - `sandbox` comes from trusted configuration (the Worker source's), never from model text, and
   `budget.remaining` is computed from the ledger when the brief is written. `resume` names the
   native session the brief continues, when the Worker keeps one. Examples:
   [`brief.task.json`](../../schemas/examples/brief.task.json),
   [`brief.node.json`](../../schemas/examples/brief.node.json).
+
+### `board-projection`
+
+- The body of an `evidence` artifact: a project's board as the board's `TASKS.md` projection
+  renders it (`format: tasks-md`), when a board task's run was admitted, for the run's worktree.
+  A projection of the store, never read back: it decides nothing.
+- `tasks` counts the project's tasks, listed or not; the text lists at most the engine's
+  `tasksFile.maxTasks` and holds at most `tasksFile.maxChars` characters, `truncated` when it was
+  cut (a note at its end says so). Its classification is the run's. Example:
+  [`board-projection.tasks-md.json`](../../schemas/examples/board-projection.tasks-md.json).
 
 ### `digest`
 

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:tsuuanmi:system:schema:brief:v1",
   "title": "Brief",
-  "description": "Body of an `objective` artifact: what one Worker run is given (PROP-0010). It carries pointers to artifacts by content id, never their content; the Worker source resolves them when it renders the brief into its own prompt format (design/workflow-engine.md#briefs). 1.1 adds `instructions`; 1.2 adds `ask`.",
+  "description": "Body of an `objective` artifact: what one Worker run is given (PROP-0010). It carries pointers to artifacts by content id, never their content; the Worker source resolves them when it renders the brief into its own prompt format (design/workflow-engine.md#briefs). 1.1 adds `instructions`; 1.2 adds `ask` and `files`.",
   "type": "object",
   "required": ["schema", "goal", "acceptance", "artifacts", "budget", "sandbox", "classification"],
   "properties": {
@@ -81,6 +81,21 @@
       "properties": { "maxQuestions": { "type": "integer", "minimum": 1, "maximum": 8 } },
       "additionalProperties": false
     },
+    "files": {
+      "description": "1.2: files the Worker source writes into the run's workspace before the run starts, read-only for the agent and never read back, each the text of the artifact it points at, under `.system/`, which git ignores there; a source with no workspace of the run's own writes none. The board task's `TASKS.md` projection, for one (design/workflow-engine.md#tasksmd-in-a-runs-workspace). Every ref is also an input of the brief's envelope (INV-12).",
+      "type": "array",
+      "maxItems": 4,
+      "items": {
+        "type": "object",
+        "required": ["path", "ref"],
+        "properties": {
+          "path": { "type": "string", "pattern": "^\\.system/[A-Za-z0-9][A-Za-z0-9_-]{0,58}\\.[A-Za-z0-9]{1,4}$" },
+          "ref": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/artifactRef" },
+          "note": { "type": "string", "maxLength": 300 }
+        },
+        "additionalProperties": false
+      }
+    },
     "budget": {
       "description": "What the run may still draw: per pool, and a deadline.",
       "type": "object",
@@ -142,8 +157,8 @@
       "then": { "description": "@1.1 fields (instructions) are refused before @1.1.", "properties": { "schema": { "enum": ["brief@1.1", "brief@1.2"] } } }
     },
     {
-      "if": { "anyOf": [{ "properties": { "ask": { "type": "object" } }, "required": ["ask"] }] },
-      "then": { "description": "@1.2 fields (ask) are refused before @1.2.", "properties": { "schema": { "const": "brief@1.2" } } }
+      "if": { "anyOf": [{ "properties": { "ask": { "type": "object" } }, "required": ["ask"] }, { "properties": { "files": { "type": "array" } }, "required": ["files"] }] },
+      "then": { "description": "@1.2 fields (ask, files) are refused before @1.2.", "properties": { "schema": { "const": "brief@1.2" } } }
     }
   ],
   "additionalProperties": false

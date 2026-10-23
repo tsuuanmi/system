@@ -19,12 +19,12 @@
  */
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { closeSync, constants, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, rmdirSync } from 'node:fs'
+import { closeSync, constants, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, rmdirSync, rmSync, unlinkSync, writeSync } from 'node:fs'
 import { basename, dirname, join, resolve, sep } from 'node:path'
 import { promisify } from 'node:util'
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@tsuuanmi/system-artifacts'
-import { ensurePrivateDir } from '@tsuuanmi/system-libs'
+import { BRIEF_FILE_PATH, ensurePrivateDir } from '@tsuuanmi/system-libs'
 import type {} from '@tsuuanmi/system-store'
 
 /** A workflow run id as it may name a branch and a directory: letters, digits, `_`, `-`. */
@@ -222,6 +222,41 @@ export class Worktrees {
   }
 
   /**
+   * Write a brief's files into a run's worktree before its agent starts (`brief@1.2` `files`, such
+   * as the board's `TASKS.md`): each under `.system/`, whose own `.gitignore` (`*`) makes git ignore
+   * the directory, so no file of it is ever part of the worktree's subject, a review's diff, or the
+   * retention commit. Each file is written read-only (0444) and replaced whole on the next write;
+   * edits are never read back. Refused, with nothing reaching the agent, when the worktree is not
+   * intact, the repository tracks anything under `.system/`, or `.system` (or a file in it) is not
+   * a plain directory (or file) of the worktree: a link is never followed out of the workspace.
+   */
+  async place(workspace: string, files: ReadonlyArray<{ path: string; text: string }>): Promise<void> {
+    if (!files.length) return
+    const row = this.ctx.store.db.prepare('SELECT gitdir FROM agent_worktrees WHERE path = ? AND removed_at IS NULL').get(workspace) as { gitdir: string } | undefined
+    if (!row || pointer(workspace) !== row.gitdir) throw new WorktreeError(`${workspace} is not an intact worktree of a run; no file is written there`)
+    for (const file of files) if (!BRIEF_FILE_PATH.test(file.path)) throw new WorktreeError(`${JSON.stringify(file.path)} is not a file under .system/; nothing is written`)
+    const tracked = await git(workspace, [`--git-dir=${row.gitdir}`, `--work-tree=${workspace}`, 'ls-files', '-z', '--', '.system'])
+    if (tracked.length) throw new WorktreeError(`the repository tracks files under .system/ (${tracked.split('\0')[0]}); system's workspace files would change them, so none is written`)
+    const dir = join(workspace, '.system')
+    const found = lstatSync(dir, { throwIfNoEntry: false })
+    if (!found) mkdirSync(dir, { mode: 0o755 })
+    else if (!found.isDirectory() || found.isSymbolicLink()) throw new WorktreeError(`${dir} is not a directory of the worktree; nothing is written`)
+    for (const [name, text] of [['.gitignore', '# Written by system: this directory is never part of the work.\n*\n'], ...files.map((f) => [f.path.slice('.system/'.length), f.text])] as const) {
+      const path = join(dir, name)
+      const existing = lstatSync(path, { throwIfNoEntry: false })
+      if (existing && !existing.isFile()) throw new WorktreeError(`${path} is not a plain file; nothing more is written`)
+      if (existing) unlinkSync(path)
+      // Created afresh, never through a link (O_NOFOLLOW, O_EXCL), read-only to the agent.
+      const fd = openSync(path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o444)
+      try {
+        writeSync(fd, text)
+      } finally {
+        closeSync(fd)
+      }
+    }
+  }
+
+  /**
    * Whether `workspace` is still the worktree it was created as: its `.git` file points to the
    * administrative directory recorded for it. An agent can write that file; when it points
    * elsewhere, git must not run in the worktree (another configuration could run commands).
@@ -301,6 +336,11 @@ export class Worktrees {
     }
     await this.verify(row)
     const inside = (args: string[]): Promise<string> => git(row.path, [`--git-dir=${row.gitdir}`, `--work-tree=${row.path}`, ...args])
+    // system's own workspace files (`.system/`, see place) are never part of the work: gone before the commit,
+    // even if the agent changed their .gitignore. A `.system` the repository tracks is the repository's.
+    const system = join(row.path, '.system')
+    const own = lstatSync(system, { throwIfNoEntry: false })
+    if (own?.isDirectory() && !own.isSymbolicLink() && !(await inside(['ls-files', '-z', '--', '.system'])).length) rmSync(system, { recursive: true, force: true })
     let commit: string | undefined
     if ((await inside(['status', '--porcelain', '--untracked-files=all'])).trim()) {
       await inside(['add', '--all'])

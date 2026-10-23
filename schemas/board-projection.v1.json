@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:tsuuanmi:system:schema:board-projection:v1",
+  "title": "Board projection",
+  "description": "Body of an `evidence` artifact: one project's board as the `TASKS.md` projection renders it (design/board.md), at the moment a board task's run was admitted, for a native agent that reads files rather than MCP. A projection of the store, never read back; bounded in tasks and characters (design/workflow-engine.md#tasksmd-in-a-runs-workspace).",
+  "type": "object",
+  "required": ["schema", "projectId", "format", "text", "tasks", "truncated"],
+  "properties": {
+    "schema": { "const": "board-projection@1.0" },
+    "projectId": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
+    "format": {
+      "description": "tasks-md: the board's TASKS.md Markdown, per task its id, title, state, criteria, and why it waits.",
+      "enum": ["tasks-md"]
+    },
+    "text": { "type": "string", "minLength": 1, "maxLength": 1048576 },
+    "tasks": { "description": "The project's tasks when it was rendered, listed or not.", "type": "integer", "minimum": 0 },
+    "truncated": { "description": "Whether the text was cut at its bound in characters (a note at its end says so).", "type": "boolean" }
+  },
+  "additionalProperties": false
+}

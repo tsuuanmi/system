@@ -4,7 +4,7 @@
  * dependencies, holder, and why it waits. A pure function of the stored records, so the same board
  * renders the same text; it is never read back (the store is the source of truth).
  */
-import type { BoardTask, Project, TaskState } from '@tsuuanmi/system-board-core'
+import type { BoardTask, Project, TaskState } from './index.ts'
 
 /** Sections in reading order: what moves now, what waits, what comes next, then what ended. */
 const SECTIONS: ReadonlyArray<{ title: string; states: readonly TaskState[] }> = [

@@ -1,7 +1,7 @@
 export { canonicalJson, contentId, sha256, type ContentId } from './canonical.ts'
 export {
-  type ArtifactLookup, type Brief, type BriefBudgetLine, type BriefClassification, BriefError, type BriefPointer, type BriefRole, type BriefSandbox, type BriefSegment, BRIEF_LIMITS,
-  bodyText, NO_LOCAL_SANDBOX, QUESTION_LIMITS, questionsOf, type ReadArtifact, renderBrief, type StartInput, startPrompt,
+  type ArtifactLookup, type Brief, type BriefBudgetLine, type BriefClassification, BriefError, type BriefFile, BRIEF_FILE_PATH, type BriefPointer, type BriefRole, type BriefSandbox, type BriefSegment, BRIEF_LIMITS,
+  bodyText, NO_LOCAL_SANDBOX, QUESTION_LIMITS, questionsOf, type ReadArtifact, renderBrief, type RenderOptions, type StartInput, startPrompt,
 } from './briefs.ts'
 export { extractJson, SchemaError, SchemaRegistry } from './schemas.ts'
 export { dshHome, ensurePrivateDir, fsyncDir, readOrCreateSecretFile, writeFileDurable } from './files.ts'

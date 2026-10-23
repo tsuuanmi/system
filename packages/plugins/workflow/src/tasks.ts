@@ -22,10 +22,10 @@
  * choices is a decision with a reason for every candidate (INV-13). The board is optional: a run
  * for a task needs it, every other run does not.
  */
-import { type ArtifactRef, BoardError, type BoardTask, type Board, type Classification, type RunOutcome, type Subject } from '@tsuuanmi/system-board-core'
+import { type ArtifactRef, BoardError, type BoardTask, type Board, type Classification, type Project, renderTasks, type RunOutcome, type Subject } from '@tsuuanmi/system-board-core'
 import type { Lease } from '@tsuuanmi/system-leases'
 import type { WorkerExecution } from '@tsuuanmi/system-workers-core'
-import { BRIEF_LIMITS, type BriefBudgetLine, type BriefPointer, captureGitSubject, questionsOf } from '@tsuuanmi/system-libs'
+import { BRIEF_LIMITS, type BriefBudgetLine, type BriefFile, type BriefPointer, captureGitSubject, questionsOf } from '@tsuuanmi/system-libs'
 import { type BudgetLine, ResourcesError, type UsageRecord } from '@tsuuanmi/system-resources-core'
 import type { TaskFrame } from './briefs.ts'
 import { TaskDigests } from './digests.ts'
@@ -44,6 +44,8 @@ const REPORT_RETRY_MAX_MS = 10 * 60_000
 const RENEW_RETRY_MS = 5_000
 
 const RANK: Record<Classification, number> = { public: 0, 'operator-shared': 1, 'local-private': 2 }
+/** Where a task run's worktree holds the board's projection (brief@1.2 `files`): under `.system/`, which its source makes git ignore. */
+const TASKS_FILE = '.system/TASKS.md'
 /** Pointers a task's run adds to every brief it writes, at most (the brief holds 64). */
 const FRAME_POINTERS = 16
 const PRODUCER = { producer: { type: 'system' as const, ref: 'workflow' } }
@@ -174,7 +176,7 @@ export class TaskRuns {
     const runId = newId('run')
     // What every brief of the run carries, and whether the run resumes the session of the work
     // before it; both settled before the task is taken, so a failure here claims nothing.
-    const frame = await this.frameOf(board, task)
+    const frame = await this.frameOf(board, task, project, classification)
     const session = plain.sessionId === undefined ? await this.session(task, prepared, plain.template, runId) : undefined
     const started = { ...plain, ...(classification ? { classification } : {}), ...(session?.sessionId ? { sessionId: session.sessionId } : {}) }
     const admittedAs = session?.sessionId ? e.prepare(started) : prepared
@@ -232,7 +234,7 @@ export class TaskRuns {
    * its questions). Only stored artifacts are pointed at, at most {@link FRAME_POINTERS}. The
    * budget is what the task may still draw: its lines less the usage the ledger counts for it.
    */
-  private async frameOf(board: Board, task: BoardTask): Promise<TaskFrame> {
+  private async frameOf(board: Board, task: BoardTask, project: Project | undefined, classification: Classification | undefined): Promise<TaskFrame> {
     const attempt = task.attempts.count + 1
     const pointers: BriefPointer[] = []
     const add = (ref: ArtifactRef, role: BriefPointer['role'], note: string): void => {
@@ -254,9 +256,46 @@ export class TaskRuns {
           : `the decision behind attempt ${attempt}: why attempt ${task.attempts.count} did not finish the task`)
       }
     }
+    const files = project ? await this.tasksFile(board, project, classification) : undefined
     return {
       projectId: task.projectId, taskId: task.taskId, attempt, goal: clampText(task.goal, BRIEF_LIMITS.goal),
       acceptance: task.acceptance.map(({ id, statement }) => ({ id, statement })), pointers, budget: await this.budgetOf(task),
+      ...(files ? { files } : {}),
+    }
+  }
+
+  /**
+   * The board's `TASKS.md` projection of the task's project, as the run is admitted, for a Worker
+   * source that writes it into the run's own worktree (docs/design/workflow-engine.md#tasksmd-in-a-runs-workspace):
+   * `renderTasks` of the board's definition, at most `tasksFile.maxTasks` tasks and
+   * `tasksFile.maxChars` characters (cut at a line, with a note), stored as a `board-projection@1.0`
+   * artifact at the run's classification, so the brief points at it and its source checks egress
+   * on its text as on any content the Worker reads (INV-12). A capability: one the board cannot
+   * render is left out, logged, and the run goes on without it.
+   */
+  private async tasksFile(board: Board, project: Project, classification: Classification | undefined): Promise<BriefFile[] | undefined> {
+    const maxTasks = this.e.config.tasksFile?.maxTasks ?? 200
+    if (maxTasks === 0) return undefined
+    const maxChars = this.e.config.tasksFile?.maxChars ?? 65_536
+    try {
+      const tasks = await board.tasks({ projectId: project.projectId })
+      let text = renderTasks(project, tasks, maxTasks)
+      const truncated = [...text].length > maxChars
+      if (truncated) {
+        const all = [...text].length
+        const note = `\n…(cut at ${maxChars} characters of ${all}: read the rest of the board with board_tasks)\n`
+        const kept = [...text].slice(0, maxChars - [...note].length).join('')
+        text = `${kept.slice(0, Math.max(0, kept.lastIndexOf('\n')))}${note}`
+      }
+      const ref = this.e.ctx.artifacts.put({
+        kind: 'evidence', bodySchema: 'board-projection@1.0',
+        body: { schema: 'board-projection@1.0', projectId: project.projectId, format: 'tasks-md', text, tasks: tasks.length, truncated },
+        classification: classification ?? project.classification ?? this.e.ctx.egress.defaultClassification, ...PRODUCER,
+      }).id as ArtifactRef
+      return [{ path: TASKS_FILE, ref, note: `the board of project ${project.projectId} when this run was admitted (${tasks.length} task(s)${truncated ? ', cut' : ''})` }]
+    } catch (error) {
+      this.warn(`the board's TASKS.md of project ${project.projectId} was not rendered; the run goes on without it`, error)
+      return undefined
     }
   }
 

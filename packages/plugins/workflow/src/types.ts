@@ -264,6 +264,12 @@ export interface Config {
    * 6; INV-9); 0 asks for none. Past it, a result keeps no digest, recorded with why.
    */
   digestsPerHour?: number
+  /**
+   * The board's `TASKS.md` projection a board task's run is given, written into its own worktree by
+   * a Worker source that has one: at most `maxTasks` tasks (default 200; 0 writes no file) and
+   * `maxChars` characters (default 65,536), past which it is cut with a note (INV-9).
+   */
+  tasksFile?: { maxTasks?: number; maxChars?: number }
   /** A review's repository reads: the hosts allowed (default github.com) and the bounds (40 files, 300 KB, 48 KB a file; INV-9). */
   repositories?: { hosts?: string[]; maxFiles?: number; maxBytes?: number; maxFileBytes?: number; maxSourceChars?: number }
 }

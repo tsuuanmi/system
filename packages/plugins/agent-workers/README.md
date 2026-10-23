@@ -70,6 +70,17 @@ The **`agents` Worker source**: agent runtimes as Workers
   - the repository's checked-out branch and main working tree are never written,
     and git always runs with `-C <path>`, fixed arguments, no shell, no hooks,
     no system or global configuration, and a 60 s bound;
+  - **a brief's files** (`brief@1.2` `files`, the board's `TASKS.md` for a board
+    task's run): resolved at start like the prompt, checked at egress with it
+    (one check of exactly what the agent is given, INV-12), and written into
+    the run's worktree before the agent starts, under `.system/`, whose own
+    `.gitignore` (`*`) makes git ignore it: never in the worktree's subject, a
+    review's diff, or a commit. Each file is created afresh read-only (0444),
+    never through a link; edits are never read back. A repository that tracks
+    anything under `.system/`, or a `.system` that is not a plain directory,
+    fails the run unsubmitted (`config_error`). The prompt names the files
+    only when they are written: a run of no workflow run, or of a Worker
+    without `worktreePerRun`, gets none;
   - an agent can write the worktree's `.git` file, so git never follows it: a
     run whose worktree's `.git` file no longer points to the worktree's own
     directory fails as `reconciliation_failed`, and the worktree is left for
@@ -79,7 +90,8 @@ The **`agents` Worker source**: agent runtimes as Workers
     `worktreeRetentionHours` ago (default 168; 0 keeps every worktree), a
     `retention` decision (rule `agent-workers.worktree-retention`, INV-13, one
     per worktree, under the workflow run) retires the worktree: its changes are
-    committed on its branch (`git add --all`, author `system
+    committed on its branch (`.system/` removed first unless the repository
+    tracks it, then `git add --all`, author `system
     <system@localhost>`, a message naming the run), then it is removed (`git
     worktree remove`, never forced). Files the repository
     ignores go with it. A branch is never deleted. A worktree that cannot be

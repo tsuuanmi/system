@@ -93,6 +93,10 @@ export class Workflow extends Service {
     gateTimeoutHours: z.number().min(0.0001).max(720).default(24).description('Hours a plan\'s gate waits for the operator\'s approval, then closes and fails the run, by rule (INV-9); continue the run to wait again'),
     approvalPollSeconds: z.natural().min(1).max(300).default(15).description('Seconds between the engine\'s reads of the approval queue: a remediation fix\'s request while its run waits on it, and the requests a Worker\'s deferred tool calls wait on (INV-9)'),
     maxSessionRuns: z.natural().min(1).max(50).default(5).description('Runs one session may serve when a board task\'s next attempt, or the next task of a chain, resumes the session of the work before it (INV-9); past it, the run starts a fresh session given its brief'),
+    tasksFile: z.object({
+      maxTasks: z.natural().max(10_000).default(200).description('Tasks it lists at most, open ones first, the rest counted; 0 writes no file'),
+      maxChars: z.natural().min(1024).max(1_048_576).default(65_536).description('Characters it holds at most; past it, it is cut at a line with a note'),
+    }).description('The board\'s TASKS.md projection a board task\'s run is given in its own worktree (INV-9)'),
     digestsPerHour: z.natural().max(1000).default(6).description('Digests of board task results the engine asks ctx.digests for in any hour, one per attempt, after its result reached the board (INV-9); 0 asks for none. Past it, a result keeps no digest, recorded with why'),
     repositories: z.object({
       hosts: z.array(z.string()).default(['github.com']).description('Hosts a review may read a public repository from'),

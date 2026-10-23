@@ -514,6 +514,8 @@ is refused (`config_error`), and every other run is unaffected.
 - A run that served an attempt is that attempt: `continue` and `supersede` refuse it, since the
   board decides the next attempt, which runs as a new run. It is not deleted or expired before
   its outcome is reported.
+- **`TASKS.md`.** Every brief of the run gives the board's projection as a file for a run's own
+  worktree ([below](#tasksmd-in-a-runs-workspace)).
 - **A question.** A step may answer with questions instead of a result; the task then waits for
   input ([below](#a-question-from-a-run)).
 - **Its budget**, when the task declares one, is reserved on the ledger before the run starts
@@ -560,6 +562,26 @@ stateDiagram-v2
   recorded before the effect; a run left `due` reserves when it advances again, one left `spent`
   blocks again (a block the board already took is refused, and the run then ends), and a hold a
   crash left unrecorded expires on its own.
+
+### TASKS.md in a run's workspace
+
+A native agent reads files, not MCP, so a run that serves a board task in a worktree of its own
+gets the board's `TASKS.md` projection ([board](board.md)) for that project as a file there,
+written before the run starts.
+
+| Step | Records | On failure |
+|---|---|---|
+| rendered | when the run is admitted, before the task is taken: `renderTasks` of the board's definition (`board-core`, the same projection the provider renders) over the project's tasks, at most `tasksFile.maxTasks` (default 200; 0 writes no file) and `tasksFile.maxChars` characters (default 65,536), past which it is cut at a line with a note saying so; a `board-projection@1.0` `evidence` artifact at the run's classification | a board that cannot render it: the run goes on without it, logged (a capability) |
+| pointed at | every brief of the run names it in `files` (`brief@1.2`): path `.system/TASKS.md`, by content id; it is an input of the brief's envelope, so the brief's classification is at least its own (INV-12) | — |
+| written | by a Worker source that has a workspace of the run's own (agent Workers with `worktreePerRun`): resolved when the execution starts, checked at egress with the prompt as one payload (INV-12), then written into the worktree before the agent starts, read-only (0444), under `.system/`, whose own `.gitignore` makes git ignore it; the prompt names it ([agent runtimes](agent-runtimes.md#workspaces)) | an egress denial fails the execution as `egress_denied`, a repository that tracks `.system/` (or a `.system` that is not a plain directory) as `config_error`, nothing sent; a source without such a workspace writes none and its prompt does not mention one |
+
+- **Never committed** (decided here): the file is not part of the work. git ignores `.system/`, so
+  it is never in the worktree's exact subject, a review's diff, or the run's changes, and the
+  worktree's retention commit removes `.system/` first unless the repository itself tracks it,
+  in which case no file is written at all. An agent may still change or commit it by hand: what
+  it holds is never read back, the board's store is the source of truth.
+- **Bounded** (INV-9): by task count and characters, at most 4 files a brief.
+- The file is the board as it stood when the run was admitted; the brief names the attempt.
 
 ### A question from a run
 
