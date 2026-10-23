@@ -164,8 +164,11 @@ second execution path (INV-1).
     version 2), and `workflow.node.escalated` names it. A node its session
     holds to its Workers (a team member, Model A) escalates only when one of
     them serves the next tier or above, since routing would refuse every other
-    Worker. With no tier left, the bound reached, or no Worker of its session
-    at the next tier, the node fails with `acceptance_rejected` (`NONE`): the
+    Worker. Those Workers are listed only for a rejected result; a listing that
+    fails leaves them unknown, and the node does not escalate (never failed
+    for the listing). With no tier left, the bound reached, no Worker of its
+    session at the next tier, or its Workers unknown, the node fails with
+    `acceptance_rejected` (`NONE`): the
     contract's reasons, then why it was not escalated. A rejected answer its
     Worker cut at its output bound (`model-answer` `finish: max-tokens`) says so
     among them.
@@ -329,8 +332,9 @@ second execution path (INV-1).
     `admission` refusal). Once the board recorded the run, before each Worker execution of it (a
     step) is routed, the run reserves its task's lines on the ledger (`ctx.resources.reserve`: the
     lines as caps for the task, the least of each line as the step's draw; ADR-0047, step 1),
-    records the step's hold on its row before the step starts, and releases it once the step is no
-    longer in flight. A cap the task's earlier steps or attempts already reached refuses it: no new
+    records the step's hold on its row before the step starts, and releases it as soon as the step's
+    execution settles (the run's next turn releases any hold left, and a finished run's budget ends
+    `released`, reserved or not). A cap the task's earlier steps or attempts already reached refuses it: no new
     step starts, the steps in flight finish and their results are taken, and the run asks for
     funding, from the ledger's count of the
     task's usage (`ctx.resources.usage`): for each spent line, what the task overdrew plus one
