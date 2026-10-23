@@ -18,9 +18,12 @@
  * cannot ask a gate before each tool call is unavailable. A run that a gate deferred fails, naming
  * the approval request it waits for; a later run of its session makes the call once approved.
  * Each runtime's enrollment slots and the agent accounts in them, identified by their verified
- * login, are kept by ./accounts.ts (ADR-0051), with the operator's tools in ./tools.ts: while the
- * account enrolled in a runtime's own home is not `ready` (nor `unverified` for want of a reader),
- * that runtime's Workers take no work.
+ * login, are kept by ./accounts.ts (ADR-0051), with the operator's tools in ./tools.ts. Workers are
+ * derived as account × role (./roles.ts, PROP-0012 phase F): each takes work only while its account
+ * is `ready`, runs in its account's home, and shares its account's concurrency, load, cooldowns, and
+ * pool. Hand-named Workers, the row's earlier shape, run as before in their runtime's own home (no
+ * work while the account enrolled there is not `ready`, nor `unverified` for want of a reader), until
+ * the operator applies the move to derived Workers (./migrate.ts); from then on they are refused.
  * @module @tsuuanmi/system-agent-workers
  */
 import { randomBytes } from 'node:crypto'
