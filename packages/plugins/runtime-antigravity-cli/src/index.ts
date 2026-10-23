@@ -29,7 +29,8 @@
  * ({@link VERIFIED_HOOK_VERSIONS}).
  * It never reports `executes` (agy's terminal sandbox has no model-free proof, and commands are
  * never offered) or `resume`. The conversation stays native; only its id crosses as the run's
- * handle (INV-7). What a run consumed is read from agy's own result, never from the model's text.
+ * handle (INV-7). What a run consumed is read from agy's own result, never from the model's text;
+ * a run that hit a quota also carries the limits agy's own usage report gives (`limits.ts`).
  * @module @tsuuanmi/system-runtime-antigravity-cli
  */
 import { type ChildProcess, execFile, spawn } from 'node:child_process'
@@ -39,15 +40,17 @@ import { promisify } from 'node:util'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import {
-  type AgentRuntimeProvider, type Confinement, type RunMetering, type RunResult, type RunSpec, type RuntimeEvidence, type TokenUsage, type ToolGate,
+  type AgentRuntimeProvider, type Confinement, type LimitObservation, type RunMetering, type RunResult, type RunSpec, type RuntimeEvidence, type TokenUsage, type ToolGate,
   TOOL_GATE_MS, askToolGate, childEnvironment, confinedCommand, proveConfinement, withMetering,
 } from '@tsuuanmi/system-agent-runtime-core'
 import { dshHome } from '@tsuuanmi/system-libs'
 import { ProviderError, type ProviderErrorKind } from '@tsuuanmi/system-provider-core'
 import { type ConfinedExec, type HookAnswer, type HookEvent, HOOK_ENV, SELF_TEST_REASON, TOKEN_ENV, execConfined, openChannel, prepareHome, selfTest } from './bridge.ts'
+import { USAGE_ARGS, VERIFIED_LIMIT_VERSIONS, limitsFromUsage } from './limits.ts'
 import { TOOLS, refusal, workspaceCustomizations } from './policy.ts'
 
 export { HOOKS_JSON, HOOK_COMMAND, prepareHome } from './bridge.ts'
+export { USAGE_ARGS, VERIFIED_LIMIT_VERSIONS, limitsFromUsage } from './limits.ts'
 export { READ_TOOLS, TOOLS, WRITE_TOOLS, refusal, workspaceCustomizations } from './policy.ts'
 
 const KIND = 'antigravity-cli'
@@ -225,14 +228,14 @@ export class AntigravityRuntime implements AgentRuntimeProvider {
       if (!hooks.proven) throw new ProviderError('config_error', `${KIND}: ${hooks.detail}; refusing a run whose tool calls nothing would hold`)
       if (signal.aborted) throw new ProviderError('aborted', `${KIND}: aborted before starting`)
       run.arm()
-      return await this.drive(run, executable, confinement, env, signal, onHandle)
+      return await this.drive(run, executable, version, confinement, env, signal, onHandle)
     } finally {
       await channel.close()
     }
   }
 
   /** Start agy on the run, read its stream to the end, and turn what it reported into the run's outcome. */
-  private async drive(run: Run, executable: string, confinement: Confinement, env: Record<string, string>, signal: AbortSignal, onHandle?: (handle: string) => void): Promise<RunResult> {
+  private async drive(run: Run, executable: string, version: string, confinement: Confinement, env: Record<string, string>, signal: AbortSignal, onHandle?: (handle: string) => void): Promise<RunResult> {
     const { spec } = run
     const args = [`--print=${spec.prompt}`, '--output-format', 'stream-json', '--disable-slash-commands', ...(spec.model ? [`--model=${spec.model}`] : [])]
     const c = confinedCommand(executable, args, confinement)
@@ -277,13 +280,40 @@ export class AntigravityRuntime implements AgentRuntimeProvider {
     if (exit.error) throw withMetering(new ProviderError('config_error', `${KIND}: agy could not be started: ${exit.error.message.slice(0, 200)}`), metering())
     if (stream.overflow) throw withMetering(new ProviderError('session_broken', `${KIND}: agy wrote a stream-json line longer than ${MAX_LINE} bytes`), metering())
     const result = stream.result
-    if (!result) throw withMetering(new ProviderError(failureKind(errorText), `${KIND}: agy ended without a result (exit ${exit.code ?? 'by signal'})${errorText ? `: ${errorText}` : ''}`), metering())
+    if (!result) throw await this.failed(failureKind(errorText), `${KIND}: agy ended without a result (exit ${exit.code ?? 'by signal'})${errorText ? `: ${errorText}` : ''}`, metering(), executable, version)
     const failure = typeof result.error === 'string' && result.error ? result.error : undefined
     if (exit.code !== 0 || result.status === 'ERROR' || failure) {
       const text = failure ?? errorText
-      throw withMetering(new ProviderError(failureKind(text), `${KIND}: ${String(result.status ?? 'failed')}${text ? `: ${text.slice(0, 300)}` : ''}`), metering())
+      throw await this.failed(failureKind(text), `${KIND}: ${String(result.status ?? 'failed')}${text ? `: ${text.slice(0, 300)}` : ''}`, metering(), executable, version)
     }
     return { text: typeof result.response === 'string' ? result.response : '', ...(stream.handle ? { nativeHandle: stream.handle } : {}), ...metering() }
+  }
+
+  /**
+   * A failed run's error, with what it consumed. A run that hit a quota or rate limit also carries
+   * the limits agy's own usage report gives (`limits.ts`), read once the run has ended, under the
+   * home's confinement, and only on an agy version whose report was verified; otherwise, or when
+   * the report cannot be read, the error says why and carries none, so the run's limit closes the
+   * pool for the Worker's cooldown (never open).
+   */
+  private async failed(kind: ProviderErrorKind, message: string, metering: RunMetering, executable: string, version: string): Promise<ProviderError> {
+    if (kind !== 'quota_exhausted') return withMetering(new ProviderError(kind, message), metering)
+    const read = await this.usageLimits(executable, version)
+    const limits = 'limits' in read ? read.limits : []
+    const note = 'unreadable' in read ? ` (its reset time is not read: ${read.unreadable})` : ''
+    return withMetering(new ProviderError(kind, `${message}${note}`), limits.length ? { ...metering, limits } : metering)
+  }
+
+  /** The limits agy's usage report (`agy --print=/usage --output-format json`) gives now, or why there are none. */
+  private async usageLimits(executable: string, version: string): Promise<{ limits: LimitObservation[] } | { unreadable: string }> {
+    if (!VERIFIED_LIMIT_VERSIONS.includes(version)) return { unreadable: `the usage report of agy ${version} is not verified` }
+    try {
+      const stdout = await this.exec()(confinedCommand(executable, [...USAGE_ARGS], this.confinement({ writable: [this.home] })), { env: this.environment(), cwd: this.home })
+      const read = limitsFromUsage(stdout.trim(), Date.now())
+      return 'unreadable' in read ? { unreadable: `agy's usage report cannot be read: ${read.unreadable}` } : read
+    } catch (error) {
+      return { unreadable: `agy's usage report failed: ${firstLine(error)}` }
+    }
   }
 
   private executable(): string | undefined {

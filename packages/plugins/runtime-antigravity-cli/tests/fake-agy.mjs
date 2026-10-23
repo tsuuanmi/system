@@ -1,6 +1,6 @@
 // A scripted Antigravity CLI for the runtime's tests: no model, no network. It answers
-// `--version`, `models` (signed in unless FAKE_AGY_SIGNED_OUT), and `plugin list --json`
-// (FAKE_AGY_PLUGINS, default none). In print mode it streams stream-json as agy does
+// `--version`, `models` (signed in unless FAKE_AGY_SIGNED_OUT), `plugin list --json`
+// (FAKE_AGY_PLUGINS, default none), and `--print=/usage --output-format json` (below). In print mode it streams stream-json as agy does
 // (`{"event":"<name>","<name>":{…}}`): an `init` naming the conversation `h-1`, then each tool call
 // of the scenario, each first through the PreToolUse hooks of `$HOME/.gemini/config/hooks.json`,
 // run as agy runs them (`sh -c` in that directory, the call as JSON on stdin, bounded by the
@@ -38,6 +38,18 @@ if (argv[0] === 'models') {
 }
 if (argv[0] === 'plugin' && argv[1] === 'list' && argv[2] === '--json') {
   console.log(env.FAKE_AGY_PLUGINS ?? '[]')
+  process.exit(0)
+}
+// Its usage report, as print mode answers `/usage` itself (no turn): FAKE_AGY_USAGE (a file holding
+// what it prints), else a report with no quota buckets; FAKE_AGY_USAGE_FAIL fails it with that message.
+if (argv[0] === '--print=/usage' && argv[1] === '--output-format' && argv[2] === 'json' && argv.length === 3) {
+  log({ ...seen, command: 'usage' })
+  if (env.FAKE_AGY_USAGE_FAIL) {
+    console.error(env.FAKE_AGY_USAGE_FAIL)
+    process.exit(1)
+  }
+  process.stdout.write(env.FAKE_AGY_USAGE ? readFileSync(env.FAKE_AGY_USAGE, 'utf8')
+    : `${JSON.stringify({ conversation_id: '', status: 'SUCCESS', response: '', duration_seconds: 0, num_turns: 0, command: { name: 'usage', data: { groups: [] } } })}\n`)
   process.exit(0)
 }
 const print = argv.find((a) => a.startsWith('--print='))

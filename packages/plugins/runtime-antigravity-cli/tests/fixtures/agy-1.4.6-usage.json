@@ -1,0 +1,525 @@
+{
+  "source": "agy 1.4.6: `agy --print=/usage --output-format json`, in the shape its binary's type descriptors give (steps.JSONOutput with command: steps.JSONCommand { name, data: printmode.quotaJSON { description, groups: [printmode.groupJSON { name, description, buckets: [printmode.bucketJSON { id, name, description, window, disabled, remaining_fraction, remaining_amount, reset_time (RFC 3339) }] }] } }), status SUCCESS as headless.buildOutput sets it. Built from that shape, not captured from an account; every name and id is redacted.",
+  "observedAt": "2026-10-24T10:00:00.000Z",
+  "cases": [
+    {
+      "case": "two windows open, one exhausted until its reset, one disabled, one saying nothing of what is left",
+      "stdout": {
+        "conversation_id": "",
+        "status": "SUCCESS",
+        "response": "<the report as tab-separated rows>",
+        "duration_seconds": 0,
+        "num_turns": 0,
+        "usage": {
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "thinking_tokens": 0,
+          "cache_read_tokens": 0,
+          "total_tokens": 0
+        },
+        "command": {
+          "name": "usage",
+          "data": {
+            "description": "<plan description>",
+            "groups": [
+              {
+                "name": "<group name>",
+                "buckets": [
+                  {
+                    "id": "<bucket-daily>",
+                    "name": "<daily requests>",
+                    "window": "<daily>",
+                    "remaining_fraction": 0.375,
+                    "reset_time": "2026-10-25T00:00:00Z"
+                  },
+                  {
+                    "id": "<bucket-weekly>",
+                    "name": "<weekly requests>",
+                    "window": "<weekly>",
+                    "remaining_fraction": 0,
+                    "remaining_amount": 0,
+                    "reset_time": "2026-10-27T08:30:00Z"
+                  }
+                ]
+              },
+              {
+                "name": "<second group>",
+                "buckets": [
+                  {
+                    "id": "<bucket-other>",
+                    "name": "<other model>",
+                    "disabled": true,
+                    "remaining_fraction": 0
+                  },
+                  {
+                    "id": "<bucket-silent>",
+                    "name": "<no numbers>",
+                    "reset_time": "2026-10-25T00:00:00Z"
+                  },
+                  {
+                    "id": "<bucket-amount>",
+                    "name": "<credits>",
+                    "remaining_amount": 120
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "limits": [
+        {
+          "window": "<bucket-daily>",
+          "status": "allowed",
+          "resetsAt": "2026-10-25T00:00:00.000Z",
+          "usedPercentage": 62.5,
+          "observedAt": "2026-10-24T10:00:00.000Z"
+        },
+        {
+          "window": "<bucket-weekly>",
+          "status": "rejected",
+          "resetsAt": "2026-10-27T08:30:00.000Z",
+          "usedPercentage": 100,
+          "observedAt": "2026-10-24T10:00:00.000Z"
+        },
+        {
+          "window": "<bucket-amount>",
+          "status": "allowed",
+          "observedAt": "2026-10-24T10:00:00.000Z"
+        }
+      ]
+    },
+    {
+      "case": "an exhausted bucket with no id closes the pool (window *); an open one with no id is not reported; a reset with an offset and fractions of a second",
+      "stdout": {
+        "conversation_id": "",
+        "status": "SUCCESS",
+        "response": "<the report as tab-separated rows>",
+        "duration_seconds": 0,
+        "num_turns": 0,
+        "usage": {
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "thinking_tokens": 0,
+          "cache_read_tokens": 0,
+          "total_tokens": 0
+        },
+        "command": {
+          "name": "quota",
+          "data": {
+            "description": "<plan description>",
+            "groups": [
+              {
+                "name": "<group name>",
+                "buckets": [
+                  {
+                    "name": "<unnamed open>",
+                    "remaining_fraction": 0.9
+                  },
+                  {
+                    "name": "<unnamed exhausted>",
+                    "remaining_fraction": 0,
+                    "reset_time": "2026-10-24T17:15:30.250+07:00"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "limits": [
+        {
+          "window": "*",
+          "status": "rejected",
+          "resetsAt": "2026-10-24T10:15:30.250Z",
+          "usedPercentage": 100,
+          "observedAt": "2026-10-24T10:00:00.000Z"
+        }
+      ]
+    },
+    {
+      "case": "resets not believed: already past for an exhausted bucket, more than 400 days away, not RFC 3339",
+      "stdout": {
+        "conversation_id": "",
+        "status": "SUCCESS",
+        "response": "<the report as tab-separated rows>",
+        "duration_seconds": 0,
+        "num_turns": 0,
+        "usage": {
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "thinking_tokens": 0,
+          "cache_read_tokens": 0,
+          "total_tokens": 0
+        },
+        "command": {
+          "name": "usage",
+          "data": {
+            "description": "<plan description>",
+            "groups": [
+              {
+                "name": "<group name>",
+                "buckets": [
+                  {
+                    "id": "a",
+                    "name": "a",
+                    "remaining_fraction": 0,
+                    "reset_time": "2026-10-24T09:59:59Z"
+                  },
+                  {
+                    "id": "b",
+                    "name": "b",
+                    "remaining_fraction": 0.5,
+                    "reset_time": "2028-01-01T00:00:00Z"
+                  },
+                  {
+                    "id": "c",
+                    "name": "c",
+                    "remaining_amount": 0,
+                    "reset_time": "Oct 25, 2026 12:00 AM"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "limits": [
+        {
+          "window": "a",
+          "status": "rejected",
+          "usedPercentage": 100,
+          "observedAt": "2026-10-24T10:00:00.000Z"
+        },
+        {
+          "window": "b",
+          "status": "allowed",
+          "usedPercentage": 50,
+          "observedAt": "2026-10-24T10:00:00.000Z"
+        },
+        {
+          "window": "c",
+          "status": "rejected",
+          "observedAt": "2026-10-24T10:00:00.000Z"
+        }
+      ]
+    },
+    {
+      "case": "an account with no quota buckets",
+      "stdout": {
+        "conversation_id": "",
+        "status": "SUCCESS",
+        "response": "<the report as tab-separated rows>",
+        "duration_seconds": 0,
+        "num_turns": 0,
+        "usage": {
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "thinking_tokens": 0,
+          "cache_read_tokens": 0,
+          "total_tokens": 0
+        },
+        "command": {
+          "name": "usage",
+          "data": {
+            "description": "<plan description>",
+            "groups": []
+          }
+        }
+      },
+      "limits": []
+    },
+    {
+      "case": "not JSON (the terminal's rows)",
+      "stdout": "<daily requests>\t37%\tresets 12:00 AM",
+      "unreadable": "it is not one JSON object"
+    },
+    {
+      "case": "a JSON array",
+      "stdout": [],
+      "unreadable": "it is not one JSON object"
+    },
+    {
+      "case": "a failed report",
+      "stdout": {
+        "conversation_id": "",
+        "status": "ERROR",
+        "response": "<the report as tab-separated rows>",
+        "duration_seconds": 0,
+        "num_turns": 0,
+        "usage": {
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "thinking_tokens": 0,
+          "cache_read_tokens": 0,
+          "total_tokens": 0
+        },
+        "command": {
+          "name": "usage",
+          "data": {
+            "description": "<plan description>",
+            "groups": []
+          }
+        }
+      },
+      "unreadable": "its status is \"ERROR\""
+    },
+    {
+      "case": "another command's report",
+      "stdout": {
+        "conversation_id": "",
+        "status": "SUCCESS",
+        "response": "<the report as tab-separated rows>",
+        "duration_seconds": 0,
+        "num_turns": 0,
+        "usage": {
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "thinking_tokens": 0,
+          "cache_read_tokens": 0,
+          "total_tokens": 0
+        },
+        "command": {
+          "name": "credits",
+          "data": {
+            "description": "<plan description>",
+            "groups": []
+          }
+        }
+      },
+      "unreadable": "it holds no usage report (command)"
+    },
+    {
+      "case": "a model's answer, not a report",
+      "stdout": {
+        "conversation_id": "<id>",
+        "status": "SUCCESS",
+        "response": "<text>",
+        "num_turns": 1
+      },
+      "unreadable": "it holds no usage report (command)"
+    },
+    {
+      "case": "no groups",
+      "stdout": {
+        "status": "SUCCESS",
+        "command": {
+          "name": "usage",
+          "data": {
+            "description": "<plan>"
+          }
+        }
+      },
+      "unreadable": "its report has no groups"
+    },
+    {
+      "case": "a group without buckets",
+      "stdout": {
+        "conversation_id": "",
+        "status": "SUCCESS",
+        "response": "<the report as tab-separated rows>",
+        "duration_seconds": 0,
+        "num_turns": 0,
+        "usage": {
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "thinking_tokens": 0,
+          "cache_read_tokens": 0,
+          "total_tokens": 0
+        },
+        "command": {
+          "name": "usage",
+          "data": {
+            "description": "<plan description>",
+            "groups": [
+              {
+                "name": "<group>"
+              }
+            ]
+          }
+        }
+      },
+      "unreadable": "a group is not a named list of buckets"
+    },
+    {
+      "case": "a bucket without a name",
+      "stdout": {
+        "conversation_id": "",
+        "status": "SUCCESS",
+        "response": "<the report as tab-separated rows>",
+        "duration_seconds": 0,
+        "num_turns": 0,
+        "usage": {
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "thinking_tokens": 0,
+          "cache_read_tokens": 0,
+          "total_tokens": 0
+        },
+        "command": {
+          "name": "usage",
+          "data": {
+            "description": "<plan description>",
+            "groups": [
+              {
+                "name": "<group name>",
+                "buckets": [
+                  {
+                    "id": "a",
+                    "remaining_fraction": 0.5
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "unreadable": "a bucket is not in the 1.4.6 shape"
+    },
+    {
+      "case": "a reset that is not a string",
+      "stdout": {
+        "conversation_id": "",
+        "status": "SUCCESS",
+        "response": "<the report as tab-separated rows>",
+        "duration_seconds": 0,
+        "num_turns": 0,
+        "usage": {
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "thinking_tokens": 0,
+          "cache_read_tokens": 0,
+          "total_tokens": 0
+        },
+        "command": {
+          "name": "usage",
+          "data": {
+            "description": "<plan description>",
+            "groups": [
+              {
+                "name": "<group name>",
+                "buckets": [
+                  {
+                    "id": "a",
+                    "name": "a",
+                    "remaining_fraction": 0,
+                    "reset_time": 1761350400
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "unreadable": "a bucket is not in the 1.4.6 shape"
+    },
+    {
+      "case": "a percentage where a fraction belongs",
+      "stdout": {
+        "conversation_id": "",
+        "status": "SUCCESS",
+        "response": "<the report as tab-separated rows>",
+        "duration_seconds": 0,
+        "num_turns": 0,
+        "usage": {
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "thinking_tokens": 0,
+          "cache_read_tokens": 0,
+          "total_tokens": 0
+        },
+        "command": {
+          "name": "usage",
+          "data": {
+            "description": "<plan description>",
+            "groups": [
+              {
+                "name": "<group name>",
+                "buckets": [
+                  {
+                    "id": "a",
+                    "name": "a",
+                    "remaining_fraction": 37.5
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "unreadable": "a remaining_fraction is not between 0 and 1"
+    },
+    {
+      "case": "a fraction as a string",
+      "stdout": {
+        "conversation_id": "",
+        "status": "SUCCESS",
+        "response": "<the report as tab-separated rows>",
+        "duration_seconds": 0,
+        "num_turns": 0,
+        "usage": {
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "thinking_tokens": 0,
+          "cache_read_tokens": 0,
+          "total_tokens": 0
+        },
+        "command": {
+          "name": "usage",
+          "data": {
+            "description": "<plan description>",
+            "groups": [
+              {
+                "name": "<group name>",
+                "buckets": [
+                  {
+                    "id": "a",
+                    "name": "a",
+                    "remaining_fraction": "0.5"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "unreadable": "a remaining_fraction is not between 0 and 1"
+    },
+    {
+      "case": "a negative amount",
+      "stdout": {
+        "conversation_id": "",
+        "status": "SUCCESS",
+        "response": "<the report as tab-separated rows>",
+        "duration_seconds": 0,
+        "num_turns": 0,
+        "usage": {
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "thinking_tokens": 0,
+          "cache_read_tokens": 0,
+          "total_tokens": 0
+        },
+        "command": {
+          "name": "usage",
+          "data": {
+            "description": "<plan description>",
+            "groups": [
+              {
+                "name": "<group name>",
+                "buckets": [
+                  {
+                    "id": "a",
+                    "name": "a",
+                    "remaining_amount": -1
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "unreadable": "a remaining_amount is not a whole number"
+    }
+  ]
+}
