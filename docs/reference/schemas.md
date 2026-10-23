@@ -215,6 +215,13 @@ guesses.
   and changes nothing.
 - `mailboxSeq` is the last delivered inbound sequence number. Redelivery after a
   crash resumes at `mailboxSeq + 1`.
+- `binding.runtime` is metadata, never a routing input: the kind of the runtime that serves the
+  session (`website` for a website Worker, else the agent runtime's kind; a kind the vocabulary
+  does not name is recorded as `local-tool`).
+- `worker-session@1.1` adds the runtime `antigravity-cli`, which `@1.0` recorded as `local-tool`.
+  A writer writes `@1.1` only for that runtime, and `@1.0` otherwise; a `@1.0` record naming it is
+  refused. Readers accept 1.0 and 1.1. Example:
+  [`worker-session.antigravity-member.json`](../../schemas/examples/worker-session.antigravity-member.json).
 - `policy.writes` names the subject the session writes under a board task's authority. Write
   authority itself is the board's: at most one open task writes a subject
   ([board](../design/board.md), INV-15); a session never claims it on its own.
