@@ -693,9 +693,10 @@ export class TaskRuns {
    * (`ctx.resources.reserve`, the lines as caps for the task, the least of each line as what the
    * run draws), recording where it stands on the run's row. Reserved, the run goes on, and the
    * reservation is released when it finishes. Refused because a line is spent, the task blocks on
-   * the board (`budget-spent`) and the run ends with nothing of it run; refused for any other
-   * reason (a pool unconfigured or unavailable since the start), the run fails, an attempt the
-   * board counts. Without a ledger, or one that does not answer, the run waits (INV-2).
+   * the board (`budget-spent`), unless the run was its last attempt, and the run ends with nothing
+   * of it run; refused for any other reason (a pool unconfigured or unavailable since the start),
+   * the run fails, an attempt the board counts. Without a ledger, or one that does not answer, the
+   * run waits (INV-2).
    */
   private async budgeted(runId: string, board: Board): Promise<'go' | 'wait' | 'stop'> {
     const row = this.row(runId)!
@@ -743,12 +744,21 @@ export class TaskRuns {
    * and the run ends with nothing of it run. The ask is fixed on the run's row before the block, so
    * a block asked again after a crash asks for the same lines. A block the board refuses (the
    * holder lapsed, say) ends the run all the same: its report then reconciles it as a failed run.
-   * A board or ledger that does not answer is asked again.
+   * A run that was its task's last attempt asks for nothing ({@link lastAttempt}). A board or
+   * ledger that does not answer is asked again.
    */
   private async spend(row: TaskRow, budget: TaskBudget, board: Board): Promise<'wait' | 'stop'> {
     if (budget.blocked === undefined && budget.refused === undefined) {
       if (budget.funding === undefined) {
-        const funding = await this.fundingAsk(row, budget, board)
+        let task: BoardTask | undefined
+        try {
+          task = await board.task(row.task_id)
+        } catch (error) {
+          this.warn(`could not read board task ${row.task_id} to ask for its funding`, error)
+          return 'wait'
+        }
+        if (task?.run?.runId === row.run_id && task.attempts.count >= task.attempts.max) return this.lastAttempt(row, budget, task)
+        const funding = await this.fundingAsk(row, budget, task)
         if (funding === 'wait') return 'wait'
         budget = { ...budget, funding }
         this.e.ctx.store.transaction((db) => void db.prepare('UPDATE workflow_tasks SET budget = ?, updated_at = ? WHERE run_id = ?').run(JSON.stringify(budget), now(), row.run_id))
@@ -783,18 +793,11 @@ export class TaskRuns {
    * task's attempts), at the unit's precision. Approved, the next attempt can reserve, and is given
    * about what one attempt was. Empty when no line is reached by recorded usage (holds that expire
    * refused the run) or the ledger cannot count it (more records than it returns): the request then
-   * asks only to go on. `wait` while the board or the ledger does not answer.
+   * asks only to go on. `wait` while the ledger does not answer.
    */
-  private async fundingAsk(row: TaskRow, budget: TaskBudget, board: Board): Promise<BudgetLine[] | 'wait'> {
+  private async fundingAsk(row: TaskRow, budget: TaskBudget, task: BoardTask | undefined): Promise<BudgetLine[] | 'wait'> {
     const resources = this.e.ctx.get('resources')
     if (!resources) return 'wait'
-    let task: BoardTask | undefined
-    try {
-      task = await board.task(row.task_id)
-    } catch (error) {
-      this.warn(`could not read board task ${row.task_id} to ask for its funding`, error)
-      return 'wait'
-    }
     if (!task) return []
     const asked: BudgetLine[] = []
     const records = new Map<string, UsageRecord[]>()
@@ -818,6 +821,42 @@ export class TaskRuns {
       asked.push({ pool: cap.pool, unit: cap.unit, amount: askable(Math.max(0, used - cap.amount) + cap.amount / task.attempts.max, cap.unit) })
     }
     return asked
+  }
+
+  /**
+   * A spent run that was its task's last attempt asks for no funding: with no attempt left, an
+   * approval could raise nothing and start nothing, since no board move makes a task ready past its
+   * attempts (ADR-0044, amended). A `gate` decision (`workflow.task-funding`) records the choice, and
+   * in one transaction with it the run's row keeps it and the run fails as `budget_spent` with
+   * nothing of it run, so a restart finds both or neither (INV-4). Its report is a failed run
+   * (`reconcileRun`), which leaves the task waiting for input (`retries-spent`). A run that ended
+   * meanwhile (the operator stopped it) is left as it ended.
+   */
+  private lastAttempt(row: TaskRow, budget: TaskBudget, task: BoardTask): 'stop' {
+    const attempt = `attempt ${task.attempts.count} of ${task.attempts.max}`
+    this.e.ctx.store.transaction((db) => {
+      const run = this.e.runRow(row.run_id)
+      if (run?.status !== 'running') return
+      const decision = this.e.ctx.artifacts.recordDecision({
+        decisionType: 'gate',
+        question: `Does run ${row.run_id}, which found board task ${row.task_id}'s budget spent, ask the operator to fund the task?`,
+        inputs: budget.decision ? [budget.decision] : [],
+        candidates: [
+          { option: 'end', selected: true, reasons: [`run ${row.run_id} is ${attempt}, the task's last: no attempt is left for funding to serve`, 'its failure is reported to the board, which leaves the task waiting for input (retries-spent); to go on, the work is proposed again'] },
+          { option: 'ask', selected: false, reasons: [`not ask: an approval could raise nothing and start no attempt, since a task makes at most its ${task.attempts.max} attempt(s)`] },
+        ],
+        decider: { type: 'rule', id: 'workflow.task-funding', version: '1' },
+        outcome: { option: 'end', detail: { taskId: row.task_id, attempt: task.attempts.count, maxAttempts: task.attempts.max } },
+        deterministic: true,
+      }, { ...PRODUCER, runId: row.run_id }).id as ArtifactRef
+      db.prepare('UPDATE workflow_tasks SET budget = ?, updated_at = ? WHERE run_id = ?').run(JSON.stringify({ ...budget, lastAttempt: decision }), now(), row.run_id)
+      const error: WorkflowError = {
+        kind: 'budget_spent', disposition: 'USER_ACTION',
+        message: `task ${row.task_id}'s budget is spent (${(budget.reasons ?? []).join('; ') || 'a cap would be exceeded'}; budget decision ${budget.decision}); nothing of this run ran; it was the task's last attempt (${attempt}), so no funding was asked (decision ${decision}): the task waits for input (retries-spent), and to go on the work is proposed again`,
+      }
+      this.e.finish(run, 'failed', { error: JSON.stringify(error) })
+    })
+    return 'stop'
   }
 
   /** The ledger refused the run for want of a pool, not a spent line: the run fails with nothing of it run, and its report is a failed attempt. */
@@ -1185,7 +1224,7 @@ function binding(lines: readonly BudgetLine[]): BudgetLine[] {
 function budgetView(budget: TaskBudget): NonNullable<TaskView['budget']> {
   return {
     state: budget.state, ...(budget.decision ? { decision: budget.decision } : {}), ...(budget.spent !== undefined ? { spent: budget.spent } : {}), ...(budget.blocked !== undefined ? { blocked: budget.blocked } : {}),
-    ...(budget.funding !== undefined ? { funding: budget.funding } : {}),
+    ...(budget.funding !== undefined ? { funding: budget.funding } : {}), ...(budget.lastAttempt ? { lastAttempt: budget.lastAttempt } : {}),
   }
 }
 

@@ -302,8 +302,12 @@ second execution path (INV-1).
     attempt's share of the line, fixed on the run's row (`task.budget.funding`) before it blocks
     the task on the board with it (`budget-spent` with `funding`, which asks the policy about
     `funding`; the operator's approval adds exactly those lines to the task's budget). The run
-    fails as `budget_spent` with nothing of it run, its outcome `blocked`; any other refusal fails
-    it (`quota_exhausted`), an attempt the board counts. Where it stands is the view's
+    fails as `budget_spent` with nothing of it run, its outcome `blocked`. On the task's last
+    attempt nothing is asked, since no approval could serve it: a `gate` decision
+    (`workflow.task-funding`) and the run's failure (`budget_spent`) commit together, the view's
+    `task.budget.lastAttempt` names the decision, and the run's report leaves the task waiting for
+    input (`retries-spent`). Any other refusal fails the run (`quota_exhausted`), an attempt the
+    board counts. Where it stands is the view's
     `task.budget` and the `workflow.task.budget` event
     ([a task's budget](../../../docs/design/workflow-engine.md#a-tasks-budget),
     [funding a spent task](../../../docs/design/workflow-engine.md#funding-a-spent-task));

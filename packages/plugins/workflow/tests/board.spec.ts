@@ -647,6 +647,37 @@ describe('ctx.workflow serves board tasks over the store-backed board and approv
     expect(greedy.run.task?.outcome).toMatchObject({ status: 'blocked', state: 'waiting-for-input' })
   })
 
+  it('asks for no funding when a task\'s budget is spent on its last attempt: the run fails as budget_spent, and its report leaves the task waiting for input (retries-spent), with nothing put to the operator (ADR-0044, INV-9, INV-13)', async () => {
+    const { ctx, workers } = await boot({ resources: 'store' })
+    await project(ctx)
+    await poolOpen(ctx)
+    const budget: BudgetLine[] = [{ pool: 'max.programmatic', unit: 'runs', amount: 1 }]
+    const task = await ready(ctx, 'last', { budget, maxAttempts: 1 })
+    await drew(ctx, task.taskId, 'r-last')
+    const run = await ctx.workflow.start({ template: 'solo', input: 'q', classification: 'public', task: { taskId: task.taskId } })
+    const failed = await settled(ctx, run.runId)
+    expect(failed).toMatchObject({ status: 'failed', error: { kind: 'budget_spent', disposition: 'USER_ACTION' } })
+    expect(failed.error!.message).toMatch(/it was the task's last attempt \(attempt 1 of 1\), so no funding was asked/)
+    expect(workers.started).toHaveLength(0)
+    const view = await reported(ctx, run.runId)
+    expect(view.task?.budget).toMatchObject({ state: 'refused', spent: true })
+    expect(view.task?.budget).not.toHaveProperty('blocked')
+    expect(view.task?.budget).not.toHaveProperty('funding')
+    // The engine's own choice, made before its effect (INV-13), on the ledger's refusal.
+    const gate = decisionOf(ctx, view.task!.budget!.lastAttempt)
+    expect(gate).toMatchObject({ decisionType: 'gate', decider: { id: 'workflow.task-funding' }, inputs: [view.task!.budget!.decision], outcome: { option: 'end', detail: { taskId: task.taskId, attempt: 1, maxAttempts: 1 } } })
+    expect(gate.candidates.map((c) => [c.option, c.selected])).toEqual([['end', true], ['ask', false]])
+    // Reported as a failed run with no attempt left: the board's own retries-spent wait, which expires.
+    expect(view.task?.outcome).toMatchObject({ status: 'reconciled', state: 'waiting-for-input' })
+    const ended = (await ctx.board.task(task.taskId))!
+    schemas.assertRecord(ended)
+    expect(ended).toMatchObject({ state: 'waiting-for-input', waiting: { reason: 'retries-spent' }, budget, attempts: { count: 1, max: 1 } })
+    expect(ended.funding).toBeUndefined()
+    expect(decisionOf(ctx, ended.lastDecision)).toMatchObject({ decisionType: 'board', outcome: { option: 'waiting-for-input', detail: { runId: run.runId, outcome: 'failed' } } })
+    expect((await ctx.approvals.list({ states: ['open', 'batched', 'approved', 'rejected'] })).filter((r) => r.requester.taskId === task.taskId)).toEqual([])
+    expect(decisionsOf(ctx, 'gate', 'workflow.task-funding')).toHaveLength(1)
+  })
+
   it('reconciles a crash between the operator\'s approval and the board\'s move: the raise is applied once, adopting the request the dead move left, and the next attempt reserves and runs (INV-4)', async () => {
     const { ctx, workers, restartBoard } = await boot({ resources: 'store' })
     await project(ctx)

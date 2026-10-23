@@ -84,3 +84,38 @@ ledger cannot count the task's usage. Then the request asks only to go on.
   the spent run was the last attempt. Then an approval raises nothing.
 - Revisit if raises should be bounded per project, or by absolute amounts per pool, rather than as
   a share of each task's own lines.
+
+## Amendment (2026-10-23): no funding asked on a task's last attempt
+
+This settles one item the record left open: the funding ask on a spent run that was the task's
+last attempt. That request could not serve the task. Approved, it raised nothing, and the task
+waited for input (`retries-spent`) all the same, since no board move makes a task ready past
+`attempts.max` (INV-9). The operator was asked to decide something that changed nothing.
+
+Options were: (1) the holder asks for nothing and reports the run failed; (2) the board refuses or
+skips the gate for a `budget-spent` block with no attempt left; (3) an approval also grants one
+more attempt. Option 2 changes what `block` does, which is the board's contract (ADR-0036). Option
+3 would let an approval exceed `attempts.max`, which the board's rules forbid. **Option 1** is
+chosen, and only the workflow engine changes.
+
+- **The engine asks for nothing on the last attempt.** When the ledger refuses a task's run for a
+  spent line, the engine reads the task first. If the board shows the run as the task's last
+  attempt (`attempts.count` equals `attempts.max`), it records a `gate` decision
+  (`workflow.task-funding`, outcome `end`, its input the ledger's refusal). In one transaction with
+  that decision, it keeps the decision on the run's row and fails the run as `budget_spent` with
+  nothing of it run (INV-13, INV-4). It does not block the task.
+- **The board's existing move ends the task.** The run's report is a failed run
+  (`reconcileRun`). With no attempt left, the board leaves the task waiting for input
+  (`retries-spent`), which expires (`input-expired`). No request is opened. To go on, the work is
+  proposed again.
+- **No contract changes.** Neither the board's contract (1.2) nor `board-task@1.1` changes. A
+  `budget-spent` block on a last attempt, which another holder could still make, behaves as the
+  record above says: approved, it raises nothing. The engine's run view gains an optional
+  `task.budget.lastAttempt`, the decision's id. The workflow contract does not cover a task's
+  budget, so its conformance suite is unchanged.
+- **Crash suite.** `budget.crash.ts` kills the engine inside that transaction (the restart decides
+  again, once) and as the report reaches the board (the restart reports once). Either way the task
+  ends as `retries-spent`, and nothing is put to the operator.
+
+Still open: stopping a run that overdraws its lines while it runs
+([ADR-0047](0047-a-run-stops-at-a-boundary-once-its-task-budget-is-spent.md)).

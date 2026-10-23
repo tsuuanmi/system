@@ -22,7 +22,8 @@
 > projection (`renderTasks` in [`board-core`](../../packages/board-core/README.md)) is written
 > into a task run's own worktree ([TASKS.md in a run's workspace](workflow-engine.md#tasksmd-in-a-runs-workspace)).
 > Differs from target: a budget is enforced before a run, never during it, so a run can overdraw
-> its last lines; only a Worker source with a worktree per run writes `TASKS.md`. The operator
+> its last lines ([ADR-0047](../decisions/adr/0047-a-run-stops-at-a-boundary-once-its-task-budget-is-spent.md));
+> only a Worker source with a worktree per run writes `TASKS.md`. The operator
 > accepts or rejects a review, and pauses, resumes, or closes a project, on `/ui`
 > ([`web-ui`](../../packages/plugins/web-ui/README.md)).
 
@@ -292,6 +293,10 @@ count, never from a model.
   subject's version is their hash, so what the operator approved is what is added.
 - A `budget-spent` block without `funding` asks only to go on, as at 1.1. The engine sends none when
   the ledger cannot count the task's usage.
+- The workflow engine makes no `budget-spent` block on a task's last attempt, since no approval
+  could serve it: it reports the run failed (`reconcileRun`), and the task waits for input
+  (`retries-spent`) with nothing asked ([funding a spent task](workflow-engine.md#funding-a-spent-task)).
+  A block another holder makes then is approved to no effect, as the "not funded" row says.
 
 ### A digest on a result
 

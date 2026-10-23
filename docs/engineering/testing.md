@@ -86,7 +86,8 @@ Suites written since [ADR-0037](../decisions/adr/0037-schema-and-protocol-first.
   - The same holds for every other row of the
     [effect register](../architecture/data-flow.md#effect-register) that names a
     crash test: an agent run never starts again; a model call is sent exactly once
-    more.
+    more; a spent budget on a board task's last attempt ends the task once
+    (`retries-spent`), never asking for funding.
 - **Architecture rules**
   ([`scripts/architecture.spec.ts`](../../scripts/architecture.spec.ts)).
   Capability-routed code names no tools (INV-11). There is one provider per
