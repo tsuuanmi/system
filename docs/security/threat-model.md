@@ -9,8 +9,9 @@
 > and `/admin/*` routes.
 >
 > The default composition mounts the Claude Code agent rows (PROP-0010 B3) with no Worker, and
-> none of the Codex, ACP, and Antigravity CLI rows, nor the model gateways (PROP-0004); the Codex row can be turned on
-> ([Codex Workers](../operations/runbooks.md#codex-workers)). The agent threats (an agent
+> none of the Codex, ACP, and Antigravity CLI rows, nor the model gateways (PROP-0004); the Codex and
+> Antigravity CLI rows can be turned on ([Codex Workers](../operations/runbooks.md#codex-workers),
+> [Antigravity CLI Workers](../operations/runbooks.md#antigravity-cli-workers)). The agent threats (an agent
 > process reading host state, or running commands) arise once the operator
 > [adds a Worker](../operations/runbooks.md#agent-workers); the gateway threats (a gateway
 > client, the model token in use) once the operator
@@ -208,11 +209,10 @@
     ([a Worker's tool calls](../design/approvals.md#a-workers-tool-calls)).
     Claude Code starts under the read confinement below, like Codex and ACP
     agents;
-  - ACP agents and the Antigravity CLI cannot ask a tool gate before each tool
-    call (`gatesToolCalls: false`; the Antigravity CLI until agy's hook is
-    verified and the gate classifies its tools), so they refuse a gated run and
-    the `agents` source admits none of their Workers; the policies below hold
-    for them still;
+  - ACP agents cannot ask a tool gate before each tool call
+    (`gatesToolCalls: false`), nor can the Antigravity CLI on an agy version not
+    verified live, so they refuse a gated run and the `agents` source admits
+    none of their Workers; the policies below hold for them still;
   - Codex (`runtime-codex-sdk`): its own `sandboxMode` (`read-only`, or
     `workspace-write` confined to the workspace) and working directory,
     approvals `never` (an escalated command is refused), network access and web
@@ -265,11 +265,18 @@
     own home (`HOME`), never the operator's `~/.gemini` or
     `~/.config/antigravity`, with its auto-update off; a home or workspace that
     configures hooks, MCP servers, or plugins, which agy would run outside every
-    gate, is refused. Not covered, so nothing runs yet: that agy runs the hook
-    before each tool call takes a model turn to show, so until a version is
-    verified live it offers no sandbox; and the token is no secret from the
-    agent's own processes, which share the run's user and namespaces (they can
-    reach only the gate's questions, never run a call).
+    gate, is refused. agy runs a tool when a hook exits 0 printing nothing, so
+    the hook's command prints a deny itself whenever the run's hook gives no
+    answer. That agy runs the hook before each tool call takes a model turn to
+    show, so it offers a sandbox and gates only on a version a supervised live
+    check verified (1.4.6,
+    [ADR-0043](../decisions/adr/0043-antigravity-cli-workers-gated-on-a-version-verified-live.md)).
+    An agy upgrade is unverified until checked the same way. Not covered: the
+    version check trusts that one agy version runs its hooks the same on every
+    host; the check covered `gemini-3.8-flash`'s file tools, and another
+    model's tools are denied, not proven; and the token is no secret from the agent's own processes, which
+    share the run's user and namespaces (they can reach only the gate's
+    questions, never run a call).
 
   **Read confinement** ([ADR-0024](../decisions/adr/0024-agent-workers-confined-for-reads.md),
   [ADR-0038](../decisions/adr/0038-confined-commands-for-claude-code-workers.md)):

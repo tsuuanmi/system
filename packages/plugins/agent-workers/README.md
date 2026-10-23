@@ -155,15 +155,20 @@ The **`agents` Worker source**: agent runtimes as Workers
   call comes (optional, never injected); with none loaded, every call is
   denied, reads included (fail-closed rule 5). Otherwise:
   - it classifies the call by its tool and input only: `Read`, `NotebookRead`,
-    `LS`, `Glob`, `Grep` inside the run's workspace → `read`; `Write`, `Edit`,
-    `MultiEdit`, `NotebookEdit` of a file inside it → `workspace-write`; `Bash`
-    → `command`, the argv the command split on single spaces (the policy's
-    exact-argv rule); `WebFetch`, `WebSearch` → `external-send`. Anything
-    else is denied by the gate's own rule, without asking the policy, and so is:
+    `LS`, `Glob`, `Grep`, Codex's `view_image`, and the Antigravity CLI's
+    `read_file` inside the run's workspace → `read`; `Write`, `Edit`,
+    `MultiEdit`, `NotebookEdit`, the Antigravity CLI's `write_file` and
+    `edit_file` of a file inside it, and Codex's `apply_patch` when every file
+    its patch names is inside it → `workspace-write`; `Bash` → `command`, the
+    argv the command split on single spaces (the policy's exact-argv rule);
+    `WebFetch`, `WebSearch` → `external-send`. Anything else (the Antigravity
+    CLI's `run_command` among it) is denied by the gate's own rule, without
+    asking the policy, and so is:
     - a path whose real location (every symlink followed, `..` resolved on
       disk; for a file not yet there, its deepest existing ancestor's) is
-      outside the workspace's real path, or that cannot be resolved;
-    - an input field the tool's Claude Agent SDK type does not declare (Bash's
+      outside the workspace's real path, or that cannot be resolved; a `file:`
+      URI is checked as the path it names;
+    - an input field the tool's input type does not declare (Bash's
       `dangerouslyDisableSandbox`, say), or a declared one of another type;
     - a `Bash` argv word that is empty or holds a shell metacharacter
       (`SHELL_METACHARACTER`, the policy's own set, from `approvals-core`).

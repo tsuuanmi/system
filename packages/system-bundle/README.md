@@ -21,8 +21,9 @@ and the `system` plugins, and it does not use `dsh-base`
   package ships its `plugin-manifest.json`.
 - **Off by default (PROP-0004):** `runtime-codex-sdk` (its Workers are admitted where the
   probe proves its tool gate on the host, [Codex Workers](../../docs/operations/runbooks.md#codex-workers)),
-  `runtime-acp` and `runtime-antigravity-cli` (neither can ask a tool gate before each tool
-  call yet, so no Worker of theirs is admitted),
+  `runtime-acp` (it cannot ask a tool gate before each tool call, so no Worker of its is
+  admitted), `runtime-antigravity-cli` (its Workers are admitted on an agy version verified
+  live, [Antigravity CLI Workers](../../docs/operations/runbooks.md#antigravity-cli-workers)),
   `profile-software-development`, and both model gateways are `disabled: true`, not
   removed. An operator patch turns one back on
   ([runbook](../../docs/operations/runbooks.md#turn-an-off-row-back-on)); the e2e test

@@ -10,8 +10,8 @@
 > agent's own records (it fails as `reconciliation_failed`); evidence beyond the final message
 > and the workspace's git subject is not stored; ACP agents cannot ask a
 > [tool gate](#tool-gate) before each tool call, so the `agents` source admits none of their
-> Workers; the Antigravity CLI cannot either until its hook is verified live and the gate
-> classifies its tools, and until then it offers no sandbox.
+> Workers; the Antigravity CLI gates only on an agy version verified live (1.4.6), and offers no
+> sandbox on any other.
 
 An **agent runtime** is an external coding agent that `system` drives as a Worker. It is the
 counterpart of the [gateways](gateways.md), where the same agents act as clients. The
@@ -28,7 +28,7 @@ turns them on.
 | [`runtime-claude-agent-sdk`](../../packages/plugins/runtime-claude-agent-sdk/README.md) | `claude-agent-sdk` | official Claude Agent SDK, on the operator's installed `claude` | exact built-in tools, file tools pre-approved inside the workspace only; `Bash` in `workspace-write` runs only, inside the SDK's sandbox ([confined commands](#confined-commands)); its own home; no settings files, hooks from disk, or MCP servers; the run's tool gate as its one PreToolUse hook |
 | [`runtime-codex-sdk`](../../packages/plugins/runtime-codex-sdk/README.md) | `codex-sdk` | official Codex SDK, on the operator's installed `codex` | Codex's own sandbox (read-only or workspace-write); approvals `never`; network, web search, and the features that add unhooked tools off; no terminal; its own Codex home, with no MCP server; the run's tool gate as its one PreToolUse hook, through a private channel ([Codex's gate](#codexs-gate)) |
 | [`runtime-acp`](../../packages/plugins/runtime-acp/README.md) | `acp:<name>` | official ACP SDK, with an agent subprocess | the client side: permission requests refused, reads confined to the workspace, no writes or terminals advertised; no tool gate (refused) |
-| [`runtime-antigravity-cli`](../../packages/plugins/runtime-antigravity-cli/README.md) | `antigravity-cli` | the operator's installed `agy`, in print mode (stream-json); no SDK exists | its PreToolUse hook, bridged to the run: the runtime's own rules (the sandbox's reading and file-editing tools only, no command; every location inside the workspace), then the run's gate; its own home (`HOME`), with no MCP server, plugin, or other hook, in it or in the workspace; no sandbox offered until agy's half of the hook is verified live; no tool gate yet (refused) |
+| [`runtime-antigravity-cli`](../../packages/plugins/runtime-antigravity-cli/README.md) | `antigravity-cli` | the operator's installed `agy`, in print mode (stream-json); no SDK exists | its PreToolUse hook, bridged to the run: the runtime's own rules (the sandbox's reading and file-editing tools only, no command; every location inside the workspace), then the run's gate; its own home (`HOME`), with no MCP server, plugin, or other hook, in it or in the workspace; the run's tool gate after its rules, and a sandbox, only on an agy version verified live ([ADR-0043](../decisions/adr/0043-antigravity-cli-workers-gated-on-a-version-verified-live.md)) |
 
 ACP is the generic path for any ACP-speaking agent, not the primary path for Claude or Codex.
 
@@ -131,10 +131,14 @@ PreToolUse hook as a command, so its gate goes through a bridge ([below](#codexs
 Antigravity CLI also runs a command hook before each tool call, which its runtime bridges to the
 run (a socket in an owner-only directory, a per-run token, any failure a deny,
 [its README](../../packages/plugins/runtime-antigravity-cli/README.md)): it asks its own rules,
-then the gate, and a `defer` is denied and ends the run. It reports `gatesToolCalls` only once
-agy's half of the hook is verified live and the `agents` source classifies agy's tools; until
-then it refuses a gated run. An ACP agent asks the client only for what it chooses to, so it does
-not gate.
+then the gate, and a `defer` is denied and ends the run. agy runs the tool when a hook exits 0
+printing nothing, so the command in its `hooks.json` prints a deny itself whenever the run's
+hook gives no answer. That agy runs the hook before each tool call takes a model turn to show, so
+the runtime reports `gatesToolCalls` (and offers a sandbox) only on an agy version a supervised
+live check verified (`VERIFIED_HOOK_VERSIONS`: 1.4.6), whose tool names (`read_file`,
+`write_file`, `edit_file`) the `agents` source classifies; on any other version it refuses every
+run ([ADR-0043](../decisions/adr/0043-antigravity-cli-workers-gated-on-a-version-verified-live.md)).
+An ACP agent asks the client only for what it chooses to, so it does not gate.
 
 ### Codex's gate
 
@@ -276,8 +280,8 @@ Claude Code runs them under two confinements
   forbidden, and with the default studio policy any other command asks the operator unless a
   rule lists it.
 
-The Antigravity CLI offers no command tool, so its Workers never `validate`: agy's own terminal
-sandbox (`--sandbox`) has no model-free proof.
+The Antigravity CLI offers no command tool (`run_command` is denied), so its Workers never
+`validate`: agy's own terminal sandbox (`--sandbox`) has no model-free proof.
 
 Commands that need the network (installing packages) fail inside a Worker: dependencies are
 prepared in the repository before the run. The sandbox runtime does not claim to stop a kernel

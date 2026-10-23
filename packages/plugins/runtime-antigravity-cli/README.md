@@ -5,19 +5,20 @@ Worker, in print mode (`agy --print=<prompt> --output-format stream-json
 --disable-slash-commands [--model=<model>]`). It runs the operator's installed
 `agy` (config `executable`, or found on PATH); nothing is vendored or depended on.
 
-**On a host today it runs nothing** (fail closed, INV-2), and its probe says why:
-
-1. Antigravity has no per-tool allow-list or workspace-scoped permission a
-   headless run can be held to, so its PreToolUse hook is the only place a
-   policy can hold. The probe proves the hook's path on the host (below); that
-   agy runs the hook before each tool call takes a model turn to show, which a
-   probe never runs. No agy version is recorded as verified live
-   (`VERIFIED_HOOK_VERSIONS` is empty), so no sandbox is offered (as an ACP agent
-   offers none unless vouched for) and every run is refused (`config_error`).
-2. The `agents` source's tool gate classifies Claude Code's tool names only and
-   denies any other ([approvals](../../../docs/design/approvals.md#how-a-call-is-classified)),
-   so the runtime reports `gatesToolCalls: false` and refuses a gated run: the
-   source admits none of its Workers until it does.
+**It runs only an agy version verified live** (fail closed, INV-2;
+[ADR-0043](../../../docs/decisions/adr/0043-antigravity-cli-workers-gated-on-a-version-verified-live.md)).
+Antigravity has no per-tool allow-list or workspace-scoped permission a headless
+run can be held to, so its PreToolUse hook is the only place a policy can hold.
+The probe proves the hook's path on the host (below); that agy runs the hook
+before each tool call takes a model turn to show, which a probe never runs. So
+the runtime offers its sandboxes and reports `gatesToolCalls` only on a version
+in `VERIFIED_HOOK_VERSIONS`, which a supervised live check verified: **1.4.6**
+(2026-10-23, `gemini-3.8-flash-low`; the recorded hook inputs and outcomes are
+[`tests/fixtures/agy-1.4.6-hook-inputs.json`](tests/fixtures/agy-1.4.6-hook-inputs.json),
+replayed through the bridge in the tests). On any other version it offers no
+sandbox (as an ACP agent offers none unless vouched for), and every run is
+refused (`config_error`). The `agents` source's gate classifies agy's tools
+([approvals](../../../docs/design/approvals.md#how-a-call-is-classified)).
 
 What turns it on is in the [runbook](../../../docs/operations/runbooks.md#antigravity-cli-workers).
 
@@ -49,10 +50,15 @@ What turns it on is in the [runbook](../../../docs/operations/runbooks.md#antigr
   is refused before anything starts.
 - **The hook, bridged to the run** (`bridge.ts`): the home holds one
   `hooks.json`, written by the runtime, with one `PreToolUse` hook on every tool
-  (`*`, timeout 60 s). Its command (`sh -c`) starts the run's own hook, which
-  the run names in agy's environment (`SYSTEM_ANTIGRAVITY_GATE_HOOK`), and
-  denies when none is named: a session in that home no run started (the
-  operator signing in) runs no tool. Per run:
+  (`*`, timeout 60 s). agy runs it before each tool step, in that file's
+  directory, with agy's own environment (seen live with 1.4.6). Its command
+  (`sh -c`) starts the run's own hook, which the run names in agy's environment
+  (`SYSTEM_ANTIGRAVITY_GATE_HOOK`), and always prints a decision itself: the
+  hook's answer only when it exits 0 with one, a deny otherwise, and a deny when
+  no hook is named, so a session in that home no run started (the operator
+  signing in) runs no tool. agy 1.4.6 blocks the tool on a non-zero exit, a
+  timeout, output it cannot read, `{}`, or an unknown decision, but runs it when
+  a hook exits 0 printing nothing: the command never leaves that to agy. Per run:
   - an owner-only directory under `<DSH_HOME>/system/run` (hidden from every
     agent; bound back read-only into this run's confinement only) holds a unix
     socket (`gate.sock`, 0600), a copy of the shipped hook script
@@ -69,21 +75,24 @@ What turns it on is in the [runbook](../../../docs/operations/runbooks.md#antigr
   - a variable of the same name configured (`env`) or forwarded (`forwardEnv`)
     is dropped: only the run sets them.
 - **Policy, exactly or refused** (`policy.ts`, before the gate): tool names are
-  agy's hook names (the step type, lowercased). A `read-only` run offers
-  `view_file`, `list_directory`, `grep_search`, and `find`; `workspace-write`
-  adds the file edits `code_action` and `file_change`; a configured `tools`
-  narrows that and may not widen it. No command (`run_command`), browser, web,
-  subagent, MCP, or scheduling tool is offered in any run. Every string in a
-  call's input, at any depth, except the fields known to hold text (a query, a
-  file's new content, an explanation), is read as a location and must be
+  as agy's hook names them, the name the model calls (not the lowercased step
+  type agy's hooks guide describes). The live check recorded
+  `gemini-3.8-flash`'s file tools: a `read-only` run offers `read_file` (`Path`,
+  `StartLine`, `EndLine`, `ByteOffset`); `workspace-write` adds `write_file`
+  (`Path`, `Content`, `Append`, `Overwrite`) and `edit_file` (`Path`, `Target`,
+  `Replacement`); a configured `tools` narrows that and may not widen it. That
+  model has no tool that lists or searches a directory. No command
+  (`run_command`), browser, web, subagent, MCP, or scheduling tool is offered in
+  any run, nor another model's tools, which are not verified. Every string in a
+  call's input, at any depth, except the fields known to hold text (a file's
+  content, an edit's target and replacement), is read as a location and must be
   inside the workspace, as written and on disk (symlinks followed): an absolute
   path, a `file:` URI, or a relative path; `~`, a `..` segment, and any other
   URI are not. A file edit never touches a customization root. So an input the
   runtime does not know is held to the workspace or denied, and so are agy's
   own artifacts (task lists and plans it writes into its home's `brain/`
   through the same tools): the agent works without them.
-- **The run's tool gate** (`RunSpec.toolGate`), once the source can classify
-  agy's tools: asked after the runtime's rules, with the tool, its input, and
+- **The run's tool gate** (`RunSpec.toolGate`): asked after the runtime's rules, with the tool, its input, and
   `<conversation id>:<step>` as the call id, bounded by `askToolGate` (30 s;
   a throw or an undefined verdict is a deny). The hook answers `allow` only when
   both allow: the rules are this runtime's policy, so nothing is left to agy's
@@ -108,8 +117,8 @@ What turns it on is in the [runbook](../../../docs/operations/runbooks.md#antigr
      print that channel's answer, and a wrong token must be denied before the
      channel is asked. Proven on this host with the real bubblewrap (the socket
      is reached through the read-only bind under the hidden DSH home). With the
-     agy version in `VERIFIED_HOOK_VERSIONS` as well: both sandboxes; otherwise
-     none, with the reason.
+     agy version in `VERIFIED_HOOK_VERSIONS` as well: both sandboxes and
+     `gatesToolCalls`; otherwise neither, with the reason.
 
   `executes` is always false (commands are never offered; agy's terminal
   sandbox, `--sandbox`, has no model-free proof, and agy's own changelog shows
@@ -118,7 +127,7 @@ What turns it on is in the [runbook](../../../docs/operations/runbooks.md#antigr
   refused rather than starting a new one).
 - **Run:** refused before agy starts (`config_error`, nothing run) for a
   relative workspace, a tool outside the sandbox, `maxTurns` (agy has no turn
-  limit), `resume`, a gate while the source cannot classify agy's tools, a home
+  limit), `resume`, an agy version not verified live, a home
   or workspace that configures what would run outside the gate, a confinement
   that cannot be built, or a hook layer that is not proven again for this run
   (the self-test against the run's own channel, inside the run's own
