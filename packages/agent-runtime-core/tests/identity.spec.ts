@@ -1,9 +1,9 @@
-import { mkdtempSync, rmSync } from 'node:fs'
+import { chmodSync, existsSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
 import { agentRuntimeIdentityConformance, agentRuntimeProviderConformance, FakeAgentRuntime } from '../conformance/agent-runtimes.ts'
-import { type AgentRuntimeProvider, accountIdOf, identityHmac, maskEmail, probeIn } from '../src/index.ts'
+import { type AgentRuntimeProvider, accountIdOf, homeProblem, identityHmac, MAX_HOME_FILE_BYTES, maskEmail, probeIn, readHomeJson } from '../src/index.ts'
 
 // The fake with scripted homes passes the provider suite and the identity suite (ADR-0051).
 agentRuntimeProviderConformance('FakeAgentRuntime', () => new FakeAgentRuntime())
@@ -56,6 +56,35 @@ describe('agent account identity (ADR-0051)', () => {
     const evidence = await probeIn(own, root)
     expect(evidence).toMatchObject({ available: false, detail: expect.stringMatching(/own configured home only/) })
     expect(asked).toBe(0)
+  })
+
+  it('reads a home\'s JSON file only when it is a small regular file of this user, never through a link a run planted (INV-2)', () => {
+    const dir = mkdtempSync(join(root, 'home-'))
+    expect(readHomeJson(join(dir, 'auth.json'))).toEqual({ state: 'absent' })
+    writeFileSync(join(dir, 'auth.json'), JSON.stringify({ tokens: { account_id: 'a' } }), { mode: 0o600 })
+    expect(readHomeJson(join(dir, 'auth.json'))).toEqual({ state: 'read', value: { tokens: { account_id: 'a' } } })
+    symlinkSync(join(dir, 'auth.json'), join(dir, 'link.json'))
+    expect(readHomeJson(join(dir, 'link.json'))).toEqual({ state: 'refused', why: 'it is a symbolic link' })
+    writeFileSync(join(dir, 'list.json'), '[1]')
+    writeFileSync(join(dir, 'text.json'), 'not json')
+    writeFileSync(join(dir, 'big.json'), `"${'x'.repeat(MAX_HOME_FILE_BYTES)}"`)
+    expect(readHomeJson(join(dir, 'list.json'))).toMatchObject({ state: 'refused', why: 'it is not a JSON object' })
+    expect(readHomeJson(join(dir, 'text.json'))).toMatchObject({ state: 'refused', why: 'it is not JSON' })
+    expect(readHomeJson(join(dir, 'big.json'))).toMatchObject({ state: 'refused', why: expect.stringMatching(/larger than/) })
+    expect(readHomeJson(dir)).toMatchObject({ state: 'refused', why: 'it is not a regular file' })
+  })
+
+  it('takes a home only when it is an existing owner-only directory, and never creates one', () => {
+    const dir = mkdtempSync(join(root, 'owned-'))
+    chmodSync(dir, 0o700)
+    expect(homeProblem(dir)).toBeUndefined()
+    expect(homeProblem('relative')).toMatch(/absolute/)
+    expect(homeProblem(join(root, 'absent'))).toMatch(/does not exist/)
+    expect(existsSync(join(root, 'absent'))).toBe(false)
+    chmodSync(dir, 0o750)
+    expect(homeProblem(dir)).toMatch(/group or others/)
+    symlinkSync(root, join(root, 'linked'))
+    expect(homeProblem(join(root, 'linked'))).toMatch(/not a directory/)
   })
 
   it('reads an account as unverified on a runtime version no supervised check verified', async () => {

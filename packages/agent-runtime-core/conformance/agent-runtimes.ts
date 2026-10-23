@@ -280,7 +280,8 @@ export class FakeAgentRuntime implements AgentRuntimeProvider {
   static readonly FILE = 'fake-login.json'
   static readonly VERIFIED = ['1.0.0']
 
-  constructor(readonly kind = 'fake-runtime', private readonly version = '1.0.0') {}
+  /** `home`: its own configured home, which a Worker source adopts as slot 1 (optional, as on the seam). */
+  constructor(readonly kind = 'fake-runtime', private readonly version = '1.0.0', readonly home?: string) {}
 
   static signIn(home: string, login: string): void {
     writeFileSync(join(home, FakeAgentRuntime.FILE), JSON.stringify({ user: login }), { mode: 0o600 })

@@ -6,7 +6,7 @@
  * @module @tsuuanmi/system-agent-runtime-core
  */
 import { execFile } from 'node:child_process'
-import { chmodSync, closeSync, constants, fstatSync, fsyncSync, openSync, readFileSync, realpathSync, renameSync, statSync, writeFileSync } from 'node:fs'
+import { chmodSync, closeSync, constants, fstatSync, fsyncSync, lstatSync, openSync, readFileSync, realpathSync, renameSync, statSync, writeFileSync } from 'node:fs'
 import { createHash, createHmac, randomBytes } from 'node:crypto'
 import { isAbsolute, join, relative, sep } from 'node:path'
 import { promisify } from 'node:util'
@@ -284,6 +284,11 @@ export function meteringOf(error: unknown): RunMetering | undefined {
  */
 export interface AgentRuntimeProvider {
   readonly kind: string
+  /**
+   * Its own configured home (an absolute path), where a run that names none runs. Optional: a Worker
+   * source adopts it, without moving it, as slot 1 of the runtime's accounts (ADR-0051).
+   */
+  readonly home?: string | undefined
   /** What it proves now, for its own home or, when it reports `homes`, the one `options.home` names. */
   probe(options?: ProbeOptions): Promise<RuntimeEvidence>
   run(spec: RunSpec, signal: AbortSignal, onHandle?: (handle: string) => void): Promise<RunResult>
@@ -320,6 +325,62 @@ export function identityHmac(key: Uint8Array, provider: string, parts: Readonly<
 export function accountIdOf(provider: string, hmac: string): string {
   if (!/^[0-9a-f]{64}$/.test(hmac)) throw new RangeError('accountIdOf: the HMAC is 64 hex characters')
   return `${provider}:${hmac.slice(0, 16)}`
+}
+
+/** The most bytes an identity reader reads of one file in a home ({@link readHomeJson}). */
+export const MAX_HOME_FILE_BYTES = 1024 * 1024
+
+/**
+ * One JSON file of a home, as an identity reader reads it (ADR-0051): `absent` when there is none;
+ * `refused` (with why, never the content) when it is not a regular file of this user (a symlink a run
+ * planted in its writable home included: it is never followed), is larger than
+ * {@link MAX_HOME_FILE_BYTES}, or is not a JSON object; else its parsed value. A run can write its own
+ * home, so nothing here trusts the file beyond its shape, and the caller reads only the fields its
+ * reader names.
+ */
+export function readHomeJson(path: string): { state: 'absent' } | { state: 'refused'; why: string } | { state: 'read'; value: Record<string, unknown> } {
+  let fd: number
+  try {
+    fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code
+    if (code === 'ENOENT' || code === 'ENOTDIR') return { state: 'absent' }
+    return { state: 'refused', why: code === 'ELOOP' ? 'it is a symbolic link' : `it cannot be opened (${code ?? 'error'})` }
+  }
+  try {
+    const stat = fstatSync(fd)
+    if (!stat.isFile()) return { state: 'refused', why: 'it is not a regular file' }
+    if (typeof process.getuid === 'function' && stat.uid !== process.getuid()) return { state: 'refused', why: 'it belongs to another user' }
+    if (stat.size > MAX_HOME_FILE_BYTES) return { state: 'refused', why: `it is larger than ${MAX_HOME_FILE_BYTES} bytes` }
+    let value: unknown
+    try {
+      value = JSON.parse(readFileSync(fd, 'utf8'))
+    } catch {
+      return { state: 'refused', why: 'it is not JSON' }
+    }
+    return value && typeof value === 'object' && !Array.isArray(value) ? { state: 'read', value: value as Record<string, unknown> } : { state: 'refused', why: 'it is not a JSON object' }
+  } finally {
+    closeSync(fd)
+  }
+}
+
+/**
+ * Whether `home` can hold an account's sign-in for a run or a reading (ADR-0051): an existing
+ * directory of this user, not a symbolic link, that group and others cannot reach. Undefined when it
+ * can; else why not. A home is never created here: an enrollment slot creates its own.
+ */
+export function homeProblem(home: string): string | undefined {
+  if (!isAbsolute(home)) return `the home ${home} is not an absolute path`
+  let stat: ReturnType<typeof lstatSync>
+  try {
+    stat = lstatSync(home)
+  } catch {
+    return `the home ${home} does not exist`
+  }
+  if (!stat.isDirectory()) return `the home ${home} is not a directory`
+  if (typeof process.getuid === 'function' && stat.uid !== process.getuid()) return `the home ${home} belongs to another user`
+  if ((stat.mode & 0o077) !== 0) return `the home ${home} is reachable by group or others (mode ${(stat.mode & 0o777).toString(8)})`
+  return undefined
 }
 
 /** An email masked for the operator (`j…@example.com`): its first letter and its domain; undefined for anything else. */
