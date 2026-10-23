@@ -164,6 +164,20 @@ describe('ctx.workers source `agents`: agent runtimes as Workers', () => {
     expect((await runs.ctx.workers.list())[0]!.capabilities.map((c) => c.capability)).toEqual(['local-data', 'develop', 'validate', 'persistent-conversation'])
   })
 
+  it('admits validate work only on a writable Worker whose runtime proved it runs commands confined; a reviewer never takes it (ADR-0038)', async () => {
+    const validate = requirement({ objective: 'run the tests and the type check', capabilities: ['validate', 'local-data'] })
+    const config = { workers: [worker(), worker({ id: 'writer', sandbox: 'workspace-write' as const })] }
+    // The runtime did not prove its commands confined: no Worker proves validate, with the reason.
+    const unproven = await boot(new ScriptedAgent({ sandboxes: ['read-only', 'workspace-write'] }), config)
+    await expect(unproven.ctx.workers.route(validate)).rejects.toThrow(/no Worker can take this work: no Worker proves validate/)
+    // It did: the writable Worker takes it, and the read-only one, though on the same runtime, does not.
+    const proven = await boot(new ScriptedAgent({ sandboxes: ['read-only', 'workspace-write'], executes: true }), config)
+    const admitted = await proven.ctx.workers.route(validate)
+    admitted.release()
+    expect(admitted.worker.worker).toBe('agent:writer')
+    await expect(proven.ctx.workers.route(validate, { restrict: { workers: ['agent:reviewer'], reason: 'the reviewer only' } })).rejects.toThrow(/no Worker can take this work/)
+  })
+
   it('runs work once with the policy from configuration, and stores the result as agent-result@1.1 (REQ-WRK-6, INV-6)', async () => {
     const agent = new ScriptedAgent()
     const { ctx } = await boot(agent)
