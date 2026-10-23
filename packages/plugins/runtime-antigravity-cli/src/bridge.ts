@@ -19,7 +19,7 @@
  */
 import { execFile } from 'node:child_process'
 import { randomBytes, timingSafeEqual } from 'node:crypto'
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer, type Server, type Socket } from 'node:net'
 import { join } from 'node:path'
 import { type Confinement, confinedCommand } from '@tsuuanmi/system-agent-runtime-core'
@@ -52,13 +52,16 @@ export const configDir = (home: string): string => join(home, '.gemini', 'config
 
 /**
  * Keep the runtime's hooks.json in `home`, and say what in that home would reach a Worker outside
- * its gate. The runtime's own file is written when absent or stale (a single hook named
- * {@link HOOK_NAME}); any other hooks.json, and any MCP server in `mcp_config.json`, is a problem,
- * never overwritten or ignored. Returns the problems; empty when the home holds none.
+ * its gate. The home itself must be owner-only (it is created so; agy makes its own directories
+ * inside it readable to others, which the home's mode keeps closed). The runtime's own file is
+ * written when absent or stale (a single hook named {@link HOOK_NAME}); any other hooks.json, and
+ * any MCP server in `mcp_config.json`, is a problem, never overwritten or ignored. Returns the
+ * problems; empty when the home holds none. Throws when the home cannot be used.
  */
 export function prepareHome(home: string): string[] {
+  ensurePrivateDir(home)
   const dir = configDir(home)
-  ensurePrivateDir(dir)
+  mkdirSync(dir, { recursive: true, mode: 0o700 })
   const problems: string[] = []
   const hooks = join(dir, 'hooks.json')
   if (!existsSync(hooks)) writeFileDurable(hooks, HOOKS_JSON)
@@ -151,7 +154,8 @@ export async function openChannel(parent: string, node: string, decide: (event: 
     const script = join(dir, 'gate-hook.mjs')
     writeFileSync(script, readFileSync(HOOK_SCRIPT), { mode: 0o600, flag: 'wx' })
     const launcher = join(dir, 'hook')
-    writeFileSync(launcher, `#!/bin/sh\nexec ${quote(node)} ${quote(script)}\n`, { mode: 0o700, flag: 'wx' })
+    // Node takes options and module paths from its environment: the hook runs with none of them.
+    writeFileSync(launcher, `#!/bin/sh\nunset NODE_OPTIONS NODE_PATH\nexec ${quote(node)} ${quote(script)}\n`, { mode: 0o700, flag: 'wx' })
     const token = randomBytes(32).toString('hex')
     const server = await listen(socketPath, token, decide, timing.requestMs ?? 40_000)
     return {

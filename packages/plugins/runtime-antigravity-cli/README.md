@@ -79,7 +79,9 @@ What turns it on is in the [runbook](../../../docs/operations/runbooks.md#antigr
   inside the workspace, as written and on disk (symlinks followed): an absolute
   path, a `file:` URI, or a relative path; `~`, a `..` segment, and any other
   URI are not. A file edit never touches a customization root. So an input the
-  runtime does not know is held to the workspace or denied.
+  runtime does not know is held to the workspace or denied, and so are agy's
+  own artifacts (task lists and plans it writes into its home's `brain/`
+  through the same tools): the agent works without them.
 - **The run's tool gate** (`RunSpec.toolGate`), once the source can classify
   agy's tools: asked after the runtime's rules, with the tool, its input, and
   `<conversation id>:<step>` as the call id, bounded by `askToolGate` (30 s;

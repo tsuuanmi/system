@@ -200,7 +200,10 @@ export class AntigravityRuntime implements AgentRuntimeProvider {
     if (spec.toolGate && !this.gateClassifies()) {
       throw new ProviderError('config_error', `${KIND}: the run's tool gate does not classify Antigravity's tools and would deny every call; refusing a gated run until it does`)
     }
+    // Both are agy's arguments, which hold no NUL.
     if (Buffer.byteLength(spec.prompt) > MAX_PROMPT_BYTES) throw new ProviderError('invalid_input', `${KIND}: the prompt is longer than agy takes as an argument (${MAX_PROMPT_BYTES} bytes)`)
+    if (spec.prompt.includes('\0')) throw new ProviderError('invalid_input', `${KIND}: the prompt holds a NUL character, which no argument can carry`)
+    if (spec.model?.includes('\0')) throw new ProviderError('config_error', `${KIND}: the model name holds a NUL character`)
     const executable = this.executable()
     if (!executable) throw new ProviderError('config_error', `${KIND}: the Antigravity CLI is not installed (no agy executable on PATH)`)
     if (signal.aborted) throw new ProviderError('aborted', `${KIND}: aborted before starting`)

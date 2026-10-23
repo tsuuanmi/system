@@ -68,7 +68,16 @@ describe('antigravity-cli: the probe proves what it reports, and never runs a ta
     // It keeps one hooks.json there, with one PreToolUse hook on every tool, and nothing else.
     expect(readFileSync(join(HOME, '.gemini', 'config', 'hooks.json'), 'utf8')).toBe(HOOKS_JSON)
     expect(JSON.parse(HOOKS_JSON)).toEqual({ [HOOK_NAME]: { PreToolUse: [{ matcher: '*', hooks: [{ type: 'command', command: HOOK_COMMAND, timeout: 60 }] }] } })
-    expect(statSync(join(HOME, '.gemini', 'config')).mode & 0o077).toBe(0)
+    // The home is owner-only; agy's own directories inside it may be readable to others (it makes them 0755).
+    expect(statSync(HOME).mode & 0o077).toBe(0)
+    chmodSync(join(HOME, '.gemini', 'config'), 0o755)
+    expect(await runtime({ env: scenario().env }).probe()).toMatchObject({ available: true })
+    chmodSync(HOME, 0o750)
+    try {
+      expect(await runtime({ env: scenario().env }).probe()).toMatchObject({ available: false, detail: expect.stringContaining('must not be accessible by group or others') })
+    } finally {
+      chmodSync(HOME, 0o700)
+    }
     // No gate directory is left behind.
     expect(readdirSync(RUN_ROOT)).toEqual([])
   })
@@ -172,6 +181,8 @@ describe('antigravity-cli: a run, exactly as configured, or refused before anyth
     await expect(go({ resume: 'h-0' })).rejects.toMatchObject({ kind: 'config_error', message: expect.stringContaining('not proven') })
     await expect(go({ toolGate: async () => ({ decision: 'allow' }) })).rejects.toMatchObject({ kind: 'config_error', message: expect.stringContaining('does not classify') })
     await expect(go({ prompt: 'x'.repeat(100_001) })).rejects.toMatchObject({ kind: 'invalid_input' })
+    await expect(go({ prompt: 'a\0b' })).rejects.toMatchObject({ kind: 'invalid_input' })
+    await expect(go({ model: 'm\0' })).rejects.toMatchObject({ kind: 'config_error' })
     await expect(runtime({ env: s.env, confine: undefined }).run({ prompt: 'x', workspace, sandbox: 'read-only' }, new AbortController().signal))
       .rejects.toMatchObject({ kind: 'config_error', message: expect.stringContaining('no read confinement') })
     expect(prints(s.log())).toEqual([])
