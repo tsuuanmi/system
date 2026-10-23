@@ -152,6 +152,12 @@
       ],
       "@tsuuanmi/system-board": [
         "packages/plugins/board/src/index.ts"
+      ],
+      "@tsuuanmi/system-plugin-host-core": [
+        "packages/plugin-host-core/src/index.ts"
+      ],
+      "@tsuuanmi/system-plugin-host": [
+        "packages/plugins/plugin-host/src/index.ts"
       ]
     }
   },

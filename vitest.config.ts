@@ -53,6 +53,8 @@ export default defineConfig({
       '@tsuuanmi/system-workers': src('./packages/plugins/workers/src/index.ts'),
       '@tsuuanmi/system-gateway-core': src('./packages/gateway-core/src/index.ts'),
       '@tsuuanmi/system-provider-core': src('./packages/provider-core/src/index.ts'),
+      '@tsuuanmi/system-plugin-host-core': src('./packages/plugin-host-core/src/index.ts'),
+      '@tsuuanmi/system-plugin-host': src('./packages/plugins/plugin-host/src/index.ts'),
     },
   },
   test: {
