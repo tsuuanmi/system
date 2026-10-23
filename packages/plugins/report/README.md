@@ -20,7 +20,7 @@ decides nothing, and no model takes part.
 - **Fails closed** (INV-2): with the board, the queue, or the ledger not loaded, it makes no report
   (`unavailable`), never a partial one; an unknown project is `unknown-project`. Bounded (INV-9): at
   most 100 000 entries of one event type, the ledger's own bound on the records of a period
-  (`maxRecords`), 100 projects listed (the rest counted); past a bound it refuses (`overloaded`),
+  (`maxRecords`), 64 pools, 100 projects listed (the rest counted); past a bound it refuses (`overloaded`),
   never truncates. What it could not count (an event log trimmed by retention within the period, no
   digest provider to read the digests' claims or runs, records with no token counts) is listed in
   `notes`.

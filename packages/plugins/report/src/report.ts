@@ -11,6 +11,8 @@ import type { UsageRecord } from '@tsuuanmi/system-resources-core'
 export const TASK_STATES: readonly TaskState[] = ['proposed', 'ready', 'claimed', 'running', 'review', 'waiting-for-input', 'waiting-for-approval', 'done', 'cancelled']
 /** Projects one report lists (`mcp-report@1` bounds it); the rest are counted. */
 export const MAX_PROJECTS = 100
+/** Pools one report lists (`mcp-report@1`), as many as the ledger configures at once. */
+export const MAX_POOLS = 64
 /** The longest period one report covers (INV-9). */
 export const MAX_DAYS = 366
 export const DEFAULT_DAYS = 7
@@ -183,7 +185,11 @@ export function buildReport(period: Period, sources: Sources, projectId?: string
 
   // Attempts: each run's outcome as it reached its task, and the review its acceptance reports.
   const reported = ofType('workflow.task.reported')
-  const status = (e: Recorded): string => String(e.data?.['status'])
+  // A run reported with reconcileRun is classed by where it left its task: done (accepted), held for the operator, or not.
+  const status = (e: Recorded): string => {
+    const s = String(e.data?.['status'])
+    return s !== 'reconciled' ? s : e.data?.['state'] === 'done' ? 'accepted' : e.data?.['state'] === 'review' ? 'review' : s
+  }
   const review = { passed: 0, failed: 0, none: 0 }
   for (const event of reported) {
     const decision = event.decision ? sources.decisions.get(event.decision) : undefined
@@ -270,6 +276,7 @@ export function buildReport(period: Period, sources: Sources, projectId?: string
     byOutcome[u.outcome ?? 'unknown'] += 1
     if (!u.usage) untokened += 1
   }
+  if (pools.size > MAX_POOLS) throw new ReportError('overloaded', `the period's records name ${pools.size} pools, more than ${MAX_POOLS}: report a shorter period`)
   for (const sum of [total, ...pools.values()]) sum.costUsd = round(sum.costUsd, 6)
   if (untokened) notes.push(`${untokened} usage record(s) carry no token counts (the runtime reported none): tokens count the others only`)
 

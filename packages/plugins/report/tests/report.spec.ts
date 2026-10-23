@@ -194,6 +194,21 @@ describe('the baseline report, computed (docs/design/reports.md)', () => {
     expect(studio.projects[0]!.projectId).toBe('p000')
     expect(studio.projectsOmitted).toBe(1)
     expect(() => schemas.assertDef('mcp-report@1.0', 'report-output', studio)).not.toThrow()
+    // More pools than one report lists refuses it, never truncates it (INV-9).
+    const pools = { ...week(), usage: Array.from({ length: 65 }, (_, i) => usage(`r${i}`, `pool-${i}`, at(1))) }
+    expect(() => buildReport(PERIOD, pools)).toThrow(/name 65 pools, more than 64/)
+  })
+
+  it('classes an attempt reported with reconcileRun by where it left its task: done is accepted, review is held for the operator', () => {
+    const sources = { ...week(), events: [
+      event('workflow.task.reported', at(1), { taskId: 't1', status: 'reconciled', state: 'done' }, { runId: 'r-a' }),
+      event('workflow.task.reported', at(1), { taskId: 't2', status: 'reconciled', state: 'review' }, { runId: 'r-b' }),
+      event('workflow.task.reported', at(1), { taskId: 't3', status: 'reconciled', state: 'ready' }, { runId: 'r-c' }),
+      event('workflow.task.reported', at(1), { taskId: 't4', status: 'moved-on', state: 'cancelled' }, { runId: 'r-d' }),
+    ] }
+    const report = buildReport(PERIOD, sources, 'p1')
+    expect(report.attempts).toMatchObject({ reported: 4, accepted: 1, heldForOperator: 1, reconciled: 1, other: 1, review: { none: 4 } })
+    expect(report.attention.interruptions).toBe(5 + 1)
   })
 
   it('leaves the digests\' claims out with no digest provider to read them', () => {

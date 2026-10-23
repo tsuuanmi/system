@@ -52,7 +52,7 @@ those requests.
 | tasks now | the scope's tasks per state, as of `asOf` |
 | tasks created, cancelled | `createdAt`, `cancellation.at` in the period |
 | tasks done, accepted results | done tasks whose accepting `acceptance` decision was made in the period; `doneByOperator` when the operator's own decision accepted it (a review held for the operator) |
-| attempts | `workflow.task.reported` in the period, by status: accepted or rejected by the run's own acceptance decision, held for the operator, reconciled (a failed or stopped run, or one whose holder was lost), other |
+| attempts | `workflow.task.reported` in the period, by where each left its task: accepted (done by the run's own acceptance decision), rejected by it (another attempt), held for the operator, reconciled (reported with `reconcileRun` and neither done nor held: a failed or stopped run, or one whose holder was lost), other (refused, moved on, never started) |
 | reviews | per reported attempt, the `review` check its acceptance decision reports: passed, failed (changes still requested), or none bound to the result |
 | remediation | cycles grown (`workflow.graph.grown` with a cycle), fixes the queue opened and closed |
 | approvals | requests made in the period; resolved in it by cause: approved, rejected by verdict, expired, withdrawn; open now; per action class |
@@ -83,7 +83,7 @@ of the first two from its records. The other side is measured by the operator ou
 | the board, the queue, or the ledger not loaded | refused (`unavailable`): a report without one of them would be silently wrong (INV-2) |
 | an unknown project | refused (`unknown-project`) |
 | an empty period, one past 366 days, or `since` with `days` | refused (`invalid`) |
-| more than 100 000 entries of one event type, or more records than the ledger returns at once | refused (`overloaded`), never truncated (INV-9) |
+| more than 100 000 entries of one event type, more records than the ledger returns at once, or records of more than 64 pools | refused (`overloaded`), never truncated (INV-9) |
 | a decision a count rests on is not stored | that task or attempt is counted as having none (no review, not done in the period) |
 
 ## Determinism

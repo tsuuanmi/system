@@ -243,7 +243,7 @@
               },
               "milestones": {
                 "type": "array",
-                "maxItems": 32,
+                "maxItems": 64,
                 "items": {
                   "type": "object",
                   "required": [
@@ -351,7 +351,7 @@
               "$ref": "#/$defs/count"
             },
             "accepted": {
-              "description": "Accepted by the run's own acceptance decision.",
+              "description": "Accepted by the run's own acceptance decision: the task done.",
               "$ref": "#/$defs/count"
             },
             "rejected": {
@@ -363,7 +363,7 @@
               "$ref": "#/$defs/count"
             },
             "reconciled": {
-              "description": "Reported with reconcileRun: a failed or stopped run, or one whose holder was lost.",
+              "description": "Reported with reconcileRun and neither accepted nor held: a failed or stopped run, or one whose holder was lost.",
               "$ref": "#/$defs/count"
             },
             "other": {
