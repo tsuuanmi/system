@@ -347,7 +347,7 @@ export class StoreBoard extends Board {
     }
   }
 
-  // Pausing, resuming, and closing are the operator's project moves (docs/design/board.md#seam).
+  // Pausing, resuming, and closing are the operator's project moves (docs/design/board.md#the-operators-project-moves).
 
   async pause(projectId: string, at: Date = new Date()) {
     return this.ctx.store.transaction(() => {
