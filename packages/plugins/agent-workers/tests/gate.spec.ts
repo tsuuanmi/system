@@ -433,11 +433,13 @@ describe('classify: a tool call as the action the policy judges', () => {
       ['Bash', { command: 'npm test', description: 'run', timeout: 1000, run_in_background: false }],
       ['WebFetch', { url: 'https://example.com', prompt: 'read it', offset: 0 }],
       ['WebSearch', { query: 'x', allowed_domains: ['example.com'], blocked_domains: [] }],
+      ['apply_patch', { command: '*** Begin Patch\n*** Update File: src/a.ts\n@@\n-x\n+y\n*** End Patch\n' }],
+      ['view_image', { path: 'src/a.ts', detail: 'high' }],
     ]
     const wrong: Record<string, [string, unknown]> = {
       Read: ['offset', '1'], NotebookRead: ['cell_id', 1], LS: ['ignore', 'node_modules'], Glob: ['path', 1], Grep: ['-i', 'yes'], Write: ['content', 1],
       Edit: ['replace_all', 'true'], MultiEdit: ['edits', [{ old_string: 'a', new_string: 'b', extra: 1 }]], NotebookEdit: ['new_source', 1],
-      Bash: ['timeout', '1000'], WebFetch: ['prompt', 1], WebSearch: ['allowed_domains', 'example.com'],
+      Bash: ['timeout', '1000'], WebFetch: ['prompt', 1], WebSearch: ['allowed_domains', 'example.com'], apply_patch: ['command', 1], view_image: ['detail', 1],
     }
     for (const [tool, input] of valid) {
       expect(classify({ tool, input }, ws), tool).not.toHaveProperty('refused')
@@ -459,8 +461,37 @@ describe('classify: a tool call as the action the policy judges', () => {
     expect(classify({ tool: 'Bash', input: { command: '' } }, ws)).toHaveProperty('refused')
   })
 
+  it('reads a patch strictly and allows it only when every file it names is inside the workspace: added, deleted, updated, or moved to', () => {
+    const patch = (...body: string[]) => ({ tool: 'apply_patch', input: { command: ['*** Begin Patch', ...body, '*** End Patch', ''].join('\n') } })
+    expect(classify(patch('*** Add File: src/new.ts', '+x', '*** Delete File: src/a.ts', '*** Update File: src/a.ts', '*** Move to: src/b.ts', '@@ class A', ' keep', '', '-x', '+y', '*** End of File'), ws))
+      .toMatchObject({ class: 'workspace-write', summary: 'apply_patch: add src/new.ts, delete src/a.ts, update src/a.ts, move to src/b.ts' })
+    expect(classify(patch(`*** Update File: ${join(ws, 'src/a.ts')}`, '-x', '+y'), ws)).toMatchObject({ class: 'workspace-write' })
+    for (const path of ['../outside/x', '/etc/passwd', 'link-dir/new.txt', 'link-file', '~/.bashrc']) {
+      for (const body of [[`*** Add File: ${path}`, '+x'], [`*** Delete File: ${path}`], [`*** Update File: ${path}`, '-x'], ['*** Update File: src/a.ts', `*** Move to: ${path}`, '-x']]) {
+        expect(classify(patch(...body), ws), body.join(' | ')).toMatchObject({ refused: expect.stringContaining('not inside the workspace') })
+      }
+    }
+    const refused = (command: string) => expect(classify({ tool: 'apply_patch', input: { command } }, ws), command).toHaveProperty('refused')
+    refused('*** Update File: src/a.ts\n-x\n')
+    refused('*** Begin Patch\n*** End Patch\n')
+    refused('*** Begin Patch\r\n*** Add File: x\r\n+x\r\n*** End Patch\r\n')
+    refused('*** Begin Patch\n*** Add File:  src/x.ts\n+x\n*** End Patch\n')
+    refused('*** Begin Patch\n*** Copy File: src/x.ts\n*** End Patch\n')
+    refused('*** Begin Patch\n*** Update File: src/a.ts\n  *** Add File: /etc/x\n*** End Patch\n')
+    refused('*** Begin Patch\n*** Add File: src/x.ts\n x\n*** End Patch\n')
+    refused('*** Begin Patch\n*** Move to: src/x.ts\n*** End Patch\n')
+    refused('*** Begin Patch\n*** Delete File: src/a.ts\n-x\n*** End Patch\n')
+    refused('<<EOF\n*** Begin Patch\n*** Add File: src/x.ts\n+x\n*** End Patch\nEOF\n')
+  })
+
+  it('reads an image inside the workspace only', () => {
+    expect(classify({ tool: 'view_image', input: { path: 'src/a.ts' } }, ws)).toMatchObject({ class: 'read', summary: 'view_image src/a.ts' })
+    for (const path of ['/etc/hostname', 'link-file', '../x.png']) expect(classify({ tool: 'view_image', input: { path } }, ws), path).toHaveProperty('refused')
+    expect(classify({ tool: 'view_image', input: {} }, ws)).toHaveProperty('refused')
+  })
+
   it('refuses a tool it does not know and an input that is not an object', () => {
-    for (const call of [{ tool: 'mcp__x__y', input: {} }, { tool: 'Agent', input: {} }, { tool: 'Read', input: 'a' }, { tool: 'Read', input: null }]) {
+    for (const call of [{ tool: 'mcp__x__y', input: {} }, { tool: 'Agent', input: {} }, { tool: 'request_user_input', input: { questions: [] } }, { tool: 'write_stdin', input: { session_id: 1, chars: 'x' } }, { tool: 'Read', input: 'a' }, { tool: 'Read', input: null }]) {
       expect(classify(call, ws)).toHaveProperty('refused')
     }
   })
