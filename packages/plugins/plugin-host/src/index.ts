@@ -170,13 +170,12 @@ export class StorePluginHost extends PluginHost {
         db.prepare(`INSERT INTO plugin_check (name, findings, since, decision) VALUES (?, ?, ?, ?)
           ON CONFLICT (name) DO UPDATE SET findings = excluded.findings, since = excluded.since, decision = excluded.decision`)
           .run(change.name, JSON.stringify(change.findings), since, decision.id)
-        ctx.store.afterCommit(() => (change.findings.length
-          ? ctx.logger.warn('plugin %s: the manifest check failed (decision %s): %s', change.name, decision.id, change.findings.map((f) => f.reason).join('; '))
-          : ctx.logger.info('plugin %s: the manifest check passed again (decision %s)', change.name, decision.id)))
+        ctx.store.afterCommit(() => ctx.logger.info('plugin %s: manifest check %s (decision %s)', change.name, change.findings.length ? 'failed' : 'passed again', decision.id))
       }
     })
     this.records = pluginRecords(rows, manifests, this.recorded(), { findings, recorded: this.checks() })
     for (const plugin of this.records.filter((p) => p.manifestState === 'refused')) ctx.logger.warn('plugin %s: manifest refused: %s', plugin.name, plugin.reason)
+    for (const plugin of this.records.filter((p) => p.findings?.length)) ctx.logger.warn('plugin %s: the manifest check found: %s', plugin.name, plugin.findings!.map((f) => f.reason).join('; '))
   }
 
   list(): PluginRecord[] {
