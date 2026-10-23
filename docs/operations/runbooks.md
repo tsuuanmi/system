@@ -805,8 +805,8 @@ expiry, then abandons a first charter's project or drops an amendment.
 
 Only a Worker with a `pool` is metered ([agent Workers](../../packages/plugins/agent-workers/README.md)).
 The bundle's `resources` row configures no pool, so until you configure one a Worker that names a
-pool is unavailable, and one that names none is never limited. A pool and a Worker that draws on
-it, for a Claude Code plan with two windows:
+pool is unavailable, and one that names none is never limited. A pool with two rolling windows,
+and a Worker that draws on it:
 
 ```yaml
 - id: resources
@@ -826,9 +826,10 @@ it, for a Claude Code plan with two windows:
           pool: max.agents, account: max, windows: { five_hour: five-hour, seven_day: seven-day } }
 ```
 
-Without `unknown: available`, a window nobody has read yet fails the pool closed: it opens when a
-run's result gives the first reading. The runtime's window names (`five_hour`) are mapped to your
-window ids by the Worker's `windows`.
+Without `unknown: available`, a window nobody has read yet fails the pool closed, and a closed pool
+admits no run that could give it a reading: only a run's result records readings today, so set it
+on a pool whose windows report only after a run. The runtime's window names (`five_hour`) are mapped to
+your window ids by the Worker's `windows`.
 
 Reading a limit:
 
