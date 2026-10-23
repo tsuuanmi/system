@@ -653,7 +653,7 @@ describe.runIf(canRunBrowser)('ctx.turns: ask through a saved account', () => {
 
   it('checks egress before sending: credentials or local-private content never leave (INV-12)', async () => {
     const { ctx, fake } = await boot()
-    const pem = String((await import('node:crypto')).generateKeyPairSync('rsa', { modulusLength: 1024 }).privateKey.export({ type: 'pkcs1', format: 'pem' }))
+    const pem = String((await import('node:crypto')).generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey.export({ type: 'pkcs1', format: 'pem' }))
     const leaked = await ctx.turns.wait((await ask(ctx, { prompt: `why does this key fail?\n${pem}` })).turnId, 30_000)
     expect(leaked).toMatchObject({ status: 'failed', error: { kind: 'egress_denied', disposition: 'USER_ACTION' } })
     // Routing keeps local-private work off remote Workers; the turn's own egress check holds even if a caller skipped that.

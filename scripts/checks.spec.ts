@@ -92,7 +92,7 @@ describe('schema checks', () => {
 describe('secrets audit', () => {
   it('reports the file, line, and rule of a credential, never its value', async () => {
     // A realistic key, made at test time (scanners ignore documented example keys).
-    const key = String(generateKeyPairSync('rsa', { modulusLength: 1024 }).privateKey.export({ type: 'pkcs1', format: 'pem' }))
+    const key = String(generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey.export({ type: 'pkcs1', format: 'pem' }))
     const findings = await scanText('notes.txt', `first line\n${key}`)
     expect(findings).toEqual([{ file: 'notes.txt', line: 2, rule: expect.stringContaining('privatekey') }])
     expect(JSON.stringify(findings)).not.toContain(key.split('\n')[1])

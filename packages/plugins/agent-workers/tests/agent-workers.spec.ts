@@ -205,7 +205,7 @@ describe('ctx.workers source `agents`: agent runtimes as Workers', () => {
     const shared = requirement()
     const admitted = await ctx.workers.route(shared)
     // Generated at run time: never a real secret in the repository.
-    const secret = String(generateKeyPairSync('rsa', { modulusLength: 1024 }).privateKey.export({ type: 'pkcs1', format: 'pem' }))
+    const secret = String(generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey.export({ type: 'pkcs1', format: 'pem' }))
     const leaked = await source.wait(source.start({ key: 'k-secret', worker: 'agent:reviewer', prompt: `debug this: ${secret}`, requirement: shared, decisions: admitted.decisions }).id, 10_000)
     expect(leaked).toMatchObject({ status: 'failed', submitted: false, error: { kind: 'egress_denied' } })
     // The egress decision is part of the run's decision chain (INV-13), as for website turns.
