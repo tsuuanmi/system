@@ -3,7 +3,7 @@
 > Target state. Boundary: [orchestration](../architecture/components.md#orchestration), core
 > component *work state machine*
 > ([ADR-0036](../decisions/adr/0036-guarantee-core-and-capability-plugins.md),
-> [ADR-0044](../decisions/adr/0044-feedback-loop-guarantee-seams.md)). Proposal:
+> [ADR-0045](../decisions/adr/0045-feedback-loop-guarantee-seams.md)). Proposal:
 > [PROP-0011](../proposals/0011-feedback-loop.md). Records:
 > [`hypothesis@1.0`](../reference/schemas.md#hypothesis),
 > [`experiment@1.0`](../reference/schemas.md#experiment),

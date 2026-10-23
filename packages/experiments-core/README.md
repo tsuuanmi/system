@@ -4,7 +4,7 @@ Experiment registry **seam definition**
 ([plugin model](../../docs/architecture/plugin-model.md#seam-catalog), plugin rule 2;
 [experiments](../../docs/design/experiments.md)). A guarantee seam of the work state machine: its
 contract changes only by an ADR ([ADR-0036](../../docs/decisions/adr/0036-guarantee-core-and-capability-plugins.md),
-[ADR-0044](../../docs/decisions/adr/0044-feedback-loop-guarantee-seams.md)).
+[ADR-0045](../../docs/decisions/adr/0045-feedback-loop-guarantee-seams.md)).
 
 | Seam | Definition | Provider |
 |---|---|---|

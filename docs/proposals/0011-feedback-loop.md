@@ -6,7 +6,7 @@ created: 2026-10-23
 summary: A feedback loop (research, hypothesis, experiment, evaluation, lesson) recorded in the ledger of record, judged by a deterministic core evaluation engine under versioned objective contracts and provider-family independence, so `system` and its applications improve on evidence and never redo an experiment blindly; first loop is worker agnosticism on the `review` template.
 owners: [operator]
 evidence: [validation/self-build, run_27a329a23f9e7bb8]
-related: [PROP-0008, PROP-0010, ADR-0027, ADR-0036, ADR-0037, ADR-0044, ADR-0045]
+related: [PROP-0008, PROP-0010, ADR-0027, ADR-0036, ADR-0037, ADR-0045, ADR-0046]
 implementation: []
 ---
 
@@ -116,7 +116,7 @@ revision that `supersedes` the old one.
 ### Records
 
 Each record is a new kind of artifact, the body of an existing envelope kind
-([ADR-0044](../decisions/adr/0044-feedback-loop-guarantee-seams.md)), with a JSON Schema in
+([ADR-0045](../decisions/adr/0045-feedback-loop-guarantee-seams.md)), with a JSON Schema in
 `schemas/`, versioned by the
 [schema rules](../reference/schemas.md#versioning). The verdict is not a new record: it is a
 `decision` of the existing schema with a new decision type, so it is explained, linked, and
@@ -176,7 +176,7 @@ Adding two guarantee seams, the `verdict` decision type, the `promotion` action 
 joins the classes that always ask, [autonomy policy](../design/approvals.md#the-autonomy-policy)),
 and any change to the `workflow` contract the controller or the arms need, changes the core:
 each needs an ADR, as [ADR-0039](../decisions/adr/0039-base-guarantee-seam-contract-changes.md)
-recorded Base's changes. F1 proposes [ADR-0044](../decisions/adr/0044-feedback-loop-guarantee-seams.md)
+recorded Base's changes. F1 proposes [ADR-0045](../decisions/adr/0045-feedback-loop-guarantee-seams.md)
 for the seams, the decision types, and the action class.
 
 #### Protocol sketch: an experiment
@@ -378,7 +378,7 @@ from those whose `invalidatedBy` predicates fired: the latter are history, shown
 
 Two rules apply [INV-5](../architecture/invariants.md#inv-5-exact-subject-binding) to
 self-improvement. Each would need an ADR to join the invariants
-([ADR-0045](../decisions/adr/0045-evaluation-and-promotion-integrity.md), proposed):
+([ADR-0046](../decisions/adr/0046-evaluation-and-promotion-integrity.md), proposed):
 
 - **Evaluation integrity.** An evaluation is valid only for its pinned candidate, baseline, suite,
   objective contract, and environment. It never authorizes another candidate, a changed objective,

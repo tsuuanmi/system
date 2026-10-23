@@ -124,7 +124,7 @@ guesses.
   the `configHash`, and the proposed `policy` by id and version. Example:
   [`decision.policy-change.json`](../../schemas/examples/decision.policy-change.json).
 - `decision@1.7` adds the feedback loop's two decision types
-  ([ADR-0044](../decisions/adr/0044-feedback-loop-guarantee-seams.md)). A decision of either must be
+  ([ADR-0045](../decisions/adr/0045-feedback-loop-guarantee-seams.md)). A decision of either must be
   `@1.7`; every other decision keeps its version.
   - `registration`: whether the experiment registry pre-registered or refused one revision of an
     experiment ([experiments](../design/experiments.md#a-registration)). Candidates `preregistered`
@@ -474,7 +474,7 @@ guesses.
   `remediation`, and `promotion`. The schema refuses `auto` and `notify` for them, except
   `remediation`, which it predates: a policy that gives `remediation` either is refused when
   loaded. `promotion` joined `common@1`'s action classes with the feedback loop
-  ([ADR-0044](../decisions/adr/0044-feedback-loop-guarantee-seams.md)). No record named it
+  ([ADR-0045](../decisions/adr/0045-feedback-loop-guarantee-seams.md)). No record named it
   before, so the schema refuses it `auto` and `notify` from the start without tightening
   anything, and the record stays `@1.0`.
 - A project policy constrains only the classes it names. The effective mode of a class is the

@@ -72,7 +72,7 @@ request that never expires (INV-9).
   lost run going on, waits for a person: the workflow's remediation gate and the board ask the
   queue about it), and `promotion` (a plugin moved to `default` on an accepted evaluation, so the
   feedback loop never approves its own change:
-  [ADR-0044](../decisions/adr/0044-feedback-loop-guarantee-seams.md)) are never `auto` or
+  [ADR-0045](../decisions/adr/0045-feedback-loop-guarantee-seams.md)) are never `auto` or
   `notify` (`ALWAYS_ASK`).
   The schema refuses a policy that says so (for `remediation`, which the schema predates, a
   load-time rule does), and the provider raises each of them to at least `ask` whatever a rule

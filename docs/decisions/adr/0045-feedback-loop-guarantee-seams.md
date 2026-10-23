@@ -1,4 +1,4 @@
-# ADR-0044: The feedback loop's guarantee seams: an experiment registry and an evaluation engine
+# ADR-0045: The feedback loop's guarantee seams: an experiment registry and an evaluation engine
 
 - **Status:** Proposed
 - **Date:** 2026-10-23
@@ -6,7 +6,7 @@
   [ADR-0036](0036-guarantee-core-and-capability-plugins.md),
   [ADR-0037](0037-schema-and-protocol-first.md),
   [ADR-0039](0039-base-guarantee-seam-contract-changes.md),
-  [ADR-0045](0045-evaluation-and-promotion-integrity.md),
+  [ADR-0046](0046-evaluation-and-promotion-integrity.md),
   [INV-2](../../architecture/invariants.md#inv-2-fail-closed),
   [INV-5](../../architecture/invariants.md#inv-5-exact-subject-binding),
   [INV-13](../../architecture/invariants.md#inv-13-every-decision-is-an-artifact)
@@ -89,7 +89,7 @@ unreleased, as ADR-0039 did for `remediation`; its suite's always-ask scenario c
 **Not decided here**, each with its own ADR when its milestone needs it: a `workflow` contract
 change that fixes a trial's run to its arm's Workers from a trusted envelope (PROP-0011 Q2; F4 or
 F5); the plugin host refusing a move to `default` that no approved promotion names (Q10); and the
-two invariant candidates, proposed in [ADR-0045](0045-evaluation-and-promotion-integrity.md).
+two invariant candidates, proposed in [ADR-0046](0046-evaluation-and-promotion-integrity.md).
 
 ## Consequences
 

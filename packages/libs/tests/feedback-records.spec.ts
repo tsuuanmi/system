@@ -1,4 +1,4 @@
-// The feedback loop's records (PROP-0011, ADR-0044) refuse what their protocols forbid. Each case
+// The feedback loop's records (PROP-0011, ADR-0045) refuse what their protocols forbid. Each case
 // starts from a valid example in schemas/examples and breaks one rule.
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'

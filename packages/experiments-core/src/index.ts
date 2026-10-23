@@ -1,6 +1,6 @@
 /**
  * Experiment registry seam definition: `ctx.experiments` (docs/design/experiments.md), a guarantee
- * seam of the work state machine (ADR-0036, ADR-0044). The registry records hypotheses and
+ * seam of the work state machine (ADR-0036, ADR-0045). The registry records hypotheses and
  * experiments, answers every registration EXACT_REPEAT, RELATED, CONTEXT_CHANGED, or NOVEL from the
  * exact identity and the structured fingerprint, pre-registers or refuses it with a `registration`
  * decision, holds each experiment's state while the evaluation engine runs it, and keeps lessons,

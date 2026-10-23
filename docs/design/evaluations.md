@@ -2,7 +2,7 @@
 
 > Target state. Boundary: [orchestration](../architecture/components.md#orchestration), core
 > component *gate* ([ADR-0036](../decisions/adr/0036-guarantee-core-and-capability-plugins.md),
-> [ADR-0044](../decisions/adr/0044-feedback-loop-guarantee-seams.md)). Proposal:
+> [ADR-0045](../decisions/adr/0045-feedback-loop-guarantee-seams.md)). Proposal:
 > [PROP-0011](../proposals/0011-feedback-loop.md). Records:
 > [`evaluation@1.0`](../reference/schemas.md#evaluation) and the `verdict` decision of
 > [`decision@1.7`](../reference/schemas.md#decision), under an
@@ -157,7 +157,7 @@ recorded plus the next reservation must stay within the funded lines.
    nothing.
 2. An evaluation is valid only for its pinned candidate, baseline, suite, contract, and
    environment ([INV-5](../architecture/invariants.md#inv-5-exact-subject-binding),
-   [ADR-0045](../decisions/adr/0045-evaluation-and-promotion-integrity.md)); a pin or seal that
+   [ADR-0046](../decisions/adr/0046-evaluation-and-promotion-integrity.md)); a pin or seal that
    moves, a run outside its arm, or a same-family fallback makes it `invalid`.
 3. A trial is recorded before its run starts and is never started twice; a run whose outcome is
    unknown is lost, never repeated.

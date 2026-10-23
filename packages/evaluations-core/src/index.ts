@@ -1,6 +1,6 @@
 /**
  * Evaluation engine seam definition: `ctx.evaluations` (docs/design/evaluations.md), a guarantee
- * seam of the gate (ADR-0036, ADR-0044). The engine runs a pre-registered experiment offline under
+ * seam of the gate (ADR-0036, ADR-0045). The engine runs a pre-registered experiment offline under
  * its pins and seals, as paired trials in an order drawn from the experiment's seed, measures each
  * trial through registered collectors and the resource ledger, analyses once at the horizon by the
  * declared method, and classifies the evaluation by the deterministic verdict rule, recorded as a

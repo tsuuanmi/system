@@ -1,9 +1,9 @@
-# ADR-0045: Evaluation integrity and promotion integrity join the invariants
+# ADR-0046: Evaluation integrity and promotion integrity join the invariants
 
 - **Status:** Proposed
 - **Date:** 2026-10-23
 - **Related:** [PROP-0011](../../proposals/0011-feedback-loop.md#invariant-candidates),
-  [ADR-0044](0044-feedback-loop-guarantee-seams.md),
+  [ADR-0045](0045-feedback-loop-guarantee-seams.md),
   [INV-4](../../architecture/invariants.md#inv-4-restart-is-reconciliation-not-replay),
   [INV-5](../../architecture/invariants.md#inv-5-exact-subject-binding),
   [INV-6](../../architecture/invariants.md#inv-6-authority-comes-from-trusted-envelopes)
