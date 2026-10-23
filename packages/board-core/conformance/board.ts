@@ -658,23 +658,37 @@ export const boardSuite = defineSuite<Boot>({
       expect(await failureOf(ctx.board.propose({ ...task('p1', 'x'), maxAttempts: 11 }, at(2)))).toBe('invalid')
       expect((await ctx.board.tasks({ projectId: 'p1' })).map((t) => t.title)).toEqual(['w1'])
     }),
-    scenario('pause-and-close', 'starts nothing in a paused project, and closes a project only when nothing of it runs, cancelling its open tasks', async (ctx) => {
+    scenario('pause-and-close', 'starts and claims nothing in a paused project, and closes a project only when nothing of it runs or is in review, cancelling its open tasks and withdrawing the requests they and a pending amendment waited on', async (ctx) => {
       await active(ctx)
+      const free = await ready(ctx, task('p1', 'free'))
       const t = await ctx.board.propose(task('p1', 't'), at(2))
       expect(validProject(await ctx.board.pause('p1', at(2)))).toMatchObject({ state: 'paused' })
+      expect(await failureOf(ctx.board.pause('p1', at(2)))).toBe('invalid-transition')
       await ctx.board.sweep(at(2))
       expect(await stateOf(ctx, t.taskId)).toBe('proposed')
-      await ctx.board.resume('p1', at(3))
+      expect(await failureOf(ctx.board.claim(free.taskId, 'lead', 600_000, at(2)))).toBe('invalid-transition')
+      expect(validProject(await ctx.board.resume('p1', at(3)))).toMatchObject({ state: 'active' })
+      expect(await failureOf(ctx.board.resume('p1', at(3)))).toBe('invalid-transition')
       await ctx.board.sweep(at(3))
       const { generation } = await ctx.board.claim(t.taskId, 'lead', 600_000, at(3))
       await ctx.board.start(t.taskId, generation, { runId: 'run-1' }, at(3))
       const open = await ctx.board.propose(task('p1', 'open'), at(3))
+      const deploy = await ctx.board.propose(task('p1', 'deploy', { actionClass: 'deploy' }), at(3))
+      await ctx.board.sweep(at(3))
+      const waitedOn = (await ctx.board.task(deploy.taskId))!.waiting!.approvalRequest!
+      const { approvalRequest: amendment } = await ctx.board.charter({ projectId: 'p1', title: 'project p1', charter: { ...CHARTER, version: 2 } }, at(3))
       expect(await failureOf(ctx.board.close('p1', 'stopped', at(4)))).toBe('invalid-transition')
-      await ctx.board.submit(t.taskId, generation, { artifacts: [result(ctx, 'r')], subject: HEAD }, at(4))
-      await ctx.board.accept(t.taskId, acceptance(ctx, 'accept', t.taskId, result(ctx, 'r')), at(5))
+      const r = result(ctx, 'r')
+      await ctx.board.submit(t.taskId, generation, { artifacts: [r], subject: HEAD }, at(4))
+      expect(await failureOf(ctx.board.close('p1', 'stopped', at(4)))).toBe('invalid-transition')
+      await ctx.board.accept(t.taskId, acceptance(ctx, 'accept', t.taskId, r), at(5))
       const closed = validProject(await ctx.board.close('p1', 'achieved', at(6)))
       expect(closed).toMatchObject({ state: 'closed', closure: { outcome: 'achieved' } })
-      expect((await ctx.board.task(open.taskId))?.cancellation?.reason).toBe('project-closed')
+      expect(closed.proposedCharter).toBeUndefined()
+      expect(decisionOf(ctx, closed.closure!.decision)).toMatchObject({ decisionType: 'board', outcome: { option: 'closed' } })
+      for (const id of [free.taskId, open.taskId, deploy.taskId]) expect((await ctx.board.task(id))?.cancellation?.reason, id).toBe('project-closed')
+      for (const requestId of [waitedOn, amendment]) expect((await ctx.approvals.get(requestId))?.resolution?.cause, requestId).toBe('withdrawn')
+      expect(await failureOf(ctx.board.close('p1', 'achieved', at(7)))).toBe('invalid-transition')
       expect(await failureOf(ctx.board.propose(task('p1', 'late'), at(7)))).toBe('invalid-transition')
     }),
   ],
@@ -804,7 +818,14 @@ export class FakeBoard extends Board {
     if (tasks.some((t) => t.state === 'running' || t.state === 'review')) throw new BoardError('invalid-transition', `${projectId} has a task running or in review`)
     for (const t of tasks) if (!TERMINAL.includes(t.state)) await this.cancelTask(t, 'project-closed', at)
     const decision = this.decide(projectId, project.state, 'closed', at, outcome)
-    return this.save(project, at, { state: 'closed', closure: { outcome, decision, at: at.toISOString() }, lastDecision: decision, proposedCharter: undefined })
+    const closed = this.save(project, at, { state: 'closed', closure: { outcome, decision, at: at.toISOString() }, lastDecision: decision, proposedCharter: undefined })
+    // A pending amendment is dropped with it: the move first, its request withdrawn after.
+    for (const [requestId, pending] of Array.from(this.charters)) {
+      if (pending.projectId !== projectId) continue
+      this.charters.delete(requestId)
+      await this.ctx.approvals.withdraw(requestId, at)
+    }
+    return closed
   }
 
   async propose(input: TaskInput, at: Date = new Date()) {

@@ -32,7 +32,9 @@ Work state machine **seam definition**
     ending in a wait no input revives, never ready once spent; review bounded by the
     reviewer's lease; a result on the subject the task writes;
   - blocking and answering; cancelling, with the approval withdrawn and dependents cancelled;
-    validation of proposals and of founding milestones; pausing and closing;
+    validation of proposals and of founding milestones; pausing, which claims and readies
+    nothing until resumed; closing, refused while a task runs or is in review, which cancels the
+    open tasks and withdraws the requests they and a pending amendment waited on;
   - a wait whose request the queue withdrew on a policy change put to the policy again: ready,
     the forbid outcome, or one new request on the same subject; a charter asked about again or
     abandoned. Its `boot` therefore also changes the queue's policies (`changePolicies`);
