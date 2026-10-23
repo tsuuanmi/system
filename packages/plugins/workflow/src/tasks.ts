@@ -247,7 +247,8 @@ export class TaskRuns {
    * attempt the run will be, its goal and acceptance criteria, and pointers, never content, to the
    * accepted results of the tasks it depends on (their digests when they have one), to its previous
    * attempt's result, and to the decision behind this attempt (a rejection's reasons, the answers to
-   * its questions). Only stored artifacts are pointed at, at most {@link FRAME_POINTERS}. The
+   * its questions), and the results of the steps an attempt the task's spent budget stopped had
+   * completed. Only stored artifacts are pointed at, at most {@link FRAME_POINTERS}. The
    * budget is what the task may still draw: its lines less the usage the ledger counts for it.
    */
   private async frameOf(board: Board, task: BoardTask, project: Project | undefined, classification: Classification | undefined): Promise<TaskFrame> {
@@ -850,7 +851,7 @@ export class TaskRuns {
    * pass the line), what the task overdrew it by plus one attempt's share of it (the line over the
    * task's attempts), at the unit's precision. Approved, the next attempt can reserve, and is given
    * about what one attempt was. Empty when no line is reached by recorded usage (holds that expire
-   * refused the run) or the ledger cannot count it (more records than it returns): the request then
+   * refused the step) or the ledger cannot count it (more records than it returns): the request then
    * asks only to go on. `wait` while the ledger does not answer.
    */
   private async fundingAsk(row: TaskRow, budget: TaskBudget, task: BoardTask | undefined): Promise<BudgetLine[] | 'wait'> {
