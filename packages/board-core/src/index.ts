@@ -17,8 +17,11 @@ declare module '@deepseek-ai/cordis' {
   }
 }
 
-/** The contract version of this seam; its conformance suite names the same. */
-export const BOARD_CONTRACT = '1.0'
+/**
+ * The contract version of this seam; its conformance suite names the same. 1.1 adds the optional
+ * {@link Board.attachDigest}: a provider at 1.0 has none.
+ */
+export const BOARD_CONTRACT = '1.1'
 
 export type Unit = 'tokens' | 'usd' | 'turns' | 'runs' | 'minutes'
 export interface BudgetLine { pool: string; unit: Unit; amount: number }
@@ -208,6 +211,18 @@ export abstract class Board extends Service {
 
   /** Cancel a task that is not running or in review. */
   abstract cancel(taskId: string, reason: 'operator' | 'lead' | 'superseded', note?: string, at?: Date): Promise<BoardTask>
+
+  /**
+   * Attach the digest of the task's current result as `result.digest`, once (contract 1.1;
+   * optional: a provider at 1.0 has none, and a result then keeps no digest). The digest is a
+   * stored `digest@1.0` report whose sources are exactly the result's artifacts (`invalid`
+   * otherwise). Refused (`invalid-transition`) while the task has no result, while its reviewer
+   * holds the review (a digest would change what the acceptance being made binds to; a review held
+   * for the operator takes one, and the operator's acceptance then names it), and once another
+   * digest is attached; the same digest again changes nothing. No state moves and no board decision
+   * is made: the digest's own settling decision records it, and a digest never accepts anything.
+   */
+  abstract attachDigest?(taskId: string, digest: ArtifactRef, at?: Date): Promise<BoardTask>
 
   /**
    * Make every move that is due at `at`: tasks whose dependencies are done become ready or wait

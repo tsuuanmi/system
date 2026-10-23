@@ -34,7 +34,7 @@ function task(t: BoardTask): string[] {
   }
   if (t.result) {
     const subject = `${t.result.subject.type} \`${inline(t.result.subject.ref)}\`${t.result.subject.version ? ` at \`${inline(t.result.subject.version)}\`` : ''}`
-    lines.push(`- result: ${subject}${t.result.acceptance ? `, accepted by \`${t.result.acceptance}\`` : ''}`)
+    lines.push(`- result: ${subject}${t.result.acceptance ? `, accepted by \`${t.result.acceptance}\`` : ''}${t.result.digest ? `; digest \`${t.result.digest}\`` : ''}`)
     if (t.result.next) lines.push(`- proposed next: ${inline(t.result.next)}`)
   }
   if (t.cancellation) lines.push(`- cancelled: ${t.cancellation.reason}${t.cancellation.note ? ` (${inline(t.cancellation.note)})` : ''} at ${t.cancellation.at}`)

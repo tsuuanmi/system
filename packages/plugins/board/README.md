@@ -57,6 +57,12 @@ charters, and their tasks.
   cancels its open tasks in the same transaction. The board sweeps
   once at start (a restart is a sweep) and every `sweepSeconds`; `0` leaves sweeping to the
   caller.
+- **A digest on a result** (`attachDigest`, contract 1.1): in one transaction, a stored
+  `digest@1.0` report whose sources are exactly the result's artifacts becomes `result.digest`,
+  once; the same digest again changes nothing. Refused while the task has no result, while its
+  reviewer holds the review (its acceptance binds to the whole result, digest included), and once
+  another is attached. No state moves and no decision is made; a review held for the operator
+  takes one, and the operator's acceptance then names it.
 - **Where the protocol's tables leave room**, this provider settles it as
   [board](../../../docs/design/board.md#where-the-tables-leave-room) says.
 - **Reads beyond the seam:** `projectPage` and `taskPage` (20 items by default, never more than
@@ -64,7 +70,8 @@ charters, and their tasks.
   `tasks`, the seam's own reads, return every match.
 - **`TASKS.md`:** `tasksMarkdown(projectId)` renders one project's board as Markdown in
   Backlog.md's spirit, for native agents without MCP: per task its id, title, state, action
-  class, attempts, dependencies, holder, run, why it waits (with its questions), result, and
+  class, attempts, dependencies, holder, run, why it waits (with its questions), result (with
+  its digest), and
   acceptance criteria as checkboxes (checked once done). Tasks are grouped in progress, waiting,
   ready, proposed, done, cancelled; at most `projectionMaxTasks`, open ones first, the rest
   counted. The output depends on the stored records only, quotes each goal so it cannot read as
@@ -107,7 +114,7 @@ charters, and their tasks.
   ([`system-approvals`](../approvals/README.md)); with that row off or refused, the board waits
   on its `approvals` inject and is not mounted.
 - **Tests:** [`tests/conformance.spec.ts`](tests/conformance.spec.ts) runs the seam's suite
-  ([`board-core/conformance/board.ts`](../../board-core/conformance/board.ts)) at contract 1.0
+  ([`board-core/conformance/board.ts`](../../board-core/conformance/board.ts)) at contract 1.1
   over `FakeApprovals`, with no expected failures; the approval queue's own tests run it over the
   store-backed queue too.
   [`tests/board.spec.ts`](tests/board.spec.ts) covers what the suite does not: restart (in place

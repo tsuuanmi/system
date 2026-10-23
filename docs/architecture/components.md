@@ -227,7 +227,7 @@ runs the work the router admitted to them. Callers never reach a source directly
   drain / resume / explain / usage`, `workflow.template(name, nodes)`;
   `workerSessions.join / send / inbox / ack / openBarrier / activate / settle`;
   `board.charter / propose / claim / renew / start / submit / accept / reconcileRun / block / answer /
-  cancel / sweep`; MCP `board_*`, and `run` with `task`; `digests.request / get / wait`, MCP
+  cancel / sweep / attachDigest`; MCP `board_*`, and `run` with `task`; `digests.request / get / wait`, MCP
   `digests_request`, `digests_get`.
 - **Packages:** [workflow](../../packages/plugins/workflow/README.md),
   [worker-sessions](../../packages/plugins/worker-sessions/README.md),
