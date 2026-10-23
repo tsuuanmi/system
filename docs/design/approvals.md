@@ -14,7 +14,8 @@
 > Worker's tool calls pass the gate of [`agent-workers`](../../packages/plugins/agent-workers/README.md),
 > which [`runtime-claude-agent-sdk`](../../packages/plugins/runtime-claude-agent-sdk/README.md)
 > compiles to a PreToolUse hook. Differs from target: remediation still uses the plan gate
-> (`approval@1.0`); a Worker's tool calls are judged under the studio policy only, since no
+> (`approval@1.0`); a new policy version takes effect by configuration and a restart, not through
+> a `policy-change` approval; a Worker's tool calls are judged under the studio policy only, since no
 > trusted envelope names an agent run's project yet; a deferred run fails as `config_error`,
 > since the workers seam has no waiting status, and nothing yet starts the later run of its
 > session once its request is approved; the workflow engine's acceptance does not yet bind a
@@ -130,8 +131,9 @@ the request becomes `rejected` with cause `expired`, and the decision's outcome 
 | open or batched → rejected (policy changed) | the provider, at load and on every `sweep`, for an unexpired request whose policy is not current at its version, or whose class (and the class its decision judged it as) the loaded policies no longer ask for | an `approval` decision `withdrawn` (decider rule `approvals.policy`), its reason naming what changed | one that fails is logged and left for the next sweep |
 
 A policy change takes effect by configuration and a restart. Cause `withdrawn` covers it: the
-requester sees its request rejected, as when its own work ended, and asks anew if the new policy
-still asks.
+requester sees its request rejected, as when its own work ended, and may ask anew if the new
+policy still asks. No requester does so by itself
+([withdrawn is not a verdict](#where-the-tables-leave-room)).
 
 ### Where the tables leave room
 
@@ -153,6 +155,11 @@ hold. The fake provider does not check them, and the suite does not test them.
   unless both `command` and the class it was judged as still ask.
 - The queue sweeps, then batches, once at start and every `sweepSeconds` (1 to 3600, never off);
   nothing else calls them in production.
+- A withdrawn request is not a verdict. A board task that waits on one stays as it is until its
+  wait expires, then waits for input (`rejected`)
+  ([board](board.md#where-the-tables-leave-room)); a Worker's gate denies the same call again in
+  that session ([a deferred call](#a-deferred-call)); a charter request waits for its expiry.
+  Whoever owns the work proposes it again.
 
 ## A Worker's tool calls
 
