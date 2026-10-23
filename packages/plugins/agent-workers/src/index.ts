@@ -186,7 +186,7 @@ const accountOf = (worker: AgentWorkerConfig): string => worker.runtime
 /** Whether an account takes work now, and when not, until when (when known) and why. */
 interface AccountGate { state: 'ready' | 'quota-exhausted' | 'unavailable'; until?: string | undefined; why?: string }
 /** The board task and project a run serves, as its reservation and usage record name them. */
-const scopeOf =(row: RunRow): { taskId?: string; projectId?: string } => ({ ...(row.task_id ? { taskId: row.task_id } : {}), ...(row.project_id ? { projectId: row.project_id } : {}) })
+const scopeOf = (row: RunRow): { taskId?: string; projectId?: string } => ({ ...(row.task_id ? { taskId: row.task_id } : {}), ...(row.project_id ? { projectId: row.project_id } : {}) })
 
 export class AgentWorkers extends Service {
   static inject = ['store', 'artifacts', 'leases', 'workers', 'agentRuntimes', 'egress']
