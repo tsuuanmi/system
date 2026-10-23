@@ -113,7 +113,9 @@ runs the work the router admitted to them. Callers never reach a source directly
   ([a Worker's tool calls](../design/approvals.md#a-workers-tool-calls)).
   A Worker configured with a resource pool is metered through `ctx.resources`: it reserves
   before a run, records one usage record from the runtime's own numbers after it, and records
-  the runtime's limit observations ([agent runtimes](../design/agent-runtimes.md#metering)).
+  the runtime's limit observations ([agent runtimes](../design/agent-runtimes.md#metering)); a
+  run the ledger counts nothing of is recorded as a `usage.unknown` fact in the event log
+  ([usage the ledger cannot count](../design/resources.md#usage-the-ledger-cannot-count)).
   A Worker configured with `worktreePerRun` works, per workflow run, in that run's own git
   worktree of its repository, and the source removes the worktree, its changes committed on
   the run's branch, once the run has been idle past a retention
@@ -291,7 +293,9 @@ runs the work the router admitted to them. Callers never reach a source directly
 - **MCP server** (`ctx.mcp`): Streamable HTTP at `/mcp` behind the operator and client
   tokens. Plugins contribute tools for their lifetime, each declaring the scope that may call
   it ([MCP tools](../reference/mcp-tools.md),
-  [ADR-0023](../decisions/adr/0023-scoped-control-credentials.md)).
+  [ADR-0023](../decisions/adr/0023-scoped-control-credentials.md)). Its `status` tool gives the
+  host's health, read from the mounted services, the resource ledger and the event log among them
+  ([mcp-server](../../packages/plugins/mcp-server/README.md)).
 - **Request guard** (in `gateway-core`): one set of transport checks for every client endpoint
   (MCP, both protocol gateways, the web UI): a loopback `Host`, no browser `Origin`, the bearer
   token in constant time, which decides the caller's scope, bounded JSON bodies, and no route on

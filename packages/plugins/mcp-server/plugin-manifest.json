@@ -54,6 +54,11 @@
       "optional": true
     },
     {
+      "seam": "resources",
+      "range": "^1.0.0",
+      "optional": true
+    },
+    {
       "seam": "store",
       "range": "^1.0.0",
       "optional": true

@@ -749,14 +749,17 @@ export async function parseAsk(args: readonly string[], readStdin: () => Promise
   return prompt ? { prompt, ...request } : undefined
 }
 
-interface UsageNode { nodeId: string; state: string; minTier: string; tier?: string; worker?: string; quotaClass?: string; usage?: { inputTokens: number; outputTokens: number } }
+interface UsageNode { nodeId: string; state: string; minTier: string; tier?: string; worker?: string; quotaClass?: string; usage?: { inputTokens: number; outputTokens: number }; usageUnknown?: string }
 interface UsageRun { runId: string; template: string; status: string; createdAt: string; nodes: UsageNode[] }
 
-/** `system usage`: per request and step, the Worker, tier, and quota class that served it, and the tokens a model Worker spent. */
+/**
+ * `system usage`: per request and step, the Worker, tier, and quota class that served it, the tokens a
+ * model Worker spent, and a step whose usage the resource ledger could not count, with why.
+ */
 export function formatUsage(usage: { runs: UsageRun[] }): string[] {
   return usage.runs.flatMap((run) => [
     `${run.runId}  ${run.template}  ${run.status}  ${run.createdAt}`,
-    ...run.nodes.map((n) => `  ${n.nodeId}  ${n.state}  ${n.tier ?? '-'}  ${n.quotaClass ?? '-'}  ${n.worker ?? '-'}${n.usage ? `  ${n.usage.inputTokens} in / ${n.usage.outputTokens} out tokens` : ''}`),
+    ...run.nodes.map((n) => `  ${n.nodeId}  ${n.state}  ${n.tier ?? '-'}  ${n.quotaClass ?? '-'}  ${n.worker ?? '-'}${n.usage ? `  ${n.usage.inputTokens} in / ${n.usage.outputTokens} out tokens` : ''}${n.usageUnknown ? `  usage unknown (${n.usageUnknown})` : ''}`),
   ])
 }
 

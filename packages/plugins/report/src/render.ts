@@ -78,9 +78,19 @@ export function renderReport(report: Report): string {
   lines.push('', '## Resources', '')
   if (!u.pools.length) lines.push('- No usage recorded.')
   for (const p of [...u.pools, ...(u.pools.length > 1 ? [{ ...u.total, pool: 'all pools' }] : [])]) {
-    lines.push(`- ${p.pool}: ${whole(p.inputTokens)} tokens in (${whole(p.cacheReadInputTokens)} cache reads, ${whole(p.cacheCreationInputTokens)} cache writes), ${whole(p.outputTokens)} out; ${plural(p.turns, 'turn')}; ${usd(p.costUsd)}; ${plural(p.records, 'record')}.`)
+    // What a cap counts as 0: the runs the ledger could not count, and the records without a figure.
+    const uncounted = [
+      p.unknownRuns ? `${plural(p.unknownRuns, 'run')} whose usage is unknown` : '', p.withoutTokens ? `${plural(p.withoutTokens, 'record')} without token counts` : '',
+      p.withoutCost ? `${plural(p.withoutCost, 'record')} without a cost` : '', p.withoutTurns ? `${plural(p.withoutTurns, 'record')} without turns` : '',
+    ].filter(Boolean)
+    lines.push(`- ${p.pool}: ${whole(p.inputTokens)} tokens in (${whole(p.cacheReadInputTokens)} cache reads, ${whole(p.cacheCreationInputTokens)} cache writes), ${whole(p.outputTokens)} out; ${plural(p.turns, 'turn')}; ${usd(p.costUsd)}; ${plural(p.records, 'record')}${uncounted.length ? `; not counted: ${uncounted.join(', ')}` : ''}.`)
   }
   if (u.byOutcome.failed || u.byOutcome.aborted) lines.push(`- Runs that did not complete: ${whole(u.byOutcome.failed)} failed, ${whole(u.byOutcome.aborted)} aborted.`)
+  if (u.unknown) {
+    const k = u.unknown
+    const kinds = [k.notReported ? `${whole(k.notReported)} not reported` : '', k.interrupted ? `${whole(k.interrupted)} interrupted` : '', k.refused ? `${whole(k.refused)} refused by the ledger` : '', k.failed ? `${whole(k.failed)} failed to record` : ''].filter(Boolean)
+    lines.push(`- Usage the ledger could not count: ${plural(k.runs, 'run')} (${kinds.join(', ')}), ${whole(k.reconciled)} of them counted since; a cap counts the others as 0.`)
+  }
 
   const b = report.baseline
   lines.push('', '## Baseline', '')

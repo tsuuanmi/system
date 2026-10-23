@@ -442,7 +442,11 @@ second execution path (INV-1).
   - `get`, `wait`, and `records` read a run and its node records.
   - `usage` lists recent runs with each step's Worker, tier, and quota class,
     and the tokens its result reports, when its Worker counts them (a model
-    Worker's `model-answer`) (the usage report).
+    Worker's `model-answer`) (the usage report). A step whose execution's
+    usage the resource ledger could not count when it ended carries
+    `usageUnknown`, the kind its Worker source recorded first in the run's
+    `usage.unknown` entries
+    ([resources](../../../docs/design/resources.md#usage-the-ledger-cannot-count)).
   - `explain` gives each step's egress, tier, route (or admission), and
     acceptance or recovery decisions with their reasons (REQ-ART-3), and each
     vote decision's ballots (round, member, choice, confidence, rationale). It

@@ -236,6 +236,31 @@ describe('usage-record@1.0 and limit-state@1.0', () => {
   })
 })
 
+describe('usage-unknown@1.0', () => {
+  const silent = example('usage-unknown.not-reported')
+  const refused = example('usage-unknown.refused')
+
+  it('names the unit, its pool, and why its usage is unknown, never a number for it (design/resources.md)', () => {
+    for (const key of ['runId', 'kind', 'account', 'pool', 'observedAt', 'reason']) {
+      const { [key]: _, ...without } = silent
+      expect(valid('usage-unknown@1.0', without), key).toBe(false)
+    }
+    expect(valid('usage-unknown@1.0', { ...silent, kind: 'estimated' })).toBe(false)
+    expect(valid('usage-unknown@1.0', { ...silent, usage: { inputTokens: 1, outputTokens: 1 } })).toBe(false)
+    expect(valid('usage-unknown@1.0', { ...silent, reason: 'x'.repeat(501) })).toBe(false)
+  })
+
+  it('carries the ledger\'s refusal and the refused record for a refused record only', () => {
+    const { failure: _, ...unexplained } = refused
+    expect(valid('usage-unknown@1.0', unexplained)).toBe(false)
+    const { record: __, ...unkept } = refused
+    expect(valid('usage-unknown@1.0', unkept)).toBe(true)
+    expect(valid('usage-unknown@1.0', { ...refused, failure: 'unknown-reservation' })).toBe(false)
+    expect(valid('usage-unknown@1.0', { ...silent, failure: 'invalid' })).toBe(false)
+    expect(valid('usage-unknown@1.0', { ...silent, record: refused.record })).toBe(false)
+  })
+})
+
 describe('brief@1.0 and digest@1.0', () => {
   const brief = example('brief.task')
   const digest = example('digest.test-run')
@@ -375,6 +400,20 @@ describe('MCP tool calls', () => {
     expect(call('mcp-report', { ...week, input: { since: 'last week' } })).toBe(false)
     expect(call('mcp-report', { ...week, output: { ...week.output, tasks: { ...week.output.tasks, done: -1 } } })).toBe(false)
     expect(call('mcp-report', { ...week, output: { ...week.output, summary: 'written by a model' } })).toBe(false)
+  })
+
+  it('1.1 says what a cap counts as 0, as counts only: the runs whose usage is unknown, by kind, and the records without a figure (D25)', () => {
+    const week = example('mcp-report.week')
+    const usage = week.output.usage
+    const withUsage = (changed: Json): Json => ({ ...week, output: { ...week.output, usage: { ...usage, ...changed } } })
+    expect(call('mcp-report', withUsage({ unknown: { ...usage.unknown, estimatedTokens: 1000 } }))).toBe(false)
+    expect(call('mcp-report', withUsage({ unknown: { runs: 1 } }))).toBe(false)
+    expect(call('mcp-report', withUsage({ total: { ...usage.total, withoutTokens: -1 } }))).toBe(false)
+    expect(call('mcp-report', withUsage({ pools: [{ ...usage.pools[0], withoutCost: 2, withoutTurns: 1 }] }))).toBe(true)
+    // A report of 1.0, with none of them, stays valid.
+    const { unknown: _, ...before } = usage
+    const { unknownRuns: __, ...total } = usage.total
+    expect(call('mcp-report', { ...week, output: { ...week.output, usage: { ...before, total, pools: [total].map((t) => ({ pool: usage.pools[0].pool, ...t })) } } })).toBe(true)
   })
 
   it('checks a call against its own tool, not another', () => {

@@ -28,8 +28,8 @@ and `since` to `days` (default 7) before it; at most 366 days. And a scope: one 
 |---|---|---|
 | board | `ctx.board`: `projects`, `project`, `tasks` | projects and their tasks as they are now (`asOf`) |
 | approval queue | `ctx.approvals.list`, every state | each request: its class, requester, creation, batch, and resolution |
-| resource ledger | `ctx.resources.usage` over the period | the counted usage records observed in it (deduplicated by the ledger) |
-| event log | `ctx.eventLog.query` | `workflow.task.reported` (one per attempt that reached its task), `workflow.task.digest`, `workflow.graph.grown`, `workflow.gate.opened` and `closed`, `approvals.batched`; for a project, each of its runs' `workflow.node.started` |
+| resource ledger | `ctx.resources.usage` over the period | the counted usage records observed in it (deduplicated by the ledger); and, for each run whose usage it could not count, whether it has counted a record of that run in its pool since |
+| event log | `ctx.eventLog.query` | `workflow.task.reported` (one per attempt that reached its task), `workflow.task.digest`, `workflow.graph.grown`, `workflow.gate.opened` and `closed`, `approvals.batched`, `usage.unknown` (a run whose usage the ledger could not count, [resources](resources.md#usage-the-ledger-cannot-count)); for a project, each of its runs' `workflow.node.started` |
 | decisions | `ctx.artifacts.get` | the acceptance decision of each done task and of each reported attempt |
 | digests | `ctx.digests.get`, when loaded | each attached digest's claims kept and dropped, escalation, and the runs that wrote it |
 
@@ -41,7 +41,9 @@ from, each task's current run, the executions those runs started (an agent Worke
 ledger names), and the runs that digested the tasks' results (the agent results the digest's
 settling and escalation decisions took as inputs). The same attribution the engine makes for a
 task's budget ([usage spent on a task](workflow-engine.md#a-board-tasks-brief)), with the digests
-added: their cost is part of what the work cost. An approval request belongs to the project when its
+added: their cost is part of what the work cost. A run whose usage the ledger could not count
+belongs to it the same way: its entry names the project, one of its tasks, or a run that served one,
+as the run itself or as the workflow run it belongs to. An approval request belongs to the project when its
 requester names the project, one of its tasks, or one of those runs; a batch, when it holds one of
 those requests.
 
@@ -61,12 +63,16 @@ those requests.
 | batches | what the operator was shown: the batches the queue made (`approvals.batched`), and each request the operator answered outside a batch, per UTC day |
 | attention budget | for a project's report, its charter's `maxInterruptionsPerDay` and `maxBatchesPerDay`; each day over either is marked |
 | usage | the records observed in the period, per pool and in all: input tokens (cached input included), cache reads and writes, output tokens, turns, the runtime's own cost estimate; and the records by outcome |
+| usage a cap counts as 0 | per pool and in all, only where there is any (`mcp-report` 1.1): the records without token counts, without a cost, without turns, and the runs recorded in the period whose usage the ledger could not count and has not counted since (`unknownRuns`); and those runs in all (`usage.unknown`): each once per pool by its first entry's kind (not reported, interrupted, refused, failed), and how many the ledger has counted a record of since (reconciled) |
 | digests | digests of task results that ended in the period: attached or bypassed; for those attached, the claims kept and dropped, and the escalations |
 | baseline | accepted results, interruptions, attempts; and, with an accepted result, per accepted result: tokens (input and output), cost, turns, interruptions, attempts |
 
 A missing number stays missing: a usage record with no token counts adds none, and the report says
-how many there were (`notes`). An event log trimmed by retention within the period is said too, as
-is a digest provider that is not loaded.
+how many there were (`notes`), as it does for records without a cost or turns and for the runs whose
+usage the ledger could not count, so tokens and cost per accepted result are then lower bounds. A
+`usage.unknown` entry that is not a valid `usage-unknown@1.0` record is not counted, and said. An
+event log trimmed by retention within the period is said too, as is a digest provider that is not
+loaded.
 
 ## The baseline
 

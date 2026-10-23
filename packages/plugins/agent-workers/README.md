@@ -138,7 +138,16 @@ The **`agents` Worker source**: agent runtimes as Workers
     submission to the end), `cost` with basis `runtime-estimate`, and
     `outcome`). Numbers the runtime did not report stay missing; a run that
     reported neither tokens nor turns gets no record. A ledger refusal is
-    logged and never changes the run's own outcome;
+    logged and never changes the run's own outcome. A record refused as
+    `invalid` with `models` is offered again without them (the totals are what
+    a cap counts). Usage the ledger could not count is recorded
+    ([usage the ledger cannot count](../../../docs/design/resources.md#usage-the-ledger-cannot-count)):
+    one `usage.unknown` event (with `ctx.eventLog`; the workflow run as its
+    `runId`), its data `usage-unknown@1.0`: `not-reported` for a run that
+    reported neither tokens nor turns, `refused` (the ledger's `failure`, and
+    the refused record kept as an `evidence` artifact when it is a valid
+    record) or `failed` for one it did not take, and `interrupted` below. A
+    fact that cannot be appended is logged. A cap counts such a run as 0;
   - **observe** each rate-limit observation the runtime reported as a
     `limit-state` reading (source `runtime-result`) of the window `windows`
     maps it to: `limited` with `resetsAt` when `rejected`, `limited` until
@@ -254,7 +263,9 @@ The **`agents` Worker source**: agent runtimes as Workers
   (`USER_ACTION`) and names its native session. Its reservation is released,
   and its usage is not invented: no result message means no `runtime-result`
   record; its usage comes from transcript reconciliation (`source:
-  transcript`), later (not built yet).
+  transcript`), later (not built yet). Until then a metered one is recorded
+  as `usage.unknown` of kind `interrupted`, under the pool its reservation drew
+  on while its Worker still names it (else logged).
 - **Never stranded:** a run whose `agent-run:<id>` lease another process holds
   is looked at again once that lease would expire (it finishes the run, or it
   crashed). A run whose lease was lost is looked at again after the lease

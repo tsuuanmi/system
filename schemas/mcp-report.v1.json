@@ -93,7 +93,7 @@
       "additionalProperties": false
     },
     "usage": {
-      "description": "Counted usage records and what they consumed: tokens as the ledger counts them (input includes cached input), turns, and the runtime's own cost estimate.",
+      "description": "Counted usage records and what they consumed: tokens as the ledger counts them (input includes cached input), turns, and the runtime's own cost estimate; and, from 1.1, what a cap counts as 0.",
       "type": "object",
       "required": [
         "records",
@@ -125,6 +125,22 @@
         },
         "costUsd": {
           "$ref": "#/$defs/usd"
+        },
+        "withoutTokens": {
+          "description": "Counted records that carry no token counts: a tokens cap counts them as 0. Absent: none.",
+          "$ref": "#/$defs/count"
+        },
+        "withoutCost": {
+          "description": "Counted records that carry no cost: a usd cap counts them as 0. Absent: none.",
+          "$ref": "#/$defs/count"
+        },
+        "withoutTurns": {
+          "description": "Counted records that carry no turn count: a turns cap counts them as 0. Absent: none.",
+          "$ref": "#/$defs/count"
+        },
+        "unknownRuns": {
+          "description": "Runs recorded in the period whose usage the ledger could not count (`usage.unknown`) and has not counted a record of since: no figure counts them, and a cap counts them as 0 (1.1). Absent: none.",
+          "$ref": "#/$defs/count"
         }
       },
       "additionalProperties": false
@@ -627,6 +643,39 @@
                 }
               },
               "additionalProperties": false
+            },
+            "unknown": {
+              "description": "The runs recorded in the period whose usage the ledger could not count (`usage-unknown@1.0`), each once by the kind of its first entry, and how many of them it has counted a record of since (reconciled). Absent: none (1.1).",
+              "type": "object",
+              "required": [
+                "runs",
+                "reconciled",
+                "notReported",
+                "interrupted",
+                "refused",
+                "failed"
+              ],
+              "properties": {
+                "runs": {
+                  "$ref": "#/$defs/count"
+                },
+                "reconciled": {
+                  "$ref": "#/$defs/count"
+                },
+                "notReported": {
+                  "$ref": "#/$defs/count"
+                },
+                "interrupted": {
+                  "$ref": "#/$defs/count"
+                },
+                "refused": {
+                  "$ref": "#/$defs/count"
+                },
+                "failed": {
+                  "$ref": "#/$defs/count"
+                }
+              },
+              "additionalProperties": false
             }
           },
           "additionalProperties": false
@@ -725,7 +774,7 @@
       "additionalProperties": false
     },
     "poolUsage": {
-      "description": "One pool's counted usage.",
+      "description": "One pool's counted usage, and what a cap counts as 0.",
       "type": "object",
       "required": [
         "pool",
@@ -761,6 +810,22 @@
         },
         "costUsd": {
           "$ref": "#/$defs/usd"
+        },
+        "withoutTokens": {
+          "description": "Counted records that carry no token counts: a tokens cap counts them as 0. Absent: none.",
+          "$ref": "#/$defs/count"
+        },
+        "withoutCost": {
+          "description": "Counted records that carry no cost: a usd cap counts them as 0. Absent: none.",
+          "$ref": "#/$defs/count"
+        },
+        "withoutTurns": {
+          "description": "Counted records that carry no turn count: a turns cap counts them as 0. Absent: none.",
+          "$ref": "#/$defs/count"
+        },
+        "unknownRuns": {
+          "description": "Runs recorded in the period whose usage the ledger could not count (`usage.unknown`) and has not counted a record of since: no figure counts them, and a cap counts them as 0 (1.1). Absent: none.",
+          "$ref": "#/$defs/count"
         }
       },
       "additionalProperties": false

@@ -18,9 +18,10 @@ import z from '@deepseek-ai/schemastery'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
-import { dshHome, ensurePrivateDir, registerSecretPath, writeFileDurable } from '@tsuuanmi/system-libs'
+import { dshHome, ensurePrivateDir, registerSecretPath, USAGE_UNKNOWN_EVENT, writeFileDurable } from '@tsuuanmi/system-libs'
 import type { PluginRecord } from '@tsuuanmi/system-plugin-host-core'
-import { type HealthReport, healthReport } from './health.ts'
+import type {} from '@tsuuanmi/system-resources-core'
+import { type HealthReport, healthReport, MAX_UNKNOWN_ENTRIES } from './health.ts'
 import { z as zod } from 'zod'
 
 
@@ -208,10 +209,19 @@ export class McpEndpoint extends McpTools {
     const turns = this.ctx.get('turns' as never) as { conversations?: (filter: { state: 'failed' }) => Array<{ account: string; binding: string; reason?: string }> } | undefined
     const browser = this.ctx.get('browser' as never) as { profileStates?: () => Array<{ account: string; open: boolean; pages: number; kept?: number; reserved: boolean; blocked?: string }>; browserCap?: () => number } | undefined
     const host = this.ctx.get('pluginHost')
+    const resources = this.ctx.get('resources')
     const report = await healthReport({
       plugins: () => brokenPlugins(this.ctx),
       ...(host ? { manifests: () => host.list().filter((p) => p.rows.length).map((p) => ({ name: p.name, mounted: p.mounted, state: p.manifestState, ...(p.reason ? { reason: p.reason } : {}), findings: (p.findings ?? []).map((f) => f.reason) })) } : {}),
       ...(workflow?.refusedTemplates ? { templates: () => workflow.refusedTemplates!() } : {}),
+      // Usage the ledger could not count, from the facts its Worker sources recorded and the ledger's own records.
+      ...(resources && eventLog ? {
+        unknownUsage: {
+          pools: async () => (await resources.pools()).map((p) => ({ pool: p.pool, windows: p.windows.map((w) => (w.seconds !== undefined ? { seconds: w.seconds } : {})) })),
+          entries: (since: string) => eventLog.query({ type: USAGE_UNKNOWN_EVENT, since, limit: MAX_UNKNOWN_ENTRIES }),
+          counted: async (runId: string, pool: string) => (await resources.usage({ runId, pool })).records.length > 0,
+        },
+      } : {}),
       ...(turns?.conversations ? { undeleted: () => turns.conversations!({ state: 'failed' }) } : {}),
       ...(browser?.profileStates ? { profiles: () => browser.profileStates!() } : {}),
       ...(browser?.browserCap?.() ? { browserCap: browser.browserCap() } : {}),
@@ -323,7 +333,7 @@ export class McpEndpoint extends McpTools {
     })
     this.tools.set('status', {
       placeholder: false,
-      spec: { scope: 'client', description: 'Health of the system harness: each check (plugins and their manifests, runtime, store, disk, vault key, accounts, Workers, provider UI drift) and the worst of them, with what to do for operator callers; plus the kernel services and installed providers, and, for the operator, every plugin of the composition with its manifest, its recorded lifecycle state, and what the manifest check found in it.', inputSchema: {} },
+      spec: { scope: 'client', description: 'Health of the system harness: each check (plugins and their manifests, runtime, store, disk, vault key, accounts, Workers, provider UI drift, usage the resource ledger could not count) and the worst of them, with what to do for operator callers; plus the kernel services and installed providers, and, for the operator, every plugin of the composition with its manifest, its recorded lifecycle state, and what the manifest check found in it.', inputSchema: {} },
       handler: async (_args, { scope }) => {
         const artifacts = this.ctx.get('artifacts')
         const providers = this.ctx.get('providers')

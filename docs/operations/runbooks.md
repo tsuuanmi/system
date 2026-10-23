@@ -1519,6 +1519,43 @@ page. A record comes from the runtime's own result message, never the model's re
 that reported no numbers has no record, and a crashed run has none until a transcript is read
 (not built yet). `system usage` lists runs, not the ledger.
 
+## Usage the ledger could not count
+
+Seen as `system health` showing `usage  degraded  max.agents: 2 run(s) in its current window (the
+last 7d) whose usage the ledger could not count (1 not-reported, 1 refused)…`, as `usage unknown
+(<why>)` on a step in `system usage`, or in the report's resources and `Not counted` lines.
+
+The ledger counted no usage record for those runs, so every cap (a board task's budget lines)
+counts them as 0, and the tokens and cost the report gives are lower bounds. They are not refused:
+you chose to count them as 0 and see them (D25); failing closed for metered pools waits for
+transcript reconciliation ([resources](../design/resources.md#usage-the-ledger-cannot-count)). A
+pool's availability is unaffected: it comes from limit readings, not records.
+
+1. **Read them.** `system events --type usage.unknown`: each entry's `data` names the run
+   (`runId`), Worker, pool, account, board task, how it ended, `kind`, and `reason`; the entry's own
+   `runId` is the workflow run (`system explain <it>`).
+2. **Act on the kind:**
+   - `not-reported`: the runtime gave neither tokens nor turns. A runtime that reports none (the
+     Codex and ACP runtimes today, [metering](../design/agent-runtimes.md#metering)) makes every run
+     of its Worker one: give its tasks `runs` budget lines rather than `tokens` or `usd`.
+   - `interrupted`: the host stopped while the run ran. Its usage comes from its transcript once
+     transcript reconciliation exists.
+   - `refused` with `failure: unknown-pool`: the Worker's `account` is not the account the
+     `resources` row gives its `pool`. Correct the Worker's `pool` and `account` and restart:
+     until then every run of it is uncounted. With `failure: invalid`: the runtime reported numbers
+     the ledger refuses (cached input above the input); `system artifact <data.record>` shows the
+     refused record with its numbers. Report it with the runtime's version.
+   - `failed`: the ledger could not record it; check the `store` check of `system health` and the
+     daemon's log.
+3. **Until it clears,** read the provider's own usage for that account (its status line or usage
+   page) before funding a task of that pool, since its budget counted those runs as nothing.
+
+The check clears once the runs fall out of the pool's longest window, or once the ledger counts a
+record of each. A pool with a window of no length (a credit balance) keeps them until the event
+log's retention removes the entries. A fact that could not be recorded at all is only in the
+daemon's log (`the usage of <run> on <Worker> (pool <pool>) is unknown (…), and that could not be
+recorded`).
+
 ## A run's worktree
 
 A Worker with `worktreePerRun: true` works, for each workflow run, in a git worktree of its own

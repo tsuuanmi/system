@@ -54,6 +54,12 @@ export interface NodeView {
   brief?: ArtifactRef
   /** Tokens the result reports spending, when its Worker counts them (model Workers). */
   usage?: { inputTokens: number; outputTokens: number }
+  /**
+   * In the usage report only: the resource ledger could not count its execution's usage when it
+   * ended (`usage.unknown`), for this reason; a cap counts it as 0. The report and health say
+   * whether a record of it was counted since.
+   */
+  usageUnknown?: 'not-reported' | 'interrupted' | 'refused' | 'failed'
   error?: WorkflowError
 }
 

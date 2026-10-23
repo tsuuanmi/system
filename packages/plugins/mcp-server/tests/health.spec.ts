@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
-import { type HealthSources, healthReport } from '../src/health.ts'
+import { type HealthSources, healthReport, MAX_UNKNOWN_ENTRIES } from '../src/health.ts'
 
 const home = mkdtempSync(join(tmpdir(), 'system-health-'))
 afterAll(() => rmSync(home, { recursive: true, force: true }))
@@ -44,6 +44,59 @@ describe('host health (REQ-HOST-6)', () => {
     const report = await healthReport(base({ accounts: async () => { throw new Error('duplicate account id') } }))
     expect(report.checks.find((c) => c.name === 'accounts')).toMatchObject({ state: 'down', detail: expect.stringContaining('duplicate account id') })
     expect(report.checks.map((c) => c.name)).toContain('ui-drift')
+  })
+
+  it('is degraded while a pool has a run whose usage the ledger could not count in its current window, naming the pool and the count (D25)', async () => {
+    const now = Date.parse('2026-10-23T12:00:00Z')
+    const fact = (runId: string, pool: string, kind: string, at: string) => ({
+      at, data: { schema: 'usage-unknown@1.0', runId, kind, account: 'max', pool, observedAt: at, reason: 'why', ...(kind === 'refused' ? { failure: 'invalid' } : {}) },
+    })
+    const entries = [
+      fact('arun_1', 'max.agents', 'not-reported', '2026-10-23T10:00:00.000Z'),
+      fact('arun_2', 'max.agents', 'refused', '2026-10-23T11:00:00.000Z'),
+      // The same run again (a restart found it interrupted): it counts once, by its first fact.
+      fact('arun_2', 'max.agents', 'interrupted', '2026-10-23T11:30:00.000Z'),
+      // Before the pool's longest window: it no longer bears on what the pool admits.
+      fact('arun_3', 'max.agents', 'not-reported', '2026-10-23T06:59:59.000Z'),
+      // Reconciled: the ledger counts a record of it now.
+      fact('arun_4', 'max.agents', 'failed', '2026-10-23T11:00:00.000Z'),
+      // A credit balance never resets: every unreconciled run counts.
+      fact('arun_5', 'api.key', 'not-reported', '2026-09-01T00:00:00.000Z'),
+      // A pool no longer configured is skipped; an entry that is no record is said, never skipped silently.
+      fact('arun_6', 'gone.pool', 'not-reported', '2026-10-23T11:00:00.000Z'),
+      { at: '2026-10-23T11:00:00.000Z', data: { kind: 'not-reported', pool: 'max.agents' } },
+    ]
+    const asked: string[] = []
+    const unknownUsage = {
+      pools: async () => [{ pool: 'max.agents', windows: [{ seconds: 3600 }, { seconds: 18_000 }] }, { pool: 'api.key', windows: [{}] }],
+      entries: (since: string) => (asked.push(since), entries),
+      counted: async (runId: string) => runId === 'arun_4',
+    }
+    const report = await healthReport(base({ unknownUsage, now: () => now }))
+    expect(report.state).toBe('degraded')
+    expect(report.checks.find((c) => c.name === 'usage')).toEqual({
+      name: 'usage', state: 'degraded',
+      detail: 'api.key: 1 run(s) in its current window (it has a window that never resets) whose usage the ledger could not count (1 not-reported); '
+        + 'max.agents: 2 run(s) in its current window (the last 5h) whose usage the ledger could not count (1 not-reported, 1 refused); '
+        + '1 usage.unknown entry is not a valid usage-unknown@1.0 record, so no pool counts it. '
+        + 'A cap counts each as 0 until the ledger counts a record of it: see system events --type usage.unknown (docs/operations/runbooks.md#usage-the-ledger-could-not-count)',
+    })
+    // Read once, back to the earliest window's start: the start of time for a window that never resets.
+    expect(asked).toEqual([new Date(0).toISOString()])
+  })
+
+  it('is ok once every such run is reconciled or out of its window, says when it read only part, and with no pool configured', async () => {
+    const at = '2026-10-23T11:00:00.000Z'
+    const one = { at, data: { schema: 'usage-unknown@1.0', runId: 'arun_1', kind: 'not-reported', account: 'max', pool: 'max.agents', observedAt: at, reason: 'why' } }
+    const pools = async () => [{ pool: 'max.agents', windows: [{ seconds: 18_000 }] }]
+    const now = () => Date.parse('2026-10-23T12:00:00Z')
+    expect(await check({ unknownUsage: { pools, entries: () => [one], counted: async () => true }, now }, 'usage')).toMatchObject({ state: 'ok', detail: 'the ledger counted the usage of every run in each pool\'s current window' })
+    expect(await check({ unknownUsage: { pools, entries: () => [one], counted: async () => false }, now: () => Date.parse('2026-10-24T12:00:00Z') }, 'usage')).toMatchObject({ state: 'ok' })
+    expect(await check({ unknownUsage: { pools: async () => [], entries: () => [one], counted: async () => false } }, 'usage')).toMatchObject({ state: 'ok', detail: 'no resource pool is configured' })
+    const full = Array.from({ length: MAX_UNKNOWN_ENTRIES }, (_, i) => ({ ...one, data: { ...one.data, runId: `arun_${i}` } }))
+    expect(await check({ unknownUsage: { pools, entries: () => full, counted: async () => false }, now }, 'usage')).toMatchObject({ state: 'degraded', detail: expect.stringMatching(/^max\.agents: 1000 run\(s\) .* \(counted from the first 1000 entries only\)\. /) })
+    // A ledger that cannot be read leaves the check down, saying why, never ok.
+    expect(await check({ unknownUsage: { pools: async () => { throw new Error('the store is closed') }, entries: () => [], counted: async () => false } }, 'usage')).toMatchObject({ state: 'down', detail: expect.stringContaining('the store is closed') })
   })
 
   it('is degraded by a provider UI change in the window: a drift event, or a step that failed as ui_drift', async () => {

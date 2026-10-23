@@ -34,7 +34,8 @@ const USAGE = `Usage: system <command>
   delete <runId> [--yes]    preview, then delete a finished run (artifacts stay)
   supersede <runId> <nodeId> (<text...> | -)
                             replace a completed step's result; everything downstream runs again
-  usage [<limit>]           recent runs: per step, the Worker, tier, and quota class used
+  usage [<limit>]           recent runs: per step, the Worker, tier, and quota class used, and whether
+                            the resource ledger could count its usage
   report [--project <id>] [--since <time> | --days <n>] [--until <time>] [--json]
                             the baseline report, from recorded data only: progress, results, what asked for you,
                             usage, cost per accepted result; by default the last 7 days (the weekly investor report)
@@ -70,7 +71,8 @@ const USAGE = `Usage: system <command>
          [--after <seq>] [--limit <n>] [--json]
                             the event log in order (operator); --after the printed next for more
   health [--json]           each check (plugins, manifests, runtime, store, disk, vault key, accounts,
-                            Workers, UI drift) and what to do; exit 0 healthy, 1 degraded, 2 down or not running
+                            Workers, UI drift, uncounted usage) and what to do; exit 0 healthy, 1 degraded,
+                            2 down or not running
   plugins [--json]          every plugin of the composition: its recorded lifecycle state, on or off, version,
                             class, rows, why a manifest is absent or refused, and what the manifest check found
   shutdown [--deadline <s>] drain, then stop the running profile (unfinished runs resume on start)

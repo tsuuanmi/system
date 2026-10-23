@@ -617,7 +617,7 @@ Scope: `client`
 
 ## `status`
 
-Health of the system harness: each check (plugins and their manifests, runtime, store, disk, vault key, accounts, Workers, provider UI drift) and the worst of them, with what to do for operator callers; plus the kernel services and installed providers, and, for the operator, every plugin of the composition with its manifest, its recorded lifecycle state, and what the manifest check found in it.
+Health of the system harness: each check (plugins and their manifests, runtime, store, disk, vault key, accounts, Workers, provider UI drift, usage the resource ledger could not count) and the worst of them, with what to do for operator callers; plus the kernel services and installed providers, and, for the operator, every plugin of the composition with its manifest, its recorded lifecycle state, and what the manifest check found in it.
 
 Scope: `client`
 
@@ -649,7 +649,7 @@ Scope: `operator`
 
 ## `usage`
 
-Recent runs and, per step, which Worker, tier, and quota class served it.
+Recent runs and, per step, which Worker, tier, and quota class served it, the tokens a model Worker reports, and a step whose usage the resource ledger could not count (usageUnknown, with why).
 
 Scope: `client`
 

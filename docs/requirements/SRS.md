@@ -237,9 +237,11 @@
 - **REQ-HOST-5** No deployment-varying value is hardcoded. Each one is a
   validated plugin configuration field.
 - **REQ-HOST-6** The host reports its health: each check (runtime, store, disk,
-  vault key custody, accounts, Workers, provider UI drift) as ok, degraded, or
-  down with what to do, and the worst of them. Health is degraded while a
-  provider UI change was seen recently.
+  vault key custody, accounts, Workers, provider UI drift, usage the resource
+  ledger could not count) as ok, degraded, or down with what to do, and the
+  worst of them. Health is degraded while a provider UI change was seen
+  recently, and while a resource pool has a run whose usage the ledger could
+  not count, and has not counted since, in its current window.
 - **REQ-HOST-7** Every plugin package and seam definition ships a manifest
   (`plugin-manifest@1.x`) that agrees with its code: the seams it provides,
   consumes, and defines, at their contract versions, and its core component or

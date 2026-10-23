@@ -41,10 +41,10 @@ Claude Code and Codex, and the `system` CLI. It is the primary client interface
     (`duplicateIdentities`), Worker availability,
     login profiles held for a login, open with their kept tabs, or blocked by a
     process that could not be stopped (`login-profiles`, from `browser`), provider UI drift within
-    `driftWindowHours`) as `ok`,
+    `driftWindowHours`, usage the resource ledger could not count) as `ok`,
     `degraded`, or `down`, and the worst of them. Only an operator-scope caller
     sees the details; a client sees each check's name and state. It reads the
-    mounted services (`credentials`, `accounts`, `workers`, `eventLog`, `browser`), skips
+    mounted services (`credentials`, `accounts`, `workers`, `eventLog`, `browser`, `resources`), skips
     those not mounted, and reports a check whose source throws as down. Workers
     count as available only when `ready` or `busy`. A vault key beside the vault
     is advice, never degraded (the default must not page). The store integrity
@@ -61,6 +61,15 @@ Claude Code and Codex, and the `system` CLI. It is the primary client interface
     configuration allows. `templates` is degraded when the
     workflow engine refused a configured template at load (with why); every
     other template still works.
+  - `usage` (with `resources` and `eventLog`) is degraded while a configured pool has a run whose
+    usage the ledger could not count (a valid `usage.unknown` entry,
+    [resources](../../../docs/design/resources.md#usage-the-ledger-cannot-count)) in its current
+    window that the ledger has not counted a record of since (`resources.usage` by run and pool),
+    naming each pool, its count, and the kinds: each run once, by its first entry; an entry that is
+    not a valid `usage-unknown@1.0` record is counted and said, never skipped. A pool's current
+    window is its longest one, back from now; a pool with a window of no length (a credit
+    balance) reads every entry the log keeps. It reads at most 1000 entries and says so when it
+    reaches them. A cap still counts such a run as 0 (D25).
 - **`GET /healthz`:** liveness for a supervisor, with no token and no data
   (`ok`).
   - `ask`, `research`, and `result` are placeholders. When `ctx.workflow` is
@@ -72,7 +81,7 @@ Claude Code and Codex, and the `system` CLI. It is the primary client interface
   (default 24), `storeCheckMinutes` (default 15).
 - **Injects:** `webServer`. It uses `ctx.get('artifacts')`, `ctx.get('store')`,
   `ctx.get('providers')`, `ctx.get('accounts')`, `ctx.get('workers')`,
-  `ctx.get('eventLog')`, and `ctx.get('pluginHost')` optionally.
+  `ctx.get('eventLog')`, `ctx.get('pluginHost')`, and `ctx.get('resources')` optionally.
 
 ## Scopes
 

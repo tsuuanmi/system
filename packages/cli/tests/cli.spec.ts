@@ -226,6 +226,8 @@ describe('system usage and explain output', () => {
           { nodeId: 'research:1', state: 'COMPLETED', minTier: 'frontier', tier: 'frontier', worker: 'worker:chatgpt-main/frontier', quotaClass: 'subscription-chat' },
           { nodeId: 'compact:1', state: 'COMPLETED', minTier: 'economy', tier: 'economy', worker: 'model:fast', quotaClass: 'metered', usage: { inputTokens: 412, outputTokens: 96 } },
           { nodeId: 'compact:2', state: 'WAITING', minTier: 'economy' },
+          // Usage the ledger could not count (D25): said, never shown as nothing.
+          { nodeId: 'review:1', state: 'COMPLETED', minTier: 'standard', tier: 'standard', worker: 'agent:reviewer', quotaClass: 'agent-plan', usageUnknown: 'not-reported' },
         ],
       }],
     })
@@ -234,6 +236,7 @@ describe('system usage and explain output', () => {
       '  research:1  COMPLETED  frontier  subscription-chat  worker:chatgpt-main/frontier',
       '  compact:1  COMPLETED  economy  metered  model:fast  412 in / 96 out tokens',
       '  compact:2  WAITING  -  -  -',
+      '  review:1  COMPLETED  standard  agent-plan  agent:reviewer  usage unknown (not-reported)',
     ])
   })
 

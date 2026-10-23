@@ -1,9 +1,9 @@
 import type { ApprovalRequest } from '@tsuuanmi/system-approvals-core'
 import type { BoardTask, Project } from '@tsuuanmi/system-board-core'
-import { SchemaRegistry } from '@tsuuanmi/system-libs'
+import { SchemaRegistry, type UsageUnknown } from '@tsuuanmi/system-libs'
 import type { UsageRecord } from '@tsuuanmi/system-resources-core'
 import { describe, expect, it } from 'vitest'
-import { buildReport, type DecisionRead, duration, MAX_PROJECTS, type Period, periodOf, type Recorded, renderReport, ReportError, runsOf, type Sources, whole, within } from '../src/index.ts'
+import { buildReport, type DecisionRead, duration, MAX_PROJECTS, type Period, periodOf, type Recorded, renderReport, ReportError, runsOf, type Sources, type UnknownRead, whole, within } from '../src/index.ts'
 
 // The baseline report's computation (docs/design/reports.md): pure, from what was read; the same
 // records and period give the same report.
@@ -146,10 +146,11 @@ describe('the baseline report, computed (docs/design/reports.md)', () => {
       ],
       threshold: { maxInterruptionsPerDay: 2, maxBatchesPerDay: 1 }, daysOver: 0,
     })
+    // The record with no token counts is counted, and a tokens cap counts it as 0 (D25): said per pool.
     expect(report.usage).toEqual({
-      total: { records: 4, inputTokens: 3000, outputTokens: 300, cacheReadInputTokens: 2400, cacheCreationInputTokens: 0, turns: 10, costUsd: 0.5 },
+      total: { records: 4, inputTokens: 3000, outputTokens: 300, cacheReadInputTokens: 2400, cacheCreationInputTokens: 0, turns: 10, costUsd: 0.5, withoutTokens: 1 },
       pools: [
-        { pool: 'a.pool', records: 3, inputTokens: 2000, outputTokens: 200, cacheReadInputTokens: 1600, cacheCreationInputTokens: 0, turns: 7, costUsd: 0.4 },
+        { pool: 'a.pool', records: 3, inputTokens: 2000, outputTokens: 200, cacheReadInputTokens: 1600, cacheCreationInputTokens: 0, turns: 7, costUsd: 0.4, withoutTokens: 1 },
         { pool: 'b.pool', records: 1, inputTokens: 1000, outputTokens: 100, cacheReadInputTokens: 800, cacheCreationInputTokens: 0, turns: 3, costUsd: 0.1 },
       ],
       byOutcome: { completed: 3, failed: 1, aborted: 0, unknown: 0 },
@@ -249,6 +250,50 @@ describe('the baseline report, computed (docs/design/reports.md)', () => {
     expect(text).toContain('- Your verdicts took: median 2h, 90th percentile 10h, longest 10h (3 verdicts).')
     expect(text).toContain('- Charter allows 2 interruptions and 1 batch a day: never over it.')
     expect(text).toContain('- Per accepted result: 1,650 tokens, $0.2500, 5 turns, 2 attempts, 3 interruptions.')
-    expect(text).toContain('- all pools: 3,000 tokens in (2,400 cache reads, 0 cache writes), 300 out; 10 turns; $0.5000; 4 records.')
+    expect(text).toContain('- all pools: 3,000 tokens in (2,400 cache reads, 0 cache writes), 300 out; 10 turns; $0.5000; 4 records; not counted: 1 record without token counts.')
+    expect(text).toContain('- b.pool: 1,000 tokens in (800 cache reads, 0 cache writes), 100 out; 3 turns; $0.1000; 1 record.')
+  })
+
+  it('counts the runs whose usage the ledger could not count, each once per pool by its first entry, those counted since, and the records without a figure (D25)', () => {
+    const fact = (runId: string, pool: string, kind: UsageUnknown['kind'], extra: Partial<UsageUnknown> = {}): UsageUnknown => ({
+      schema: 'usage-unknown@1.0', runId, kind, account: 'acc', pool, observedAt: at(1), reason: 'why', ...(kind === 'refused' ? { failure: 'invalid' as const } : {}), ...extra,
+    })
+    const unknowns: UnknownRead[] = [
+      { at: at(1), fact: fact('arun-1', 'a.pool', 'not-reported', { projectId: 'p1' }), reconciled: false },
+      // The same run again (a restart found it interrupted): once, by its first entry.
+      { at: at(1, 13), fact: fact('arun-1', 'a.pool', 'interrupted', { projectId: 'p1' }), reconciled: false },
+      { at: at(2), runId: 'run-1', fact: fact('arun-2', 'a.pool', 'refused'), reconciled: false },
+      // The ledger has counted a record of it since: reconciled, so no figure misses it.
+      { at: at(3), fact: fact('arun-3', 'a.pool', 'failed', { taskId: 't1' }), reconciled: true },
+      // A pool with no counted record in the period still gets its line.
+      { at: at(4), fact: fact('arun-4', 'c.pool', 'interrupted', { projectId: 'p1' }), reconciled: false },
+      // Outside the period, and outside the project.
+      { at: at(8), fact: fact('arun-5', 'a.pool', 'not-reported', { projectId: 'p1' }), reconciled: false },
+      { at: at(2), fact: fact('arun-6', 'a.pool', 'not-reported', { projectId: 'p2' }), reconciled: false },
+    ]
+    // A record with no cost and no turns: a usd or turns cap counts it as 0 of them.
+    const { cost: _, turns: __, ...bare } = usage('r5', 'b.pool', at(2))
+    const sources = { ...week(), usage: [...week().usage, bare] }
+    const scope = { projectId: 'p1', tasks: new Set(['t1']), runs: new Set(['run-1']) }
+    const report = buildReport(PERIOD, { ...sources, unknowns: unknowns.filter((u) => within.unknown(scope, u)) }, 'p1')
+    expect(() => schemas.assertDef('mcp-report@1.1', 'report-output', report)).not.toThrow()
+    expect(report.usage.unknown).toEqual({ runs: 4, reconciled: 1, notReported: 1, interrupted: 1, refused: 1, failed: 1 })
+    expect(report.usage.total).toMatchObject({ records: 5, withoutTokens: 1, withoutCost: 1, withoutTurns: 1, unknownRuns: 3 })
+    expect(report.usage.pools.map((p) => [p.pool, p.records, p.unknownRuns, p.withoutCost])).toEqual([['a.pool', 3, 2, undefined], ['b.pool', 2, undefined, 1], ['c.pool', 0, 1, undefined]])
+    expect(report.notes).toEqual([
+      '1 usage record(s) carry no token counts (the runtime reported none): tokens count the others only',
+      '1 usage record(s) carry no cost (the runtime reported none): cost counts the others only',
+      '1 usage record(s) carry no turn count: turns count the others only',
+      '3 run(s) whose usage the ledger could not count, and has not counted since: no figure counts them, and a cap counts them as 0 (4 recorded in the period: 1 not-reported, 1 interrupted, 1 refused, 1 failed, 1 of them counted since; system events --type usage.unknown)',
+    ])
+    const text = renderReport(report)
+    expect(text).toContain('- a.pool: 2,000 tokens in (1,600 cache reads, 0 cache writes), 200 out; 7 turns; $0.4000; 3 records; not counted: 2 runs whose usage is unknown, 1 record without token counts.')
+    expect(text).toContain('- c.pool: 0 tokens in (0 cache reads, 0 cache writes), 0 out; 0 turns; $0.0000; 0 records; not counted: 1 run whose usage is unknown.')
+    expect(text).toContain('- Usage the ledger could not count: 4 runs (1 not reported, 1 interrupted, 1 refused by the ledger, 1 failed to record), 1 of them counted since; a cap counts the others as 0.')
+    // The same entries in another order give the same report; none gives no such field.
+    expect(buildReport(PERIOD, { ...sources, unknowns: [...unknowns].reverse().filter((u) => within.unknown(scope, u)) }, 'p1')).toEqual(report)
+    expect(buildReport(PERIOD, week(), 'p1').usage).not.toHaveProperty('unknown')
+    // The studio report counts every one of the period, the other project's included.
+    expect(buildReport(PERIOD, { ...sources, unknowns }).usage.unknown).toMatchObject({ runs: 5, notReported: 2 })
   })
 })

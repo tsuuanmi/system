@@ -24,6 +24,7 @@
     "@tsuuanmi/system-gateway-core": "workspace:*",
     "@tsuuanmi/system-libs": "workspace:*",
     "@tsuuanmi/system-plugin-host-core": "workspace:*",
+    "@tsuuanmi/system-resources-core": "workspace:*",
     "zod": "^4.1.0"
   },
   "peerDependencies": {
