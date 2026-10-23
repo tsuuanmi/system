@@ -26,14 +26,19 @@ The **`agents` Worker source**: agent runtimes as Workers
   `five_hour: five-hour`). Optional: `worktreePerRun` (default false; see
   below). Workers configured with the same workspace must agree on it, or the
   plugin refuses to load (`config_error`): a reviewer must read the tree it
-  reviews.
+  reviews. Optional: `reviewMember` (default false; see **Review members**
+  below), which a Worker whose sandbox is not
+  `read-only` cannot set (`config_error` at load: a writer never reviews).
 - **Capabilities are what `probe()` proves now** (cached for `probeTtlMs`):
   - `local-data`;
   - `review` only for a read-only sandbox: a review is independent of the
     change (INV-15);
   - `develop` for a writable sandbox, and `validate` only if the runtime can
     also run commands confined to the workspace (`executes`);
-  - `persistent-conversation` when the runtime can resume.
+  - `persistent-conversation` when the runtime can resume;
+  - for a review member only, offers scoped to a review member's steps
+    (`capability-descriptor@1.4`): `reason`, and `persistent-conversation`
+    (evidence `conformance`, kept by replay) when the runtime cannot resume.
 
   A Worker never offers plain `reason`, so ordinary asks never spend agent-plan
   quota (P1). If the runtime is missing, cannot enforce the configured sandbox,
@@ -231,7 +236,37 @@ The **`agents` Worker source**: agent runtimes as Workers
   period; a run already submitted then fails as `reconciliation_failed`, never
   run again (INV-4).
 - **Sessions:** a session id is bound to its Worker (`affinity`). Later runs
-  resume the agent's native session. With `worktreePerRun`, a session resumed
-  by another workflow run resumes in that run's worktree.
+  resume the agent's native session, on a runtime that reports `resume`; no
+  other runtime is ever asked to resume one, and the session keeps no native
+  handle there. With `worktreePerRun`, a session resumed by another workflow
+  run resumes in that run's worktree. A `reset` (a compaction) starts the
+  session's next run fresh: no native handle, and a new generation for a replay.
+  On a runtime that cannot resume, a session's later run is refused
+  (`config_error`, unsent) unless it is a review member's (below).
+- **Review members**
+  ([ADR-0045](../../../docs/decisions/adr/0045-read-only-agent-workers-as-review-members.md)):
+  a read-only Worker configured `reviewMember: true` may be a member of a
+  `review` team:
+  - it offers `reason` for a review member's steps only (scope `review-member`,
+    which the workflow engine names on each proposal, ballot, and debate of a
+    `review` team), never for an ask, a brainstorm, research, a planner, or a
+    digest;
+  - on a runtime that resumes, the member's steps continue its native session
+    as any session does;
+  - on a runtime that cannot (the Antigravity CLI), it offers
+    `persistent-conversation` for that work only, and keeps the member's
+    conversation by **replay**: a later run's prompt is the session's earlier
+    completed runs of its generation, each its own message and its answer, in
+    order, each between fence lines derived from its own text, then the new
+    message. What is replayed is each turn's message and final answer, not the
+    agent's tool calls. The run's own prompt is what it records (`prompt`,
+    `promptHash`), as a model Worker's replay does;
+  - the replay is bounded by `maxReplayChars` (default 200,000 characters of
+    earlier turns): past it the run fails as `invalid_input` before anything is
+    sent, and a history is never cut (INV-9). An earlier answer no longer stored
+    fails it the same way;
+  - egress checks exactly what is sent, the replay included, at the strictest
+    classification of the turns it holds (INV-12); the run's gate, sandbox, and
+    confinement are unchanged.
 - **Injects:** `store`, `artifacts`, `leases`, `workers`, `agentRuntimes`, `egress`;
   reads `resources`, `approvals`, and `eventLog` when present.

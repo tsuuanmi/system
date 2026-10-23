@@ -29,7 +29,7 @@ import { bodyText, BRIEF_FILE_PATH, type BriefFile, captureGitSubject, type Cont
 import { ProviderError, ProviderScheduler, dispositionOf, promptOfStart, toProviderError } from '@tsuuanmi/system-provider-core'
 import { type LimitState, type Resources, ResourcesError, type UsageRecord } from '@tsuuanmi/system-resources-core'
 import type {} from '@tsuuanmi/system-store'
-import type { ArtifactRef, CapabilityDescriptor, ExecutionStatus, QuotaClass, Tier, WorkerExecution, WorkerSandbox, WorkerStart } from '@tsuuanmi/system-workers-core'
+import type { ArtifactRef, CapabilityDescriptor, CapabilityOffer, ExecutionStatus, QuotaClass, Tier, WorkerExecution, WorkerSandbox, WorkerStart, WorkScope } from '@tsuuanmi/system-workers-core'
 import { GATE_MIGRATION, type Deferral, runGate } from './gate.ts'
 import { RUN_ID, type RepositoryCheck, type SweepOutcome, Worktrees } from './worktrees.ts'
 
@@ -73,10 +73,22 @@ export interface AgentWorkerConfig {
   worktreePerRun?: boolean
   /** How long a limit hit with no reset time keeps the pool closed, in seconds (default 3600). */
   limitCooldownSeconds?: number
+  /**
+   * The operator names this read-only Worker a review member (ADR-0045): it offers `reason` for a
+   * review team member's steps only, never for other work, and, when its runtime cannot resume a
+   * conversation, keeps the member's conversation by replay. Default false; refused unless the
+   * sandbox is `read-only`.
+   */
+  reviewMember?: boolean
 }
 
 export interface Config {
   workers: AgentWorkerConfig[]
+  /**
+   * The most characters of earlier turns a review member's replayed conversation holds (default
+   * 200,000); a turn past it fails before anything is sent, never cut (ADR-0045, INV-9).
+   */
+  maxReplayChars?: number
   /** How long a probe result stands (default 5 min). */
   probeTtlMs?: number
   /** Hard deadline per run; the agent is stopped and the run fails as `timeout` (default 15 min). */
@@ -115,6 +127,10 @@ interface RunRow {
   project_id?: string | null
   /** JSON `[{ path, text }]`: the brief's files, resolved at start, written into the run's worktree before the agent starts. */
   files?: string | null
+  /** The kind of work the run was admitted for (`WorkRequirement.scope`): a review member's step may be replayed (ADR-0045). */
+  scope?: string | null
+  /** The generation of its session it belongs to: a replay holds that generation's earlier turns only. */
+  session_generation?: number | null
   created_at: string
   updated_at: string
 }
@@ -127,6 +143,9 @@ const newId = (): string => `arun_${randomBytes(8).toString('hex')}`
 const MAX_MODELS = 16
 /** How often finished workflow runs' worktrees are looked at for removal. */
 const SWEEP_MS = 60 * 60_000
+/** The kind of work a review member's offers are scoped to (ADR-0045). */
+const REVIEW_MEMBER: WorkScope = 'review-member'
+const RANK: Record<Classification, number> = { public: 0, 'operator-shared': 1, 'local-private': 2 }
 const now = (): string => new Date().toISOString()
 /** The board task and project a run serves, as its reservation and usage record name them. */
 const scopeOf = (row: RunRow): { taskId?: string; projectId?: string } => ({ ...(row.task_id ? { taskId: row.task_id } : {}), ...(row.project_id ? { projectId: row.project_id } : {}) })
@@ -150,7 +169,9 @@ export class AgentWorkers extends Service {
       windows: z.dict(z.string()).description('The runtime\'s limit window names mapped to the pool\'s window ids, for example five_hour: five-hour'),
       worktreePerRun: z.boolean().default(false).description('Each run of a workflow run works in that run\'s own git worktree of the workspace (the top level of a git repository), on branch system/run/<runId>'),
       limitCooldownSeconds: z.natural().min(60).max(604_800).default(3600).description('How long a limit hit with no reset time keeps the pool closed'),
+      reviewMember: z.boolean().default(false).description('A review member (ADR-0045): this read-only Worker offers reason for a review team member\'s steps only, and keeps the member\'s conversation by replay when its runtime cannot resume'),
     })).default([]).description('Agent-runtime Workers; each policy comes from here only (INV-6)'),
+    maxReplayChars: z.natural().min(1).max(2_000_000).default(200_000).description('Characters of earlier turns a review member\'s replayed conversation holds, at most; a turn past it fails, never cut'),
     probeTtlMs: z.natural().default(5 * 60_000).description('How long a probe result stands'),
     runTimeoutMs: z.natural().min(1).default(15 * 60_000).description('Hard deadline per run'),
     worktreeRoot: z.string().description('Where the worktrees of worktreePerRun Workers go (default <DSH_HOME>/system/worktrees)'),
@@ -179,6 +200,8 @@ export class AgentWorkers extends Service {
       if (this.workers.has(PREFIX + worker.id)) throw new ProviderError('config_error', `duplicate agent Worker ${worker.id}`)
       if ((worker.pool === undefined) !== (worker.account === undefined)) throw new ProviderError('config_error', `agent Worker ${worker.id}: pool and account are set together`)
       if (worker.pool === undefined && Object.keys(worker.windows ?? {}).length) throw new ProviderError('config_error', `agent Worker ${worker.id}: windows map limit windows to a pool, and no pool is set`)
+      // A writer never reviews: a review is independent of the change (INV-15).
+      if (worker.reviewMember && worker.sandbox !== 'read-only') throw new ProviderError('config_error', `agent Worker ${worker.id}: a review member must be read-only (sandbox: read-only); a writer never reviews (INV-15)`)
       // Workers of one workspace agree on worktreePerRun: a reviewer must read the tree it reviews, the writer's worktree.
       const other = [...this.workers.values()].find((w) => resolve(w.workspace) === resolve(worker.workspace) && !!w.worktreePerRun !== !!worker.worktreePerRun)
       if (other) throw new ProviderError('config_error', `agent Workers ${other.id} and ${worker.id} share the workspace ${worker.workspace}, and only one of them works in a worktree per run (worktreePerRun): set it on both`)
@@ -221,6 +244,13 @@ export class AgentWorkers extends Service {
       // A brief's files (brief@1.2 files, the board's TASKS.md): their text, resolved at start like the prompt.
       version: 7,
       sql: 'ALTER TABLE agent_runs ADD COLUMN files TEXT;',
+    }, {
+      // A review member's conversation kept by replay (ADR-0045): the kind of work a run is, and the
+      // session's generation it belongs to (a reset starts a new one, whose replay starts empty).
+      version: 8,
+      sql: `ALTER TABLE agent_runs ADD COLUMN scope TEXT;
+      ALTER TABLE agent_runs ADD COLUMN session_generation INTEGER;
+      ALTER TABLE agent_sessions ADD COLUMN generation INTEGER NOT NULL DEFAULT 0;`,
     }])
     ctx.workers.register({
       name: 'agents',
@@ -238,8 +268,9 @@ export class AgentWorkers extends Service {
         return session ? [session.worker] : undefined
       },
       handle: (sessionId) => (this.ctx.store.db.prepare('SELECT native_handle FROM agent_sessions WHERE session_id = ?').get(sessionId) as { native_handle: string | null } | undefined)?.native_handle ?? undefined,
-      // The Worker stays (session affinity); without a handle the next run starts a new agent session.
-      reset: (sessionId) => Number(this.ctx.store.db.prepare('UPDATE agent_sessions SET native_handle = NULL WHERE session_id = ?').run(sessionId).changes) > 0,
+      // The Worker stays (session affinity); without a handle the next run starts a new agent session,
+      // and in a new generation a replayed conversation starts empty (ADR-0045).
+      reset: (sessionId) => Number(this.ctx.store.db.prepare('UPDATE agent_sessions SET native_handle = NULL, generation = generation + 1 WHERE session_id = ?').run(sessionId).changes) > 0,
     })
     ctx.effect(() => {
       queueMicrotask(() => {
@@ -274,19 +305,27 @@ export class AgentWorkers extends Service {
       // A metered Worker takes work only while its pool is available (INV-2).
       const pool = proof ? await this.poolGate(id, worker) : 'ready'
       const ready = proof && pool !== 'unavailable'
-      const proven = ready
+      const probed = { kind: 'probe' as const, at: observedAt }
+      const proven: CapabilityOffer[] = ready
         ? [
-            'local-data',
-            // A review is independent of the change, so only a Worker that cannot write proves it (INV-15).
-            ...(worker.sandbox === 'workspace-write' ? ['develop', ...(evidence.executes ? ['validate'] : [])] : ['review']),
-            ...(evidence.resume ? ['persistent-conversation'] : []),
+            ...[
+              'local-data',
+              // A review is independent of the change, so only a Worker that cannot write proves it (INV-15).
+              ...(worker.sandbox === 'workspace-write' ? ['develop', ...(evidence.executes ? ['validate'] : [])] : ['review']),
+              ...(evidence.resume ? ['persistent-conversation'] : []),
+            ].map((capability) => ({ capability, evidence: probed })),
+            // A review member (ADR-0045) reasons for a review team member's steps only: never plain
+            // reason, so an ordinary ask never spends agent-plan quota (P1). Its conversation is kept
+            // natively when the runtime resumes one, else by this source's replay, for that work only.
+            ...(worker.reviewMember ? [{ capability: 'reason', evidence: probed, scope: REVIEW_MEMBER }] : []),
+            ...(worker.reviewMember && !evidence.resume ? [{ capability: 'persistent-conversation', evidence: { kind: 'conformance' as const, at: observedAt }, scope: REVIEW_MEMBER }] : []),
           ]
         : []
       return {
         // The runtime is who serves the work, so it is the Worker's family (ADR-0027).
-        schema: 'capability-descriptor@1.1', worker: id, provider: worker.runtime, family: worker.runtime, tier: worker.tier, quotaClass: worker.quotaClass ?? 'agent-plan',
-        locality: 'local', capabilities: proven.map((capability) => ({ capability, evidence: { kind: 'probe', at: observedAt } })),
-        state: ready ? pool : 'unavailable', observedAt,
+        schema: proven.some((c) => c.scope) ? 'capability-descriptor@1.4' : 'capability-descriptor@1.1',
+        worker: id, provider: worker.runtime, family: worker.runtime, tier: worker.tier, quotaClass: worker.quotaClass ?? 'agent-plan',
+        locality: 'local', capabilities: proven, state: ready ? pool : 'unavailable', observedAt,
       }
     }))
   }
@@ -428,18 +467,23 @@ export class AgentWorkers extends Service {
         if (existing.prompt !== prompt) throw new ProviderError('invalid_input', 'the request key was reused with a different prompt')
         return execution(existing)
       }
+      let generation: number | null = null
       if (request.sessionId) {
         db.prepare('INSERT OR IGNORE INTO agent_sessions (session_id, worker, native_handle, created_at) VALUES (?, ?, NULL, ?)').run(request.sessionId, request.worker, now())
-        const bound = (db.prepare('SELECT worker FROM agent_sessions WHERE session_id = ?').get(request.sessionId) as { worker: string }).worker
-        if (bound !== request.worker) throw new ProviderError('invalid_input', `session ${request.sessionId} belongs to ${bound}, not ${request.worker}`)
+        const session = db.prepare('SELECT worker, generation FROM agent_sessions WHERE session_id = ?').get(request.sessionId) as { worker: string; generation: number }
+        if (session.worker !== request.worker) throw new ProviderError('invalid_input', `session ${request.sessionId} belongs to ${session.worker}, not ${request.worker}`)
+        generation = session.generation
       }
       const row: RunRow = {
         run_id: newId(), request_key: key, worker: request.worker, session_id: request.sessionId ?? null, prompt,
         classification, status: 'queued', submitted_at: null, native_handle: null, result: null, error: null,
-        workflow_run_id: request.runId ?? null, task_id: taskId, project_id: projectId, files, created_at: now(), updated_at: now(),
+        workflow_run_id: request.runId ?? null, task_id: taskId, project_id: projectId, files,
+        // The work it was admitted for, from the trusted requirement (INV-6): only a review member's step is ever replayed.
+        scope: request.requirement.scope ?? null, session_generation: generation, created_at: now(), updated_at: now(),
       }
-      db.prepare(`INSERT INTO agent_runs (run_id, request_key, worker, session_id, prompt, classification, status, workflow_run_id, task_id, project_id, files, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?)`).run(row.run_id, key, row.worker, row.session_id, row.prompt, row.classification, row.workflow_run_id ?? null, taskId, projectId, files, row.created_at, row.updated_at)
+      db.prepare(`INSERT INTO agent_runs (run_id, request_key, worker, session_id, prompt, classification, status, workflow_run_id, task_id, project_id, files, scope, session_generation, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?)`).run(row.run_id, key, row.worker, row.session_id, row.prompt, row.classification, row.workflow_run_id ?? null, taskId, projectId, files,
+        row.scope ?? null, generation, row.created_at, row.updated_at)
       this.ctx.store.afterCommit(() => this.schedule(row.run_id))
       return execution(row)
     })
@@ -533,18 +577,20 @@ export class AgentWorkers extends Service {
         }
         const worker = this.workers.get(row.worker)
         if (!worker) throw new ProviderError('config_error', `${row.worker} is no longer configured`)
+        // What the agent is sent: its prompt, or a review member's conversation replayed before it (ADR-0045).
+        const turn = await this.turnOf(row, worker)
         // INV-12: the prompt reaches the agent's remote model, so it is checked before anything starts,
         // with the files it will read in its worktree: one check of exactly what the agent is given.
         const placed = row.files ? (JSON.parse(row.files) as Array<{ path: string; text: string }>) : []
-        const payload = [row.prompt, ...placed.map((f) => `${f.path}:\n${f.text}`)].join('\n\n')
-        const egress = await this.ctx.egress.check({ payload, classification: row.classification as Classification, workerClass: 'agent' })
+        const payload = [turn.prompt, ...placed.map((f) => `${f.path}:\n${f.text}`)].join('\n\n')
+        const egress = await this.ctx.egress.check({ payload, classification: turn.classification, workerClass: 'agent' })
         // Fenced like every write of a run: a holder that lost the run writes nothing.
         this.update(row.run_id, { egress_decision: egress.decision }, current)
         if (!egress.allowed) {
           this.fail(row, new ProviderError('egress_denied', `${egress.reason} (decision ${egress.decision})`), current)
           return
         }
-        await this.scheduler(row.worker).runTurn(row.worker, signal, async (slot) => this.execute(row, worker, AbortSignal.any([signal, slot.signal]), current))
+        await this.scheduler(row.worker).runTurn(row.worker, signal, async (slot) => this.execute(row, worker, turn, AbortSignal.any([signal, slot.signal]), current))
       } catch (error) {
         if (this.stopped.signal.aborted) return
         if (error instanceof LeaseLost || error instanceof StaleGeneration || lost.aborted) {
@@ -564,7 +610,48 @@ export class AgentWorkers extends Service {
     if (!outcome.held) this.retryLater(runId, outcome.retryInMs)
   }
 
-  private async execute(row: RunRow, worker: AgentWorkerConfig, signal: AbortSignal, lease: () => Lease): Promise<void> {
+  /**
+   * What a run sends its agent. Outside a session, or on a runtime that resumes a conversation, its
+   * own prompt (continuing the session's native conversation, once it has one). On a runtime that
+   * cannot resume, a session's later turn replays the session's earlier completed turns before its
+   * prompt, each its own message and its answer, as they were (ADR-0045): only for a review
+   * member's step on a Worker named a review member, bounded by `maxReplayChars` and never cut, at
+   * the strictest classification of what it holds (INV-12). Any other such turn is refused. Nothing
+   * has reached the agent yet.
+   */
+  private async turnOf(row: RunRow, worker: AgentWorkerConfig): Promise<Turn> {
+    const own: Turn = { prompt: row.prompt, classification: row.classification as Classification, native: true }
+    if (!row.session_id) return own
+    const evidence = await this.evidence(worker)
+    if (evidence.resume) {
+      const session = this.ctx.store.db.prepare('SELECT native_handle FROM agent_sessions WHERE session_id = ?').get(row.session_id) as { native_handle: string | null } | undefined
+      return { ...own, ...(session?.native_handle ? { resume: session.native_handle } : {}) }
+    }
+    // The session's earlier completed turns of the same generation, in order: a reset starts a new one.
+    const earlier = this.ctx.store.db.prepare(`SELECT run_id, prompt, result, classification FROM agent_runs
+      WHERE session_id = ? AND run_id != ? AND status = 'completed' AND COALESCE(session_generation, 0) = ? AND created_at <= ?
+      ORDER BY created_at, run_id`).all(row.session_id, row.run_id, row.session_generation ?? 0, row.created_at) as Array<{ run_id: string; prompt: string; result: string | null; classification: Classification }>
+    if (!earlier.length) return { ...own, native: false }
+    if (!worker.reviewMember || row.scope !== REVIEW_MEMBER) {
+      throw new ProviderError('config_error', `${row.worker} cannot continue session ${row.session_id}: its runtime cannot resume a conversation, and this source keeps one by replay only for a review member's steps (ADR-0045); nothing was run`)
+    }
+    let classification = own.classification
+    const turns = earlier.map((run, i) => {
+      const answer = run.result ? this.ctx.artifacts.get(run.result as ArtifactRef) : undefined
+      const text = (answer?.body as { text?: unknown } | undefined)?.text
+      if (typeof text !== 'string') throw new ProviderError('invalid_input', `${row.worker}: the answer of turn ${i + 1} of session ${row.session_id} (run ${run.run_id}) is no longer stored, so its conversation cannot be replayed; nothing was sent`)
+      for (const c of [run.classification, answer!.classification as Classification]) if (RANK[c] > RANK[classification]) classification = c
+      return { prompt: run.prompt, answer: text }
+    })
+    const chars = turns.reduce((n, t) => n + [...t.prompt].length + [...t.answer].length, 0)
+    const max = this.config.maxReplayChars ?? 200_000
+    if (chars > max) {
+      throw new ProviderError('invalid_input', `${row.worker}: session ${row.session_id}'s ${turns.length} earlier turn(s) hold ${chars} characters, over the ${max} its replay holds (agent-workers maxReplayChars); nothing was sent, and the history is never cut`)
+    }
+    return { prompt: replayed(turns, row.prompt), classification, native: false }
+  }
+
+  private async execute(row: RunRow, worker: AgentWorkerConfig, turn: Turn, signal: AbortSignal, lease: () => Lease): Promise<void> {
     const provider = this.ctx.agentRuntimes.get(worker.runtime)
     if (!provider) throw new ProviderError('config_error', `no ${worker.runtime} runtime is registered`)
     // Admission proved it once; a queued run, or one taken up after a restart, runs only on
@@ -585,29 +672,31 @@ export class AgentWorkers extends Service {
       runId: row.run_id, worker: row.worker, workspace, sessionId: row.session_id ?? undefined, workflowRunId: row.workflow_run_id ?? undefined,
       classification: row.classification as 'public' | 'operator-shared' | 'local-private',
     })
-    const session = row.session_id
-      ? this.ctx.store.db.prepare('SELECT native_handle FROM agent_sessions WHERE session_id = ?').get(row.session_id) as { native_handle: string | null } | undefined
-      : undefined
     const spec: RunSpec = {
-      prompt: row.prompt, workspace, sandbox: worker.sandbox,
+      prompt: turn.prompt, workspace, sandbox: worker.sandbox,
       // Omitted or empty means the runtime's minimal set: the config schema turns an omitted list into [].
       ...(worker.tools?.length ? { tools: worker.tools } : {}), ...(worker.model ? { model: worker.model } : {}), ...(worker.maxTurns ? { maxTurns: worker.maxTurns } : {}),
-      ...(session?.native_handle ? { resume: session.native_handle } : {}),
+      // Only a runtime that reports `resume` is ever asked to continue a conversation.
+      ...(turn.resume ? { resume: turn.resume } : {}),
       toolGate: gate.gate,
     }
     // Metered: nothing runs without a reservation (INV-2, INV-9).
     const meter = this.meter(row.worker, worker)
     const reservation = meter ? await this.reserve(row, meter, lease) : undefined
     try {
-      const result = await this.submit(row, worker, provider, spec, signal, lease, meter, gate.deferral)
-      this.complete(row, worker, workspace, result, lease)
+      const result = await this.submit(row, worker, provider, spec, turn.native, signal, lease, meter, gate.deferral)
+      this.complete(row, worker, workspace, result, turn.native, lease)
     } finally {
       if (reservation) await this.release(row.worker, reservation)
     }
   }
 
-  /** Run the agent, and meter what it consumed, completed or not. */
-  private async submit(row: RunRow, worker: AgentWorkerConfig, provider: AgentRuntimeProvider, spec: RunSpec, signal: AbortSignal, lease: () => Lease, meter: Meter | undefined, deferral: () => Deferral | undefined): Promise<RunResult> {
+  /**
+   * Run the agent, and meter what it consumed, completed or not. A session keeps the run's native
+   * handle only when its runtime can resume it (`native`); a replayed conversation keeps none, so no
+   * brief names one and no run is asked to resume it.
+   */
+  private async submit(row: RunRow, worker: AgentWorkerConfig, provider: AgentRuntimeProvider, spec: RunSpec, native: boolean, signal: AbortSignal, lease: () => Lease, meter: Meter | undefined, deferral: () => Deferral | undefined): Promise<RunResult> {
     // Submitted from here on: the agent may act as soon as it starts.
     this.update(row.run_id, { status: 'running', submitted_at: now() }, lease)
     const startedAt = Date.now()
@@ -618,7 +707,7 @@ export class AgentWorkers extends Service {
         this.ctx.store.transaction((db) => {
           this.ctx.leases.fence(lease())
           db.prepare('UPDATE agent_runs SET native_handle = ?, updated_at = ? WHERE run_id = ?').run(handle, now(), row.run_id)
-          if (row.session_id) db.prepare('UPDATE agent_sessions SET native_handle = ? WHERE session_id = ?').run(handle, row.session_id)
+          if (row.session_id && native) db.prepare('UPDATE agent_sessions SET native_handle = ? WHERE session_id = ?').run(handle, row.session_id)
         })
       })
     } catch (error) {
@@ -640,7 +729,7 @@ export class AgentWorkers extends Service {
   }
 
   /** Store the result as a `report` artifact and complete the run. */
-  private complete(row: RunRow, worker: AgentWorkerConfig, workspace: string, result: RunResult, lease: () => Lease): void {
+  private complete(row: RunRow, worker: AgentWorkerConfig, workspace: string, result: RunResult, native: boolean, lease: () => Lease): void {
     const handle = result.nativeHandle ?? this.row(row.run_id)?.native_handle ?? undefined
     // A worktree whose .git file the agent pointed elsewhere is not read by git: its result is not trusted.
     if (workspace !== worker.workspace && !this.worktrees.intact(workspace)) {
@@ -650,7 +739,7 @@ export class AgentWorkers extends Service {
     const captured = captureGitSubject(workspace)
     this.ctx.store.transaction((db) => {
       this.ctx.leases.fence(lease())
-      if (handle && row.session_id) db.prepare('UPDATE agent_sessions SET native_handle = ? WHERE session_id = ?').run(handle, row.session_id)
+      if (handle && row.session_id && native) db.prepare('UPDATE agent_sessions SET native_handle = ? WHERE session_id = ?').run(handle, row.session_id)
       // `agent-result@1.2` when the runtime reported its token usage, `@1.1` otherwise.
       const usage = usageOf(result)
       const schema = usage.usage ? 'agent-result@1.2' : 'agent-result@1.1'
@@ -819,6 +908,36 @@ function execution(row: RunRow): WorkerExecution {
     ...(row.error ? { error: JSON.parse(row.error) as WorkerExecution['error'] & object } : {}),
     decisions: [row.egress_decision, row.budget_decision].filter((d): d is string => typeof d === 'string').map((d) => d as ContentId),
   }
+}
+
+/** What a run sends its agent, and how its session continues. */
+interface Turn {
+  prompt: string
+  /** The strictest classification of what it holds (INV-12). */
+  classification: Classification
+  /** The native conversation it continues, on a runtime that resumes one. */
+  resume?: string
+  /** Its runtime keeps the conversation itself: the session keeps the run's native handle. */
+  native: boolean
+}
+
+/** A part of a replayed conversation, between fence lines derived from its own text, which that text cannot close. */
+function fenced(label: string, text: string): string {
+  const fence = `~~~~ ${sha256(`${label}\0${text}`).slice(-12)} ~~~~`
+  return `### ${label}, between the lines ${fence}\n${fence}\n${text}\n${fence}`
+}
+
+/**
+ * A review member's conversation replayed for a runtime that cannot resume it (ADR-0045): its
+ * earlier turns as they were, each the message it was given and its answer, in order, then the
+ * conversation's next message.
+ */
+function replayed(turns: ReadonlyArray<{ prompt: string; answer: string }>, next: string): string {
+  return [
+    `This message continues a conversation you had earlier. Its ${turns.length} earlier turn(s) follow as they were, in order: each message you were given, and your answer to it. Then comes the conversation's next message, which you answer now.`,
+    ...turns.flatMap((t, i) => [fenced(`Turn ${i + 1}: the message you were given`, t.prompt), fenced(`Turn ${i + 1}: your answer`, t.answer)]),
+    `### The conversation's next message\n${next}`,
+  ].join('\n\n')
 }
 
 /** The ledger a metered Worker draws on. */
