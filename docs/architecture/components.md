@@ -93,10 +93,12 @@ runs the work the router admitted to them. Callers never reach a source directly
   every website conversation it creates and deletes it on its site once its session is
   released ([conversation ledger](../design/provider-turns.md#conversation-ledger)).
 - **Agent Workers** (`ctx.agentWorkers`): one Worker per configured agent, held to a policy from
-  configuration (workspace, sandbox, tool allow-list). Its rows and the agent runtimes' are off
-  in the default composition
-  ([turn a row on](../operations/runbooks.md#turn-an-off-row-back-on)). A Worker's capabilities are what its
-  runtime's `probe()` proves now; a policy the runtime cannot enforce leaves it unavailable.
+  configuration (workspace, sandbox, tool allow-list). Its row, `agent-runtimes`, and the Claude
+  Code runtime's are on in the default composition, with no Worker until the operator names a
+  repository ([agent Workers](../operations/runbooks.md#agent-workers)); the Codex and ACP rows
+  are off. A Worker's capabilities are what its
+  runtime's `probe()` proves now; a policy the runtime cannot enforce leaves it unavailable, and
+  only a runtime that proves its commands confined (`executes`) gives a writable Worker `validate`.
   Runs are durable, one at a time per Worker, and a run that started is never rerun by itself.
   The agent runs here but its model is remote, so each prompt passes the egress check first.
   Every tool call passes the run's gate, the autonomy policy through `ctx.approvals`, before it
@@ -112,10 +114,13 @@ runs the work the router admitted to them. Callers never reach a source directly
   ([workspaces](../design/agent-runtimes.md#workspaces)).
 - **Agent runtimes** (`ctx.agentRuntimes`): providers for Claude Code (Claude Agent SDK), Codex
   (Codex SDK), and ACP agents ([agent runtimes](../design/agent-runtimes.md)). Each agent
-  process starts without the daemon's credentials, and cannot read host state (the DSH home,
-  the session's runtime and temporary directories, registered secret paths): the
-  registry owns the read confinement, applied with bubblewrap where a runtime's own sandbox
-  does not confine reads ([ADR-0024](../decisions/adr/0024-agent-workers-confined-for-reads.md)).
+  process starts without the daemon's credentials, in a home of its own, and cannot read host
+  state (the DSH home, the session's runtime and temporary directories, registered secret
+  paths, every agent's login): the registry owns the read confinement, applied with
+  bubblewrap around every agent ([ADR-0024](../decisions/adr/0024-agent-workers-confined-for-reads.md)).
+  Commands run in each runtime's own sandbox nested inside it: Codex's, or, for Claude Code, the
+  Agent SDK's, writing only the workspace and with no network, proven on the host by the probe
+  ([ADR-0038](../decisions/adr/0038-confined-commands-for-claude-code-workers.md)).
 - **Model Workers** (`ctx.models` and the `models` source): one Worker per entry of the
   operator's model catalog, an API model or a local one, over the DSH `llm` service
   ([models](../design/models.md)). Calls are durable and idempotent by key, the exact prompt
@@ -201,7 +206,7 @@ runs the work the router admitted to them. Callers never reach a source directly
   Its holder and run-owner moves are made by the workflow run that serves an attempt, never by a
   `board_*` tool.
 - **Profiles:** plugins that contribute templates through `ctx.workflow.template` (`research`,
-  with its `deep` variant; `agent-review`, mounted with the agent Workers) and acceptance
+  with its `deep` variant; `agent-review`, for the agent Workers, its row off by default) and acceptance
   contracts through `ctx.workers`. A profile never names a provider, browser, or account, and
   holds no engine code.
 - **Does not own:** provider mechanics, Worker admission, or protocol framing.

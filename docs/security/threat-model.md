@@ -36,7 +36,7 @@
 | Zone | Who |
 |---|---|
 | trusted | the operator, the host process, the account vault, operator configuration, plugins the operator installed |
-| semi-trusted | local clients (Codex, Claude Code, MCP agents), trusted for their own envelope, sandbox, and approvals; agent-runtime Workers (Claude Code, Codex, ACP agents), confined by their own runtime's sandbox under the operator's policy |
+| semi-trusted | local clients (Codex, Claude Code, MCP agents), trusted for their own envelope, sandbox, and approvals; agent-runtime Workers (Claude Code, Codex, ACP agents), confined for reads by bubblewrap and for writes and commands by their own runtime's sandbox, under the operator's policy |
 | untrusted | provider websites, model output, tool output, repository content, web pages, other local processes, other users on the machine |
 
 ## Threats and controls
@@ -183,17 +183,22 @@
   sandbox, and tools; INV-6). Each runtime enforces it with its own sandbox,
   exactly, or the run is refused before it starts (REQ-WRK-6):
   - Claude Code (`runtime-claude-agent-sdk`): only the listed built-in tools
-    exist and are pre-approved, each scoped to the workspace, reads included
-    (`Read(./**)`, `Grep(./**)`, `Glob(./**)` for `read-only`; `workspace-write`
-    adds `Edit(./**)` and `Write(./**)`). A bare rule reaches the whole disk,
-    including the daemon's `vault.key` and token files. `permissionMode: dontAsk`
-    denies anything else without a prompt; `settingSources: []` keeps the
-    operator's own settings and hooks out; no MCP server is attached; the run's
-    tool gate is its one PreToolUse hook, which asks the autonomy policy before
-    every tool call: `deny` and `defer` hold in every permission mode, and an
-    allowed call still meets the workspace-scoped pre-approvals (a hook's
-    `allow` would skip them, so the gate never gives one)
-    ([a Worker's tool calls](../design/approvals.md#a-workers-tool-calls));
+    exist and are pre-approved, each file tool scoped to the workspace, reads
+    included (`Read(./**)`, `Grep(./**)`, `Glob(./**)` for `read-only`;
+    `workspace-write` adds `Edit(./**)`, `Write(./**)`, and `Bash`, whose
+    commands run in the SDK's sandbox, below). A bare file rule reaches the
+    whole disk, including the daemon's `vault.key` and token files.
+    `permissionMode: dontAsk` denies anything else without a prompt;
+    `settingSources: []` keeps the operator's own settings and hooks out; no
+    MCP server is attached; it runs in its own home (`CLAUDE_CONFIG_DIR`),
+    never the operator's `~/.claude`; the run's tool gate is its one PreToolUse
+    hook, which asks the autonomy policy before every tool call: `deny` and
+    `defer` hold in every permission mode, and an allowed call still meets the
+    workspace-scoped pre-approvals (a hook's `allow` would skip them, so the
+    gate never gives one)
+    ([a Worker's tool calls](../design/approvals.md#a-workers-tool-calls)).
+    Claude Code starts under the read confinement below, like Codex and ACP
+    agents;
   - Codex and ACP agents cannot ask a tool gate before each tool call
     (`gatesToolCalls: false`), so they refuse a gated run and the `agents`
     source admits none of their Workers; the policies below hold for them
@@ -217,9 +222,10 @@
     signal ends its whole PID namespace, children included, so it cannot hang a
     run or keep writing after it.
 
-  **Read confinement** ([ADR-0024](../decisions/adr/0024-agent-workers-confined-for-reads.md)):
-  Codex and ACP agents start under bubblewrap, in their own PID namespace and
-  session. It hides the DSH home (vault, key, tokens, store, login profiles,
+  **Read confinement** ([ADR-0024](../decisions/adr/0024-agent-workers-confined-for-reads.md),
+  [ADR-0038](../decisions/adr/0038-confined-commands-for-claude-code-workers.md)):
+  every agent (Claude Code, Codex, ACP agents) starts under bubblewrap, in its own PID
+  namespace and session. It hides the DSH home (vault, key, tokens, store, login profiles,
   DSH's own credentials); the session's runtime directory, so the user's message
   bus (which can start commands outside any sandbox) and key agents are out of
   reach; the temporary directories, which hold the browsers' live profiles, the
@@ -231,6 +237,32 @@
   run. Not covered: abstract Unix sockets (an X server's still needs the hidden
   cookie), and other files in the home directory, which an operator adds to the
   `agent-runtimes` row's `hide`.
+
+  **Confined commands** (B3,
+  [ADR-0038](../decisions/adr/0038-confined-commands-for-claude-code-workers.md)): a
+  Claude Code Worker's shell runs only in `workspace-write` runs, each command
+  inside the SDK's sandbox nested in the read confinement: the root read-only and
+  only the run's workspace (a git worktree per writing task) writable, its own
+  network namespace with no domain allowed (`strictAllowlist`), no command outside
+  the sandbox (`allowUnsandboxedCommands: false`), and a run whose sandbox cannot
+  start fails (`failIfUnavailable`). The probe proves both layers on the host (the
+  read confinement, then a sandbox with no network started inside it) before the
+  Worker may write or `validate`; the release checklist verifies the sandbox
+  Claude Code itself starts, live. Each command still passes the tool gate by its
+  exact argv, so a shell metacharacter is forbidden and an unlisted command asks
+  the operator. What remains:
+  - a kernel escape from the namespaces, which neither bubblewrap nor the
+    sandbox runtime claims to stop;
+  - reads inside the confinement: a command can read what Claude Code itself
+    can, including its own home (its sign-in, and the transcripts of every
+    Claude Code Worker session on this host) and the variables the operator
+    forwards to it (`forwardEnv`). It cannot send them off the host (no
+    network), but it can show them to the model or write them into the
+    worktree; forward only what the Worker needs, and keep Workers of different
+    classifications on different hosts or homes;
+  - Claude Code's own process is not network-confined (its model is remote);
+    its tools are bound by the pre-approvals and the gate, and `WebFetch` and
+    `WebSearch` are not offered.
 
   A Worker whose runtime cannot enforce its configured sandbox, or cannot prove
   on this host that the host state is unreadable (`readsConfined`), is

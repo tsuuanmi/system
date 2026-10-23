@@ -1,6 +1,6 @@
 # ADR-0024: Agent Workers are confined for reads; host state is never readable
 
-- **Status:** Accepted
+- **Status:** Accepted; superseded in part by [ADR-0038](0038-confined-commands-for-claude-code-workers.md) (Claude Code also runs under the read confinement, and proves `readsConfined` on the host)
 - **Date:** 2026-10-14
 - **Related:** [PROP-0003](../../proposals/0003-production-readiness.md#m6a-security-hardening),
   REQ-WRK-6, QA-6,
