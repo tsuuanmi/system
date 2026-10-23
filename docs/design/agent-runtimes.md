@@ -353,5 +353,5 @@ An agent Worker never offers plain `reason`, so ordinary asks never spend agent-
   SIGTERM after a grace period, then SIGKILL, so it cannot hang a run.
 - **Evidence.** The result artifact carries the final message, the prompt hash, the sandbox,
   the workspace the run worked in (with `worktreePerRun`, its [worktree](#workspaces)), and, for a git working tree, its exact subject after the run, which a review
-  binds to; with `@1.2`, the run's main model and token usage, in total and per model. Target: diffs, commands run, and test results stored as artifacts with their
+  binds to (a tree git cannot read then fails the run as `reconciliation_failed`, never stored as one with no subject); with `@1.2`, the run's main model and token usage, in total and per model. Target: diffs, commands run, and test results stored as artifacts with their
   hashes.

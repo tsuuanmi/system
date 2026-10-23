@@ -42,7 +42,20 @@ const ENV = { PATH: process.env.PATH ?? '/usr/bin:/bin', GIT_OPTIONAL_LOCKS: '0'
 const SAFE = ['-c', 'core.fsmonitor=false', '-c', 'core.hooksPath=/dev/null', '-c', 'diff.external=']
 
 function git(workspace: string, args: string[], timeoutMs: number): Buffer {
-  return execFileSync('git', [...SAFE, '-C', workspace, ...args], { env: ENV, timeout: timeoutMs, maxBuffer: 64 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] })
+  return execFileSync('git', [...SAFE, '-C', workspace, ...args], { env: ENV, timeout: timeoutMs, maxBuffer: 64 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] })
+}
+
+/**
+ * git's own answer that `workspace` is no repository with a commit: no such directory, not a
+ * repository, or no revision HEAD names yet. Only that is "no subject"; any other failure (a
+ * timeout, no git, a repository git refuses to read) leaves the subject unknown, which is never
+ * taken for none.
+ */
+const NO_SUBJECT = /^fatal: (not a git repository|Needed a single revision|cannot change to '.*': No such file or directory)/m
+
+function noSubject(error: unknown): boolean {
+  const { status, stderr } = error as { status?: unknown; stderr?: unknown }
+  return status === 128 && NO_SUBJECT.test(String(stderr ?? ''))
 }
 
 /**
@@ -71,16 +84,19 @@ function untrackedFile(path: string, maxBytes: number): { size: number; mtimeMs:
 }
 
 /**
- * The subject of a git working tree, or undefined when the workspace is not a repository with a
- * commit. Two captures are equal exactly when HEAD and every change on top of it are.
+ * The subject of a git working tree, or undefined when git answers that the workspace is not a
+ * repository with a commit. Any other failure of git throws: a subject that cannot be read is
+ * unknown, never absent. Two captures are equal exactly when HEAD and every change on top of it are.
  */
 export function captureGitSubject(workspace: string, options: CaptureOptions = {}): CapturedSubject | undefined {
   const timeoutMs = options.timeoutMs ?? 10_000
   let head: string
   try {
     head = git(workspace, ['rev-parse', '--verify', 'HEAD'], timeoutMs).toString('utf8').trim()
-  } catch {
-    return undefined
+  } catch (error) {
+    if (noSubject(error)) return undefined
+    const said = String((error as { stderr?: unknown }).stderr ?? '').trim().split('\n').at(-1) || (error as Error).message.split('\n')[0]
+    throw new Error(`the subject of ${workspace} cannot be read: git rev-parse failed (${said!.slice(0, 200)})`, { cause: error })
   }
   const tracked = git(workspace, ['diff', '--binary', '--no-color', '--no-ext-diff', '--no-textconv', 'HEAD'], timeoutMs).toString('utf8')
   const untracked = git(workspace, ['ls-files', '--others', '--exclude-standard', '-z'], timeoutMs).toString('utf8').split('\0').filter(Boolean).sort()

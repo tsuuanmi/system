@@ -1111,6 +1111,22 @@ describe('agents source: a git worktree per workflow run (worktreePerRun; PROP-0
     expect(git(decoy, 'status', '--porcelain')).toBe('')
   })
 
+  it('fails a run whose working tree git cannot read afterwards: its result is never stored without its subject (INV-2, INV-5)', async () => {
+    const repo = repository()
+    const agent = developer({
+      act: (spec) => {
+        // git now refuses the repository ("bad config line"): its subject is unknown, not absent.
+        writeFileSync(join(spec.workspace, '.git', 'config'), '[broken\n')
+        return 'done'
+      },
+    })
+    const { ctx } = await boot(agent, { workers: [writer(repo)], worktreeRoot: temp('system-worktrees-') })
+    const done = await run(ctx, 'agent:dev', 'k-unreadable')
+    expect(agent.runs[0]!.workspace).toBe(repo)
+    expect(done).toMatchObject({ status: 'failed', submitted: true, error: { kind: 'reconciliation_failed', message: expect.stringMatching(/cannot be read: git rev-parse failed \(fatal: bad config line 1/) } })
+    expect(done.result).toBeUndefined()
+  })
+
   it('refuses worktreePerRun on a workspace that is not the top level of a git repository: the Worker takes no work, and a run fails as config_error before the agent starts', async () => {
     const plain = temp('system-plain-')
     const agent = developer()
