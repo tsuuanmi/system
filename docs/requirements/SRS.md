@@ -239,7 +239,8 @@
 - **REQ-HOST-6** The host reports its health: each check (runtime, store, disk,
   vault key custody, accounts, Workers, provider UI drift) as ok, degraded, or
   down with what to do, and the worst of them. Health is degraded while a
-  provider UI change was seen recently.
+  provider UI change was seen recently, and while a Worker source was silent or
+  failed in its last read, naming it.
 - **REQ-HOST-7** Every plugin package and seam definition ships a manifest
   (`plugin-manifest@1.x`) that agrees with its code: the seams it provides,
   consumes, and defines, at their contract versions, and its core component or

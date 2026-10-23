@@ -25,7 +25,7 @@ describe('host health (REQ-HOST-6)', () => {
     expect(await check({ minFreeBytes: Number.MAX_SAFE_INTEGER }, 'disk')).toMatchObject({ state: 'degraded' })
   })
 
-  it('names every Worker source that was silent or failed in its last read, and is never ok while one is (INV-2)', async () => {
+  it('names every Worker source that was silent or failed in its last read, and is never ok while one is (REQ-HOST-6, INV-2)', async () => {
     const at = '2026-10-23T09:41:07.000Z'
     const described = { source: 'turns', state: 'described' as const, at }
     const silent = { source: 'agents', state: 'silent' as const, at, detail: 'did not describe its Workers within 5 s' }
