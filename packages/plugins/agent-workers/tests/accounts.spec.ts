@@ -297,7 +297,7 @@ describe('agent accounts: the Workers in an enrolled home (ADR-0051, INV-2)', ()
 describe('agent accounts: the operator\'s MCP tools (mcp-agent-accounts@1.0)', () => {
   it('enrolls, lists, and removes through account_enroll, account_agents, and account_remove, operator scope, each output as its schema says', async () => {
     const b = await boot()
-    for (const tool of ['account_enroll', 'account_remove', 'account_agents']) expect(b.mcp.tools.get(tool)!.spec.scope).toBe('operator')
+    for (const tool of ['account_enroll', 'account_remove', 'account_agents', 'account_migrate']) expect(b.mcp.tools.get(tool)!.spec.scope).toBe('operator')
     const begun = await call(b, 'account_enroll', { step: 'begin', provider: KIND })
     expect(begun.isError).toBeUndefined()
     expect(begun.structuredContent).toMatchObject({ adopted: true, account: { slot: 1, status: 'enrolled' }, workers: ['agent:reviewer'], login: { command: 'fake-login' } })

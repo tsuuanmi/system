@@ -93,7 +93,7 @@ describe('the api-first preset (e2e through dsh, ADR-0025)', () => {
     expect(tools).toContain('model_key')
     // No website account tool (the login, account, and turn rows are off); exactly the agent account
     // tools, which come with the agent-workers row (ADR-0051).
-    expect(tools.filter((t) => t.startsWith('account_')).sort()).toEqual(['account_agents', 'account_enroll', 'account_remove'])
+    expect(tools.filter((t) => t.startsWith('account_')).sort()).toEqual(['account_agents', 'account_enroll', 'account_migrate', 'account_remove'])
     expect(await call('status', {})).toMatchObject({ harness: 'system', store: 'ok', providers: [] })
 
     // No key stored yet: the call fails closed, for the operator to act on, and nothing is sent.
