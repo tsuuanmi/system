@@ -125,5 +125,7 @@ charters, and their tasks.
   a founding call crashed), both crash windows around a withdrawal and a close that fails after
   reading, a wait whose request the queue no longer knows, a spent or lost run under a policy
   that does not ask, the gate before every attempt, the checks an acceptance reports, results
-  on the written subject, paging bounds, invalid records refused, the tools' outputs against
-  their schema definitions, and the projection.
+  on the written subject, a paused project (its running attempt reaches its outcome and its waits
+  their expiry, nothing new is claimed or gated, and resuming gates its proposed tasks), paging
+  bounds, invalid records refused, the tools' outputs against their schema definitions, and the
+  projection.

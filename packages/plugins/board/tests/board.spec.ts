@@ -656,6 +656,62 @@ describe('ctx.board (store-backed): the protocol\'s guards', () => {
     expect((await ctx.board.start(t.taskId, generation, { runId: 'run-1' }, at(5))).state).toBe('running')
   })
 
+  it('lets a paused project\'s running attempt reach its outcome and its waits their expiry, claims and gates nothing new, and gates its proposed tasks once resumed (fail-closed rule 1, INV-9, INV-13)', async () => {
+    const { ctx } = await boot()
+    await active(ctx)
+    const running = await ready(ctx, task('p2', 'running'))
+    const asks = await ready(ctx, task('p2', 'asks'))
+    const idle = await ready(ctx, task('p2', 'idle'))
+    const run = await ctx.board.claim(running.taskId, 'lead', 600_000, at(3))
+    await ctx.board.start(running.taskId, run.generation, { runId: 'run-1' }, at(3))
+    const question = await ctx.board.claim(asks.taskId, 'lead', 600_000, at(3))
+    await ctx.board.start(asks.taskId, question.generation, { runId: 'run-2' }, at(3))
+    const asking = await ctx.board.block(asks.taskId, question.generation, { reason: 'question', questions: ['Which band?'] }, at(3))
+    const merge = await ctx.board.propose(task('p2', 'merge', { actionClass: 'merge' }), at(3))
+    const deploy = await ctx.board.propose(task('p2', 'deploy', { actionClass: 'deploy' }), at(3))
+    await ctx.board.sweep(at(3))
+    const deployWait = (await ctx.board.task(deploy.taskId))!.waiting!
+    const later = await ctx.board.propose(task('p2', 'later'), at(4))
+
+    const paused = await ctx.board.pause('p2', at(5))
+    expect(paused).toMatchObject({ state: 'paused' })
+    const pausing = ctx.artifacts.get(paused.lastDecision!)!.body as { decisionType: string; candidates: Array<{ option: string; selected: boolean; reasons: string[] }>; outcome: { option: string } }
+    expect(pausing).toMatchObject({ decisionType: 'board', outcome: { option: 'paused' } })
+    expect(pausing.candidates.map((c) => [c.option, c.selected, c.reasons.join(' ')])).toEqual([
+      ['paused', true, expect.stringMatching(/no task is claimed or started.*a running attempt goes on to its outcome, and every wait keeps its expiry/)],
+      ['active', false, 'not kept active: the operator paused it'],
+    ])
+    await ctx.board.sweep(at(5))
+    expect(await ctx.board.task(later.taskId)).toMatchObject({ state: 'proposed' })
+    expect(await failureOf(ctx.board.claim(idle.taskId, 'lead', 600_000, at(5)))).toBe('invalid-transition')
+
+    // The running attempt goes on to its outcome: renewed, submitted, accepted.
+    await ctx.board.renew(running.taskId, run.generation, 600_000, at(6))
+    const r = result(ctx, 'finished while paused')
+    await ctx.board.submit(running.taskId, run.generation, { artifacts: [r], subject: HEAD }, at(6))
+    expect(await ctx.board.accept(running.taskId, acceptance(ctx, 'accept', running.taskId, r), at(7))).toMatchObject({ state: 'done' })
+    // An approval asked before the pause still applies; the task it readies is not claimed while paused.
+    await decide(ctx, (await ctx.board.task(merge.taskId))!.waiting!.approvalRequest!, 'approved', at(8))
+    await ctx.board.sweep(at(8))
+    expect(await ctx.board.task(merge.taskId)).toMatchObject({ state: 'ready' })
+    expect(await failureOf(ctx.board.claim(merge.taskId, 'lead', 600_000, at(8)))).toBe('invalid-transition')
+    // Every wait keeps its expiry.
+    await ctx.board.sweep(new Date(Date.parse(deployWait.expiresAt) + 1000))
+    expect(await ctx.board.task(deploy.taskId)).toMatchObject({ state: 'waiting-for-input', waiting: { reason: 'rejected' } })
+    const end = new Date(Date.parse(asking.waiting!.expiresAt) + 1000)
+    await ctx.board.sweep(end)
+    expect(await ctx.board.task(asks.taskId)).toMatchObject({ state: 'cancelled', cancellation: { reason: 'input-expired' } })
+    expect(await ctx.board.task(later.taskId)).toMatchObject({ state: 'proposed' })
+
+    const resumed = await ctx.board.resume('p2', end)
+    expect(ctx.artifacts.get(resumed.lastDecision!)?.body).toMatchObject({ decisionType: 'board', outcome: { option: 'active' }, candidates: [{ option: 'active', selected: true }, { option: 'paused', reasons: ['not kept paused: the operator resumed it'] }] })
+    await ctx.board.sweep(end)
+    const gated = (await ctx.board.task(later.taskId))!
+    expect(gated).toMatchObject({ state: 'ready' })
+    expect(ctx.artifacts.get(gated.lastDecision!)?.body).toMatchObject({ decisionType: 'board', outcome: { option: 'ready', detail: { mode: 'auto' } } })
+    expect((await ctx.board.claim(idle.taskId, 'lead', 600_000, end)).generation).toBe(1)
+  })
+
   it('lets one open task write a subject at a time, also when one ends (INV-15)', async () => {
     const { ctx } = await boot()
     await active(ctx)

@@ -347,12 +347,18 @@ export class StoreBoard extends Board {
     }
   }
 
+  // Pausing, resuming, and closing are the operator's project moves (docs/design/board.md#seam).
+
   async pause(projectId: string, at: Date = new Date()) {
     return this.ctx.store.transaction(() => {
       const { project } = this.projectOf(projectId)
       if (project.state !== 'active') throw new BoardError('invalid-transition', `${projectId} is ${project.state}, not active`)
       return this.writeProject(project, changed(project, at, {
-        state: 'paused', lastDecision: this.decision(project, undefined, { from: 'active', to: 'paused', why: 'paused: no new task starts until it is resumed', whyNot: 'the lead or the operator asked to pause it' }, at),
+        state: 'paused', lastDecision: this.decision(project, undefined, {
+          from: 'active', to: 'paused',
+          why: 'paused: until it is resumed no task is claimed or started and no proposed task is put to the policy; a running attempt goes on to its outcome, and every wait keeps its expiry',
+          whyNot: 'the operator paused it',
+        }, at),
       }))
     })
   }
@@ -362,12 +368,21 @@ export class StoreBoard extends Board {
       const { project } = this.projectOf(projectId)
       if (project.state !== 'paused') throw new BoardError('invalid-transition', `${projectId} is ${project.state}, not paused`)
       return this.writeProject(project, changed(project, at, {
-        state: 'active', lastDecision: this.decision(project, undefined, { from: 'paused', to: 'active', why: 'resumed: its approved charter still holds', whyNot: 'the lead or the operator asked to resume it' }, at),
+        state: 'active', lastDecision: this.decision(project, undefined, {
+          from: 'paused', to: 'active',
+          why: 'resumed: its approved charter still holds; its proposed tasks go through the gate on the next sweep, and its ready tasks may be claimed again',
+          whyNot: 'the operator resumed it',
+        }, at),
       }))
     })
   }
 
   async close(projectId: string, outcome: 'achieved' | 'stopped', at: Date = new Date()) {
+    return (await this.closeProject(projectId, outcome, at)).project
+  }
+
+  /** Close a project (`close`), and say how many open tasks the close cancelled (`board_close` reports it). */
+  async closeProject(projectId: string, outcome: 'achieved' | 'stopped', at: Date = new Date()): Promise<{ project: Project; cancelled: number }> {
     if (outcome !== 'achieved' && outcome !== 'stopped') throw new BoardError('invalid', `a project closes as achieved or stopped, not ${String(outcome)}`)
     const before = this.projectOf(projectId)
     if (before.project.state !== 'active' && before.project.state !== 'paused') throw new BoardError('invalid-transition', `${projectId} is ${before.project.state}`)
@@ -375,22 +390,22 @@ export class StoreBoard extends Board {
     if (open.some((t) => t.state === 'running' || t.state === 'review')) throw new BoardError('invalid-transition', `${projectId} has a task running or in review`)
     // With the queue unavailable nothing closes (rule 7): what waits on it is read before anything moves.
     await this.reachable([...open.flatMap((t) => (t.waiting?.approvalRequest ? [t.waiting.approvalRequest] : [])), ...(before.request ? [before.request] : [])])
-    const { project, released } = this.ctx.store.transaction(() => {
+    const { project, released, cancelled } = this.ctx.store.transaction(() => {
       const now = this.projectOf(projectId)
       if (now.project.revision !== before.project.revision) throw new BoardError('conflict', `${projectId} changed while it was being closed`)
       const { cancelled, released } = this.cancelOpen(now.project, at)
       const decision = this.decision(now.project, undefined, {
-        from: now.project.state, to: 'closed', why: `closed as ${outcome}`, whyNot: `the lead or the operator closed it; ${cancelled} open task(s) cancelled`,
+        from: now.project.state, to: 'closed', why: `closed as ${outcome}`, whyNot: `the operator closed it; ${cancelled} open task(s) cancelled`,
         detail: { outcome, cancelled },
       }, at)
       const closed = this.writeProject(now.project, changed(now.project, at, {
         state: 'closed', closure: { outcome, decision, at: at.toISOString() }, lastDecision: decision, proposedCharter: undefined,
       }), null)
-      return { project: closed, released: [...released, ...(now.request ? [now.request] : [])] }
+      return { project: closed, released: [...released, ...(now.request ? [now.request] : [])], cancelled }
     })
     // Withdrawn only once the move committed (S7): a crash or a failed transaction leaves every wait as it was.
     await this.withdrawAll(released, at)
-    return project
+    return { project, cancelled }
   }
 
   /**
