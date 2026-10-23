@@ -132,6 +132,17 @@ describe('antigravity-cli: the probe proves what it reports, and never runs a ta
   })
 })
 
+describe('antigravity-cli: its accounts (ADR-0051)', () => {
+  it('gives agy in a home to sign in with, as its HOME with the XDG directories inside it, and no session bus; it reads no identity, so its accounts stay unverified', () => {
+    const r = runtime()
+    const login = r.loginCommand(join(root, 'slot'))
+    expect(login).toMatchObject({ command: AGY, args: [], env: { HOME: join(root, 'slot'), XDG_CONFIG_HOME: join(root, 'slot', '.config'), AGY_CLI_DISABLE_AUTO_UPDATE: 'true' } })
+    expect(Object.keys(login.env)).not.toContain('DBUS_SESSION_BUS_ADDRESS')
+    expect((r as { identity?: unknown }).identity).toBeUndefined()
+    expect(r.home).toBe(HOME)
+  })
+})
+
 describe('antigravity-cli: a run, exactly as configured, or refused before anything starts', () => {
   const workspace = join(root, 'workspace')
   mkdirSync(join(workspace, 'src'), { recursive: true })

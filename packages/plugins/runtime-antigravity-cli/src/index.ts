@@ -39,7 +39,7 @@ import { promisify } from 'node:util'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import {
-  type AgentRuntimeProvider, type Confinement, type RunMetering, type RunResult, type RunSpec, type RuntimeEvidence, type TokenUsage, type ToolGate,
+  type AgentRuntimeProvider, type Confinement, type LoginCommand, type RunMetering, type RunResult, type RunSpec, type RuntimeEvidence, type TokenUsage, type ToolGate,
   TOOL_GATE_MS, askToolGate, childEnvironment, confinedCommand, proveConfinement, withMetering,
 } from '@tsuuanmi/system-agent-runtime-core'
 import { dshHome } from '@tsuuanmi/system-libs'
@@ -143,7 +143,8 @@ interface Deferral {
 
 export class AntigravityRuntime implements AgentRuntimeProvider {
   readonly kind = KIND
-  private readonly home: string
+  /** Its own configured home: where every run runs, and slot 1 of its accounts. */
+  readonly home: string
 
   constructor(private readonly options: RuntimeOptions = {}) {
     if (options.home !== undefined && !isAbsolute(options.home)) throw new ProviderError('config_error', `${KIND}: home must be an absolute path`)
@@ -286,6 +287,23 @@ export class AntigravityRuntime implements AgentRuntimeProvider {
       throw withMetering(new ProviderError(failureKind(text), `${KIND}: ${String(result.status ?? 'failed')}${text ? `: ${text.slice(0, 300)}` : ''}`), metering())
     }
     return { text: typeof result.response === 'string' ? result.response : '', ...(stream.handle ? { nativeHandle: stream.handle } : {}), ...metering() }
+  }
+
+  /**
+   * `agy` in `home` (as its `HOME`, with the XDG directories inside it and its auto-update off), where
+   * the operator signs in, in their own terminal and without D-Bus, so the sign-in lands in the
+   * home's own files (ADR-0051). It has no `identity`: no file or command was shown to name the
+   * signed-in Google account (PROP-0012 open question 1), so its accounts are enrolled `unverified`
+   * and none is routed on until a reader is verified.
+   */
+  loginCommand(home: string): LoginCommand {
+    return {
+      command: this.executable() ?? 'agy', args: [],
+      env: {
+        HOME: home, XDG_CONFIG_HOME: join(home, '.config'), XDG_CACHE_HOME: join(home, '.cache'), XDG_DATA_HOME: join(home, '.local', 'share'),
+        XDG_STATE_HOME: join(home, '.local', 'state'), AGY_CLI_DISABLE_AUTO_UPDATE: 'true',
+      },
+    }
   }
 
   private executable(): string | undefined {
