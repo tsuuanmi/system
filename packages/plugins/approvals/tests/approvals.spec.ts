@@ -124,6 +124,8 @@ describe('configuration', () => {
       // A lone request waits maxWaitSeconds to be batched: it must be under the shortest expiry it can get.
       [[{ ...STUDIO, batch: { maxSize: 2, maxWaitSeconds: 600 } }], /^policy studio: batch\.maxWaitSeconds \(600\) is not under the shortest expiry of the studio's requests \(600 s\)/],
       [[UNBATCHED, { ...PROJECT, batch: { maxSize: 2, maxWaitSeconds: 3600 } }], /^policy p1\.policy: batch\.maxWaitSeconds \(3600\) is not under the shortest expiry of project p1's requests \(400 s\)/],
+      // A set is bounded (INV-9): the studio's policy and 100 projects'.
+      [[STUDIO, ...Array.from({ length: 101 }, (_, i) => ({ ...PROJECT, id: `p${i}.policy`, projectId: `p${i}` }))], /^a set holds at most 101 policies \(the studio's and 100 projects'\); 102 configured$/],
     ]
     for (const [policies, problem] of cases) expect(policyProblems(policies), JSON.stringify(policies).slice(0, 120)).toContainEqual(expect.stringMatching(problem))
     expect(policyProblems(POLICIES)).toEqual([])

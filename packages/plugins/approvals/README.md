@@ -72,12 +72,12 @@ guarantee seam: it fails closed (INV-2). Code decides, never a model.
   - `proposePolicy({policy, note?}, at?)` (contract 1.1): a policy change, from the operator's
     channels only (the web UI, MCP `approvals_policy_propose`; INV-6). The record replaces the
     policy with its id at a higher version, same scope and project, or adds a policy for a project
-    that has none; the whole set it makes (`MAX_SET`, 101 policies at most) must pass every
-    load-time rule, or nothing is stored (`invalid`). `policy-change` is judged like any action
-    (the project's set for a project's policy) and recorded; on `forbid` it is refused
-    (`not-asked`). On `ask`, one transaction stores a `policy-change@1.0` (the record, the record it
-    replaces, the whole set, its hash, the base set's hash, the configured set's hash, and every
-    effective mode it moves) and queues an `approval-request@1.1` on
+    that has none; the whole set it makes must pass every load-time rule, or nothing is stored
+    (`invalid`). `policy-change` is judged like any action (the project's set for a project's
+    policy) and recorded; on `forbid` it is refused (`not-asked`). On `ask`, one transaction
+    stores a `policy-change@1.0` (the record, the record it replaces, the whole set, its hash, the
+    base set's hash, the configured set's hash, and every effective mode it moves) and queues an
+    `approval-request@1.1` on
     `{content, autonomy-policy-set, <hash>}`, requester `approvals` with the `policyChangeId`.
     `request` refuses that requester from any caller (`invalid`).
   - Applying it: an operator's approval of that request, while its base set is still in force (else
@@ -119,18 +119,19 @@ guarantee seam: it fails closed (INV-2). Code decides, never a model.
 - **Config:** `policies` (required): `autonomy-policy@1.x` records, exactly one studio policy
   and project policies that narrow it; `sweepSeconds` (1 to 3600, default 60); `supersedes`
   (optional): the `sha256:` hash of the stored set this configuration replaces, read only at a
-  start where that set no longer matches the configuration. At load, a
-  policy the schema refuses, two rules for one action class, a rule giving a class in
-  `ALWAYS_ASK` `auto` or `notify` (a 1.0 policy's `remediation`), an `expiry.defaultSeconds` or a
-  rule's `expiresSeconds` above `expiry.maxSeconds`, a commands entry with an empty word or a
-  shell metacharacter, a batch rule whose `maxWaitSeconds` is not under the shortest expiry a
-  request it batches can get, no or several studio policies, a project policy narrowing another
-  policy than the studio's, two policies for one project, or two with one id refuses the plugin,
-  as does a stored policy set the configuration no longer matches unless `supersedes` names it:
-  no `ctx.approvals` is provided, the error is logged, and every action that needs a person
-  waits. `checkConfig` names the same problems to `system check` before a start.
-  The bundle row carries the default studio policy; a patch that targets the row replaces its
-  whole config, so it carries the policies too.
+  start where that set no longer matches the configuration. At load, a policy the schema
+  refuses, two rules for one action class, a rule giving a class in `ALWAYS_ASK` `auto` or
+  `notify` (a 1.0 policy's `remediation`), an `expiry.defaultSeconds` or a rule's
+  `expiresSeconds` above `expiry.maxSeconds`, a commands entry with an empty word or a shell
+  metacharacter, a batch rule whose `maxWaitSeconds` is not under the shortest expiry a request
+  it batches can get, no or several studio policies, a project policy narrowing another policy
+  than the studio's, two policies for one project, two with one id, or more than 101 policies
+  (the studio's and 100 projects') refuses the plugin, as does a stored policy set the
+  configuration no longer matches unless `supersedes` names it: no `ctx.approvals` is provided,
+  the error is logged, and every action that needs a person waits. `checkConfig` names the same
+  problems of the configured set to `system check` before a start; only the start sees the
+  store. The bundle row carries the default studio policy; a patch that targets the row replaces
+  its whole config, so it carries the policies too.
 - **Injects:** `store`, `artifacts`; `mcp` and `eventLog` are optional.
 - **Consumers:** the board; the web UI's queue; the `agents` Worker source, whose
   per-run tool gate calls `check`, `request`, and `get` for every tool call of an agent run

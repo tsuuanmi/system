@@ -445,7 +445,8 @@ guesses.
   `expiresSeconds ≤ expiry.maxSeconds`, no rule giving a class that always asks `auto` or
   `notify`, commands-list entries of non-empty words with no shell metacharacter, and a batch
   rule whose `maxWaitSeconds` is under the shortest expiry a request it batches can get; a
-  policy that breaks one is refused when loaded.
+  policy that breaks one is refused when loaded. A set holds at most 101 policies: the studio's
+  and 100 projects'.
 - The classes that always ask are the irreversible effects (`external-send`, `deploy`,
   `delete-data`, `spend`), the investor's decisions (`charter`, `funding`, `policy-change`), and
   `remediation`. The schema refuses `auto` and `notify` for them, except `remediation`,

@@ -38,6 +38,9 @@ export interface Judgement {
   forbidden?: string
 }
 
+/** The policies a set holds at most: the studio's and 100 projects' (INV-9; `policy-change@1.0`). */
+export const MAX_SET = 101
+
 /** The batch rule when no policy names one: every request is its own batch, at once. */
 const NO_BATCHING = { maxSize: 1, maxWaitSeconds: 0 } as const
 
@@ -83,11 +86,11 @@ function commandProblems(line: string): string[] {
  * or notify, and commands-list entries of non-empty words free of shell metacharacters; ids are
  * unique; there is exactly one studio policy; each project policy, at most one per project,
  * narrows that studio policy; and each batch rule's `maxWaitSeconds` is under the shortest expiry
- * a request it batches can get.
+ * a request it batches can get. A set holds at most {@link MAX_SET} policies.
  */
 export function policyProblems(policies: unknown, schemas: SchemaRegistry = new SchemaRegistry()): string[] {
   if (!Array.isArray(policies)) return ['policies must be a list of autonomy-policy@1.0 records']
-  const problems: string[] = []
+  const problems: string[] = policies.length > MAX_SET ? [`a set holds at most ${MAX_SET} policies (the studio's and 100 projects'); ${policies.length} configured`] : []
   const valid: AutonomyPolicy[] = []
   const ids = new Set<string>()
   const projects = new Set<string>()
@@ -149,9 +152,6 @@ function allows(policy: AutonomyPolicy, argv: readonly string[]): boolean {
     return words.length === argv.length && words.every((word, i) => argv[i] === word)
   })
 }
-
-/** The policies a stored set holds at most: the studio's and 100 projects' (`policy-change@1.0`). */
-export const MAX_SET = 101
 
 /** A configured policy set, valid by {@link policyProblems}: the studio policy and the project policies that narrow it. */
 export class PolicySet {
@@ -272,7 +272,6 @@ export function proposedSet(base: PolicySet, policy: AutonomyPolicy): { policies
     return { policies: base.all().map((p) => (p.id === policy.id ? policy : p)), previous }
   }
   if (policy.scope !== 'project') return { problems: [`policy ${policy.id}: a new policy is a project's; the set has one studio policy (${base.studio.id})`] }
-  if (base.all().length >= MAX_SET) return { problems: [`policy ${policy.id}: a set holds at most ${MAX_SET} policies`] }
   return { policies: [...base.all(), policy] }
 }
 
