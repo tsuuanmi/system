@@ -2,7 +2,7 @@
   "name": "@tsuuanmi/system-plugin-host",
   "version": "0.0.0",
   "private": true,
-  "description": "ctx.pluginHost: reads every row of the composition from the DSH loader and the manifest its package declares, and records each plugin's lifecycle state, every change a lifecycle decision first; records and automates nothing else",
+  "description": "ctx.pluginHost: reads every row of the composition from the DSH loader and the manifest its package declares, and records each plugin's lifecycle state, every change a lifecycle decision first, and checks each plugin a row mounts against the manifests at start, each finding a gate decision; it never mounts, stops, or gates a plugin",
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",

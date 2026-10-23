@@ -2,7 +2,7 @@
   "name": "@tsuuanmi/system-plugin-host-core",
   "version": "0.0.0",
   "private": true,
-  "description": "Plugin host seam definition: ctx.pluginHost, every plugin of the composition with its declared manifest and its recorded lifecycle state, each change a lifecycle decision; with its conformance suite and a fake provider",
+  "description": "Plugin host seam definition: ctx.pluginHost, every plugin of the composition with its declared manifest and its recorded lifecycle state, each change a lifecycle decision, and the manifest check at start; with its conformance suite and a fake provider",
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",
