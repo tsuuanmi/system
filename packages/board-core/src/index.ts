@@ -213,7 +213,9 @@ export abstract class Board extends Service {
    * Make every move that is due at `at`: tasks whose dependencies are done become ready or wait
    * for approval; resolved approvals release or stop what waits on them; lost leases and expired
    * waits are applied, including the expiry of a request the queue never resolved or no longer
-   * knows; an abandoned project's open tasks are cancelled. Returns the tasks and projects it moved.
+   * knows; a wait whose request the queue withdrew on a policy change (decider rule
+   * `approvals.policy`) goes through its gate again under the current policy; an abandoned
+   * project's open tasks are cancelled. Returns the tasks and projects it moved.
    */
   abstract sweep(at: Date): Promise<{ tasks: BoardTask[]; projects: Project[] }>
 }

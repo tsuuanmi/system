@@ -33,8 +33,12 @@ charters, and their tasks.
     rejection, or a decision with the checks passed, applies.
   - A move that ends a wait (`reconcileRun`, `cancel`, `close`) reads the request first, commits,
     and withdraws it after; a withdrawal that fails is logged, and the request expires on its
-    own. The sweep leaves a task waiting on a withdrawn request as it is (only the board
-    withdraws).
+    own. The sweep leaves a task waiting on a request the board withdrew itself as it is. A
+    request the queue withdrew on a policy change (its decision's decider rule
+    `approvals.policy`) gets no verdict, so the sweep runs the wait's gate again under the policy
+    now: ready, one new request on the same subject, or the forbid outcome for an
+    `approval-needed` wait; a new request or a wait for input for a spent budget or a lost run; a
+    charter asked about again or refused ([board](../../../docs/design/board.md#where-the-tables-leave-room)).
 - **Leases.** A task's holder is a `ctx.leases` lease on `board-task:<taskId>`; its generation is
   the holder's generation. The lease token stays in the store, never in the record. Every write a
   holder makes (`start`, `submit`, `block`, `renew`) presents the generation and passes the

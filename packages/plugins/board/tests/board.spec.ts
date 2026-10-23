@@ -12,7 +12,7 @@ import { SchemaRegistry } from '@tsuuanmi/system-libs'
 import Store from '@tsuuanmi/system-store'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { z as zod } from 'zod'
-import { FakeApprovals } from '../../../approvals-core/conformance/approvals.ts'
+import { FakeApprovals, POLICIES } from '../../../approvals-core/conformance/approvals.ts'
 import { CHARTER } from '../../../board-core/conformance/board.ts'
 import StoreBoard, { type Config } from '../src/index.ts'
 import { BOARD_TOOLS, INPUTS } from '../src/tools.ts'
@@ -512,6 +512,52 @@ describe('ctx.board (store-backed): the approval queue', () => {
     expect(await ctx.board.project('p4')).toMatchObject({ state: 'closed', closure: { outcome: 'abandoned' } })
     expect(await ctx.board.task(early.taskId)).toMatchObject({ state: 'cancelled', cancellation: { reason: 'project-closed' } })
     expect(await ctx.board.sweep(at(60 * 24 * 365))).toMatchObject({ projects: [] })
+  })
+
+  it('asks again once after a policy change withdrew the request a wait was on: it adopts the request a crash left between asking again and recording', async () => {
+    const { ctx, approvals } = await boot()
+    await active(ctx)
+    const spend = await ctx.board.propose(task('p2', 'spend', { actionClass: 'spend' }), at(2))
+    await ctx.board.sweep(at(2))
+    const withdrawn = (await ctx.board.task(spend.taskId))!.waiting!.approvalRequest!
+    const [studio, ...rest] = POLICIES
+    expect(approvals().reload([{ ...studio!, version: studio!.version + 1 }, ...rest], at(3)).map((r) => r.requestId)).toEqual([withdrawn])
+    // What a board that crashed after asking again, before committing, leaves in the queue.
+    const verdict = await ctx.approvals.check({ class: 'spend', projectId: 'p2' })
+    const orphan = await ctx.approvals.request({
+      subject: { type: 'content', ref: `board-task:${spend.taskId}:attempt:0`, version: 'approval-needed' }, action: { class: 'spend', summary: 'approval-needed: spend' },
+      requester: { component: 'board', projectId: 'p2', taskId: spend.taskId }, verdict, classification: 'operator-shared',
+    }, at(3))
+    await ctx.board.sweep(at(3))
+    expect(await ctx.board.task(spend.taskId)).toMatchObject({ state: 'waiting-for-approval', waiting: { reason: 'approval-needed', approvalRequest: orphan.requestId } })
+    expect((await open(ctx, 'p2')).map((r) => r.requestId)).toEqual([orphan.requestId])
+  })
+
+  it('withdraws the request it asked again on a policy change when the task changed meanwhile, and leaves a wait the board withdrew itself as it is (S7)', async () => {
+    const { ctx, approvals } = await boot()
+    await active(ctx)
+    const spend = await ctx.board.propose(task('p2', 'spend', { actionClass: 'spend' }), at(2))
+    await ctx.board.sweep(at(2))
+    const [studio, ...rest] = POLICIES
+    approvals().reload([{ ...studio!, version: studio!.version + 1 }, ...rest], at(3))
+    // The sweep stops at its first await on the queue; the lead cancels the task meanwhile.
+    const sweeping = ctx.board.sweep(at(3))
+    await ctx.board.cancel(spend.taskId, 'lead', undefined, at(3))
+    expect((await sweeping).tasks).toEqual([])
+    expect(await ctx.board.task(spend.taskId)).toMatchObject({ state: 'cancelled', cancellation: { reason: 'lead' } })
+    expect(await open(ctx, 'p2')).toEqual([])
+    // The one the policy change withdrew, and the one the sweep asked again and then withdrew.
+    expect((await ctx.approvals.list({ projectId: 'p2', states: ['rejected'] })).filter((r) => r.requester.taskId === spend.taskId)).toHaveLength(2)
+
+    // A lost run whose request the board itself withdrew (a crash between its move and the withdrawal) keeps waiting for its owner.
+    const t = await ready(ctx, task('p2', 't'), at(4))
+    const { generation } = await ctx.board.claim(t.taskId, 'lead', 60_000, at(4))
+    await ctx.board.start(t.taskId, generation, { runId: 'run-1' }, at(4))
+    await ctx.board.sweep(at(10))
+    const lost = (await ctx.board.task(t.taskId))!
+    await ctx.approvals.withdraw(lost.waiting!.approvalRequest!, at(11))
+    expect(await ctx.board.sweep(at(11))).toEqual({ tasks: [], projects: [] })
+    expect(await ctx.board.task(t.taskId)).toEqual(lost)
   })
 
   it('withdraws the request of a wait it expired itself, so the operator is not shown it again', async () => {

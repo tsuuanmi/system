@@ -29,6 +29,10 @@ Work state machine **seam definition**
     ending in a wait no input revives, never ready once spent; review bounded by the
     reviewer's lease; a result on the subject the task writes;
   - blocking and answering; cancelling, with the approval withdrawn and dependents cancelled;
-    validation of proposals and of founding milestones; pausing and closing.
+    validation of proposals and of founding milestones; pausing and closing;
+  - a wait whose request the queue withdrew on a policy change put to the policy again: ready,
+    the forbid outcome, or one new request on the same subject; a charter asked about again or
+    abandoned. Its `boot` therefore also changes the queue's policies (`changePolicies`).
 
-  It also exports `FakeBoard`, which passes it.
+  It also exports `FakeBoard`, which passes it. Contract 1.0 is unreleased and amended in place
+  ([ADR-0039](../../docs/decisions/adr/0039-base-guarantee-seam-contract-changes.md)).
