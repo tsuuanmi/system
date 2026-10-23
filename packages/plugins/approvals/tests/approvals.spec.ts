@@ -19,7 +19,7 @@ import Store from '@tsuuanmi/system-store'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { z as zod } from 'zod'
 import { POLICIES } from '../../../approvals-core/conformance/approvals.ts'
-import StoreApprovals, { checkConfig, type Config, policyProblems } from '../src/index.ts'
+import StoreApprovals, { checkConfig, type Config, policyProblems, type RepeatedApprovals } from '../src/index.ts'
 import { APPROVAL_TOOLS, type ApprovalTool, INPUTS } from '../src/tools.ts'
 import { ManualApprovals } from './manual.ts'
 
@@ -891,7 +891,7 @@ describe('the queue proposes a policy change from repeated approvals (docs/desig
 
   it('refuses repeatedApprovals out of its bounds, at load and in system check', async () => {
     for (const value of [{ approvals: 2 }, { approvals: 101 }, { windowSeconds: 60 }, { windowSeconds: 7776001 }, { approvals: 3.5 }, { every: 1 }, { enabled: 'yes' }]) {
-      expect(checkConfig({ policies: POLICIES, repeatedApprovals: value as Config['repeatedApprovals'] }).join('; ')).toMatch(/^repeatedApprovals\./)
+      expect(checkConfig({ policies: POLICIES, repeatedApprovals: value as RepeatedApprovals }).join('; ')).toMatch(/^repeatedApprovals\./)
     }
     expect(checkConfig({ policies: POLICIES, repeatedApprovals: {} })).toEqual([])
     expect(checkConfig({ policies: POLICIES, repeatedApprovals: { enabled: true, approvals: 100, windowSeconds: 7776000 } })).toEqual([])
