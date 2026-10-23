@@ -54,6 +54,11 @@ export interface GuardOptions {
 
 export type GuardResult = { ok: true; scope: Scope } | { ok: false; status: 401 | 403 | 421; reason: string }
 
+/**
+ * SHA-256 here only gives both sides one length for `timingSafeEqual`; it is not password
+ * storage. Every accepted token is 32 random bytes (`scopeToken`), so a fast hash leaves nothing
+ * to guess, and nothing hashed is stored.
+ */
 const digest = (value: string): Buffer => createHash('sha256').update(value).digest()
 
 /** Constant-time comparison over SHA-256 digests (equal length by construction); never an empty token. */
