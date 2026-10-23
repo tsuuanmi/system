@@ -10,16 +10,16 @@ import type { Board, Subject } from '@tsuuanmi/system-board-core'
 import { type Lease, LeaseLost, StaleGeneration } from '@tsuuanmi/system-leases'
 import { canonicalJson, SchemaRegistry, sha256 } from '@tsuuanmi/system-libs'
 import { dispositionOf } from '@tsuuanmi/system-provider-core'
-import { AdmissionFailure, type AdmittedWorker, type ArtifactRef, type Classification, type RouteOptions, type WorkRequirement, type WorkerExecution } from '@tsuuanmi/system-workers-core'
+import { AdmissionFailure, type AdmittedWorker, type ArtifactRef, type Classification, provesFor, type RouteOptions, type WorkRequirement, type WorkerExecution } from '@tsuuanmi/system-workers-core'
 import { acceptPlain } from './acceptance.ts'
 import { type Draft, draftOf, instructionsProblem, instructionsText, placeholderScope, recordBrief, refuseInstructions, renderedChars, type TaskFrame, unfilledProblem } from './briefs.ts'
 import { block, expireGate, gateDeadline, grow, grownSteps } from './growth.ts'
-import { admissionKind, escalate, failAttempt, inputHint, routedDecisions } from './recovery.ts'
+import { admissionKind, cutShort, escalate, failAttempt, heldWorkers, inputHint, routedDecisions } from './recovery.ts'
 import { isRemediationGate, pollMs, queueOf, settleQueued } from './queue.ts'
 import { missingSubject, remediate, reviewSubject, subjectGate, wordingOf } from './review.ts'
 import { recoverWakes, settleWake } from './sessions.ts'
 import { appended, compose, DEFAULT_TEMPLATES, type Instructions, literal, type NodeTemplate, recordExecutor, type ResolvedNode, type ResolvedSpec, resolve, schemaBlock, UnfilledPlaceholders, variantProblem, variantsOf } from './spec.ts'
-import { runSnapshot } from './sources.ts'
+import { MATERIAL_REQUEST, runSnapshot, showsTextMaterial, sourceOf } from './sources.ts'
 import { TaskRuns } from './tasks.ts'
 import { decide, expireTie, restriction, runtimeOf, tally, teamGroup, teamPrompt } from './teams.ts'
 import { type Config, errorOf, LEASE_TTL_MS, newId, TASK_WAIT_MS, type NodeHelpers, type NodeRecord, type NodeRow, now, type RunRow, type RunView, type StartInput, type TaskBudget, type WorkflowError, WorkflowFailure } from './types.ts'
@@ -464,10 +464,12 @@ export class Engine {
       ...(scope.team ? { team: teamPrompt(this, spec, nodes) } : {}),
     }
     // The brief's instructions: text, and each dependency's result as a pointer, never its content.
-    // Every placeholder is filled, or the node fails here with nothing sent (INV-2).
+    // Every placeholder is filled, or the node fails here with nothing sent (INV-2). The caller's
+    // own text, when a source step this prompt shows already holds it, is shown there once.
+    const input = !wording.literal && showsTextMaterial(this, nodes, wording.prompt, wording.refs) ? MATERIAL_REQUEST : run.input
     let parts: Instructions
     try {
-      parts = wording.literal ? literal(wording.prompt) : compose(wording.prompt, run.input, wording.refs, extras)
+      parts = wording.literal ? literal(wording.prompt) : compose(wording.prompt, input, wording.refs, extras)
     } catch (error) {
       if (!(error instanceof UnfilledPlaceholders)) throw error
       return refuseInstructions(this, run, node, unfilledProblem(spec, error.placeholders), lease)
@@ -629,9 +631,9 @@ export class Engine {
       } catch (error) {
         done()
         if (!(error instanceof AdmissionFailure)) throw error
-        const hint = error.rejections.length ? inputHint(this, spec, error, input.chars) : ': no Worker is configured (for website Workers, map tiers to modes in the account catalog, then sign the account in)'
-        // A team member that finds no other provider family: say what the team needs, beside why this one failed.
-        const team = spec.team?.role === 'propose' && exclude ? await this.familyShortage(spec) : ''
+        const hint = error.rejections.length ? inputHint(this, spec, error, input.chars, sourceOf(this, this.nodeRows(run.run_id), spec.dependsOn)) : ': no Worker is configured (for website Workers, map tiers to modes in the account catalog, then sign the account in)'
+        // A team member short of provider families: say what the team needs, beside why this one failed.
+        const team = spec.team?.role === 'propose' && exclude ? await this.familyShortage(spec, record.requirement) : ''
         return failAttempt(this, run, { ...node, attempt }, { kind: admissionKind(error), disposition: dispositionOf(admissionKind(error)), message: `${team}${error.message}${hint}` },
           { sent: false, decisions: [error.decision] }, lease)
       }
@@ -716,7 +718,7 @@ export class Engine {
     if (!current.result) {
       return failAttempt(this, run, node, { kind: 'internal', disposition: 'CODE_FIX', message: `${node.source} reported execution ${current.id} completed without a result` }, { sent: true, execution: current }, lease)
     }
-    this.complete(run, node, spec, current, lease)
+    await this.complete(run, node, spec, current, lease)
   }
 
   /**
@@ -749,9 +751,17 @@ export class Engine {
     }, { producer: { type: 'system', ref: 'workflow' }, runId: run.run_id, nodeId: node.node_id }).id as ArtifactRef
   }
 
-  /** A team's need for provider families against those ready now, as the start of a member's admission failure. */
-  private async familyShortage(spec: ResolvedNode): Promise<string> {
-    const ready = new Set((await this.ctx.workers.list()).filter((w) => (w.state === 'ready' || w.state === 'busy') && w.family !== undefined).map((w) => w.family))
+  /**
+   * A team's need for provider families, as the start of a member's admission failure, when fewer
+   * are ready now than it has members: the families of the Workers ready or busy that prove what
+   * the member's step needs. With enough of them, the shortage is not why it failed: empty.
+   */
+  private async familyShortage(spec: ResolvedNode, requirement: WorkRequirement): Promise<string> {
+    const ready = new Set((await this.ctx.workers.list())
+      .filter((w) => (w.state === 'ready' || w.state === 'busy') && w.family !== undefined
+        && requirement.capabilities.every((c) => w.capabilities.some((o) => o.capability === c && provesFor(o, requirement))))
+      .map((w) => w.family))
+    if (ready.size >= spec.team!.members) return ''
     return `team ${spec.team!.id} needs ${spec.team!.members} provider families, one per member; ${ready.size} ${ready.size === 1 ? 'is' : 'are'} ready (ADR-0027). `
   }
 
@@ -773,11 +783,17 @@ export class Engine {
   }
 
   /** A finished execution: check its result against the node's contract, then commit the output receipt. */
-  private complete(run: RunRow, node: NodeRow, spec: ResolvedNode, execution: WorkerExecution, lease: () => Lease): void {
+  private async complete(run: RunRow, node: NodeRow, spec: ResolvedNode, execution: WorkerExecution, lease: () => Lease): Promise<void> {
     const result = execution.result as ArtifactRef
     // A step of a board task's run may ask questions instead of answering, as its brief offers: no result, the task waits.
     if (this.tasks.asks(run, node, execution, lease)) return
+    // The Workers the node's session holds it to, read before its result is judged: a rejected
+    // result escalates only onto one of them (Model A), and the decision is taken in a transaction.
+    const held = await heldWorkers(this, spec)
     const acceptance = this.ctx.workers.accept(result, spec.acceptance, { producer: 'workflow', runId: run.run_id, nodeId: node.node_id, ...(spec.resultSchema ? { resultSchema: spec.resultSchema } : {}) })
+    // A rejected answer its Worker cut at its output bound says so: room may be what it lacked, not a tier.
+    const cut = acceptance.accepted ? undefined : cutShort(this, result)
+    const rejected = [...acceptance.reasons, ...(cut ? [cut] : [])]
     const decisions = { decisions: JSON.stringify([...execution.decisions, ...routedDecisions(node, this)]) }
     const data = { executionId: execution.id, source: node.source, worker: node.worker, tier: node.served_tier, quotaClass: node.quota_class, accepted: acceptance.accepted }
     let gate: ReturnType<typeof subjectGate> | undefined
@@ -798,8 +814,11 @@ export class Engine {
         }
         this.writeNode(node, { state: 'COMPLETED', error: null, ...decisions }, (r) => ({ ...r, outputReceipt: { result, acceptance: acceptance.decision }, lastDecision: acceptance.decision }), lease)
         this.ctx.eventLog.append({ type: 'workflow.node.completed', runId: run.run_id, nodeId: node.node_id, decision: acceptance.decision, data })
-      } else if (!escalate(this, run, node, spec, result, acceptance.decision, acceptance.reasons, decisions, lease)) {
-        const error: WorkflowError = { kind: 'acceptance_rejected', disposition: 'NONE', message: `${spec.acceptance}: ${acceptance.reasons.join('; ')}` }
+      } else {
+        const escalation = escalate(this, run, node, spec, result, acceptance.decision, rejected, decisions, lease, held)
+        if (escalation.escalated) return
+        // The acceptance's own reasons first, then why it did not run again higher.
+        const error: WorkflowError = { kind: 'acceptance_rejected', disposition: 'NONE', message: `${spec.acceptance}: ${rejected.join('; ')}; not escalated: ${escalation.why}` }
         this.writeNode(node, { state: 'FAILED', error: JSON.stringify(error), ...decisions }, (r) => ({ ...r, lastDecision: acceptance.decision }), lease)
         this.ctx.eventLog.append({ type: 'workflow.node.failed', runId: run.run_id, nodeId: node.node_id, decision: acceptance.decision, data: { ...data, kind: error.kind } })
       }
