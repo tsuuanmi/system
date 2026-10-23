@@ -346,10 +346,10 @@ No options.
 | Option | Type | Default | Description |
 |---|---|---|---|
 | `executable` | string |  | Path to the codex executable (default: found on PATH) |
-| `config` | Record<string, any> | `{}` | Codex --config overrides, such as model_provider and model_providers (operator configuration) |
+| `config` | Record<string, any> | `{}` | Codex --config overrides, such as model_provider and model_providers (operator configuration); no mcp_servers, no hooks, and no feature the runtime keeps off |
 | `env` | Record<string, string> | `{}` | Explicit environment for the codex process (no secrets; use forwardEnv) |
 | `forwardEnv` | string[] | `[]` | Daemon environment variables forwarded by name, such as the one a provider env_key names |
-| `home` | string |  | The Workers' Codex home (CODEX_HOME; default <DSH_HOME>/system/codex-home); it must configure no MCP server |
+| `home` | string |  | The Workers' Codex home (CODEX_HOME; default <DSH_HOME>/system/codex-home), never the operator's ~/.codex; it must configure no MCP server; sign in there once |
 
 ## `store`
 

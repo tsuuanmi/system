@@ -8,7 +8,7 @@
 > plugins below; differs from target: `persistent-conversation` rests on the probe's `resume`
 > flag, not on a resume conformance test (planned); a started run is never reconciled from the
 > agent's own records (it fails as `reconciliation_failed`); evidence beyond the final message
-> and the workspace's git subject is not stored; Codex and ACP agents cannot ask a
+> and the workspace's git subject is not stored; ACP agents cannot ask a
 > [tool gate](#tool-gate) before each tool call, so the `agents` source admits none of their
 > Workers.
 
@@ -25,7 +25,7 @@ turns them on.
 | Provider plugin | Kind | Backed by | Policy holder |
 |---|---|---|---|
 | [`runtime-claude-agent-sdk`](../../packages/plugins/runtime-claude-agent-sdk/README.md) | `claude-agent-sdk` | official Claude Agent SDK, on the operator's installed `claude` | exact built-in tools, file tools pre-approved inside the workspace only; `Bash` in `workspace-write` runs only, inside the SDK's sandbox ([confined commands](#confined-commands)); its own home; no settings files, hooks from disk, or MCP servers; the run's tool gate as its one PreToolUse hook |
-| [`runtime-codex-sdk`](../../packages/plugins/runtime-codex-sdk/README.md) | `codex-sdk` | official Codex SDK, on the operator's installed `codex` | Codex's own sandbox (read-only or workspace-write); approvals `never`; network and web search off; its own Codex home, with no MCP server; no tool gate (refused) |
+| [`runtime-codex-sdk`](../../packages/plugins/runtime-codex-sdk/README.md) | `codex-sdk` | official Codex SDK, on the operator's installed `codex` | Codex's own sandbox (read-only or workspace-write); approvals `never`; network, web search, and the features that add unhooked tools off; no terminal; its own Codex home, with no MCP server; the run's tool gate as its one PreToolUse hook, through a private channel ([Codex's gate](#codexs-gate)) |
 | [`runtime-acp`](../../packages/plugins/runtime-acp/README.md) | `acp:<name>` | official ACP SDK, with an agent subprocess | the client side: permission requests refused, reads confined to the workspace, no writes or terminals advertised; no tool gate (refused) |
 
 ACP is the generic path for any ACP-speaking agent, not the primary path for Claude or Codex.
@@ -121,9 +121,54 @@ passes the call on to that policy, `deny` refuses it with a reason the agent is 
 `config_error`, naming the request, and a later run of its session makes the call once approved.
 
 A runtime that can ask the gate before every tool call reports `gatesToolCalls`; one that cannot
-refuses a run that carries a gate (`config_error`), and its Workers are not admitted. Claude Code
-compiles the gate to one PreToolUse hook on every tool. Codex runs its tools with approvals
-`never`, and an ACP agent asks the client only for what it chooses to, so neither gates.
+refuses a run that carries a gate (`config_error`), and its Workers are not admitted. Each gating
+runtime asks it with `askToolGate` (agent-runtime-core): bounded at 30 s, and a gate that throws,
+answers a verdict the contract does not define, or answers late is a deny. Claude Code compiles
+the gate to one PreToolUse hook on every tool, an in-process callback of its SDK. Codex runs a
+PreToolUse hook as a command, so its gate goes through a bridge ([below](#codexs-gate)). An ACP
+agent asks the client only for what it chooses to, so it does not gate.
+
+### Codex's gate
+
+Codex 0.164 runs PreToolUse hooks as commands, before each tool call, with the call as JSON on
+stdin ([ADR-0042](../decisions/adr/0042-codex-workers-ask-the-gate-through-a-hook-bridge.md)).
+What it does with a hook was established live on the host, and the bridge is built around it:
+
+| Codex 0.164 | So the runtime |
+|---|---|
+| a hook from configuration runs only when trusted: the sha256 of its definition's sorted-key JSON is recorded under its key; an untrusted hook is skipped without a word | passes the hook and its trust per run as `--config` overrides (`hooks.PreToolUse`, `hooks.state`), never in a file; no other hook is trusted |
+| a hook that exits non-zero (other than 2), prints what Codex cannot read, or times out lets the tool run | ships a hook (`gate-hook.js`, Node built-ins only) that blocks on every failure (exit 2, the reason on stderr) and answers within 90 s, under Codex's 120 s timeout |
+| `permissionDecision: allow` and `ask` are refused; a block (`deny`, or exit 2) is the only decision | maps `allow` to no output, so Codex's own sandbox still decides; `deny` to a block with the reason; `defer` to a block with the reason and the request, then ends the run |
+| `exec_command` is reported as `Bash` with `command` only; `apply_patch` with the patch as `command`; `view_image` with `path` | lets the gate's table classify them by these names ([approvals](approvals.md#how-a-call-is-classified)) |
+| `write_stdin` writes to a running command's terminal without asking a hook; a session without a terminal has its stdin closed | hides `/dev/ptmx` and `/dev/pts` from Codex, so no session gets a terminal (nor reaches the operator's) |
+| hosted tools (web search, image generation) run at the model's provider, where no hook sees them; apps, plugins, and subagents add tools or work outside the run | turns web search off and keeps those features off (`FEATURES_OFF`); a configuration that turns one on, or holds `hooks`, is refused |
+
+- **The channel.** Per gated run, the runtime opens a unix socket in a fresh owner-only directory
+  under `<DSH_HOME>/system/run`, bound into the run's confinement read-only with the hook script
+  and `node`, and a 256-bit key. Codex passes its environment to the hook, which reads the socket
+  and the key there (`SYSTEM_CODEX_GATE_SOCKET`, `SYSTEM_CODEX_GATE_KEY`); Codex's own commands
+  never get them (`shell_environment_policy.exclude`). The hook sends the key and its input on one
+  connection and reads one answer. The bridge denies a wrong key, an input that is not a
+  PreToolUse call, a call from another directory than the run's workspace, and any call after a
+  defer; it bounds the input (16 MiB), the connections at once (16), and each connection's time.
+  The directory, the socket, and the run's launcher are removed when the run ends.
+- **A tool that ran past the gate.** Codex reports each tool's work as an item (a command, a file
+  change, an MCP call, a web search). Every item a tool produces must be accounted for by a call
+  the gate allowed; one that is not (a hook that failed and let the tool run) stops the run, which
+  fails as `config_error`. That is detection after one call, not prevention: the probe is the
+  prevention.
+- **A deferred call.** Codex's hooks cannot end a turn, so the runtime ends the run itself once
+  the gate defers: the call is blocked, its reason naming the request is the call's output in the
+  thread, every later call is denied, and the Codex process is stopped. A later run of the same
+  thread makes the call again; the gate finds the approval for that exact input.
+- **The proof.** The probe reports `gatesToolCalls` only after one turn on this host, with the
+  run's configuration, hook, and confinement, against a scripted model the probe serves on loopback
+  (a random path; no account and no provider is reached; `--ephemeral`): the first request offers
+  only tools Codex runs itself; a command the probe's gate denies comes back as the hook's block
+  and did not run; a terminal command the gate allows starts no terminal session; and the turn
+  ends with the scripted answer. Otherwise `gatesToolCalls: false`, the reason in `detail`, and no
+  Codex Worker is admitted. A Codex upgrade that changes any of the above fails the proof, not a
+  run.
 
 ## Workspaces
 
@@ -164,7 +209,7 @@ has the configuration and every rule.
   own client configuration holds the `system` MCP server (operator tools such as `approve`).
   So a Worker attaches none: Claude Code takes no settings files and a strict, empty MCP
   configuration; Codex runs in its own Codex home and fails closed if that home configures
-  any.
+  any, with plugins and apps off.
 - **Reads** ([ADR-0024](../decisions/adr/0024-agent-workers-confined-for-reads.md)). The host
   state is never readable to an agent. `ctx.agentRuntimes.confinement()` names what to hide
   (the DSH home, the session's runtime directory, the temporary directories, credential
@@ -177,8 +222,11 @@ has the configuration and every rule.
   command line ([ADR-0038](../decisions/adr/0038-confined-commands-for-claude-code-workers.md)).
   Each agent runs in a home of its own (Codex's `CODEX_HOME`, Claude Code's
   `CLAUDE_CONFIG_DIR`, both under `<DSH_HOME>/system`), never the operator's login, which is
-  hidden. Each probe reports `readsConfined`, proven positively on the host by
-  `proveConfinement`, and the `agents` source checks it again before each run starts.
+  hidden; the operator signs in there once, and a probe that finds no one signed in reports the
+  Worker unavailable ([runbook](../operations/runbooks.md#agent-workers)). Codex also runs with the
+  terminal devices hidden ([Codex's gate](#codexs-gate)). Each probe reports `readsConfined`, proven
+  positively on the host by `proveConfinement`, and the `agents` source checks it again before
+  each run starts.
 - **Egress** ([INV-12](../architecture/invariants.md#inv-12-data-egress-is-explicit)). The
   agent runs here, but its model is remote. So the `agents` source checks each prompt with
   `ctx.egress` (Worker class `agent`) before the agent starts, keeps the decision id on the run,

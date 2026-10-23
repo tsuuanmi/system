@@ -86,8 +86,9 @@
     # --- agent runtimes: Claude Code as the first Worker, on by default (PROP-0010 B3). Each run is
     # confined for reads by bubblewrap, and its commands by the SDK's sandbox (ADR-0024, ADR-0038);
     # a host without Claude Code, bubblewrap, or a sign-in still boots, and the probe says why its
-    # Workers are unavailable. Codex and ACP stay off: they cannot ask a tool gate before each tool
-    # call, so the `agents` source would admit none of their Workers. ---
+    # Workers are unavailable. Codex stays off (PROP-0004): its Workers ask the tool gate through a
+    # PreToolUse hook its probe proves on the host (ADR-0042), once the operator turns it on. ACP
+    # stays off: it cannot ask a tool gate before each tool call, so no Worker of its is admitted. ---
     - id: agent-runtimes
       name: '@tsuuanmi/system-agent-runtimes'         # ctx.agentRuntimes and the read confinement
     - id: runtime-claude-agent-sdk

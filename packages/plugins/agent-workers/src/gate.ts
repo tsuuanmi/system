@@ -27,6 +27,11 @@ export interface ToolAction {
   consequences: string
 }
 
+/**
+ * The table is keyed by the tool names the runtimes report (INV-11: a name, never a runtime): Claude
+ * Code's built-in tools, and Codex's as its PreToolUse hook reports them (`exec_command` as `Bash`
+ * with `command` only, `apply_patch` with the patch as `command`, `view_image`).
+ */
 /** Tools that only read, and the input field that names where; a field that may be absent reads the workspace. */
 const READS: Record<string, { field: string; required: boolean }> = {
   Read: { field: 'file_path', required: true },
@@ -34,9 +39,12 @@ const READS: Record<string, { field: string; required: boolean }> = {
   LS: { field: 'path', required: true },
   Glob: { field: 'path', required: false },
   Grep: { field: 'path', required: false },
+  view_image: { field: 'path', required: true },
 }
 /** Tools that change one file, and the input field that names it. */
 const WRITES: Record<string, string> = { Write: 'file_path', Edit: 'file_path', MultiEdit: 'file_path', NotebookEdit: 'notebook_path' }
+/** Tools that change files by a patch, and the input field that holds it: the patch names every file it touches. */
+const PATCHES: Record<string, string> = { apply_patch: 'command' }
 /** Tools that send data out of this machine, and the input field the operator is shown. */
 const SENDS: Record<string, string> = { WebFetch: 'url', WebSearch: 'query' }
 /** The tool that runs a command. */
@@ -47,9 +55,10 @@ type FieldType = 'string' | 'number' | 'boolean' | 'strings' | 'edits'
 /**
  * Every input field each classified tool may carry, and its type, from the Claude Agent SDK's tool
  * input types (`sdk-tools.d.ts`; `MultiEdit`, `NotebookRead`, and `LS`, which it no longer
- * declares, from their last published shapes). A field not listed (Bash's
- * `dangerouslyDisableSandbox`, say, which would run it outside its sandbox), or a listed one of
- * another type, refuses the call: the gate classifies only an input it knows whole.
+ * declares, from their last published shapes) and from what Codex's PreToolUse hook reports
+ * (Codex 0.164: `apply_patch` and `view_image`; its `Bash` is a subset of Claude Code's). A field not
+ * listed (Bash's `dangerouslyDisableSandbox`, say, which would run it outside its sandbox), or a
+ * listed one of another type, refuses the call: the gate classifies only an input it knows whole.
  */
 const FIELDS: Record<string, Record<string, FieldType>> = {
   Read: { file_path: 'string', offset: 'number', limit: 'number', pages: 'string', allow_large: 'boolean' },
@@ -67,6 +76,8 @@ const FIELDS: Record<string, Record<string, FieldType>> = {
   Bash: { command: 'string', description: 'string', timeout: 'number', run_in_background: 'boolean' },
   WebFetch: { url: 'string', prompt: 'string', offset: 'number' },
   WebSearch: { query: 'string', allowed_domains: 'strings', blocked_domains: 'strings' },
+  apply_patch: { command: 'string' },
+  view_image: { path: 'string', detail: 'string' },
 }
 const EDIT_FIELDS: Record<string, FieldType> = { old_string: 'string', new_string: 'string', replace_all: 'boolean' }
 
@@ -153,16 +164,62 @@ function within(workspace: string, path: string): boolean {
 
 const ANSWER = 'Approved: the next run of this session makes exactly this call. Rejected, or unanswered when the request expires: the call is denied.'
 
+/** The file headers of a patch, and what each does to the file it names. */
+const PATCH_HEADERS = [['*** Add File: ', 'add'], ['*** Delete File: ', 'delete'], ['*** Update File: ', 'update'], ['*** Move to: ', 'move to']] as const
+
+/**
+ * The files a patch touches, as its headers name them, read strictly in the patch format's own
+ * grammar (`*** Begin Patch`, then `Add File` with `+` lines, `Delete File`, or `Update File` with an
+ * optional `Move to` and `@@`, ` `, `+`, `-` lines and `*** End of File`, then `*** End Patch`). The
+ * tool acts only on files its headers name, so every one is returned; anything the grammar does
+ * not allow (a line starting `***` that is not a header where one may stand, a carriage return, a
+ * name with surrounding spaces) refuses the whole patch: the gate never guesses at a lenient reading.
+ */
+function patchFiles(patch: string): Array<{ op: string; path: string }> | { refused: string } {
+  const lines = patch.split('\n')
+  if (lines.at(-1) === '') lines.pop()
+  if (patch.includes('\r') || patch.includes('\0')) return { refused: 'the patch holds a carriage return or a NUL' }
+  if (lines[0] !== '*** Begin Patch' || lines.at(-1) !== '*** End Patch' || lines.length < 3) return { refused: 'the patch does not start with *** Begin Patch and end with *** End Patch' }
+  const files: Array<{ op: string; path: string }> = []
+  let state: 'add' | 'delete' | 'update' | 'moved' | 'eof' | undefined
+  for (const [i, line] of lines.slice(1, -1).entries()) {
+    const header = PATCH_HEADERS.find(([prefix]) => line.startsWith(prefix))
+    if (header) {
+      const [prefix, op] = header
+      const path = line.slice(prefix.length)
+      if (path === '' || path !== path.trim()) return { refused: `patch line ${i + 2} names no file, or one with surrounding spaces` }
+      if (op === 'move to' && state !== 'update') return { refused: `patch line ${i + 2}: Move to stands only right after Update File` }
+      files.push({ op, path })
+      state = op === 'move to' ? 'moved' : op
+      continue
+    }
+    if (line.trimStart().startsWith('***')) {
+      if (line === '*** End of File' && (state === 'update' || state === 'moved')) {
+        state = 'eof'
+        continue
+      }
+      return { refused: `patch line ${i + 2} is a *** line the patch format does not define here` }
+    }
+    // An empty line in an update hunk is an empty context line, as the tool itself reads it.
+    const ok = state === 'add' ? line.startsWith('+') : state === 'update' || state === 'moved' ? /^[ +-]/.test(line) || line === '' || line === '@@' || line.startsWith('@@ ') : false
+    if (!ok) return { refused: `patch line ${i + 2} is not a line its hunk may hold` }
+  }
+  if (!files.length) return { refused: 'the patch names no file' }
+  return files
+}
+
 /**
  * Classify one tool call, conservatively; `{ refused }` for a call the gate does not classify,
  * which is denied without asking anyone. Every classified tool's input may carry only the fields
  * its SDK type declares, each of its type (an unknown field, or a wrong type, is refused), and a
  * path is inside the workspace only where it really is, every symlink followed:
- * - `Read`, `NotebookRead`, `LS`, `Glob`, `Grep`: `read`, when the path they name is inside the
- *   workspace (absent for `Glob` and `Grep`: the workspace); a `Glob` pattern whose literal
- *   leading directory is outside it, or that climbs with `..`, is refused;
+ * - `Read`, `NotebookRead`, `LS`, `Glob`, `Grep`, `view_image`: `read`, when the path they name is
+ *   inside the workspace (absent for `Glob` and `Grep`: the workspace); a `Glob` pattern whose
+ *   literal leading directory is outside it, or that climbs with `..`, is refused;
  * - `Write`, `Edit`, `MultiEdit`, `NotebookEdit`: `workspace-write`, for a file inside the
  *   workspace; outside it is refused (the runtime refuses it too);
+ * - `apply_patch`: `workspace-write`, when its patch reads strictly in the patch grammar and every
+ *   file a header names (added, deleted, updated, or moved to) is inside the workspace;
  * - `Bash`: `command`, its argv the command split on single spaces, exactly as the policy's
  *   exact-argv rule matches it; an empty word (a doubled, leading, or trailing space) or a word
  *   with a shell metacharacter is refused here, before the policy is asked (which forbids the
@@ -193,6 +250,17 @@ export function classify(call: ToolCall, workspace: string): ToolAction | { refu
     if (where === undefined && !read.required) return { class: 'read', summary: clamp(`${tool} in the workspace`), consequences: `Reads inside the run's workspace. ${ANSWER}` }
     if (typeof where !== 'string' || !within(workspace, where)) return { refused: `${tool} reads ${typeof where === 'string' ? where : 'no path'}, which is not inside the workspace` }
     return { class: 'read', summary: clamp(`${tool} ${where}`), consequences: `Reads ${where} inside the run's workspace. ${ANSWER}` }
+  }
+  const patchField = Object.hasOwn(PATCHES, tool) ? PATCHES[tool] : undefined
+  if (patchField) {
+    const patch = input[patchField]
+    if (typeof patch !== 'string') return { refused: `${tool} carries no patch` }
+    const files = patchFiles(patch)
+    if ('refused' in files) return { refused: `${tool}: ${files.refused}` }
+    const outside = files.find((f) => !within(workspace, f.path))
+    if (outside) return { refused: `${tool} changes ${outside.path}, which is not inside the workspace` }
+    const touched = clamp(files.map((f) => `${f.op} ${f.path}`).join(', '))
+    return { class: 'workspace-write', summary: clamp(`${tool}: ${touched}`), consequences: `Changes ${files.length === 1 ? 'one file' : `${files.length} files`} inside the run's workspace: ${touched}. ${ANSWER}` }
   }
   const write = Object.hasOwn(WRITES, tool) ? WRITES[tool] : undefined
   if (write) {

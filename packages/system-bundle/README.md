@@ -19,8 +19,10 @@ and the `system` plugins, and it does not use `dsh-base`
   plugin's lifecycle state (a row on `default`, a row off `candidate`), every change a decision;
   it never turns a row on or off ([plugin host](../../docs/design/plugin-host.md)). Each plugin
   package ships its `plugin-manifest.json`.
-- **Off by default (PROP-0004):** `runtime-codex-sdk` and `runtime-acp` (they cannot ask
-  a tool gate before each tool call, so no Worker of theirs is admitted),
+- **Off by default (PROP-0004):** `runtime-codex-sdk` (its Workers are admitted where the
+  probe proves its tool gate on the host, [Codex Workers](../../docs/operations/runbooks.md#codex-workers)),
+  `runtime-acp` (it cannot ask a tool gate before each tool call, so no Worker of its own is
+  admitted),
   `profile-software-development`, and both model gateways are `disabled: true`, not
   removed. An operator patch turns one back on
   ([runbook](../../docs/operations/runbooks.md#turn-an-off-row-back-on)); the e2e test

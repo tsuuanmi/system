@@ -460,6 +460,9 @@ importers:
       '@tsuuanmi/system-runtime-claude-agent-sdk':
         specifier: workspace:*
         version: link:../runtime-claude-agent-sdk
+      '@tsuuanmi/system-runtime-codex-sdk':
+        specifier: workspace:*
+        version: link:../runtime-codex-sdk
       '@tsuuanmi/system-worker-sessions':
         specifier: workspace:*
         version: link:../worker-sessions

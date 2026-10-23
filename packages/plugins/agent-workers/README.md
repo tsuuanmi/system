@@ -4,7 +4,8 @@ The **`agents` Worker source**: agent runtimes as Workers
 ([design](../../../docs/design/agent-runtimes.md)).
 
 - **On by default, with no Worker** (PROP-0010 B3): this row, `agent-runtimes`,
-  and `runtime-claude-agent-sdk` are on in the default composition; Codex, ACP,
+  and `runtime-claude-agent-sdk` are on in the default composition; Codex
+  ([runbook](../../../docs/operations/runbooks.md#codex-workers)), ACP,
   and the software-development profile, whose `agent-review` template only
   these Workers can run, stay off
   ([turn them on](../../../docs/operations/runbooks.md#turn-an-off-row-back-on)).

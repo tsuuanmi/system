@@ -78,8 +78,9 @@ installed.
     `deny` and `defer` are the hook's `permissionDecision`, with the reason;
     `allow` returns no decision, because a hook's `allow` would skip the
     workspace-scoped pre-approvals above, and with them the workspace bound. A
-    gate that throws, answers an unknown verdict, or takes longer than 30 s (the
-    hook's own timeout is 60 s) is a deny. After a `defer`, every later call is
+    gate that throws, answers an unknown verdict, or takes longer than 30 s
+    (`askToolGate`, agent-runtime-core; the hook's own timeout is 60 s) is a
+    deny. After a `defer`, every later call is
     denied, and the run rejects with a `config_error` naming the request,
     whatever the result says (a headless query ends with `terminal_reason:
     tool_deferred`); a result that reports a deferred call the gate never

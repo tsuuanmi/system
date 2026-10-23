@@ -25,7 +25,7 @@
 
    A Codex Worker needs `codex` the same way:
    `npm i --prefix ~/.dsh/system/tools/codex @openai/codex`, then set the
-   runtime's `executable` ([agent Workers](#agent-workers)).
+   runtime's `executable` ([Codex Workers](#codex-workers)).
 4. Sign in each account: run `system account login <id>`, open the printed
    noVNC link through the printed `ssh -L` command, sign in, and press
    **Save account**. Alternatively, run `system account save <id>` after the
@@ -125,11 +125,8 @@ the Codex and ACP rows are off ([below](#turn-an-off-row-back-on)).
   configure none: if it does, the Worker is unavailable and runs fail
   (`config_error`) until you remove them
   (`CODEX_HOME=~/.dsh/system/codex-home codex mcp remove <name>`). A Worker that
-  uses an OpenAI or ChatGPT login must be signed in inside that home:
-
-  ```sh
-  CODEX_HOME=~/.dsh/system/codex-home codex login
-  ```
+  uses an OpenAI or ChatGPT login must be signed in inside that home
+  ([Codex Workers](#codex-workers)).
 
 - **Read confinement:** every agent (Claude Code, Codex, ACP agents) starts under
   [bubblewrap](https://github.com/containers/bubblewrap)
@@ -156,6 +153,69 @@ the Codex and ACP rows are off ([below](#turn-an-off-row-back-on)).
   `website`, `model`, and `model-local` too: the setting replaces the whole
   default.
 
+### Codex Workers
+
+The `runtime-codex-sdk` row is off by default (PROP-0004). Its Workers are admitted only where the
+probe proves, on this host, that Codex asks the run's tool gate before each tool call
+([Codex's gate](../design/agent-runtimes.md#codexs-gate)); every call then goes to the approval
+queue as a Claude Code Worker's does. To use one:
+
+1. **Install `codex` where the confinement lets it run.** `npm i --prefix
+   ~/.dsh/system/tools/codex @openai/codex`, then `executable:
+   /home/me/.dsh/system/tools/codex/node_modules/.bin/codex`. The standalone installer puts
+   Codex under `~/.codex/packages`, inside `~/.codex`, which the confinement hides: either
+   install it as above, or bind its release directory back read-only and name its binary
+   (an upgrade changes the path; change both):
+
+   ```yaml
+   - id: agent-runtimes
+     config:
+       readOnly: ['$DSH_HOME/system/tools', '/home/me/.codex/packages/standalone/releases/0.164.0-x86_64-unknown-linux-musl']
+   - id: runtime-codex-sdk
+     config:
+       executable: /home/me/.codex/packages/standalone/releases/0.164.0-x86_64-unknown-linux-musl/bin/codex
+   ```
+
+   The release directory holds Codex's programs only; your login and configuration in
+   `~/.codex` stay hidden.
+2. **Sign Codex in inside its own home, once** (a Worker on the Responses gateway needs no
+   login, [above](#agent-workers)):
+
+   ```sh
+   install -d -m 700 ~/.dsh/system/codex-home        # owner-only
+   CODEX_HOME=~/.dsh/system/codex-home codex login   # on a remote host: codex login --device-auth
+   ```
+
+   Your own `~/.codex` login is never used. Until a Worker home is signed in, each Worker is
+   unavailable with "not signed in inside its home". Configure nothing else there: no MCP
+   server, no hooks.
+3. **Turn the row on and name the Workers** in `~/.dsh/profiles/system/cordis.patch.yml`. The
+   `workers` list replaces the whole list, so keep your Claude Code Workers in it:
+
+   ```yaml
+   - id: runtime-codex-sdk
+     disabled: false
+     config:
+       executable: /home/me/.dsh/system/tools/codex/node_modules/.bin/codex
+   - id: agent-workers
+     config:
+       workers:
+         - { id: codex-reviewer, runtime: codex-sdk, workspace: /home/me/src/project, sandbox: read-only, tier: standard, worktreePerRun: true }
+         - { id: codex-developer, runtime: codex-sdk, workspace: /home/me/src/project, sandbox: workspace-write, tier: standard, worktreePerRun: true }
+   ```
+
+   Its `config` may also name Codex's model and provider (`config: { model: …, model_provider:
+   … }`); it may not hold `mcp_servers` or `hooks`, nor turn on a feature the runtime keeps off.
+4. **Restart** (`system shutdown`, then `system start`), then `system explain` or `/ui` shows each
+   Codex Worker ready, or why not:
+   - "not signed in inside its home": step 2;
+   - "reads cannot be confined", or "Codex's own sandbox does not start inside the
+     confinement": the [read confinement](#agent-workers) on this host, or a `codex` the
+     confinement hides (step 1);
+   - "tool calls cannot be gated: …": the probe's turn showed Codex would run a tool without
+     asking the gate (a hook that did not run, a terminal session, a hosted tool). Usually a
+     Codex release that changed its hooks: keep the Workers off and report the reason.
+
 ## Turn an off row back on
 
 The default composition (PROP-0004) keeps these rows in the system bundle but
@@ -164,7 +224,8 @@ off (`disabled: true`). The Claude Code agent rows (`agent-runtimes`,
 
 | Rows | What they serve |
 |---|---|
-| `runtime-codex-sdk`, `runtime-acp` | Codex and ACP agent Workers ([agent runtimes](../design/agent-runtimes.md)); neither can ask a tool gate before each tool call, so the `agents` source admits none of their Workers until they can |
+| `runtime-codex-sdk` | Codex agent Workers ([Codex Workers](#codex-workers)); admitted where the probe proves its tool gate on the host |
+| `runtime-acp` | ACP agent Workers ([agent runtimes](../design/agent-runtimes.md)); an ACP agent cannot ask a tool gate before each tool call, so the `agents` source admits none of its Workers until it can |
 | `profile-software-development` | the `agent-review` template, for agent Workers ([templates](../reference/workflow-templates.md#agent-review)) |
 | `gateway-anthropic`, `gateway-responses` | the model gateways behind `system claude-env`, `system codex-env`, and `system mcp-token --scope model` ([gateways](../design/gateways.md)) |
 
