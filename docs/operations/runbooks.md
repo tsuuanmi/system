@@ -691,6 +691,76 @@ routed to one fails `reauth_required` before anything is sent.
 3. `system health` shows `accounts` ok again once no two entries share a sign-in, and the Workers
    take work at once. Then `system continue <runId>` for a run that failed on it.
 
+## Enroll an agent account
+
+An agent account is one sign-in of an agent runtime (Claude Code, Codex, the Antigravity CLI) in
+an enrollment slot: an owner-only home, nothing more. Its id is the runtime and a keyed hash of who
+signed in (`codex-sdk:04aa5c1e9b7d3f20`), never a name you choose
+([ADR-0051](../decisions/adr/0051-agent-accounts-are-enrolled-slots-identified-by-their-login.md)).
+Slot 1 of each runtime is its existing home (`~/.dsh/system/claude-home`, `codex-home`,
+`antigravity-home`), adopted where it is; later slots are
+`~/.dsh/system/agent-homes/<runtime>/<n>`. Until Workers are account × role (PROP-0012 phase F),
+the configured agent Workers run in slot 1's home only: an account in a later slot is enrolled and
+watched, and runs nothing yet.
+
+Before you start: the vault is loaded (the key of the ids lives there, and is backed up with it),
+the runtime's row is on, and you are at a terminal on the host.
+
+1. **More than one slot:** give the runtime its slots on the `agent-workers` row (default 1), and
+   restart:
+
+   ```yaml
+   - id: agent-workers
+     config:
+       providers:
+         - provider: codex-sdk
+           slots: 2
+       # … the rest of the row's configuration stays (a targeted patch replaces the whole config)
+   ```
+
+2. **Slot 1 (the home your Workers use now):** `system account login codex-sdk`. It adopts the home
+   and verifies the sign-in it holds, without signing in again. From then on the Workers in that
+   home run only while this account is `ready`: a re-sign-in there as anyone else stops them.
+3. **Another account:** `system account login codex-sdk` again. It takes the lowest free slot,
+   prints the runtime's own sign-in command for its home, and runs it here without D-Bus
+   (`env -u DBUS_SESSION_BUS_ADDRESS CODEX_HOME=… codex login`; for Claude Code,
+   `CLAUDE_CONFIG_DIR=… claude`, then `/login` and exit). Sign in as the other person, and let the
+   command end: the CLI then verifies who signed in.
+4. Read what it printed (also `system account list`): the account id, a masked hint (Claude Code
+   shows `a…@example.com`), and the status. `ready` exits 0; anything else exits 1 and takes no
+   work: see [resolve a quarantined agent account](#resolve-a-quarantined-agent-account).
+5. `system explain <decision id>` shows each `enrollment` decision: the slot, the account id, the
+   reader and version, and why; never the person.
+
+- **Sign an account in again** (a token expired, `signed-out`): `system account login <accountId>`.
+  It must sign in as the same person, else the account is quarantined `changed`.
+- **Free a slot:** `system account remove <accountId>` (or `<runtime> --slot <n>`). The home and
+  the sign-in in it are kept; to remove the sign-in itself, sign out with the runtime's own
+  command in that home (for example `CODEX_HOME=… codex logout`).
+- **The Antigravity CLI** has no verified way to read who is signed in: its accounts enroll
+  `unverified`. Slot 1's Workers run as before enrollment; no later slot will ever run until a
+  reader is verified (PROP-0012 open question 1).
+- **A new runtime version:** the readers are pinned to the versions they were checked on (Codex
+  0.164.0, Claude Code 2.1.308). On another version an account reads `unverified`; slot 1's
+  Workers still run as before, and the reader waits for a check on that version.
+
+## Resolve a quarantined agent account
+
+`system health` shows `agent-accounts` degraded, naming each account that takes no work, and
+`system account list` shows its `status` and `reason`. A quarantine never clears by itself; only
+your `system account verify` or `login` lifts it.
+
+| Reason | What happened | Resolve |
+|---|---|---|
+| `signed-out` (a status) | the runtime's own sign-in check fails in that home | `system account login <accountId>` (or `<runtime> --slot <n>`), as the same person |
+| `changed` | the home now signs in as another person | sign it in again as the account it was (`system account login <accountId>`), or take the new person as a new account: `system account verify <runtime> --slot <n> --accept` (the old id keeps its history) |
+| `duplicate` | two slots of one runtime sign in as one person (both are quarantined) | sign one slot in as another person, or `system account remove` it; then `system account verify` the other |
+| `ambiguous` | the sign-in names no whole person (an API-key sign-in, a damaged state file), or two people share one short id | sign the slot in with a personal login; for a short-id clash, remove one of them and enroll it again |
+| `unverified` | no reader is verified for the runtime or its version (the Antigravity CLI; an upgraded Codex or Claude Code) | nothing to do on the account: slot 1's Workers run as before; wait for a reader verified on that version |
+
+A run that was already queued when its home changed person fails before anything is sent
+(`config_error`, naming the quarantine); `system continue <runId>` once it is resolved.
+
 ## Backup and restore
 
 State lives in `~/.dsh/system`:

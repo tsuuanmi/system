@@ -52,8 +52,12 @@ only on `review` (`--ref` and `--focus` only with `--repo`).
 
 | Command | What it does |
 |---|---|
-| `system account list` | list provider accounts and their status |
+| `system account list` | list provider accounts and their status; agent accounts beside them (`kind: agent`: id, runtime, slot, status and why, masked hint, home, the Workers that run there) |
 | `system account login <id>` | open a remote login desktop (noVNC over `ssh -L`); Save stores the account |
+| `system account login <runtime> [--slot <n>]` | enroll an agent account ([ADR-0051](../decisions/adr/0051-agent-accounts-are-enrolled-slots-identified-by-their-login.md)): take the runtime's lowest free slot (or that one; a taken slot is signed in again), run the runtime's own sign-in in the slot's home in this terminal without D-Bus, then verify who signed in; exit 0 when the account is `ready`. A slot 1 that just adopted the runtime's existing home is verified as it is ([runbook](../operations/runbooks.md#enroll-an-agent-account)) |
+| `system account login <accountId>` | sign an agent account in again in its own home; a different principal quarantines it (`changed`) |
+| `system account verify <accountId \| runtime --slot <n>> [--accept]` | read who is signed in to an agent account's home again and record it; `--accept` takes a `changed` slot's new principal as a new account (exit 0 when `ready`) |
+| `system account remove <accountId \| runtime --slot <n>>` | free an agent account's slot; its home and the sign-in in it are kept |
 | `system account credentials <id>` | store login credentials from stdin as JSON `{"email","password","totpSecret"?}` |
 | `system account relogin <id>` | sign in again with the stored credentials (TOTP computed locally) |
 | `system account code <id> <code>` | supply a one-time code a running sign-in is waiting for |
@@ -62,8 +66,9 @@ only on `review` (`--ref` and `--focus` only with `--repo`).
 | `system account probe <id>` | prove which website features the account offers (Deep research, Web search, …) |
 | `system account verify <id>` | re-verify a reauth-required account from its saved state, sending nothing: ready again if it still signs in as the saved account (exit 0), else it stays marked (exit 1) |
 
-`system account add` and `system account remove` are planned; accounts are configuration
-([`accounts`](configuration.md#accounts)).
+An agent account is named by its id (`<runtime>:<16 hex>`, with a `:`) or by its runtime; any
+other name is a website account. `system account add`, and `remove` for website accounts, are
+planned; website accounts are configuration ([`accounts`](configuration.md#accounts)).
 
 ## Operations
 

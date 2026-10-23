@@ -695,5 +695,30 @@ The state of each phase is in the [roadmap](roadmap.md#later-candidates). Built:
     home are one account, never two members; a member whose held account cannot be told apart is
     refused with the cause (`workflow` contract 1.5,
     [distinct accounts](../design/teams.md#distinct-accounts)).
+- **Phase E** (2026-10-24; [enrollment and quarantine](../design/agent-runtimes.md#enrollment-and-quarantine),
+  [runbook](../operations/runbooks.md#enroll-an-agent-account)):
+  - enrollment slots (`slots` on an `agent-workers` `providers` entry, default 1), each an
+    owner-only home; slot 1 adopts the runtime's own home where it is (the provider's optional
+    `home`), later slots are `<DSH_HOME>/system/agent-homes/<provider>/<n>`;
+  - `system account login <runtime>` (MCP `account_enroll`, `begin` then `verify`), `login
+    <accountId>`, `verify`, `remove`, and agent accounts in `system account list` (MCP
+    `account_agents`), operator scope, `mcp-agent-accounts@1.0`;
+  - identity readers: Codex (`tokens.account_id` of `auth.json`) and Claude Code
+    (`oauthAccount.accountUuid` and `organizationUuid` of `.claude.json`), each pinned to the
+    version it was seen on (0.164.0, 2.1.308), against redacted fixtures; Codex and Claude Code run
+    and probe in a named home; the Antigravity CLI gives its sign-in command and reads no identity;
+  - the account id `<provider>:<16 hex>` of an HMAC keyed by a per-install key in the vault;
+    quarantine (`changed`, `ambiguous`, `duplicate` of both slots, `unverified`) and `signed-out`,
+    each an `enrollment` decision first; re-read at each probe and before each run, never lifting
+    anything; health's `agent-accounts` check;
+  - open questions taken as proposed: Codex's principal is its ChatGPT account id alone (question
+    3; a workspace plan's shared id then reads as a duplicate, the safe side); Claude Code's is the
+    account and organization ids from the home's state file (question 2); the masked hint is kept
+    (question 9); an API-key sign-in names no person and is `ambiguous` (question 4, the account
+    kind `credential` not built).
+  - Until phase F, the configured Workers run in their runtime's own home: they take work while no
+    slot holds it, or while its account is `ready` or `unverified` (Antigravity's slot 1, as before
+    enrollment); never beyond slot 1. Owed: phase A's supervised check of both readers on the
+    operator's real accounts.
 
 The other phases are listed [above](#phased-plan).

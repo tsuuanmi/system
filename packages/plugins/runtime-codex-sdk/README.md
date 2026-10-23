@@ -20,8 +20,21 @@ operator's installed `codex` through the official Codex TypeScript SDK.
   - Codex runs in **its own Codex home** (`CODEX_HOME`, config `home`, default
     `<DSH_HOME>/system/codex-home`, created owner-only), never the operator's
     `~/.codex`, where `system mcp-config codex` puts the `system` MCP server.
-    It runs in no other home: a run naming one (`RunSpec.home`, one account's
-    home, ADR-0051) is refused (`config_error`) before anything runs.
+    A run or probe may name another home (`RunSpec.home`, `probe({ home })`: one
+    account's, ADR-0051; its probe reports `homes`), which must already be an
+    owner-only directory of this user, else the run is refused (`config_error`)
+    before anything runs; it then stands for that home everywhere below. Its own
+    home is `home` on the provider, which slot 1 of its accounts adopts.
+  - **Who is signed in** (`identity(home, key)`, reader `codex-auth-json`, on
+    `VERIFIED_IDENTITY_VERSIONS`, Codex 0.164.0; any other version is
+    `unverified`): `codex login status` in that home, confined and with none of
+    the forwarded variables, must print `Logged in using ChatGPT` (an API-key
+    sign-in is `ambiguous`; none is `missing`); then `tokens.account_id` of the
+    home's `auth.json`, the ChatGPT account id, the only field read (opened
+    without following a link, bounded), hashed with the install's key. No hint.
+    The fields were seen on this host; phase A's supervised check on real
+    accounts (equal across restart, token refresh, re-login) is still owed.
+    `loginCommand(home)` is `CODEX_HOME=<home> codex login`.
     Codex starts MCP servers outside its sandbox, so a Worker would reach their
     tools (`approve`, the credential tools, …). The probe and every run call
     `codex mcp list --json` on that home and fail closed (`config_error`) if any

@@ -40,8 +40,38 @@ The **`agents` Worker source**: agent runtimes as Workers
   A metered Worker whose pool is out says when it is back (`limitUntil`, the
   ledger's `until`), so a node that only it could take waits for the reset
   instead of failing ([assigned accounts](../../../docs/design/routing.md#assigned-accounts)).
-  Several accounts per runtime, enrolled by their login, are PROP-0012's later
-  phases (ADR-0051).
+- **Enrolled accounts** (`src/accounts.ts`, `src/tools.ts`; PROP-0012 phase E,
+  ADR-0051; [design](../../../docs/design/agent-runtimes.md#enrollment-and-quarantine),
+  [runbook](../../../docs/operations/runbooks.md#enroll-an-agent-account)):
+  - Each runtime has `slots` (its `providers` entry, default 1, at most 64),
+    each an owner-only home: slot 1 adopts the runtime's own home (`home` on its
+    provider) where it is, slot `n` is `<accountHomes>/<runtime>/<n>` (default
+    `<DSH_HOME>/system/agent-homes`). A slot is kept as an `agent-account@1.0`
+    record (store table `agent_accounts`, migration 10), validated on every write.
+  - The account id is `<runtime>:<16 hex>` of the runtime's `identity(home, key)`
+    HMAC, keyed by 32 bytes made once in the credential vault
+    (`system-agent-workers/identity-key`); no vault, and nothing is read.
+  - `ready`, `signed-out`, or quarantined `changed`, `ambiguous`, `duplicate`
+    (both slots), or `unverified` (no reader: the Antigravity CLI, or a version
+    not pinned), by the rule `agent-accounts.enrollment` (`assess`). Every
+    change is an `enrollment` decision (`decision@1.8`) recorded first, its
+    input the slot's earlier decision, never the principal.
+  - The operator's tools, operator scope, checked against
+    `mcp-agent-accounts@1.0`: `account_enroll` (step `begin` takes a slot and
+    returns the runtime's sign-in command for its home; step `verify` records
+    who signed in; `accept` takes a `changed` slot's new principal as a new
+    account), `account_remove` (frees a slot, keeping its home), and
+    `account_agents` (every slot, and each runtime's slots). Only the
+    operator's `verify` lifts a quarantine or a sign-out.
+  - Each probe re-reads the runtime's `ready` accounts, and each run the
+    account of its home: a different principal is quarantined `changed`, none
+    signed out, recorded first; a re-read never lifts anything.
+  - Until Workers are account × role (phase F), the configured Workers run in
+    their runtime's own home, slot 1's: they take work while no slot holds it,
+    or while its account is `ready` or `unverified` (no verified reader, as
+    before enrollment); otherwise they are `unavailable` with the reason, and a
+    queued run fails before the agent starts (`config_error`). Later slots run
+    nothing yet.
 - **One account, every role** (PROP-0012 phase C): the Workers of one runtime
   share its home, so they are one account, and each sees what holds the
   others:

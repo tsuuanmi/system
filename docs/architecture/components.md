@@ -106,6 +106,11 @@ runs the work the router admitted to them. Callers never reach a source directly
   runtime's `probe()` proves now; a policy the runtime cannot enforce leaves it unavailable, and
   only a runtime that proves its commands confined (`executes`) gives a writable Worker `validate`.
   Runs are durable, one at a time per Worker, and a run that started is never rerun by itself.
+  It keeps each runtime's enrollment slots and the agent accounts in them, identified by a keyed
+  hash of the verified login (the key in `ctx.credentials`), quarantines a missing, changed,
+  ambiguous, duplicate, or unverified one, and offers the operator's `account_enroll`,
+  `account_remove`, and `account_agents` tools on `ctx.mcp`
+  ([agent accounts](../design/agent-runtimes.md#enrollment-and-quarantine)).
   The agent runs here but its model is remote, so each prompt passes the egress check first.
   Every tool call passes the run's gate, the autonomy policy through `ctx.approvals`, before it
   runs; a runtime that cannot ask a gate first is not admitted, and a call the policy asks

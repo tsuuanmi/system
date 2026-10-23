@@ -5,7 +5,7 @@ Capability **seam definition** for agent runtimes
 
 | Seam | Definition | Provider |
 |---|---|---|
-| `ctx.agentRuntimes` | abstract `AgentRuntimes` with `register`, `get`, `list`; `AgentRuntimeProvider` (`probe`, `run`, optional `identity`, `loginCommand`), `RunSpec`, `RunResult`, `RunMetering`, `TokenUsage`, `ModelUsage`, `LimitObservation`, `RuntimeEvidence`, `ProbeOptions`, `IdentityReading`, `LoginCommand`, `SandboxMode`, `ToolGate`, `ToolCall`, `ToolVerdict`; `askToolGate`, `isToolVerdict`, `TOOL_GATE_MS`; `withMetering`, `meteringOf`; `identityHmac`, `accountIdOf`, `maskEmail`, `probeIn` | `@tsuuanmi/system-agent-runtimes` |
+| `ctx.agentRuntimes` | abstract `AgentRuntimes` with `register`, `get`, `list`; `AgentRuntimeProvider` (`probe`, `run`, optional `identity`, `loginCommand`), `RunSpec`, `RunResult`, `RunMetering`, `TokenUsage`, `ModelUsage`, `LimitObservation`, `RuntimeEvidence`, `ProbeOptions`, `IdentityReading`, `LoginCommand`, `SandboxMode`, `ToolGate`, `ToolCall`, `ToolVerdict`; `askToolGate`, `isToolVerdict`, `TOOL_GATE_MS`; `withMetering`, `meteringOf`; `identityHmac`, `accountIdOf`, `maskEmail`, `probeIn`, `homeProblem`, `readHomeJson`, `MAX_HOME_FILE_BYTES` | `@tsuuanmi/system-agent-runtimes` |
 
 - A provider adapts one agent (Claude Code, Codex, an ACP agent) to `run(spec)`.
   Only the agent's native handle crosses the seam (INV-7).
@@ -55,7 +55,14 @@ Capability **seam definition** for agent runtimes
     with why. Never a token or the raw principal (INV-8), never a throw for a home
     it cannot read. `accountIdOf(provider, hmac)` is the account id;
   - `loginCommand(home)`: the runtime's own sign-in command, its environment
-    naming the home and no session bus.
+    naming the home and no session bus;
+  - `home`: the provider's own configured home, which a Worker source adopts as
+    slot 1 of its accounts;
+  - for readers: `homeProblem(home)` (an existing owner-only directory of this
+    user, not a link, or why not; it never makes one) and `readHomeJson(path)`
+    (a JSON object from a regular file of this user, opened without following a
+    link and at most `MAX_HOME_FILE_BYTES`; `absent`, or `refused` with why,
+    never its content), since a run can write its own home.
 - **`childEnvironment(forward, explicit)`** is the environment every runtime's
   child process starts with (INV-8):
   1. DSH's own `scrubbedParentEnv()` (`@deepseek-ai/dsh-subprocess`): every name

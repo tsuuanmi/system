@@ -260,18 +260,30 @@ has the configuration and every rule.
 
 > Decision: [ADR-0051](../decisions/adr/0051-agent-accounts-are-enrolled-slots-identified-by-their-login.md)
 > (proposed), from [PROP-0012](../proposals/0012-agent-accounts.md). Built: the seam's additions,
-> their suite, and a fake that passes it; no runtime reads an identity or runs in a named home yet.
+> their suite, and a fake that passes it (phase B); identity readers for Codex and Claude Code,
+> runs and probes in a named home, enrollment slots, quarantine, and `enrollment` decisions
+> (phase E). Differs from target: the readers rest on the fields seen on this host and on fixtures,
+> not yet on phase A's supervised check on the operator's accounts ([below](#identity-readers));
+> Workers are not yet account × role (phase F), so only slot 1's account runs work, through the
+> configured Workers of its runtime's own home; and those keep running while that account is
+> `unverified` (REQ-ACC-11 holds for the Workers phase F derives from accounts: the configured ones
+> keep today's behaviour until the cutover, PROP-0012's migration step 5).
 
 Several sign-ins per runtime are told apart by who is signed in, never by a name:
 
 - **Slots are homes.** An enrollment slot is an owner-only home under the DSH home,
-  `<DSH_HOME>/system/agent-homes/<provider>/<n>`, hidden from every agent child; a run binds back
-  only its own account's home. The slot's number never names, orders, or identifies an account.
+  `<DSH_HOME>/system/agent-homes/<provider>/<n>`, hidden from every agent child; slot 1 adopts the
+  runtime's own home where it is ([below](#enrollment-and-quarantine)). A run binds back only its
+  own account's home. The slot's number never names, orders, or identifies an account.
 - **`RunSpec.home` and `probe({ home })`.** A provider that runs in a named home reports `homes`.
   One that does not refuses a run naming a home (`config_error`) before anything runs, never runs
   it in its own home instead; and `probeIn(provider, home)` asks a named home only of a provider
-  whose own probe reports `homes`, else the evidence is unavailable. Every runtime today runs in
-  its configured home only.
+  whose own probe reports `homes`, else the evidence is unavailable. Codex and Claude Code report
+  `homes`: a named home must already be an owner-only directory of this user (`homeProblem`; it is
+  never made by a run or a probe), and it then stands for the runtime's own home everywhere (the
+  environment variable, the bind back, the MCP and sign-in checks). The ACP runtime and the
+  Antigravity CLI run in their own home only. A provider may also name its own configured home
+  (`home`, optional), which a Worker source adopts as slot 1.
 - **`identity(home, key)`** reads who is signed in to that home, under the same confinement as a
   run, and returns:
 
@@ -304,10 +316,78 @@ Several sign-ins per runtime are told apart by who is signed in, never by a name
   runtime. A cooldown or a closed pool of any of them holds them all (`quota-exhausted`, with
   `limitUntil` the latest reset), a failover leaves them all out, and a team counts them as one
   account ([distinct accounts](teams.md#distinct-accounts)). A session stays on its one Worker.
-- **Planned** (PROP-0012 phases E and F): identity readers for Codex and Claude Code on the CLI
-  versions phase A verifies, quarantine (`agent-account@1.0` status, `enrollment` decisions),
-  `system account login <provider>`, and Workers as account × role. The Antigravity CLI has no
-  verified reader: its accounts stay `unverified` and route nothing.
+- **Planned** (PROP-0012 phase F): Workers as account × role, each run naming its account's home.
+
+### Identity readers
+
+Each reader reads only the fields it names, from files of the home it is given, opened without
+following a link (a run can write its own home) and bounded in size (`readHomeJson`), after the
+runtime's own sign-in check in that home under the read confinement and with none of the
+operator's forwarded variables. Only the keyed hash (and a masked email) leaves the runtime.
+
+| Runtime | Reader | Pinned to | Sign-in check | Principal (hashed) | Hint |
+|---|---|---|---|---|---|
+| `codex-sdk` | `codex-auth-json` | Codex 0.164.0 | `codex login status` says `Logged in using ChatGPT` (an API-key sign-in names no person: `ambiguous`) | `tokens.account_id` of `auth.json`, the ChatGPT account id | none (the email is only in the id token, which is never read) |
+| `claude-agent-sdk` | `claude-state-file` | Claude Code 2.1.308 | `claude auth status` says `loggedIn`, and the home keeps that sign-in in its own `.credentials.json` (existence only; elsewhere is `unverified`) | `oauthAccount.accountUuid` and `oauthAccount.organizationUuid` of `.claude.json`, both whole (never the email alone) | `oauthAccount.emailAddress`, masked |
+| `antigravity-cli` | none | — | — | no file or command was shown to name the signed-in Google account: every account is `unverified` | — |
+
+- **Version-pinned** as agy's hook is ([ADR-0043](../decisions/adr/0043-antigravity-cli-workers-gated-on-a-version-verified-live.md)):
+  `VERIFIED_IDENTITY_VERSIONS` in each runtime; on any other version a reading is `unverified`.
+- **Evidence, and what is still owed.** The file and field names were seen on this host (two Codex
+  homes signed in as two accounts showed two `tokens.account_id`; values were never read into any
+  record), and each reader is tested against redacted fixtures of that shape and passes the
+  identity suite. **Phase A's supervised check on the operator's real accounts is still owed**: that
+  each id stays equal across a restart, a token refresh, and a re-login, and differs for two
+  accounts, on the pinned versions. Until it is done the pins rest on the shapes seen, not on that
+  check.
+- **A Codex workspace plan** shares its ChatGPT account id among its members (PROP-0012 open
+  question 3): two such homes read as one principal, which enrollment quarantines as `duplicate`,
+  the safe side.
+
+### Enrollment and quarantine
+
+The `agents` source ([`agent-workers`](../../packages/plugins/agent-workers/README.md)) keeps each
+slot as an `agent-account@1.0` record and every change of what a slot holds as an `enrollment`
+decision, recorded before the record changes; inputs are the slot's earlier decision, never the
+principal ([INV-13](../architecture/invariants.md#inv-13-every-decision-is-an-artifact)).
+
+- **Slots.** A runtime has `slots` (on its `agent-workers` `providers` entry, default 1, at most
+  64). Slot 1 is the runtime's own configured home, adopted where it is; slot `n` is
+  `<accountHomes>/<runtime>/<n>` (default `<DSH_HOME>/system/agent-homes`), made owner-only when
+  taken. Both are under the DSH home, hidden from every agent child.
+- **The key** of the ids is 32 random bytes made once in the credential vault (record
+  `system-agent-workers/identity-key`), under its lock, and never made again: no vault, or a key of
+  another length, and nothing is read. Losing it changes every id; it is backed up with the vault.
+- **`system account login <runtime>`** (MCP `account_enroll`, step `begin`): take the lowest free
+  slot (or the one named), record it `enrolled`, and return the runtime's `loginCommand` for its
+  home, which the CLI runs in the operator's terminal without D-Bus; the daemon runs no interactive
+  sign-in. Then step `verify` reads the identity and records the status:
+
+  | Reading | Status |
+  |---|---|
+  | `verified`, equal to the pinned principal (or none pinned), held by no other slot of the runtime | `ready` |
+  | `missing` | `signed-out` |
+  | `verified`, another principal than the pinned one | `quarantined`, `changed` (the pinned account stays on the record; `--accept` takes the new one as a new account) |
+  | `verified`, the same full hash as another slot | both `quarantined`, `duplicate` |
+  | `verified`, another slot's short id under a different full hash | both `quarantined`, `ambiguous` |
+  | `ambiguous` | `quarantined`, `ambiguous` |
+  | `unverified`, or a runtime with no `identity` | `quarantined`, `unverified` |
+
+- **Read again** at each probe of the runtime (every `ready` account) and before each run (the
+  account in the run's home). A re-read only takes away: a changed principal is quarantined, a
+  missing one signed out, each recorded first; it never lifts a quarantine or a sign-out, and never
+  quarantines a peer. Only the operator's `verify` (or `login`) does.
+- **Who takes work, until Workers are account × role.** The configured Workers run in their
+  runtime's own home, slot 1's. They take work while no slot holds that home (as before
+  enrollment), while its account is `ready`, or while it is `unverified` (the runtime has no
+  verified reader, so nothing better was known before enrollment either; never beyond slot 1).
+  Enrolled and not yet verified, signed out, or quarantined `changed`, `ambiguous`, or `duplicate`,
+  they read `unavailable` with the reason, and a run already queued fails before anything is sent
+  (`config_error`). Accounts in later slots are enrolled and watched, and run nothing yet.
+- **Removal** (`account_remove`) records `removed` and frees the slot; its home and the sign-in in
+  it are kept.
+- **Health** (`agent-accounts`) names every account that is not `ready`, with its status and why;
+  `system account list` (MCP `account_agents`) lists each slot beside the website accounts.
 
 ## Confined commands
 

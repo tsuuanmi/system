@@ -35,6 +35,12 @@ What turns it on is in the [runbook](../../../docs/operations/runbooks.md#antigr
   file in its home, never the operator's keyring). The operator's `~/.gemini`
   and `~/.config/antigravity` are hidden by the read confinement. Sign in there
   once; nothing else belongs in that home.
+- **Accounts** (ADR-0051): its own home is `home` on the provider, which slot 1
+  of its accounts adopts, and `loginCommand(home)` is `agy` with that home as
+  its `HOME` (the XDG directories inside it, auto-update off). It has no
+  `identity`: no file or command was shown to name the signed-in Google account
+  (PROP-0012 open question 1), so its accounts are enrolled `unverified`, and
+  none beyond slot 1 is ever routed until a reader is verified.
 - **Nothing outside the gate:** the home must configure no MCP server
   (`.gemini/config/mcp_config.json`), enable no plugin (`agy plugin list
   --json`), and hold no `hooks.json` but the runtime's own; any of them makes
