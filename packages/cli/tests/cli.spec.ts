@@ -1,9 +1,10 @@
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { CHROME_LOCK } from '@tsuuanmi/system-browser-patchright'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { assertRuntime, callTool, formatEvents, formatHealth, formatPlugins, parseEvents, healthExit, hostHealth, hostPlugins, claudeGatewayCommand, codexGatewayCommand, drainHost, formatTools, ensureBrowser, hostProcessProblem, shutdownHost, exitCode, formatArtifact, formatExplanation, formatUsage, mcpConfig, mcpHeaders, mcpToken, mergeProfileManifest, parseAsk, parseReport, uiUrl, parseComposedRows, presetOf, rowOffProblem } from '../src/index.ts'
+import { assertRuntime, callTool, checkRows, formatEvents, formatHealth, formatPlugins, parseEvents, healthExit, hostHealth, hostPlugins, claudeGatewayCommand, codexGatewayCommand, drainHost, formatTools, ensureBrowser, hostProcessProblem, shutdownHost, exitCode, formatArtifact, formatExplanation, formatUsage, mcpConfig, mcpHeaders, mcpToken, mergeProfileManifest, parseAsk, parseReport, uiUrl, parseComposedRows, presetOf, rowOffProblem } from '../src/index.ts'
 
 const dirs: string[] = []
 afterEach(() => {
@@ -116,6 +117,34 @@ describe('system CLI (PR #3 kernel review)', () => {
       'default   on  @x/c@1.0.0     family: surface          row c',
       '              finding: it consumes ctx.workflow in the range ^2.0.0, which @tsuuanmi/system-workflow does not satisfy: it provides 1.3.0',
       `              recorded by ${decision} (system artifact)`,
+    ])
+  })
+
+  it('checks a profile\'s rows before a start: a shipped plugin that does not resolve or load is a problem, never a row with nothing to check (REQ-HOST-2, INV-2)', async () => {
+    const bundle = mkdtempSync(join(tmpdir(), 'system-check-'))
+    dirs.push(bundle)
+    writeFileSync(join(bundle, 'package.json'), JSON.stringify({ name: 'bundle', version: '0.0.0' }))
+    const plugin = (name: string, files: Record<string, string>, main = 'index.js'): void => {
+      mkdirSync(join(bundle, 'node_modules', name, 'lib'), { recursive: true })
+      writeFileSync(join(bundle, 'node_modules', name, 'package.json'), JSON.stringify({ name, version: '0.0.0', main }))
+      for (const [file, text] of Object.entries(files)) writeFileSync(join(bundle, 'node_modules', name, file), text)
+    }
+    plugin('good-plugin', { 'index.js': "module.exports = { Config: (c) => { if (c.n !== undefined && typeof c.n !== 'number') throw new Error('n must be a number'); return c } }" })
+    plugin('broken-plugin', { 'index.js': "throw new Error('boom at import')" })
+    plugin('unbuilt-plugin', {}, 'lib/index.js')
+    const checked = await checkRows([
+      { id: 'good', name: 'good-plugin', config: { n: 1 } },
+      { id: 'bad-config', name: 'good-plugin', config: { n: 'x' } },
+      { id: 'broken', name: 'broken-plugin' },
+      { id: 'unbuilt', name: 'unbuilt-plugin' },
+      { id: 'dsh', name: 'not-shipped-plugin' },
+      { id: 'off', name: 'broken-plugin', disabled: true },
+    ], createRequire(join(bundle, 'package.json')))
+    expect(checked.rows).toBe(2)
+    expect(checked.problems).toEqual([
+      'row bad-config (good-plugin): n must be a number',
+      expect.stringMatching(/^row broken \(broken-plugin\): its plugin does not load: boom at import/),
+      expect.stringMatching(/^row unbuilt \(unbuilt-plugin\): its plugin cannot be resolved: Cannot find module/),
     ])
   })
 
