@@ -371,6 +371,8 @@ describe('antigravity-cli: the hook fails closed on its own', () => {
       out += String(chunk)
     })
     child.on('error', reject)
+    // A hook that denies before it reads its input closes stdin early: the write then fails, and the deny is what is checked.
+    child.stdin.on('error', () => undefined)
     child.on('close', () => resolve(JSON.parse(out.trim().split('\n').at(-1)!) as { decision: string; reason?: string }))
     child.stdin.end(JSON.stringify(input))
   })
