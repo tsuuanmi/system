@@ -558,6 +558,20 @@ A turn that fails with `reauth_required` or `challenge` (disposition
 
 Then continue the failed run: `system continue <runId>`.
 
+## Two accounts sign in as one person
+
+Two catalog entries of one provider whose saved sign-ins are the same person are one account, not
+two (REQ-ACC-7): counting them as two would let a team's members, or a failover, share it. So
+none of them takes work. `system health` shows `accounts` degraded, naming them (`chatgpt-main and
+chatgpt-2 are signed in as the same person`), and their Workers are `unavailable`; a turn already
+routed to one fails `reauth_required` before anything is sent.
+
+1. Decide which entry keeps that sign-in.
+2. Sign each other entry in as a different person: `system account login <id>` and Save. Or remove
+   it from the `accounts` row's catalog and restart.
+3. `system health` shows `accounts` ok again once no two entries share a sign-in, and the Workers
+   take work at once. Then `system continue <runId>` for a run that failed on it.
+
 ## Backup and restore
 
 State lives in `~/.dsh/system`:

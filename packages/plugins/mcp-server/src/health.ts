@@ -28,6 +28,8 @@ export interface HealthSources {
   /** Where the vault keeps its key, when the vault reports it. */
   keyCustody?: () => { keyApart: boolean }
   accounts?: () => Promise<Array<{ id: string; status: string }>>
+  /** Groups of accounts signed in as one person (REQ-ACC-7): their Workers take no work. */
+  duplicateAccounts?: () => Promise<string[][]>
   workers?: () => Promise<Array<{ worker: string; state: string }>>
   /** Events of `type` committed since `sinceIso`. */
   events?: (type: string, sinceIso: string) => Array<{ data?: Record<string, unknown> | undefined }>
@@ -145,8 +147,13 @@ export async function healthReport(sources: HealthSources): Promise<HealthReport
   if (accounts) {
     checks.push(await guarded('accounts', async () => {
       const waiting = (await accounts()).filter((a) => a.status === 'reauth-required' || a.status === 'challenge')
-      return waiting.length
-        ? { name: 'accounts', state: 'degraded', detail: `${waiting.map((a) => `${a.id} (${a.status})`).join(', ')}: sign in again (system account login <id>)` }
+      const duplicates = (await sources.duplicateAccounts?.()) ?? []
+      const problems = [
+        ...(waiting.length ? [`${waiting.map((a) => `${a.id} (${a.status})`).join(', ')}: sign in again (system account login <id>)`] : []),
+        ...duplicates.map((ids) => `${ids.join(' and ')} are signed in as the same person, so none of them takes work: sign all but one in as another person, or remove them from the catalog (docs/operations/runbooks.md#two-accounts-sign-in-as-one-person)`),
+      ]
+      return problems.length
+        ? { name: 'accounts', state: 'degraded', detail: problems.join('; ') }
         : ok('accounts', 'every account is signed in or not in use')
     }))
   }

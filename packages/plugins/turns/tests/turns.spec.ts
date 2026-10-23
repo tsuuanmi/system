@@ -164,6 +164,40 @@ describe.runIf(canRunBrowser)('ctx.turns: ask through a saved account', () => {
     expect(fake.sent).toEqual([])
   }, 90_000)
 
+  it('takes every Worker of two accounts signed in as one person out of work, and sends nothing on a turn routed before (REQ-ACC-7)', async () => {
+    const { ctx, fake } = await boot({ accounts: [account('chatgpt-main'), account('chatgpt-2')], ready: ['chatgpt-main', 'chatgpt-2'] })
+    const statesOf = async (): Promise<string[]> => [...new Set((await ctx.workers.list()).map((w) => w.state))]
+    expect(await statesOf()).toEqual(['ready'])
+    const requirement: WorkRequirement = {
+      schema: 'work-requirement@1.0', objective: 'x', capabilities: ['reason'], data: { classification: 'public', refs: [] }, egressPolicy: 'egress.classification-and-secrets',
+      tier: { min: 'standard', source: 'default' }, acceptance: { contract: 'acceptance.answer' },
+    }
+    // Routed to chatgpt-main while the two were distinct; then chatgpt-2 is signed in as the same person.
+    const admitted = await ctx.workers.route(requirement, { restrict: { workers: ['worker:chatgpt-main/standard'], reason: 'test' } })
+    const saved = await ctx.accounts.get('chatgpt-2')
+    await ctx.accounts.saveState('chatgpt-2', {
+      state: { origins: [fake.origin], cookies: [], capturedAt: '2026-10-23T00:00:00Z' },
+      identityHash: contentId({ provider: 'chatgpt-web', identity: `chatgpt-web:${fake.options.userId}` }), verifiedAt: '2026-10-23T00:00:00Z',
+    }, saved.revision)
+    expect(await ctx.accounts.duplicateIdentities()).toEqual([['chatgpt-main', 'chatgpt-2']])
+    // Both entries, every tier: neither is a distinct account, and their status is untouched.
+    expect(await statesOf()).toEqual(['unavailable'])
+    expect((await ctx.accounts.list()).map((a) => a.status)).toEqual(['ready', 'ready'])
+    await expect(ctx.workers.route(requirement)).rejects.toBeInstanceOf(AdmissionFailure)
+    const started = ctx.turns.ask({ key: 'routed-before', worker: admitted.worker.worker, prompt: 'never sent', requirement, decisions: admitted.decisions })
+    admitted.release()
+    const turn = await ctx.turns.wait(started.turnId, 30_000)
+    expect(turn).toMatchObject({ status: 'failed', submitted: false, error: { kind: 'reauth_required', disposition: 'USER_ACTION', message: expect.stringMatching(/chatgpt-main is signed in as the same person as chatgpt-2.*nothing was sent/) } })
+    expect(fake.sent).toEqual([])
+    // Signed in as another person, chatgpt-2 is a distinct account again, and both take work.
+    await ctx.accounts.saveState('chatgpt-2', {
+      state: { origins: [fake.origin], cookies: [], capturedAt: '2026-10-23T00:00:00Z' },
+      identityHash: contentId({ provider: 'chatgpt-web', identity: 'chatgpt-web:someone-else' }), verifiedAt: '2026-10-23T00:00:00Z',
+    })
+    expect(await ctx.accounts.duplicateIdentities()).toEqual([])
+    expect(await statesOf()).toEqual(['ready'])
+  }, 90_000)
+
   it('checks a ready account\'s sign-in, sending nothing, and marks it signed out only on positive evidence (health sees it before a turn)', async () => {
     const { ctx, fake } = await boot({ fake: { loginOffer: true } })
     expect(await ctx.turns.checkSignIn('chatgpt-main')).toBe('signed-in')

@@ -31,7 +31,10 @@
     saved state signs in again as the same identity is ready, verified now,
     with its state unchanged.
   - `markChallenge` keeps the state.
-  - `duplicateIdentities` flags accounts that share an identity (REQ-TEAM-4).
+  - `duplicateIdentities` lists the groups of accounts that share an identity
+    (REQ-ACC-7, REQ-TEAM-4). The website runtime takes every Worker of such an
+    account out of work, and health names them
+    ([turns](../turns/README.md)).
 - **Known limitation:** every read decrypts the whole vault, including every
   account's portable state. That is fine for a few accounts; caching by file
   change, or one record per file, is the next step if the catalog grows.
