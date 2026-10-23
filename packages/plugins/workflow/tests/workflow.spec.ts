@@ -1077,7 +1077,8 @@ describe.runIf(canRunBrowser)('ctx.workflow: static DAGs on the single engine', 
       .toEqual([['plan:1:gate', 'COMPLETED'], ['plan:1:old-step', 'COMPLETED']])
     expect(retire.inputs).toContain(oldPlan)
     const retiredRecord = ctx.workflow.records(run.runId).find((r) => r.nodeId === 'plan:1:old-step')!
-    expect(retiredRecord).toMatchObject({ schema: 'workflow-node@1.1', state: 'RETIRED', lastDecision: retire.id })
+    // Retired after it ran: its execution names its brief, so it is written as 1.2 (1.1 adds RETIRED, 1.2 the brief).
+    expect(retiredRecord).toMatchObject({ schema: 'workflow-node@1.2', state: 'RETIRED', lastDecision: retire.id })
     const schemas = new SchemaRegistry()
     for (const record of ctx.workflow.records(run.runId)) schemas.assertRecord(record)
   }, 240_000)

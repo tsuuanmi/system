@@ -294,7 +294,7 @@ function retireGrowth(e: Engine, run: RunRow, grower: string, grown: NodeRow[], 
   const gone = new Set(grown.map((n) => n.node_id))
   e.ctx.store.transaction((db) => {
     for (const n of grown) {
-      e.writeNode(e.nodeRow(run.run_id, n.node_id)!, { state: 'RETIRED' }, (r) => ({ ...r, schema: 'workflow-node@1.1', lastDecision: decision }), lease)
+      e.writeNode(e.nodeRow(run.run_id, n.node_id)!, { state: 'RETIRED' }, (r) => ({ ...r, schema: r.execution?.brief ? 'workflow-node@1.2' : 'workflow-node@1.1', lastDecision: decision }), lease)
     }
     for (const dependent of e.nodeRows(run.run_id)) {
       const dspec = specOf(dependent)

@@ -18,6 +18,7 @@ export function view(e: Engine, run: RunRow): RunView {
       ...(n.execution_id ? { executionId: n.execution_id } : {}), ...(n.source ? { source: n.source } : {}), ...(n.worker ? { worker: n.worker } : {}),
       ...(n.served_tier ? { tier: n.served_tier } : {}), ...(n.quota_class ? { quotaClass: n.quota_class } : {}),
       ...(record.outputReceipt ? { result: record.outputReceipt.result, ...usageOf(e, record.outputReceipt.result) } : {}),
+      ...(record.execution?.brief ? { brief: record.execution.brief } : {}),
       ...(n.error && n.state !== 'COMPLETED' ? { error: JSON.parse(n.error) as WorkflowError } : {}),
     }
   })

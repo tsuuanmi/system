@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { DEFAULT_TEMPLATES, type NodeTemplate, parsePlan, preflight, render, resolve } from '../src/spec.ts'
+import { type Brief, NO_LOCAL_SANDBOX, renderBrief } from '@tsuuanmi/system-libs'
+import { appended, compose, DEFAULT_TEMPLATES, type NodeTemplate, parsePlan, preflight, resolve } from '../src/spec.ts'
 import { TEST_TEMPLATES } from './templates.ts'
 
 const node = (nodeId: string, overrides: Partial<NodeTemplate> = {}): NodeTemplate => ({
@@ -85,8 +86,26 @@ describe('workflow specs', () => {
     expect(resolve('t', nodes, {}).specHash).toBe(plain.specHash)
   })
 
-  it('renders the caller input and dependency results verbatim', () => {
-    expect(render('Q: {{input}}\n<r>{{node:research:1}}</r>', 'why?', { 'research:1': 'a {{input}} b' })).toBe('Q: why?\n<r>a {{input}} b</r>')
+  it('composes the caller input as text and each dependency result as a pointer, which renders verbatim and is never expanded again', () => {
+    const ref = `sha256:${'e'.repeat(64)}` as const
+    const parts = compose('Q: {{input}}\n<r>{{node:research:1}}</r> again: {{node:research:1}}', 'why?', { 'research:1': ref })
+    expect(parts).toEqual({
+      segments: [{ text: 'Q: why?\n<r>' }, { artifact: 0 }, { text: '</r> again: ' }, { artifact: 0 }],
+      pointers: [{ ref, role: 'input', note: 'the result of node research:1' }],
+    })
+    const brief: Brief = {
+      schema: 'brief@1.1', goal: 'g', acceptance: [{ id: 'c', statement: 's' }], artifacts: parts.pointers, instructions: parts.segments,
+      budget: { remaining: [] }, sandbox: NO_LOCAL_SANDBOX, classification: 'public',
+    }
+    const read = () => ({ bodySchema: 'provider-answer@1.0', body: { text: 'a {{input}} b' }, classification: 'public' as const })
+    expect(renderBrief(brief, read)).toBe('Q: why?\n<r>a {{input}} b</r> again: a {{input}} b')
+  })
+
+  it('splits a text longer than a brief holds on whole characters, and merges what it can', () => {
+    const long = '😀'.repeat(262_145)
+    const parts = appended(compose('{{input}}', long, {}), '!')
+    expect(parts.segments.map((s) => ('text' in s ? [...s.text].length : -1))).toEqual([262_144, 2])
+    expect(parts.segments.map((s) => ('text' in s ? s.text : '')).join('')).toBe(`${long}!`)
   })
 
   it('lets {{grown}} appear only in nodes that depend on a planner', () => {

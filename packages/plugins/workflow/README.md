@@ -85,20 +85,26 @@ second execution path (INV-1).
     (REQ-SES-8). A caller's `sessionId` must be one the engine issued.
   - `clientRequestId` makes `start` idempotent.
   - At most `maxActiveRuns` runs are unfinished at once (INV-9).
-- **Nodes** are durable `workflow-node@1.0` records, validated on every write.
-  - `WAITING` → `READY`: when every dependency is `COMPLETED`, the prompt is
-    rendered from the dependencies' results. The input receipt binds
-    `inputHash` (the node, the rendered prompt, and the dependency results)
-    and its bundle.
+- **Nodes** are durable `workflow-node@1.x` records, validated on every write
+  (`@1.2` once an execution names its brief).
+  - `WAITING` → `READY`: when every dependency is `COMPLETED`, the template's
+    prompt is composed into the brief's instructions: its text and the caller's
+    input as text, each dependency's result as a pointer by content id. The input
+    receipt binds `inputHash` (the node, the prompt those instructions render to,
+    and the dependency results) and its bundle.
   - A `worker` node declares capabilities, and its requirement (objective,
     capabilities, plus `persistent-conversation` in a session, classification,
     tier, and contract) is recorded at admission.
   - The engine routes it through `ctx.workers` (a session keeps its affinity),
-    then starts it on the admitted Worker's source. A website Worker's source is
-    the turn runtime. The request key is the run, node, attempt, and input hash,
+    then records its **brief** (`brief@1.1`, an `objective` artifact: the
+    instructions, its goal and criteria, the pointers, the budget, the Worker's
+    `sandbox` as its source declares it) and starts it on the admitted Worker's
+    source with that brief, which the source renders into its prompt
+    ([briefs](../../../docs/design/workflow-engine.md#briefs)). Admission measures
+    the rendered prompt. The request key is the run, node, attempt, and input hash,
     so a restart re-attaches to the same execution and never sends twice.
-  - `RUNNING` carries the execution and its route decision. A stop while
-    routing starts nothing.
+  - `RUNNING` carries the execution, its route decision, and its brief. A stop
+    while routing starts nothing.
   - An admission failure fails the node with nothing sent: `reauth_required`
     when there is no Worker or one was kept out only by its account's state,
     `egress_denied` for local-private work with no local Worker, `config_error`
@@ -246,6 +252,15 @@ second execution path (INV-1).
     operator may accept leaves the review held for the operator. A failed or stopped run, and a run whose holder was
     lost, is reported with `reconcileRun` (a `reconciliation` decision). The view's `task`
     shows the claim, the phase, and how the outcome reached the board;
+  - every brief the run writes states the task, the attempt, its goal and acceptance criteria,
+    its budget less what the ledger counts for it, and points at the accepted results of the
+    tasks it depends on and, on a later attempt, the previous attempt's result and the decision
+    behind this one ([a board task's brief](../../../docs/design/workflow-engine.md#a-board-tasks-brief));
+  - a task's next attempt, or the first of a task that depends on exactly one other, resumes the
+    session of the run before it when the template keeps a conversation, the session's Worker
+    keeps a native session it can resume now, and the session has served fewer than
+    `maxSessionRuns` runs (default 5); else it starts fresh. Either is an `admission` decision
+    (`workflow.task-session`), made before the task is taken;
   - such a run is not continued, superseded, deleted, or expired before its outcome is reported.
   - The board is optional: with none loaded, a task's run is refused (`config_error`) and every
     other run is unchanged.
@@ -381,12 +396,13 @@ second execution path (INV-1).
     example `continue` right after the run failed) runs once that advance
     ends; it is never dropped.
 - **Retention:** the operator deletes runs (`delete`). After `retainDays`, a
-  finished run's input text and rendered prompts are cleared. With
+  finished run's input text, rendered prompts, and composed instructions are
+  cleared; its briefs stay with the run. With
   `retainRunsDays` (default 0, off), a finished run older than that is deleted
   daily, except a session's latest run, and then `ctx.artifacts.collect()` takes
   what only expired runs needed.
 - **Conformance.** The seam's suite is [`conformance/workflow.ts`](conformance/workflow.ts),
-  run through the [conformance runner](../../libs/conformance/runner.ts) at contract 1.2 by
+  run through the [conformance runner](../../libs/conformance/runner.ts) at contract 1.3 by
   `tests/conformance.spec.ts`, against this engine and the real plugins it injects (the
   store-backed board and approval queue among them), with only Worker execution scripted:
   - valid `workflow-node@1.x` records; a node completes only with its input receipt, its
@@ -397,6 +413,10 @@ second execution path (INV-1).
     accepted on its exact subject; a lead's claim adopted, a stale claim or a task not ready
     refused before anything is written; a failed run reported with `reconcileRun`, never
     continued;
+  - since 1.3, every execution started with a brief recorded before it and named by its record,
+    pointing at its dependencies' results and never carrying them, which renders to the
+    template's prompt; a board task's brief from the task; a task's next attempt resuming the
+    session before it when its Worker can, fresh otherwise;
   - admission that fails closed and stays within `maxActiveRuns`; a node no Worker is
     admitted for fails with nothing sent;
   - bounded retries of unsent failures, a sent one never resent, and bounded escalation;
@@ -408,7 +428,8 @@ second execution path (INV-1).
   - the decision a refused planner names (its `graph-growth` refusal), and the `gate` decision a
     blocked gate records and names (what it waits for, until when).
 - **Injects:** `store`, `artifacts`, `eventLog`, `leases`, `egress`, `workers`, `workerSessions`;
-  `mcp` and `board` (the abstract `Board` of `board-core`, never the board plugin) are optional.
+  `mcp` and `board` (the abstract `Board` of `board-core`, never the board plugin) are optional;
+  it reads `resources` when present (a task's budget for its briefs).
 - **Tests** beyond the suite: [`tests/board.spec.ts`](tests/board.spec.ts) runs the engine over
   the store-backed board and approval queue end to end: a task claimed and done, a lead's claim
   adopted, stale claims refused, the lease renewed past its length, a failed and a stopped run
@@ -426,7 +447,8 @@ in `engine.ts`:
 | Module | Owns |
 |---|---|
 | `engine.ts` | engine state; admission (`start`); the run loop under the run lease; a node's path from `WAITING` to `COMPLETED` or `FAILED`; node writes |
-| `spec.ts` | templates, team unrolling, preflight, resolution, prompt rendering, and parsing of plans and assessments |
+| `spec.ts` | templates, team unrolling, preflight, resolution, composing a prompt into a brief's instructions, and parsing of plans and assessments |
+| `briefs.ts` | the brief of each execution: drafted from the node's instructions and its board task, its rendered length, recorded with the Worker's sandbox |
 | `types.ts` | records, views, config, row shapes, `WorkflowFailure` |
 | `migrations.ts` | the engine's tables |
 | `recovery.ts` | retries after a failed attempt, escalation after a rejected result, admission failure kinds |
@@ -437,6 +459,6 @@ in `engine.ts`:
 | `sessions.ts` | wake-on-message, checkpoints, compaction |
 | `operator.ts` | `stop`, `continue`, `supersede`, `approve` |
 | `retention.ts` | `delete` and the expiry of private text and runs; a deleted run releases the Worker sessions no other run uses |
-| `tasks.ts` | runs that serve a board task: taking the task, run first then work, lease renewal, the holder lost, the result's subject and acceptance, the report through the board's moves |
+| `tasks.ts` | runs that serve a board task: what their briefs carry, resuming the session before them, taking the task, run first then work, lease renewal, the holder lost, the result's subject and acceptance, the report through the board's moves |
 | `views.ts` | run views, `usage`, `explain` |
 | `tools.ts` | the MCP tools |

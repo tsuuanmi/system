@@ -22,11 +22,13 @@
  */
 import { type ArtifactRef, BoardError, type BoardTask, type Board, type Classification, type RunOutcome, type Subject } from '@tsuuanmi/system-board-core'
 import type { Lease } from '@tsuuanmi/system-leases'
-import { captureGitSubject } from '@tsuuanmi/system-libs'
-import type { Engine } from './engine.ts'
-import type { ResolvedNode } from './spec.ts'
+import { BRIEF_LIMITS, type BriefBudgetLine, type BriefPointer, captureGitSubject } from '@tsuuanmi/system-libs'
+import type {} from '@tsuuanmi/system-resources-core'
+import type { TaskFrame } from './briefs.ts'
+import type { Engine, Prepared } from './engine.ts'
+import { clampText, type ResolvedNode } from './spec.ts'
 import {
-  newId, type NodeRecord, type NodeRow, now, type RunRow, type RunView, TASK_LEASE_TTL_MS, type TaskOutcome, type TaskRow, type TaskStartInput, type TaskView, type WorkflowError, WorkflowFailure,
+  newId, type NodeRecord, type NodeRow, now, type RunRow, type RunView, type StartInput, TASK_LEASE_TTL_MS, type TaskOutcome, type TaskRow, type TaskStartInput, type TaskView, type WorkflowError, WorkflowFailure,
 } from './types.ts'
 import { view } from './views.ts'
 
@@ -37,6 +39,8 @@ const REPORT_RETRY_MAX_MS = 10 * 60_000
 const RENEW_RETRY_MS = 5_000
 
 const RANK: Record<Classification, number> = { public: 0, 'operator-shared': 1, 'local-private': 2 }
+/** Pointers a task's run adds to every brief it writes, at most (the brief holds 64). */
+const FRAME_POINTERS = 16
 const PRODUCER = { producer: { type: 'system' as const, ref: 'workflow' } }
 
 type Result = { artifacts: ArtifactRef[]; subject: Subject }
@@ -124,7 +128,7 @@ export class TaskRuns {
     const board = e.board
     if (!board) throw new WorkflowFailure('config_error', `no board is loaded: a run for board task ${claim.taskId} needs ctx.board (its bundle row on, over the approval queue); nothing was started`)
     if ((claim.holder === undefined) !== (claim.generation === undefined)) throw new WorkflowFailure('invalid_input', 'a claim handed to a run names its holder and its generation, both or neither')
-    const again = e.repeated(plain, prepared)
+    const again = this.repeated(plain, prepared)
     if (again) {
       if (this.row(again.run_id)?.task_id !== claim.taskId) throw new WorkflowFailure('invalid_input', 'clientRequestId was reused with a different request')
       return view(e, again)
@@ -138,13 +142,18 @@ export class TaskRuns {
     }
     const project = await board.project(task.projectId)
     const classification = classificationOf(plain.classification, project?.classification, task)
-    const started = { ...plain, ...(classification ? { classification } : {}) }
     const runId = newId('run')
+    // What every brief of the run carries, and whether the run resumes the session of the work
+    // before it; both settled before the task is taken, so a failure here claims nothing.
+    const frame = await this.frameOf(board, task)
+    const session = plain.sessionId === undefined ? await this.session(task, prepared, plain.template, runId) : undefined
+    const started = { ...plain, ...(classification ? { classification } : {}), ...(session?.sessionId ? { sessionId: session.sessionId } : {}) }
+    const admittedAs = session?.sessionId ? e.prepare(started) : prepared
     const { option, generation, expiresAt, decision } = await this.take(board, task, claim, runId)
-    const bound = { runId, taskId: task.taskId, holder: claim.holder ?? ownerOf(runId), generation, claim: option === 'adopt' ? 'adopted' as const : 'own' as const, writes: task.writes }
+    const bound = { runId, taskId: task.taskId, holder: claim.holder ?? ownerOf(runId), generation, claim: option === 'adopt' ? 'adopted' as const : 'own' as const, writes: task.writes, frame }
     // A concurrent start under the same clientRequestId admitted its own run: this one starts nothing,
     // and the claim it took lapses back to ready on its own.
-    const admitted = e.admit(started, prepared, bound)
+    const admitted = e.admit(started, admittedAs, bound)
     if (admitted.runId !== runId) return admitted
     // Run first, then work: the board records the run before any node runs (fail-closed rule 3).
     try {
@@ -166,6 +175,132 @@ export class TaskRuns {
     }
     this.activate(runId, { expiresAt, schedule: true })
     return e.get(runId)!
+  }
+
+  /**
+   * The run a repeated `clientRequestId` already started for a task, if any. That run may have
+   * resumed an earlier session, which its spec names: the same request is the same template and
+   * input, resolved with or without that session.
+   */
+  private repeated(input: StartInput, prepared: Prepared): RunRow | undefined {
+    if (!prepared.requestKey) return undefined
+    const existing = this.e.ctx.store.db.prepare('SELECT * FROM workflow_runs WHERE request_key = ?').get(prepared.requestKey) as RunRow | undefined
+    if (!existing) return undefined
+    const same = existing.input === input.input && (existing.spec_hash === prepared.spec.specHash
+      || (input.sessionId === undefined && !!existing.session_id && this.e.prepare({ ...input, sessionId: existing.session_id }).spec.specHash === existing.spec_hash))
+    if (!same) throw new WorkflowFailure('invalid_input', 'clientRequestId was reused with a different request')
+    return existing
+  }
+
+  /**
+   * What every brief of a task's run carries (docs/design/workflow-engine.md#briefs): the task, the
+   * attempt the run will be, its goal and acceptance criteria, and pointers, never content, to the
+   * accepted results of the tasks it depends on (their digests when they have one), to its previous
+   * attempt's result, and to the decision behind this attempt (a rejection's reasons, the answers to
+   * its questions). Only stored artifacts are pointed at, at most {@link FRAME_POINTERS}. The
+   * budget is what the task may still draw: its lines less the usage the ledger counts for it.
+   */
+  private async frameOf(board: Board, task: BoardTask): Promise<TaskFrame> {
+    const attempt = task.attempts.count + 1
+    const pointers: BriefPointer[] = []
+    const add = (ref: ArtifactRef, role: BriefPointer['role'], note: string): void => {
+      if (pointers.length < FRAME_POINTERS && !pointers.some((p) => p.ref === ref) && this.e.ctx.artifacts.get(ref)) pointers.push({ ref, role, note: clampText(note, BRIEF_LIMITS.note) })
+    }
+    for (const id of task.dependsOn) {
+      const done = await board.task(id)
+      if (!done?.result) continue
+      for (const ref of done.result.digest ? [done.result.digest] : done.result.artifacts) add(ref, 'input', `${done.result.digest ? 'the digest of ' : ''}the accepted result of ${id}: ${done.title}`)
+    }
+    if (task.attempts.count > 0) {
+      for (const ref of task.result?.artifacts ?? []) add(ref, 'prior', `the result of attempt ${task.attempts.count}`)
+      if (task.result?.digest) add(task.result.digest, 'prior', `the digest of attempt ${task.attempts.count}'s result`)
+      if (task.lastDecision) add(task.lastDecision, 'review', `the decision behind attempt ${attempt}: why attempt ${task.attempts.count} did not finish the task`)
+    }
+    return {
+      projectId: task.projectId, taskId: task.taskId, attempt, goal: clampText(task.goal, BRIEF_LIMITS.goal),
+      acceptance: task.acceptance.map(({ id, statement }) => ({ id, statement })), pointers, budget: await this.budgetOf(task),
+    }
+  }
+
+  /**
+   * What the task may still draw, per budget line: the line less the usage the resource ledger
+   * counts for the task (tokens are input and output tokens; minutes are not totalled by the
+   * ledger and stay as declared). With no ledger loaded, or one that cannot answer, the lines as
+   * declared: the brief informs the Worker, and the ledger's reservations enforce the pools.
+   */
+  private async budgetOf(task: BoardTask): Promise<BriefBudgetLine[]> {
+    const lines = task.budget ?? []
+    const resources = this.e.ctx.get('resources')
+    if (!lines.length || !resources) return lines
+    try {
+      const { totals } = await resources.usage({ taskId: task.taskId })
+      return lines.map((line) => {
+        const total = totals.find((t) => t.pool === line.pool)
+        const used = !total ? 0 : line.unit === 'tokens' ? (total.usage?.inputTokens ?? 0) + (total.usage?.outputTokens ?? 0)
+          : line.unit === 'usd' ? total.costUsd ?? 0 : line.unit === 'turns' ? total.turns ?? 0 : line.unit === 'runs' ? total.records : 0
+        return { ...line, amount: Math.max(0, line.amount - used) }
+      })
+    } catch (error) {
+      this.warn(`the resource ledger did not count task ${task.taskId}'s usage; its brief names its budget as declared`, error)
+      return lines
+    }
+  }
+
+  /**
+   * Whether a task's run resumes the session of the work before it: its previous attempt's run, or,
+   * on a first attempt, the run of the one task it depends on (a chain). It does when the template
+   * keeps a conversation, the session's Worker keeps a native session it can resume and is ready
+   * to, and the session has served fewer than `maxSessionRuns` runs (INV-9); the new brief is then
+   * that session's next message. Otherwise the run starts a fresh session, given the brief. The
+   * choice is an `admission` decision (`workflow.task-session`). Undefined when there was no work
+   * before it with a session, or the caller named a session itself.
+   */
+  private async session(task: BoardTask, prepared: Prepared, template: string, runId: string): Promise<{ sessionId?: string; decision: ArtifactRef } | undefined> {
+    const previous = this.previousSession(task.taskId, 'attempt') ?? (task.attempts.count === 0 && task.dependsOn.length === 1 ? this.previousSession(task.dependsOn[0]!, 'dependency') : undefined)
+    if (!previous) return undefined
+    const workers = this.e.ctx.workers
+    const max = this.e.config.maxSessionRuns ?? 5
+    const what = previous.via === 'attempt' ? `attempt ${task.attempts.count}'s run ${previous.runId}` : `run ${previous.runId} of task ${previous.taskId}, which it depends on`
+    let fresh: string | undefined
+    let handle: string | undefined
+    if (!prepared.spec.nodes.some((n) => n.session.persist)) fresh = `template ${template} keeps no conversation across its steps, so there is no session to resume`
+    else {
+      handle = workers.handle(previous.sessionId)
+      const bound = workers.affinity(previous.sessionId) ?? []
+      const listed = (await workers.list()).filter((w) => bound.includes(w.worker))
+      const ready = listed.find((w) => (w.state === 'ready' || w.state === 'busy') && w.capabilities.some((c) => c.capability === 'persistent-conversation'))
+      const served = (this.e.ctx.store.db.prepare('SELECT COUNT(*) AS n FROM workflow_runs WHERE session_id = ?').get(previous.sessionId) as { n: number }).n
+      if (!handle) fresh = `session ${previous.sessionId} of ${what} has no native session its Worker can resume`
+      else if (!ready) fresh = `the Worker of session ${previous.sessionId} cannot resume it now (${listed.length ? listed.map((w) => `${w.worker} is ${w.state}`).join(', ') : `${bound.join(', ') || 'no Worker'} is not listed`})`
+      else if (served >= max) fresh = `session ${previous.sessionId} has served ${served} runs (limit ${max}, workflow.maxSessionRuns; INV-9)`
+    }
+    const resume = !fresh
+    const decision = this.e.ctx.artifacts.recordDecision({
+      decisionType: 'admission',
+      question: `Does run ${runId}, attempt ${task.attempts.count + 1} of board task ${task.taskId}, resume the session of ${what}?`,
+      inputs: [],
+      candidates: [
+        { option: 'resume', selected: resume, reasons: resume ? [`session ${previous.sessionId} of ${what} keeps native session ${handle}, and its Worker can resume it`, 'the brief is the session\'s next message: the Worker keeps its context'] : [`not resume: ${fresh}`] },
+        { option: 'fresh', selected: !resume, reasons: resume ? ['not fresh: the session can be resumed, so the Worker keeps the context it built'] : [fresh!, 'a fresh session is given the brief, which points at the earlier work'] },
+      ],
+      decider: { type: 'rule', id: 'workflow.task-session', version: '1' },
+      outcome: { option: resume ? 'resume' : 'fresh', detail: { taskId: task.taskId, from: previous.runId, sessionId: previous.sessionId, ...(resume ? { nativeHandle: handle } : {}) } },
+      deterministic: true,
+    }, { ...PRODUCER, runId }).id as ArtifactRef
+    return { ...(resume ? { sessionId: previous.sessionId } : {}), decision }
+  }
+
+  /** The session of the latest run that served a task, and that run. */
+  private previousSession(taskId: string, via: 'attempt' | 'dependency'): { sessionId: string; runId: string; taskId: string; via: 'attempt' | 'dependency' } | undefined {
+    const row = this.e.ctx.store.db.prepare(`SELECT r.session_id, r.run_id FROM workflow_tasks t JOIN workflow_runs r ON r.run_id = t.run_id
+      WHERE t.task_id = ? AND r.session_id IS NOT NULL ORDER BY t.created_at DESC, t.rowid DESC LIMIT 1`).get(taskId) as { session_id: string; run_id: string } | undefined
+    return row ? { sessionId: row.session_id, runId: row.run_id, taskId, via } : undefined
+  }
+
+  /** What every brief of a task's run carries, fixed when the run was admitted. */
+  frame(runId: string): TaskFrame | undefined {
+    const frame = this.row(runId)?.frame
+    return frame ? JSON.parse(frame) as TaskFrame : undefined
   }
 
   /**

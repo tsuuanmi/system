@@ -98,16 +98,11 @@ export function append(e: Engine, run: RunRow, after: NodeRow, added: ResolvedNo
 }
 
 /** The findings of the steps a planner this node depends on added (never retired ones), in order, under their objectives. */
-export function grownText(e: Engine, spec: ResolvedNode, nodes: NodeRow[]): string {
+export function grownSteps(spec: ResolvedNode, nodes: NodeRow[]): Array<{ objective: string; result?: ArtifactRef | undefined }> {
   const planners = spec.dependsOn.filter((id) => (JSON.parse(nodes.find((n) => n.node_id === id)!.spec) as ResolvedNode).grows)
   return nodes
     .filter((n) => n.state !== 'RETIRED' && planners.some((p) => grewFrom(n, p)) && (JSON.parse(n.spec) as ResolvedNode).executor !== 'gate')
-    .map((n) => {
-      const step = JSON.parse(n.spec) as ResolvedNode
-      const result = (JSON.parse(n.record) as NodeRecord).outputReceipt?.result
-      return `### ${step.objective}\n${result ? e.resultText(result) : ''}`
-    })
-    .join('\n\n')
+    .map((n) => ({ objective: (JSON.parse(n.spec) as ResolvedNode).objective, result: (JSON.parse(n.record) as NodeRecord).outputReceipt?.result }))
 }
 
 /**
