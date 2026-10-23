@@ -20,14 +20,14 @@ website Worker, as built today.
 |---|---|---|---|---|
 | 1. Hand over intent | surface | `ctx.mcp`, gateways, CLI start a workflow run | built | — |
 | 2. Intake: work kind, tier, data class, artifacts to read | decision | `ctx.decisions` ([PROP-0002](../proposals/0002-decision-assisted-routing.md)); today the run's input and template | planned | the work kind's default tier |
-| 3. Policy and egress gate | core: gate | `ctx.egress`; `approvals` for actions that need a person | egress built, approvals planned | closed: deny, or queue for approval |
-| 4. Choose a resource | core: resource ledger, gate | `ctx.workers` admission and routing; account cooldowns ([ADR-0034](../decisions/adr/0034-unsent-failover-to-a-sibling-account.md)); `resources` for limits and scarcity | routing built, `resources` planned | wait for the window, or another source |
+| 3. Policy and egress gate | core: gate | `ctx.egress`; `approvals` for actions that need a person | built | closed: deny, or queue for approval |
+| 4. Choose a resource | core: resource ledger, gate | `ctx.workers` admission and routing; account cooldowns ([ADR-0034](../decisions/adr/0034-unsent-failover-to-a-sibling-account.md)); `resources` for limits and scarcity | built | wait for the window, or another source |
 | 5. Worker runs | Worker, context | a Worker source (`ctx.turns`, `ctx.agentWorkers`, `ctx.models`); `context` plugins at agent launch | Workers built, `context` planned | context plugin bypassed; Worker reconciled by the runner |
-| 6. Record results | core: ledger of record | `ctx.artifacts`, `ctx.eventLog`, `ctx.turnReceipts`; usage to `resources` | built; usage ledger planned | the write fails closed |
+| 6. Record results | core: ledger of record | `ctx.artifacts`, `ctx.eventLog`, `ctx.turnReceipts`; usage to `resources` | built | the write fails closed |
 | 7. Verify | verification | acceptance contracts through `workers.contract`; team quote checks | built | no verifier: no automatic acceptance |
 | 8. Acceptance gate | core: gate | `workers.accept`, then the node's transition | built | retry or escalate, back to step 4 |
 | 9. Digest | digest | `digests` | planned | the lead receives artifact pointers |
-| 10. Update the board | core: work state machine | `ctx.workflow` run and node states; `board` tasks and projects | workflow built, `board` planned | — |
+| 10. Update the board | core: work state machine | `ctx.workflow` run and node states; `board` tasks and projects | built | — |
 
 ## Turn
 
