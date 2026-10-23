@@ -243,8 +243,8 @@ A task's `budget` lines cap what its attempts draw, together, as the
 (`budget-spent`), and only an approved `funding` request lets it go on. From contract 1.2 the
 request names the exact lines it would add, and the approval adds exactly those
 ([ADR-0044](../decisions/adr/0044-funding-raises-a-spent-task-budget.md)). The holder computes
-them: the [workflow engine](workflow-engine.md#a-tasks-budget) takes them from the ledger's count,
-never from a model.
+them: the [workflow engine](workflow-engine.md#funding-a-spent-task) takes them from the ledger's
+count, never from a model.
 
 | Step | Who | Records | On failure |
 |---|---|---|---|
