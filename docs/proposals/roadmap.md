@@ -126,3 +126,9 @@ Not scheduled; each needs the operator's go-ahead:
 Each needs its own proposal: an A2A gateway and runtime (cross-runtime peers), an
 ACP client gateway for editors, sandboxed or SSH `exec` providers, more website
 providers, and a desktop launcher.
+
+Proposed, not scheduled: [PROP-0013](0013-feedback-from-work.md), feedback from work. Its phases,
+each on the operator's go-ahead, in the proposed order: L1 and L2 (a liveness verdict: a failed
+probe is not death, no automated input to a session blocked on an approval), C1 to C3 (a completion
+gate at the Worker's stop boundary, then its checks at acceptance), and W1 to W5 (code-host
+observations briefing the next attempt, then landing). W2 and W5 need B8's branches.
