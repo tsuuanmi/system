@@ -14,7 +14,7 @@ The **operator's web UI**, on the DSH webserver under `/ui` (loopback only):
   with its class, exact subject, summary, consequences, and expiry, and the operator's
   **Approve / Deny** for one request or a whole batch, with an optional note; a `policy-change`
   request shows the change it asks for (**Show change**: the effective modes it moves and the
-  record's diff). Without it the page shows the runs alone and the queue routes answer `503`;
+  record's diff, and, for a change the queue proposed itself, that it did and why). Without it the page shows the runs alone and the queue routes answer `503`;
 - when `ctx.approvals` is present, the **autonomy policy** page (`?view=policy`): the set in force
   (its hash, and whether it is the configuration or a change the operator approved), the
   effective mode of every action class for the studio and each project, the policies, the latest
