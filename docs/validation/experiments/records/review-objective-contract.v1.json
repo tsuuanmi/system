@@ -1,0 +1,48 @@
+{
+  "record": "objective-contract",
+  "id": "review-workflow",
+  "version": 1,
+  "application": {
+    "kind": "workflow-template",
+    "ref": "review",
+    "note": "the built-in team review of a public repository at one pinned commit"
+  },
+  "hardConstraints": [
+    { "id": "invariants", "validator": "the core's guarantees, outside the loop's reach; a trial that shows a break of one is refuted, never tuned" },
+    { "id": "egress", "validator": "every member step of a trial has its egress decision; the trial's classification is public" },
+    { "id": "autonomy-policy", "validator": "the default studio policy, unchanged for the whole experiment" },
+    { "id": "read-only-members", "validator": "an agent member's workspace holds nothing after a trial that it did not hold before (checked by the operator)" }
+  ],
+  "primary": {
+    "metric": "defects-per-cost",
+    "direction": "higher",
+    "unit": "defect labels identified per member-step execution",
+    "definition": "per arm, the defect labels identified (matching rule of the suite) summed over trials, over the member steps executed (proposals, ballots, debates, and their retries and escalations) summed over the same trials: a ratio of sums",
+    "minimumPracticalEffect": { "value": 0.1, "scale": "ratio" }
+  },
+  "guardrails": [
+    { "metric": "blocking-recall", "direction": "higher", "floor": 0.5, "nonInferiorityMargin": { "value": 0.17, "scale": "absolute" }, "definition": "blocking labels identified over blocking labels present, summed over trials" },
+    { "metric": "false-positives", "direction": "lower", "nonInferiorityMargin": { "value": 1, "scale": "absolute" }, "definition": "per trial: findings on a known non-defect's lines, and unmatched defect findings the adjudicator judged not a defect; unadjudicated ones reported as bounds" },
+    { "metric": "quote-validity", "direction": "higher", "nonInferiorityMargin": { "value": 0.1, "scale": "absolute" }, "definition": "defect findings whose quote is confirmed over all defect findings, summed over trials" },
+    { "metric": "latency", "direction": "lower", "nonInferiorityMargin": { "value": 0.5, "scale": "ratio" }, "definition": "per trial, minutes from the run's start to the team's decision; the median over trials" },
+    { "metric": "stalls", "direction": "lower", "nonInferiorityMargin": { "value": 0.34, "scale": "absolute" }, "definition": "per trial, member-step attempts that stalled or timed out (provider_stalled, timeout), retried or not" }
+  ],
+  "cost": {
+    "metrics": [
+      { "metric": "member-steps", "unit": "executions", "source": "the run's workflow.node.started events of member steps" },
+      { "metric": "pool-usage", "unit": "native, per pool", "source": "the resource ledger's usage records of the trial's runs (resources_usage); a Worker source that records none is reported as none" },
+      { "metric": "adjudication", "unit": "minutes", "source": "the adjudicator's own record" }
+    ],
+    "ceiling": "the experiment's budget"
+  },
+  "comparison": "constrained-dominance",
+  "protocol": {
+    "confidence": 0.9,
+    "minCases": 5,
+    "minRepetitions": 3,
+    "partitions": ["regression"],
+    "horizon": "fixed",
+    "interim": "none",
+    "note": "minCases 5: the fewest cases at which an enumerated two-sided sign-flip test over cases can reach 0.1. With fewer cases no metric can support or refute; the verdict is at most inconclusive."
+  }
+}
