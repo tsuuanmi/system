@@ -11,6 +11,10 @@ REQ-WRK-10). One row, `models`, mounts two parts from one configuration:
   - **A call** streams one request and returns the visible text, the provider's
     token usage, and the finish. Output tokens are at most the entry's
     `maxTokens`.
+  - **A stalled stream:** an attempt whose stream is silent for `idleTimeoutMs`
+    (default 5 min) is stopped and fails as DSH `TIMEOUT`, saying how many
+    events and characters it got. A slow answer that keeps streaming is not
+    stopped.
   - **Re-attempts:** a failure the route's retry policy calls transient is sent
     again with that policy's backoff, at most `maxRetries` times (default 2,
     at most 5), even under an unbounded route policy.
@@ -45,7 +49,8 @@ REQ-WRK-10). One row, `models`, mounts two parts from one configuration:
     decision joins the call's decision chain. A denial fails the call as
     `egress_denied`, never sent.
   - **Bounds (INV-9):** `maxConcurrentCalls` (default 4), the requirement's
-    `budget.maxTokens`, and `callTimeoutMs` (default 5 min; failure `timeout`).
+    `budget.maxTokens`, and `callTimeoutMs`, the ceiling over every attempt and
+    back-off (default 15 min; failure `timeout`).
   - **Result:** a `report` artifact, `model-answer@1.0`, with the requirement's
     classification and the token usage, which the usage report shows.
   - **Cancel (REQ-WRK-4):** a running call is aborted, a queued one never sent.
@@ -64,7 +69,7 @@ REQ-WRK-10). One row, `models`, mounts two parts from one configuration:
   may set `maxSessionTurns` and `maxHistoryChars`, and `maxInputChars`, the
   longest prompt it takes, declared to admission
   ([ADR-0032](../../../docs/decisions/adr/0032-admission-refuses-input-longer-than-a-worker-takes.md))), `maxRetries`,
-  `maxConcurrentCalls`, `callTimeoutMs`, `retainDays`, `maxSessionTurns`,
+  `maxConcurrentCalls`, `callTimeoutMs`, `idleTimeoutMs`, `retainDays`, `maxSessionTurns`,
   `maxHistoryChars`
   ([catalog](../../../docs/reference/configuration.md#models)).
 - **Injects:** `LlmModels` `llm`; `ModelWorkers` `store`, `artifacts`, `leases`,

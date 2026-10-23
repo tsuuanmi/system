@@ -452,6 +452,37 @@ on this machine ([models](../design/models.md)). Two rows of the profile's
   decision; the answer records its sends and attempts
   ([effect register](../architecture/data-flow.md#effect-register)).
 
+### A model call times out
+
+A step on a model Worker fails as `timeout`, and since its prompt was sent the
+engine does not send it again (`USER_ACTION`). The message says which bound
+stopped it ([bounds](../design/models.md#a-call)):
+
+- **`… TIMEOUT: no progress for N ms (idleTimeoutMs) after E stream event(s)
+  and C characters of answer`:** the stream went silent on the last of its
+  attempts (the first request and up to `maxRetries` re-attempts). A stalled
+  connection or an overloaded provider, not a slow answer. Check the
+  provider's status and the network path, then `system continue <runId>`.
+- **`… did not finish within N ms (callTimeoutMs, the ceiling over every
+  attempt)`:** the call was still answering, or re-attempting, when the
+  ceiling (default 15 min) came. Either raise `callTimeoutMs` on the `models`
+  row (a targeted patch: list the catalog too), or make each answer cheaper:
+  a smaller entry `maxTokens`, or a lower `reasoning` level on the route if
+  the model thinks at length (the `llm-pi-ai` route's reasoning tokens count
+  toward `maxTokens`). Then `system continue <runId>`.
+
+`system explain <runId>` shows the step's failure; a finished answer records
+its attempts (`attempts` 2 or more: a request failed transiently first).
+
+**A Gemini API call times out.** The Gemini API Worker (a `google` route,
+`gemini-3.8-flash`) answered in 45 s to 4 min on 2026-10-23, with at most about
+4,000 output tokens, and without a measurable thinking share: on a route that
+sets no `reasoning`, `gemini-3.8-flash` already thinks at its lowest level
+(`low`; it offers no `minimal` or `off`). Its time goes to the provider, not
+to the answer's length, so raising the ceiling is the remedy for a slow call;
+lowering `maxTokens` or `reasoning` does not help it. The defaults fit it: a
+5 min silence bound and a 15 min ceiling.
+
 ## API-first preset
 
 For an organization that cannot accept automated use of consumer websites
