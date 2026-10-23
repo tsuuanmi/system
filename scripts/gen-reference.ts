@@ -37,9 +37,15 @@ const wrap = (t: string): string => (t.includes(' \\| ') ? `(${t})` : t)
 
 const describe = (schema: Schema): string => {
   const d = schema.meta?.description
-  return (typeof d === 'string' ? d : d?.en ?? '').replace(/\|/g, '\\|').replace(/\n/g, ' ')
+  // A table cell: a backslash is escaped too, or one before a `|` would leave the pipe a cell break.
+  return (typeof d === 'string' ? d : d?.en ?? '').replace(/[\\|]/g, '\\$&').replace(/\n/g, ' ')
 }
 
+/**
+ * A default as a code span in a table cell. Only `|` is escaped: JSON writes a backslash only as
+ * half of an escape pair, so a `|` is never left after an odd run of them, and inside a code span
+ * an escaped backslash would show twice.
+ */
 const show = (value: unknown): string => (value === undefined ? '' : `\`${JSON.stringify(value)}\``.replace(/\|/g, '\\|'))
 
 /** One row per option, nested objects flattened as dotted keys. */

@@ -17,7 +17,8 @@ export interface Evidence { file: string; line: number; title: string }
 const clip = (text: string): string => {
   const plain = text.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1').replace(/\*\*/g, '').replace(/\s+/g, ' ').trim()
   const first = plain.split(/(?<=\.)\s/)[0]!
-  return (first.length > 140 ? `${first.slice(0, 137)}…` : first).replace(/\|/g, '\\|')
+  // A table cell: a backslash is escaped too, or one before a `|` would leave the pipe a cell break.
+  return (first.length > 140 ? `${first.slice(0, 137)}…` : first).replace(/[\\|]/g, '\\$&')
 }
 
 /** Requirements, quality attributes, and invariants, from their canonical documents. */

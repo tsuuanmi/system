@@ -615,7 +615,8 @@ export async function listTools(home: string = dshHome()): Promise<ToolContract[
 
 /** Tool contracts as the reference page (docs/reference/mcp-tools.md). */
 export function formatTools(tools: readonly ToolContract[]): string {
-  const cell = (text: string): string => text.replace(/\|/g, '\\|').replace(/\n/g, ' ')
+  // A backslash is escaped too, or one before a `|` would leave the pipe a cell break.
+  const cell = (text: string): string => text.replace(/[\\|]/g, '\\$&').replace(/\n/g, ' ')
   return [
     '# MCP tool contracts',
     '',

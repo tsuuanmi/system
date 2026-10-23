@@ -302,6 +302,8 @@ describe('tool contracts reference', () => {
     expect(page).toContain('| `prompt` | string | yes | the prompt |')
     expect(page).toContain('| `tier` | "economy" \\| "standard" |  |  |')
     expect(page).toContain('## `status`\n\n\n\nNo arguments.')
+    // A backslash is escaped too, so one before a pipe cannot leave the pipe a cell break.
+    expect(formatTools([{ name: 'grep', inputSchema: { properties: { pattern: { type: 'string', description: 'say a\\|b' } } } }])).toContain('| `pattern` | string |  | say a\\\\\\|b |')
   })
 })
 
