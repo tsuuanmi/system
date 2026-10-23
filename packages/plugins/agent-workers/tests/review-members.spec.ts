@@ -1,11 +1,13 @@
 /**
  * Read-only agent Workers as `review` team members (ADR-0049): the real workflow engine, routing,
- * approval queue, and `agents` source, with two scripted agent runtimes of different kinds (so two
- * provider families): one that resumes a conversation, as the Codex runtime does, and one that
+ * approval queue, and `agents` source, with two scripted agent runtimes of different kinds and
+ * provider families: one that resumes a conversation, as the Codex runtime does, and one that
  * cannot, as the Antigravity CLI runtime cannot, whose member's conversation this source replays.
+ * Every member step runs under the review-member profile: no tool call runs, in an empty workspace.
  */
+import { execFileSync } from 'node:child_process'
 import { generateKeyPairSync } from 'node:crypto'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
@@ -21,6 +23,7 @@ import Store from '@tsuuanmi/system-store'
 import WorkerRouter, { type WorkRequirement } from '@tsuuanmi/system-workers'
 import WorkerSessions from '@tsuuanmi/system-worker-sessions'
 import Workflow from '@tsuuanmi/system-workflow'
+import { sha256 } from '@tsuuanmi/system-libs'
 import { afterAll, afterEach, describe, expect, it } from 'vitest'
 import AgentWorkers, { type Config } from '../src/index.ts'
 
@@ -56,7 +59,9 @@ const agreeing: Answer = (message, member) => (isProposal(message)
 class Member implements AgentRuntimeProvider {
   readonly runs: RunSpec[] = []
   readonly calls: ToolVerdict[] = []
-  constructor(readonly kind: string, private readonly resume: boolean, private readonly answer: Answer = agreeing) {}
+  /** Runs before its answer, when set: a test holds a run open, or writes where it must not. */
+  during?: (spec: RunSpec) => Promise<void> | void
+  constructor(readonly kind: string, private readonly resume: boolean, private readonly answer: Answer = agreeing, private readonly handles = true) {}
 
   async probe() {
     return { available: true, detail: `${this.kind} 1.0`, version: '1.0', sandboxes: ['read-only' as const], resume: this.resume, executes: false, readsConfined: true, gatesToolCalls: true }
@@ -66,22 +71,23 @@ class Member implements AgentRuntimeProvider {
     // As the Antigravity CLI runtime does: a conversation it cannot continue is refused, never started anew.
     if (spec.resume && !this.resume) throw new ProviderError('config_error', `${this.kind}: continuing a conversation is not proven`)
     this.runs.push(spec)
-    const handle = spec.resume ?? `${this.kind}-${this.runs.length}`
-    onHandle?.(handle)
+    const handle = this.handles ? spec.resume ?? `${this.kind}-${this.runs.length}` : undefined
+    if (handle) onHandle?.(handle)
     this.calls.push(await spec.toolGate!({ tool: 'Read', input: { file_path: join(spec.workspace, 'README.md') }, callId: `${this.kind}-${this.runs.length}` }, signal))
+    await this.during?.(spec)
     const at = spec.prompt.lastIndexOf(NEXT)
     const message = at >= 0 ? spec.prompt.slice(at + NEXT.length) : spec.prompt
-    return { text: this.answer(message, this.kind), nativeHandle: handle, turns: 1 }
+    return { text: this.answer(message, this.kind), ...(handle ? { nativeHandle: handle } : {}), turns: 1 }
   }
 }
 
+// A review member's workspace: an empty directory outside any repository.
 const WORKSPACE = mkdtempSync(join(tmpdir(), 'system-review-members-'))
-// The one file a member reads, through its gate.
-writeFileSync(join(WORKSPACE, 'README.md'), '# scratch\n')
 afterAll(() => rmSync(WORKSPACE, { recursive: true, force: true }))
 type WorkerConfig = Config['workers'][number]
+/** A review member; its family is a fake one per runtime (ADR-0027: no family literal names a vendor). */
 const member = (id: string, runtime: string, extra: Partial<WorkerConfig> = {}): WorkerConfig => ({
-  id, runtime, workspace: WORKSPACE, sandbox: 'read-only', tier: 'standard', reviewMember: true, ...extra,
+  id, runtime, workspace: WORKSPACE, sandbox: 'read-only', tier: 'standard', reviewMember: true, family: `family-${runtime}`, ...extra,
 })
 
 async function boot(runtimes: AgentRuntimeProvider[], config: Partial<Config> & Pick<Config, 'workers'>, workflow: Record<string, unknown> = {}) {
@@ -119,16 +125,29 @@ describe('read-only agent Workers as review team members (ADR-0049)', () => {
     })
     const workers = Object.fromEntries((await ctx.workers.list()).map((w) => [w.worker, w]))
     const offers = (id: string) => workers[id]!.capabilities.map((c) => [c.capability, c.evidence.kind, c.scope ?? 'any'])
-    expect(workers['agent:codex']).toMatchObject({ schema: 'capability-descriptor@1.4', quotaClass: 'agent-plan', family: 'resumes' })
+    expect(workers['agent:codex']).toMatchObject({ schema: 'capability-descriptor@1.4', quotaClass: 'agent-plan', family: 'family-resumes' })
     expect(offers('agent:codex')).toEqual([['local-data', 'probe', 'any'], ['review', 'probe', 'any'], ['persistent-conversation', 'probe', 'any'], ['reason', 'probe', 'review-member']])
     expect(offers('agent:agy')).toEqual([['local-data', 'probe', 'any'], ['review', 'probe', 'any'], ['reason', 'probe', 'review-member'], ['persistent-conversation', 'conformance', 'review-member']])
-    // Not named a review member: never reason, and no conversation its runtime cannot keep.
+    // Not under the profile: never reason, and no conversation its runtime cannot keep.
     expect(workers['agent:plain']).toMatchObject({ schema: 'capability-descriptor@1.1' })
     expect(offers('agent:plain')).toEqual([['local-data', 'probe', 'any'], ['review', 'probe', 'any']])
     // An ordinary ask never reaches them (P1): fail closed, the scope named.
     await expect(ctx.workers.route(ordinary({ capabilities: ['reason'] }))).rejects.toThrow(/no Worker proves reason \(.*it proves reason only for review-member work/)
-    // A writer is never a review member (INV-15): the configuration is refused.
+    // A writer is never a review member (INV-15); one names its family; it works in no worktree: the configuration is refused.
     expect(() => new AgentWorkers(new Context(), { workers: [member('writer', 'resumes', { sandbox: 'workspace-write' })] })).toThrow(/a review member must be read-only/)
+    const { family: _family, ...nameless } = member('nameless', 'resumes')
+    expect(() => new AgentWorkers(new Context(), { workers: [nameless] })).toThrow(/a review member names its provider family/)
+    expect(() => new AgentWorkers(new Context(), { workers: [member('worktree', 'resumes', { worktreePerRun: true })] })).toThrow(/never a worktree per run/)
+  })
+
+  it('withdraws the profile\'s offers while it cannot be enforced: a runtime that cannot gate every tool call, or keep host state unreadable, proves nothing', async () => {
+    const ungated = new Member('ungated', true)
+    ungated.probe = async () => ({ available: true, detail: 'ungated 1.0', version: '1.0', sandboxes: ['read-only' as const], resume: true, executes: false, readsConfined: true, gatesToolCalls: false })
+    const unconfined = new Member('unconfined', false)
+    unconfined.probe = async () => ({ available: true, detail: 'unconfined 1.0', version: '1.0', sandboxes: ['read-only' as const], resume: false, executes: false, readsConfined: false, gatesToolCalls: true })
+    const { ctx } = await boot([ungated, unconfined], { workers: [member('ungated', 'ungated'), member('unconfined', 'unconfined')] })
+    for (const worker of await ctx.workers.list()) expect(worker, worker.worker).toMatchObject({ state: 'unavailable', capabilities: [] })
+    await expect(ctx.workers.route(requirement())).rejects.toThrow(/no Worker proves reason, persistent-conversation/)
   })
 
   it('runs a review with two agent members: one continues natively, the other by replay, each ballot judged on what its member read; asks and brainstorms never reach them', async () => {
@@ -138,7 +157,7 @@ describe('read-only agent Workers as review team members (ADR-0049)', () => {
     const done = await ctx.workflow.wait(ctx.workflow.start({ template: 'review', input: MATERIAL, classification: 'public' }).runId, 60_000)
     expect(done).toMatchObject({ status: 'completed' })
     expect(done.answer).toMatch(/^outcome: pass; method: team-majority; winner: pass;/)
-    // Two provider families, one per member (ADR-0027): an agent Worker's family is its runtime.
+    // Two provider families, one per member (ADR-0027): each review member's, as the operator named it.
     const byId = Object.fromEntries(done.nodes.map((n) => [n.nodeId, n]))
     expect(new Set([byId['review:m1:propose']!.worker, byId['review:m2:propose']!.worker])).toEqual(new Set(['agent:codex', 'agent:agy']))
     // Every member step is review-member work, needing reason and its conversation; nothing else is.
@@ -163,10 +182,24 @@ describe('read-only agent Workers as review team members (ADR-0049)', () => {
     // Its replay keeps no native handle: no brief claims to resume one.
     const ballotBrief = ctx.artifacts.get(ctx.workflow.records(done.runId).find((r) => r.nodeId === `review:m${byId['review:m1:propose']!.worker === 'agent:agy' ? 1 : 2}:ballot:1`)!.execution!.brief!)!.body
     expect(ballotBrief).not.toHaveProperty('resume')
-    // Every run carried the run's gate, and the policy judged every tool call (the tool gate is unchanged).
+    // Every run carried the run's gate, which denied every tool call under the review-member profile.
     expect([...resumes.runs, ...replays.runs].every((r) => typeof r.toolGate === 'function')).toBe(true)
-    expect([...resumes.calls, ...replays.calls].map((v) => v.decision)).toEqual(['allow', 'allow', 'allow', 'allow'])
+    expect([...resumes.calls, ...replays.calls].map((v) => v.decision)).toEqual(['deny', 'deny', 'deny', 'deny'])
+    for (const verdict of [...resumes.calls, ...replays.calls]) expect((verdict as { reason?: string }).reason).toMatch(/^a review member answers from the material in its prompt alone: the review-member profile allows no tool call \(ADR-0049\) \(decision sha256:/)
     expect([...resumes.runs, ...replays.runs].every((r) => r.sandbox === 'read-only')).toBe(true)
+    expect(readdirSync(WORKSPACE)).toEqual([])
+    // Each answer is recorded with its profile, and the replayed one bound to exactly the turns it was sent.
+    const results = (worker: string) => (ctx.store.db.prepare('SELECT result FROM agent_runs WHERE worker = ? ORDER BY created_at, run_id').all(worker) as Array<{ result: string }>)
+      .map((r) => ctx.artifacts.get(r.result as `sha256:${string}`)!)
+    const native = results('agent:codex')
+    expect(native.map((a) => a.body)).toEqual([expect.objectContaining({ schema: 'agent-result@1.3', profile: 'review-member' }), expect.objectContaining({ schema: 'agent-result@1.3', profile: 'review-member', nativeHandle: 'resumes-1' })])
+    for (const a of native) expect(a.body).not.toHaveProperty('replay')
+    const [first, second] = results('agent:agy')
+    expect(first!.body).toMatchObject({ schema: 'agent-result@1.3', profile: 'review-member', promptHash: sha256(replays.runs[0]!.prompt) })
+    expect(first!.body).not.toHaveProperty('replay')
+    const proposalRun = (first!.body as { runId: string }).runId
+    expect(second!.body).toMatchObject({ profile: 'review-member', replay: { runs: [proposalRun], answers: [first!.id], promptHash: sha256(replayed) } })
+    expect(second!.inputs).toEqual([first!.id])
     // An ask and a brainstorm fail closed, with nothing sent to an agent (P1).
     const asked = await ctx.workflow.wait(ctx.workflow.start({ template: 'ask', input: 'q', classification: 'public' }).runId, 30_000)
     expect(asked).toMatchObject({ status: 'failed', error: { message: expect.stringMatching(/no Worker proves reason/) } })
@@ -186,8 +219,8 @@ describe('read-only agent Workers as review team members (ADR-0049)', () => {
     const done = await ctx.workflow.wait(ctx.workflow.start({ template: 'review', input: MATERIAL, classification: 'public' }).runId, 60_000)
     expect(done).toMatchObject({ status: 'completed' })
     expect(done.answer).toMatch(/^outcome: pass; method: team-majority;/)
-    expect(done.nodes.filter((n) => /:debate:1$/.test(n.nodeId)).map((n) => n.state)).toEqual(['COMPLETED', 'COMPLETED'])
-    expect(ctx.workflow.records(done.runId).find((r) => /:debate:1$/.test(r.nodeId))!.requirement).toMatchObject({ scope: 'review-member' })
+    expect(done.nodes.filter((n) => n.nodeId.endsWith(':debate:1')).map((n) => n.state)).toEqual(['COMPLETED', 'COMPLETED'])
+    expect(ctx.workflow.records(done.runId).find((r) => r.nodeId.endsWith(':debate:1'))!.requirement).toMatchObject({ scope: 'review-member' })
     expect(resumes.runs.map((r) => r.resume)).toEqual([undefined, 'resumes-1', 'resumes-1'])
     const debate = replays.runs[2]!.prompt
     expect(debate).toMatch(/^This message continues a conversation you had earlier\. Its 2 earlier turn\(s\) follow/)
@@ -240,8 +273,87 @@ describe('read-only agent Workers as review team members (ADR-0049)', () => {
     const other = ordinary()
     expect(await run('a1', 'agent:agy', 'ses_ask', other)).toMatchObject({ status: 'completed' })
     expect(await run('a2', 'agent:agy', 'ses_ask', other)).toMatchObject({ status: 'failed', submitted: false, error: { kind: 'config_error', message: expect.stringMatching(/cannot continue session ses_ask: its runtime cannot resume/) } })
-    expect(await run('p1', 'agent:plain', 'ses_plain')).toMatchObject({ status: 'completed' })
-    expect(await run('p2', 'agent:plain', 'ses_plain')).toMatchObject({ status: 'failed', submitted: false, error: { kind: 'config_error' } })
-    expect(replays.runs.map((r) => r.prompt).filter((p) => /^(a2|p2)$/.test(p))).toEqual([])
+    // A Worker not under the profile never runs a review member's step, even its first.
+    expect(await run('p1', 'agent:plain', 'ses_plain')).toMatchObject({ status: 'failed', submitted: false, error: { kind: 'config_error', message: expect.stringMatching(/not under the review-member profile/) } })
+    expect(await run('p2', 'agent:plain', 'ses_plain', other)).toMatchObject({ status: 'completed' })
+    expect(await run('p3', 'agent:plain', 'ses_plain', other)).toMatchObject({ status: 'failed', submitted: false, error: { kind: 'config_error' } })
+    expect(replays.runs.map((r) => r.prompt).filter((p) => /^(a2|p1|p3)$/.test(p))).toEqual([])
   })
+
+  it('runs a review member\'s step only in an empty workspace outside any repository, and trusts no answer after which it changed', async () => {
+    const base = mkdtempSync(join(tmpdir(), 'system-review-members-ws-'))
+    cleanups.push(() => rmSync(base, { recursive: true, force: true }))
+    const filled = join(base, 'filled')
+    mkdirSync(filled)
+    writeFileSync(join(filled, 'AGENTS.md'), 'Instructions a runtime would read on its own.\n')
+    const repository = join(base, 'repository')
+    mkdirSync(join(repository, 'inner'), { recursive: true })
+    execFileSync('git', ['init', '-q', repository])
+    const written = join(base, 'written')
+    mkdirSync(written)
+    const replays = new Member('replays', false, () => 'an answer')
+    replays.during = (spec) => {
+      if (spec.workspace === written) writeFileSync(join(written, 'note.md'), 'a read-only member wrote this\n')
+    }
+    const { ctx } = await boot([replays], {
+      workers: [member('filled', 'replays', { workspace: filled }), member('nested', 'replays', { workspace: join(repository, 'inner') }), member('writes', 'replays', { workspace: written })],
+    })
+    const source = ctx.workers.source('agents')!
+    const admitted = await ctx.workers.route(requirement())
+    const run = async (worker: string) => source.wait(source.start({ key: worker, worker, prompt: worker, sessionId: `ses_${worker.slice(6)}`, requirement: requirement(), decisions: admitted.decisions }).id, 10_000)
+    expect(await run('agent:filled')).toMatchObject({ status: 'failed', submitted: false, error: { kind: 'config_error', message: expect.stringMatching(/workspace .*filled is not empty .*material is its prompt alone; nothing was run/) } })
+    expect(await run('agent:nested')).toMatchObject({ status: 'failed', submitted: false, error: { kind: 'config_error', message: expect.stringMatching(/workspace .*inner is inside the repository .*repository, whose files a runtime may read on its own/) } })
+    expect(replays.runs).toHaveLength(0)
+    expect(await run('agent:writes')).toMatchObject({ status: 'failed', error: { kind: 'reconciliation_failed', message: expect.stringMatching(/no longer empty after a review member's step: the read-only sandbox did not hold, the answer is not trusted/) } })
+  })
+
+  it('never gives a member a fresh conversation for a continuation: a turn it cannot resume or replay whole is refused, unsent', async () => {
+    // A runtime that resumes, and gave the first turn no native handle.
+    const handleless = new Member('handleless', true, () => 'an answer', false)
+    const replays = new Member('replays', false, () => 'an answer')
+    const { ctx } = await boot([handleless, replays], { workers: [member('handleless', 'handleless'), member('agy', 'replays')] })
+    const source = ctx.workers.source('agents')!
+    const admitted = await ctx.workers.route(requirement())
+    const start = (key: string, worker: string, sessionId: string, work: WorkRequirement = requirement()) =>
+      source.start({ key, worker, prompt: key, sessionId, requirement: work, decisions: admitted.decisions }).id
+    const run = async (key: string, worker: string, sessionId: string, work?: WorkRequirement) => source.wait(start(key, worker, sessionId, work), 10_000)
+    expect(await run('h1', 'agent:handleless', 'ses_h')).toMatchObject({ status: 'completed' })
+    expect(await run('h2', 'agent:handleless', 'ses_h')).toMatchObject({ status: 'failed', submitted: false, error: { kind: 'invalid_input', message: expect.stringMatching(/1 earlier turn\(s\) and no native conversation to resume, and a review member is never given a fresh conversation/) } })
+    expect(handleless.runs.map((r) => r.prompt)).toEqual(['h1'])
+    // An earlier turn not run under the profile: tools may have run in it, which a replay cannot hold.
+    expect(await run('m1', 'agent:agy', 'ses_mixed', ordinary())).toMatchObject({ status: 'completed' })
+    expect(await run('m2', 'agent:agy', 'ses_mixed')).toMatchObject({ status: 'failed', submitted: false, error: { kind: 'invalid_input', message: expect.stringMatching(/did not run under the review-member profile, so tools may have run in it that a replay cannot hold/) } })
+    // An earlier turn still open: never replayed without it.
+    let release!: () => void
+    const held = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    cleanups.push(() => release())
+    replays.during = (spec) => (spec.prompt === 'o1' ? held : undefined)
+    const first = start('o1', 'agent:agy', 'ses_open')
+    await expect.poll(() => replays.runs.some((r) => r.prompt === 'o1')).toBe(true)
+    expect(await run('o2', 'agent:agy', 'ses_open')).toMatchObject({ status: 'failed', submitted: false, error: { kind: 'invalid_input', message: expect.stringMatching(/has not finished, so the conversation cannot be replayed whole/) } })
+    release()
+    expect(await source.wait(first, 10_000)).toMatchObject({ status: 'completed' })
+    expect(replays.runs.map((r) => r.prompt).filter((p) => /^(m2|o2)$/.test(p))).toEqual([])
+  }, 60_000)
+
+  it('keeps members of one provider family apart, whatever they prove: family separation is checked apart from capability (ADR-0027)', async () => {
+    const resumes = new Member('resumes', true)
+    const replays = new Member('replays', false)
+    const { ctx } = await boot([resumes, replays], { workers: [member('codex', 'resumes', { family: 'one-vendor' }), member('agy', 'replays', { family: 'one-vendor' })] })
+    // Each proves every capability a member step needs.
+    for (const worker of await ctx.workers.list()) {
+      expect(worker.capabilities.filter((c) => c.scope === 'review-member').map((c) => c.capability), worker.worker).toContain('reason')
+      expect(worker.family).toBe('one-vendor')
+    }
+    const done = await ctx.workflow.wait(ctx.workflow.start({ template: 'review', input: MATERIAL, classification: 'public' }).runId, 60_000)
+    expect(done).toMatchObject({ status: 'failed', error: { message: expect.stringMatching(/provider famil/) } })
+    // The second member was refused on diversity alone, its capabilities proven.
+    const refused = ctx.workflow.explain(done.runId)!.nodes.find((n) => n.nodeId === 'review:m2:propose')!
+    expect(refused.state).not.toBe('COMPLETED')
+    const admission = refused.decisions.filter((d) => d.type === 'admission').map((d) => ctx.artifacts.get(d.id)?.body as { candidates?: Array<{ option: string; reasons: string[] }> } | undefined)[0]
+    expect(admission?.candidates?.flatMap((c) => c.reasons).join('\n')).toMatch(/same provider family/)
+    expect(admission?.candidates?.flatMap((c) => c.reasons).join('\n')).not.toMatch(/does not prove/)
+  }, 120_000)
 })

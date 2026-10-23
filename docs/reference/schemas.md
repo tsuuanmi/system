@@ -275,8 +275,17 @@ guesses.
   `cacheCreationInputTokens`.
 - A crashed process writes no result message and so no `agent-result`; its usage is reconciled
   from the session transcript into a `usage-record`. A record carrying any of the three fields
-  below `@1.2` is refused. Readers accept 1.0 to 1.2. Example:
+  below `@1.2` is refused. Readers accept 1.0 to 1.3. Example:
   [`agent-result.usage.json`](../../schemas/examples/agent-result.usage.json).
+- `agent-result@1.3` adds `profile` and `replay`, written for a review team member's step
+  ([ADR-0049](../decisions/adr/0049-read-only-agent-workers-as-review-members.md)). `profile`
+  `review-member` says the step ran under the review-member profile: its gate denied every tool
+  call, so the answer rests on its prompt alone. `replay` binds an answer to the conversation it
+  continued by replay, on a runtime that keeps none: the earlier runs of its session it was sent, in
+  order (each its message and its answer exactly as they were), their answers (also the artifact's
+  `inputs`), and `promptHash`, the hash of everything the run was sent; the top-level `promptHash`
+  stays the hash of its own message. A record carrying either field below `@1.3` is refused. Example:
+  [`agent-result.review-member.json`](../../schemas/examples/agent-result.review-member.json).
 
 ### `model-answer`
 

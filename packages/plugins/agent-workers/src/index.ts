@@ -16,6 +16,8 @@
  * @module @tsuuanmi/system-agent-workers
  */
 import { randomBytes } from 'node:crypto'
+import { execFileSync } from 'node:child_process'
+import { readdirSync } from 'node:fs'
 import { isAbsolute, join, resolve } from 'node:path'
 import { type Context, Service } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
@@ -74,10 +76,18 @@ export interface AgentWorkerConfig {
   /** How long a limit hit with no reset time keeps the pool closed, in seconds (default 3600). */
   limitCooldownSeconds?: number
   /**
-   * The operator names this read-only Worker a review member (ADR-0049): it offers `reason` for a
-   * review team member's steps only, never for other work, and, when its runtime cannot resume a
-   * conversation, keeps the member's conversation by replay. Default false; refused unless the
-   * sandbox is `read-only`.
+   * Its provider family (ADR-0027): an opaque string the operator gives, the same as other Workers'
+   * of the vendor whose models it runs, so routing keeps team members of one vendor apart. Default:
+   * the runtime. Required for a review member.
+   */
+  family?: string
+  /**
+   * The operator places this read-only Worker's review team member steps under the enforced
+   * review-member profile (ADR-0049): no tool call runs, its workspace is an empty directory outside
+   * any repository, and its material is its prompt alone. The profile, while it can be enforced,
+   * grants `reason` for those steps only, never for other work; a runtime that cannot resume a
+   * conversation keeps the member's by replay. Default false; refused unless the sandbox is
+   * `read-only`, `family` is set, and `worktreePerRun` is off.
    */
   reviewMember?: boolean
 }
@@ -131,6 +141,8 @@ interface RunRow {
   scope?: string | null
   /** The generation of its session it belongs to: a replay holds that generation's earlier turns only. */
   session_generation?: number | null
+  /** JSON: the earlier runs of its session it replays, in order, fixed when it is first prepared (ADR-0049). */
+  replay?: string | null
   created_at: string
   updated_at: string
 }
@@ -169,7 +181,8 @@ export class AgentWorkers extends Service {
       windows: z.dict(z.string()).description('The runtime\'s limit window names mapped to the pool\'s window ids, for example five_hour: five-hour'),
       worktreePerRun: z.boolean().default(false).description('Each run of a workflow run works in that run\'s own git worktree of the workspace (the top level of a git repository), on branch system/run/<runId>'),
       limitCooldownSeconds: z.natural().min(60).max(604_800).default(3600).description('How long a limit hit with no reset time keeps the pool closed'),
-      reviewMember: z.boolean().default(false).description('A review member (ADR-0049): this read-only Worker offers reason for a review team member\'s steps only, and keeps the member\'s conversation by replay when its runtime cannot resume'),
+      family: z.string().min(1).max(128).description('Its provider family (ADR-0027; default: the runtime): the same as other Workers\' of the vendor whose models it runs, so team members of one vendor stay apart. Required for a review member'),
+      reviewMember: z.boolean().default(false).description('Its review team member steps run under the enforced review-member profile (ADR-0049): no tool call runs, its workspace is an empty directory outside any repository, and the profile grants reason for those steps only; a runtime that cannot resume keeps the member\'s conversation by replay. Read-only Workers with a family only'),
     })).default([]).description('Agent-runtime Workers; each policy comes from here only (INV-6)'),
     maxReplayChars: z.natural().min(1).max(2_000_000).default(200_000).description('Characters of earlier turns a review member\'s replayed conversation holds, at most; a turn past it fails, never cut'),
     probeTtlMs: z.natural().default(5 * 60_000).description('How long a probe result stands'),
@@ -200,8 +213,15 @@ export class AgentWorkers extends Service {
       if (this.workers.has(PREFIX + worker.id)) throw new ProviderError('config_error', `duplicate agent Worker ${worker.id}`)
       if ((worker.pool === undefined) !== (worker.account === undefined)) throw new ProviderError('config_error', `agent Worker ${worker.id}: pool and account are set together`)
       if (worker.pool === undefined && Object.keys(worker.windows ?? {}).length) throw new ProviderError('config_error', `agent Worker ${worker.id}: windows map limit windows to a pool, and no pool is set`)
-      // A writer never reviews: a review is independent of the change (INV-15).
-      if (worker.reviewMember && worker.sandbox !== 'read-only') throw new ProviderError('config_error', `agent Worker ${worker.id}: a review member must be read-only (sandbox: read-only); a writer never reviews (INV-15)`)
+      if (worker.family !== undefined && (typeof worker.family !== 'string' || !worker.family.length || worker.family.length > 128)) throw new ProviderError('config_error', `agent Worker ${worker.id}: family must be 1 to 128 characters`)
+      if (worker.reviewMember) {
+        // A writer never reviews: a review is independent of the change (INV-15).
+        if (worker.sandbox !== 'read-only') throw new ProviderError('config_error', `agent Worker ${worker.id}: a review member must be read-only (sandbox: read-only); a writer never reviews (INV-15)`)
+        // Members are kept apart by provider family, which a runtime's name does not tell (ADR-0027).
+        if (worker.family === undefined) throw new ProviderError('config_error', `agent Worker ${worker.id}: a review member names its provider family (family), the same as other Workers' of the vendor whose models it runs, so team members of one vendor stay apart`)
+        // Its workspace is an empty directory outside any repository: a worktree per run is neither.
+        if (worker.worktreePerRun) throw new ProviderError('config_error', `agent Worker ${worker.id}: a review member works in an empty directory outside any repository, never a worktree per run (worktreePerRun)`)
+      }
       // Workers of one workspace agree on worktreePerRun: a reviewer must read the tree it reviews, the writer's worktree.
       const other = [...this.workers.values()].find((w) => resolve(w.workspace) === resolve(worker.workspace) && !!w.worktreePerRun !== !!worker.worktreePerRun)
       if (other) throw new ProviderError('config_error', `agent Workers ${other.id} and ${worker.id} share the workspace ${worker.workspace}, and only one of them works in a worktree per run (worktreePerRun): set it on both`)
@@ -245,11 +265,13 @@ export class AgentWorkers extends Service {
       version: 7,
       sql: 'ALTER TABLE agent_runs ADD COLUMN files TEXT;',
     }, {
-      // A review member's conversation kept by replay (ADR-0049): the kind of work a run is, and the
-      // session's generation it belongs to (a reset starts a new one, whose replay starts empty).
+      // A review member's conversation kept by replay (ADR-0049): the kind of work a run is, the
+      // session's generation it belongs to (a reset starts a new one, whose replay starts empty), and
+      // the earlier runs it replays, fixed when first prepared.
       version: 8,
       sql: `ALTER TABLE agent_runs ADD COLUMN scope TEXT;
       ALTER TABLE agent_runs ADD COLUMN session_generation INTEGER;
+      ALTER TABLE agent_runs ADD COLUMN replay TEXT;
       ALTER TABLE agent_sessions ADD COLUMN generation INTEGER NOT NULL DEFAULT 0;`,
     }])
     ctx.workers.register({
@@ -314,17 +336,20 @@ export class AgentWorkers extends Service {
               ...(worker.sandbox === 'workspace-write' ? ['develop', ...(evidence.executes ? ['validate'] : [])] : ['review']),
               ...(evidence.resume ? ['persistent-conversation'] : []),
             ].map((capability) => ({ capability, evidence: probed })),
-            // A review member (ADR-0049) reasons for a review team member's steps only: never plain
-            // reason, so an ordinary ask never spends agent-plan quota (P1). Its conversation is kept
-            // natively when the runtime resumes one, else by this source's replay, for that work only.
+            // The review-member profile (ADR-0049) grants reason for a review team member's steps only,
+            // and only while it is enforced: the Worker is read-only (checked at load) and ready, so
+            // its runtime enforces the read-only sandbox, keeps host state unreadable, and asks the
+            // run's gate before every tool call, which the gate denies. Never plain reason, so an
+            // ordinary ask never spends agent-plan quota (P1). Its conversation is kept natively when
+            // the runtime resumes one, else by this source's replay, for that work only.
             ...(worker.reviewMember ? [{ capability: 'reason', evidence: probed, scope: REVIEW_MEMBER }] : []),
             ...(worker.reviewMember && !evidence.resume ? [{ capability: 'persistent-conversation', evidence: { kind: 'conformance' as const, at: observedAt }, scope: REVIEW_MEMBER }] : []),
           ]
         : []
       return {
-        // The runtime is who serves the work, so it is the Worker's family (ADR-0027).
+        // The operator's family, else the runtime, who serves the work (ADR-0027).
         schema: proven.some((c) => c.scope) ? 'capability-descriptor@1.4' : 'capability-descriptor@1.1',
-        worker: id, provider: worker.runtime, family: worker.runtime, tier: worker.tier, quotaClass: worker.quotaClass ?? 'agent-plan',
+        worker: id, provider: worker.runtime, family: worker.family ?? worker.runtime, tier: worker.tier, quotaClass: worker.quotaClass ?? 'agent-plan',
         locality: 'local', capabilities: proven, state: ready ? pool : 'unavailable', observedAt,
       }
     }))
@@ -578,7 +603,7 @@ export class AgentWorkers extends Service {
         const worker = this.workers.get(row.worker)
         if (!worker) throw new ProviderError('config_error', `${row.worker} is no longer configured`)
         // What the agent is sent: its prompt, or a review member's conversation replayed before it (ADR-0049).
-        const turn = await this.turnOf(row, worker)
+        const turn = await this.turnOf(row, worker, current)
         // INV-12: the prompt reaches the agent's remote model, so it is checked before anything starts,
         // with the files it will read in its worktree: one check of exactly what the agent is given.
         const placed = row.files ? (JSON.parse(row.files) as Array<{ path: string; text: string }>) : []
@@ -614,41 +639,92 @@ export class AgentWorkers extends Service {
    * What a run sends its agent. Outside a session, or on a runtime that resumes a conversation, its
    * own prompt (continuing the session's native conversation, once it has one). On a runtime that
    * cannot resume, a session's later turn replays the session's earlier completed turns before its
-   * prompt, each its own message and its answer, as they were (ADR-0049): only for a review
-   * member's step on a Worker named a review member, bounded by `maxReplayChars` and never cut, at
-   * the strictest classification of what it holds (INV-12). Any other such turn is refused. Nothing
-   * has reached the agent yet.
+   * prompt, each its own message and its answer, exactly as they were (ADR-0049): only for a review
+   * member's step on a Worker under the review-member profile, every earlier turn one too (so no
+   * tool ran in it), bounded by `maxReplayChars` and never cut, at the strictest classification of
+   * what it holds (INV-12). The runs it replays are fixed when it is first prepared. A continuation
+   * that can be neither resumed nor replayed whole is refused: a member is never given a fresh
+   * conversation in its place. Nothing has reached the agent yet.
    */
-  private async turnOf(row: RunRow, worker: AgentWorkerConfig): Promise<Turn> {
+  private async turnOf(row: RunRow, worker: AgentWorkerConfig, lease: () => Lease): Promise<Turn> {
     const own: Turn = { prompt: row.prompt, classification: row.classification as Classification, native: true }
     if (!row.session_id) return own
+    const member = row.scope === REVIEW_MEMBER
     const evidence = await this.evidence(worker)
     if (evidence.resume) {
       const session = this.ctx.store.db.prepare('SELECT native_handle FROM agent_sessions WHERE session_id = ?').get(row.session_id) as { native_handle: string | null } | undefined
-      return { ...own, ...(session?.native_handle ? { resume: session.native_handle } : {}) }
+      if (session?.native_handle) return { ...own, resume: session.native_handle }
+      if (member) {
+        const earlier = this.earlierRuns(row).filter((r) => r.status !== 'failed')
+        if (earlier.length) throw new ProviderError('invalid_input', `${row.worker}: session ${row.session_id} has ${earlier.length} earlier turn(s) and no native conversation to resume, and a review member is never given a fresh conversation for a continuation; nothing was sent`)
+      }
+      return own
     }
-    // The session's earlier completed turns of the same generation, in order: a reset starts a new one.
-    const earlier = this.ctx.store.db.prepare(`SELECT run_id, prompt, result, classification FROM agent_runs
-      WHERE session_id = ? AND run_id != ? AND status = 'completed' AND COALESCE(session_generation, 0) = ? AND created_at <= ?
-      ORDER BY created_at, run_id`).all(row.session_id, row.run_id, row.session_generation ?? 0, row.created_at) as Array<{ run_id: string; prompt: string; result: string | null; classification: Classification }>
-    if (!earlier.length) return { ...own, native: false }
-    if (!worker.reviewMember || row.scope !== REVIEW_MEMBER) {
+    const replay = row.replay ? (JSON.parse(row.replay) as string[]) : undefined
+    const earlier = replay ? undefined : this.earlierRuns(row)
+    // A first turn: no earlier one, or only failed ones, which are no part of the conversation.
+    if (!replay && earlier!.every((r) => r.status === 'failed')) return { ...own, native: false }
+    if (!worker.reviewMember || !member) {
       throw new ProviderError('config_error', `${row.worker} cannot continue session ${row.session_id}: its runtime cannot resume a conversation, and this source keeps one by replay only for a review member's steps (ADR-0049); nothing was run`)
     }
+    // A turn still open would be left out of the conversation: refused, never replayed without it.
+    const open = earlier?.find((r) => r.status !== 'completed' && r.status !== 'failed')
+    if (open) throw new ProviderError('invalid_input', `${row.worker}: run ${open.run_id} of session ${row.session_id} has not finished, so the conversation cannot be replayed whole; nothing was sent`)
+    const ids = replay ?? earlier!.filter((r) => r.status === 'completed').map((r) => r.run_id)
     let classification = own.classification
-    const turns = earlier.map((run, i) => {
+    const turns = ids.map((id, i) => {
+      const run = this.row(id)
+      if (!run || run.status !== 'completed' || run.session_id !== row.session_id) throw new ProviderError('invalid_input', `${row.worker}: turn ${i + 1} of session ${row.session_id} (run ${id}) is no longer a completed turn of it; nothing was sent`)
+      // Only a turn in which no tool ran is exactly its message and its answer.
+      if (run.scope !== REVIEW_MEMBER) throw new ProviderError('invalid_input', `${row.worker}: turn ${i + 1} of session ${row.session_id} (run ${id}) did not run under the review-member profile, so tools may have run in it that a replay cannot hold; nothing was sent`)
       const answer = run.result ? this.ctx.artifacts.get(run.result as ArtifactRef) : undefined
       const text = (answer?.body as { text?: unknown } | undefined)?.text
-      if (typeof text !== 'string') throw new ProviderError('invalid_input', `${row.worker}: the answer of turn ${i + 1} of session ${row.session_id} (run ${run.run_id}) is no longer stored, so its conversation cannot be replayed; nothing was sent`)
-      for (const c of [run.classification, answer!.classification as Classification]) if (RANK[c] > RANK[classification]) classification = c
-      return { prompt: run.prompt, answer: text }
+      if (typeof text !== 'string') throw new ProviderError('invalid_input', `${row.worker}: the answer of turn ${i + 1} of session ${row.session_id} (run ${id}) is no longer stored, so its conversation cannot be replayed; nothing was sent`)
+      for (const c of [run.classification as Classification, answer!.classification as Classification]) if (RANK[c] > RANK[classification]) classification = c
+      return { runId: id, answer: answer!.id as ArtifactRef, prompt: run.prompt, text }
     })
-    const chars = turns.reduce((n, t) => n + [...t.prompt].length + [...t.answer].length, 0)
+    const chars = turns.reduce((n, t) => n + [...t.prompt].length + [...t.text].length, 0)
     const max = this.config.maxReplayChars ?? 200_000
     if (chars > max) {
       throw new ProviderError('invalid_input', `${row.worker}: session ${row.session_id}'s ${turns.length} earlier turn(s) hold ${chars} characters, over the ${max} its replay holds (agent-workers maxReplayChars); nothing was sent, and the history is never cut`)
     }
-    return { prompt: replayed(turns, row.prompt), classification, native: false }
+    // Fixed once: a run taken up again after a restart replays exactly these turns.
+    if (!replay) this.update(row.run_id, { replay: JSON.stringify(ids) }, lease)
+    return {
+      prompt: replayed(turns.map((t) => ({ prompt: t.prompt, answer: t.text })), row.prompt), classification, native: false,
+      replay: { runs: ids, answers: turns.map((t) => t.answer) },
+    }
+  }
+
+  /** The runs of a run's session before it, of the same generation (a reset starts a new one), in order. */
+  private earlierRuns(row: RunRow): Array<{ run_id: string; status: ExecutionStatus }> {
+    return this.ctx.store.db.prepare(`SELECT run_id, status FROM agent_runs
+      WHERE session_id = ? AND run_id != ? AND COALESCE(session_generation, 0) = ? AND created_at <= ?
+      ORDER BY created_at, run_id`).all(row.session_id, row.run_id, row.session_generation ?? 0, row.created_at) as Array<{ run_id: string; status: ExecutionStatus }>
+  }
+
+  /**
+   * Why a review member's run cannot hold its profile in `workspace` (ADR-0049), or undefined when
+   * it can: the Worker is under the profile, read-only, and its workspace an empty directory outside
+   * any repository, so nothing there reaches the agent without a tool call (a runtime may read
+   * instruction files from its working directory and the repository above it on its own).
+   */
+  private profileProblem(worker: AgentWorkerConfig, workspace: string): string | undefined {
+    if (!worker.reviewMember || worker.sandbox !== 'read-only') return 'it is not under the review-member profile (reviewMember, read-only)'
+    let entries: string[]
+    try {
+      entries = readdirSync(workspace)
+    } catch (error) {
+      return `its workspace ${workspace} cannot be read (${(error as NodeJS.ErrnoException).code ?? (error as Error).message})`
+    }
+    if (entries.length) return `its workspace ${workspace} is not empty (it holds ${entries.length} entr${entries.length === 1 ? 'y' : 'ies'}), and a review member's material is its prompt alone`
+    let repository: string | undefined
+    try {
+      repository = repositoryOf(workspace)
+    } catch (error) {
+      return `git cannot tell whether its workspace ${workspace} is inside a repository (${(error as Error).message.slice(0, 200)})`
+    }
+    return repository === undefined ? undefined : `its workspace ${workspace} is inside the repository ${repository}, whose files a runtime may read on its own`
   }
 
   private async execute(row: RunRow, worker: AgentWorkerConfig, turn: Turn, signal: AbortSignal, lease: () => Lease): Promise<void> {
@@ -667,10 +743,15 @@ export class AgentWorkers extends Service {
         throw new ProviderError('config_error', `${row.worker}: the brief's files cannot be written into ${workspace}: ${(error as Error).message}; nothing was run`, { cause: error })
       })
     }
+    // A review member's step runs under the review-member profile, or not at all (ADR-0049).
+    const member = row.scope === REVIEW_MEMBER
+    const problem = member ? this.profileProblem(worker, workspace) : undefined
+    if (problem) throw new ProviderError('config_error', `${row.worker} cannot run a review member's step under the review-member profile: ${problem}; nothing was run`)
     // Every tool call passes the run's gate before it runs; the runtime's own policy still holds.
+    // Under the review-member profile, the gate denies every one.
     const gate = runGate(this.ctx, {
       runId: row.run_id, worker: row.worker, workspace, sessionId: row.session_id ?? undefined, workflowRunId: row.workflow_run_id ?? undefined,
-      classification: row.classification as 'public' | 'operator-shared' | 'local-private',
+      classification: row.classification as 'public' | 'operator-shared' | 'local-private', ...(member ? { profile: REVIEW_MEMBER } : {}),
     })
     const spec: RunSpec = {
       prompt: turn.prompt, workspace, sandbox: worker.sandbox,
@@ -685,7 +766,7 @@ export class AgentWorkers extends Service {
     const reservation = meter ? await this.reserve(row, meter, lease) : undefined
     try {
       const result = await this.submit(row, worker, provider, spec, turn.native, signal, lease, meter, gate.deferral)
-      this.complete(row, worker, workspace, result, turn.native, lease)
+      this.complete(row, worker, workspace, result, turn, lease)
     } finally {
       if (reservation) await this.release(row.worker, reservation)
     }
@@ -729,8 +810,14 @@ export class AgentWorkers extends Service {
   }
 
   /** Store the result as a `report` artifact and complete the run. */
-  private complete(row: RunRow, worker: AgentWorkerConfig, workspace: string, result: RunResult, native: boolean, lease: () => Lease): void {
+  private complete(row: RunRow, worker: AgentWorkerConfig, workspace: string, result: RunResult, turn: Turn, lease: () => Lease): void {
     const handle = result.nativeHandle ?? this.row(row.run_id)?.native_handle ?? undefined
+    const native = turn.native
+    const member = row.scope === REVIEW_MEMBER
+    // A review member's workspace is still empty: else the read-only sandbox did not hold, and its answer is not trusted.
+    if (member && readdirSync(workspace).length) {
+      throw new ProviderError('reconciliation_failed', `${row.worker}'s workspace ${workspace} is no longer empty after a review member's step: the read-only sandbox did not hold, the answer is not trusted, and the workspace is left for the operator`)
+    }
     // A worktree whose .git file the agent pointed elsewhere is not read by git: its result is not trusted.
     if (workspace !== worker.workspace && !this.worktrees.intact(workspace)) {
       throw new ProviderError('reconciliation_failed', `${row.worker} changed the .git file of its worktree ${workspace}; the result is not trusted, and the worktree is left for the operator`)
@@ -740,9 +827,10 @@ export class AgentWorkers extends Service {
     this.ctx.store.transaction((db) => {
       this.ctx.leases.fence(lease())
       if (handle && row.session_id && native) db.prepare('UPDATE agent_sessions SET native_handle = ? WHERE session_id = ?').run(handle, row.session_id)
-      // `agent-result@1.2` when the runtime reported its token usage, `@1.1` otherwise.
+      // `agent-result@1.3` for a review member's step (its profile, and the turns it replayed), else
+      // `@1.2` when the runtime reported its token usage, `@1.1` otherwise.
       const usage = usageOf(result)
-      const schema = usage.usage ? 'agent-result@1.2' : 'agent-result@1.1'
+      const schema = member ? 'agent-result@1.3' : usage.usage ? 'agent-result@1.2' : 'agent-result@1.1'
       const artifact = this.ctx.artifacts.put({
         kind: 'report', bodySchema: schema,
         body: {
@@ -752,8 +840,12 @@ export class AgentWorkers extends Service {
           ...(captured ? { subject: captured.subject } : {}),
           ...(result.turns !== undefined ? { turns: result.turns } : {}), ...(result.costUsd !== undefined ? { costUsd: result.costUsd } : {}),
           ...(usage.usage && result.model ? { model: result.model } : {}), ...usage,
+          // The answer is bound to exactly what it answered: the earlier turns replayed, by run and answer, and the hash of all it was sent.
+          ...(member ? { profile: REVIEW_MEMBER } : {}),
+          ...(turn.replay ? { replay: { runs: turn.replay.runs, answers: turn.replay.answers, promptHash: sha256(turn.prompt) } } : {}),
           text: result.text,
         },
+        ...(turn.replay ? { inputs: turn.replay.answers } : {}),
         classification: row.classification as 'public' | 'operator-shared' | 'local-private',
         producer: { type: 'worker', ref: row.worker },
       })
@@ -910,6 +1002,21 @@ function execution(row: RunRow): WorkerExecution {
   }
 }
 
+/**
+ * The top level of the git work tree that holds `dir`, by git's own search; undefined when git
+ * finds none. Throws when git cannot tell (a bare repository, an unsafe one, no git): the caller
+ * then fails closed.
+ */
+function repositoryOf(dir: string): string | undefined {
+  try {
+    const env = { PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: process.env.HOME ?? '', GIT_CONFIG_NOSYSTEM: '1', GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0', LC_ALL: 'C' }
+    return execFileSync('git', ['-c', 'core.fsmonitor=false', '-C', dir, 'rev-parse', '--show-toplevel'], { env, timeout: 10_000, stdio: ['ignore', 'pipe', 'pipe'] }).toString('utf8').trim() || dir
+  } catch (error) {
+    if (/not a git repository/i.test(String((error as { stderr?: unknown }).stderr ?? ''))) return undefined
+    throw error
+  }
+}
+
 /** What a run sends its agent, and how its session continues. */
 interface Turn {
   prompt: string
@@ -919,6 +1026,8 @@ interface Turn {
   resume?: string
   /** Its runtime keeps the conversation itself: the session keeps the run's native handle. */
   native: boolean
+  /** The earlier turns it replays (ADR-0049): their runs and their answers, in order. */
+  replay?: { runs: string[]; answers: ArtifactRef[] }
 }
 
 /** A part of a replayed conversation, between fence lines derived from its own text, which that text cannot close. */

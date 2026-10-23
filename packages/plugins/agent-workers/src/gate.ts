@@ -5,7 +5,8 @@
  * it cannot classify is denied (INV-2). `forbid` denies; `auto` and `notify` allow, their rule's
  * required checks still pending (they bind when the result is accepted, not per call); `ask` opens
  * one approval request on the exact call (INV-5) and defers it, and the same exact call in a later
- * run of the same session runs once the operator approved it.
+ * run of the same session runs once the operator approved it. A review member's run (the
+ * review-member profile, ADR-0049) has every call denied: its material is its prompt alone.
  * @module @tsuuanmi/system-agent-workers/gate
  */
 import { lstatSync, realpathSync } from 'node:fs'
@@ -321,6 +322,11 @@ export interface GateRun {
   /** The workflow run the agent run belongs to, for the decisions' and events' lineage. */
   workflowRunId?: string | undefined
   classification: 'public' | 'operator-shared' | 'local-private'
+  /**
+   * The run's step is a review team member's, under the review-member profile (ADR-0049): its
+   * material is its prompt alone, so the gate denies every tool call, each a recorded decision.
+   */
+  profile?: 'review-member' | undefined
 }
 
 /** The call a run's gate deferred: the run stops there and does not complete. */
@@ -476,6 +482,7 @@ export function runGate(ctx: Context, run: GateRun): RunGate {
   }
 
   const judge = async (call: ToolCall): Promise<ToolVerdict> => {
+    if (run.profile === 'review-member') return refuse(call, 'a review member answers from the material in its prompt alone: the review-member profile allows no tool call (ADR-0049)')
     if (deferred) return refuse(call, `the run stopped at its ${deferred.tool} call, which waits for approval request ${deferred.requestId}; no further call runs`)
     const approvals = ctx.get('approvals')
     if (!approvals) return refuse(call, 'no approval queue (ctx.approvals) is loaded, and no tool call runs without its autonomy decision')
