@@ -146,8 +146,8 @@ export interface TaskQuestion {
 /**
  * Where a task run's reservation stands: `due` until the run is recorded on the board; `reserved`
  * (the ledger holds it while the run lives) and then `released`; or `refused`, `spent` when a line
- * of the task's budget is reached, which blocks the task (`budget-spent`), and otherwise because a
- * pool cannot be drawn on, which fails the run.
+ * of the task's budget is reached, which blocks the task (`budget-spent`) unless the run was its
+ * last attempt, and otherwise because a pool cannot be drawn on, which fails the run.
  */
 export interface TaskBudgetView {
   state: 'due' | 'reserved' | 'refused' | 'released'
@@ -158,6 +158,12 @@ export interface TaskBudgetView {
   blocked?: boolean
   /** The lines the block asked to raise the task's budget by (empty: it asked only to go on), fixed before the block. */
   funding?: Array<{ pool: string; unit: 'tokens' | 'usd' | 'turns' | 'runs' | 'minutes'; amount: number }>
+  /**
+   * The spent run was its task's last attempt, so it asked for no funding: the engine's `gate`
+   * decision (`workflow.task-funding`), kept with the run's failure; its report leaves the task
+   * waiting for input (`retries-spent`).
+   */
+  lastAttempt?: ArtifactRef
 }
 
 /** A task run's budget as its row keeps it (`workflow_tasks.budget`): the task's lines (the caps), and its reservation. */
