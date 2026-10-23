@@ -53,6 +53,17 @@ describe('ctx.workerSessions: sessions, mailboxes, direct messages (ADR-0015)', 
     expect(() => ctx.workerSessions.group('grp-1')).toThrow(/already/)
   })
 
+  it('records an Antigravity CLI member\'s runtime as worker-session@1.1, and a record that names it as @1.0 is refused', async () => {
+    const ctx = await boot()
+    team(ctx)
+    ctx.workerSessions.join('grp-1', { sessionId: 'ses_d', role: 'm4', runtime: 'antigravity-cli', worker: 'agent:agy-review', formation: H('d') })
+    const session = ctx.workerSessions.session('ses_d')!
+    new SchemaRegistry().assertRecord(session)
+    expect(session).toMatchObject({ schema: 'worker-session@1.1', binding: { runtime: 'antigravity-cli', generation: 0 } })
+    expect(ctx.workerSessions.session('ses_a')).toMatchObject({ schema: 'worker-session@1.0' })
+    expect(() => new SchemaRegistry().assertRecord({ ...session, schema: 'worker-session@1.0' })).toThrow()
+  })
+
   it('holds messages behind a closed barrier, then delivers them in order (the barrier is a mailbox gate, REQ-SES-3)', async () => {
     const ctx = await boot()
     team(ctx)

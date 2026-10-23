@@ -13,8 +13,7 @@
 > [`login`](../../packages/plugins/login/README.md), and
 > [`credentials-vault`](../../packages/plugins/credentials-vault/README.md); differs from
 > target: Linux only (no `offscreen`); `system account remove`, retained pages per session,
-> sleep prevention, the challenge reload outside a turn, the `imap` code provider, and flagging
-> accounts with equal identity hashes are planned.
+> sleep prevention, the challenge reload outside a turn, and the `imap` code provider are planned.
 
 ## Principle: a genuine browser, headed but invisible
 
@@ -109,7 +108,7 @@ interface ProviderAccountSupport {          // part of ProviderDriver
 | Login profile | a per-account native Chrome profile directory, machine-local, used for interactive login and re-auth. Automated turns never use it, except on a **session-bound** account, which does all its work there (see [context lifecycle](#context-lifecycle), [ADR-0030](../decisions/adr/0030-session-bound-accounts-use-their-login-profile.md)) |
 | Storage | account records and login credentials are encrypted grant records in `ctx.credentials`, provided by the AES-256-GCM vault (canonical: [credentials vault](../../packages/plugins/credentials-vault/README.md)) |
 | Isolation | one browser process, scheduler, and set of conversation bindings per account. Ports are allocated dynamically, not by index. Two accounts never share a context |
-| Distinct identities | at save time, `identity()` is hashed. Accounts whose hashes match are flagged, which REQ-TEAM-4 needs for independent team members |
+| Distinct identities | at save time, `identity()` is hashed. Accounts whose hashes match are one person, so none of them takes work: their Workers are `unavailable`, a turn routed to one fails `reauth_required` unsent, and health names them ([runbook](../operations/runbooks.md#two-accounts-sign-in-as-one-person)). REQ-TEAM-4 needs this for independent team members |
 | Write-back | after each turn, and after a sign-in check that finds the account signed in, refreshed state is written only if both the account revision and the scheduler lease generation are current ([scheduling](scheduling-and-leases.md)). A Save or relogin made while the turn ran has a newer revision, so the turn's write-back is skipped and the newer sign-in wins. A session-bound account writes nothing back: its session lives in its profile |
 | Re-auth | only **positive** signed-out evidence (a login URL or login surface) sets `reauth-required`. A challenge or an unknown state never does |
 | Removal | `system account remove <id>` (planned) deletes the record and the login profile after confirmation |

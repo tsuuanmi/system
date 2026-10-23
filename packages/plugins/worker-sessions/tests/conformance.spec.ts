@@ -11,7 +11,7 @@ import WorkerSessions from '../src/index.ts'
 // The real provider, over a real store and artifact ledger, runs the seam's suite (ADR-0037).
 runSuite(workerSessionsSuite, {
   name: '@tsuuanmi/system-worker-sessions',
-  contract: '1.0',
+  contract: '1.1',
   // Gaps between the documented contract and this provider, reported for reconciliation.
   boot: async () => {
     const dir = mkdtempSync(join(tmpdir(), 'system-sessions-conformance-'))

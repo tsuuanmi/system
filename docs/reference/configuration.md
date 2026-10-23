@@ -47,7 +47,7 @@
 | `workers[].account` | string |  | The account the pool belongs to; required with pool |
 | `workers[].windows` | Record<string, string> | `{}` | The runtime's limit window names mapped to the pool's window ids, for example five_hour: five-hour |
 | `workers[].worktreePerRun` | boolean | `false` | Each run of a workflow run works in that run's own git worktree of the workspace (the top level of a git repository), on branch system/run/<runId> |
-| `workers[].limitCooldownSeconds` | number (60…604800) | `3600` | How long a limit hit with no reset time keeps the pool closed |
+| `workers[].limitCooldownSeconds` | number (60…604800) | `3600` | How long a limit hit with no reset time keeps the pool closed; with no pool, how long every Worker of its runtime cools down |
 | `workers[].family` | string (1…128) |  | Its provider family (ADR-0027; default: the runtime): the same as other Workers' of the vendor whose models it runs, so team members of one vendor stay apart. Required for a review member |
 | `workers[].reviewMember` | boolean | `false` | Its review team member steps run under the enforced review-member profile (ADR-0049): no tool call runs, its workspace is an empty directory outside any repository, and the profile grants reason for those steps only; a runtime that cannot resume keeps the member's conversation by replay. Read-only Workers with a family only |
 | `maxReplayChars` | number (1…2000000) | `200000` | Characters of earlier turns a review member's replayed conversation holds, at most; a turn past it fails, never cut |

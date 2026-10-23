@@ -25,6 +25,17 @@ describe('host health (REQ-HOST-6)', () => {
     expect(await check({ minFreeBytes: Number.MAX_SAFE_INTEGER }, 'disk')).toMatchObject({ state: 'degraded' })
   })
 
+  it('is degraded by accounts signed in as one person, naming them and the runbook (REQ-ACC-7)', async () => {
+    const duplicates = await check({ duplicateAccounts: async () => [['chatgpt-main', 'chatgpt-2']] }, 'accounts')
+    expect(duplicates).toMatchObject({ state: 'degraded', detail: expect.stringMatching(/^chatgpt-main and chatgpt-2 are signed in as the same person, so none of them takes work: .*runbooks\.md#two-accounts-sign-in-as-one-person/) })
+    // With an account to sign in again too, both are named.
+    const both = await check({ accounts: async () => [{ id: 'main', status: 'reauth-required' }], duplicateAccounts: async () => [['a', 'b']] }, 'accounts')
+    expect(both?.detail).toMatch(/main \(reauth-required\).*; a and b are signed in as the same person/)
+    expect(await check({ duplicateAccounts: async () => [] }, 'accounts')).toMatchObject({ state: 'ok' })
+    // A source that cannot say fails the check closed, as any other.
+    expect(await check({ duplicateAccounts: async () => { throw new Error('vault locked') } }, 'accounts')).toMatchObject({ state: 'down', detail: expect.stringContaining('vault locked') })
+  })
+
   it('advises on a vault key beside the vault without alarming: the default must not page every install', async () => {
     expect(await check({ keyCustody: () => ({ keyApart: false }) }, 'vault-key')).toMatchObject({ state: 'ok', detail: expect.stringContaining('key-custody') })
   })

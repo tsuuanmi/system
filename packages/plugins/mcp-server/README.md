@@ -37,7 +37,8 @@ Claude Code and Codex, and the `system` CLI. It is the primary client interface
     check found in it with the decision that recorded it, from `ctx.pluginHost` when mounted;
     REQ-HOST-7), and **health** (REQ-HOST-6, `src/health.ts`):
     each check (plugins of the composition, their manifests, refused workflow templates, runtime, store integrity, free
-    disk, vault key custody, accounts to sign in again, Worker availability,
+    disk, vault key custody, accounts to sign in again or signed in as one person
+    (`duplicateIdentities`), Worker availability,
     login profiles held for a login, open with their kept tabs, or blocked by a
     process that could not be stopped (`login-profiles`, from `browser`), provider UI drift within
     `driftWindowHours`) as `ok`,

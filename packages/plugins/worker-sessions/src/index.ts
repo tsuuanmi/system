@@ -33,13 +33,16 @@ declare module '@deepseek-ai/cordis' {
 const WAKING = new Set<Message['intent'] | undefined>([undefined, 'inform', 'request', 'critique', 'handoff', 'input-required'])
 
 export type SessionState = 'FORMING' | 'IDLE' | 'ACTIVE' | 'INPUT_REQUIRED' | 'FAILED' | 'CLOSED'
-/** The session binding's runtime kinds: the `worker-session@1.0` schema's vocabulary (metadata, never routing). */
-export const RUNTIMES = ['website', 'claude-agent-sdk', 'codex-sdk', 'acp', 'a2a', 'local-tool', 'model-api'] as const
+/**
+ * The session binding's runtime kinds: the `worker-session@1.x` schema's vocabulary (metadata, never
+ * routing). `antigravity-cli` came with `@1.1`.
+ */
+export const RUNTIMES = ['website', 'claude-agent-sdk', 'codex-sdk', 'antigravity-cli', 'acp', 'a2a', 'local-tool', 'model-api'] as const
 export type Runtime = typeof RUNTIMES[number]
 
-/** A `worker-session@1.0` record. */
+/** A `worker-session@1.x` record: `@1.1` when its binding's runtime is one `@1.0` does not name, `@1.0` otherwise. */
 export interface WorkerSession {
-  schema: 'worker-session@1.0'
+  schema: 'worker-session@1.0' | 'worker-session@1.1'
   sessionId: string
   group?: string
   runId?: string
@@ -198,7 +201,7 @@ export class WorkerSessions extends Service {
         return existing
       }
       const record: WorkerSession = {
-        schema: 'worker-session@1.0', sessionId: member.sessionId, group,
+        schema: member.runtime === 'antigravity-cli' ? 'worker-session@1.1' : 'worker-session@1.0', sessionId: member.sessionId, group,
         ...(member.runId ? { runId: member.runId } : {}), ...(member.nodeId ? { nodeId: member.nodeId } : {}),
         worker: member.worker, role: member.role, formation: member.formation, state: 'IDLE', binding: { runtime: member.runtime, generation: 0 },
         policy: { mayMessage: member.mayMessage ?? [group], ...(row.barrier_open ? {} : { barrier: 'independent-first' }) },

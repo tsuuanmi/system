@@ -218,7 +218,7 @@ export class McpEndpoint extends McpTools {
       dshHome: dshHome(),
       ...(store ? { storeCheck: () => this.cachedStoreCheck(() => String(Object.values(store.db.prepare('PRAGMA quick_check(1)').get() ?? {})[0])) } : {}),
       ...(credentials?.custody ? { keyCustody: () => credentials.custody!() } : {}),
-      ...(accounts ? { accounts: async () => (await accounts.list()).map((a: { id: string; status: string }) => ({ id: a.id, status: a.status })) } : {}),
+      ...(accounts ? { accounts: async () => (await accounts.list()).map((a: { id: string; status: string }) => ({ id: a.id, status: a.status })), duplicateAccounts: () => accounts.duplicateIdentities() } : {}),
       ...(workers ? { workers: async () => (await workers.list()).map((w: { worker: string; state: string }) => ({ worker: w.worker, state: w.state })) } : {}),
       ...(eventLog ? { events: (type: string, since: string) => eventLog.query({ type, since, limit: 1000 }) } : {}),
       minFreeBytes: this.config.minFreeBytes ?? 2 ** 30,

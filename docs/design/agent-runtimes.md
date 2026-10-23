@@ -317,10 +317,18 @@ The `agents` source meters a Worker whose configuration names a resource `pool` 
    skipped. Then the reservation is released. The reservation and the record name the board task
    and project the run's brief serves, if any, so the ledger counts the run against that task's
    budget ([a task's budget](workflow-engine.md#a-tasks-budget)).
+4. A run that fails `quota_exhausted` and left no `limited` reading (Codex and the Antigravity
+   CLI report no limit observation) closes every window of the pool: a `limited` reading (source
+   `limit-notice`) for the Worker's `limitCooldownSeconds`, until a later reading says otherwise.
+   A limit is never retried on the same pool unseen ([fail-closed rules](resources.md#fail-closed-rules)).
 
 A run that started before a restart has no result message, so nothing is recorded for it then;
 its usage is reconciled from the agent's session transcript later (planned). A Worker with no
-pool is not metered.
+pool is not metered, but its limits still hold: a run that fails `quota_exhausted` on one (or on a
+metered Worker whose ledger did not take the reading) cools down every Worker of its runtime,
+which share the runtime's one home and so its one sign-in. They are `quota-exhausted` until the
+reset time the runtime named, else for `limitCooldownSeconds`, at most seven days, across a
+restart (event `agent-workers.cooldown`; [agent Workers](../../packages/plugins/agent-workers/README.md)).
 
 ## Admission evidence
 

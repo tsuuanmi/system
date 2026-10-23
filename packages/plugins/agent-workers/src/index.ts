@@ -8,6 +8,8 @@
  * A Worker configured with a resource pool meters its runs through `ctx.resources`
  * (docs/design/resources.md): a reservation before the run (none, nothing runs), one
  * `usage-record` from the runtime's own numbers after it, and its limit observations as readings.
+ * A run that fails `quota_exhausted` with no limit reading the ledger keeps closes its pool for a
+ * bounded cooldown; with no pool, every Worker of its runtime cools down (one home, one sign-in).
  * A Worker configured with `worktreePerRun` works in a git worktree of its own per workflow run
  * (./worktrees.ts). Every tool call of a run passes the run's gate first (./gate.ts): the autonomy
  * policy through `ctx.approvals` (optional; none, and no tool call runs), so a Worker whose runtime
@@ -26,6 +28,7 @@ import {
 } from '@tsuuanmi/system-agent-runtime-core'
 import type {} from '@tsuuanmi/system-artifacts'
 import type { Classification } from '@tsuuanmi/system-egress'
+import type {} from '@tsuuanmi/system-event-log'
 import { type Lease, LeaseLost, StaleGeneration } from '@tsuuanmi/system-leases'
 import { bodyText, BRIEF_FILE_PATH, type BriefFile, captureGitSubject, type ContentId, dshHome, sha256 } from '@tsuuanmi/system-libs'
 import { ProviderError, ProviderScheduler, dispositionOf, promptOfStart, toProviderError } from '@tsuuanmi/system-provider-core'
@@ -73,7 +76,10 @@ export interface AgentWorkerConfig {
    * `system/run/<runId>`, never in the repository's main working tree. Default false.
    */
   worktreePerRun?: boolean
-  /** How long a limit hit with no reset time keeps the pool closed, in seconds (default 3600). */
+  /**
+   * How long a limit hit with no reset time keeps the pool closed, in seconds (default 3600); for a
+   * Worker with no pool, how long every Worker of its runtime cools down.
+   */
   limitCooldownSeconds?: number
   /**
    * Its provider family (ADR-0027): an opaque string the operator gives, the same as other Workers'
@@ -159,6 +165,8 @@ const SWEEP_MS = 60 * 60_000
 const REVIEW_MEMBER: WorkScope = 'review-member'
 const RANK: Record<Classification, number> = { public: 0, 'operator-shared': 1, 'local-private': 2 }
 const now = (): string => new Date().toISOString()
+/** The longest a runtime cools down for one limit hit, whatever reset time its runtime named (INV-9). */
+const MAX_COOLDOWN_MS = 604_800_000
 /** The board task and project a run serves, as its reservation and usage record name them. */
 const scopeOf = (row: RunRow): { taskId?: string; projectId?: string } => ({ ...(row.task_id ? { taskId: row.task_id } : {}), ...(row.project_id ? { projectId: row.project_id } : {}) })
 
@@ -180,7 +188,7 @@ export class AgentWorkers extends Service {
       account: z.string().description('The account the pool belongs to; required with pool'),
       windows: z.dict(z.string()).description('The runtime\'s limit window names mapped to the pool\'s window ids, for example five_hour: five-hour'),
       worktreePerRun: z.boolean().default(false).description('Each run of a workflow run works in that run\'s own git worktree of the workspace (the top level of a git repository), on branch system/run/<runId>'),
-      limitCooldownSeconds: z.natural().min(60).max(604_800).default(3600).description('How long a limit hit with no reset time keeps the pool closed'),
+      limitCooldownSeconds: z.natural().min(60).max(604_800).default(3600).description('How long a limit hit with no reset time keeps the pool closed; with no pool, how long every Worker of its runtime cools down'),
       family: z.string().min(1).max(128).description('Its provider family (ADR-0027; default: the runtime): the same as other Workers\' of the vendor whose models it runs, so team members of one vendor stay apart. Required for a review member'),
       reviewMember: z.boolean().default(false).description('Its review team member steps run under the enforced review-member profile (ADR-0049): no tool call runs, its workspace is an empty directory outside any repository, and the profile grants reason for those steps only; a runtime that cannot resume keeps the member\'s conversation by replay. Read-only Workers with a family only'),
     })).default([]).description('Agent-runtime Workers; each policy comes from here only (INV-6)'),
@@ -273,6 +281,10 @@ export class AgentWorkers extends Service {
       ALTER TABLE agent_runs ADD COLUMN session_generation INTEGER;
       ALTER TABLE agent_runs ADD COLUMN replay TEXT;
       ALTER TABLE agent_sessions ADD COLUMN generation INTEGER NOT NULL DEFAULT 0;`,
+    }, {
+      // A limit no ledger reading holds: the runtime's Workers cool down until then (one home, one sign-in).
+      version: 9,
+      sql: 'CREATE TABLE agent_cooldowns (runtime TEXT PRIMARY KEY, until TEXT NOT NULL, worker TEXT NOT NULL, run_id TEXT NOT NULL, source TEXT NOT NULL, created_at TEXT NOT NULL);',
     }])
     ctx.workers.register({
       name: 'agents',
@@ -324,8 +336,9 @@ export class AgentWorkers extends Service {
       // A Worker whose runtime cannot keep the host state unreadable (ADR-0024), or cannot ask the
       // run's gate before each tool call, is never admitted.
       const proof = admits(evidence, worker) && (!repository || 'repository' in repository)
-      // A metered Worker takes work only while its pool is available (INV-2).
-      const pool = proof ? await this.poolGate(id, worker) : 'ready'
+      // A metered Worker takes work only while its pool is available (INV-2), and no Worker while its
+      // runtime cools down from a limit no ledger reading holds.
+      const pool = proof ? (this.cooldown(worker.runtime) ? 'quota-exhausted' : await this.poolGate(id, worker)) : 'ready'
       const ready = proof && pool !== 'unavailable'
       const probed = { kind: 'probe' as const, at: observedAt }
       const proven: CapabilityOffer[] = ready
@@ -736,6 +749,9 @@ export class AgentWorkers extends Service {
     if (!admits(evidence, worker)) {
       throw new ProviderError('config_error', `${worker.runtime} cannot run this Worker now: ${evidence.gatesToolCalls ? evidence.detail : `${evidence.detail}; it cannot ask the run's gate before each tool call`}`)
     }
+    // Queued before its runtime hit a limit no ledger reading holds: it would hit it again (INV-2).
+    const cooled = this.cooldown(worker.runtime)
+    if (cooled) throw new ProviderError('quota_exhausted', `${worker.runtime} hit a usage limit (run ${cooled.run_id} on ${cooled.worker}); its Workers take no run until ${cooled.until}; nothing was run`)
     const workspace = await this.workspaceOf(row, worker)
     // The brief's files go into the run's own worktree before the agent starts; nothing has reached it yet.
     if (row.files && workspace !== worker.workspace) {
@@ -796,7 +812,16 @@ export class AgentWorkers extends Service {
       const failure = deadline.aborted && !signal.aborted
         ? new ProviderError('timeout', `${row.worker} did not finish within ${this.config.runTimeoutMs ?? 15 * 60_000} ms; it was stopped`, { cause: error })
         : deferred && !signal.aborted ? waiting(row, deferred, error) : error
-      if (meter) await this.account(row, worker, meter, meteringOf(error), toProviderError(failure).kind === 'aborted' ? 'aborted' : 'failed', Date.now() - startedAt)
+      const kind = toProviderError(failure).kind
+      const metering = meteringOf(error)
+      const limited = meter ? await this.account(row, worker, meter, metering, kind === 'aborted' ? 'aborted' : 'failed', Date.now() - startedAt) : false
+      // A limit hit that left no limited reading in the ledger is never retried there unseen (INV-2).
+      if (kind === 'quota_exhausted' && !limited) {
+        // The run's own outcome stays the limit, whatever recording it does.
+        await this.limitHit(row, worker, meter, metering?.limits ?? [], toProviderError(failure).message).catch((caught: unknown) => {
+          this.ctx.logger.warn(`agent Workers: the limit ${row.worker} hit could not be recorded: ${(caught as Error).message}`)
+        })
+      }
       throw failure
     }
     // A run whose gate deferred a call did not finish, whatever its runtime reported (INV-2).
@@ -895,13 +920,14 @@ export class AgentWorkers extends Service {
    * reading, then one `usage-record` (source `runtime-result`). Numbers the runtime did not report
    * stay missing; a run that reported neither tokens nor turns gets no record here (its transcript
    * is reconciled later). The run's own outcome never depends on the ledger: a refusal is logged.
+   * Whether a `limited` reading of the pool was recorded.
    */
-  private async account(row: RunRow, worker: AgentWorkerConfig, meter: Meter, metering: RunMetering | undefined, outcome: 'completed' | 'failed' | 'aborted', durationMs: number): Promise<void> {
-    if (metering?.limits?.length) await this.observe(row.worker, worker, meter, metering.limits)
+  private async account(row: RunRow, worker: AgentWorkerConfig, meter: Meter, metering: RunMetering | undefined, outcome: 'completed' | 'failed' | 'aborted', durationMs: number): Promise<boolean> {
+    const limited = metering?.limits?.length ? await this.observe(row.worker, worker, meter, metering.limits) : false
     const usage = usageOf(metering)
     if (!usage.usage && metering?.turns === undefined) {
       this.ctx.logger.warn(`agent Workers: ${row.run_id} on ${row.worker} reported no usage; it is left to transcript reconciliation`)
-      return
+      return limited
     }
     const model = { ...(worker.model ? { request: worker.model } : {}), ...(metering?.model ? { response: metering.model } : {}) }
     const record: UsageRecord = {
@@ -918,12 +944,14 @@ export class AgentWorkers extends Service {
     await meter.resources.record(record).catch((error: unknown) => {
       this.ctx.logger.warn(`agent Workers: the usage of ${row.run_id} on ${row.worker} was not recorded: ${(error as Error).message}`)
     })
+    return limited
   }
 
-  /** Record the runtime's limit observations as readings of the pool's mapped windows. */
-  private async observe(id: string, worker: AgentWorkerConfig, meter: Meter, limits: LimitObservation[]): Promise<void> {
+  /** Record the runtime's limit observations as readings of the pool's mapped windows; whether a `limited` one was recorded. */
+  private async observe(id: string, worker: AgentWorkerConfig, meter: Meter, limits: LimitObservation[]): Promise<boolean> {
     const pool = await meter.resources.pools({ account: meter.account }).then((pools) => pools.find((p) => p.pool === meter.pool), () => undefined)
     const cooldownMs = (worker.limitCooldownSeconds ?? 3600) * 1000
+    let limited = false
     for (const limit of limits) {
       const windowId = worker.windows?.[limit.window]
       const mapped = windowId === undefined ? undefined : pool?.windows.find((w) => w.id === windowId)
@@ -946,11 +974,71 @@ export class AgentWorkers extends Service {
           ...(mapped && limit.usedPercentage !== undefined ? { usedPercentage: limit.usedPercentage } : {}),
           source: 'runtime-result', observedAt: limit.observedAt,
         }
-        await meter.resources.observe(reading).catch((error: unknown) => {
+        const recorded = await meter.resources.observe(reading).then(() => true, (error: unknown) => {
           this.ctx.logger.warn(`agent Workers: a limit reading of ${id} was not recorded: ${(error as Error).message}`)
+          return false
         })
+        if (recorded && reading.state === 'limited') limited = true
       }
     }
+    return limited
+  }
+
+  /**
+   * A run failed `quota_exhausted`, and no `limited` reading of its pool was recorded: the runtime
+   * reported no limit (Codex and the Antigravity CLI report none), one the ledger could not place,
+   * or the Worker has no pool. The limit is never retried unseen (INV-2):
+   * - a metered Worker's pool gets a `limited` reading (source `limit-notice`, the runtime's failure)
+   *   on every window, for `limitCooldownSeconds`, as a `rejected` limit on an unmapped window does.
+   *   A later reading says otherwise (an `ok` one opens the window again);
+   * - a Worker with no pool, or one whose ledger did not take the readings, cools its runtime down:
+   *   its Workers share the runtime's one home, so its one sign-in. Every one of them is
+   *   `quota-exhausted` until the latest `rejected` reset time its runtime named, else for
+   *   `limitCooldownSeconds`, never more than seven days (INV-9). Event `agent-workers.cooldown`.
+   */
+  private async limitHit(row: RunRow, worker: AgentWorkerConfig, meter: Meter | undefined, limits: LimitObservation[], message: string): Promise<void> {
+    const at = Date.now()
+    const cooldownMs = (worker.limitCooldownSeconds ?? 3600) * 1000
+    const source = message.slice(0, 200)
+    if (meter) {
+      const pool = await meter.resources.pools({ account: meter.account }).then((pools) => pools.find((p) => p.pool === meter.pool), () => undefined)
+      let recorded = 0
+      for (const window of pool?.windows ?? []) {
+        const reading: LimitState = {
+          schema: 'limit-state@1.0', pool: meter.pool, account: meter.account,
+          window: { id: window.id, kind: window.kind, ...(window.seconds !== undefined ? { seconds: window.seconds } : {}) },
+          state: 'limited', cooldownUntil: new Date(at + cooldownMs).toISOString(), source: 'limit-notice', observedAt: new Date(at).toISOString(),
+        }
+        await meter.resources.observe(reading).then(() => recorded++, (error: unknown) => {
+          this.ctx.logger.warn(`agent Workers: the limit ${row.worker} hit was not recorded on pool ${meter.pool}: ${(error as Error).message}`)
+        })
+      }
+      if (recorded) {
+        this.ctx.logger.warn(`agent Workers: ${row.worker} hit a usage limit its runtime gave no reading for; pool ${meter.pool} is closed for ${cooldownMs / 1000} s`)
+        return
+      }
+    }
+    // The latest reset time a rejected limit names, when it is still ahead; else the configured cooldown.
+    const reset = Math.max(0, ...limits.filter((l) => l.status === 'rejected' && l.resetsAt).map((l) => Date.parse(l.resetsAt!)).filter((ms) => Number.isFinite(ms) && ms > at))
+    const until = new Date(Math.min(reset || at + cooldownMs, at + MAX_COOLDOWN_MS)).toISOString()
+    this.ctx.store.db.prepare(`INSERT INTO agent_cooldowns (runtime, until, worker, run_id, source, created_at) VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT (runtime) DO UPDATE SET until = excluded.until, worker = excluded.worker, run_id = excluded.run_id, source = excluded.source, created_at = excluded.created_at
+      WHERE excluded.until > agent_cooldowns.until`).run(worker.runtime, until, row.worker, row.run_id, source, now())
+    try {
+      this.ctx.get('eventLog')?.append({
+        type: 'agent-workers.cooldown', ...(row.workflow_run_id ? { runId: row.workflow_run_id } : {}), ...(row.session_id ? { sessionId: row.session_id } : {}),
+        data: { runtime: worker.runtime, worker: row.worker, agentRun: row.run_id, until, source },
+      })
+    } catch (error) {
+      this.ctx.logger.warn(`agent Workers: the cooldown event of ${row.run_id} was not appended: ${(error as Error).message}`)
+    }
+    this.ctx.logger.warn(`agent Workers: ${row.worker} hit a usage limit no ledger reading holds; every ${worker.runtime} Worker takes no run until ${until}`)
+  }
+
+  /** The cooldown a runtime's Workers are in now, if any; a lapsed one is gone. */
+  private cooldown(runtime: string): { until: string; worker: string; run_id: string } | undefined {
+    this.ctx.store.db.prepare('DELETE FROM agent_cooldowns WHERE until <= ?').run(now())
+    return this.ctx.store.db.prepare('SELECT until, worker, run_id FROM agent_cooldowns WHERE runtime = ?').get(runtime) as { until: string; worker: string; run_id: string } | undefined
   }
 
   private scheduler(worker: string): ProviderScheduler {

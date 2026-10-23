@@ -642,6 +642,20 @@ A turn that fails with `reauth_required` or `challenge` (disposition
 
 Then continue the failed run: `system continue <runId>`.
 
+## Two accounts sign in as one person
+
+Two catalog entries of one provider whose saved sign-ins are the same person are one account, not
+two (REQ-ACC-7): counting them as two would let a team's members, or a failover, share it. So
+none of them takes work. `system health` shows `accounts` degraded, naming them (`chatgpt-main and
+chatgpt-2 are signed in as the same person`), and their Workers are `unavailable`; a turn already
+routed to one fails `reauth_required` before anything is sent.
+
+1. Decide which entry keeps that sign-in.
+2. Sign each other entry in as a different person: `system account login <id>` and Save. Or remove
+   it from the `accounts` row's catalog and restart.
+3. `system health` shows `accounts` ok again once no two entries share a sign-in, and the Workers
+   take work at once. Then `system continue <runId>` for a run that failed on it.
+
 ## Backup and restore
 
 State lives in `~/.dsh/system`:
@@ -1435,12 +1449,21 @@ Reading a limit:
   (`USER_ACTION`) before the agent starts, with a `budget` decision whose reasons name the pool and
   `until` (`system explain <runId>`). A run that hit the limit while working fails the same way and
   is never retried on that pool.
+- A runtime that reports no limit observation (Codex, the Antigravity CLI) still fails the run
+  `quota_exhausted` when it hits one: every window of the pool then reads `limited` (source
+  `limit-notice`) for the Worker's `limitCooldownSeconds`.
+- **A Worker with no pool** is not metered, but a limit it hits cools down every Worker of its
+  runtime (they share one sign-in): `system health` lists them `quota-exhausted`, a run on one
+  fails `quota_exhausted` before the agent starts, and event `agent-workers.cooldown`
+  (`system events --type agent-workers.cooldown`) names the runtime, the run, and `until`: the
+  reset time the runtime named, else `limitCooldownSeconds`, at most seven days. It survives a
+  restart and ends only at `until`.
 
 What to do:
 
-1. **Wait.** The pool opens by itself at `until`. No command ends a limit early (website
-   accounts have `system account clear-cooldown`; the ledger has no counterpart), and a limited
-   pool admits no run that could read it open again.
+1. **Wait.** The pool, or a runtime's cooldown, opens by itself at `until`. No command ends a
+   limit early (website accounts have `system account clear-cooldown`; the ledger and agent
+   runtimes have no counterpart), and a limited pool admits no run that could read it open again.
 2. **Or add capacity:** configure another pool and account for a second Worker, which routing then
    picks; or point the Worker's `pool` and `account` at another pool and restart.
 3. Then `system continue <runId>` for a run that failed on the limit.

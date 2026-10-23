@@ -692,6 +692,108 @@ describe('agents source: metering through ctx.resources (docs/design/resources.m
   })
 })
 
+describe('agents source: a usage limit its runtime gives no reading for is never retried unseen (PROP-0012 phase C, INV-2)', () => {
+  const QUOTA = (): Error => new ProviderError('quota_exhausted', 'codex-sdk: You\'ve hit your usage limit.')
+  const run = async (ctx: Context, key: string, id = 'agent:reviewer') => {
+    const source = ctx.workers.source('agents')!
+    return source.wait(source.start({ key, worker: id, prompt: 'look at it', requirement: requirement(), decisions: { tier: 'sha256:0', route: 'sha256:0' } as never }).id, 10_000)
+  }
+  const near = (iso: string | undefined, ms: number): void => expect(Math.abs(Date.parse(iso!) - ms)).toBeLessThan(5000)
+
+  it('closes a metered Worker\'s pool on every window for the cooldown, as a limit-notice reading, until a later reading says otherwise (REQ-WRK-8)', async () => {
+    const agent = new ScriptedAgent({ fail: QUOTA() })
+    const { ctx } = await boot(agent, { workers: [metered({ limitCooldownSeconds: 600 })] }, undefined, LEDGER)
+    const before = Date.now()
+    expect(await run(ctx, 'k1')).toMatchObject({ status: 'failed', submitted: true, error: { kind: 'quota_exhausted' } })
+    const pool = (await ctx.resources.pools({ account: 'max' }))[0]!
+    expect(pool.readings.map((r) => [r.window.id, r.state, r.source])).toEqual(POOL.windows.map((w) => [w.id, 'limited', 'limit-notice']))
+    for (const reading of pool.readings) near(reading.cooldownUntil, before + 600_000)
+    for (const reading of pool.readings) new SchemaRegistry().assertRecord(reading)
+    expect(pool.available).toBe(false)
+    expect((await ctx.workers.list())[0]).toMatchObject({ state: 'quota-exhausted' })
+    // Not retried there unseen: the next run is refused before the agent starts.
+    expect(await run(ctx, 'k2')).toMatchObject({ status: 'failed', submitted: false, error: { kind: 'quota_exhausted' } })
+    expect(agent.runs).toHaveLength(1)
+    // The limit is the ledger's: no runtime cooldown besides it.
+    expect(ctx.store.db.prepare('SELECT COUNT(*) AS n FROM agent_cooldowns').get()).toEqual({ n: 0 })
+    // A later reading of each window says otherwise, and the Worker takes work again.
+    for (const window of POOL.windows) await ctx.resources.observe(limitReading(window as never, { state: 'ok', observedAt: new Date(Date.now() + 1000).toISOString() }))
+    expect((await ctx.workers.list())[0]).toMatchObject({ state: 'ready' })
+  })
+
+  it('adds nothing when the runtime reported the limit itself: its own reading closes the pool', async () => {
+    const resetsAt = inAnHour()
+    const agent = new ScriptedAgent({ fail: withMetering(QUOTA(), { limits: [{ window: 'five_hour', status: 'rejected', resetsAt, observedAt: new Date().toISOString() }] }) })
+    const { ctx } = await boot(agent, { workers: [metered()] }, undefined, LEDGER)
+    await run(ctx, 'k1')
+    const pool = (await ctx.resources.pools({ account: 'max' }))[0]!
+    expect(pool.readings.map((r) => [r.window.id, r.state, r.source, r.resetsAt])).toEqual([['five-hour', 'limited', 'runtime-result', resetsAt]])
+    expect(pool).toMatchObject({ available: false, until: resetsAt })
+  })
+
+  it('cools down every Worker of the runtime of an unmetered Worker (one home, one sign-in), across a restart, until the cooldown ends; other runtimes keep working (REQ-WRK-8)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'system-agents-'))
+    const config: Config = { workers: [worker({ limitCooldownSeconds: 600 }), worker({ id: 'second' }), worker({ id: 'elsewhere', runtime: 'other' })] }
+    const agent = new ScriptedAgent({ fail: QUOTA() })
+    const first = await boot(agent, config, dir)
+    first.ctx.agentRuntimes.register(Object.assign(new ScriptedAgent(), { kind: 'other' }))
+    const before = Date.now()
+    expect(await run(first.ctx, 'k1')).toMatchObject({ status: 'failed', submitted: true, error: { kind: 'quota_exhausted' } })
+    const states = async (ctx: Context) => Object.fromEntries((await ctx.workers.list()).map((w) => [w.worker, w.state]))
+    expect(await states(first.ctx)).toEqual({ 'agent:reviewer': 'quota-exhausted', 'agent:second': 'quota-exhausted', 'agent:elsewhere': 'ready' })
+    const [event] = first.ctx.eventLog.query({ type: 'agent-workers.cooldown' })
+    expect(event?.data).toMatchObject({ runtime: 'scripted', worker: 'agent:reviewer', source: expect.stringContaining('usage limit') })
+    near(event?.data?.until as string, before + 600_000)
+    // A run on the other Worker of that runtime is refused before the agent starts.
+    const refused = await run(first.ctx, 'k2', 'agent:second')
+    expect(refused).toMatchObject({ status: 'failed', submitted: false, error: { kind: 'quota_exhausted', message: expect.stringMatching(/takes? no run until .*nothing was run/) } })
+    expect(agent.runs).toHaveLength(1)
+    await first.stop()
+    cleanups.splice(cleanups.indexOf(first.stop), 1)
+    // It survives a restart.
+    const second = await boot(new ScriptedAgent(), config, dir)
+    second.ctx.agentRuntimes.register(Object.assign(new ScriptedAgent(), { kind: 'other' }))
+    expect(await states(second.ctx)).toMatchObject({ 'agent:reviewer': 'quota-exhausted', 'agent:second': 'quota-exhausted' })
+    // Once it ends, the Workers take work again.
+    second.ctx.store.db.prepare('UPDATE agent_cooldowns SET until = ?').run(new Date(Date.now() - 1000).toISOString())
+    expect(await states(second.ctx)).toEqual({ 'agent:reviewer': 'ready', 'agent:second': 'ready', 'agent:elsewhere': 'ready' })
+    expect(await run(second.ctx, 'k3')).toMatchObject({ status: 'completed' })
+  })
+
+  it('cools an unmetered runtime down until the reset its runtime named, at most seven days (INV-9)', async () => {
+    const resetsAt = new Date(Date.now() + 2 * 3_600_000).toISOString()
+    const soon = { limits: [{ window: 'five_hour', status: 'rejected' as const, resetsAt, observedAt: new Date().toISOString() }] }
+    const { ctx } = await boot(new ScriptedAgent({ fail: withMetering(QUOTA(), soon) }), { workers: [worker()] })
+    await run(ctx, 'k1')
+    expect(ctx.store.db.prepare('SELECT until FROM agent_cooldowns WHERE runtime = ?').get('scripted')).toEqual({ until: resetsAt })
+    const far = { limits: [{ window: 'seven_day', status: 'rejected' as const, resetsAt: new Date(Date.now() + 30 * 86_400_000).toISOString(), observedAt: new Date().toISOString() }] }
+    const capped = await boot(new ScriptedAgent({ fail: withMetering(QUOTA(), far) }), { workers: [worker()] })
+    const before = Date.now()
+    await run(capped.ctx, 'k1')
+    near((capped.ctx.store.db.prepare('SELECT until FROM agent_cooldowns').get() as { until: string }).until, before + 7 * 86_400_000)
+  })
+
+  it('cools the runtime down when the ledger does not take the limit reading, so a metered Worker fails closed too', async () => {
+    const agent = new ScriptedAgent({ fail: QUOTA() })
+    const { ctx } = await boot(agent, { workers: [metered()] }, undefined, LEDGER)
+    ctx.resources.observe = async () => {
+      throw new Error('the ledger is read-only')
+    }
+    await run(ctx, 'k1')
+    expect((await ctx.resources.pools({ account: 'max' }))[0]!.available).toBe(true)
+    expect((await ctx.workers.list())[0]).toMatchObject({ state: 'quota-exhausted' })
+    expect(await run(ctx, 'k2')).toMatchObject({ status: 'failed', submitted: false, error: { kind: 'quota_exhausted' } })
+    expect(agent.runs).toHaveLength(1)
+  })
+
+  it('cools nothing down for a failure that is not a usage limit', async () => {
+    const { ctx } = await boot(new ScriptedAgent({ fail: new ProviderError('session_broken', 'the agent broke') }), { workers: [worker()] })
+    await run(ctx, 'k1')
+    expect((await ctx.workers.list())[0]).toMatchObject({ state: 'ready' })
+    expect(ctx.store.db.prepare('SELECT COUNT(*) AS n FROM agent_cooldowns').get()).toEqual({ n: 0 })
+  })
+})
+
 // Real git repositories, worktrees, and a workflow run end to end: slower than the 5 s default on CI runners.
 describe('agents source: a git worktree per workflow run (worktreePerRun; PROP-0010 B3)', { timeout: 60_000 }, () => {
   const ORIGINAL = 'def add(a, b):\n    return a - b\n'
