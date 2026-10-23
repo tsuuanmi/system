@@ -12,7 +12,8 @@
 > handoff envelopes, the plan's side-effect classes, and convergence blocker reports are
 > planned. A board task's `run.brief` is not set: each execution names its own
 > [brief](#briefs). Only a remediation fix's gate asks the [approval queue](#remediation-on-the-approval-queue);
-> a planner's plan gate is still the operator's `approve`.
+> a planner's plan gate is still the operator's `approve`. A task's budget is reserved once per
+> run, before it starts work, not per execution ([a task's budget](#a-tasks-budget)).
 
 There is one engine, and every multi-step job runs on it as an append-only DAG
 ([ADR-0012](../decisions/adr/0012-dag-execution-model.md)). It combines three
@@ -555,6 +556,9 @@ stateDiagram-v2
 | due → failed | the ledger refused it for want of a pool (not configured, or unavailable since the start), or refused the request itself: the run fails as `quota_exhausted` with nothing of it run | its report is a failed attempt (`reconcileRun`), through the board's gate |
 | reserved → released | when the run finishes, completed or not; a reservation a stop left held is released at the next start | a ledger that does not release it: the hold expires on its own (`holdSeconds`, INV-9) |
 
+- **Funding** raises no line: the board has no move that changes a task's budget, so an approval
+  of the `funding` request gives an attempt whose run the ledger refuses again while the line is
+  reached (each such attempt counts). To go on, the work is proposed again with larger lines.
 - **Before, never after** (resources rule 4): a run that overdraws its lines while it runs is
   not stopped mid-run; what it drew is recorded under the task, so the task's next attempt is
   refused, and the brief tells each Worker what is left.

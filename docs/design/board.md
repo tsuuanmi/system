@@ -9,12 +9,17 @@
 > Implemented in [`board`](../../packages/plugins/board/README.md) (definition
 > [`board-core`](../../packages/board-core/README.md)); its bundle row is on, over the
 > [approval queue](../../packages/plugins/approvals/README.md); the
-> [workflow engine](workflow-engine.md#board-tasks) runs a task's attempts. Differs from target:
-> no run blocks its task yet (no budget is enforced per task: the engine counts the usage spent
-> on a task for its briefs, but does not reserve per task; no question reaches the board from a
-> run); `TASKS.md` is
-> rendered on request, and nothing writes it into a workspace yet. The operator accepts or
-> rejects a review on `/ui` ([`web-ui`](../../packages/plugins/web-ui/README.md)).
+> [workflow engine](workflow-engine.md#board-tasks) runs a task's attempts (MCP `run` or
+> `system run --task`): it reserves a task's budget lines on the ledger before its run starts
+> work, and a spent one blocks the task (`budget-spent`,
+> [a task's budget](workflow-engine.md#a-tasks-budget)); a step that cannot finish without a
+> person's answer blocks it on its questions (`question`,
+> [a question from a run](workflow-engine.md#a-question-from-a-run)); and the `TASKS.md`
+> projection (`renderTasks` in [`board-core`](../../packages/board-core/README.md)) is written
+> into a task run's own worktree ([TASKS.md in a run's workspace](workflow-engine.md#tasksmd-in-a-runs-workspace)).
+> Differs from target: a budget is enforced before a run, never during it, so a run can overdraw
+> its last lines; only a Worker source with a worktree per run writes `TASKS.md`. The operator
+> accepts or rejects a review on `/ui` ([`web-ui`](../../packages/plugins/web-ui/README.md)).
 
 The board holds work that outlives a run: projects with charters, and their tasks. A run of the
 [workflow engine](workflow-engine.md) serves one attempt of one task. Only the board moves a
