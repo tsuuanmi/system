@@ -1,10 +1,11 @@
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { SUPPORTED_NODE } from '@tsuuanmi/system-libs'
 import { afterEach, describe, expect, it } from 'vitest'
+import { pinnedPnpm, pnpm, pnpmCommand } from './pnpm.ts'
 import { changelogSection, checkDshPins, checksums, dshPins, lockstepVersion, MANIFEST, onlyDependencyBumps, previousRelease, releaseNotes, unresolvedWorkspaceDependencies, workspacePackages } from './release-artifacts.ts'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
@@ -106,6 +107,41 @@ describe('release artifacts (ADR-0026)', () => {
     expect(() => checkDshPins(before, { version: '1.3.0', pins: bumped })).not.toThrow()
     expect(() => checkDshPins(before, { version: '1.2.4', pins: before.pins })).not.toThrow()
     expect(() => checkDshPins(before, { version: '1.2.4', pins: [...before.pins, ...bumped] })).toThrow(/: \+@deepseek-ai\/cordis@4.0.6-alpha.1$/)
+  })
+
+  it('runs the pnpm packageManager pins, whatever pnpm is on PATH or none (ADR-0026)', () => {
+    const pinned = pinnedPnpm()
+    expect(pnpm(['--version']).trim()).toBe(pinned)
+    expect(pinnedPnpm({ packageManager: `pnpm@${pinned}+sha512.0a1b` })).toBe(pinned)
+    for (const packageManager of ['pnpm@^12.0.0', 'pnpm', 'yarn@4.0.0', undefined]) expect(() => pinnedPnpm({ packageManager })).toThrow(/must pin pnpm as "packageManager": "pnpm@<version>"/)
+
+    // Fakes that print a version: the first that prints the pinned one runs, in a fixed order.
+    const fake = (dir: string, name: string, version: string, js = false): string => {
+      mkdirSync(dir, { recursive: true })
+      const file = join(dir, name)
+      writeFileSync(file, js ? `console.log(${JSON.stringify(version)})\n` : `#!/bin/sh\necho ${version}\n`)
+      chmodSync(file, 0o755)
+      return file
+    }
+    const base = temp()
+    const stale = join(base, 'stale')
+    fake(stale, 'pnpm', '9.0.0')
+    fake(stale, 'corepack', pinned)
+    const running = fake(join(base, 'running'), 'pnpm-native', pinned)
+    const script = fake(join(base, 'script'), 'pnpm.cjs', pinned, true)
+    const current = join(base, 'current')
+    fake(current, 'pnpm', pinned)
+    // The pnpm running the script first, a .cjs one under this Node; never npm's.
+    expect(pnpmCommand({ PATH: stale, npm_execpath: running })).toEqual([running])
+    expect(pnpmCommand({ PATH: stale, npm_execpath: script })).toEqual([process.execPath, script])
+    expect(pnpmCommand({ PATH: stale, npm_execpath: fake(join(base, 'npm'), 'npm-cli.js', pinned, true) })).toEqual(['corepack', 'pnpm'])
+    // Then pnpm on PATH at the pinned version, then corepack's: a pnpm of another version never runs.
+    expect(pnpmCommand({ PATH: `${current}:${stale}` })).toEqual(['pnpm'])
+    expect(pnpmCommand({ PATH: stale })).toEqual(['corepack', 'pnpm'])
+    expect(pnpmCommand({ PATH: stale, npm_execpath: fake(join(base, 'old'), 'pnpm', '9.0.0') })).toEqual(['corepack', 'pnpm'])
+    // None at the pinned version: refused, naming the pin and what each candidate said.
+    fake(join(base, 'none'), 'corepack', '0.34.0')
+    expect(() => pnpmCommand({ PATH: join(base, 'none') })).toThrow(`pnpm ${pinned} (packageManager in package.json) is not reachable: run this through it, put it on PATH, or install corepack (pnpm: not found; corepack pnpm: 0.34.0)`)
   })
 
   it('names one supported Node range in engines, the start-up check, and the CI matrix (ADR-0026, CON-2)', () => {

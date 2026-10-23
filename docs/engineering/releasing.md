@@ -73,6 +73,14 @@ pnpm changeset          # pick the bump; the summary becomes the changelog line
 The notes hold the changelog section of each package that changed. A package
 whose section only lists the group's dependency bumps is left out.
 
+The release scripts run the pnpm that `packageManager` in the root
+[`package.json`](../../package.json) pins, never whichever comes first on `PATH`
+([`scripts/pnpm.ts`](../../scripts/pnpm.ts)): the pnpm running them, else a
+`pnpm` on `PATH` at that version, else `corepack pnpm`. With none of these at
+the pinned version, nothing runs. The root scripts they start (`build`) call
+`pnpm` by name, so building the assets still needs the pinned pnpm on `PATH`
+(`corepack enable` puts it there).
+
 ## Verifying a release
 
 In a directory holding the release's assets:

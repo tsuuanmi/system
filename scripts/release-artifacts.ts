@@ -14,7 +14,8 @@
  * - a patch release keeps the DSH pins of the previous release tag.
  * After packing, every `@tsuuanmi/*` dependency of a tarball must be another tarball at exactly
  * that version. Nothing is published. `--verify` runs only the checks before building; it needs
- * no install (Node strips the types), so the release workflow runs it first.
+ * no install (Node strips the types), so the release workflow runs it first. pnpm is the version
+ * `packageManager` pins, found as `scripts/pnpm.ts` says, never whichever comes first on PATH.
  *
  *   pnpm release:artifacts [--tag v<version>]
  *   node scripts/release-artifacts.ts --verify --tag v<version>
@@ -24,6 +25,7 @@ import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { pnpm } from './pnpm.ts'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
 export const OUT = join(root, 'dist', 'release')
@@ -36,7 +38,7 @@ export const MANIFEST = /^(schemas|packages\/[^/]+|packages\/plugins\/[^/]+)\/pa
 
 /** Every workspace package, as pnpm lists them (the workspace root left out). */
 export function workspacePackages(): WorkspacePackage[] {
-  const listed = JSON.parse(execFileSync('pnpm', ['ls', '-r', '--depth', '-1', '--json'], { cwd: root, encoding: 'utf8' })) as Array<{ name: string; version: string; path: string }>
+  const listed = JSON.parse(pnpm(['ls', '-r', '--depth', '-1', '--json'])) as Array<{ name: string; version: string; path: string }>
   return listed
     .filter((p) => relative(root, p.path) !== '')
     .map((p) => ({ name: p.name, version: p.version, dir: p.path }))
@@ -177,13 +179,10 @@ function main(): void {
 
   rmSync(OUT, { recursive: true, force: true })
   mkdirSync(OUT, { recursive: true })
-  const pnpm = (args: string[]): void => {
-    execFileSync('pnpm', args, { cwd: root, stdio: 'inherit' })
-  }
   const filters = packages.flatMap((p) => ['--filter', p.name])
-  pnpm(['build'])
-  for (const p of packages) pnpm(['--filter', p.name, 'pack', '--pack-destination', OUT])
-  pnpm(['sbom', '--sbom-format', 'cyclonedx', '--prod', '--split', ...filters, '--out', join(OUT, '%s-%v.cdx.json')])
+  pnpm(['build'], 'inherit')
+  for (const p of packages) pnpm(['--filter', p.name, 'pack', '--pack-destination', OUT], 'inherit')
+  pnpm(['sbom', '--sbom-format', 'cyclonedx', '--prod', '--split', ...filters, '--out', join(OUT, '%s-%v.cdx.json')], 'inherit')
   const tarballs = readdirSync(OUT).filter((name) => name.endsWith('.tgz'))
   if (tarballs.length !== packages.length) throw new Error(`packed ${tarballs.length} tarballs for ${packages.length} packages`)
   const packed = tarballs.map((name) => JSON.parse(execFileSync('tar', ['-xzOf', join(OUT, name), 'package/package.json'], { encoding: 'utf8' })) as { name: string; version: string } & Record<string, unknown>)
