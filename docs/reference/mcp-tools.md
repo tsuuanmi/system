@@ -52,7 +52,7 @@ Scope: `operator`
 | Argument | Type | Required | Description |
 |---|---|---|---|
 | `step` | "begin" \| "verify" | yes | begin, then verify after the sign-in |
-| `provider` | string |  | An agent runtime kind, for example codex-sdk |
+| `provider` | string |  | An agent runtime kind, as its provider registers it |
 | `slot` | integer |  | One slot of the provider |
 | `accountId` | string |  | An agent account id, <provider>:<16 hex> |
 | `accept` | boolean |  | verify only: accept a changed slot's new principal as a new account |
@@ -103,7 +103,7 @@ Scope: `operator`
 
 | Argument | Type | Required | Description |
 |---|---|---|---|
-| `provider` | string |  | An agent runtime kind, for example codex-sdk |
+| `provider` | string |  | An agent runtime kind, as its provider registers it |
 | `slot` | integer |  | One slot of the provider |
 | `accountId` | string |  | An agent account id, <provider>:<16 hex> |
 

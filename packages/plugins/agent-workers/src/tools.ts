@@ -45,7 +45,7 @@ const refOf = (args: Record<string, unknown>): SlotRef => (typeof args.accountId
 
 export function registerAccountTools(ctx: Context, accounts: AgentAccounts): void {
   const slotShape = {
-    provider: zod.string().max(64).optional().describe('An agent runtime kind, for example codex-sdk'),
+    provider: zod.string().max(64).optional().describe('An agent runtime kind, as its provider registers it'),
     slot: zod.number().int().min(1).max(64).optional().describe('One slot of the provider'),
     accountId: zod.string().max(81).optional().describe('An agent account id, <provider>:<16 hex>'),
   }
