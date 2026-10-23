@@ -4,7 +4,8 @@
 > family *digest* ([ADR-0036](../decisions/adr/0036-guarantee-core-and-capability-plugins.md)).
 > Proposals: [PROP-0010](../proposals/0010-base-version.md),
 > [PROP-0008](../proposals/0008-studio-operating-model.md#mechanism-1-the-digest-layer).
-> Records: [`digest@1.0`](../reference/schemas.md#digest), [`brief@1.1`](../reference/schemas.md#brief);
+> Records: [`digest@1.0`](../reference/schemas.md#digest), [`brief@1.1`](../reference/schemas.md#brief),
+> [`digest-extract@1.0`](../reference/schemas.md#digest-extract) (the extractive provider's);
 > MCP tools [`digests_*`](../reference/schemas.md#mcp-tools-digests_).
 >
 > Defined in [`digest-core`](../../packages/digest-core/README.md); provided by
