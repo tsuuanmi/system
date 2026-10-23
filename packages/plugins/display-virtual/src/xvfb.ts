@@ -26,6 +26,8 @@ export interface XvfbOptions {
   /** Per-signal wait before escalating SIGTERM → SIGKILL (default 2 s). */
   shutdownTimeoutMs?: number
   spawn?: SpawnXvfb
+  /** Where the server keeps its display locks and sockets: `/tmp`, as Xvfb does; a test gives a private directory. */
+  displayRoot?: string
 }
 
 export interface XvfbExit {
@@ -175,7 +177,7 @@ export function startXvfb(options: XvfbOptions): Promise<XvfbHandle> {
       const stop = async (): Promise<void> => {
         await terminate(child, shutdownTimeoutMs)
         // A loaded host may keep Xvfb past its SIGTERM grace (live gate, 2026-10-18).
-        if (child.signalCode === 'SIGKILL') removeStaleDisplay(number, child.pid)
+        if (child.signalCode === 'SIGKILL') removeStaleDisplay(number, child.pid, options.displayRoot)
       }
       resolve({ display: `:${number}`, authority: authority.path, exited, stop })
     })

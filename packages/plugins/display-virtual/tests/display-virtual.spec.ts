@@ -1,7 +1,7 @@
 import type { ChildProcess } from 'node:child_process'
 import { execFileSync } from 'node:child_process'
 import { EventEmitter } from 'node:events'
-import { accessSync, constants, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { PassThrough } from 'node:stream'
@@ -106,9 +106,11 @@ describe('startXvfb (ported from tsuuanmi/internet)', () => {
 
   it('escalates to SIGKILL when Xvfb ignores SIGTERM', async () => {
     const { spawn, calls } = fakeSpawner()
-    const xvfb = await startXvfb({ executable: 'Xvfb', startupTimeoutMs: 200, shutdownTimeoutMs: 20, spawn })
+    // A private display root: the stale-display cleanup after the SIGKILL never reads the host's /tmp.
+    const root = mkdtempSync(join(tmpdir(), 'system-xroot-'))
+    const xvfb = await startXvfb({ executable: 'Xvfb', startupTimeoutMs: 200, shutdownTimeoutMs: 20, spawn, displayRoot: root })
     calls[0]!.child.ignoreTerm = true
-    await xvfb.stop()
+    await xvfb.stop().finally(() => rmSync(root, { recursive: true, force: true }))
     expect(calls[0]!.child.kills).toEqual(['SIGTERM', 'SIGKILL'])
   })
 
@@ -130,22 +132,24 @@ describe('startXvfb (ported from tsuuanmi/internet)', () => {
     }
   })
 
-  it.runIf(process.platform === 'linux' && (() => { try { accessSync('/tmp/.X11-unix', constants.W_OK); return true } catch { return false } })())('cleans up after its own SIGKILL on stop, never after a clean exit', async () => {
+  it('cleans up after its own SIGKILL on stop, never after a clean exit', async () => {
     const number = '987654'
-    const files = [`/tmp/.X${number}-lock`, `/tmp/.X11-unix/X${number}`]
+    const root = mkdtempSync(join(tmpdir(), 'system-xroot-'))
+    mkdirSync(join(root, '.X11-unix'), { mode: 0o700 })
+    const files = [join(root, `.X${number}-lock`), join(root, '.X11-unix', `X${number}`)]
     try {
       for (const kill of [true, false]) {
-        writeFileSync(files[0]!, '      4242\n')
-        writeFileSync(files[1]!, '')
+        writeFileSync(files[0]!, '      4242\n', { mode: 0o600 })
+        writeFileSync(files[1]!, '', { mode: 0o600 })
         const { spawn, calls } = fakeSpawner((c) => setImmediate(() => c.ready(number)))
-        const xvfb = await startXvfb({ executable: 'Xvfb', startupTimeoutMs: 200, shutdownTimeoutMs: 20, spawn })
+        const xvfb = await startXvfb({ executable: 'Xvfb', startupTimeoutMs: 200, shutdownTimeoutMs: 20, spawn, displayRoot: root })
         calls[0]!.child.ignoreTerm = kill
         await xvfb.stop()
         // A clean exit removes its own files (a real Xvfb does); the fake leaves them, so they stay.
         expect(files.map((f) => existsSync(f))).toEqual(kill ? [false, false] : [true, true])
       }
     } finally {
-      for (const f of files) rmSync(f, { force: true })
+      rmSync(root, { recursive: true, force: true })
     }
   })
 })
