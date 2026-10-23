@@ -1,9 +1,10 @@
 # ADR-0050: The approval queue proposes, never applies, a policy change from repeated identical approvals
 
-- **Status:** Proposed
-- **Date:** 2026-10-23
+- **Status:** Accepted
+- **Date:** 2026-10-23 (accepted 2026-10-23, by the operator, with the feature off by default)
 - **Related:** [ADR-0036](0036-guarantee-core-and-capability-plugins.md),
-  [ADR-0041](0041-policy-changes-through-the-approval-queue.md),
+  [ADR-0041](0041-policy-changes-through-the-approval-queue.md) (superseded in part: the operator
+  is no longer the only one who proposes),
   [PROP-0008](../../proposals/0008-studio-operating-model.md#fewer-approvals-reliable-results),
   [PROP-0010](../../proposals/0010-base-version.md),
   [INV-2](../../architecture/invariants.md#inv-2-fail-closed),
@@ -47,7 +48,9 @@ often for every project. Only a `commands` line is as narrow as what was approve
 
 ## Decision
 
-Option 3.
+Option 3. It supersedes ADR-0041 in part: the operator is no longer the only one who proposes a
+policy change, since the queue may propose, never apply, the one shape below; only the operator's
+approval applies a change, as before.
 
 - **What counts as identical.** A request's shape is a studio `command` (no project), not
   `local-private`, judged as the `command` class (not already listed, not forbidden), whose argv
@@ -78,7 +81,8 @@ Option 3.
   the queue's own clock after the sweep, so a restart or a second process proposes nothing twice; a
   pass that fails is logged and never stops the queue.
 - **Off by default.** `repeatedApprovals.enabled` turns it on (validated plugin `Config`); the
-  bundle leaves it off until the operator accepts this ADR.
+  bundle leaves it off, and the operator turns it on for the studio in the `approvals` row
+  (accepted that way, 2026-10-23).
 - **The seam.** `approvals` stays at contract 1.1: no method changes, and `PolicyChange` gains the
   optional `origin` (`policy-change@1.1`, a minor). The fake provider and the conformance suite
   are unchanged: a provider need not propose anything.

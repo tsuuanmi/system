@@ -1,6 +1,6 @@
 # ADR-0015: Durable Worker sessions with direct peer messaging
 
-- **Status:** Accepted
+- **Status:** Accepted; amended 2026-10-23 (contract 1.1 names the Antigravity CLI runtime)
 - **Date:** 2026-10-11
 - **Related:** ADR-0006, ADR-0012, INV-7, INV-15,
   [sessions and messaging](../../design/sessions-and-messaging.md),
@@ -72,3 +72,16 @@ Option 3.
   session, not a universal Worker id or a protocol mirror. Native handles stay
   native.
 - Because the model is A2A-shaped, a later A2A adapter translates behavior only.
+
+## Amendment (2026-10-23): contract 1.1 names the Antigravity CLI runtime
+
+`ctx.workerSessions` is a guarantee seam (work state machine), so a change to its contract is
+recorded by ADR ([ADR-0036](0036-guarantee-core-and-capability-plugins.md)). Its conformance
+contract moves from 1.0 to 1.1, additively: a session record's `binding.runtime` gains
+`antigravity-cli` (`worker-session@1.1`), which 1.0 recorded as `local-tool`. A writer writes
+`@1.1` only for that runtime and `@1.0` otherwise; readers take both, and a `@1.0` record naming
+`antigravity-cli` is refused. No method changes, so a consumer at 1.0 keeps working; the suite
+adds `workerSessions.binding-runtime-recorded`, from 1.1 on. The runtime stays metadata, never a routing input.
+The decision above is unchanged. The change is phase C of
+[PROP-0012](../../proposals/0012-agent-accounts.md#seams-and-records-touched), which the operator
+accepted on 2026-10-23 (D23).

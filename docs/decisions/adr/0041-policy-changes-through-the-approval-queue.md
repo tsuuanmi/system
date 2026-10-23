@@ -1,6 +1,6 @@
 # ADR-0041: A policy change goes through the approval queue, and the stored set yields only to the configuration it came from
 
-- **Status:** Accepted
+- **Status:** Accepted; superseded in part by [ADR-0050](0050-the-queue-proposes-a-policy-change-from-repeated-approvals.md) (the queue may also propose, never apply, one commands line from repeated identical approvals; off by default)
 - **Date:** 2026-10-23 (accepted 2026-10-23, by the operator)
 - **Related:** [ADR-0036](0036-guarantee-core-and-capability-plugins.md),
   [ADR-0039](0039-base-guarantee-seam-contract-changes.md),

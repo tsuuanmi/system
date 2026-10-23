@@ -1,7 +1,8 @@
 # ADR-0047: A board task's run stops at its next boundary once the ledger's recorded usage passes the task's lines
 
-- **Status:** Proposed
-- **Date:** 2026-10-23
+- **Status:** Accepted for step 1 (option 2); step 2 (option 3) deferred until the live install
+  shows real overdraws
+- **Date:** 2026-10-23 (step 1 accepted 2026-10-23, by the operator; step 2 deferred the same day)
 - **Related:** [ADR-0036](0036-guarantee-core-and-capability-plugins.md),
   [ADR-0044](0044-funding-raises-a-spent-task-budget.md),
   [PROP-0010](../../proposals/0010-base-version.md),
@@ -80,25 +81,34 @@ rules, so it needs an ADR (ADR-0036).
    usage is never estimated from a model's report (resources rule 3, and the metering guarantee in
    ADR-0036).
 
-## Decision (proposed)
+## Decision
 
-Do option 2 first, then option 3 for runtimes that report progress. Each lands as its own change.
+Proposed: option 2 first (step 1), then option 3 for runtimes that report progress (step 2), each
+as its own change.
+
+**Accepted for step 1 only (2026-10-23, by the operator).** Option 2, the per-step reservation in
+the engine, is accepted, with rule 4 and every seam unchanged; it is built
+([implementation note](#implementation-note-2026-10-23-option-2)). Option 3 is **deferred** until
+the live install shows real overdraws: this record does not accept it. It comes back for the
+operator's decision with that evidence, and with the seam changes listed above, before any of them
+is made.
 
 - **Option 2 changes only the engine.** Rule 4 is unchanged. Where each execution's reservation
   stands goes on the run's row. The ledger's `budget` decision is recorded before any effect
   (INV-13). Each reservation is released when its execution finishes, and a hold that a crash
   leaves behind expires (INV-9). A restart reserves again, never twice (INV-4), and the crash
   suite covers it. A brief still states what the task has left.
-- **Option 3 follows** once an agent runtime reports progress. It goes through the seam changes
-  listed above, each with its conformance scenarios and fakes, and rule 4 is amended in that change.
+- **Option 3, once accepted** (deferred, above), needs an agent runtime that reports progress. It
+  goes through the seam changes listed above, each with its conformance scenarios and fakes, and
+  rule 4 is amended in that change.
 - **Both options** count recorded usage only, never an estimate. Neither stops a tool mid-call.
   Each records every stop as a decision before its effect.
 
 ## Consequences
 
-- Until this is accepted and built, rule 4 stays "before, never after": a run can overdraw its
-  task's last lines. The overdraw is recorded, and then it is either funded (ADR-0044) or the task
-  ends.
+- Rule 4 stays "before, never after", now before each step: while step 2 is deferred, a step in
+  flight can overdraw its task's last lines. The overdraw is recorded, and then it is either funded
+  (ADR-0044) or the task ends.
 - Option 2 limits an overdraw to the steps in flight. One long agent step can still overdraw, up to
   its own `maxTurns`.
 - A run stopped between steps leaves the results of the steps it completed. The next attempt's

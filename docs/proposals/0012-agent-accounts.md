@@ -1,7 +1,7 @@
 ---
 id: PROP-0012
 type: proposal
-status: proposed
+status: accepted
 created: 2026-10-23
 summary: Several accounts per agent runtime (3 Claude Code, 2 Codex CLI, 3 Antigravity CLI), managed by provider and an account id derived from the verified login, never a hand-made name; enrollment slots are only homes; Workers are account × role; an unverified, changed, or duplicate identity is quarantined; and a per-provider setting `accounts: assigned | pooled`, assigned by default and required for personal subscriptions, under which a limit makes an account's work wait and never moves it to another account of that provider, for agent and website accounts alike.
 owners: [operator]
@@ -655,8 +655,26 @@ above and no compatibility path. Records keep their old Worker and pool ids.
 
 ## Decision
 
-Pending the operator's review (D23). On acceptance, phase B writes the two ADRs named above.
+Accepted by the operator on 2026-10-23 (D23): enrollment slots are only homes; the account id is
+the provider and a keyed hash of the verified login principal; Workers are account × role, with
+per-account concurrency, cooldowns, and affinity; an unverified, duplicate, or changed identity is
+quarantined. Accounts are assigned, not pooled: all eight are personal paid subscriptions (D24),
+so a limit makes an account's work wait for its reset and never moves it to another account of
+that provider. Each phase still starts on the operator's go-ahead. Phase B writes the two ADRs
+named above; the [open questions](#open-questions) stay open until the phase that needs each
+answer.
 
 ## Implementation
 
-Nothing yet. The phases are listed [above](#phased-plan).
+Phase C, in part (2026-10-23):
+
+- an Antigravity CLI member's session records `antigravity-cli` (`worker-session@1.1`, the
+  `workerSessions` contract 1.1,
+  [ADR-0015's amendment](../decisions/adr/0015-worker-sessions-and-peer-messaging.md#amendment-2026-10-23-contract-11-names-the-antigravity-cli-runtime));
+- two catalog entries signed in as one person take no work, and health names them (REQ-ACC-7;
+  [runbook](../operations/runbooks.md#two-accounts-sign-in-as-one-person));
+- a `quota_exhausted` run with no limit observation closes its Worker's pool, and with no pool
+  cools its runtime down ([agent Workers](../../packages/plugins/agent-workers/README.md)).
+
+Open in phase C: agent `siblings` and a team's held accounts counted by sibling. The other phases
+are listed [above](#phased-plan).

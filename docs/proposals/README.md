@@ -83,7 +83,7 @@ accepted/implemented -> superseded
   redoes an experiment blindly; promotion through the approval queue. First loop: worker
   agnosticism on the `review` template.
 
-- [PROP-0012: Agent accounts](0012-agent-accounts.md), **proposed**. Several sign-ins per agent
+- [PROP-0012: Agent accounts](0012-agent-accounts.md), **accepted**. Several sign-ins per agent
   runtime (three Claude Code, two Codex CLI, three Antigravity CLI): enrollment slots are only
   homes; the account id is derived from the verified login, never named; an unverified, changed,
   or duplicate identity is quarantined; Workers are account × role with per-account concurrency,
