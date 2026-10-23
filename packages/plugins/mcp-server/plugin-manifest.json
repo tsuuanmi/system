@@ -24,6 +24,11 @@
       "optional": true
     },
     {
+      "seam": "agentWorkers",
+      "range": "^1.0.0",
+      "optional": true
+    },
+    {
       "seam": "artifacts",
       "range": "^1.0.0",
       "optional": true

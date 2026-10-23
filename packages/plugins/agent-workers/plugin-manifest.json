@@ -44,7 +44,17 @@
       "optional": true
     },
     {
+      "seam": "credentials",
+      "range": "^1.0.0",
+      "optional": true
+    },
+    {
       "seam": "eventLog",
+      "range": "^1.0.0",
+      "optional": true
+    },
+    {
+      "seam": "mcp",
       "range": "^1.0.0",
       "optional": true
     },
@@ -61,6 +71,10 @@
     },
     {
       "key": "providers",
+      "sensitive": false
+    },
+    {
+      "key": "accountHomes",
       "sensitive": false
     },
     {

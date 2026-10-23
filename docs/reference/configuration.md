@@ -54,10 +54,12 @@
 | `workers[].limitCooldownSeconds` | number (60…604800) | `3600` | How long a limit hit with no reset time keeps the pool closed; with no pool, how long every Worker of its runtime cools down |
 | `workers[].family` | string (1…128) |  | Its provider family (ADR-0027; default: the runtime): the same as other Workers' of the vendor whose models it runs, so team members of one vendor stay apart. Required for a review member |
 | `workers[].reviewMember` | boolean | `false` | Its review team member steps run under the enforced review-member profile (ADR-0049): no tool call runs, its workspace is an empty directory outside any repository, and the profile grants reason for those steps only; a runtime that cannot resume keeps the member's conversation by replay. Read-only Workers with a family only |
-| `providers` | object[] | `[]` | How each agent runtime's accounts are used; a runtime not listed is assigned (ADR-0052) |
+| `providers` | object[] | `[]` | How each agent runtime's accounts are used and how many may be enrolled; a runtime not listed is assigned, with one slot (ADR-0051, ADR-0052) |
 | `providers[].provider` (required) | string |  | The agent runtime kind, as its provider registers it (the runtime of its Workers) |
 | `providers[].accounts` | "assigned" \| "pooled" | `"assigned"` | assigned (the default; personal subscriptions): a limit on one account never moves its work to another account of this runtime, the work waits; pooled: only with pooledTerms |
 | `providers[].pooledTerms` | any |  | {confirmedBy, confirmedAt, terms}: who confirmed that this runtime's plan terms allow pooling its accounts, when (ISO time), and which terms; required for pooled (ADR-0052) |
+| `providers[].slots` | number (1…64) |  | How many accounts of this runtime may be enrolled (default 1: its own home, adopted as slot 1); each slot is an owner-only home (ADR-0051) |
+| `accountHomes` | string |  | Where enrollment slots 2 and later keep their homes, <accountHomes>/<provider>/<n> (default <DSH_HOME>/system/agent-homes); hidden from every agent |
 | `maxReplayChars` | number (1…2000000) | `200000` | Characters of earlier turns a review member's replayed conversation holds, at most; a turn past it fails, never cut |
 | `probeTtlMs` | number (0…) | `300000` | How long a probe result stands |
 | `runTimeoutMs` | number (1…) | `900000` | Hard deadline per run |

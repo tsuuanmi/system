@@ -23,7 +23,7 @@ A plugin may also consume a service of the dsh launcher itself, which no row pro
 | [gateway-core](../../packages/gateway-core/README.md) | gateways | defines `mcp` | — | — | `libs` |
 | [gateway-responses](../../packages/plugins/gateway-responses/README.md) | gateways | — | `gateway-responses` | `webServer`, `workflow`, `store` | `gateway-core`, `gateway-turns`, `libs` |
 | [gateway-turns](../../packages/gateway-turns/README.md) | gateways | — | — | — | `gateway-core`, `libs` |
-| [mcp-server](../../packages/plugins/mcp-server/README.md) | gateways | `mcp` | `mcp-server` | `webServer`, `accounts` (optional), `artifacts` (optional), `browser` (optional), `credentials` (optional), `eventLog` (optional), `pluginHost` (optional), `providers` (optional), `resources` (optional), `store` (optional), `turns` (optional), `workers` (optional), `workflow` (optional) | `gateway-core`, `libs`, `plugin-host-core`, `resources-core` |
+| [mcp-server](../../packages/plugins/mcp-server/README.md) | gateways | `mcp` | `mcp-server` | `webServer`, `accounts` (optional), `agentWorkers` (optional), `artifacts` (optional), `browser` (optional), `credentials` (optional), `eventLog` (optional), `pluginHost` (optional), `providers` (optional), `resources` (optional), `store` (optional), `turns` (optional), `workers` (optional), `workflow` (optional) | `gateway-core`, `libs`, `plugin-host-core`, `resources-core` |
 | [report](../../packages/plugins/report/README.md) | gateways | — | `report` | `artifacts`, `eventLog`, `approvals` (optional), `board` (optional), `digests` (optional), `mcp` (optional), `resources` (optional) | `approvals-core`, `board-core`, `digest-core`, `gateway-core`, `libs`, `resources-core` |
 | [web-ui](../../packages/plugins/web-ui/README.md) | gateways | — | `web-ui` | `webServer`, `workflow`, `approvals` (optional), `artifacts` (optional), `board` (optional) | `approvals-core`, `board-core`, `gateway-core`, `libs` |
 | [board](../../packages/plugins/board/README.md) | orchestration | `board` | `board` | `store`, `artifacts`, `leases`, `approvals`, `mcp` (optional) | `approvals-core`, `board-core`, `gateway-core`, `leases`, `libs` |
@@ -46,7 +46,7 @@ A plugin may also consume a service of the dsh launcher itself, which no row pro
 | [workers-core](../../packages/workers-core/README.md) | routing | defines `workers` | — | — | — |
 | [agent-runtime-core](../../packages/agent-runtime-core/README.md) | capabilities | defines `agentRuntimes` | — | — | — |
 | [agent-runtimes](../../packages/plugins/agent-runtimes/README.md) | capabilities | `agentRuntimes` | `agent-runtimes` | — | `agent-runtime-core`, `libs` |
-| [agent-workers](../../packages/plugins/agent-workers/README.md) | capabilities | `agentWorkers` | `agent-workers` | `store`, `artifacts`, `leases`, `workers`, `agentRuntimes`, `egress`, `approvals` (optional), `eventLog` (optional), `resources` (optional) | `agent-runtime-core`, `approvals-core`, `leases`, `libs`, `provider-core`, `resources-core`, `workers-core` |
+| [agent-workers](../../packages/plugins/agent-workers/README.md) | capabilities | `agentWorkers` | `agent-workers` | `store`, `artifacts`, `leases`, `workers`, `agentRuntimes`, `egress`, `approvals` (optional), `credentials` (optional), `eventLog` (optional), `mcp` (optional), `resources` (optional) | `agent-runtime-core`, `approvals-core`, `gateway-core`, `leases`, `libs`, `provider-core`, `resources-core`, `workers-core` |
 | [models](../../packages/plugins/models/README.md) | capabilities | `models` | `models` | `llm`, `store`, `artifacts`, `leases`, `workers`, `egress`, `models`, `credentials` (optional), `eventLog` (optional), `mcp` (optional) | `gateway-core`, `leases`, `libs`, `models-core`, `provider-core`, `workers-core` |
 | [models-core](../../packages/models-core/README.md) | capabilities | defines `models` | — | — | `workers-core` |
 | [runtime-acp](../../packages/plugins/runtime-acp/README.md) | capabilities | — | `runtime-acp` | `agentRuntimes` | `agent-runtime-core`, `provider-core` |
@@ -147,7 +147,9 @@ flowchart TB
   agent_workers --> agent_runtimes
   agent_workers --> egress
   agent_workers -.-> approvals
+  agent_workers -.-> credentials_vault
   agent_workers -.-> event_log
+  agent_workers -.-> mcp_server
   agent_workers -.-> resources
   approvals --> store
   approvals --> artifacts
@@ -182,6 +184,7 @@ flowchart TB
   login -.-> mcp_server
   mcp_server --> webserver
   mcp_server -.-> accounts
+  mcp_server -.-> agent_workers
   mcp_server -.-> artifacts
   mcp_server -.-> browser_patchright
   mcp_server -.-> credentials_vault
@@ -276,6 +279,7 @@ policy above it. Each such edge is listed here so a new one is a visible change.
 |---|---|---|---|
 | `agent-workers` (capabilities) | `approvals` | `approvals` (routing) | optional |
 | `agent-workers` (capabilities) | `egress` | `egress` (routing) | required |
+| `agent-workers` (capabilities) | `mcp` | `mcp-server` (gateways) | optional |
 | `agent-workers` (capabilities) | `resources` | `resources` (routing) | optional |
 | `agent-workers` (capabilities) | `workers` | `workers` (routing) | required |
 | `approvals` (routing) | `mcp` | `mcp-server` (gateways) | optional |
@@ -364,6 +368,7 @@ flowchart TB
   agent_runtimes --> agent_runtime_core
   agent_workers --> agent_runtime_core
   agent_workers --> approvals_core
+  agent_workers --> gateway_core
   agent_workers --> leases
   agent_workers --> provider_core
   agent_workers --> resources_core
