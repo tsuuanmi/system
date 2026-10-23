@@ -823,10 +823,10 @@ export class Engine {
     const result = execution.result as ArtifactRef
     // A step of a board task's run may ask questions instead of answering, as its brief offers: no result, the task waits.
     if (this.tasks.asks(run, node, execution, lease)) return
-    // The Workers the node's session holds it to, read before its result is judged: a rejected
-    // result escalates only onto one of them (Model A), and the decision is taken in a transaction.
-    const held = await heldWorkers(this, spec)
     const acceptance = this.ctx.workers.accept(result, spec.acceptance, { producer: 'workflow', runId: run.run_id, nodeId: node.node_id, ...(spec.resultSchema ? { resultSchema: spec.resultSchema } : {}) })
+    // Only a rejected result reads the Workers the node's session holds it to: it escalates only onto
+    // one of them (Model A), decided in a transaction. A listing that fails never fails the step.
+    const held = acceptance.accepted ? undefined : await heldWorkers(this, spec)
     // A rejected answer its Worker cut at its output bound says so: room may be what it lacked, not a tier.
     const cut = acceptance.accepted ? undefined : cutShort(this, result)
     const rejected = [...acceptance.reasons, ...(cut ? [cut] : [])]
