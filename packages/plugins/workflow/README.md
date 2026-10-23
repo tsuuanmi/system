@@ -160,9 +160,15 @@ second execution path (INV-1).
     default 1, at most 3). The run is a new execution of the same node: its
     requirement's tier becomes `{ min: next, source: decision }`, and its key
     carries the escalation count. The rejected result stays as evidence. The
-    choice is an `escalation` decision either way, and `workflow.node.escalated`
-    names it. With no tier left, or the bound reached, the node fails with
-    `acceptance_rejected` (`NONE`).
+    choice is an `escalation` decision either way (`workflow.escalation`
+    version 2), and `workflow.node.escalated` names it. A node its session
+    holds to its Workers (a team member, Model A) escalates only when one of
+    them serves the next tier or above, since routing would refuse every other
+    Worker. With no tier left, the bound reached, or no Worker of its session
+    at the next tier, the node fails with `acceptance_rejected` (`NONE`): the
+    contract's reasons, then why it was not escalated. A rejected answer its
+    Worker cut at its output bound (`model-answer` `finish: max-tokens`) says so
+    among them.
 - **Graph growth (REQ-WF-8, REQ-WF-10).**
   - A node with `grows` is a planner. Its accepted answer must carry a JSON
     plan, which is untrusted input checked against bounds:
@@ -218,7 +224,10 @@ second execution path (INV-1).
     artifact and an `acceptance` decision `workflow.source-snapshot` (the URL,
     commit, files with their blob ids, and the unread files). The members'
     proposal prompt is the request, then the files line-numbered between
-    content-derived fences, then the unread list. Config `repositories`: the
+    content-derived fences, then the unread list. For the caller's text, that
+    text is the request and the file `material` both, so it is shown once:
+    `{{input}}` composes to one line naming the file (`MATERIAL_REQUEST`), so the
+    text counts once against a member's input. Config `repositories`: the
     allowed `hosts` (default `github.com`), `maxFiles` (40), `maxBytes`
     (300 KB), `maxFileBytes` (48 KB), and `maxSourceChars` (24,000 characters
     as members read it; `fitSource` lists files past it as not shown, and
@@ -267,8 +276,9 @@ second execution path (INV-1).
     (Model A). The run forms one session group per team, and each member joins
     at its first admission. Members never message each other. A member's later
     steps stay in its conversation through session affinity, which admits any
-    tier of the same account, so an escalated step runs in the same
-    conversation without joining again. Its Worker's source keeps that
+    tier of the same account (a model Worker's session: a higher tier of its
+    family), so an escalated step runs in the same conversation without joining
+    again; with none at the next tier, it is not escalated (above). Its Worker's source keeps that
     conversation natively, or by replaying it (a model Worker; an agent Worker
     under the review-member profile whose runtime cannot resume, for a review
     member's steps only, an exact replay recorded with its answer): the ballot
@@ -277,8 +287,11 @@ second execution path (INV-1).
     conversation fails its step; it is never given a fresh one.
   - Members route one at a time, each avoiding every account another member
     holds (REQ-TEAM-4). A member that finds no other provider family fails as
-    `config_error`, naming how many families the team needs and how many are
-    ready.
+    `config_error`. When fewer families are ready than the team has members
+    (counting Workers ready or busy that prove the step), its message starts with
+    how many it needs and how many are ready; otherwise the admission's own
+    reasons are why, and a member over every other family's input bound fails
+    as `invalid_input`, naming the bound to change.
   - When the run finishes, its members' leftover mail is acknowledged.
   - A run of the removed procedure (critique rounds, a lead, a synthesis) stays
     readable with `explain` and `result`; `continue` and `supersede` refuse it
@@ -578,7 +591,11 @@ second execution path (INV-1).
   the digests of task results: asked after the report and set on the task, the next task's brief
   pointing at it, the hourly bound, no provider, a digest not written, a review held for the
   operator, a restart while a request is pending, the wait's bound, and a board that no longer
-  takes it.
+  takes it. [`tests/member-routing.spec.ts`](tests/member-routing.spec.ts) covers a review
+  member kept off a website by its input bound (the live review of 2026-10-23): a text review's
+  material shown once, so the member fits the site; a member over a site's bound routed at its own
+  tier; a rejected answer its session cannot escalate failed with the rejection and why, never a
+  family shortage that is not there, and one it can escalated within its session.
 
 ## Source layout
 
@@ -593,13 +610,13 @@ in `engine.ts`:
 | `briefs.ts` | the brief of each execution: drafted from the node's instructions and its board task, its rendered length, recorded with the Worker's sandbox; the guard that no execution starts on instructions that leave a placeholder unfilled, and its decision |
 | `types.ts` | records, views, config, row shapes, `WorkflowFailure` |
 | `migrations.ts` | the engine's tables |
-| `recovery.ts` | retries after a failed attempt, escalation after a rejected result, admission failure kinds |
+| `recovery.ts` | retries after a failed attempt, escalation after a rejected result (onto a Worker its session can take), admission failure kinds and their hints |
 | `growth.ts` | graph growth and approval gates |
 | `review.ts` | exact-subject review and remediation cycles; what a node's instructions are composed from, a re-review's from its review |
 | `queue.ts` | a remediation fix's gate on the approval queue: the request on its exact subject, its verdict, adoption after a crash |
 | `continuations.ts` | a deferred tool call's continuation: the request noted when its node fails, read from the queue, the session continued once when approved |
 | `acceptance.ts` | a plain run's acceptance: the policy's required checks it did not pass, recorded as pending |
-| `sources.ts` | a review's source step: the repository snapshot or the caller's text, rendered for members |
+| `sources.ts` | a review's source step: the repository snapshot or the caller's text, rendered for members; the caller's text shown once where a prompt shows its snapshot |
 | `teams.ts` | team contracts and parsing, quote checks and merging of findings, options, ballot and debate prompts, tally and the blocking-finding rule, decision, tie and `vote`, distinct accounts |
 | `sessions.ts` | wake-on-message, checkpoints, compaction |
 | `operator.ts` | `stop`, `continue`, `supersede`, `approve` |

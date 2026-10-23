@@ -126,7 +126,10 @@ flowchart LR
   (`{{grown}}`) as a pointer by content id, role `input`. The input hash covers the text these
   instructions render to, so a node's execution key is what it was. A plan step's prompt is model
   text and a remediation fix's prompt the engine's own: each is used as it is, never expanded. A
-  re-review is worded as the review it re-runs ([graph growth](#graph-growth)).
+  re-review is worded as the review it re-runs ([graph growth](#graph-growth)). Where the prompt
+  places a source step's snapshot of the caller's own text (a text review), that text is already
+  there, line-numbered: `{{input}}` composes to one line naming its file instead, so the text is
+  shown and counted once ([sources](teams.md#sources)).
 - **Every placeholder filled.** A template's text may hold only `{{input}}`, `{{node:<id>}}` of a
   node it depends on, and `{{grown}}` after a planner (and the engine's own `{{team}}` in a team's
   ballot and debate). Any other `{{` (an unknown name, another spelling, no closing `}}`) refuses

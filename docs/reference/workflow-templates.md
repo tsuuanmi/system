@@ -61,7 +61,8 @@ On a split vote with an objection open, `brainstorm:tally:<r>` appends
 A source step, then the same team procedure over what it read: the caller's public repository
 at one pinned commit, or else the caller's text as the one file `material`
 ([sources](../design/teams.md#sources)). Each member's proposal prompt is the caller's input
-followed by the source. The options are `pass` and `changes`, over the members' findings merged
+followed by the source; for the caller's text, which is the file `material` too, the input is one
+line naming that file, so the text is shown once. The options are `pass` and `changes`, over the members' findings merged
 by quoted line; a confirmed blocking finding decides `changes`. The MCP tool `review` and
 `system review` run it.
 
