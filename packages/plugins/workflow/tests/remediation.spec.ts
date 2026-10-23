@@ -10,7 +10,7 @@ import Artifacts from '@tsuuanmi/system-artifacts'
 import Egress from '@tsuuanmi/system-egress'
 import EventLog from '@tsuuanmi/system-event-log'
 import Leases from '@tsuuanmi/system-leases'
-import { captureGitSubject, sha256 } from '@tsuuanmi/system-libs'
+import { type Brief, captureGitSubject, sha256 } from '@tsuuanmi/system-libs'
 import Store from '@tsuuanmi/system-store'
 import WorkerSessions from '@tsuuanmi/system-worker-sessions'
 import WorkerRouter from '@tsuuanmi/system-workers'
@@ -21,7 +21,8 @@ import { CONFIG, type Rendered, ScriptedWorkers } from '../conformance/workflow.
 import Workflow, { type NodeTemplate, type RunView } from '../src/index.ts'
 
 // Remediation on the approval queue (docs/design/workflow-engine.md#remediation-on-the-approval-queue),
-// end to end over the store-backed queue and a git working tree; only Worker execution is scripted.
+// and a re-review's instructions, composed as its review's were, end to end over the store-backed
+// queue and a git working tree; only Worker execution is scripted.
 vi.setConfig({ testTimeout: 120_000 })
 
 /** Everything asks but `read`: `remediation` is never auto or notify anyway (ALWAYS_ASK). */
@@ -36,6 +37,8 @@ const step = (nodeId: string, extra: Partial<NodeTemplate>): NodeTemplate => ({
 /** A change, and an exact-subject review of it: blocking findings grow a fix behind a gate, then a re-review. */
 const TEMPLATES: Record<string, NodeTemplate[]> = {
   change: [step('develop', { prompt: 'Develop: {{input}}' }), step('review', { prompt: 'Review: {{input}}', capabilities: ['review'], dependsOn: ['develop'] })],
+  // The review reads the developer's answer too: a re-review reads the fix's in its place.
+  bound: [step('develop', { prompt: 'Develop: {{input}}' }), step('review', { prompt: 'Review: {{input}}\n<change>{{node:develop}}</change>', capabilities: ['review'], dependsOn: ['develop'] })],
   read: [step('answer', { capabilities: ['reason'] })],
 }
 
@@ -125,9 +128,12 @@ async function boot(options: { queue?: boolean; policy?: AutonomyPolicy; reviews
       const changes = ++reviews <= (options.reviews ?? 1)
       return { text: '```json\n' + JSON.stringify({ subject, verdict: changes ? 'changes-requested' : 'approve', findings: [{ severity: changes ? 'blocking' : 'info', title: 'no test for add()', file: 'calc.py' }] }) + '\n```' }
     }
-    if (request.prompt.includes('Fix the blocking findings')) writeFileSync(join(tree, `test_${workers.started.length}.py`), 'assert True\n')
-    else writeFileSync(join(tree, 'calc.py'), 'def add(a, b):\n    return a + b\n')
-    return { text: 'done' }
+    if (request.prompt.includes('Fix the blocking findings')) {
+      writeFileSync(join(tree, `test_${workers.started.length}.py`), 'assert True\n')
+      return { text: 'added a test' }
+    }
+    writeFileSync(join(tree, 'calc.py'), 'def add(a, b):\n    return a + b\n')
+    return { text: 'changed add()' }
   }
   const config = { ...CONFIG, approvalPollSeconds: 1, templates: TEMPLATES }
   const fibers: Fiber[] = [
@@ -433,5 +439,79 @@ describe('remediation on the approval queue', () => {
     const run = ctx.workflow.start({ template: 'read', input: 'What does add() do?', classification: 'public' })
     expect((await finished(ctx, run.runId)).status).toBe('completed')
     expect(ctx.artifacts.list({ kind: 'decision', runId: run.runId }).filter((a) => (a.body as { decider: { id: string } }).decider.id === 'workflow.run-acceptance')).toEqual([])
+  })
+})
+
+/** Every review the Workers read (each is given an exact subject), in order. */
+const reviewsOf = (workers: ScriptedWorkers): Rendered[] => workers.started.filter((s) => /^Subject: /m.test(s.prompt))
+/** What a review was asked, before the exact subject the engine appends. */
+const asked = (prompt: string): string => prompt.split('\n\n## The exact subject of this review')[0]!
+/** A node's row as the engine stored it. */
+const rowOf = (ctx: Context, runId: string, nodeId: string): { spec: string } => ctx.store.db.prepare('SELECT spec FROM workflow_nodes WHERE run_id = ? AND node_id = ?').get(runId, nodeId) as { spec: string }
+
+describe('a re-review\'s instructions (docs/design/workflow-engine.md#graph-growth)', () => {
+  it('are composed as its review\'s were: the caller\'s input for {{input}}, and the pointer to the change\'s writer re-bound to the fix that wrote the new subject (REQ-WF-5, INV-2)', async () => {
+    const { ctx, workers } = await boot()
+    const run = ctx.workflow.start({ template: 'bound', input: 'Fix add()', classification: 'public' })
+    await decide(ctx, (await ctx.approvals.get((await queued(ctx, run.runId)).blocked.approvalRequest))!, 'approved')
+    expect((await finished(ctx, run.runId)).status).toBe('completed')
+    const reviews = reviewsOf(workers)
+    expect(reviews.map((r) => asked(r.prompt))).toEqual(['Review: Fix add()\n<change>changed add()</change>', 'Review: Fix add()\n<change>added a test</change>'])
+    for (const review of reviews) expect(review.prompt).not.toContain('{{')
+    // Bound to the subject the fix left, not the one the first review read.
+    expect(/^Subject: (\S+)$/m.exec(reviews[1]!.prompt)![1]).not.toBe(/^Subject: (\S+)$/m.exec(reviews[0]!.prompt)![1])
+    // It points at the fix's result by content id, named as the fix's, never carrying it, and binds it in its input receipt.
+    const records = ctx.workflow.records(run.runId)
+    const fix = records.find((r) => r.nodeId === 'review:fix:1')!.outputReceipt!.result
+    const recheck = records.find((r) => r.nodeId === 'review:review:2')!
+    expect(recheck.inputReceipt!.bundle).toEqual([fix])
+    const brief = ctx.artifacts.get(recheck.execution!.brief!)!.body as Brief
+    expect(brief.artifacts).toEqual([{ ref: fix, role: 'input', note: 'the result of node review:fix:1' }])
+    expect(JSON.stringify(brief.instructions)).not.toContain('added a test')
+  })
+
+  it('composes a re-review an earlier engine grew with its review\'s template marked literal as that review, once it is promoted', async () => {
+    const { ctx, workers } = await boot()
+    const run = ctx.workflow.start({ template: 'change', input: 'Fix add()', classification: 'public' })
+    const request = (await ctx.approvals.get((await queued(ctx, run.runId)).blocked.approvalRequest))!
+    const grown = JSON.parse(rowOf(ctx, run.runId, 'review:review:2').spec) as Record<string, unknown>
+    expect(grown).toMatchObject({ prompt: 'Review: {{input}}', reviewOf: 'review', cycle: 2 })
+    expect(grown).not.toHaveProperty('literal')
+    // As the engine grew it before re-reviews were composed: the review's template, marked literal.
+    ctx.store.db.prepare('UPDATE workflow_nodes SET spec = ? WHERE run_id = ? AND node_id = ?').run(JSON.stringify({ ...grown, literal: true }), run.runId, 'review:review:2')
+    await decide(ctx, request, 'approved')
+    expect((await finished(ctx, run.runId)).status).toBe('completed')
+    expect(reviewsOf(workers).map((r) => asked(r.prompt))).toEqual(['Review: Fix add()', 'Review: Fix add()'])
+    // Its spec now says what its instructions were composed from.
+    expect(JSON.parse(rowOf(ctx, run.runId, 'review:review:2').spec)).not.toHaveProperty('literal')
+  })
+
+  it('starts no Worker on instructions an earlier engine stored with the review\'s placeholder unfilled: the re-review fails as config_error on a decision, and continue composes it (INV-2, INV-13)', async () => {
+    const { ctx, workers } = await boot()
+    const scripted = workers.reply
+    let reviews = 0
+    // The re-review's first execution fails after it was sent: the run waits for the operator, the instructions stored.
+    workers.reply = (request) => (/^Subject: /m.test(request.prompt) && ++reviews === 2 ? { fail: 'network', disposition: 'BACKOFF', sent: true } : scripted(request))
+    const run = ctx.workflow.start({ template: 'change', input: 'Fix add()', classification: 'public' })
+    await decide(ctx, (await ctx.approvals.get((await queued(ctx, run.runId)).blocked.approvalRequest))!, 'approved')
+    expect(await finished(ctx, run.runId)).toMatchObject({ status: 'failed', error: { kind: 'network' } })
+    // As the engine before re-reviews were composed left it: the review's template marked literal, and stored as it is.
+    const spec = JSON.parse(rowOf(ctx, run.runId, 'review:review:2').spec) as Record<string, unknown>
+    ctx.store.db.prepare('UPDATE workflow_nodes SET spec = ?, prompt = ?, brief_parts = ? WHERE run_id = ? AND node_id = ?')
+      .run(JSON.stringify({ ...spec, literal: true }), 'Review: {{input}}', JSON.stringify({ segments: [{ text: 'Review: {{input}}' }], pointers: [] }), run.runId, 'review:review:2')
+    const sent = workers.started.length
+    ctx.workflow.continue(run.runId, 'review:review:2')
+    const refused = await finished(ctx, run.runId)
+    expect(refused).toMatchObject({ status: 'failed', error: { kind: 'config_error' } })
+    expect(refused.error!.message).toContain('stored by an earlier engine')
+    expect(workers.started).toHaveLength(sent)
+    const record = ctx.workflow.records(run.runId).find((r) => r.nodeId === 'review:review:2')!
+    expect(record.inputReceipt).toBeUndefined()
+    expect(ctx.artifacts.get(record.lastDecision!)!.body).toMatchObject({ decisionType: 'gate', decider: { id: 'workflow.instructions' }, outcome: { option: 'fail' } })
+    expect(ctx.eventLog.query({ type: 'workflow.node.failed', runId: run.runId }).at(-1)).toMatchObject({ nodeId: 'review:review:2', decision: record.lastDecision, data: { kind: 'config_error' } })
+    // Continued, it is composed as its review was, and runs.
+    ctx.workflow.continue(run.runId, 'review:review:2')
+    expect((await finished(ctx, run.runId)).status).toBe('completed')
+    expect(asked(workers.started.at(-1)!.prompt)).toBe('Review: Fix add()')
   })
 })

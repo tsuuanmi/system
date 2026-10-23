@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { type Brief, NO_LOCAL_SANDBOX, renderBrief } from '@tsuuanmi/system-libs'
-import { appended, compose, DEFAULT_TEMPLATES, type NodeTemplate, parsePlan, preflight, resolve } from '../src/spec.ts'
+import { appended, compose, DEFAULT_TEMPLATES, type NodeTemplate, parsePlan, preflight, resolve, UnfilledPlaceholders, unfilledPlaceholders } from '../src/spec.ts'
 import { TEST_TEMPLATES } from './templates.ts'
 
 const node = (nodeId: string, overrides: Partial<NodeTemplate> = {}): NodeTemplate => ({
@@ -99,6 +99,37 @@ describe('workflow specs', () => {
     }
     const read = () => ({ bodySchema: 'provider-answer@1.0', body: { text: 'a {{input}} b' }, classification: 'public' as const })
     expect(renderBrief(brief, read)).toBe('Q: why?\n<r>a {{input}} b</r> again: a {{input}} b')
+  })
+
+  it('composes every placeholder of a template or none: one it cannot fill throws, naming it, and text it inserts is never scanned (INV-2)', () => {
+    const ref = `sha256:${'e'.repeat(64)}` as const
+    const unfilled = (prompt: string, results: Record<string, typeof ref> = {}, extras = {}): string[] => {
+      try {
+        compose(prompt, 'x', results, extras)
+      } catch (error) {
+        expect(error).toBeInstanceOf(UnfilledPlaceholders)
+        return (error as UnfilledPlaceholders).placeholders
+      }
+      return []
+    }
+    expect(unfilled('Q: {{input}} {{node:a}} {{node:b}}', { a: ref })).toEqual(['{{node:b}}'])
+    expect(unfilled('{{grown}} {{team}}')).toEqual(['{{grown}}', '{{team}}'])
+    expect(unfilled('{{grown}} {{team}}', {}, { grown: [], team: 'ballot' })).toEqual([])
+    expect(unfilled('{{other}} {{ input }} {{{input}}} {{input')).toEqual(['{{other}}', '{{ input }}', '{{{input}}', '{{input…'])
+    // JSON in a template opens no placeholder; the caller's text is data, sent as written.
+    expect(unfilled('{{input}}: {"a": {"b": [{"c": 1}]}}')).toEqual([])
+    expect(compose('Q: {{input}}', 'what does {{input}} do?', {})).toEqual({ segments: [{ text: 'Q: what does {{input}} do?' }], pointers: [] })
+    expect(unfilledPlaceholders('{{input}} {{node:a}} {{grown}} {{team}}', { refs: { a: ref }, grown: true, team: true })).toEqual([])
+  })
+
+  it('refuses at preflight a placeholder the engine does not fill, and {{team}} anywhere but a team\'s ballot (INV-2)', () => {
+    expect(() => preflight([node('a', { prompt: 'Answer {{inptu}}' })])).toThrow('node a uses {{inptu}}, which is not a placeholder the engine fills')
+    expect(() => preflight([node('a', { prompt: 'Answer {{ input }}' })])).toThrow(/node a uses \{\{ input \}\}/)
+    expect(() => preflight([node('a', { prompt: 'Answer {{input' })])).toThrow(/node a uses \{\{input…/)
+    expect(() => preflight([node('a', { prompt: '{{team}}' })])).toThrow(/node a uses \{\{team\}\}/)
+    expect(() => preflight([node('a', { prompt: '{{input}}: {"a": {"b": 1}}' })])).not.toThrow()
+    // A team's ballot is worded by the engine, with {{team}}.
+    expect(resolve('t', [node('t', { team: { kind: 'brainstorm' } })], {}).nodes.filter((n) => n.prompt === '{{team}}').map((n) => n.team?.role)).toEqual(['ballot', 'ballot'])
   })
 
   it('splits a text longer than a brief holds on whole characters, and merges what it can', () => {

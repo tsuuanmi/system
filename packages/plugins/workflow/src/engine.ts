@@ -12,13 +12,13 @@ import { canonicalJson, SchemaRegistry, sha256 } from '@tsuuanmi/system-libs'
 import { dispositionOf } from '@tsuuanmi/system-provider-core'
 import { AdmissionFailure, type AdmittedWorker, type ArtifactRef, type Classification, type RouteOptions, type WorkRequirement, type WorkerExecution } from '@tsuuanmi/system-workers-core'
 import { acceptPlain } from './acceptance.ts'
-import { type Draft, draftOf, instructionsText, recordBrief, renderedChars, type TaskFrame } from './briefs.ts'
+import { type Draft, draftOf, instructionsProblem, instructionsText, placeholderScope, recordBrief, refuseInstructions, renderedChars, type TaskFrame, unfilledProblem } from './briefs.ts'
 import { block, expireGate, gateDeadline, grow, grownSteps } from './growth.ts'
 import { admissionKind, escalate, failAttempt, inputHint, routedDecisions } from './recovery.ts'
 import { isRemediationGate, pollMs, queueOf, settleQueued } from './queue.ts'
-import { missingSubject, remediate, reviewSubject, subjectGate } from './review.ts'
+import { missingSubject, remediate, reviewSubject, subjectGate, wordingOf } from './review.ts'
 import { recoverWakes, settleWake } from './sessions.ts'
-import { appended, compose, DEFAULT_TEMPLATES, literal, type NodeTemplate, recordExecutor, type ResolvedNode, type ResolvedSpec, resolve, schemaBlock, variantProblem, variantsOf } from './spec.ts'
+import { appended, compose, DEFAULT_TEMPLATES, type Instructions, literal, type NodeTemplate, recordExecutor, type ResolvedNode, type ResolvedSpec, resolve, schemaBlock, UnfilledPlaceholders, variantProblem, variantsOf } from './spec.ts'
 import { runSnapshot } from './sources.ts'
 import { TaskRuns } from './tasks.ts'
 import { decide, expireTie, restriction, runtimeOf, tally, teamGroup, teamPrompt } from './teams.ts'
@@ -449,15 +449,28 @@ export class Engine {
     if (spec.executor === 'gate') return block(this, run, node, spec, lease)
     if (spec.executor === 'tally') return tally(this, run, node, spec, nodes, lease)
     if (spec.executor === 'decide') return decide(this, run, node, spec, nodes, lease)
-    const deps = spec.dependsOn.map((id) => nodes.find((n) => n.node_id === id)!)
-    const results = deps.map((d) => (JSON.parse(d.record) as NodeRecord).outputReceipt!.result)
-    const refs = Object.fromEntries(deps.map((d, i) => [d.node_id, results[i]!]))
+    // What its instructions are composed from: its template's prompt (a re-review's is its review's) or text used as it is.
+    const wording = wordingOf(spec, nodes)
+    if ('problem' in wording) return refuseInstructions(this, run, node, { message: `${wording.problem}; nothing was sent`, placeholders: [] }, lease)
+    const { results } = wording
+    const scope = placeholderScope(spec, wording, nodes)
     const extras = {
-      ...(spec.prompt.includes('{{grown}}') ? { grown: grownSteps(spec, nodes) } : {}),
-      ...(spec.team?.role === 'ballot' || spec.team?.role === 'debate' ? { team: teamPrompt(this, spec, nodes) } : {}),
+      readFrom: wording.readFrom,
+      ...(scope.grown && wording.prompt.includes('{{grown}}') ? { grown: grownSteps(wording.grownOf, nodes) } : {}),
+      ...(scope.team ? { team: teamPrompt(this, spec, nodes) } : {}),
     }
     // The brief's instructions: text, and each dependency's result as a pointer, never its content.
-    let parts = spec.literal ? literal(spec.prompt) : compose(spec.prompt, run.input, refs, extras)
+    // Every placeholder is filled, or the node fails here with nothing sent (INV-2).
+    let parts: Instructions
+    try {
+      parts = wording.literal ? literal(wording.prompt) : compose(wording.prompt, run.input, wording.refs, extras)
+    } catch (error) {
+      if (!(error instanceof UnfilledPlaceholders)) throw error
+      return refuseInstructions(this, run, node, unfilledProblem(spec, error.placeholders), lease)
+    }
+    // A re-review an earlier engine grew says literal while its review is a template: its spec says what it is composed from now.
+    const { literal: _literal, ...worded } = spec
+    const composed: ResolvedNode = !!spec.literal === wording.literal ? spec : { ...worded, ...(wording.literal ? { literal: true } : {}) }
     if (spec.resultSchema) parts = appended(parts, `\n\n${schemaBlock(spec.resultSchema, this.schemas.schemaOf(spec.resultSchema))}`)
     // A review of an agent's change binds to the workspace's exact subject now (REQ-TEAM-5, REQ-WF-5).
     const found = spec.capabilities.includes('review') ? reviewSubject(this, results, run.input) : undefined
@@ -472,9 +485,11 @@ export class Engine {
     if (bound) parts = appended(parts, `\n\n${bound.block}`)
     // The prompt as the Worker will read it, for the input hash: rendered as its source renders the brief.
     const prompt = instructionsText(this, parts)
-    const inputHash = sha256(canonicalJson({ node: spec, prompt, dependencies: results }))
-    this.writeNode(node, { state: 'READY', prompt, brief_parts: JSON.stringify(parts), ...(bound ? { subject: JSON.stringify({ workspace: bound.workspace, subject: bound.subject }) } : {}) },
-      (record) => ({ ...record, inputReceipt: { inputHash, bundle: results } }), lease)
+    const inputHash = sha256(canonicalJson({ node: composed, prompt, dependencies: results }))
+    this.writeNode(node, {
+      state: 'READY', prompt, brief_parts: JSON.stringify(parts), ...(composed === spec ? {} : { spec: JSON.stringify(composed) }),
+      ...(bound ? { subject: JSON.stringify({ workspace: bound.workspace, subject: bound.subject }) } : {}),
+    }, (record) => ({ ...record, inputReceipt: { inputHash, bundle: results } }), lease)
   }
 
   /**
@@ -541,6 +556,10 @@ export class Engine {
       if (delay > 0 && !(await sleep(delay, signal))) return
       // A review's source is read by the engine, not a Worker.
       if (spec.executor === 'snapshot') return runSnapshot(this, run, node, spec, lease, signal)
+      // No Worker execution starts on instructions that are not what the node's wording composes
+      // to, a placeholder left unfilled (INV-2): it fails here, before anything is routed or sent.
+      const unsafe = instructionsProblem(spec, this.nodeRows(run.run_id).filter((n) => n.state !== 'RETIRED'))
+      if (unsafe) return refuseInstructions(this, run, node, unsafe, lease)
       const record = JSON.parse(node.record) as NodeRecord
       const attempt = node.attempt + 1
       // A node that must differ from others routes once they have Workers (ADR-0027).

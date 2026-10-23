@@ -41,6 +41,12 @@ second execution path (INV-1).
       prompt is engine-composed and quotes the findings as data.
     - It then appends a re-review bound to the new subject. Whatever waited
       for the review waits for both.
+    - The re-review is worded as the review the cycles started from: that
+      review's prompt, composed again at promotion (`{{input}}` the caller's
+      text, each `{{node:<id>}}` the result that review read, but the fix's in
+      place of the step that wrote the change, its note naming the fix). A plan
+      step's review stays model text. A re-review an earlier version grew marked
+      literal is composed so too, and its spec says so from then on.
     - Cycles stop at the engine config `maxReviewCycles` reviews (default 3,
       the first included). Each choice, the bound included, is a
       `graph-growth` decision (`workflow.remediation`).
@@ -81,8 +87,10 @@ second execution path (INV-1).
     load (preflight):
     - valid, unique node ids;
     - known dependencies, and no cycles;
-    - a prompt may use only `{{input}}` and its own dependencies
-      (`{{node:<id>}}`);
+    - a prompt may use only `{{input}}`, its own dependencies
+      (`{{node:<id>}}`), and `{{grown}}` after a planner; any other `{{` (an
+      unknown name, another spelling, no closing `}}`, or `{{team}}`, which only
+      the engine's team ballots use) is refused;
     - exactly one final node, whose result is the run's;
     - `differentFrom` names only other, non-team nodes;
     - a team node has no `differentFrom`, `grows`, or `resultSchema`;
@@ -111,6 +119,16 @@ second execution path (INV-1).
     input as text, each dependency's result as a pointer by content id. The input
     receipt binds `inputHash` (the node, the prompt those instructions render to,
     and the dependency results) and its bundle.
+  - **Every placeholder filled (INV-2).** Composition fills every placeholder of
+    the template's text or composes nothing: one the engine cannot fill fails the
+    node as `config_error` with nothing sent, on a `gate` decision
+    (`workflow.instructions`) naming it. Before each Worker execution starts, the
+    engine checks again that the node's instructions are what its wording
+    composes to; a node an earlier version promoted otherwise (a re-review's
+    template stored as it is) fails the same way, without its input receipt, so
+    `continue` composes it again. Text the engine never expands (the caller's
+    input, a result, a plan step's model text, a fix's quoted findings, a diff)
+    is data, sent as written.
   - A `worker` node declares capabilities, and its requirement (objective,
     capabilities, plus `persistent-conversation` in a session, classification,
     tier, and contract) is recorded at admission.
@@ -523,7 +541,14 @@ second execution path (INV-1).
   subject and the fix only once it is approved (`approve` refused), a rejection and `continue`, an
   expiry, `forbid`, `stop` withdrawing, a restart that applies a verdict given meanwhile and adopts
   a request whose id was lost, the plan gate with no queue, and a plain run's acceptance with its
-  pending checks. The continuation of a deferred call runs end to end with a gating agent runtime
+  pending checks; and a re-review's instructions: composed as its review's, its pointer re-bound
+  to the fix, one an earlier version grew marked literal composed when promoted, and one stored
+  uncomposed refused before it starts, then composed on `continue`.
+  [`tests/instructions.spec.ts`](tests/instructions.spec.ts) covers the placeholder guard: a
+  template with a placeholder the engine does not fill refused at load and on the profiles seam,
+  a stored one refused at promotion and before a Worker starts, each on a decision with nothing
+  sent, and a `{{…}}` in the caller's input or a result sent as written.
+  The continuation of a deferred call runs end to end with a gating agent runtime
   in [`agent-workers`' gate tests](../agent-workers/tests/gate.spec.ts).
   [`tests/digests.spec.ts`](tests/digests.spec.ts) covers
   the digests of task results: asked after the report and set on the task, the next task's brief
@@ -540,13 +565,13 @@ in `engine.ts`:
 | Module | Owns |
 |---|---|
 | `engine.ts` | engine state; admission (`start`); the run loop under the run lease; a node's path from `WAITING` to `COMPLETED` or `FAILED`; node writes |
-| `spec.ts` | templates, team unrolling, preflight, resolution, composing a prompt into a brief's instructions, and parsing of plans and assessments |
-| `briefs.ts` | the brief of each execution: drafted from the node's instructions and its board task, its rendered length, recorded with the Worker's sandbox |
+| `spec.ts` | templates, team unrolling, preflight, resolution, composing a prompt into a brief's instructions (every placeholder filled, or none), and parsing of plans and assessments |
+| `briefs.ts` | the brief of each execution: drafted from the node's instructions and its board task, its rendered length, recorded with the Worker's sandbox; the guard that no execution starts on instructions that leave a placeholder unfilled, and its decision |
 | `types.ts` | records, views, config, row shapes, `WorkflowFailure` |
 | `migrations.ts` | the engine's tables |
 | `recovery.ts` | retries after a failed attempt, escalation after a rejected result, admission failure kinds |
 | `growth.ts` | graph growth and approval gates |
-| `review.ts` | exact-subject review and remediation cycles |
+| `review.ts` | exact-subject review and remediation cycles; what a node's instructions are composed from, a re-review's from its review |
 | `queue.ts` | a remediation fix's gate on the approval queue: the request on its exact subject, its verdict, adoption after a crash |
 | `continuations.ts` | a deferred tool call's continuation: the request noted when its node fails, read from the queue, the session continued once when approved |
 | `acceptance.ts` | a plain run's acceptance: the policy's required checks it did not pass, recorded as pending |
