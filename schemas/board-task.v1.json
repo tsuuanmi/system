@@ -2,11 +2,11 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:tsuuanmi:system:schema:board-task:v1",
   "title": "Board task",
-  "description": "Durable state of one task on a project's board (ctx.board, design/board.md): work that outlives a run. Only the work state machine moves it, and each move names the decision behind it (INV-13). Mutable state that points at immutable artifacts.",
+  "description": "Durable state of one task on a project's board (ctx.board, design/board.md): work that outlives a run. Only the work state machine moves it, and each move names the decision behind it (INV-13). Mutable state that points at immutable artifacts. @1.1 adds a spent budget's funding: the lines a budget-spent wait asks for (`waiting.funding`), and the raises an approved request applied (`funding`).",
   "type": "object",
   "required": ["schema", "taskId", "projectId", "title", "goal", "acceptance", "dependsOn", "actionClass", "state", "attempts", "createdAt", "revision"],
   "properties": {
-    "schema": { "const": "board-task@1.0" },
+    "schema": { "enum": ["board-task@1.0", "board-task@1.1"] },
     "taskId": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
     "projectId": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
     "milestone": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/id" },
@@ -45,7 +45,7 @@
       "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/subject"
     },
     "budget": {
-      "description": "The most one attempt may draw from each pool; spending it blocks the task (INV-9).",
+      "description": "The most the task's attempts may draw from each pool, together, as the resource ledger counts them for the task; a line reached blocks the task (budget-spent, INV-9). An approved funding request raises it (`funding`).",
       "type": "array",
       "maxItems": 16,
       "items": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/budgetLine" }
@@ -143,10 +143,38 @@
           "uniqueItems": true,
           "items": { "enum": ["tests", "typecheck", "lint", "schema", "quote-check", "review"] }
         },
+        "funding": {
+          "description": "@1.1, for budget-spent: the lines the funding request asks to add to the budget, at most one per pool and unit of it. The request's subject version is `budget-spent:<sha256 of their canonical JSON>`, so its verdict binds to exactly these.",
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "items": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/budgetLine" }
+        },
         "since": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp" },
         "expiresAt": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp" }
       },
       "additionalProperties": false
+    },
+    "funding": {
+      "description": "@1.1: each raise of `budget` an approved funding request applied, oldest first: the lines added, the operator's `approval` artifact, and the board's decision that applied them. One per attempt at most, so bounded by `attempts.max`.",
+      "type": "array",
+      "maxItems": 10,
+      "items": {
+        "type": "object",
+        "required": ["lines", "approval", "decision", "at"],
+        "properties": {
+          "lines": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 16,
+            "items": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/budgetLine" }
+          },
+          "approval": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/artifactRef" },
+          "decision": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/artifactRef" },
+          "at": { "$ref": "urn:tsuuanmi:system:schema:common:v1#/$defs/timestamp" }
+        },
+        "additionalProperties": false
+      }
     },
     "cancellation": {
       "type": "object",
@@ -234,6 +262,20 @@
       "if": { "properties": { "state": { "const": "cancelled" } } },
       "then": { "required": ["cancellation"], "properties": { "cancellation": true } },
       "else": { "not": { "required": ["cancellation"] } }
+    },
+    {
+      "description": "@1.1: a funding ask is a budget-spent wait's, and a record that carries an ask or a raise is @1.1, so a reader on @1.0 never meets one.",
+      "if": {
+        "anyOf": [
+          { "required": ["funding"], "properties": { "funding": true } },
+          { "required": ["waiting"], "properties": { "waiting": { "type": "object", "required": ["funding"], "properties": { "funding": true } } } }
+        ]
+      },
+      "then": { "properties": { "schema": { "const": "board-task@1.1" } } }
+    },
+    {
+      "if": { "required": ["waiting"], "properties": { "waiting": { "type": "object", "required": ["funding"], "properties": { "funding": true } } } },
+      "then": { "properties": { "waiting": { "type": "object", "properties": { "reason": { "const": "budget-spent" } } } } }
     }
   ],
   "additionalProperties": false

@@ -1,0 +1,74 @@
+{
+  "schema": "board-task@1.1",
+  "taskId": "task-0007",
+  "projectId": "proj-sparse-align",
+  "milestone": "m2",
+  "title": "Vectorize the scoring loop",
+  "goal": "Make the inner scoring loop of bench/align use SIMD without changing a score.",
+  "acceptance": [
+    {
+      "id": "a1",
+      "statement": "bench/align scores are identical",
+      "check": "tests"
+    }
+  ],
+  "dependsOn": [],
+  "actionClass": "workspace-write",
+  "budget": [
+    {
+      "pool": "max.programmatic",
+      "unit": "runs",
+      "amount": 3
+    },
+    {
+      "pool": "max.programmatic",
+      "unit": "usd",
+      "amount": 4.5
+    }
+  ],
+  "state": "waiting-for-approval",
+  "attempts": {
+    "count": 2,
+    "max": 3
+  },
+  "run": {
+    "runId": "run-0019",
+    "startedAt": "2026-10-23T08:10:00Z"
+  },
+  "waiting": {
+    "reason": "budget-spent",
+    "approvalRequest": "apr-0052",
+    "funding": [
+      {
+        "pool": "max.programmatic",
+        "unit": "usd",
+        "amount": 1.5
+      }
+    ],
+    "since": "2026-10-23T08:10:01Z",
+    "expiresAt": "2026-10-24T08:10:01Z"
+  },
+  "funding": [
+    {
+      "lines": [
+        {
+          "pool": "max.programmatic",
+          "unit": "runs",
+          "amount": 1
+        },
+        {
+          "pool": "max.programmatic",
+          "unit": "usd",
+          "amount": 1.5
+        }
+      ],
+      "approval": "sha256:4f1c0a7e3b9d2c8f6a5e1d0b7c3a9f2e8d4b6c1a0f9e3d7b2c5a8e1f4d0b9c6a",
+      "decision": "sha256:9a2e7c4b1d8f3a6e0c5b9d2f7a1e4c8b3d6f0a9e2c7b5d1f8a4e0c3b6d9f2a7e",
+      "at": "2026-10-22T16:02:00Z"
+    }
+  ],
+  "createdAt": "2026-10-21T09:00:00Z",
+  "updatedAt": "2026-10-23T08:10:01Z",
+  "lastDecision": "sha256:2d7b0e9c4a1f8d3b6e5c0a9f2d7e4b1c8a3f6d0e9b2c5a7f4d1e8b3c0a6f9d2e",
+  "revision": 14
+}

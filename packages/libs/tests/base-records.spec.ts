@@ -158,6 +158,30 @@ describe('board-task@1.0', () => {
   })
 })
 
+describe('board-task@1.1', () => {
+  const funded = example('board-task.funding')
+
+  it('carries a spent budget\'s funding ask and its raises only at @1.1, so a reader on @1.0 never meets one', () => {
+    expect(valid('board-task@1.1', funded)).toBe(true)
+    expect(valid('board-task@1.0', { ...funded, schema: 'board-task@1.0' })).toBe(false)
+    const { funding: _, ...asking } = funded
+    expect(valid('board-task@1.0', { ...asking, schema: 'board-task@1.0' })).toBe(false)
+    const { funding: __, ...plainWait } = funded.waiting
+    expect(valid('board-task@1.0', { ...funded, schema: 'board-task@1.0', waiting: plainWait })).toBe(false)
+    expect(valid('board-task@1.1', { ...asking, waiting: plainWait })).toBe(true)
+  })
+
+  it('asks for funding only on a budget-spent wait, for at least one line, and names each raise\'s approval and decision (INV-5, INV-13)', () => {
+    expect(valid('board-task@1.1', { ...funded, waiting: { ...funded.waiting, reason: 'reconciliation-failed' } })).toBe(false)
+    expect(valid('board-task@1.1', { ...funded, waiting: { ...funded.waiting, funding: [] } })).toBe(false)
+    const { approval: _, ...unapproved } = funded.funding[0]
+    expect(valid('board-task@1.1', { ...funded, funding: [unapproved] })).toBe(false)
+    const { decision: __, ...undecided } = funded.funding[0]
+    expect(valid('board-task@1.1', { ...funded, funding: [undecided] })).toBe(false)
+    expect(valid('board-task@1.1', { ...funded, funding: [{ ...funded.funding[0], lines: [] }] })).toBe(false)
+  })
+})
+
 describe('project@1.0', () => {
   const project = example('project.active')
 

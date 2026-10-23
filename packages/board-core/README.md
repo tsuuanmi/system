@@ -7,16 +7,21 @@ Work state machine **seam definition**
 
 | Seam | Definition | Provider |
 |---|---|---|
-| `ctx.board` | abstract `Board` with `charter(input, at?)`, `project`, `projects`, `pause`, `resume`, `close`, `propose(input, at?)`, `task`, `tasks`, `claim`, `renew`, `start`, `submit`, `accept`, `reconcileRun`, `block`, `answer`, `cancel`, `sweep(at)`, and the optional `attachDigest(taskId, digest, at?)` (1.1); `Project`, `Charter`, `Milestone`, `BoardTask`, `CharterInput`, `TaskInput`, `Claim`, `RunOutcome`, `BoardError`; `TERMINAL`, `BOARD_CONTRACT` (1.1) | the fake `FakeBoard`; the store-backed [`board`](../plugins/board/README.md) |
+| `ctx.board` | abstract `Board` with `charter(input, at?)`, `project`, `projects`, `pause`, `resume`, `close`, `propose(input, at?)`, `task`, `tasks`, `claim`, `renew`, `start`, `submit`, `accept`, `reconcileRun`, `block` (its optional `funding`, 1.2), `answer`, `cancel`, `sweep(at)`, and the optional `attachDigest(taskId, digest, at?)` (1.1); `Project`, `Charter`, `Milestone`, `BoardTask`, `Funding`, `CharterInput`, `TaskInput`, `Claim`, `RunOutcome`, `BoardError`; `TERMINAL`, `fundingVersion`, `BOARD_CONTRACT` (1.2) | the fake `FakeBoard`; the store-backed [`board`](../plugins/board/README.md) |
 
-- The types mirror `project@1.0` and `board-task@1.0`; the schemas in `schemas/` are canonical.
+- The types mirror `project@1.0` and `board-task@1.1`; the schemas in `schemas/` are canonical.
+- `block` takes, from 1.2, an optional `funding` on a `budget-spent` wait: the lines the holder
+  asks to raise the task's budget by. `fundingVersion(contentId)` is the version of the subject
+  that binds a funding request to those lines (`budget-spent:<sha256 of their canonical JSON>`);
+  each provider hashes the lines with `contentId` of `@tsuuanmi/system-libs`
+  ([funding a spent budget](../../docs/design/board.md#funding-a-spent-budget)).
 - `renderTasks(project, tasks, maxTasks)` is the board's `TASKS.md` projection, a pure function
   of those records, outside the seam's contract: the provider renders it on request, and the
   workflow engine into a task run's worktree, so both render the same text.
 - Depends on Cordis and the vocabulary of `@tsuuanmi/system-approvals-core`: the board asks
   for approvals through `ctx.approvals` and never decides one itself.
 - The conformance suite is [`conformance/board.ts`](conformance/board.ts), run through the
-  [conformance runner](../libs/conformance/runner.ts) at contract 1.1 over any `ctx.approvals`
+  [conformance runner](../libs/conformance/runner.ts) at contract 1.2 over any `ctx.approvals`
   provider:
   - a charter approved by the operator before anything starts; rejection or expiry abandons the
     project and cancels its open tasks; amendments held until approved;
@@ -38,9 +43,16 @@ Work state machine **seam definition**
     abandoned. Its `boot` therefore also changes the queue's policies (`changePolicies`);
   - since 1.1, a digest attached to a task's exact result once, never while its reviewer holds
     the review; a review held for the operator takes one, and the operator's acceptance must then
-    name it; a done task's result takes one after its acceptance.
+    name it; a done task's result takes one after its acceptance;
+  - since 1.2, a spent budget's funding ask bound to the request's subject, invalid asks refused,
+    kept when the request is asked again after a policy change; approved, exactly those lines
+    added to the budget, the raise recorded with the approval before the next attempt's gate;
+    rejected, nothing raised; an ask past any bound a provider may set opening no request.
 
-  It also exports `FakeBoard`, which passes it. Contract 1.0 is unreleased and amended in place
+  It also exports `FakeBoard`, which passes it (its bound per task: `fundingMaxPercent`, default
+  100). Contract 1.0 is unreleased and amended in place
   ([ADR-0039](../../docs/decisions/adr/0039-base-guarantee-seam-contract-changes.md)); 1.1 adds
   the optional `attachDigest`, a minor
-  ([ADR-0040](../../docs/decisions/adr/0040-briefs-on-the-workers-and-workflow-seams.md)).
+  ([ADR-0040](../../docs/decisions/adr/0040-briefs-on-the-workers-and-workflow-seams.md)); 1.2
+  the optional `funding` of a `budget-spent` block, a minor
+  ([ADR-0044](../../docs/decisions/adr/0044-funding-raises-a-spent-task-budget.md)).

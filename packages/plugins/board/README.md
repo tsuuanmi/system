@@ -5,7 +5,8 @@
 [`board-core`](../../board-core/README.md)). It holds work that outlives a run: projects with
 charters, and their tasks.
 
-- **Records.** Projects are `project@1.0` and tasks `board-task@1.0` records, one row each in
+- **Records.** Projects are `project@1.0` and tasks `board-task@1.0` records (`@1.1` once a
+  task carries a funding ask or a raise), one row each in
   `board_projects` and `board_tasks`, indexed by project and state. Every record is validated
   before it is written and after it is read: one that fails on read is never acted on. Every
   write is revision-checked.
@@ -18,7 +19,8 @@ charters, and their tasks.
   board never decides one. With the queue unavailable, every move that needs it fails and
   nothing moves; the sweep still applies the moves that do not (a lapsed claim).
   - A request is on the exact subject: `project:<id>:charter:<version>` with the charter's hash,
-    or `board-task:<id>:attempt:<n>` with the wait's reason. A verdict counts only for that
+    or `board-task:<id>:attempt:<n>` with the wait's reason (a funding ask's: `budget-spent:` and
+    the hash of its lines). A verdict counts only for that
     subject and that task, and every return to ready for a new attempt asks the policy again,
     so one approval never covers a later attempt.
   - Before it opens a request, the board adopts its own request on the same subject, open or
@@ -57,6 +59,20 @@ charters, and their tasks.
   cancels its open tasks in the same transaction. The board sweeps
   once at start (a restart is a sweep) and every `sweepSeconds`; `0` leaves sweeping to the
   caller.
+- **Funding a spent budget** (`block`'s `funding`, contract 1.2;
+  [board](../../../docs/design/board.md#funding-a-spent-budget)): the ask is checked first (1 to
+  16 lines, each of a pool and unit the budget has, once, above zero; `invalid` otherwise), then
+  against the bound: what all of the task's raises add to a line stays within
+  `fundingMaxPercent` of the amount it declared (the line less earlier raises) and within 10^12.
+  Past it, the task waits for input (`rejected`) with a `board` decision, and no request is
+  opened. Within it, the `funding` request's subject version is `budget-spent:<contentId of the
+  lines>`, its summary names them and its consequences the budget they make, and `waiting.funding`
+  keeps them. On approval, the sweep checks the request's subject against the stored lines and the
+  bound again, then in one transaction adds the lines, appends `{lines, approval, decision, at}` to
+  `funding` with its `board` decision (`budget-spent` → `funded`), and makes the next attempt's
+  gate move, whose decision names the raise. A failure before that commit leaves the task as it
+  was, waiting on the approved request; the next sweep applies it once and adopts any request
+  the gate had opened. A request asked again after a policy change keeps the lines and subject.
 - **A digest on a result** (`attachDigest`, contract 1.1): in one transaction, a stored
   `digest@1.0` report whose sources are exactly the result's artifacts becomes `result.digest`,
   once; the same digest again changes nothing. Refused while the task has no result, while its
@@ -110,13 +126,14 @@ charters, and their tasks.
     its latest done tasks (their digest, else their first artifact); `conventions` are the
     charter's constraint notes.
 - **Injects:** `store`, `artifacts`, `leases`, `approvals`; `mcp` is optional.
-- **Config:** `inputExpirySeconds` (default 7 days), `leaseTtlSeconds` (600), `maxAttempts` (3),
-  `pageBound` (100), `projectionMaxTasks` (200), `sweepSeconds` (60).
+- **Config:** `fundingMaxPercent` (default 100, 0 to 1000), `inputExpirySeconds` (default 7
+  days), `leaseTtlSeconds` (600), `maxAttempts` (3), `pageBound` (100), `projectionMaxTasks`
+  (200), `sweepSeconds` (60).
 - **Bundle:** the `board` row is on, over the `approvals` row
   ([`system-approvals`](../approvals/README.md)); with that row off or refused, the board waits
   on its `approvals` inject and is not mounted.
 - **Tests:** [`tests/conformance.spec.ts`](tests/conformance.spec.ts) runs the seam's suite
-  ([`board-core/conformance/board.ts`](../../board-core/conformance/board.ts)) at contract 1.1
+  ([`board-core/conformance/board.ts`](../../board-core/conformance/board.ts)) at contract 1.2
   over `FakeApprovals`, with no expected failures; the approval queue's own tests run it over the
   store-backed queue too.
   [`tests/board.spec.ts`](tests/board.spec.ts) covers what the suite does not: restart (in place
@@ -125,5 +142,7 @@ charters, and their tasks.
   a founding call crashed), both crash windows around a withdrawal and a close that fails after
   reading, a wait whose request the queue no longer knows, a spent or lost run under a policy
   that does not ask, the gate before every attempt, the checks an acceptance reports, results
-  on the written subject, paging bounds, invalid records refused, the tools' outputs against
+  on the written subject, a funding ask's bound across raises, a bound lowered before an
+  approval is applied, an approval that does not bind the stored lines, a funding approval with
+  no attempt left, paging bounds, invalid records refused, the tools' outputs against
   their schema definitions, and the projection.

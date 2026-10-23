@@ -6,13 +6,13 @@
 import { createHash, randomUUID } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@tsuuanmi/system-artifacts'
-import { canonicalJson, SchemaRegistry } from '@tsuuanmi/system-libs'
+import { canonicalJson, contentId, SchemaRegistry } from '@tsuuanmi/system-libs'
 import { expect } from 'vitest'
 import { type Action, type ApprovalRequest, type AutonomyPolicy, waitSeconds } from '@tsuuanmi/system-approvals-core'
 import { POLICIES } from '../../approvals-core/conformance/approvals.ts'
 import { defineSuite, type Scenario } from '../../libs/conformance/runner.ts'
 import {
-  type ActionClass, type ArtifactRef, Board, BoardError, type BoardTask, type CancelReason, type Charter, type CharterInput, type Claim, type Project, type RunOutcome,
+  type ActionClass, type ArtifactRef, Board, BoardError, type BoardTask, type BudgetLine, type CancelReason, type Charter, type CharterInput, type Claim, fundingVersion, type Project, type RunOutcome,
   type ProjectState, type Subject, type TaskInput, type TaskState, TERMINAL, type WaitReason,
 } from '../src/index.ts'
 
@@ -116,7 +116,7 @@ const digestOf = (ctx: Context, sources: ArtifactRef[], summary = 'the result in
   body: { schema: 'digest@1.0', sources, status: 'passed', summary, claims: [{ id: 'C1', kind: 'finding', text: 'it ran', citation: { artifact: sources[0]!, quote: 'attempt' } }] },
 }).id as ArtifactRef
 
-const scenario = (id: string, title: string, run: (ctx: Context, booted: { changePolicies: (policies: readonly AutonomyPolicy[]) => Promise<void> }) => Promise<void>, since: '1.0' | '1.1' = '1.0'): Scenario<Boot> => ({
+const scenario = (id: string, title: string, run: (ctx: Context, booted: { changePolicies: (policies: readonly AutonomyPolicy[]) => Promise<void> }) => Promise<void>, since: '1.0' | '1.1' | '1.2' = '1.0'): Scenario<Boot> => ({
   id: `board.${id}`, since, title,
   run: async (boot) => {
     const { ctx, dispose, changePolicies } = await boot()
@@ -130,7 +130,7 @@ const scenario = (id: string, title: string, run: (ctx: Context, booted: { chang
 
 export const boardSuite = defineSuite<Boot>({
   seam: 'board',
-  contract: '1.1',
+  contract: '1.2',
   scenarios: [
     scenario('charter-approved-activates', 'starts work only under a charter the operator approved, bound to that charter version, with every milestone planned (INV-5, INV-6)', async (ctx) => {
       expect(await failureOf(ctx.board.charter({ projectId: 'p1', title: 'Kernel', charter: CHARTER, milestones: [{ id: 'm1', title: 'First', state: 'funded', funding: `sha256:${'1'.repeat(64)}` }] }, T0))).toBe('invalid')
@@ -630,6 +630,81 @@ export const boardSuite = defineSuite<Boot>({
       expect(await failureOf(ctx.board.answer(asks.taskId, ['yes'], at(5)))).toBe('invalid')
       expect(validTask(await ctx.board.answer(asks.taskId, ['yes', 'no'], at(5)))).toMatchObject({ state: 'ready' })
     }),
+    scenario('funding-raises-budget', 'binds a spent budget\'s funding request to the exact lines its holder asks for, keeps them when it is asked again, and once the operator approves it adds exactly those lines to the budget, recorded with the approval, before the next attempt goes through the gate; a rejection raises nothing, and an ask past the bound opens no request (INV-5, INV-9, INV-13)', async (ctx, { changePolicies }) => {
+      await active(ctx, 'p2')
+      const budget: BudgetLine[] = [{ pool: 'max.programmatic', unit: 'usd', amount: 10 }, { pool: 'max.programmatic', unit: 'runs', amount: 2 }]
+      const running = async (title: string): Promise<{ taskId: string; generation: number }> => {
+        const { taskId } = await ready(ctx, task('p2', title, { budget }))
+        const { generation } = await ctx.board.claim(taskId, 'lead', 600_000, at(3))
+        await ctx.board.start(taskId, generation, { runId: `run-${title}` }, at(3))
+        return { taskId, generation }
+      }
+      const ask: BudgetLine[] = [{ pool: 'max.programmatic', unit: 'usd', amount: 4 }]
+      const funded = await running('funded')
+      // Refused, and nothing changes: an ask on another wait, on a line the budget lacks, of nothing, of no line, or of one line twice.
+      for (const wait of [
+        { reason: 'question' as const, questions: ['Which pool?'], funding: ask },
+        { reason: 'budget-spent' as const, funding: [{ pool: 'max.programmatic', unit: 'tokens' as const, amount: 5 }] },
+        { reason: 'budget-spent' as const, funding: [{ ...ask[0]!, amount: 0 }] },
+        { reason: 'budget-spent' as const, funding: [] },
+        { reason: 'budget-spent' as const, funding: [ask[0]!, ask[0]!] },
+      ]) expect(await failureOf(ctx.board.block(funded.taskId, funded.generation, wait, at(4)))).toBe('invalid')
+      expect(await stateOf(ctx, funded.taskId)).toBe('running')
+
+      const asked = validTask(await ctx.board.block(funded.taskId, funded.generation, { reason: 'budget-spent', funding: ask }, at(4)))
+      expect(asked).toMatchObject({ schema: 'board-task@1.1', state: 'waiting-for-approval', waiting: { reason: 'budget-spent', funding: ask }, budget })
+      const request = (await ctx.approvals.get(asked.waiting!.approvalRequest!))!
+      // INV-5: the verdict binds to exactly those lines, the subject's version their content id; the operator reads them in the queue.
+      expect(request).toMatchObject({
+        action: { class: 'funding' }, requester: { component: 'board', taskId: funded.taskId },
+        subject: { type: 'content', ref: `board-task:${funded.taskId}:attempt:1`, version: fundingVersion(contentId(ask)) },
+      })
+      expect(request.action.summary).toContain('+4 usd of max.programmatic')
+
+      // A policy change withdraws the request: asked again on the same lines and subject.
+      const [studio, ...rest] = POLICIES
+      await changePolicies([{ ...studio!, version: studio!.version + 1 }, ...rest])
+      await ctx.approvals.sweep(at(5))
+      await ctx.board.sweep(at(5))
+      const again = validTask((await ctx.board.task(funded.taskId))!)
+      expect(again).toMatchObject({ state: 'waiting-for-approval', waiting: { reason: 'budget-spent', funding: ask } })
+      expect(again.waiting!.approvalRequest).not.toBe(request.requestId)
+      expect((await ctx.approvals.get(again.waiting!.approvalRequest!))?.subject).toEqual(request.subject)
+
+      await decide(ctx, again.waiting!.approvalRequest!, 'approved', at(6))
+      await ctx.board.sweep(at(6))
+      const raised = validTask((await ctx.board.task(funded.taskId))!)
+      // The next attempt went through the gate (read is auto in p2), on a budget of exactly the lines approved more.
+      expect(raised).toMatchObject({ state: 'ready', attempts: { count: 1 }, budget: [{ pool: 'max.programmatic', unit: 'usd', amount: 14 }, { pool: 'max.programmatic', unit: 'runs', amount: 2 }] })
+      expect(raised.waiting).toBeUndefined()
+      const approval = (await ctx.approvals.get(again.waiting!.approvalRequest!))!.resolution!
+      expect(raised.funding).toEqual([{ lines: ask, approval: approval.approval, decision: expect.stringMatching(/^sha256:/), at: at(6).toISOString() }])
+      const raise = ctx.artifacts.get(raised.funding![0]!.decision)!.body as { decisionType: string; inputs: string[] }
+      expect(raise.decisionType).toBe('board')
+      expect(raise.inputs).toEqual(expect.arrayContaining([approval.decision, approval.approval]))
+      // Raised before the gate: the next attempt's move names the raise.
+      expect((ctx.artifacts.get(raised.lastDecision!)!.body as { inputs: string[] }).inputs).toContain(raised.funding![0]!.decision)
+      expect(await ctx.board.sweep(at(7))).toEqual({ tasks: [], projects: [] })
+
+      // Rejected: nothing is raised, and the task waits for input.
+      const denied = await running('denied')
+      const blocked = await ctx.board.block(denied.taskId, denied.generation, { reason: 'budget-spent', funding: ask }, at(8))
+      await decide(ctx, blocked.waiting!.approvalRequest!, 'rejected', at(9))
+      await ctx.board.sweep(at(9))
+      const rejected = validTask((await ctx.board.task(denied.taskId))!)
+      expect(rejected).toMatchObject({ state: 'waiting-for-input', waiting: { reason: 'rejected' }, budget })
+      expect(rejected.funding).toBeUndefined()
+      expect(rejected.waiting!.funding).toBeUndefined()
+
+      // An ask past any bound a provider may set opens no request: the task waits for input, nothing raised (INV-9).
+      const greedy = await running('greedy')
+      const open = (await ctx.approvals.list({ projectId: 'p2' })).length
+      const refused = validTask(await ctx.board.block(greedy.taskId, greedy.generation, { reason: 'budget-spent', funding: [{ ...ask[0]!, amount: 1e9 }] }, at(10)))
+      expect(refused).toMatchObject({ state: 'waiting-for-input', waiting: { reason: 'rejected' }, budget })
+      expect(refused.holder).toBeUndefined()
+      expect((await ctx.approvals.list({ projectId: 'p2' })).length).toBe(open)
+      expect(decisionOf(ctx, refused.lastDecision).decisionType).toBe('board')
+    }, '1.2'),
     scenario('cancel-cascades', 'cancels a task not running, withdraws the approval it waited on, and cancels the tasks that depended on it', async (ctx) => {
       await active(ctx, 'p2')
       const merge = await ctx.board.propose(task('p2', 'merge', { actionClass: 'merge' }), at(2))
@@ -681,10 +756,14 @@ export const boardSuite = defineSuite<Boot>({
 })
 
 const TTL_INPUT_SECONDS = 7 * 24 * 3600
+const sameLine = (a: BudgetLine, b: BudgetLine): boolean => a.pool === b.pool && a.unit === b.unit
+const addLines = (budget: readonly BudgetLine[], lines: readonly BudgetLine[]): BudgetLine[] =>
+  budget.map((b) => ({ ...b, amount: Math.round((b.amount + lines.filter((l) => sameLine(l, b)).reduce((n, l) => n + l.amount, 0)) * 1e6) / 1e6 }))
 
 /**
  * A fake provider of `ctx.board`: the protocol in memory. Approvals go through `ctx.approvals`,
- * decisions through `ctx.artifacts`.
+ * decisions through `ctx.artifacts`. A funding ask may raise a line, in all, by `fundingMaxPercent`
+ * (default 100) of what the task declared.
  */
 export class FakeBoard extends Board {
   static inject = ['artifacts', 'approvals']
@@ -694,8 +773,17 @@ export class FakeBoard extends Board {
   private readonly charters = new Map<string, { projectId: string; version: number; expiresAt: string }>()
   private generations = new Map<string, number>()
 
-  constructor(ctx: Context, private readonly config: { inputExpirySeconds?: number } = {}) {
+  constructor(ctx: Context, private readonly config: { inputExpirySeconds?: number; fundingMaxPercent?: number } = {}) {
     super(ctx)
+  }
+
+  /** Whether adding `lines` keeps every line of the task's budget within the bound, over all its raises. */
+  private withinBound(task: BoardTask, lines: readonly BudgetLine[]): boolean {
+    const percent = this.config.fundingMaxPercent ?? 100
+    return lines.every((ask) => {
+      const so = (task.funding ?? []).flatMap((f) => f.lines).filter((l) => sameLine(l, ask)).reduce((n, l) => n + l.amount, 0)
+      return (task.budget ?? []).filter((b) => sameLine(b, ask)).every((b) => so + ask.amount <= ((b.amount - so) * percent) / 100 && b.amount + ask.amount <= 1e12)
+    })
   }
 
   /** A `board` decision: `to` chosen for `why`, staying at `from` (or each of `others`, when given) declined, each with its reason. */
@@ -963,25 +1051,31 @@ export class FakeBoard extends Board {
    * only an approval goes on: a verdict under which no request can be opened leaves it waiting for
    * input, never readied or cancelled (INV-4).
    */
-  private async gate(task: BoardTask, actionClass: ActionClass, reason: 'approval-needed' | 'budget-spent' | 'reconciliation-failed', at: Date): Promise<BoardTask> {
+  private async gate(task: BoardTask, actionClass: ActionClass, reason: 'approval-needed' | 'budget-spent' | 'reconciliation-failed', at: Date, funding?: BudgetLine[]): Promise<BoardTask> {
     const verdict = await this.ctx.approvals.check({ class: actionClass, projectId: task.projectId })
     if (verdict.mode !== 'ask') {
       return this.save(task, at, { state: 'waiting-for-input', holder: undefined, waiting: this.inputWait('rejected', at), lastDecision: this.decide(task.taskId, task.state, 'waiting-for-input', at, `${reason}: the policy gives ${actionClass} ${verdict.mode}, so no approval can be asked`) })
     }
-    const request = await this.ctx.approvals.request({
-      subject: { type: 'content', ref: `board-task:${task.taskId}:attempt:${task.attempts.count}`, version: reason },
-      action: { class: actionClass, summary: `${reason}: ${task.title}`.slice(0, 500) },
-      requester: { component: 'board', projectId: task.projectId, taskId: task.taskId, ...(task.run ? { runId: task.run.runId } : {}) },
-      verdict, classification: this.projectOf(task.projectId).classification ?? 'operator-shared',
-    }, at)
+    const request = await this.ctx.approvals.request(this.request(task, actionClass, reason, verdict, funding), at)
     return this.save(task, at, {
-      state: 'waiting-for-approval', holder: undefined,
-      waiting: { reason, approvalRequest: request.requestId, since: at.toISOString(), expiresAt: request.expiresAt }, lastDecision: verdict.decision,
+      state: 'waiting-for-approval', holder: undefined, ...(funding ? { schema: 'board-task@1.1' as const } : {}),
+      waiting: { reason, approvalRequest: request.requestId, ...(funding ? { funding } : {}), since: at.toISOString(), expiresAt: request.expiresAt }, lastDecision: verdict.decision,
     })
   }
 
-  /** Back for a new attempt, through the gate again: one approval never covers a later attempt. */
-  private async again(task: BoardTask, at: Date, why: string): Promise<BoardTask> {
+  /** The request on `board-task:<id>:attempt:<n>`: its version the reason, or a funding ask's lines bound by {@link fundingVersion}. */
+  private request(task: BoardTask, actionClass: ActionClass, reason: 'approval-needed' | 'budget-spent' | 'reconciliation-failed', verdict: Awaited<ReturnType<Context['approvals']['check']>>, funding?: BudgetLine[]) {
+    const raise = funding?.map((l) => `+${l.amount} ${l.unit} of ${l.pool}`).join(', ')
+    return {
+      subject: { type: 'content' as const, ref: `board-task:${task.taskId}:attempt:${task.attempts.count}`, version: funding ? fundingVersion(contentId(funding)) : reason },
+      action: { class: actionClass, summary: `${reason}: ${task.title}${raise ? `; raise its budget by ${raise}` : ''}`.slice(0, 500) },
+      requester: { component: 'board' as const, projectId: task.projectId, taskId: task.taskId, ...(task.run ? { runId: task.run.runId } : {}) },
+      verdict, classification: this.projectOf(task.projectId).classification ?? 'operator-shared',
+    }
+  }
+
+  /** Back for a new attempt, through the gate again: one approval never covers a later attempt. A `cause` decision is named by the move's. */
+  private async again(task: BoardTask, at: Date, why: string, cause?: ArtifactRef): Promise<BoardTask> {
     const verdict = await this.ctx.approvals.check({ class: task.actionClass, projectId: task.projectId })
     if (verdict.mode === 'forbid') return this.cancelTask(task, 'forbidden', at, verdict.decision)
     if (verdict.mode === 'ask') {
@@ -995,7 +1089,7 @@ export class FakeBoard extends Board {
         waiting: { reason: 'approval-needed', approvalRequest: request.requestId, since: at.toISOString(), expiresAt: request.expiresAt }, lastDecision: verdict.decision,
       })
     }
-    return this.save(task, at, { state: 'ready', holder: undefined, run: undefined, result: undefined, waiting: undefined, lastDecision: this.decide(task.taskId, task.state, 'ready', at, `${why}; policy ${verdict.mode}`) })
+    return this.save(task, at, { state: 'ready', holder: undefined, run: undefined, result: undefined, waiting: undefined, lastDecision: this.decide(task.taskId, task.state, 'ready', at, `${why}; policy ${verdict.mode}`, { inputs: [...(cause ? [cause] : []), verdict.decision] }) })
   }
 
   /** Whether the queue withdrew `request` on a policy change (decider rule `approvals.policy`), not the board itself. */
@@ -1019,13 +1113,8 @@ export class FakeBoard extends Board {
       ? { ready: 'auto or notify', 'waiting-for-approval': 'ask', cancelled: 'forbid' }
       : { 'waiting-for-approval': 'ask', 'waiting-for-input': 'auto, notify, or forbid' }
     const to = verdict.mode === 'ask' ? 'waiting-for-approval' : reason !== 'approval-needed' ? 'waiting-for-input' : verdict.mode === 'forbid' ? 'cancelled' : 'ready'
-    const request = verdict.mode === 'ask'
-      ? await this.ctx.approvals.request({
-        subject: withdrawn.subject, action: { class: actionClass, summary: `${reason}: ${task.title}`.slice(0, 500) },
-        requester: { component: 'board', projectId: task.projectId, taskId: task.taskId, ...(task.run ? { runId: task.run.runId } : {}) },
-        verdict, classification: this.projectOf(task.projectId).classification ?? 'operator-shared',
-      }, at)
-      : undefined
+    // A spent budget's funding ask is asked again as it was: the same lines, the same subject.
+    const request = verdict.mode === 'ask' ? await this.ctx.approvals.request(this.request(task, actionClass, reason, verdict, task.waiting!.funding), at) : undefined
     const decision = this.decide(task.taskId, task.state, to, at, `the policy change withdrew ${withdrawn.requestId}; the policy now gives ${actionClass} ${verdict.mode}`, {
       inputs: [withdrawn.resolution!.decision, verdict.decision],
       others: Object.entries(options).filter(([o]) => o !== to).map(([option, modes]) => ({ option, whyNot: `only on ${modes}, and the policy gives ${actionClass} ${verdict.mode}` })),
@@ -1033,7 +1122,7 @@ export class FakeBoard extends Board {
     if (to === 'cancelled') return this.cancelTask(task, 'forbidden', at, decision)
     if (to === 'ready') return this.save(task, at, { state: 'ready', holder: undefined, run: undefined, waiting: undefined, lastDecision: decision })
     if (to === 'waiting-for-input') return this.save(task, at, { state: 'waiting-for-input', holder: undefined, waiting: this.inputWait('rejected', at), lastDecision: decision })
-    return this.save(task, at, { waiting: { reason, approvalRequest: request!.requestId, since: at.toISOString(), expiresAt: request!.expiresAt }, lastDecision: decision })
+    return this.save(task, at, { waiting: { reason, approvalRequest: request!.requestId, ...(task.waiting!.funding ? { funding: task.waiting!.funding } : {}), since: at.toISOString(), expiresAt: request!.expiresAt }, lastDecision: decision })
   }
 
   /**
@@ -1065,15 +1154,27 @@ export class FakeBoard extends Board {
     return { project: this.save(project, at, { state: 'closed', closure: { outcome: 'abandoned', decision, at: at.toISOString() }, lastDecision: decision }), cancelled }
   }
 
-  async block(taskId: string, generation: number, wait: { reason: 'budget-spent' | 'reconciliation-failed' | 'question'; questions?: string[] }, at: Date = new Date()) {
+  async block(taskId: string, generation: number, wait: { reason: 'budget-spent' | 'reconciliation-failed' | 'question'; questions?: string[]; funding?: BudgetLine[] }, at: Date = new Date()) {
     const task = this.taskOf(taskId)
     this.held(task, generation, at)
     this.expect(task, 'running')
+    if (wait.funding !== undefined) {
+      const lines = wait.funding
+      if (wait.reason !== 'budget-spent' || !Array.isArray(lines) || lines.length < 1 || lines.length > 16) throw new BoardError('invalid', 'a budget-spent block asks for 1 to 16 lines')
+      for (const [i, l] of lines.entries()) {
+        if (!(l.amount > 0 && l.amount <= 1e12) || !task.budget?.some((b) => sameLine(b, l)) || lines.findIndex((o) => sameLine(o, l)) !== i) throw new BoardError('invalid', `${JSON.stringify(l)} is not a line of ${taskId}'s budget to raise`)
+      }
+    }
     if (wait.reason === 'question') {
       if (!wait.questions?.length) throw new BoardError('invalid', 'a question wait names its questions')
       return this.save(task, at, { state: 'waiting-for-input', holder: undefined, waiting: this.inputWait('question', at, wait.questions), lastDecision: this.decide(taskId, 'running', 'waiting-for-input', at, 'question') })
     }
-    return this.gate(task, wait.reason === 'budget-spent' ? 'funding' : 'remediation', wait.reason, at)
+    const funding = wait.funding?.map(({ pool, unit, amount }) => ({ pool, unit, amount }))
+    // An ask past the bound opens no request: no approval could apply it (INV-9).
+    if (funding && !this.withinBound(task, funding)) {
+      return this.save(task, at, { state: 'waiting-for-input', holder: undefined, waiting: this.inputWait('rejected', at), lastDecision: this.decide(taskId, 'running', 'waiting-for-input', at, 'budget-spent: the funding asked is past the bound per task, so no request is opened') })
+    }
+    return this.gate(task, wait.reason === 'budget-spent' ? 'funding' : 'remediation', wait.reason, at, funding)
   }
 
   async answer(taskId: string, answers: string[], at: Date = new Date()) {
@@ -1189,7 +1290,19 @@ export class FakeBoard extends Board {
           if (due <= now) moved.set(task.taskId, this.save(task, at, { state: 'waiting-for-input', waiting: this.inputWait('rejected', at), lastDecision: this.decide(task.taskId, 'waiting-for-approval', 'waiting-for-input', at, 'the approval wait expired with no verdict') }))
           continue
         }
-        if (request.state === 'approved' && task.waiting!.reason !== 'approval-needed' && task.attempts.count < task.attempts.max) moved.set(task.taskId, await this.again(task, at, 'the operator approved going on'))
+        const funding = task.waiting!.reason === 'budget-spent' ? task.waiting!.funding : undefined
+        if (request.state === 'approved' && funding && task.attempts.count < task.attempts.max) {
+          // Exactly the lines the request bound (INV-5), within the bound (INV-9), raised and recorded before the next attempt's gate.
+          if (request.subject.version !== fundingVersion(contentId(funding)) || !this.withinBound(task, funding)) {
+            moved.set(task.taskId, this.save(task, at, { state: 'waiting-for-input', waiting: this.inputWait('rejected', at), lastDecision: this.decide(task.taskId, 'waiting-for-approval', 'waiting-for-input', at, 'the approval does not bind the asked lines, or they are past the bound') }))
+            continue
+          }
+          const approval = request.resolution.approval!
+          const decision = this.decide(task.taskId, 'budget-spent', 'funded', at, `the operator approved ${request.requestId} on exactly these lines`, { inputs: [request.resolution.decision, approval] })
+          const budget = addLines(task.budget ?? [], funding)
+          this.save(task, at, { schema: 'board-task@1.1', budget, funding: [...(task.funding ?? []), { lines: funding, approval, decision, at: at.toISOString() }], lastDecision: decision })
+          moved.set(task.taskId, await this.again(task, at, `the operator approved going on, the budget raised (${decision})`, decision))
+        } else if (request.state === 'approved' && task.waiting!.reason !== 'approval-needed' && task.attempts.count < task.attempts.max) moved.set(task.taskId, await this.again(task, at, 'the operator approved going on'))
         else if (request.state === 'approved' && task.attempts.count >= task.attempts.max) {
           moved.set(task.taskId, this.save(task, at, { state: 'waiting-for-input', waiting: this.inputWait('retries-spent', at), lastDecision: request.resolution.decision }))
         } else if (request?.state === 'approved') moved.set(task.taskId, this.save(task, at, { state: 'ready', waiting: undefined, run: undefined, lastDecision: request.resolution!.decision }))

@@ -80,6 +80,7 @@
 
 | Option | Type | Default | Description |
 |---|---|---|---|
+| `fundingMaxPercent` | number (0…1000) | `100` | The most approved funding may raise a task's budget line in all, in percent of what the task declared; an ask past it opens no request |
 | `inputExpirySeconds` | number (60…7776000) | `604800` | How long a wait for input lasts before it cancels the task, in seconds |
 | `leaseTtlSeconds` | number (30…3600) | `600` | Lease length when a claim names none, in seconds (leases.maxTtlMs caps it) |
 | `maxAttempts` | number (1…10) | `3` | Attempts a task gets when its proposal names none |
