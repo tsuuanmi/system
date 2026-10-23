@@ -13,14 +13,13 @@ import { randomBytes } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import type {} from '@tsuuanmi/system-artifacts'
-import { type ArtifactRef, DigestError, type DigestRequest, Digests, type DigestState, type DigestView, type EscalationDecision, escalation, type QuoteCheck, quoteCheck, settlement } from '@tsuuanmi/system-digest-core'
+import { type ArtifactRef, DigestError, type DigestRequest, Digests, type DigestState, type DigestView, type EscalationDecision, escalation, type QuoteCheck, quoteCheck, registerDigestTools, settlement } from '@tsuuanmi/system-digest-core'
 import type {} from '@tsuuanmi/system-event-log'
 import type {} from '@tsuuanmi/system-gateway-core'
 import { type Lease, LeaseLost, StaleGeneration } from '@tsuuanmi/system-leases'
 import { type Brief, bodyText, type BriefSegment, extractJson, NO_LOCAL_SANDBOX, renderBrief, SchemaRegistry, sha256 } from '@tsuuanmi/system-libs'
 import type {} from '@tsuuanmi/system-store'
 import { AdmissionFailure, type Classification, type Tier, TIERS, type WorkRequirement } from '@tsuuanmi/system-workers-core'
-import { registerTools } from './tools.ts'
 
 export interface Config {
   /** The tier the digest Worker runs on, as both its minimum and its maximum (default economy). */
@@ -146,7 +145,7 @@ export class StoreDigests extends Digests {
         this.waiters.clear()
       }
     })
-    ctx.inject(['mcp'], (c) => registerTools(c, this))
+    ctx.inject(['mcp'], (c) => registerDigestTools(c, this))
   }
 
   async request(input: DigestRequest): Promise<DigestView> {

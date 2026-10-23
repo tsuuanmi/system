@@ -10,9 +10,9 @@ import WorkerRouter from '@tsuuanmi/system-workers'
 import { vi } from 'vitest'
 import { runSuite } from '../../../libs/conformance/runner.ts'
 import { digestsSuite } from '../../../digest-core/conformance/digests.ts'
+import { DigestWorker } from '../../../digest-core/conformance/worker.ts'
 import { DIGESTS_CONTRACT } from '@tsuuanmi/system-digest-core'
 import StoreDigests from '../src/index.ts'
-import { DigestWorker } from './worker.ts'
 
 vi.setConfig({ testTimeout: 60_000 })
 

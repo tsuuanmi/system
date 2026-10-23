@@ -29,7 +29,8 @@ A plugin may also consume a service of the dsh launcher itself, which no row pro
 | [board](../../packages/plugins/board/README.md) | orchestration | `board` | `board` | `store`, `artifacts`, `leases`, `approvals`, `mcp` (optional) | `approvals-core`, `board-core`, `gateway-core`, `leases`, `libs` |
 | [board-core](../../packages/board-core/README.md) | orchestration | defines `board` | — | — | `approvals-core` |
 | [digest](../../packages/plugins/digest/README.md) | orchestration | `digests` | `digest` | `store`, `artifacts`, `leases`, `workers`, `eventLog` (optional), `mcp` (optional) | `digest-core`, `gateway-core`, `leases`, `libs`, `workers-core` |
-| [digest-core](../../packages/digest-core/README.md) | orchestration | defines `digests` | — | — | `libs` |
+| [digest-core](../../packages/digest-core/README.md) | orchestration | defines `digests` | — | — | `gateway-core`, `libs` |
+| [digest-extractive](../../packages/plugins/digest-extractive/README.md) | orchestration | `digests` | `digest-extractive` | `store`, `artifacts`, `leases`, `workers`, `eventLog` (optional), `mcp` (optional) | `digest-core`, `gateway-core`, `leases`, `libs`, `workers-core` |
 | [evaluations-core](../../packages/evaluations-core/README.md) | orchestration | defines `evaluations` | — | — | `experiments-core`, `libs` |
 | [experiments-core](../../packages/experiments-core/README.md) | orchestration | defines `experiments` | — | — | `libs` |
 | [profile-scientific-research](../../packages/plugins/profile-scientific-research/README.md) | orchestration | — | `profile-scientific-research` | `workflow`, `workers`, `artifacts`, `eventLog` | `libs` |
@@ -82,7 +83,9 @@ A plugin may also consume a service of the dsh launcher itself, which no row pro
 
 An arrow runs from a consumer to the package that provides the seam; a dotted arrow is an optional
 seam. A seam with no provider yet (an optional seam, or one only a row that is off by default
-requires) points to the package that defines it. Rows of DSH core appear under host and libraries.
+requires) points to the package that defines it. A seam with an alternative provider, whose row is
+off and which the operator swaps in by configuration, points to the provider whose row is on. Rows
+of DSH core appear under host and libraries.
 
 ```mermaid
 flowchart TB
@@ -96,6 +99,7 @@ flowchart TB
   subgraph orchestration ["orchestration"]
     board["board<br/>ctx.board"]
     digest["digest<br/>ctx.digests"]
+    digest_extractive["digest-extractive<br/>ctx.digests"]
     profile_scientific_research["profile-scientific-research"]
     profile_software_development["profile-software-development"]
     worker_sessions["worker-sessions<br/>ctx.workerSessions"]
@@ -167,6 +171,12 @@ flowchart TB
   digest --> workers
   digest -.-> event_log
   digest -.-> mcp_server
+  digest_extractive --> store
+  digest_extractive --> artifacts
+  digest_extractive --> leases
+  digest_extractive --> workers
+  digest_extractive -.-> event_log
+  digest_extractive -.-> mcp_server
   egress --> artifacts
   event_log --> store
   gateway_anthropic --> webserver
@@ -280,6 +290,7 @@ policy above it. Each such edge is listed here so a new one is a visible change.
 | `agent-workers` (capabilities) | `workers` | `workers` (routing) | required |
 | `approvals` (routing) | `mcp` | `mcp-server` (gateways) | optional |
 | `board` (orchestration) | `mcp` | `mcp-server` (gateways) | optional |
+| `digest-extractive` (orchestration) | `mcp` | `mcp-server` (gateways) | optional |
 | `digest` (orchestration) | `mcp` | `mcp-server` (gateways) | optional |
 | `login` (provider runtime) | `mcp` | `mcp-server` (gateways) | optional |
 | `models` (capabilities) | `egress` | `egress` (routing) | required |
@@ -314,6 +325,7 @@ flowchart TB
     board_core["board-core<br/>defines board"]
     digest["digest<br/>ctx.digests"]
     digest_core["digest-core<br/>defines digests"]
+    digest_extractive["digest-extractive<br/>ctx.digests"]
     evaluations_core["evaluations-core<br/>defines evaluations"]
     experiments_core["experiments-core<br/>defines experiments"]
     worker_sessions["worker-sessions<br/>ctx.workerSessions"]
@@ -382,6 +394,11 @@ flowchart TB
   digest --> gateway_core
   digest --> leases
   digest --> workers_core
+  digest_core --> gateway_core
+  digest_extractive --> digest_core
+  digest_extractive --> gateway_core
+  digest_extractive --> leases
+  digest_extractive --> workers_core
   display_virtual --> provider_core
   egress --> provider_core
   evaluations_core --> experiments_core

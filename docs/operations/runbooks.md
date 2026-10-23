@@ -367,7 +367,8 @@ off (`disabled: true`). The Claude Code agent rows (`agent-runtimes`,
 | `runtime-codex-sdk` | Codex agent Workers ([Codex Workers](#codex-workers)); admitted where the probe proves its tool gate on the host |
 | `runtime-acp` | ACP agent Workers ([agent runtimes](../design/agent-runtimes.md)); an ACP agent cannot ask a tool gate before each tool call, so the `agents` source admits none of its Workers until it can |
 | `runtime-antigravity-cli` | Antigravity CLI agent Workers ([Antigravity CLI](#antigravity-cli-workers)); admitted on an agy version a supervised live check verified |
-| `profile-software-development` | the `agent-review` template, for agent Workers ([templates](../reference/workflow-templates.md#agent-review)) |
+| `profile-software-development` | the `agent-review` and `algorithm-development` templates, for agent Workers ([templates](../reference/workflow-templates.md#agent-review)); the Base pilot needs it on ([pilot](pilot.md#name-the-repository-and-the-workers)) |
+| `digest-extractive` | the extractive-first digest provider, in place of `digest`: turn the `digest` row off in the same patch ([swap the digest provider](#swap-the-digest-provider)) |
 | `gateway-anthropic`, `gateway-responses` | the model gateways behind `system claude-env`, `system codex-env`, and `system mcp-token --scope model` ([gateways](../design/gateways.md)) |
 
 1. Add the row to your profile patch, `~/.dsh/profiles/system/cordis.patch.yml`,
@@ -391,6 +392,50 @@ At the start after the change, the plugin host records it: `system plugins` show
 plugin `default` once its row is on and `candidate` once it is off, and `system artifact` of
 its lifecycle decision (`system plugins --json`) shows the state it left
 ([plugin host](../design/plugin-host.md)). A start with the same rows records nothing.
+
+## Swap the digest provider
+
+The default composition digests with the `digest` row, whose Worker reads every source whole. The
+`digest-extractive` row, off, provides the same seam extractive-first: code selects verbatim spans
+of the sources first, the Worker reads only those, and each claim's quote is filled from them
+([extractive-first](../design/digests.md#extractive-first)). Both serve the same `digests_*` tools,
+and one runs at a time. Swapping them is a configuration change only (Base exit criterion 6).
+
+1. **Between runs.** A digest pending when you swap is not finished by the other provider: the
+   board task waiting on it keeps no digest, recorded with why ("the digest provider no longer
+   knows request …"). Swap when no task's run has just reported.
+2. **One patch, both rows.** In your profile patch, `~/.dsh/profiles/system/cordis.patch.yml`:
+
+   ```yaml
+   - id: digest
+     disabled: true
+   - id: digest-extractive
+     disabled: false
+   ```
+
+   A row's configuration is its own: if you configured the `digest` row (`tier`, `maxClaims`,
+   `maxPending`, `timeoutMinutes`), give `digest-extractive` the same `config`; it adds
+   `maxExtracts`, the spans its Worker is given (default 40).
+3. `system check` until it says `ok`, then `system shutdown` and `system start`.
+4. **Check.** `system plugins` shows `@tsuuanmi/system-digest` `candidate` and
+   `@tsuuanmi/system-digest-extractive` `default`, each with the `lifecycle` decision that recorded
+   it; `system health` shows `plugins` and `manifests` ok. A new request's id starts with `dgx-`,
+   and its brief (`system artifact <brief>`) points at a `digest-extract@1.0` artifact, never at a
+   source.
+5. **Compare** before and after, as the [release checklist](../validation/release-checklist.md)
+   records it: the same kind of results digested by each provider, their claims kept and dropped
+   and escalations (`digests_get`), and the tokens the digest Workers' runs recorded on the
+   resource ledger (MCP `resources_usage`).
+
+To swap back, reverse the patch (or remove both rows from it) and restart. A provider's requests
+stay in its own table: while it is off, `digests_get` of one of its requests is refused
+(`unknown-request`), and the report counts that digest's attachment but not its claims, and says so
+in its notes; its digest and settling decision stay in the ledger (`system artifact`). Compare the
+period before a swap with the report made before it.
+
+With both rows on, the second provider to register does not start: `system health` shows
+`plugins` down, naming it ("service \"digests\" has been registered"). Turn one of them off and
+restart.
 
 ## The manifest check found a plugin
 

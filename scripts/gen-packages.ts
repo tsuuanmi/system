@@ -70,6 +70,7 @@ export const LAYER_OF: Record<string, Layer> = {
   'board': 'orchestration',
   'digest-core': 'orchestration',
   'digest': 'orchestration',
+  'digest-extractive': 'orchestration',
   'experiments-core': 'orchestration',
   'evaluations-core': 'orchestration',
   'statistics': 'orchestration',
@@ -99,6 +100,8 @@ export interface Pkg {
   optional: string[]
   imports: string[]
   mountId?: string
+  /** Its bundle row is off by default (`disabled: true`). */
+  off?: boolean
   dsh?: boolean
 }
 
@@ -234,7 +237,7 @@ export function scan(): Pkg[] {
     return {
       dir: p.dir, name: json.name, path: relative(root, p.path), plugin: p.plugin, layer: layer ?? 'host and libraries',
       defines: [...defines].sort(), provides: [...provides].sort(), required: [...required], optional: [...optional].sort(), imports: imports.sort(),
-      ...(row ? { mountId: row.id } : {}),
+      ...(row ? { mountId: row.id, ...(row.off ? { off: true } : {}) } : {}),
     }
   })
 
@@ -258,17 +261,41 @@ export function scan(): Pkg[] {
     }
     for (const k of p.optional) if (!providerOf.has(k) && !defined.has(k) && !(k in HOST_SERVICES)) problems.push(`${p.dir} consumes ctx.${k}, which no package or bundle row provides or defines`)
   }
-  for (const [k, by] of providerOf) if (by.length > 1) problems.push(`ctx.${k} is provided by ${by.join(', ')}`)
+  problems.push(...providerProblems(pkgs))
   if (problems.length) throw new Error(`gen-packages:\n  ${problems.join('\n  ')}`)
   return pkgs
+}
+
+/**
+ * Alternative providers of one seam (QA-9) are allowed only as rows the operator swaps by
+ * configuration: exactly one of their bundle rows is on by default and the others are off, so one
+ * provider runs (INV-1; Cordis refuses a second registration of a service at run time).
+ * gen-manifests holds them to a capability seam and one contract.
+ */
+export function providerProblems(pkgs: readonly Pkg[]): string[] {
+  const providers = new Map<string, Pkg[]>()
+  for (const p of pkgs) for (const k of p.provides) providers.set(k, [...(providers.get(k) ?? []), p])
+  const problems: string[] = []
+  for (const [k, by] of providers) {
+    if (by.length < 2) continue
+    const on = by.filter((p) => !p.off)
+    if (on.length !== 1) problems.push(`ctx.${k} is provided by ${by.map((p) => p.dir).join(', ')}: exactly one of their bundle rows must be on by default, and the others off (${on.length} are on)`)
+  }
+  return problems
+}
+
+/** The provider a seam's consumers reach in the default composition: the one whose row is on. */
+export function defaultProviders(pkgs: readonly Pkg[]): Map<string, Pkg> {
+  const providerOf = new Map<string, Pkg>()
+  for (const p of pkgs) for (const k of p.provides) if (!providerOf.has(k) || providerOf.get(k)!.off) providerOf.set(k, p)
+  return providerOf
 }
 
 const id = (dir: string): string => dir.replace(/[^A-Za-z0-9]/g, '_')
 const seams = (keys: string[], mark = ''): string[] => keys.map((k) => `\`${k}\`${mark}`)
 
 export function render(pkgs: Pkg[] = scan()): string {
-  const providerOf = new Map<string, Pkg>()
-  for (const p of pkgs) for (const k of p.provides) providerOf.set(k, p)
+  const providerOf = defaultProviders(pkgs)
   // A seam with no provider yet (only optional consumers are allowed one) points to its definition.
   for (const p of pkgs) for (const k of p.defines) if (!providerOf.has(k)) providerOf.set(k, p)
   const byLayer = (layer: Layer): Pkg[] => pkgs.filter((p) => p.layer === layer)
@@ -341,7 +368,9 @@ export function render(pkgs: Pkg[] = scan()): string {
     '',
     'An arrow runs from a consumer to the package that provides the seam; a dotted arrow is an optional',
     'seam. A seam with no provider yet (an optional seam, or one only a row that is off by default',
-    'requires) points to the package that defines it. Rows of DSH core appear under host and libraries.',
+    'requires) points to the package that defines it. A seam with an alternative provider, whose row is',
+    'off and which the operator swaps in by configuration, points to the provider whose row is on. Rows',
+    'of DSH core appear under host and libraries.',
     '',
     ...graph(seamEdges, (p) => inSeamGraph.has(id(p.dir))),
     '',

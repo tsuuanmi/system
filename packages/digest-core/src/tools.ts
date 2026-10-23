@@ -1,14 +1,15 @@
 /**
- * The `digests_*` MCP tools (docs/design/digests.md), client scope: a lead asks for a digest of raw
- * artifacts and reads it as it settles. Each call's input and structured output are validated
- * against `schemas/mcp-digests.v1.json` `$defs/<tool>-input` and `-output`; a refused input does
- * nothing.
+ * The `digests_*` MCP tools (docs/design/digests.md), client scope, which every provider of
+ * `ctx.digests` serves the same way: a lead asks for a digest of raw artifacts and reads it as it
+ * settles. Each call's input and structured output are validated against
+ * `schemas/mcp-digests.v1.json` `$defs/<tool>-input` and `-output`; a refused input does nothing.
+ * The tools belong to the seam, not to a provider, so replacing the provider keeps them.
  */
 import type { Context } from '@deepseek-ai/cordis'
-import { type ArtifactRef, DigestError, type Digests, type DigestView } from '@tsuuanmi/system-digest-core'
 import type { ToolHandler, ToolSpec } from '@tsuuanmi/system-gateway-core'
 import { SchemaRegistry } from '@tsuuanmi/system-libs'
 import { z as zod } from 'zod'
+import { type ArtifactRef, DigestError, type Digests, type DigestView } from './index.ts'
 
 export const DIGEST_TOOLS = ['digests_request', 'digests_get'] as const
 export type DigestTool = typeof DIGEST_TOOLS[number]
@@ -22,7 +23,7 @@ const artifactRef = () => zod.string().regex(/^sha256:[0-9a-f]{64}$/)
 const waitSeconds = () => zod.number().int().min(0).max(55).optional().describe('How long to wait for the request to settle before returning it (default 0, at most 55 s)')
 
 /** Input shapes, matching `$defs/<tool>-input`. */
-export const INPUTS: Record<DigestTool, ToolSpec['inputSchema']> = {
+export const DIGEST_TOOL_INPUTS: Record<DigestTool, ToolSpec['inputSchema']> = {
   digests_request: {
     sources: zod.array(artifactRef()).min(1).max(64).describe('The raw artifacts to digest, by content id (1 to 64, each once)'),
     clientRequestId: zod.string().min(1).max(200).optional().describe('Retry-safe request key: the same key returns the same request'),
@@ -41,8 +42,8 @@ const DESCRIPTIONS: Record<DigestTool, string> = {
 
 type Handler = (args: Record<string, unknown>) => Promise<DigestView>
 
-/** The tools' behavior, over a provider; exported so tests call it as a client would. */
-export function handlers(digests: Digests): Record<DigestTool, Handler> {
+/** The tools' behavior, over any provider; exported so tests call it as a client would. */
+export function digestToolHandlers(digests: Digests): Record<DigestTool, Handler> {
   const settled = async (view: DigestView, args: Record<string, unknown>): Promise<DigestView> =>
     (typeof args.waitSeconds === 'number' && args.waitSeconds > 0 ? digests.wait(view.requestId, args.waitSeconds * 1000) : view)
   return {
@@ -56,7 +57,7 @@ export function handlers(digests: Digests): Record<DigestTool, Handler> {
 }
 
 /** Wrap a handler: validate the input first and the structured output last, and report a refusal as an MCP error. */
-export function tool(name: DigestTool, handler: Handler): ToolHandler {
+export function digestTool(name: DigestTool, handler: Handler): ToolHandler {
   return async (args) => {
     try {
       schemas.assertDef('mcp-digests@1.0', defOf(name, 'input'), args)
@@ -78,8 +79,8 @@ export function tool(name: DigestTool, handler: Handler): ToolHandler {
   }
 }
 
-/** Contribute the tools to `ctx.mcp` for the provider's lifetime. */
-export function registerTools(ctx: Context, digests: Digests): void {
-  const behavior = handlers(digests)
-  for (const name of DIGEST_TOOLS) ctx.mcp.tool(name, { scope: 'client', description: DESCRIPTIONS[name], inputSchema: INPUTS[name] }, tool(name, behavior[name]))
+/** Contribute the tools to `ctx.mcp` for the provider's lifetime: a provider calls it from `ctx.inject(['mcp'], …)`. */
+export function registerDigestTools(ctx: Context, digests: Digests): void {
+  const behavior = digestToolHandlers(digests)
+  for (const name of DIGEST_TOOLS) ctx.mcp.tool(name, { scope: 'client', description: DESCRIPTIONS[name], inputSchema: DIGEST_TOOL_INPUTS[name] }, digestTool(name, behavior[name]))
 }

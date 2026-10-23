@@ -13,6 +13,7 @@ import StoreResources from '@tsuuanmi/system-resources'
 import type { PoolConfig } from '@tsuuanmi/system-resources-core'
 import Store from '@tsuuanmi/system-store'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { FakeDigests } from '../../../digest-core/conformance/digests.ts'
 import { attempt, bootPilot, charter, decide, operatorAccepts, type Pilot, POLICY, propose, queued, reported, until } from '../../profile-software-development/tests/pilot.ts'
 import * as Report from '../src/index.ts'
 
@@ -127,14 +128,14 @@ describe('the report tool over a pilot (PROP-0010 B8)', () => {
 })
 
 describe('the report tool without its sources', () => {
-  /** The kernel, the queue, the ledger, and the board as `rows` says, with the report and an MCP registry. */
-  async function boot(rows: { board?: boolean; retainDays?: number; pools?: PoolConfig[] } = {}): Promise<Context> {
+  /** The kernel, the queue, the ledger, the board, and a digest provider as `rows` says, with the report and an MCP registry. */
+  async function boot(rows: { board?: boolean; retainDays?: number; pools?: PoolConfig[]; digests?: boolean } = {}): Promise<Context> {
     const dir = mkdtempSync(join(tmpdir(), 'system-report-'))
     const ctx = new Context()
     const fibers: Fiber[] = [
       ctx.plugin(Store, { path: join(dir, 'system.db') }), ctx.plugin(Artifacts, {}), ctx.plugin(EventLog, { retainDays: rows.retainDays ?? 0 }), ctx.plugin(Leases, {}),
       ctx.plugin(StoreApprovals, { policies: [POLICY], sweepSeconds: 3600 }), ctx.plugin(StoreResources, { pools: rows.pools ?? [] }),
-      ...(rows.board === false ? [] : [ctx.plugin(StoreBoard, { sweepSeconds: 0 })]), ctx.plugin(RecordingMcp), ctx.plugin(Report),
+      ...(rows.board === false ? [] : [ctx.plugin(StoreBoard, { sweepSeconds: 0 })]), ...(rows.digests ? [ctx.plugin(FakeDigests, {})] : []), ctx.plugin(RecordingMcp), ctx.plugin(Report),
     ]
     await Promise.all(fibers)
     // A provider's fiber settles before its service is up: wait for the board to be served.
@@ -177,5 +178,13 @@ describe('the report tool without its sources', () => {
     expect(report!.usage.pools).toMatchObject([{ pool: 'max.agents', records: 1, turns: 2, unknownRuns: 1, withoutTokens: 1, withoutCost: 1 }])
     expect(report!.notes).toContain('1 usage.unknown entry is not a valid usage-unknown@1.0 record: not counted')
     expect(text).toContain('- Usage the ledger could not count: 2 runs (1 not reported, 1 refused by the ledger), 1 of them counted since; a cap counts the others as 0.')
+  })
+
+  it('says when the digest provider loaded does not know a digest attached in the period, which another provider settled before a swap, rather than count it as no claim (Base exit criterion 6)', async () => {
+    const ctx = await boot({ digests: true })
+    ctx.eventLog.append({ type: 'workflow.task.digest', runId: 'run-1', data: { taskId: 't1', state: 'attached', requestId: 'dig-of-the-other-provider', digest: `sha256:${'5'.repeat(64)}` } })
+    const { report } = await call(ctx, {})
+    expect(report!.digests).toEqual({ attached: 1, bypassed: 0, claimsKept: 0, claimsDropped: 0, escalated: 0 })
+    expect(report!.notes).toEqual(['1 digest(s) attached in the period are unknown to the digest provider loaded (another provider settled them before its row was swapped): their claims are not counted'])
   })
 })

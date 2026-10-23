@@ -13,8 +13,11 @@ import { expect } from 'vitest'
 import { defineSuite, type Scenario } from '../../libs/conformance/runner.ts'
 import { type ArtifactRef, type DigestBody, DigestError, type DigestRequest, Digests, type DigestView, type EscalationDecision, escalation, ESCALATION_TIER, quoteCheck, type QuoteCheck, settlement, type SettlementDecision } from '../src/index.ts'
 
-/** How the digest Worker of a tier answers a request: the text of its answer, or a failure of its run. */
-export type Drafter = (sources: readonly ArtifactRef[], tier: 'economy' | 'standard' | 'frontier') => { text: string } | { fail: string }
+/**
+ * How the digest Worker of a tier answers a request: the text of its answer, or a failure of its
+ * run. A scripted Worker also gives it the prompt its brief rendered to, when it has one.
+ */
+export type Drafter = (sources: readonly ArtifactRef[], tier: 'economy' | 'standard' | 'frontier', prompt?: string) => { text: string } | { fail: string }
 export type Boot = (drafter: Drafter | undefined) => Promise<{ ctx: Context; dispose: () => Promise<void> }>
 
 const schemas = new SchemaRegistry()

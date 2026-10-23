@@ -8,7 +8,9 @@
  * - versions: a provided seam is at the contract its provider pins in its conformance run
  *   (`runSuite(<suite>, { contract })` in the package's tests), a defined seam at its suite's
  *   `contract`, and a seam whose suite predates the conformance runner, or has none (DSH's), at 1.0;
- *   a consumed seam accepts `^` its provider's version in this workspace, else its definition's;
+ *   a consumed seam accepts `^` its provider's version in this workspace (the provider whose bundle
+ *   row is on, when an alternative's row is off), else its definition's; alternative providers of
+ *   one seam are allowed only on a capability seam, and only at one contract;
  * - class: the [seam catalog](../docs/architecture/plugin-model.md#seam-catalog): a package that
  *   provides or defines seams takes their Class; one that provides none is named in the family table;
  * - config: the plugin's `Config` schema, run: each top-level key, sensitive when it or a schema
@@ -252,23 +254,37 @@ export function derive(facts: CodeFacts, pkgs: Pkg[] = scan(), model: string = r
 
   // The version of every seam in this workspace: its provider's, else its definition's.
   const definitionVersion = (seam: string): string => semver(suiteOf.get(seam)?.contract ?? '1.0')
-  const providedVersion = new Map<string, { version: string; by: string; from: string }>()
+  // Each provider's version of each seam it provides: seam → provider directory → version.
+  const providedVersion = new Map<string, Map<string, { version: string; by: string; from: string }>>()
+  const provided = (seam: string, dir: string, v: { version: string; by: string; from: string }): void => void providedVersion.set(seam, (providedVersion.get(seam) ?? new Map()).set(dir, v))
   for (const p of pkgs) {
     for (const seam of p.provides) {
       const suite = suiteOf.get(seam)
       if (!suite || p.dsh) {
-        providedVersion.set(seam, { version: '1.0.0', by: p.dir, from: p.dsh ? 'a DSH row has no versioned conformance suite: contract 1.0' : 'it has no versioned conformance suite: contract 1.0' })
+        provided(seam, p.dir, { version: '1.0.0', by: p.dir, from: p.dsh ? 'a DSH row has no versioned conformance suite: contract 1.0' : 'it has no versioned conformance suite: contract 1.0' })
         continue
       }
       const runs = pinned.get(p.dir)?.get(seam) ?? []
       const contracts = [...new Set(runs.map((r) => r.contract))]
       if (!contracts.length) problems.push(`${p.path}: provides ctx.${seam}, but runs no conformance suite of it (runSuite(…) in its tests)`)
       else if (contracts.length > 1) problems.push(`${p.path}: pins ctx.${seam} at several contracts (${contracts.join(', ')})`)
-      else providedVersion.set(seam, { version: semver(contracts[0]!), by: p.dir, from: `its conformance run pins contract ${contracts[0]} (${runs[0]!.file})` })
+      else provided(seam, p.dir, { version: semver(contracts[0]!), by: p.dir, from: `its conformance run pins contract ${contracts[0]} (${runs[0]!.file})` })
     }
   }
+  // Alternative providers of one seam, swapped by configuration (QA-9): only of a capability seam,
+  // since a guarantee seam's provider changes by an ADR (ADR-0036), and all at one contract, so every
+  // consumer's range, taken from the provider whose row is on, accepts each of them.
+  for (const [seam, byDir] of providedVersion) {
+    if (byDir.size < 2) continue
+    const dirs = [...byDir.keys()].join(', ')
+    if (classes.get(seam)?.kind !== 'family') problems.push(`ctx.${seam} is provided by ${dirs}, but it is not a capability seam in the seam catalog: a guarantee seam has one provider (ADR-0036)`)
+    const versions = new Set([...byDir.values()].map((v) => v.version))
+    if (versions.size > 1) problems.push(`ctx.${seam} is provided by ${dirs} at ${[...versions].join(', ')}: alternative providers pin one contract, so a consumer's range accepts each`)
+  }
+  const onByDefault = (dir: string): boolean => !pkgs.find((p) => p.dir === dir)?.off
   const versionOf = (seam: string): { version: string; by: string } => {
-    const provided = providedVersion.get(seam)
+    const byDir = providedVersion.get(seam)
+    const provided = byDir && ([...byDir.entries()].find(([dir]) => onByDefault(dir)) ?? [...byDir.entries()][0])?.[1]
     if (provided) return { version: provided.version, by: provided.by }
     const definer = pkgs.find((p) => p.defines.includes(seam))
     if (definer) return { version: definitionVersion(seam), by: definer.dir }
@@ -299,7 +315,7 @@ export function derive(facts: CodeFacts, pkgs: Pkg[] = scan(), model: string = r
     if (!cls) continue
     const contracts = new Map<string, { version: string; from: string }>()
     for (const seam of p.provides) {
-      const v = providedVersion.get(seam)
+      const v = providedVersion.get(seam)?.get(p.dir)
       if (v) contracts.set(seam, { version: v.version, from: v.from })
     }
     for (const seam of p.defines) contracts.set(seam, { version: definitionVersion(seam), from: suiteOf.has(seam) ? `its suite is at contract ${suiteOf.get(seam)!.contract} (${suiteOf.get(seam)!.file})` : 'no versioned conformance suite: contract 1.0' })

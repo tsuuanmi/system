@@ -1,7 +1,8 @@
 /**
- * A scripted digest Worker for the provider's tests: a read-only Worker on this machine (it proves
- * `review` and `local-data`) on each of `tiers` (`w:digest` on economy, `w:digest:<tier>` above),
- * that answers each run as the drafter says, given the sources its brief points at and its tier.
+ * A scripted digest Worker for the tests of every provider of `ctx.digests`: a read-only Worker on
+ * this machine (it proves `review` and `local-data`) on each of `tiers` (`w:digest` on economy,
+ * `w:digest:<tier>` above), that answers each run as the drafter says, given the request's sources,
+ * its tier, and the prompt its brief rendered to (as any text-prompted Worker source renders it).
  * With no drafter it describes no Worker at all. Its runs outlive a restart of the provider, as a
  * Worker's own runtime does.
  */
@@ -9,14 +10,22 @@ import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@tsuuanmi/system-artifacts'
 import { type Brief, startPrompt } from '@tsuuanmi/system-libs'
 import { type ArtifactRef, type Tier, TIERS, type WorkerExecution, type WorkerSource, type WorkerStart } from '@tsuuanmi/system-workers-core'
-import type { Drafter } from '../../../digest-core/conformance/digests.ts'
-import { worker } from '../../../workers-core/conformance/workers.ts'
+import { worker } from '../../workers-core/conformance/workers.ts'
+import type { Drafter } from './digests.ts'
 
 const idOf = (tier: Tier): string => (tier === 'economy' ? 'w:digest' : `w:digest:${tier}`)
+
+/**
+ * The request's sources as a provider's brief names them: by default the brief's pointers. A
+ * provider that points its Worker at something derived from the sources says how to read them back.
+ */
+export type SourcesOf = (brief: Brief, read: (ref: ArtifactRef) => { body?: unknown } | undefined) => ArtifactRef[]
 
 export class DigestWorker {
   /** Every run started, with the prompt its brief rendered to; a repeated key starts none. */
   readonly started: Array<WorkerStart & { id: string; prompt: string; sources: ArtifactRef[]; tier: Tier }> = []
+  /** Every answer given, by run id: what the Worker sent back. */
+  readonly answers = new Map<string, string>()
   readonly cancelled: string[] = []
   /** Runs stay running until {@link release}. */
   hold = false
@@ -27,7 +36,7 @@ export class DigestWorker {
   private readonly waiters = new Map<string, Set<() => void>>()
   private ctx: Context | undefined
 
-  constructor(private readonly drafter: Drafter | undefined) {}
+  constructor(private readonly drafter: Drafter | undefined, private readonly sourcesOf: SourcesOf = (brief) => brief.artifacts.map((p) => p.ref as ArtifactRef)) {}
 
   readonly source = (ctx: Context): WorkerSource => {
     this.ctx = ctx
@@ -53,27 +62,29 @@ export class DigestWorker {
   /** End a held run as the drafter says. */
   release(id: string): void {
     const run = this.started.find((s) => s.id === id)!
-    this.finish(id, this.drafter!(run.sources, run.tier))
+    this.finish(id, this.drafter!(run.sources, run.tier, run.prompt))
   }
 
   private start(request: WorkerStart): WorkerExecution {
     const known = this.keys.get(request.key)
     if (known) return { ...this.executions.get(known)! }
     const ctx = this.ctx!
-    const prompt = startPrompt(request, (ref) => ctx.artifacts.get(ref)).prompt
-    const sources = (ctx.artifacts.get(request.brief!)!.body as Brief).artifacts.map((p) => p.ref as ArtifactRef)
+    const read = (ref: ArtifactRef) => ctx.artifacts.get(ref)
+    const prompt = startPrompt(request, read).prompt
+    const sources = this.sourcesOf(ctx.artifacts.get(request.brief!)!.body as Brief, read)
     const id = `d-${this.started.length + 1}`
     const tier = TIERS.find((t) => idOf(t) === request.worker)!
     this.keys.set(request.key, id)
     this.started.push({ ...request, id, prompt, sources, tier })
     this.executions.set(id, { id, status: 'running', submitted: true, decisions: [] })
-    if (!this.hold) this.finish(id, this.drafter!(sources, tier))
+    if (!this.hold) this.finish(id, this.drafter!(sources, tier, prompt))
     return { ...this.executions.get(id)! }
   }
 
   private finish(id: string, answer: { text: string } | { fail: string }): void {
     const execution = this.executions.get(id)!
     if ('text' in answer) {
+      this.answers.set(id, answer.text)
       execution.result = this.ctx!.artifacts.put({
         kind: 'report', bodySchema: 'provider-answer@1.0', classification: 'operator-shared', producer: { type: 'worker', ref: 'w:digest' },
         body: { schema: 'provider-answer@1.0', provider: 'scripted', account: 'scripted', turnId: id, conversation: { mode: 'temporary' }, promptHash: `sha256:${'0'.repeat(64)}`, text: answer.text },

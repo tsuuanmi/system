@@ -72,7 +72,9 @@ how many there were (`notes`), as it does for records without a cost or turns an
 usage the ledger could not count, so tokens and cost per accepted result are then lower bounds. A
 `usage.unknown` entry that is not a valid `usage-unknown@1.0` record is not counted, and said. An
 event log trimmed by retention within the period is said too, as is a digest provider that is not
-loaded.
+loaded, and a digest the provider loaded does not know: another provider settled it before its row
+was swapped ([replacing the provider](digests.md#replacing-the-provider)), so its claims, and for a
+project the runs that wrote it, are not counted.
 
 ## The baseline
 

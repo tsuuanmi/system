@@ -1,0 +1,332 @@
+{
+  "criterion": "Base exit criterion 6: the digest provider replaced through its manifest with no core change, with metrics before and after (docs/design/digests.md#replacing-the-provider)",
+  "patch": [
+    {
+      "id": "digest",
+      "disabled": true
+    },
+    {
+      "id": "digest-extractive",
+      "disabled": false
+    }
+  ],
+  "fixtures": [
+    {
+      "name": "vitest-run",
+      "sources": 1,
+      "chars": 8506
+    },
+    {
+      "name": "pytest-run",
+      "sources": 1,
+      "chars": 1252
+    },
+    {
+      "name": "benchmark",
+      "sources": 2,
+      "chars": 1456
+    },
+    {
+      "name": "attempt",
+      "sources": 3,
+      "chars": 1734
+    },
+    {
+      "name": "validation-only",
+      "sources": 1,
+      "chars": 281
+    }
+  ],
+  "workers": {
+    "copies": {
+      "description": "copies each quote verbatim on every tier",
+      "before": {
+        "provider": "@tsuuanmi/system-digest",
+        "digests": {
+          "written": 5,
+          "notWritten": 0,
+          "bypassed": 0
+        },
+        "claims": {
+          "kept": 30,
+          "dropped": 0,
+          "passRate": 1
+        },
+        "escalations": 0,
+        "worker": {
+          "runs": 5,
+          "promptChars": 31035,
+          "answerChars": 8499
+        },
+        "requests": [
+          {
+            "fixture": "vitest-run",
+            "state": "written",
+            "kept": 6,
+            "dropped": 0,
+            "escalated": false,
+            "runs": 1,
+            "promptChars": 12006,
+            "answerChars": 1705
+          },
+          {
+            "fixture": "pytest-run",
+            "state": "written",
+            "kept": 6,
+            "dropped": 0,
+            "escalated": false,
+            "runs": 1,
+            "promptChars": 4752,
+            "answerChars": 1635
+          },
+          {
+            "fixture": "benchmark",
+            "state": "written",
+            "kept": 6,
+            "dropped": 0,
+            "escalated": false,
+            "runs": 1,
+            "promptChars": 5058,
+            "answerChars": 1335
+          },
+          {
+            "fixture": "attempt",
+            "state": "written",
+            "kept": 6,
+            "dropped": 0,
+            "escalated": false,
+            "runs": 1,
+            "promptChars": 5438,
+            "answerChars": 2229
+          },
+          {
+            "fixture": "validation-only",
+            "state": "written",
+            "kept": 6,
+            "dropped": 0,
+            "escalated": false,
+            "runs": 1,
+            "promptChars": 3781,
+            "answerChars": 1595
+          }
+        ]
+      },
+      "after": {
+        "provider": "@tsuuanmi/system-digest-extractive",
+        "digests": {
+          "written": 5,
+          "notWritten": 0,
+          "bypassed": 0
+        },
+        "claims": {
+          "kept": 30,
+          "dropped": 0,
+          "passRate": 1
+        },
+        "escalations": 0,
+        "worker": {
+          "runs": 5,
+          "promptChars": 16234,
+          "answerChars": 4001
+        },
+        "requests": [
+          {
+            "fixture": "vitest-run",
+            "state": "written",
+            "kept": 6,
+            "dropped": 0,
+            "escalated": false,
+            "runs": 1,
+            "promptChars": 4396,
+            "answerChars": 816
+          },
+          {
+            "fixture": "pytest-run",
+            "state": "written",
+            "kept": 6,
+            "dropped": 0,
+            "escalated": false,
+            "runs": 1,
+            "promptChars": 3018,
+            "answerChars": 780
+          },
+          {
+            "fixture": "benchmark",
+            "state": "written",
+            "kept": 6,
+            "dropped": 0,
+            "escalated": false,
+            "runs": 1,
+            "promptChars": 3227,
+            "answerChars": 630
+          },
+          {
+            "fixture": "attempt",
+            "state": "written",
+            "kept": 6,
+            "dropped": 0,
+            "escalated": false,
+            "runs": 1,
+            "promptChars": 3661,
+            "answerChars": 1020
+          },
+          {
+            "fixture": "validation-only",
+            "state": "written",
+            "kept": 6,
+            "dropped": 0,
+            "escalated": false,
+            "runs": 1,
+            "promptChars": 1932,
+            "answerChars": 755
+          }
+        ]
+      }
+    },
+    "paraphrases": {
+      "description": "on the economy tier, collapses whitespace and drops closing punctuation when it copies a quote; on the standard tier, copies verbatim",
+      "before": {
+        "provider": "@tsuuanmi/system-digest",
+        "digests": {
+          "written": 5,
+          "notWritten": 0,
+          "bypassed": 0
+        },
+        "claims": {
+          "kept": 23,
+          "dropped": 7,
+          "passRate": 0.767
+        },
+        "escalations": 0,
+        "worker": {
+          "runs": 5,
+          "promptChars": 31035,
+          "answerChars": 8472
+        },
+        "requests": [
+          {
+            "fixture": "vitest-run",
+            "state": "written",
+            "kept": 4,
+            "dropped": 2,
+            "escalated": false,
+            "runs": 1,
+            "promptChars": 12006,
+            "answerChars": 1703
+          },
+          {
+            "fixture": "pytest-run",
+            "state": "written",
+            "kept": 4,
+            "dropped": 2,
+            "escalated": false,
+            "runs": 1,
+            "promptChars": 4752,
+            "answerChars": 1622
+          },
+          {
+            "fixture": "benchmark",
+            "state": "written",
+            "kept": 5,
+            "dropped": 1,
+            "escalated": false,
+            "runs": 1,
+            "promptChars": 5058,
+            "answerChars": 1331
+          },
+          {
+            "fixture": "attempt",
+            "state": "written",
+            "kept": 5,
+            "dropped": 1,
+            "escalated": false,
+            "runs": 1,
+            "promptChars": 5438,
+            "answerChars": 2225
+          },
+          {
+            "fixture": "validation-only",
+            "state": "written",
+            "kept": 5,
+            "dropped": 1,
+            "escalated": false,
+            "runs": 1,
+            "promptChars": 3781,
+            "answerChars": 1591
+          }
+        ]
+      },
+      "after": {
+        "provider": "@tsuuanmi/system-digest-extractive",
+        "digests": {
+          "written": 5,
+          "notWritten": 0,
+          "bypassed": 0
+        },
+        "claims": {
+          "kept": 30,
+          "dropped": 0,
+          "passRate": 1
+        },
+        "escalations": 0,
+        "worker": {
+          "runs": 5,
+          "promptChars": 16234,
+          "answerChars": 4001
+        },
+        "requests": [
+          {
+            "fixture": "vitest-run",
+            "state": "written",
+            "kept": 6,
+            "dropped": 0,
+            "escalated": false,
+            "runs": 1,
+            "promptChars": 4396,
+            "answerChars": 816
+          },
+          {
+            "fixture": "pytest-run",
+            "state": "written",
+            "kept": 6,
+            "dropped": 0,
+            "escalated": false,
+            "runs": 1,
+            "promptChars": 3018,
+            "answerChars": 780
+          },
+          {
+            "fixture": "benchmark",
+            "state": "written",
+            "kept": 6,
+            "dropped": 0,
+            "escalated": false,
+            "runs": 1,
+            "promptChars": 3227,
+            "answerChars": 630
+          },
+          {
+            "fixture": "attempt",
+            "state": "written",
+            "kept": 6,
+            "dropped": 0,
+            "escalated": false,
+            "runs": 1,
+            "promptChars": 3661,
+            "answerChars": 1020
+          },
+          {
+            "fixture": "validation-only",
+            "state": "written",
+            "kept": 6,
+            "dropped": 0,
+            "escalated": false,
+            "runs": 1,
+            "promptChars": 1932,
+            "answerChars": 755
+          }
+        ]
+      }
+    }
+  }
+}

@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { readManifest } from '../packages/plugin-host-core/src/index.ts'
 import { bundleAllowance, check, checkAll, type CodeFacts, codeFacts, configKeys, type Derived, derive, familyNames, render, satisfies, seamClasses } from './gen-manifests.ts'
+import { type Pkg, providerProblems, scan } from './gen-packages.ts'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
 let facts: CodeFacts
@@ -26,7 +27,7 @@ const shipped = (dir: string, edit: (m: Record<string, any>) => void): string =>
 
 describe('the manifests the workspace ships (REQ-HOST-7)', () => {
   it('has one for every plugin and every seam definition, each valid as the host reads it, and all agreeing with the code', () => {
-    expect(derived.map((d) => d.path).filter((p) => p.startsWith('packages/plugins/')).length).toBe(37)
+    expect(derived.map((d) => d.path).filter((p) => p.startsWith('packages/plugins/')).length).toBe(38)
     expect(derived.filter((d) => d.manifest.defines).map((d) => d.dir).sort()).toEqual([
       'agent-runtime-core', 'approvals-core', 'board-core', 'digest-core', 'evaluations-core', 'experiments-core', 'gateway-core', 'models-core', 'plugin-host-core', 'provider-core',
       'resources-core', 'workers-core',
@@ -52,7 +53,7 @@ describe('the manifests the workspace ships (REQ-HOST-7)', () => {
     expect(of('plugin-host').manifest.config).toEqual([{ key: 'allowWithoutManifest', sensitive: false }])
     expect(of('store').manifest.config?.map((c) => c.key)).toEqual(['path', 'busyTimeoutMs', 'synchronous'])
     expect(of('report').manifest.config).toBeUndefined()
-    expect(derived.filter((d) => d.manifest.config).length).toBe(33)
+    expect(derived.filter((d) => d.manifest.config).length).toBe(34)
     // Secrets live in the credential vault; a plugin's configuration holds paths and references only.
     expect(derived.flatMap((d) => (d.manifest.config ?? []).filter((c) => c.sensitive).map((c) => `${d.dir}.${c.key}`))).toEqual([])
   })
@@ -150,6 +151,21 @@ describe('the generator', () => {
     const model = readFileSync(join(root, 'docs', 'architecture', 'plugin-model.md'), 'utf8')
     expect(() => derive(facts, undefined, model.replace(/^\| Orchestration \| `board` .*$/m, ''))).toThrow(/packages\/plugins\/board: ctx\.board is not in the seam catalog/)
     expect(() => derive(facts, undefined, model.replace(', `profile-scientific-research`', ''))).toThrow(/profile-scientific-research: provides no seam, so the family table .* must name it once/)
+  })
+
+  it('lets a capability seam have an alternative provider, at the contract of the one whose row is on, its row off; never a guarantee seam, never two rows on (INV-1, QA-9, ADR-0036)', () => {
+    expect(of('digest-extractive').manifest).toMatchObject({ class: { kind: 'family', family: 'digest' }, provides: [{ seam: 'digests', version: '1.1.0' }] })
+    expect(of('digest').manifest.provides).toEqual(of('digest-extractive').manifest.provides)
+    expect(of('workflow').manifest.consumes).toContainEqual({ seam: 'digests', range: '^1.1.0', optional: true })
+    const model = readFileSync(join(root, 'docs', 'architecture', 'plugin-model.md'), 'utf8')
+    expect(() => derive(facts, undefined, model.replace('| Orchestration | `digests` | plugin: digest |', '| Orchestration | `digests` | core: gate |')))
+      .toThrow(/ctx\.digests is provided by digest, digest-extractive, but it is not a capability seam in the seam catalog: a guarantee seam has one provider/)
+    const pkgs = scan()
+    expect(providerProblems(pkgs)).toEqual([])
+    const bothOn = pkgs.map((p) => (p.dir === 'digest-extractive' ? { ...p, off: undefined } : p)) as Pkg[]
+    expect(providerProblems(bothOn)).toEqual([expect.stringMatching(/ctx\.digests is provided by digest, digest-extractive: exactly one of their bundle rows must be on by default, and the others off \(2 are on\)/)])
+    const noneOn = pkgs.map((p) => (p.dir === 'digest' ? { ...p, off: true } : p)) as Pkg[]
+    expect(providerProblems(noneOn)).toEqual([expect.stringMatching(/\(0 are on\)/)])
   })
 
   it('matches a caret range as semver does for a major above zero (the plugin host\'s own rule)', () => {

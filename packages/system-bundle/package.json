@@ -21,6 +21,7 @@
     "@tsuuanmi/system-browser-patchright": "workspace:*",
     "@tsuuanmi/system-credentials-vault": "workspace:*",
     "@tsuuanmi/system-digest": "workspace:*",
+    "@tsuuanmi/system-digest-extractive": "workspace:*",
     "@tsuuanmi/system-report": "workspace:*",
     "@tsuuanmi/system-display-virtual": "workspace:*",
     "@tsuuanmi/system-egress": "workspace:*",

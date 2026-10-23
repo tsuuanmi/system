@@ -1,0 +1,48 @@
+{
+  "schema": "digest-extract@1.0",
+  "rule": {
+    "id": "digest-extractive.select",
+    "version": "1"
+  },
+  "sources": [
+    {
+      "ref": "sha256:8118a3e5e3964accb3dc9f3ff143334dfb25e88b942f92cf6ddb65d7d1a5431a",
+      "spans": 3
+    },
+    {
+      "ref": "sha256:27906a522c6a493b9c27ae732c8e7d9fa4b5d97e6a5054103f3d3954e6438dd1",
+      "spans": 1
+    }
+  ],
+  "extracts": [
+    {
+      "id": "E1",
+      "source": 0,
+      "offset": 0,
+      "quote": "PASS tests/align/basic.spec.ts",
+      "signal": "result"
+    },
+    {
+      "id": "E2",
+      "source": 0,
+      "offset": 31,
+      "quote": "FAIL tests/align/end-gaps.spec.ts (2 failed)",
+      "signal": "failure"
+    },
+    {
+      "id": "E3",
+      "source": 0,
+      "offset": 76,
+      "quote": "Tests: 41 passed, 2 failed",
+      "signal": "failure"
+    },
+    {
+      "id": "E4",
+      "source": 1,
+      "offset": 0,
+      "quote": "Benchmark bench/align: median speed-up 2.4x over the reference, n=30.",
+      "signal": "metric"
+    }
+  ],
+  "text": "Verbatim extracts of 2 artifact(s): 4 of their 4 spans (a span is a non-blank line, or part of a long one), selected by rule digest-extractive.select 1.\nS1 = sha256:8118a3e5e3964accb3dc9f3ff143334dfb25e88b942f92cf6ddb65d7d1a5431a: 3 of its 3 spans\nS2 = sha256:27906a522c6a493b9c27ae732c8e7d9fa4b5d97e6a5054103f3d3954e6438dd1: 1 of its 1 spans\n\nE1 S1: PASS tests/align/basic.spec.ts\nE2 S1: FAIL tests/align/end-gaps.spec.ts (2 failed)\nE3 S1: Tests: 41 passed, 2 failed\nE4 S2: Benchmark bench/align: median speed-up 2.4x over the reference, n=30."
+}

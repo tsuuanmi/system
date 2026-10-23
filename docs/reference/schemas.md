@@ -765,6 +765,24 @@ guesses.
   a local Worker or one the egress policy allows. Example:
   [`digest.test-run.json`](../../schemas/examples/digest.test-run.json).
 
+### `digest-extract`
+
+- The body of an `evidence` artifact the extractive digest provider records before its Worker runs
+  ([extractive-first](../design/digests.md#extractive-first)): verbatim spans of a request's
+  sources, selected by code. Its envelope inputs are the `sources`, and its classification is at
+  least theirs. The Worker's brief points at it, never at a source.
+- Each extract's `quote` occurs verbatim in its source's text (the body's `text` field, else its
+  canonical JSON) at `offset`, in code points: one line, or a part of a line longer than a quote may
+  be, without surrounding whitespace, so it can stand as a claim's quote. A claim the Worker cites
+  by an extract's `id` is given that extract's source, quote, and offset; the quote check still
+  reads the source.
+- `rule` names the selection rule and its version: the same stored sources, rule, and bound give
+  the same body, so the artifact deduplicates. `sources[].spans` counts the spans of each source the
+  rule weighed, `truncated` when its text is longer than the rule reads; `text` is what the Worker
+  reads (the sources by number, then each extract with its id). An extract with no span is never
+  recorded: the request is bypassed. Example:
+  [`digest-extract.test-run.json`](../../schemas/examples/digest-extract.test-run.json).
+
 ### MCP tools: `digests_*`
 
 | Tool | Scope | Does |
