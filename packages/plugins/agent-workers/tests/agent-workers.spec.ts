@@ -899,7 +899,7 @@ describe('agents source: a git worktree per workflow run (worktreePerRun; PROP-0
     const agent = developer()
     const { ctx } = await boot(agent, { workers: [writer(repo)], worktreeRoot: temp('system-worktrees-') })
     // Generated at run time: never a real secret in the repository.
-    const secret = String(generateKeyPairSync('rsa', { modulusLength: 1024 }).privateKey.export({ type: 'pkcs1', format: 'pem' }))
+    const secret = String(generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey.export({ type: 'pkcs1', format: 'pem' }))
     const leaked = await briefed(ctx, 'k-leak', taskBrief(ctx, `# p1\n${secret}`), 'run_leak')
     expect(leaked).toMatchObject({ status: 'failed', submitted: false, error: { kind: 'egress_denied' } })
     const tracked = repository()
