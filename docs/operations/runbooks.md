@@ -848,13 +848,16 @@ check` (37 rows, checked on a copy, 2026-10-23).
    to `~/.dsh/profiles/system`, and its `node_modules` too when the bundle link differs.
 2. `git -C ~/workspaces/system-live checkout --detach e218ae7`, then `pnpm install --frozen-lockfile
    && pnpm build` there.
-3. If Base started: `node packages/cli/lib/bin.js restore <dir>/store`, then again with `--yes`.
+3. If Base started, in `~/workspaces/system-live`: `node packages/cli/lib/bin.js restore
+   <dir>/store`, then again with `--yes`.
 4. Start as before: `cd ~/workspaces/system-live && nohup node packages/cli/lib/bin.js start >>
    ~/system-backups/daemon.log 2>&1 &`.
 
 The script was rehearsed on a throwaway worktree and DSH home: the upgrade suite's fixture store,
-a profile linked from another checkout. A start that failed rolled back to e218ae7, the store
-restored; an update with a changed patch completed, its seven old runs explaining as before.
+a profile linked from another checkout. A start that failed rolled back to e218ae7, the store and
+the profile's link restored; an update interrupted mid-build was taken up again; and updates with a
+changed patch, and with the fragment's runtime rows and three reviewer Workers (none signed in
+there, so each reported), completed, the seven old runs explaining as before.
 
 ## Rotate a control token
 
