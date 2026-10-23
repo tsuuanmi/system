@@ -792,12 +792,14 @@ check` (37 rows, checked on a copy, 2026-10-23).
    `pnpm install --frozen-lockfile && pnpm build` there (Node 24 first on `PATH`, pnpm from Node 22's:
    `export PATH="$PATH:$HOME/.nvm/versions/node/v22.23.2/bin"`). Write the candidate patch
    (`~/system-backups/live-base.cordis.patch.yml`). Install Codex 0.164.0 and check agy's version.
-2. **Dry run:** `scripts/live-update.sh <sha> --check-with ~/workspaces/system-base --patch
-   ~/system-backups/live-base.cordis.patch.yml`. It changes nothing. It checks the tools, the live
-   checkout (clean, at e218ae7), the target (a descendant), the vault key, free space, and the
-   candidate patch against the target's code (`system check` on a scratch copy of the profile); reads
-   how the daemon was started from its process; captures what the profile answers now (a read); and
-   prints `system health` and the plan. Fix what it reports until it ends with the plan.
+2. **Dry run**, from the target's checkout (never from `system-live`, whose files the update
+   replaces while the script runs; it refuses): `~/workspaces/system-base/scripts/live-update.sh
+   <sha> --check-with ~/workspaces/system-base --patch ~/system-backups/live-base.cordis.patch.yml`.
+   It changes nothing. It checks the tools, the live checkout (clean, at e218ae7), the target (a
+   descendant), the vault key, free space, and the candidate patch against the target's code
+   (`system check` on a scratch copy of the profile); reads how the daemon was started from its
+   process; captures what the profile answers now (a read); and prints `system health` and the
+   plan. Fix what it reports until it ends with the plan.
 3. **Apply:** the same command with `--apply`, in a shell that outlives a disconnect (`tmux`, or
    `nohup … > ~/system-backups/live-update.out 2>&1 &`): the drain alone may take ten minutes. The
    daemon starts with this shell's environment, as the first `nohup` start had its own. Notes and the

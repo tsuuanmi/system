@@ -110,6 +110,17 @@ describe('live-update.sh', () => {
     expect(readdirSync(f.backups)).toEqual([])
   })
 
+  it('refuses to run from the live checkout, whose files the update replaces', () => {
+    const f = fixture()
+    const copy = join(f.live, 'tools')
+    mkdirSync(copy)
+    for (const file of ['live-update.sh', 'live-update-check.ts']) writeFileSync(join(copy, file), readFileSync(join(dirname(SCRIPT), file)))
+    const result = spawnSync('bash', [join(copy, 'live-update.sh'), f.target, '--from', f.from, '--live', f.live, '--dsh-home', f.home, '--backups', f.backups,
+      '--node-dir', dirname(process.execPath), '--pnpm-dir', f.bin], { encoding: 'utf8' })
+    expect(result.stderr).toContain('run this script from another checkout')
+    expect(result.status).toBe(1)
+  })
+
   it('refuses a live checkout with uncommitted changes', () => {
     const f = fixture()
     writeFileSync(join(f.live, 'pnpm-lock.yaml'), 'changed\n')

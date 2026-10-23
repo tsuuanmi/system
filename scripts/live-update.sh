@@ -142,6 +142,8 @@ trap '[[ -z $SCRATCH ]] || rm -rf -- "$SCRATCH"' EXIT
 [[ -d $LIVE ]] || die "no live checkout at $LIVE (--live)"
 [[ -d $DSH_HOME_DIR ]] || die "no DSH home at $DSH_HOME_DIR (--dsh-home)"
 LIVE=$(realpath "$LIVE")
+# Bash reads a script as it runs it, and the update replaces the live checkout's files.
+if [[ $(realpath "$SCRIPT_DIR")/ == "$LIVE"/* ]]; then die "run this script from another checkout than $LIVE (the target's, say): the update replaces its files"; fi
 DSH_HOME_DIR=$(realpath "$DSH_HOME_DIR")
 BACKUPS=$(realpath -m "$BACKUPS")
 RUN_PATH=$NODE_DIR:$PATH            # the daemon and the CLI: Node 24 first, then the caller's PATH
