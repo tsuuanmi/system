@@ -126,7 +126,7 @@ export interface AnalysisInput {
 }
 
 /**
- * One method of the pinned statistics library (F2; docs/proposals/0011-feedback-loop.md#statistics-library-pending).
+ * One method of the pinned statistics library (F2; docs/design/statistics.md, `@tsuuanmi/system-statistics`).
  * Deterministic for the same input and seed. It returns the paired difference (candidate minus
  * baseline, as measured) and the candidate arm's own level, each as an estimate with its interval.
  */

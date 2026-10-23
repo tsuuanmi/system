@@ -170,6 +170,9 @@
       ],
       "@tsuuanmi/system-evaluations-core": [
         "packages/evaluations-core/src/index.ts"
+      ],
+      "@tsuuanmi/system-statistics": [
+        "packages/statistics/src/index.ts"
       ]
     }
   },

@@ -130,8 +130,9 @@ Rules for the two classes:
 
 A plugin exists only when something can really be swapped or scoped. These stay **libraries**:
 canonical JSON and hashing, the pure reconciliation decision function, the failure-class
-taxonomy, the timeout and deadline primitives, the per-account scheduler, the UI engine, and
-the record schemas. These pieces have exactly one correct answer per process, and turning them
+taxonomy, the timeout and deadline primitives, the per-account scheduler, the UI engine, the
+evaluation engine's statistics (pinned by version in each experiment), and the record schemas.
+These pieces have exactly one correct answer per process, and turning them
 into services would make the kernel "know too much".
 
 A plugin that registers only event listeners, such as a policy hook, is a plugin but not a

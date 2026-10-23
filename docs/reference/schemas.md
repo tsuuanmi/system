@@ -895,7 +895,8 @@ guesses.
 - `protocol` declares the interval `confidence`, `minCases`, `repetitions`, the evidence
   `partitions` (never `development`), and one method per metric: `sign-flip`, `bootstrap` (with
   its `resamples`), or `bayesian` (with its `prior`). An experiment's protocol may only be
-  stricter ([experiments](../design/experiments.md#a-registration)).
+  stricter ([experiments](../design/experiments.md#a-registration)). Each method is the pinned
+  statistics library's ([statistics](../design/statistics.md)).
 - The registry also refuses a contract whose primary or a guardrail has no method or no metric, whose
   ratio reads an undefined metric or a ratio, or that guards the primary or one metric twice
   (`contractProblems` in [`experiments-core`](../../packages/experiments-core/README.md)). Example:

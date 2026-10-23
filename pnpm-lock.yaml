@@ -1638,6 +1638,18 @@ importers:
         specifier: workspace:*
         version: link:../plugins/store
 
+  packages/statistics:
+    devDependencies:
+      '@tsuuanmi/system-evaluations-core':
+        specifier: workspace:*
+        version: link:../evaluations-core
+      '@tsuuanmi/system-experiments-core':
+        specifier: workspace:*
+        version: link:../experiments-core
+      '@tsuuanmi/system-libs':
+        specifier: workspace:*
+        version: link:../libs
+
   packages/system-bundle:
     dependencies:
       '@tsuuanmi/system-accounts':

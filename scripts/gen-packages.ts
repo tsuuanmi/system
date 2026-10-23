@@ -72,6 +72,7 @@ export const LAYER_OF: Record<string, Layer> = {
   'digest': 'orchestration',
   'experiments-core': 'orchestration',
   'evaluations-core': 'orchestration',
+  'statistics': 'orchestration',
   'worker-sessions': 'orchestration',
   'profile-software-development': 'orchestration',
   'profile-scientific-research': 'orchestration',

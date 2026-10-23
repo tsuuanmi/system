@@ -34,6 +34,7 @@ A plugin may also consume a service of the dsh launcher itself, which no row pro
 | [experiments-core](../../packages/experiments-core/README.md) | orchestration | defines `experiments` | — | — | `libs` |
 | [profile-scientific-research](../../packages/plugins/profile-scientific-research/README.md) | orchestration | — | `profile-scientific-research` | `workflow`, `workers`, `artifacts`, `eventLog` | `libs` |
 | [profile-software-development](../../packages/plugins/profile-software-development/README.md) | orchestration | — | `profile-software-development` | `workflow` | — |
+| [statistics](../../packages/statistics/README.md) | orchestration | — | — | — | — |
 | [worker-sessions](../../packages/plugins/worker-sessions/README.md) | orchestration | `workerSessions` | `worker-sessions` | `store`, `artifacts`, `mcp` (optional) | `gateway-core`, `libs` |
 | [workflow](../../packages/plugins/workflow/README.md) | orchestration | `workflow` | `workflow` | `store`, `artifacts`, `eventLog`, `leases`, `egress`, `workers`, `workerSessions`, `approvals` (optional), `board` (optional), `digests` (optional), `mcp` (optional), `resources` (optional) | `approvals-core`, `board-core`, `digest-core`, `gateway-core`, `leases`, `libs`, `provider-core`, `resources-core`, `worker-sessions`, `workers-core` |
 | [approvals](../../packages/plugins/approvals/README.md) | routing | `approvals` | `approvals` | `store`, `artifacts`, `eventLog` (optional), `mcp` (optional) | `approvals-core`, `gateway-core`, `libs` |

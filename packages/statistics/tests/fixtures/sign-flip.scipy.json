@@ -1,0 +1,2427 @@
+{
+  "about": "Golden results of the exact paired sign-flip test, from SciPy (docs/design/statistics.md#golden-tests).",
+  "generator": "scripts/statistics/sign-flip-goldens.py",
+  "reference": {
+    "python": "3.14.2",
+    "numpy": "2.5.4",
+    "scipy": "1.18.1",
+    "function": "scipy.stats.permutation_test",
+    "paired": "permutation_test((candidate, baseline), lambda x, y, axis: mean(x - y, axis), permutation_type='samples', vectorized=True, n_resamples=inf, batch=16384, alternative=...)",
+    "oneSample": "permutation_test((values,), lambda x, axis: mean(x, axis), permutation_type='samples', vectorized=True, n_resamples=inf, batch=16384, alternative=...)"
+  },
+  "confidences": [0.8, 0.9, 0.95, 0.99, 0.999],
+  "datasets": [
+    {
+      "id": "two-pairs",
+      "about": "the fewest pairs SciPy takes",
+      "candidate": [3.0, 5.0],
+      "baseline": [1.0, 2.0],
+      "scipy": {
+        "greater": 0.25,
+        "statistic": 2.5,
+        "less": 1.0,
+        "two-sided": 0.5
+      },
+      "intervals": [
+        {
+          "confidence": 0.8,
+          "rank": 0,
+          "lower": null,
+          "upper": null,
+          "checks": [
+            {
+              "bound": "lower",
+              "side": "inside",
+              "delta": -1.0,
+              "alternative": "greater",
+              "p": 0.25
+            },
+            {
+              "bound": "upper",
+              "side": "inside",
+              "delta": 6.0,
+              "alternative": "less",
+              "p": 0.25
+            }
+          ]
+        },
+        {
+          "confidence": 0.9,
+          "rank": 0,
+          "lower": null,
+          "upper": null,
+          "checks": [
+            {
+              "bound": "lower",
+              "side": "inside",
+              "delta": -1.0,
+              "alternative": "greater",
+              "p": 0.25
+            },
+            {
+              "bound": "upper",
+              "side": "inside",
+              "delta": 6.0,
+              "alternative": "less",
+              "p": 0.25
+            }
+          ]
+        },
+        {
+          "confidence": 0.95,
+          "rank": 0,
+          "lower": null,
+          "upper": null,
+          "checks": [
+            {
+              "bound": "lower",
+              "side": "inside",
+              "delta": -1.0,
+              "alternative": "greater",
+              "p": 0.25
+            },
+            {
+              "bound": "upper",
+              "side": "inside",
+              "delta": 6.0,
+              "alternative": "less",
+              "p": 0.25
+            }
+          ]
+        },
+        {
+          "confidence": 0.99,
+          "rank": 0,
+          "lower": null,
+          "upper": null,
+          "checks": [
+            {
+              "bound": "lower",
+              "side": "inside",
+              "delta": -1.0,
+              "alternative": "greater",
+              "p": 0.25
+            },
+            {
+              "bound": "upper",
+              "side": "inside",
+              "delta": 6.0,
+              "alternative": "less",
+              "p": 0.25
+            }
+          ]
+        },
+        {
+          "confidence": 0.999,
+          "rank": 0,
+          "lower": null,
+          "upper": null,
+          "checks": [
+            {
+              "bound": "lower",
+              "side": "inside",
+              "delta": -1.0,
+              "alternative": "greater",
+              "p": 0.25
+            },
+            {
+              "bound": "upper",
+              "side": "inside",
+              "delta": 6.0,
+              "alternative": "less",
+              "p": 0.25
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "three-pairs-worse",
+      "about": "the candidate worse on every pair",
+      "candidate": [1.0, 0.0, 2.0],
+      "baseline": [4.0, 3.0, 2.5],
+      "scipy": {
+        "greater": 1.0,
+        "statistic": -2.1666666666666665,
+        "less": 0.125,
+        "two-sided": 0.25
+      },
+      "intervals": [
+        {
+          "confidence": 0.8,
+          "rank": 0,
+          "lower": null,
+          "upper": null,
+          "checks": [
+            {
+              "bound": "lower",
+              "side": "inside",
+              "delta": -6.0,
+              "alternative": "greater",
+              "p": 0.125
+            },
+            {
+              "bound": "upper",
+              "side": "inside",
+              "delta": 2.5,
+              "alternative": "less",
+              "p": 0.125
+            }
+          ]
+        },
+        {
+          "confidence": 0.9,
+          "rank": 0,
+          "lower": null,
+          "upper": null,
+          "checks": [
+            {
+              "bound": "lower",
+              "side": "inside",
+              "delta": -6.0,
+              "alternative": "greater",
+              "p": 0.125
+            },
+            {
+              "bound": "upper",
+              "side": "inside",
+              "delta": 2.5,
+              "alternative": "less",
+              "p": 0.125
+            }
+          ]
+        },
+        {
+          "confidence": 0.95,
+          "rank": 0,
+          "lower": null,
+          "upper": null,
+          "checks": [
+            {
+              "bound": "lower",
+              "side": "inside",
+              "delta": -6.0,
+              "alternative": "greater",
+              "p": 0.125
+            },
+            {
+              "bound": "upper",
+              "side": "inside",
+              "delta": 2.5,
+              "alternative": "less",
+              "p": 0.125
+            }
+          ]
+        },
+        {
+          "confidence": 0.99,
+          "rank": 0,
+          "lower": null,
+          "upper": null,
+          "checks": [
+            {
+              "bound": "lower",
+              "side": "inside",
+              "delta": -6.0,
+              "alternative": "greater",
+              "p": 0.125
+            },
+            {
+              "bound": "upper",
+              "side": "inside",
+              "delta": 2.5,
+              "alternative": "less",
+              "p": 0.125
+            }
+          ]
+        },
+        {
+          "confidence": 0.999,
+          "rank": 0,
+          "lower": null,
+          "upper": null,
+          "checks": [
+            {
+              "bound": "lower",
+              "side": "inside",
+              "delta": -6.0,
+              "alternative": "greater",
+              "p": 0.125
+            },
+            {
+              "bound": "upper",
+              "side": "inside",
+              "delta": 2.5,
+              "alternative": "less",
+              "p": 0.125
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "zeros-and-ties",
+      "about": "zero differences and equal differences",
+      "candidate": [2.0, 1.0, 3.0, 0.0, 1.0, 2.0, 5.0, 4.0],
+      "baseline": [1.0, 1.0, 2.0, 1.0, 0.0, 2.0, 3.0, 4.0],
+      "scipy": {
+        "greater": 0.15625,
+        "statistic": 0.5,
+        "less": 0.96875,
+        "two-sided": 0.3125
+      },
+      "intervals": [
+        {
+          "confidence": 0.8,
+          "rank": 25,
+          "lower": 0.0,
+          "upper": 1.0,
+          "checks": [
+            {
+              "bound": "lower",
+              "side": "outside",
+              "delta": -0.125,
+              "alternative": "greater",
+              "p": 0.03515625
+            },
+            {
+              "bound": "lower",
+              "side": "inside",
+              "delta": 0.08333333333333333,
+              "alternative": "greater",
+              "p": 0.15625
+            },
+            {
+              "bound": "upper",
+              "side": "outside",
+              "delta": 1.125,
+              "alternative": "less",
+              "p": 0.03515625
+            },
+            {
+              "bound": "upper",
+              "side": "inside",
+              "delta": 0.9166666666666667,
+              "alternative": "less",
+              "p": 0.15625
+            }
+          ]
+        },
+        {
+          "confidence": 0.9,
+          "rank": 12,
+          "lower": 0.0,
+          "upper": 1.0,
+          "checks": [
+            {
+              "bound": "lower",
+              "side": "outside",
+              "delta": -0.125,
+              "alternative": "greater",
+              "p": 0.03515625
+            },
+            {
+              "bound": "lower",
+              "side": "inside",
+              "delta": 0.08333333333333333,
+              "alternative": "greater",
+              "p": 0.15625
+            },
+            {
+              "bound": "upper",
+              "side": "outside",
+              "delta": 1.125,
+              "alternative": "less",
+              "p": 0.03515625
+            },
+            {
+              "bound": "upper",
+              "side": "inside",
+              "delta": 0.9166666666666667,
+              "alternative": "less",
+              "p": 0.15625
+            }
+          ]
+        },
+        {
+          "confidence": 0.95,
+          "rank": 6,
+          "lower": -0.3333333333333333,
+          "upper": 1.3333333333333333,
+          "checks": [
+            {
+              "bound": "lower",
+              "side": "outside",
+              "delta": -0.41666666666666663,
+              "alternative": "greater",
+              "p": 0.01953125
+            },
+            {
+              "bound": "lower",
+              "side": "inside",
+              "delta": -0.29166666666666663,
+              "alternative": "greater",
+              "p": 0.03125
+            },
+            {
+              "bound": "upper",
+              "side": "outside",
+              "delta": 1.4166666666666665,
+              "alternative": "less",
+              "p": 0.01953125
+            },
+            {
+              "bound": "upper",
+              "side": "inside",
+              "delta": 1.2916666666666665,
+              "alternative": "less",
+              "p": 0.03125
+            }
+          ]
+        },
+        {
+          "confidence": 0.99,
+          "rank": 1,
+          "lower": -1.0,
+          "upper": 2.0,
+          "checks": [
+            {
+              "bound": "lower",
+              "side": "outside",
+              "delta": -3.0,
+              "alternative": "greater",
+              "p": 0.00390625
+            },
+            {
+              "bound": "lower",
+              "side": "inside",
+              "delta": -0.75,
+              "alternative": "greater",
+              "p": 0.0078125
+            },
+            {
+              "bound": "upper",
+              "side": "outside",
+              "delta": 4.0,
+              "alternative": "less",
+              "p": 0.00390625
+            },
+            {
+              "bound": "upper",
+              "side": "inside",
+              "delta": 1.75,
+              "alternative": "less",
+              "p": 0.0078125
+            }
+          ]
+        },
+        {
+          "confidence": 0.999,
+          "rank": 0,
+          "lower": null,
+          "upper": null,
+          "checks": [
+            {
+              "bound": "lower",
+              "side": "inside",
+              "delta": -3.0,
+              "alternative": "greater",
+              "p": 0.00390625
+            },
+            {
+              "bound": "upper",
+              "side": "inside",
+              "delta": 4.0,
+              "alternative": "less",
+              "p": 0.00390625
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "all-zero",
+      "about": "every difference zero",
+      "candidate": [0.5, 1.0, 1.5, 2.0],
+      "baseline": [0.5, 1.0, 1.5, 2.0],
+      "scipy": {
+        "greater": 1.0,
+        "statistic": 0.0,
+        "less": 1.0,
+        "two-sided": 1.0
+      },
+      "intervals": [
+        {
+          "confidence": 0.8,
+          "rank": 1,
+          "lower": 0.0,
+          "upper": 0.0,
+          "checks": [
+            {
+              "bound": "lower",
+              "side": "outside",
+              "delta": -1.0,
+              "alternative": "greater",
+              "p": 0.0625
+            },
+            {
+              "bound": "upper",
+              "side": "outside",
+              "delta": 1.0,
+              "alternative": "less",
+              "p": 0.0625
+            }
+          ]
+        },
+        {
+          "confidence": 0.9,
+          "rank": 0,
+          "lower": null,
+          "upper": null,
+          "checks": [
+            {
+              "bound": "lower",
+              "side": "inside",
+              "delta": -1.0,
+              "alternative": "greater",
+              "p": 0.0625
+            },
+            {
+              "bound": "upper",
+              "side": "inside",
+              "delta": 1.0,
+              "alternative": "less",
+              "p": 0.0625
+            }
+          ]
+        },
+        {
+          "confidence": 0.95,
+          "rank": 0,
+          "lower": null,
+          "upper": null,
+          "checks": [
+            {
+              "bound": "lower",
+              "side": "inside",
+              "delta": -1.0,
+              "alternative": "greater",
+              "p": 0.0625
+            },
+            {
+              "bound": "upper",
+              "side": "inside",
+              "delta": 1.0,
+              "alternative": "less",
+              "p": 0.0625
+            }
+          ]
+        },
+        {
+          "confidence": 0.99,
+          "rank": 0,
+          "lower": null,
+          "upper": null,
+          "checks": [
+            {
+              "bound": "lower",
+              "side": "inside",
+              "delta": -1.0,
+              "alternative": "greater",
+              "p": 0.0625
+            },
+            {
+              "bound": "upper",
+              "side": "inside",
+              "delta": 1.0,
+              "alternative": "less",
+              "p": 0.0625
+            }
+          ]
+        },
+        {
+          "confidence": 0.999,
+          "rank": 0,
+          "lower": null,
+          "upper": null,
+          "checks": [
+            {
+              "bound": "lower",
+              "side": "inside",
+              "delta": -1.0,
+              "alternative": "greater",
+              "p": 0.0625
+            },
+            {
+              "bound": "upper",
+              "side": "inside",
+              "delta": 1.0,
+              "alternative": "less",
+              "p": 0.0625
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "all-better",
+      "about": "every difference positive",
+      "candidate": [11.0, 12.0, 13.0, 14.0, 15.0, 16.0, 17.0, 18.0, 19.0, 20.0],
+      "baseline": [10.5, 11.0, 12.25, 12.0, 14.5, 15.0, 15.75, 17.0, 18.5, 18.0],
+      "scipy": {
+        "greater": 0.0009765625,
+        "statistic": 1.05,
+        "less": 1.0,
+        "two-sided": 0.001953125
+      },
+      "intervals": [
+        {
+          "confidence": 0.8,
+          "rank": 102,
+          "lower": 0.7916666666666666,
+          "upper": 1.2916666666666667,
+          "checks": [
+            {
+              "bound": "lower",
+              "side": "outside",
+              "delta": 0.7886904761904762,
+              "alternative": "greater",
+              "p": 0.0986328125
+            },
+            {
+              "bound": "lower",
+              "side": "inside",
+              "delta": 0.7958333333333334,
+              "alternative": "greater",
+              "p": 0.1044921875
+            },
+            {
+              "bound": "upper",
+              "side": "outside",
+              "delta": 1.2958333333333334,
+              "alternative": "less",
+              "p": 0.099609375
+            },
+            {
+              "bound": "upper",
+              "side": "inside",
+              "delta": 1.2886904761904763,
+              "alternative": "less",
+              "p": 0.109375
+            }
+          ]
+        },
+        {
+          "confidence": 0.9,
+          "rank": 51,
+          "lower": 0.75,
+          "upper": 1.375,
+          "checks": [
+            {
+              "bound": "lower",
+              "side": "outside",
+              "delta": 0.7291666666666667,
+              "alternative": "greater",
+              "p": 0.0458984375
+            },
+            {
+              "bound": "lower",
+              "side": "inside",
+              "delta": 0.7678571428571428,
+              "alternative": "greater",
+              "p": 0.095703125
+            },
+            {
+              "bound": "upper",
+              "side": "outside",
+              "delta": 1.3875,
+              "alternative": "less",
+              "p": 0.044921875
+            },
+            {
+              "bound": "upper",
+              "side": "inside",
+              "delta": 1.3625,
+              "alternative": "less",
+              "p": 0.056640625
+            }
+          ]
+        },
+        {
+          "confidence": 0.95,
+          "rank": 25,
+          "lower": 0.6666666666666666,
+          "upper": 1.5,
+          "checks": [
+            {
+              "bound": "lower",
+              "side": "outside",
+              "delta": 0.6583333333333333,
+              "alternative": "greater",
+              "p": 0.0205078125
+            },
+            {
+              "bound": "lower",
+              "side": "inside",
+              "delta": 0.6770833333333333,
+              "alternative": "greater",
+              "p": 0.029296875
+            },
+            {
+              "bound": "upper",
+              "side": "outside",
+              "delta": 1.53125,
+              "alternative": "less",
+              "p": 0.013671875
+            },
+            {
+              "bound": "upper",
+              "side": "inside",
+              "delta": 1.475,
+              "alternative": "less",
+              "p": 0.0263671875
+            }
+          ]
+        },
+        {
+          "confidence": 0.99,
+          "rank": 5,
+          "lower": 0.5,
+          "upper": 1.6666666666666667,
+          "checks": [
+            {
+              "bound": "lower",
+              "side": "outside",
+              "delta": -1.5,
+              "alternative": "greater",
+              "p": 0.0009765625
+            },
+            {
+              "bound": "lower",
+              "side": "inside",
+              "delta": 0.53125,
+              "alternative": "greater",
+              "p": 0.0078125
+            },
+            {
+              "bound": "upper",
+              "side": "outside",
+              "delta": 1.7083333333333335,
+              "alternative": "less",
+              "p": 0.0048828125
+            },
+            {
+              "bound": "upper",
+              "side": "inside",
+              "delta": 1.6458333333333335,
+              "alternative": "less",
+              "p": 0.0078125
+            }
+          ]
+        },
+        {
+          "confidence": 0.999,
+          "rank": 0,
+          "lower": null,
+          "upper": null,
+          "checks": [
+            {
+              "bound": "lower",
+              "side": "inside",
+              "delta": -1.5,
+              "alternative": "greater",
+              "p": 0.0009765625
+            },
+            {
+              "bound": "upper",
+              "side": "inside",
+              "delta": 4.0,
+              "alternative": "less",
+              "p": 0.0009765625
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dyadic-halves",
+      "about": "halves and quarters: every sum exact, ties exact",
+      "candidate": [2.5, 1.0, 3.25, 0.5, 4.0, 2.0, 1.75, 3.0, 2.5, 0.25, 1.5, 2.0],
+      "baseline": [2.0, 1.5, 2.75, 0.5, 3.0, 2.5, 1.25, 3.0, 1.5, 0.75, 1.0, 1.5],
+      "scipy": {
+        "greater": 0.1083984375,
+        "statistic": 0.25,
+        "less": 0.9619140625,
+        "two-sided": 0.216796875
+      },
+      "intervals": [
+        {
+          "confidence": 0.8,
+          "rank": 409,
+          "lower": 0.0,
+          "upper": 0.5,
+          "checks": [
+            {
+              "bound": "lower",
+              "side": "outside",
+              "delta": -0.03571428571428571,
+              "alternative": "greater",
+              "p": 0.038330078125
+            },
+            {
+              "bound": "lower",
+              "side": "inside",
+              "delta": 0.027777777777777776,
+              "alternative": "greater",
+              "p": 0.1083984375
+            },
+            {
+              "bound": "upper",
+              "side": "outside",
+              "delta": 0.53125,
+              "alternative": "less",
+              "p": 0.039306640625
+            },
+            {
+              "bound": "upper",
+              "side": "inside",
+              "delta": 0.4722222222222222,
+              "alternative": "less",
+              "p": 0.109375
+            }
+          ]
+        },
+        {
+          "confidence": 0.9,
+          "rank": 204,
+          "lower": 0.0,
+          "upper": 0.5,
+          "checks": [
+            {
+              "bound": "lower",
+              "side": "outside",
+              "delta": -0.03571428571428571,
+              "alternative": "greater",
+              "p": 0.038330078125
+            },
+            {
+              "bound": "lower",
+              "side": "inside",
+              "delta": 0.027777777777777776,
+              "alternative": "greater",
+              "p": 0.1083984375
+            },
+            {
+              "bound": "upper",
+              "side": "outside",
+              "delta": 0.53125,
+              "alternative": "less",
+              "p": 0.039306640625
+            },
+            {
+              "bound": "upper",
+              "side": "inside",
+              "delta": 0.4722222222222222,
+              "alternative": "less",
+              "p": 0.109375
+            }
+          ]
+        },
+        {
+          "confidence": 0.95,
+          "rank": 102,
+          "lower": -0.1,
+          "upper": 0.6,
+          "checks": [
+            {
+              "bound": "lower",
+              "side": "outside",
+              "delta": -0.1125,
+              "alternative": "greater",
+              "p": 0.0234375
+            },
+            {
+              "bound": "lower",
+              "side": "inside",
+              "delta": -0.09166666666666667,
+              "alternative": "greater",
+              "p": 0.030517578125
+            },
+            {
+              "bound": "upper",
+              "side": "outside",
+              "delta": 0.6125,
+              "alternative": "less",
+              "p": 0.023681640625
+            },
+            {
+              "bound": "upper",
+              "side": "inside",
+              "delta": 0.5916666666666667,
+              "alternative": "less",
+              "p": 0.031005859375
+            }
+          ]
+        },
+        {
+          "confidence": 0.99,
+          "rank": 20,
+          "lower": -0.25,
+          "upper": 0.75,
+          "checks": [
+            {
+              "bound": "lower",
+              "side": "outside",
+              "delta": -0.275,
+              "alternative": "greater",
+              "p": 0.004150390625
+            },
+            {
+              "bound": "lower",
+              "side": "inside",
+              "delta": -0.225,
+              "alternative": "greater",
+              "p": 0.007568359375
+            },
+            {
+              "bound": "upper",
+              "side": "outside",
+              "delta": 0.7916666666666667,
+              "alternative": "less",
+              "p": 0.002197265625
+            },
+            {
+              "bound": "upper",
+              "side": "inside",
+              "delta": 0.725,
+              "alternative": "less",
+              "p": 0.007080078125
+            }
+          ]
+        },
+        {
+          "confidence": 0.999,
+          "rank": 2,
+          "lower": -0.5,
+          "upper": 1.0,
+          "checks": [
+            {
+              "bound": "lower",
+              "side": "outside",
+              "delta": -1.5,
+              "alternative": "greater",
+              "p": 0.000244140625
+            },
+            {
+              "bound": "lower",
+              "side": "inside",
+              "delta": -0.4375,
+              "alternative": "greater",
+              "p": 0.001953125
+            },
+            {
+              "bound": "upper",
+              "side": "outside",
+              "delta": 2.0,
+              "alternative": "less",
+              "p": 0.000244140625
+            },
+            {
+              "bound": "upper",
+              "side": "inside",
+              "delta": 0.9166666666666667,
+              "alternative": "less",
+              "p": 0.0009765625
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "rates-tenths",
+      "about": "rates in tenths: decimal ties SciPy's tolerance catches",
+      "candidate": [0.9, 1.0, 0.8, 0.7, 1.0, 0.9, 0.6, 1.0, 0.8, 0.9],
+      "baseline": [0.8, 0.9, 0.8, 0.9, 0.7, 1.0, 0.6, 0.9, 0.7, 0.8],
+      "scipy": {
+        "greater": 0.1953125,
+        "statistic": 0.05,
+        "less": 0.91015625,
+        "two-sided": 0.390625
+      },
+      "exact": {
+        "divisor": 10,
+        "candidate": [9, 10, 8, 7, 10, 9, 6, 10, 8, 9],
+        "baseline": [8, 9, 8, 9, 7, 10, 6, 9, 7, 8],
+        "greater": 0.1953125,
+        "less": 0.91015625,
+        "two-sided": 0.390625
+      },
+      "intervals": [
+        {
+          "confidence": 0.8,
+          "rank": 102,
+          "lower": -2.7755575615628914e-17,
+          "upper": 0.10000000000000003,
+          "checks": [
+            {
+              "bound": "lower",
+              "side": "outside",
+              "delta": -0.008333333333333345,
+              "alternative": "greater",
+              "p": 0.0908203125
+            },
+            {
+              "bound": "lower",
+              "side": "inside",
+              "delta": 0.006249999999999978,
+              "alternative": "greater",
+              "p": 0.1953125
+            },
+            {
+              "bound": "upper",
+              "side": "outside",
+              "delta": 0.10714285714285716,
+              "alternative": "less",
+              "p": 0.0947265625
+            },
+            {
+              "bound": "upper",
+              "side": "inside",
+              "delta": 0.09375000000000003,
+              "alternative": "less",
+              "p": 0.1875
+            }
+          ]
+        },
+        {
+          "confidence": 0.9,
+          "rank": 51,
+          "lower": -0.025000000000000022,
+          "upper": 0.12500000000000003,
+          "checks": [
+            {
+              "bound": "lower",
+              "side": "outside",
+              "delta": -0.029166666666666674,
+              "alternative": "greater",
+              "p": 0.046875
+            },
+            {
+              "bound": "lower",
+              "side": "inside",
+              "delta": -0.02250000000000002,
+              "alternative": "greater",
+              "p": 0.0615234375
+            },
+            {
+              "bound": "upper",
+              "side": "outside",
+              "delta": 0.12916666666666668,
+              "alternative": "less",
+              "p": 0.0439453125
+            },
+            {
+              "bound": "upper",
+              "side": "inside",
+              "delta": 0.12250000000000003,
+              "alternative": "less",
+              "p": 0.0634765625
+            }
+          ]
+        },
+        {
+          "confidence": 0.95,
+          "rank": 25,
+          "lower": -0.05000000000000002,
+          "upper": 0.15,
+          "checks": [
+            {
+              "bound": "lower",
+              "side": "outside",
+              "delta": -0.058333333333333334,
+              "alternative": "greater",
+              "p": 0.0146484375
+            },
+            {
+              "bound": "lower",
+              "side": "inside",
+              "delta": -0.04500000000000001,
+              "alternative": "greater",
+              "p": 0.03125
+            },
+            {
+              "bound": "upper",
+              "side": "outside",
+              "delta": 0.15833333333333333,
+              "alternative": "less",
+              "p": 0.0166015625
+            },
+            {
+              "bound": "upper",
+              "side": "inside",
+              "delta": 0.14500000000000002,
+              "alternative": "less",
+              "p": 0.0283203125
+            }
+          ]
+        },
+        {
+          "confidence": 0.99,
+          "rank": 5,
+          "lower": -0.10000000000000002,
+          "upper": 0.2,
+          "checks": [
+            {
+              "bound": "lower",
+              "side": "outside",
+              "delta": -0.12500000000000003,
+              "alternative": "greater",
+              "p": 0.0029296875
+            },
+            {
+              "bound": "lower",
+              "side": "inside",
+              "delta": -0.08750000000000002,
+              "alternative": "greater",
+              "p": 0.0078125
+            },
+            {
+              "bound": "upper",
+              "side": "outside",
+              "delta": 0.25,
+              "alternative": "less",
+              "p": 0.001953125
+            },
+            {
+              "bound": "upper",
+              "side": "inside",
+              "delta": 0.18333333333333335,
+              "alternative": "less",
+              "p": 0.0068359375
+            }
+          ]
+        },
+        {
+          "confidence": 0.999,
+          "rank": 0,
+          "lower": null,
+          "upper": null,
+          "checks": [
+            {
+              "bound": "lower",
+              "side": "inside",
+              "delta": -1.2000000000000002,
+              "alternative": "greater",
+              "p": 0.0009765625
+            },
+            {
+              "bound": "upper",
+              "side": "inside",
+              "delta": 1.3,
+              "alternative": "less",
+              "p": 0.0009765625
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "counts-twenty",
+      "about": "small counts on 20 pairs: many zeros and ties",
+      "candidate": [0.0, 1.0, 0.0, 2.0, 1.0, 0.0, 0.0, 3.0, 1.0, 0.0, 2.0, 0.0, 1.0, 0.0, 0.0, 1.0, 2.0, 0.0, 0.0, 1.0],
+      "baseline": [1.0, 1.0, 0.0, 3.0, 2.0, 1.0, 0.0, 3.0, 2.0, 0.0, 2.0, 1.0, 1.0, 1.0, 0.0, 2.0, 2.0, 1.0, 0.0, 1.0],
+      "scipy": {
+        "greater": 1.0,
+        "statistic": -0.45,
+        "less": 0.001953125,
+        "two-sided": 0.00390625
+      },
+      "intervals": [
+        {
+          "confidence": 0.8,
+          "rank": 104857,
+          "lower": -0.6,
+          "upper": -0.3,
+          "checks": [
+            {
+              "bound": "lower",
+              "side": "outside",
+              "delta": -0.6076923076923078,
+              "alternative": "greater",
+              "p": 0.08495712280273438
+            },
+            {
+              "bound": "lower",
+              "side": "inside",
+              "delta": -0.5916666666666667,
+              "alternative": "greater",
+              "p": 0.11623954772949219
+            },
+            {
+              "bound": "upper",
+              "side": "outside",
+              "delta": -0.2928571428571428,
+              "alternative": "less",
+              "p": 0.09000110626220703
+            },
+            {
+              "bound": "upper",
+              "side": "inside",
+              "delta": -0.3038461538461539,
+              "alternative": "less",
+              "p": 0.11643695831298828
+            }
+          ]
+        },
+        {
+          "confidence": 0.9,
+          "rank": 52428,
+          "lower": -0.6363636363636364,
+          "upper": -0.25,
+          "checks": [
+            {
+              "bound": "lower",
+              "side": "outside",
+              "delta": -0.6396103896103896,
+              "alternative": "greater",
+              "p": 0.049835205078125
+            },
+            {
+              "bound": "lower",
+              "side": "inside",
+              "delta": -0.6306818181818181,
+              "alternative": "greater",
+              "p": 0.06116485595703125
+            },
+            {
+              "bound": "upper",
+              "side": "outside",
+              "delta": -0.2403846153846154,
+              "alternative": "less",
+              "p": 0.0377960205078125
+            },
+            {
+              "bound": "upper",
+              "side": "inside",
+              "delta": -0.2583333333333333,
+              "alternative": "less",
+              "p": 0.059479713439941406
+            }
+          ]
+        },
+        {
+          "confidence": 0.95,
+          "rank": 26214,
+          "lower": -0.7,
+          "upper": -0.2,
+          "checks": [
+            {
+              "bound": "lower",
+              "side": "outside",
+              "delta": -0.7071428571428571,
+              "alternative": "greater",
+              "p": 0.02037811279296875
+            },
+            {
+              "bound": "lower",
+              "side": "inside",
+              "delta": -0.6961538461538461,
+              "alternative": "greater",
+              "p": 0.026042938232421875
+            },
+            {
+              "bound": "upper",
+              "side": "outside",
+              "delta": -0.19090909090909092,
+              "alternative": "less",
+              "p": 0.017007827758789062
+            },
+            {
+              "bound": "upper",
+              "side": "inside",
+              "delta": -0.20714285714285713,
+              "alternative": "less",
+              "p": 0.02550506591796875
+            }
+          ]
+        },
+        {
+          "confidence": 0.99,
+          "rank": 5242,
+          "lower": -0.8,
+          "upper": -0.125,
+          "checks": [
+            {
+              "bound": "lower",
+              "side": "outside",
+              "delta": -0.8090909090909091,
+              "alternative": "greater",
+              "p": 0.0032262802124023438
+            },
+            {
+              "bound": "lower",
+              "side": "inside",
+              "delta": -0.788888888888889,
+              "alternative": "greater",
+              "p": 0.0050201416015625
+            },
+            {
+              "bound": "upper",
+              "side": "outside",
+              "delta": -0.11805555555555555,
+              "alternative": "less",
+              "p": 0.00394439697265625
+            },
+            {
+              "bound": "upper",
+              "side": "inside",
+              "delta": -0.13392857142857142,
+              "alternative": "less",
+              "p": 0.0067768096923828125
+            }
+          ]
+        },
+        {
+          "confidence": 0.999,
+          "rank": 524,
+          "lower": -0.8888888888888888,
+          "upper": 0.0,
+          "checks": [
+            {
+              "bound": "lower",
+              "side": "outside",
+              "delta": -0.8944444444444444,
+              "alternative": "greater",
+              "p": 0.0004987716674804688
+            },
+            {
+              "bound": "lower",
+              "side": "inside",
+              "delta": -0.8819444444444444,
+              "alternative": "greater",
+              "p": 0.0005931854248046875
+            },
+            {
+              "bound": "upper",
+              "side": "outside",
+              "delta": 1.0,
+              "alternative": "less",
+              "p": 9.5367431640625e-07
+            },
+            {
+              "bound": "upper",
+              "side": "inside",
+              "delta": -0.041666666666666664,
+              "alternative": "less",
+              "p": 0.001953125
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "normal-twelve",
+      "about": "continuous draws, a moderate effect",
+      "candidate": [3.0942672284191954, 3.179116751562598, 1.83868372696075, -2.696830890447262, 0.9440980867941351, 1.5141395702622982, -0.3702725061167883, 1.6175167200089877, 1.1158089005206107, 0.20666083703559834, -0.3542058522933654, 0.3504320406151893],
+      "baseline": [1.6870351205983747, 1.9545116702480603, 1.173746906139441, -1.637571884897821, 0.32646160926166606, -0.08866832493469737, 0.7417414651028343, 0.38387752011957266, -1.0840339780120696, 0.39799239063885783, 0.016716071487125467, 0.24941803184024758],
+      "scipy": {
+        "greater": 0.056884765625,
+        "statistic": 0.5265156679775297,
+        "less": 0.943359375,
+        "two-sided": 0.11376953125
+      },
+      "intervals": [
+        {
+          "confidence": 0.8,
+          "rank": 409,
+          "lower": 0.11231564422824727,
+          "upper": 0.9440890882086498,
+          "checks": [
+            {
+              "bound": "lower",
+              "side": "outside",
+              "delta": 0.1121953202722093,
+              "alternative": "greater",
+              "p": 0.099853515625
+            },
+            {
+              "bound": "lower",
+              "side": "inside",
+              "delta": 0.11272464457621974,
+              "alternative": "greater",
+              "p": 0.10009765625
+            },
+            {
+              "bound": "upper",
+              "side": "outside",
+              "delta": 0.9444300196382867,
+              "alternative": "less",
+              "p": 0.099853515625
+            },
+            {
+              "bound": "upper",
+              "side": "inside",
+              "delta": 0.9440433981810833,
+              "alternative": "less",
+              "p": 0.10009765625
+            }
+          ]
+        },
+        {
+          "confidence": 0.9,
+          "rank": 204,
+          "lower": -0.026246814502781508,
+          "upper": 1.0831578888892759,
+          "checks": [
+            {
+              "bound": "lower",
+              "side": "outside",
+              "delta": -0.02733942301567666,
+              "alternative": "greater",
+              "p": 0.0498046875
+            },
+            {
+              "bound": "lower",
+              "side": "inside",
+              "delta": -0.026193637156447326,
+              "alternative": "greater",
+              "p": 0.050048828125
+            },
+            {
+              "bound": "upper",
+              "side": "outside",
+              "delta": 1.08353633108305,
+              "alternative": "less",
+              "p": 0.0498046875
+            },
+            {
+              "bound": "upper",
+              "side": "inside",
+              "delta": 1.0828510600107903,
+              "alternative": "less",
+              "p": 0.050048828125
+            }
+          ]
+        },
+        {
+          "confidence": 0.95,
+          "rank": 102,
+          "lower": -0.1660575249334203,
+          "upper": 1.2127132078169087,
+          "checks": [
+            {
+              "bound": "lower",
+              "side": "outside",
+              "delta": -0.1668660621244719,
+              "alternative": "greater",
+              "p": 0.02490234375
+            },
+            {
+              "bound": "lower",
+              "side": "inside",
+              "delta": -0.16590711998837282,
+              "alternative": "greater",
+              "p": 0.025146484375
+            },
+            {
+              "bound": "upper",
+              "side": "outside",
+              "delta": 1.2128917991415573,
+              "alternative": "less",
+              "p": 0.02490234375
+            },
+            {
+              "bound": "upper",
+              "side": "inside",
+              "delta": 1.2119764064104332,
+              "alternative": "less",
+              "p": 0.025146484375
+            }
+          ]
+        },
+        {
+          "confidence": 0.99,
+          "rank": 20,
+          "lower": -0.48113960575427145,
+          "upper": 1.4734290837540485,
+          "checks": [
+            {
+              "bound": "lower",
+              "side": "outside",
+              "delta": -0.4916258288684282,
+              "alternative": "greater",
+              "p": 0.0048828125
+            },
+            {
+              "bound": "lower",
+              "side": "inside",
+              "delta": -0.48013105207076057,
+              "alternative": "greater",
+              "p": 0.005126953125
+            },
+            {
+              "bound": "upper",
+              "side": "outside",
+              "delta": 1.4813124743021882,
+              "alternative": "less",
+              "p": 0.0048828125
+            },
+            {
+              "bound": "upper",
+              "side": "inside",
+              "delta": 1.4710670046735,
+              "alternative": "less",
+              "p": 0.005126953125
+            }
+          ]
+        },
+        {
+          "confidence": 0.999,
+          "rank": 2,
+          "lower": -1.085636488384532,
+          "upper": 1.9013253868648379,
+          "checks": [
+            {
+              "bound": "lower",
+              "side": "outside",
+              "delta": -1.0988252298020773,
+              "alternative": "greater",
+              "p": 0.00048828125
+            },
+            {
+              "bound": "lower",
+              "side": "inside",
+              "delta": -1.0724477469669864,
+              "alternative": "greater",
+              "p": 0.000732421875
+            },
+            {
+              "bound": "upper",
+              "side": "outside",
+              "delta": 2.0505841326987593,
+              "alternative": "less",
+              "p": 0.00048828125
+            },
+            {
+              "bound": "upper",
+              "side": "inside",
+              "delta": 1.8524314400207942,
+              "alternative": "less",
+              "p": 0.000732421875
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "normal-twenty",
+      "about": "continuous draws on 20 pairs, a small effect",
+      "candidate": [-0.7390590330013529, 9.254199893142863, 3.454468045378361, 8.946989684958758, 7.682429950798426, 3.422532126605441, 4.670420947611221, 6.648852107270389, 6.311430925990983, 3.802225484068407, 10.181342756014509, 4.141233370523662, 7.411129064913921, 10.551629765696209, 5.13368349545123, 5.7700310191331905, 6.49573721720383, 7.471652580869498, 5.002156013869649, 3.6654987916611357],
+      "baseline": [0.4941770750990164, 9.843029887228308, 3.001379722721784, 5.970803155862587, 6.189564866822137, 4.35049582173268, 4.105621416143214, 6.445750566769398, 4.397475645035418, 3.2754588379452287, 8.884851265602098, 3.276235054381564, 7.579483518702458, 8.043218201192884, 5.231728568874458, 4.90126167239412, 6.007801133625273, 6.584503078439825, 4.903638896014, 4.075249798481725],
+      "scipy": {
+        "greater": 0.011981964111328125,
+        "statistic": 0.5858428012546077,
+        "less": 0.9880189895629883,
+        "two-sided": 0.02396392822265625
+      },
+      "intervals": [
+        {
+          "confidence": 0.8,
+          "rank": 104857,
+          "lower": 0.2634549273687656,
+          "upper": 0.905567132298075,
+          "checks": [
+            {
+              "bound": "lower",
+              "side": "outside",
+              "delta": 0.2634544261799814,
+              "alternative": "greater",
+              "p": 0.09999942779541016
+            },
+            {
+              "bound": "lower",
+              "side": "inside",
+              "delta": 0.2634554488253652,
+              "alternative": "greater",
+              "p": 0.10000038146972656
+            },
+            {
+              "bound": "upper",
+              "side": "outside",
+              "delta": 0.9055680439820086,
+              "alternative": "less",
+              "p": 0.09999942779541016
+            },
+            {
+              "bound": "upper",
+              "side": "inside",
+              "delta": 0.9055662743929347,
+              "alternative": "less",
+              "p": 0.10000038146972656
+            }
+          ]
+        },
+        {
+          "confidence": 0.9,
+          "rank": 52428,
+          "lower": 0.16793908829448428,
+          "upper": 1.003858588275623,
+          "checks": [
+            {
+              "bound": "lower",
+              "side": "outside",
+              "delta": 0.16793840764911627,
+              "alternative": "greater",
+              "p": 0.049999237060546875
+            },
+            {
+              "bound": "lower",
+              "side": "inside",
+              "delta": 0.16793930314614874,
+              "alternative": "greater",
+              "p": 0.05000019073486328
+            },
+            {
+              "bound": "upper",
+              "side": "outside",
+              "delta": 1.0038592356567508,
+              "alternative": "less",
+              "p": 0.049999237060546875
+            },
+            {
+              "bound": "upper",
+              "side": "inside",
+              "delta": 1.0038570817658203,
+              "alternative": "less",
+              "p": 0.05000019073486328
+            }
+          ]
+        },
+        {
+          "confidence": 0.95,
+          "rank": 26214,
+          "lower": 0.08224596827317793,
+          "upper": 1.093865634237447,
+          "checks": [
+            {
+              "bound": "lower",
+              "side": "outside",
+              "delta": 0.08224397939995017,
+              "alternative": "greater",
+              "p": 0.024999618530273438
+            },
+            {
+              "bound": "lower",
+              "side": "inside",
+              "delta": 0.08224618890744678,
+              "alternative": "greater",
+              "p": 0.025000572204589844
+            },
+            {
+              "bound": "upper",
+              "side": "outside",
+              "delta": 1.0938672170755905,
+              "alternative": "less",
+              "p": 0.024999618530273438
+            },
+            {
+              "bound": "upper",
+              "side": "inside",
+              "delta": 1.0938598215828177,
+              "alternative": "less",
+              "p": 0.025000572204589844
+            }
+          ]
+        },
+        {
+          "confidence": 0.99,
+          "rank": 5242,
+          "lower": -0.09076518883526948,
+          "upper": 1.2901361497778179,
+          "checks": [
+            {
+              "bound": "lower",
+              "side": "outside",
+              "delta": -0.09077199327679883,
+              "alternative": "greater",
+              "p": 0.0049991607666015625
+            },
+            {
+              "bound": "lower",
+              "side": "inside",
+              "delta": -0.09073418696100491,
+              "alternative": "greater",
+              "p": 0.005000114440917969
+            },
+            {
+              "bound": "upper",
+              "side": "outside",
+              "delta": 1.2901414594834004,
+              "alternative": "less",
+              "p": 0.0049991607666015625
+            },
+            {
+              "bound": "upper",
+              "side": "inside",
+              "delta": 1.2901265779344757,
+              "alternative": "less",
+              "p": 0.005000114440917969
+            }
+          ]
+        },
+        {
+          "confidence": 0.999,
+          "rank": 524,
+          "lower": -0.31501289464432963,
+          "upper": 1.5652814545535056,
+          "checks": [
+            {
+              "bound": "lower",
+              "side": "outside",
+              "delta": -0.3150691719070484,
+              "alternative": "greater",
+              "p": 0.000499725341796875
+            },
+            {
+              "bound": "lower",
+              "side": "inside",
+              "delta": -0.3146565920021573,
+              "alternative": "greater",
+              "p": 0.0005006790161132812
+            },
+            {
+              "bound": "upper",
+              "side": "outside",
+              "delta": 1.565368222002254,
+              "alternative": "less",
+              "p": 0.000499725341796875
+            },
+            {
+              "bound": "upper",
+              "side": "inside",
+              "delta": 1.5651986573419499,
+              "alternative": "less",
+              "p": 0.0005006790161132812
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "worse-twenty",
+      "about": "the candidate mostly worse on 20 pairs",
+      "candidate": [-0.03619805401284404, -0.04951093152923691, 0.22179139464253328, 0.5891511415543559, 0.2893823570362188, 0.29305878982654515, 0.8994595310034118, 0.546783198643922, 0.6446627488759833, -0.08232303430163196, 0.46068034920233203, -0.18074611651065964, -0.26445179509898603, 0.4751480037508371, 1.1451777875425986, 0.8434413112945177, 0.47337487567008674, 0.5186696278851252, 0.2583229917424193, 0.4581627624332596],
+      "baseline": [0.17942603606697405, 0.15108302355775105, 0.19895645493832026, 0.404940662201293, 0.6226001479036919, 0.7871253215045044, 0.8442944645484949, 0.606820452933942, 0.8972981142308236, 0.23278875502098995, 0.2705290967755968, 0.3132427784662499, 0.06143535617075602, 0.8625982152504404, 0.97068050399483, 0.7628947191085667, 0.5111451475694085, 0.43177594021443344, 0.45035997001621, 0.9585442248595991],
+      "scipy": {
+        "greater": 0.9943695068359375,
+        "statistic": -0.15072512228410437,
+        "less": 0.005631446838378906,
+        "two-sided": 0.011262893676757812
+      },
+      "intervals": [
+        {
+          "confidence": 0.8,
+          "rank": 104857,
+          "lower": -0.22048412445474277,
+          "upper": -0.0808673325444148,
+          "checks": [
+            {
+              "bound": "lower",
+              "side": "outside",
+              "delta": -0.2204847885745272,
+              "alternative": "greater",
+              "p": 0.09999942779541016
+            },
+            {
+              "bound": "lower",
+              "side": "inside",
+              "delta": -0.22048410663906476,
+              "alternative": "greater",
+              "p": 0.10000038146972656
+            },
+            {
+              "bound": "upper",
+              "side": "outside",
+              "delta": -0.08086731928501484,
+              "alternative": "less",
+              "p": 0.09999942779541016
+            },
+            {
+              "bound": "upper",
+              "side": "inside",
+              "delta": -0.08086768249717405,
+              "alternative": "less",
+              "p": 0.10000038146972656
+            }
+          ]
+        },
+        {
+          "confidence": 0.9,
+          "rank": 52428,
+          "lower": -0.2421356647027644,
+          "upper": -0.05933290736085741,
+          "checks": [
+            {
+              "bound": "lower",
+              "side": "outside",
+              "delta": -0.24213566753590238,
+              "alternative": "greater",
+              "p": 0.049999237060546875
+            },
+            {
+              "bound": "lower",
+              "side": "inside",
+              "delta": -0.2421356346056484,
+              "alternative": "greater",
+              "p": 0.05000019073486328
+            },
+            {
+              "bound": "upper",
+              "side": "outside",
+              "delta": -0.059332874812412756,
+              "alternative": "less",
+              "p": 0.049999237060546875
+            },
+            {
+              "bound": "upper",
+              "side": "inside",
+              "delta": -0.05933291653790705,
+              "alternative": "less",
+              "p": 0.05000019073486328
+            }
+          ]
+        },
+        {
+          "confidence": 0.95,
+          "rank": 26214,
+          "lower": -0.2619978101288816,
+          "upper": -0.03952907898311339,
+          "checks": [
+            {
+              "bound": "lower",
+              "side": "outside",
+              "delta": -0.2619978420303064,
+              "alternative": "greater",
+              "p": 0.024999618530273438
+            },
+            {
+              "bound": "lower",
+              "side": "inside",
+              "delta": -0.2619965051495974,
+              "alternative": "greater",
+              "p": 0.025000572204589844
+            },
+            {
+              "bound": "upper",
+              "side": "outside",
+              "delta": -0.039528050322638564,
+              "alternative": "less",
+              "p": 0.024999618530273438
+            },
+            {
+              "bound": "upper",
+              "side": "inside",
+              "delta": -0.03952955844177302,
+              "alternative": "less",
+              "p": 0.025000572204589844
+            }
+          ]
+        },
+        {
+          "confidence": 0.99,
+          "rank": 5242,
+          "lower": -0.30462584717893854,
+          "upper": 0.002984913213718806,
+          "checks": [
+            {
+              "bound": "lower",
+              "side": "outside",
+              "delta": -0.3046263500050817,
+              "alternative": "greater",
+              "p": 0.0049991607666015625
+            },
+            {
+              "bound": "lower",
+              "side": "inside",
+              "delta": -0.3046230481851284,
+              "alternative": "greater",
+              "p": 0.005000114440917969
+            },
+            {
+              "bound": "upper",
+              "side": "outside",
+              "delta": 0.002990699415674321,
+              "alternative": "less",
+              "p": 0.0049991607666015625
+            },
+            {
+              "bound": "upper",
+              "side": "inside",
+              "delta": 0.002982594255054764,
+              "alternative": "less",
+              "p": 0.005000114440917969
+            }
+          ]
+        },
+        {
+          "confidence": 0.999,
+          "rank": 524,
+          "lower": -0.3622965652884938,
+          "upper": 0.06084195113286391,
+          "checks": [
+            {
+              "bound": "lower",
+              "side": "outside",
+              "delta": -0.36230424937919414,
+              "alternative": "greater",
+              "p": 0.000499725341796875
+            },
+            {
+              "bound": "lower",
+              "side": "inside",
+              "delta": -0.3621873857523557,
+              "alternative": "greater",
+              "p": 0.0005006790161132812
+            },
+            {
+              "bound": "upper",
+              "side": "outside",
+              "delta": 0.060862225711720196,
+              "alternative": "less",
+              "p": 0.000499725341796875
+            },
+            {
+              "bound": "upper",
+              "side": "inside",
+              "delta": 0.06084019374838474,
+              "alternative": "less",
+              "p": 0.0005006790161132812
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "tolerance-tie",
+      "about": "decimal differences 0.1, 0.2, -0.3 whose sum is 0 only in exact arithmetic",
+      "candidate": [0.1, 0.2, 0.0],
+      "baseline": [0.0, 0.0, 0.3],
+      "scipy": {
+        "greater": 0.5,
+        "statistic": 1.850371707708594e-17,
+        "less": 0.625,
+        "two-sided": 1.0
+      },
+      "exact": {
+        "divisor": 10,
+        "candidate": [1, 2, 0],
+        "baseline": [0, 0, 3],
+        "greater": 0.625,
+        "less": 0.625,
+        "two-sided": 1.0
+      },
+      "intervals": [
+        {
+          "confidence": 0.8,
+          "rank": 0,
+          "lower": null,
+          "upper": null,
+          "checks": [
+            {
+              "bound": "lower",
+              "side": "inside",
+              "delta": -1.3,
+              "alternative": "greater",
+              "p": 0.125
+            },
+            {
+              "bound": "upper",
+              "side": "inside",
+              "delta": 1.2,
+              "alternative": "less",
+              "p": 0.125
+            }
+          ]
+        },
+        {
+          "confidence": 0.9,
+          "rank": 0,
+          "lower": null,
+          "upper": null,
+          "checks": [
+            {
+              "bound": "lower",
+              "side": "inside",
+              "delta": -1.3,
+              "alternative": "greater",
+              "p": 0.125
+            },
+            {
+              "bound": "upper",
+              "side": "inside",
+              "delta": 1.2,
+              "alternative": "less",
+              "p": 0.125
+            }
+          ]
+        },
+        {
+          "confidence": 0.95,
+          "rank": 0,
+          "lower": null,
+          "upper": null,
+          "checks": [
+            {
+              "bound": "lower",
+              "side": "inside",
+              "delta": -1.3,
+              "alternative": "greater",
+              "p": 0.125
+            },
+            {
+              "bound": "upper",
+              "side": "inside",
+              "delta": 1.2,
+              "alternative": "less",
+              "p": 0.125
+            }
+          ]
+        },
+        {
+          "confidence": 0.99,
+          "rank": 0,
+          "lower": null,
+          "upper": null,
+          "checks": [
+            {
+              "bound": "lower",
+              "side": "inside",
+              "delta": -1.3,
+              "alternative": "greater",
+              "p": 0.125
+            },
+            {
+              "bound": "upper",
+              "side": "inside",
+              "delta": 1.2,
+              "alternative": "less",
+              "p": 0.125
+            }
+          ]
+        },
+        {
+          "confidence": 0.999,
+          "rank": 0,
+          "lower": null,
+          "upper": null,
+          "checks": [
+            {
+              "bound": "lower",
+              "side": "inside",
+              "delta": -1.3,
+              "alternative": "greater",
+              "p": 0.125
+            },
+            {
+              "bound": "upper",
+              "side": "inside",
+              "delta": 1.2,
+              "alternative": "less",
+              "p": 0.125
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "latency-seconds",
+      "about": "latencies near 30 s that differ by 0.05 s: decimal ties SciPy's tolerance still catches",
+      "candidate": [30.12, 29.87, 31.05, 30.48, 29.99, 30.31, 30.77, 29.64, 30.2, 30.53, 30.06, 30.91],
+      "baseline": [30.17, 29.92, 31.05, 30.43, 30.04, 30.36, 30.72, 29.69, 30.25, 30.48, 30.11, 30.96],
+      "scipy": {
+        "greater": 0.96728515625,
+        "statistic": -0.02083333333333363,
+        "less": 0.11328125,
+        "two-sided": 0.2265625
+      },
+      "exact": {
+        "divisor": 1000,
+        "candidate": [30120, 29870, 31050, 30480, 29990, 30310, 30770, 29640, 30200, 30530, 30060, 30910],
+        "baseline": [30170, 29920, 31050, 30430, 30040, 30360, 30720, 29690, 30250, 30480, 30110, 30960],
+        "greater": 0.96728515625,
+        "less": 0.11328125,
+        "two-sided": 0.2265625
+      },
+      "intervals": [
+        {
+          "confidence": 0.8,
+          "rank": 409,
+          "lower": -0.04000000000000057,
+          "upper": 0.0,
+          "checks": [
+            {
+              "bound": "lower",
+              "side": "outside",
+              "delta": -0.040833333333333915,
+              "alternative": "greater",
+              "p": 0.085205078125
+            },
+            {
+              "bound": "lower",
+              "side": "inside",
+              "delta": -0.039444444444445004,
+              "alternative": "greater",
+              "p": 0.102294921875
+            },
+            {
+              "bound": "upper",
+              "side": "outside",
+              "delta": 0.004166666666666726,
+              "alternative": "less",
+              "p": 0.032958984375
+            },
+            {
+              "bound": "upper",
+              "side": "inside",
+              "delta": -0.0031250000000000444,
+              "alternative": "less",
+              "p": 0.11328125
+            }
+          ]
+        },
+        {
+          "confidence": 0.9,
+          "rank": 204,
+          "lower": -0.05000000000000071,
+          "upper": 0.0,
+          "checks": [
+            {
+              "bound": "lower",
+              "side": "outside",
+              "delta": -1.0500000000000007,
+              "alternative": "greater",
+              "p": 0.000244140625
+            },
+            {
+              "bound": "lower",
+              "side": "inside",
+              "delta": -0.047222222222222894,
+              "alternative": "greater",
+              "p": 0.0625
+            },
+            {
+              "bound": "upper",
+              "side": "outside",
+              "delta": 0.004166666666666726,
+              "alternative": "less",
+              "p": 0.032958984375
+            },
+            {
+              "bound": "upper",
+              "side": "inside",
+              "delta": -0.0031250000000000444,
+              "alternative": "less",
+              "p": 0.11328125
+            }
+          ]
+        },
+        {
+          "confidence": 0.95,
+          "rank": 102,
+          "lower": -0.05000000000000071,
+          "upper": 0.010000000000000142,
+          "checks": [
+            {
+              "bound": "lower",
+              "side": "outside",
+              "delta": -1.0500000000000007,
+              "alternative": "greater",
+              "p": 0.000244140625
+            },
+            {
+              "bound": "lower",
+              "side": "inside",
+              "delta": -0.047222222222222894,
+              "alternative": "greater",
+              "p": 0.0625
+            },
+            {
+              "bound": "upper",
+              "side": "outside",
+              "delta": 0.01125000000000016,
+              "alternative": "less",
+              "p": 0.019287109375
+            },
+            {
+              "bound": "upper",
+              "side": "inside",
+              "delta": 0.009166666666666797,
+              "alternative": "less",
+              "p": 0.026123046875
+            }
+          ]
+        },
+        {
+          "confidence": 0.99,
+          "rank": 20,
+          "lower": -0.05000000000000071,
+          "upper": 0.025000000000000355,
+          "checks": [
+            {
+              "bound": "lower",
+              "side": "outside",
+              "delta": -1.0500000000000007,
+              "alternative": "greater",
+              "p": 0.000244140625
+            },
+            {
+              "bound": "lower",
+              "side": "inside",
+              "delta": -0.047222222222222894,
+              "alternative": "greater",
+              "p": 0.0625
+            },
+            {
+              "bound": "upper",
+              "side": "outside",
+              "delta": 0.02916666666666708,
+              "alternative": "less",
+              "p": 0.0029296875
+            },
+            {
+              "bound": "upper",
+              "side": "inside",
+              "delta": 0.02250000000000032,
+              "alternative": "less",
+              "p": 0.005615234375
+            }
+          ]
+        },
+        {
+          "confidence": 0.999,
+          "rank": 2,
+          "lower": -0.05000000000000071,
+          "upper": 0.05000000000000071,
+          "checks": [
+            {
+              "bound": "lower",
+              "side": "outside",
+              "delta": -1.0500000000000007,
+              "alternative": "greater",
+              "p": 0.000244140625
+            },
+            {
+              "bound": "lower",
+              "side": "inside",
+              "delta": -0.047222222222222894,
+              "alternative": "greater",
+              "p": 0.0625
+            },
+            {
+              "bound": "upper",
+              "side": "outside",
+              "delta": 1.0500000000000007,
+              "alternative": "less",
+              "p": 0.000244140625
+            },
+            {
+              "bound": "upper",
+              "side": "inside",
+              "delta": 0.04375000000000062,
+              "alternative": "less",
+              "p": 0.001953125
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "latency-level",
+      "about": "latencies near 30 s that differ by 0.05 s, level on average: ties carried by the rounding of 30 s",
+      "candidate": [30.12, 29.87, 31.05, 30.48, 29.99, 30.31, 30.77, 29.64, 30.2, 30.53],
+      "baseline": [30.17, 29.82, 31.05, 30.43, 30.04, 30.26, 30.82, 29.59, 30.25, 30.53],
+      "scipy": {
+        "greater": 0.63671875,
+        "statistic": -3.552713678800501e-16,
+        "less": 0.5,
+        "two-sided": 1.0
+      },
+      "exact": {
+        "divisor": 1000,
+        "candidate": [30120, 29870, 31050, 30480, 29990, 30310, 30770, 29640, 30200, 30530],
+        "baseline": [30170, 29820, 31050, 30430, 30040, 30260, 30820, 29590, 30250, 30530],
+        "greater": 0.63671875,
+        "less": 0.63671875,
+        "two-sided": 1.0
+      },
+      "intervals": [
+        {
+          "confidence": 0.8,
+          "rank": 102,
+          "lower": -0.020000000000000285,
+          "upper": 0.019999999999999574,
+          "checks": [
+            {
+              "bound": "lower",
+              "side": "outside",
+              "delta": -0.02071428571428601,
+              "alternative": "greater",
+              "p": 0.0869140625
+            },
+            {
+              "bound": "lower",
+              "side": "inside",
+              "delta": -0.018333333333334187,
+              "alternative": "greater",
+              "p": 0.1181640625
+            },
+            {
+              "bound": "upper",
+              "side": "outside",
+              "delta": 0.0207142857142854,
+              "alternative": "less",
+              "p": 0.0869140625
+            },
+            {
+              "bound": "upper",
+              "side": "inside",
+              "delta": 0.018333333333333236,
+              "alternative": "less",
+              "p": 0.1181640625
+            }
+          ]
+        },
+        {
+          "confidence": 0.9,
+          "rank": 51,
+          "lower": -0.02500000000000095,
+          "upper": 0.025000000000000355,
+          "checks": [
+            {
+              "bound": "lower",
+              "side": "outside",
+              "delta": -0.027500000000000687,
+              "alternative": "greater",
+              "p": 0.0458984375
+            },
+            {
+              "bound": "lower",
+              "side": "inside",
+              "delta": -0.023214285714286596,
+              "alternative": "greater",
+              "p": 0.0830078125
+            },
+            {
+              "bound": "upper",
+              "side": "outside",
+              "delta": 0.027500000000000035,
+              "alternative": "less",
+              "p": 0.0458984375
+            },
+            {
+              "bound": "upper",
+              "side": "inside",
+              "delta": 0.02321428571428579,
+              "alternative": "less",
+              "p": 0.0830078125
+            }
+          ]
+        },
+        {
+          "confidence": 0.95,
+          "rank": 25,
+          "lower": -0.03750000000000053,
+          "upper": 0.037499999999999645,
+          "checks": [
+            {
+              "bound": "lower",
+              "side": "outside",
+              "delta": -0.03875000000000055,
+              "alternative": "greater",
+              "p": 0.017578125
+            },
+            {
+              "bound": "lower",
+              "side": "inside",
+              "delta": -0.035416666666667165,
+              "alternative": "greater",
+              "p": 0.025390625
+            },
+            {
+              "bound": "upper",
+              "side": "outside",
+              "delta": 0.03874999999999975,
+              "alternative": "less",
+              "p": 0.017578125
+            },
+            {
+              "bound": "upper",
+              "side": "inside",
+              "delta": 0.03541666666666672,
+              "alternative": "less",
+              "p": 0.025390625
+            }
+          ]
+        },
+        {
+          "confidence": 0.99,
+          "rank": 5,
+          "lower": -0.05000000000000071,
+          "upper": 0.05000000000000071,
+          "checks": [
+            {
+              "bound": "lower",
+              "side": "outside",
+              "delta": -1.0500000000000007,
+              "alternative": "greater",
+              "p": 0.0009765625
+            },
+            {
+              "bound": "lower",
+              "side": "inside",
+              "delta": -0.04500000000000064,
+              "alternative": "greater",
+              "p": 0.015625
+            },
+            {
+              "bound": "upper",
+              "side": "outside",
+              "delta": 1.0500000000000007,
+              "alternative": "less",
+              "p": 0.0009765625
+            },
+            {
+              "bound": "upper",
+              "side": "inside",
+              "delta": 0.04500000000000028,
+              "alternative": "less",
+              "p": 0.015625
+            }
+          ]
+        },
+        {
+          "confidence": 0.999,
+          "rank": 0,
+          "lower": null,
+          "upper": null,
+          "checks": [
+            {
+              "bound": "lower",
+              "side": "inside",
+              "delta": -1.0500000000000007,
+              "alternative": "greater",
+              "p": 0.0009765625
+            },
+            {
+              "bound": "upper",
+              "side": "inside",
+              "delta": 1.0500000000000007,
+              "alternative": "less",
+              "p": 0.0009765625
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
