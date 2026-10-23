@@ -306,15 +306,19 @@ second execution path (INV-1).
   - a task that declares a budget runs only where the resource ledger can hold it to its lines:
     with no ledger loaded, or a pool of its budget the ledger does not configure or finds
     unavailable, the start is refused before the task is taken (`config_error`, `overloaded`; an
-    `admission` refusal). Once the board recorded the run, before any step runs, the run reserves
-    its task's lines on the ledger (`ctx.resources.reserve`: the lines as caps for the task, the
-    least of each line as its draw), and releases the reservation when it finishes. A cap the
-    task already reached refuses it: the run asks for funding, from the ledger's count of the
+    `admission` refusal). Once the board recorded the run, before each Worker execution of it (a
+    step) is routed, the run reserves its task's lines on the ledger (`ctx.resources.reserve`: the
+    lines as caps for the task, the least of each line as the step's draw; ADR-0047, step 1),
+    records the step's hold on its row before the step starts, and releases it once the step is no
+    longer in flight. A cap the task's earlier steps or attempts already reached refuses it: no new
+    step starts, the steps in flight finish and their results are taken, and the run asks for
+    funding, from the ledger's count of the
     task's usage (`ctx.resources.usage`): for each spent line, what the task overdrew plus one
     attempt's share of the line, fixed on the run's row (`task.budget.funding`) before it blocks
     the task on the board with it (`budget-spent` with `funding`, which asks the policy about
     `funding`; the operator's approval adds exactly those lines to the task's budget). The run
-    fails as `budget_spent` with nothing of it run, its outcome `blocked`. On the task's last
+    fails as `budget_spent`, its outcome `blocked`; the next attempt's brief points at the results
+    of the steps it completed. On the task's last
     attempt nothing is asked, since no approval could serve it: a `gate` decision
     (`workflow.task-funding`) and the run's failure (`budget_spent`) commit together, the view's
     `task.budget.lastAttempt` names the decision, and the run's report leaves the task waiting for

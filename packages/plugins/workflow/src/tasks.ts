@@ -33,7 +33,7 @@ import type { Engine, Prepared } from './engine.ts'
 import { routedDecisions } from './recovery.ts'
 import { clampText, type ResolvedNode } from './spec.ts'
 import {
-  newId, type NodeRecord, type NodeRow, now, type RunRow, type RunView, type StartInput, TASK_LEASE_TTL_MS, type TaskBudget, type TaskOutcome, type TaskQuestion, type TaskRow, type TaskStartInput, type TaskView, type WorkflowError, WorkflowFailure,
+  newId, type NodeRecord, type NodeRow, now, type RunRow, type RunView, type StartInput, type StepHold, TASK_LEASE_TTL_MS, type TaskBudget, type TaskOutcome, type TaskQuestion, type TaskRow, type TaskStartInput, type TaskView, type WorkflowError, WorkflowFailure,
 } from './types.ts'
 import { view } from './views.ts'
 
@@ -138,9 +138,10 @@ export class TaskRuns {
   /** On start: outcomes a stop or crash left unreported are reported (running runs resume through their advance). */
   recover(): void {
     this.digests.recover()
-    // A reservation a stop or crash left held after its run finished is released (it would expire on its own).
+    // Reservations a stop or crash left held after their run finished are released (they would expire on their own).
     const held = this.e.ctx.store.db.prepare(`SELECT t.run_id FROM workflow_tasks t JOIN workflow_runs r ON r.run_id = t.run_id
-      WHERE t.budget IS NOT NULL AND json_extract(t.budget, '$.state') = 'reserved' AND r.status != 'running'`).all() as Array<{ run_id: string }>
+      WHERE t.budget IS NOT NULL AND (json_extract(t.budget, '$.state') IN ('due', 'reserved') OR json_array_length(t.budget, '$.holds') > 0)
+      AND r.status != 'running'`).all() as Array<{ run_id: string }>
     for (const { run_id } of held) void this.release(run_id)
     if (!this.e.board) return
     const pending = this.e.ctx.store.db.prepare(`SELECT t.run_id FROM workflow_tasks t JOIN workflow_runs r ON r.run_id = t.run_id
@@ -246,7 +247,8 @@ export class TaskRuns {
    * attempt the run will be, its goal and acceptance criteria, and pointers, never content, to the
    * accepted results of the tasks it depends on (their digests when they have one), to its previous
    * attempt's result, and to the decision behind this attempt (a rejection's reasons, the answers to
-   * its questions). Only stored artifacts are pointed at, at most {@link FRAME_POINTERS}. The
+   * its questions), and the results of the steps an attempt the task's spent budget stopped had
+   * completed. Only stored artifacts are pointed at, at most {@link FRAME_POINTERS}. The
    * budget is what the task may still draw: its lines less the usage the ledger counts for it.
    */
   private async frameOf(board: Board, task: BoardTask, project: Project | undefined, classification: Classification | undefined): Promise<TaskFrame> {
@@ -263,6 +265,8 @@ export class TaskRuns {
     if (task.attempts.count > 0) {
       for (const ref of task.result?.artifacts ?? []) add(ref, 'prior', `the result of attempt ${task.attempts.count}`)
       if (task.result?.digest) add(task.result.digest, 'prior', `the digest of attempt ${task.attempts.count}'s result`)
+      // An attempt the task's spent budget stopped between steps leaves the results of the steps it completed (ADR-0047).
+      for (const { nodeId, ref } of this.stoppedSteps(task.taskId)) add(ref, 'prior', `the result of step ${nodeId} of attempt ${task.attempts.count}, which the task's spent budget stopped before its next step`)
       if (task.lastDecision) {
         // Answers to the questions the previous attempt asked resume the task: its next brief points at them.
         const answered = (this.e.ctx.artifacts.get(task.lastDecision)?.body as { outcome?: { detail?: { answers?: unknown } } } | undefined)?.outcome?.detail?.answers
@@ -277,6 +281,21 @@ export class TaskRuns {
       acceptance: task.acceptance.map(({ id, statement }) => ({ id, statement })), pointers, budget: await this.budgetOf(task),
       ...(files ? { files } : {}),
     }
+  }
+
+  /**
+   * The results of the steps the task's latest run completed, when its budget refused a later step
+   * because a line was spent: that attempt ended without a result of its own, so the next one is
+   * pointed at what it did. Nothing for any other run.
+   */
+  private stoppedSteps(taskId: string): Array<{ nodeId: string; ref: ArtifactRef }> {
+    const last = this.e.ctx.store.db.prepare('SELECT run_id, budget FROM workflow_tasks WHERE task_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1').get(taskId) as { run_id: string; budget: string | null } | undefined
+    const budget = last?.budget ? JSON.parse(last.budget) as TaskBudget : undefined
+    if (!budget || budget.state !== 'refused' || !budget.spent) return []
+    return this.e.nodeRows(last!.run_id).filter((n) => n.state === 'COMPLETED').flatMap((n) => {
+      const result = (JSON.parse(n.record) as NodeRecord).outputReceipt?.result
+      return result ? [{ nodeId: n.node_id, ref: result }] : []
+    })
   }
 
   /**
@@ -523,11 +542,11 @@ export class TaskRuns {
       const resumed = await this.resume(row, board)
       if (resumed !== 'go') return resumed
     } else if (row.lost || this.renewals.has(runId)) {
-      return this.budgeted(runId, board)
+      return 'go'
     }
     // After a restart, the lease is renewed before anything runs: a lapse shows now, not later.
     if ((await this.renew(this.row(runId)!, board)) === 'unknown') return 'wait'
-    return this.budgeted(runId, board)
+    return 'go'
   }
 
   /**
@@ -690,52 +709,90 @@ export class TaskRuns {
   }
 
   /**
-   * Before a recorded task run starts work: reserve its task's budget lines on the ledger, once
-   * (`ctx.resources.reserve`, the lines as caps for the task, the least of each line as what the
-   * run draws), recording where it stands on the run's row. Reserved, the run goes on, and the
-   * reservation is released when it finishes. Refused because a line is spent, the task blocks on
-   * the board (`budget-spent`), unless the run was its last attempt, and the run ends with nothing
-   * of it run; refused for any other reason (a pool unconfigured or unavailable since the start),
-   * the run fails, an attempt the board counts. Without a ledger, or one that does not answer, the
-   * run waits (INV-2).
+   * Before a Worker execution of a task's run starts (a step; ADR-0047, step 1): reserve its task's
+   * budget lines on the ledger (`ctx.resources.reserve`, the lines as caps for the task, the least
+   * of each line as what the step draws), so a line the task's earlier steps and attempts already
+   * reached refuses the step before it is routed or sent. Reserved, the hold is recorded on the
+   * run's row under the step before the step starts, and released once the step is no longer in
+   * flight ({@link releaseSteps}). Refused, the refusal is recorded on the row, and the run starts no
+   * new step: once nothing of it is in flight, {@link budgetEnd} blocks the task or fails the run.
+   * `wait` without a ledger, or one that does not answer (nothing runs without a reservation, INV-2);
+   * `stop` once the run's budget refused a step; `go` otherwise, and for a run with no budget.
    */
-  private async budgeted(runId: string, board: Board): Promise<'go' | 'wait' | 'stop'> {
-    const row = this.row(runId)!
-    // A run that lost its holder winds down, and one that finished has nothing left to start.
-    if (row.lost || !row.budget || this.e.runRow(runId)?.status !== 'running') return 'go'
-    let budget = JSON.parse(row.budget) as TaskBudget
-    if (budget.state === 'reserved' || budget.state === 'released') return 'go'
-    if (budget.state === 'due') {
-      const resources = this.e.ctx.get('resources')
-      if (!resources) {
-        this.warn(`run ${runId} waits to reserve task ${row.task_id}'s budget`, new Error('no resource ledger is loaded'))
+  async reserveStep(run: RunRow, node: NodeRow, attempt: number): Promise<'go' | 'wait' | 'stop'> {
+    const row = this.row(run.run_id)
+    if (!row?.budget || row.lost) return 'go'
+    const budget = JSON.parse(row.budget) as TaskBudget
+    if (budget.state === 'refused') return 'stop'
+    const step = stepKey(node.node_id, attempt, node.escalations)
+    // Its hold is already recorded and not yet released: the step never reserves twice.
+    if (holdsOf(budget).some((h) => h.step === step)) return 'go'
+    const resources = this.e.ctx.get('resources')
+    if (!resources) {
+      this.warn(`step ${node.node_id} of run ${run.run_id} waits to reserve task ${row.task_id}'s budget`, new Error('no resource ledger is loaded'))
+      return 'wait'
+    }
+    const projectId = this.frame(run.run_id)?.projectId
+    const lines = distinct(budget.caps).map((line) => ({ pool: line.pool, unit: line.unit, amount: LEAST[line.unit] }))
+    let reserved: Awaited<ReturnType<typeof resources.reserve>>
+    try {
+      reserved = await resources.reserve({ runId: run.run_id, ...(projectId ? { projectId } : {}), taskId: row.task_id, lines, caps: budget.caps })
+    } catch (error) {
+      if (!(error instanceof ResourcesError)) {
+        this.warn(`the resource ledger did not answer the reservation of step ${node.node_id} of run ${run.run_id}`, error)
         return 'wait'
       }
-      const projectId = this.frame(runId)?.projectId
-      const lines = distinct(budget.caps).map((line) => ({ pool: line.pool, unit: line.unit, amount: LEAST[line.unit] }))
-      let reserved: Awaited<ReturnType<typeof resources.reserve>>
-      try {
-        reserved = await resources.reserve({ runId, ...(projectId ? { projectId } : {}), taskId: row.task_id, lines, caps: budget.caps })
-      } catch (error) {
-        if (!(error instanceof ResourcesError)) {
-          this.warn(`the resource ledger did not answer the reservation of run ${runId}`, error)
-          return 'wait'
-        }
-        budget = { ...budget, state: 'refused', spent: false, reasons: [`the ledger refused the request (${error.failure}: ${error.message})`] }
-        this.budgetMoved(row, budget, budget.reasons![0]!)
-        return this.unbudgeted(row, budget)
-      }
-      if (reserved.state === 'reserved') {
-        this.budgetMoved(row, { ...budget, state: 'reserved', reservationId: reserved.reservationId, decision: reserved.decision }, `reserved ${lines.map((l) => `${l.amount} ${l.unit} of ${l.pool}`).join(', ')} within the task's budget`)
-        return 'go'
-      }
-      // Spent: every pool is configured and available, so a cap refused it (fail closed: one that cannot be read is not).
-      const pools = await resources.pools().catch(() => undefined)
-      const spent = !!pools && budget.caps.every((line) => pools.some((p) => p.pool === line.pool && p.available))
-      budget = { ...budget, state: 'refused', decision: reserved.decision, spent, reasons: reserved.reasons }
-      this.budgetMoved(row, budget, reserved.reasons.join('; '))
+      const why = `the ledger refused the request (${error.failure}: ${error.message})`
+      // The first refusal stands: a step refused beside it changes nothing.
+      this.budgetMoved(row, node.node_id, (b) => (b.state === 'refused' ? b : { ...b, state: 'refused', spent: false, reasons: [why] }), why)
+      return 'stop'
     }
+    if (reserved.state === 'reserved') {
+      const hold: StepHold = { step, nodeId: node.node_id, reservationId: reserved.reservationId, decision: reserved.decision }
+      // Recorded even when a step beside it was refused meanwhile, so it is released with the rest.
+      const after = this.budgetMoved(row, node.node_id, (b) => ({
+        ...withoutHolds(b), holds: [...holdsOf(b), hold], ...(b.state === 'refused' ? {} : { state: 'reserved' as const, decision: reserved.decision }),
+      }), `step ${node.node_id} reserved ${lines.map((l) => `${l.amount} ${l.unit} of ${l.pool}`).join(', ')} within the task's budget`, reserved.decision)
+      return after.state === 'refused' ? 'stop' : 'go'
+    }
+    // Spent: every pool is configured and available, so a cap refused it (fail closed: one that cannot be read is not).
+    const pools = await resources.pools().catch(() => undefined)
+    const spent = !!pools && budget.caps.every((line) => pools.some((p) => p.pool === line.pool && p.available))
+    this.budgetMoved(row, node.node_id, (b) => (b.state === 'refused' ? b : { ...b, state: 'refused', decision: reserved.decision, spent, reasons: reserved.reasons }), reserved.reasons.join('; '), reserved.decision)
+    return 'stop'
+  }
+
+  /** Whether the run's budget refused a step: it starts no new step, and ends once nothing of it is in flight. */
+  budgetStopped(runId: string): boolean {
+    const budget = this.row(runId)?.budget
+    return !!budget && (JSON.parse(budget) as TaskBudget).state === 'refused'
+  }
+
+  /**
+   * A run whose budget refused a step, with nothing of it in flight now: the steps that were
+   * running finished and their results were taken. Refused because a line is spent, the task blocks
+   * on the board (`budget-spent`, {@link spend}), unless the run was its last attempt; refused for
+   * any other reason (a pool unconfigured or unavailable since the start), the run fails, an attempt
+   * the board counts. `wait` while the board is not loaded or does not answer.
+   */
+  async budgetEnd(runId: string): Promise<'wait' | 'stop'> {
+    const row = this.row(runId)!
+    const board = this.e.board
+    if (!board) return 'wait'
+    const budget = JSON.parse(row.budget!) as TaskBudget
     return budget.spent ? this.spend(row, budget, board) : this.unbudgeted(row, budget)
+  }
+
+  /**
+   * Release the reservations of the run's steps that are no longer in flight: every step but the
+   * running ones (a node `RUNNING` on the attempt and escalation its hold names). A step that
+   * finished, failed, or never started (refused, stopped, or a crash before its start) keeps no hold.
+   */
+  async releaseSteps(runId: string, nodes: readonly NodeRow[]): Promise<void> {
+    const row = this.row(runId)
+    if (!row?.budget || !holdsOf(JSON.parse(row.budget) as TaskBudget).length) return
+    const running = new Set(nodes.filter((n) => n.state === 'RUNNING' && n.execution_id).map((n) => stepKey(n.node_id, n.attempt, n.escalations)))
+    await this.releaseHolds(runId, running, false)
   }
 
   /**
@@ -762,23 +819,25 @@ export class TaskRuns {
         const funding = await this.fundingAsk(row, budget, task)
         if (funding === 'wait') return 'wait'
         budget = { ...budget, funding }
-        this.e.ctx.store.transaction((db) => void db.prepare('UPDATE workflow_tasks SET budget = ?, updated_at = ? WHERE run_id = ?').run(JSON.stringify(budget), now(), row.run_id))
+        this.setBudget(row.run_id, (b) => ({ ...b, funding }))
       }
+      let blocked: Pick<TaskBudget, 'blocked' | 'refused'>
       try {
         await board.block(row.task_id, row.generation, { reason: 'budget-spent', ...(budget.funding!.length ? { funding: budget.funding! } : {}) })
-        budget = { ...budget, blocked: true }
+        blocked = { blocked: true }
       } catch (error) {
         if (!(error instanceof BoardError)) {
           this.warn(`the board did not answer run ${row.run_id}'s block of task ${row.task_id} on its spent budget`, error)
           return 'wait'
         }
-        budget = { ...budget, blocked: false, refused: refusal(error) }
+        blocked = { blocked: false, refused: refusal(error) }
       }
-      this.e.ctx.store.transaction((db) => void db.prepare('UPDATE workflow_tasks SET budget = ?, updated_at = ? WHERE run_id = ?').run(JSON.stringify(budget), now(), row.run_id))
+      budget = { ...budget, ...blocked }
+      this.setBudget(row.run_id, (b) => ({ ...b, ...blocked }))
     }
     const error: WorkflowError = {
       kind: 'budget_spent', disposition: 'USER_ACTION',
-      message: `task ${row.task_id}'s budget is spent (${(budget.reasons ?? []).join('; ') || 'a cap would be exceeded'}; budget decision ${budget.decision}); nothing of this run ran${budget.blocked
+      message: `task ${row.task_id}'s budget is spent (${(budget.reasons ?? []).join('; ') || 'a cap would be exceeded'}; budget decision ${budget.decision}); ${this.ran(row.run_id)}${budget.blocked
         ? `; the board took the block${budget.funding?.length ? `, asking to raise the budget by ${linesText(budget.funding)}` : ''}, and the operator decides whether the task goes on`
         : ` (the board did not take the block: ${budget.refused})`}`,
     }
@@ -793,7 +852,7 @@ export class TaskRuns {
    * pass the line), what the task overdrew it by plus one attempt's share of it (the line over the
    * task's attempts), at the unit's precision. Approved, the next attempt can reserve, and is given
    * about what one attempt was. Empty when no line is reached by recorded usage (holds that expire
-   * refused the run) or the ledger cannot count it (more records than it returns): the request then
+   * refused the step) or the ledger cannot count it (more records than it returns): the request then
    * asks only to go on. `wait` while the ledger does not answer.
    */
   private async fundingAsk(row: TaskRow, budget: TaskBudget, task: BoardTask | undefined): Promise<BudgetLine[] | 'wait'> {
@@ -835,7 +894,7 @@ export class TaskRuns {
    */
   private lastAttempt(row: TaskRow, budget: TaskBudget, task: BoardTask): 'stop' {
     const attempt = `attempt ${task.attempts.count} of ${task.attempts.max}`
-    this.e.ctx.store.transaction((db) => {
+    this.e.ctx.store.transaction(() => {
       const run = this.e.runRow(row.run_id)
       if (run?.status !== 'running') return
       const decision = this.e.ctx.artifacts.recordDecision({
@@ -850,51 +909,92 @@ export class TaskRuns {
         outcome: { option: 'end', detail: { taskId: row.task_id, attempt: task.attempts.count, maxAttempts: task.attempts.max } },
         deterministic: true,
       }, { ...PRODUCER, runId: row.run_id }).id as ArtifactRef
-      db.prepare('UPDATE workflow_tasks SET budget = ?, updated_at = ? WHERE run_id = ?').run(JSON.stringify({ ...budget, lastAttempt: decision }), now(), row.run_id)
+      this.setBudget(row.run_id, (b) => ({ ...b, lastAttempt: decision }))
       const error: WorkflowError = {
         kind: 'budget_spent', disposition: 'USER_ACTION',
-        message: `task ${row.task_id}'s budget is spent (${(budget.reasons ?? []).join('; ') || 'a cap would be exceeded'}; budget decision ${budget.decision}); nothing of this run ran; it was the task's last attempt (${attempt}), so no funding was asked (decision ${decision}): the task waits for input (retries-spent), and to go on the work is proposed again`,
+        message: `task ${row.task_id}'s budget is spent (${(budget.reasons ?? []).join('; ') || 'a cap would be exceeded'}; budget decision ${budget.decision}); ${this.ran(row.run_id)}; it was the task's last attempt (${attempt}), so no funding was asked (decision ${decision}): the task waits for input (retries-spent), and to go on the work is proposed again`,
       }
       this.e.finish(run, 'failed', { error: JSON.stringify(error) })
     })
     return 'stop'
   }
 
-  /** The ledger refused the run for want of a pool, not a spent line: the run fails with nothing of it run, and its report is a failed attempt. */
+  /** The ledger refused a step for want of a pool, not a spent line: the run fails with no new step started, and its report is a failed attempt. */
   private unbudgeted(row: TaskRow, budget: TaskBudget): 'stop' {
     const error: WorkflowError = {
       kind: 'quota_exhausted', disposition: 'USER_ACTION',
-      message: `task ${row.task_id}'s budget cannot be reserved: ${(budget.reasons ?? []).join('; ')}${budget.decision ? ` (budget decision ${budget.decision})` : ''}; nothing of this run ran`,
+      message: `task ${row.task_id}'s budget cannot be reserved: ${(budget.reasons ?? []).join('; ')}${budget.decision ? ` (budget decision ${budget.decision})` : ''}; ${this.ran(row.run_id)}`,
     }
     this.e.finish(this.e.runRow(row.run_id)!, 'failed', { error: JSON.stringify(error) })
     return 'stop'
   }
 
-  /** Where the run's reservation stands, on its row, and the `workflow.task.budget` event naming the ledger's decision. */
-  private budgetMoved(row: TaskRow, budget: TaskBudget, why: string): void {
-    this.e.ctx.store.transaction((db) => {
-      db.prepare('UPDATE workflow_tasks SET budget = ?, updated_at = ? WHERE run_id = ?').run(JSON.stringify(budget), now(), row.run_id)
-      this.e.ctx.eventLog.append({ type: 'workflow.task.budget', runId: row.run_id, ...(budget.decision ? { decision: budget.decision } : {}), data: { taskId: row.task_id, state: budget.state, ...(budget.spent !== undefined ? { spent: budget.spent } : {}), reason: clampText(why, 500) } })
+  /**
+   * What of the run ran before its budget stopped it: nothing, or the steps whose executions
+   * started (their results, when they completed, stay with the run, and the next attempt's brief
+   * points at them).
+   */
+  private ran(runId: string): string {
+    const started = (this.e.ctx.store.db.prepare('SELECT COUNT(*) AS n FROM workflow_nodes WHERE run_id = ? AND execution_id IS NOT NULL').get(runId) as { n: number }).n
+    return started ? `no step of this run started after the ${started} that ran before the refusal` : 'nothing of this run ran'
+  }
+
+  /** Change the run's budget on its row, read and written in one transaction, so steps beside each other never undo each other's change. */
+  private setBudget(runId: string, change: (budget: TaskBudget) => TaskBudget): TaskBudget | undefined {
+    return this.e.ctx.store.transaction((db) => {
+      const stored = (db.prepare('SELECT budget FROM workflow_tasks WHERE run_id = ?').get(runId) as { budget: string | null } | undefined)?.budget
+      if (!stored) return undefined
+      const next = change(JSON.parse(stored) as TaskBudget)
+      db.prepare('UPDATE workflow_tasks SET budget = ?, updated_at = ? WHERE run_id = ?').run(JSON.stringify(next), now(), runId)
+      return next
     })
   }
 
-  /** A finished run's reservation is released; one the ledger no longer holds (released, or expired) counts as released. */
-  private async release(runId: string): Promise<void> {
+  /** A step's reservation moved: where the run's budget stands, on its row, and the `workflow.task.budget` event naming the ledger's decision, in one transaction. */
+  private budgetMoved(row: TaskRow, nodeId: string, change: (budget: TaskBudget) => TaskBudget, why: string, decision?: ArtifactRef): TaskBudget {
+    return this.e.ctx.store.transaction(() => {
+      const budget = this.setBudget(row.run_id, change)!
+      this.e.ctx.eventLog.append({
+        type: 'workflow.task.budget', runId: row.run_id, nodeId, ...(decision ?? budget.decision ? { decision: decision ?? budget.decision } : {}),
+        data: { taskId: row.task_id, state: budget.state, ...(budget.spent !== undefined ? { spent: budget.spent } : {}), reason: clampText(why, 500) },
+      })
+      return budget
+    })
+  }
+
+  /** A finished run's reservations are released; one the ledger no longer holds (released, or expired) counts as released. */
+  private release(runId: string): Promise<void> {
+    return this.releaseHolds(runId, new Set(), true)
+  }
+
+  /**
+   * Release every hold of the run's steps but those in `keep`, then record what is left on its row.
+   * A hold the ledger does not release stays recorded (it expires on its own, INV-9), and is asked
+   * again later; without a ledger now, nothing is released. Once the run `finished` and nothing is
+   * held, a run that reserved is `released`.
+   */
+  private async releaseHolds(runId: string, keep: ReadonlySet<string>, finished: boolean): Promise<void> {
     const row = this.row(runId)
-    const budget = row?.budget ? JSON.parse(row.budget) as TaskBudget : undefined
-    if (!row || budget?.state !== 'reserved' || !budget.reservationId) return
+    if (!row?.budget) return
+    const stale = holdsOf(JSON.parse(row.budget) as TaskBudget).filter((h) => !keep.has(h.step))
     const resources = this.e.ctx.get('resources')
-    // Without a ledger now, the hold expires on its own (INV-9); the next start releases it.
-    if (!resources) return
-    try {
-      await resources.release(budget.reservationId)
-    } catch (error) {
-      if (!(error instanceof ResourcesError && error.failure === 'unknown-reservation')) {
-        this.warn(`the reservation ${budget.reservationId} of run ${runId} was not released; it expires on its own`, error)
-        return
+    // Without a ledger now, the holds expire on their own (INV-9); the next start releases them.
+    if (stale.length && !resources) return
+    const released = new Set<string>()
+    for (const hold of stale) {
+      try {
+        await resources!.release(hold.reservationId)
+        released.add(hold.reservationId)
+      } catch (error) {
+        if (error instanceof ResourcesError && error.failure === 'unknown-reservation') released.add(hold.reservationId)
+        else this.warn(`the reservation ${hold.reservationId} of ${hold.nodeId ? `step ${hold.nodeId}` : 'the run'} of run ${runId} was not released; it expires on its own`, error)
       }
     }
-    this.e.ctx.store.transaction((db) => void db.prepare(`UPDATE workflow_tasks SET budget = json_set(budget, '$.state', 'released'), updated_at = ? WHERE run_id = ? AND json_extract(budget, '$.state') = 'reserved'`).run(now(), runId))
+    this.setBudget(runId, (b) => {
+      const holds = holdsOf(b).filter((h) => !released.has(h.reservationId))
+      const state = b.state === 'refused' ? 'refused' : holds.length ? 'reserved' : finished && b.decision ? 'released' : b.state === 'reserved' ? 'due' : b.state
+      return { ...withoutHolds(b), ...(holds.length ? { holds } : {}), state }
+    })
   }
 
   // --- a question from a run ---
@@ -1208,6 +1308,21 @@ export class TaskRuns {
   private warn(what: string, error: unknown): void {
     this.e.ctx.logger.warn(`workflow: ${what}: ${(error as Error)?.message ?? String(error)}`)
   }
+}
+
+/** The key of a step's execution: its node, attempt, and escalation, as its start key names them. */
+const stepKey = (nodeId: string, attempt: number, escalations: number): string => `${nodeId}:${attempt}:${escalations}`
+
+/** The reservations a run's budget holds: its steps', and the run's one reservation an engine before ADR-0047 step 1 kept, which no step owns. */
+function holdsOf(budget: TaskBudget): StepHold[] {
+  if (budget.holds) return budget.holds
+  return budget.state === 'reserved' && budget.reservationId && budget.decision ? [{ step: '', nodeId: '', reservationId: budget.reservationId, decision: budget.decision }] : []
+}
+
+/** A budget without its holds, nor the run-level reservation of an earlier engine ({@link holdsOf} reads both). */
+function withoutHolds(budget: TaskBudget): TaskBudget {
+  const { holds: _holds, reservationId: _reservationId, ...rest } = budget
+  return rest
 }
 
 /** A budget's lines, one per pool and unit (the first of each). */
