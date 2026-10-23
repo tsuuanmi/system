@@ -40,7 +40,9 @@ import { ProviderError, ProviderScheduler, dispositionOf, promptOfStart, toProvi
 import { type LimitState, type Resources, ResourcesError, type UsageRecord } from '@tsuuanmi/system-resources-core'
 import type {} from '@tsuuanmi/system-store'
 import type { ArtifactRef, CapabilityDescriptor, CapabilityOffer, ExecutionStatus, QuotaClass, Tier, WorkerExecution, WorkerSandbox, WorkerStart, WorkScope } from '@tsuuanmi/system-workers-core'
+import { ACCOUNTS_MIGRATION, AgentAccounts, MAX_SLOTS } from './accounts.ts'
 import { GATE_MIGRATION, type Deferral, runGate } from './gate.ts'
+import { registerAccountTools } from './tools.ts'
 import { RUN_ID, type RepositoryCheck, type SweepOutcome, Worktrees } from './worktrees.ts'
 
 declare module '@deepseek-ai/cordis' {
@@ -108,9 +110,12 @@ export interface Config {
   /**
    * How each agent provider's (runtime's) accounts are used (ADR-0052): `assigned` (the default,
    * and the only one for personal subscriptions) or `pooled`, which needs `pooledTerms`. A runtime
-   * no entry names is assigned. Today each runtime runs one account, its home.
+   * no entry names is assigned. Today each runtime runs one account, its home. `slots`: how many
+   * accounts may be enrolled for it (ADR-0051; default 1, its own home adopted as slot 1).
    */
-  providers?: ProviderAccounts[]
+  providers?: Array<ProviderAccounts & { slots?: number | undefined }>
+  /** Where enrollment slots 2 and later keep their homes (default `<DSH_HOME>/system/agent-homes`): `<accountHomes>/<provider>/<n>`. */
+  accountHomes?: string
   /**
    * The most characters of earlier turns a review member's replayed conversation holds (default
    * 200,000); a turn past it fails before anything is sent, never cut (ADR-0049, INV-9).
@@ -215,7 +220,9 @@ export class AgentWorkers extends Service {
       accounts: z.union(['assigned', 'pooled']).default('assigned').description('assigned (the default; personal subscriptions): a limit on one account never moves its work to another account of this runtime, the work waits; pooled: only with pooledTerms'),
       // Not z.object: an omitted object would come back as {}; checked when loaded.
       pooledTerms: z.any().description('{confirmedBy, confirmedAt, terms}: who confirmed that this runtime\'s plan terms allow pooling its accounts, when (ISO time), and which terms; required for pooled (ADR-0052)'),
-    })).default([]).description('How each agent runtime\'s accounts are used; a runtime not listed is assigned (ADR-0052)'),
+      slots: z.natural().min(1).max(MAX_SLOTS).description('How many accounts of this runtime may be enrolled (default 1: its own home, adopted as slot 1); each slot is an owner-only home (ADR-0051)'),
+    })).default([]).description('How each agent runtime\'s accounts are used and how many may be enrolled; a runtime not listed is assigned, with one slot (ADR-0051, ADR-0052)'),
+    accountHomes: z.string().description('Where enrollment slots 2 and later keep their homes, <accountHomes>/<provider>/<n> (default <DSH_HOME>/system/agent-homes); hidden from every agent'),
     maxReplayChars: z.natural().min(1).max(2_000_000).default(200_000).description('Characters of earlier turns a review member\'s replayed conversation holds, at most; a turn past it fails, never cut'),
     probeTtlMs: z.natural().default(5 * 60_000).description('How long a probe result stands'),
     runTimeoutMs: z.natural().min(1).default(15 * 60_000).description('Hard deadline per run'),
@@ -237,6 +244,8 @@ export class AgentWorkers extends Service {
   private readonly worktrees: Worktrees
   /** Each runtime's account setting (ADR-0052); a runtime not configured is assigned. */
   private readonly accounts: Map<string, AccountSetting>
+  /** The enrollment slots of each runtime and the accounts in them (ADR-0051). */
+  readonly agentAccounts: AgentAccounts
   private sweeping: Promise<SweepOutcome> | undefined
 
   constructor(ctx: Context, private readonly config: Config = { workers: [] }) {
@@ -268,6 +277,18 @@ export class AgentWorkers extends Service {
     }
     if (config.worktreeRoot !== undefined && !isAbsolute(config.worktreeRoot)) throw new ProviderError('config_error', 'agent Workers: worktreeRoot must be an absolute path')
     this.worktrees = new Worktrees(ctx, config.worktreeRoot ?? join(dshHome(), 'system', 'worktrees'))
+    if (config.accountHomes !== undefined && !isAbsolute(config.accountHomes)) throw new ProviderError('config_error', 'agent Workers: accountHomes must be an absolute path')
+    const slots = new Map<string, number>()
+    for (const entry of config.providers ?? []) {
+      if (entry.slots === undefined) continue
+      if (!Number.isInteger(entry.slots) || entry.slots < 1 || entry.slots > MAX_SLOTS) throw new ProviderError('config_error', `agent-workers.providers: ${entry.provider} has slots ${String(entry.slots)}; 1 to ${MAX_SLOTS}`)
+      slots.set(entry.provider, entry.slots)
+    }
+    this.agentAccounts = new AgentAccounts(ctx, {
+      slots: (provider) => slots.get(provider) ?? 1,
+      root: config.accountHomes ?? join(dshHome(), 'system', 'agent-homes'),
+      workersOf: (provider) => [...this.workers].filter(([, w]) => w.runtime === provider).map(([id]) => id).sort(),
+    })
     ctx.store.migrate('agent-workers', [{
       version: 1,
       sql: `CREATE TABLE agent_runs (
@@ -316,7 +337,7 @@ export class AgentWorkers extends Service {
       // A limit no ledger reading holds: the runtime's Workers cool down until then (one home, one sign-in).
       version: 9,
       sql: 'CREATE TABLE agent_cooldowns (runtime TEXT PRIMARY KEY, until TEXT NOT NULL, worker TEXT NOT NULL, run_id TEXT NOT NULL, source TEXT NOT NULL, created_at TEXT NOT NULL);',
-    }])
+    }, ACCOUNTS_MIGRATION])
     // A pooled runtime's recorded terms, as a gate decision at each start (ADR-0052, INV-13).
     for (const [provider, setting] of this.accounts) {
       if (setting.mode === 'pooled' && setting.pooledTerms) ctx.artifacts.recordDecision(pooledTermsDecision(provider, setting.pooledTerms, 'agent-workers.pooled-terms'), { producer: { type: 'system', ref: 'agent-workers' } })
@@ -346,6 +367,8 @@ export class AgentWorkers extends Service {
       // and in a new generation a replayed conversation starts empty (ADR-0049).
       reset: (sessionId) => Number(this.ctx.store.db.prepare('UPDATE agent_sessions SET native_handle = NULL, generation = generation + 1 WHERE session_id = ?').run(sessionId).changes) > 0,
     })
+    // The operator's enrollment tools, when the MCP endpoint is mounted (operator scope).
+    ctx.inject(['mcp'], (c) => registerAccountTools(c, this.agentAccounts))
     ctx.effect(() => {
       queueMicrotask(() => {
         this.recover()
@@ -434,6 +457,12 @@ export class AgentWorkers extends Service {
    * Worker's own pool, which its run's reservation checks with a `budget` decision.
    */
   private async accountGate(worker: AgentWorkerConfig, own: boolean): Promise<AccountGate> {
+    // The account enrolled in its runtime's home, when one is: quarantined or signed out, it takes no work (ADR-0051).
+    const enrolled = this.agentAccounts.homeGate(worker.runtime)
+    if (enrolled.state === 'unavailable') {
+      this.warnOnce(`agent Workers: ${enrolled.why}`)
+      return { state: 'unavailable', why: enrolled.why }
+    }
     const cooled = this.cooldown(worker.runtime)
     if (cooled) return { state: 'quota-exhausted', until: cooled.until, why: `${worker.runtime} hit a usage limit (run ${cooled.run_id} on ${cooled.worker}); its Workers take no run until ${cooled.until}` }
     const meter = (w: AgentWorkerConfig): string => JSON.stringify([w.account, w.pool])
@@ -542,6 +571,10 @@ export class AgentWorkers extends Service {
     if (cached && Date.now() - cached.at < (this.config.probeTtlMs ?? 5 * 60_000)) return cached.evidence
     const evidence = await provider.probe().catch((error: unknown): RuntimeEvidence => ({ available: false, detail: (error as Error).message.slice(0, 200), sandboxes: [], resume: false, executes: false, readsConfined: false, gatesToolCalls: false }))
     this.probes.set(worker.runtime, { at: Date.now(), evidence })
+    // Each probe reads the runtime's ready accounts again: one no longer signed in as its pinned principal is taken out (ADR-0051).
+    await this.agentAccounts.recheck(worker.runtime).catch((error: unknown) => {
+      this.ctx.logger.warn(`agent Workers: the accounts of ${worker.runtime} could not be read again: ${(error as Error).message}`)
+    })
     return evidence
   }
 
@@ -831,6 +864,9 @@ export class AgentWorkers extends Service {
     if (!admits(evidence, worker)) {
       throw new ProviderError('config_error', `${worker.runtime} cannot run this Worker now: ${evidence.gatesToolCalls ? evidence.detail : `${evidence.detail}; it cannot ask the run's gate before each tool call`}`)
     }
+    // The account enrolled in its home is read again before the run: a principal changed since the
+    // probe quarantines it, and the gate below fails the run unsubmitted (ADR-0051, INV-2).
+    await this.agentAccounts.recheck(worker.runtime, provider.home)
     // Queued before its account hit a limit (its runtime's cooldown, or another of its Workers' pools):
     // it would hit it again (INV-2). Its own pool is its reservation's to check.
     const held = await this.accountGate(worker, false)
