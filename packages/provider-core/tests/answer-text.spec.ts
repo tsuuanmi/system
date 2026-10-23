@@ -45,4 +45,14 @@ describe('Markdown from a Copy button is kept only when it is the rendered answe
   it('counts a footnote, which renders, as prose', () => {
     expect(sameWords('Claim.[^1]\n\n[^1]: A footnote text here.', 'Claim.1\n\n1. A footnote text here. ↩')).toBe(true)
   })
+
+  it('reads long runs of unclosed brackets, unended links, or a long reference target in linear time (no polynomial backtracking)', () => {
+    const n = 100_000
+    const started = performance.now()
+    expect(compareWords(`${'['.repeat(n)} The answer.`, 'The answer.')).toMatchObject({ same: true, prose: 2, links: 0 })
+    expect(compareWords('[a]('.repeat(n), 'a')).toMatchObject({ prose: n, links: 0 })
+    expect(compareWords('!['.repeat(n), '')).toMatchObject({ prose: 0, links: 0 })
+    expect(compareWords(`The answer [1].\n\n[1]: ${'!'.repeat(n)}`, 'The answer 1.')).toMatchObject({ same: true, prose: 2, links: 1 })
+    expect(performance.now() - started).toBeLessThan(1000)
+  })
 })

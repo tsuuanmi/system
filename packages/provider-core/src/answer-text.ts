@@ -21,15 +21,66 @@ function renderedWords(markdown: string): { prose: string[]; linkWords: number; 
     linkWords += words(text).length
     return ' '
   }
-  const definition = /^ {0,3}\[([^\]\n^][^\]\n]*)\]:[ \t]*\S+.*$/gm
+  const definition = /^ {0,3}\[([^\]\n^][^\]\n]*)\]:[ \t]*\S.*$/gm
   const defined = new Set([...markdown.matchAll(definition)].map((m) => m[1]!.toLowerCase()))
   const plain = markdown
     .replace(/^```[^\n]*$/gm, ' ')
     .replace(definition, ' ')
-    .replace(/!?\[([^\]]*)\](?:\([^)]*\)|\[[^\]]*\])/g, link)
-    .replace(/\[([^\]\n]+)\]/g, (marker, id: string) => defined.has(id.toLowerCase()) ? link(marker, id) : marker)
-    .replace(/^\s{0,3}(?:#{1,6}|>|[-*+]|\d+[.)])\s+/gm, ' ')
-  return { prose: words(plain), linkWords, links }
+  const linked = replaceLinks(plain, link)
+  const marked = replaceMarkers(linked, (marker, id) => defined.has(id.toLowerCase()) ? link(marker, id) : marker)
+  return { prose: words(marked.replace(/^\s{0,3}(?:#{1,6}|>|[-*+]|\d+[.)])\s+/gm, ' ')), linkWords, links }
+}
+
+/**
+ * For each position of a text, the index of the next of `chars` at or after it (`-1` for none).
+ * A link or marker scan looks its closing bracket up here, so it reads the text once: a
+ * `\[[^\]]*\]` regex instead rescans to the end from every `[` of a run that is never closed,
+ * which takes quadratic time on page text.
+ */
+function nextOf(text: string, chars: string): Int32Array {
+  const next = new Int32Array(text.length + 1).fill(-1)
+  for (let i = text.length - 1; i >= 0; i--) next[i] = chars.includes(text[i]!) ? i : next[i + 1]!
+  return next
+}
+
+/**
+ * Text with each link replaced, scanning left to right: `[label](target)` or `[label][id]`, an
+ * image's `![label](target)` too, where the label runs to the first `]` and the target or id to
+ * the first `)` or `]` after it (none of them nest).
+ */
+function replaceLinks(text: string, replace: (link: string, label: string) => string): string {
+  const bracket = nextOf(text, ']')
+  const paren = nextOf(text, ')')
+  let out = ''
+  let copied = 0
+  for (let i = 0; i < text.length; i++) {
+    const open = text[i] === '[' ? i : text[i] === '!' && text[i + 1] === '[' ? i + 1 : -1
+    if (open < 0) continue
+    const close = bracket[open + 1]!
+    if (close < 0) continue
+    const end = text[close + 1] === '(' ? paren[close + 2]! : text[close + 1] === '[' ? bracket[close + 2]! : -1
+    if (end < 0) continue
+    out += text.slice(copied, i) + replace(text.slice(i, end + 1), text.slice(open + 1, close))
+    copied = end + 1
+    i = end
+  }
+  return out + text.slice(copied)
+}
+
+/** Text with each bracketed marker on one line (`[1]`, `[name]`, not `[]`) replaced, scanning left to right. */
+function replaceMarkers(text: string, replace: (marker: string, id: string) => string): string {
+  const stop = nextOf(text, ']\n')
+  let out = ''
+  let copied = 0
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] !== '[') continue
+    const close = stop[i + 1]!
+    if (close <= i + 1 || text[close] !== ']') continue
+    out += text.slice(copied, i) + replace(text.slice(i, close + 1), text.slice(i + 1, close))
+    copied = close + 1
+    i = close
+  }
+  return out + text.slice(copied)
 }
 
 /**
