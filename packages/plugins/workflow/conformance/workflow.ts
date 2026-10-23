@@ -11,11 +11,18 @@
  * `restart` stops the engine and everything under it, runs `between` while it is down, and
  * starts it again on the same durable state. Since 1.2 the context also provides `ctx.board` over
  * `ctx.approvals`, with a policy that runs `read` on auto, and the engine serves board tasks.
+ * Since 1.4 it also provides `ctx.resources`, a resource ledger configured with {@link POOLS}
+ * and nothing recorded, which the engine holds a task's budget to.
  */
+import { execFileSync } from 'node:child_process'
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@tsuuanmi/system-artifacts'
-import type { BoardTask, TaskInput } from '@tsuuanmi/system-board-core'
-import { SchemaRegistry, sha256, startPrompt } from '@tsuuanmi/system-libs'
+import type { BoardTask, BudgetLine, TaskInput } from '@tsuuanmi/system-board-core'
+import { captureGitSubject, SchemaRegistry, sha256, startPrompt } from '@tsuuanmi/system-libs'
+import type { PoolConfig } from '@tsuuanmi/system-resources-core'
 import type { ArtifactRef, CapabilityDescriptor, WorkerExecution, WorkerSource, WorkerStart } from '@tsuuanmi/system-workers-core'
 import { expect } from 'vitest'
 import { type ContractVersion, defineSuite, type Scenario } from '../../../libs/conformance/runner.ts'
@@ -66,6 +73,21 @@ export class ScriptedWorkers {
   readonly cancelled: string[] = []
   /** How a new execution ends; by default it answers at once. */
   reply: (request: Rendered) => Reply = (request) => ({ text: `answer: ${request.prompt}` })
+  /**
+   * Since 1.4: a git repository this runtime works in as a source with a worktree of each run's own
+   * does (agent Workers' `worktreePerRun`). Set, each run (`WorkerStart.runId`) gets a detached
+   * worktree of it under `runs`, made at its first execution; before the execution starts, the
+   * brief's `files` are written under the worktree's `.system/`, read-only, beside a `.gitignore`
+   * that makes git ignore the directory, and the prompt names them; each answer is an
+   * `agent-result@1.1` naming the worktree and the subject it is at when the engine first reads it,
+   * after which {@link afterCapture} runs. Unset, executions have no workspace.
+   */
+  worktreePerRun: { repository: string; runs: string } | undefined = undefined
+  /** Each run's worktree, by run id (with {@link worktreePerRun}). */
+  readonly worktrees = new Map<string, string>()
+  /** Runs once an answer's subject was captured, before the engine checks it (an agent's later edits). */
+  afterCapture: (worktree: string) => void = () => {}
+  private readonly worktreeOf = new Map<string, string>()
   private readonly executions = new Map<string, WorkerExecution>()
   private readonly requests = new Map<string, Rendered>()
   private readonly answers = new Map<string, string>()
@@ -97,6 +119,17 @@ export class ScriptedWorkers {
     const text = this.answers.get(id)
     if (execution && text !== undefined) {
       const request = this.requests.get(id)!
+      const worktree = this.worktreeOf.get(id)
+      if (worktree) {
+        const { subject } = captureGitSubject(worktree)!
+        execution.result = this.ctx!.artifacts.put({
+          kind: 'report', bodySchema: 'agent-result@1.1', classification: request.requirement.data.classification, producer: { type: 'worker', ref: request.worker },
+          body: { schema: 'agent-result@1.1', worker: request.worker, runtime: 'scripted', runId: id, promptHash: sha256(request.prompt), sandbox: 'workspace-write', text, workspace: worktree, subject },
+        }).id as ArtifactRef
+        this.answers.delete(id)
+        this.afterCapture(worktree)
+        return { ...execution }
+      }
       execution.result = this.ctx!.artifacts.put({
         kind: 'report', bodySchema: 'provider-answer@1.0', classification: request.requirement.data.classification, producer: { type: 'worker', ref: request.worker },
         body: { schema: 'provider-answer@1.0', provider: 'scripted', account: 'scripted', turnId: id, conversation: { mode: 'temporary' }, promptHash: sha256(request.prompt), text },
@@ -119,12 +152,14 @@ export class ScriptedWorkers {
   private start(start: WorkerStart): WorkerExecution {
     const known = this.keys.get(start.key)
     if (known) return this.get(known)!
+    const worktree = this.worktreePerRun && start.runId ? this.place(start, this.worktreePerRun) : undefined
     // Rendered as a text-prompted source renders a brief, its pointers resolved at start.
-    const request: Rendered = { ...start, prompt: startPrompt(start, (ref) => this.ctx!.artifacts.get(ref)).prompt }
+    const request: Rendered = { ...start, prompt: startPrompt(start, (ref) => this.ctx!.artifacts.get(ref), { placesFiles: !!worktree }).prompt }
     if (start.sessionId && !this.sessions.has(start.sessionId)) this.sessions.set(start.sessionId, { worker: start.worker })
     const session = start.sessionId ? this.sessions.get(start.sessionId)! : undefined
     if (session && this.keepsHandles) session.handle ??= `native-${start.sessionId}`
     const id = `x-${this.started.length + 1}`
+    if (worktree) this.worktreeOf.set(id, worktree)
     this.keys.set(start.key, id)
     this.requests.set(id, request)
     this.started.push({ ...request, id })
@@ -132,6 +167,34 @@ export class ScriptedWorkers {
     const reply = this.reply(request)
     if (reply !== 'hold') this.finish(id, reply)
     return this.get(id)!
+  }
+
+  /** The run's own worktree, made at its first execution, with the brief's files written under `.system/` (git-ignored, read-only). */
+  private place(start: WorkerStart, workspace: { repository: string; runs: string }): string {
+    let worktree = this.worktrees.get(start.runId!)
+    if (!worktree) {
+      worktree = join(workspace.runs, start.runId!)
+      mkdirSync(workspace.runs, { recursive: true })
+      execFileSync('git', ['-C', workspace.repository, 'worktree', 'add', '-q', '--detach', worktree], { stdio: 'ignore' })
+      this.worktrees.set(start.runId!, worktree)
+    }
+    const brief = start.brief ? this.ctx!.artifacts.get(start.brief)?.body as { files?: Array<{ path: string; ref: ArtifactRef }> } | undefined : undefined
+    if (brief?.files?.length) {
+      const dir = join(worktree, '.system')
+      mkdirSync(dir, { recursive: true })
+      writeFileSync(join(dir, '.gitignore'), '*\n')
+      for (const file of brief.files) {
+        const path = join(worktree, file.path)
+        try {
+          chmodSync(path, 0o644)
+        } catch {
+          // Not written yet.
+        }
+        writeFileSync(path, (this.ctx!.artifacts.get(file.ref)!.body as { text: string }).text)
+        chmodSync(path, 0o444)
+      }
+    }
+    return worktree
   }
 
   private finish(id: string, reply: Exclude<Reply, 'hold'>): void {
@@ -196,6 +259,9 @@ export const TEMPLATES: Record<string, NodeTemplate[]> = {
 
 /** A Worker that keeps conversations (`persistent-conversation`), for the scenarios that resume one. */
 export const KEEPER: CapabilityDescriptor = worker('w:keeper', { tier: 'standard', proves: [...PROVES, 'persistent-conversation'] })
+
+/** Since 1.4: the pool the context's resource ledger configures, which a task's budget draws on (it reads unknown until a scenario observes it). */
+export const POOLS: readonly PoolConfig[] = [{ pool: 'max.programmatic', account: 'max', kind: 'programmatic', windows: [{ id: 'monthly', kind: 'credit' }] }]
 
 /** The engine configuration every scenario starts from: short back-offs, two attempts a node. */
 export const CONFIG: Config = { retryDelayMs: 50, maxAttempts: 2 }
@@ -313,6 +379,26 @@ export async function readyTask(ctx: Context, title: string, extra: Partial<Task
   return task
 }
 
+/** Since 1.4: the ledger reads the pool {@link POOLS} configures as ok, so a budget on it can be reserved (a window with no reading is unknown, INV-2). */
+async function poolOpen(ctx: Context): Promise<void> {
+  await ctx.resources.observe({ schema: 'limit-state@1.0', pool: 'max.programmatic', account: 'max', window: { id: 'monthly', kind: 'credit' }, state: 'ok', source: 'runtime-result', observedAt: new Date().toISOString() })
+}
+
+/** Usage the ledger counts for a task, as its Worker's source records it: one run of one turn on the pool {@link POOLS} configures. */
+async function drew(ctx: Context, taskId: string, requestId: string): Promise<void> {
+  await ctx.resources.record({ schema: 'usage-record@1.0', requestId, source: 'runtime-result', observedAt: new Date().toISOString(), account: 'max', pool: 'max.programmatic', taskId, turns: 1 })
+}
+
+/** A task budget of `amount` runs on the pool {@link POOLS} configures. */
+const runsOf = (amount: number): BudgetLine[] => [{ pool: 'max.programmatic', unit: 'runs', amount }]
+
+/** The ledger's `budget` decisions on the reservations of one run, in order. */
+const budgetsOf = (ctx: Context, runId: string): string[] => ctx.artifacts.list({ kind: 'decision', decisionType: 'budget', limit: 1000 })
+  .map((a) => a.body as Decision).filter((d) => d.outcome.detail?.['runId'] === runId).map((d) => d.outcome.option)
+
+/** Run `git` in `dir`, returning what it prints. */
+const git = (dir: string, ...args: string[]): string => execFileSync('git', ['-C', dir, '-c', 'user.name=t', '-c', 'user.email=t@example.test', ...args], { encoding: 'utf8' })
+
 /** The run's outcome reached its board task. */
 const reported = async (ctx: Context, runId: string): Promise<RunView> => {
   await until(() => ctx.workflow.get(runId)?.task?.phase === 'reported', `run ${runId}'s report`)
@@ -350,8 +436,10 @@ export const workflowSuite = defineSuite<Boot>({
   // 1.1: every execution names the run it belongs to (`WorkerStart.runId`). 1.2: a run serves one
   // attempt of a board task (`start` with `task`), through `ctx.board` only. 1.3: every execution
   // is started with a brief recorded before it (`WorkerStart.brief`), and a task's next attempt
-  // resumes the session of the one before it when its Worker can.
-  contract: '1.3',
+  // resumes the session of the one before it when its Worker can. 1.4: a board task's budget held
+  // to its lines on the ledger before each step, a step's questions blocking its task, and the
+  // board's TASKS.md given to the run's own worktree, git-ignored and never part of the work (ADR-0053).
+  contract: '1.4',
   scenarios: [
     scenario('node-records', 'keeps every node record valid against workflow-node@1.x with a rising revision, and completes a node only with its input receipt, an output receipt binding its Worker\'s result, and the acceptance decision that accepted it (INV-14, INV-13, INV-3)', async ({ ctx, workers }) => {
       workers.reply = () => 'hold'
@@ -784,6 +872,181 @@ export const workflowSuite = defineSuite<Boot>({
       expect(fresh.candidates.find((c) => c.option === 'fresh')!.reasons.join(' ')).toMatch(/no native session/)
       expect(ctx.artifacts.get(workers.started.at(-1)!.brief!)!.body).not.toHaveProperty('resume')
     }, {}, '1.3'),
+
+    scenario('task-budget', 'holds a board task that declares a budget to its lines on the resource ledger: refuses it before taking it when the ledger cannot hold them, reserves before each step of its run (the ledger\'s budget decision on the run\'s row before the step starts), and once a step spent a line starts no further step, takes the steps in flight, and blocks the task with a funding request on lines computed from the ledger\'s count; funded, the next attempt reserves within the raised lines and is pointed at the steps the stopped one completed (ADR-0047, ADR-0044, INV-2, INV-9, INV-13)', async ({ ctx, workers }) => {
+      await activeProject(ctx)
+      // Fail closed before the task is taken: a pool the ledger does not configure, and one it has no reading of yet.
+      const nowhere = await readyTask(ctx, 'nowhere', { budget: [{ pool: 'nowhere', unit: 'runs', amount: 3 }] })
+      const unread = await readyTask(ctx, 'unread', { budget: runsOf(3) })
+      expect(await refusalOf(() => ctx.workflow.start({ template: 'solo', input: 'q', classification: 'public', task: { taskId: nowhere.taskId } }))).toBe('config_error')
+      expect(await refusalOf(() => ctx.workflow.start({ template: 'solo', input: 'q', classification: 'public', task: { taskId: unread.taskId } }))).toBe('overloaded')
+      expect(workers.started).toHaveLength(0)
+      for (const refused of [nowhere, unread]) expect(await ctx.board.task(refused.taskId)).toMatchObject({ state: 'ready', attempts: { count: 0 } })
+      const admissions = ctx.artifacts.list({ kind: 'decision', decisionType: 'admission', limit: 100 }).map((a) => a.body as Decision)
+      expect(admissions.filter((d) => d.decider.id === 'workflow.task-admission' && d.outcome.option === 'refuse')).toHaveLength(2)
+
+      await poolOpen(ctx)
+      const task = await readyTask(ctx, 'two steps', { budget: runsOf(1) })
+      workers.reply = () => 'hold'
+      const run = await ctx.workflow.start({ template: 'chain', input: 'q', classification: 'public', task: { taskId: task.taskId } })
+      await until(() => workers.started.length === 1, 'the first step started')
+      // Reserved before the step started work: the least of each line, the task's lines as caps.
+      const held = ctx.workflow.get(run.runId)!.task!.budget!
+      expect(held).toMatchObject({ state: 'reserved' })
+      expect(decisionOf(ctx, held.decision)).toMatchObject({ decisionType: 'budget', outcome: { option: 'reserved', detail: { runId: run.runId, caps: runsOf(1), lines: runsOf(1) } } })
+      // The first step draws the task's one run, as its source records it on the ledger.
+      await drew(ctx, task.taskId, 'step-a')
+      workers.release(workers.started[0]!.id, { text: 'the first half' })
+
+      const failed = await settled(ctx, run.runId)
+      expect(failed).toMatchObject({ status: 'failed', error: { kind: 'budget_spent', disposition: 'USER_ACTION' } })
+      // The second step was refused before it was routed or sent.
+      await pause(300)
+      expect(workers.started).toHaveLength(1)
+      expect(ctx.workflow.records(run.runId).map((r) => [r.nodeId, r.state])).toEqual([['a', 'COMPLETED'], ['b', 'READY']])
+      expect(budgetsOf(ctx, run.runId)).toEqual(['reserved', 'refused'])
+      // The ask: what the task overdrew the line by (none), plus one attempt's share of it, rounded up.
+      const ask = runsOf(1)
+      const view = await reported(ctx, run.runId)
+      expect(view.task).toMatchObject({ budget: { state: 'refused', spent: true, blocked: true, funding: ask }, outcome: { status: 'blocked', state: 'waiting-for-approval' } })
+      expect(decisionOf(ctx, view.task!.budget!.decision)).toMatchObject({ decisionType: 'budget', outcome: { option: 'refused' } })
+      const blocked = (await ctx.board.task(task.taskId))!
+      expect(blocked).toMatchObject({ state: 'waiting-for-approval', waiting: { reason: 'budget-spent', funding: ask }, attempts: { count: 1 } })
+      const request = (await ctx.approvals.get(blocked.waiting!.approvalRequest!))!
+      expect(request).toMatchObject({ action: { class: 'funding' }, requester: { taskId: task.taskId } })
+
+      // Funded by the operator: the board raises exactly those lines, and the next attempt reserves within them and runs both steps.
+      const [verdict] = await ctx.approvals.decide([{ requestId: request.requestId, subject: request.subject, verdict: 'approved' }])
+      expect(verdict?.refused).toBeUndefined()
+      await ctx.board.sweep(new Date())
+      expect(await ctx.board.task(task.taskId)).toMatchObject({ state: 'ready', budget: runsOf(2) })
+      workers.reply = () => ({ text: 'done' })
+      const second = await ctx.workflow.start({ template: 'chain', input: 'q', classification: 'public', task: { taskId: task.taskId } })
+      expect(await settled(ctx, second.runId)).toMatchObject({ status: 'completed' })
+      expect(workers.started).toHaveLength(3)
+      expect(budgetsOf(ctx, second.runId)).toEqual(['reserved', 'reserved'])
+      const next = ctx.artifacts.get(workers.started[1]!.brief!)!.body as { attempt: number; artifacts: Array<{ ref: string; role: string }> }
+      expect(next.attempt).toBe(2)
+      expect(next.artifacts).toContainEqual(expect.objectContaining({ ref: recordOf(ctx, run.runId, 'a').outputReceipt!.result, role: 'prior' }))
+      expect((await reported(ctx, second.runId)).task!.outcome).toMatchObject({ status: 'accepted', state: 'done' })
+    }, {}, '1.4'),
+
+    scenario('task-budget-last-attempt', 'asks for no funding when a task\'s budget is spent on its last attempt, since no approval could serve it: a gate decision on the ledger\'s refusal ends the run as budget_spent with nothing started, and its report leaves the task waiting for input (retries-spent) with nothing put to the operator (ADR-0044, INV-9, INV-13)', async ({ ctx, workers }) => {
+      await activeProject(ctx)
+      await poolOpen(ctx)
+      const task = await readyTask(ctx, 'last', { budget: runsOf(1), maxAttempts: 1 })
+      await drew(ctx, task.taskId, 'earlier')
+      const run = await ctx.workflow.start({ template: 'solo', input: 'q', classification: 'public', task: { taskId: task.taskId } })
+      expect(await settled(ctx, run.runId)).toMatchObject({ status: 'failed', error: { kind: 'budget_spent', disposition: 'USER_ACTION' } })
+      expect(workers.started).toHaveLength(0)
+      const view = await reported(ctx, run.runId)
+      expect(view.task!.budget).toMatchObject({ state: 'refused', spent: true })
+      expect(view.task!.budget).not.toHaveProperty('blocked')
+      expect(view.task!.budget).not.toHaveProperty('funding')
+      const gate = decisionOf(ctx, view.task!.budget!.lastAttempt)
+      expect(gate).toMatchObject({ decisionType: 'gate', decider: { id: 'workflow.task-funding' }, inputs: [view.task!.budget!.decision], outcome: { option: 'end' } })
+      expect(view.task!.outcome).toMatchObject({ status: 'reconciled', state: 'waiting-for-input' })
+      expect(await ctx.board.task(task.taskId)).toMatchObject({ state: 'waiting-for-input', waiting: { reason: 'retries-spent' }, attempts: { count: 1, max: 1 } })
+      expect((await ctx.approvals.list({ states: ['open', 'batched', 'approved', 'rejected'] })).filter((r) => r.requester.taskId === task.taskId)).toEqual([])
+    }, {}, '1.4'),
+
+    scenario('task-question', 'blocks a board task on the questions a step of its run asks instead of answering, as every brief of the run offers (brief@1.2 ask): the step fails as question with no result on a gate decision, nothing after it starts, and the holder raises the board\'s question wait; answered, the next attempt\'s brief points at the answers; outside a board task nothing offers to ask, and such an answer is a result (INV-6, INV-9, INV-13)', async ({ ctx, workers }) => {
+      await activeProject(ctx)
+      const task = await readyTask(ctx, 'unclear')
+      const questions = ['Which band width?', 'Keep the old API?']
+      workers.reply = () => ({ text: `\`\`\`json\n${JSON.stringify({ questions })}\n\`\`\`` })
+      const run = await ctx.workflow.start({ template: 'chain', input: 'q', classification: 'public', task: { taskId: task.taskId } })
+      const failed = await settled(ctx, run.runId)
+      expect(failed).toMatchObject({ status: 'failed', error: { kind: 'question', disposition: 'USER_ACTION' } })
+      expect(failed.nodes.map((n) => n.state)).toEqual(['FAILED', 'WAITING'])
+      expect(failed.nodes[0]!.result).toBeUndefined()
+      expect(ctx.artifacts.get(workers.started[0]!.brief!)!.body).toMatchObject({ schema: 'brief@1.2', ask: { maxQuestions: 8 } })
+      const view = await reported(ctx, run.runId)
+      expect(view.task!.question).toMatchObject({ state: 'raised', nodeId: 'a', questions })
+      expect(decisionOf(ctx, view.task!.question!.decision)).toMatchObject({ decisionType: 'gate', decider: { id: 'workflow.task-question' }, outcome: { option: 'ask', detail: { taskId: task.taskId, nodeId: 'a' } } })
+      expect(view.task!.outcome).toMatchObject({ status: 'blocked', state: 'waiting-for-input' })
+      expect(await ctx.board.task(task.taskId)).toMatchObject({ state: 'waiting-for-input', waiting: { reason: 'question', questions }, attempts: { count: 1 } })
+      await pause(300)
+      expect(workers.started).toHaveLength(1)
+
+      // Answered: only that trusted move and the gate start the next attempt, which is briefed with the answers.
+      await ctx.board.answer(task.taskId, ['64 is enough', 'yes, keep it'])
+      expect(await ctx.board.task(task.taskId)).toMatchObject({ state: 'ready' })
+      workers.reply = () => ({ text: 'the answer' })
+      const next = await ctx.workflow.start({ template: 'chain', input: 'q', classification: 'public', task: { taskId: task.taskId } })
+      expect((await reported(ctx, next.runId)).task!.outcome).toMatchObject({ status: 'accepted', state: 'done' })
+      const brief = ctx.artifacts.get(workers.started[1]!.brief!)!.body as { attempt: number; artifacts: Array<{ role: string }> }
+      expect(brief.attempt).toBe(2)
+      expect(brief.artifacts.map((p) => p.role)).toContain('review')
+      expect(workers.started[1]!.prompt).toContain('64 is enough')
+
+      workers.reply = () => ({ text: '{"questions": ["Which?"]}' })
+      const plain = await settled(ctx, start(ctx, 'solo', 'q').runId)
+      expect(plain).toMatchObject({ status: 'completed', answer: '{"questions": ["Which?"]}' })
+      expect(ctx.artifacts.get(workers.started.at(-1)!.brief!)!.body).not.toHaveProperty('ask')
+    }, {}, '1.4'),
+
+    scenario('task-tasks-file', 'gives every brief of a board task\'s run the board\'s TASKS.md projection of its project as a file for the run\'s own worktree (brief@1.2 files, .system/TASKS.md, a board-projection@1.0 by content id), which a source with such a worktree writes there git-ignored; the run\'s result binds to the worktree\'s exact subject without it, nothing commits it, and what an agent writes into it is never read back (INV-5, INV-9, INV-12, INV-15)', async ({ ctx, workers }) => {
+      const dir = mkdtempSync(join(tmpdir(), 'system-workflow-conformance-tree-'))
+      try {
+        const repository = join(dir, 'repo')
+        mkdirSync(repository)
+        git(repository, 'init', '-q')
+        writeFileSync(join(repository, 'kernel.c'), 'int main(void) { return 0; }\n')
+        git(repository, 'add', '.')
+        git(repository, 'commit', '-q', '-m', 'init')
+        const head = git(repository, 'rev-parse', 'HEAD').trim()
+        workers.worktreePerRun = { repository, runs: join(dir, 'runs') }
+        await activeProject(ctx)
+        const other = await readyTask(ctx, 'other work')
+        const task = await readyTask(ctx, 'in a worktree', { writes: { type: 'git-head', ref: head } })
+        let read = ''
+        workers.reply = (request) => {
+          const worktree = workers.worktrees.get(request.runId!)!
+          read = readFileSync(join(worktree, '.system', 'TASKS.md'), 'utf8')
+          writeFileSync(join(worktree, 'kernel.c'), 'int main(void) { return 1; }\n')
+          return { text: 'changed kernel.c' }
+        }
+        // An agent edits the board's file by hand after its answer: it is no part of the work, and never read back.
+        workers.afterCapture = (worktree) => {
+          const file = join(worktree, '.system', 'TASKS.md')
+          chmodSync(file, 0o644)
+          writeFileSync(file, `${readFileSync(file, 'utf8')}\n- [x] other work: done by hand\n`)
+        }
+        const run = await ctx.workflow.start({ template: 'solo', input: 'change it', classification: 'public', task: { taskId: task.taskId } })
+        expect(await settled(ctx, run.runId)).toMatchObject({ status: 'completed' })
+
+        const envelope = ctx.artifacts.get(workers.started[0]!.brief!)!
+        const files = (envelope.body as { files: Array<{ path: string; ref: ArtifactRef }> }).files
+        expect(files).toEqual([expect.objectContaining({ path: '.system/TASKS.md' })])
+        expect(envelope.inputs).toContain(files[0]!.ref)
+        const projection = ctx.artifacts.get(files[0]!.ref)!
+        expect(projection).toMatchObject({ kind: 'evidence', bodySchema: 'board-projection@1.0', body: { projectId: 'p1', format: 'tasks-md', tasks: 2, truncated: false } })
+        schemas.assertRecord(projection.body as { schema: string })
+        const text = (projection.body as { text: string }).text
+        for (const line of ['### other work', '### in a worktree', `- id: \`${task.taskId}\``]) expect(text).toContain(line)
+        // The source wrote it before the run, and named it in the prompt.
+        expect(read).toBe(text)
+        expect(workers.started[0]!.prompt).toContain('- .system/TASKS.md')
+
+        // Git-ignored: the work is the change to kernel.c alone, and the result is accepted on exactly that subject.
+        const worktree = workers.worktrees.get(run.runId)!
+        expect(git(worktree, 'status', '--porcelain')).toBe(' M kernel.c\n')
+        expect(git(worktree, 'ls-files', '.system')).toBe('')
+        expect((await reported(ctx, run.runId)).task!.outcome).toMatchObject({ status: 'accepted', state: 'done' })
+        const board = (await ctx.board.task(task.taskId))!
+        const { subject, diff } = captureGitSubject(worktree)!
+        expect(board.result!.subject).toEqual(subject)
+        expect(diff).not.toContain('.system')
+        // Never committed: no commit beyond the one the repository had.
+        expect(git(worktree, 'rev-parse', 'HEAD').trim()).toBe(head)
+        expect(git(repository, 'rev-list', '--all', '--count').trim()).toBe('1')
+        // Never read back: the board is unchanged by the edit.
+        expect(await ctx.board.task(other.taskId)).toMatchObject({ state: 'ready', attempts: { count: 0 } })
+      } finally {
+        rmSync(dir, { recursive: true, force: true })
+      }
+    }, {}, '1.4'),
 
     scenario('drain', 'admits no new run while draining, reports the runs still executing and lets them finish, and admits runs again on resume (REQ-HOST-1)', async ({ ctx, workers }) => {
       workers.reply = () => 'hold'
