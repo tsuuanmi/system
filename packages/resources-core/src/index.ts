@@ -14,8 +14,8 @@ declare module '@deepseek-ai/cordis' {
   }
 }
 
-/** The contract version of this seam; its conformance suite names the same. */
-export const RESOURCES_CONTRACT = '1.0'
+/** The contract version of this seam; its conformance suite names the same. 1.1: pool templates and the optional `declare` (ADR-0052). */
+export const RESOURCES_CONTRACT = '1.1'
 
 export type ArtifactRef = `sha256:${string}`
 export type Unit = 'tokens' | 'usd' | 'turns' | 'runs' | 'minutes'
@@ -34,6 +34,29 @@ export interface PoolConfig {
    */
   unknown?: 'available' | 'unavailable'
 }
+
+/**
+ * A pool template as the operator configures it (contract 1.1, ADR-0052): a pool's kind and windows,
+ * and the account group it applies to (an agent runtime, a website's provider). The ledger makes one
+ * pool of it per account a Worker source declares in that group ({@link Resources.declare}), so a
+ * limit on one account never closes another's.
+ */
+export interface PoolTemplate {
+  template: string
+  group: string
+  kind: PoolConfig['kind']
+  windows: PoolConfig['windows']
+  unknown?: PoolConfig['unknown']
+}
+
+/** An account a Worker source declares to the ledger: its id, and the group a template names. */
+export interface DeclaredAccount {
+  account: string
+  group: string
+}
+
+/** The id of the pool a template makes for one account: `<template>/<account>`. */
+export const templatePool = (template: string, account: string): string => `${template}/${account}`
 
 /** `limit-state@1.0`. */
 export interface LimitState {
@@ -144,4 +167,15 @@ export abstract class Resources extends Service {
 
   /** The counted records that match, oldest first, and their totals per pool. */
   abstract usage(filter?: UsageFilter): Promise<{ records: UsageRecord[]; totals: UsageTotal[] }>
+
+  /**
+   * Optional (contract 1.1, ADR-0052): a Worker source's accounts, replacing what that source
+   * declared before. Each configured template whose `group` is an account's makes one pool,
+   * {@link templatePool}`(template, account)` of that `account`, listed, reserved, read, and recorded
+   * as a configured pool is. Returns the ids of the pools the source's accounts now have. Refused
+   * (`invalid`), changing nothing, when an id is not an id, a made pool would be a configured one
+   * or another source's, or the pools would be more than the ledger lists. An empty list withdraws
+   * them; their readings and records stay, under their ids.
+   */
+  declare?(source: string, accounts: readonly DeclaredAccount[]): Promise<string[]>
 }

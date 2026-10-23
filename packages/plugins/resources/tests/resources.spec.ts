@@ -10,10 +10,10 @@ import { Context } from '@deepseek-ai/cordis'
 import Artifacts from '@tsuuanmi/system-artifacts'
 import { McpTools, type ToolHandler, type ToolSpec } from '@tsuuanmi/system-gateway-core'
 import { SchemaRegistry } from '@tsuuanmi/system-libs'
-import { type LimitState, type PoolConfig, ResourcesError, type UsageRecord } from '@tsuuanmi/system-resources-core'
+import { type LimitState, type PoolConfig, type PoolTemplate, ResourcesError, type UsageRecord } from '@tsuuanmi/system-resources-core'
 import Store from '@tsuuanmi/system-store'
 import { afterEach, describe, expect, it } from 'vitest'
-import StoreResources, { type Config, MAX_POOLS, MAX_WINDOWS, validatePools } from '../src/index.ts'
+import StoreResources, { type Config, MAX_POOLS, MAX_WINDOWS, validatePools, validateTemplates } from '../src/index.ts'
 
 /** A `ctx.mcp` that keeps contributed tools, so a test calls a handler as a scope would. */
 class RecordingMcp extends McpTools {
@@ -149,6 +149,30 @@ describe('configuration', () => {
       expect(ctx.get('resources')).toBeUndefined()
       await fiber.dispose()
     }
+  })
+
+  it('refuses a pool template whose id or group is not a name, a duplicate, or one with bad windows; a declaration past the pools the tool lists changes nothing; declared pools keep their readings across a restart once declared again (ADR-0052)', async () => {
+    const window: PoolConfig['windows'][number] = { id: 'w', kind: 'rolling' }
+    const template = (id: string, group = 'runtime', windows: PoolConfig['windows'] = [window]): PoolTemplate => ({ template: id, group, kind: 'interactive', windows })
+    expect(() => validateTemplates([template('t'), template('t')])).toThrow(/duplicate pool template t/)
+    expect(() => validateTemplates([template('a/b')])).toThrow(/not a name/)
+    expect(() => validateTemplates([template('t', 'g:1')])).toThrow(/not a name/)
+    expect(() => validateTemplates([template('t', 'runtime', [])])).toThrow(/1 to 8/)
+    expect(validateTemplates([template('t')])[0]).toEqual({ template: 't', group: 'runtime', kind: 'interactive', windows: [window], unknown: 'unavailable' })
+    const dir = tempDir()
+    const first = await boot(dir, { pools: POOLS, templates: [template('plan')] })
+    const many = Array.from({ length: MAX_POOLS - POOLS.length + 1 }, (_, i) => ({ account: `runtime:${String(i).padStart(16, '0')}`, group: 'runtime' }))
+    expect(await failureOf(first.resources.declare!('agents', many))).toBe('invalid')
+    expect(await first.resources.declare!('agents', many.slice(0, 1))).toEqual([`plan/${many[0]!.account}`])
+    expect(await failureOf(first.resources.declare!('agents', many))).toBe('invalid')
+    expect((await first.resources.pools()).map((p) => p.pool)).toEqual([...POOLS.map((p) => p.pool), `plan/${many[0]!.account}`].sort())
+    await first.resources.observe({ schema: 'limit-state@1.0', pool: `plan/${many[0]!.account}`, account: many[0]!.account, window, state: 'limited', resetsAt: at(60).toISOString(), source: 'limit-notice', observedAt: T0.toISOString() })
+    await first.stop()
+    // A restart forgets the declaration until the source declares again; the reading stood all along.
+    const second = await boot(dir, { pools: POOLS, templates: [template('plan')] })
+    expect((await second.resources.pools()).map((p) => p.pool)).toEqual(POOLS.map((p) => p.pool).sort())
+    await second.resources.declare!('agents', many.slice(0, 1))
+    expect((await second.resources.pools({ account: many[0]!.account }, at(1)))[0]).toMatchObject({ available: false, until: at(60).toISOString() })
   })
 
   it('with no pools configured (the bundle default), lists none and refuses every reading, record, and reservation (INV-2)', async () => {

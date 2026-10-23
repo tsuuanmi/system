@@ -16,14 +16,16 @@ import type {} from '@tsuuanmi/system-artifacts'
 import type {} from '@tsuuanmi/system-gateway-core'
 import { SchemaRegistry } from '@tsuuanmi/system-libs'
 import {
-  type ArtifactRef, type BudgetLine, type LimitState, type PoolConfig, type PoolState, type Reservation, type ReservationRequest, Resources, ResourcesError,
-  type TokenUsage, type Unit, type UsageFilter, type UsageRecord, type UsageTotal,
+  type ArtifactRef, type BudgetLine, type DeclaredAccount, type LimitState, type PoolConfig, type PoolState, type PoolTemplate, type Reservation, type ReservationRequest, Resources, ResourcesError,
+  templatePool, type TokenUsage, type Unit, type UsageFilter, type UsageRecord, type UsageTotal,
 } from '@tsuuanmi/system-resources-core'
 import type {} from '@tsuuanmi/system-store'
 import { z as zod } from 'zod'
 
 /** An id as `common@1` defines it: what a pool, account, window, run, project, or task id must be. */
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$/
+/** A template's id and group, and a declaring source's name: no `/` or `:`, so `<template>/<account>` names one pair. */
+const NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/
 /** The bounds `mcp-resources@1` puts on `resources_pools`: pools per answer, readings per pool. */
 export const MAX_POOLS = 64
 export const MAX_WINDOWS = 8
@@ -41,6 +43,8 @@ const PRODUCER = { type: 'system', ref: 'resources' } as const
 export interface Config {
   /** The resource pools and their windows (operator configuration, never a hardcoded plan). */
   pools?: PoolConfig[]
+  /** Pool templates (ADR-0052): one pool of each per account a Worker source declares in its group. */
+  templates?: PoolTemplate[]
   /** Records per `resources_usage` page unless the caller asks for fewer or more (default 20, at most 100). */
   pageSize?: number
   /** Records `usage()` returns at most; more matching is refused, so a caller narrows the filter or pages (default 10000; INV-9). */
@@ -89,6 +93,24 @@ export function validatePools(pools: readonly PoolConfig[]): PoolConfig[] {
   })
 }
 
+/**
+ * Check the configured pool templates as pools are checked (their kind, windows, and `unknown`), with
+ * ids and groups of {@link NAME}, unique ids, at most {@link MAX_POOLS}. Throws on the first fault.
+ */
+export function validateTemplates(templates: readonly PoolTemplate[]): PoolTemplate[] {
+  if (templates.length > MAX_POOLS) throw new Error(`resources: ${templates.length} pool templates configured, more than ${MAX_POOLS}`)
+  const seen = new Set<string>()
+  return templates.map((t) => {
+    for (const [name, value] of [['template', t.template], ['group', t.group]] as const) {
+      if (typeof value !== 'string' || !NAME.test(value)) throw new Error(`resources: pool template ${String(t.template)}: ${name} ${JSON.stringify(value)} is not a name (letters, digits, '.', '_', '-'; at most 64)`)
+    }
+    if (seen.has(t.template)) throw new Error(`resources: duplicate pool template ${t.template}`)
+    seen.add(t.template)
+    const [p] = validatePools([{ pool: t.template, account: t.group, kind: t.kind, windows: t.windows, ...(t.unknown !== undefined ? { unknown: t.unknown } : {}) }])
+    return { template: p!.pool, group: p!.account, kind: p!.kind, windows: p!.windows, unknown: p!.unknown ?? 'unavailable' }
+  })
+}
+
 const invalid = (message: string): ResourcesError => new ResourcesError('invalid', message)
 /** Milliseconds since the epoch of an RFC 3339 timestamp; refused (`invalid`) when it does not parse. */
 const epochMs = (value: string, name: string): number => {
@@ -101,6 +123,7 @@ const round6 = (n: number): number => Math.round(n * 1e6) / 1e6
 /** At most {@link MAX_REASONS} reasons, the last one saying how many more there were. */
 const bounded = (reasons: string[]): string[] => reasons.length <= MAX_REASONS ? reasons : [...reasons.slice(0, MAX_REASONS - 1), `and ${reasons.length - MAX_REASONS + 1} more`]
 const isObject = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value)
+const byPool = (a: PoolConfig, b: PoolConfig): number => (a.pool < b.pool ? -1 : a.pool > b.pool ? 1 : 0)
 
 const TOKEN_KEYS = ['inputTokens', 'outputTokens', 'cacheReadInputTokens', 'cacheCreationInputTokens', 'reasoningOutputTokens'] as const
 /** What a schema cannot say of a record's token counts (docs/reference/schemas.md#usage-record). */
@@ -137,13 +160,27 @@ export class StoreResources extends Resources {
       })).required().description(`The pool's limit windows (1 to ${MAX_WINDOWS}, unique ids)`),
       unknown: z.union(['available', 'unavailable']).default('unavailable').description('Whether a window with no reading, or an unknown one, leaves the pool available (a pool that never reports, such as a local model); unavailable fails closed'),
     })).default([]).description(`The resource pools (at most ${MAX_POOLS}, unique ids): operator configuration, never a hardcoded plan`),
+    templates: z.array(z.object({
+      template: z.string().pattern(NAME).required().description('Template id: the pool it makes for an account is <template>/<account>'),
+      group: z.string().pattern(NAME).required().description('The account group it applies to (an agent runtime, as the agent-workers providers name it)'),
+      kind: z.union([...KINDS]).required().description('What each pool of it is, as a pool\'s kind'),
+      windows: z.array(z.object({
+        id: z.string().pattern(ID).required().description('Window id, as readings name it'),
+        kind: z.union([...WINDOW_KINDS]).required().description('As a pool window\'s kind'),
+        seconds: z.natural().min(1).max(31_622_400).description('The window\'s length, when it has one'),
+      })).required().description(`Each pool's limit windows (1 to ${MAX_WINDOWS}, unique ids)`),
+      unknown: z.union(['available', 'unavailable']).default('unavailable').description('As a pool\'s unknown; unavailable fails closed'),
+    })).default([]).description('Pool templates (ADR-0052): one pool of a template per account a Worker source declares in its group, <template>/<account>, so a limit on one account never closes another\'s'),
     pageSize: z.natural().min(1).max(100).default(20).description('Records per resources_usage page when the caller names no limit'),
     maxRecords: z.natural().min(1).max(1_000_000).default(10_000).description('Records usage() returns at most; more matching is refused (narrow the filter or page)'),
     holdSeconds: z.natural().min(60).max(604_800).default(14_400).description('How long a reservation nobody releases (a crashed run) keeps counting against its caps'),
   }) as unknown as z<Config>
 
   private readonly schemas = new SchemaRegistry()
-  private readonly configured: readonly PoolConfig[]
+  private readonly fixed: readonly PoolConfig[]
+  private readonly templates: readonly PoolTemplate[]
+  /** The pools of each Worker source's declared accounts (ADR-0052): in memory, declared again at each start. */
+  private readonly declared = new Map<string, PoolConfig[]>()
   private readonly pageSize: number
   private readonly maxRecords: number
   private readonly holdSeconds: number
@@ -151,7 +188,8 @@ export class StoreResources extends Resources {
   constructor(ctx: Context, config: Config = {}) {
     super(ctx)
     // Validated before anything is written: a bad configuration changes nothing.
-    this.configured = validatePools(config.pools ?? []).sort((a, b) => (a.pool < b.pool ? -1 : a.pool > b.pool ? 1 : 0))
+    this.fixed = validatePools(config.pools ?? []).sort(byPool)
+    this.templates = validateTemplates(config.templates ?? [])
     this.pageSize = config.pageSize ?? 20
     this.maxRecords = config.maxRecords ?? 10_000
     this.holdSeconds = config.holdSeconds ?? 14_400
@@ -230,6 +268,37 @@ export class StoreResources extends Resources {
 
   async pools(filter: { account?: string } = {}, at: Date = new Date()): Promise<PoolState[]> {
     return this.poolStates(filter, at)
+  }
+
+  async declare(source: string, accounts: readonly DeclaredAccount[]): Promise<string[]> {
+    if (typeof source !== 'string' || !NAME.test(source)) throw invalid(`source ${JSON.stringify(source)} is not a name`)
+    if (!Array.isArray(accounts) || accounts.length > MAX_POOLS) throw invalid(`a source declares 0 to ${MAX_POOLS} accounts`)
+    const others = [...this.declared].filter(([s]) => s !== source).flatMap(([, pools]) => pools)
+    const taken = new Set([...this.fixed, ...others].map((p) => p.pool))
+    const made: PoolConfig[] = []
+    for (const declared of accounts as unknown[]) {
+      if (!isObject(declared) || typeof declared.account !== 'string' || !ID.test(declared.account) || typeof declared.group !== 'string' || !NAME.test(declared.group)) {
+        throw invalid(`${JSON.stringify(declared)} is not an account (an id) with its group (a name)`)
+      }
+      for (const t of this.templates.filter((t) => t.group === declared.group)) {
+        const pool = templatePool(t.template, declared.account)
+        if (!ID.test(pool)) throw invalid(`the pool ${pool} of template ${t.template} for ${declared.account} is not an id`)
+        // A configured pool, or another source's, is never taken over or doubled.
+        if (taken.has(pool)) throw invalid(`the pool ${pool} is already configured or declared`)
+        taken.add(pool)
+        made.push({ pool, account: declared.account, kind: t.kind, unknown: t.unknown ?? 'unavailable', windows: t.windows.map((w) => ({ ...w })) })
+      }
+    }
+    if (this.fixed.length + others.length + made.length > MAX_POOLS) throw invalid(`the ledger lists at most ${MAX_POOLS} pools, configured and declared`)
+    if (made.length) this.declared.set(source, made.sort(byPool))
+    else this.declared.delete(source)
+    return made.map((p) => p.pool)
+  }
+
+  /** Every pool: the configured ones and those of the accounts Worker sources declared, by id. */
+  private get configured(): readonly PoolConfig[] {
+    if (!this.declared.size) return this.fixed
+    return [...this.fixed, ...[...this.declared.values()].flat()].sort(byPool)
   }
 
   async observe(reading: LimitState): Promise<ArtifactRef> {
