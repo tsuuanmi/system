@@ -341,6 +341,28 @@ describe('the command surface (REQ-GW-4)', () => {
       for (const command of family) expect(commands, command).toContain(command)
     }
   })
+  it('says what the web UI holds, in the usage and the CLI reference: every part of the web UI reference', async () => {
+    const { spawnSync } = await import('node:child_process')
+    const { fileURLToPath } = await import('node:url')
+    const bin = fileURLToPath(new URL('../src/bin.ts', import.meta.url))
+    const tsx = fileURLToPath(new URL('../../../node_modules/.bin/tsx', import.meta.url))
+    const doc = (name: string): string => readFileSync(fileURLToPath(new URL(`../../../docs/reference/${name}`, import.meta.url)), 'utf8')
+    const flat = (text: string): string => text.replace(/\s+/g, ' ').toLowerCase()
+    // The `ui` entry runs until the next command; the reference's row is one line.
+    const usage = flat(/^ {2}ui {2,}([\s\S]*?)(?=^ {2}[a-z])/m.exec(spawnSync(tsx, [bin, '--help'], { encoding: 'utf8' }).stdout)![1]!)
+    const reference = flat(/^\| `system ui` \|(.*)$/m.exec(doc('cli.md'))![1]!)
+    const parts = [...doc('web-ui.md').matchAll(/^## (.+)$/gm)].map((m) => m[1]!.toLowerCase())
+    expect(parts).toEqual(expect.arrayContaining(['runs', 'reviews', 'projects', 'approval queue', 'autonomy policy']))
+    for (const part of parts) {
+      expect(usage, part).toContain(part)
+      expect(reference, part).toContain(part)
+    }
+    // Its two pages beside the runs, by the names the page gives them.
+    for (const page of ['board page', 'autonomy policy page']) {
+      expect(usage, page).toContain(page)
+      expect(reference, page).toContain(page)
+    }
+  })
   it('hands out only the model token by name, and only with a gateway row on; the operator and client tokens stay with the CLI and its helpers (ADR-0023)', async () => {
     const { spawnSync } = await import('node:child_process')
     const { fileURLToPath } = await import('node:url')
