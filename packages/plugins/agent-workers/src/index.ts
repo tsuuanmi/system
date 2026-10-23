@@ -193,7 +193,7 @@ export class AgentWorkers extends Service {
       reviewMember: z.boolean().default(false).description('Its review team member steps run under the enforced review-member profile (ADR-0049): no tool call runs, its workspace is an empty directory outside any repository, and the profile grants reason for those steps only; a runtime that cannot resume keeps the member\'s conversation by replay. Read-only Workers with a family only'),
     })).default([]).description('Agent-runtime Workers; each policy comes from here only (INV-6)'),
     providers: z.array(z.object({
-      provider: z.string().required().description('The agent runtime kind, for example claude-agent-sdk'),
+      provider: z.string().required().description('The agent runtime kind, as its provider registers it (the runtime of its Workers)'),
       accounts: z.union(['assigned', 'pooled']).default('assigned').description('assigned (the default; personal subscriptions): a limit on one account never moves its work to another account of this runtime, the work waits; pooled: only with pooledTerms'),
       // Not z.object: an omitted object would come back as {}; checked when loaded.
       pooledTerms: z.any().description('{confirmedBy, confirmedAt, terms}: who confirmed that this runtime\'s plan terms allow pooling its accounts, when (ISO time), and which terms; required for pooled (ADR-0052)'),

@@ -17,7 +17,7 @@
 | `accounts[].quotaClass` (required) | "subscription-chat" \| "agent-plan" \| "metered" \| "local" |  |  |
 | `accounts[].tiers` | Record<string, string> | `{}` | Tier → provider mode preset; each mapped tier is one Worker, an unmapped tier is never served |
 | `providers` | object[] | `[]` | How each website provider's accounts are used; a provider not listed is assigned (ADR-0052) |
-| `providers[].provider` (required) | string |  | The website provider (its driver kind), for example chatgpt-web |
+| `providers[].provider` (required) | string |  | The website provider: the provider of its catalog accounts (its driver kind) |
 | `providers[].accounts` | "assigned" \| "pooled" | `"assigned"` | assigned (the default; personal subscriptions): a limit on one account never moves its work to another account of this provider, the work waits; pooled: only with pooledTerms |
 | `providers[].pooledTerms` | any |  | {confirmedBy, confirmedAt, terms}: who confirmed that this provider's terms allow pooling its accounts, when (ISO time), and which terms; required for pooled (ADR-0052) |
 
@@ -55,7 +55,7 @@
 | `workers[].family` | string (1…128) |  | Its provider family (ADR-0027; default: the runtime): the same as other Workers' of the vendor whose models it runs, so team members of one vendor stay apart. Required for a review member |
 | `workers[].reviewMember` | boolean | `false` | Its review team member steps run under the enforced review-member profile (ADR-0049): no tool call runs, its workspace is an empty directory outside any repository, and the profile grants reason for those steps only; a runtime that cannot resume keeps the member's conversation by replay. Read-only Workers with a family only |
 | `providers` | object[] | `[]` | How each agent runtime's accounts are used; a runtime not listed is assigned (ADR-0052) |
-| `providers[].provider` (required) | string |  | The agent runtime kind, for example claude-agent-sdk |
+| `providers[].provider` (required) | string |  | The agent runtime kind, as its provider registers it (the runtime of its Workers) |
 | `providers[].accounts` | "assigned" \| "pooled" | `"assigned"` | assigned (the default; personal subscriptions): a limit on one account never moves its work to another account of this runtime, the work waits; pooled: only with pooledTerms |
 | `providers[].pooledTerms` | any |  | {confirmedBy, confirmedAt, terms}: who confirmed that this runtime's plan terms allow pooling its accounts, when (ISO time), and which terms; required for pooled (ADR-0052) |
 | `maxReplayChars` | number (1…2000000) | `200000` | Characters of earlier turns a review member's replayed conversation holds, at most; a turn past it fails, never cut |
