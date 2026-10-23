@@ -40,6 +40,7 @@ package's `package.json`. **Status** is one of **in use**, **planned**, or
 | Versions and changelogs | Changesets (`@changesets/cli`), one `fixed` group | dev tool | repository root | in use | release-please and semantic-release derive versions from commit messages; Changesets records the bump with the change ([releasing](releasing.md)) |
 | SBOM | `pnpm sbom` (CycloneDX), built into the package manager | dev tool | `scripts/release-artifacts.ts` | in use | `@cyclonedx/cdxgen` and `@cyclonedx/cyclonedx-npm` add a dependency; the package manager already resolves the exact production tree |
 | Build provenance | `actions/attest-build-provenance`, pinned by SHA | CI action | `release` workflow | in use | SLSA provenance stored by GitHub, verified with `gh attestation verify`; no signing key to keep |
+| Statistics reference | SciPy 1.18.1 `scipy.stats.permutation_test` (BSD-3-Clause), with NumPy 2.5.4 on Python 3.14.2, fetched by `uv run --with` into uv's cache | dev tool (reference, run once) | `scripts/statistics/sign-flip-goldens.py`, the fixture of `statistics` | in use | the research run's reference ([research](../research/statistics-tooling-2026-10-23.md)): it generates the golden results the [statistics](../design/statistics.md#golden-tests) tests read; never installed in the workspace, never run by a test or at runtime |
 
 ## Built, with what was compared
 
@@ -66,6 +67,7 @@ Each of these is built because nothing fits; the comparison is the reason.
 | Model gateways | `/anthropic` and `/openai` on the `gateway-turns` library | `gateway-anthropic`, `gateway-responses` | in use | claude-code-router, claude-code-proxy, LiteLLM, claudex translate API to API; ours drives web chat through durable, receipted runs ([ADR-0022](../decisions/adr/0022-text-protocol-tool-calls-for-website-models.md)). Nothing was ported from codex-chatgpt-web |
 | Operator web UI | the small `/ui` page | `web-ui` | in use | DSH `dsh-web-app` needs `dsh-base` (ADR-0019); operator decision |
 | CLI | the `system` binary with a stdio MCP shim | `cli` | in use | commander, citty; mcp-remote and supergateway would put the token in client config |
+| Statistics of the evaluation engine | the exact paired sign-flip test and its interval, 2 to 20 cases, golden-tested against SciPy, no dependency, pinned by version in each experiment ([statistics](../design/statistics.md)) | `statistics` | in use (its consumer is the `evaluations` provider, F4) | from the research run ([research](../research/statistics-tooling-2026-10-23.md)): SciPy and statsmodels (BSD-3-Clause) are Python, and a sidecar was not shown worth it, so SciPy is the reference only; GrowthBook `gbstats` (MIT) tests independent samples, with no paired resampling; Optuna and Ax/BoTorch (MIT) optimize rather than infer; PyMC and ArviZ (Apache-2.0) only for a later Bayesian method; MLflow (Apache-2.0) at most a downstream projection of the record; simple-statistics (ISC) awaits a licence-policy decision and is not used |
 
 ## Dropped
 

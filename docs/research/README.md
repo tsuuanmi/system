@@ -21,6 +21,7 @@ decisions, architecture, or design.
 | [design-review-2026-10-22.md](design-review-2026-10-22.md) | review of the current design; production multi-agent lessons (Anthropic, Cognition, Manus, MAST); neighbouring projects (PAL MCP, claude-code-router, RouteLLM, LiteLLM…); token economics and optimization plugins (RTK, context-mode, Serena, caveman) | 2026-10-22 |
 | [ecosystem-for-base-2026-10-22.md](ecosystem-for-base-2026-10-22.md) | existing projects, Claude Code primitives, and open standards for each core component of the Base version: adopt, adapt, or avoid (Agent SDK usage and hooks, sandbox-runtime, ccusage, Backlog.md, A2A, DBOS, OTel GenAI, MCP manifests) | 2026-10-22 |
 | [provider-context-and-caching.md](provider-context-and-caching.md) | how context windows, prompt caching, and thinking tokens work at Claude, OpenAI, and Gemini, and the rules for `system` | 2026-10-22 |
+| [statistics-tooling-2026-10-23.md](statistics-tooling-2026-10-23.md) | statistics and experiment tooling for the feedback loop (SciPy, statsmodels, GrowthBook `gbstats`, MLflow, Optuna, Ax/BoTorch, PyMC): what PROP-0011's F2 reuses and builds | 2026-10-23 |
 
 Each analysis ends with **Adopted** and **Not adopted** lists. Once its findings
 are fully promoted, an analysis may be pruned, because git history keeps it.

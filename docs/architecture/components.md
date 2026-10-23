@@ -249,6 +249,9 @@ runs the work the router admitted to them. Callers never reach a source directly
   horizon, and classified by the deterministic verdict rule as a `verdict` decision; it decides no
   promotion, which always asks the operator ([evaluations](../design/evaluations.md)). No provider
   yet: its suite runs against a fake.
+- **Statistics** (library): the intervals the verdict rule reads, pinned by version in each
+  experiment; inference only, holding no threshold: the exact paired sign-flip test and the
+  interval that inverts it, golden-tested against SciPy ([statistics](../design/statistics.md)).
 - **Profiles:** plugins that contribute templates through `ctx.workflow.template` (`research`,
   with its `deep` variant; `agent-review`, for the agent Workers, its row off by default) and acceptance
   contracts through `ctx.workers`. A profile never names a provider, browser, or account, and
@@ -268,7 +271,8 @@ runs the work the router admitted to them. Callers never reach a source directly
   [board-core](../../packages/board-core/README.md), [board](../../packages/plugins/board/README.md),
   [digest-core](../../packages/digest-core/README.md), [digest](../../packages/plugins/digest/README.md),
   [experiments-core](../../packages/experiments-core/README.md),
-  [evaluations-core](../../packages/evaluations-core/README.md).
+  [evaluations-core](../../packages/evaluations-core/README.md),
+  [statistics](../../packages/statistics/README.md).
 
 ## Host
 
