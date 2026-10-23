@@ -407,7 +407,7 @@ It is off unless the row's `repeatedApprovals.enabled` is true, and the bundle l
 
 | From → to | Who | Records | On failure |
 |---|---|---|---|
-| — → asked | the queue's own pass (`proposeRepeated`), when the rule holds | in one transaction: the `policy-change` request, a `decision@1.6` `policy-change` (decider rule `approvals.repeated-approvals`; candidates the proposed set's hash, selected, and the set in force, kept until the operator approves; inputs the `autonomy` decision that said ask and the operator's approvals it counted, the newest 100), and the `policy-change@1.1` with its `origin` | a change asked meanwhile, or the shape barred, refuses it under the write lock and nothing is stored; a pass that fails is logged and the next pass tries again: the queue goes on |
+| — → asked | the queue's own pass (`proposeRepeated`), when the rule holds | in one transaction: the `policy-change` request, a `decision@1.6` `policy-change` (decider rule `approvals.repeated-approvals`; candidates the proposed set's hash, selected, and the set in force, kept until the operator approves; inputs the `autonomy` decision that said ask and the operator's approvals it counted, the newest 100), and the `policy-change@1.1` with its `origin` | a change asked meanwhile, the shape barred, or its requests in the window no longer read as they were counted (one rejected, expired, or approved since), refuses it under the write lock and nothing is stored; a pass that fails is logged and the next pass tries again: the queue goes on |
 
 The pass is deterministic from the store: a restart, or a second process over the same store,
 proposes nothing twice. A stored request that fails its schema leaves its shape out.

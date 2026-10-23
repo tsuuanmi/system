@@ -806,6 +806,23 @@ describe('the queue proposes a policy change from repeated approvals (docs/desig
     expect(await approvals.proposeRepeated(after(4700))).toBeUndefined()
   })
 
+  it('reads the shape\'s requests again in the transaction that stores the proposal: one rejected while it was proposed stops it', async () => {
+    const { ctx, approvals } = await boot({ config: REPEATED })
+    await approvedTimes(ctx, LINT, 3)
+    // Open, it counts neither way; the operator rejects it while the queue checks that a change asks.
+    const pending = await command(ctx, LINT, 'p', after(200))
+    const check = approvals.check.bind(approvals)
+    approvals.check = async (action: Action) => {
+      if (action.class === 'policy-change') expect(await verdict(ctx, pending, 'rejected', after(250))).toMatchObject({ state: 'rejected' })
+      return check(action)
+    }
+    expect(await approvals.proposeRepeated(after(300))).toBeUndefined()
+    expect(await approvals.policyChanges()).toEqual([])
+    approvals.check = check
+    // Read again on the next pass, the rejection keeps the shape out.
+    expect(await approvals.proposeRepeated(after(310))).toBeUndefined()
+  })
+
   it('proposes again on the new set when its proposal was withdrawn because another change came into force', async () => {
     const { ctx, approvals } = await boot({ config: REPEATED })
     await approvedTimes(ctx, LINT, 3)

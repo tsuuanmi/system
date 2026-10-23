@@ -99,7 +99,9 @@ guarantee seam: it fails closed (INV-2). Code decides, never a model.
     proposed as the studio policy at its next version with that one line added to `commands`, and
     nothing else: only when the argv then runs as `workspace-write` under `auto` or `notify` and no
     class's mode moves. One transaction stores the `policy-change@1.1` (its `origin`), its request,
-    and a `decision@1.6` `policy-change` (decider rule `approvals.repeated-approvals`). A shape whose
+    and a `decision@1.6` `policy-change` (decider rule `approvals.repeated-approvals`), after reading
+    the shape's requests again: if they no longer read as they were counted, nothing is stored and
+    the next pass reads them afresh. A shape whose
     queue proposal was asked, applied, retired, rejected, or expired is never proposed again; a
     withdrawn one may be. A pass that fails is logged; it never stops the queue.
   - **The set in force** is the latest applied change's, kept in the store, while it is not
