@@ -106,8 +106,8 @@ not six. The run's conversation is recorded, and deleted at retention like any o
 
 Provided by
 [`profile-software-development`](../../packages/plugins/profile-software-development/README.md),
-which is mounted only with the agent Worker rows, off in the default composition
-([turn them on](../operations/runbooks.md#turn-an-off-row-back-on)). A review on this machine,
+whose row is off in the default composition, though the Claude Code agent rows it needs are on
+([turn it on](../operations/runbooks.md#turn-an-off-row-back-on)). A review on this machine,
 by a read-only local agent Worker; never a website account.
 
 | Node | Capabilities | Tier | Conversation | Acceptance |

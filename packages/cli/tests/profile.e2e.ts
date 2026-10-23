@@ -16,8 +16,9 @@ const home = mkdtempSync(join(tmpdir(), 'system-e2e-'))
 const env = { ...process.env, DSH_HOME: home }
 let child: ChildProcess | undefined
 
-// The MVP composition (PROP-0004): agent Worker and model gateway rows are off.
-const ALLOWED_ROWS = ['timer', 'credentials', 'webserver', 'store', 'event-log', 'leases', 'artifacts', 'resources', 'approvals', 'accounts', 'turn-receipts', 'display', 'browser', 'providers', 'provider-chatgpt-web', 'provider-gemini-web', 'login', 'egress', 'workers', 'turns', 'llm', 'llm-pi-ai', 'models', 'worker-sessions', 'workflow', 'board', 'profile-scientific-research', 'web-ui', 'mcp-server']
+// The default composition: the Claude Code agent rows are on (PROP-0010 B3); the Codex, ACP,
+// software-development, and model gateway rows are off (PROP-0004).
+const ALLOWED_ROWS = ['timer', 'credentials', 'webserver', 'store', 'event-log', 'leases', 'artifacts', 'resources', 'approvals', 'accounts', 'turn-receipts', 'display', 'browser', 'providers', 'provider-chatgpt-web', 'provider-gemini-web', 'login', 'egress', 'workers', 'turns', 'agent-runtimes', 'runtime-claude-agent-sdk', 'agent-workers', 'llm', 'llm-pi-ai', 'models', 'worker-sessions', 'workflow', 'board', 'profile-scientific-research', 'web-ui', 'mcp-server']
 
 async function client2(url: string, token: string): Promise<Client> {
   const client = new Client({ name: 'e2e-2', version: '0' })
@@ -52,7 +53,7 @@ afterAll(async () => {
 })
 
 describe('system profile (e2e through dsh)', () => {
-  it('mounts exactly the allow-listed rows (agent Worker and gateway rows off) and no dsh-base', () => {
+  it('mounts exactly the allow-listed rows (Claude Code agent rows on; Codex, ACP, and gateway rows off) and no dsh-base', () => {
     const dump = execFileSync(process.execPath, [bin, 'start', '--dump-config'], { env, encoding: 'utf8' })
     const mounted = dump.split(/^(?=- id: )/m).filter((block) => block.startsWith('- id: ') && !/^ {2}disabled: true$/m.test(block)).map((block) => /^- id: (\S+)/.exec(block)![1])
     expect(mounted).toEqual(ALLOWED_ROWS)
@@ -61,11 +62,12 @@ describe('system profile (e2e through dsh)', () => {
 
   it('turns an off row back on from an operator patch (off, not deleted)', () => {
     const patch = join(home, 'rows-on.yml')
-    writeFileSync(patch, '- id: gateway-anthropic\n  disabled: false\n- id: agent-workers\n  disabled: false\n')
+    writeFileSync(patch, '- id: gateway-anthropic\n  disabled: false\n- id: runtime-codex-sdk\n  disabled: false\n')
     const dump = execFileSync(process.execPath, [bin, 'start', '--patch', patch, '--dump-config'], { env, encoding: 'utf8' })
     const mounted = dump.split(/^(?=- id: )/m).filter((block) => block.startsWith('- id: ') && !/^ {2}disabled: true$/m.test(block)).map((block) => /^- id: (\S+)/.exec(block)![1])
-    expect(mounted).toEqual(expect.arrayContaining(['gateway-anthropic', 'agent-workers']))
+    expect(mounted).toEqual(expect.arrayContaining(['gateway-anthropic', 'runtime-codex-sdk']))
     expect(mounted).not.toContain('gateway-responses')
+    expect(mounted).not.toContain('runtime-acp')
   }, 60_000)
 
   it('checks the profile against this code before a start: a removed team procedure and a bad config value are named, with exit 1', () => {
@@ -157,6 +159,29 @@ describe('system profile (e2e through dsh)', () => {
     expect(existsSync(join(home, 'system', 'vault.key'))).toBe(true)
     expect(existsSync(join(home, 'system', 'blobs'))).toBe(false)
 
+    const exited = new Promise((resolve) => child?.on('exit', resolve))
+    child.kill('SIGTERM')
+    await exited
+    expect(existsSync(discoveryPath)).toBe(false)
+  }, 120_000)
+
+  it('boots with a Claude Code Worker configured on a host without Claude Code: the Worker is unavailable, and the profile serves as before (PROP-0010 B3)', async () => {
+    const patch = join(home, 'claude-missing.yml')
+    writeFileSync(patch, [
+      readFileSync(join(home, 'port0.yml'), 'utf8').trimEnd(),
+      '- id: runtime-claude-agent-sdk', '  config:', `    executable: ${join(home, 'no-claude', 'claude')}`,
+      '- id: agent-workers', '  config:', '    workers:', `      - { id: reviewer, runtime: claude-agent-sdk, workspace: ${home}, sandbox: read-only, tier: standard }`, '',
+    ].join('\n'))
+    child = spawn(process.execPath, [bin, 'start', '--patch', patch], { env, stdio: 'pipe', detached: true })
+    const discoveryPath = join(home, 'system', 'mcp.json')
+    await waitFor(discoveryPath, 60_000)
+    const { url, tokenFiles } = JSON.parse(readFileSync(discoveryPath, 'utf8')) as { url: string; tokenFiles: Record<'operator', string> }
+    const client = await client2(url, readFileSync(tokenFiles.operator).toString('base64url'))
+    const status = await client.callTool({ name: 'status', arguments: {} }).finally(() => client.close())
+    expect(status.structuredContent).toMatchObject({ harness: 'system', store: 'ok' })
+    const { checks } = (status.structuredContent as { health: { checks: Array<{ name: string; detail?: string }> } }).health
+    expect(checks.find((check) => check.name === 'workers')?.detail).toContain('agent:reviewer (unavailable)')
+    expect(checks.find((check) => check.name === 'plugins')).toMatchObject({ state: 'ok' })
     const exited = new Promise((resolve) => child?.on('exit', resolve))
     child.kill('SIGTERM')
     await exited

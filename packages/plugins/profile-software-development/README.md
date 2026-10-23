@@ -10,8 +10,9 @@ engine code and no rules of its own.
   account ([nodes](../../../docs/reference/workflow-templates.md#agent-review)).
   Exact-subject review and remediation cycles are engine behaviour for any
   template ([workflow engine](../workflow/README.md)).
-- **Off by default:** the row is off in the default composition, with the agent
-  Worker rows it needs (PROP-0004); the `api-first` preset turns them on
+- **Off by default:** the row is off in the default composition (PROP-0004),
+  though the Claude Code agent rows it needs are on (PROP-0010 B3); the
+  `api-first` preset turns it on
   ([turn a row on](../../../docs/operations/runbooks.md#turn-an-off-row-back-on)).
   PROP-0004 removed the `develop` template; its earlier runs keep their records.
 - **Injects:** `workflow`.

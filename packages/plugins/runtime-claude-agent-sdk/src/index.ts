@@ -3,14 +3,20 @@
  * Worker, through the official Claude Agent SDK, running the operator's installed `claude`.
  * The configured policy is enforced exactly or refused (never loosened):
  * - only the listed built-in tools exist in the session (`tools`), and only they are
- *   pre-approved (`allowedTools`), each for the workspace only, reads included; anything else is
- *   denied without a prompt (`dontAsk`, no approval surface);
+ *   pre-approved (`allowedTools`), each file tool for the workspace only, reads included; anything
+ *   else is denied without a prompt (`dontAsk`, no approval surface);
  * - no settings files are loaded (`settingSources: []`) and no MCP server is attached
  *   (`strictMcpConfig` with none given, live check 2026-10-12: the account's claude.ai
  *   connectors were attached otherwise), so nothing outside the policy widens a Worker;
  * - `workspace-write` adds `Edit` and `Write`, pre-approved only by workspace-scoped rules
- *   (verified live against traversal, symlinks, and home paths); `Bash` is not offered, as
- *   commands cannot be confined yet, so the runtime does not `validate`;
+ *   (verified live against traversal, symlinks, and home paths), and `Bash`, whose every command
+ *   runs in the SDK's sandbox (ADR-0038): writes to the workspace only, no network, no command
+ *   outside it, and a run whose sandbox cannot start fails. A `read-only` run has no `Bash`;
+ * - Claude Code starts under the read confinement of `ctx.agentRuntimes` (ADR-0024, ADR-0038):
+ *   bubblewrap hides the host state, and only its own home (`CLAUDE_CONFIG_DIR`, never the
+ *   operator's `~/.claude`) and the workspace come back. The probe proves the confinement on this
+ *   host, and a sandbox with no network started inside it, before it offers `workspace-write` and
+ *   reports `executes`; without either proof nothing writes or runs a command;
  * - Claude Code starts without the daemon's credentials: only the variables the operator
  *   forwards by name (`forwardEnv`) or sets (`env`) reach it (INV-8);
  * - a run's tool gate (`RunSpec.toolGate`) compiles to a PreToolUse hook on every tool: `deny`
@@ -22,17 +28,18 @@
  * never from the model's text, and reported for a failed run too.
  * @module @tsuuanmi/system-runtime-claude-agent-sdk
  */
-import { execFile } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { accessSync, constants } from 'node:fs'
 import { delimiter, isAbsolute, join } from 'node:path'
 import { promisify } from 'node:util'
-import { type HookCallback, type HookJSONOutput, query } from '@anthropic-ai/claude-agent-sdk'
+import { type HookCallback, type HookJSONOutput, type SandboxSettings, type SpawnedProcess, type SpawnOptions, query } from '@anthropic-ai/claude-agent-sdk'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import {
-  type AgentRuntimeProvider, type LimitObservation, type ModelUsage, type RunMetering, type RunResult, type RunSpec, type RuntimeEvidence, type TokenUsage, type ToolCall, type ToolGate, type ToolVerdict,
-  childEnvironment, withMetering,
+  type AgentRuntimeProvider, type Confinement, type LimitObservation, type ModelUsage, type RunMetering, type RunResult, type RunSpec, type RuntimeEvidence, type SandboxMode, type TokenUsage,
+  type ToolCall, type ToolGate, type ToolVerdict, childEnvironment, confinedCommand, proveConfinement, withMetering,
 } from '@tsuuanmi/system-agent-runtime-core'
+import { dshHome, ensurePrivateDir } from '@tsuuanmi/system-libs'
 import { ProviderError, type ProviderErrorKind } from '@tsuuanmi/system-provider-core'
 
 export type QueryFn = typeof query
@@ -41,16 +48,50 @@ export type QueryFn = typeof query
 const READ_ONLY_TOOLS = ['Read', 'Grep', 'Glob']
 /** Built-in tools that write files; always approved through workspace-scoped rules only. */
 const WRITE_TOOLS = ['Edit', 'Write']
-const ALLOWED: Record<'read-only' | 'workspace-write', string[]> = { 'read-only': READ_ONLY_TOOLS, 'workspace-write': [...READ_ONLY_TOOLS, ...WRITE_TOOLS] }
+/** The built-in tool that runs commands: in a `workspace-write` run only, every command inside the SDK's sandbox (ADR-0038). */
+const COMMAND_TOOL = 'Bash'
+const ALLOWED: Record<SandboxMode, string[]> = { 'read-only': READ_ONLY_TOOLS, 'workspace-write': [...READ_ONLY_TOOLS, ...WRITE_TOOLS, COMMAND_TOOL] }
 
 /**
- * Pre-approval rule for one tool, scoped to the working directory (`./**`). Bare rules reach the
- * whole disk: a bare `Write` wrote outside the workspace, and a bare `Read` or `Grep` read
- * outside it (live, 2026-10-12 and 2026-10-13), which would expose the daemon's own state
- * (`vault.key`, the token files). The scoped rules held against `..` traversal, a symlink out of
- * the workspace, and a home path; anything else is denied without a prompt (`dontAsk`).
+ * Pre-approval rule for one tool. A file tool's is scoped to the working directory (`./**`): bare
+ * rules reach the whole disk, as a bare `Write` wrote outside the workspace, and a bare `Read` or
+ * `Grep` read outside it (live, 2026-10-12 and 2026-10-13), which would expose the daemon's own
+ * state (`vault.key`, the token files). The scoped rules held against `..` traversal, a symlink
+ * out of the workspace, and a home path; anything else is denied without a prompt (`dontAsk`).
+ * `Bash` is pre-approved whole: the SDK's sandbox bounds where each command acts (the workspace,
+ * no network), and the run's tool gate decides whether it runs at all, by its exact argv
+ * (docs/design/approvals.md#a-workers-tool-calls).
  */
-const rule = (tool: string): string => `${tool}(./**)`
+const rule = (tool: string): string => (tool === COMMAND_TOOL ? tool : `${tool}(./**)`)
+
+/**
+ * The SDK's sandbox for the commands of a `workspace-write` run (ADR-0038): on, and a run whose
+ * sandbox cannot start fails instead of running a command unconfined (`failIfUnavailable`); no
+ * command runs outside it, whatever the model asks (`allowUnsandboxedCommands: false`); writes
+ * reach the run's workspace only; and no network: no domain is allowed, and `strictAllowlist`
+ * makes any other host a refusal by the sandbox itself, never a question for a permission flow.
+ */
+export function commandSandbox(workspace: string): SandboxSettings {
+  return {
+    enabled: true, failIfUnavailable: true, allowUnsandboxedCommands: false,
+    filesystem: { allowWrite: [workspace] },
+    network: { allowedDomains: [], strictAllowlist: true },
+  }
+}
+
+/**
+ * A namespaced `true` with no network, started inside the read confinement as the SDK's sandbox
+ * starts a command on Linux: bubblewrap, found on Claude Code's PATH, with its own network and PID
+ * namespaces over a read-only root. That it starts proves the second layer nests on this host
+ * (ADR-0038), as Codex's probe proves its own sandbox (ADR-0024).
+ */
+const NESTED_SANDBOX = ['--die-with-parent', '--new-session', '--unshare-net', '--unshare-pid', '--ro-bind', '/', '/', '--dev', '/dev', '--proc', '/proc', '--', 'true']
+
+/** A command line, confined, run with Claude Code's environment; resolves its stdout, rejects on a non-zero exit. */
+export type ConfinedRun = (command: { command: string; args: string[] }, env: Record<string, string>) => Promise<string>
+
+/** Starts Claude Code's process, already confined (default: `spawn`, with stdin and stdout piped). */
+export type SpawnConfined = (command: string, args: string[], options: { cwd?: string | undefined; env: Record<string, string | undefined>; signal: AbortSignal }) => SpawnedProcess
 
 /** How long the gate may take over one tool call; past it the call is denied. */
 const GATE_MS = 30_000
@@ -64,6 +105,24 @@ export interface RuntimeOptions {
   env?: Record<string, string> | undefined
   /** Daemon environment variables forwarded by name, such as an API key Claude Code should use. */
   forwardEnv?: string[] | undefined
+  /**
+   * The Workers' Claude Code home (`CLAUDE_CONFIG_DIR`; default `<DSH_HOME>/system/claude-home`),
+   * never the operator's `~/.claude`, which the read confinement hides from every agent.
+   */
+  home?: string | undefined
+  /**
+   * The read confinement for a Claude Code child, given the paths it must still reach (its home,
+   * its workspace); `ctx.agentRuntimes.confinement` (ADR-0024). Without it, the runtime offers no Worker.
+   */
+  confine?: ((bind: { readOnly?: readonly string[]; writable?: readonly string[] }) => Confinement) | undefined
+  /** Proves the confinement on this host (default `proveConfinement`). */
+  prove?: (confinement: Confinement) => Promise<{ confined: boolean; detail: string }>
+  /** Starts a sandbox with no network inside the confinement (default: {@link NESTED_SANDBOX}); rejects when it does not start. */
+  nested?: ConfinedRun
+  /** `claude auth status` inside the confinement (default: run it); rejects on a non-zero exit. */
+  status?: ConfinedRun
+  /** Starts the confined Claude Code process for the SDK (default: `spawn`). */
+  spawn?: SpawnConfined
   query?: QueryFn
   findExecutable?: () => string | undefined
   version?: (executable: string) => Promise<string>
@@ -72,26 +131,47 @@ export interface RuntimeOptions {
 export class ClaudeAgentRuntime implements AgentRuntimeProvider {
   readonly kind = 'claude-agent-sdk'
   private readonly query: QueryFn
+  private readonly home: string
 
   constructor(private readonly options: RuntimeOptions = {}) {
     this.query = options.query ?? query
+    if (options.home !== undefined && !isAbsolute(options.home)) throw new ProviderError('config_error', 'claude-agent-sdk: home must be an absolute path')
+    this.home = options.home ?? join(dshHome(), 'system', 'claude-home')
   }
 
   async probe(): Promise<RuntimeEvidence> {
     const executable = this.executable()
-    if (!executable) return { available: false, detail: 'Claude Code is not installed (no claude executable on PATH)', sandboxes: [], resume: false, executes: false, readsConfined: false, gatesToolCalls: false }
+    if (!executable) return unavailable('Claude Code is not installed (no claude executable on PATH)')
+    let version: string
     try {
-      const version = await (this.options.version ?? claudeVersion)(executable)
-      // No Bash: commands cannot be confined to the workspace yet, so it cannot validate. Every
-      // pre-approved tool is scoped to the workspace, reads included, and nothing else is
-      // allowed, so the host state stays unreadable (ADR-0024; verified live 2026-10-13). A run's
-      // tool gate is a PreToolUse hook on every tool, which holds in every permission mode.
-      return {
-        available: true, detail: `Claude Code ${version}; reads scoped to the workspace`, version, sandboxes: ['read-only', 'workspace-write'], resume: true, executes: false, readsConfined: true,
-        gatesToolCalls: true,
-      }
+      version = await (this.options.version ?? claudeVersion)(executable)
     } catch (error) {
-      return { available: false, detail: `claude --version failed: ${(error as Error).message.slice(0, 160)}`, sandboxes: [], resume: false, executes: false, readsConfined: false, gatesToolCalls: false }
+      return unavailable(`claude --version failed: ${firstLine(error)}`)
+    }
+    // Every pre-approved tool is scoped to the workspace, and Claude Code runs under the host's
+    // read confinement, proven here (ADR-0024, ADR-0038). A run's tool gate is a PreToolUse hook on
+    // every tool, which holds in every permission mode.
+    const found = { available: true, version, resume: true, gatesToolCalls: true }
+    const unconfined = (detail: string): RuntimeEvidence => ({ ...found, detail: `Claude Code ${version}; ${detail}`, sandboxes: ['read-only'], executes: false, readsConfined: false })
+    if (!this.options.confine) return unconfined('no read confinement is configured')
+    try {
+      ensurePrivateDir(this.home)
+    } catch (error) {
+      return unavailable(`claude-agent-sdk: its home ${this.home} cannot be used: ${firstLine(error)}`)
+    }
+    const confinement = this.options.confine({ writable: [this.home] })
+    const reads = await (this.options.prove ?? proveConfinement)(confinement)
+    if (!reads.confined) return unconfined(reads.detail)
+    const env = this.environment()
+    const signedOut = await this.signedOut(executable, confinement, env)
+    if (signedOut) {
+      return unavailable(`Claude Code ${version} is not signed in inside its home ${this.home} (${signedOut}): sign in there (CLAUDE_CONFIG_DIR=${this.home} claude), or forward an API key by name (forwardEnv)`)
+    }
+    // Commands need the second layer too: without it, no run writes or runs a command (ADR-0038).
+    const commands = await this.proveCommands(confinement, env)
+    return {
+      ...found, detail: `Claude Code ${version}; ${reads.detail}; ${commands.detail}`,
+      sandboxes: commands.proven ? ['read-only', 'workspace-write'] : ['read-only'], executes: commands.proven, readsConfined: true,
     }
   }
 
@@ -108,6 +188,16 @@ export class ClaudeAgentRuntime implements AgentRuntimeProvider {
     const executable = this.executable()
     if (!executable) throw new ProviderError('config_error', 'claude-agent-sdk: Claude Code is not installed')
     if (signal.aborted) throw new ProviderError('aborted', 'claude-agent-sdk: aborted before starting')
+    if (!this.options.confine) throw new ProviderError('config_error', 'claude-agent-sdk: no read confinement is configured; refusing to run Claude Code with the host state readable (ADR-0024)')
+    const writes = spec.sandbox === 'workspace-write'
+    const confinement = this.confinement(writes ? { writable: [this.home, spec.workspace] } : { writable: [this.home], readOnly: [spec.workspace] })
+    const env = this.environment()
+    if (writes) {
+      // The second layer is proven again before a run that writes: its sandbox must start (ADR-0038).
+      const commands = await this.proveCommands(confinement, env)
+      if (!commands.proven) throw new ProviderError('config_error', `claude-agent-sdk: ${commands.detail}; refusing a workspace-write run, whose commands would not be confined (ADR-0038)`)
+      if (signal.aborted) throw new ProviderError('aborted', 'claude-agent-sdk: aborted before starting')
+    }
     const controller = new AbortController()
     const abort = (): void => controller.abort()
     signal.addEventListener('abort', abort, { once: true })
@@ -126,8 +216,12 @@ export class ClaudeAgentRuntime implements AgentRuntimeProvider {
           // No MCP server at all: not the operator's, not a project's, not the account's connectors.
           mcpServers: {}, strictMcpConfig: true,
           pathToClaudeCodeExecutable: executable, abortController: controller,
-          // Without the daemon's credentials (INV-8); its own sign-in lives in ~/.claude.
-          env: childEnvironment(this.options.forwardEnv, this.options.env),
+          // Under the host's read confinement, its home and the workspace bound back (ADR-0024, ADR-0038).
+          spawnClaudeCodeProcess: (options) => this.spawnConfined(options, confinement),
+          // Without the daemon's credentials (INV-8); its own sign-in lives in its home.
+          env,
+          // Every command in the SDK's sandbox: the workspace, no network, no way out (ADR-0038).
+          ...(writes ? { sandbox: commandSandbox(spec.workspace) } : {}),
           ...(spec.model ? { model: spec.model } : {}), ...(spec.maxTurns ? { maxTurns: spec.maxTurns } : {}), ...(spec.resume ? { resume: spec.resume } : {}),
           // No matcher: every tool call, subagents' included, passes the gate before it runs.
           ...(spec.toolGate ? { hooks: { PreToolUse: [{ hooks: [gateHook(spec.toolGate, deferral)], timeout: HOOK_TIMEOUT_S }] } } : {}),
@@ -179,7 +273,70 @@ export class ClaudeAgentRuntime implements AgentRuntimeProvider {
   private executable(): string | undefined {
     return this.options.executable ?? (this.options.findExecutable ?? (() => onPath('claude')))()
   }
+
+  /** Claude Code's environment: without the daemon's credentials (INV-8), in its own home. */
+  private environment(): Record<string, string> {
+    return childEnvironment(this.options.forwardEnv, { ...this.options.env, CLAUDE_CONFIG_DIR: this.home })
+  }
+
+  /** The confinement of one run, checked before anything starts: its home exists owner-only, and no bind exposes a hidden path. */
+  private confinement(bind: { readOnly?: readonly string[]; writable?: readonly string[] }): Confinement {
+    try {
+      ensurePrivateDir(this.home)
+      const confinement = this.options.confine!(bind)
+      confinedCommand('true', [], confinement)
+      return confinement
+    } catch (error) {
+      throw new ProviderError('config_error', `claude-agent-sdk: ${firstLine(error)}; nothing was run`, { cause: error })
+    }
+  }
+
+  /** The SDK's Claude Code process, started under the confinement: the SDK's command line, wrapped. */
+  private spawnConfined(options: SpawnOptions, confinement: Confinement): SpawnedProcess {
+    const confined = confinedCommand(options.command, options.args, confinement)
+    return (this.options.spawn ?? spawnPiped)(confined.command, confined.args, { cwd: options.cwd, env: options.env, signal: options.signal })
+  }
+
+  /** Whether a sandbox with no network starts inside the confinement (ADR-0038). */
+  private async proveCommands(confinement: Confinement, env: Record<string, string>): Promise<{ proven: boolean; detail: string }> {
+    try {
+      await (this.options.nested ?? runConfined)(confinedCommand('bwrap', NESTED_SANDBOX, confinement), env)
+      return { proven: true, detail: 'commands confined: a sandbox with no network starts inside it' }
+    } catch (error) {
+      return { proven: false, detail: `commands cannot be confined: a sandbox does not start inside the confinement: ${firstLine(error)}` }
+    }
+  }
+
+  /**
+   * Why Claude Code is not signed in inside its home, or undefined when it is: `claude auth status`
+   * under the confinement exits 0 and does not report `"loggedIn": false`.
+   */
+  private async signedOut(executable: string, confinement: Confinement, env: Record<string, string>): Promise<string | undefined> {
+    try {
+      const status = await (this.options.status ?? runConfined)(confinedCommand(executable, ['auth', 'status'], confinement), env)
+      return loggedOut(status) ? 'claude auth status: not logged in' : undefined
+    } catch (error) {
+      return `claude auth status failed: ${firstLine(error)}`
+    }
+  }
 }
+
+const unavailable = (detail: string): RuntimeEvidence => ({ available: false, detail, sandboxes: [], resume: false, executes: false, readsConfined: false, gatesToolCalls: false })
+
+const firstLine = (error: unknown): string => (error instanceof Error ? error.message : String(error)).split('\n')[0]!.slice(0, 160)
+
+/** Whether `claude auth status` output says no one is signed in (`"loggedIn": false`); output it cannot read says nothing. */
+function loggedOut(stdout: string): boolean {
+  try {
+    return (JSON.parse(stdout) as { loggedIn?: unknown } | null)?.loggedIn === false
+  } catch {
+    return false
+  }
+}
+
+const runConfined: ConfinedRun = async (command, env) => (await promisify(execFile)(command.command, command.args, { timeout: 15_000, env })).stdout
+
+const spawnPiped: SpawnConfined = (command, args, options) => spawn(command, args, { ...options, stdio: ['pipe', 'pipe', 'ignore'] })
 
 /** The tool call a run's gate deferred: the run stops there. */
 interface Deferral {
@@ -374,6 +531,7 @@ export interface Config {
   executable?: string
   env?: Record<string, string>
   forwardEnv?: string[]
+  home?: string
 }
 
 export const name = 'runtime-claude-agent-sdk'
@@ -382,8 +540,12 @@ export const Config: z<Config> = z.object({
   executable: z.string().description('Path to the claude executable (default: found on PATH)'),
   env: z.dict(z.string()).description('Explicit environment for Claude Code (no secrets; use forwardEnv)'),
   forwardEnv: z.array(z.string()).description('Daemon environment variables forwarded by name, such as an API key Claude Code should use'),
+  home: z.string().description('The Workers\' Claude Code home (CLAUDE_CONFIG_DIR; default <DSH_HOME>/system/claude-home), never the operator\'s ~/.claude; sign in there once'),
 })
 
 export function apply(ctx: Context, config: Config = {}): void {
-  ctx.agentRuntimes.register(new ClaudeAgentRuntime({ executable: config.executable, env: config.env, forwardEnv: config.forwardEnv }))
+  ctx.agentRuntimes.register(new ClaudeAgentRuntime({
+    executable: config.executable, env: config.env, forwardEnv: config.forwardEnv, home: config.home,
+    confine: (bind) => ctx.agentRuntimes.confinement(bind),
+  }))
 }

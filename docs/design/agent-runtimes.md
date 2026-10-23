@@ -13,16 +13,18 @@
 > Workers.
 
 An **agent runtime** is an external coding agent that `system` drives as a Worker. It is the
-counterpart of the [gateways](gateways.md), where the same agents act as clients. The agent
-runtime and agent Worker rows are off in the default composition (PROP-0004); an operator turns
-them on ([runbook](../operations/runbooks.md#turn-an-off-row-back-on)), and the `api-first`
-preset does.
+counterpart of the [gateways](gateways.md), where the same agents act as clients. The
+`agent-runtimes`, `runtime-claude-agent-sdk`, and `agent-workers` rows are on in the default
+composition (PROP-0010 B3), with no Worker until the operator names a repository
+([runbook](../operations/runbooks.md#agent-workers)); the Codex and ACP rows are off
+([turn one on](../operations/runbooks.md#turn-an-off-row-back-on)), and the `api-first` preset
+turns them on.
 
 ## Providers
 
 | Provider plugin | Kind | Backed by | Policy holder |
 |---|---|---|---|
-| [`runtime-claude-agent-sdk`](../../packages/plugins/runtime-claude-agent-sdk/README.md) | `claude-agent-sdk` | official Claude Agent SDK, on the operator's installed `claude` | exact built-in tools, pre-approved inside the workspace only; no settings files, hooks from disk, or MCP servers; the run's tool gate as its one PreToolUse hook |
+| [`runtime-claude-agent-sdk`](../../packages/plugins/runtime-claude-agent-sdk/README.md) | `claude-agent-sdk` | official Claude Agent SDK, on the operator's installed `claude` | exact built-in tools, file tools pre-approved inside the workspace only; `Bash` in `workspace-write` runs only, inside the SDK's sandbox ([confined commands](#confined-commands)); its own home; no settings files, hooks from disk, or MCP servers; the run's tool gate as its one PreToolUse hook |
 | [`runtime-codex-sdk`](../../packages/plugins/runtime-codex-sdk/README.md) | `codex-sdk` | official Codex SDK, on the operator's installed `codex` | Codex's own sandbox (read-only or workspace-write); approvals `never`; network and web search off; its own Codex home, with no MCP server; no tool gate (refused) |
 | [`runtime-acp`](../../packages/plugins/runtime-acp/README.md) | `acp:<name>` | official ACP SDK, with an agent subprocess | the client side: permission requests refused, reads confined to the workspace, no writes or terminals advertised; no tool gate (refused) |
 
@@ -165,19 +167,57 @@ has the configuration and every rule.
   (the DSH home, the session's runtime directory, the temporary directories, credential
   stores, every path registered with `registerSecretPath`, and operator paths) and what to
   bind back (the operator's tools read-only; the Worker's own home and its workspace as its
-  sandbox allows; never a bind that holds a hidden path). A runtime whose own sandbox does not
-  confine reads starts its agent under bubblewrap with that confinement (`confinedCommand`:
-  its own PID namespace and session, `--die-with-parent`): Codex through an owner-only
-  launcher (`writeLauncher`), ACP agents directly. Claude Code's pre-approved tools are scoped
-  to the workspace, reads included, so it needs no wrapper. Each probe reports
-  `readsConfined`, proven positively on the host by `proveConfinement`, and the `agents`
-  source checks it again before each run starts.
+  sandbox allows; never a bind that holds a hidden path). Every runtime starts its agent under
+  bubblewrap with that confinement (`confinedCommand`: its own PID namespace and session,
+  `--die-with-parent`): Codex through an owner-only launcher (`writeLauncher`), ACP agents
+  directly, Claude Code through the SDK's `spawnClaudeCodeProcess`, which wraps the SDK's own
+  command line ([ADR-0038](../decisions/adr/0038-confined-commands-for-claude-code-workers.md)).
+  Each agent runs in a home of its own (Codex's `CODEX_HOME`, Claude Code's
+  `CLAUDE_CONFIG_DIR`, both under `<DSH_HOME>/system`), never the operator's login, which is
+  hidden. Each probe reports `readsConfined`, proven positively on the host by
+  `proveConfinement`, and the `agents` source checks it again before each run starts.
 - **Egress** ([INV-12](../architecture/invariants.md#inv-12-data-egress-is-explicit)). The
   agent runs here, but its model is remote. So the `agents` source checks each prompt with
   `ctx.egress` (Worker class `agent`) before the agent starts, keeps the decision id on the run,
   and fails a denied run as `egress_denied`, never submitted. By default the `agent` class
   receives `public` and `operator-shared` work only, although routing admits `local-private`
   work to a local Worker ([routing](routing.md#data-locality-policy)).
+
+## Confined commands
+
+A Worker proves `validate` only when its runtime runs commands confined to the workspace with no
+network (`executes`). Codex runs its commands in its own sandbox, nested in the read confinement.
+Claude Code runs them under two confinements
+([ADR-0038](../decisions/adr/0038-confined-commands-for-claude-code-workers.md)):
+
+- **Reads, by the host:** the read confinement above, around the whole Claude Code process.
+- **Commands, by the SDK's sandbox:** a `workspace-write` run offers `Bash` and enables the
+  SDK's sandbox (Anthropic's sandbox runtime, shipped in Claude Code: bubblewrap and a network
+  proxy on Linux) with `enabled` and `failIfUnavailable` (a run whose sandbox cannot start
+  fails, never runs a command unconfined), `allowUnsandboxedCommands: false`,
+  `filesystem.allowWrite` the run's workspace only, and `network.allowedDomains: []` with
+  `strictAllowlist`, so a host is refused by the sandbox itself and never asked about. A
+  `read-only` run has no `Bash` and no sandbox. An allow list for the network (a package
+  registry) would be an egress decision
+  ([INV-12](../architecture/invariants.md#inv-12-data-egress-is-explicit)), not a runtime
+  default.
+- **The proof:** the probe reports `executes: true`, and offers `workspace-write`, only when
+  both layers hold on this host: `proveConfinement`, then a nested sandbox start inside the
+  confinement (bubblewrap on Claude Code's own PATH, a namespaced `true` with its own network
+  and PID namespaces over a read-only root), the check Codex's probe makes with its own
+  sandbox. Otherwise `executes: false` and `read-only` only, the reason in `detail` (INV-2):
+  its Workers review but never `develop` or `validate` on this host. A `workspace-write` run
+  starts the nested sandbox again before Claude Code starts, and is refused (`config_error`)
+  when it does not; inside the run, `failIfUnavailable` guards the sandbox Claude Code starts.
+- **The policy still decides:** the sandbox bounds where a command acts; the run's
+  [tool gate](#tool-gate) decides whether it runs at all, by its exact argv
+  ([approvals](approvals.md#a-workers-tool-calls)): a word with a shell metacharacter is
+  forbidden, and with the default studio policy any other command asks the operator unless a
+  rule lists it.
+
+Commands that need the network (installing packages) fail inside a Worker: dependencies are
+prepared in the repository before the run. The sandbox runtime does not claim to stop a kernel
+escape ([threat model](../security/threat-model.md#threats-and-controls)).
 
 ## Metering
 
@@ -219,7 +259,7 @@ whose workspace cannot hold a worktree per run (`config_error`).
 | `local-data` | the Worker is ready (it runs on this machine, in its workspace) |
 | `review` | the sandbox is `read-only`: a review is independent of the change ([INV-15](../architecture/invariants.md#inv-15-one-writer-per-subject)) |
 | `develop` | the sandbox is `workspace-write` |
-| `validate` | the sandbox is `workspace-write` and the probe reports `executes` |
+| `validate` | the sandbox is `workspace-write` and the probe reports `executes` ([confined commands](#confined-commands)) |
 | `persistent-conversation` | the probe reports `resume`. Target: a resume conformance test passes (planned). This is what qualifies a runtime as a long-lived [team member](teams.md#membership-model-a) |
 
 An agent Worker never offers plain `reason`, so ordinary asks never spend agent-plan quota

@@ -78,14 +78,15 @@
       name: '@tsuuanmi/system-workers'               # Worker registry, admission, deterministic router
     - id: turns
       name: '@tsuuanmi/system-turns'                 # the website Worker runtime (durable turns)
-    # --- agent runtimes (M3): Claude Code and others as Workers; off in the MVP composition (PROP-0004).
-    # An operator patch turns a row on with `- id: <row>` and `disabled: false`, then configures workers. ---
+    # --- agent runtimes: Claude Code as the first Worker, on by default (PROP-0010 B3). Each run is
+    # confined for reads by bubblewrap, and its commands by the SDK's sandbox (ADR-0024, ADR-0038);
+    # a host without Claude Code, bubblewrap, or a sign-in still boots, and the probe says why its
+    # Workers are unavailable. Codex and ACP stay off: they cannot ask a tool gate before each tool
+    # call, so the `agents` source would admit none of their Workers. ---
     - id: agent-runtimes
-      name: '@tsuuanmi/system-agent-runtimes'
-      disabled: true
+      name: '@tsuuanmi/system-agent-runtimes'         # ctx.agentRuntimes and the read confinement
     - id: runtime-claude-agent-sdk
-      name: '@tsuuanmi/system-runtime-claude-agent-sdk'   # runs the installed `claude`
-      disabled: true
+      name: '@tsuuanmi/system-runtime-claude-agent-sdk'   # runs the installed `claude`, in its own home
     - id: runtime-codex-sdk
       name: '@tsuuanmi/system-runtime-codex-sdk'      # Codex as a Worker (the operator's installed codex)
       disabled: true
@@ -93,8 +94,12 @@
       name: '@tsuuanmi/system-runtime-acp'            # ACP agents (none until configured)
       disabled: true
     - id: agent-workers
-      name: '@tsuuanmi/system-agent-workers'          # the `agents` Worker source (no workers until configured)
-      disabled: true
+      name: '@tsuuanmi/system-agent-workers'          # the `agents` Worker source
+      config:
+        # No Worker until the operator names a repository: a Worker's workspace is an absolute path,
+        # and none is known here. The operator's patch adds a read-only reviewer and a writer with a
+        # worktree per run (docs/operations/runbooks.md#agent-workers).
+        workers: []
     # --- API and local models (M6e): routes on llm-pi-ai and the model catalog in the operator patch ---
     - id: llm
       name: '@deepseek-ai/dsh-llm'                    # ctx.llm: provider-neutral model calls
@@ -112,7 +117,7 @@
     - id: board
       name: '@tsuuanmi/system-board'
     - id: profile-software-development
-      name: '@tsuuanmi/system-profile-software-development'  # agent-review, for agent Workers (off with them)
+      name: '@tsuuanmi/system-profile-software-development'  # agent-review, for agent Workers; off until the operator turns it on
       disabled: true
     - id: profile-scientific-research
       name: '@tsuuanmi/system-profile-scientific-research'  # the research procedure (template with a deep variant, contracts, typed artifacts)

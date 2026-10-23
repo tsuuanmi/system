@@ -6,8 +6,10 @@
 - Providers register for their plugin's lifetime, and kinds are unique.
   Workers name a runtime by kind in configuration; nothing branches on a kind
   (INV-11).
-- **Read confinement** ([ADR-0024](../../../docs/decisions/adr/0024-agent-workers-confined-for-reads.md)):
-  `confinement({ readOnly, writable })` is what every agent child runs under. It
+- **Read confinement** ([ADR-0024](../../../docs/decisions/adr/0024-agent-workers-confined-for-reads.md),
+  [ADR-0038](../../../docs/decisions/adr/0038-confined-commands-for-claude-code-workers.md)):
+  `confinement({ readOnly, writable })` is what every agent child (Claude Code,
+  Codex, ACP agents) runs under. It
   always hides, when present, the DSH home, `$XDG_RUNTIME_DIR` (or
   `/run/user/<uid>`), `$TMPDIR`, `/tmp`, `/var/tmp`, `/dev/shm`,
   `$CREDENTIALS_DIRECTORY`, the credential stores in the home directory

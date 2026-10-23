@@ -46,9 +46,33 @@
 ## Agent Workers
 
 An agent Worker (Claude Code, Codex, an ACP agent) runs on this machine, under
-an `agent-workers` row. The agent rows are off by default; turn them on first
-([below](#turn-an-off-row-back-on)).
+the `agent-workers` row. The Claude Code rows (`agent-runtimes`,
+`runtime-claude-agent-sdk`, `agent-workers`) are on by default, with no Worker;
+the Codex and ACP rows are off ([below](#turn-an-off-row-back-on)).
 
+- **Add Claude Code Workers for a repository.** A Worker works in a workspace
+  you name, so the bundle configures none. For a repository at
+  `/home/me/src/project` (the top level of a git repository with a commit), add
+  a reviewer and a developer to your profile patch,
+  `~/.dsh/profiles/system/cordis.patch.yml`:
+
+  ```yaml
+  - id: agent-workers
+    config:
+      workers:
+        # Reads only: proves review. Never writes, never runs a command.
+        - { id: reviewer, runtime: claude-agent-sdk, workspace: /home/me/src/project, sandbox: read-only, tier: standard, worktreePerRun: true }
+        # Writes in its own git worktree per workflow run, never your checkout: proves develop,
+        # and validate once its commands are proven confined on this host.
+        - { id: developer, runtime: claude-agent-sdk, workspace: /home/me/src/project, sandbox: workspace-write, tier: standard, worktreePerRun: true }
+  ```
+
+  Both name the same workspace, so both set `worktreePerRun`: the reviewer
+  reads the developer's worktree. Then sign Claude Code in inside its Worker
+  home (below), restart, and `system explain` or `/ui` shows each Worker ready,
+  or why not. Every tool call still asks the approval queue first; with the
+  default studio policy a command asks the operator unless a rule lists its
+  exact argv.
 - **Credentials:** the agent process starts without the daemon's credentials.
   Every variable whose name contains `KEY`, `PASSWORD`, `SECRET`, or `TOKEN`,
   and every `DSH_*` variable, is removed. A credential the agent needs is
@@ -67,10 +91,33 @@ an `agent-workers` row. The agent rows are off by default; turn them on first
     ([ADR-0024](../decisions/adr/0024-agent-workers-confined-for-reads.md)), a
     Codex Worker can still read the other token files on disk
     ([threat model](../security/threat-model.md#threats-and-controls)).
-  - **Claude Code:** its own sign-in in `~/.claude` needs nothing. An API key or
-    OAuth token taken from the environment must be named in the
-    `runtime-claude-agent-sdk` row's `forwardEnv`.
+  - **Claude Code:** an API key or OAuth token taken from the environment must
+    be named in the `runtime-claude-agent-sdk` row's `forwardEnv`.
   - **ACP agents:** each `runtime-acp` agent entry has its own `forwardEnv`.
+- **Claude Code Worker home:** Claude Code Workers run with their own
+  `CLAUDE_CONFIG_DIR` (`runtime-claude-agent-sdk` config `home`, default
+  `~/.dsh/system/claude-home`), never your `~/.claude`, which the read
+  confinement hides from every agent. Sign in there once:
+
+  ```sh
+  install -d -m 700 ~/.dsh/system/claude-home          # owner-only, or the Worker refuses it
+  CLAUDE_CONFIG_DIR=~/.dsh/system/claude-home claude   # then /login, and /exit
+  ```
+
+  or forward an API key or a `claude setup-token` token by name instead. Until
+  then each Worker is unavailable with "not signed in inside its home".
+- **Confined commands**
+  ([ADR-0038](../decisions/adr/0038-confined-commands-for-claude-code-workers.md)):
+  a `workspace-write` Claude Code Worker runs `Bash` inside the SDK's sandbox,
+  nested in the read confinement: it writes only the run's workspace and has no
+  network. Install `socat` too (`sudo apt-get install bubblewrap socat`): the
+  sandbox's network proxy needs it, and without it each writing run fails at
+  start rather than running a command unconfined. If `/ui` shows "commands
+  cannot be confined", a sandbox does not start inside the confinement on this
+  host (user namespaces refused inside a namespace, or no `bwrap` on the
+  daemon's PATH): the Worker stays read-only (`review` only) until it does.
+  Commands that need the network (installing packages) fail inside a Worker:
+  prepare dependencies in the repository first.
 - **Codex Worker home:** Codex Workers run with their own `CODEX_HOME`
   (`runtime-codex-sdk` config `home`, default `~/.dsh/system/codex-home`),
   never your `~/.codex`, which `system mcp-config codex` gives the `system` MCP
@@ -84,7 +131,7 @@ an `agent-workers` row. The agent rows are off by default; turn them on first
   CODEX_HOME=~/.dsh/system/codex-home codex login
   ```
 
-- **Read confinement:** Codex and ACP agents start under
+- **Read confinement:** every agent (Claude Code, Codex, ACP agents) starts under
   [bubblewrap](https://github.com/containers/bubblewrap)
   ([ADR-0024](../decisions/adr/0024-agent-workers-confined-for-reads.md)). It
   hides `~/.dsh`, your session's runtime directory (`/run/user/<uid>`), `/tmp`,
@@ -112,23 +159,20 @@ an `agent-workers` row. The agent rows are off by default; turn them on first
 ## Turn an off row back on
 
 The default composition (PROP-0004) keeps these rows in the system bundle but
-off (`disabled: true`):
+off (`disabled: true`). The Claude Code agent rows (`agent-runtimes`,
+`runtime-claude-agent-sdk`, `agent-workers`) are on (PROP-0010 B3).
 
 | Rows | What they serve |
 |---|---|
-| `agent-runtimes`, `runtime-claude-agent-sdk`, `runtime-codex-sdk`, `runtime-acp`, `agent-workers` | agent Workers ([agent runtimes](../design/agent-runtimes.md)) |
+| `runtime-codex-sdk`, `runtime-acp` | Codex and ACP agent Workers ([agent runtimes](../design/agent-runtimes.md)); neither can ask a tool gate before each tool call, so the `agents` source admits none of their Workers until they can |
 | `profile-software-development` | the `agent-review` template, for agent Workers ([templates](../reference/workflow-templates.md#agent-review)) |
 | `gateway-anthropic`, `gateway-responses` | the model gateways behind `system claude-env`, `system codex-env`, and `system mcp-token --scope model` ([gateways](../design/gateways.md)) |
 
 1. Add the row to your profile patch, `~/.dsh/profiles/system/cordis.patch.yml`,
-   with `disabled: false`. Agent Workers need every agent row they use:
+   with `disabled: false`:
 
    ```yaml
-   - id: agent-runtimes
-     disabled: false
-   - id: runtime-claude-agent-sdk
-     disabled: false
-   - id: agent-workers
+   - id: profile-software-development
      disabled: false
    ```
 
@@ -138,8 +182,8 @@ off (`disabled: true`):
 4. `system start --dump-config` shows the row without `disabled: true`.
 
 To turn it off again, remove the row from your patch, or set `disabled: true`,
-and restart. The `api-first` preset turns the agent rows on for you
-([API-first](#api-first-preset)).
+and restart; the Claude Code rows turn off the same way. The `api-first` preset
+turns every agent row on for you ([API-first](#api-first-preset)).
 
 ## Remove the free ChatGPT account
 
@@ -250,8 +294,8 @@ For an organization that cannot accept automated use of consumer websites
 1. `system init --preset api-first` adds the preset's bundle layer to the
    profile, right after the system bundle. It turns off the display, browser,
    provider registry, website drivers, login, accounts, website turns, turn
-   receipts, and both model gateways, turns the agent Worker rows and the
-   software-development profile on, and orders quota `local`, `metered`,
+   receipts, and both model gateways, turns every agent Worker row (Codex and
+   ACP included) and the software-development profile on, and orders quota `local`, `metered`,
    `agent-plan`, `subscription-chat`. Your `cordis.patch.yml` is not touched,
    and a later `system init` keeps the preset.
 2. Configure model Workers ([above](#api-and-local-models)) and agent Workers
